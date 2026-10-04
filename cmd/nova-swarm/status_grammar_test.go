@@ -56,7 +56,7 @@ var statusWords = map[string]bool{
 // statusAfter returns the first status word after token in out, and whether the
 // token was found on any line: the status word that leads a typed line (STANDARD §2).
 func statusAfter(out, token string) (string, bool) {
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if rest, ok := strings.CutPrefix(line, token); ok && strings.HasPrefix(rest, " ") {
 			rest = strings.TrimLeft(rest, " ")
 			word, _, _ := strings.Cut(rest, " ")
@@ -256,7 +256,7 @@ func TestStatusGrammar(t *testing.T) {
 			if tc.wantLine != "" {
 				foundPrefix := false
 				for _, out := range []string{stdout, stderr} {
-					for _, line := range strings.Split(out, "\n") {
+					for line := range strings.SplitSeq(out, "\n") {
 						if strings.HasPrefix(line, tc.wantLine) {
 							foundPrefix = true
 							break
@@ -270,7 +270,7 @@ func TestStatusGrammar(t *testing.T) {
 			}
 			if tc.token == "" {
 				for _, out := range []string{stdout, stderr} {
-					for _, line := range strings.Split(out, "\n") {
+					for line := range strings.SplitSeq(out, "\n") {
 						for _, tok := range verbTokens {
 							if rest, ok := strings.CutPrefix(line, tok); ok && strings.HasPrefix(rest, " ") {
 								rest = strings.TrimLeft(rest, " ")

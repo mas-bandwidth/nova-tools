@@ -36,7 +36,7 @@ func TestTheHelpsWalkthroughLandsACardForReal(t *testing.T) {
 	var last string
 	for _, line := range realSteps {
 		if strings.HasPrefix(line, "git ") {
-			for _, part := range strings.Split(line, " && ") {
+			for part := range strings.SplitSeq(line, " && ") {
 				args, err := onboarding.SplitShell(part)
 				require.NoError(t, err, part)
 				git(args[1:]...)

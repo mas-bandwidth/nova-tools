@@ -179,7 +179,7 @@ func ParseStamp(s string) (Stamp, error) {
 		}
 	}
 
-	for _, tok := range strings.Fields(trimmed) {
+	for tok := range strings.FieldsSeq(trimmed) {
 		k, v, ok := strings.Cut(tok, "=")
 		if !ok {
 			continue

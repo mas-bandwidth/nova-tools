@@ -206,7 +206,7 @@ func (g *gitPusher) checkoutTip(ctx context.Context, repo, ns, base string) stri
 	}
 	var tips []string
 	seen := map[string]bool{base: true}
-	for _, sha := range strings.Fields(string(res.Stdout)) {
+	for sha := range strings.FieldsSeq(string(res.Stdout)) {
 		if seen[sha] {
 			continue
 		}
@@ -342,7 +342,7 @@ func addAlternate(repo, objects string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	for _, l := range strings.Split(string(held), "\n") {
+	for l := range strings.SplitSeq(string(held), "\n") {
 		if strings.TrimSpace(l) == objects {
 			return nil
 		}
@@ -390,13 +390,13 @@ func (g *gitPusher) run(ctx context.Context, c string, stdin *strings.Reader, ar
 // `!` on stdout), else the first fatal:/error: line on stderr, else stderr's
 // last line, else the error.
 func gitLine(res gitrun.Result, err error) string {
-	for _, l := range strings.Split(string(res.Stdout), "\n") {
+	for l := range strings.SplitSeq(string(res.Stdout), "\n") {
 		if strings.HasPrefix(l, "!") {
 			return oneLineOf(l)
 		}
 	}
 	var last string
-	for _, l := range strings.Split(string(res.Stderr), "\n") {
+	for l := range strings.SplitSeq(string(res.Stderr), "\n") {
 		l = strings.TrimSpace(l)
 		if strings.HasPrefix(l, "fatal:") || strings.HasPrefix(l, "error:") {
 			return oneLineOf(l)

@@ -337,7 +337,7 @@ func parsePackages(out, root string, pkgs []string) (map[string][]string, error)
 	dirOf := map[string]string{} // import path -> relative dir
 	type line struct{ path, dir, deps string }
 	var lines []line
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		f := strings.SplitN(l, "\t", 4)
 		if len(f) != 4 || f[2] == "true" {
 			continue
@@ -360,7 +360,7 @@ func parsePackages(out, root string, pkgs []string) (map[string][]string, error)
 			continue
 		}
 		dirs := []string{l.dir}
-		for _, d := range strings.Fields(l.deps) {
+		for d := range strings.FieldsSeq(l.deps) {
 			if rel, ok := dirOf[d]; ok {
 				dirs = append(dirs, rel)
 			}

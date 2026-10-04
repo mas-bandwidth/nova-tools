@@ -358,12 +358,12 @@ func shallowCut(root, sha string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, r := range strings.Fields(out) {
+	for r := range strings.FieldsSeq(out) {
 		raw, err := gitOut(root, "cat-file", "-p", r)
 		if err != nil {
 			return "", err
 		}
-		for _, line := range strings.Split(raw, "\n") {
+		for line := range strings.SplitSeq(raw, "\n") {
 			if strings.HasPrefix(line, "parent ") {
 				return r, nil
 			}
@@ -385,7 +385,7 @@ func deletedInAncestry(root, revs string) (map[string]bool, error) {
 		return nil, err
 	}
 	set := map[string]bool{}
-	for _, rel := range strings.Split(out, "\n") {
+	for rel := range strings.SplitSeq(out, "\n") {
 		if rel = strings.TrimSpace(rel); rel != "" {
 			set[rel] = true
 		}
@@ -400,7 +400,7 @@ func treePaths(root, sha string) (map[string]bool, error) {
 		return nil, err
 	}
 	set := map[string]bool{}
-	for _, rel := range strings.Split(out, "\n") {
+	for rel := range strings.SplitSeq(out, "\n") {
 		if rel = strings.TrimSpace(rel); rel != "" {
 			set[rel] = true
 		}
@@ -417,7 +417,7 @@ func readDeletionsAgainst(root, parent, commit, head, subject string) (*mergeDel
 	if err != nil {
 		return nil, err
 	}
-	for _, rel := range strings.Split(gone, "\n") {
+	for rel := range strings.SplitSeq(gone, "\n") {
 		if rel = strings.TrimSpace(rel); rel != "" {
 			m.Deleted = append(m.Deleted, rel)
 		}
@@ -455,7 +455,7 @@ func commitParents(root, commit string) ([]string, error) {
 		return nil, err
 	}
 	var parents []string
-	for _, line := range strings.Split(raw, "\n") {
+	for line := range strings.SplitSeq(raw, "\n") {
 		if p, ok := strings.CutPrefix(line, "parent "); ok {
 			parents = append(parents, p)
 		}
@@ -575,7 +575,7 @@ func pullRequestHeadRepo(eventPath string) string {
 // adds: the declarations this change makes and no other.
 func declaredRowsAdded(diff string) map[string]string {
 	rows := map[string]string{}
-	for _, line := range strings.Split(diff, "\n") {
+	for line := range strings.SplitSeq(diff, "\n") {
 		if !strings.HasPrefix(line, "+") || strings.HasPrefix(line, "+++") {
 			continue
 		}

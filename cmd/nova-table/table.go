@@ -481,7 +481,7 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	}
 	var list []string
 	if sub == "set" {
-		for _, n := range strings.Split(tables, ",") {
+		for n := range strings.SplitSeq(tables, ",") {
 			if n = strings.TrimSpace(n); n != "" {
 				list = append(list, n)
 			}

@@ -60,7 +60,7 @@ func releaseWorkflowJobs(t *testing.T, file string) map[string]releaseJob {
 func releaseTargets(t *testing.T) []string {
 	t.Helper()
 	var out []string
-	for _, line := range strings.Split(readFile(t, filepath.Join(repoRoot(t), "tools", "ghrelease", "release-targets")), "\n") {
+	for line := range strings.SplitSeq(readFile(t, filepath.Join(repoRoot(t), "tools", "ghrelease", "release-targets")), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

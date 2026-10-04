@@ -343,7 +343,7 @@ func countBusIDs(res []string) int {
 	count := 0
 	for _, r := range res {
 		spaced := strings.ReplaceAll(strings.ReplaceAll(r, ",", " "), ";", " ")
-		for _, tok := range strings.Fields(spaced) {
+		for tok := range strings.FieldsSeq(spaced) {
 			if isBusID(tok) {
 				count++
 			}

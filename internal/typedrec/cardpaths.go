@@ -9,7 +9,7 @@ func CardPaths(read func(string) (string, bool)) []string {
 	var out []string
 	for _, key := range []string{"PATHS", "NEW"} {
 		value, _ := read(key)
-		for _, g := range strings.Split(value, ",") {
+		for g := range strings.SplitSeq(value, ",") {
 			if g = strings.TrimSpace(g); g != "" && g != "none" {
 				out = append(out, g)
 			}

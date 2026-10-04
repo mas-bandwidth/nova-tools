@@ -130,7 +130,7 @@ func readSpec(t *testing.T) spec {
 	require.NoError(t, err)
 	s := spec{body: map[string]string{}}
 	cur := ""
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if rest, ok := strings.CutPrefix(line, "## "); ok {
 			cur = rest
 			if i := strings.IndexAny(cur, "(:"); i >= 0 {
@@ -163,7 +163,7 @@ func match(t *testing.T, re, text, what string) string {
 
 func splitList(s, sep string) []string {
 	var out []string
-	for _, w := range strings.Split(s, sep) {
+	for w := range strings.SplitSeq(s, sep) {
 		if w = strings.TrimSpace(w); w != "" {
 			out = append(out, w)
 		}

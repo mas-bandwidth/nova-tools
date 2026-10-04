@@ -1513,7 +1513,7 @@ func findingOf(r Result) string {
 		lines = append(lines, report)
 	}
 	repeat := report != ""
-	for _, l := range strings.Split(r.Body, "\n") {
+	for l := range strings.SplitSeq(r.Body, "\n") {
 		l = strings.TrimSpace(l)
 		switch {
 		case l == "" || strings.HasPrefix(l, "#"):
@@ -1529,7 +1529,7 @@ func findingOf(r Result) string {
 // oneLine is a report as one line for a verb's flag: the first non-empty
 // line, cut at 500 bytes; "" when there is none.
 func oneLine(s string) string {
-	for _, l := range strings.Split(s, "\n") {
+	for l := range strings.SplitSeq(s, "\n") {
 		l = strings.TrimSpace(l)
 		if l == "" || strings.HasPrefix(l, "#") {
 			continue

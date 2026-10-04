@@ -151,7 +151,7 @@ func TestOK8(t *testing.T) { _ = Opts{Deadline: time.Minute} }
 
 // isSlowTagged reports whether the file's build constraint names the slow tag.
 func isSlowTagged(src []byte) bool {
-	for _, line := range strings.Split(string(src), "\n") {
+	for line := range strings.SplitSeq(string(src), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "package ") {
 			return false

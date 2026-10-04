@@ -442,7 +442,7 @@ func roundWrite(p *Plan, r *round, moves roundMoves) {
 			n, _ := strconv.ParseUint(m, 10, 64)
 			w.count += n
 		} else {
-			for _, x := range strings.Split(m, ",") {
+			for x := range strings.SplitSeq(m, ",") {
 				w.moved(x)
 			}
 		}

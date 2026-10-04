@@ -280,7 +280,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		return code
 	}
 	var why []string
-	for _, l := range strings.Split(strings.TrimSpace(problems.String()), "\n") {
+	for l := range strings.SplitSeq(strings.TrimSpace(problems.String()), "\n") {
 		why = append(why, strings.TrimSpace(l))
 	}
 	o := tool.Refuse(why...)
@@ -438,7 +438,7 @@ func channelNames(spec, verb string, stderr io.Writer) ([]string, bool) {
 		return nil, false
 	}
 	var out []string
-	for _, name := range strings.Split(spec, ",") {
+	for name := range strings.SplitSeq(spec, ",") {
 		switch n := strings.TrimSpace(name); n {
 		case "bm25", "trigram":
 			out = append(out, n)
@@ -1100,7 +1100,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// blank-line split: a CRLF candidate file must chunk into the paragraphs
 	// its LF twin does, or check queries one giant blob against a corpus that
 	// was indexed paragraph by paragraph.
-	for _, p := range strings.Split(memindex.NormalizeNewlines(string(raw)), "\n\n") {
+	for p := range strings.SplitSeq(memindex.NormalizeNewlines(string(raw)), "\n\n") {
 		if len(memindex.Tokenize(p)) >= memindex.MinTerms {
 			candidates = append(candidates, p)
 		}
@@ -1415,7 +1415,7 @@ func readGold(name string) ([]goldRow, error) {
 			return nil, fmt.Errorf("%s line %d has an empty query", name, lineNo)
 		}
 		var expected []string
-		for _, e := range strings.Split(expects, ",") {
+		for e := range strings.SplitSeq(expects, ",") {
 			if e = strings.TrimSpace(e); e != "" {
 				expected = append(expected, e)
 			}

@@ -33,7 +33,7 @@ const classIndexHeading = "## The class tests"
 func ClassTests(spec string) []string {
 	var out []string
 	in := false
-	for _, line := range strings.Split(spec, "\n") {
+	for line := range strings.SplitSeq(spec, "\n") {
 		t := strings.TrimRight(line, " \t\r")
 		switch {
 		case strings.TrimSpace(t) == classIndexHeading:
@@ -71,7 +71,7 @@ func ParseRetired(md string) []RetiredRow {
 	var out []RetiredRow
 	var cur time.Time
 	var haveCur bool
-	for _, raw := range strings.Split(md, "\n") {
+	for raw := range strings.SplitSeq(md, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
@@ -378,7 +378,7 @@ var openWords = []string{"TODO", "PARTIAL", "NEEDS WORK"}
 // is closed when it holds PASS and none of the open words, so `FAIL then PASS`
 // is closed and `FAIL` alone is not.
 func LedgerRows(md string) (rows, open int) {
-	for _, raw := range strings.Split(md, "\n") {
+	for raw := range strings.SplitSeq(md, "\n") {
 		line := strings.TrimSpace(raw)
 		if !strings.HasPrefix(line, "|") {
 			continue

@@ -85,7 +85,7 @@ func busUsageVerbs(t *testing.T) []string {
 
 	var banner []string
 	started, closed := false, false
-	for _, line := range strings.Split(string(src), "\n") {
+	for line := range strings.SplitSeq(string(src), "\n") {
 		if !started {
 			if strings.HasPrefix(line, "const usage = `") {
 				started = true

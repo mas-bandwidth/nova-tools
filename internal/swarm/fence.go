@@ -161,12 +161,12 @@ const CardReadPathsMarker = "READ:"
 func CardReadPaths(card []byte) []string {
 	var out []string
 	seen := map[string]bool{}
-	for _, line := range strings.Split(string(card), "\n") {
+	for line := range strings.SplitSeq(string(card), "\n") {
 		trimmed := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#-*> "))
 		if !strings.HasPrefix(trimmed, CardReadPathsMarker) {
 			continue
 		}
-		for _, field := range strings.Fields(strings.TrimPrefix(trimmed, CardReadPathsMarker)) {
+		for field := range strings.FieldsSeq(strings.TrimPrefix(trimmed, CardReadPathsMarker)) {
 			field = strings.Trim(field, "`\"',;")
 			if !strings.HasPrefix(field, "/") || seen[field] {
 				continue
@@ -194,7 +194,7 @@ const (
 // whether it rejected anything at all. The first is the one that matters: the model stops
 // at it, and every later line is a consequence of the same missing rule.
 func FenceRejection(raw []byte) (string, bool) {
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		_, after, ok := strings.Cut(line, FenceRejectionMark)
 		if !ok {
 			continue

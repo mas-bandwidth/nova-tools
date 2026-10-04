@@ -249,7 +249,7 @@ func ParseJudgmentBar(raw string) (float64, error) {
 // a read's price or a field set tells the decision nothing), each line trimmed.
 func HistoryOf(log string) []string {
 	var out []string
-	for _, l := range strings.Split(log, "\n") {
+	for l := range strings.SplitSeq(log, "\n") {
 		t := strings.TrimSpace(l)
 		switch {
 		case t == "", strings.HasPrefix(t, "LOG OK"), strings.Contains(t, " cost: "), strings.Contains(t, " changed by "):

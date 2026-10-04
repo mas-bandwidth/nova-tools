@@ -298,7 +298,7 @@ const wantFixtureSetup = "nova-self-talk example ./pages"
 func exampleBlockLines(usage string) []string {
 	var out []string
 	inBlock := false
-	for _, line := range strings.Split(usage, "\n") {
+	for line := range strings.SplitSeq(usage, "\n") {
 		if line == "example:" {
 			inBlock = true
 			continue
@@ -321,7 +321,7 @@ func exampleBlockLines(usage string) []string {
 // fixtureSetupLine returns the setup line the block reads, or "" when the banner loses it. It
 // matches the line's shape rather than its exact text, so the printed line is what is run.
 func fixtureSetupLine(usage string) string {
-	for _, line := range strings.Split(usage, "\n") {
+	for line := range strings.SplitSeq(usage, "\n") {
 		if trimmed := strings.TrimSpace(line); trimmed == wantFixtureSetup {
 			return trimmed
 		}

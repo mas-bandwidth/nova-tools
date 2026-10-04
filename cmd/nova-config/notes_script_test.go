@@ -53,7 +53,7 @@ func runSeed(t *testing.T, dir string, args ...string) (string, int, [][]string)
 	raw, err := os.ReadFile(filepath.Join(dir, "calls.log"))
 	require.NoError(t, err)
 	var calls [][]string
-	for _, line := range strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(string(raw), "\n"), "\n") {
 		if line != "" {
 			calls = append(calls, strings.Split(strings.TrimSuffix(line, "\x1f"), "\x1f"))
 		}

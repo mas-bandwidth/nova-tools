@@ -503,7 +503,7 @@ func TestStatusGrammar(t *testing.T) {
 			res, out := tc.run(t)
 			var gotWord string
 			verbToken := strings.ToUpper(tc.verb)
-			for _, line := range strings.Split(out, "\n") {
+			for line := range strings.SplitSeq(out, "\n") {
 				fields := strings.Fields(line)
 				if len(fields) >= 2 && fields[0] == verbToken {
 					gotWord = strings.TrimSuffix(fields[1], ":")

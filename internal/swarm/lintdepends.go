@@ -166,7 +166,7 @@ func quoteDepends(ids []string) string {
 }
 
 func splitDepends(value string) (ids []string, empty bool) {
-	for _, p := range strings.Split(value, ",") {
+	for p := range strings.SplitSeq(value, ",") {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			empty = true

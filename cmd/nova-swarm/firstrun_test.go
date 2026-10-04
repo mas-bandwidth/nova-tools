@@ -121,7 +121,7 @@ func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
 			args := localize(t, pool, strings.Fields(strings.TrimPrefix(line, "$ "))[1:])
 			exit, stdout, stderr := runSwarm(t, args...)
 			require.Equal(t, 0, exit, "the transcript's `%s` exited %d: %s", line, exit, stderr)
-			for _, out := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
+			for out := range strings.SplitSeq(strings.TrimSuffix(stdout, "\n"), "\n") {
 				if shape := onboarding.Shape(out); shape != "" {
 					printed = append(printed, shape)
 				}

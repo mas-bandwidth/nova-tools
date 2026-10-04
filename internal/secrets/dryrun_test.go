@@ -58,8 +58,8 @@ func sameTree(t *testing.T, what string, before, after map[string]string) {
 // planField is the value of key= on the first line of lines that carries it.
 func planField(t *testing.T, lines, key string) string {
 	t.Helper()
-	for _, l := range strings.Split(lines, "\n") {
-		for _, tok := range strings.Fields(l) {
+	for l := range strings.SplitSeq(lines, "\n") {
+		for tok := range strings.FieldsSeq(l) {
 			if v, ok := strings.CutPrefix(tok, key+"="); ok {
 				return v
 			}
@@ -107,13 +107,13 @@ func TestSealDryRunPlansWhatTheRealRunThenTakes(t *testing.T) {
 	assert.NotContains(t, plan, "keepme", "a value reached the plan:\n%s", plan)
 	got := readMaybe(t, f.sopsStdin)
 	assert.Empty(t, got, "the dry run encrypted; sops stdin held:\n%s", got)
-	for _, arg := range strings.Split(readMaybe(t, f.sopsArgs), "\n") {
+	for arg := range strings.SplitSeq(readMaybe(t, f.sopsArgs), "\n") {
 		if arg == "-e" {
 			assert.Fail(t, fmt.Sprintf("the dry run ran a sops encrypt:\n%s", readMaybe(t, f.sopsArgs)))
 		}
 	}
 	for _, write := range []string{"checkout", "add", "commit", "push", "pull"} {
-		for _, arg := range strings.Split(readMaybe(t, f.gitArgs), "\n") {
+		for arg := range strings.SplitSeq(readMaybe(t, f.gitArgs), "\n") {
 			if arg == write {
 				assert.Fail(t, fmt.Sprintf("the dry run ran git %s:\n%s", write, readMaybe(t, f.gitArgs)))
 			}
@@ -222,7 +222,7 @@ func TestSeatInjectDryRunPlansWhatTheRealRunThenTakes(t *testing.T) {
 		assert.Empty(t, got, "the dry run called gh:\n%s", got)
 	}
 	for _, write := range []string{"checkout", "add", "commit", "push", "pull"} {
-		for _, arg := range strings.Split(readMaybe(t, f.gitArgs), "\n") {
+		for arg := range strings.SplitSeq(readMaybe(t, f.gitArgs), "\n") {
 			if arg == write {
 				assert.Fail(t, fmt.Sprintf("the dry run ran git %s:\n%s", write, readMaybe(t, f.gitArgs)))
 			}

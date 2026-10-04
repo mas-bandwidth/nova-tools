@@ -20,7 +20,7 @@ func memberFlags(t *testing.T) map[string]string {
 	at := strings.Index(help, "\nflags:\n")
 	require.GreaterOrEqual(t, at, 0, help)
 	lines := map[string]string{}
-	for _, l := range strings.Split(help[at+len("\nflags:\n"):], "\n") {
+	for l := range strings.SplitSeq(help[at+len("\nflags:\n"):], "\n") {
 		if !strings.HasPrefix(l, "  --") {
 			break
 		}
@@ -36,7 +36,7 @@ func memberFlags(t *testing.T) map[string]string {
 func TestEveryMemberFlagIsDescribedAndInTheUsageLine(t *testing.T) {
 	t.Parallel()
 	var usageLine string
-	for _, l := range strings.Split(usage, "\n") {
+	for l := range strings.SplitSeq(usage, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(l), "nova-swarm member ") {
 			usageLine = l
 			break

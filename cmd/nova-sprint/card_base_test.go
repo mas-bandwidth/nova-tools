@@ -34,7 +34,7 @@ func TestCardShowsTheHeadTheNextAttemptStartsFrom(t *testing.T) {
 	assert.Contains(t, out, "PACKET s1-1.w3 attempt=3")
 	card := ta.ok("card s1-1")
 	var attempts []string
-	for _, l := range strings.Split(card, "\n") {
+	for l := range strings.SplitSeq(card, "\n") {
 		if strings.HasPrefix(l, "ATTEMPT ") {
 			attempts = append(attempts, l)
 		}

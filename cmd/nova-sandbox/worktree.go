@@ -373,7 +373,7 @@ func listWorktrees(repo string) map[string]bool {
 		return map[string]bool{}
 	}
 	listed := map[string]bool{}
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if p, ok := strings.CutPrefix(line, "worktree "); ok {
 			listed[p] = true
 		}
@@ -434,7 +434,7 @@ func readRecord(scratch string, id int) (worktreeRecord, bool) {
 		return worktreeRecord{}, false
 	}
 	rec := worktreeRecord{id: id}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		k, v, ok := strings.Cut(line, "=")
 		if !ok {
 			continue

@@ -71,7 +71,7 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 
 func toolSectionsFromMD(md string) []string {
 	var tools []string
-	for _, line := range strings.Split(md, "\n") {
+	for line := range strings.SplitSeq(md, "\n") {
 		rest, ok := strings.CutPrefix(line, "## ")
 		if !ok {
 			continue

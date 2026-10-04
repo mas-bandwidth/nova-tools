@@ -242,7 +242,7 @@ func segments(text string) []segment {
 		}
 		if strings.HasPrefix(trimmed, "|") {
 			flush()
-			for _, cell := range strings.Split(trimmed, "|") {
+			for cell := range strings.SplitSeq(trimmed, "|") {
 				if c := flattenLine(cell); c != "" {
 					out = append(out, sentences([]byte(c), repeat(n, len(c)))...)
 				}
@@ -614,7 +614,7 @@ func habitualVerb(w string) bool {
 
 func words(s string) map[string]bool {
 	m := make(map[string]bool)
-	for _, w := range strings.Fields(s) {
+	for w := range strings.FieldsSeq(s) {
 		m[w] = true
 	}
 	return m

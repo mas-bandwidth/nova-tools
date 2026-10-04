@@ -72,7 +72,7 @@ func carriesPlatformToken(section string) bool {
 // carriesPlatformLine reports whether the section carries a platform line: a
 // line whose trimmed form begins `Platform:` and names something after it.
 func carriesPlatformLine(section string) bool {
-	for _, line := range strings.Split(section, "\n") {
+	for line := range strings.SplitSeq(section, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "Platform:") && strings.TrimSpace(strings.TrimPrefix(line, "Platform:")) != "" {
 			return true

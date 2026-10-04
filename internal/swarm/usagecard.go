@@ -169,7 +169,7 @@ func queryCardMessages(path string, startedMs, endedMs int64) ([][]string, error
 			path, SQLiteBinary, err, oneLine(errb.String()))
 	}
 	var rows [][]string
-	for _, line := range strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(out.String(), "\n"), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}

@@ -153,7 +153,7 @@ func (g *GH) Tags(ctx context.Context, repo string) ([]string, error) {
 		return nil, err
 	}
 	var tags []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			tags = append(tags, line)
 		}
@@ -200,7 +200,7 @@ func (g *GH) Files(ctx context.Context, repo, base, head string) ([]string, erro
 	}
 	seen := map[string]bool{}
 	var files []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		if line = strings.TrimSpace(line); line == "" || seen[line] {
 			continue
 		}
@@ -315,7 +315,7 @@ func (GoBuild) Platforms(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(capture.Bytes())))
 	}
 	var pairs []string
-	for _, line := range strings.Split(string(capture.Bytes()), "\n") {
+	for line := range strings.SplitSeq(string(capture.Bytes()), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			pairs = append(pairs, line)
 		}
@@ -378,7 +378,7 @@ func diffNamesResult(stdout, stderr *diffCapture, runErr error) ([]string, error
 		return nil, fmt.Errorf("%w: %s", runErr, strings.TrimSpace(string(stderr.Bytes())))
 	}
 	var files []string
-	for _, line := range strings.Split(string(stdout.Bytes()), "\n") {
+	for line := range strings.SplitSeq(string(stdout.Bytes()), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			files = append(files, line)
 		}

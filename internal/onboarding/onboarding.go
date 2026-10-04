@@ -39,7 +39,7 @@ func ExampleLines(usage, tool string) ([]string, error) {
 	// of the banner instead would sweep up any later sentence that happens to
 	// begin with the tool's own name, and try to run it.
 	var out []string
-	for _, line := range strings.Split(tail, "\n") {
+	for line := range strings.SplitSeq(tail, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, tool+" ") {
 			break
@@ -123,7 +123,7 @@ func Shape(line string) string {
 // that cannot fail.
 func SectionNames(md string) []string {
 	var names []string
-	for _, line := range strings.Split(md, "\n") {
+	for line := range strings.SplitSeq(md, "\n") {
 		name, ok := strings.CutPrefix(line, "## ")
 		if !ok {
 			continue
@@ -180,7 +180,7 @@ func Transcript(md, tool, heading string) ([]string, error) {
 func fencedLines(tail string) []string {
 	var lines []string
 	fenced := false
-	for _, line := range strings.Split(tail, "\n") {
+	for line := range strings.SplitSeq(tail, "\n") {
 		if strings.HasPrefix(line, "### ") && !fenced {
 			break
 		}

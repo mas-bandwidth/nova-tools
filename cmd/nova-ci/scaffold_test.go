@@ -170,7 +170,7 @@ func scaffoldTree(t *testing.T, pattern string) (root, bin, tree string) {
 	out, err := list.Output()
 	require.NoError(t, err, "go list -deps -test %s: %v", pattern, err)
 	seen := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		parts := strings.Split(line, "|")
 		dir := parts[0]
 		rel, err := filepath.Rel(root, dir)

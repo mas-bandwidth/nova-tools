@@ -1142,7 +1142,7 @@ func TestNativeSharedGoCaches(t *testing.T) {
 		{"GOCACHE", wantBuild},
 	} {
 		line := ""
-		for _, l := range strings.Split(got, "\n") {
+		for l := range strings.SplitSeq(got, "\n") {
 			if strings.HasPrefix(l, "stat "+dir.name+": ") {
 				line = l
 			}
@@ -1209,7 +1209,7 @@ func TestNativeNoSharedCachesRestoresHomeCaches(t *testing.T) {
 func nativeLoggedEnv(t *testing.T, log string) map[string][]string {
 	t.Helper()
 	m := map[string][]string{}
-	for _, line := range strings.Split(log, "\n") {
+	for line := range strings.SplitSeq(log, "\n") {
 		if !strings.HasPrefix(line, "env: ") {
 			continue
 		}
@@ -1523,7 +1523,7 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 			if tc.want == " harness=silent" {
 				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
 				require.NoError(t, err, "the capture is written even for a silent run")
-				for _, line := range strings.Split(string(raw), "\n") {
+				for line := range strings.SplitSeq(string(raw), "\n") {
 					assert.True(t, strings.TrimSpace(line) == "" || strings.HasPrefix(line, "SANDBOX "), "a silent run's capture carries a line the child wrote: %q", line)
 				}
 			}

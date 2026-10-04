@@ -142,7 +142,7 @@ func TestNamesPrintsSomethingASendWillAccept(t *testing.T) {
 		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=bo-")
 	// The one-line guarantee still holds: every line of the output is one line.
-	for _, line := range strings.Split(strings.TrimRight(r.stdout, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(r.stdout, "\n"), "\n") {
 		require.Truef(t, strings.HasPrefix(line, "NAMES "), "a value broke the output into a line that is not an event: %q", line)
 	}
 }
@@ -233,7 +233,7 @@ func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 	// one name, and `open=` beside it saying what it leaves out.
 	scope := field(t, r.stdout, "INBOX SCOPE mode=since cursor=")
 	_ = scope
-	for _, line := range strings.Split(r.stdout, "\n") {
+	for line := range strings.SplitSeq(r.stdout, "\n") {
 		if !strings.Contains(line, "carrying=") {
 			continue
 		}

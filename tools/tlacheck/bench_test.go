@@ -290,7 +290,7 @@ func TestRunOnABenchMeasuresEachStaleCaseInATroughAndMergesTheRecords(t *testing
 	if g := do(e2, out2, errs2, "groups", "--root", root, "--stale"); g.code != 0 || g.stdout != "[]\n" {
 		t.Errorf("after the bench run the records are not current: %+v", g)
 	}
-	for _, l := range strings.Split(strings.TrimSpace(r.stdout), "\n") {
+	for l := range strings.SplitSeq(strings.TrimSpace(r.stdout), "\n") {
 		if !eventRE.MatchString(l) {
 			t.Errorf("not an event: %q", l)
 		}

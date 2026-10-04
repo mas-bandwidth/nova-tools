@@ -57,7 +57,7 @@ func versionKey(line string) (string, error) {
 	if opaque(line) {
 		return "", fmt.Errorf("no_release_identity")
 	}
-	for _, t := range strings.Fields(line) {
+	for t := range strings.FieldsSeq(line) {
 		if dotted.MatchString(t) {
 			return t[digit.FindStringIndex(t)[0]:], nil
 		}
@@ -76,7 +76,7 @@ func identity(e Entry, raw string, report bool) Read {
 		return r
 	}
 	if e.Kind == "model" {
-		for _, line := range strings.Split(raw, "\n") {
+		for line := range strings.SplitSeq(raw, "\n") {
 			f := strings.Fields(line)
 			if len(f) > 1 && f[0] == e.Name && digest.MatchString(strings.ToLower(f[1])) {
 				r.Raw = strings.TrimSuffix(line, "\r")

@@ -30,7 +30,7 @@ import (
 // native Windows leg.
 func CILegsFromYAML(yaml string) map[string]bool {
 	legs := make(map[string]bool)
-	for _, line := range strings.Split(yaml, "\n") {
+	for line := range strings.SplitSeq(yaml, "\n") {
 		trimmed := strings.TrimPrefix(strings.TrimSpace(line), "- ")
 		key, value, ok := strings.Cut(trimmed, ":")
 		if !ok {
@@ -163,7 +163,7 @@ func PastedDocExamplesByDoc(root string) ([]DocExample, error) {
 func shellLinesInFencedBlocks(md string) []string {
 	var examples []string
 	inFence := false
-	for _, line := range strings.Split(md, "\n") {
+	for line := range strings.SplitSeq(md, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
 			inFence = !inFence
@@ -183,7 +183,7 @@ func pastedLinesInFencedBlocks(md string) ([]string, error) {
 	examples := shellLinesInFencedBlocks(md)
 	var block []string
 	inFence := false
-	for _, line := range strings.Split(md, "\n") {
+	for line := range strings.SplitSeq(md, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			if inFence {
 				lines, err := blockHelpExamples(strings.Join(block, "\n"))
@@ -252,7 +252,7 @@ func BannerExampleLines(banner string) ([]string, error) {
 	}
 	var out []string
 	continued := false
-	for _, line := range strings.Split(tail, "\n") {
+	for line := range strings.SplitSeq(tail, "\n") {
 		if strings.TrimSpace(line) == "" || (line[0] != ' ' && line[0] != '\t') {
 			break
 		}
@@ -329,7 +329,7 @@ func helpBannerExamplesWith(root string, seams SourceSeams) (map[string]string, 
 			// A tool on internal/tool writes its banner from its verbs: each
 			// verb's Example is its example lines, after the tool's name.
 			for _, ex := range exampleFields(file) {
-				for _, l := range strings.Split(ex, "\n") {
+				for l := range strings.SplitSeq(ex, "\n") {
 					if l = strings.Join(strings.Fields(l), " "); l != "" {
 						if _, dup := out["example: "+tool+" "+l]; !dup {
 							out["example: "+tool+" "+l] = rel
@@ -409,7 +409,7 @@ func stringConstants(file *ast.File) []string {
 func ListRows(list string) []string {
 	var rows []string
 	seen := make(map[string]bool)
-	for _, line := range strings.Split(list, "\n") {
+	for line := range strings.SplitSeq(list, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") || seen[line] {
 			continue

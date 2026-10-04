@@ -1323,8 +1323,8 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 	for _, want := range []string{"-json", "$.providerID", "$.modelID", "$.tokens.input", "$.tokens.cache.write", "$.tokens.reasoning", "$.path.cwd", "directory FROM session"} {
 		assert.True(t, strings.Contains(argv, want), "no invocation named %s; the real schema keeps it in the JSON data column:\n%s", want, argv)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(argv), "\n") {
-		for _, tok := range strings.Fields(line) {
+	for line := range strings.SplitSeq(strings.TrimSpace(argv), "\n") {
+		for tok := range strings.FieldsSeq(line) {
 			// filepath.IsAbs, not a leading slash: on windows an absolute path starts
 			// with a drive letter, and the leading-slash reading made this clause
 			// vacuous there.
@@ -1475,7 +1475,7 @@ func TestRule20ReportPrintsTheBodyAndNothingElse(t *testing.T) {
 
 	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr, "--note", note)
 	wantExit(t, r, 0)
-	for _, line := range strings.Split(strings.TrimSuffix(r.stdout, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(r.stdout, "\n"), "\n") {
 		f := strings.Split(line, "\t")
 		assert.Equal(t, 6, len(f), "a report line has %d fields, want six: %q", len(f), line)
 		assert.False(t, strings.ContainsAny(line, "~#"), "a report line carries ~ or #: %q", line)

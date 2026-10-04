@@ -123,7 +123,7 @@ func exampleSitting(t *testing.T) string {
 	sit := t.TempDir()
 	_, block, found := strings.Cut(usage, "\nsetup:\n")
 	require.Truef(t, found, "the banner has no setup: block")
-	for _, raw := range strings.Split(block, "\n") {
+	for raw := range strings.SplitSeq(block, "\n") {
 		if !strings.HasPrefix(raw, "  ") {
 			break
 		}
@@ -183,7 +183,7 @@ func helpLine(t *testing.T, prefix string) string {
 func theLine(t *testing.T, stream, prefix string) string {
 	t.Helper()
 	var got []string
-	for _, line := range strings.Split(stream, "\n") {
+	for line := range strings.SplitSeq(stream, "\n") {
 		if strings.HasPrefix(line, prefix) {
 			got = append(got, line)
 		}

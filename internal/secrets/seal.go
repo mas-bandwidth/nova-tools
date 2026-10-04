@@ -580,7 +580,7 @@ func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile string, 
 func sealApply(existing []byte, name, value string) []byte {
 	var b strings.Builder
 	if len(existing) > 0 {
-		for _, line := range strings.Split(string(existing), "\n") {
+		for line := range strings.SplitSeq(string(existing), "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), name+":") {
 				continue
 			}

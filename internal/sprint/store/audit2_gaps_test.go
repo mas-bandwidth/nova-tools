@@ -335,11 +335,11 @@ func noStoredIDs(t *testing.T, v InboxView) {
 		}
 		for _, c := range g.Commands {
 			for _, line := range c.Lines {
-				for _, w := range strings.Fields(line) {
+				for w := range strings.FieldsSeq(line) {
 					if !strings.Contains(w, "~") {
 						continue
 					}
-					for _, part := range strings.Split(strings.Trim(w, "'"), ",") {
+					for part := range strings.SplitSeq(strings.Trim(w, "'"), ",") {
 						require.True(t, ok[part], "group %s (%s) prints the stored id %s: %s", g.ID, g.Type, part, line)
 					}
 				}

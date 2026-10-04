@@ -27,7 +27,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 	// verb added to the banner later is covered the day its row appears.
 	var verbs []string
 	seen := map[string]bool{}
-	for _, line := range strings.Split(banner, "\n") {
+	for line := range strings.SplitSeq(banner, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 || fields[0] != "nova-memory" || strings.HasPrefix(fields[1], "-") {
 			continue
@@ -50,7 +50,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 			require.Equalf(t, 2, exit, "`nova-memory %s` with no flags exited %d, want 2; stderr: %s", verb, exit, stderr)
 			assert.Equalf(t, "", stdout, "`nova-memory %s` refused but wrote to stdout: %q", verb, stdout)
 			refusals := 0
-			for _, line := range strings.Split(strings.TrimSuffix(stderr, "\n"), "\n") {
+			for line := range strings.SplitSeq(strings.TrimSuffix(stderr, "\n"), "\n") {
 				if line == "" || strings.HasPrefix(line, "  ") {
 					continue // an indented hint is guidance on its own line, not the refusal
 				}

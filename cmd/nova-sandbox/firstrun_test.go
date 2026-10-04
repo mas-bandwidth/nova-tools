@@ -27,7 +27,7 @@ func TestTheCheckTranscriptNamesEveryFieldTheVerbPrints(t *testing.T) {
 	require.NoError(t, err)
 	var documented string
 	inSection := false
-	for _, l := range strings.Split(string(doc), "\n") {
+	for l := range strings.SplitSeq(string(doc), "\n") {
 		trimmed := strings.TrimSpace(l)
 		if strings.HasPrefix(l, "## ") {
 			inSection = l == "## nova-sandbox"
@@ -47,7 +47,7 @@ func TestTheCheckTranscriptNamesEveryFieldTheVerbPrints(t *testing.T) {
 	code := run([]string{"check"}, strings.NewReader(""), &out, &errb, os.Environ())
 	require.Equal(t, 0, code, "nova-sandbox check exited %d, want 0", code)
 	var printed string
-	for _, l := range strings.Split(out.String(), "\n") {
+	for l := range strings.SplitSeq(out.String(), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(l), "CHECK OK ") {
 			require.Empty(t, printed, "nova-sandbox check printed more than one CHECK OK line: %q and %q", printed, l)
 			printed = strings.TrimSpace(l)
@@ -72,7 +72,7 @@ func TestTheCheckTranscriptNamesEveryFieldTheVerbPrints(t *testing.T) {
 func checkFieldNames(line string) []string {
 	field := regexp.MustCompile(`^[a-z0-9_-]+=`)
 	var names []string
-	for _, tok := range strings.Fields(line) {
+	for tok := range strings.FieldsSeq(line) {
 		if !field.MatchString(tok) {
 			continue
 		}
@@ -100,7 +100,7 @@ func TestTheProbeAndSandboxTranscriptsNameEveryFieldTheVerbsPrint(t *testing.T) 
 	require.NoError(t, err)
 	documented := map[string]string{}
 	inSection := false
-	for _, l := range strings.Split(string(doc), "\n") {
+	for l := range strings.SplitSeq(string(doc), "\n") {
 		trimmed := strings.TrimSpace(l)
 		if strings.HasPrefix(l, "## ") {
 			inSection = l == "## nova-sandbox"
@@ -124,7 +124,7 @@ func TestTheProbeAndSandboxTranscriptsNameEveryFieldTheVerbsPrint(t *testing.T) 
 	require.NoError(t, err)
 	field := regexp.MustCompile(`^[a-z0-9_-]+=`)
 	printed := map[string][]string{}
-	for _, line := range strings.Split(string(src), "\n") {
+	for line := range strings.SplitSeq(string(src), "\n") {
 		for _, prefix := range []string{"PROBE OK ", "SANDBOX OK "} {
 			i := strings.Index(line, `"`+prefix)
 			if i < 0 {
@@ -134,7 +134,7 @@ func TestTheProbeAndSandboxTranscriptsNameEveryFieldTheVerbsPrint(t *testing.T) 
 			end := strings.Index(rest, `"`)
 			require.GreaterOrEqual(t, end, 0, "main.go's %q format string is not closed on its line: %q", prefix, line)
 			var names []string
-			for _, tok := range strings.Fields(rest[:end]) {
+			for tok := range strings.FieldsSeq(rest[:end]) {
 				if !field.MatchString(tok) {
 					continue
 				}
@@ -178,7 +178,7 @@ func documentedStep(md, cmdPrefix string) (onboarding.Step, error) {
 	}
 	fenced := false
 	var blockLines []string
-	for _, line := range strings.Split(section, "\n") {
+	for line := range strings.SplitSeq(section, "\n") {
 		if strings.HasPrefix(line, "```") {
 			if fenced {
 				for len(blockLines) > 0 && strings.TrimSpace(blockLines[0]) == "" {

@@ -111,7 +111,7 @@ func readReceipts(output string) map[string]benchReceipt {
 
 func cycle(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	var benches []string
-	for _, b := range strings.Split(o.benches, ",") {
+	for b := range strings.SplitSeq(o.benches, ",") {
 		if b = strings.TrimSpace(b); b == "" {
 			continue
 		}

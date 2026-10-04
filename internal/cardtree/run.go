@@ -53,7 +53,7 @@ var (
 // step is not-done, its words say why, so no word is ever pushed as a head.
 func ParseVerdicts(body string) map[string]Result {
 	out := map[string]Result{}
-	for _, l := range strings.Split(body, "\n") {
+	for l := range strings.SplitSeq(body, "\n") {
 		m := verdictRE.FindStringSubmatch(strings.TrimRight(l, "\r"))
 		if m == nil {
 			continue

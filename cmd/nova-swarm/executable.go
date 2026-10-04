@@ -68,7 +68,7 @@ func splitPathExt(pathext string) []string {
 		return defaultPathExt
 	}
 	var out []string
-	for _, e := range strings.Split(pathext, ";") {
+	for e := range strings.SplitSeq(pathext, ";") {
 		e = strings.ToUpper(strings.TrimSpace(e))
 		if e == "" {
 			continue

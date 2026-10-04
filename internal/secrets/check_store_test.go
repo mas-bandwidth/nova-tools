@@ -139,7 +139,7 @@ func TestCheckListsFailuresInPathOrderAndCapsTheSameOnes(t *testing.T) {
 
 	listed := func(out, word string) []string {
 		var got []string
-		for _, l := range strings.Split(out, "\n") {
+		for l := range strings.SplitSeq(out, "\n") {
 			if strings.Contains(l, word) {
 				got = append(got, strings.TrimSuffix(strings.Fields(l)[3], ":"))
 			}

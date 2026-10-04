@@ -102,7 +102,7 @@ func TestReportRunRefusesEachMissingName(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"NOVA_BENCH_SEAT", "NOVA_BENCH_SOPS", "NOVA_CARD_REDIS"} {
 		var kept []string
-		for _, l := range strings.Split(goodCardEnv, "\n") {
+		for l := range strings.SplitSeq(goodCardEnv, "\n") {
 			if !strings.Contains(l, name) {
 				kept = append(kept, l)
 			}

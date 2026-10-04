@@ -100,7 +100,7 @@ func TestBarePctDeadSourceIsUnknown(t *testing.T) {
 	}
 	cell := func(t *testing.T, rendered, row string, column int) string {
 		t.Helper()
-		for _, line := range strings.Split(rendered, "\n") {
+		for line := range strings.SplitSeq(rendered, "\n") {
 			parts := strings.Split(line, "|")
 			if len(parts) > column && strings.TrimSpace(parts[0]) == row {
 				return strings.TrimSpace(parts[column])

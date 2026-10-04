@@ -300,7 +300,7 @@ func (b *bench) standard(args ...string) (int, string) {
 // drifts is the DRIFT lines of an output.
 func drifts(output string) []string {
 	var lines []string
-	for _, l := range strings.Split(output, "\n") {
+	for l := range strings.SplitSeq(output, "\n") {
 		if strings.HasPrefix(l, "DRIFT ") {
 			lines = append(lines, l)
 		}

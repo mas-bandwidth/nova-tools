@@ -101,7 +101,7 @@ func statusWords(r Result) string {
 	if r.Code == 0 {
 		return "OK"
 	}
-	for _, line := range strings.Split(r.Stderr+r.Stdout, "\n") {
+	for line := range strings.SplitSeq(r.Stderr+r.Stdout, "\n") {
 		words := strings.Fields(line)
 		for i, w := range words {
 			w = strings.TrimRight(w, ":,")

@@ -99,7 +99,7 @@ func TestEveryKindHasAMigrationDeclaringItsColumns(t *testing.T) {
 		// the kind's own statements: its CREATE TABLE and every ALTER TABLE
 		// of it, so a column of the same name on another table never counts
 		var own strings.Builder
-		for _, stmt := range strings.Split(joined.String(), ";") {
+		for stmt := range strings.SplitSeq(joined.String(), ";") {
 			if strings.Contains(stmt, "CREATE TABLE IF NOT EXISTS config."+k.Table+" (") ||
 				strings.Contains(stmt, "ALTER TABLE config."+k.Table+" ") || strings.Contains(stmt, "ALTER TABLE config."+k.Table+"\n") {
 				own.WriteString(stmt + "\n")

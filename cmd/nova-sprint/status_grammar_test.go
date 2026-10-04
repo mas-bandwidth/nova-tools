@@ -122,7 +122,7 @@ func TestStatusGrammar(t *testing.T) {
 				return
 			}
 			var status string
-			for _, l := range strings.Split(strings.TrimRight(out+errs, "\n"), "\n") {
+			for l := range strings.SplitSeq(strings.TrimRight(out+errs, "\n"), "\n") {
 				if strings.HasPrefix(l, tc.wantToken+" ") {
 					status = l
 					break

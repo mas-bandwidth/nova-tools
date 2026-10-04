@@ -45,7 +45,7 @@ func gofmtVerb(e env, args []string, h selHost) int {
 		return 2
 	}
 	var unformatted []string
-	for _, l := range strings.Split(out.String(), "\n") {
+	for l := range strings.SplitSeq(out.String(), "\n") {
 		if l != "" {
 			unformatted = append(unformatted, l)
 		}

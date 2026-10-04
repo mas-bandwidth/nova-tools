@@ -501,7 +501,7 @@ func ParseColumn(spec string) (Column, error) {
 // ParseColumns reads a comma-separated list of column declarations.
 func ParseColumns(specs string) ([]Column, error) {
 	var cols []Column
-	for _, spec := range strings.Split(specs, ",") {
+	for spec := range strings.SplitSeq(specs, ",") {
 		spec = strings.TrimSpace(spec)
 		if spec == "" {
 			continue
@@ -521,7 +521,7 @@ func ParseColumns(specs string) ([]Column, error) {
 // ParseWidths reads col=n,col=n.
 func ParseWidths(spec string) (map[string]int, error) {
 	out := map[string]int{}
-	for _, part := range strings.Split(spec, ",") {
+	for part := range strings.SplitSeq(spec, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -613,7 +613,7 @@ func decodeDefinition(name string, h map[string]string) (Table, bool, error) {
 	if order == "" {
 		return Table{}, true, fmt.Errorf("table %s has no column order", name)
 	}
-	for _, col := range strings.Split(order, ",") {
+	for col := range strings.SplitSeq(order, ",") {
 		v, ok := h["col:"+col]
 		if !ok {
 			return Table{}, true, fmt.Errorf("table %s orders column %s, which it does not define", name, col)

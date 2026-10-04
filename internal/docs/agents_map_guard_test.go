@@ -165,7 +165,7 @@ func TestRootMapCarriesTheWholeStandard(t *testing.T) {
 	require.NoError(t, err, "%s: %v; the standard is the one source the root page embeds", StandardDoc, err)
 	pages, _ := Render(root, DefaultCatalog)
 	body := pages[RootAgents]
-	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(string(raw), "\n"), "\n") {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}

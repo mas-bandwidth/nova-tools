@@ -179,7 +179,7 @@ func checkReceipts(traces []trace) error {
 				return errors.New("receipt count does not match committed effects")
 			}
 			var lines []string
-			for _, line := range strings.Split(s.Stdout, "\n") {
+			for line := range strings.SplitSeq(s.Stdout, "\n") {
 				if strings.HasPrefix(line, "TABLE RECEIPT ") {
 					lines = append(lines, line)
 				}

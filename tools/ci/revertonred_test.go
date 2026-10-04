@@ -559,7 +559,7 @@ func TestRevertOnRedWorkflowDoesNotSetPushRevert(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("../../.github/workflows/revert-on-red.yml")
 	require.NoError(t, err)
-	for _, l := range strings.Split(string(b), "\n") {
+	for l := range strings.SplitSeq(string(b), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(l), "#") {
 			continue
 		}

@@ -596,7 +596,7 @@ func novaConfigMachines(ctx context.Context) ([]benchRow, error) {
 // name, and tla=true for a record machine (a row with no tla field is none).
 func parseMachineList(out string) []benchRow {
 	var rows []benchRow
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		f := strings.Fields(l)
 		if len(f) < 2 || f[0] != "MACHINE" {
 			continue

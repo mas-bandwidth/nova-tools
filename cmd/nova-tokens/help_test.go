@@ -20,7 +20,7 @@ func TestHelpListsOneSumForm(t *testing.T) {
 	// example lines below it are not mistaken for synopsis lines.
 	inUsage := false
 	n := 0
-	for _, line := range strings.Split(r.stdout, "\n") {
+	for line := range strings.SplitSeq(r.stdout, "\n") {
 		switch {
 		case line == "usage:":
 			inUsage = true

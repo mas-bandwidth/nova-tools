@@ -130,7 +130,7 @@ func TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither(t *testing.T) {
 		run := append([]string{}, args...)
 		for page := 1; page <= 4; page++ {
 			r := invoke(t, "", run...).mustCode(t, 0)
-			for _, line := range strings.Split(r.stdout, "\n") {
+			for line := range strings.SplitSeq(r.stdout, "\n") {
 				for _, p := range []string{"from-bo/a-legacy.md", "from-bo/b-legacy.md"} {
 					if strings.Contains(line, "path="+p) && strings.HasPrefix(line, "INBOX ") {
 						seen[p]++
@@ -138,7 +138,7 @@ func TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither(t *testing.T) {
 				}
 			}
 			next := ""
-			for _, field := range strings.Fields(r.stdout) {
+			for field := range strings.FieldsSeq(r.stdout) {
 				if tok, ok := strings.CutPrefix(field, "next="); ok {
 					next = tok
 				}
@@ -306,7 +306,7 @@ func TestRetryAfterAPartialResumesAtNext(t *testing.T) {
 // bodyNext2 is bodyNext that also answers "-", which is what a terminal page carries.
 func bodyNext2(t *testing.T, stdout string) string {
 	t.Helper()
-	for _, field := range strings.Fields(stdout) {
+	for field := range strings.FieldsSeq(stdout) {
 		if token, ok := strings.CutPrefix(field, "next="); ok {
 			return token
 		}

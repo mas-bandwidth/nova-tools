@@ -79,7 +79,7 @@ func foldedTuples(t *testing.T, out, month string) []string {
 
 func reportTuples(stdout string) []string {
 	var lines []string
-	for _, l := range strings.Split(stdout, "\n") {
+	for l := range strings.SplitSeq(stdout, "\n") {
 		if strings.HasPrefix(l, "REPORT day=") {
 			lines = append(lines, l)
 		}

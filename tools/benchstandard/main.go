@@ -172,7 +172,7 @@ func wantedGo(e env) string {
 		if err != nil {
 			continue
 		}
-		for _, line := range strings.Split(string(raw), "\n") {
+		for line := range strings.SplitSeq(string(raw), "\n") {
 			if f := strings.Fields(line); len(f) >= 2 && f[0] == "go" {
 				return "go" + f[1]
 			}

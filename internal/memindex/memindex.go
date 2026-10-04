@@ -208,7 +208,7 @@ func frontmatter(src string) (name, typ string) {
 	if end < 0 {
 		return "", ""
 	}
-	for _, line := range strings.Split(body[:end], "\n") {
+	for line := range strings.SplitSeq(body[:end], "\n") {
 		trimmed := strings.TrimSpace(line)
 		if v, ok := strings.CutPrefix(trimmed, "name:"); ok && name == "" {
 			name = strings.TrimSpace(v)
@@ -235,7 +235,7 @@ func stripFrontmatter(src string) string {
 	if end < 0 {
 		return src
 	}
-	for _, l := range strings.Split(src[4:4+end], "\n") {
+	for l := range strings.SplitSeq(src[4:4+end], "\n") {
 		if !yamlLine.MatchString(l) {
 			return src
 		}
@@ -326,7 +326,7 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 		}
 		para := 0
 		line := 1
-		for _, p := range strings.Split(text, "\n\n") {
+		for p := range strings.SplitSeq(text, "\n\n") {
 			start := line
 			line += strings.Count(p, "\n") + 2
 			// Blank lines left by repeated separators are not paragraph content.

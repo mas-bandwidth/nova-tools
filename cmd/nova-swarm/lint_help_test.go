@@ -16,7 +16,7 @@ func TestLintHelpExplainsEveryFlag(t *testing.T) {
 	exit, stdout, _ := runSwarm(t, "lint", "-h")
 	require.Equal(t, 0, exit, "lint -h: exit %d", exit)
 	in, flags := false, 0
-	for _, line := range strings.Split(stdout, "\n") {
+	for line := range strings.SplitSeq(stdout, "\n") {
 		if line == "flags:" {
 			in = true
 			continue

@@ -92,7 +92,7 @@ func ledgerOwners(paths []string, ledgers []landLedger) (owners []landLedger, ou
 // once, and the ones with the tip's side (stage 2, ours) present.
 func unmergedPaths(out string) (paths []string, ours map[string]bool) {
 	ours = map[string]bool{}
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		meta, p, ok := strings.Cut(line, "\t")
 		if !ok {
 			continue
@@ -112,7 +112,7 @@ func unmergedPaths(out string) (paths []string, ours map[string]bool) {
 // "" for none. An update rewrites its whole family in place, whichever paths conflicted,
 // and a link would take a write outside the clone, where git status cannot see it.
 func familyLink(lsFiles string, ledgers []landLedger) string {
-	for _, line := range strings.Split(lsFiles, "\n") {
+	for line := range strings.SplitSeq(lsFiles, "\n") {
 		meta, p, ok := strings.Cut(line, "\t")
 		if !ok || !strings.HasPrefix(meta, "120000 ") {
 			continue
@@ -136,7 +136,7 @@ func familyPaths(lsFiles string, ledgers []landLedger) []string {
 	for _, l := range ledgers {
 		out = append(out, l.roots...)
 	}
-	for _, line := range strings.Split(lsFiles, "\n") {
+	for line := range strings.SplitSeq(lsFiles, "\n") {
 		if _, p, ok := strings.Cut(line, "\t"); ok && owned(p, ledgers) {
 			out = append(out, p)
 		}
@@ -229,7 +229,7 @@ func (l *lander) restore(ctx context.Context, dir string, known []string, env st
 		return cmp.Or(env, "the clone's untracked files could not be listed: "+firstLine("", err))
 	}
 	var stray []string
-	for _, p := range strings.Split(after, "\x00") {
+	for p := range strings.SplitSeq(after, "\x00") {
 		if p != "" && !slices.Contains(known, p) {
 			stray = append(stray, p)
 		}

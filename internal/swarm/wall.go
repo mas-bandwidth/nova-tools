@@ -142,7 +142,7 @@ func WallRefused(log []byte) (WallRefusal, bool) {
 	if p, ok := FenceRejection(log); ok {
 		return WallRefusal{Path: p, Step: WallStep(log)}, true
 	}
-	for _, raw := range strings.Split(string(log), "\n") {
+	for raw := range strings.SplitSeq(string(log), "\n") {
 		line := strings.TrimSpace(stripPaint(raw))
 		if line == "" {
 			continue
@@ -173,7 +173,7 @@ func WallRefused(log []byte) (WallRefusal, bool) {
 // printed none. A card that died at its second step says so, so the remedy can name where.
 func WallStep(log []byte) string {
 	step := ""
-	for _, raw := range strings.Split(string(log), "\n") {
+	for raw := range strings.SplitSeq(string(log), "\n") {
 		line := strings.TrimSpace(stripPaint(raw))
 		rest, ok := strings.CutPrefix(line, WallStepMark)
 		if !ok {
@@ -224,7 +224,7 @@ func wallPathToken(line string) string {
 			rest = next
 		}
 	}
-	for _, f := range strings.Fields(line) {
+	for f := range strings.FieldsSeq(line) {
 		t := strings.Trim(f, "'\"`.,;:()[]{}<>")
 		if strings.HasPrefix(t, "/") {
 			return t
@@ -366,7 +366,7 @@ type ShellDenial struct {
 // printed any. The first is the one that matters: every later line is downstream of the same
 // closed path.
 func ShellDenied(log []byte) (ShellDenial, bool) {
-	for _, raw := range strings.Split(string(log), "\n") {
+	for raw := range strings.SplitSeq(string(log), "\n") {
 		line := strings.TrimSpace(stripPaint(raw))
 		if line == "" {
 			continue

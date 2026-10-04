@@ -47,7 +47,7 @@ func TestAncestryFetchesAreOneVerb(t *testing.T) {
 				continue
 			}
 			assert.Contains(t, body, step.want, "%s step %q", file, step.name)
-			for _, line := range strings.Split(body, "\n") {
+			for line := range strings.SplitSeq(body, "\n") {
 				code := strings.TrimSpace(line)
 				if !strings.HasPrefix(code, "#") {
 					assert.NotContains(t, code, "git fetch", "%s step %q spells a git fetch itself; the fetch is the verb's", file, step.name)

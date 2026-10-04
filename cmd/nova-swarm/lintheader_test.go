@@ -261,7 +261,7 @@ func TestLintCloneStepStillDraftsAStepThatEntersNothing(t *testing.T) {
 	require.Equal(t, 1, exit, "a STEP 1 that enters no repository is a drift: exit %d\n%s", exit, stdout)
 	require.Contains(t, stdout, "clone-step", "a STEP 1 that enters no repository is a drift: exit %d\n%s", exit, stdout)
 	line := ""
-	for _, l := range strings.Split(stdout, "\n") {
+	for l := range strings.SplitSeq(stdout, "\n") {
 		if strings.Contains(l, "clone-step") {
 			line = l
 		}

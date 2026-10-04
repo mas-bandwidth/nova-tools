@@ -92,7 +92,7 @@ var runDenials denialReader = readOSDenials
 func parseDenials(logText string, pidFloor int) []deniedPath {
 	var out []deniedPath
 	seen := map[string]bool{}
-	for _, line := range strings.Split(logText, "\n") {
+	for line := range strings.SplitSeq(logText, "\n") {
 		_, after, ok := strings.Cut(line, "Sandbox: ")
 		if !ok {
 			continue

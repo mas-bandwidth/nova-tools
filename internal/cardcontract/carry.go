@@ -83,7 +83,7 @@ func short12(s string) string {
 // ParseCarryLine is the words of the last carry line in native's log, "" when it has none.
 func ParseCarryLine(log []byte) string {
 	words := ""
-	for _, l := range strings.Split(string(log), "\n") {
+	for l := range strings.SplitSeq(string(log), "\n") {
 		if rest, ok := strings.CutPrefix(strings.TrimRight(l, "\r"), CarryLinePrefix); ok {
 			words = strings.TrimSpace(rest)
 		}

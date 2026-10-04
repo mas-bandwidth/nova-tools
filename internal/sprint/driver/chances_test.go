@@ -389,7 +389,7 @@ func TestTheSameSeedPlaysTheSameEventsAndAnotherSeedOthers(t *testing.T) {
 	for _, want := range []string{"finish --as", "--failed", "read --as reader-a --broken", "--conflict", "--cross", "(m1 falls silent", "(m1 beats again)"} {
 		assert.Contains(t, ranA+outA, want, "300 ticks of the simulation never played %q", want)
 	}
-	for _, l := range strings.Split(ranA, "\n") {
+	for l := range strings.SplitSeq(ranA, "\n") {
 		require.False(t, coordinatorVerbs[strings.Fields(l)[0]], "the simulation ran the coordinator's verb: %s", l)
 	}
 }

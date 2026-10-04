@@ -455,9 +455,9 @@ func TestEveryMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 	assert.Equal(t, 80, finished, "m1 and m2 finished %d of their 80 working cards in the two calls", finished)
 	text := out.String()
 	assert.Contains(t, text, "read --as reader-a --begin --epoch 0 [40 cards: s1-1.r1.reader-a s1-2.r1.reader-a s1-3.r1.reader-a ...]", "a batch prints its count and first three:\n%s", text)
-	for _, l := range strings.Split(text, "\n") {
+	for l := range strings.SplitSeq(text, "\n") {
 		n := 0
-		for _, x := range strings.Fields(l) {
+		for x := range strings.FieldsSeq(l) {
 			if strings.HasSuffix(x, "@1") || strings.HasSuffix(x, ".reader-a") {
 				n++
 			}

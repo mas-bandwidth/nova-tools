@@ -69,7 +69,7 @@ func startsRedis(src []byte) bool {
 // every build that does not pass `-tags functional`: the expression is false
 // with every other tag set.
 func needsFunctional(src []byte) bool {
-	for _, line := range strings.Split(string(src), "\n") {
+	for line := range strings.SplitSeq(string(src), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "package ") {
 			break

@@ -262,7 +262,7 @@ func TestInventoryRefusesALoopItCannotRender(t *testing.T) {
 // prints, each as printed (the help left-trims its lines).
 func helpCommands(t *testing.T, help string) (printf, chmod string) {
 	t.Helper()
-	for _, l := range strings.Split(help, "\n") {
+	for l := range strings.SplitSeq(help, "\n") {
 		l = strings.TrimSpace(l)
 		switch {
 		case strings.HasPrefix(l, "printf "):

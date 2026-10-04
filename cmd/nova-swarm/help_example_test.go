@@ -31,7 +31,7 @@ func TestTheLaunchVerbsShowAnExampleMadeOfTheirOwnFlags(t *testing.T) {
 		}
 		flags := help[strings.Index(help, "flags:\n"):]
 		assert.LessOrEqual(t, strings.Index(help, "example:"), strings.Index(help, "flags:"), "%s -h shows the example after the flags", verb)
-		for _, w := range strings.Fields(ex) {
+		for w := range strings.FieldsSeq(ex) {
 			assert.False(t, strings.HasPrefix(w, "--") && !strings.Contains(flags, "\n  "+w+" ") && !strings.Contains(flags, "\n  "+w+"\n"), "%s: the example uses %s, which %s -h does not list", verb, w, verb)
 		}
 		assert.True(t, strings.HasPrefix(ex, "nova-swarm "+verb+" "), "the %s example does not run %s: %q", verb, verb, ex)

@@ -757,7 +757,7 @@ func TestProbeReExecsTheToolAndNeverAShell(t *testing.T) {
 	require.Contains(t, out, want, "read_root did not read the probe's own executable.\nwant a line %q\ngot:\n%s", want, out)
 	// No step stands on a shell. /bin and /usr/bin are fixed roots, so a read under one
 	// of them proves nothing about the root the generator computes at run time.
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if !strings.HasPrefix(line, "PROBE STEP ") {
 			continue
 		}
@@ -1436,7 +1436,7 @@ func TestTheTranscriptNamesTheToolsOwnBinary(t *testing.T) {
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	var line string
-	for _, l := range strings.Split(string(doc), "\n") {
+	for l := range strings.SplitSeq(string(doc), "\n") {
 		if strings.Contains(l, "PROBE STEP name=read_root") {
 			line = l
 			break
@@ -1491,7 +1491,7 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 		// One refusal per problem, and every one of them inside the published
 		// grammar: a bare probe's missing --write is reason=check naming bad_write,
 		// not reason=bad_write.
-		for _, line := range strings.Split(strings.TrimSpace(errOut), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSpace(errOut), "\n") {
 			reason, _, ok := strings.Cut(strings.TrimPrefix(line, "PROBE REFUSED reason="), ":")
 			if !assert.True(t, ok && strings.HasPrefix(line, "PROBE REFUSED reason="), "not a PROBE REFUSED line: %q", line) {
 				continue
@@ -1530,7 +1530,7 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 		assert.Contains(t, errOut, "PROBE REFUSED reason=check: ", "the refusal does not carry a reason of the PROBE REFUSED set; SPEC-SANDBOX fixes it to check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable:\n%s", errOut)
 		assert.Contains(t, errOut, "(bad_read)", "the refusal drops the bad_read token a reader greps for; it belongs in the text:\n%s", errOut)
 		// And no reason= outside the published set reaches the reader.
-		for _, line := range strings.Split(errOut, "\n") {
+		for line := range strings.SplitSeq(errOut, "\n") {
 			if !strings.HasPrefix(line, "PROBE REFUSED reason=") {
 				continue
 			}
@@ -1552,7 +1552,7 @@ func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 	code, out, errOut := j.tool(t, j.env(), "help")
 	require.Equal(t, 0, code, "help exit %d", code)
 	probe := ""
-	for _, block := range strings.Split(out, "\n\n") {
+	for block := range strings.SplitSeq(out, "\n\n") {
 		if strings.Contains(block, "nova-sandbox probe ") {
 			probe = block
 		}
@@ -1621,7 +1621,7 @@ func exampleCommands(t *testing.T, block, base string) []string {
 	t.Helper()
 	var lines []string
 	joined := ""
-	for _, raw := range strings.Split(block, "\n") {
+	for raw := range strings.SplitSeq(block, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue

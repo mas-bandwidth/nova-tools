@@ -328,7 +328,7 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 		return d, []Finding{{Line: 1, Reason: "the first line is not `" + Version + " day=… at=… build=… turns=… sources=…`; the repair is fold --day <d>"}}
 	}
 	fields := map[string]string{}
-	for _, tok := range strings.Fields(strings.TrimPrefix(head, Version+" ")) {
+	for tok := range strings.FieldsSeq(strings.TrimPrefix(head, Version+" ")) {
 		if k, v, ok := strings.Cut(tok, "="); ok {
 			fields[k] = v
 		}

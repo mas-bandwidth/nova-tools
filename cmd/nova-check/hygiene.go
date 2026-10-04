@@ -59,7 +59,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	}
 
 	var ids []hygiene.Identity
-	for _, one := range strings.Split(*identity, ",") {
+	for one := range strings.SplitSeq(*identity, ",") {
 		one = strings.TrimSpace(one)
 		if one == "" {
 			continue
@@ -109,7 +109,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	}
 
 	var paths []string
-	for _, p := range strings.Split(*pathsFlag, ",") {
+	for p := range strings.SplitSeq(*pathsFlag, ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			paths = append(paths, p)
 		}

@@ -38,7 +38,7 @@ func TestHelpShowsASchemaAndAResultLine(t *testing.T) {
 	help := cli.OK(t, "help").Stdout
 
 	first := ""
-	for _, line := range strings.Split(help, "\n") {
+	for line := range strings.SplitSeq(help, "\n") {
 		if strings.Contains(line, "noul") {
 			first = line
 			break

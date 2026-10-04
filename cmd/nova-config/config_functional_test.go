@@ -398,7 +398,7 @@ func TestAnsibleInventoryFailsLoudlyWithTheVariableTheHelpPrints(t *testing.T) {
 	help, _ := r.run(t, 0, "inventory", "-h")
 	printf, chmod := helpCommands(t, help)
 	var ansibleLine string
-	for _, l := range strings.Split(help, "\n") {
+	for l := range strings.SplitSeq(help, "\n") {
 		if l = strings.TrimSpace(l); strings.HasPrefix(l, "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory ") {
 			ansibleLine = l
 		}

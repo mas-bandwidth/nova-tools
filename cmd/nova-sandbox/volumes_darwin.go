@@ -67,7 +67,7 @@ func runDiskutil(args ...string) (string, error) {
 // says why. The whole output would be a paragraph inside a one-line refusal.
 func oneLineOf(s string) string {
 	var last string
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if t := strings.TrimSpace(line); t != "" {
 			last = t
 		}
@@ -80,7 +80,7 @@ func oneLineOf(s string) string {
 // the same way in every macOS this tool has run on, and a plist parser is a dependency
 // and a second failure mode for three strings.
 func field(out, name string) string {
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		trimmed := strings.TrimSpace(line)
 		// `diskutil apfs list` draws a tree, so a field line can carry | and + before it.
 		trimmed = strings.TrimLeft(trimmed, "|+-< ")
@@ -118,7 +118,7 @@ func (diskutilVolumes) Exists(name string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		trimmed := strings.TrimLeft(strings.TrimSpace(line), "|+-< ")
 		rest, ok := strings.CutPrefix(trimmed, "Name:")
 		if !ok {
@@ -349,7 +349,7 @@ func (diskutilVolumes) List() ([]diskVolume, error) {
 		}
 		cur = diskVolume{}
 	}
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		trimmed := strings.TrimLeft(strings.TrimSpace(line), treeChars)
 		if rest, ok := strings.CutPrefix(trimmed, "Volume "); ok {
 			flush()

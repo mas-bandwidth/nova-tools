@@ -123,7 +123,7 @@ func (a *app) readFriends(ctx context.Context, pg string) ([]config.Row, error) 
 // (#, *, -, _, spaces), is one of keys in any case: the rest of the line after the colon;
 // false when no line has one.
 func reportValue(report string, keys ...string) (string, bool) {
-	for _, line := range strings.Split(report, "\n") {
+	for line := range strings.SplitSeq(report, "\n") {
 		key, rest, ok := strings.Cut(strings.TrimLeft(line, "#*-_ \t"), ":")
 		if ok && slices.Contains(keys, strings.ToLower(strings.TrimSpace(key))) {
 			return strings.TrimSpace(rest), true

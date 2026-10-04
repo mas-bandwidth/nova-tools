@@ -225,7 +225,7 @@ func (w *witness) checkRunners() {
 		table := w.runTool(ps, []string{"-eo", "pid=,args="}).stdout
 		var pids []string
 		bin := d + "bin/Runner.Listener"
-		for _, line := range strings.Split(table, "\n") {
+		for line := range strings.SplitSeq(table, "\n") {
 			if f := strings.Fields(line); len(f) > 0 && strings.Contains(line, bin) {
 				pids = append(pids, f[0])
 			}
@@ -710,7 +710,7 @@ func (w *witness) largest(n int) string {
 	for i := 0; i < len(entries); i += chunk {
 		end := min(i+chunk, len(entries))
 		res := w.runTool(du, append([]string{"-sk"}, entries[i:end]...))
-		for _, line := range strings.Split(res.stdout, "\n") {
+		for line := range strings.SplitSeq(res.stdout, "\n") {
 			kbs, path, ok := strings.Cut(line, "\t")
 			if !ok {
 				continue

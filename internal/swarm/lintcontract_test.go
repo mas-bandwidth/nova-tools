@@ -41,7 +41,7 @@ func TestTheDocumentsContractLineIsOneTheLintAccepts(t *testing.T) {
 
 	doc := readOr(t, cardCutDocPath)
 	want := ""
-	for _, line := range strings.Split(doc, "\n") {
+	for line := range strings.SplitSeq(doc, "\n") {
 		if strings.HasPrefix(line, "RESULT ") || strings.HasPrefix(line, "RESULT: ") {
 			want = line
 			break

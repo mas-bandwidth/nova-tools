@@ -50,7 +50,7 @@ func TestNativeRunHandsTheChildTheBenchGo(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(slot, "native-argv.log"))
 	require.NoError(t, err, "the run recorded no native-argv.log")
 	path := ""
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if v, ok := strings.CutPrefix(line, "env: PATH="); ok {
 			path = v
 		}

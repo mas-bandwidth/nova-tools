@@ -343,7 +343,7 @@ func ParseChildRules(text, source string) ([]ChildRule, error) {
 	var problems []string
 	names, sentences := map[string]int{}, map[string]int{}
 	n := 0
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		n++
 		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
 		if line == "" || strings.HasPrefix(line, "#") {

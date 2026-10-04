@@ -204,7 +204,7 @@ func validBinds(text string) ([]string, error) {
 		return nil, errors.New("--bind is empty; name 127.0.0.1 and/or a tailnet address, refusing to guess")
 	}
 	var out []string
-	for _, raw := range strings.Split(text, ",") {
+	for raw := range strings.SplitSeq(text, ",") {
 		a := strings.TrimSpace(raw)
 		if a == "" {
 			return nil, fmt.Errorf("--bind %q holds an empty entry", text)

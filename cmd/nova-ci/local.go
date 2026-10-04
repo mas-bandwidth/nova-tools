@@ -272,7 +272,7 @@ func localWhy(code int, errText string, err error) string {
 
 func localCountLines(s string) int {
 	n := 0
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if strings.TrimSpace(line) != "" {
 			n++
 		}

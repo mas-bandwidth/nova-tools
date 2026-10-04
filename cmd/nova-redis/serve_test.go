@@ -83,7 +83,7 @@ func (h *serveHarness) run(args ...string) (int, string, string) {
 func config(t *testing.T, raw []byte) map[string][][]string {
 	t.Helper()
 	out := map[string][][]string{}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

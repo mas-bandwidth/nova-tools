@@ -243,7 +243,7 @@ func execIdentityLookupIsDefeated(t *testing.T, bin, sopsPath string) {
 		assert.Equal(t, 0, code, "caller %s: --key alone must open the seat's own file with every planted identity present, got %d: %s", callerName, code, errOut)
 		assert.Contains(t, out, "GH_TOKEN=ghp_mine\n", "caller %s: --key alone must open the seat's own file with every planted identity present, got %d: %s", callerName, code, errOut)
 		for name := range lookupVars {
-			for _, line := range strings.Split(out, "\n") {
+			for line := range strings.SplitSeq(out, "\n") {
 				assert.False(t, strings.HasPrefix(line, name+"="), "caller %s: %s reached the command: %s", callerName, name, line)
 			}
 		}

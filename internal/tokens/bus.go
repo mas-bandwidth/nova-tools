@@ -393,7 +393,7 @@ func parseBody(n *note, label string, body []string, offset int, rules *Rules) {
 			n.comments++
 			if m := reposComment.FindStringSubmatch(line); m != nil {
 				var repos []string
-				for _, name := range strings.Split(m[1], ",") {
+				for name := range strings.SplitSeq(m[1], ",") {
 					repos = append(repos, strings.TrimSpace(name))
 				}
 				n.touched = append(n.touched, repos...)

@@ -53,7 +53,7 @@ func TestTheCardTemplateCarriesNoExitCodesLineAndLintsClean(t *testing.T) {
 
 	exit, tmpl, stderr := runSwarm(t, "template", "--name", "card")
 	require.Equal(t, 0, exit, "template --name card exits 0, got %d\nstderr: %s", exit, stderr)
-	for _, line := range strings.Split(tmpl, "\n") {
+	for line := range strings.SplitSeq(tmpl, "\n") {
 		require.False(t, strings.HasPrefix(strings.ToLower(line), "exit codes"), "the card template carries a banner line inside its RULES: %q", line)
 	}
 	card := writeLintCard(t, "template.card", filledLibraries(tmpl))

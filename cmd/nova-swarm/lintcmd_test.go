@@ -148,7 +148,7 @@ func TestLintTestCommandRemedyNamesTheAcceptedSet(t *testing.T) {
 	stdout, exit, _ := lintCmdCard(t, "remedy.card", "node test/x.mjs")
 	require.Equal(t, 1, exit, "`node test/x.mjs` is not on the accepted list, drifts at exit 1, got %d\n%s", exit, stdout)
 	drift := ""
-	for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(stdout, "\n"), "\n") {
 		if strings.HasPrefix(line, "LINT DRIFT ") && strings.Contains(line, "test-command:") {
 			drift = line
 			break

@@ -241,7 +241,7 @@ func stream(t *testing.T, r Report, name string) Stream {
 // field reads one key=value extra off a printed line.
 func field(t *testing.T, line, key string) string {
 	t.Helper()
-	for _, tok := range strings.Fields(line) {
+	for tok := range strings.FieldsSeq(line) {
 		if v, ok := strings.CutPrefix(tok, key+"="); ok {
 			return v
 		}
@@ -704,7 +704,7 @@ func TestEveryFieldSurvivesAHostileValue(t *testing.T) {
 	for _, line := range f.read(t).Lines() {
 		assert.False(t, strings.ContainsAny(line, "\n\r\t"), "a line carried a control character: %q", line)
 		assert.NotContains(t, line, "\u202e", "a line carried a bidi override: %q", line)
-		for _, tok := range strings.Fields(line) {
+		for tok := range strings.FieldsSeq(line) {
 			assert.LessOrEqual(t, strings.Count(tok, "="), 1, "a field holds a second `=`: %q in %q", tok, line)
 		}
 	}

@@ -250,7 +250,7 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 		return bad("argv", "is not a JSON list of at least one string")
 	}
 	l.Argv = memberArgv(l.Argv)
-	for _, k := range strings.Split(v["keys"], ",") {
+	for k := range strings.SplitSeq(v["keys"], ",") {
 		if k = strings.TrimSpace(k); k != "" {
 			l.Keys = append(l.Keys, k)
 		}

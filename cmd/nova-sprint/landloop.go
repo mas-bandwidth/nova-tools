@@ -77,12 +77,12 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 		// what landed (stdout's LAND lines, but its summary), and everything land said
 		// was wrong (stderr: a refused or failed batch, a refusal before any batch, the
 		// remedy)
-		for _, line := range strings.Split(out.String(), "\n") {
+		for line := range strings.SplitSeq(out.String(), "\n") {
 			if strings.HasPrefix(line, "LAND ") && !strings.HasPrefix(line, "LAND DONE") {
 				lines = append(lines, line)
 			}
 		}
-		for _, line := range strings.Split(errb.String(), "\n") {
+		for line := range strings.SplitSeq(errb.String(), "\n") {
 			if strings.TrimSpace(line) != "" {
 				lines = append(lines, line)
 			}

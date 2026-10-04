@@ -298,7 +298,7 @@ func TestSeatInjectWalksSealsRoadToTheMerge(t *testing.T) {
 		"pull request #42 is open; waiting", "approved; merging #42", "checking the seat decrypts"} {
 		assert.Contains(t, got, want, "progress missing %q:\n%s", want, got)
 	}
-	for _, l := range strings.Split(strings.TrimSpace(got), "\n") {
+	for l := range strings.SplitSeq(strings.TrimSpace(got), "\n") {
 		assert.True(t, strings.HasPrefix(l, "seat inject: "), "progress line without the seat inject: prefix: %q", l)
 	}
 	assertNoValue(t, "progress", got)

@@ -84,7 +84,7 @@ func (f *fakeRemote) scripts() []string {
 // scriptKey names the workload a script belongs to, so a table can answer per workload. The
 // marker is the one certify writes into every script it composes.
 func scriptKey(script string) string {
-	for _, line := range strings.Split(script, "\n") {
+	for line := range strings.SplitSeq(script, "\n") {
 		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "# nova-certify workload "); ok {
 			return strings.TrimSpace(v)
 		}

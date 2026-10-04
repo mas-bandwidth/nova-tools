@@ -19,7 +19,7 @@ import (
 
 func fieldOf(t *testing.T, text, key string) string {
 	t.Helper()
-	for _, tok := range strings.Fields(text) {
+	for tok := range strings.FieldsSeq(text) {
 		if v, ok := strings.CutPrefix(tok, key+"="); ok {
 			return v
 		}
@@ -113,7 +113,7 @@ func TestDryRunIsInTheHelpOfEveryVerbThatTakesIt(t *testing.T) {
 			flat := spaces.ReplaceAllString(out, " ")
 			assert.Contains(t, flat, "--dry-run prints the plan and writes nothing", "%s -h does not say what --dry-run does:\n%s", verb, out)
 			example := false
-			for _, l := range strings.Split(out, "\n") {
+			for l := range strings.SplitSeq(out, "\n") {
 				l = strings.TrimSpace(l)
 				if strings.HasPrefix(spaces.ReplaceAllString(l, " "), "nova-secrets "+verb+" ") && strings.HasSuffix(l, "--dry-run") {
 					example = true

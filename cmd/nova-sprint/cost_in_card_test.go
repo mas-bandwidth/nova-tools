@@ -64,7 +64,7 @@ func TestTheCardCarriesEveryConsumerWhoeverIsRemoved(t *testing.T) {
 	require.Len(t, lines, 7, out)
 	ends := []string{}
 	for _, l := range lines[:6] {
-		for _, w := range strings.Fields(l) {
+		for w := range strings.FieldsSeq(l) {
 			if v, ok := strings.CutPrefix(w, "end="); ok {
 				ends = append(ends, v)
 			}

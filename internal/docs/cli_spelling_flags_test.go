@@ -83,7 +83,7 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 	require.NoError(t, err, "docs/CLI.md: %v", err)
 	ref := ""
 	seen := 0
-	for _, line := range strings.Split(string(cli), "\n") {
+	for line := range strings.SplitSeq(string(cli), "\n") {
 		if strings.HasPrefix(line, "nova-check spelling ") {
 			seen++
 			ref = line

@@ -26,7 +26,7 @@ func TestThePlatformLineNamesNoFieldThisBenchAlreadyPrints(t *testing.T) {
 
 	var platform string
 	inSection := false
-	for _, l := range strings.Split(string(doc), "\n") {
+	for l := range strings.SplitSeq(string(doc), "\n") {
 		if strings.HasPrefix(l, "## ") {
 			inSection = l == "## nova-sandbox"
 			continue
@@ -68,7 +68,7 @@ func TestThePlatformLineNamesNoFieldThisBenchAlreadyPrints(t *testing.T) {
 	code := run([]string{"check"}, strings.NewReader(""), &out, &errb, os.Environ())
 	require.Equal(t, 0, code, "nova-sandbox check exited %d, want 0; stderr: %s", code, errb.String())
 	var printed string
-	for _, l := range strings.Split(out.String(), "\n") {
+	for l := range strings.SplitSeq(out.String(), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(l), "CHECK OK ") {
 			printed = strings.TrimSpace(l)
 		}

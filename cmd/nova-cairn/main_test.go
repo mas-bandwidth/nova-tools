@@ -235,7 +235,7 @@ func TestSourcePointerIsRecordedNeverOpened(t *testing.T) {
 	require.Contains(t, out, " source=bench-a/session-7#L3 ", "append --source printed %q, want its own source", out)
 	out = c.ok("index")
 	printed(t, out, "entry=inherits stamp=", "entry=own stamp=")
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		switch {
 		case strings.Contains(line, "entry=inherits "):
 			require.True(t, strings.HasSuffix(line, " source="+field), "index row %q, want the session's source", line)

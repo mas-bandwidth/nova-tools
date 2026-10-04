@@ -65,7 +65,7 @@ func aggregate(e env, args []string) int {
 			case "--what":
 				what = v
 			case "--skip-ok":
-				for _, n := range strings.Split(v, ",") {
+				for n := range strings.SplitSeq(v, ",") {
 					skipOK[strings.TrimSpace(n)] = true
 				}
 			case "--skip-ok-on":
@@ -76,7 +76,7 @@ func aggregate(e env, args []string) int {
 				if skipOKOn[ev] == nil {
 					skipOKOn[ev] = map[string]bool{}
 				}
-				for _, n := range strings.Split(names, ",") {
+				for n := range strings.SplitSeq(names, ",") {
 					skipOKOn[ev][strings.TrimSpace(n)] = true
 				}
 			}

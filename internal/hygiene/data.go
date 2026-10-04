@@ -62,7 +62,7 @@ func parseStray(data string) ([]strayRule, error) {
 			return nil, fmt.Errorf("stray.txt:%d: a row with no pattern", n+1)
 		}
 		if len(fields) == 2 {
-			for _, k := range strings.Split(fields[1], ",") {
+			for k := range strings.SplitSeq(fields[1], ",") {
 				if k = strings.TrimSpace(k); k != "" {
 					rule.except[k] = true
 				}
@@ -106,7 +106,7 @@ var (
 func loadKinds() ([]string, map[string]bool) {
 	kindOnce.Do(func() {
 		kindSet = map[string]bool{}
-		for _, line := range strings.Split(kindData, "\n") {
+		for line := range strings.SplitSeq(kindData, "\n") {
 			line = strings.TrimRight(line, "\r")
 			if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 				continue

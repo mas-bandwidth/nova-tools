@@ -119,7 +119,7 @@ func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
 // checkTierRoutes refuses a tier's array that names a route that is not a row,
 // is disabled, or serves another tier: the deal would only skip it.
 func checkTierRoutes(ctx context.Context, st Store, row Row) error {
-	for _, name := range strings.Split(row.Fields["routes"], ",") {
+	for name := range strings.SplitSeq(row.Fields["routes"], ",") {
 		if name == "" {
 			continue
 		}

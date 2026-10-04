@@ -64,7 +64,7 @@ func TestStatsPrintsThePassFromTheCards(t *testing.T) {
 	ta := statsSprint(t)
 	out := ta.ok("stats")
 	rows := map[string]string{}
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		k, v, _ := strings.Cut(l, " | ")
 		rows[strings.TrimSpace(k)] = strings.Join(strings.Fields(v), " ")
 	}

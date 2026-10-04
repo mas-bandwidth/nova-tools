@@ -27,7 +27,7 @@ func issue1458Code(t *testing.T) string {
 	raw, err := os.ReadFile(wsl2BootstrapPath)
 	require.NoError(t, err, "%s: %v", wsl2BootstrapPath, err)
 	var code []string
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}

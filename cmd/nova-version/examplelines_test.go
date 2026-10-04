@@ -25,7 +25,7 @@ func mainDocumentedExamples(t *testing.T) []string {
 	raw, err := os.ReadFile("main.go")
 	require.NoError(t, err, "main.go: %v", err)
 	var out []string
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "//"))
 		if strings.HasPrefix(line, "nova-version ") {
 			out = append(out, strings.Join(strings.Fields(line), " "))

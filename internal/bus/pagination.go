@@ -511,7 +511,7 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 		if err != nil {
 			return nil, err
 		}
-		for _, p := range strings.Fields(out) {
+		for p := range strings.FieldsSeq(out) {
 			if isNotePath(p) {
 				latest[p] = commit
 			}

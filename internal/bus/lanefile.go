@@ -46,7 +46,7 @@ func refuseLaneLink(root, full string) error {
 		return fmt.Errorf("%s is not inside the bus at %s", full, root)
 	}
 	at := root
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
 		if part == "." || part == "" {
 			continue
 		}

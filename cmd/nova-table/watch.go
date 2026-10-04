@@ -60,7 +60,7 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 	}
 	var names []string
 	if len(pos) == 1 {
-		for _, n := range strings.Split(pos[0], ",") {
+		for n := range strings.SplitSeq(pos[0], ",") {
 			if n = strings.TrimSpace(n); n != "" {
 				names = append(names, n)
 			}

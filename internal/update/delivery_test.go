@@ -271,7 +271,7 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 			}
 			need(t, errout, "the bus said: PREPARE FAIL")
 			note := ""
-			for _, line := range strings.Split(errout, "\n") {
+			for line := range strings.SplitSeq(errout, "\n") {
 				if strings.HasPrefix(line, "REPORT NOTE") {
 					if note != "" {
 						require.EqualValuesf(t, "", note, "one refusal became two lines:\n%s", errout)
@@ -379,7 +379,7 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 		require.NoError(t, err, err)
 	}
 	sendArgv := ""
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if strings.HasPrefix(line, "argv send ") {
 			sendArgv = line
 		}
@@ -409,7 +409,7 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 		}
 	}
 	// prepare takes neither: it runs no Git and touches no network.
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if strings.HasPrefix(line, "argv prepare ") && (strings.Contains(line, "--attempts") || strings.Contains(line, "--git-timeout")) {
 			assert.Failf(t, "", "prepare was handed a Git bound it has no use for: %s", line)
 		}

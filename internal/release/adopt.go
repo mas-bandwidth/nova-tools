@@ -703,7 +703,7 @@ func verifyArgv(dir string) []string {
 // countVerified is how many lines a sha256sum -c / shasum -c run marked OK.
 func countVerified(output string) int {
 	n := 0
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		if strings.HasSuffix(strings.TrimSpace(line), ": OK") {
 			n++
 		}

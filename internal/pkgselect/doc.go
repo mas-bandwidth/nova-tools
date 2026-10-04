@@ -34,7 +34,7 @@ func ModulePath(root string) string {
 	if err != nil {
 		return ""
 	}
-	for _, l := range strings.Split(string(b), "\n") {
+	for l := range strings.SplitSeq(string(b), "\n") {
 		f := strings.Fields(l)
 		if len(f) == 2 && f[0] == "module" {
 			return strings.Trim(f[1], `"`)

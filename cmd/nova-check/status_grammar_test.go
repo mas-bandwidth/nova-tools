@@ -172,7 +172,7 @@ func TestStatusGrammar(t *testing.T) {
 func lastLineLeadingWith(t *testing.T, stream, token string) string {
 	t.Helper()
 	line := ""
-	for _, candidate := range strings.Split(stream, "\n") {
+	for candidate := range strings.SplitSeq(stream, "\n") {
 		if strings.HasPrefix(candidate, token+" ") {
 			line = candidate
 		}

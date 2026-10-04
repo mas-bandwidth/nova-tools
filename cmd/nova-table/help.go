@@ -211,7 +211,7 @@ func recoverHelp(out io.Writer, code *int) {
 func printCommandHelp(out io.Writer, c command, fs *flag.FlagSet) {
 	fmt.Fprintln(out, "usage: nova-table "+strings.TrimSpace(c.name+" "+c.syntax))
 	fmt.Fprintln(out, "\nexample:")
-	for _, l := range strings.Split(c.example, "\n") {
+	for l := range strings.SplitSeq(c.example, "\n") {
 		fmt.Fprintln(out, "  "+l)
 	}
 	if c.name == "batch" {

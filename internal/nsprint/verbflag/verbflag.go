@@ -411,7 +411,7 @@ func Subverbs(banner, prog, verb string) []string {
 	want := append([]string{prog}, strings.Fields(verb)...)
 	n := len(want)
 	var subs []string
-	for _, l := range strings.Split(banner, "\n") {
+	for l := range strings.SplitSeq(banner, "\n") {
 		l = strings.TrimSpace(l)
 		if strings.EqualFold(l, "example:") {
 			break
@@ -438,7 +438,7 @@ func Subverbs(banner, prog, verb string) []string {
 		if len(words) == n || !subverbRe.MatchString(words[n]) {
 			return nil
 		}
-		for _, s := range strings.Split(words[n], "|") {
+		for s := range strings.SplitSeq(words[n], "|") {
 			if !slices.Contains(subs, s) {
 				subs = append(subs, s)
 			}

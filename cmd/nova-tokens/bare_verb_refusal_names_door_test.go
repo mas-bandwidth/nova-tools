@@ -27,7 +27,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 	// refusal when invoked bare. Dedupe report and sum, which share two forms.
 	var verbs []string
 	seen := map[string]bool{}
-	for _, line := range strings.Split(help.stdout, "\n") {
+	for line := range strings.SplitSeq(help.stdout, "\n") {
 		line = strings.TrimRight(line, " \t")
 		if !strings.HasPrefix(line, "  nova-tokens ") {
 			continue

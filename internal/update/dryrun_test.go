@@ -138,7 +138,7 @@ func TestStatusPrintsEveryEntryAndExitsByWhetherAnyDiffer(t *testing.T) {
 		assert.Failf(t, "", "status printed a check line; its own first token is STATUS:\nout: %s\nerr: %s", out, errs)
 	}
 	sameDir(t, "status", before, dirTree(t, f.dir))
-	for _, line := range strings.Split(strings.TrimSpace(f.callLog(t)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(f.callLog(t)), "\n") {
 		if !strings.HasPrefix(line, "reader.sh") && !strings.HasPrefix(line, "latest-") {
 			assert.Failf(t, "", "status ran something that is not a version read: %q", line)
 		}

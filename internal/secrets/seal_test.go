@@ -334,7 +334,7 @@ func TestSealSaysWhatItIsDoing(t *testing.T) {
 		assert.Contains(t, got, want, "progress missing %q:\n%s", want, got)
 	}
 	assert.NotContains(t, got, "quietsecretvalue", "value leaked into progress:\n%s", got)
-	for _, l := range strings.Split(strings.TrimSpace(got), "\n") {
+	for l := range strings.SplitSeq(strings.TrimSpace(got), "\n") {
 		assert.True(t, strings.HasPrefix(l, "seal: "), "progress line without the seal: prefix: %q", l)
 	}
 	git := strings.ReplaceAll(readMaybe(t, f.gitArgs), "\n", " ")

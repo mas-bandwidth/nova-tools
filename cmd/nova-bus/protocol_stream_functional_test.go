@@ -76,7 +76,7 @@ func TestProgressNeverEntersTheProtocolStream(t *testing.T) {
 	sawProgress := false
 	for _, run := range runs {
 		r := invoke(t, "", run.args...)
-		for _, line := range strings.Split(r.stdout, "\n") {
+		for line := range strings.SplitSeq(r.stdout, "\n") {
 			if strings.TrimSpace(line) == "" {
 				continue
 			}
@@ -86,7 +86,7 @@ func TestProgressNeverEntersTheProtocolStream(t *testing.T) {
 			}
 			assert.Truef(t, bus.IsProtocol(line), "%s wrote a line on stdout with no documented protocol prefix; add the prefix to internal/bus.ProtocolPrefixes or move the line to stderr:\n%s", run.what, line)
 		}
-		for _, line := range strings.Split(r.stderr, "\n") {
+		for line := range strings.SplitSeq(r.stderr, "\n") {
 			if bus.IsProgress(line) {
 				sawProgress = true
 			}

@@ -194,7 +194,7 @@ func TestStatusGrammar(t *testing.T) {
 			}
 			var got string
 			var found bool
-			for _, line := range strings.Split(strings.TrimRight(stream, "\n"), "\n") {
+			for line := range strings.SplitSeq(strings.TrimRight(stream, "\n"), "\n") {
 				var word string
 				if tc.leads {
 					fields := strings.Fields(line)

@@ -53,7 +53,7 @@ func gitProcsFromPS(psOut, self string, cwds map[string]string, cwdErr error, al
 			first = ownershipUnknownErr(why)
 		}
 	}
-	for _, line := range strings.Split(psOut, "\n") {
+	for line := range strings.SplitSeq(psOut, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -151,7 +151,7 @@ func lsofCwds(stdout, stderr string, code int, runErr error) (map[string]string,
 		return nil, ownershipUnknownErr(fmt.Sprintf("lsof failed code=%d %s", code, stderr))
 	}
 	var pid string
-	for _, line := range strings.Split(stdout, "\n") {
+	for line := range strings.SplitSeq(stdout, "\n") {
 		if line == "" {
 			continue
 		}

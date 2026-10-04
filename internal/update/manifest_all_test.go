@@ -141,7 +141,7 @@ func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 		}
 		h := out.String()
 		numbered := 0
-		for _, l := range strings.Split(h, "\n") {
+		for l := range strings.SplitSeq(h, "\n") {
 			if t := strings.TrimSpace(l); len(t) > 2 && t[0] >= '1' && t[0] <= '6' && t[1] == '.' {
 				numbered++
 			}
@@ -158,7 +158,7 @@ func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 	// nova-version's exit codes name no verb it does not have
 	var out, errs bytes.Buffer
 	Main("nova-version", []string{"help"}, "v0", &out, &errs)
-	for _, l := range strings.Split(out.String(), "\n") {
+	for l := range strings.SplitSeq(out.String(), "\n") {
 		if strings.HasPrefix(l, "exit codes:") && strings.Contains(l, "apply") {
 			assert.Failf(t, "", "nova-version's exit codes name apply, which it does not have: %s", l)
 		}

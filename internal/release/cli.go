@@ -134,7 +134,7 @@ type platformList []string
 
 func (p *platformList) String() string { return strings.Join(*p, ",") }
 func (p *platformList) Set(v string) error {
-	for _, one := range strings.Split(v, ",") {
+	for one := range strings.SplitSeq(v, ",") {
 		if one = strings.TrimSpace(one); one != "" {
 			*p = append(*p, one)
 		}
@@ -146,7 +146,7 @@ func (p *platformList) Set(v string) error {
 // verb answers about THAT verb. A person who asked about `adopt` did not ask to
 // re-read `cut`.
 func VerbUsage(verb string) string {
-	for _, line := range strings.Split(Verbs, "\n") {
+	for line := range strings.SplitSeq(Verbs, "\n") {
 		if strings.HasPrefix(line, "nova-update release "+verb+" ") {
 			return line
 		}

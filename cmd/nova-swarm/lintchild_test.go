@@ -62,7 +62,7 @@ func TestChildRulesAreAskedForByTheFlag(t *testing.T) {
 	exit, stdout, _ = runSwarm(t, "lint", "--card", card, "--child-rules", "--max", "0")
 	require.Equal(t, 1, exit, "the same card under --child-rules drifts at exit 1, got %d\n%s", exit, stdout)
 	drifts := 0
-	for _, line := range strings.Split(stdout, "\n") {
+	for line := range strings.SplitSeq(stdout, "\n") {
 		if strings.HasPrefix(line, "LINT DRIFT card=good.card rule-") || strings.HasPrefix(line, "LINT DRIFT card=good.card step-") {
 			drifts++
 			assert.Contains(t, line, " remedy=", "a child-rule drift names no remedy: %s", line)

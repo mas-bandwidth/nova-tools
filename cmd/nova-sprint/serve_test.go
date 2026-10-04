@@ -232,7 +232,7 @@ func TestNothingAWorkerSendsDisplacesTheServersWords(t *testing.T) {
 	require.Equal(t, 0, res.Code, res.Stderr)
 	log := r.boss("nova-sprint log")
 	assert.Contains(t, log, "m1", "the moves are the worker's")
-	for _, line := range strings.Split(log, "\n") {
+	for line := range strings.SplitSeq(log, "\n") {
 		if strings.Contains(line, "took") || strings.Contains(line, "finished") {
 			assert.NotContains(t, line, "boss", "no worker's verb ran as the coordinator: %s", line)
 		}

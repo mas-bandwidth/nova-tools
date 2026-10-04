@@ -81,7 +81,7 @@ func fixtureSetupLines(usage string) []string {
 		return nil
 	}
 	var out []string
-	for _, line := range strings.Split(block, "\n") {
+	for line := range strings.SplitSeq(block, "\n") {
 		if !strings.HasPrefix(line, "  ") {
 			break
 		}
@@ -96,7 +96,7 @@ func fixtureSetupLines(usage string) []string {
 func exampleBlockLines(usage string) []string {
 	var out []string
 	inBlock := false
-	for _, line := range strings.Split(usage, "\n") {
+	for line := range strings.SplitSeq(usage, "\n") {
 		if line == "example:" {
 			inBlock = true
 			continue

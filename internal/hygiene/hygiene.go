@@ -185,7 +185,7 @@ func identityFindings(out string, ids []Identity) ([]Finding, error) {
 		allowed[id.Name+sep+id.Email] = true
 	}
 	var findings []Finding
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if line == "" {
 			continue
@@ -390,7 +390,7 @@ func checkAddedLines(ctx context.Context, repo, base, head string, shapes []keyS
 	}
 	var findings []Finding
 	file, lineNo := "", 0
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		line = strings.TrimRight(line, "\r")
 		switch {
 		case strings.HasPrefix(line, "+++ "):

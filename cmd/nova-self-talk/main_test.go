@@ -322,7 +322,7 @@ func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
 	noForgedLine := func(t *testing.T, stdout, stderr string) {
 		t.Helper()
 		for _, stream := range []string{stdout, stderr} {
-			for _, line := range strings.Split(stream, "\n") {
+			for line := range strings.SplitSeq(stream, "\n") {
 				assert.False(t, strings.HasPrefix(line, forged), "a caller's text forged a line: %q", line)
 			}
 		}

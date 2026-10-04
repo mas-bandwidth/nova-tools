@@ -134,7 +134,7 @@ func TestDiffVerbOrdersChangedToolsByName(t *testing.T) {
 		var out, errs bytes.Buffer
 		require.Zero(t, Run("nova-version", []string{"diff", "--from", before, "--to", after}, "test", &out, &errs, Environment{}), errs.String())
 		var names []string
-		for _, line := range strings.Split(out.String(), "\n") {
+		for line := range strings.SplitSeq(out.String(), "\n") {
 			if strings.HasPrefix(line, "DIFF CHANGED ") {
 				names = append(names, strings.Fields(line)[2])
 			}

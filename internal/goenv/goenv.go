@@ -125,7 +125,7 @@ func removes(name, value string) bool {
 // carriesJSONFlag reports whether a value holds a -json or --json flag, in any
 // of the spellings a flag list uses: on its own, or with a value attached.
 func carriesJSONFlag(value string) bool {
-	for _, field := range strings.Fields(value) {
+	for field := range strings.FieldsSeq(value) {
 		if !strings.HasPrefix(field, "-") {
 			continue
 		}

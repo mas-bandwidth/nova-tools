@@ -251,7 +251,7 @@ func TestRedisServerExemptionIsKeyedByLine(t *testing.T) {
 	for _, e := range redisServerExemptions {
 		body := readFile(t, filepath.Join(root, filepath.FromSlash(e.path)))
 		matched := false
-		for _, line := range strings.Split(body, "\n") {
+		for line := range strings.SplitSeq(body, "\n") {
 			if redisServerLineMatches(line) && strings.Contains(line, e.line) {
 				matched = true
 				break

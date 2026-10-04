@@ -47,7 +47,7 @@ func TestRevertOnRedRunsAToolBuiltFromDevNotFromTheRedTree(t *testing.T) {
 			assert.True(t, toolDir != "" && s.With["go-version-file"] == toolDir+"/go.mod", "step %d sets up Go from %q; want the tool checkout's go.mod, after that checkout", i, s.With["go-version-file"])
 			goSetup = true
 		}
-		for _, line := range strings.Split(s.Run, "\n") {
+		for line := range strings.SplitSeq(s.Run, "\n") {
 			l := strings.TrimSpace(line)
 			if !strings.Contains(l, "./tools/ci") {
 				continue

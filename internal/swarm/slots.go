@@ -145,7 +145,7 @@ func loadSlotShares(store string) (capacity, reserve int, shares map[string]int,
 func parseSlotLease(id string, raw []byte) (SlotLease, error) {
 	l := SlotLease{ID: id}
 	seen := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}

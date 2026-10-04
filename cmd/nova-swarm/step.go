@@ -184,7 +184,7 @@ func stepReads(dir, bin string) []string {
 		}
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, ".git", "objects", "info", "alternates")); err == nil {
-		for _, l := range strings.Split(string(b), "\n") {
+		for l := range strings.SplitSeq(string(b), "\n") {
 			if l = strings.TrimSpace(l); filepath.IsAbs(l) {
 				out = append(out, "--read-noexec", l)
 			}

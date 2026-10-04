@@ -55,7 +55,7 @@ func TestAGoScriptStepIsBuiltAndRunInItsOwnWall(t *testing.T) {
 	realWallBackend(t)
 	repo := stepRepo(t)
 	var prog strings.Builder
-	for _, l := range strings.Split(strings.TrimRight(goStep, "\n"), "\n") {
+	for l := range strings.SplitSeq(strings.TrimRight(goStep, "\n"), "\n") {
 		prog.WriteString("  " + l + "\n")
 	}
 	want := sha256.Sum256([]byte("FOO AND FOO\n"))

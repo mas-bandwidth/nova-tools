@@ -100,7 +100,7 @@ func buildTagsInTestFiles(t *testing.T) map[string][]string {
 		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("node_modules") {
 			continue
 		}
-		for _, line := range strings.Split(string(f.Src), "\n") {
+		for line := range strings.SplitSeq(string(f.Src), "\n") {
 			line = strings.TrimSpace(line)
 			// A build constraint may only appear before the package clause.
 			if strings.HasPrefix(line, "package ") {
@@ -122,7 +122,7 @@ func buildTagsInTestFiles(t *testing.T) map[string][]string {
 func optInTags(expr string) []string {
 	expr = strings.NewReplacer("&&", " ", "||", " ", "(", " ", ")", " ").Replace(expr)
 	var out []string
-	for _, word := range strings.Fields(expr) {
+	for word := range strings.FieldsSeq(expr) {
 		if strings.HasPrefix(word, "!") {
 			// `!windows` is on everywhere else: the file is not hidden.
 			continue
@@ -163,7 +163,7 @@ func tagsNamedBySchedules(t *testing.T, root string) map[string][]string {
 		for _, line := range lines {
 			if strings.Contains(line, "go test") || strings.Contains(line, "go vet") {
 				for _, m := range literal.FindAllStringSubmatch(line, -1) {
-					for _, tag := range strings.Split(m[1], ",") {
+					for tag := range strings.SplitSeq(m[1], ",") {
 						named[tag] = appendOnce(named[tag], e.Name())
 					}
 				}
@@ -177,7 +177,7 @@ func tagsNamedBySchedules(t *testing.T, root string) map[string][]string {
 						continue
 					}
 					for _, m := range literal.FindAllStringSubmatch(recipe, -1) {
-						for _, tag := range strings.Split(m[1], ",") {
+						for tag := range strings.SplitSeq(m[1], ",") {
 							named[tag] = appendOnce(named[tag], e.Name())
 						}
 					}
@@ -192,7 +192,7 @@ func tagsNamedBySchedules(t *testing.T, root string) map[string][]string {
 // dropped, so prose ABOUT a tag never stands in for a job that runs it.
 func noComments(text string) []string {
 	var out []string
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
@@ -309,7 +309,7 @@ func vetTagsByCIVetSteps(t *testing.T, root string) map[string][]string {
 	for _, name := range names {
 		for _, recipe := range mk.recipeFor(name) {
 			for _, m := range vetTagRe.FindAllStringSubmatch(recipe, -1) {
-				for _, tag := range strings.Split(m[1], ",") {
+				for tag := range strings.SplitSeq(m[1], ",") {
 					tags[tag] = appendOnce(tags[tag], "Makefile "+name)
 				}
 			}
@@ -328,7 +328,7 @@ func vetTagsByCIVetSteps(t *testing.T, root string) map[string][]string {
 				continue
 			}
 			for _, m := range vetTagRe.FindAllStringSubmatch(line, -1) {
-				for _, tag := range strings.Split(m[1], ",") {
+				for tag := range strings.SplitSeq(m[1], ",") {
 					tags[tag] = appendOnce(tags[tag], e.Name())
 				}
 			}

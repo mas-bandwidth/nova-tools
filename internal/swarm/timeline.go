@@ -193,7 +193,7 @@ func cutWord(s string) (word, rest string, ok bool) {
 
 // metaValue reads one `key=value` token whose value holds no spaces.
 func metaValue(s, key string) string {
-	for _, tok := range strings.Fields(s) {
+	for tok := range strings.FieldsSeq(s) {
 		if v, found := strings.CutPrefix(tok, key+"="); found {
 			return v
 		}

@@ -229,7 +229,7 @@ func runFirstRunShapes(t *testing.T, doc string, lines []string, dir, busPath st
 			require.NoError(t, os.WriteFile(filepath.Join(dir, redirect), []byte(finish(r.stdout)), 0o644))
 		}
 		printed = map[string]bool{}
-		for _, out := range strings.Split(r.stdout+"\n"+r.stderr, "\n") {
+		for out := range strings.SplitSeq(r.stdout+"\n"+r.stderr, "\n") {
 			if shape := onboarding.Shape(out); shape != "" {
 				printed[shape] = true
 				got = append(got, out)

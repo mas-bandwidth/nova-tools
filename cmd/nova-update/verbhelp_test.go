@@ -60,7 +60,7 @@ func TestStatusAndApplyHelpShowAnExampleThatRuns(t *testing.T) {
 			require.Equal(t, 0, c, "%s -h exited %d: %s", tc.verb, c, errs.String())
 		}
 		var example string
-		for _, l := range strings.Split(out.String(), "\n") {
+		for l := range strings.SplitSeq(out.String(), "\n") {
 			l = strings.TrimSpace(l)
 			if strings.HasPrefix(l, "nova-update "+tc.verb+" --file versions.tsv") {
 				example = l

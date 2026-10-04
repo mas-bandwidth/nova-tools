@@ -32,7 +32,7 @@ func checkCounts(t *testing.T, stderr string) (findings, fail, classSum int) {
 	require.Equalf(t, 1, len(m), "want exactly one BUS CHECK line on stderr, got %d:\n%s", len(m), stderr)
 	findings, _ = strconv.Atoi(m[0][1])
 	fail, _ = strconv.Atoi(m[0][2])
-	for _, kv := range strings.Fields(m[0][4]) {
+	for kv := range strings.FieldsSeq(m[0][4]) {
 		_, v, _ := strings.Cut(kv, "=")
 		n, _ := strconv.Atoi(v)
 		classSum += n

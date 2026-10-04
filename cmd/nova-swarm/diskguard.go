@@ -154,7 +154,7 @@ func (g *guard) processes() ([]string, bool) {
 // naming is the first process line with a word that is one of paths or lies under it.
 func naming(list []string, paths ...string) string {
 	for _, line := range list {
-		for _, w := range strings.Fields(line) {
+		for w := range strings.FieldsSeq(line) {
 			if _, v, ok := strings.Cut(w, "="); ok && strings.HasPrefix(w, "-") {
 				w = v // --root=<dir>
 			}
@@ -547,7 +547,7 @@ func readHead(git string) (string, error) {
 		}
 	}
 	if b, err := os.ReadFile(filepath.Join(git, "packed-refs")); err == nil {
-		for _, line := range strings.Split(string(b), "\n") {
+		for line := range strings.SplitSeq(string(b), "\n") {
 			if sha, name, ok := strings.Cut(strings.TrimSpace(line), " "); ok && name == ref && typedrec.IsFullSha(sha) {
 				return sha, nil
 			}
@@ -939,7 +939,7 @@ func lsofPaths(b []byte, self int) []string {
 	var out []string
 	seen := map[string]bool{}
 	mine := false
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		switch {
 		case strings.HasPrefix(line, "p"):
 			n, err := strconv.Atoi(line[1:])
@@ -985,7 +985,7 @@ func procPaths(proc string, self int) ([]string, error) {
 // psLines is ps's "pid args" output as argument lines, the line of pid self left out.
 func psLines(b []byte, self int) []string {
 	var out []string
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		pid, args, _ := strings.Cut(strings.TrimSpace(line), " ")
 		if n, err := strconv.Atoi(pid); err != nil || n == self {
 			continue

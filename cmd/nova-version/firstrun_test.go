@@ -43,7 +43,7 @@ func TestExecutableFirstRun(t *testing.T) {
 			wanted = append(wanted, s)
 		}
 	}
-	for _, line := range strings.Split(out.String(), "\n") {
+	for line := range strings.SplitSeq(out.String(), "\n") {
 		if s := firstRunShape(line); s != "" {
 			actual = append(actual, s)
 		}

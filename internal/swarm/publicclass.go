@@ -86,7 +86,7 @@ func loadPublicAllowlist(root string) (map[string]bool, bool) {
 		return nil, false
 	}
 	out := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

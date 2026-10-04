@@ -27,7 +27,7 @@ func TestTheViewSetUsageLinesNameEveryFlag(t *testing.T) {
 		text, err := os.ReadFile(doc)
 		require.NoError(t, err)
 		found := 0
-		for _, line := range strings.Split(string(text), "\n") {
+		for line := range strings.SplitSeq(string(text), "\n") {
 			if !strings.Contains(line, "nova-table view set ") && !strings.Contains(line, "`view set <name>") {
 				continue
 			}

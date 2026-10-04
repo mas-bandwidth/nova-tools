@@ -391,7 +391,7 @@ func TestHygieneKeyShapesMatchTheHarvestBackstop(t *testing.T) {
 func shapeDataRows(t *testing.T, data string) []string {
 	t.Helper()
 	var out []string
-	for _, line := range strings.Split(data, "\n") {
+	for line := range strings.SplitSeq(data, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
@@ -660,7 +660,7 @@ func TestKindDeclaredHoldsTheEmbeddedNameSet(t *testing.T) {
 	raw, err := os.ReadFile("kinds.txt")
 	require.NoError(t, err)
 	var want []string
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		line = strings.TrimRight(line, "\r")
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue

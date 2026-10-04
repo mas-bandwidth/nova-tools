@@ -59,7 +59,7 @@ func wantNotContains(t *testing.T, got, want string) {
 
 // lineWith returns the first line of s holding every one of the substrings.
 func lineWith(s string, subs ...string) string {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		ok := true
 		for _, sub := range subs {
 			if !strings.Contains(line, sub) {

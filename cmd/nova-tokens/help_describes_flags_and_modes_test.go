@@ -19,7 +19,7 @@ func TestEveryVerbFlagHasADescription(t *testing.T) {
 			wantExit(t, r, 0)
 			inFlags := false
 			count := 0
-			for _, line := range strings.Split(r.stdout, "\n") {
+			for line := range strings.SplitSeq(r.stdout, "\n") {
 				if line == "flags:" {
 					inFlags = true
 					continue

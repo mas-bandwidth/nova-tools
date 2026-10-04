@@ -75,7 +75,7 @@ func TestEveryBareVerbRefusalNamesItsDoor(t *testing.T) {
 func requireDoorOnEveryRefusal(t *testing.T, label, stderr string) {
 	t.Helper()
 	lines := 0
-	for _, line := range strings.Split(strings.TrimSuffix(stderr, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(stderr, "\n"), "\n") {
 		if line == "" {
 			continue
 		}

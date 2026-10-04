@@ -118,7 +118,7 @@ func TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255(t *testing.T) {
 	require.NotContains(t, combined, "NATIVE OK", "a harness that exited 255 after writing RESULT.md must not say OK:\nstdout:\n%s\nstderr:\n%s\nexit %d", stdout, stderr, code)
 	require.NotContains(t, combined, "NATIVE REFUSED", "a harness that exited 255 after writing RESULT.md must not say REFUSED:\nstdout:\n%s\nstderr:\n%s\nexit %d", stdout, stderr, code)
 	var incomplete []string
-	for _, line := range strings.Split(combined, "\n") {
+	for line := range strings.SplitSeq(combined, "\n") {
 		if strings.HasPrefix(line, "NATIVE INCOMPLETE ") {
 			incomplete = append(incomplete, line)
 		}
@@ -126,7 +126,7 @@ func TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255(t *testing.T) {
 	require.Len(t, incomplete, 1, "want exactly one NATIVE INCOMPLETE line, got %d:\nstdout:\n%s\nstderr:\n%s\nexit %d", len(incomplete), stdout, stderr, code)
 	line := incomplete[0]
 	hasRC, hasWhy := false, false
-	for _, f := range strings.Fields(line) {
+	for f := range strings.FieldsSeq(line) {
 		if f == "rc=255" {
 			hasRC = true
 		}

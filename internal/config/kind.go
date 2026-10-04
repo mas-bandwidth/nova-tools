@@ -846,7 +846,7 @@ func (f Field) Canonical(raw string) (string, error) {
 		return c, nil
 	case TypeSeq:
 		var words []string
-		for _, w := range strings.Split(raw, ",") {
+		for w := range strings.SplitSeq(raw, ",") {
 			if w = strings.TrimSpace(w); w == "" && raw != "" || w != "" && !NamePattern.MatchString(w) {
 				return "", fmt.Errorf("--%s %q: want a comma list of %s names in order", f.Name, raw, f.Ref)
 			} else if w != "" {

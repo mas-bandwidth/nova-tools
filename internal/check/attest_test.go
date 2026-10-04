@@ -302,7 +302,7 @@ func TestRecordLayerCheckCountMatchesSPEC(t *testing.T) {
 	// which is also the verb the binary dispatches ("### links -- ...").
 	inTool := false
 	specNames := map[string]bool{}
-	for _, line := range strings.Split(string(spec), "\n") {
+	for line := range strings.SplitSeq(string(spec), "\n") {
 		switch {
 		case strings.HasPrefix(line, "## nova-check"):
 			inTool = true

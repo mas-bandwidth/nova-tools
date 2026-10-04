@@ -104,7 +104,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, view func(*sprin
 func event(name string, body []byte) []byte {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "event: %s\n", name)
-	for _, line := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+	for line := range bytes.SplitSeq(bytes.TrimSpace(body), []byte("\n")) {
 		b.WriteString("data: ")
 		b.Write(line)
 		b.WriteString("\n")

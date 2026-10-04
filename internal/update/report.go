@@ -201,7 +201,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 		r := captureRun(child, args, p.Artifact, ChildCap)
 		cancel()
 		line := ""
-		for _, l := range strings.Split(r.Stdout, "\n") {
+		for l := range strings.SplitSeq(r.Stdout, "\n") {
 			if confirmed(l, p.ID) {
 				line = l
 				break

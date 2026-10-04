@@ -20,7 +20,7 @@ var placeholderRE = regexp.MustCompile(`<[^<>\n]+>`)
 // line and nova-sprint add says so on its own.
 func UnfilledTemplateLines(card string) []CardHeaderFinding {
 	unfilled := map[string]bool{}
-	for _, l := range strings.Split(templateCard, "\n") {
+	for l := range strings.SplitSeq(templateCard, "\n") {
 		if placeholderRE.MatchString(l) {
 			unfilled[strings.TrimSpace(l)] = true
 		}

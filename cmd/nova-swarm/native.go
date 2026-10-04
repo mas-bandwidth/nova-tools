@@ -1698,7 +1698,7 @@ func harnessSpoke(path string) bool {
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "SANDBOX ") {
 			continue
 		}
@@ -2073,13 +2073,13 @@ func keepNativeSecretName(name string) bool {
 // cannot trust to name its own containment, and the reason is returned (SPEC-SANDBOX rules
 // 1 and 11: never silently degraded, and a wall that cannot say what it is is no wall).
 func wallNamed(out string) (backend, cwd, reason string) {
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if !strings.HasPrefix(line, "SANDBOX OK ") {
 			continue
 		}
 		receipt := false
 		readable := ""
-		for _, tok := range strings.Fields(line) {
+		for tok := range strings.FieldsSeq(line) {
 			switch {
 			case strings.HasPrefix(tok, "backend="):
 				backend = strings.TrimPrefix(tok, "backend=")
@@ -2548,7 +2548,7 @@ func readGate(git, checkout, start string) (*cardcontract.Gate, error) {
 		return nil, fmt.Errorf("the read's gate: the files the work changed could not be read: %w", err)
 	}
 	var changed []string
-	for _, f := range strings.Split(out, "\x00") {
+	for f := range strings.SplitSeq(out, "\x00") {
 		if f != "" {
 			changed = append(changed, f)
 		}

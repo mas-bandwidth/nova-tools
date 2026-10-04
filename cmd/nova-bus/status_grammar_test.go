@@ -327,7 +327,7 @@ func grammarWaitBus(t *testing.T) string {
 }
 
 func statusWord(stream, token string) string {
-	for _, line := range strings.Split(stream, "\n") {
+	for line := range strings.SplitSeq(stream, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue

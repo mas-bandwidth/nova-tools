@@ -52,7 +52,7 @@ func loopDeals(out string) [][]string {
 		}
 		cur = nil
 	}
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.HasSuffix(l, " tick") {
 			flush()
 			continue
@@ -181,7 +181,7 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 	}
 
 	// the loop's twin never disagreed with the store's own counts
-	for _, l := range strings.Split(out.String(), "\n") {
+	for l := range strings.SplitSeq(out.String(), "\n") {
 		if strings.HasPrefix(l, "TIMES ") {
 			assert.Contains(t, l, " mismatch=0:", "the loop's twin did not add up to the store's counts: %s", l)
 		}

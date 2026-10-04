@@ -208,7 +208,7 @@ func (s *fakeSSH) verify(machine, dir string) (string, error) {
 
 func sumFileNames(body string) []string {
 	var names []string
-	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(body), "\n") {
 		if _, name, ok := strings.Cut(line, "  "); ok && name != "" {
 			names = append(names, name)
 		}
@@ -558,7 +558,7 @@ func TestBuildStampsEveryToolAndWritesOneChecksumFile(t *testing.T) {
 	if strings.Contains(string(sums), "SHA256SUMS") {
 		require.NotContains(t, string(sums), "SHA256SUMS", "SHA256SUMS lists itself:\n%s", sums)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(sums)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(sums)), "\n") {
 		want, name, ok := strings.Cut(line, "  ")
 		if !ok {
 			require.True(t, ok, "not a sha256sum line: %q", line)
@@ -960,7 +960,7 @@ func TestAdoptRefusesOneMachineAndStillReportsTheRest(t *testing.T) {
 		require.Contains(t, o.String(), "RELEASE ADOPTED machine=hulk", "the machine that worked has no receipt:\n%s", o.String())
 	}
 	line := ""
-	for _, l := range strings.Split(e.String(), "\n") {
+	for l := range strings.SplitSeq(e.String(), "\n") {
 		if strings.HasPrefix(l, "RELEASE REFUSED machine=vision") {
 			line = l
 		}
@@ -1098,7 +1098,7 @@ func TestProgressGoesToStderrAndReceiptsToStdout(t *testing.T) {
 	if !strings.Contains(e.String(), "release: ") {
 		require.Contains(t, e.String(), "release: ", "no progress on stderr: %q", e.String())
 	}
-	for _, line := range strings.Split(strings.TrimSpace(o.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(o.String()), "\n") {
 		if line != "" && !strings.HasPrefix(line, "RELEASE ") {
 			require.FailNowf(t, "assertion failed", "stdout carries something that is not a receipt: %q", line)
 		}

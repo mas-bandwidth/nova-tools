@@ -345,7 +345,7 @@ func TestTheWindowsSumsFileNamesOnlyExeFiles(t *testing.T) {
 		require.NoError(t, err, err)
 	}
 	var names []string
-	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(body)), "\n") {
 		sum, name, ok := strings.Cut(line, "  ")
 		if !ok {
 			require.True(t, ok, "%s is not a sha256sum line: %q", SumsFile, line)

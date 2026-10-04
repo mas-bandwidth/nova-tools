@@ -73,7 +73,7 @@ func fromLines(t *testing.T, token, text string) parsed {
 			p.Notes = append(p.Notes, rest)
 		default:
 			var kv []string
-			for _, f := range strings.Fields(rest) {
+			for f := range strings.FieldsSeq(rest) {
 				k, v, _ := strings.Cut(f, "=")
 				if v == "-" {
 					v = ""

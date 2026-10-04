@@ -446,7 +446,7 @@ func needsPreview(needs []sprint.NeedState) string {
 // control characters other than a line break or a tab are shown escaped, so
 // no text given can move the terminal.
 func paragraph(w io.Writer, text string) {
-	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
 		var b strings.Builder
 		for _, r := range line {
 			switch {

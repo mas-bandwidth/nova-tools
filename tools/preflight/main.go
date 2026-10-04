@@ -234,7 +234,7 @@ func run(args []string, e env) int {
 	// always has; the vet step that follows fails on the same tree.
 	step(command{name: gofmtCmd, args: []string{"-l", "."}, out: &listed, err: io.Discard})
 	var unformatted []string
-	for _, l := range strings.Split(listed.String(), "\n") {
+	for l := range strings.SplitSeq(listed.String(), "\n") {
 		if l != "" {
 			unformatted = append(unformatted, l)
 		}

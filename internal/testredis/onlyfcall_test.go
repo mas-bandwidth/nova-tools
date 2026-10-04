@@ -290,7 +290,7 @@ func TestOnlyFCALLFailsEveryCommandOfTheList(t *testing.T) {
 	for _, g := range writeGroups {
 		for _, name := range g.commands {
 			words := []any{}
-			for _, w := range strings.Fields(name) {
+			for w := range strings.FieldsSeq(name) {
 				words = append(words, w)
 			}
 			words = append(words, "k", "v")

@@ -56,12 +56,12 @@ func TestAnUnknownVerbIsNamedWithTheVerbs(t *testing.T) {
 func TestEveryNamedVerbExists(t *testing.T) {
 	t.Parallel()
 
-	for _, verb := range strings.Split(verbs, ", ") {
+	for verb := range strings.SplitSeq(verbs, ", ") {
 		code, _, stderr := runCI(t, append(strings.Fields(verb), "-h"), "")
 		assert.Equal(t, 0, code, "%s -h: stderr %q", verb, stderr)
 	}
 	_, stdout, _ := runCI(t, []string{"help"}, "")
-	for _, line := range strings.Split(stdout, "\n") {
+	for line := range strings.SplitSeq(stdout, "\n") {
 		if f := strings.Fields(line); len(f) > 1 && f[0] == "nova-ci" {
 			assert.Contains(t, verbs, f[1], "the banner's line %q names a verb the dispatch does not list", line)
 		}

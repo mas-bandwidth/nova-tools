@@ -429,7 +429,7 @@ func hasReason(bad []Refusal, reason string) bool {
 // not the chain header, the braces or a comment.
 func ruleLines(text string) []string {
 	var out []string
-	for _, l := range strings.Split(text, "\n") {
+	for l := range strings.SplitSeq(text, "\n") {
 		t := strings.TrimSpace(l)
 		if t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "table ") ||
 			strings.HasPrefix(t, "chain ") || strings.HasPrefix(t, "type filter hook") || t == "}" {

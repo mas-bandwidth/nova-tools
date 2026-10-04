@@ -213,7 +213,7 @@ func checkSourceFloors(path, text string, failures *[]Failure) {
 			rest = rest[:i]
 		}
 		var items []string
-		for _, part := range strings.Split(rest, ";") {
+		for part := range strings.SplitSeq(rest, ";") {
 			part = strings.TrimPrefix(normWords(part), "and ")
 			if part != "" {
 				items = append(items, part)

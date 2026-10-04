@@ -251,7 +251,7 @@ func fromDefaults(busDir, key string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

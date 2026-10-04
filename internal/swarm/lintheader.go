@@ -354,7 +354,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		// nor a refusal.
 		var globs []string
 		empty := false
-		for _, g := range strings.Split(paths.value, ",") {
+		for g := range strings.SplitSeq(paths.value, ",") {
 			g = strings.TrimSpace(g)
 			if g == "" {
 				empty = true
@@ -461,7 +461,7 @@ func ReadTrustFixture(path string) (TrustState, error) {
 			continue
 		}
 		var kind, state string
-		for _, fld := range strings.Fields(rest) {
+		for fld := range strings.FieldsSeq(rest) {
 			k, v, ok := strings.Cut(fld, "=")
 			if !ok {
 				continue

@@ -52,7 +52,7 @@ func TestTheCLIReferenceNamesEveryDogfoodGateFlag(t *testing.T) {
 	reference, err := os.ReadFile("../../docs/CLI.md")
 	require.NoError(t, err, "docs/CLI.md: %v; it is the command reference a person reads to find a verb's flags", err)
 	usage, found := "", 0
-	for _, line := range strings.Split(string(reference), "\n") {
+	for line := range strings.SplitSeq(string(reference), "\n") {
 		if strings.HasPrefix(line, "nova-check dogfood gate ") {
 			usage = line
 			found++

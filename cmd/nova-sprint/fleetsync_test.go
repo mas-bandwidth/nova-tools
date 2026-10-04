@@ -177,7 +177,7 @@ func TestFleetSyncSetsAChangedWidthAndNothingElse(t *testing.T) {
 	out := ta.ok("fleet sync")
 	// the MOVED lines alone: the OK line's op id is random and can hold the letters m2
 	var moved []string
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(l, "MOVED ") {
 			moved = append(moved, l)
 		}

@@ -299,8 +299,8 @@ func readLooseCommitTree(gitDir, commitSHA string) (map[string]string, error) {
 	}
 
 	var treeSHA string
-	lines := strings.Split(string(data), "\n")
-	for _, l := range lines {
+	lines := strings.SplitSeq(string(data), "\n")
+	for l := range lines {
 		if after, ok := strings.CutPrefix(l, "tree "); ok {
 			treeSHA = strings.TrimSpace(after)
 			break

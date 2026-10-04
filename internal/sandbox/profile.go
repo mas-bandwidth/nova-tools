@@ -142,7 +142,7 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	}
 	var out strings.Builder
 	seen := map[string]bool{}
-	for _, line := range strings.Split(profiles.DarwinTemplate, "\n") {
+	for line := range strings.SplitSeq(profiles.DarwinTemplate, "\n") {
 		if body, ok := filled[strings.TrimSpace(line)]; ok && strings.TrimSpace(line) == line {
 			seen[strings.TrimSpace(line)] = true
 			if body != "" {
@@ -161,7 +161,7 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	}
 	// A marker is a LINE, never a substring: the template's own header documents each
 	// marker by name, and those lines are comments that stay in the filled profile.
-	for _, line := range strings.Split(out.String(), "\n") {
+	for line := range strings.SplitSeq(out.String(), "\n") {
 		if strings.HasPrefix(line, ";;") {
 			continue
 		}

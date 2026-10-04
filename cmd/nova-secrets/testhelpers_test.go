@@ -57,7 +57,7 @@ func genKey(t *testing.T, dir, name string) keyPair {
 	require.NoError(t, os.Chmod(privPath, 0600))
 	data, err := os.ReadFile(privPath)
 	require.NoError(t, err)
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		if after, ok := strings.CutPrefix(line, "# public key: "); ok {
 			return keyPair{
 				privPath: privPath,

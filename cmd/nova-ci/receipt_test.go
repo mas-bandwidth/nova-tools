@@ -96,7 +96,7 @@ func TestReceiptHelpDescribesEveryFlag(t *testing.T) {
 	assert.Contains(t, out.String(), "nova-ci github receipt --from-runner --redis <addr>")
 	_, flags, found := strings.Cut(out.String(), "\nflags:\n")
 	require.True(t, found, "receipt -h lists no flags:\n%s", out.String())
-	for _, line := range strings.Split(flags, "\n") {
+	for line := range strings.SplitSeq(flags, "\n") {
 		if strings.HasPrefix(line, "  --") {
 			assert.Regexp(t, `^  --[a-z-]+( <[a-z]+>)?  \S`, line, "flag line %q has no description", line)
 		}

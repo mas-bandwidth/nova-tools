@@ -24,7 +24,7 @@ func classRules(spec string) ([]string, error) {
 	active, found := false, false
 	var fence byte
 	width := 0
-	for _, line := range strings.Split(spec, "\n") {
+	for line := range strings.SplitSeq(spec, "\n") {
 		trimmed := strings.TrimLeft(line, " ")
 		if len(line)-len(trimmed) <= 3 && (strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")) {
 			n := 0

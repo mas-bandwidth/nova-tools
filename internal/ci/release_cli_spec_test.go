@@ -32,7 +32,7 @@ func TestTheCommandReferenceDeclaresEveryReleaseVerb(t *testing.T) {
 	for _, v := range declared {
 		have[v.Key()] = true
 	}
-	for _, line := range strings.Split(release.Verbs, "\n") {
+	for line := range strings.SplitSeq(release.Verbs, "\n") {
 		fields := strings.Fields(line)
 		require.GreaterOrEqualf(t, len(fields), 3, "a usage line is not `nova-update release <verb> ...`: %q", line)
 		key := fields[0] + " " + fields[1] + " " + fields[2]

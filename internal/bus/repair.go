@@ -531,7 +531,7 @@ func blockingPaths(dir, ref string, dirty []string) ([]string, error) {
 		return nil, err
 	}
 	changed := map[string]bool{}
-	for _, p := range strings.Split(out, "\x00") {
+	for p := range strings.SplitSeq(out, "\x00") {
 		if p != "" {
 			changed[p] = true
 		}
@@ -755,7 +755,7 @@ func readProcView(pid string, r procReader) procView {
 // "Uid:\t<real>\t<effective>\t<saved>\t<fs>". ok is false when there is no such line or
 // it has fewer than two fields.
 func statusEffectiveUID(status []byte) (uint32, bool) {
-	for _, line := range strings.Split(string(status), "\n") {
+	for line := range strings.SplitSeq(string(status), "\n") {
 		if !strings.HasPrefix(line, "Uid:") {
 			continue
 		}

@@ -95,7 +95,7 @@ func TestWaitOnNoteEmptyTickPrintsNothingAndDoesNotReturn(t *testing.T) {
 		after := afterOf(t, r.stdout)
 		require.Falsef(t, after < timeout, "wait --on-note returned after %s, before its %s deadline, on a note that only copies the waiter:\n%s", after, timeout, r.stdout)
 	}
-	for _, line := range strings.Split(strings.TrimRight(r.stdout, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(r.stdout, "\n"), "\n") {
 		require.Falsef(t, !strings.HasPrefix(line, "WAIT as=") && !strings.HasPrefix(line, "WAIT TIMEOUT ") && !strings.HasPrefix(line, "WAIT DONE "), "an empty --on-note tick printed %q; it prints nothing:\n%s", line, r.stdout)
 	}
 }

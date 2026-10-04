@@ -216,7 +216,7 @@ func addReceiptRecord(t *testing.T, checkout, target string) {
 
 func bodyNext(t *testing.T, stdout string) string {
 	t.Helper()
-	for _, field := range strings.Fields(stdout) {
+	for field := range strings.FieldsSeq(stdout) {
 		if token, ok := strings.CutPrefix(field, "next="); ok && token != "-" {
 			return token
 		}

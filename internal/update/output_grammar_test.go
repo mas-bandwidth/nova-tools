@@ -233,7 +233,7 @@ func TestUpdateVerbsTakeJSONAndLeadWithTheirStatus(t *testing.T) {
 func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 	t.Parallel()
 	linesOf := func(s, prefix string) (lines []string) {
-		for _, l := range strings.Split(s, "\n") {
+		for l := range strings.SplitSeq(s, "\n") {
 			if strings.HasPrefix(l, prefix) {
 				lines = append(lines, l)
 			}

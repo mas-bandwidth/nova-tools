@@ -365,12 +365,12 @@ func TestNightlySpaceLegIsTheOnlyEnforcingLeg(t *testing.T) {
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	test := jobBody(src, "test")
 	require.NotEmpty(t, test, "no test job in ci.yml")
-	for _, line := range strings.Split(test, "\n") {
+	for line := range strings.SplitSeq(test, "\n") {
 		assert.Falsef(t, strings.HasPrefix(strings.TrimSpace(line), "if:") && strings.Contains(line, "!= 'schedule'"), "the test job's if excludes schedule (%s); the nightly space legs are where the budgets are enforced", strings.TrimSpace(line))
 	}
 	assert.Contains(t, test, "NIGHTLY_ENFORCE: ${{ github.event_name == 'schedule' && matrix.entry.group == 'space' && '1' || '0' }}", "the test step's NIGHTLY_ENFORCE is not 1 exactly on a schedule run's space legs")
 	var code []string
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
 			code = append(code, line)
 		}

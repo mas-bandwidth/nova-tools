@@ -540,7 +540,7 @@ func ensurePointer(store, session, id string, stamp time.Time) error {
 		return noRecord(store, session, "")
 	}
 	want := pointerLine(id, stamp)
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if strings.HasPrefix(line, "ENTRY "+id+" ") || line == want {
 			return nil
 		}

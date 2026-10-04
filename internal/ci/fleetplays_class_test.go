@@ -186,7 +186,7 @@ func fleetPlayProblems(src fleetSource, groups map[string]bool) []string {
 // variable is not a read of it.
 func uncommented(b []byte) string {
 	var keep []string
-	for _, l := range strings.Split(string(b), "\n") {
+	for l := range strings.SplitSeq(string(b), "\n") {
 		if !strings.HasPrefix(strings.TrimSpace(l), "#") {
 			keep = append(keep, l)
 		}
@@ -323,7 +323,7 @@ func TestFleetPlaysReadOnlyTheInventory(t *testing.T) {
 	retired, err := os.ReadFile(filepath.Join(root, "fleet", "retired-tools.txt"))
 	require.NoError(t, err)
 	n := 0
-	for _, l := range strings.Split(string(retired), "\n") {
+	for l := range strings.SplitSeq(string(retired), "\n") {
 		if l = strings.TrimSpace(l); l == "" || strings.HasPrefix(l, "#") {
 			continue
 		}

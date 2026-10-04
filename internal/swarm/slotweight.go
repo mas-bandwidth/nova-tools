@@ -51,7 +51,7 @@ func CardKindFromText(text string) string {
 	if k := cardFields(text)["kind"]; k != "" {
 		return k
 	}
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		fields := strings.Fields(line)
 		for i := 0; i+1 < len(fields); i++ {
 			if fields[i] == ":kind" {
@@ -75,7 +75,7 @@ var cardHeaders = []string{"kind", "files", "packages", "lanes", "lane", "platfo
 // cardFields reads the stated evidence lines, first occurrence winning.
 func cardFields(text string) map[string]string {
 	out := map[string]string{}
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		name, value, ok := strings.Cut(strings.TrimSpace(line), ":")
 		if !ok {
 			continue

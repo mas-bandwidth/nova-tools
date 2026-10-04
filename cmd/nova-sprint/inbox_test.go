@@ -303,7 +303,7 @@ func TestInboxPrintsTheReaderFindingInFullUnderTheJudgment(t *testing.T) {
 	out := ta.ok("inbox")
 	// the judgment line names the type and the card, not the finding
 	var judgment string
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(l, "JUDGMENT ") {
 			judgment = l
 			break
@@ -341,7 +341,7 @@ func TestInboxNamesASingleCardJudgmentByItsCard(t *testing.T) {
 // review: a card taken off a stopped stream is back in review, and that
 // judgment asks the coordinator to decide it again.
 func openBesidesReturned(out string) bool {
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(l, "JUDGMENT") && !strings.Contains(l, sprint.NReturned) {
 			return true
 		}

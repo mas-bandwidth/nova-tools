@@ -226,7 +226,7 @@ func ParseWorkload(source string, raw []byte) (Workload, error) {
 				return Workload{}, fmt.Errorf("%s line %d: wall is yes or no, got %q", source, n+1, value)
 			}
 		case "reads":
-			for _, part := range strings.Split(value, ",") {
+			for part := range strings.SplitSeq(value, ",") {
 				if t := strings.TrimSpace(part); t != "" {
 					w.Reads = append(w.Reads, t)
 				}
@@ -767,7 +767,7 @@ func validPlatform(s string) bool {
 // messages, and error text are rejected the same way. If no line matches a recognized
 // shape naming buildTool, it returns "".
 func BuildVersion(out string) string {
-	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -959,7 +959,7 @@ func certifyScript(in CertifyInput, w Workload) string {
 
 // matchedLine is the first line of the output the expect matches, whole.
 func matchedLine(re *regexp.Regexp, out string) (string, bool) {
-	for _, raw := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+	for raw := range strings.SplitSeq(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		line := strings.TrimSpace(strings.TrimRight(raw, "\r"))
 		if line != "" && re.MatchString(line) {
 			return line, true
@@ -971,7 +971,7 @@ func matchedLine(re *regexp.Regexp, out string) (string, bool) {
 // firstAnswerLine is the one line of a machine's answer that a person needs: the first
 // non-empty one, which is what the tool that failed said about itself.
 func firstAnswerLine(out string) string {
-	for _, raw := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+	for raw := range strings.SplitSeq(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		if line := strings.TrimSpace(raw); line != "" {
 			return line
 		}

@@ -48,7 +48,7 @@ func TestTheViewShowsAStreamWithNoCards(t *testing.T) {
 		return ntable.RenderTables("", tables, ntable.RenderOpts{})
 	}
 	has := func(text, table string) bool {
-		for _, line := range strings.Split(text, "\n") {
+		for line := range strings.SplitSeq(text, "\n") {
 			if strings.HasPrefix(line, table+" ") || line == table {
 				return true
 			}

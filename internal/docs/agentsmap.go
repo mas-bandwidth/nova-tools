@@ -225,7 +225,7 @@ func embedStandard(standard string) string {
 	var b strings.Builder
 	b.WriteString("The standard below is [" + StandardDoc + "](" + StandardDoc + "), embedded whole; every PR meets it.\n\n")
 	inFence := false
-	for _, line := range strings.Split(strings.TrimRight(standard, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(standard, "\n"), "\n") {
 		if strings.HasPrefix(line, "```") {
 			inFence = !inFence
 		}

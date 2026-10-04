@@ -107,7 +107,7 @@ func (ta *testApp) whereRun(watch bool) whereRun {
 // tableOf is the table of the frame titled name: its lines up to the next
 // blank line, or "" when the frame shows none.
 func tableOf(frame, name string) string {
-	for _, block := range strings.Split(frame, "\n\n") {
+	for block := range strings.SplitSeq(frame, "\n\n") {
 		if strings.HasPrefix(block, name+" ") {
 			return block
 		}

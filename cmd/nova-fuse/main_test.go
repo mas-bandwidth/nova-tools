@@ -824,7 +824,7 @@ func writeBox(t *testing.T, path string, b fuse.Box) {
 // a SECOND line wearing the grammar, so counting lines is the assertion, not substrings.
 func countLinesWithPrefix(s, prefix string) int {
 	n := 0
-	for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(s, "\n"), "\n") {
 		if strings.HasPrefix(line, prefix) {
 			n++
 		}
@@ -837,7 +837,7 @@ func countLinesWithPrefix(s, prefix string) int {
 func noForgedOKLine(t *testing.T, prefix, stdout, stderr string) {
 	t.Helper()
 	for name, stream := range map[string]string{"stdout": stdout, "stderr": stderr} {
-		for _, line := range strings.Split(stream, "\n") {
+		for line := range strings.SplitSeq(stream, "\n") {
 			assert.False(t, strings.HasPrefix(line, prefix), "%s carries a forged %q line: %q", name, prefix, line)
 		}
 	}
@@ -937,7 +937,7 @@ func TestAStoredQuarantineKeyWithANewlinePrintsEscaped(t *testing.T) {
 	writeRaw(t, box, raw)
 	code, out, errOut = capture(t, []string{"lift", "quarantine", "--box", box, "dis cord"}, nowish())
 	require.Equal(t, 0, code, "lift exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
-	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(out, "\n"), "\n") {
 		assert.True(t, strings.HasPrefix(line, "LIFT OK"), "every lift line must open the grammar, got %q", line)
 	}
 	assert.Contains(t, out, `dis\x0acord`, "the announced lift must quote the stored spelling, escaped, got %q", out)
@@ -1377,7 +1377,7 @@ func TestAnAtStampCannotForgeALine(t *testing.T) {
 		}})
 		code, out, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "discord"}, nowish())
 		require.Equal(t, 0, code, "exit = %d, want 0\nstderr: %q", code, errOut)
-		for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.TrimRight(out, "\n"), "\n") {
 			assert.True(t, strings.HasPrefix(line, "LIFT OK"), "every line must open the grammar, got %q", line)
 		}
 		noForgedOKLine(t, "FUSE OK", out, errOut)
@@ -1425,7 +1425,7 @@ func TestAStoredKeyCannotPoseAsAField(t *testing.T) {
 	assert.NotContains(t, out, "lockdown=clear", "a stored key posed as the lockdown field:\n%s", out)
 	assert.Contains(t, out, `quarantine=x\x20lockdown\x3dclear\x20quarantines\x3d0 since=t: r`, "the key must print as one token with its = escaped, got:\n%s", out)
 	// Every field on every line is one token holding exactly one "=", the tool's own.
-	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(out, "\n"), "\n") {
 		head, _, _ := strings.Cut(line, ": ")
 		for _, tok := range strings.Fields(head)[2:] {
 			assert.Equal(t, 1, strings.Count(tok, "="), "token %q on %q is not one key=value field", tok, line)

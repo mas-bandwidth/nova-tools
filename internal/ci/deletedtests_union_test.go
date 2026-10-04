@@ -25,7 +25,7 @@ func TestDeletedTestsLogMergesByUnionAndReadsUnordered(t *testing.T) {
 	require.NoError(t, err)
 	want := deletedTestsLogPath + " merge=union"
 	var line string
-	for _, l := range strings.Split(string(attrs), "\n") {
+	for l := range strings.SplitSeq(string(attrs), "\n") {
 		if strings.TrimSpace(l) == want {
 			line = l
 		}

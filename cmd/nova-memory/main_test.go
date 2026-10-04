@@ -261,7 +261,7 @@ func TestReceiptsNameTheChannelTheScoreCameFrom(t *testing.T) {
 	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25,trigram", "--k", "3", "diaphones")
 	require.Equalf(t, 0, exit, "exit = %d, want 0; stderr: %s", exit, stderr)
 	var hits int
-	for _, line := range strings.Split(stdout, "\n") {
+	for line := range strings.SplitSeq(stdout, "\n") {
 		if !strings.HasPrefix(line, "SEARCH HIT ") {
 			continue
 		}
@@ -304,7 +304,7 @@ func TestAReceiptsPathAndSnippetSitAfterTheFieldBoundary(t *testing.T) {
 		"when", "can", "the", "relief", "boat", "land", "at", "the", "jetty")
 	require.Equalf(t, 0, exit, "exit = %d, want 0; stderr: %s", exit, stderr)
 	hits := 0
-	for _, line := range strings.Split(strings.TrimRight(stdout, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(stdout, "\n"), "\n") {
 		if !strings.HasPrefix(line, "SEARCH HIT ") {
 			continue
 		}
@@ -393,7 +393,7 @@ func TestCheckCandidateSplittingIsLineEndingAgnostic(t *testing.T) {
 	}
 	strip := func(s string) string {
 		var keep []string
-		for _, line := range strings.Split(s, "\n") {
+		for line := range strings.SplitSeq(s, "\n") {
 			if !strings.HasPrefix(line, "MEMORY OK ") { // holds the source path, which differs by design
 				keep = append(keep, line)
 			}
@@ -659,7 +659,7 @@ func TestExampleGoldHeaderCommentMatchesRowCount(t *testing.T) {
 	}
 
 	found := false
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if !strings.HasPrefix(trimmed, "#") {
 			continue
@@ -695,7 +695,7 @@ func TestEvalMeasuresChannelSetsAgainstEachOther(t *testing.T) {
 	mrr := func(channels string) string {
 		exit, stdout, stderr := runCLI(t, "", "eval", "--root", corpus, "--channels", channels, "--k", "3", "--floor", "0.8", exampleGold)
 		require.Equalf(t, 0, exit, "channels %s: exit = %d; stderr: %s", channels, exit, stderr)
-		for _, line := range strings.Split(stdout, "\n") {
+		for line := range strings.SplitSeq(stdout, "\n") {
 			if strings.HasPrefix(line, "EVAL OK") {
 				return line[strings.Index(line, "mrr="):]
 			}
@@ -812,7 +812,7 @@ func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
 	noForgedLine := func(t *testing.T, forged, stdout, stderr string) {
 		t.Helper()
 		for _, stream := range []string{stdout, stderr} {
-			for _, line := range strings.Split(stream, "\n") {
+			for line := range strings.SplitSeq(stream, "\n") {
 				assert.Falsef(t, strings.HasPrefix(line, forged), "a caller's or the corpus's text forged a line: %q", line)
 			}
 		}

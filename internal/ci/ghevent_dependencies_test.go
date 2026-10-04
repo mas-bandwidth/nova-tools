@@ -19,7 +19,7 @@ func TestGitHubEventReadersDoNotImportIngestion(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "go.mod"))
 	require.NoError(t, err)
 	module := ""
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) >= 2 && fields[0] == "module" {
 			module = strings.Trim(fields[1], "\"") + "/"

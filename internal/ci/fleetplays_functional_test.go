@@ -431,7 +431,7 @@ func renderedByDiff(t *testing.T, out, path string) []byte {
 			continue
 		}
 		var b strings.Builder
-		for _, line := range strings.Split(body, "\n") {
+		for line := range strings.SplitSeq(body, "\n") {
 			after, ok := strings.CutPrefix(line, "+")
 			if !ok {
 				break

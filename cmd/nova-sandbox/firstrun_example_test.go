@@ -50,7 +50,7 @@ func TestHelpFirstRunLinesProveTheWall(t *testing.T) {
 
 	_, tail, _ := strings.Cut(usage, onboarding.ExampleHeading)
 	var block []string
-	for _, line := range strings.Split(tail, "\n") {
+	for line := range strings.SplitSeq(tail, "\n") {
 		if strings.TrimSpace(line) == "" {
 			break
 		}

@@ -1284,7 +1284,7 @@ func (a *app) briefFiles(dir string, files []string, stderr io.Writer) ([]string
 // not a card), or no such line is no needs.
 func briefNeeds(brief string) []string {
 	value, found := "", false
-	for _, line := range strings.Split(brief, "\n") {
+	for line := range strings.SplitSeq(brief, "\n") {
 		if key, v, ok := cardhdr.KeyValue(line); ok && key == "Needs" {
 			value, found = v, true
 			break
@@ -1294,7 +1294,7 @@ func briefNeeds(brief string) []string {
 		value, _ = swarm.CardHeaderValue([]byte(brief), "DEPENDS-ON")
 	}
 	var out []string
-	for _, id := range strings.Split(value, ",") {
+	for id := range strings.SplitSeq(value, ",") {
 		if cut, _, ok := strings.Cut(id, "("); ok {
 			id = cut
 		}
@@ -2622,7 +2622,7 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 func splitCommas(words []string) []string {
 	var out []string
 	for _, w := range words {
-		for _, item := range strings.Split(w, ",") {
+		for item := range strings.SplitSeq(w, ",") {
 			if item != "" {
 				out = append(out, item)
 			}

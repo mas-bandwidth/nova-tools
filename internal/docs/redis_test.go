@@ -54,7 +54,7 @@ func TestSpecRedisVerbBlockNamesEveryVerb(t *testing.T) {
 	require.True(t, ok, "docs/SPEC-REDIS.md: no fenced verb block under \"## The verbs\"")
 
 	named := map[string]bool{}
-	for _, line := range strings.Split(block, "\n") {
+	for line := range strings.SplitSeq(block, "\n") {
 		rest, ok := strings.CutPrefix(line, "nova-redis ")
 		if !ok {
 			continue

@@ -236,7 +236,7 @@ func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 
 // takesGzip says a request's Accept-Encoding names gzip and does not refuse it (q=0).
 func takesGzip(accept string) bool {
-	for _, part := range strings.Split(accept, ",") {
+	for part := range strings.SplitSeq(accept, ",") {
 		name, params, _ := strings.Cut(strings.TrimSpace(part), ";")
 		if strings.TrimSpace(name) != "gzip" {
 			continue

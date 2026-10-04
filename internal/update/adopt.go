@@ -215,7 +215,7 @@ func postAdoptReceipt(ctx context.Context, o options, body []byte, env Environme
 	child2, cancel2 := context.WithTimeout(ctx, allowance)
 	r := captureRun(child2, args, []byte(prepared.Stdout), ChildCap)
 	cancel2()
-	for _, l := range strings.Split(r.Stdout, "\n") {
+	for l := range strings.SplitSeq(r.Stdout, "\n") {
 		if confirmed(l, id) {
 			return l, nil
 		}

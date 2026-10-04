@@ -87,7 +87,7 @@ func seatWrapViolations(src []byte) []string {
 			continue
 		}
 		redisOnly := true
-		for _, name := range strings.Split(m[1], ",") {
+		for name := range strings.SplitSeq(m[1], ",") {
 			if name != "" && !seatWrapRedisKey.MatchString(name) {
 				redisOnly = false
 			}

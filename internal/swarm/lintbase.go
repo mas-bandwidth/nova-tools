@@ -288,7 +288,7 @@ func doneWhenTests(v string) ([]doneTest, string) {
 		scope := goTestTargets(seg)
 		for _, m := range goTestRunRE.FindAllStringSubmatch(seg, -1) {
 			pat := strings.Trim(m[1], `"'`)
-			for _, p := range strings.Split(pat, "|") {
+			for p := range strings.SplitSeq(pat, "|") {
 				p = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(p), "^"), "$")
 				if i := strings.Index(p, "/"); i >= 0 {
 					p = p[:i]
@@ -371,7 +371,7 @@ func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
 // (`-count 1`, `-timeout 60s`) is no package and is left out.
 func goTestTargets(seg string) []string {
 	var out []string
-	for _, f := range strings.Fields(seg) {
+	for f := range strings.FieldsSeq(seg) {
 		f = strings.Trim(f, `"'`)
 		switch {
 		case f == ".", f == "...", strings.HasPrefix(f, "./"), strings.HasPrefix(f, "../"):
@@ -450,7 +450,7 @@ func goTestPathspecs(repo, sha string, scope []string) []string {
 	module := ""
 	if len(scope) > 0 {
 		if gm, err := baseGit(repo, "show", "--end-of-options", sha+":go.mod"); err == nil {
-			for _, l := range strings.Split(gm, "\n") {
+			for l := range strings.SplitSeq(gm, "\n") {
 				if v, ok := strings.CutPrefix(strings.TrimSpace(l), "module "); ok {
 					module = strings.Trim(strings.TrimSpace(v), `"`)
 					break
@@ -528,7 +528,7 @@ func oneLineCap(v string, n int) string {
 
 // contractSha is the `sha=<hex>` on the contract line, or "".
 func contractSha(line string) string {
-	for _, f := range strings.Fields(line) {
+	for f := range strings.FieldsSeq(line) {
 		if v, ok := strings.CutPrefix(f, "sha="); ok && hexRE.MatchString(v) {
 			return v
 		}
@@ -547,7 +547,7 @@ func short12(sha string) string {
 
 func splitPathsValue(v string) []string {
 	var out []string
-	for _, p := range strings.Split(v, ",") {
+	for p := range strings.SplitSeq(v, ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}
@@ -581,7 +581,7 @@ func pathsMissingAt(repo, sha string, entries []string) ([]string, error) {
 		return nil, err
 	}
 	var files []string
-	for _, f := range strings.Split(list, "\x00") {
+	for f := range strings.SplitSeq(list, "\x00") {
 		if f != "" {
 			files = append(files, f)
 		}
@@ -731,7 +731,7 @@ func tableRows(p string) ([][]string, error) {
 		return nil, err
 	}
 	var rows [][]string
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

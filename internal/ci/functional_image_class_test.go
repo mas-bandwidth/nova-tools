@@ -79,7 +79,7 @@ var (
 func containerInstructions(src string) []string {
 	var out []string
 	var cur strings.Builder
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		trim := strings.TrimSpace(line)
 		if strings.HasPrefix(trim, "#") {
 			continue
@@ -142,7 +142,7 @@ func downloadProblems(ins []string) []string {
 			out = append(out, "an apt source is written with no Signed-By key: "+shorten(in))
 		}
 		if strings.HasPrefix(in, "COPY ") {
-			for _, f := range strings.Fields(in) {
+			for f := range strings.FieldsSeq(in) {
 				if v, ok := strings.CutPrefix(f, "--from="); ok && !stages[v] {
 					out = append(out, "a COPY takes files from "+v+", which is not a stage of this file (an outside image by tag moves and is not checked): "+shorten(in))
 				}
@@ -655,7 +655,7 @@ func TestFunctionalImageSourceCheckSeesADeletedInstall(t *testing.T) {
 	containerfile := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(functionalImageFile)))
 	drop := func(substr string) string {
 		var keep []string
-		for _, l := range strings.Split(containerfile, "\n") {
+		for l := range strings.SplitSeq(containerfile, "\n") {
 			if !strings.Contains(l, substr) {
 				keep = append(keep, l)
 			}

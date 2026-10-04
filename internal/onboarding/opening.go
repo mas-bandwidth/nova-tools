@@ -112,7 +112,7 @@ func ExampleCommands(banner, tool string) []string {
 	}
 	var out []string
 	continued := false
-	for _, line := range strings.Split(tail, "\n") {
+	for line := range strings.SplitSeq(tail, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			break

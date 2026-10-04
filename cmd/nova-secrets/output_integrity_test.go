@@ -248,7 +248,7 @@ func TestNoFileContentOrCallerArgumentCanForgeALine(t *testing.T) {
 					return c == '\r' || c == 0x1b || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069) || c == 0x2028 || c == 0x2029
 				})
 				assert.Less(t, i, 0, "run %q: %s carries a raw repaint or bidi control at byte %d: %q", r, streamName, i, stream)
-				for _, line := range strings.Split(stream, "\n") {
+				for line := range strings.SplitSeq(stream, "\n") {
 					if line == "" {
 						continue
 					}

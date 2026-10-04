@@ -189,7 +189,7 @@ func TestTheHelpBoxExampleDecodesAsTheDescribedQuarantine(t *testing.T) {
 	t.Parallel()
 	_, out, _ := runFuse(t, "help")
 	var example string
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(line, `  {"lockdown": null, "quarantine": {"a-forum"`) {
 			example = strings.TrimSpace(line)
 		}

@@ -67,7 +67,7 @@ func TestToolsCIIsBuiltOnceAndNeverRun(t *testing.T) {
 			cacheRestore, cacheSave := false, false
 			for i, s := range job.Steps {
 				assert.NotContains(t, s.Run, "go run ./tools/ci", "%s step %q runs tools/ci with go run; call the binary built once", where, s.Name)
-				for _, line := range strings.Split(s.Run, "\n") {
+				for line := range strings.SplitSeq(s.Run, "\n") {
 					l := strings.TrimSpace(line)
 					switch {
 					case strings.HasPrefix(l, `go build -o "$RUNNER_TEMP/ci" ./tools/ci`), strings.HasPrefix(l, `go -C .revert-tool build -o "$RUNNER_TEMP/ci" ./tools/ci`),

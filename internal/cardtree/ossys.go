@@ -165,7 +165,7 @@ func osExec(dir string, env, argv []string) (string, int, error) {
 // lastLine is the last line of output that is the command's own, not the wall's receipt.
 func lastLine(s string) string {
 	last := ""
-	for _, l := range strings.Split(s, "\n") {
+	for l := range strings.SplitSeq(s, "\n") {
 		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "SANDBOX ") {
 			last = l
 		}

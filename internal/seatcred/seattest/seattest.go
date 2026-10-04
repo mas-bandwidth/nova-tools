@@ -103,7 +103,7 @@ func genKey(t *testing.T, ageKeygen, path string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if pub, ok := strings.CutPrefix(line, "# public key: "); ok {
 			return strings.TrimSpace(pub)
 		}

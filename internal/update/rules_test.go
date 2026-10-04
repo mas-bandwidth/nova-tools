@@ -78,7 +78,7 @@ func TestRule9CheckWritesNothingAndNeverRunsAnApply(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(log)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(log)), "\n") {
 		if line != "" && !strings.HasPrefix(line, "print ") {
 			require.Failf(t, "", "check ran something that is not a version read: %q", line)
 		}
@@ -262,7 +262,7 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	// nova-version's usage lines are its verbs' own (versiontool.go): the
 	// banner lists them under usage:, after what the tool is and how it works.
 	lines := map[string]string{}
-	for _, l := range strings.Split(printed.String(), "\n") {
+	for l := range strings.SplitSeq(printed.String(), "\n") {
 		if f := strings.Fields(l); len(f) > 1 && f[0] == "nova-version" {
 			lines[f[1]] += l + "\n"
 		}

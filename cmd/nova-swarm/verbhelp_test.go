@@ -102,7 +102,7 @@ func assertTheStepWallFlagSaysWhatItWantsOnBothLines(t *testing.T) {
 	t.Helper()
 	step := swarmHelp(t, "step", "-h")
 	var usageLine string
-	for _, l := range strings.Split(usage, "\n") {
+	for l := range strings.SplitSeq(usage, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(l), "nova-swarm step ") {
 			usageLine = strings.TrimSpace(l)
 			break

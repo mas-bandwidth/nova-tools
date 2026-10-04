@@ -164,7 +164,7 @@ func TestTheRankFollowsFusedAndTheBannerSaysSo(t *testing.T) {
 	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25,trigram", "--k", "5", "glazing", "salt", "haze", "brass")
 	require.Equal(t, 0, exit, stderr)
 	prev, hits, channels := 1.0, 0, map[string]bool{}
-	for _, line := range strings.Split(stdout, "\n") {
+	for line := range strings.SplitSeq(stdout, "\n") {
 		if !strings.HasPrefix(line, "SEARCH HIT ") {
 			continue
 		}

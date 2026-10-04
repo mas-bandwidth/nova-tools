@@ -96,7 +96,7 @@ func jobLaunches(t *testing.T, job string) int {
 	raw, err := os.ReadFile(filepath.Join(job, "launches"))
 	require.NoError(t, err)
 	n := 0
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if strings.TrimSpace(line) != "" {
 			n++
 		}

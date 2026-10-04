@@ -124,8 +124,8 @@ func breadcrumb(said string) bool {
 // okClosing reports output whose last non-empty line is an OK event line.
 func okClosing(out string) bool {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	last := strings.Fields(lines[len(lines)-1])
-	for _, w := range last {
+	last := strings.FieldsSeq(lines[len(lines)-1])
+	for w := range last {
 		if w == "OK" {
 			return true
 		}

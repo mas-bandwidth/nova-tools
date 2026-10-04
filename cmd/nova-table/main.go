@@ -186,7 +186,7 @@ func (app *application) run(args []string, stdout, stderr io.Writer) (code int) 
 			return exitOf(err)
 		}
 		j.out.Exit = code
-		for _, l := range strings.Split(strings.TrimSpace(j.said.String()), "\n") {
+		for l := range strings.SplitSeq(strings.TrimSpace(j.said.String()), "\n") {
 			if l != "" {
 				j.out.Notes = append(j.out.Notes, l)
 			}

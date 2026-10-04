@@ -149,7 +149,7 @@ func BusyPercent(prev, cur Ticks) (float64, bool) {
 // guest time twice and inflate the load. The guest tick stays inside user/nice,
 // which is busy, so busy is every tick but idle and iowait as before.
 func ParseProcStat(s string) (Ticks, bool) {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 5 || f[0] != "cpu" {
 			continue
@@ -181,11 +181,11 @@ func ParseProcStat(s string) (Ticks, bool) {
 // ParseTopCPU is darwin top's "CPU usage: a% user, b% sys, c% idle" line;
 // busy is 100 minus idle.
 func ParseTopCPU(s string) (float64, bool) {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if !strings.HasPrefix(line, "CPU usage:") {
 			continue
 		}
-		for _, part := range strings.Split(strings.TrimPrefix(line, "CPU usage:"), ",") {
+		for part := range strings.SplitSeq(strings.TrimPrefix(line, "CPU usage:"), ",") {
 			f := strings.Fields(part)
 			if len(f) == 2 && f[1] == "idle" {
 				idle, good := topPercent(f[0])

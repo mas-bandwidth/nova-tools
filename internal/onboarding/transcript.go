@@ -253,7 +253,7 @@ func cutDeclaration(cmd string) (string, declaration, error) {
 	if !found {
 		return cmd, decl, nil
 	}
-	for _, clause := range strings.Split(text, ";") {
+	for clause := range strings.SplitSeq(text, ";") {
 		key, value, ok := strings.Cut(strings.TrimSpace(clause), ":")
 		value = strings.TrimSpace(value)
 		if !ok || value == "" {
@@ -330,7 +330,7 @@ func lastComment(cmd string) (string, string, bool) {
 // splitList reads `darwin, linux` as two values and `age-keygen` as one.
 func splitList(value string) []string {
 	var out []string
-	for _, item := range strings.Split(value, ",") {
+	for item := range strings.SplitSeq(value, ",") {
 		if item = strings.TrimSpace(item); item != "" {
 			out = append(out, item)
 		}

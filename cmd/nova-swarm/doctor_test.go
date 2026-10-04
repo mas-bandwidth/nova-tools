@@ -663,7 +663,7 @@ func TestDoctorLinesAreTheOnesTheDocsList(t *testing.T) {
 	}
 	printed := map[string]bool{}
 	note := func(text string) {
-		for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
 			if line == "" {
 				continue
 			}

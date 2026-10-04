@@ -1333,7 +1333,7 @@ func groupText(g sprint.Group, now time.Time, opened bool) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, groupLine(g, now))
 	if g.Kind == sprint.Judgment && g.What != "" {
-		for _, l := range strings.Split(g.What, "\n") {
+		for l := range strings.SplitSeq(g.What, "\n") {
 			fmt.Fprintf(&b, "  %s\n", oneline.Escape(l))
 		}
 	}

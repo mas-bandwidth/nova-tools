@@ -92,7 +92,7 @@ func TestAncestorsAreProperAndSlashIsExcluded(t *testing.T) {
 func TestTheRealTemplateFillsCompletely(t *testing.T) {
 	t.Parallel()
 	got := fillTemplate(profiles.DarwinTemplate, fillInput{write: "/private/var/s/w", ref: "/private/var/s/ref", optRoots: []string{"/opt/homebrew"}})
-	for _, l := range strings.Split(got, "\n") {
+	for l := range strings.SplitSeq(got, "\n") {
 		if strings.Contains(l, "@@") {
 			assert.True(t, strings.HasPrefix(l, ";;"), "a marker survived: %s", l)
 		}
@@ -108,7 +108,7 @@ func TestTheRealTemplateFillsCompletely(t *testing.T) {
 		assert.Contains(t, got, want, "the filled template lacks it")
 	}
 	// The network grant is IP only: never (allow network*) on a line of policy.
-	for _, l := range strings.Split(got, "\n") {
+	for l := range strings.SplitSeq(got, "\n") {
 		if !strings.HasPrefix(l, ";;") {
 			assert.NotContains(t, l, "(allow network*)", "the filled profile grants every unix-domain socket")
 		}

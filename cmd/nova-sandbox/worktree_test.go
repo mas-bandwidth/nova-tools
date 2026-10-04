@@ -169,7 +169,7 @@ func recordGUID(t *testing.T, scratch string, id int) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(scratch, fmt.Sprintf("%d.pr", id)))
 	require.NoError(t, err, "the record file is not there: %s", err)
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if v, ok := strings.CutPrefix(line, "guid="); ok {
 			return v
 		}

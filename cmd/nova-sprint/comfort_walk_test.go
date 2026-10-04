@@ -39,7 +39,7 @@ func TestALandRefusalNamesEachCauseOnItsLineAndTheTwinsMerge(t *testing.T) {
 	code, out, errs := twinProcess(t, file, "land --stream s1 --dry-run")
 	assert.Equal(t, 1, code, "%s%s", out, errs)
 	var refused, notes []string
-	for _, l := range strings.Split(errs, "\n") {
+	for l := range strings.SplitSeq(errs, "\n") {
 		switch {
 		case strings.HasPrefix(l, "LAND REFUSED"):
 			refused = append(refused, l)
@@ -72,7 +72,7 @@ func TestTheLogPrintsACostRecordAsOneShortLine(t *testing.T) {
 	assert.NotContains(t, out, "cost_record:", out)
 	assert.NotContains(t, out, "cost_total=", out)
 	assert.Contains(t, out, "s1-1 cost: read s1-1.r1.reader-a by reader-a, ok", out)
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		assert.LessOrEqual(t, len(l), 200, "a long line: %s", l)
 	}
 	assert.Contains(t, ta.ok("log --card s1-1"), "cost_record:")

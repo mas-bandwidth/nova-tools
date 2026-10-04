@@ -373,7 +373,7 @@ func HasTrailer(message string) bool {
 // HasExactTrailer reports whether a commit message carries the exact trailer key and value.
 func HasExactTrailer(message, what string) bool {
 	want := strings.TrimSpace(TrailerKey + ": " + what)
-	for _, line := range strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.ReplaceAll(message, "\r\n", "\n"), "\n") {
 		if strings.TrimSpace(line) == want {
 			return true
 		}
@@ -391,7 +391,7 @@ func notOurs(dir, ref string) ([]string, error) {
 		return nil, err
 	}
 	var foreign []string
-	for _, rec := range strings.Split(out, "\x00") {
+	for rec := range strings.SplitSeq(out, "\x00") {
 		if strings.TrimSpace(rec) == "" {
 			continue
 		}
@@ -1085,7 +1085,7 @@ func ChangedSince(dir, commit string) ([]string, error) {
 		return nil, err
 	}
 	var paths []string
-	for _, p := range strings.Split(out, "\x00") {
+	for p := range strings.SplitSeq(out, "\x00") {
 		// The same claim the pathspec makes, made again here in Go. It is not redundant:
 		// pathspec magic is a git feature, this is the tool's own rule, and a path that is
 		// not inside a lane is not this tool's business whatever git matched.

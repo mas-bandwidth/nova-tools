@@ -209,7 +209,7 @@ func seatInjectValidate(opts *SeatInjectOptions) ([]string, error) {
 
 	seen := map[string]bool{}
 	var names []string
-	for _, raw := range strings.Split(opts.Only, ",") {
+	for raw := range strings.SplitSeq(opts.Only, ",") {
 		n := strings.TrimSpace(raw)
 		if n == "" {
 			continue

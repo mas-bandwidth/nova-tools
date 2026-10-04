@@ -286,7 +286,7 @@ func (m Machine) failsSharedLock() bool {
 func readRoles(field string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
-	for _, part := range strings.Split(field, ",") {
+	for part := range strings.SplitSeq(field, ",") {
 		role := strings.TrimSpace(part)
 		if role == "" {
 			continue

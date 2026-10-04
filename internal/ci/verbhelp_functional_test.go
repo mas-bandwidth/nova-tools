@@ -49,7 +49,7 @@ var exitLabel = regexp.MustCompile(`(?i)(\bexit codes?\s*:|^\s*exit\s*:)`)
 // verbflag's own matcher, written apart from it.
 func statedExitCodes(banner string) string {
 	inSentence := ""
-	for _, l := range strings.Split(banner, "\n") {
+	for l := range strings.SplitSeq(banner, "\n") {
 		loc := exitLabel.FindStringIndex(l)
 		if loc == nil {
 			continue

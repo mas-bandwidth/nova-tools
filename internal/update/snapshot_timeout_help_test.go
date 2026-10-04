@@ -32,7 +32,7 @@ func TestSnapshotHelpStatesShapeTimeouts(t *testing.T) {
 
 // timeoutHelpLine is the rendered --timeout flag line from a verb's help.
 func timeoutHelpLine(help string) string {
-	for _, l := range strings.Split(help, "\n") {
+	for l := range strings.SplitSeq(help, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(l), "--timeout") {
 			return l
 		}

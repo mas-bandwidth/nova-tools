@@ -89,7 +89,7 @@ func TestTheBannerSaysWhatAFirstRunNeeds(t *testing.T) {
 		assert.Contains(t, head, want)
 	}
 	var dry string
-	for _, l := range strings.Split(head, "\n") {
+	for l := range strings.SplitSeq(head, "\n") {
 		if strings.HasPrefix(l, "  nova-table ") && strings.HasSuffix(l, "--dry-run") {
 			dry = strings.TrimSpace(l)
 		}

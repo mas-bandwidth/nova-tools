@@ -82,7 +82,7 @@ var unitPlatforms = [][2]string{{"linux", "amd64"}, {"darwin", "arm64"}, {"darwi
 // with no constraint is a unit file.
 func unitTierFile(src []byte) bool {
 	var expr constraint.Expr
-	for _, line := range strings.Split(string(src), "\n") {
+	for line := range strings.SplitSeq(string(src), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "package ") {
 			break

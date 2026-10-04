@@ -210,7 +210,7 @@ func TestThePackageDocNamesEveryVerb(t *testing.T) {
 // such a line as a usage line, and its second word as a verb.
 func TestNoBannerProseLineReadsAsAVerb(t *testing.T) {
 	t.Parallel()
-	for _, line := range strings.Split(usage, "\n") {
+	for line := range strings.SplitSeq(usage, "\n") {
 		assert.False(t, strings.HasPrefix(line, "nova-bus ") && !strings.HasPrefix(line, "nova-bus: "), "a banner line reads as a usage line: %q", line)
 	}
 }

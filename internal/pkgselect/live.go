@@ -36,7 +36,7 @@ type Deprecated struct {
 // import path is read as the directory under it.
 func ParseDeprecated(text, module string) *Deprecated {
 	d := &Deprecated{module: module, keep: map[string]bool{}}
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		line, _, _ = strings.Cut(line, "#")
 		line = strings.Trim(line, " \t\r")
 		if line == "" {

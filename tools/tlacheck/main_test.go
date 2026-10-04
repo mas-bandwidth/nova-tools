@@ -321,7 +321,7 @@ func TestRunReportsAFailingCaseOnStderrAndExitsOne(t *testing.T) {
 	if !strings.Contains(r.stderr, "CASE FAIL config=MCABroken.cfg result=FAIL") || !strings.Contains(r.stderr, "RUN FAIL cases=2") {
 		t.Errorf("stderr = %q", r.stderr)
 	}
-	for _, l := range strings.Split(strings.TrimSpace(r.stderr), "\n") {
+	for l := range strings.SplitSeq(strings.TrimSpace(r.stderr), "\n") {
 		if !eventRE.MatchString(strings.SplitN(l, ": ", 2)[0]) {
 			t.Errorf("not an event: %q", l)
 		}
@@ -612,7 +612,7 @@ func TestReadmeCommandsParseUnderTheRealFlagParser(t *testing.T) {
 	invocation := regexp.MustCompile(`tlacheck\s+([a-z]+)((?:\s+[^\s|)&;><]+)*)`)
 	var commands [][]string
 	inBlock := false
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if strings.HasPrefix(line, "```") {
 			inBlock = !inBlock
 			continue
@@ -622,7 +622,7 @@ func TestReadmeCommandsParseUnderTheRealFlagParser(t *testing.T) {
 		}
 		for _, m := range invocation.FindAllStringSubmatch(line, -1) {
 			args := []string{m[1]}
-			for _, a := range strings.Fields(strings.ReplaceAll(m[2], `"`, "")) {
+			for a := range strings.FieldsSeq(strings.ReplaceAll(m[2], `"`, "")) {
 				args = append(args, a)
 			}
 			commands = append(commands, args)
@@ -934,7 +934,7 @@ func TestReadmeNamesTheRunnerFilesAndWhereTheJarComesFrom(t *testing.T) {
 		t.Fatal(err)
 	}
 	var bullet string
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if strings.HasPrefix(line, "- the runner's result files") {
 			bullet = line
 		}

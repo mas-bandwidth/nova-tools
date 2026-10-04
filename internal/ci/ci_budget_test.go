@@ -495,7 +495,7 @@ const twoMinuteCap = 2
 func jobNames(src string) []string {
 	var names []string
 	inJobs := false
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		if !strings.HasPrefix(line, " ") && strings.TrimSpace(line) == "jobs:" {
 			inJobs = true
 			continue
@@ -524,7 +524,7 @@ func jobNames(src string) []string {
 func jobTimeouts(src string) map[string]int {
 	out := make(map[string]int)
 	cur := ""
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		if m := jobKeyRe.FindStringSubmatch(line); m != nil {
 			cur = m[1]
 			continue
@@ -599,7 +599,7 @@ var droppedByRuling = map[string]string{
 func certificationOKNeeds(src string) map[string]bool {
 	needs := make(map[string]bool)
 	inCertOK := false
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		if m := jobKeyRe.FindStringSubmatch(line); m != nil {
 			inCertOK = m[1] == "certification-ok"
 			continue
@@ -611,7 +611,7 @@ func certificationOKNeeds(src string) map[string]bool {
 		if after, ok := strings.CutPrefix(trimmed, "needs:"); ok {
 			list := strings.TrimSpace(after)
 			list = strings.Trim(list, "[]")
-			for _, name := range strings.Split(list, ",") {
+			for name := range strings.SplitSeq(list, ",") {
 				if name = strings.TrimSpace(name); name != "" {
 					needs[name] = true
 				}

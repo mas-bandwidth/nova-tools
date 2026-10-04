@@ -883,8 +883,8 @@ func parseCommandStats(info string) map[string]int64 {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
 				cmd := strings.TrimPrefix(parts[0], "cmdstat_")
-				fields := strings.Split(parts[1], ",")
-				for _, f := range fields {
+				fields := strings.SplitSeq(parts[1], ",")
+				for f := range fields {
 					kv := strings.SplitN(f, "=", 2)
 					if len(kv) == 2 && kv[0] == "calls" {
 						calls, _ := strconv.ParseInt(kv[1], 10, 64)

@@ -32,7 +32,7 @@ func sources(t *testing.T) map[string][]string {
 			t.Fatal(err)
 		}
 		var code []string
-		for _, l := range strings.Split(string(raw), "\n") {
+		for l := range strings.SplitSeq(string(raw), "\n") {
 			if strings.HasPrefix(strings.TrimSpace(l), "//") {
 				continue
 			}

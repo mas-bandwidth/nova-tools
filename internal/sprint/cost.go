@@ -134,7 +134,7 @@ func parseConsumer(key, line string) Consumer {
 		}
 		return v
 	}
-	for _, w := range strings.Fields(line) {
+	for w := range strings.FieldsSeq(line) {
 		k, v, _ := strings.Cut(w, "=")
 		switch k {
 		case "kind":

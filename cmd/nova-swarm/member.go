@@ -963,7 +963,7 @@ var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // splitNames is a comma list of names, blanks dropped.
 func splitNames(s string) []string {
 	var out []string
-	for _, n := range strings.Split(s, ",") {
+	for n := range strings.SplitSeq(s, ",") {
 		if n = strings.TrimSpace(n); n != "" {
 			out = append(out, n)
 		}

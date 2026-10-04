@@ -125,7 +125,7 @@ func TestTheKeyFileModeIsARefusalOnEveryVerbThatTakesOne(t *testing.T) {
 	// 5. Stripped # public key: comment in key file
 	rawBytes, _ := os.ReadFile(keyA.privPath)
 	var stripped []string
-	for _, l := range strings.Split(string(rawBytes), "\n") {
+	for l := range strings.SplitSeq(string(rawBytes), "\n") {
 		if !strings.HasPrefix(l, "# public key:") {
 			stripped = append(stripped, l)
 		}
@@ -204,7 +204,7 @@ func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
 		require.Equal(t, 0, code, "%s through the recording sops: exit %d: %s", verb[0], code, errOut)
 		logged, err := os.ReadFile(probeLog)
 		require.NoError(t, err, "%s ran no version probe: %v", verb[0], err)
-		for _, line := range strings.Split(strings.TrimSpace(string(logged)), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSpace(string(logged)), "\n") {
 			if strings.HasPrefix(line, "ARGS ") {
 				assert.Contains(t, line, "--disable-version-check", "%s: the version probe can reach the network: %s", verb[0], line)
 			}

@@ -49,7 +49,7 @@ func pushTrace(t *testing.T, trace string) []string {
 	b, err := os.ReadFile(trace)
 	require.NoError(t, err)
 	var pushes []string
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if _, cmd, ok := strings.Cut(line, "trace: built-in: git push "); ok {
 			pushes = append(pushes, strings.ReplaceAll(cmd, "'", ""))
 		}

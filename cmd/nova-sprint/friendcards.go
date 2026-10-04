@@ -104,7 +104,7 @@ func friendReportOf(report string) (verdict, head, para string) {
 	head, _ = reportValue(report, "head")
 	head = strings.ToLower(strings.Trim(firstWord(head), "*_`.,;:"))
 	var lines []string
-	for _, l := range strings.Split(report, "\n") {
+	for l := range strings.SplitSeq(report, "\n") {
 		key, _, _ := strings.Cut(strings.TrimLeft(l, "#*-_ \t"), ":")
 		switch k := strings.ToLower(strings.TrimSpace(key)); {
 		case strings.TrimSpace(l) == "":
@@ -151,7 +151,7 @@ func (a *app) branchTip(ctx context.Context, repo, branch string) (string, error
 	if err != nil {
 		return "", err
 	}
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if f := strings.Fields(line); len(f) == 2 && f[1] == ref {
 			return f[0], nil
 		}

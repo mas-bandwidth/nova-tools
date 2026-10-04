@@ -59,7 +59,7 @@ func TestTheBannersFirstSendRecipeRunsAsPrinted(t *testing.T) {
 		if i := strings.Index(line, "  ("); i >= 0 {
 			line = strings.TrimSpace(line[:i]) // a trailing parenthesis is the recipe's comment
 		}
-		for _, part := range strings.Split(line, " && ") {
+		for part := range strings.SplitSeq(line, " && ") {
 			fields := strings.Fields(part)
 			out := ""
 			for i, f := range fields {

@@ -103,7 +103,7 @@ func TestEveryVerbsHelpStatesItsEffectAndDescribesEveryFlag(t *testing.T) {
 				} else {
 					assert.Regexp(t, `(?m)^effect: \S`, out)
 				}
-				for _, l := range strings.Split(out, "\n") {
+				for l := range strings.SplitSeq(out, "\n") {
 					m := flagLine.FindStringSubmatch(l)
 					if m == nil {
 						continue

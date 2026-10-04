@@ -22,7 +22,7 @@ func headSHA(t *testing.T, dir string) string {
 
 func laneNote(t *testing.T, checkout, lane string) string {
 	t.Helper()
-	for _, name := range strings.Fields(gitIn(t, checkout, "ls-tree", "-r", "--name-only", "HEAD")) {
+	for name := range strings.FieldsSeq(gitIn(t, checkout, "ls-tree", "-r", "--name-only", "HEAD")) {
 		if strings.HasPrefix(name, lane+"/") && strings.HasSuffix(name, ".md") {
 			return name
 		}

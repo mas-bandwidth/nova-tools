@@ -19,7 +19,7 @@ import (
 // statusAfter returns the first word after token in out, and whether the token
 // was found on any line: the status word that leads a typed line (STANDARD §2).
 func statusAfter(out, token string) (string, bool) {
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if rest, ok := strings.CutPrefix(line, token); ok && strings.HasPrefix(rest, " ") {
 			rest = strings.TrimLeft(rest, " ")
 			word, _, _ := strings.Cut(rest, " ")

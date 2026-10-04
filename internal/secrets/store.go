@@ -173,8 +173,8 @@ func parseSopsConfig(f io.Reader) (*SopsConfig, error) {
 				inAgeBlock = true
 			} else {
 				inAgeBlock = false
-				parts := strings.Split(val, ",")
-				for _, p := range parts {
+				parts := strings.SplitSeq(val, ",")
+				for p := range parts {
 					p = strings.TrimSpace(p)
 					if p != "" {
 						currentRule.Recipients = append(currentRule.Recipients, p)
@@ -192,8 +192,8 @@ func parseSopsConfig(f io.Reader) (*SopsConfig, error) {
 			} else {
 				cleanLine := strings.TrimPrefix(trimmed, "-")
 				cleanLine = strings.TrimSpace(cleanLine)
-				parts := strings.Split(cleanLine, ",")
-				for _, p := range parts {
+				parts := strings.SplitSeq(cleanLine, ",")
+				for p := range parts {
 					p = strings.TrimSpace(p)
 					if p != "" {
 						currentRule.Recipients = append(currentRule.Recipients, p)

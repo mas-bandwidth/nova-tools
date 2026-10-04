@@ -121,7 +121,7 @@ func TestEveryVerbHelpStatesItsEffectAndWhatEachFlagWants(t *testing.T) {
 			assert.Equal(t, 0, code, "stderr: %s", stderr)
 			assert.Contains(t, stdout, "\neffect: ")
 			inFlags := false
-			for _, line := range strings.Split(stdout, "\n") {
+			for line := range strings.SplitSeq(stdout, "\n") {
 				switch {
 				case line == "flags:":
 					inFlags = true

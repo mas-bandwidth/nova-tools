@@ -58,7 +58,7 @@ func novaCIVerbs(t *testing.T) map[string]bool {
 			s, err := strconv.Unquote(lit.Value)
 			require.NoError(t, err, "%s: the verbs constant: %v", novaCIMainPath, err)
 			verbs := map[string]bool{}
-			for _, name := range strings.Split(s, ", ") {
+			for name := range strings.SplitSeq(s, ", ") {
 				verbs[name] = true
 			}
 			return verbs

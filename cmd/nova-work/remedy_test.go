@@ -85,7 +85,7 @@ func TestARemedyKeepsEveryValueOneShellWord(t *testing.T) {
 				js := workMain(fresh()).Run(append(args, "--json")...)
 				txt := workMain(fresh()).Run(args...)
 				require.Equal(t, 2, js.Code, "%s: %s%s", name, js.Stdout, js.Stderr)
-				for _, l := range strings.Split(strings.TrimSuffix(txt.Stderr, "\n"), "\n") {
+				for l := range strings.SplitSeq(strings.TrimSuffix(txt.Stderr, "\n"), "\n") {
 					require.Regexp(t, `^(IMPORT|VERIFY) `, l, "%s: a value broke the refusal's line: %q", name, txt.Stderr)
 				}
 				first, _, _ := strings.Cut(txt.Stderr, "\n")

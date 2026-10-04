@@ -399,7 +399,7 @@ func (s *Snapshot) Streams() []string { return s.Work.Rows() }
 // Split is a comma list, without empty items.
 func Split(s string) []string {
 	var out []string
-	for _, x := range strings.Split(s, ",") {
+	for x := range strings.SplitSeq(s, ",") {
 		if x = strings.TrimSpace(x); x != "" {
 			out = append(out, x)
 		}

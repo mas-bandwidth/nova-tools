@@ -177,13 +177,13 @@ func realBus(t *testing.T) busFixture {
 func (b busFixture) published(t *testing.T) (notes []string, index []string) {
 	t.Helper()
 	out := git(t, b.bare, "ls-tree", "-r", "--name-only", "main")
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		if strings.HasPrefix(line, b.lane+"/") && strings.HasSuffix(line, ".md") {
 			notes = append(notes, line)
 		}
 	}
 	if strings.Contains(out, b.lane+"/INDEX") {
-		for _, line := range strings.Split(strings.TrimSpace(git(t, b.bare, "show", "main:"+b.lane+"/INDEX")), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSpace(git(t, b.bare, "show", "main:"+b.lane+"/INDEX")), "\n") {
 			if strings.TrimSpace(line) != "" {
 				index = append(index, line)
 			}
@@ -686,7 +686,7 @@ func parseStageRecord(content string) stageReceipt {
 	var r stageReceipt
 	lines := strings.Split(content, "\n")
 	if len(lines) > 0 {
-		for _, f := range strings.Fields(lines[0]) {
+		for f := range strings.FieldsSeq(lines[0]) {
 			parts := strings.SplitN(f, "=", 2)
 			if len(parts) == 2 {
 				switch parts[0] {
@@ -889,7 +889,7 @@ func (r reporter) remoteHasANote(t *testing.T) bool {
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		if strings.HasPrefix(line, r.bus.lane+"/") && strings.HasSuffix(line, ".md") {
 			return true
 		}

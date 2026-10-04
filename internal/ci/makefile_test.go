@@ -259,7 +259,7 @@ func (mk *parsedMakefile) read(t *testing.T, path string, depth int) {
 		}
 		if m := makeIncludeRe.FindStringSubmatch(trimmed); m != nil {
 			optional := strings.HasPrefix(trimmed, "-")
-			for _, inc := range strings.Fields(mk.expand(mk.vars, m[1])) {
+			for inc := range strings.FieldsSeq(mk.expand(mk.vars, m[1])) {
 				targetPath := filepath.Join(filepath.Dir(path), inc)
 				matches, err := filepath.Glob(targetPath)
 				if err == nil && len(matches) > 0 {
@@ -297,7 +297,7 @@ func (mk *parsedMakefile) read(t *testing.T, path string, depth int) {
 			continue
 		}
 		if len(targets) == 1 && targets[0] == ".PHONY" {
-			for _, name := range strings.Fields(rest) {
+			for name := range strings.FieldsSeq(rest) {
 				mk.phony[name] = true
 			}
 			current = ""

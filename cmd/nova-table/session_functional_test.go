@@ -86,7 +86,7 @@ drop jobs
 	require.Len(t, clients, 1, "wire: hello=%d clients=%d calls=%d", hellos, len(clients), calls)
 	require.EqualValues(t, 12, calls, "wire: hello=%d clients=%d calls=%d", hellos, len(clients), calls)
 	require.EqualValues(t, 5, strings.Count(out.String(), "TABLE RECEIPT "), "mutation receipts:\n%s", &out)
-	for _, line := range strings.Split(out.String(), "\n") {
+	for line := range strings.SplitSeq(out.String(), "\n") {
 		require.False(t, strings.Contains(line, " trips=") && !strings.Contains(line, " trips=1"), "per-verb trips grew across the session: %s", line)
 	}
 	tab, err := ntable.Read(ctx, admin, "jobs")

@@ -154,7 +154,7 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 			flush()
 			var out, errb bytes.Buffer
 			run(strings.Fields(args), &out, &errb, firstRunStamp)
-			for _, printed := range strings.Split(out.String()+errb.String(), "\n") {
+			for printed := range strings.SplitSeq(out.String()+errb.String(), "\n") {
 				if shape := onboarding.Shape(printed); shape != "" {
 					pending = append(pending, shape)
 				}

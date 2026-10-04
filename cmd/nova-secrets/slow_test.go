@@ -390,7 +390,7 @@ func TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount(t *testing.T) {
 
 	failLines := func(errOut, kindMarker string) int {
 		n := 0
-		for _, l := range strings.Split(errOut, "\n") {
+		for l := range strings.SplitSeq(errOut, "\n") {
 			if strings.HasPrefix(l, "SECRETS CHECK FAIL ") && !strings.HasPrefix(l, "SECRETS CHECK FAIL as=") && strings.Contains(l, kindMarker) {
 				n++
 			}

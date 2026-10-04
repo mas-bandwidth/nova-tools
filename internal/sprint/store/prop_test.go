@@ -72,7 +72,7 @@ func (f *propFail) Sig() string {
 		d = stallWhy(d)
 	}
 	var words []string
-	for _, w := range strings.Fields(d) {
+	for w := range strings.FieldsSeq(d) {
 		if strings.ContainsAny(w, "0123456789") {
 			continue
 		}

@@ -638,7 +638,7 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 			remoteIndex, err := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
 			require.NoError(t, err, "bare remote missing index")
 			matchCount := 0
-			for _, l := range strings.Split(strings.TrimSpace(remoteIndex), "\n") {
+			for l := range strings.SplitSeq(strings.TrimSpace(remoteIndex), "\n") {
 				if l == IndexLine(p.Index) {
 					matchCount++
 				}

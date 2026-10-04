@@ -63,7 +63,7 @@ func fencedBlockAfter(t *testing.T, text, marker string) []string {
 	block, _, found := strings.Cut(after, "```")
 	require.Truef(t, found, "the fenced block after %s is never closed", marker)
 	var lines []string
-	for _, line := range strings.Split(block, "\n") {
+	for line := range strings.SplitSeq(block, "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			lines = append(lines, line)
 		}

@@ -108,7 +108,7 @@ func NewSpellingChecker(ignore []string) *SpellingChecker {
 // ParseAllowlist parses allowlist content: one word per line, ignoring blank lines and # comments.
 func ParseAllowlist(content string) []string {
 	var words []string
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		if idx := strings.IndexByte(line, '#'); idx >= 0 {
 			line = line[:idx]
 		}
@@ -725,7 +725,7 @@ func pathEnteredRoot(rootResolved, path string) bool {
 		cur = vol + string(filepath.Separator)
 	}
 	seen := false
-	for _, part := range strings.Split(rest, string(filepath.Separator)) {
+	for part := range strings.SplitSeq(rest, string(filepath.Separator)) {
 		if part == "" || part == "." {
 			continue
 		}

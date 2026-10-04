@@ -154,7 +154,7 @@ func namesGit(lit string) bool {
 	// has to carry the separator itself: "/usr/bin/git" is a path, and the bare word git in
 	// the middle of a sentence is prose -- cmd/nova-tokens/main.go's banner has one, and it is
 	// the tool telling a person it does not read the git history.
-	for _, word := range strings.Fields(lower) {
+	for word := range strings.FieldsSeq(lower) {
 		word = strings.Trim(word, `"'()[]{},;:=`+"`")
 		if !strings.ContainsAny(word, `/\`) {
 			continue

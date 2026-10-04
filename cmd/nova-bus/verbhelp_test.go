@@ -33,7 +33,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		"(a reply, written into --draft-dir from --body-file, the note's From/To/Re lines filled in)",
 	} {
 		onOwnLine := false
-		for _, line := range strings.Split(banner, "\n") {
+		for line := range strings.SplitSeq(banner, "\n") {
 			if strings.TrimSpace(line) == clause {
 				onOwnLine = true
 				break
@@ -62,7 +62,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	// is the one exception and stays one command: its JSON is a single-quoted shell
 	// argument, and a backslash continuation inside the quotes is not something a
 	// shell runs, so the line is exempt here rather than split across arguments.
-	for _, line := range strings.Split(banner, "\n") {
+	for line := range strings.SplitSeq(banner, "\n") {
 		if strings.Contains(line, "printf '%s\\n'") {
 			continue
 		}
@@ -94,7 +94,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		if j := strings.Index(command, "  ("); j >= 0 {
 			command = strings.TrimSpace(command[:j])
 		}
-		for _, part := range strings.Split(command, " && ") {
+		for part := range strings.SplitSeq(command, " && ") {
 			fields := strings.Fields(part)
 			require.NotEmptyf(t, fields, "the recipe prints an empty command line: %q", line)
 			switch fields[0] {

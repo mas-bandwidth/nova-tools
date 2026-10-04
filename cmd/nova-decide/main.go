@@ -736,7 +736,7 @@ func bars(s string) ([]float64, error) {
 
 func list(s string) []string {
 	var out []string
-	for _, f := range strings.Split(s, ",") {
+	for f := range strings.SplitSeq(s, ",") {
 		if f = strings.TrimSpace(f); f != "" {
 			out = append(out, f)
 		}

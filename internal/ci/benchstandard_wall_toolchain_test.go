@@ -80,7 +80,7 @@ func quotedBetween(t *testing.T, body, begin, end string) []string {
 	block, _, found := strings.Cut(after, end)
 	require.True(t, found, "%s carries no %q marker", benchStandardSource, end)
 	var out []string
-	for _, line := range strings.Split(block, "\n") {
+	for line := range strings.SplitSeq(block, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "//") {
 			continue
 		}

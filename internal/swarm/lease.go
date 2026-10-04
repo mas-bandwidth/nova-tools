@@ -212,7 +212,7 @@ func ReadJobLease(jobDir string) (JobLease, error) {
 // false, and an unknown record is never read as a dead owner (rule 2).
 func parseJobLease(path string, raw []byte, st os.FileInfo) JobLease {
 	lease := JobLease{Path: path, Beat: st.ModTime(), info: st}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
 			continue

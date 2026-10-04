@@ -103,7 +103,7 @@ func (s *selector) goList(args ...string) ([]string, string, error) {
 // tree with the warning.
 func (s *selector) failed(errText string) (Outcome, error) {
 	first := ""
-	for _, l := range strings.Split(errText, "\n") {
+	for l := range strings.SplitSeq(errText, "\n") {
 		if l != "" {
 			first = l
 			break
@@ -163,7 +163,7 @@ func (s *selector) treeFromFiles() ([]string, error) {
 		return nil, &ListError{Text: fmt.Sprintf("select-packages: git ls-files exited %d: %s\n", res.Code, strings.TrimSpace(res.Stderr))}
 	}
 	dirs := map[string]bool{}
-	for _, f := range strings.Split(res.Stdout, "\x00") {
+	for f := range strings.SplitSeq(res.Stdout, "\x00") {
 		if f == "" || treeExcludedDir.MatchString(f) {
 			continue
 		}

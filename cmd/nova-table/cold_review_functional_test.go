@@ -44,7 +44,7 @@ func TestColumnRemovalNamesAllBlockersAndRunnableBatches(t *testing.T) {
 	require.Equal(t, after, before, "refused deletion changed snapshot: %v", err)
 	_, remedies, ok := strings.Cut(strings.TrimSpace(errout), "; run: ")
 	require.True(t, ok, "%v", errout)
-	for _, line := range strings.Split(remedies, "; ") {
+	for line := range strings.SplitSeq(remedies, "; ") {
 		words, err := onboarding.SplitShell(line)
 		require.NoError(t, err, "%v", err)
 		// The advertised command, with this fixture's address supplied before

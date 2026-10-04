@@ -330,7 +330,7 @@ func TestTheBlockedDestinationLineIsTheSpecsOwn(t *testing.T) {
 
 	spec := specSandbox(t)
 	inFence, found := false, false
-	for _, line := range strings.Split(spec, "\n") {
+	for line := range strings.SplitSeq(spec, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			inFence = !inFence
 			continue

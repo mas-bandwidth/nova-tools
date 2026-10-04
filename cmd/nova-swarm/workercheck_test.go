@@ -143,7 +143,7 @@ func TestWorkerCheckFlagTypes(t *testing.T) {
 		d["harness"] = filepath.Join(t.TempDir(), "no-such-harness")
 	})
 	drifts := func(out string) (n int, all string) {
-		for _, l := range strings.Split(out, "\n") {
+		for l := range strings.SplitSeq(out, "\n") {
 			if strings.HasPrefix(l, "WORKER DRIFT ") {
 				n++
 			}

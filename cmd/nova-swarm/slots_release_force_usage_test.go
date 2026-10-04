@@ -24,7 +24,7 @@ func TestUsageNamesForceAndTheKeepOnSlotsRelease(t *testing.T) {
 	exit, stdout, stderr := runSwarm(t, "help")
 	require.Equal(t, 0, exit, "`nova-swarm help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
 	var block []string
-	for _, line := range strings.Split(stdout, "\n") {
+	for line := range strings.SplitSeq(stdout, "\n") {
 		if strings.Contains(line, "nova-swarm slots release") {
 			block = append(block, line)
 			continue

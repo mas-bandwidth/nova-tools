@@ -76,7 +76,7 @@ func TestTheProducerCardCarriesWhatEachConsumerCostAndTheTotal(t *testing.T) {
 	ta := costCard(t)
 	out := ta.ok("card s1-1")
 	var lines []string
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(l, "COST ") {
 			lines = append(lines, l)
 		}
@@ -135,7 +135,7 @@ func TestACardWithNoConsumerRecordPrintsDashes(t *testing.T) {
 // costLines are the COST lines of a card's story.
 func costLines(out string) []string {
 	var lines []string
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(l, "COST ") {
 			lines = append(lines, l)
 		}

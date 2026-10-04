@@ -720,7 +720,7 @@ func TestNoCallerPathCanForgeALine(t *testing.T) {
 	oneEvent := func(t *testing.T, forged, stdout, stderr string) {
 		t.Helper()
 		for _, stream := range []string{stdout, stderr} {
-			for _, line := range strings.Split(strings.TrimRight(stream, "\n"), "\n") {
+			for line := range strings.SplitSeq(strings.TrimRight(stream, "\n"), "\n") {
 				if line == "" {
 					continue
 				}
@@ -860,7 +860,7 @@ func TestTheDenyListFieldIsOneToken(t *testing.T) {
 
 	lineWith := func(t *testing.T, stream, token string) string {
 		t.Helper()
-		for _, line := range strings.Split(strings.TrimRight(stream, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.TrimRight(stream, "\n"), "\n") {
 			if strings.HasPrefix(line, token) {
 				return line
 			}
@@ -873,7 +873,7 @@ func TestTheDenyListFieldIsOneToken(t *testing.T) {
 	// scanner reads is the field count the tool wrote.
 	fieldCount := func(line string) int {
 		n := 0
-		for _, f := range strings.Fields(line) {
+		for f := range strings.FieldsSeq(line) {
 			if strings.Contains(f, "=") {
 				n++
 			}

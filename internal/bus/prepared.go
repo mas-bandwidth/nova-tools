@@ -235,7 +235,7 @@ func queryRemote(busDir, ref string, p Prepared, art PreparedArtifact) (bool, st
 	indexMatch := false
 
 	if errIndex == nil {
-		for _, line := range strings.Split(remoteIndex, "\n") {
+		for line := range strings.SplitSeq(remoteIndex, "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
@@ -492,7 +492,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 
 	if ahead > 0 {
 		var refNonArtLines []string
-		for _, l := range strings.Split(refIndex, "\n") {
+		for l := range strings.SplitSeq(refIndex, "\n") {
 			l = strings.TrimSpace(l)
 			if l == "" {
 				continue
@@ -504,7 +504,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 		if err != nil {
 			return PushResult{}, err
 		}
-		for _, rec := range strings.Split(logOut, "\x00") {
+		for rec := range strings.SplitSeq(logOut, "\x00") {
 			if strings.TrimSpace(rec) == "" {
 				continue
 			}
@@ -523,7 +523,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			}
 			// Validate full tree against ref
 			diffRefOut, _ := git(busDir, "diff-tree", "--no-commit-id", "--name-only", "-r", ref, sha)
-			for _, touched := range strings.Split(strings.TrimSpace(diffRefOut), "\n") {
+			for touched := range strings.SplitSeq(strings.TrimSpace(diffRefOut), "\n") {
 				touched = strings.TrimSpace(touched)
 				if touched == "" {
 					continue
@@ -533,7 +533,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 				}
 			}
 			diffOut, _ := git(busDir, "diff-tree", "--no-commit-id", "--name-only", "-r", "-m", sha)
-			for _, touched := range strings.Split(strings.TrimSpace(diffOut), "\n") {
+			for touched := range strings.SplitSeq(strings.TrimSpace(diffOut), "\n") {
 				touched = strings.TrimSpace(touched)
 				if touched == "" {
 					continue
@@ -567,7 +567,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			if errIndex == nil {
 				var commitNonArtLines []string
 				artCount := 0
-				for _, l := range strings.Split(commitIndex, "\n") {
+				for l := range strings.SplitSeq(commitIndex, "\n") {
 					l = strings.TrimSpace(l)
 					if l == "" {
 						continue
@@ -619,7 +619,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 		headHasIndex := false
 		artIndexCount := 0
 		var headNonArtLines []string
-		for _, l := range strings.Split(headIndex, "\n") {
+		for l := range strings.SplitSeq(headIndex, "\n") {
 			l = strings.TrimSpace(l)
 			if l == "" {
 				continue
@@ -646,7 +646,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 		}
 
 		diffHeadRef, _ := git(busDir, "diff-tree", "--no-commit-id", "--name-only", "-r", ref, "HEAD")
-		for _, touched := range strings.Split(strings.TrimSpace(diffHeadRef), "\n") {
+		for touched := range strings.SplitSeq(strings.TrimSpace(diffHeadRef), "\n") {
 			touched = strings.TrimSpace(touched)
 			if touched == "" {
 				continue

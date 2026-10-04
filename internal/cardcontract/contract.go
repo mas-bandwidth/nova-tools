@@ -317,7 +317,7 @@ func LastPushed(job string) (branch, head string) {
 	if err != nil {
 		return "", ""
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		f := strings.Split(line, "\t")
 		if len(f) >= 2 && typedrec.IsSha(strings.TrimSpace(f[1])) {
 			branch, head = strings.TrimSpace(f[0]), strings.TrimSpace(f[1])

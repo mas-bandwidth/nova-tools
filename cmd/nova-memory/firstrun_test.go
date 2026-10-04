@@ -108,7 +108,7 @@ func usageExamples(t *testing.T) []string {
 	_, tail, found := strings.Cut(stdout, "\nexample:\n")
 	require.Truef(t, found, "the usage banner has no `example:` section:\n%s", stdout)
 	var out []string
-	for _, line := range strings.Split(tail, "\n") {
+	for line := range strings.SplitSeq(tail, "\n") {
 		if line = strings.TrimSpace(line); strings.HasPrefix(line, "nova-memory ") {
 			out = append(out, strings.Join(strings.Fields(line), " "))
 		}
@@ -201,7 +201,7 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 // the command and reads down the screen.
 func shapesOf(stream string) []string {
 	var out []string
-	for _, line := range strings.Split(stream, "\n") {
+	for line := range strings.SplitSeq(stream, "\n") {
 		if s := shape(line); s != "" {
 			out = append(out, s)
 		}
@@ -253,7 +253,7 @@ func readmeFirstRun(t *testing.T) [][]string {
 	var blocks [][]string
 	var lines []string
 	fenced := false
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		if strings.HasPrefix(line, "```") {
 			if fenced && len(lines) > 0 {
 				blocks = append(blocks, lines)
@@ -318,7 +318,7 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 		got := field(t, lines[0], "words-source")
 		assert.Equalf(t, "corpus-top-terms", got, "words-source = %q, want corpus-top-terms when --words was not given", got)
 	}
-	for _, w := range strings.Split(words, " ") {
+	for w := range strings.SplitSeq(words, " ") {
 		assert.Falsef(t, quickstartFunctionWords[w], "the demonstration query offers %q, a function word, as one of this corpus's own terms", w)
 	}
 	assert.Equalf(t, "QUICKSTART OK done=3", lines[len(lines)-2], "the line before NOTE is\n  %s\nwant\n  %s", lines[len(lines)-2], "QUICKSTART OK done=3")
@@ -424,7 +424,7 @@ func TestREADMEFirstRunQuickstartBlockMatchesWhatTheToolPrints(t *testing.T) {
 	exit, stdout, stderr := runCLI(t, "", localize(append([]string{"quickstart"}, strings.Fields(cmd)...), "")...)
 	require.Equalf(t, 0, exit, "the README quickstart does not run: exit %d, stderr: %s", exit, stderr)
 	printedShape, printedEcho := map[string]bool{}, map[string]bool{}
-	for _, out := range strings.Split(stdout, "\n") {
+	for out := range strings.SplitSeq(stdout, "\n") {
 		if strings.HasPrefix(out, "$ nova-memory ") {
 			printedEcho[rootless(out)] = true
 			continue
@@ -482,7 +482,7 @@ func indexOf(lines []string, want string) int {
 // field reads one key=value field off an event line.
 func field(t *testing.T, line, key string) string {
 	t.Helper()
-	for _, tok := range strings.Fields(line) {
+	for tok := range strings.FieldsSeq(line) {
 		if k, v, ok := strings.Cut(tok, "="); ok && k == key {
 			return v
 		}

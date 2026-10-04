@@ -38,7 +38,7 @@ func TestLandFetchIsTheBaseAndTheHeadsByIDInOneCommand(t *testing.T) {
 	b, err := os.ReadFile(trace)
 	require.NoError(t, err)
 	var fetches []string
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if _, cmd, ok := strings.Cut(line, "trace: built-in: git fetch "); ok {
 			fetches = append(fetches, strings.ReplaceAll(cmd, "'", ""))
 		}

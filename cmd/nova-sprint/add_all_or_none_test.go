@@ -24,7 +24,7 @@ func writeBriefDir(t *testing.T, n int) string {
 
 // resultLine is the result line of a verb: the one that starts with its token and a status.
 func resultLine(out, errs, token string) string {
-	for _, l := range strings.Split(out+errs, "\n") {
+	for l := range strings.SplitSeq(out+errs, "\n") {
 		if strings.HasPrefix(l, token+" OK ") || strings.HasPrefix(l, token+" FAILED ") {
 			return l
 		}

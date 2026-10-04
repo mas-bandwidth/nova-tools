@@ -68,7 +68,7 @@ func (g github) importTree(c *tool.Call) *tool.Out {
 		o.Fact("calls", f.Calls).Fact("points", f.Points)
 		o.Facts = append(o.Facts, more...)
 		o.Fact("gh", ghPath)
-		for _, l := range strings.Split(strings.TrimSpace(retries.String()), "\n") {
+		for l := range strings.SplitSeq(strings.TrimSpace(retries.String()), "\n") {
 			if l != "" {
 				o.Note(l)
 			}

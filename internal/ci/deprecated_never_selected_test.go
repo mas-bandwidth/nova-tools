@@ -53,7 +53,7 @@ func TestDeprecatedPackagesAreNeverSelected(t *testing.T) {
 	for _, p := range kept {
 		keptSet[p] = true
 	}
-	for _, p := range strings.Fields(in) {
+	for p := range strings.FieldsSeq(in) {
 		assert.Equal(t, keptSet[p], lt.Package(strings.TrimPrefix(p, mod)), "liveTree says %s live=%v, the deprecated filter says %v; the two readings of %s disagree", p, lt.Package(strings.TrimPrefix(p, mod)), keptSet[p], pkgselect.DeprecatedFile)
 	}
 	want := strings.Join([]string{
@@ -91,7 +91,7 @@ func TestDeprecatedListNamesRealPackages(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, line := range strings.Split(readFile(t, filepath.Join(root, filepath.FromSlash(pkgselect.DeprecatedFile))), "\n") {
+	for line := range strings.SplitSeq(readFile(t, filepath.Join(root, filepath.FromSlash(pkgselect.DeprecatedFile))), "\n") {
 		line, _, _ = strings.Cut(line, "#")
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "keep "))
 		if line == "" {

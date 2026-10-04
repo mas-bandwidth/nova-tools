@@ -296,7 +296,7 @@ func (a *app) deleteBranches(ctx context.Context, dir string, branches []pruneBr
 			return append(left, branches[start:]...), "the branch tips could not be read: " + firstLine("", err)
 		}
 		have := map[string]string{}
-		for _, line := range strings.Split(listed, "\n") {
+		for line := range strings.SplitSeq(listed, "\n") {
 			if f := strings.Fields(line); len(f) == 2 {
 				have[strings.TrimPrefix(f[1], "refs/heads/")] = f[0]
 			}
@@ -326,7 +326,7 @@ func (a *app) deleteBranches(ctx context.Context, dir string, branches []pruneBr
 			out, err = a.pruneGit(ctx, dir, nil, args...)
 		}
 		var refused []string
-		for _, line := range strings.Split(out, "\n") {
+		for line := range strings.SplitSeq(out, "\n") {
 			f := strings.Split(line, "\t")
 			if len(f) < 3 || !strings.HasPrefix(f[1], ":refs/heads/") {
 				continue
@@ -369,7 +369,7 @@ func (a *app) tidyRefs(ctx context.Context, dir string, bases []string) (refs in
 		return 0, firstLine("", err)
 	}
 	var others []string
-	for _, ref := range strings.Fields(local) {
+	for ref := range strings.FieldsSeq(local) {
 		name := strings.TrimPrefix(ref, prefix)
 		if name != "HEAD" && !slices.Contains(bases, name) {
 			others = append(others, name)
@@ -383,7 +383,7 @@ func (a *app) tidyRefs(ctx context.Context, dir string, bases []string) (refs in
 		return 0, firstLine("", err)
 	}
 	have := map[string]bool{}
-	for _, line := range strings.Split(listed, "\n") {
+	for line := range strings.SplitSeq(listed, "\n") {
 		if f := strings.Fields(line); len(f) == 2 {
 			have[strings.TrimPrefix(f[1], "refs/heads/")] = true
 		}

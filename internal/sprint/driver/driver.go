@@ -185,7 +185,7 @@ func commandLine(args []string) string {
 // short is a verb's summary line, shortened to its token, status and counts.
 func short(verb, text string, code int) string {
 	tok := strings.ToUpper(verb)
-	for _, l := range strings.Split(text, "\n") {
+	for l := range strings.SplitSeq(text, "\n") {
 		f := strings.Fields(l)
 		if len(f) >= 2 && strings.HasPrefix(f[0], tok) && (f[1] == "OK" || f[1] == "FAIL") {
 			keep := []string{f[0], f[1]}
@@ -197,7 +197,7 @@ func short(verb, text string, code int) string {
 			return strings.Join(keep, " ")
 		}
 	}
-	for _, l := range strings.Split(text, "\n") {
+	for l := range strings.SplitSeq(text, "\n") {
 		if strings.TrimSpace(l) != "" {
 			return fmt.Sprintf("exit %d: %s", code, strings.TrimSpace(l))
 		}

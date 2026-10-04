@@ -32,7 +32,7 @@ func TestEveryStatsTableHasALegend(t *testing.T) {
 	}
 	assert.Contains(t, out, "takes is every take on it, work and read alike, each take of a card again counted")
 	assert.Contains(t, out, "cards is its work cards (one per attempt, counted to the member it was last dealt to)")
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.HasSuffix(strings.SplitN(l, ":", 2)[0], "s") && strings.Contains(l, ": per ") {
 			assert.NotContains(t, l, " | ", "a legend is not read as a row: %s", l)
 		}

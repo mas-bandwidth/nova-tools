@@ -24,7 +24,7 @@ type liveTree struct {
 func loadLiveTree(t *testing.T, root string) *liveTree {
 	t.Helper()
 	lt := &liveTree{keep: map[string]bool{}}
-	for _, line := range strings.Split(readFile(t, filepath.Join(root, filepath.FromSlash(pkgselect.DeprecatedFile))), "\n") {
+	for line := range strings.SplitSeq(readFile(t, filepath.Join(root, filepath.FromSlash(pkgselect.DeprecatedFile))), "\n") {
 		line, _, _ = strings.Cut(line, "#")
 		line = strings.TrimSpace(line)
 		switch {

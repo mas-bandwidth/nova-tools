@@ -62,7 +62,7 @@ const receiptRun = `"$RUNNER_TEMP/ci" report-run \
 // runLines is a run block's non-blank lines with their indentation taken off.
 func runLines(run string) []string {
 	var out []string
-	for _, l := range strings.Split(run, "\n") {
+	for l := range strings.SplitSeq(run, "\n") {
 		if l = strings.TrimSpace(l); l != "" {
 			out = append(out, l)
 		}
@@ -145,7 +145,7 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 func verbCode(src string) string {
 	var out []string
 	inHelp := false
-	for _, l := range strings.Split(src, "\n") {
+	for l := range strings.SplitSeq(src, "\n") {
 		t := strings.TrimSpace(l)
 		if strings.HasPrefix(t, "//") {
 			continue

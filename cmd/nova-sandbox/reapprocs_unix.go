@@ -44,7 +44,7 @@ func processesUnder(mount string) ([]int, error) {
 	}
 	var pids []int
 	self := syscall.Getpid()
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		n, cerr := strconv.Atoi(strings.TrimSpace(line))
 		if cerr != nil || n <= 1 || n == self {
 			continue

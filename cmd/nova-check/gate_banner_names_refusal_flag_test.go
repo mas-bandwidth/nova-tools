@@ -40,7 +40,7 @@ func TestTheGateBannerNamesTheFlagItsOwnRefusalTellsYouToPass(t *testing.T) {
 	code, stdout, helpErr := dogfoodRun(t, "help")
 	require.EqualValues(t, 0, code, "`nova-check help` exit %d, want 0\nstderr: %s", code, helpErr)
 	gateLines := []string{}
-	for _, l := range strings.Split(stdout, "\n") {
+	for l := range strings.SplitSeq(stdout, "\n") {
 		if strings.Contains(l, "nova-check dogfood gate") {
 			gateLines = append(gateLines, l)
 		}

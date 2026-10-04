@@ -373,7 +373,7 @@ func gitShowFile(storeDir, ref, path string) ([]byte, error) {
 
 func splitLines(out []byte) []string {
 	var lines []string
-	for _, l := range strings.Split(string(out), "\n") {
+	for l := range strings.SplitSeq(string(out), "\n") {
 		l = strings.TrimSpace(l)
 		if l != "" {
 			lines = append(lines, l)

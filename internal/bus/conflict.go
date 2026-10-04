@@ -311,7 +311,7 @@ func unmergedPaths(dir string) ([]string, error) {
 	}
 	seen := map[string]bool{}
 	var paths []string
-	for _, p := range strings.Split(out, "\x00") {
+	for p := range strings.SplitSeq(out, "\x00") {
 		if p == "" || seen[p] {
 			continue
 		}
@@ -333,7 +333,7 @@ func UnionLines(ours, theirs string) string {
 	seen := map[string]bool{}
 	var out []string
 	for _, block := range []string{ours, theirs} {
-		for _, line := range strings.Split(strings.ReplaceAll(block, "\r\n", "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.ReplaceAll(block, "\r\n", "\n"), "\n") {
 			if strings.TrimSpace(line) == "" || seen[line] {
 				continue
 			}

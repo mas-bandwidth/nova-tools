@@ -61,7 +61,7 @@ func ValidatePaths(paths []string) error {
 // made only of `*` and `?` constrains nothing about that segment, and a glob whose
 // every segment is like that constrains nothing about anything.
 func boundsNothing(p string) bool {
-	for _, seg := range strings.Split(p, "/") {
+	for seg := range strings.SplitSeq(p, "/") {
 		if strings.Trim(seg, "*?") != "" {
 			return false
 		}

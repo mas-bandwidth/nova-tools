@@ -179,7 +179,7 @@ func parseRest(v string) (RouteRest, bool) {
 // skipped. The route name is the line's first field, one token.
 func parseRule3(v string) map[string]RouteRest {
 	out := map[string]RouteRest{}
-	for _, line := range strings.Split(v, "\n") {
+	for line := range strings.SplitSeq(v, "\n") {
 		line = strings.TrimSpace(line)
 		route, restv, ok := strings.Cut(line, " ")
 		if !ok || route == "" {

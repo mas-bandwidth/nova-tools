@@ -200,7 +200,7 @@ func isTextScanned(rel string) bool {
 func measureTextGenerality(files []textScanFile) map[string]int {
 	counts := map[string]int{}
 	for _, f := range files {
-		for _, line := range strings.Split(string(f.Src), "\n") {
+		for line := range strings.SplitSeq(string(f.Src), "\n") {
 			for _, tok := range generalityTextFindings(f.Rel, line) {
 				counts[f.Rel+":"+tok]++
 			}

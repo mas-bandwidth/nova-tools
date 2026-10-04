@@ -94,7 +94,7 @@ func TestACardsLaunchRunsBehindCI(t *testing.T) {
 	raw, err := os.ReadFile(got)
 	require.NoError(t, err)
 	read := map[string]int{}
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
 		k, v, _ := strings.Cut(line, "=")
 		n, err := strconv.Atoi(strings.TrimSpace(v))
 		require.NoError(t, err, "RESULT.md line %q carries no nice value", line)

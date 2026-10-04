@@ -330,7 +330,7 @@ func packageFromKey(key string) (string, error) {
 			(strings.HasPrefix(kind, "/") || strings.HasPrefix(kind, "\\"))) {
 		return "", fmt.Errorf("invalid package ledger key %q: expected repo-relative file:kind", key)
 	}
-	for _, segment := range strings.Split(file, "/") {
+	for segment := range strings.SplitSeq(file, "/") {
 		if segment == "" || segment == "." || segment == ".." {
 			return "", fmt.Errorf("invalid package ledger key %q: unsafe source path", key)
 		}
@@ -343,7 +343,7 @@ func packageShardPath(dir, pkg string) (string, error) {
 		return filepath.Join(dir, "@root.txt"), nil
 	}
 	var segments []string
-	for _, segment := range strings.Split(pkg, "/") {
+	for segment := range strings.SplitSeq(pkg, "/") {
 		if segment == "" || segment == "." || segment == ".." || strings.Contains(segment, "\\") {
 			return "", fmt.Errorf("invalid source package %q", pkg)
 		}

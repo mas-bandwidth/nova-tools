@@ -13,7 +13,7 @@ import (
 func ParseIostat(s string) (float64, bool) {
 	var idle float64
 	n := 0
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		id, ok := iostatIdle(line)
 		if !ok {
 			continue

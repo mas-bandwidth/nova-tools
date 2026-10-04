@@ -42,7 +42,7 @@ import (
 // budgetOf is the `budget=` field of a NATIVE OK line.
 func budgetOf(t *testing.T, out string) string {
 	t.Helper()
-	for _, f := range strings.Fields(nativeOKLine(t, out)) {
+	for f := range strings.FieldsSeq(nativeOKLine(t, out)) {
 		if v, ok := strings.CutPrefix(f, "budget="); ok {
 			return v
 		}

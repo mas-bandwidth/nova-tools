@@ -123,7 +123,7 @@ func flagEntry(help, name string) (string, bool) {
 	}
 	var entry []string
 	in, found := false, false
-	for _, line := range strings.Split(section, "\n") {
+	for line := range strings.SplitSeq(section, "\n") {
 		if line == "" {
 			break // the section ends at its first blank line
 		}

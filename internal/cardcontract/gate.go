@@ -154,7 +154,7 @@ func readsPath(b []byte, doc string) bool {
 // holdsGo reports whether the directory at dir under repo holds a .go file: a package, and
 // not one the diff deleted whole.
 func holdsGo(repo, dir string) bool {
-	for _, el := range strings.Split(dir, "/") {
+	for el := range strings.SplitSeq(dir, "/") {
 		if gateSkipDir(el) && el != "." {
 			return false
 		}

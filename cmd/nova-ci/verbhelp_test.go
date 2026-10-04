@@ -121,7 +121,7 @@ func (h countRefusedHook) ProcessPipelineHook(next redis.ProcessPipelineHook) re
 func allowlistRowInHelp(t *testing.T, help string) string {
 	t.Helper()
 	var row string
-	for _, line := range strings.Split(help, "\n") {
+	for line := range strings.SplitSeq(help, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.Count(line, "\t") == 3 && strings.Contains(line, "@") {
 			require.Empty(t, row, "help prints two allowlist rows: %q and %q", row, line)

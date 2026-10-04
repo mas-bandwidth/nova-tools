@@ -266,7 +266,7 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 			assert.Equal(t, tc.want, tableOf(frame, sprint.Friends))
 			titles := func(frame string) []string {
 				var order []string
-				for _, block := range strings.Split(frame, "\n\n") {
+				for block := range strings.SplitSeq(frame, "\n\n") {
 					if title, _, ok := strings.Cut(block, " |"); ok && !strings.Contains(title, "\n") {
 						order = append(order, strings.TrimSpace(title))
 					}

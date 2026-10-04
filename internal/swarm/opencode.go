@@ -302,7 +302,7 @@ func queryOpenCode(path string, limit time.Duration) ([][]string, error) {
 			path, SQLiteBinary, err, oneLine(errb.String()))
 	}
 	var rows [][]string
-	for _, line := range strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(out.String(), "\n"), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}

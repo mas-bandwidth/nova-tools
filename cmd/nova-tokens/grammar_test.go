@@ -28,7 +28,7 @@ func outputGrammar(t *testing.T) map[string]string {
 	require.NoError(t, err, err)
 	var block, cur []string
 	in := false
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			if in {
 				for _, l := range cur {
@@ -63,7 +63,7 @@ func outputGrammar(t *testing.T) map[string]string {
 func grammarPairs(s string) map[string]string {
 	out := map[string]string{}
 	key := ""
-	for _, tok := range strings.Fields(s) {
+	for tok := range strings.FieldsSeq(s) {
 		if i := strings.Index(tok, "="); i > 0 && !strings.ContainsAny(tok[:i], "<>:\"") {
 			key = tok[:i]
 			out[key] = tok[i+1:]
@@ -175,7 +175,7 @@ func checkAgainstGrammar(t *testing.T, grammar map[string]string, line string) {
 func printedLines(r result) []string {
 	var out []string
 	for _, s := range []string{r.stdout, r.stderr} {
-		for _, line := range strings.Split(s, "\n") {
+		for line := range strings.SplitSeq(s, "\n") {
 			switch strings.Fields(line + " x")[0] {
 			case "TOKENS", "SOURCES", "SUM", "CHECK", "REPORT":
 				out = append(out, line)
@@ -484,7 +484,7 @@ func statusFoldedOut(t *testing.T) string {
 // statusWord is the first status word after the token on any line of the stream, or the
 // empty string when no line of the token carries one.
 func statusWord(stream, token string) string {
-	for _, line := range strings.Split(stream, "\n") {
+	for line := range strings.SplitSeq(stream, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 2 || f[0] != token {
 			continue

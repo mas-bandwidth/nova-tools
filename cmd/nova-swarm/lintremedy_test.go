@@ -45,7 +45,7 @@ func TestEveryDriftCarriesItsRemedy(t *testing.T) {
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
 	require.Equal(t, 1, exit, "a drifting card exits 1, got %d\nstdout: %s", exit, stdout)
 	drifts := 0
-	for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(stdout, "\n"), "\n") {
 		if !strings.HasPrefix(line, "LINT DRIFT ") {
 			continue
 		}
@@ -71,7 +71,7 @@ func TestLintRulesPrintsEveryRuleAndItsRemedy(t *testing.T) {
 	require.Equal(t, 0, exit, "`lint --rules` is a listing, not a refusal: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	require.Empty(t, stderr, "a listing writes nothing to stderr: %q", stderr)
 	seen := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(stdout, "\n"), "\n") {
 		rest, ok := strings.CutPrefix(line, "LINT RULE ")
 		require.True(t, ok, "every line of the listing is one rule: %q", line)
 		name, remedy, ok := strings.Cut(rest, " remedy=")

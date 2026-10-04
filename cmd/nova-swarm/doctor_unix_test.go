@@ -31,7 +31,7 @@ func reapRecordedChildren(t *testing.T, pidFile string) {
 		return
 	}
 	var pids []int
-	for _, field := range strings.Fields(string(raw)) {
+	for field := range strings.FieldsSeq(string(raw)) {
 		pid, err := strconv.Atoi(field)
 		if !assert.NoError(t, err, "the pid file holds %q, want one pid per line", field) || !assert.Greater(t, pid, 1, "the pid file holds %q, want one pid per line", field) {
 			continue

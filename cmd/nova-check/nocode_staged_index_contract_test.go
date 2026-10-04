@@ -135,7 +135,7 @@ func stLab(t *testing.T) string {
 // could satisfy.
 func stLine(t *testing.T, stream, prefix string) string {
 	t.Helper()
-	for _, line := range strings.Split(strings.TrimRight(stream, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(stream, "\n"), "\n") {
 		if strings.HasPrefix(line, prefix) {
 			return line
 		}

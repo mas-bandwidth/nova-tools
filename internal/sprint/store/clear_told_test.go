@@ -89,7 +89,7 @@ func (c *clearOnCall) AtEpoch(epoch uint64, old bool) Backend {
 // the sprint's, of no epoch.
 func withoutMachine(img string) string {
 	var out []string
-	for _, l := range strings.Split(img, "\n") {
+	for l := range strings.SplitSeq(img, "\n") {
 		if !strings.Contains(l, "sprint:heartbeat") && !strings.Contains(l, "sprint:machine") {
 			out = append(out, l)
 		}

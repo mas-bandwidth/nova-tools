@@ -369,7 +369,7 @@ func TestDogfoodRecordUsageNamesTheVerbList(t *testing.T) {
 	code, stdout, _ := dogfoodRun(t, "help")
 	require.EqualValues(t, 0, code, "exit %d", code)
 	line := ""
-	for _, l := range strings.Split(stdout, "\n") {
+	for l := range strings.SplitSeq(stdout, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(l), "nova-check dogfood record ") {
 			line = l
 			break

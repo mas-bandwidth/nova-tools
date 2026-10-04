@@ -480,7 +480,7 @@ func fleetShebangNamesBash(first string) bool {
 	if !ok {
 		return false
 	}
-	for _, f := range strings.Fields(rest) {
+	for f := range strings.FieldsSeq(rest) {
 		if f == "bash" || strings.HasSuffix(f, "/bash") {
 			return true
 		}

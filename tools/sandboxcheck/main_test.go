@@ -92,7 +92,7 @@ func TestDumpProfilePrintsTheFilledEmbeddedTemplate(t *testing.T) {
 		if code != 0 {
 			t.Errorf("%s: exit %d:\n%s", name, code, out)
 		}
-		for _, l := range strings.Split(out, "\n") {
+		for l := range strings.SplitSeq(out, "\n") {
 			if strings.Contains(l, "@@") && !strings.HasPrefix(l, ";;") {
 				t.Errorf("%s: an unfilled marker: %s", name, l)
 			}

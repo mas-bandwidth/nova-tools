@@ -24,7 +24,7 @@ var usageHeading = regexp.MustCompile(`^usage\b[^:]*:\s*$`)
 func usageVerbs(tool, banner string) []string {
 	var block strings.Builder
 	in := false
-	for _, line := range strings.Split(banner, "\n") {
+	for line := range strings.SplitSeq(banner, "\n") {
 		switch {
 		case usageHeading.MatchString(line):
 			in = true

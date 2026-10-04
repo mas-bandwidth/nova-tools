@@ -50,7 +50,7 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 		require.EqualValuesf(t, 1, code, "exit %d, want 1 (drift found)\n%s", code, all)
 	}
 	var drift []string
-	for _, l := range strings.Split(all, "\n") {
+	for l := range strings.SplitSeq(all, "\n") {
 		if strings.Contains(l, "DRIFT") {
 			drift = append(drift, l)
 		}

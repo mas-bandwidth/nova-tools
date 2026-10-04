@@ -86,7 +86,7 @@ func ParseUsage(line string) Usage {
 		"output": &u.Tokens.Output, "reasoning": &u.Tokens.Reasoning, "requests": &u.Tokens.Requests, "max_prompt": &u.Tokens.MaxPrompt}
 	texts := map[string]*string{"wall": &u.Wall, "budget": &u.Budget, "model": &u.Model, "actual_usd": &u.Actual, "actual_by": &u.ActualBy,
 		"price_route": &u.Route, "prices": &u.Prices, "predicted_usd": &u.Predicted, "unpriced": &u.Unpriced}
-	for _, w := range strings.Fields(line) {
+	for w := range strings.FieldsSeq(line) {
 		k, v, ok := strings.Cut(w, "=")
 		switch {
 		case !ok:
@@ -225,7 +225,7 @@ func SpendWord(t Tokens, cost, model string) string {
 func ParseSpend(w string) Usage {
 	u := NoUsage()
 	var line []string
-	for _, part := range strings.Split(w, ",") {
+	for part := range strings.SplitSeq(w, ",") {
 		k, v, ok := strings.Cut(part, ":")
 		if !ok || v == "" {
 			continue
@@ -369,7 +369,7 @@ func ParseTotal(line string) Total {
 		"reasoning": &t.Tokens.Reasoning, "requests": &t.Tokens.Requests, "max_prompt": &t.Tokens.MaxPrompt, "wait_s": &t.Wait, "run_s": &t.Run}
 	ints := map[string]*int{"records": &t.Records, "predicted_of": &t.PredOf, "actual_of": &t.ActualOf, "charged_of": &t.ChargedOf}
 	texts := map[string]*string{"predicted_usd": &t.Predicted, "actual_usd": &t.Actual, "actual_by": &t.ActualBy, "charged_usd": &t.Charged}
-	for _, w := range strings.Fields(line) {
+	for w := range strings.FieldsSeq(line) {
 		k, v, _ := strings.Cut(w, "=")
 		switch {
 		case counts[k] != nil:

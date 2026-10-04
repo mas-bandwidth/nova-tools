@@ -109,7 +109,7 @@ func TestEveryVerbsUsageLineNamesItsFlags(t *testing.T) {
 	t.Parallel()
 
 	usageLine := func(prefix string) string {
-		for _, l := range strings.Split(usage, "\n") {
+		for l := range strings.SplitSeq(usage, "\n") {
 			if l = strings.TrimSpace(l); strings.HasPrefix(l, prefix) {
 				return l
 			}
@@ -129,7 +129,7 @@ func TestEveryVerbsUsageLineNamesItsFlags(t *testing.T) {
 			exit, help, _ := runSelfTalk(t, verb, "-h")
 			require.Equal(t, 0, exit)
 			_, flags, _ := strings.Cut(help, "flags:\n")
-			for _, l := range strings.Split(flags, "\n") {
+			for l := range strings.SplitSeq(flags, "\n") {
 				if name, ok := strings.CutPrefix(l, "  --"); ok {
 					name, _, _ = strings.Cut(name, " ")
 					assert.Contains(t, line, "[--"+name, "%s registers --%s and its usage line does not name it: %s", verb, name, line)

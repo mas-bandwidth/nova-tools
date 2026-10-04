@@ -1218,7 +1218,7 @@ func (l *lander) git(ctx context.Context, dir string, args ...string) (string, e
 func firstLine(out string, err error) string {
 	if err != nil {
 		var lines []string
-		for _, l := range strings.Split(err.Error(), "\n") {
+		for l := range strings.SplitSeq(err.Error(), "\n") {
 			if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "hint:") {
 				lines = append(lines, l)
 			}

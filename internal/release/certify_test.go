@@ -49,7 +49,7 @@ func (s *certifySSH) Run(ctx context.Context, machine string, argv []string) (st
 	}
 	s.scripts = append(s.scripts, script)
 	class := ""
-	for _, line := range strings.Split(script, "\n") {
+	for line := range strings.SplitSeq(script, "\n") {
 		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "# nova-certify workload "); ok {
 			class = strings.TrimSpace(v)
 			break

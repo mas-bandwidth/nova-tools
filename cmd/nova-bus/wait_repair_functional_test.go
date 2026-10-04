@@ -25,7 +25,7 @@ import (
 func waitRepairLines(r result) []string {
 	var lines []string
 	for _, stream := range []string{r.stdout, r.stderr} {
-		for _, line := range strings.Split(stream, "\n") {
+		for line := range strings.SplitSeq(stream, "\n") {
 			if strings.HasPrefix(line, "WAIT REPAIR ") {
 				lines = append(lines, line)
 			}
@@ -322,7 +322,7 @@ func TestWaitRefusesAnotherAccountsStaleLock(t *testing.T) {
 
 func waitScanLines(r result) []string {
 	var lines []string
-	for _, line := range strings.Split(r.stdout, "\n") {
+	for line := range strings.SplitSeq(r.stdout, "\n") {
 		if strings.HasPrefix(line, "WAIT SCAN ") {
 			lines = append(lines, line)
 		}

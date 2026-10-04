@@ -29,7 +29,7 @@ func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
 	// build identity and exits 0, so it has no missing-flag refusal at all.
 	var verbs []string
 	seen := map[string]bool{}
-	for _, line := range strings.Split(help, "\n") {
+	for line := range strings.SplitSeq(help, "\n") {
 		rest, ok := strings.CutPrefix(line, "  nova-fuse ")
 		if !ok {
 			continue
@@ -50,7 +50,7 @@ func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
 		}
 		assert.Empty(t, out, "bare `nova-fuse %s`: a refusal wrote to stdout: %q", verb, out)
 		refusals := 0
-		for _, line := range strings.Split(strings.TrimSuffix(errOut, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSuffix(errOut, "\n"), "\n") {
 			if strings.HasPrefix(line, "  ") {
 				// The one indented hint line a missing-flag refusal may carry;
 				// the door is not the hint, so the hint is not the subject here.

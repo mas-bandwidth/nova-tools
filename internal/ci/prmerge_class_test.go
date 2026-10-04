@@ -120,7 +120,7 @@ func TestNoGhPrMergeSpellingUnderDotGithub(t *testing.T) {
 					f.Rel, i+1, trimmed))
 				continue
 			}
-			for _, field := range strings.Fields(line) {
+			for field := range strings.FieldsSeq(line) {
 				if field == "--auto" || strings.HasPrefix(field, "--auto=") {
 					violations = append(violations, fmt.Sprintf(
 						"%s:%d carries --auto: %s\nauto-merge is a standing instruction nobody is in the room for",

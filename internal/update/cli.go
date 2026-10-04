@@ -769,7 +769,7 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	// statement counts only when the builds confirm it.
 	stated := map[string]string{}
 	readStated := func(text string) {
-		for _, line := range strings.Split(text, "\n") {
+		for line := range strings.SplitSeq(text, "\n") {
 			f := strings.Fields(strings.ToLower(line))
 			if len(f) == 4 && f[0] == "renamed" && f[2] == "to" {
 				stated[f[1]] = f[3]
@@ -810,7 +810,7 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 			return nil, fmt.Errorf("cannot list cmd/* at %s in %s (%s) (supply a --repo whose %s revision holds a cmd directory)", rev, repo, oneline.Escape(p.Reason), rev)
 		}
 		var tools []string
-		for _, line := range strings.Split(p.Stdout, "\n") {
+		for line := range strings.SplitSeq(p.Stdout, "\n") {
 			if line = strings.TrimSpace(line); line != "" {
 				tools = append(tools, line)
 			}
@@ -910,7 +910,7 @@ type movedInv map[string]map[string]map[string]bool
 // these lines do not print, the note cannot announce.
 func parseMovedHelp(tool, help string) map[string]map[string]bool {
 	verbs := map[string]map[string]bool{}
-	for _, line := range strings.Split(help, "\n") {
+	for line := range strings.SplitSeq(help, "\n") {
 		if line = strings.TrimSpace(line); !strings.HasPrefix(line, tool+" ") {
 			continue
 		}

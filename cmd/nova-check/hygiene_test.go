@@ -265,7 +265,7 @@ func hygManyFindings(t *testing.T) string {
 // the remedy that is meant to print it.
 func hygMore(t *testing.T, stdout string) (total int, remedy string) {
 	t.Helper()
-	for _, line := range strings.Split(stdout, "\n") {
+	for line := range strings.SplitSeq(stdout, "\n") {
 		if !strings.HasPrefix(line, "HYGIENE MORE ") {
 			continue
 		}

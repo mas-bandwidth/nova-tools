@@ -36,7 +36,7 @@ type Hunk struct {
 func Parse(diff string) []File {
 	var out []File
 	var f *File
-	for _, l := range strings.Split(diff, "\n") {
+	for l := range strings.SplitSeq(diff, "\n") {
 		switch {
 		case strings.HasPrefix(l, "diff --git "):
 			a, b, _ := strings.Cut(strings.TrimPrefix(l, "diff --git "), " b/")

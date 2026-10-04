@@ -170,7 +170,7 @@ func TestNativeBudgetSitsWhereTheGrammarPutsIt(t *testing.T) {
 // this file, which no build tag guards, because every budget test reads a field of the
 // NATIVE verdict line and one of them is unix-only.
 func fieldOf(line, key string) string {
-	for _, f := range strings.Fields(line) {
+	for f := range strings.FieldsSeq(line) {
 		if v, ok := strings.CutPrefix(f, key+"="); ok {
 			return v
 		}
@@ -191,7 +191,7 @@ func fieldOf(line, key string) string {
 // verdict's OWN assertions live in native_verdict_test.go and are untouched.
 func nativeOKLine(t *testing.T, out string) string {
 	t.Helper()
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(line, "NATIVE OK ") || strings.HasPrefix(line, "NATIVE INCOMPLETE ") {
 			return line
 		}

@@ -231,7 +231,7 @@ func ReadLockHolder(path string) string {
 	if s == "" {
 		return "-"
 	}
-	for _, tok := range strings.Fields(s) {
+	for tok := range strings.FieldsSeq(s) {
 		if v, ok := strings.CutPrefix(tok, "pid="); ok {
 			if _, err := strconv.Atoi(v); err == nil {
 				return v

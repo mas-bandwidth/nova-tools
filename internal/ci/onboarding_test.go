@@ -53,7 +53,7 @@ const shipsInNoFleetBuild = "ships in no fleet build"
 // document, keyed by tool name.
 func toolSections(md string) map[string]string {
 	out := map[string]string{}
-	for _, line := range strings.Split("\n"+md, "\n") {
+	for line := range strings.SplitSeq("\n"+md, "\n") {
 		rest, ok := strings.CutPrefix(line, "## ")
 		if !ok {
 			continue

@@ -140,7 +140,7 @@ func dashboardAddrs(flag, list string) ([]string, error) {
 		return nil, nil
 	}
 	var out []string
-	for _, addr := range strings.Split(list, ",") {
+	for addr := range strings.SplitSeq(list, ",") {
 		addr = strings.TrimSpace(addr)
 		if addr == "" {
 			continue

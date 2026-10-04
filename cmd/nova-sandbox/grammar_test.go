@@ -50,7 +50,7 @@ func specProbeRefusalReasons(t *testing.T) map[string]bool {
 	t.Helper()
 	var found []string
 	inFence := false
-	for _, line := range strings.Split(specSandbox(t), "\n") {
+	for line := range strings.SplitSeq(specSandbox(t), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			inFence = !inFence
 			continue
@@ -64,7 +64,7 @@ func specProbeRefusalReasons(t *testing.T) map[string]bool {
 	alts, _, ok := strings.Cut(strings.TrimPrefix(found[0], probeRefusedGrammarPrefix), ">")
 	require.True(t, ok, "the grammar's PROBE REFUSED alternatives are not closed by `>`: %q", found[0])
 	set := map[string]bool{}
-	for _, word := range strings.Split(alts, "|") {
+	for word := range strings.SplitSeq(alts, "|") {
 		word = strings.TrimSpace(word)
 		require.NotEmpty(t, word, "the grammar's PROBE REFUSED alternatives hold an empty word: %q", found[0])
 		set[word] = true

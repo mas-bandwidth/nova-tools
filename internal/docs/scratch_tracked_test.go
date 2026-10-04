@@ -47,7 +47,7 @@ func TestNoTrackedScratchPathOrOversizedFile(t *testing.T) {
 
 	var scratch []string
 	var oversized []oversizedFile
-	for _, path := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+	for path := range strings.SplitSeq(strings.TrimSuffix(string(out), "\x00"), "\x00") {
 		if path == "" {
 			continue
 		}

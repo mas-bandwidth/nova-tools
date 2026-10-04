@@ -56,7 +56,7 @@ func renderTablesLock() string {
 // lockBody is a lock file's lines without its comments and blanks.
 func lockBody(raw string) string {
 	var b strings.Builder
-	for _, line := range strings.Split(raw, "\n") {
+	for line := range strings.SplitSeq(raw, "\n") {
 		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
 			b.WriteString(line + "\n")
 		}

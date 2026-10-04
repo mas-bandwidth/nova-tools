@@ -272,7 +272,7 @@ func readOwnerMarker(mount string) (pid int, start string, ok bool) {
 	if err != nil {
 		return 0, "", false
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if rest, cut := strings.CutPrefix(strings.TrimSpace(line), "pid="); cut {
 			pid, _ = strconv.Atoi(strings.TrimSpace(rest))
 		}

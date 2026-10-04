@@ -101,7 +101,7 @@ func ParseGateOutput(out string) []Failure {
 	reset := func() {
 		pending, loose, byRun, cur, running, inTimeout = nil, nil, map[string][]string{}, -1, "", false
 	}
-	for _, l := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+	for l := range strings.SplitSeq(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		t := strings.TrimSpace(l)
 		if m := failRE.FindStringSubmatch(l); m != nil {
 			inTimeout = false
@@ -205,10 +205,10 @@ func DiffSummary(diff string) string {
 // CardPaths is a card's PATHS globs: its first `PATHS:` line (cardhdr.KeyValue), split
 // on commas; nil when it names none.
 func CardPaths(card string) []string {
-	for _, l := range strings.Split(card, "\n") {
+	for l := range strings.SplitSeq(card, "\n") {
 		if k, v, ok := cardhdr.KeyValue(strings.TrimSpace(l)); ok && k == cardhdr.KeyPaths {
 			var out []string
-			for _, g := range strings.Split(v, ",") {
+			for g := range strings.SplitSeq(v, ",") {
 				if g = strings.TrimSpace(g); g != "" && g != "none" {
 					out = append(out, g)
 				}

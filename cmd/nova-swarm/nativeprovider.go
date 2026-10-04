@@ -76,7 +76,7 @@ var providerErrorRE = regexp.MustCompile(`(?i)message="?stream error|server_erro
 // "" when there is none. The cause read from it (swarm.CauseFromText) is what is bounded.
 func providerLogError(dataHome string, offset int64) string {
 	raw := tailSince(filepath.Join(dataHome, filepath.FromSlash(harnessLogFile)), offset)
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if !strings.Contains(line, "level=ERROR") || !providerErrorRE.MatchString(line) {
 			continue
 		}
@@ -227,7 +227,7 @@ func providerLine(label string, wall float64, model string, cause swarm.Provider
 // provider error line, trimmed to the line's own message; "" when there is none.
 func printedHarnessError(capture []byte) string {
 	var provider string
-	for _, line := range strings.Split(string(capture), "\n") {
+	for line := range strings.SplitSeq(string(capture), "\n") {
 		if !strings.Contains(line, "level=ERROR") {
 			continue
 		}

@@ -20,7 +20,7 @@ import (
 func templateUnfilledLine(t *testing.T, prefix string) string {
 	t.Helper()
 	var got []string
-	for _, l := range strings.Split(templateCard, "\n") {
+	for l := range strings.SplitSeq(templateCard, "\n") {
 		if l = strings.TrimSpace(l); strings.HasPrefix(l, prefix) {
 			got = append(got, l)
 		}

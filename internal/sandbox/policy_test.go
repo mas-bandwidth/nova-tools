@@ -584,7 +584,7 @@ func TestAncestorsGetMetadataOnly(t *testing.T) {
 // whole text would be reading the documentation rather than the policy.
 func grantLines(profile string) string {
 	var out []string
-	for _, line := range strings.Split(profile, "\n") {
+	for line := range strings.SplitSeq(profile, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), ";;") {
 			continue
 		}
@@ -670,7 +670,7 @@ func TestMachLookupIsNarrowed(t *testing.T) {
 	require.Empty(t, bad, "refused: %v", bad)
 	text, _, err := DarwinProfile(pol)
 	require.NoError(t, err)
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		require.NotEqual(t, "(allow mach-lookup)", strings.TrimSpace(line), "the template still carries the unqualified (allow mach-lookup): pbpaste reads the clipboard under it")
 	}
 	for _, name := range []string{

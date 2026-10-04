@@ -13,7 +13,7 @@ import (
 // chancesLine is the chances play prints before its first tick.
 func chancesLine(t *testing.T, out string) string {
 	t.Helper()
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(l, "chances: ") {
 			return l
 		}
@@ -156,7 +156,7 @@ func landsUnder(t *testing.T, flags string) map[string]int {
 			return seen
 		}
 		out := ta.ok(fmt.Sprintf("play --simulation %s --seed %d --ticks 5 --batch 5", flags, round))
-		for _, l := range strings.Split(out, "\n") {
+		for l := range strings.SplitSeq(out, "\n") {
 			if verb, ok := strings.CutPrefix(l, "  nova-sprint "); ok {
 				switch v := strings.Fields(verb)[0]; v {
 				case "take", "finish", "read", "merge", "fleet":
@@ -249,7 +249,7 @@ func TestPlaySimulationBatchesOneCallForEveryMachineATick(t *testing.T) {
 	one, two, _ := strings.Cut(out, "\ntick 2 ")
 	all := strings.Join(members, ",")
 	takes, taken := 0, 0
-	for _, l := range strings.Split(one, "\n") {
+	for l := range strings.SplitSeq(one, "\n") {
 		if verb, as, n := movedLine(strings.TrimSpace(l)); verb == "take" {
 			takes++
 			taken += n
@@ -259,7 +259,7 @@ func TestPlaySimulationBatchesOneCallForEveryMachineATick(t *testing.T) {
 		}
 	}
 	finishes, finished := 0, 0
-	for _, l := range strings.Split(two, "\n") {
+	for l := range strings.SplitSeq(two, "\n") {
 		if verb, as, n := movedLine(strings.TrimSpace(l)); verb == "finish" {
 			finishes++
 			finished += n

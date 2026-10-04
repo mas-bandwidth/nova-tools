@@ -78,7 +78,7 @@ func jobBlocks(src string) map[string]string {
 			b.Reset()
 		}
 	}
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		if !strings.HasPrefix(line, " ") && strings.TrimSpace(line) == "jobs:" {
 			inJobs = true
 			continue
@@ -120,7 +120,7 @@ func runsOnHosted(block string) bool {
 
 // jobRunsOnEvent reports whether a job's own `if:` guard names the event.
 func jobRunsOnEvent(block, event string) bool {
-	for _, line := range strings.Split(block, "\n") {
+	for line := range strings.SplitSeq(block, "\n") {
 		if strings.HasPrefix(line, "    if:") && strings.Contains(line, "github.event_name == '"+event+"'") {
 			return true
 		}
@@ -281,7 +281,7 @@ func TestRunnersPerMachineIsOneNumber(t *testing.T) {
 // `branches: [...]` line.
 func pushTriggerBranches(src string) []string {
 	inOn, inPush := false, false
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if !strings.HasPrefix(line, " ") && trimmed != "" {
 			// A top-level key: enters `on:` and leaves it again.
@@ -301,7 +301,7 @@ func pushTriggerBranches(src string) []string {
 		}
 		if m := pushBranchesRe.FindStringSubmatch(line); m != nil {
 			var out []string
-			for _, b := range strings.Split(m[1], ",") {
+			for b := range strings.SplitSeq(m[1], ",") {
 				if b = strings.Trim(strings.TrimSpace(b), `"'`); b != "" {
 					out = append(out, b)
 				}

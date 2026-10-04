@@ -99,7 +99,7 @@ func parseNameLines(s string) (map[string]bool, []string, error) {
 	names := map[string]bool{}
 	seenPrefix := map[string]bool{}
 	var prefixes []string
-	for _, raw := range strings.Split(s, "\n") {
+	for raw := range strings.SplitSeq(s, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -192,7 +192,7 @@ func validPrefix(v, line string) error {
 	// "." and ".." segments would each build a prefix that never matches a
 	// cleaned relative path, so they are refused rather than normalized away:
 	// a silent normalization hides which entry the author actually wrote.
-	for _, seg := range strings.Split(v, "/") {
+	for seg := range strings.SplitSeq(v, "/") {
 		if seg == "" || seg == "." || seg == ".." {
 			return fmt.Errorf("floor name list: %q is not a clean path prefix (empty, . or .. segment)", line)
 		}
@@ -208,7 +208,7 @@ func validPrefix(v, line string) error {
 // and report a clean tree. A guard that forbids nothing must refuse.
 func parseExtLines(s string) ([]string, error) {
 	seen := map[string]bool{}
-	for _, raw := range strings.Split(s, "\n") {
+	for raw := range strings.SplitSeq(s, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

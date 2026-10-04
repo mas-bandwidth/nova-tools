@@ -29,7 +29,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 	// word is part of it only when a flag (or the record verb's flag group) follows.
 	seen := map[string]bool{}
 	var verbs []string
-	for _, line := range strings.Split(helpOut, "\n") {
+	for line := range strings.SplitSeq(helpOut, "\n") {
 		line = strings.TrimRight(line, " ")
 		if !strings.HasPrefix(line, "  nova-check ") {
 			continue
@@ -63,7 +63,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 			continue
 		}
 		refused++
-		for _, line := range strings.Split(strings.TrimRight(stderr, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.TrimRight(stderr, "\n"), "\n") {
 			if line == "" || strings.HasPrefix(line, "  ") {
 				// An empty line, or the hint that follows a refusal on its own indented
 				// line: the door belongs on the refusal line, before the hint.
