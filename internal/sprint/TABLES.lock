@@ -85,6 +85,13 @@
 # are as they were. No column changed, so the lines below are unchanged. Held by
 # TestAFriendsStatusIsTheFriendsRuleOverItsBeatsAndItsHold and
 # TestADownFriendShowsNoneWorking.
+#
+# Change, 2026-10-04, asked by Glenn in words: "Alex does security work only." The friend
+# row of nova-config (not a sprint table) takes two fields, streams and kinds, which friend
+# sync carries onto the friends roster record and the friend dealer reads; no column, fold
+# or row of the tables below changes, so the shape is the same. Held by
+# TestDealerNeverDealsAFriendOutsideHerStreams and TestSprintTablesAreLocked.
+#
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown

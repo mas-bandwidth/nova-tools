@@ -456,3 +456,36 @@ func TestFriendSyncDeliversHerReadyCardsAndKeepsHerQueueFile(t *testing.T) {
 	assert.Equal(t, []friendTask{{ID: "s1-1.w1", State: "working"}, {ID: "s1-2.w1", State: "working"}, {ID: "s1-3.w1", State: "queued"}}, q.Tasks, "a finished card's record is left as it was (her session marks it done)")
 	ta.clean()
 }
+
+// A card naming a friend whose nova-config row restricts her streams or kinds outside the
+// card is refused at add and at brief with the restriction named, nothing written, so it
+// never sits undealable; the same card inside her restriction is taken.
+func TestAddAndBriefRefuseACardNamingAFriendOutsideHerRestriction(t *testing.T) {
+	t.Parallel()
+	ta, cfg := friendApp(t, "amy")
+	_, _, err := cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"streams": "security*", "kinds": "audit"}, "t")
+	require.NoError(t, err)
+	ta.ok("friend sync --root " + t.TempDir())
+	add := func(stream, kind string) (int, string) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "c1.md"), []byte(passingBrief("c1: a card\nKIND: "+kind+"\nWHO: friend amy")), 0o644))
+		code, _, errs := ta.do("add --stream " + stream + " --brief-dir " + dir)
+		return code, errs
+	}
+	code, errs := add("s1", "audit")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "friend amy works only streams security*, and the card's stream is s1")
+	assert.Contains(t, errs, "nova-config friend set amy --streams")
+	code, errs = add("security-1", "fix-red")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "friend amy works only kinds audit, and the card's kind fix-red is outside them")
+	code, _ = add("security-1", "audit")
+	assert.Equal(t, 0, code)
+
+	// brief re-checks the same card with a new brief naming a kind outside her kinds
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.md"), []byte(passingBrief("c1: a card\nKIND: fix-red\nWHO: friend amy")), 0o644))
+	code, _, errs = ta.do("brief c1 --brief-file " + filepath.Join(dir, "b.md"))
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "friend amy works only kinds audit")
+}

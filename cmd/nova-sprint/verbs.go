@@ -1185,7 +1185,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if *brief == "" && *sentinel == "" {
 		c.says = append(c.says, "the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>")
 	}
-	if code := a.holdWho("add", st, stderr, *brief); code != 0 {
+	if code := a.holdWho("add", st, stderr, sprint.Split(*stream), *brief); code != 0 {
 		return code
 	}
 	c.addStream = *stream
@@ -1281,7 +1281,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	for i, cd := range cards {
 		texts[i] = cd.Brief
 	}
-	if code := a.holdWho("add", st, stderr, texts...); code != 0 {
+	if code := a.holdWho("add", st, stderr, []string{stream}, texts...); code != 0 {
 		return code
 	}
 	r := sprint.AddReq{Stream: stream, Cards: cards, Who: c.actor, Before: before, After: after, Held: held, Score: at, BriefOps: asked.ops, BriefRecord: asked.record, Replaces: replaces}
@@ -1434,8 +1434,13 @@ func uniquify(ids []string) []string {
 // `WHO: friend <name>`, the name a row of the friends table (nova-config's friend rows,
 // copied by friend sync), and `WHO: friend` only while the table has a friend. A brief
 // whose line does not read, or names no friend of the table, refuses the whole call, exit
-// 2, nothing written. A brief with no WHO line is a machine's, as before.
-func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, briefs ...string) int {
+// 2, nothing written. A brief naming a friend whose row restricts her streams or kinds
+// (sprint.FriendRestrictionWhy) outside the card's stream and the brief's KIND is refused
+// with the restriction named, so it never sits undealable; streams are the streams the
+// cards go to, none when the card's is unknown, and the restriction is then left to the
+// step. A brief with no WHO line is a
+// machine's, as before.
+func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, streams []string, briefs ...string) int {
 	var names []string
 	read := false
 	for _, b := range briefs {
@@ -1458,6 +1463,21 @@ func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, briefs
 			return refuse(stderr, verbName, "the brief says WHO: friend, and the friends table has no friend: its rows are nova-config's friend rows; run: nova-sprint friend sync")
 		case w.Name != "" && !slices.Contains(names, w.Name):
 			return refuse(stderr, verbName, fmt.Sprintf("the brief says WHO: friend %s, and %s is no row of the friends table (friends: %s): name one, or write WHO: friend for any; run: nova-sprint friend sync", w.Name, w.Name, strings.Join(names, ",")))
+		}
+		if w.Name == "" || len(streams) == 0 {
+			continue
+		}
+		spec, err := st.FriendSpecOf(context.Background(), w.Name)
+		if err != nil {
+			return a.readFailed(verbName, err, stderr)
+		}
+		seat := sprint.FriendSeat{Name: w.Name, Streams: spec.Streams, Kinds: spec.Kinds}
+		for _, stream := range streams {
+			why := sprint.FriendRestrictionWhy(seat, stream, sprint.BriefKind(b))
+			if why == "" {
+				continue
+			}
+			return refuse(stderr, verbName, "the brief says WHO: friend "+w.Name+", and "+why+" (her nova-config friend row's restriction): name a friend it fits, or write WHO: friend for any; run: nova-config friend set "+w.Name+" --streams <globs> --kinds <kinds>")
 		}
 	}
 	return 0
@@ -2254,7 +2274,7 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "brief", err.Error())
 		}
 	}
-	if code := a.holdWho("brief", st, stderr, *brief); code != 0 {
+	if code := a.holdWho("brief", st, stderr, a.streamOfCard(st, ids[0]), *brief); code != 0 {
 		return code
 	}
 	c.says = append(c.says, unfilledSays("the brief of "+ids[0], *brief)...)
@@ -2988,4 +3008,14 @@ func (a *app) cmdReaderRetire(args []string, stdout, stderr io.Writer) int {
 	}
 	sayOK(stdout, c.json, "reader retire", "READER-RETIRE OK readers="+strings.Join(names, ","), map[string]any{"readers": names})
 	return 0
+}
+
+// streamOfCard is the stream of the primary id, none when the store does not answer or
+// holds no such card (the step that follows refuses an unknown card itself).
+func (a *app) streamOfCard(st *store.Store, id string) []string {
+	v, err := st.CardOf(context.Background(), id)
+	if err != nil || v.Primary == nil {
+		return nil
+	}
+	return []string{v.Primary.Row}
 }

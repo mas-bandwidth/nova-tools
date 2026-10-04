@@ -52,7 +52,7 @@ func (a *app) cmdRecut(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if r.Brief != "" {
-		if code := a.holdWho("recut", st, stderr, r.Brief); code != 0 {
+		if code := a.holdWho("recut", st, stderr, a.streamOfCard(st, r.ID), r.Brief); code != 0 {
 			return code
 		}
 		c.says = append(c.says, unfilledSays("the brief of the twin of "+ids[0], r.Brief)...)

@@ -519,3 +519,37 @@ func TestMigrationThirtyGivesEveryFriendTheBatchMode(t *testing.T) {
 	require.NoError(t, err, "the file runs again")
 	assert.Equal(t, map[string]string{"f1": "batch", "f2": "one-shot"}, columnOf(t, st, "mode"), "a mode set since is kept")
 }
+
+// 0032 gives every friend a restriction (docs/SPEC-CONFIG.md, the friend kind): each row
+// there before it has none, a row added after takes none, and the file run again keeps a
+// restriction set since.
+func TestMigrationThirtyTwoGivesEveryFriendNoRestriction(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := OpenPG(ctx, server.Database(t))
+	require.NoError(t, err)
+	defer st.Close()
+	all, err := Migrations()
+	require.NoError(t, err)
+	var last Migration
+	for _, m := range all {
+		if m.Version == 32 {
+			last = m
+			break
+		}
+		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+	}
+	require.Equal(t, "0032_friend_restriction.sql", last.Name)
+	for _, f := range []string{"f1", "f2"} {
+		_, err = st.db.ExecContext(ctx, `INSERT INTO config.friends (name, slots, tiers, roles) VALUES ($1, 2, 'flash', '')`, f)
+		require.NoError(t, err, f)
+	}
+	require.NoError(t, st.applyOne(ctx, last))
+	assert.Equal(t, map[string]string{"f1": "", "f2": ""}, columnOf(t, st, "streams"), "every friend there before 0032 has no restriction")
+	assert.Equal(t, map[string]string{"f1": "", "f2": ""}, columnOf(t, st, "kinds"))
+	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET streams = 'security*' WHERE name = 'f2'`)
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(ctx, last.SQL)
+	require.NoError(t, err, "the file runs again")
+	assert.Equal(t, map[string]string{"f1": "", "f2": "security*"}, columnOf(t, st, "streams"), "a restriction set since is kept")
+}

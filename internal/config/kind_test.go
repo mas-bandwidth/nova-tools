@@ -93,7 +93,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width,mode", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode,streams,kinds", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,streams,kinds", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -555,4 +555,26 @@ func TestAFriendRowsModeDefaultsToBatch(t *testing.T) {
 	assert.Equal(t, FriendModeBatch, FriendMode(Row{Name: "amy", Fields: map[string]string{}}))
 	assert.Equal(t, FriendModeOneShot, FriendMode(Row{Name: "amy", Fields: map[string]string{"mode": "one-shot"}}))
 	assert.Equal(t, []string{"batch", "one-shot"}, FriendModes)
+}
+
+// A friend row's restriction (streams: globs over stream names, kinds: card KIND values)
+// reads as no restriction when empty or absent, and a streams entry that is no glob is
+// refused with the flag named.
+func TestAFriendRowsRestrictionReadsAndChecks(t *testing.T) {
+	t.Parallel()
+	none := Row{Name: "amy", Fields: map[string]string{}}
+	assert.Empty(t, FriendStreams(none))
+	assert.Empty(t, FriendKinds(none))
+	r := Row{Name: "alex", Fields: map[string]string{"streams": "security*, deploy", "kinds": "audit,fix-red"}}
+	assert.Equal(t, []string{"security*", "deploy"}, FriendStreams(r))
+	assert.Equal(t, []string{"audit", "fix-red"}, FriendKinds(r))
+	assert.NoError(t, checkFriend(r))
+	assert.ErrorContains(t, checkFriend(Row{Name: "amy", Fields: map[string]string{"streams": "sec[urity"}}), "want --streams")
+	assert.ErrorContains(t, checkFriend(Row{Name: "amy", Fields: map[string]string{"kinds": "fix red"}}), "want --kinds")
+	k, ok := Lookup(KindFriend)
+	require.True(t, ok)
+	for _, f := range []string{"streams", "kinds"} {
+		_, has := k.Field(f)
+		assert.True(t, has, f)
+	}
 }

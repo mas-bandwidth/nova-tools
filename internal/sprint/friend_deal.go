@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 	"strings"
 
@@ -89,6 +90,47 @@ type FriendSeat struct {
 	Class  string
 	Tiers  []string
 	Dir    string
+	// Streams and Kinds are her restriction (config.friends streams and kinds): glob
+	// patterns over stream names and card KIND values; empty is no restriction.
+	Streams []string
+	Kinds   []string
+}
+
+// FriendRestrictionWhy is why the friend is never dealt a card of this stream and kind,
+// "" when her row allows it: her streams are glob patterns over stream names and her
+// kinds are card KIND values, each empty meaning no restriction (docs/SPEC-SPRINT.md
+// section 1, a friend's card). The deal, add and brief all ask it, so a card is refused
+// at the door by the rule that would leave it undealable.
+func FriendRestrictionWhy(f FriendSeat, stream, kind string) string {
+	if len(f.Streams) > 0 && !slices.ContainsFunc(f.Streams, func(g string) bool { ok, _ := path.Match(g, stream); return ok }) {
+		return fmt.Sprintf("friend %s works only streams %s, and the card's stream is %s", f.Name, strings.Join(f.Streams, ","), stream)
+	}
+	if len(f.Kinds) > 0 && !slices.Contains(f.Kinds, kind) {
+		k := kind
+		if k == "" {
+			k = "(none)"
+		}
+		return fmt.Sprintf("friend %s works only kinds %s, and the card's kind %s is outside them", f.Name, strings.Join(f.Kinds, ","), k)
+	}
+	return ""
+}
+
+// BriefKind is the KIND a brief's header gives its card, "" when it has none: the first
+// KIND line of the header block under line 1.
+func BriefKind(brief string) string {
+	_, rest, _ := strings.Cut(brief, "\n")
+	for rest != "" {
+		var l string
+		l, rest, _ = strings.Cut(rest, "\n")
+		k, v, ok := cardhdr.KeyValue(l)
+		if !ok {
+			break
+		}
+		if strings.EqualFold(k, "kind") {
+			return v
+		}
+	}
+	return ""
 }
 
 // Members is the fleet's machines: its rows but the friends' (FriendRow), in row order.
@@ -114,7 +156,8 @@ func friendLoad(s *Snapshot, name string) int {
 // people busy by having 2X width queued up in ready per-friend"): a card naming a
 // friend goes to her while she is up and below her room, and waits ready otherwise; a
 // card for any friend goes to the friend up with the most room free, the first by name
-// among equals. Each is its next attempt's work card, created on the friend's row at
+// among equals; never a friend whose restriction (FriendRestrictionWhy) leaves the card
+// out, so the card waits ready when no friend within her restriction is up with room. Each is its next attempt's work card, created on the friend's row at
 // generation 1, in working while she has a lane free (her width less her working cards;
 // dealt and taken now: its deadline is the working one) and ready behind them otherwise
 // (her finish takes the next: Finish), carrying the primary's fix, finding and why as a
@@ -124,7 +167,9 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 	var p Plan
 	free, lanes := map[string]int{}, map[string]int{}
 	var up []string
+	seat := map[string]FriendSeat{}
 	for _, f := range seats {
+		seat[f.Name] = f
 		if f.Status == Up {
 			free[f.Name] = DealAhead*f.Width - friendLoad(s, f.Name)
 			lanes[f.Name] = f.Width - s.Fleet.Count(FriendRow(f.Name), Working)
@@ -147,15 +192,16 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 		if wc != nil {
 			not, _ = FriendOfRow(wc.F(FieldTakenFrom))
 		}
+		kind := BriefKind(c.F("brief"))
 		if name == "" {
 			for _, f := range up {
-				if f != not && free[f] > 0 && (name == "" || free[f] > free[name]) {
+				if f != not && free[f] > 0 && FriendRestrictionWhy(seat[f], c.Row, kind) == "" && (name == "" || free[f] > free[name]) {
 					name = f
 				}
 			}
 		}
-		if name == "" || name == not || free[name] <= 0 {
-			continue // no friend it may go to is up with room: it waits ready
+		if name == "" || name == not || free[name] <= 0 || FriendRestrictionWhy(seat[name], c.Row, kind) != "" {
+			continue // no friend it may go to is up with room and within her restriction: it waits ready
 		}
 		card := WorkCardID(c.ID, c.Int("attempt")+1)
 		if wc == nil && s.Fleet.Card(card) != nil {

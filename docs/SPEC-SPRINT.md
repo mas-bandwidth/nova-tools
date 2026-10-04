@@ -228,7 +228,14 @@ against it; the owner, 2026-10-04: "Do it just like the fleet, you keep people
 busy by having 2X width queued up in ready per-friend"): the friend it names,
 or for `WHO: friend` the friend up with the most room free, the first by name
 among equals; with none it waits ready, held by the no-stall rule as waiting
-for a friend (`sprint.FriendDeal`). On her row the card is `working` while she
+for a friend (`sprint.FriendDeal`). A friend's nova-config row may restrict the work she
+is dealt (`streams`, glob patterns over stream names; `kinds`, card KIND values; empty is
+none, docs/SPEC-CONFIG.md; the owner, 2026-10-04: one friend does security work only), carried
+by friend sync onto her friends row: the deal never gives her a card whose stream or KIND
+is outside it (`sprint.FriendRestrictionWhy`), so a `WHO: friend` card skips her and goes
+to a friend within her restriction, and a `WHO: friend <name>` card naming her outside it
+is refused at add, brief and recut with the restriction named (exit 2, nothing written),
+so it never sits undealable. On her row the card is `working` while she
 has a lane free (her width less her working cards; dealt and taken at once)
 and `ready` behind her working cards otherwise, so her inbox holds her width
 working and as many again ready; her finish of a card takes the oldest ready

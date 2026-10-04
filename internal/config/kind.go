@@ -18,6 +18,7 @@ import (
 	"maps"
 	"net"
 	"net/url"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -223,10 +224,41 @@ func FriendMode(r Row) string {
 	return DefaultFriendMode
 }
 
+// FriendStreams is a friend row's stream restriction: the glob patterns (path.Match)
+// over stream names her streams field lists, none when it is empty or absent, which
+// means no restriction (docs/SPEC-CONFIG.md, the friend kind).
+func FriendStreams(r Row) []string { return friendList(r.Fields["streams"]) }
+
+// FriendKinds is a friend row's card-kind restriction: the card KIND values her kinds
+// field lists, none when it is empty or absent, which means no restriction.
+func FriendKinds(r Row) []string { return friendList(r.Fields["kinds"]) }
+
+// friendList is a comma list as written, blanks dropped, in the order given.
+func friendList(v string) []string {
+	var out []string
+	for _, w := range strings.Split(v, ",") {
+		if w = strings.TrimSpace(w); w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
-// instead). A width that failed its own validation is absent and skipped.
+// instead); every pattern of her streams is a glob that reads, and her kinds are
+// words with no space. A width that failed its own validation is absent and skipped.
 func checkFriend(r Row) error {
+	for _, g := range FriendStreams(r) {
+		if _, err := path.Match(g, ""); err != nil {
+			return fmt.Errorf("friend %s has streams pattern %q, which is no glob (%v): want --streams a comma list of globs over stream names, like security*", r.Name, g, err)
+		}
+	}
+	for _, k := range FriendKinds(r) {
+		if strings.ContainsAny(k, " \t") {
+			return fmt.Errorf("friend %s has kinds entry %q; a kind is one word, a card's KIND value: want --kinds a comma list like fix-red,audit", r.Name, k)
+		}
+	}
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
 		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
 	}
@@ -401,13 +433,15 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, and her delivery mode",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, and her restriction to streams and kinds of work",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
+			{Name: "streams", Type: TypeText, Help: "a restriction on her work: a comma list of glob patterns over stream names (security*); the sprint's friend dealer deals her only cards of a stream that matches one; empty (the default) is no restriction"},
+			{Name: "kinds", Type: TypeText, Help: "a restriction on her work: a comma list of card KIND values (fix-red,audit); the sprint's friend dealer deals her only cards of one of them; empty (the default) is no restriction"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
