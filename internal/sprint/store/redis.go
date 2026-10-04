@@ -694,6 +694,13 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		}
 		p.Set(ctx, r.Names.Key(friendHealthKey(op.Health.Friend)), string(rec), 0)
 	}
+	if op.Timers != nil {
+		rec, err := json.Marshal(op.Timers)
+		if err != nil {
+			return err
+		}
+		p.Set(ctx, r.Names.Key(keyTimers), string(rec), 0)
+	}
 	return nil
 }
 
