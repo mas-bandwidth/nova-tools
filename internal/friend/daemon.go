@@ -71,6 +71,12 @@ type Daemon struct {
 	// pushed in, so a small model has one line to run and nothing to fill in.
 	PongCommand func(nonce string) string
 
+	// Delivering is true while a delivery worker goroutine is active.
+	Delivering bool
+	// DeliverDone is called (if non-nil) after a delivery finishes and its
+	// result has been written to the results channel.
+	DeliverDone func()
+
 	m           *Machine
 	status      Status
 	written     time.Time
@@ -135,9 +141,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	start := func(j job, now time.Time) {
 		j.started = now
 		busy = &j
+		d.Delivering = true
 		go func() {
 			exit, err := d.Deliver.Deliver(ctx, j.text)
 			results <- result{j, exit, err}
+			if d.DeliverDone != nil {
+				d.DeliverDone()
+			}
 		}()
 	}
 	for ctx.Err() == nil {
@@ -208,6 +218,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		select {
 		case r := <-results:
+			d.Delivering = false
 			var deferred Deferred
 			if errors.As(r.err, &deferred) { // not a failure: the message stays in hand, tried again, counted toward nothing
 				deferrals++

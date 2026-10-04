@@ -56,7 +56,7 @@ func newRig(t *testing.T) *rig {
 			r.now = r.now.Add(BeatEvery)
 			return r.now
 		},
-		Pause: func(context.Context, time.Duration) {
+		Pause: func(ctx context.Context, _ time.Duration) {
 			r.mu.Lock()
 			r.pauses++
 			hold, release, passive := r.hold, r.pauses == r.releaseAt, r.passive
@@ -64,11 +64,21 @@ func newRig(t *testing.T) *rig {
 				close(hold)
 				r.hold = nil
 			}
+			delivering := r.d.Delivering
 			r.mu.Unlock()
-			if passive || (hold != nil && !release) {
+			if passive || (hold != nil && !release) || !delivering {
 				return // no turn to wait for, or one still running on purpose
 			}
-			<-r.gate
+			select {
+			case <-r.gate:
+			case <-ctx.Done():
+			}
+		},
+		DeliverDone: func() {
+			select {
+			case r.gate <- struct{}{}:
+			default:
+			}
 		},
 		Beat: func(context.Context) error {
 			r.mu.Lock()
@@ -105,7 +115,6 @@ func (r *rig) Deliver(ctx context.Context, text string) (int, error) {
 		case <-ctx.Done():
 		}
 	}
-	r.gate <- struct{}{}
 	return r.exit, nil
 }
 
@@ -413,7 +422,7 @@ func TestADeferredDeliveryIsTriedAgainAndNeverGivenUpOrAcked(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	def := &deferrer{stop: func() { r.cancel() }}
-	r.d.Deliver, r.passive = def, true
+	r.d.Deliver = def
 	r.send(t, "ada", "hello", "x")
 	r.run(t, 1000*int(RecheckEvery/BeatEvery)*4) // the ceiling, never reached: the thousandth deferral ends the run
 	assert.Equal(t, 1000, def.n, "handed in a thousand times")
