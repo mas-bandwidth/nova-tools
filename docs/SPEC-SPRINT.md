@@ -2855,6 +2855,30 @@ The sprint's server serves both read-only (section 14, the server): `GET
 /api/view/coordinator[?all=1][&since=<cursor>]` and `GET
 /api/view/worker?as=<name>[&since=<cursor>]`, the verb's JSON as it prints it.
 
+#### view-coordinator-needs.w1
+
+`nova-sprint view coordinator --needs [--json]` lists every decision waiting on the
+coordinator, ranked by the cards blocked behind each, and takes neither `--all` nor
+`--since`. It is `sprint.NeedsRank` (internal/sprint/needs_rank.go) over one read of the work
+and merge tables and the open judgments at one epoch: no git, no other read. A need is one
+of: an open judgment (`judgment`, one need a judgment however many cards it names, `id` the
+judgment's id); a sentinel reached or held that waits for its release (`sentinel`); a stopped
+stream with no judgment open on it (`stream`, `type` its cause); a card admitted held that
+waits for its release (`held`). A sentinel, card or stream an open judgment names has its
+need in that judgment only.
+
+`behind` is the cards not landed that wait on the need's cards, transitively through needs and
+stream order (the waits of a card: its unmet needs and the sentinel before it, as `WaitsFor`
+reads them); the need's own cards and sentinels are not counted. The list is ordered by
+`behind`, then by age (the older first: a judgment's since it was raised, a sentinel's since
+reached, a held card's since held, a stream's since it stopped), then by kind in the order
+above, then by id. Each need carries `cards` (the cards it is about), `age_ns`, `what` and
+`paths`: the evidence paths the judgment's words name (a word with a slash in it, or ending
+in `.md`, `.json`, `.txt` or `.log`), reports and findings. The JSON is `view`
+`coordinator-needs`, `schema` 1, `at`, `epoch`, `total` and `needs`; the text is
+`VIEW coordinator --needs total=<n>`, then a line a need (`<behind> behind <age> <kind> <id>:
+cards <ids>; evidence <paths>`), at most 20 lines with a `+<n> more` line.
+
 ## 12. The driver
 
 `nova-sprint play` plays the outside world on a tick (`--every`), seeded
