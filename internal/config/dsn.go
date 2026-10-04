@@ -35,14 +35,19 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 		return "", fmt.Errorf("--pg is required: postgres://user@host:5432/nova (or %s)", EnvPG)
 	}
 	// The boundary is the flag's own text, judged before any parse: the
-	// refusal quotes nothing, while a parse error quotes the DSN it could
-	// not read, so a flag that carries a password must never reach one. A
-	// flag whose text cannot be parsed at all is refused without echo too,
-	// because the raw text may carry a credential in a spelling
+	// flag's refusal quotes nothing, while a parse error quotes the DSN it
+	// could not read, so a flag that carries a password must never reach
+	// one. A flag whose text cannot be parsed at all is refused without echo
+	// too, because the raw text may carry a credential in a spelling
 	// flagCarriesPassword did not anticipate. A DSN from the environment is
-	// not on a command line and is never refused for its password, and a
-	// password pgconn takes from the process environment is never mistaken
-	// for one on the line.
+	// not on a command line and is never refused for its password; when the
+	// parser cannot read it the refusal names the variable and the wanted
+	// shape and the pgconn error's kind, never its text: pgconn's own text
+	// runs the raw connection string through a best-effort redactor that
+	// malformed input defeats (a non-numeric port, spaces around a keyword's
+	// '=', an unclosed quote) and leaves the password in the open. A password
+	// pgconn takes from the process environment is never mistaken for one on
+	// the line.
 	if flagValue != "" && flagCarriesPassword(flagValue) {
 		return "", refuseFlagPassword()
 	}
@@ -51,7 +56,7 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 		if flagValue != "" {
 			return "", refuseFlagPassword()
 		}
-		return "", fmt.Errorf("--pg: %v; want postgres://user@host:5432/nova", err)
+		return "", fmt.Errorf("%s could not be parsed; want postgres://user@host:5432/nova (%T)", EnvPG, err)
 	}
 	// The parsed config is the second look, after any parse: the lexical
 	// check judges the flag's text, but net/url refuses a control byte the
