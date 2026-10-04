@@ -115,7 +115,7 @@ func redisTool(d deps) *tool.Tool {
 		How: `serve runs redis-server on loopback or tailnet addresses only, with its data in --dir.
 spill writes a value under <owner>:<name> with a required expiry; recall reads it back.
 fn load and fn check install and verify the functions nova-table and nova-sprint call.
-Passwords come from an environment variable, never from an argument.
+The password is read from the variable NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD.
 first run: the --dry-run line needs no store; spill and recall need a Redis at 127.0.0.1:6379.`,
 		ExitTable: "0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).",
 		Words:     []string{"UNCONFIRMED", "MISSING", "EXPIRED", "UNBOUNDED"},
