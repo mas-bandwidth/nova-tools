@@ -91,7 +91,7 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 // it names the remedy and quotes nothing, because the DSN itself may hold
 // the secret (docs/nova-config/README.md, "Connecting").
 func refuseFlagPassword() error {
-	return fmt.Errorf("--pg carries a password; leave it out and export it as the variable %s names (a ps reads the line)", EnvPGPassEnv)
+	return fmt.Errorf("--pg: carries a password; leave it out and export it as the variable %s names (a ps reads the line)", EnvPGPassEnv)
 }
 
 // flagCarriesPassword reports whether the flag's DSN text names a password
