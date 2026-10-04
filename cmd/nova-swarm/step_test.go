@@ -12,6 +12,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestStepReadsGrantsTheToolchainFromTheBenchHomeWhenProcessHomeIsTheSlot is the script
+// card's go vet exit 126: the step process's HOME is the slot, and the wall must still
+// grant the bench sdk the shim execs.
+func TestStepReadsGrantsTheToolchainFromTheBenchHomeWhenProcessHomeIsTheSlot(t *testing.T) {
+	t.Parallel()
+	slot := t.TempDir() // the process HOME of a script step; stepReads takes the bench home as an argument and never reads it
+	home := t.TempDir()
+	sdk := filepath.Join(home, "sdk")
+	require.NoError(t, os.MkdirAll(sdk, 0o755))
+	real, err := filepath.EvalSymlinks(sdk)
+	require.NoError(t, err)
+	reads := stepReads(t.TempDir(), filepath.Join(t.TempDir(), "bin"), home)
+	assert.True(t, hasFlagPair(reads, "--read", real), "the step wall grants the bench sdk: %s", strings.Join(reads, " "))
+	assert.False(t, hasFlagPair(reads, "--read", filepath.Join(slot, "sdk")), "the slot home is not a toolchain root: %s", strings.Join(reads, " "))
+}
+
 // treeSteps is a tree under STEP 2 of lintGoodCard: two model steps (docs/SPEC-SPRINT.md, a
 // card is a tree of steps).
 const treeSteps = "STEP 2. Read docs/SPEC-SWARM.md first.\n" +

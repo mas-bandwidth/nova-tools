@@ -137,6 +137,10 @@ var swarmAudit = audit.Config{
 		// syscall only sets Setpgid -- the process-group flag that lets the deadline reap
 		// the whole tree -- and holds no writer of its own.
 		`"os/signal"`, `"syscall"`,
+		// step.go (benchPasswdHome) reads the bench user's home from the password database with
+		// os/user.Current; it holds no writer, and the home it returns is a path the step's wall
+		// grants, never a line this binary prints.
+		`"os/user"`,
 		// nativesample.go (SPEC-SWARM rule 13d, issue #1545) needs sync, and it holds no
 		// writer of any kind. sync.Mutex and sync.Once are the only two things taken from
 		// it: the mutex guards the figures the sampling goroutine and the launch's own
