@@ -70,34 +70,71 @@ func TestAFriendsCardIsDealtToTheFriendItNamesOnHerRowInWorking(t *testing.T) {
 	assert.Contains(t, p.Refused[0].Why, "a friend's card")
 }
 
-func TestAFriendIsDealtNoMoreThanHerWidth(t *testing.T) {
+func TestAFriendIsDealtHerRoomWorkingAtHerWidthAndReadyBehind(t *testing.T) {
 	t.Parallel()
-	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend"))
+	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend"))
 	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up}, {Name: "bob", Width: 1, Status: Up}}
 	dealWith(w, seats...)
-	assert.Equal(t, 2, w.s.Fleet.Count(FriendRow("amy"), Working), "amy works her width")
+	amy := FriendRow("amy")
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "amy works her width")
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Ready), "and holds as many again ready behind them (DealAhead times her width)")
 	assert.Equal(t, 1, w.s.Fleet.Count(FriendRow("bob"), Working), "WHO: friend goes to the friend with room")
-	assert.Equal(t, Ready, w.s.StateOf("s1-3"), "the third card for amy waits for a free lane")
+	assert.Equal(t, Ready, w.s.StateOf("s1-5"), "the fifth card for amy waits for room on her row")
+	ready := w.s.Fleet.Card("s1-3.w1")
+	assert.Equal(t, Ready, ready.Col)
+	assert.Empty(t, ready.F("taken"), "a card dealt ready is not taken")
+	assert.Equal(t, Working, w.s.StateOf("s1-3"), "its primary is working on it, as a machine's dealt primary is")
 
 	// a tick later nothing has freed: nothing more is dealt
 	dealWith(w, seats...)
-	assert.Equal(t, 2, w.s.Fleet.Count(FriendRow("amy"), Working))
-	assert.Equal(t, Ready, w.s.StateOf("s1-3"))
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working))
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Ready))
+	assert.Equal(t, Ready, w.s.StateOf("s1-5"))
 
-	// she finishes one: the next tick deals her the third
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: FriendRow("amy"), Gens: gensOf(w.s, "s1-1.w1"), Head: "abc"}))
+	// she finishes one: her finish takes her oldest ready card into working at once, no
+	// tick between, and the next tick deals her the fifth, ready behind
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: amy, Gens: gensOf(w.s, "s1-1.w1"), Head: "abc"}))
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "her next card is working the moment one finishes")
+	assert.Equal(t, Working, w.s.Fleet.Card("s1-3.w1").Col, "the oldest ready one")
+	assert.NotEmpty(t, w.s.Fleet.Card("s1-3.w1").F("taken"))
+	assert.Equal(t, 1, w.s.Fleet.Count(amy, Ready))
 	dealWith(w, seats...)
-	assert.Equal(t, Working, w.s.StateOf("s1-3"))
-	assert.Equal(t, 2, w.s.Fleet.Count(FriendRow("amy"), Working))
+	assert.Equal(t, Working, w.s.StateOf("s1-5"))
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Ready), "the deal fills her room again")
+	assert.Empty(t, Check(w.s, nil))
+}
+
+// The owner's example (2026-10-04): a friend at width 8 with 30 cards waiting has 16
+// dealt, 8 working and 8 ready, and gets a 17th when one lands.
+func TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt(t *testing.T) {
+	t.Parallel()
+	briefs := make([]string, 30)
+	for i := range briefs {
+		briefs[i] = friendBrief("friend amy")
+	}
+	w := friendWorld(t, briefs...)
+	seat := FriendSeat{Name: "amy", Width: 8, Status: Up}
+	dealWith(w, seat)
+	amy := FriendRow("amy")
+	require.Equal(t, 8, w.s.Fleet.Count(amy, Working))
+	require.Equal(t, 8, w.s.Fleet.Count(amy, Ready))
+	assert.Equal(t, 14, len(w.s.Work.Column(Ready)), "fourteen wait on the work table")
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: amy, Gens: gensOf(w.s, "s1-1.w1"), Head: "abc"}))
+	assert.Equal(t, 8, w.s.Fleet.Count(amy, Working), "she took her next at once")
+	assert.Equal(t, 7, w.s.Fleet.Count(amy, Ready))
+	dealWith(w, seat)
+	assert.Equal(t, 8, w.s.Fleet.Count(amy, Ready), "the 17th is dealt")
+	assert.Equal(t, 13, len(w.s.Work.Column(Ready)))
 }
 
 func TestWhoFriendGoesToTheUpFriendWithTheMostFreeWidth(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
-	dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Up}, FriendSeat{Name: "bob", Width: 3, Status: Up}, FriendSeat{Name: "cat", Width: 8, Status: Held})
-	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row, "bob has three free, amy one")
-	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-2.w1").Row, "bob still has two free")
-	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-3.w1").Row, "amy and bob have one each: amy is first by name")
+	// room is DealAhead times width: amy has two places, bob four
+	dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Up}, FriendSeat{Name: "bob", Width: 2, Status: Up}, FriendSeat{Name: "cat", Width: 8, Status: Held})
+	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row, "bob has four free, amy two")
+	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-2.w1").Row, "bob still has three free")
+	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-3.w1").Row, "amy and bob have two each: amy is first by name")
 	assert.Equal(t, 0, w.s.Fleet.Count(FriendRow("cat"), Working), "a held friend is dealt nothing")
 }
 
