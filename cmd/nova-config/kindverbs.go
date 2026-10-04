@@ -66,7 +66,7 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 func positional(k *config.Kind, fs *stdflag.FlagSet, name, verb string) (string, error) {
 	switch {
 	case k.Singleton && fs.NArg() > 0:
-		return "", fmt.Errorf("%s takes no name: it is one row; want %s --<field> <value> ...", k.Name, verb)
+		return "", fmt.Errorf("%s takes no name: it is one row; want %s --<field> <value>", k.Name, verb)
 	case name == "" && fs.NArg() == 1:
 		return fs.Arg(0), nil
 	case fs.NArg() > 0:
