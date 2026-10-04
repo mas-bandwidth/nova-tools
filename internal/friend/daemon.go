@@ -354,7 +354,7 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 				d.status.StoreError = ""
 				for _, e := range fresh {
 					msg := e.Message()
-					if passive && d.StateDir != "" && msg.From == state.Coordinator {
+					if passive && !known[e.Entry] && d.StateDir != "" && msg.From == state.Coordinator {
 						s, err := UpdateSessionState(d.StateDir, func(s *SessionState) error {
 							if s.Coordinator == msg.From {
 								s.Asleep = false
@@ -365,6 +365,9 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 							return err
 						}
 						state = s
+					}
+					if passive {
+						known[e.Entry] = true
 					}
 					if nonce, seat, since, isPing := ParsePing(msg.Body); isPing && !answered[e.Entry] {
 						d.daemonPong(ctx, bus, msg, nonce, state.Asleep)

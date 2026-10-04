@@ -120,3 +120,25 @@ func TestDaemonEntryOrderNumeric(t *testing.T) {
 	require.True(t, entryBefore("10-2", "10-11"))
 	require.False(t, entryBefore("10-11", "10-2"))
 }
+
+func TestPassiveObservedCoordinatorDoesNotUndoLaterLocalSleep(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := asleepRig(t, "")
+		r.d.Deliver = Stub{Harness: "fake"}
+		r.passive = true
+		r.send(t, "ada", "wake", "one observed coordinator message")
+		r.at[1] = func() {
+			state, err := ReadSessionState(r.d.StateDir)
+			require.NoError(t, err)
+			require.False(t, state.Asleep)
+			_, err = UpdateSessionState(r.d.StateDir, func(s *SessionState) error { s.Asleep = true; return nil })
+			require.NoError(t, err)
+		}
+		r.run(t, 5)
+		state, err := ReadSessionState(r.d.StateDir)
+		require.NoError(t, err)
+		require.True(t, state.Asleep)
+		require.Empty(t, state.WakeBarrier)
+	})
+}
