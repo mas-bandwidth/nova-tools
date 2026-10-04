@@ -1316,3 +1316,5 @@ internal/secrets/storepull_test.go dead: its only subject is the store pull path
 internal/secrets/storepull_cover_test.go dead: its only subject is mpintBytes and wirePublicKey, deleted with the dead storepull.go (dead-pkg-secrets-t2b); nothing it pins remains
 internal/dogfood/cli_cover_test.go dead: its only subject is Keys, deleted with the dead Keys in internal/dogfood/cli.go (dead-code pass 2026-10-04); nothing it pins remains
 cmd/nova-ci/timing_test.go moved to tools/citiming/main_test.go with the timing.go script it guards
+internal/typedrec/disposition_test.go dead: its one test drove the DISPOSITION v1 parser (ParseDisposition, ReadClaim.Refusal, isHexHead, isDispositionScore, isDispositionSpace, lenientDispositionKV, strictDispositionKV, isBareDispositionKey), unreachable from cmd/... on linux, darwin and windows and deleted with disposition.go; nothing it pins remains
+internal/typedrec/evidence_test.go dead: its one test drove ContractDef.Markdown, unreachable from cmd/... on linux, darwin and windows and deleted with ContractDef.StatusWords and ContractDef.SectionNames; nothing it pins remains
