@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>nova-sprint</title>
 <!--FAVICON-->
-<script>try{var t=localStorage.getItem("sprint-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+<script>try{localStorage.removeItem("sprint-theme")}catch(e){}</script>
 <style>
 /* the wordmark's face, served from the binary beside its licence (OFL): the page loads nothing from elsewhere */
 @font-face { font-family: "Nunito"; font-style: normal; font-weight: 800; font-display: swap; src: url("nunito-800.woff2") format("woff2"); }
-/* Dark is the designed-for theme and the default; light is a toggle only.
+/* Dark is the designed-for theme and the default.
    Type is set large (28 px base) to read from across the room; the spacing
    grid is 16 px. Tables never scroll sideways: a table too wide takes its compact form. */
 :root, :root[data-theme="dark"] {
@@ -41,33 +41,7 @@
   --cell-h: 1rem;
   --flash: #7cb4ff;
   --flash-tint: rgba(57,135,229,.24);
-}
-:root[data-theme="light"] {
-  color-scheme: light;
-  --bg: #f4f5f7;
-  --surface: #ffffff;
-  --border: #e3e5e9;
-  --border-strong: #d2d6dc;
-  --text: #121417;
-  --text-2: #525963;
-  --text-3: #868d97;
-  --track: #e6e8ec;
-  --s-waiting: #c3c7cd;
-  --s-ready: #9aa0a9;
-  --s-working: #2a78d6;
-  --s-review: #e87ba4;
-  --s-merging: #eda100;
-  --s-landed: #1baf7a;
-  --good: #0f8a3c;
-  --warning: #b77900;
-  --serious: #c4552b;
-  --critical: #c93434;
-  --good-tint: rgba(15,138,60,.10);
-  --warning-tint: rgba(232,160,0,.14);
-  --critical-tint: rgba(201,52,52,.10);
-  --neutral-tint: rgba(82,89,99,.08);
-  --flash: #1f62b8;
-  --flash-tint: rgba(42,120,214,.16);
+  --tier-flash: #3b82f6; --tier-pro: #a855f7; --tier-heavy: #f59e0b; --tier-frontier: #ec4899; --tier-other: #4b5563;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -88,6 +62,26 @@ body {
 .row.head .frac { font-family: inherit; }
 .muted { color: var(--text-2); }
 .faint { color: var(--text-3); }
+/* the Cost breakdown's header line is the pie's legend (Glenn 2026-10-04 2:43 to 3:05 PM): drawn as the state legend (.legend), on one line, the amount white */
+#tier-sub { flex-wrap: nowrap; white-space: nowrap; align-items: baseline; } /* the header row is align-items: baseline: the legend's text sits on the title's baseline */
+#tier-sub > span { align-items: baseline; } /* each square stands on the text's baseline, as tall as the capitals, not centered on the box */
+#tier-sub .ta { color: var(--text); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* spend panel (Glenn 2026-10-04 10:35 AM): one collapsible panel; the pie of cards by tier on the left, one and a half hero
+   columns wide, the ten most expensive streams as a table on the right; the fold hides both */
+.spend { margin-bottom: 3rem; }
+.spend-body { display: grid; grid-template-columns: 3fr 7fr; align-items: stretch; }
+@media (max-width: 2000px) { .spend-body { grid-template-columns: 3fr 9fr; } }
+@media (max-width: 1100px) { .spend-body { grid-template-columns: 1fr; } }
+.pie-wrap { display: flex; align-items: flex-start; justify-content: center; padding: 2rem 3rem 2rem; border-right: 1px solid var(--border); } /* the disc sits at the top of its column, level with the table head */
+@media (max-width: 1100px) { .pie-wrap { border-right: 0; border-bottom: 1px solid var(--border); } }
+.pie { width: 100%; max-width: 40rem; aspect-ratio: 1 / 1; height: auto; } /* the disc fills its column (Glenn 10:50 AM: "too small") */
+.pie path { stroke: var(--surface); stroke-width: 1; }
+.toprows .row { grid-template-columns: var(--name-w) repeat(var(--tier-cols, 5), minmax(6rem, 1fr)); } /* stream, then the tiers with spend in spend order and total, at equal widths (Glenn 11:20 AM; 2:50 PM: $0 tiers dropped) */
+.toprows .rank { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.toprows .tiers { color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toprows .tiers i { font-style: normal; display: inline-block; width: .6em; height: .6em; border-radius: 2px; margin: 0 .35em 0 .75em; vertical-align: -.02em; }
+.toprows .tiers i:first-child { margin-left: 0; }
 
 /* top bar */
 .top { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 2rem; }
@@ -102,8 +96,6 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .live { display: inline-flex; align-items: center; gap: 1rem; font-size: 1.625rem; color: var(--text-2); }
 .dot { width: 1rem; height: 1rem; border-radius: 50%; background: var(--text-3); flex: none; }
 .live.ok .dot { background: var(--good); }
-button.toggle { font: inherit; font-size: 1.5rem; height: 3rem; padding: 0 1rem; border-radius: 0.75rem; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; }
-button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 
 /* hero */
 /* five tiles at full size: one row of five from 2000 px; three and two below that; two per row (the last full width, centred) below 1100 px */
@@ -122,7 +114,10 @@ button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 .label { font-size: 1.5rem; line-height: 2rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
 .big { font-size: 4.5rem; line-height: 1.3; font-weight: 600; margin-top: 0.5rem; white-space: nowrap; }
 .big small { margin-left: 0.5rem; font-size: .5em; font-weight: 500; color: var(--text-2); }
+.big { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -.01em; } /* a monospace comma reads as a space (Glenn 2026-10-04 2:40 PM) */
 .sub { font-size: 1.625rem; line-height: 2.25rem; color: var(--text-2); }
+.hero .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* a tile's subline is one line at every width (Glenn 2026-10-04 3:20 PM) */
+#inflight-sub .pn { color: var(--text); font-variant-numeric: tabular-nums; }
 .sub.small { font-size: 1.25rem; line-height: 1.75rem; }
 .progress-card { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; padding: 2rem 3rem; margin-bottom: 3rem; }
 .progress-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 1rem 2rem; margin-bottom: 1.5rem; }
@@ -194,6 +189,7 @@ footer a:hover { color: var(--text); }
 @keyframes pulse { 0%, 100% { --pulse: 1; } 50% { --pulse: .55; } }
 :root { animation: pulse 2s ease-in-out infinite; }
 #overall .cell.working { opacity: var(--pulse); }  /* the steady pulse is for the top bar only; table cells flash once on change */
+#overall.stopped .cell.working { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .flash, :root { animation: none; } }
 
 
@@ -299,7 +295,6 @@ footer a:hover { color: var(--text); }
   </div>
   <div class="right">
     <span class="live" id="live"><span class="dot"></span><span id="live-text">Connecting</span></span>
-    <button class="toggle" id="theme" type="button" aria-label="Switch theme">Light</button>
   </div>
 </header>
 
@@ -328,6 +323,14 @@ footer a:hover { color: var(--text); }
     <div class="label">Throughput</div>
     <div class="big" id="tput">-</div>
     <div class="sub">cards / hour</div>
+  </div>
+</section>
+
+<section class="panel spend">
+  <div class="panel-head"><h2>Cost breakdown</h2><span class="legend" id="tier-sub"></span></div>
+  <div class="scroll spend-body">
+    <div class="pie-wrap"><svg class="pie" id="pie" viewBox="0 0 100 100" aria-label="spend by tier"></svg></div>
+    <div class="rows toprows" id="top-streams"></div>
   </div>
 </section>
 
