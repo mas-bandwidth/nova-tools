@@ -265,8 +265,7 @@ func assertField(t *testing.T, line, key, want, msg string) {
 func TestConvergencePrintsOneLinePerStream(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t)
-	lines := f.read(t).Lines()
+	lines := newFixture(t).read(t).Lines()
 	require.Len(t, lines, len(Order)+1, "want %d stream lines and one verdict, got %d:\n%s", len(Order), len(lines), strings.Join(lines, "\n"))
 	for i, name := range Order {
 		want := "CONVERGENCE " + name + " "
@@ -352,15 +351,13 @@ func TestLandingReadsRoundsFromTheBodyAndTheLogs(t *testing.T) {
 func TestLandingComparesTheWindowWithTheOneBefore(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t)
-	s := stream(t, f.read(t), "LANDING")
+	s := stream(t, newFixture(t).read(t), "LANDING")
 	assert.Equal(t, float64(3), s.Now, "now=%v, want 3", s.Now) // #3 round 2 and #4 round 4
 	// #5, merged in the twelve hours before --since
 	assert.Equal(t, float64(6), s.Before, "before=%v, want 6 (the batch in the window before --since)", s.Before)
 	assert.Equal(t, Contracting, s.Trend(), "trend %s, want contracting: fewer rounds per batch is landing getting cheaper", s.Trend())
-	line := s.Line()
-	assertField(t, line, "per-hour", "0.17", "per-hour=%s, want 0.17 (two batches in twelve hours)")
-	assertField(t, line, "prev-batches", "1", "prev-batches=%s, want 1")
+	assertField(t, s.Line(), "per-hour", "0.17", "per-hour=%s, want 0.17 (two batches in twelve hours)")
+	assertField(t, s.Line(), "prev-batches", "1", "prev-batches=%s, want 1")
 }
 
 // ---------------------------------------------------------------------------
@@ -370,8 +367,7 @@ func TestLandingComparesTheWindowWithTheOneBefore(t *testing.T) {
 func TestClassesCountsTheIndexEntriesAtBothRevisions(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t)
-	s := stream(t, f.read(t), "CLASSES")
+	s := stream(t, newFixture(t).read(t), "CLASSES")
 	require.Equal(t, float64(29), s.Now, "now=%v before=%v, want 29 and 27; the `###` outside the index must not be counted", s.Now, s.Before)
 	require.Equal(t, float64(27), s.Before, "now=%v before=%v, want 29 and 27; the `###` outside the index must not be counted", s.Now, s.Before)
 	assert.Equal(t, Contracting, s.Trend(), "trend %s, want contracting: a class made mechanical cannot come back", s.Trend())
@@ -385,8 +381,7 @@ func TestClassesCountsTheIndexEntriesAtBothRevisions(t *testing.T) {
 func TestScriptsCountsWhatIsLeftAndWhatTheWindowRetired(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t)
-	s := stream(t, f.read(t), "SCRIPTS")
+	s := stream(t, newFixture(t).read(t), "SCRIPTS")
 	assert.Equal(t, float64(3), s.Now, "now=%v, want 3: two .sh, one shebang, and neither the binary nor the subdirectory", s.Now)
 	assert.Equal(t, float64(5), s.Before, "before=%v, want 5: three left plus the two rows dated inside the window", s.Before)
 	assertField(t, s.Line(), "retired-in-window", "2", "retired-in-window=%s, want 2")
@@ -421,14 +416,12 @@ func TestRetiredRowsInheritTheNearestDateAbove(t *testing.T) {
 func TestPRsCountsWhatWasOpenAtSince(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t)
-	s := stream(t, f.read(t), "PRS")
+	s := stream(t, newFixture(t).read(t), "PRS")
 	assert.Equal(t, float64(2), s.Now, "now=%v, want 2 open", s.Now)
 	// #1 open and older than --since, plus #6 created before it and closed inside.
 	assert.Equal(t, float64(2), s.Before, "before=%v, want 2", s.Before)
-	line := s.Line()
-	assertField(t, line, "opened", "1", "opened=%s, want 1")
-	assertField(t, line, "closed", "3", "closed=%s, want 3 (two batches and one plain pull request)")
+	assertField(t, s.Line(), "opened", "1", "opened=%s, want 1")
+	assertField(t, s.Line(), "closed", "3", "closed=%s, want 3 (two batches and one plain pull request)")
 }
 
 // ---------------------------------------------------------------------------
@@ -444,10 +437,9 @@ func TestEdgesIsTheGateAndTheRounds(t *testing.T) {
 	// has an issue and is not.
 	assert.Equal(t, float64(2), s.Now, "now=%v, want 2 open edges", s.Now)
 	assert.Equal(t, float64(1), s.Before, "before=%v, want 1: only the receipt written before --since", s.Before)
-	line := s.Line()
-	assertField(t, line, "rounds", "2", "rounds=%s, want 2 friends in the window")
-	assertField(t, line, "not-ok", "1", "not-ok=%s, want 1")
-	assertField(t, line, "not-ok-per-round", "0.50", "not-ok-per-round=%s, want 0.50")
+	assertField(t, s.Line(), "rounds", "2", "rounds=%s, want 2 friends in the window")
+	assertField(t, s.Line(), "not-ok", "1", "not-ok=%s, want 1")
+	assertField(t, s.Line(), "not-ok-per-round", "0.50", "not-ok-per-round=%s, want 0.50")
 
 	f.opts.By = []string{"Stella"}
 	narrowed := stream(t, f.read(t), "EDGES")
@@ -462,8 +454,7 @@ func TestEdgesIsTheGateAndTheRounds(t *testing.T) {
 func TestFleetIsTheUnitsOffTheMajorityStamp(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t)
-	s := stream(t, f.read(t), "FLEET")
+	s := stream(t, newFixture(t).read(t), "FLEET")
 	assert.Equal(t, float64(1), s.Now, "now=%v, want 1 machine off the one build", s.Now)
 	assertField(t, s.Line(), "certified", "2/4", "certified=%s, want 2/4")
 
@@ -488,8 +479,7 @@ func TestFleetIsTheUnitsOffTheMajorityStamp(t *testing.T) {
 func TestFleetAndLedgerTakeTheirBeforeFromTheState(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t)
-	report := f.read(t)
+	report := newFixture(t).read(t)
 	for _, name := range []string{"FLEET", "LEDGER"} {
 		s := stream(t, report, name)
 		assert.False(t, s.HaveBefore, "%s had a before with no state; a snapshot is one instant", name)
@@ -517,8 +507,7 @@ func TestFleetAndLedgerTakeTheirBeforeFromTheState(t *testing.T) {
 func TestLedgerCountsTheRowsNotYetPass(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t)
-	s := stream(t, f.read(t), "LEDGER")
+	s := stream(t, newFixture(t).read(t), "LEDGER")
 	assertField(t, s.Line(), "rows", "5", "rows=%s, want 5")
 	assert.Equal(t, float64(3), s.Now, "open=%v, want 3: PARTIAL, TODO and NEEDS WORK; `FAIL then PASS` is closed", s.Now)
 	rows, open := LedgerRows("not a table\n\n| a | PASS |\n")
@@ -614,11 +603,10 @@ func TestWithNoStateNothingIsRemembered(t *testing.T) {
 	t.Parallel()
 
 	tick := at(t, windowNow)
-	st, err := LoadState("")
+	_, err := LoadState("")
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
-		var streak bool
-		_, st, streak = widening(5, 3).Apply(State{Streams: map[string]StreamState{}}, tick)
+		_, _, streak := widening(5, 3).Apply(State{Streams: map[string]StreamState{}}, tick)
 		require.False(t, streak, "tick %d exited 1 with nothing remembered", i)
 	}
 	dir := t.TempDir()
@@ -626,7 +614,6 @@ func TestWithNoStateNothingIsRemembered(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	require.Empty(t, entries, "a run with no --state wrote %d files", len(entries))
-	_ = st
 }
 
 func TestStateSurvivesARoundTrip(t *testing.T) {
@@ -679,10 +666,9 @@ func TestConvergenceRefusesAVersionsFileItDoesNotKnow(t *testing.T) {
 		{"empty", ""},
 	} {
 		_, err := ParseVersions("versions.tsv", tc.body)
-		if !assert.Error(t, err, "%s was accepted", tc.name) {
-			continue
+		if assert.Error(t, err, "%s was accepted", tc.name) {
+			assert.ErrorContains(t, err, "versions.tsv", "%s: the refusal does not name the file: %v", tc.name, err)
 		}
-		assert.ErrorContains(t, err, "versions.tsv", "%s: the refusal does not name the file: %v", tc.name, err)
 	}
 	_, err := ParseVersions("v.tsv", "host\tbuild\na\tv1")
 	assert.ErrorContains(t, err, "machine<TAB>stamp", "the refusal does not name the headers it reads")
@@ -731,8 +717,7 @@ func TestEveryFieldSurvivesAHostileValue(t *testing.T) {
 func TestJSONCarriesTheSameReadingAsTheLines(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t)
-	report := f.read(t)
+	report := newFixture(t).read(t)
 	raw, err := json.Marshal(report.AsJSON(at(t, windowNow), at(t, windowSince)))
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "CONVERGENCE", "the JSON object carries a line: %s", raw)
@@ -749,10 +734,11 @@ func TestJSONCarriesTheSameReadingAsTheLines(t *testing.T) {
 		}
 	}
 	measured, contracting, wide, absent := report.Verdict()
-	assert.Equal(t, measured, back.Measured, "the object's verdict is %+v, the line's is %d/%d/%v/%v", back, measured, contracting, wide, absent)
-	assert.Equal(t, contracting, back.Contracting, "the object's verdict is %+v, the line's is %d/%d/%v/%v", back, measured, contracting, wide, absent)
-	assert.Len(t, back.Widening, len(wide), "the object's verdict is %+v, the line's is %d/%d/%v/%v", back, measured, contracting, wide, absent)
-	assert.Len(t, back.Absent, len(absent), "the object's verdict is %+v, the line's is %d/%d/%v/%v", back, measured, contracting, wide, absent)
+	verdict := fmt.Sprintf("the object's verdict is %+v, the line's is %d/%d/%v/%v", back, measured, contracting, wide, absent)
+	assert.Equal(t, measured, back.Measured, verdict)
+	assert.Equal(t, contracting, back.Contracting, verdict)
+	assert.Len(t, back.Widening, len(wide), verdict)
+	assert.Len(t, back.Absent, len(absent), verdict)
 }
 
 // ---------------------------------------------------------------------------
@@ -794,9 +780,8 @@ func TestReadRefusesAnUnreadableSource(t *testing.T) {
 		f := newFixture(t)
 		tc.set(&f.opts)
 		_, err := Read(context.Background(), f.opts)
-		if !assert.Error(t, err, "%s: an unreadable source was read as a reading", tc.name) {
-			continue
+		if assert.Error(t, err, "%s: an unreadable source was read as a reading", tc.name) {
+			assert.ErrorContains(t, err, tc.name, "%s: the refusal does not name the flag: %v", tc.name, err)
 		}
-		assert.ErrorContains(t, err, tc.name, "%s: the refusal does not name the flag: %v", tc.name, err)
 	}
 }

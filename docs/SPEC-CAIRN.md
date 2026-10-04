@@ -1,4 +1,4 @@
-# nova-cairn — specification (bounded slice for #248)
+# nova-cairn — specification
 
 `nova-cairn` is one binary at the **record layer**. It carries a session
 across its end mechanically: it opens a session record, appends the friend's
@@ -10,7 +10,7 @@ rule, `internal/oneline` and `internal/bounded` — applies here unchanged
 and is not restated. Where this tool needs something the Conventions do not
 cover, it is below and it says so.
 
-This slice is a bounded contribution to draft #245, not its ratification.
+This slice is a bounded contribution, not a ratification.
 The differences are stated here first, before any approval of that draft:
 this tool imposes no memory lifecycle. There is deliberately no seal, no
 consume, no delete, no grading, no consolidation, no liveness inference, no

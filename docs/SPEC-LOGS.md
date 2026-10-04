@@ -36,7 +36,7 @@ carries all fifteen fields, so a reader never guesses. An example line (the valu
 illustrative):
 
 ```json
-{"level":"INFO","msg":"sweep: pass ends","ts":"2026-09-17T16:56:03.412Z","source":"example-tool",
+{"level":"INFO","msg":"sweep: pass ends","ts":"2000-01-01T00:00:00.000Z","source":"example-tool",
  "bench":"bench-1","verb":"sweep","job":"","card":"","pr":0,"run":"","slot":"","guid":"a1b2…",
  "event":"done","dur_ms":1840,"err":""}
 ```

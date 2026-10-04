@@ -33,9 +33,9 @@ func TestLegacyDraftIDIsOneSegmentAndDeterministic(t *testing.T) {
 	want := "legacy-" + hex.EncodeToString(sum[:])[:12]
 	got := LegacyDraftID(path)
 	assert.Equal(t, want, got, "LegacyDraftID(%q) = %q, want %q", path, got, want)
-	assert.False(t, got != LegacyDraftID(path), "LegacyDraftID is not deterministic")
+	assert.Equal(t, LegacyDraftID(path), got, "LegacyDraftID is not deterministic")
 	assert.False(t, strings.ContainsAny(got, "/\\"), "%q is not one path segment", got)
-	assert.False(t, len(got) != len("legacy-")+12, "%q is not `legacy-` and twelve hex digits", got)
+	assert.Equal(t, len("legacy-")+12, len(got), "%q is not `legacy-` and twelve hex digits", got)
 	{
 		other := LegacyDraftID("from-bo/2026-09-05T0901Z-older.md")
 		assert.False(t, other == got, "two paths composed one name: %q", got)
@@ -63,10 +63,11 @@ func TestPublishNoReplaceRefusesAnExistingNameAndLeavesNoTemporary(t *testing.T)
 	final := filepath.Join(dir, "2026-09-09T1234Z-re-bo-abcdef012345.md")
 	require.NoError(t, os.WriteFile(final, []byte("somebody is editing this\n"), 0o644))
 	path, err := PublishNoReplace(dir, filepath.Base(final), []byte("the new one\n"))
-	require.False(t, !errors.Is(err, ErrDraftExists), "PublishNoReplace over an existing name returned (%q, %v), want ErrDraftExists", path, err)
+	require.True(t, errors.Is(err, ErrDraftExists), "PublishNoReplace over an existing name returned (%q, %v), want ErrDraftExists", path, err)
 	assert.Contains(t, err.Error(), final, "the refusal does not name the path: %v", err)
 	raw, rerr := os.ReadFile(final)
-	assert.False(t, rerr != nil || string(raw) != "somebody is editing this\n", "the existing draft was touched: %v %q", rerr, raw)
+	assert.NoError(t, rerr, "the existing draft was touched: %v %q", rerr, raw)
+	assert.Equal(t, "somebody is editing this\n", string(raw), "the existing draft was touched: %v %q", rerr, raw)
 	assertOnlyFiles(t, dir, filepath.Base(final))
 }
 
@@ -81,7 +82,8 @@ func TestPublishNoReplaceWritesTheWholeDraftAndRemovesItsTemporary(t *testing.T)
 	path, err := PublishNoReplace(dir, "2026-09-09T1234Z-re-bo-abcdef012345.md", []byte(content))
 	require.NoError(t, err)
 	raw, err := os.ReadFile(path)
-	assert.False(t, err != nil || string(raw) != content, "the published draft is %q (%v), want the content byte for byte", raw, err)
+	assert.NoError(t, err, "the published draft is %q (%v), want the content byte for byte", raw, err)
+	assert.Equal(t, content, string(raw), "the published draft is %q (%v), want the content byte for byte", raw, err)
 	assertOnlyFiles(t, dir, "2026-09-09T1234Z-re-bo-abcdef012345.md")
 }
 
@@ -103,7 +105,7 @@ func TestNoCreateExclusivePublishQuotesWhatEachCallSaid(t *testing.T) {
 
 	path, err := publishNoReplaceWith(dir, "2026-09-09T1234Z-re-bo-abcdef012345.md", []byte("body\n"),
 		func(string, string) error { return linkSaid }, func(string, string) error { return renameSaid })
-	require.False(t, !errors.Is(err, ErrNoExclusivePublish), "PublishNoReplace on a filesystem with neither publish returned (%q, %v), want ErrNoExclusivePublish", path, err)
+	require.True(t, errors.Is(err, ErrNoExclusivePublish), "PublishNoReplace on a filesystem with neither publish returned (%q, %v), want ErrNoExclusivePublish", path, err)
 	for _, want := range []string{dir, "link said", linkSaid.Error(), noReplaceRenameCall, renameSaid.Error()} {
 		assert.Contains(t, err.Error(), want, "the refusal does not carry %q: %v", want, err)
 	}
@@ -121,7 +123,8 @@ func TestTheSecondPublishIsUsedWhenTheFirstIsNotAvailable(t *testing.T) {
 		func(string, string) error { return linkSaid }, os.Rename)
 	require.NoError(t, err, "the second publish did not publish: %v", err)
 	raw, rerr := os.ReadFile(path)
-	assert.False(t, rerr != nil || string(raw) != "body\n", "the second publish wrote %q (%v)", raw, rerr)
+	assert.NoError(t, rerr, "the second publish wrote %q (%v)", raw, rerr)
+	assert.Equal(t, "body\n", string(raw), "the second publish wrote %q (%v)", raw, rerr)
 	assertOnlyFiles(t, dir, "2026-09-09T1234Z-re-bo-abcdef012345.md")
 
 	// And an existing name is still the refusal, made by the publish and not by a check.
@@ -142,7 +145,7 @@ func assertOnlyFiles(t *testing.T, dir string, want ...string) {
 	for _, e := range entries {
 		got = append(got, e.Name())
 	}
-	require.False(t, len(got) != len(want), "the directory holds %v, want %v (a refused publish leaves no temporary)", got, want)
+	require.Equal(t, len(want), len(got), "the directory holds %v, want %v (a refused publish leaves no temporary)", got, want)
 	for _, w := range want {
 		found := false
 		for _, g := range got {

@@ -1,2 +1,2 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 8
+# ceiling: 0

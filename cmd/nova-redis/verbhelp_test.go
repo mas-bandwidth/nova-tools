@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"io"
 	"testing"
 
@@ -31,4 +34,48 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 
 func redisRun(args []string, stdout, stderr io.Writer) int {
 	return run(args, stdout, stderr, realDeps())
+}
+
+// nova-redis's definition meets the standard its banner and help cannot hold
+// by construction: every verb's effect, and a how text of five short lines.
+func TestRedisToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, redisTool(deps{}).Problems())
+}
+
+// TestHelpSaysWhichVariableHoldsThePassword pins the help's sentence about the
+// store password (ONBOARDING point 2: a flag's description says what it
+// wants): NOVA_REDIS_PASSWORD_ENV holds the name of the variable the password
+// is read from, never the password itself, the rule login.check applies (the
+// spill and recall section of docs/SPEC-REDIS.md). The sentence it replaces,
+// "(default NOVA_REDIS_PASSWORD_ENV, else NOVA_REDIS_PASSWORD)", read two
+// ways: that NOVA_REDIS_PASSWORD_ENV holds the password, or that it holds that
+// name. The --password-env flag description says the same.
+func TestHelpSaysWhichVariableHoldsThePassword(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{name: "banner", args: []string{"-h"}, want: []string{
+			"The password is read from the variable NOVA_REDIS_PASSWORD_ENV names",
+			"else NOVA_REDIS_PASSWORD",
+		}},
+		{name: "password-env flag description", args: []string{"spill", "-h"}, want: []string{
+			"the NAME of the variable that holds the password, never the password itself",
+			"the variable $NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			code := redisRun(tc.args, &stdout, io.Discard)
+			require.Equal(t, 0, code, "%v: want exit 0", tc.args)
+			out := stdout.String()
+			for _, w := range tc.want {
+				assert.Contains(t, out, w, "%v: the help does not say which variable holds the password and which one holds its name; a reader may export the password into NOVA_REDIS_PASSWORD_ENV", tc.args)
+			}
+			assert.NotContains(t, out, "default NOVA_REDIS_PASSWORD_ENV", "%v: the old sentence reads as NOVA_REDIS_PASSWORD_ENV holding the password", tc.args)
+		})
+	}
 }

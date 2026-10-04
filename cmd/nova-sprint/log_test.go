@@ -35,7 +35,7 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 	}
 	assert.NotContains(t, out, "s1-2.w1", "log --card s1-1 shows s1-2's work")
 	out = ta.ok("log --member m1")
-	assert.False(t, !strings.Contains(out, "s1-2.w1: attempt 2") && !strings.Contains(out, "attempt 1 dealt to m1"), "log --member m1:\n%s", out)
+	assert.True(t, strings.Contains(out, "s1-2.w1: attempt 2") || strings.Contains(out, "attempt 1 dealt to m1"), "log --member m1:\n%s", out)
 	ta.mu.Lock()
 	ta.now = ta.now.Add(time.Hour)
 	ta.mu.Unlock()

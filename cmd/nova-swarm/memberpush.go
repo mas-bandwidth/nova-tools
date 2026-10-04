@@ -60,10 +60,10 @@ type gitPusher struct {
 }
 
 // pushWaits is the waits before a push that origin rejected on its own side, git's
-// `[remote rejected]`, is sent again: the remote's failure, never the commit's (three
-// pushes were rejected so within thirty seconds of a fleet pass, 2026-10-01, and each
-// failed its card). A push origin refuses for the commit (`[rejected]`: not a fast
-// forward) is refused at once, as before, and never forced.
+// `[remote rejected]`, is sent again: the remote's failure, never the commit's, and
+// each rejection must end the card. A push origin refuses for the commit
+// (`[rejected]`: not a fast forward) is refused at once, as before, and never
+// forced.
 var pushWaits = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
 
 func newGitPusher(root, slots string) *gitPusher {
@@ -114,10 +114,10 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 		}
 		// the push repository is shared by every launch of this member and borrows the bench
 		// mirror's objects, which the mirror's own repack can move: a fetch's check of every ref
-		// can find another launch's ref unreadable for a moment ("fatal: bad object
-		// refs/member/<another launch>/HEAD", the 5000-card load test of 2026-10-01). It is
-		// the member's moment, never the card's: this launch's refs are dropped and the fetch
-		// is made again after a wait, and only a fetch that fails every time is the refusal
+		// can find another launch's ref unreadable for a moment (git reports "fatal: bad
+		// object refs/member/<another launch>/HEAD"). It is the member's moment, never the
+		// card's: this launch's refs are dropped and the fetch is made again after a wait,
+		// and only a fetch that fails every time is the refusal
 		if try == len(pushWaits) {
 			return member.Push{Refused: "fetch from the checkout into the member's push repository, " + strconv.Itoa(try+1) + " tries: " + gitLine(res, err)}
 		}
@@ -196,9 +196,9 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 
 // checkoutTip is the one tip of the checkout's HEAD and branches (fetched under ns) that holds
 // a commit the staged commit does not and descends from it: the child's one line of work. ""
-// when there is none, or more than one. On the 1000-card load test of 2026-10-01 five of the
-// first twelve failures were a result naming a sha whose first characters were right and whose
-// tail was invented, from one route, with the commit itself on the checkout's branch.
+// when there is none, or more than one. On runs where the result names a sha whose first
+// characters are right and whose tail is invented, the commit itself is on the checkout's
+// branch, retrievable through this path.
 func (g *gitPusher) checkoutTip(ctx context.Context, repo, ns, base string) string {
 	res, err := g.run(ctx, repo, nil, "for-each-ref", "--format=%(objectname)", ns+"/")
 	if err != nil {

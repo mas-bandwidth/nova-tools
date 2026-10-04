@@ -30,7 +30,10 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyBefore := f.fs.String("legacy-before", "", "a finding about the header of a note dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) warns instead of failing")
 	rebuildIndex := f.fs.Bool("rebuild-index", false, "with --full, rewrite each lane's INDEX from the notes on disk")
 	dryRun := f.fs.Bool("dry-run", false, "with --rebuild-index, print each lane's count and write nothing")
-	maxFindings := f.fs.Int("max", defaultCheckMax, "findings of each class to print before one BUS MORE line per class names the rest of it (default 20, 0 = all)")
+	var maxFindings int
+	f.fs.IntVar(&maxFindings, "max", defaultCheckMax, "findings of each class to print before one BUS MORE line per class names the rest of it (default 20, 0 = all)")
+	// --fail-max is --max for one release (docs/STANDARD.md section 2).
+	f.fs.IntVar(&maxFindings, "fail-max", defaultCheckMax, "alias of --max, accepted for one release")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {
 		return 2
@@ -38,7 +41,10 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
 		return 2
 	}
-	if !f.atLeastZero("max", *maxFindings, stderr) {
+	if f.set("fail-max") {
+		fmt.Fprintln(stderr, "NOTE --fail-max is --max")
+	}
+	if !f.atLeastZero("max", maxFindings, stderr) {
 		return 2
 	}
 	// A check with no baseline is not a check of nothing, it is a caller who has not said
@@ -141,7 +147,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 				}
 				n, rerr := bus.RebuildLaneIndex(*busDir, c, t, lane)
 				if rerr != nil {
-					fmt.Fprintf(stderr, "BUS FAIL %s: %s\n", oneline.Escape(bus.IndexPath(lane)), oneline.Err(rerr))
+					fmt.Fprintf(stderr, "BUS FAILED %s: %s\n", oneline.Escape(bus.IndexPath(lane)), oneline.Err(rerr))
 					return 1
 				}
 				fmt.Fprintf(stdout, "BUS INDEX lane=%s notes=%d\n", oneline.Field(lane), n)
@@ -193,30 +199,26 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	printed := map[string]int{}
 	for _, p := range problems {
 		class := bus.ProblemClass(p)
-		if *maxFindings > 0 && printed[class] >= *maxFindings {
+		if maxFindings > 0 && printed[class] >= maxFindings {
 			continue
 		}
 		printed[class]++
-		// A WARN GOES TO STDOUT, and it went to stderr. The grammar says which stream a
-		// line is on and the rule is one sentence: FAIL lines and refusals to stderr,
-		// everything else to stdout. A WARN is neither -- it is a finding that was
-		// TOLERATED, reported by a run that passed -- so putting it on stderr made every
-		// clean-but-forgiving run look like a failing one to anything reading the streams
-		// apart, which is what CI does. It is an informational line and it is now where the
-		// informational lines are.
+		// A tolerated finding is a NOTE on stdout (docs/STANDARD.md section 2). FAILED
+		// lines and refusals go to stderr, and everything else goes to stdout. A NOTE
+		// is a finding a passing run reports, so it is not a failure word on exit 0.
 		if p.Warn {
-			fmt.Fprintf(stdout, "BUS WARN %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
+			fmt.Fprintf(stdout, "BUS NOTE %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
 			continue
 		}
-		fmt.Fprintf(stderr, "BUS FAIL %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
+		fmt.Fprintf(stderr, "BUS FAILED %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
 	}
 	for _, cc := range counts.Class {
 		if printed[cc.Class] < cc.Count {
 			fmt.Fprintf(stderr, "BUS MORE kind=%s shown=%d total=%d remedy=%s\n", oneline.Field(cc.Class), printed[cc.Class], cc.Count, oneline.Quote("--max 0"))
 		}
 	}
-	// THE CAP'S OWN LINES GO WHERE THE FAIL LINES GO, and no further than they do. The
-	// findings report's gate half is the BUS FAIL lines on stderr, and the two lines that
+	// THE CAP'S OWN LINES GO WHERE THE FAILED LINES GO, and no further than they do. The
+	// findings report's gate half is the BUS FAILED lines on stderr, and the two lines that
 	// account for it -- what the cap held back, and the count by class -- end that same
 	// report on that same stream: a count a caller could read as a pass never enters
 	// stdout of a failing run, which is the law TestCheckFailsAndNamesEveryFinding keeps,

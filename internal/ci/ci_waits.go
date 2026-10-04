@@ -211,7 +211,7 @@ type waitAllow struct {
 // (waits, net, goenv, testbins, templates) and of the `file spell date reason`
 // card template list: a row is keyed by its first two fields, every list only
 // shrinks, and a missing file is an empty list -- a tree with nothing parked in
-// it is the goal (nova-tools#4339).
+// it is the goal.
 var FileLineListOptions = allowlist.Options{Key: allowlist.Fields(2), Ceiling: true, MissingIsEmpty: true}
 
 // FileLineKey is a finding's key in those lists, the first two fields of the row
@@ -266,9 +266,8 @@ func readWaitAllowlist(path string) ([]waitAllow, error) {
 //
 // A row allows ONE offender of its kind in its file. The line in the row is where the
 // offender stood when the row was written, for a reader; it is not matched on. Matching
-// on the line turned dev red the moment any merge shifted lines in a listed file
-// (2026-09-17: #1073 moved cmd/nova-swarm/native_test.go and every group after it
-// failed). The count per file and kind is what the list holds still: a new fixed wait
+// on the line turned dev red the moment any merge shifted lines in a listed file.
+// The count per file and kind is what the list holds still: a new fixed wait
 // in a listed file exceeds its rows and is refused, a fixed one leaves a row unused
 // and the stale rule makes the list shrink. An exact line match is preferred so the
 // stale row reported is the one a reader expects.

@@ -5,15 +5,14 @@ import (
 	"strings"
 )
 
-// StreamRemove is the rule of stream remove (the owner, 2026-10-01: "you
-// should have a verb to remove work streams" / "they should only succeed on a
-// STOPPED sprint machine"): why each named stream may not leave the work and
-// merge tables, none when every one may. A stream may leave only while the
-// machine is STOPPED, only when it is a row of the work or the merge table,
-// and only when it holds no card: no primary or sentinel placed in any column
-// of its work row, no merge card in its merge row (its control card, which
-// the row takes with it, is no card it holds). The verb names several and
-// applies all or none: one refused refuses every other with it.
+// StreamRemove is the rule of stream remove: why each named stream may not
+// leave the work and merge tables, none when every one may. A stream may
+// leave only while the machine is STOPPED, only when it is a row of the work
+// or the merge table, and only when it holds no card: no primary or sentinel
+// placed in any column of its work row, no merge card in its merge row (its
+// control card, which the row takes with it, is no card it holds). The verb
+// names several and applies all or none: one refused refuses every other
+// with it.
 func StreamRemove(s *Snapshot, running bool, streams []string) []Refusal {
 	var out []Refusal
 	refused := map[string]bool{}

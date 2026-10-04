@@ -21,9 +21,9 @@ import (
 func outputGrammar(t *testing.T) map[string]string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	raw, err := os.ReadFile(filepath.Join(root, "docs", "SPEC-TOKENS.md"))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	var block, cur []string
 	in := false
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -165,11 +165,11 @@ func checkAgainstGrammar(t *testing.T, grammar map[string]string, line string) {
 			continue
 		}
 		if i := strings.Index(spec, "<"); i > 0 {
-			assert.False(t, !strings.HasPrefix(v, spec[:i]), "%s prints %s=%s; the output grammar admits only %s=%s", kind, k, v, k, spec)
+			assert.True(t, strings.HasPrefix(v, spec[:i]), "%s prints %s=%s; the output grammar admits only %s=%s", kind, k, v, k, spec)
 			continue
 		}
 		if alts, closed := grammarEnum(spec); closed {
-			assert.False(t, !grammarAdmits(alts, v), "%s prints %s=%s; the output grammar enumerates %s=%s", kind, k, v, k, spec)
+			assert.True(t, grammarAdmits(alts, v), "%s prints %s=%s; the output grammar enumerates %s=%s", kind, k, v, k, spec)
 		}
 	}
 }
@@ -259,6 +259,6 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 			}
 		}
 	}
-	require.False(t, !sawPartial, "no TOKENS PARTIAL line was checked against the grammar")
+	require.True(t, sawPartial, "no TOKENS PARTIAL line was checked against the grammar")
 	require.False(t, n < 10, "%d printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing", n)
 }

@@ -242,7 +242,7 @@ func runFirstRunShapes(t *testing.T, doc string, lines []string, dir, busPath st
 // docs/CLI.md's `### First run` is the page a stranger copies from, and until this test
 // nothing ran it: the executed copy was docs/TESTS.md's, whose harness replaced the
 // draft's placeholder by itself, so a CLI.md sitting whose `send` could only answer
-// `SEND FAIL ... the unedited template placeholder` was green (the 2026-09-27 audit).
+// `SEND FAILED ... the unedited template placeholder` was green (the 2026-09-27 audit).
 //
 // This runs CLI.md's lines in order on the same fixture, and the step between `draft`
 // and `send` is the one the page WRITES: the `sed` line in its prose, run with sh in

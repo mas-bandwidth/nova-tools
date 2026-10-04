@@ -21,18 +21,12 @@ func TestCreateBoxRefusesSymlinkParent(t *testing.T) {
 	root := t.TempDir()
 	real := filepath.Join(root, "real")
 	link := filepath.Join(root, "link")
-	{
-		err := os.Mkdir(real, 0700)
-		require.NoError(t, err)
-	}
-	{
-		err := os.Symlink(real, link)
-		require.NoError(t, err)
-	}
-	{
-		err := CreateBox(filepath.Join(link, "box.json"))
-		assert.Error(t, err, "CreateBox accepted a symlink parent")
-	}
+	err := os.Mkdir(real, 0700)
+	require.NoError(t, err)
+	err = os.Symlink(real, link)
+	require.NoError(t, err)
+	err = CreateBox(filepath.Join(link, "box.json"))
+	assert.Error(t, err, "CreateBox accepted a symlink parent")
 	entries, err := os.ReadDir(real)
 	require.NoError(t, err)
 	assert.Len(t, entries, 0, "refusal left entries in the linked directory: %v", entries)
@@ -54,10 +48,8 @@ func TestConcurrentCreateBoxHasOneWinner(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	{
-		n := wins.Load()
-		require.Equal(t, int32(1), n, "successful creators=%d, want1", n)
-	}
+	n := wins.Load()
+	require.Equal(t, int32(1), n, "successful creators=%d, want1", n)
 	box, err := ReadBox(path)
 	require.NoError(t, err)
 	require.Nil(t, box.Lockdown, "created box not empty: %+v", box)

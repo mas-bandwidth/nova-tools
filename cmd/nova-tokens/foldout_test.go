@@ -33,7 +33,7 @@ func TestFoldOutAbsent(t *testing.T) {
 		wantContains(t, r.stderr, out)
 		{
 			got := read(t, out)
-			assert.False(t, got != "a regular file\n", "the file at --out was overwritten: %q", got)
+			assert.Equal(t, "a regular file\n", got, "the file at --out was overwritten: %q", got)
 		}
 	})
 }

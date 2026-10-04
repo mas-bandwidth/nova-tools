@@ -15,9 +15,10 @@ import (
 )
 
 // The dogfood verb answers the one question a tool's own tests cannot: has
-// somebody who did not write it run it, on real work, with the edges filed? A
-// tool is not finished until that is so, and without a record the claim is
-// whatever the last person said.
+// somebody outside its authoring process run it? A tool is not
+// finished until it is tested, dogfooded by a non-author on real work with the
+// edges filed, the feedback applied, documented and released. Nothing tracked
+// that, so the claim was whatever the last person said it was.
 //
 // Three sub-verbs, and they are deliberately small: `ledger` reads the verb
 // list against a directory of receipts and prints one row per verb; `record`
@@ -26,10 +27,12 @@ import (
 // record, and every path comes from a flag.
 //
 // The verb list comes from the binaries when `--tools` names them, and from the
-// command reference otherwise. Both are here because each closes a failure the
-// other has: a tool documented in a shape the reader does not read contributes
-// no rows and can never be gated on, and a verb that exists in the binary but
-// not in the reference strands its receipts against a stale document.
+// command reference otherwise. Both are here because this verb's own first
+// dogfood pass finds the failure only a second
+// source closes: a tool documented in a shape the reader did not read
+// contributed zero rows and could never be gated on, and two verbs that exist
+// in the binary but not in the reference stranded their receipts against a
+// document that had gone stale.
 const (
 	cliHint      = `--cli <file> is the command reference the verbs are read from, usually docs/CLI.md; it is the list this ledger is about, so it is never guessed from the working directory`
 	toolsHint    = `--tools <dir> is a directory of built nova-* binaries, each asked for its own help: the authoritative verb list, with --cli as the fallback for the tools it does not hold`
@@ -226,8 +229,8 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 
 // reportStranded names every receipt that matched no verb: the file, what it
 // claimed, and the verb it was probably meant to be. Both `ledger` and `gate`
-// call it, on every outcome: a lane must not pass or fail without learning
-// that evidence it read was thrown away, and which, and how to spell it.
+// call it, so a lane cannot pass or fail without learning that the evidence
+// it read was thrown away.
 func reportStranded(read dogfoodRead, failMax int, stderr io.Writer) {
 	strands := dogfood.Stranded(read.verbs, read.receipts)
 	if len(strands) == 0 {
@@ -370,8 +373,10 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	// The spelling is checked against the same list the ledger will read it
-	// against, so a receipt for a verb spelled differently is refused now
-	// rather than stranded, unread, later.
+	// against. A receipt for a verb spelled differently is refused here, where
+	// the run can say which verb was meant; accepted in silence, it would only
+	// surface later as a note that names no verb, and the bench would read as
+	// having dogfooded nothing at all.
 	verbs, code := src.verbList("record", *failMax, stderr)
 	if code != 0 {
 		return code

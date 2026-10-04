@@ -31,5 +31,5 @@ func TestHelpListsOneSumForm(t *testing.T) {
 			n++
 		}
 	}
-	assert.False(t, n != 1, "the help banner's usage block carries %d `nova-tokens sum` synopsis lines, want 1:\n%s", n, r.stdout)
+	assert.Equal(t, 1, n, "the help banner's usage block carries %d `nova-tokens sum` synopsis lines, want 1:\n%s", n, r.stdout)
 }

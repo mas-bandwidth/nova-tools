@@ -9,7 +9,7 @@ import "maps"
 // landed cross need) as the parts of one tick, in a fixed order.
 //
 // The state of the model is the sprint as the next tick's pump will leave the
-// work table (the owner's tick, 2026-09-30, errata 3 amendment 12): while the
+// work table: while the
 // machine runs, every step but the pump queues its work-table changes, and the
 // engine plans each on the work table with the ones before it applied
 // (sprint.WithQueue), so the abstract state of the engine is read the same
@@ -42,9 +42,9 @@ func SetMachine(s State, running bool) (State, error) {
 // nothing; a RUNNING one runs its parts in order, each on the state the one
 // before left: the start, the fleet's level (T4) and the readers' (levelReads),
 // once; then the four tables' updates in the owner's order: the work pump's
-// resolve (T1), deal (T3) and accept (the owner's ruling of 2026-09-30,
-// "accept is mechanical"), the readers' ask (T2), the merge's resume (T7); and
-// then done (R15, errata 3 amendment 6), which stops
+// resolve (T1), deal (T3) and accept (mechanical: the machine applies the
+// rule, no judgment), the readers' ask (T2), the merge's resume (T7); and
+// then done, which stops
 // the machine on a done sprint. The tables the updates dirty are updated again
 // until none is; the model's parts dirty no earlier table, so one pass is the
 // fixpoint.
@@ -59,8 +59,8 @@ func Tick(s State, ch TickChoices) (State, error) {
 	if s.Machine != Running {
 		return s, nil
 	}
-	// the start: the fleet's and the readers' rebalance, once (the owner,
-	// 2026-10-01: "just once before tick, rebalance each table.")
+	// the start: the fleet's and the readers' rebalance, each table once,
+	// before the tick's updates.
 	n, err := s.level(ch.Level)
 	if err != nil {
 		return s, err
@@ -81,7 +81,7 @@ func Tick(s State, ch TickChoices) (State, error) {
 	return n, nil
 }
 
-// tickDone is R15 as errata 3 amendment 6 amends it (sprint.TickDone): the
+// tickDone is the machine's done rule (sprint.TickDone): the
 // tick's last part; a sprint done (sprintDone) stops the machine, its note
 // addressed to the coordinator, and no judgment opens. A stopped machine does
 // not tick, so it says it once for each run that finishes the sprint.
@@ -137,9 +137,9 @@ func (n *State) tickResume() {
 // tickDeal is T3: ready primaries in stream turns (one from each stream in
 // turn, the streams from the first past the deal's stream index, a stream with none
 // skipped, each stream's oldest first by score; Start moves the index past
-// each primary's stream, errata 3 amendment 10), each to the up
+// each primary's stream), each to the up
 // next member round the fleet (NextMember), no member holding more work
-// cards, ready and working, than its Room (DealAhead times its Width, errata 3 amendment 9); with no member up and primaries to deal, the no-member
+// cards, ready and working, than its Room (DealAhead times its Width); with no member up and primaries to deal, the no-member
 // judgment once, closed when the condition clears (section 14).
 func (n *State) tickDeal(choice map[string]string) error {
 	var ready []string
@@ -213,7 +213,7 @@ func (n *State) tickAsk(choice map[string][]string) error {
 			review = append(review, id)
 		}
 	}
-	// in stream turns from the ask's stream index (errata 3 amendment 10);
+	// in stream turns from the ask's stream index;
 	// Ask moves it past each primary's stream
 	review = n.streamTurns(review, n.AskStreamLast)
 	for _, p := range review {

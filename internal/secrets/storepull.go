@@ -24,7 +24,7 @@ import (
 )
 
 // storepull.go is the one boundary where the store's pull credential is chosen
-// (docs/SPEC-SECRETS.md, "Additions from dogfooding", rule 7). The store is pulled on a bench
+// (docs/SPEC-SECRETS.md). The store is pulled on a bench
 // over the bench's own SSH key, generated on that bench, its public half authorized on the
 // GitHub account the bench acts as; never a person's credential; never present inside the card
 // wall. The rule is held HERE, where the key is handed to ssh, rather than by reading a clone's
@@ -34,7 +34,7 @@ import (
 // binaries; every path is typed by the caller.
 type StorePullOptions struct {
 	StoreDir string   // the store's working copy on this bench
-	Seat     string   // the bench seat pulling, e.g. swarm-studio
+	Seat     string   // the name of the bench seat pulling
 	SeatHome string   // the seat's own home; its key lives in <SeatHome>/.ssh
 	Key      string   // the private half of the seat's SSH key
 	Wall     []string // the card wall's directories (slot, job, work): the key may lie in none

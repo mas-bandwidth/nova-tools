@@ -79,7 +79,7 @@ func TestLockRecoversWhenTheSentinelHolderDied(t *testing.T) {
 	{
 		got := ReadLockHolder(lockPath)
 		if got != fmt.Sprint(os.Getpid()) {
-			require.False(t, got != fmt.Sprint(os.Getpid()), "after recovery the lock names %q, want this process %d", got, os.Getpid())
+			require.Equal(t, fmt.Sprint(os.Getpid()), got, "after recovery the lock names %q, want this process %d", got, os.Getpid())
 		}
 	}
 	if _, err := os.Stat(sentinelPath(lockPath)); err != nil {
@@ -104,7 +104,7 @@ func TestRemoveLockFileTreatsAMissingFileAsGone(t *testing.T) {
 	}
 	{
 		_, err := os.Stat(path)
-		require.False(t, !errors.Is(err, os.ErrNotExist), "the file was not removed: %v", err)
+		require.True(t, errors.Is(err, os.ErrNotExist), "the file was not removed: %v", err)
 	}
 }
 

@@ -8,9 +8,9 @@ import (
 )
 
 // harnessStartWaits is the wait before each relaunch of a harness whose START failed
-// (harnessStartFailed), one entry per retry, in the same job on the same route. The
-// owner, 2026-10-01: "maybe: 1-1-1-2-2-4-4-8-8 is better ;)". Nine retries, 31 s in all;
-// when they are spent the run hands back as any provider failure, naming the starts.
+// (harnessStartFailed), one entry per retry, in the same job on the same route. Nine
+// retries, 31 s in all; when they are spent the run hands back as any provider failure,
+// naming the starts.
 var harnessStartWaits = []time.Duration{
 	1 * time.Second, 1 * time.Second, 1 * time.Second,
 	2 * time.Second, 2 * time.Second,

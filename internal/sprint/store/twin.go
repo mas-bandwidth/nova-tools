@@ -15,8 +15,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// The tick's twin: the sprint read once and kept (the owner's requirement
-// of 2026-09-30, "the whole intent is sub-second ticks"). The first read
+// The tick's twin: the sprint read once and kept, so every tick stays
+// sub-second. The first read
 // builds it; every later read of a step that loads the four tables brings it
 // up to date instead of reading them whole, and each step's own writes are
 // applied to it from their receipts (the store's own account of what each
@@ -55,8 +55,8 @@ import (
 // TwinNotAhead and LockedApplyNotLost, each with a
 // reversed witness that breaks it (tla/CASES.tsv, dirtytickread).
 
-// GrantError is a read the store refused to this user for want of a grant:
-// the twin reads the table whole instead, and the tick says so (a NOTE).
+// GrantError is a read the store refused its user for want of a grant: the
+// twin reads the table whole instead, and the tick says so (a NOTE).
 type GrantError struct {
 	Command, Key string
 	Cause        error

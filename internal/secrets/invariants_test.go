@@ -168,6 +168,27 @@ func TestCheckInvariant3HoldsEveryValueSealedOutsideTheClearList(t *testing.T) {
 	}
 }
 
+// A rule whose unencrypted_regex does not compile is named as the rule's fault: the
+// Compile error is surfaced with the regex and the rule it came from, so the operator
+// repairs .sops.yaml instead of resealing the file the rule was meant to permit.
+func TestABrokenUnencryptedRegexIsNamed(t *testing.T) {
+	t.Parallel()
+	rule := seatRule("rowan", pubRowan, pubRecovery)
+	rule.UnencryptedRegex = "^(PUBLIC_"
+	cfg := &SopsConfig{CreationRules: []CreationRule{rule}}
+	fails, sealed, clear := CheckInvariant3(storeOf(t, map[string]string{
+		"rowan.yaml": sealedFor([]string{pubRowan, pubRecovery}, "API_KEY"),
+	}), cfg, []string{"rowan.yaml"})
+	assertReasons(t, fails, `unencrypted_regex "^(PUBLIC_", which is not a valid regular expression`)
+	if assert.Len(t, fails, 1) {
+		assert.Equal(t, "unsealed", fails[0].Kind)
+		assert.Equal(t, "rowan.yaml", fails[0].File)
+		assert.Contains(t, fails[0].Reason, ".sops.yaml rule for rowan.yaml")
+	}
+	assert.Equal(t, 0, sealed, "a file under a broken rule is not sealed")
+	assert.Equal(t, 0, clear, "no clear key is credited under a broken rule")
+}
+
 func TestCheckInvariant4HoldsTheKeyToOpenExactlyTheFilesThatListIt(t *testing.T) {
 	t.Parallel()
 	f := newSeatFixture(t)

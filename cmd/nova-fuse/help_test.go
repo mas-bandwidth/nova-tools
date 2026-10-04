@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +13,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 )
+
+// foldBanner joins the banner's wrapped lines into running prose, so a
+// sentence is compared as the reader folds it, while the banner itself keeps
+// its wrap.
+func foldBanner(text string) string {
+	return strings.Join(strings.Fields(text), " ")
+}
 
 func TestVerbHelpNamesItsEffectsFlagsAndExitMeanings(t *testing.T) {
 	t.Parallel()
@@ -40,6 +49,122 @@ func TestVerbHelpNamesItsEffectsFlagsAndExitMeanings(t *testing.T) {
 			assert.NotContains(t, out, "how it works:", "focused help does not print the whole banner")
 		})
 	}
+
+	// The banner's three sentences below are checked against the behaviour by
+	// running it, and the banner is what changes to match (ONBOARDING point 5:
+	// tests pin the banner by EXECUTING it; docs/CLI-STYLE.md (d): 0 passed or
+	// done, 1 ran and said no, 2 could not run; docs/SPEC.md "Exit codes and
+	// output grammar" and "The read has one yes and two noes").
+
+	t.Run("exit codes name one meaning of 1 per verb", func(t *testing.T) {
+		t.Parallel()
+		code, out, errs := runFuse(t, "help")
+		require.Zero(t, code, errs)
+		require.Empty(t, errs)
+		said := foldBanner(out)
+		assert.Contains(t, said, "check: 1 blown (a lockdown, or a quarantine on the surface)")
+		assert.Contains(t, said, "init, lockdown, quarantine, lift quarantine: 1 the write was attempted and re-reading the box did not show it")
+		assert.Contains(t, said, "status, path: 0 only")
+		assert.Contains(t, said, "every verb: 2 could not run")
+		assert.NotContains(t, said, "could not do it / could not verify it",
+			"one sentence must not carry both meanings of 1: blown for check, unverified for a write")
+	})
+
+	t.Run("the exit meanings answer as the banner says", func(t *testing.T) {
+		t.Parallel()
+		// check: 1 blown -- a quarantine on the named surface, and a lockdown.
+		box := freshBox(t) // the fixture quarantines a-public-issue-tracker
+		code, _, _ := runFuse(t, "check", "--box", box, "a-public-issue-tracker")
+		assert.Equal(t, 1, code, "check of a quarantined surface answers 1")
+		blown := boxIn(t)
+		writeRaw(t, blown, `{"lockdown":{"at":"2026-09-08T21:14:00Z","reason":"suspected compromise"},"quarantine":{}}`)
+		code, _, _ = runFuse(t, "check", "--box", blown, "any-surface")
+		assert.Equal(t, 1, code, "check under a lockdown answers 1")
+		// write verbs: 1 the write was attempted and re-reading the box did not
+		// show it -- init where a box stands, and a lift with nothing to lift.
+		code, _, _ = runFuse(t, "init", "--box", box)
+		assert.Equal(t, 1, code, "init over an existing box answers 1")
+		code, _, _ = runFuse(t, "lift", "quarantine", "--box", box, "a-forum")
+		assert.Equal(t, 1, code, "a lift the re-read does not show answers 1")
+		// status, path: 0 only -- never 1, blown box or not.
+		code, _, _ = runFuse(t, "status", "--box", blown)
+		assert.Equal(t, 0, code, "status reports a blown box at 0; it never answers 1")
+		code, _, _ = runFuse(t, "path", "--box", blown)
+		assert.Equal(t, 0, code, "path echoes at 0; it never answers 1")
+		// every verb: 2 could not run.
+		code, _, _ = runFuse(t, "check")
+		assert.Equal(t, 2, code, "a check with no --box could not run")
+	})
+
+	t.Run("a path with no box refuses only where the banner says", func(t *testing.T) {
+		t.Parallel()
+		_, help, _ := runFuse(t, "help")
+		said := foldBanner(help)
+		assert.Contains(t, said, "Every verb except init, lockdown, and path refuses a path with no box, never read as CLEAR")
+		assert.Contains(t, said, "lockdown makes a blown box there")
+		assert.NotContains(t, said, "2 could not run -- missing flag, no box at the path",
+			"the blanket sentence called a path with no box exit 2 for every verb; lockdown answers 0 there")
+
+		dir := t.TempDir()
+		for _, args := range [][]string{
+			{"status", "--box", filepath.Join(dir, "status.json")},
+			{"check", "--box", filepath.Join(dir, "check.json"), "a-forum"},
+			{"quarantine", "--box", filepath.Join(dir, "quarantine.json"), "a-forum", "a reason"},
+			{"lift", "quarantine", "--box", filepath.Join(dir, "lift.json"), "a-forum"},
+		} {
+			code, _, _ := runFuse(t, args...)
+			assert.Equal(t, 2, code, "%v: a verb that needs a box refuses a path with none at 2", args)
+		}
+
+		// The exception the run records: lockdown --dry-run at a path with no
+		// box answers 0, writes nothing, and says a real run would make a box
+		// there holding a blown lockdown.
+		absent := filepath.Join(dir, "fuse-box.json")
+		code, dryOut, dryErrs := runFuse(t, "lockdown", "--box", absent, "--dry-run", "a reason")
+		require.Equal(t, 0, code, "lockdown --dry-run at a path with no box: %s", dryErrs)
+		assert.Contains(t, dryOut, "dry_run=true")
+		assert.Contains(t, dryOut, "a real run would make a box there holding a blown lockdown")
+		_, err := os.Stat(absent)
+		assert.True(t, os.IsNotExist(err), "the dry run wrote a box")
+
+		// And the real run makes the blown box the banner now names.
+		made := filepath.Join(dir, "made.json")
+		code, _, errs := runFuse(t, "lockdown", "--box", made, "a reason")
+		require.Equal(t, 0, code, "lockdown at a path with no box: %s", errs)
+		require.FileExists(t, made)
+		code, _, _ = runFuse(t, "check", "--box", made)
+		assert.Equal(t, 1, code, "the box lockdown made is blown")
+
+		// init makes an empty box there; path reads no box at all.
+		fresh := filepath.Join(dir, "fresh.json")
+		code, _, _ = runFuse(t, "init", "--box", fresh)
+		assert.Equal(t, 0, code, "init at a path with no box makes the empty box")
+		require.FileExists(t, fresh)
+		code, echoed, _ := runFuse(t, "path", "--box", filepath.Join(dir, "nowhere.json"))
+		assert.Equal(t, 0, code, "path reads no box at all")
+		assert.Contains(t, echoed, "nowhere.json")
+	})
+
+	t.Run("lift lockdown names the command that replaces the box", func(t *testing.T) {
+		t.Parallel()
+		_, out, _ := runFuse(t, "help")
+		said := foldBanner(out)
+		assert.Contains(t, said, "REFUSED by design: the box is replaced: nova-fuse init --box <a new path>, and the harness pointed at it, by the person, never by this tool")
+		assert.NotContains(t, said, "a blown fuse is REPLACED, only", "REPLACED named no command a reader could act on in one turn")
+
+		// The named command runs: init makes the new clear box; the tool never
+		// replaces the blown one itself.
+		dir := t.TempDir()
+		blown := filepath.Join(dir, "blown.json")
+		writeRaw(t, blown, `{"lockdown":{"at":"2026-09-08T21:14:00Z","reason":"suspected compromise"},"quarantine":{}}`)
+		fresh := filepath.Join(dir, "fresh.json")
+		code, _, _ := runFuse(t, "init", "--box", fresh)
+		assert.Equal(t, 0, code, "the replacement init runs at a new path")
+		code, _, _ = runFuse(t, "check", "--box", fresh)
+		assert.Equal(t, 0, code, "the new box is clear")
+		code, _, _ = runFuse(t, "check", "--box", blown)
+		assert.Equal(t, 1, code, "the old box stays blown until the person replaces it")
+	})
 }
 
 func TestCheckHelpFlagStillFailsClosedAndNamesFocusedHelp(t *testing.T) {

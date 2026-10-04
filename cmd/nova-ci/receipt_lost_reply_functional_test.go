@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -107,7 +108,7 @@ func TestReceiptCommittedWriteWithLostReplyIsReportedUnconfirmed(t *testing.T) {
 	args := receiptArgs()
 	args[3] = ln.Addr().String()
 	var out, errOut bytes.Buffer
-	code := cmdReceipt(ctx, args[1:], &out, &errOut, noEnv)
+	code := cmdReceipt(ctx, args[1:], &out, &errOut, noEnv, store.Open)
 	_ = ln.Close()
 	wg.Wait()
 	require.NoError(t, proxyErr)

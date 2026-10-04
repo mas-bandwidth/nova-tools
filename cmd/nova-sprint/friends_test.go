@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -394,6 +395,43 @@ func TestTheFriendVerbsRefuse(t *testing.T) {
 	assert.Equal(t, exitCannotRead, code)
 	assert.Contains(t, errs, "the config cannot be read")
 	assert.Equal(t, map[string]string{"amy": "down"}, ta.friendStatus(), "nothing was changed")
+}
+
+// The friends paragraph of nova-sprint help friend says what friend sync does
+// (docs/SPEC-SPRINT.md section 1, a friend's card): the job directory is the
+// card's stored id, <card> at epoch 0 and <card>~<epoch> after a clear; a
+// full-sha LAND is refused and left working when the tip differs (both shas
+// named), when origin has no branch of that name, when the tip cannot be read,
+// or when the card names no REPO: line; HOLD, FAIL, FAILED, BROKEN, a LAND
+// without a full sha, an empty report and any other verdict finish the card
+// failed with the report's first paragraph; and the friends table is drawn
+// after merge only under where --all, the default frame drawing no merge table.
+func TestFriendHelpMatchesWhatFriendSyncDoes(t *testing.T) {
+	t.Parallel()
+	var out, errb bytes.Buffer
+	code := newApp(func(string) string { return "" }).run([]string{"help", "friend"}, &out, &errb)
+	require.Equal(t, 0, code, errb.String())
+	help := strings.Join(strings.Fields(out.String()), " ")
+	for _, want := range []string{
+		"inbox/<job>/BRIEF.md",
+		"the job directory <card> at epoch 0 and <card>~<epoch> after a clear",
+		"outbox/<job>/REPORT.md",
+		"when the tip is another sha (both named), when origin has no branch of that name, when the tip cannot be read, or when the card names no REPO: line",
+		"Verdict: HOLD, FAIL, FAILED or BROKEN",
+		"a LAND without a full sha, an empty report and any other verdict finish the card failed too",
+		"the friends table is drawn after merge only under where --all",
+	} {
+		assert.Contains(t, help, want, "nova-sprint help friend says %q", want)
+	}
+	for _, gone := range []string{
+		"inbox/<card>/BRIEF.md",
+		"outbox/<card>/REPORT.md",
+		"is refused naming both shas",
+		"Verdict: HOLD or FAIL",
+		"friends after merge and before fleet",
+	} {
+		assert.NotContains(t, help, gone, "nova-sprint help friend no longer says %q", gone)
+	}
 }
 
 // A friend beats through the sprint's server as a member does: `friend beat

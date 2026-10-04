@@ -1,4 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
-internal/nsprint/store/store.go:glenn 1
+# ceiling: 1
 internal/nsprint/store/store.go:space 1

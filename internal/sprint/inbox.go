@@ -152,7 +152,7 @@ func StaleStream(id string) (string, bool) {
 const FieldStaleReview = "stale_review"
 
 // Inbox groups: what happened since the cursor addressed to someone first
-// (the coordinator's "the sprint is done", errata 3 amendment 6: no judgment
+// (the coordinator's "the sprint is done": no judgment
 // waits on it, and it is the first thing the coordinator reads), then open
 // judgments (marked ones, repeats and overdue, first of all, then the longest
 // waiting), then streams that have not moved past their deadline, then what

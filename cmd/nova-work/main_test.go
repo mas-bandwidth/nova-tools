@@ -111,7 +111,7 @@ func TestImportThenVerifyIsZeroDifferences(t *testing.T) {
 	diag = fmt.Sprintf("verify after a change: exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Equal(t, 1, res.Code, diag)
 	require.Empty(t, res.Stdout, diag)
-	require.Regexp(t, `(?m)^VERIFY FAIL tree=.* differences=1 missing=0 extra=0 drift=1 gh=/bin/gh$`, res.Stderr, diag)
+	require.Regexp(t, `(?m)^VERIFY FAILED tree=.* differences=1 missing=0 extra=0 drift=1 gh=/bin/gh$`, res.Stderr, diag)
 	require.Regexp(t, `(?m)^VERIFY DRIFT path=repos/mas-bandwidth/reliable/issues/\d+ field=title want="[^"]+" got="changed [^"]+"$`, res.Stderr, diag)
 
 	res = workMain(recorded(t, "/bin/gh")).Run(append([]string{"import", "--org", "mas-bandwidth", "--dry-run"}, repo...)...)
@@ -315,7 +315,7 @@ func TestVerifyAgainstASecondTreeReadsNoNetwork(t *testing.T) {
 	}{
 		{"the same tree", []string{"verify", "--tree", a, "--against", a}, 0, "VERIFY OK tree=" + a, nil},
 		{"the help's example", []string{"verify", "--tree", a, "--against", b}, 1, "",
-			[]string{"VERIFY FAIL tree=" + a, " against=" + b + " ", "differences=1 missing=0 extra=0 drift=1\n",
+			[]string{"VERIFY FAILED tree=" + a, " against=" + b + " ", "differences=1 missing=0 extra=0 drift=1\n",
 				`VERIFY DRIFT path=repos/acme/widgets field=archived want="true" got="false"` + "\n"}},
 		{"a repository out of scope", []string{"verify", "--tree", a, "--against", b, "--repo", "acme/other"}, 0, "VERIFY OK", nil},
 		{"a GitHub flag beside it", []string{"verify", "--tree", a, "--against", b, "--gh", "gh", "--page-size", "5"}, 2, "",
@@ -338,4 +338,141 @@ func TestVerifyAgainstASecondTreeReadsNoNetwork(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStatusGrammar pins the standard's three words after the verb (OK, REFUSED,
+// FAILED; docs/STANDARD.md section 2) and their exit codes for every verb of nova-work.
+func TestStatusGrammar(t *testing.T) {
+	t.Parallel()
+
+	type grammarResult struct {
+		Word string
+		Code int
+	}
+
+	cases := []struct {
+		name     string
+		verb     string
+		run      func(t *testing.T) (testkit.Result, string)
+		wantWord string
+		wantCode int
+	}{
+		{
+			name: "import OK",
+			verb: "import",
+			run: func(t *testing.T) (testkit.Result, string) {
+				res := workMain(recorded(t, "/bin/gh")).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--page-size", "15", "--dry-run")
+				return res, res.Stdout
+			},
+			wantWord: "OK",
+			wantCode: 0,
+		},
+		{
+			name: "import REFUSED",
+			verb: "import",
+			run: func(t *testing.T) (testkit.Result, string) {
+				res := workMain(unreachable(t)).Run("import")
+				return res, res.Stderr
+			},
+			wantWord: "REFUSED",
+			wantCode: 2,
+		},
+		{
+			name: "import budget REFUSED",
+			verb: "import",
+			run: func(t *testing.T) (testkit.Result, string) {
+				res := workMain(recorded(t, "/bin/gh")).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--page-size", "15", "--max-calls", "2", "--dry-run")
+				return res, res.Stderr
+			},
+			wantWord: "REFUSED",
+			wantCode: 2,
+		},
+		{
+			name: "verify OK",
+			verb: "verify",
+			run: func(t *testing.T) (testkit.Result, string) {
+				tree := filepath.Join(t.TempDir(), "tree.lisp")
+				repo := []string{"--repo", "mas-bandwidth/reliable", "--page-size", "15"}
+				res := workMain(recorded(t, "/bin/gh")).Run(append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
+				require.Equal(t, 0, res.Code)
+				verRes := workMain(recorded(t, "/bin/gh")).Run(append([]string{"verify", "--tree", tree}, repo...)...)
+				return verRes, verRes.Stdout
+			},
+			wantWord: "OK",
+			wantCode: 0,
+		},
+		{
+			name: "verify REFUSED",
+			verb: "verify",
+			run: func(t *testing.T) (testkit.Result, string) {
+				res := workMain(unreachable(t)).Run("verify")
+				return res, res.Stderr
+			},
+			wantWord: "REFUSED",
+			wantCode: 2,
+		},
+		{
+			name: "verify FAILED",
+			verb: "verify",
+			run: func(t *testing.T) (testkit.Result, string) {
+				tree := filepath.Join(t.TempDir(), "tree.lisp")
+				repo := []string{"--repo", "mas-bandwidth/reliable", "--page-size", "15"}
+				res := workMain(recorded(t, "/bin/gh")).Run(append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
+				require.Equal(t, 0, res.Code)
+				data := testkit.ReadFile(t, tree)
+				changed := strings.Replace(data, `:title "`, `:title "changed `, 1)
+				testkit.WriteFile(t, tree, changed)
+				verRes := workMain(recorded(t, "/bin/gh")).Run(append([]string{"verify", "--tree", tree}, repo...)...)
+				return verRes, verRes.Stderr
+			},
+			wantWord: "FAILED",
+			wantCode: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res, out := tc.run(t)
+			var gotWord string
+			verbToken := strings.ToUpper(tc.verb)
+			for _, line := range strings.Split(out, "\n") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 && fields[0] == verbToken {
+					gotWord = strings.TrimSuffix(fields[1], ":")
+					break
+				}
+			}
+			assert.Equal(t, grammarResult{Word: tc.wantWord, Code: tc.wantCode}, grammarResult{Word: gotWord, Code: res.Code},
+				"%s: want word %s and exit %d, got word %q and exit %d\nstdout:\n%s\nstderr:\n%s",
+				tc.name, tc.wantWord, tc.wantCode, gotWord, res.Code, res.Stdout, res.Stderr)
+		})
+	}
+}
+
+// TestTheVerbsRenderJSON pins that both verbs use the common typed output
+// rendering (docs/STANDARD.md section 2), including refusal results.
+func TestTheVerbsRenderJSON(t *testing.T) {
+	t.Parallel()
+	cli := workMain(unreachable(t))
+	for _, verb := range []string{"import", "verify"} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			res := cli.Run(verb, "--json")
+			assert.Equal(t, 2, res.Code)
+			assert.Contains(t, res.Stdout, `"status":"refused"`)
+			assert.Contains(t, res.Stdout, `"verb":"`+verb+`"`)
+			assert.Empty(t, res.Stderr)
+		})
+	}
+}
+
+// A bare command names the verbs and recovery in one refusal line, followed
+// by its stage note (internal/tool.Tool.Stage); it never prints the banner.
+func TestABareCommandRefusesWithItsStage(t *testing.T) {
+	t.Parallel()
+	res := workMain(unreachable(t)).Run()
+	require.Equal(t, 2, res.Code, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
+	require.Empty(t, res.Stdout, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
+	require.Equal(t, "WORK REFUSED: no verb given; the verbs are import, verify, version; run: nova-work help\n  NOTE "+preAlpha+"\n", res.Stderr, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
 }

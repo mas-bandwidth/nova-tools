@@ -77,7 +77,10 @@ func TestCountCheckFindingsCountsEveryFindingByClass(t *testing.T) {
 	// No findings, no classes, and zero everywhere.
 	{
 		empty := CountCheckFindings(nil)
-		require.False(t, empty.Findings != 0 || empty.Fail != 0 || empty.Warn != 0 || len(empty.Class) != 0, "CountCheckFindings(nil) = %+v, want all zero", empty)
+		require.Equal(t, 0, empty.Findings, "CountCheckFindings(nil) = %+v, want all zero", empty)
+		require.Equal(t, 0, empty.Fail, "CountCheckFindings(nil) = %+v, want all zero", empty)
+		require.Equal(t, 0, empty.Warn, "CountCheckFindings(nil) = %+v, want all zero", empty)
+		require.Equal(t, 0, len(empty.Class), "CountCheckFindings(nil) = %+v, want all zero", empty)
 	}
 }
 
@@ -143,19 +146,22 @@ func TestResolveSinceCommit(t *testing.T) {
 	{
 		got, err := ResolveSinceCommit(dir, shas[0])
 		if err != nil || got != shas[0] {
-			require.False(t, err != nil || got != shas[0], "a sha: got %s, %v; want %s", got, err, shas[0])
+			require.NoError(t, err, "a sha: got %s, %v; want %s", got, err, shas[0])
+			require.Equal(t, shas[0], got, "a sha: got %s, %v; want %s", got, err, shas[0])
 		}
 	}
 	{
 		got, err := ResolveSinceCommit(dir, "2026-09-06")
 		if err != nil || got != shas[1] {
-			require.False(t, err != nil || got != shas[1], "a date: got %s, %v; want %s (the last commit before 2026-09-06)", got, err, shas[1])
+			require.NoError(t, err, "a date: got %s, %v; want %s (the last commit before 2026-09-06)", got, err, shas[1])
+			require.Equal(t, shas[1], got, "a date: got %s, %v; want %s (the last commit before 2026-09-06)", got, err, shas[1])
 		}
 	}
 	{
 		got, err := ResolveSinceCommit(dir, "2026-09-05T11:00:00Z")
 		if err != nil || got != shas[0] {
-			require.False(t, err != nil || got != shas[0], "an instant: got %s, %v; want %s", got, err, shas[0])
+			require.NoError(t, err, "an instant: got %s, %v; want %s", got, err, shas[0])
+			require.Equal(t, shas[0], got, "an instant: got %s, %v; want %s", got, err, shas[0])
 		}
 	}
 	// A tag that looks like a date is a revision, and a revision wins.
@@ -167,7 +173,8 @@ func TestResolveSinceCommit(t *testing.T) {
 	{
 		got, err := ResolveSinceCommit(dir, "2026-09-06")
 		if err != nil || got != shas[2] {
-			require.False(t, err != nil || got != shas[2], "a tag spelled like a date: got %s, %v; want the tag's commit %s", got, err, shas[2])
+			require.NoError(t, err, "a tag spelled like a date: got %s, %v; want the tag's commit %s", got, err, shas[2])
+			require.Equal(t, shas[2], got, "a tag spelled like a date: got %s, %v; want the tag's commit %s", got, err, shas[2])
 		}
 	}
 	// A date before the history refuses; neither a revision nor a date is the revision
@@ -178,5 +185,7 @@ func TestResolveSinceCommit(t *testing.T) {
 	}
 	_, err := ResolveSinceCommit(dir, "nosuchref")
 	_, revErr := ResolveCommit(dir, "nosuchref")
-	require.False(t, err == nil || revErr == nil || err.Error() != revErr.Error(), "a value that is neither: got %v, want the revision refusal %v", err, revErr)
+	require.Error(t, err, "a value that is neither: got %v, want the revision refusal %v", err, revErr)
+	require.Error(t, revErr, "a value that is neither: got %v, want the revision refusal %v", err, revErr)
+	require.Equal(t, revErr.Error(), err.Error(), "a value that is neither: got %v, want the revision refusal %v", err, revErr)
 }

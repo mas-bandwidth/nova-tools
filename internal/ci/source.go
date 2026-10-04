@@ -59,8 +59,7 @@ func (s SourceSeams) parseFile(name string, src []byte, mode parser.Mode) (*toke
 // three, which are the standard library's. This package's own tests run the
 // checkers over this repository side by side, and there they are answered from
 // the tests' one shared read of the tree (tree_test.go), so six checkers open,
-// list and parse each file once between them rather than once each
-// (nova-tools#4328, Glenn 2026-09-26: unit tests under 2 s, frugal with cores).
+// list and parse each file once between them rather than once each.
 // A root outside that tree -- every fixture a test builds -- takes the disk.
 var (
 	// walkSourceDir is filepath.WalkDir.

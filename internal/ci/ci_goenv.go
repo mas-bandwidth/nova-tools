@@ -19,7 +19,7 @@ import (
 // inner `go test` of `nova-review mutate` inherited it, and the parser counting
 // `--- PASS:` lines saw a JSON stream instead, called the green run red and
 // reported `red=2 green=0` where the range is `red=1 green=1`. Three legs of
-// integration-4 (#1332) failed on a tool that was working. Any tool that reads
+// integration-4 failed on a tool that was working. Any tool that reads
 // the output of a go command it started has the same hole; internal/goenv is
 // the one place that closes it, and this checker is what keeps the next site
 // from opening it again.
@@ -157,8 +157,7 @@ func checkGoEnvWith(root, allowlistPath string, seams SourceSeams) (GoEnvResult,
 // matchGoEnvAllow returns the index of an unused entry that allows this
 // finding, or -1. A row allows ONE offender of its kind in its file; the line
 // is for a reader and an exact match is only preferred, never required, so a
-// merge that shifts lines does not turn dev red (the lesson the waits list
-// carries from #1073).
+// merge that shifts lines does not turn dev red.
 func matchGoEnvAllow(entries []waitAllow, used []bool, f GoEnvFinding) int {
 	loose := -1
 	for i, e := range entries {
