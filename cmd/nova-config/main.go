@@ -279,7 +279,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
 			return run(append(args[1:], "--help"), stdout, stderr, d)
 		}
-		fmt.Fprint(stdout, banner())
+		_, _ = fmt.Fprint(stdout, banner()) // ignored: output already committed to stdout
 		return 0
 	case "version", "--version":
 		fs := verbflag.New("version")
@@ -295,7 +295,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 			o.Verb = "version"
 			return emit(stdout, o)
 		}
-		fmt.Fprintln(stdout, buildinfo.Line(toolName, version))
+		_, _ = fmt.Fprintln(stdout, buildinfo.Line(toolName, version)) // ignored: output already committed to stdout
 		return 0
 	case "kinds":
 		return runKinds(args[1:], stdout, stderr)
@@ -323,14 +323,14 @@ func refuse(stderr io.Writer, verb, what string) int {
 	if strings.Contains(what, "; run: ") {
 		next = "" // the reason names its own next command (a --file migrate has not made)
 	}
-	fmt.Fprintf(stderr, "%s REFUSED: %s%s\n", strings.TrimSpace(toolName+" "+verb), plain(what), next)
+	_, _ = fmt.Fprintf(stderr, "%s REFUSED: %s%s\n", strings.TrimSpace(toolName+" "+verb), plain(what), next) // ignored: output already committed to stderr
 	return 2
 }
 
 // refused is the exit 1 line: the verb ran and the store or Redis said no.
 // next names the command that resolves it.
 func refused(stderr io.Writer, verb, what, next string) int {
-	fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next)
+	_, _ = fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next) // ignored: output already committed to stderr
 	return 1
 }
 
@@ -526,7 +526,7 @@ func nameAndRest(k *config.Kind, args []string) (string, []string) {
 // printNotes writes a result's notes, one NOTE line each.
 func printNotes(stdout io.Writer, notes []string) {
 	for _, n := range notes {
-		fmt.Fprintln(stdout, "NOTE "+n)
+		_, _ = fmt.Fprintln(stdout, "NOTE "+n) // ignored: output already committed to stdout
 	}
 }
 

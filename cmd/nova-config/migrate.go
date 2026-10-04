@@ -42,9 +42,9 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 			return emit(stdout, o)
 		}
 		for _, m := range all {
-			fmt.Fprintf(stdout, "MIGRATION version=%d file=%s lines=%d\n", m.Version, config.Value(m.Name), strings.Count(m.SQL, "\n"))
+			_, _ = fmt.Fprintf(stdout, "MIGRATION version=%d file=%s lines=%d\n", m.Version, config.Value(m.Name), strings.Count(m.SQL, "\n")) // ignored: output already committed to stdout
 		}
-		fmt.Fprintf(stdout, "CONFIG MIGRATE print=%d pg=-\n", len(all))
+		_, _ = fmt.Fprintf(stdout, "CONFIG MIGRATE print=%d pg=-\n", len(all)) // ignored: output already committed to stdout
 		return 0
 	}
 	dsn, err := c.dsn(d.getenv)
@@ -81,7 +81,7 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 		o.Verb = verb
 		return emit(stdout, o)
 	}
-	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=%d\n", key, config.Value(value), from, to, len(applied))
+	_, _ = fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=%d\n", key, config.Value(value), from, to, len(applied)) // ignored: output already committed to stdout
 	return 0
 }
 
@@ -149,9 +149,9 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 		return emit(stdout, o)
 	}
 	for _, l := range lines {
-		fmt.Fprintln(stdout, l)
+		_, _ = fmt.Fprintln(stdout, l) // ignored: output already committed to stdout
 	}
-	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=0 dry_run=true pending=%d missing=%d role=%s ready=%s\n", key, config.Value(value), have, len(all), len(pending), len(missing), config.Value(owners.Role), ready)
+	_, _ = fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=0 dry_run=true pending=%d missing=%d role=%s ready=%s\n", key, config.Value(value), have, len(all), len(pending), len(missing), config.Value(owners.Role), ready) // ignored: output already committed to stdout
 	printNotes(stdout, o.Notes)
 	return o.Exit
 }

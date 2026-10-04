@@ -41,7 +41,7 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	// cannotRead is the exit 3 line: the name or the rows could not be read.
 	cannotRead := func(what, next string) int {
-		fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next)
+		_, _ = fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next) // ignored: output already committed to stderr
 		return exitCannotRead
 	}
 	name, _, err := config.SelfName(ctx, config.SelfSource{Getenv: d.getenv, Hostname: d.hostname, Tailscale: d.tailscale})
@@ -64,7 +64,7 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 			return cannotRead("the config cannot be read: "+err.Error(), helpFor(verb))
 		}
 		if !found {
-			fmt.Fprintf(stderr, "%s %s REFUSED: %q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --width <n> --as <name>%s\n", toolName, verb, name, toolName, name, c.again())
+			_, _ = fmt.Fprintf(stderr, "%s %s REFUSED: %q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --width <n> --as <name>%s\n", toolName, verb, name, toolName, name, c.again()) // ignored: output already committed to stderr
 			return 2
 		}
 	}
@@ -76,7 +76,7 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 		}
 		return emit(stdout, o)
 	}
-	fmt.Fprintln(stdout, name)
+	_, _ = fmt.Fprintln(stdout, name) // ignored: output already committed to stdout
 	return 0
 }
 
@@ -147,7 +147,7 @@ func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Write
 		}
 		return emit(stdout, o)
 	}
-	fmt.Fprintln(stdout, w.Line())
+	_, _ = fmt.Fprintln(stdout, w.Line()) // ignored: output already committed to stdout
 	return 0
 }
 

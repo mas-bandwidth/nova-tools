@@ -40,8 +40,8 @@ func runKinds(args []string, stdout, stderr io.Writer) int {
 		return emit(stdout, o)
 	}
 	for _, k := range config.Kinds {
-		fmt.Fprintln(stdout, config.KindLine(k))
+		_, _ = fmt.Fprintln(stdout, config.KindLine(k)) // ignored: output already committed to stdout
 	}
-	fmt.Fprintf(stdout, "CONFIG KINDS count=%d\n", len(config.Kinds))
+	_, _ = fmt.Fprintf(stdout, "CONFIG KINDS count=%d\n", len(config.Kinds)) // ignored: output already committed to stdout
 	return 0
 }

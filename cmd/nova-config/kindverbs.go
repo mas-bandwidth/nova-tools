@@ -198,7 +198,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 			o.Verb, o.Notes = verb, notes
 			return emit(stdout, o)
 		}
-		fmt.Fprintln(stdout, config.PlanLine(plan))
+		_, _ = fmt.Fprintln(stdout, config.PlanLine(plan)) // ignored: output already committed to stdout
 		printNotes(stdout, notes)
 		return 0
 	}
@@ -221,9 +221,9 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		return emit(stdout, o)
 	}
 	if add {
-		fmt.Fprintf(stdout, "CONFIG ADD kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
+		_, _ = fmt.Fprintf(stdout, "CONFIG ADD kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id) // ignored: output already committed to stdout
 	} else {
-		fmt.Fprintf(stdout, "CONFIG SET kind=%s name=%s rev=%d changed=%s\n", k.Name, config.Value(name), id, config.Value(strings.Join(changed, ",")))
+		_, _ = fmt.Fprintf(stdout, "CONFIG SET kind=%s name=%s rev=%d changed=%s\n", k.Name, config.Value(name), id, config.Value(strings.Join(changed, ","))) // ignored: output already committed to stdout
 	}
 	printNotes(stdout, notes)
 	return 0
@@ -319,7 +319,7 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 			o.Verb = verb
 			return emit(stdout, o)
 		}
-		fmt.Fprintln(stdout, config.PlanLine(plan))
+		_, _ = fmt.Fprintln(stdout, config.PlanLine(plan)) // ignored: output already committed to stdout
 		return 0
 	}
 	id, err := st.Delete(ctx, k.Name, name, actor)
@@ -331,7 +331,7 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 		o.Verb = verb
 		return emit(stdout, o)
 	}
-	fmt.Fprintf(stdout, "CONFIG REMOVE kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
+	_, _ = fmt.Fprintf(stdout, "CONFIG REMOVE kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id) // ignored: output already committed to stdout
 	return 0
 }
 
@@ -440,9 +440,9 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 		return emit(stdout, o)
 	}
 	for _, row := range rows {
-		fmt.Fprintln(stdout, config.ListLine(k, row)+liveSuffix(bs, row.Name))
+		_, _ = fmt.Fprintln(stdout, config.ListLine(k, row)+liveSuffix(bs, row.Name)) // ignored: output already committed to stdout
 	}
-	fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d\n", k.Name, len(rows))
+	_, _ = fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d\n", k.Name, len(rows)) // ignored: output already committed to stdout
 	return 0
 }
 
@@ -507,9 +507,9 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		return emit(stdout, o)
 	}
 	for _, ch := range changes {
-		fmt.Fprintln(stdout, config.HistoryLine(ch))
+		_, _ = fmt.Fprintln(stdout, config.HistoryLine(ch)) // ignored: output already committed to stdout
 	}
-	fmt.Fprintf(stdout, "CONFIG HISTORY kind=%s name=%s changes=%d\n", k.Name, config.Value(name), len(changes))
+	_, _ = fmt.Fprintf(stdout, "CONFIG HISTORY kind=%s name=%s changes=%d\n", k.Name, config.Value(name), len(changes)) // ignored: output already committed to stdout
 	return 0
 }
 
@@ -547,7 +547,7 @@ func showRow(ctx context.Context, k *config.Kind, name string, st pgStore, stdou
 		o.Item(k.Name, rowFields(k, row, extra...)...)
 		return emit(stdout, o)
 	}
-	fmt.Fprintln(stdout, config.ShowLine(k, row)+suffix)
+	_, _ = fmt.Fprintln(stdout, config.ShowLine(k, row)+suffix) // ignored: output already committed to stdout
 	return 0
 }
 

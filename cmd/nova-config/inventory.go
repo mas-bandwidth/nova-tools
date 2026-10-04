@@ -109,7 +109,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		// fail is a store failure: the deadline, or the store's own words.
 		fail := func(err error) int {
 			if ctx.Err() != nil {
-				fmt.Fprintf(stderr, "%s %s REFUSED: timed out after %s waiting for the store at %s while %s; check that Redis answers there; run: %s\n", toolName, verb, *timeout, addr, stage, again("--timeout", (*timeout*3).String()))
+				_, _ = fmt.Fprintf(stderr, "%s %s REFUSED: timed out after %s waiting for the store at %s while %s; check that Redis answers there; run: %s\n", toolName, verb, *timeout, addr, stage, again("--timeout", (*timeout*3).String())) // ignored: output already committed to stderr
 				return 2
 			}
 			return refuse(stderr, verb, err.Error())
@@ -144,14 +144,14 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		if err != nil {
 			return refuse(stderr, verb, err.Error())
 		}
-		fmt.Fprintln(stdout, string(data))
+		_, _ = fmt.Fprintln(stdout, string(data)) // ignored: output already committed to stdout
 		return 0
 	}
 	data, err := inv.JSON()
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	fmt.Fprintln(stdout, string(data))
+	_, _ = fmt.Fprintln(stdout, string(data)) // ignored: output already committed to stdout
 	return 0
 }
 

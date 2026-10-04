@@ -81,7 +81,7 @@ func configRun(args []string, stdout, stderr io.Writer) int {
 	h := newHarness()
 	code := run(args, stdout, stderr, h.deps())
 	if h.opens != 0 || h.redis.opens != 0 {
-		fmt.Fprintf(stderr, "opened postgres %d and redis %d time(s)\n", h.opens, h.redis.opens)
+		_, _ = fmt.Fprintf(stderr, "opened postgres %d and redis %d time(s)\n", h.opens, h.redis.opens) // ignored: output already committed to stderr
 	}
 	return code
 }

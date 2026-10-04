@@ -99,7 +99,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 				o.Item("op", "kind", kn, "op", op.Op, "name", op.Name, "changed", op.Changed)
 				return
 			}
-			fmt.Fprintln(stdout, config.OpLine(word, kn, op))
+			_, _ = fmt.Fprintln(stdout, config.OpLine(word, kn, op)) // ignored: output already committed to stdout
 		})
 		if err != nil {
 			if config.IsConflict(err) {
@@ -112,10 +112,10 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 			continue
 		}
 		if *check {
-			fmt.Fprintf(stdout, "CONFIG CHECK kind=%s add=%d set=%d remove=%d rev=%d applied=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, res.RedisRev)
+			_, _ = fmt.Fprintf(stdout, "CONFIG CHECK kind=%s add=%d set=%d remove=%d rev=%d applied=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, res.RedisRev) // ignored: output already committed to stdout
 			continue
 		}
-		fmt.Fprintf(stdout, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, d.now().Sub(start).Milliseconds())
+		_, _ = fmt.Fprintf(stdout, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, d.now().Sub(start).Milliseconds()) // ignored: output already committed to stdout
 	}
 	if *asJSON {
 		return emit(stdout, o)

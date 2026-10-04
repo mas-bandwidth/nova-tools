@@ -50,7 +50,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 			}
 			emit(stdout, o)
 		} else {
-			fmt.Fprintln(stdout, line)
+			_, _ = fmt.Fprintln(stdout, line) // ignored: output already committed to stdout
 		}
 		if code != 0 {
 			return refused(stderr, verb, why, next)
