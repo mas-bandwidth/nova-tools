@@ -11,6 +11,7 @@ internal/bus 18
 internal/ci/slowtests 2
 internal/dogfood 1
 internal/filelock 2
+internal/gitrun 2
 internal/hygiene 1
 internal/nsprint/fn 5
 internal/nsprint/store 3

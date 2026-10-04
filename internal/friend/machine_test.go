@@ -90,3 +90,8 @@ func TestPingAndPongLinesRoundTrip(t *testing.T) {
 	_, _, _, _, ok = ParsePong("daemon-pong abc123")
 	assert.False(t, ok)
 }
+
+// Up says whether the session has proved itself: it answered the current challenge, and
+// has answered at least once (the daemon alone never makes a friend up; tla/Friend.tla:
+// UpOnlyAfterPong).
+func (m *Machine) Up() bool { return m.Challenge == Quiet && m.Pongs > 0 }

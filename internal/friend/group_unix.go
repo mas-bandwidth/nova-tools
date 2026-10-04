@@ -19,7 +19,3 @@ func ownGroup(cmd *exec.Cmd) {
 
 // killGroup ends every process left in the group led by pid.
 func killGroup(pid int) { _ = syscall.Kill(-pid, syscall.SIGKILL) } // ignored: a group already gone is the state wanted
-
-// GroupAlive says whether any process of the group led by pid is still
-// there (a signal of 0 to the group), for a test of the kill.
-func GroupAlive(pid int) bool { return syscall.Kill(-pid, 0) == nil }

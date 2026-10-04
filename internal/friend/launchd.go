@@ -169,13 +169,6 @@ func Uninstall(ctx context.Context, a Agent, uid int, run Launchctl, remove func
 	return ran, nil
 }
 
-// Loaded says whether launchctl has the label: `launchctl print
-// gui/<uid>/<label>` answers 0 when it does.
-func Loaded(ctx context.Context, label string, uid int, run Launchctl) bool {
-	_, err := run(ctx, "print", fmt.Sprintf("gui/%d/%s", uid, label))
-	return err == nil
-}
-
 // Said is the command line as a plan says it, with no path in it: the
 // secrets wrap by its names and seat, then the daemon's own flags, --redis
 // and --server left to the install line that gave them.
