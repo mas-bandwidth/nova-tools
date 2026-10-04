@@ -29,30 +29,28 @@ seat naming its recipients), a recovery.pub (the recovery key every file is also
 sealed to) and one sops-encrypted <seat>.yaml per seat; a seat is a named identity
 whose age key file (mode 0600) opens its file. exec decrypts only the --only names
 into one command's environment; names reads names without decrypting; no value is printed.
-first run: keygen makes a key and prints its .sops.yaml rule; a new store is git init,
-recovery.pub, that rule and a branch with an upstream; seal writes a seat's first value.
-a first store: age-keygen -o <a key file kept off this machine> prints the public key;
-its 'Public key:' line is recovery.pub. .sops.yaml holds the rule the tests write:
-creation_rules:
-  - path_regex: ^worker\.yaml$
-    age: <seat public key>,<recovery key>
-write recovery.pub and .sops.yaml first, then:
-git init -b main <store> && git init --bare <dir> && git -C <store> remote add origin <dir> && git -C <store> add recovery.pub .sops.yaml && git -C <store> commit -m "first store" && git -C <store> push -u origin main
-a program seals the first value on stdin:
-  nova-secrets seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --stdin
+first run: setup: makes a store from an empty directory (it needs age-keygen
+and sops on PATH); first value: seals one with --stdin, the path a harness takes.
 
 usage:
   nova-secrets version  print this build identity (--version also accepted)
-  nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
+  nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path>
+                      --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
   nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
   nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
   nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
   nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
-  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path>
+                      --machine <name> --secret <name> [--path <remote path>]
+                      [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
   nova-secrets placed --machine <name> [--receipts <dir>]
-  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
-  nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
-  nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path>
+                      --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seat add --store <dir> --as <seat> --pub <age1…>
+                      --from <source seat> --only <NAME,...> --key <path> --sops <path>
+  nova-secrets seat inject --store <dir> --as <seat> --from <source seat>
+                      --only <NAME,...> --key <path> --sops <path> [--no-pr]
+                      [--dry-run] [--gh <path>] [--git <path>]
   nova-secrets help
 
 flags:
@@ -77,9 +75,12 @@ flags:
   --ssh <path>         ssh executable to use (default ssh)
   --name NAME          key to seal (seal only)
   --pub <age1…>        the new seat's age public key, from its own keygen receipt (seat add only)
-  --from <seat>        a seat this machine can open, whose values are re-sealed (seat add, seat inject)
-  --stdin              read the value from stdin instead of the terminal (seal only)
-  --no-pr              stop after the commit; make no gh call; return the store to its starting branch (seal, seat inject)
+  --from <seat>        a seat this machine can open, whose values are re-sealed (seat add,
+                       seat inject)
+  --stdin              read the value from stdin instead of the terminal, the path a harness
+                       takes (seal only)
+  --no-pr              stop after the commit; make no gh call; return the store to its
+                       starting branch (seal, seat inject)
   --dry-run            prints the plan and writes nothing (place, seal, seat inject): the file, the
                        recipients, the machine and remote path, the branch and the pull request the
                        real run would take, as PLAN lines ending in DRY-RUN OK, exit 0; no ssh, no
@@ -87,8 +88,9 @@ flags:
                        decrypt the seat file the real run reads first (place: --as's, to find
                        --secret; seal: the existing <as>.yaml, to say add or replace; seat inject:
                        --from's, to find the names), so --key must open it; seal reads no new value.
-                       seal and seat inject read the store at HEAD, so their store must be committed;
-                       a store with no commit yet is refused with the commit that starts it
+                       seal and seat inject read the store at HEAD, so their store must be
+                       committed; a store with no commit yet is refused with the commit
+                       that starts it
   --gh <path>          path to the gh executable (seal, seat inject; default: gh)
   --git <path>         path to the git executable (seal, seat inject; default: git)
 
@@ -96,6 +98,27 @@ exit codes: 0 ran and passed, 1 check found the store red (one line per
 failure), 2 could not run or refused (one line naming the remedy); exec ends with
 the command's own status, and 125 when exec itself refused and the command never
 ran.
+
+setup: needs age-keygen and sops on PATH; run these from an empty directory first
+  mkdir -m 700 -p ~/.config/nova-secrets
+  nova-secrets keygen --as recovery --key ~/.config/nova-secrets/recovery.key \
+    --age-keygen "$(command -v age-keygen)"
+  mkdir -p ./secrets && git -C ./secrets init -q -b main
+  sed -n 's/^# public key: //p' ~/.config/nova-secrets/recovery.key > ./secrets/recovery.pub
+  printf 'creation_rules: []\n' > ./secrets/.sops.yaml
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
+    --age-keygen "$(command -v age-keygen)" \
+    --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
+  printf 'bench-a\tbench-a.example\t/home/bench\n' > ./fleet.tsv
+  git -C ./secrets add -A && git -C ./secrets commit -qm 'a new store'
+  git init -q --bare ./secrets.git
+  git -C ./secrets remote add origin ../secrets.git
+  git -C ./secrets push -qu origin main
+
+first value:
+  printf '%s' 'a-token-value' | nova-secrets seal --store ./secrets --as ada \
+    --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops \
+    --name GH_TOKEN --stdin --no-pr
 
 example:
   nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
@@ -353,7 +376,7 @@ func dispatch(args []string, s streams) int {
 		if verb == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
 			return dispatch(append(slices.Clone(args[1:]), "--help"), s)
 		}
-		fmt.Fprint(s.stdout, usage)
+		fmt.Fprintf(s.stdout, "%s", usage)
 		return 0
 	case "exec":
 		return runExecCLI(args[1:], s)
@@ -650,7 +673,7 @@ func runSeatCLI(args []string, s streams) int {
 	case "inject":
 		return runSeatInjectCLI(args[1:], s)
 	case "help", "--help", "-h":
-		fmt.Fprint(s.stdout, usage)
+		fmt.Fprintf(s.stdout, "%s", usage)
 		return 0
 	default:
 		return s.refuse("seat", 2, fmt.Errorf("unknown seat subverb %s; the subverbs are add and inject; run: nova-secrets seat add -h", oneline.Quote(args[0])))
