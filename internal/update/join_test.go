@@ -243,7 +243,7 @@ func newReporter(t *testing.T, version string) reporter {
 	return reporter{bus: b, bin: bin, manifest: m, snapshot: filepath.Join(dir, "s.json")}
 }
 func (r reporter) args() []string {
-	return []string{"report", "--file", r.manifest, "--send", "--snapshot", r.snapshot,
+	return []string{"report", "--file", r.manifest, "--send", "--state", r.snapshot,
 		"--as", r.bus.as, "--to", r.bus.to, "--bus", r.bus.checkout,
 		"--remote", "origin", "--branch", "main", "--timeout", "60s", "--budget", "120s"}
 }

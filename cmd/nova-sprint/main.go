@@ -97,7 +97,8 @@ type app struct {
 	// readTwins is the process's read twin of each store, by address: what
 	// its verbs last read, so a verb after the first reads only what changed
 	// (store/twin.go). It is not the mem twin above, which is a store.
-	readTwins map[string]*store.Twin
+	readTwinsMu sync.Mutex
+	readTwins   map[string]*store.Twin
 	// landRoot is the directory land keeps its clones under when it is given
 	// no --repo-dir (land.go): os.UserCacheDir's nova-sprint/land.
 	landRoot func() (string, error)
@@ -118,9 +119,10 @@ type app struct {
 	// wall clock.
 	gateBackend func() (decide.Backend, func() time.Time)
 	// serial is the server's one line of control (serve.go): a worker's batch
-	// and a tick of the run loop each hold it, so neither runs during the other.
+	// and a tick of the run loop each hold it, so neither runs during the other;
+	// the tick takes it at its turn, not behind every batch waiting (sprint.ControlLine).
 	// serveAddr is the store the server runs the workers' verbs on.
-	serial    sync.Mutex
+	serial    sprint.ControlLine
 	serveAddr string
 	// serving says the verb running is one a worker sent to the server (set and
 	// cleared under serial): its step names the epoch its worker holds, or is
@@ -157,6 +159,11 @@ type app struct {
 	// home is the directory a seat's inbox is under (inbox --wait --push seat:
 	// ~/<holder>-working/inbox): os.UserHomeDir unless a test sets it.
 	home func() (string, error)
+	// goos is the OS seat install writes its unit for (seatinstall.go): runtime.GOOS unless a
+	// test sets it; seatLoad, when set (a test), loads and unloads the unit in place of
+	// launchctl or systemctl --user, so a test loads nothing on its machine.
+	goos     string
+	seatLoad func(goos, op, path string) error
 	// transport carries the balance poll's requests to the providers (balance.go):
 	// nil is http.DefaultTransport, a test gives a fake.
 	transport http.RoundTripper
@@ -343,13 +350,16 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep, CheckTwin: a.checkTwin, ByHand: a.twinOpen(c.redis)}
 	// every verb this process runs on the store reads through one twin: a
 	// verb after the first reads only what changed (store/twin.go)
+	a.readTwinsMu.Lock()
 	if a.readTwins == nil {
 		a.readTwins = map[string]*store.Twin{}
 	}
 	if a.readTwins[c.redis] == nil {
 		a.readTwins[c.redis] = store.NewTwin()
 	}
-	st.ShareTwin(a.readTwins[c.redis])
+	tw := a.readTwins[c.redis]
+	a.readTwinsMu.Unlock()
+	st.ShareTwin(tw)
 	st.LockAfterLoss = true // a part that lost a try locks (store/lock.go)
 	if t := a.twins[c.redis]; t != nil {
 		st.NewID = t.newID

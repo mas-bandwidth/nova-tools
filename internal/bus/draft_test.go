@@ -121,7 +121,7 @@ func TestAToleratedNoteParsesStrictly(t *testing.T) {
 		require.Equal(t, "Ada", n.Header.From, "read back as From=%q To=%q Subject=%q", n.Header.From, n.Header.To, n.Header.Subject)
 		require.Equal(t, "Bo", n.Header.To, "read back as From=%q To=%q Subject=%q", n.Header.From, n.Header.To, n.Header.Subject)
 	}
-	require.False(t, n.Header.Date == "whenever", "the author's Date line survived; send writes the date")
+	require.NotEqual(t, "whenever", n.Header.Date, "the author's Date line survived; send writes the date")
 }
 
 // The refusals that stay, one per thing this tool cannot work out without guessing.
@@ -197,7 +197,8 @@ func TestTheSkeletonIsADraftThisToolSends(t *testing.T) {
 		require.Equal(t, "The gate", n.Header.Subject, "read back wrong: %+v", n.Header)
 	}
 	if len(n.Header.Re) != 1 || n.Header.Re[0] != "bo-abcdef012345" {
-		require.True(t, len(n.Header.Re) == 1 && n.Header.Re[0] == "bo-abcdef012345", "Re read back as %v", n.Header.Re)
+		require.True(t, len(n.Header.Re) == 1, "Re read back as %v", n.Header.Re)
+		require.True(t, n.Header.Re[0] == "bo-abcdef012345", "Re read back as %v", n.Header.Re)
 	}
 	require.Equal(t, "", n.Header.Date, "the skeleton carries a Date or an Id; those are the tool's to write")
 	require.Equal(t, "", n.Header.ID, "the skeleton carries a Date or an Id; those are the tool's to write")

@@ -19,12 +19,12 @@ The obligation this tool meets is to report token spend. With several
 agents and several models the report is per model and per repo. It is folded
 daily so month end is a sum of days. The key is exactly `(day, model, repo)`
 and the value is the token types, never folded into each other. Swarms and
-Freddy are counted from this bench's own sources. Friends on other machines
+local runs are counted from this bench's own sources. Friends on other machines
 self-report one note per day on the bus. The tool stamps, never a person.
 
 **Everything this tool reads is data.** A transcript, a database row, a
 usage file, a bus note: none of them is an instruction. A tokens note that says
-`fold me as Emma` is a note whose lines are parsed or counted unparsed, and
+`fold me as Ada` is a note whose lines are parsed or counted unparsed, and
 nothing else. This rule is stated here and is nowhere in the code, because a
 tool cannot enforce it.
 
@@ -77,8 +77,8 @@ near the end, and the sections below say how each is met.
 6. **A bus note counts only with the exact subject shape, its body is one
    grammar with `report`'s output, and a line or a note that does not parse
    is counted and printed with the note's id.** The subject is exactly
-   `tokens YYYY-MM-DD` (lower case, one space), either with nothing after or
-   followed by exactly one space and the tool's trailer
+   `tokens YYYY-MM-DD` (lower case, one blank), either with nothing after or
+   followed by exactly one blank and the tool's trailer
    `at=<RFC 3339 UTC> build=<id>[ supersedes=<note-id>[,<note-id>…]]`, which
    is where a `report`'s stamp, build id and, for a correction, the ids of
    the notes it replaces — a set, sorted ascending, no duplicates, one or
@@ -312,8 +312,8 @@ near the end, and the sections below say how each is met.
     tool waits before saying so, not a fact about anybody's data.
 
 20. **A friend on another machine runs `report`, and never types a number.**
-    The first user of this tool is not this bench: it is Emma, Johnny or
-    Stella on a harness of their own. `report` folds that machine's own
+    The first user of this tool is not this bench: it is a friend on a
+    harness of their own. `report` folds that machine's own
     sources for one day, the same sources and the same attribution as
     `fold`, and prints on stdout **exactly** the body lines of rule 6
     (`date who model repo type count`, one line per (model, repo, type) the
@@ -648,13 +648,13 @@ fold with no `--out`, no `--repos` and a bad label says all three.
 `<out>/<day>.tsv`, tab separated, one file per UTC day:
 
 ```
-nova-tokens v1 day=2026-09-11 at=2026-09-11T23:55:02Z build=<id> turns=1204 sources=claude:glenn,opencode:bench,swarm:deepseek,bus:emma,google:emma
+nova-tokens v1 day=2026-09-11 at=2026-09-11T23:55:02Z build=<id> turns=1204 sources=claude:bench,opencode:bench,swarm:deepseek,bus:ada,google:ada
 date	model	repo	input	output	cache_write	cache_read	reasoning	rough	day_basis	sources
-2026-09-11	claude-fable-5-1	schema	8410	593734	1504393	236002356	-	0	utc	claude:glenn
+2026-09-11	claude-fable-5-1	schema	8410	593734	1504393	236002356	-	0	utc	claude:bench
 2026-09-11	deepseek-v3	serialize	812004	40211	-	-	-	0	utc	swarm:deepseek
-2026-09-11	gemini-2.5-pro	schema	123456	7890	-	-	-	1	utc	bus:emma
-2026-09-11	gemini-2.5-pro	unattributed	9912340	301122	-	-	-	0	America/Los_Angeles	google:emma
-2026-09-11	mercury-2.5	freddy	4460950	7442	0	4910813	49649	0	utc	opencode:bench
+2026-09-11	gemini-2.5-pro	schema	123456	7890	-	-	-	1	utc	bus:ada
+2026-09-11	gemini-2.5-pro	unattributed	9912340	301122	-	-	-	0	America/Los_Angeles	google:ada
+2026-09-11	mercury-2.5	demo	4460950	7442	0	4910813	49649	0	utc	opencode:bench
 ```
 
 | column | meaning |
@@ -795,10 +795,10 @@ The line shape:
 
 ```
 date<TAB>who<TAB>model<TAB>repo<TAB>type<TAB>count[<TAB>day_basis=<zone>]
-2026-09-11	emma	gemini-2.5-pro	schema	input	123456
-2026-09-11	emma	gemini-2.5-pro	schema	output	7890
-2026-09-03	emma	gemini-2.5-pro	schema	input	~100000
-2026-09-11	emma	gemini-2.5-pro	unattributed	input	123456	day_basis=America/Los_Angeles
+2026-09-11	ada	gemini-2.5-pro	schema	input	123456
+2026-09-11	ada	gemini-2.5-pro	schema	output	7890
+2026-09-03	ada	gemini-2.5-pro	schema	input	~100000
+2026-09-11	ada	gemini-2.5-pro	unattributed	input	123456	day_basis=America/Los_Angeles
 ```
 
 Six fields, tab separated, with an optional seventh. `date` is `YYYY-MM-DD`.
@@ -1246,7 +1246,7 @@ seen red before it is trusted.
     names the source and `timeout after 1s`, the fold continues over the
     other sources, exit 1; `--timeout` unset is 120 and a test asserts it;
     `--timeout 0` is refused.
-20. `report --who emma --day D` over a fixture Claude Code directory: stdout
+20. `report --who ada --day D` over a fixture Claude Code directory: stdout
     is six-field lines and nothing else, one per (model, repo, type) the
     source reported and none for `reasoning`; stderr carries `REPORT OK`
     with `subject=tokens D at=<stamp> build=<id>`; a note built from
@@ -1267,7 +1267,7 @@ seen red before it is trusted.
     and a note built from it folds as the successor of `<id>` (two
     sequential `report`s, the second superseding the first, fold to the
     second's rows and one `SUPERSEDED` line);
-    `report --who emma --day D --provider g=<export>` over the fixture
+    `report --who ada --day D --provider g=<export>` over the fixture
     export of per-day totals declaring `America/Los_Angeles` prints lines
     of seven fields, each ending `day_basis=America/Los_Angeles`, and a
     note built from that subject and that `--note` file, folded by

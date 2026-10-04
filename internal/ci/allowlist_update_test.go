@@ -40,7 +40,68 @@ var listFilePatterns = []string{"*allowlist*.txt", "*.allow", "*_examples.txt"}
 // LoadPackages owns every .txt shard below one of these directories, including
 // future package shards and the @root shard.
 var countedShardDirectories = []string{
-	"discarded", "scripthide", "okonfailure", "remedy", "generality", "generality-text", "testify",
+	"discarded", "scripthide", "okonfailure", "remedy", "generality", "generality-text", "testify", "staticcheck", "errcheck",
+	"flagusage", "toolanswers",
+}
+
+// TestCountedShardDirectoriesNameEveryLedger: countedShardDirectories is the one
+// list the allowlist guard reads to know which ledgers are package-sharded, so a
+// ledger directory missing from it is discovered by no class test: its shards are
+// read with no recipe guard and no `NOVA_CI_UPDATE=1` path. This test walks
+// internal/ci/testdata and names every directory that holds a shard below a
+// package subdirectory (a recursive shard); the flags and tool answers ledgers
+// are the miss found on landing (nova-tools#5096, docs/SPEC-CI.md §allowlist).
+func TestCountedShardDirectoriesNameEveryLedger(t *testing.T) {
+	t.Parallel()
+
+	named := map[string]bool{}
+	for _, name := range countedShardDirectories {
+		named[name] = true
+	}
+	root := filepath.Join(repoRoot(t), "internal", "ci", "testdata")
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	var missing []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		recursive, err := holdsRecursiveShard(dir)
+		require.NoError(t, err)
+		if recursive && !named[e.Name()] {
+			missing = append(missing, e.Name())
+		}
+	}
+	sort.Strings(missing)
+	for _, name := range missing {
+		t.Errorf("internal/ci/testdata/%s holds package shards but is not named in countedShardDirectories; name it so the allowlist guard discovers every shard below it", name)
+	}
+}
+
+// holdsRecursiveShard reports whether dir holds a .txt shard below a package
+// subdirectory: the shape countedShardDirectories names and LoadPackages consumes
+// (docs/SPEC-CI.md §allowlist: "Counted package shards are discovered recursively
+// below their ledger directories and consumed through allowlist.LoadPackages").
+func holdsRecursiveShard(dir string) (bool, error) {
+	found := false
+	err := filepath.WalkDir(dir, func(file string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".txt" {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, file)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(filepath.ToSlash(rel), "/") {
+			found = true
+		}
+		return nil
+	})
+	return found, err
 }
 
 // TestEveryAllowlistIsReadThroughTheOneHelper is the class test of #4339: every
@@ -538,4 +599,35 @@ func writeLedgerGuardFixture(t *testing.T, root, rel, contents string) {
 	file := filepath.Join(root, filepath.FromSlash(rel))
 	require.NoError(t, os.MkdirAll(filepath.Dir(file), 0o755))
 	require.NoError(t, os.WriteFile(file, []byte(contents), 0o644))
+}
+
+// lintClassTests are the class tests whose package ledgers sit in
+// countedShardDirectories as `staticcheck` and `errcheck` (docs/SPEC-CI.md,
+// both entries): functional-tier tests that `make lint` runs.
+var lintClassTests = []string{"TestStaticcheckFindings", "TestUncheckedErrors"}
+
+// TestTheLintJobRunsTheLinterClassTests: the staticcheck and errcheck ledgers
+// gate a change only when CI runs their class tests. They are functional-tier
+// and the functional job never runs on a pull request, so ci.yml's lint job,
+// which runs on every pull request, merge group and push, carries `make lint`,
+// and `make lint` reaches both tests. Without the step the two ledgers are
+// read on a developer's machine and nowhere else.
+func TestTheLintJobRunsTheLinterClassTests(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	job := jobBody(readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml")), "lint")
+	require.NotEmpty(t, job, "ci.yml has no lint job")
+	runsMakeLint := false
+	for _, c := range runCommands(job) {
+		if c.cmd == "make lint" {
+			runsMakeLint = true
+		}
+	}
+	assert.True(t, runsMakeLint, "ci.yml's lint job runs no `make lint` step, so the staticcheck and errcheck class tests gate no pull request; add a step `run: make lint`")
+
+	recipes := strings.Join(parseMakefile(t, filepath.Join(root, "Makefile")).recipesUnder("lint"), "\n")
+	for _, name := range lintClassTests {
+		assert.Contains(t, recipes, "-run '^"+name+"$'", "`make lint` does not run %s; the recipes it runs are:\n%s", name, recipes)
+	}
 }

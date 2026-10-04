@@ -19,10 +19,15 @@ func readerBeatKey(reader string) string { return "reader-beat:" + reader }
 func readerAwayKey(reader string) string { return "reader-away:" + reader }
 
 // readerHold is the coordinator's hold of a reader away: empty while released.
+// Held marks a hold made by hold <reader> (hold.go), whose state reads held, with
+// the coordinator's Reason and whether it took the reads begun back (Return).
 type readerHold struct {
-	Away bool      `json:"away,omitempty"`
-	At   time.Time `json:"at,omitempty"`
-	By   string    `json:"by,omitempty"`
+	Away   bool      `json:"away,omitempty"`
+	At     time.Time `json:"at,omitempty"`
+	By     string    `json:"by,omitempty"`
+	Held   bool      `json:"held,omitempty"`
+	Reason string    `json:"reason,omitempty"`
+	Return bool      `json:"return,omitempty"`
 }
 
 // ReaderRows is the readers table's rows, in table order.
@@ -152,6 +157,9 @@ func (st *Store) ReaderStates(ctx context.Context, readers []string, now time.Ti
 			_ = json.Unmarshal([]byte(vals[2*i+1]), &hold)
 		}
 		out[r] = sprint.ReaderState(hold.Away, b, now)
+		if hold.Held {
+			out[r] = sprint.ReaderHeld // hold <reader> (hold.go): held, whatever it beats
+		}
 	}
 	return out, nil
 }
