@@ -532,9 +532,13 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
+	cohort := cohortFlags(fs)
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "where", argErr("takes no words ", err, pos...))
+	}
+	if cohort.enabled() {
+		return a.cohortWhere(fs, *c, cohort, *watch, *atEpoch, args, stdout, stderr)
 	}
 	ctx := context.Background()
 	if *watch && isTwin(c.redis) {

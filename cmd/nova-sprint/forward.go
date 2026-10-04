@@ -151,6 +151,9 @@ func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent
 	if addr == "" || v.unserved() != "" || v.help || v.err != nil {
 		return 0, false // no server, not served, a wait, its help, or flags it refuses: runs here
 	}
+	if v.name == "where" && v.given("manifest") {
+		return 0, false // local manifest is read here; cohortWhere forwards exact identities
+	}
 	rest := args[v.words:]
 	var brief []string
 	if v.name == "add" { // add's checks and its brief decisions run here first (briefdecide.go)

@@ -2712,3 +2712,40 @@ removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page
 through it.
 
+
+## Cohort inspection
+
+`where --stream <exact-stream>` or `where --ids <id,...>` inspects the exact
+selected primaries. `where --manifest <path>` reads a JSON array of primary ID
+strings or one ID per line, locally, and sends the identities in one server
+request. Selection forms are exclusive; missing IDs refuse the inspection.
+Sentinels are excluded and listed separately. No prefix, historical fleet
+percentage or control-card total defines the cohort. This inspection writes
+nothing. `--json` and text render the same value; the ordinary `where` frame
+is unchanged. Cohort inspection is one snapshot and refuses `--watch`.
+
+The first work pass counts each primary's `w1` terminal verdict. A provider
+return or no-result generation does not create another primary or a second
+attempt; it is a separate recorded take. All work attempts and distinct cards
+with retries are reported separately. First-attempt reads count every `r1`
+independent verdict; pending reads and returned runs remain separate. Broken
+reads are findings, not evidence that a worker retry has already occurred.
+Historical work and read records are loaded in batches, including retired
+records named by producer cost history, never one card RPC per primary.
+
+Only a reviewed dev verification receipt proves a dev landing: `dev_branch`
+is `dev`, `dev_repo` and `dev_review` are present, `dev_tip` and `dev_head` are
+full commit SHAs, `dev_head` equals the primary's head, `dev_attempt` matches
+its current attempt, and `dev_verified_at` is an RFC 3339 timestamp. An absent
+or stale receipt leaves dev landing unknown. A base-branch staging receipt
+(`staged_base`) and a legacy `landed` column are reported separately; the
+legacy column alone never proves dev ancestry. The display does not claim
+that no other historical dev landings exist.
+
+Costs sum the primaries' authoritative `cost_total` records, including totals
+past the bounded consumer-history list. Coverage counts and actual reporters
+remain explicit. Charged cost is reported actual cost when available and
+predicted cost otherwise. Completed consumer accounting excludes unreported
+live spend and is never described as a complete provider invoice. Token
+classes, usage provenance and route/model records remain on the returned
+primary, work/read and consumer records.
