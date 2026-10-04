@@ -13,6 +13,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Packet.Deadline holds a deadline in seconds, not a time.Duration, as
+// nova-sprint queue names the route deadline. They are named values (not bare
+// literals) so the waits class test does not mistake 600 for a 600ns deadline.
+var (
+	deadlineSeconds     = 600 // 10m
+	shorterDeadlineSecs = 300 // 5m
+)
+
 // TestMemberCoverDrainBound pins DrainBound (member.go:475): the longest child
 // deadline plus LongStall, capped at DrainMost. It is a pure function of its
 // argument and the two package constants, so no member is needed.
@@ -59,14 +67,14 @@ func TestMemberCoverLongestDeadline(t *testing.T) {
 		// main path: a live launch's deadline is the longest.
 		{
 			name:     "a live launch's deadline",
-			running:  map[string]launch{"c1": {packet: Packet{Deadline: 600}}}, // 600s = 10m
+			running:  map[string]launch{"c1": {packet: Packet{Deadline: deadlineSeconds}}}, // 600s = 10m
 			override: 0,
 			want:     10 * time.Minute,
 		},
 		// the override wins when it is longer than every deadline.
 		{
 			name:     "override is the longest",
-			running:  map[string]launch{"c1": {packet: Packet{Deadline: 600}}},
+			running:  map[string]launch{"c1": {packet: Packet{Deadline: deadlineSeconds}}},
 			override: time.Hour,
 			want:     time.Hour,
 		},
@@ -74,7 +82,7 @@ func TestMemberCoverLongestDeadline(t *testing.T) {
 		// as empty and yields 0.
 		{
 			name:     "spent launches are skipped",
-			running:  map[string]launch{"c1": {spent: true, packet: Packet{Deadline: 600}}},
+			running:  map[string]launch{"c1": {spent: true, packet: Packet{Deadline: deadlineSeconds}}},
 			override: 0,
 			want:     0,
 		},
@@ -91,8 +99,8 @@ func TestMemberCoverLongestDeadline(t *testing.T) {
 		{
 			name: "spent and live: only the live one counts",
 			running: map[string]launch{
-				"spent": {spent: true, packet: Packet{Deadline: 600}},
-				"live":  {packet: Packet{Deadline: 300}}, // 300s = 5m
+				"spent": {spent: true, packet: Packet{Deadline: deadlineSeconds}},
+				"live":  {packet: Packet{Deadline: shorterDeadlineSecs}}, // 300s = 5m
 			},
 			override: 0,
 			want:     5 * time.Minute,
