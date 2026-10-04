@@ -36,7 +36,7 @@ import (
 //   - every other verb (take, finish, read, queue, which records a reader's beat, fleet
 //     beat, which can write the fleet table, and every coordinator's write) waits for the
 //     line as before, and the line waits for its caller: a batch whose caller has gone is
-//     not run (serialLock.LockCtx).
+//     not run (sprint.ControlLine.LockCtx).
 //
 // The lanes run only on a store that is safe from more than one goroutine: Redis, and
 // the in-memory store a test gives (store.Mem). A twin file (mem:<file>) is written
@@ -72,7 +72,7 @@ type serveLanes struct {
 	now func() time.Time
 	// line is the read lane's own line: one read at a time on read's state, given up by a
 	// caller that has gone as the server's line is.
-	line serialLock
+	line sprint.ControlLine
 	read *app
 }
 

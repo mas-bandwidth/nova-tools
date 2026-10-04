@@ -3075,6 +3075,23 @@ batches=<n> beat-lane=<n> read-lane=<n> on-line=<n> gone=<n> wait-max=<d> held-m
 held-by=<verb> over=<d>`. The model is `tla/ServerLanes.tla`. The server keeps
 nothing between requests.
 
+The tick's turn. The batches, the lanes beside the tick (land's reads and report, decide,
+balance) and the tick take one line of control. The batches and the lanes take it in the order
+they asked; the tick does not queue behind them. A tick that asks takes the line as soon as no
+batch waits; else its turn is due once the batches have had the line, since the tick before
+ended, for as long as that tick held it (100 ms at least, 5 s at most), and then the tick takes
+the line next, after the holder in flight and before every batch still waiting. So the tick
+waits at most its turn and one batch, however many batches wait, two ticks of a loaded server
+begin less than 15 s apart while a tick and a batch each take less than 5 s, and the batches
+keep at least half the line while the ticks take at most 5 s. A batch whose caller has gone
+gives its place in the order up: it is never served, and neither the batches behind it nor
+the tick wait for it. A tick that waited more than TickEvery for the line prints `LINE the
+tick waited <d>`. A tick queued behind every batch waiting is the stall this prevents: the
+ticks run in a second or two and begin tens of seconds apart, and a RUNNING machine reads
+STOPPED with no stop given (12:52 to 12:56 PM on 2026-10-04). `TestNoTickStepExceedsItsBound`
+holds the bound, `TestAWaiterThatWentGivesItsTicketUp` the places given up, and
+`tla/ServerLanes.tla` models both (`TickTakesItsTurn`, `NoTicketBlocksTheLine`).
+
 The server runs the workers' verbs only: `take`, `finish`, `read` and `queue`, each beginning
 `<verb> --as <worker>` with one worker's name, `fleet beat <member> --load <percent>` and
 nothing more, and `friend beat <friend>` with its report's flags (`--running`, `--working`, `--queue`, `--width`, `--load`), each once with its value, and nothing more. No later word of a verb, wherever it stands, is a flag named `as`, `redis` or

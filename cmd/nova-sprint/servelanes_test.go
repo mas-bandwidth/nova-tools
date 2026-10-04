@@ -53,7 +53,7 @@ func TestVerbAnsweredWhileLandInProgress(t *testing.T) {
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 	r.ok("start")
 	r.a.serveAddr = "mem:0"
-	r.a.serial.waiting = func() { t.Error("a verb waited for the line while the landing ran its git") }
+	r.a.serial.OnWait = func() { t.Error("a verb waited for the line while the landing ran its git") }
 	atPush, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	r.a.beforePush = func(int) {
@@ -99,7 +99,7 @@ func TestBeatsAndReadsAnswerWhileTheLineIsHeld(t *testing.T) {
 	ta := laneRig(t)
 	require.NotNil(t, ta.a.lanesFor(context.Background()), "the in-memory store runs the lanes")
 	waited := make(chan struct{}, 8)
-	ta.a.serial.waiting = func() { waited <- struct{}{} }
+	ta.a.serial.OnWait = func() { waited <- struct{}{} }
 	ta.a.serial.Lock() // the tick
 	for _, v := range []struct {
 		local bool
@@ -143,7 +143,7 @@ func TestABatchWhoseCallerWentIsNotRun(t *testing.T) {
 	ta := laneRig(t)
 	ta.a.lanesFor(context.Background())
 	waiting := make(chan struct{})
-	ta.a.serial.waiting = func() { close(waiting) }
+	ta.a.serial.OnWait = func() { close(waiting) }
 	ta.a.serial.Lock()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan sprintwire.Response, 1)
@@ -161,7 +161,7 @@ func TestABatchWhoseCallerWentIsNotRun(t *testing.T) {
 		assert.Contains(t, r.Stderr, "its caller went away while it waited; nothing was changed")
 	}
 	assert.Equal(t, 2, ta.a.served.gone)
-	ta.a.serial.waiting = nil
+	ta.a.serial.OnWait = nil
 	again := serveOne(ta.a, false, take...)
 	require.Equal(t, 0, again.Code, again.Stderr)
 	assert.Contains(t, again.Stdout, "s1-1", "the take that went away took nothing: the cards were still there to take")
@@ -189,7 +189,7 @@ func TestATwinFileTakesTheLineForEveryVerb(t *testing.T) {
 	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1:2")
 	require.Nil(t, r.a.lanesFor(context.Background()))
 	waiting := make(chan struct{})
-	r.a.serial.waiting = func() { close(waiting) }
+	r.a.serial.OnWait = func() { close(waiting) }
 	r.a.serial.Lock()
 	done := make(chan sprintwire.Result, 1)
 	go func() { done <- serveOne(r.a, true, "where") }()
@@ -218,24 +218,6 @@ func TestServeSaysWhatItsBatchesCost(t *testing.T) {
 	log.Reset()
 	serveOne(ta.a, false, "friend", "beat", "amy")
 	assert.Empty(t, log.String(), "the tally starts again after its line")
-}
-
-// The line waits in the order its waiters came, can be given up, and is never held by
-// a waiter that gave up.
-func TestTheSerialLineIsGivenUpByACallerThatWent(t *testing.T) {
-	t.Parallel()
-	var l serialLock
-	l.Lock()
-	assert.False(t, l.TryLock())
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	assert.Error(t, l.LockCtx(ctx), "a caller already gone does not wait")
-	l.Unlock()
-	require.NoError(t, l.LockCtx(context.Background()))
-	assert.Panics(t, func() { l.Unlock(); l.Unlock() })
-	assert.Error(t, l.LockCtx(ctx), "a free line is not taken by a caller that has gone")
-	assert.True(t, l.TryLock(), "and is still free")
-	l.Unlock()
 }
 
 // A beat or a read whose caller has gone before it started is not run either

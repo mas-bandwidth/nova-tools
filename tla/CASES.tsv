@@ -352,3 +352,5 @@ MCServerLanesLive.cfg	MCServerLanes.tla	pass	-	ignore-terminal	serverlanes	requi
 MCServerLanesBrokenBeatOnLine.cfg	MCServerLanes.tla	invariant	BeatNeverWaitsForTheLine|LanesHoldNoLine	ignore-terminal	serverlanes	required	-
 MCServerLanesBrokenReadOnLine.cfg	MCServerLanes.tla	invariant	ReadWaitsOnlyForReads|LanesHoldNoLine	ignore-terminal	serverlanes	required	-
 MCServerLanesBrokenRunGone.cfg	MCServerLanes.tla	invariant	GoneNeverRuns	ignore-terminal	serverlanes	required	-
+MCServerLanesBrokenNoSkip.cfg	MCServerLanes.tla	invariant	NoTicketBlocksTheLine	ignore-terminal	serverlanes	required	-
+MCServerLanesBrokenTickQueues.cfg	MCServerLanes.tla	invariant	TickTakesItsTurn	ignore-terminal	serverlanes	required	-
