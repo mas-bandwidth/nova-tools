@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"testing"
 	"time"
 
@@ -20,9 +21,7 @@ func book(pr *Card, cons ...Consumer) {
 	for _, c := range cons {
 		set := map[string]string{}
 		addConsumer(pr, set, c)
-		for k, v := range set {
-			pr.Fields[k] = v
-		}
+		maps.Copy(pr.Fields, set)
 	}
 }
 

@@ -95,9 +95,7 @@ func TestCheckRefusesAnswersThatDoNotFit(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := map[string]Answer{}
-			for k, v := range good {
-				a[k] = v
-			}
+			maps.Copy(a, good)
 			tc.edit(a)
 			assert.ErrorContains(t, s.Check(a), tc.says)
 		})

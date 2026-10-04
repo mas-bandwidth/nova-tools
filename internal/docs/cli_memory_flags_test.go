@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"maps"
 	"os"
 	"sort"
 	"strings"
@@ -137,9 +138,7 @@ func cmdVerbsRead(t *testing.T, lines []string, helper map[string]int) []*cmdVer
 			}
 		}
 		if usesHelper {
-			for flag, at := range helper {
-				v.flags[flag] = at
-			}
+			maps.Copy(v.flags, helper)
 		}
 		verbs = append(verbs, v)
 	}

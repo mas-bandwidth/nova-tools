@@ -3,6 +3,7 @@ package tlc
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -156,9 +157,7 @@ func TestInputsRefuseACaseTheyCannotResolve(t *testing.T) {
 				row("MCNoModule.cfg", "MCNoModule.tla", "pass", "-", "check", "alpha", "required", "-"),
 			"MCTop.tla": "EXTENDS Naturals\n", "MCTop.cfg": "c\n", "MCNoModule.cfg": "c\n",
 		}
-		for k, v := range extra {
-			base[k] = v
-		}
+		maps.Copy(base, extra)
 		return testSource(t, tree(t, base))
 	}
 	tests := []struct {
@@ -261,9 +260,7 @@ func TestOnlyTheResultFilesOfTheRunnerAreInputs(t *testing.T) {
 	for _, n := range ResultFiles {
 		other := testSource(t, inputsTree(t))
 		other.Runner = map[string][]byte{}
-		for k, v := range src.Runner {
-			other.Runner[k] = v
-		}
+		maps.Copy(other.Runner, src.Runner)
 		other.Runner[RunnerDir+"/"+n] = []byte("edited\n")
 		after, _, _ := other.Fingerprint("MCLone.cfg")
 		assert.NotEqual(t, before, after, "editing the result file %s left the fingerprint unchanged", n)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand"
 	"os"
 	"reflect"
@@ -76,9 +77,7 @@ func (s *epochTableState) copy() *epochTableState {
 	n.rows = slices.Clone(s.rows)
 	for at, members := range s.cells {
 		n.cells[at] = zset{}
-		for id, score := range members {
-			n.cells[at][id] = score
-		}
+		maps.Copy(n.cells[at], members)
 	}
 	return n
 }

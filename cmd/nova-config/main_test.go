@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -73,9 +74,7 @@ func newFakeRedis() *fakeRedis {
 }
 func (f *fakeRedis) Read(_ context.Context, kind string) (map[string]config.View, int64, error) {
 	out := map[string]config.View{}
-	for n, v := range f.views[kind] {
-		out[n] = v
-	}
+	maps.Copy(out, f.views[kind])
 	if k, _ := config.Lookup(kind); k != nil && k.Singleton && out[kind] == nil {
 		out[kind] = config.View{}
 		for _, fl := range k.Fields {
@@ -125,24 +124,14 @@ func (f *fakeRedis) Snapshot(ctx context.Context) (*config.Snapshot, error) {
 		return nil, ctx.Err()
 	}
 	snap := &config.Snapshot{Machines: map[string]config.View{}, Fleet: config.View{}, Beats: map[string]*config.Beat{}, Revs: map[string]int64{}}
-	for n, v := range f.views[config.KindMachine] {
-		snap.Machines[n] = v
-	}
-	for k, v := range f.views[config.KindFleet][config.KindFleet] {
-		snap.Fleet[k] = v
-	}
-	for k, r := range f.revs {
-		snap.Revs[k] = r
-	}
+	maps.Copy(snap.Machines, f.views[config.KindMachine])
+	maps.Copy(snap.Fleet, f.views[config.KindFleet][config.KindFleet])
+	maps.Copy(snap.Revs, f.revs)
 	if _, ok := f.revs["loop"]; ok {
 		snap.Loops = map[string]config.View{}
-		for n, v := range f.views["loop"] {
-			snap.Loops[n] = v
-		}
+		maps.Copy(snap.Loops, f.views["loop"])
 	}
-	for n, b := range f.beats {
-		snap.Beats[n] = b
-	}
+	maps.Copy(snap.Beats, f.beats)
 	return snap, nil
 }
 

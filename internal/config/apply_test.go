@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 
@@ -29,9 +30,7 @@ func (f *fakeApplier) Read(_ context.Context, kind string) (map[string]View, int
 	out := map[string]View{}
 	for n, v := range f.views[kind] {
 		c := View{}
-		for k, s := range v {
-			c[k] = s
-		}
+		maps.Copy(c, v)
 		out[n] = c
 	}
 	// A singleton's view is always there, empty until written (the real

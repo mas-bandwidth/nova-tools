@@ -8,6 +8,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"testing"
 	"time"
 
@@ -195,9 +196,7 @@ func TestAWritingPartsExchangesArePinned(t *testing.T) {
 	require.NoError(t, err, "the world's take: %v %+v", err, res)
 	require.NotEmpty(t, res.Moved, "the world's take: %v %+v", err, res)
 	before := map[string]int{}
-	for k, v := range h.m.Calls {
-		before[k] = v
-	}
+	maps.Copy(before, h.m.Calls)
 	res = h.must(part("ping", ping(sprint.Fleet, 1)))
 	require.NotEmpty(t, res.Moved, "the part wrote nothing: %+v", res)
 	got := map[string]int{}

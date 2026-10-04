@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -945,9 +946,7 @@ func TestJudgeOnlyOursByDeadlineLabelPlusGrace(t *testing.T) {
 	const id = "20300102t030405-0123abcd"
 	with := func(m map[string]string, k, v string) map[string]string {
 		out := map[string]string{}
-		for a, b := range m {
-			out[a] = b
-		}
+		maps.Copy(out, m)
 		if v == "<delete>" {
 			delete(out, k)
 		} else {

@@ -5,6 +5,7 @@ package ntable_test
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math/rand"
 	"slices"
 	"sort"
@@ -483,9 +484,7 @@ func (o *batchOracle) apply(manifest ntable.BatchManifest) {
 		}
 
 		if len(entry.Set) > 0 {
-			for k, v := range entry.Set {
-				mem.fields[k] = v
-			}
+			maps.Copy(mem.fields, entry.Set)
 		}
 		if len(entry.Unset) > 0 {
 			for _, k := range entry.Unset {

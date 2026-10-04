@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -545,12 +546,8 @@ func TestAReaderCountsOnceWhereItsCardIs(t *testing.T) {
 func TestEveryDecisionPrintsItsCommands(t *testing.T) {
 	t.Parallel()
 	all := map[string][]string{}
-	for typ, ds := range Decisions {
-		all[typ] = ds
-	}
-	for typ, ds := range TickDecisions {
-		all[typ] = ds
-	}
+	maps.Copy(all, Decisions)
+	maps.Copy(all, TickDecisions)
 	for typ, ds := range all {
 		for _, level := range []bool{false, true} {
 			n := Note{ID: "n-1.1", Kind: Judgment, Type: typ, Stream: "s1", Primaries: []string{"s1-1", "s2-1"}, StreamLevel: level}
@@ -575,12 +572,8 @@ func TestEveryDecisionPrintsItsCommands(t *testing.T) {
 func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 	t.Parallel()
 	all := map[string][]string{}
-	for typ, ds := range Decisions {
-		all[typ] = ds
-	}
-	for typ, ds := range TickDecisions {
-		all[typ] = ds
-	}
+	maps.Copy(all, Decisions)
+	maps.Copy(all, TickDecisions)
 	all[NRemindFailed] = []string{"goal set friend-a --to <route>", "goal drop friend-a", "ack"}
 	ackable := map[string]bool{NBlocked: true, NMissingNeed: true, NCIRed: true, NRepairSkipped: true, NOpStuck: true, NRemindFailed: true, NProviderFunds: true, NProviderLow: true, NProviderKey: true, NAllOutOfCredit: true, NScoredLow: true}
 	for typ, ds := range all {

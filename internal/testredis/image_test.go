@@ -450,9 +450,7 @@ func fakeKeysUnder(prefix string, n int) map[string]fakeKey {
 func merge(parts ...map[string]fakeKey) map[string]fakeKey {
 	all := map[string]fakeKey{}
 	for _, part := range parts {
-		for k, v := range part {
-			all[k] = v
-		}
+		maps.Copy(all, part)
 	}
 	return all
 }

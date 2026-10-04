@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -131,9 +132,7 @@ func seqRound(order []string, counter uint64, n int) []string {
 // over). It returns the names taken and the counter after.
 func seqTurns(names []string, counts map[string]int, counter uint64, k int) ([]string, uint64) {
 	left := map[string]int{}
-	for n, c := range counts {
-		left[n] = c
-	}
+	maps.Copy(left, counts)
 	n := uint64(len(names))
 	var out []string
 	for len(out) < k {

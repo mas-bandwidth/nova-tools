@@ -1,6 +1,7 @@
 package tlc
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,9 +93,7 @@ func TestLoadCasesHoldsThePlanToTheFiles(t *testing.T) {
 	require.NoError(t, err, "a matching tree was refused")
 	with := func(edit func(map[string]string)) map[string]string {
 		m := map[string]string{}
-		for k, v := range base {
-			m[k] = v
-		}
+		maps.Copy(m, base)
 		edit(m)
 		return m
 	}

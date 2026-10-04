@@ -3,6 +3,7 @@ package ci
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -353,9 +354,7 @@ func TestFleetPlaysRuleReadsTheShapes(t *testing.T) {
 		for k, v := range base.plays {
 			s.plays[k] = append([]byte{}, v...)
 		}
-		for k, v := range base.templates {
-			s.templates[k] = v
-		}
+		maps.Copy(s.templates, base.templates)
 		edit(&s)
 		return fleetPlayProblems(s, groups)
 	}

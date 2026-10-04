@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"strconv"
 	"testing"
 	"time"
@@ -116,9 +117,7 @@ func (w *world) entry(ch Change) {
 	if e.Expect != nil && e.Expect.Absent {
 		require.Nil(w.t, c, "%s: create %s: exists", ch.Table, e.ID)
 		c = &Card{ID: e.ID, Row: e.Create.Row, Col: e.Create.Col, Score: e.Create.Score, Rev: 1, Fields: map[string]string{}}
-		for k, v := range e.Set {
-			c.Fields[k] = v
-		}
+		maps.Copy(c.Fields, e.Set)
 		tb.Put(c)
 		return
 	}

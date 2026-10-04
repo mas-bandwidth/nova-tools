@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,9 +106,7 @@ func TestLandResolvesAConflictOnlyInGeneratedLedgers(t *testing.T) {
 	debtB := map[string]string{"debt/b": "", fakeLedger: "# ceiling: 1\na\n"}
 	with := func(m map[string]string, k, v string) map[string]string {
 		out := map[string]string{k: v}
-		for a, b := range m {
-			out[a] = b
-		}
+		maps.Copy(out, m)
 		return out
 	}
 	for _, tc := range []struct {

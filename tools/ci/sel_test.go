@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -218,9 +219,7 @@ func matrixRepoFake(t *testing.T, extra map[string]selReply) (*selFake, string) 
 	answers := map[string]selReply{
 		selListTree: {out: selImports("cmd/a", "cmd/nova-bus", "cmd/nova-sandbox", "internal/b", "internal/ci", "internal/docs")},
 	}
-	for k, v := range extra {
-		answers[k] = v
-	}
+	maps.Copy(answers, extra)
 	return newSelFake(answers), selRepo(t)
 }
 
@@ -686,9 +685,7 @@ func TestUnitTestRunsMakeTestOnceThePathHoldsTheShim(t *testing.T) {
 			f := newSelFake(map[string]selReply{tc.want: {out: "ok\n"}})
 			f.paths["redis-server"] = shim
 			vars := map[string]string{"RUNNER_TEMP": tmp}
-			for k, v := range tc.vars {
-				vars[k] = v
-			}
+			maps.Copy(vars, tc.vars)
 			code, out, errb := selRun(func(e env, a []string) int { return unitTestVerb(e, a, f.host()) }, "", vars, "--packages", "./cmd/a ./cmd/b")
 			if code != 0 || out != "ok\n" || errb != "" {
 				t.Errorf("exit %d, stdout %q, stderr %q", code, out, errb)

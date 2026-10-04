@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -201,9 +202,7 @@ func TestAnIdleTickReadsEveryTableAndChangesNothing(t *testing.T) {
 	h.machine()
 	h.machine() // the tick after moves: reads everything, finds nothing to do
 	before := map[string]int{}
-	for k, v := range h.m.Calls {
-		before[k] = v
-	}
+	maps.Copy(before, h.m.Calls)
 	revs := [4]uint64{}
 	for i, tb := range All {
 		revs[i] = h.m.Revision(h.st.Names.Table(tb))

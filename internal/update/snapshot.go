@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -496,8 +497,6 @@ func confirmed(line, id string) bool {
 }
 func cloneObserved(m map[string]observed) map[string]observed {
 	n := map[string]observed{}
-	for k, v := range m {
-		n[k] = v
-	}
+	maps.Copy(n, m)
 	return n
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"sort"
 	"strconv"
@@ -1330,9 +1331,7 @@ func (h *harness) rowAdd(rt *rapid.T) {
 			}
 		}
 		mr.owner, mr.binds = spec.Owner, map[string]string{}
-		for col, k := range spec.Binds {
-			mr.binds[col] = k
-		}
+		maps.Copy(mr.binds, spec.Binds)
 		// the row the verb hands back is the row as written
 		for j, col := range propColumns {
 			key, _ := h.m.shown(tn, r, col)

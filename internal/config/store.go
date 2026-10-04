@@ -396,8 +396,6 @@ func (m *Mem) Ownership(context.Context) (Ownership, error) {
 	defer m.mu.Unlock()
 	o := m.Catalog
 	o.Tables = map[string]string{}
-	for t, owner := range m.Catalog.Tables {
-		o.Tables[t] = owner
-	}
+	maps.Copy(o.Tables, m.Catalog.Tables)
 	return o, nil
 }

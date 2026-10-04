@@ -2,6 +2,7 @@ package refmodel_test
 
 import (
 	"fmt"
+	"maps"
 	"testing"
 	"time"
 
@@ -31,9 +32,7 @@ func TestLevelRefuserTheEngineAndTheModelAgree(t *testing.T) {
 	put := func(id, member, col string, extra map[string]string) {
 		fields := map[string]string{"kind": "work", "primary": id, "stream": "s1", "attempt": "1", "gen": "2", "member": member,
 			"dealt": t0.UTC().Format(time.RFC3339), "untaken_since": t0.UTC().Format(time.RFC3339), "redeals": "0"}
-		for k, v := range extra {
-			fields[k] = v
-		}
+		maps.Copy(fields, extra)
 		w.s.Fleet.Put(&sprint.Card{ID: id + ".w1", Row: member, Col: col, Score: score, Rev: 1, Fields: fields})
 		w.s.Work.Put(&sprint.Card{ID: id, Row: "s1", Col: sprint.Working, Score: score, Rev: 1,
 			Fields: map[string]string{"kind": "primary", "attempt": "1", "stream": "s1", "work": id + ".w1"}})

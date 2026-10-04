@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -120,9 +121,7 @@ func TestRouteCoverAttemptLine(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := base()
-			for k, v := range tc.fields {
-				f[k] = v
-			}
+			maps.Copy(f, tc.fields)
 			line := AttemptLine(&Card{ID: "p1.w1", Row: "m1", Col: tc.col, Fields: f})
 			for _, w := range tc.want {
 				assert.Contains(t, line, w)

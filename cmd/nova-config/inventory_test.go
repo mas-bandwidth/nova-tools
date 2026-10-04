@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -216,9 +217,7 @@ func TestInventoryLocalMachine(t *testing.T) {
 			t.Parallel()
 			h := inventoryHarness(t, 3)
 			h.hostname = tc.hostname
-			for k, v := range tc.env {
-				h.env[k] = v
-			}
+			maps.Copy(h.env, tc.env)
 			code, out, errs := h.run(t, "inventory")
 			require.Equal(t, 0, code, errs)
 			assert.Equal(t, tc.want, localMachines(t, out))

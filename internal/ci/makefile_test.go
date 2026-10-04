@@ -2,6 +2,7 @@ package ci
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -355,12 +356,8 @@ func (mk *parsedMakefile) expand(vars map[string]string, s string) string {
 // cannot find.)
 func (mk *parsedMakefile) recipeFor(target string) []string {
 	vars := map[string]string{}
-	for k, v := range mk.vars {
-		vars[k] = v
-	}
-	for k, v := range mk.targetVars[target] {
-		vars[k] = v
-	}
+	maps.Copy(vars, mk.vars)
+	maps.Copy(vars, mk.targetVars[target])
 	var out []string
 	for _, line := range mk.recipes[target] {
 		out = append(out, mk.expand(vars, line))

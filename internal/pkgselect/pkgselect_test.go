@@ -2,6 +2,7 @@ package pkgselect
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -351,9 +352,7 @@ func TestSelectNeverSilentlySelectsNothing(t *testing.T) {
 				diffCmd:    {Stdout: "cmd/foo/foo.go\n"},
 				lsFilesCmd: {Stdout: tracked()},
 			}
-			for k, v := range lists[tc.fake] {
-				answers[k] = v
-			}
+			maps.Copy(answers, lists[tc.fake])
 			out, err := Select(newFake(answers).run, Options{Root: root, All: tc.all, Base: "base", WholeTreeOnError: tc.wholeTree})
 			if tc.wantErr != "" {
 				var le *ListError

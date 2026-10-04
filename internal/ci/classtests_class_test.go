@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -426,9 +427,7 @@ func readDeletionsAgainst(root, parent, commit, head, subject string) (*mergeDel
 	if err != nil {
 		return nil, err
 	}
-	for p, why := range declaredRowsAdded(diff) {
-		m.Declared[p] = why
-	}
+	maps.Copy(m.Declared, declaredRowsAdded(diff))
 	return m, nil
 }
 

@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,9 +29,7 @@ func baseCard(header map[string]string, steps ...string) []byte {
 		"PATHS":      "internal/decide/decide.go",
 		"DEPENDS-ON": "-",
 	}
-	for k, v := range header {
-		def[k] = v
-	}
+	maps.Copy(def, header)
 	var b strings.Builder
 	b.WriteString("RESULT nx-f19-decide-confidence-presence sha=d4e7c1fff962 -- a missing confidence prints as zero\n")
 	for _, k := range order {

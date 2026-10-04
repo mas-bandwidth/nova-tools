@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 
@@ -154,9 +155,7 @@ func TestAclCoverStoreRead(t *testing.T) {
 			nil, nil, nil, first, 1, "ACL USERS: "},
 		{"a category answers no command list", func() map[string]any {
 			m := map[string]any{}
-			for k, v := range full {
-				m[k] = v
-			}
+			maps.Copy(m, full)
 			m["ACL CAT Read"] = 7
 			return m
 		}(), map[string]error{"ACL GETUSER default": redis.Nil}, nil,

@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -68,9 +69,7 @@ func (w *world) place(tb *Table, id, row, col string) {
 func putWorkCard(w *world, p, member, col string, score float64, extra map[string]string) {
 	fields := map[string]string{"kind": "work", "primary": p, "stream": "s1", "attempt": "1", "gen": "2", "member": member,
 		"dealt": stamp(t0), "untaken_since": stamp(t0), "redeals": "0"}
-	for k, v := range extra {
-		fields[k] = v
-	}
+	maps.Copy(fields, extra)
 	w.s.Fleet.Put(&Card{ID: p + ".w1", Row: member, Col: col, Score: score, Rev: 1, Fields: fields})
 	prim := map[string]string{"kind": "primary", "attempt": "1", "stream": "s1"}
 	pcol := Working

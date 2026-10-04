@@ -2,6 +2,7 @@ package refmodel_test
 
 import (
 	"fmt"
+	"maps"
 	"strconv"
 	"testing"
 	"time"
@@ -143,9 +144,7 @@ func (w *world) entry(ch sprint.Change) error {
 			return fmt.Errorf("%s: create %s: it exists", ch.Table, e.ID)
 		}
 		c = &sprint.Card{ID: e.ID, Row: e.Create.Row, Col: e.Create.Col, Score: e.Create.Score, Rev: 1, Fields: map[string]string{}}
-		for k, v := range e.Set {
-			c.Fields[k] = v
-		}
+		maps.Copy(c.Fields, e.Set)
 		tb.Put(c)
 		return nil
 	}

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,9 +19,7 @@ func loopView(name, machine string, over map[string]string) View {
 		"seat": "seat-a", "keys": "API_KEY,BENCH_PASSWORD", "every": "0", "keepalive": "true",
 		"enabled": "true", "log": "~/nova-bench/loops/" + name + ".log",
 	}
-	for k, x := range over {
-		v[k] = x
-	}
+	maps.Copy(v, over)
 	return v
 }
 
