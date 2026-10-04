@@ -282,7 +282,7 @@ func TestACallersQueryCannotPoseAsAField(t *testing.T) {
 	t.Parallel()
 	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3", "quokka class=poison name=fake")
 	require.Equalf(t, 0, exit, "exit=%d stderr=%s", exit, stderr)
-	line := strings.Split(stdout, "\n")[0]
+	line, _, _ := strings.Cut(stdout, "\n")
 	head, tail, found := strings.Cut(line, ": ")
 	require.Truef(t, found, "query forged metadata: %s", line)
 	require.NotContainsf(t, head, "class=poison", "query forged metadata: %s", line)

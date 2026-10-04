@@ -148,7 +148,7 @@ func TestQuickstartQuotesItsWords(t *testing.T) {
 
 	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--words", "lantern", "--words", "clean deploy")
 	require.Equal(t, 0, exit, stderr)
-	first := strings.SplitN(stdout, "\n", 2)[0]
+	first, _, _ := strings.Cut(stdout, "\n")
 	assert.NotContains(t, first, `\x20`)
 	assert.True(t, strings.HasSuffix(first, ` words="lantern clean deploy"`), "the first line is %q", first)
 	_, err := strconv.Unquote(first[strings.Index(first, " words=")+len(" words="):])

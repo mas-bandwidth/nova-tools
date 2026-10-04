@@ -36,7 +36,7 @@ func TestNativeRunWritesTimeline(t *testing.T) {
 	path := filepath.Join(slot, "jobs", label, swarm.TimelineFileName)
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err, "the native run wrote no timeline at %s", path)
-	head := strings.SplitN(string(raw), "\n", 2)[0]
+	head, _, _ := strings.Cut(string(raw), "\n")
 	require.Equal(t, strings.Join(swarm.TimelineColumns, "\t"), head, "timeline header = %q, want %q", head, strings.Join(swarm.TimelineColumns, "\t"))
 
 	rows, err := swarm.ReadTimeline(path)

@@ -1051,7 +1051,7 @@ func TestRule12TheToolStampsAndNoFlagSetsIt(t *testing.T) {
 	}, "\n")+"\n")
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
 	wantExit(t, r, 0)
-	first := strings.Split(read(t, filepath.Join(out, "2026-09-11.tsv")), "\n")[0]
+	first, _, _ := strings.Cut(read(t, filepath.Join(out, "2026-09-11.tsv")), "\n")
 	for _, want := range []string{"nova-tokens v1 ", "day=2026-09-11", "at=2026-09-11T23:55:02Z", "build=", "turns=2", "sources=claude:glenn"} {
 		assert.True(t, strings.Contains(first, want), "the version line %q lacks %q", first, want)
 	}

@@ -105,7 +105,7 @@ func TestTheChildEnvPutsTheShimFirstAndPinsShell(t *testing.T) {
 	env := nativeChildEnv("data", "job", "tmp", "", "", shim, shell, "")
 	path, ok := lookup(env, "PATH")
 	require.True(t, ok, "the child was handed no PATH")
-	first := strings.Split(path, string(os.PathListSeparator))[0]
+	first, _, _ := strings.Cut(path, string(os.PathListSeparator))
 	require.Equal(t, shim, first, "PATH starts with %q, want the shim %q", first, shim)
 	got, ok := lookup(env, "SHELL")
 	require.True(t, ok, "SHELL = %q (set=%v), want %q", got, ok, shell)

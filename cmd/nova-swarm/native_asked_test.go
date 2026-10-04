@@ -54,7 +54,7 @@ func TestNativeWritesAnAskedResultForACardThatEndedWithAQuestion(t *testing.T) {
 
 	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
 	require.NoError(t, err, "a card that ended by asking left no report\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
-	line1 := strings.SplitN(string(raw), "\n", 2)[0]
+	line1, _, _ := strings.Cut(string(raw), "\n")
 	require.True(t, strings.HasPrefix(line1, "RESULT: ASKED "), "line 1 must carry the verdict word, got %q", line1)
 	require.Contains(t, line1, question, "line 1 must carry the question itself, got %q", line1)
 	require.Contains(t, string(raw), "written-by: nova-swarm native", "the report does not say the machinery wrote it:\n%s", raw)

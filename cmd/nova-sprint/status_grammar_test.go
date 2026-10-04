@@ -116,7 +116,7 @@ func TestStatusGrammar(t *testing.T) {
 			require.Equal(t, tc.wantExit, code, "exit = %d, want %d\nstdout: %q\nstderr: %q", code, tc.wantExit, out, errs)
 			if tc.wantWord == "REFUSED" {
 				assert.Empty(t, out, "a refusal prints nothing on stdout, got %q", out)
-				first := strings.Split(strings.TrimRight(errs, "\n"), "\n")[0]
+				first, _, _ := strings.Cut(strings.TrimRight(errs, "\n"), "\n")
 				assert.True(t, strings.HasPrefix(first, tc.wantToken+" REFUSED:"), "the refusal must open with %q REFUSED:, got %q", tc.wantToken, first)
 				assert.Contains(t, errs, tc.wantMarker, "the refusal must carry its remedy, got %q", errs)
 				return

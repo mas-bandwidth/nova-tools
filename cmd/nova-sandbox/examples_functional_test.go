@@ -54,7 +54,7 @@ func TestSandboxCLISetupAndCommandsMatchOutput(t *testing.T) {
 	const jobExamples = "macOS job examples (replace /path/to with your own paths):\n"
 	bannerStart := strings.Index(usage, jobExamples)
 	require.GreaterOrEqual(t, bannerStart, 0, "missing help example")
-	bannerBlock := strings.SplitN(usage[bannerStart+len(jobExamples):], "\n\n", 2)[0]
+	bannerBlock, _, _ := strings.Cut(usage[bannerStart+len(jobExamples):], "\n\n")
 	bannerCommands := exampleCommands(t, bannerBlock, j.base)
 	require.Len(t, bannerCommands, 1, "expected one help wrap command")
 	count := 0

@@ -62,7 +62,7 @@ func fetchAncestryVerb(e env, args []string, h selHost) int {
 			return 1
 		}
 		// Read stored parent headers: rev-list hides them at a shallow boundary.
-		headers := strings.SplitN(res.Stdout, "\n\n", 2)[0]
+		headers, _, _ := strings.Cut(res.Stdout, "\n\n")
 		if strings.Count("\n"+headers, "\nparent ") < 2 {
 			fmt.Fprintln(e.stdout, "a one-parent commit: no promotion to read")
 			return 0

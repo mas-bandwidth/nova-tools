@@ -232,7 +232,7 @@ func TestStatusGrammar(t *testing.T) {
 			require.Equal(t, tc.wantExit, exit, "exit = %d, want %d\nstdout: %q\nstderr: %q", exit, tc.wantExit, stdout, stderr)
 			if tc.wantWord == "REFUSED" {
 				assert.Empty(t, stdout, "a refusal must print nothing on stdout, got %q", stdout)
-				first := strings.Split(strings.TrimRight(stderr, "\n"), "\n")[0]
+				first, _, _ := strings.Cut(strings.TrimRight(stderr, "\n"), "\n")
 				assert.True(t, strings.HasPrefix(first, tc.wantToken), "the refusal must open with %q, got %q", tc.wantToken, first)
 				assert.Contains(t, stderr, tc.wantMarker, "the refusal must carry its marker, got %q", stderr)
 				return
@@ -241,7 +241,7 @@ func TestStatusGrammar(t *testing.T) {
 			if tc.wantExit != 0 {
 				stream = stderr
 			}
-			first := strings.Split(strings.TrimRight(stream, "\n"), "\n")[0]
+			first, _, _ := strings.Cut(strings.TrimRight(stream, "\n"), "\n")
 			fields := strings.Fields(first)
 			require.GreaterOrEqual(t, len(fields), 2, "the first line must open with a verb token and a status word, got %q", first)
 			assert.Equal(t, tc.wantToken, fields[0], "the verb token is %q, want %q in %q", fields[0], tc.wantToken, first)

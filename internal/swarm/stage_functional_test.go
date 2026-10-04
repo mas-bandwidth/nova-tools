@@ -197,7 +197,7 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 	require.True(t, res.TimedOut, "a hung clone must end ErrStageTimeout with TimedOut; got err=%v res=%+v", err, res)
 	raw, rerr := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
 	require.NoError(t, rerr, "RESULT.md not written on timeout: %v", rerr)
-	first := strings.SplitN(string(raw), "\n", 2)[0]
+	first, _, _ := strings.Cut(string(raw), "\n")
 	require.Equal(t, "RESULT: BLOCKED stage-timeout hulk 1", first, "RESULT.md line 1 = %q", first)
 }
 

@@ -193,7 +193,7 @@ func TestStampAcceptsTheShapesThisRepositoryTagsThroughTheReleaseTemplate(t *tes
 			w.write(fmt.Sprintf("dist/%s_%s_linux_amd64", n, tag), "#!binary\n", 0o755)
 		}
 		w.runner.output = func(c command) (string, int) {
-			n := strings.SplitN(filepath.Base(c.name), "_", 2)[0]
+			n, _, _ := strings.Cut(filepath.Base(c.name), "_")
 			return fmt.Sprintf("%s %s linux/amd64\n", n, tag), 0
 		}
 		w.wantRun(0, "asserted the "+tag+" stamp on 2 of 2 shipped tools", "stamp", tag, "dist/%s_"+tag+"_linux_amd64")
