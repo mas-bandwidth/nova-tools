@@ -52,7 +52,8 @@ func foldedTuples(t *testing.T, out, month string) []string {
 	sums := map[[3]string]*acc{}
 	for _, p := range paths {
 		d, findings, err := tokens.ReadDayFile(p)
-		require.True(t, err == nil && len(findings) == 0, "day file %s: %v %v", p, err, findings)
+		require.True(t, err == nil, "day file %s: %v %v", p, err, findings)
+		require.True(t, len(findings) == 0, "day file %s: %v %v", p, err, findings)
 		for _, r := range d.Rows {
 			k := [3]string{r.Date, r.Model, r.Repo}
 			a := sums[k]
