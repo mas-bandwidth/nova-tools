@@ -126,7 +126,7 @@ changed a document, STOP: line 2 `BLOCKED not-reproduced`, paste the output.
 STEP 4. THE FIX, only in the three documents.
 
 Make the three corrections named above. Nothing else on those lines changes -- not the link
-TEXT, not the prose, not one space. Touch no other file; in particular create no directory and
+TEXT, not the prose, not one blank. Touch no other file; in particular create no directory and
 no new document. Then run the named test again; it must be green.
 
 Then run, once, for the record:

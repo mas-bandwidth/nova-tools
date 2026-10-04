@@ -1,21 +1,15 @@
 // Package ntable is a general, Redis-backed table built from one primitive:
-// the ordered set (Glenn 2026-09-27: "at an even simpler level, I think there
-// should be a concept of ordered sets" / "The work stream table is really just
-// a series of ordered sets, per-cell" / "and the value printed, happens to be
-// for each cell, |s|" / "(but it doesn't need to be always)"). It knows
-// nothing about sprints: the nova-table tool is its face.
+// the ordered set. A table is a series of ordered sets, one per cell, and
+// the value a cell prints is by default that set's cardinality, |s|. It
+// knows nothing about sprints: the nova-table tool is its face.
 //
-// A table has three kinds of cell (Glenn, the same day: "there are cells
-// that are headers for columns, and cells that are headers for rows" / "and
-// there are cells at the bottom of each row that are sums or some function of
-// the column above." / "for example, for the stream table the bottom rows are
-// the sum of the column above."):
+// A table has three kinds of cell:
 //
 //   - HEADER cells: the top row is the column labels (Column.Label, default
 //     the column name); the left column is the row labels (Row.Label, default
 //     the row key), in front of every declared column. Labels, not sets.
 //   - BODY cells: every body cell is an ordered set, a Redis ZSET, rendered
-//     by its column's projection: count (the cardinality, Glenn's |s|),
+//     by its column's projection: count (the cardinality, |s|),
 //     members (the members in score order, comma-joined), first, last (the
 //     lowest and highest scored member), text (a value per row, set by
 //     row set, blank when none; no set).
@@ -74,17 +68,16 @@ const (
 	Max    = "max"
 	Union  = "union"
 	Avg    = "avg"    // the mean of a count column over the rows
-	Pooled = "pooled" // a pct column's footer: the named counts summed over every row's counts summed (never the mean of percentages: Glenn 2026-09-27)
+	Pooled = "pooled" // a pct column's footer: the named counts summed over every row's counts summed (never the mean of percentages)
 	None   = "none"
 )
 
-// A formula projection (SPEC-NOVA-TABLE, computed cells; Glenn 2026-09-27:
-// "waiting% ... the % of waiting tasks as a % of all tasks in that row"):
-// pct(<col>) is the named count column as a percentage of the row's count
-// columns together; pct(<col>/<a>+<b>+...) is the named count column as a
-// percentage of the named count columns a, b, ... of the row; sum(<a>+<b>+...)
-// is the named count columns of the row added. A formula cell holds no set:
-// computed at render, never stored, never written.
+// A formula projection (SPEC-NOVA-TABLE, computed cells): pct(<col>) is the
+// named count column as a percentage of the row's count columns together;
+// pct(<col>/<a>+<b>+...) is the named count column as a percentage of the
+// named count columns a, b, ... of the row; sum(<a>+<b>+...) is the named
+// count columns of the row added. A formula cell holds no set: computed at
+// render, never stored, never written.
 const (
 	pctPrefix = "pct("
 	sumPrefix = "sum("
@@ -179,8 +172,7 @@ func ParseFormula(projection string) (Formula, error) {
 // and formula columns have none).
 func (c Column) HasSet() bool { return c.Projection != Text && !IsFormula(c.Projection) }
 
-// DefaultFooter is the footer label a table has when none is set: none
-// (Glenn 2026-09-27: "the footer title should be off by default"); the
+// DefaultFooter is the footer label a table has when none is set: none; the
 // footer row still prints the folds, with a blank label cell, and
 // `create --footer <label>` names it.
 const DefaultFooter = ""

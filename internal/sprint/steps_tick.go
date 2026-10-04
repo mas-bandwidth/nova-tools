@@ -181,14 +181,6 @@ func (r TickReq) running(now time.Time, stampText string) (time.Duration, bool) 
 // to the part's bounds, and how many moves and judgments are due past them.
 type TickPartFn func(*Snapshot, TickReq) (plan Plan, due int)
 
-// TickPart is one part of a tick: its name, its plan, and what is due past
-// its bounds.
-type TickPart struct {
-	Name string
-	Plan Plan
-	Due  int
-}
-
 // TickPartDef is a part of the tick by name, with its planner.
 type TickPartDef struct {
 	Name string
@@ -263,17 +255,6 @@ var TickParts = func() []TickPartDef {
 	}
 	return append(out, TickEnd...)
 }()
-
-// Tick is every part's plan over one observed state. Each part is computed
-// from the same state; the binding runs them in order, each on a fresh read.
-func Tick(s *Snapshot, r TickReq) []TickPart {
-	out := make([]TickPart, 0, len(TickParts))
-	for _, p := range TickParts {
-		plan, due := p.Fn(s, r)
-		out = append(out, TickPart{p.Name, plan, due})
-	}
-	return out
-}
 
 // NReadyToMerge is the note the pump addresses to the coordinator once a
 // tick for each stream it queued accepted cards in: the merge is the

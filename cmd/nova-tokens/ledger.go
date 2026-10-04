@@ -189,7 +189,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, res := range results {
 		if res.bad {
-			fmt.Fprintf(s.out(), "LEDGER BAD day=%s why=%s\n", oneline.Field(res.day), oneline.Escape(res.why))
+			fmt.Fprintf(s.out(), "LEDGER FAILED day=%s why=%s\n", oneline.Field(res.day), oneline.Escape(res.why))
 			s.item("bad", "day", res.day, "why", tool.Text(res.why))
 		} else {
 			fmt.Fprintf(s.out(), "LEDGER day=%s rows=%d\n", oneline.Field(res.day), res.rows)
@@ -198,7 +198,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	}
 	verdict, code := "OK", 0
 	if bad > 0 || days == 0 {
-		verdict, code = "NO", 1
+		verdict, code = "FAILED", 1
 	}
 	scope, value := "day", *day
 	if *day == "" {
@@ -287,7 +287,7 @@ func cmdReportStore(s *sink, addr, user, passwordEnv, month, by string, max int,
 	s.fact("month", month)
 	s.fact("source", "redis")
 	if indexed == 0 {
-		fmt.Fprintf(s.out(), "REPORT NO month=%s source=redis indexed=0\n", oneline.Field(month))
+		fmt.Fprintf(s.out(), "REPORT FAILED month=%s source=redis indexed=0\n", oneline.Field(month))
 		s.fact("indexed", 0)
 		return s.done(1, 0)
 	}

@@ -13,7 +13,7 @@ import (
 )
 
 // statusWord is the first word after the token on a line of a verb's text form.
-var statusWord = regexp.MustCompile(`(?m)^(?:[A-Z][A-Z-]*|nova-check(?: [a-z]+)*) (OK|FAIL|NO|WARN|REFUSED)\b`)
+var statusWord = regexp.MustCompile(`(?m)^(?:[A-Z][A-Z-]*|nova-check(?: [a-z]+)*) (OK|FAILED|REFUSED)\b`)
 
 // Every verb with both a text and a --json form answers one run with one value:
 // the same exit code, the same status, and the same dry-run fact, on a passing
@@ -102,7 +102,7 @@ func TestTextAndJSONGiveTheSameVerdict(t *testing.T) {
 			case 0:
 				assert.Equal(t, "OK", last, "%s", tc.name)
 			case 1:
-				assert.Contains(t, []string{"FAIL", "NO"}, last, "%s", tc.name)
+				assert.Equal(t, "FAILED", last, "%s", tc.name)
 			default:
 				assert.Equal(t, "REFUSED", last, "%s", tc.name)
 			}
@@ -150,14 +150,14 @@ func TestConvergenceTextAndJSONGiveTheSameVerdict(t *testing.T) {
 	}
 }
 
-// A planned write lists its corrections under --fail-max like every listing, in
+// A planned write lists its corrections under --max like every listing, in
 // both renderings, and changes no byte.
 func TestAPlannedSpellingWriteIsBoundedAndWritesNothing(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	file := filepath.Join(dir, "a.md")
 	require.NoError(t, os.WriteFile(file, []byte("recieve\nseperate\n"), 0o644))
-	args := []string{"spelling", "--dir", dir, "--write", "--dry-run", "--fail-max", "1"}
+	args := []string{"spelling", "--dir", dir, "--write", "--dry-run", "--max", "1"}
 	exit, stdout, _ := runCheck(t, args...)
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, 1, strings.Count(stdout, "SPELLING FIX "), stdout)
