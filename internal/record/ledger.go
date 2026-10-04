@@ -280,9 +280,7 @@ func (s *RedisLedger) ReplaceLedgerDays(ctx context.Context, days []LedgerDay) e
 	for i, d := range prepared {
 		keys[i] = d.key
 		args = append(args, len(d.fields))
-		for _, f := range d.fields {
-			args = append(args, f)
-		}
+		args = append(args, d.fields...)
 	}
 	if err := s.rdb.Eval(ctx, replaceLedgerDaysScript, keys, args...).Err(); err != nil {
 		if len(prepared) == 1 {
