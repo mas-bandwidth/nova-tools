@@ -60,8 +60,8 @@ stale at a 1.1.0 head.
 
 ## Good, keep
 
-- The refusal that names the remedy verb whole, flags and all: `open first:
-  nova-cairn open --store <dir> --session <id> --publish <policy>`
+- The refusal that names the remedy verb whole, flags and all:
+  `open first: nova-cairn open --store <dir> --session <id> --publish <policy>`
   (internal/cairn/cairn.go:214), with a test that runs it through a shell.
 - A store read in its own shape and never migrated: `open` on a flat record is
   a no-op, an append lands a dated section in the file's own form, and no side
