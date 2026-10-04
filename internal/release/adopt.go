@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // machineName is what may be handed to ssh as a destination. It is deliberately
@@ -256,16 +258,18 @@ func olderThan(self, release string) bool {
 
 // dropFetchedRelease removes the directory a remote --from unpacked into when
 // the digest or the artifact checks refuse. The removal is best effort: its
-// error is discarded so a cleanup failure cannot replace the refusal, and it
-// does not touch anything outside that directory. security#72 finding 7
-// (ordering half). docs/SPEC-UPDATE.md, "What adopt will never do": a fetched
-// release is checked against a digest that did not travel with the bits, and
-// bytes that fail that check do not stay in --stage for a later local adopt.
-func dropFetchedRelease(dir string) {
+// error is discarded so a cleanup failure cannot replace the refusal. root is
+// --stage, and dir is strictly the <version>/<platform> directory this run
+// created, so nothing outside it is touched. The class rule routes a computed
+// path through safepath.RemoveUnder, which is the one os.RemoveAll that
+// refuses an arbitrary directory (security#72 finding 7, ordering half;
+// docs/SPEC-UPDATE.md, "What adopt will never do").
+func dropFetchedRelease(root, dir string) {
 	if dir == "" {
 		return
 	}
-	_ = os.RemoveAll(dir)
+	// ignored: best-effort cleanup after a refusal; its error must not replace that refusal
+	_ = safepath.RemoveUnder(root, dir)
 }
 
 func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
@@ -462,11 +466,11 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		// question, and a refusal that shows one of them cannot answer it.
 		got, err := fileSum(filepath.Join(into, SumsFile))
 		if err != nil {
-			dropFetchedRelease(fetched)
+			dropFetchedRelease(o.stage, fetched)
 			return refusal(errs, "ADOPT", fmt.Errorf("cannot read the fetched %s: %w (the fetch did not bring a checksum file)", SumsFile, err))
 		}
 		if got != expectSums {
-			dropFetchedRelease(fetched)
+			dropFetchedRelease(o.stage, fetched)
 			return refusal(errs, "ADOPT", refuse(
 				"do not adopt this release; the bits on that machine are not the bits that were cut",
 				"the %s fetched from %s has digest %s, but %s says the release %s was cut with digest %s", SumsFile, fromHost, got, sumsFrom, o.version, expectSums))
@@ -476,7 +480,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	local := ArtifactDir(localRoot, o.version, goos, goarch)
 	arts, err := ReadSums(local)
 	if err != nil {
-		dropFetchedRelease(fetched)
+		dropFetchedRelease(o.stage, fetched)
 		if os.IsNotExist(err) {
 			return refusal(errs, "ADOPT", refuse(
 				fmt.Sprintf("build it first: nova-update release build --version %s --out %s --source <checkout> --platform %s-%s", o.version, o.from, goos, goarch),
@@ -489,7 +493,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// the fleet is left in four different states while somebody reads them.
 	progress(errs, "verifying %d artifacts against %s", len(arts), SumsFile)
 	if _, err := VerifyArtifacts(local, arts); err != nil {
-		dropFetchedRelease(fetched)
+		dropFetchedRelease(o.stage, fetched)
 		return refusal(errs, "ADOPT", err)
 	}
 	// THE RELEASE INSTALLS ITSELF. The nova-update that runs the remote
