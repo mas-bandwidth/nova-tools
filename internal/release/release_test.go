@@ -477,6 +477,30 @@ func TestCutRefusesAVersionNoLaterStepCouldCheck(t *testing.T) {
 	}
 }
 
+func TestValidVersionRefusesAPrereleaseSuffixCarryingShellSyntax(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range []string{
+		"v9.9.9-;id>pwned",
+		"v9.9.9-x/../../pwn",
+		"v9.9.9-$(id)",
+		"v9.9.9-a b",
+		"v9.9.9-`id`",
+	} {
+		if err := ValidVersion(v); err == nil {
+			assert.Error(t, err, "accepted %q", v)
+		}
+	}
+	for _, v := range []string{
+		"v0.15.3-0.20260918044559-d576bf6bbabb",
+		"v1.0.0-rc1",
+	} {
+		if err := ValidVersion(v); err != nil {
+			assert.NoError(t, err, "refused %q: %v", v, err)
+		}
+	}
+}
+
 func TestEveryReleaseVerbNamesItsMissingFlagsAtOnce(t *testing.T) {
 	t.Parallel()
 
