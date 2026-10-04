@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -374,4 +375,60 @@ func TestThePushReachesTheSeatOverTheBus(t *testing.T) {
 	assert.Contains(t, errs, "(dial tcp: connection refused); its file stands", errs)
 	assert.Contains(t, out, "INBOX OK pushed="+held.Notes[0]+" file="+heldFile+"\n", out)
 	assert.FileExists(t, heldFile)
+}
+
+// The backlog alarms reach the seat over nova-bus (docs/SPEC-SPRINT.md section 14, the
+// backlog alarms, and "Handing over the seat"): tick --backlog-alarm, past the review
+// alarm, writes one note to the coordinator, and inbox --wait --push seat writes it to
+// the holder's inbox and sends it as one message; once an episode, so a second tick and
+// a second push send nothing more. The twin store, the test clock, internal/bus's Fake.
+func TestTheBacklogAlarmReachesTheSeatOverTheBus(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.inReview(1)
+	ta.ok("start")
+	ta.ok("tick --backlog-alarm")
+	assert.NotContains(t, ta.ok("inbox"), sprint.NBacklogReview, "a result just in: nothing")
+	ta.mu.Lock()
+	ta.now = ta.now.Add(31 * time.Minute)
+	ta.mu.Unlock()
+	ta.ok("tick")
+	assert.NotContains(t, ta.ok("inbox"), sprint.NBacklogReview, "a tick by hand without --backlog-alarm says nothing")
+	ta.ok("tick --backlog-alarm")
+	ta.ok("tick --backlog-alarm")
+	inbox := ta.ok("inbox")
+	assert.Equal(t, 1, strings.Count(inbox, sprint.NBacklogReview), inbox)
+	assert.Contains(t, inbox, "1 in review, the oldest result waiting 31m0s (stream s1), past the alarm of 30m0s", inbox)
+
+	home := t.TempDir()
+	ta.a.home = func() (string, error) { return home, nil }
+	require.NoError(t, os.MkdirAll(filepath.Join(home, "coordinator-working", "inbox"), 0o755))
+	b := &bus.Bus{Store: bus.NewFake(t0, "coordinator")}
+	ta.a.bus = func(ctx context.Context, m bus.Message) error { _, err := b.Send(ctx, m); return err }
+	in := ta.interruptible()
+	ta.atSleep(func(n int) {
+		if n == 2 {
+			in.now(t)
+		}
+	})
+	out := ta.ok("inbox --wait --push seat --timeout 200ms")
+	g := ta.group(sprint.NBacklogReview, "")
+	assert.Contains(t, out, "INBOX OK bus=coordinator group="+g.ID+"\n", out)
+	var alarms []bus.Message
+	for {
+		e, ok, err := b.Recv(context.Background(), "coordinator", 0)
+		require.NoError(t, err)
+		if !ok {
+			break
+		}
+		_, err = b.AckEntry(context.Background(), "coordinator", e.Entry)
+		require.NoError(t, err)
+		if m := e.Message(); strings.Contains(m.Subject, sprint.NBacklogReview) {
+			alarms = append(alarms, m)
+		}
+	}
+	require.Len(t, alarms, 1, "one message for the episode")
+	assert.Equal(t, "sprint happened "+g.ID+": "+sprint.NBacklogReview+" (1 new)", alarms[0].Subject)
+	assert.Contains(t, alarms[0].Body, "past the alarm of 30m0s", alarms[0].Body)
 }

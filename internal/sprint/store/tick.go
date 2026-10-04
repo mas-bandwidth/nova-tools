@@ -891,7 +891,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	}
 	at := snap.Epoch
 	res.Tables = newTables()
-	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm}
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm, BacklogAlarm: st.BacklogAlarm}
 	// the first read as it was: the twin it came from moves on with every
 	// part's writes, and with any other writer in this process
 	first := *snap
@@ -945,8 +945,8 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	// 4. The end: the checks, the deadlines, the overdue judgments and the
 	// done part, once the tables are settled.
 	t.res.Order = append(t.res.Order, "end")
-	// the machine's own answers, when the loop gives them: the rule parts and the idle alarm
-	end := sprint.TickEndWith(t.req.AnswerRules, t.req.IdleAlarm)
+	// the machine's own answers, when the loop gives them: the rule parts and the alarms
+	end := sprint.TickEndWith(t.req.AnswerRules, t.req.IdleAlarm, t.req.BacklogAlarm)
 	if out := t.parts("", end); out != tickOn && out != tickDone {
 		return t.end(out, last, unfinished, seen)
 	}

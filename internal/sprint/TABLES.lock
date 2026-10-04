@@ -85,6 +85,22 @@
 # are as they were. No column changed, so the lines below are unchanged. Held by
 # TestAFriendsStatusIsTheFriendsRuleOverItsBeatsAndItsHold and
 # TestADownFriendShowsNoneWorking.
+#
+# Amendment, 2026-10-04, the friends table, Glenn's words (card verb-seat-install-pushb):
+# "trust but VERIFY"; "I want to trust the ok%"; "Mechanical. You know the drill.";
+# "Are they actually doing the work that is shown in the friend table? Really?";
+# "i don't want dollar amounts for friends. token counts are fine." The friends table
+# shows no dollar amount, and must not: its columns are below (ready, working, width,
+# done, ok%, status; ok and failed hidden), there is no cost column on it, and the
+# dashboard draws the same cells (internal/sprintdash/page/app.js, fleetLike without
+# load). A friend's cost, where one is shown, is a token count, never dollars. No shape
+# changes in this change, so the lines below are unchanged. Not done here, held as a
+# brief defect: a token-count column (a new column, and a record of a friend's tokens
+# that the store does not hold yet) and an ok% counted only on work a reader verified
+# (today ok counts a friend's job that finished not failed); each is a shape or meaning
+# change of its own, to be made with this lock in the same change. Held by
+# TestSprintTablesAreLocked and the friends table's golden text,
+# TestTheFriendsTableShowsAfterMergeAndBeforeFleet (cmd/nova-sprint).
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown

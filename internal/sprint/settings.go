@@ -83,12 +83,18 @@ type SetReq struct {
 	Streams  []string `json:",omitempty"`
 	ReadTier string   `json:",omitempty"`
 	DealtMax string   `json:",omitempty"`
-	Who      string
+	// AlarmReviewAge and AlarmMergingAge are the backlog alarms' ages (backlog.go): a
+	// duration above zero, default, or off.
+	AlarmReviewAge  string `json:",omitempty"`
+	AlarmMergingAge string `json:",omitempty"`
+	Who             string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
 // the coordinator, a read tier that is not flash, pro or default, a dealt bound that
-// is not a positive duration, nothing to set, or a stream that is not a stream.
+// is not a positive duration, a backlog alarm's age that is not a duration above zero,
+// default or off (docs/SPEC-SPRINT.md section 14, the backlog alarms), nothing to set,
+// or a stream that is not a stream.
 func Set(s *Snapshot, r SetReq) Plan {
 	var p Plan
 	var why []string
@@ -103,8 +109,16 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--dealt-max wants a duration above zero (6h, 90m), or "+ReadTierDefault+" for 3 times the take deadline; found "+r.DealtMax)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" {
-		why = append(why, "nothing to set: --read-tier or --dealt-max")
+	for _, a := range [][2]string{{"--alarm-review-age", r.AlarmReviewAge}, {"--alarm-merging-age", r.AlarmMergingAge}} {
+		if a[1] != "" && !validAlarmAge(a[1]) {
+			why = append(why, a[0]+" wants a duration above zero (30m, 2h), "+ReadTierDefault+" for "+BacklogAgeDefault.String()+", or "+AlarmOff+" to take the alarm off; found "+a[1])
+		}
+		if a[1] != "" && len(r.Streams) > 0 {
+			why = append(why, a[0]+" is the sprint's, not a stream's: nova-sprint set "+a[0]+" "+a[1])
+		}
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.AlarmReviewAge == "" && r.AlarmMergingAge == "" {
+		why = append(why, "nothing to set: --read-tier, --dealt-max, --alarm-review-age or --alarm-merging-age")
 	}
 	if len(r.Streams) > 0 && r.DealtMax != "" {
 		why = append(why, "--dealt-max is the sprint's, not a stream's: nova-sprint set --dealt-max "+r.DealtMax)
@@ -134,7 +148,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 	// a property is written with its word, default included: the readers take
 	// default for none (DealtMax, readTierSetting)
 	var moved []string
-	for _, kv := range [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}} {
+	for _, kv := range [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}, {PropAlarmReviewAge, r.AlarmReviewAge}, {PropAlarmMergingAge, r.AlarmMergingAge}} {
 		if kv[1] == "" {
 			continue
 		}
@@ -153,6 +167,8 @@ func orDefault(v, name string) string {
 		return v
 	case name == PropDealtMax:
 		return fmt.Sprintf("default (%s, 3 times the take deadline)", DealtMaxDefault)
+	case name == PropAlarmReviewAge || name == PropAlarmMergingAge:
+		return fmt.Sprintf("default (%s)", BacklogAgeDefault)
 	}
 	return "default (each card's own tier)"
 }

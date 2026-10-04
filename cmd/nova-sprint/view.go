@@ -51,9 +51,6 @@ const viewSchema = 1
 const (
 	// viewWindow is the recent window the views count in: landed and finished in the last 30m.
 	viewWindow = 30 * time.Minute
-	// viewBacklogAge is how long the oldest result waits in review or merging before the
-	// backlog is an alarm.
-	viewBacklogAge = 30 * time.Minute
 	// viewStaleReport is how long a friend holding cards goes without a beat before her row
 	// needs a look.
 	viewStaleReport = 15 * time.Minute
@@ -474,15 +471,11 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			S:    fmt.Sprintf("nothing is ready and %d cards wait (%d held)", n.Waiting, n.Held),
 			Next: release("nova-sprint needs --roots")})
 	}
-	for _, col := range []sprint.State{sprint.Review, sprint.Merging} {
-		oldest, stream, count := time.Duration(0), "", 0
-		for _, c := range s.Work.Column(col) {
-			count++
-			if age := resultAge(s, c, now); age > oldest {
-				oldest, stream = age, c.Row
-			}
-		}
-		if oldest < viewBacklogAge {
+	// the backlog alarms, as the tick pushes them (sprint.TickBacklog; docs/SPEC-SPRINT.md
+	// section 14, the backlog alarms): the oldest result past the column's alarm
+	for _, col := range sprint.BacklogCols {
+		count, oldest, stream := sprint.Backlog(s, col, now)
+		if alarm, on := s.BacklogAge(col); !on || count == 0 || oldest < alarm {
 			continue
 		}
 		next := "nova-sprint ask --stream " + stream
@@ -542,20 +535,6 @@ func judgmentItem(g sprint.Group, now time.Time) viewItem {
 		what = strings.TrimSpace("stream " + g.Stream + ": " + what)
 	}
 	return viewItem{K: "j:" + g.ID, T: itemJudgment, W: g.Type, B: g.Behind, N: g.Size, OD: g.Overdue, D: strings.Join(g.Decisions, "|"), S: viewClip(what), Next: next, age: now.Sub(g.Oldest)}
-}
-
-// resultAge is how long a primary's result has waited: since its newest work card finished.
-func resultAge(s *sprint.Snapshot, pr *sprint.Card, now time.Time) time.Duration {
-	var newest time.Time
-	for _, c := range s.Fleet.Of(pr.ID) {
-		if t, err := time.Parse(time.RFC3339, c.F("finished")); err == nil && t.After(newest) {
-			newest = t
-		}
-	}
-	if newest.IsZero() {
-		return 0
-	}
-	return now.Sub(newest)
 }
 
 // coordinatorSum is the view's first line: the seat, what needs it, and the sprint's counts.

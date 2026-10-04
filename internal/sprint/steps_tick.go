@@ -165,6 +165,10 @@ type TickReq struct {
 	// IdleAlarm says the tick watches for an idle fleet and tells the coordinator why
 	// (idle.go; run --idle-alarm).
 	IdleAlarm bool
+	// BacklogAlarm says the tick watches the review and merging backlogs and tells the
+	// coordinator when the oldest result waits past its alarm (backlog.go; run
+	// --backlog-alarm).
+	BacklogAlarm bool
 }
 
 func (r TickReq) who() string {
@@ -259,9 +263,10 @@ var TickEnd = []TickPartDef{
 // deadlines, so a judgment the end raises is answered in its own tick, and before the
 // overdue part, each a step that may write any table, as a coordinator's verb does, its
 // work-table changes queued for the next pump; with idle (TickReq.IdleAlarm, run
-// --idle-alarm), the idle alarm (TickIdle) after the overdue part, before the done part.
-// With neither the end is TickEnd's alone, as before them.
-func TickEndWith(rules, idle bool) []TickPartDef {
+// --idle-alarm), the idle alarm (TickIdle) after the overdue part, before the done part;
+// with backlog (TickReq.BacklogAlarm, run --backlog-alarm), the backlog alarms
+// (TickBacklog) after it. With none of them the end is TickEnd's alone, as before them.
+func TickEndWith(rules, idle, backlog bool) []TickPartDef {
 	out := append([]TickPartDef(nil), TickEnd[:2]...)
 	if rules {
 		out = append(out, TickRules...)
@@ -269,6 +274,9 @@ func TickEndWith(rules, idle bool) []TickPartDef {
 	out = append(out, TickEnd[2])
 	if idle {
 		out = append(out, TickPartDef{PartIdle, TickIdle})
+	}
+	if backlog {
+		out = append(out, TickPartDef{PartBacklog, TickBacklog})
 	}
 	return append(out, TickEnd[3:]...)
 }

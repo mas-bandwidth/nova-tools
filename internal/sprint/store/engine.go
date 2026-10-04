@@ -82,6 +82,10 @@ type Store struct {
 	// IdleAlarm says the tick watches for an idle fleet and pushes the coordinator one note
 	// of why an episode (run --idle-alarm, on by default there; sprint.TickIdle).
 	IdleAlarm bool
+	// BacklogAlarm says the tick watches the review and merging backlogs and pushes the
+	// coordinator one note an episode when the oldest result waits past its alarm (run
+	// --backlog-alarm, on by default there; sprint.TickBacklog).
+	BacklogAlarm bool
 	// Stats is what the store's reads cost (stats.go); nil is made on the
 	// first tick. Its pinned copies share it.
 	Stats *Stats

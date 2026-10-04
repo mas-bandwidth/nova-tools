@@ -51,7 +51,9 @@ var AllOrder = []string{Work, Readers, Merge, Friends, Fleet}
 // as text, summed; ok and failed (hidden) count her jobs done ok and done
 // failed, and done and ok% are the table's formulas over them, the footer
 // pooling ok% over the friends; status is text with no fold. The rows are the
-// friends'; where draws them from store.FriendRows.
+// friends'; where draws them from store.FriendRows. No column is a dollar amount
+// (TABLES.lock, the amendment of 2026-10-04, the owner: "i don't want dollar amounts
+// for friends. token counts are fine.").
 func FriendsDef() ntable.Table {
 	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,ok,failed")
 	if err != nil {

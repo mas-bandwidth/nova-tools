@@ -48,8 +48,8 @@ func init() {
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "", "stop", (*app).cmdMachineStop},
-		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRun},
-		{"tick", "[--answer-rules] [--idle-alarm]", "tick", (*app).cmdTick},
+		{"run", "[--answer-rules=false] [--idle-alarm=false] [--backlog-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRun},
+		{"tick", "[--answer-rules] [--idle-alarm] [--backlog-alarm]", "tick", (*app).cmdTick},
 		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
@@ -90,7 +90,7 @@ func init() {
 		{"reader retire", "<reader>...", "reader retire reader-d", (*app).cmdReaderRetire},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
 		{"stream set", "<stream>... --read-tier <flash|pro|default>", "stream set skips --read-tier pro", (*app).cmdStreamSet},
-		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
+		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--alarm-review-age <duration|default|off>] [--alarm-merging-age <duration|default|off>]", "set --read-tier pro", (*app).cmdSet},
 		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
@@ -2592,11 +2592,14 @@ card's own tier, and default takes the stream's off.`) + "\n"
 
 // cmdSet writes the sprint's settings (sprint.Set): its read tier, the tier every
 // card's reads are raised to, and its dealt bound, how long a work card may wait
-// dealt and never taken before it is a judgment (nova-tools#5096 items 22, 27).
+// dealt and never taken before it is a judgment (nova-tools#5096 items 22, 27), and
+// the backlog alarms' ages (docs/SPEC-SPRINT.md section 14, the backlog alarms).
 func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("set")
 	tier := fs.String("read-tier", "", "the tier every card's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: each card's own tier)")
 	dealt := fs.String("dealt-max", "", fmt.Sprintf("how long a work card may wait dealt and never taken (in its member's ready queue, or withdrawn) before it is a judgment: a duration, or default (%s, 3 times the take deadline); a taken card's own deadline starts at its take", sprint.DealtMaxDefault))
+	reviewAge := fs.String("alarm-review-age", "", fmt.Sprintf("the review backlog alarm: when the oldest result in review has waited this long, the tick (run --backlog-alarm) pushes the coordinator one note an episode; a duration, default (%s), or off", sprint.BacklogAgeDefault))
+	mergingAge := fs.String("alarm-merging-age", "", fmt.Sprintf("the merging backlog alarm: when the oldest result merging has waited this long, the tick (run --backlog-alarm) pushes the coordinator one note an episode; a duration, default (%s), or off", sprint.BacklogAgeDefault))
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
@@ -2608,7 +2611,7 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
 	}
-	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, Who: c.actor}), stdout, stderr)
+	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, AlarmReviewAge: *reviewAge, AlarmMergingAge: *mergingAge, Who: c.actor}), stdout, stderr)
 }
 
 // cmdPromoted is the coordinator's word that the sprint branch was promoted into dev
