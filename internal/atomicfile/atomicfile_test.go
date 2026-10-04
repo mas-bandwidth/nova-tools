@@ -107,7 +107,7 @@ func referencePerm(dir, name string, perm os.FileMode) os.FileMode {
 		return perm
 	}
 	_ = f.Close()
-	defer os.Remove(ref)
+	defer func() { _ = os.Remove(ref) }() // ignored: a reference file removed on return; it may already be gone
 	st, err := os.Stat(ref)
 	if err != nil {
 		return perm
