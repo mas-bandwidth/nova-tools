@@ -1,4 +1,4 @@
-| `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts || `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` || `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>]` |# Command reference
+# Command reference
 
 [Back to Nova Tools](../README.md)
 
@@ -820,13 +820,13 @@ pong are real for it all the same.
 
 | Command | What it does |
 | --- | --- |
-| `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>]` | The daemon: the recv loop with the deliver adapter, the beat, the ping and pong machine; until a signal |
+| `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>]` | The daemon: the recv loop with the deliver adapter, the beat, the ping and pong machine; until a signal |
 | `install --as <me> --harness <h> --dir <d> [...] [--launchd-log <file>] [--dry-run]` | Writes and loads the launchd agent `com.nova.friend-<me>`; idempotent |
 | `uninstall --as <me> [--dry-run]` | Boots the agent out and removes its plist |
 | `ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>]` | One `PING <nonce>` on the friend's stream, with the seat line |
-| `pong --as <me> --nonce <n> [--dir <d>] [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>]` | The session's answer: one note to the coordinator, and the pong file |
+| `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` | The session's answer: one note to the coordinator, and the pong file |
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
-| `status --as <me> --dir <d>` | The daemon's state, the last pong, the queue file's counts |
+| `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
 Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the
