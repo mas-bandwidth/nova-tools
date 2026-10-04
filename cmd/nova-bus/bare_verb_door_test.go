@@ -16,7 +16,8 @@ import (
 // are read from the usage block so a verb added later is covered without editing this
 // test; they are not listed here.
 func TestEveryBareVerbRefusalNamesItsDoor(t *testing.T) {
-	t.Setenv("NOVA_BUS_RECEIPT_MAX_WORDS", "")
+	t.Parallel()
+	env := runEnv{getenv: func(string) string { return "" }}
 
 	// Every verb the usage block names, run BARE. A verb that exits 0 or 1 with no
 	// flags is a valid invocation and not this test's business; only exit 2 is.
@@ -27,7 +28,7 @@ func TestEveryBareVerbRefusalNamesItsDoor(t *testing.T) {
 			continue
 		}
 		seen[v.verb] = true
-		r := invoke(t, "", v.verb)
+		r := env.invoke(t, "", v.verb)
 		if r.code == 0 || r.code == 1 {
 			continue
 		}
@@ -60,7 +61,7 @@ func TestEveryBareVerbRefusalNamesItsDoor(t *testing.T) {
 		{"nova-bus wait timeout", []string{"wait", "--bus", busDir, "--as", "Ada", "--remote", "origin", "--branch", "main", "--receipt-max-words", "1"}},
 		{"nova-bus check baseline", []string{"check", "--bus", busDir}},
 	} {
-		r := invoke(t, "", tc.args...)
+		r := env.invoke(t, "", tc.args...)
 		if r.code != 2 {
 			assert.Failf(t, "assertion failed", "%s: exit = %d, want 2 (could not run); stderr: %q", tc.label, r.code, r.stderr)
 			continue

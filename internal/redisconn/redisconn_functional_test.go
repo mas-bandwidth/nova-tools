@@ -391,7 +391,7 @@ func TestOpenAsAnACLUser(t *testing.T) {
 func TestOpenToAClosedPort(t *testing.T) {
 	t.Parallel()
 	addr := net.JoinHostPort("127.0.0.1", testredis.FreePort(t))
-	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
+	ctx, cancel := context.WithTimeout(t.Context(), redisconn.OpenTimeout)
 	defer cancel()
 	conn, err := redisconn.Open(ctx, redisconn.Options{Env: redisconn.GeneralEnv}, environment(map[string]string{redisconn.GeneralEnv.Addr: addr}))
 	if bound := ctx.Err(); bound != nil {

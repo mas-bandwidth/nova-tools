@@ -183,7 +183,10 @@ func TestLockScanCountsEveryProcessItSaw(t *testing.T) {
 	}
 
 	rep, err = clearStaleIndexLockReport(dir, time.Now(), func() ([]gitProc, error) { return nil, ownershipUnknownErr("ps failed") }, indexLockOwner, self)
-	require.True(t, err != nil && !rep.Scanned && !rep.Cleared && rep.Scan == (LockScan{}), "a scan that failed as a whole: report=%+v err=%v, want no counts and the failure", rep, err)
+	require.True(t, err != nil, "a scan that failed as a whole: report=%+v err=%v, want no counts and the failure", rep, err)
+	require.True(t, !rep.Scanned, "a scan that failed as a whole: report=%+v err=%v, want no counts and the failure", rep, err)
+	require.True(t, !rep.Cleared, "a scan that failed as a whole: report=%+v err=%v, want no counts and the failure", rep, err)
+	require.True(t, rep.Scan == (LockScan{}), "a scan that failed as a whole: report=%+v err=%v, want no counts and the failure", rep, err)
 
 	rep, err = clearStaleIndexLockReport(dir, time.Now(), func() ([]gitProc, error) { return classifyViews(views[:1], self) }, indexLockOwner, self)
 	require.NoError(t, err, "only a foreign git: report=%+v err=%v, want cleared with foreign=1", rep, err)

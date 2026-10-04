@@ -170,7 +170,7 @@ func TestTheDistanceAtWallTimeThroughARealStore(t *testing.T) {
 	for _, route := range farRoutes {
 		t.Run(route.name, func(t *testing.T) {
 			addr := route.via(t, store)
-			ctx, cancel := context.WithTimeout(context.Background(), farCeiling)
+			ctx, cancel := context.WithTimeout(t.Context(), farCeiling)
 			t.Cleanup(cancel)
 			c := farWallClient(ctx, t, addr)
 

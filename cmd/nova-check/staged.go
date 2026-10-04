@@ -495,7 +495,7 @@ func stagedBlobHeads(root string, recs []stagedRecord) (map[string]stagedBlobHea
 		}
 		return nil
 	}()
-	stdin.Close()
+	_ = stdin.Close() // ignored: the read loop above reports a failed write, and Wait below reports the child's exit
 	// Wait always runs, so the batch is never left writing into a closed
 	// reader. An early read error leaves it with unread requests; its
 	// complaint is reported only when nothing louder already happened.

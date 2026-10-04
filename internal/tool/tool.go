@@ -13,7 +13,12 @@
 // the object stay one value. A tool whose exit 0 already means CLEAR sets
 // HelpRefused, and `<verb> -h` is then a refusal at exit 2 naming `help`, never
 // an answer at exit 0. A tool may name a default verb (`<tool> <file>`) and its
-// own status words (STALE beside FAIL). A command holds only what its verbs do.
+// own status words (STALE beside FAIL). A verb may be hidden (Verb.Hidden): it
+// runs and answers `-h`, and the banner, the usage block and the unknown-verb
+// list do not show it, a probe step verb a user never types. A verb that counts
+// what it read names the fact (Verb.Looks), and an OK over that count at zero
+// is a FAILED unless --allow-empty accepts nothing as the answer. A command
+// holds only what its verbs do.
 package tool
 
 import (
@@ -25,6 +30,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -95,8 +101,15 @@ type Verb struct {
 	Detail    string         // lines `help <verb>` prints above its flags: a format, a worked example
 	ExitTable string         // this verb's exit codes, quoted by its -h; "" quotes the tool's
 	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
+	Hidden    bool           // the verb runs and answers -h and `help <it>`, but the banner, the usage block and the verb lists a refusal names do not show it: a probe step verb a user never types (STANDARD §3, help is never a refusal; §2, a list names the verbs there are for the reader)
+	Looks     string         // the name of the fact that counts what the verb read: an OK with that fact 0 is a FAILED naming it and the same command with --allow-empty, the flag the skeleton adds to a verb that declares Looks, since a check that looked at nothing is not green (STANDARD §2, exit codes tell the truth)
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
 	Run       func(c *Call) *Out
+	// RefuseExit is the code a refusal of this verb exits, 0 meaning 2: a
+	// wrapper whose own refusal stands apart from the child it runs (a
+	// missing store, a bad flag) states it once here, and both the exit and
+	// the verb's exit table in its help follow (skeleton contract 2.5).
+	RefuseExit int
 }
 
 // Effect is what running a verb does beyond printing: one of the three below,
@@ -274,7 +287,8 @@ func (t *Tool) help(stdout, stderr io.Writer, code *int) {
 
 // writeHelp prints one verb's help: its lines quoted from the banner with its
 // flags and the exit codes (the verb's own, Verb.ExitTable, where it states
-// them), then the verb's effect, on stdout.
+// them, and the code its own refusal exits, Verb.RefuseExit, where it declares
+// one), then the verb's effect, on stdout.
 func (t *Tool) writeHelp(name string, fs *flag.FlagSet, stdout io.Writer) {
 	effect, detail, exit := Effect("unstated"), "", []string{"exit codes: " + t.ExitTable}
 	for _, v := range t.verbs() {
@@ -283,8 +297,13 @@ func (t *Tool) writeHelp(name string, fs *flag.FlagSet, stdout io.Writer) {
 			if v.Effect != "" {
 				effect = v.Effect
 			}
+			table := t.ExitTable
 			if v.ExitTable != "" {
-				exit = []string{"exit codes: " + v.ExitTable}
+				table = v.ExitTable
+			}
+			exit = []string{"exit codes: " + table}
+			if v.RefuseExit != 0 {
+				exit = append(exit, "  "+name+": refused, exit "+strconv.Itoa(v.RefuseExit))
 			}
 		}
 	}
@@ -371,9 +390,24 @@ func (t *Tool) verbs() []Verb {
 	})
 }
 
+// shown is the verbs every list the tool prints names: the banner's usage and
+// example blocks, the --json sentence and a refusal's verb list. A hidden verb
+// (Verb.Hidden) is off every one of them, while it runs and answers help like
+// any verb (STANDARD §2: an unknown name is answered with the names there are
+// for the reader, and a probe step verb is not one of them).
+func (t *Tool) shown() []Verb {
+	var vs []Verb
+	for _, v := range t.verbs() {
+		if !v.Hidden {
+			vs = append(vs, v)
+		}
+	}
+	return vs
+}
+
 func (t *Tool) names() []string {
 	var names []string
-	for _, v := range t.verbs() {
+	for _, v := range t.shown() {
 		names = append(names, v.Name)
 	}
 	return names
@@ -392,7 +426,7 @@ func (t *Tool) Banner() string {
 		b.WriteString(HowLabel + how + "\n\n")
 	}
 	b.WriteString("usage:\n")
-	for _, v := range t.verbs() {
+	for _, v := range t.shown() {
 		for _, l := range lines(v.Usage) {
 			fmt.Fprintf(&b, "  %s %s\n", t.Name, l)
 		}
@@ -402,7 +436,7 @@ func (t *Tool) Banner() string {
 		b.WriteString(t.UsageNote + "\n\n")
 	}
 	var own []string
-	for _, v := range t.verbs() {
+	for _, v := range t.shown() {
 		if v.flags().prints {
 			own = append(own, v.Name)
 		}
@@ -418,7 +452,7 @@ func (t *Tool) Banner() string {
 	b.WriteString(json + ": " + why + ". A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
 	b.WriteString("example:\n")
-	for _, v := range t.verbs() {
+	for _, v := range t.shown() {
 		for _, l := range lines(v.Example) {
 			fmt.Fprintf(&b, "  %s %s\n", t.Name, l)
 		}
@@ -471,6 +505,15 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	if o == nil {
 		o = Fail("the verb returned no result") // never silent
 	}
+	if v.Looks != "" && o.Status == OK && !c.Bool("allow-empty") && o.lookedAtNothing(v.Looks) {
+		// No green over nothing (STANDARD §2: exit codes tell the truth): the
+		// FAILED names the count, and its remedy is the same command with the
+		// flag that accepts nothing as the answer.
+		o.Status, o.Exit = Failed, 1
+		o.Why = append(o.Why, "looked at nothing: "+v.Looks+"=0")
+		o.Remedy = strings.TrimSpace(t.Name+" "+v.Name+" "+strings.Join(args, " ")) +
+			" --allow-empty if nothing is the answer"
+	}
 	if c.Given("dry-run") && c.Bool("dry-run") {
 		switch {
 		case !c.dryRead: // a tool bug its own tests meet: the verb ran as if for real
@@ -494,6 +537,9 @@ func (v Verb) flags() *Flags {
 	if v.DryRun {
 		f.Bool("dry-run", false, "print what the verb would write and write nothing")
 	}
+	if v.Looks != "" { // the skeleton adds the flag to a verb that declares Looks
+		f.Bool("allow-empty", false, "answer OK even when the count of what the verb read ("+v.Looks+") is 0")
+	}
 	if !f.prints {
 		f.Bool("json", false, "print the result as one JSON object instead of lines")
 	}
@@ -506,6 +552,16 @@ func (v Verb) flags() *Flags {
 // JSON always on stdout. A status word the tool does not declare is a tool
 // bug its own tests meet, never printed as if it were one.
 func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int {
+	if o.printed && (v == nil || !v.flags().prints) {
+		// A raw exit is the one a verb that declared Prints returns; from any
+		// other it escapes the one envelope, a tool bug (skeleton contract
+		// 2.5 and 1.3).
+		name := "the verb"
+		if v != nil {
+			name = v.Name
+		}
+		o = Fail("verb " + name + " returned a raw exit without Prints")
+	}
 	if o.Word != "" && (o.Status == Refused || !slices.Contains(t.Words, o.Word)) {
 		o = Fail(fmt.Sprintf("the verb answered %s %s, a status word %s does not declare (Tool.Words) or one on a refusal",
 			o.Status, o.Word, t.Name))
@@ -517,6 +573,9 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 	}
 	if o.Status == Refused && o.Remedy == "" {
 		o.Remedy = t.Name + " help"
+	}
+	if !o.printed && o.Status == Refused && v != nil && v.RefuseExit != 0 {
+		o.Exit = v.RefuseExit
 	}
 	if o.printed {
 		return o.Exit

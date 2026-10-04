@@ -2,9 +2,10 @@ package tokens
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -185,9 +186,10 @@ func (n *note) clean() bool { return n.dead == nil && len(n.lineErrs) == 0 }
 
 // ReadBus reads every lane the roster names and returns ONE source per lane, because the
 // label of a self-report is the lane owner's name whatever the `who` field of a line
-// inside it says.
-func ReadBus(dir string, rules *Rules, at time.Time) []*Source {
-	roster, err := laneNames(dir)
+// inside it says. The lanes are read through the caller's fs.FS, rooted at dir
+// (os.DirFS(dir) in main, fstest.MapFS in a test), and dir is the path the report names.
+func ReadBus(dir string, fsys fs.FS, rules *Rules, at time.Time) []*Source {
+	roster, err := laneNames(fsys)
 	if err != nil {
 		s := &Source{Label: KindBus, Kind: KindBus, Path: dir, Reports: nil, Basis: UTC}
 		s.Stat.Files = 0
@@ -201,11 +203,12 @@ func ReadBus(dir string, rules *Rules, at time.Time) []*Source {
 	byLane := map[string][]*note{}
 	sources := map[string]*Source{}
 	for _, name := range roster {
-		s := &Source{Label: Label(KindBus, name), Kind: KindBus, Path: filepath.Join(dir, "from-"+name), Basis: UTC}
+		laneDir := "from-" + name
+		s := &Source{Label: Label(KindBus, name), Kind: KindBus, Path: filepath.Join(dir, laneDir), Basis: UTC}
 		sources[name] = s
-		ents, err := os.ReadDir(s.Path)
+		ents, err := fs.ReadDir(fsys, laneDir)
 		if err != nil {
-			if !os.IsNotExist(err) {
+			if !errors.Is(err, fs.ErrNotExist) {
 				s.unreadable(s.Path, err.Error())
 			}
 			continue
@@ -213,12 +216,13 @@ func ReadBus(dir string, rules *Rules, at time.Time) []*Source {
 		var files []string
 		for _, e := range ents {
 			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-				files = append(files, filepath.Join(s.Path, e.Name()))
+				files = append(files, filepath.Join(laneDir, e.Name()))
 			}
 		}
 		sort.Strings(files)
-		for _, path := range files {
-			raw, err := readSource(path)
+		for _, fname := range files {
+			path := filepath.Join(dir, fname)
+			raw, err := readSourceFS(fsys, fname)
 			if err != nil {
 				s.unreadable(path, err.Error())
 				continue
@@ -250,8 +254,8 @@ func ReadBus(dir string, rules *Rules, at time.Time) []*Source {
 }
 
 // laneNames reads the roster and returns the lane owners' slugs, sorted.
-func laneNames(dir string) ([]string, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, "participants.json"))
+func laneNames(fsys fs.FS) ([]string, error) {
+	raw, err := fs.ReadFile(fsys, "participants.json")
 	if err != nil {
 		return nil, err
 	}
