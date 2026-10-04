@@ -161,3 +161,24 @@ func assertBound(t testing.TB, err error, bound string) {
 	assert.Contains(t, msg, bound, "refusal does not name --%s: %s", bound, msg)
 	assert.Contains(t, msg, "work.work", "refusal does not name the file: %s", msg)
 }
+
+// TestTheReaderRefusesAnIntegerThatOverflowsInt64 pins security#82 finding 1:
+// the integer reader must refuse any number that does not fit in int64 instead
+// of wrapping silently.
+func TestTheReaderRefusesAnIntegerThatOverflowsInt64(t *testing.T) {
+	t.Parallel()
+	f, err := worklang.Read("n.work", []byte("9223372036854775807"), testLimits())
+	require.NoError(t, err)
+	require.Equal(t, worklang.Integer, f.Kind)
+	assert.Equal(t, int64(9223372036854775807), f.Int)
+
+	for _, s := range []string{"9223372036854775808", "18446744073709551623", "1234567890123456789012345678901234567890"} {
+		_, err := worklang.Read("n.work", []byte(s), testLimits())
+		ref := assertRefusal(t, err)
+		assert.Contains(t, ref.Error(), "forbidden token at byte=0", "%s: %s", s, ref.Error())
+	}
+
+	f, err = worklang.Read("n.work", []byte("42"), testLimits())
+	require.NoError(t, err)
+	assert.Equal(t, int64(42), f.Int)
+}

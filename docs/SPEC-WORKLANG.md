@@ -27,7 +27,8 @@ never syntax. A keyword that is empty or holds a second `:` is refused as a forb
 at its byte. **Every token that starts with a digit, `+` or `-` goes to the integer reader**, so
 it must be an integer: a sign with no digits after it (`-x`, a bare `+`) or digits followed
 directly by a non-boundary byte (`12abc`) is refused as a forbidden token at its byte, never read
-as a symbol.
+as a symbol. An integer must fit in int64; a decimal that overflows is refused as a forbidden
+token at its byte.
 
 **Nothing is evaluated.** Before parsing, a lexical pass refuses every token that would
 evaluate or escape, each at its own byte offset: `#` (a dispatch macro such as `#.`), `|`,
