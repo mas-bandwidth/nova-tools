@@ -84,6 +84,39 @@ func TestTheMemKeepsTheResidueOfADroppedTable(t *testing.T) {
 
 // addRows names every changed row once, in order, whatever order the parts
 // changed them in.
+// TestMemApplyAnswersAnAbsentGuardWithoutACreateInsteadOfPanicking pins
+// security#78 finding 2: an Absent guard with no member record is a legal
+// guard-only manifest and must answer with an unchanged receipt, not panic.
+func TestMemApplyAnswersAnAbsentGuardWithoutACreateInsteadOfPanicking(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMem()
+	cols, err := ntable.ParseColumns("ready")
+	require.NoError(t, err)
+	require.NoError(t, m.Create(ctx, ntable.Table{Name: "demo", Columns: cols}))
+	require.NoError(t, m.RowsAdd(ctx, "demo", []string{"r"}))
+	dt, err := m.table("demo")
+	require.NoError(t, err)
+	rev := fmt.Sprint(dt.rev)
+	guard := ntable.BatchManifest{
+		Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev, OperationID: "guard",
+		Members: []ntable.BatchMemberEntry{{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}}},
+	}
+	r, err := m.Apply(ctx, guard)
+	require.NoError(t, err, "a guard-only absent entry must not panic")
+	require.False(t, r.Replay, "first answer is not a replay")
+	require.Equal(t, "noop", r.Outcome, "a guard-only entry is a no-op")
+	require.Equal(t, rev, fmt.Sprint(r.Before), "the receipt names the revision it guarded")
+
+	dt.members["ghost"] = &memMember{epoch: 0}
+	guard2 := guard
+	guard2.OperationID = "guard2"
+	guard2.ExpectedTableRevision = fmt.Sprint(dt.rev)
+	_, err = m.Apply(ctx, guard2)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "MEMBEREXISTS")
+}
+
 func TestAddRowsKeepsEachTablesRowsSortedAndOnce(t *testing.T) {
 	t.Parallel()
 	r := TickResult{Tables: newTables()}
