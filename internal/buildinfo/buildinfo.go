@@ -177,7 +177,12 @@ func (f Fields) Extra(key string) (string, bool) {
 // It is deliberately strict about the four mandatory tokens -- a caller uses ok to tell
 // "this binary is broken" from "this binary is old", and a parser that accepts a usage
 // refusal can tell neither -- and deliberately open about what follows, because the hurt
-// it exists to end was a reader taking one tool's extra fact for a broken build.
+// it exists to end was a reader taking one tool's extra fact for a broken build. Field
+// three is exactly one <goos>/<goarch> pair as docs/SPEC.md spells the grammar: one
+// separator with nonempty components, the same shape fleet's validPlatform already
+// requires of this field, so the shared parser and its consumers agree. The components
+// are opaque names, never a fixed allowlist, so a valid cross-platform line still
+// parses.
 func Parse(s string) (Fields, bool) {
 	line, _, _ := strings.Cut(s, "\n")
 	tokens := strings.Fields(strings.TrimSuffix(line, "\r"))
@@ -185,7 +190,7 @@ func Parse(s string) (Fields, bool) {
 		return Fields{}, false
 	}
 	goos, goarch, found := strings.Cut(tokens[2], "/")
-	if !found || goos == "" || goarch == "" {
+	if !found || goos == "" || goarch == "" || strings.Contains(goarch, "/") {
 		return Fields{}, false
 	}
 	f := Fields{Tool: tokens[0], Version: tokens[1], Platform: tokens[2], GoVersion: tokens[3]}
