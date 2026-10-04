@@ -106,7 +106,7 @@ func renderPrimary(l Line, fromCol, toCol string, moved bool, by string) string 
 		}
 		return fmt.Sprintf("%s is ready again %s", id, by)
 	case string(Working):
-		if fromCol == string(Review) {
+		if fromCol == string(Review) || fromCol == string(Merging) || l.Verb == "redo" {
 			return fmt.Sprintf("%s reworked %s: attempt %s", id, by, l.Set["attempt"])
 		}
 		return fmt.Sprintf("%s is being worked: attempt %s dealt", id, l.Set["attempt"])
@@ -367,6 +367,8 @@ func Timeline(lines []Line, id string) []Line {
 			continue // the merge card's line says merged and landed
 		case l.Note == nil && l.Table == Merge && l.From == "" && !l.Removed:
 			continue // queued at the accept, which says so
+		case l.Note == nil && l.Table == Merge && strings.HasSuffix(l.To, ":"+string(Returned)) && l.Verb == "redo":
+			continue // the redo merge return is suppressed
 		case l.Note == nil && l.From == l.To && !l.Removed && len(l.Text) == 0 && l.Set["score"] == "":
 			continue // a field set in passing (a stamp, the readers asked): the lines around it say what happened
 		}

@@ -65,6 +65,7 @@ func init() {
 		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
+		{"redo", "<card>... [--stream <s>] [--answers <note>]", "redo s1-2", (*app).cmdRedo},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>] [--one]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first | --before <id>) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
 		{"relink", "<old-id>[,<old-id>...] <new-id> [--reason <text>]", "relink lint-pkg-cairn-t lint-pkg-cairn-tb --reason 're-cut as its twin'", (*app).cmdRelink},
@@ -2227,6 +2228,20 @@ func (a *app) cmdReturn(args []string, stdout, stderr io.Writer) int {
 		return ""
 	}, func(ids []string, s *sel, c *common) store.Step {
 		return store.ReturnStep(sprint.ReturnReq{Sel: s.sel(ids), Reason: *reason, Answers: answers(*ans), Who: c.actor})
+	})
+}
+
+func (a *app) cmdRedo(args []string, stdout, stderr io.Writer) int {
+	var ans *string
+	return a.setVerb("redo", args, stdout, stderr, false, func(fs flagSet) {
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+	}, func(ids []string, s *sel) string {
+		if len(ids) == 0 && s.stream == "" {
+			return "wants ids or --stream <s>"
+		}
+		return ""
+	}, func(ids []string, s *sel, c *common) store.Step {
+		return store.RedoStep(sprint.RedoReq{Sel: s.sel(ids), Answers: answers(*ans), Who: c.actor})
 	})
 }
 

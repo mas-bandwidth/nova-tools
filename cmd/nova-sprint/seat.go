@@ -188,7 +188,7 @@ const handoverDecisions = 10
 // decisionVerbs are the coordinator's decisions handover shows from the log,
 // beside the seat's own changes and the holds (their notes), by the verb of the
 // step that wrote the line: rework only with a fix.
-var decisionVerbs = []string{"release", "drop", "rework"}
+var decisionVerbs = []string{"release", "drop", "rework", "redo"}
 
 // handover reads what the next seat needs and renders it: the holder and since
 // when, the machine and the progress, each stream's counts, the sentinels held
@@ -307,7 +307,7 @@ func decisionOf(l sprint.Line) (decisionView, bool) {
 		}
 		return decisionView{At: l.At, Verb: n.Type, What: n.What, By: n.Who}, true
 	}
-	if l.Kind != sprint.LineMove || !slices.Contains(decisionVerbs, l.Verb) || (l.Verb == "rework" && l.Text["fix"] == "") {
+	if l.Kind != sprint.LineMove || !slices.Contains(decisionVerbs, l.Verb) || ((l.Verb == "rework" || l.Verb == "redo") && l.Text["fix"] == "") {
 		return decisionView{}, false
 	}
 	if l.Table != sprint.Work {
@@ -318,7 +318,7 @@ func decisionOf(l sprint.Line) (decisionView, bool) {
 		what = sprint.Preview(l.Cards, ",")
 	}
 	reason := l.Text["reason"]
-	if l.Verb == "rework" {
+	if l.Verb == "rework" || l.Verb == "redo" {
 		reason = l.Text["fix"]
 	}
 	return decisionView{At: l.At, Verb: l.Verb, What: what, By: l.Actor, Reason: reason}, true
