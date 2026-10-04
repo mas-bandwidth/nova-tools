@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,26 +33,23 @@ func codexSessions(t *testing.T) string {
 	return home
 }
 
-func TestCodexNewestThreadIsResolvedBeforeItsLockIsProbed(t *testing.T) {
+func TestCodexNewestThreadIsResolvedBeforeItsOwnerIsDiscovered(t *testing.T) {
 	t.Parallel()
 	home := codexSessions(t)
-	fe := &fakeExec{}
-	var probed string
-	c := &Codex{Home: home, Dir: filepath.Join(home, "project"), Run: fe.run, Held: func(path string) bool { probed = path; return true }}
+	c := &Codex{Home: home, Dir: filepath.Join(home, "project"), Dial: codexUnavailable}
 	_, err := c.Deliver(context.Background(), "hello")
 	require.ErrorContains(t, err, "thread old")
-	assert.Equal(t, LockPath(home, "old"), probed)
-	assert.Empty(t, fe.calls)
 }
 
 func TestCodexNoSavedThreadRefusesWithoutSpawning(t *testing.T) {
 	t.Parallel()
-	fe := &fakeExec{}
 	home := codexSessions(t)
-	c := &Codex{Home: home, Dir: filepath.Join(home, "missing"), Run: fe.run}
+	c := &Codex{Home: home, Dir: filepath.Join(home, "missing"), Dial: func(context.Context, string, string) (net.Conn, error) {
+		t.Fatal("must resolve before dialing")
+		return nil, nil
+	}}
 	_, err := c.Deliver(context.Background(), "hello")
 	require.ErrorContains(t, err, "start a thread there or name one with --session")
-	assert.Empty(t, fe.calls)
 }
 
 func TestCodexNewestSessionMatchesPhysicalDirectoryAliases(t *testing.T) {

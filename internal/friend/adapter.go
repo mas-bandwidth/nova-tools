@@ -19,15 +19,16 @@ import (
 var Harnesses = append([]string{"opencode", "codex", "claude", "antigravity", "dsh", "gemini", "grok"}, RefusedHarnesses...)
 
 // Deliverer pushes one text into the friend's running session as a turn
-// and blocks until the turn ends: its exit code is the harness's, 0 acking
-// the message on the bus (SPEC-FRIEND.md, the deliver command).
+// and normally blocks until the turn ends. Desktop Codex instead confirms
+// admission to the owning app. Exit 0 acks the bus message in either case
+// (SPEC-FRIEND.md, the deliver command and Codex).
 type Deliverer interface {
 	Deliver(ctx context.Context, text string) (exit int, err error)
 }
 
 // Deferred is a Deliverer's answer when the session cannot take a turn now
-// and nothing has failed (the Codex chat open in the app, holding the
-// thread's writer lock). The daemon keeps the message in hand, tries again
+// and nothing has failed (for example, an open Codex chat whose app does
+// not confirm admission). The daemon keeps the message in hand, tries again
 // after RecheckEvery, counts nothing toward MaxDeliveries and acks nothing,
 // so a chat open all day loses no message.
 type Deferred struct{ Reason string }
@@ -96,7 +97,7 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	case "opencode":
 		return &OpenCode{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "codex":
-		return &Codex{Dir: dir, Session: session, Run: run, Out: out}, nil
+		return &Codex{Dir: dir, Session: session, Out: out}, nil
 	case "grok":
 		return &Grok{Dir: dir, Wake: session, Run: run, Out: out}, nil
 	case "antigravity":

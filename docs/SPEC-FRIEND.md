@@ -90,8 +90,8 @@ server (`friend beat <friend>`, a plain beat: the queue, working and width
 flags are owed on the server's side); the pong file, while a challenge is
 open; the status file.
 
-The deliver adapter runs the harness directly, never through a shell, as its
-own session leader; past the ten minute budget the whole process group is
+Subprocess-based deliver adapters run the harness directly, never through
+a shell, as their own session leader; past the ten minute budget the whole process group is
 signalled, SIGTERM then SIGKILL, so a harness that forks leaves no orphan.
 Six adapters are real: OpenCode, `opencode run --session <id> --dir <dir>
 <text>`, the newest session of the directory when none is named; Codex,
@@ -105,30 +105,57 @@ answered by the daemon at once, beating, and recording a push it cannot
 deliver; so the tool is honest, and the beat and the daemon pong are real
 for it.
 
-Codex delivers by resume, not into the open chat: `codex exec resume
---skip-git-repo-check <thread> <text>` resumes the saved thread in a new codex
-process, so the thread's model answers with the friend's whole context, and
-the record labels every such turn "answered by resume, not by the open
-chat". The open chat itself is out of reach: the Codex desktop app
-(ChatGPT.app) runs its app-server on a stdio pair it owns and listens on no
-socket, and while a thread is open there the app holds its writer lock
-(`~/.codex/thread-writer-locks/<thread>.lock`), which refuses a resume
-("thread <id> already has an active writer", measured 2026-10-04 on an open
-thread, exit 1). Without --session, the adapter resolves the newest saved thread with the
-same working directory from session_meta headers and session_index updated_at
-under CODEX_HOME (otherwise ~/.codex); without a matching thread it refuses
-with a remedy rather than spawning codex. It probes that exact thread's writer
-lock first (the same flock codex takes). While held, it returns Deferred without
-running codex: no failure is counted and nothing is acked or given up, even
-after 1,000 deferrals. The daemon retries every ten seconds. The probe releases
-its brief exclusive lock before resume, so a writer can still acquire it in
-that window; this observation is not a reservation. Reaching the open chat needs the app on the shared local daemon:
-the app connects to `~/.codex/app-server-control/app-server-control.sock`
-instead of its own stdio server only when launched with
-`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1` and a daemon is already up (`codex
-app-server daemon start`; read from the app bundle, unverified); then `codex
-queue --thread <id> --message <text>` reaches the open chat, and the adapter
-should move to it.
+### Codex
+
+A thread open in the desktop app holds its writer lock under
+CODEX_HOME (otherwise ~/.codex). The adapter first resolves the exact saved
+thread for the working directory when --session is absent, then discovers its
+owner through the app-owned Unix socket
+`<CODEX_HOME>/ipc/ipc.sock`. It does not start another app-server or a
+headless copy of the open chat.
+
+The measured desktop protocol uses four-byte little-endian lengths and JSON
+frames: initialize version 0, thread-owner-discovery version 1 with hostId
+local and conversationId, then thread-follower-start-turn version 2 targeted
+to that owner's client ID. The turnStart request names that same thread and
+carries one text input. Each response must match its request ID and method;
+the admission response must come from the discovered owner and contain a
+nonempty turn ID. Broadcasts do not count as receipts. Requests and responses
+are bounded at 1 MiB and the whole exchange at five seconds, or the caller's
+earlier cancellation. The implementation uses the standard library's
+net.Dialer, io.ReadFull, encoding/binary and encoding/json; no second queue or
+store is added. One message and one bounded response fit in process memory;
+100 times the current friend count does not change the per-delivery bound.
+
+An admission receipt means the app has accepted the input. It does not mean
+the model has completed an answer. The record says "delivered to open chat"
+with the thread and turn IDs, explicitly "admitted, not answered", and the
+daemon can ACK the bus message. A missing owner, incompatible protocol,
+malformed receipt, timeout or disconnected socket returns Deferred: no
+headless fallback, no failure charged and no bus ACK. The
+daemon retries every ten seconds. A lost receipt after admission can cause a
+duplicate on retry; the private desktop protocol provides no proven
+exactly-once guarantee here. This is a measured private interface, not a
+stable public API, so incompatible app updates fail by deferring.
+
+The adapter never invokes a headless resume, including when no desktop owner
+is available. No matching saved thread is a refusal with a remedy, not a guess
+at another session. The previous headless resume and writer-lock probe are
+removed: neither can deliver into the open app, and an observation of an
+unheld lock is not authority to start a separate session.
+
+Measurement on 2026-10-04 with ChatGPT 26.930.21537 build 12776: a bus message at 16:57:45 UTC was submitted through
+the app-owned IPC socket at 16:57:47.860, admitted at 16:57:47.967, observed as
+actual input in that same open conversation, and answered on the bus at
+16:57:49. The app used its own stdio app-server throughout. Its process still
+carried CODEX_APP_SERVER_USE_LOCAL_DAEMON=1 from an earlier experiment: the
+route bypassed that daemon, but a repeat after a launch without the flag is
+still required to establish the ordinary-launch measurement. The earlier
+claim that the flag makes `codex queue` reach the open chat is withdrawn:
+that experiment accepted a queued message on another server without
+delivering it to the open chat. Until desktop delivery is confirmed for a
+particular installation, the session's own bounded blocking bus read at the
+end of work is the fallback; the daemon keeps beating independently.
 
 ### Antigravity
 

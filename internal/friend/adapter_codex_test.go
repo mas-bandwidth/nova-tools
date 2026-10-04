@@ -2,6 +2,8 @@ package friend
 
 import (
 	"context"
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,45 +13,52 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCodexResumesTheNamedThreadAndLabelsTheAnswerAsResume(t *testing.T) {
-	t.Parallel()
-	fe := &fakeExec{exit: 0, out: "got it, sent on the bus.\n"}
-	var rec strings.Builder
-	c := &Codex{Dir: "/w/stella", Session: "01a104a7-04b1-7003-ad3d-781200c5ff5d", Run: fe.run, Held: func(string) bool { return false }, Out: &rec}
-	exit, err := c.Deliver(context.Background(), "ping: run the pong line")
-	require.NoError(t, err)
-	assert.Equal(t, 0, exit)
-	require.Len(t, fe.calls, 1)
-	assert.Equal(t, []string{"/w/stella", "codex", "exec", "resume", "--skip-git-repo-check", "01a104a7-04b1-7003-ad3d-781200c5ff5d", "ping: run the pong line"}, fe.calls[0])
-	assert.Equal(t, "answered by resume, not by the open chat: codex exec resume --skip-git-repo-check 01a104a7-04b1-7003-ad3d-781200c5ff5d <text>\ngot it, sent on the bus.\n", rec.String())
+func codexUnavailable(context.Context, string, string) (net.Conn, error) {
+	return nil, errors.New("app unavailable")
 }
 
-func TestCodexWithoutAThreadResumesTheNewestOfTheDirectory(t *testing.T) {
+func TestCodexAdmissionAndDeferralNeverSpawnHeadless(t *testing.T) {
 	t.Parallel()
-	fe := &fakeExec{exit: 7}
-	var rec strings.Builder
-	home := codexSessions(t)
-	dir := filepath.Join(home, "project")
-	c := &Codex{Dir: dir, Home: home, Run: fe.run, Program: "/opt/codex", Held: func(string) bool { return false }, Out: &rec}
-	exit, err := c.Deliver(context.Background(), "hello")
-	require.NoError(t, err)
-	assert.Equal(t, 7, exit)
-	assert.Equal(t, [][]string{{dir, "/opt/codex", "exec", "resume", "--skip-git-repo-check", "old", "hello"}}, fe.calls)
-	assert.Equal(t, "not answered: codex exec resume exited 7 (a thread open in the Codex app refuses a resume; or no such thread)\n", rec.String())
-}
-
-func TestCodexRefusesWhileTheAppHoldsTheThreadWithoutRunningCodex(t *testing.T) {
-	t.Parallel()
-	fe := &fakeExec{}
-	var probed string
-	c := &Codex{Dir: "/w/stella", Session: "t1", Home: "/h/.codex", Run: fe.run, Held: func(lock string) bool { probed = lock; return true }}
-	exit, err := c.Deliver(context.Background(), "hello")
-	assert.Equal(t, 0, exit)
-	var deferred Deferred
-	require.ErrorAs(t, err, &deferred)
-	assert.Contains(t, deferred.Reason, "thread t1")
-	assert.Equal(t, filepath.Join("/h/.codex", "thread-writer-locks", "t1.lock"), probed)
-	assert.Empty(t, fe.calls)
+	for _, tc := range []struct {
+		name                 string
+		unavailable, invalid bool
+	}{
+		{name: "admitted"}, {name: "unavailable", unavailable: true}, {name: "unconfirmed", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fe := &fakeExec{}
+			var record strings.Builder
+			adapter, err := NewDeliverer("codex", "/project", "thread-1", fe.run, &record)
+			require.NoError(t, err)
+			c := adapter.(*Codex)
+			c.Home = "/codex"
+			conn := &codexConn{t: t}
+			c.Dial = conn.dial
+			if tc.unavailable {
+				c.Dial = codexUnavailable
+			}
+			if tc.invalid {
+				conn.change = func(method string, reply map[string]any) {
+					if method == "thread-follower-start-turn" {
+						reply["result"] = map[string]any{}
+					}
+				}
+			}
+			exit, err := c.Deliver(context.Background(), "hello")
+			assert.Zero(t, exit)
+			if tc.unavailable || tc.invalid {
+				var deferred Deferred
+				require.ErrorAs(t, err, &deferred)
+				assert.Contains(t, deferred.Reason, "thread thread-1")
+				assert.Empty(t, record.String())
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, "delivered to open chat: thread=thread-1 turn=turn-1 (admitted, not answered)\n", record.String())
+			}
+			assert.Empty(t, fe.calls)
+		})
+	}
 }
 
 func TestCodexHomeIsCodexHomeThenTheUsersDotCodex(t *testing.T) {
