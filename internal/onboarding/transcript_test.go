@@ -674,6 +674,119 @@ func TestAHashInsideSingleQuotesIsNotADeclaration(t *testing.T) {
 	assert.Equal(t, want, got, "the quoted argument = %q, want %q", got, want)
 }
 
+// Steps preprocesses with the SAME quote grammar SplitShell reads (see
+// SplitShell): an operator inside a single- or double-quoted argument is the
+// argument's own text, not shell syntax, and inside a double-quoted run a
+// backslash escapes only isDoubleQuoteEscapable's four characters, so an
+// escaped double quote does not end the run. Before this, cutRedirect's bare
+// strings.Contains refused `say --body 'a < b | c; done'` as a pipeline, and
+// lastComment took the `"` in `--body "a \" # Platform: linux"` for the end of
+// the argument and read the in-argument `# Platform:` as a declaration.
+func TestStepsPreservesQuotedSyntaxCharacters(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name      string
+		line      string
+		args      []string
+		stdin     string
+		platforms []string
+		requires  []string
+		stderr    bool
+		wantErr   bool
+	}{
+		{
+			name: "a single-quoted literal less-than is an argument, not a redirect",
+			line: `$ nova-alpha count --body 'a < b'`,
+			args: []string{"count", "--body", "a < b"},
+		},
+		{
+			name: "a double-quoted literal greater-than is an argument",
+			line: `$ nova-alpha say --body "a > b"`,
+			args: []string{"say", "--body", "a > b"},
+		},
+		{
+			name: "a single-quoted literal pipe is an argument",
+			line: `$ nova-alpha say --body 'a | b'`,
+			args: []string{"say", "--body", "a | b"},
+		},
+		{
+			name: "a double-quoted literal and-and is an argument",
+			line: `$ nova-alpha say --body "a && b"`,
+			args: []string{"say", "--body", "a && b"},
+		},
+		{
+			name: "a single-quoted literal semicolon is an argument",
+			line: `$ nova-alpha say --body 'a ; b'`,
+			args: []string{"say", "--body", "a ; b"},
+		},
+		{
+			name: "an escaped double quote before an in-argument declaration marker",
+			line: `$ nova-alpha say --body "a \" # Platform: linux"`,
+			args: []string{"say", "--body", `a " # Platform: linux`},
+		},
+		{
+			name: "an in-argument Requires marker is not a declaration",
+			line: `$ nova-alpha say --body 'a # Requires: JEV_API_KEY b'`,
+			args: []string{"say", "--body", "a # Requires: JEV_API_KEY b"},
+		},
+		{
+			name: "an in-argument Stderr marker is not a declaration",
+			line: `$ nova-alpha say --body "a \" # Stderr: whole"`,
+			args: []string{"say", "--body", `a " # Stderr: whole`},
+		},
+		{
+			name:      "a real trailing declaration after a quoted argument still parses",
+			line:      `$ nova-alpha say --body "a \" # Platform: linux"   # Platform: darwin`,
+			args:      []string{"say", "--body", `a " # Platform: linux`},
+			platforms: []string{"darwin"},
+		},
+		{
+			name:  "the existing unquoted stdin redirect is unchanged",
+			line:  `$ nova-alpha count < testdata/events.jsonl`,
+			args:  []string{"count"},
+			stdin: "testdata/events.jsonl",
+		},
+		{
+			name:    "an unquoted pipe is still refused",
+			line:    `$ nova-alpha list | head -2`,
+			wantErr: true,
+		},
+		{
+			name:    "an unquoted output redirect is still refused",
+			line:    `$ nova-alpha list > out.txt`,
+			wantErr: true,
+		},
+		{
+			name:    "an unquoted separator is still refused",
+			line:    `$ nova-alpha list ; echo done`,
+			wantErr: true,
+		},
+		{
+			name:    "an unquoted and-and is still refused",
+			line:    `$ nova-alpha list && echo done`,
+			wantErr: true,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			steps, err := Steps("nova-alpha", []string{c.line, "ALPHA OK"})
+			if c.wantErr {
+				assert.Error(t, err, "Steps accepted %q; it cannot run that line", c.line)
+				return
+			}
+			require.NoError(t, err, "Steps refused %q: %v", c.line, err)
+			require.Len(t, steps, 1, "Steps cut %d steps, want 1", len(steps))
+			assert.Equal(t, c.args, steps[0].Args, "Args = %q, want %q", steps[0].Args, c.args)
+			assert.Equal(t, c.stdin, steps[0].Stdin, "Stdin = %q, want %q", steps[0].Stdin, c.stdin)
+			assert.Equal(t, c.platforms, steps[0].Platforms, "Platforms = %q, want %q", steps[0].Platforms, c.platforms)
+			assert.Equal(t, c.requires, steps[0].Requires, "Requires = %q, want %q", steps[0].Requires, c.requires)
+			assert.Equal(t, c.stderr, steps[0].StderrWhole, "StderrWhole = %v, want %v", steps[0].StderrWhole, c.stderr)
+		})
+	}
+}
+
 // A `# Platform:` value that is not a GOOS is a step that skips on every bench
 // for ever and is never seen again. `macOS` is the one a person writes.
 func TestAPlatformDeclarationMustNameAGOOS(t *testing.T) {
