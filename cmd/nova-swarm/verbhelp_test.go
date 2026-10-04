@@ -101,6 +101,15 @@ func assertTheExitCodesWrapAtOneHundredColumns(t *testing.T) {
 func assertTheStepWallFlagSaysWhatItWantsOnBothLines(t *testing.T) {
 	t.Helper()
 	step := swarmHelp(t, "step", "-h")
+	var usageLine string
+	for _, l := range strings.Split(usage, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "nova-swarm step ") {
+			usageLine = strings.TrimSpace(l)
+			break
+		}
+	}
+	require.NotEmpty(t, usageLine, "the banner has a step usage line")
+	assert.Contains(t, step, usageLine, "step -h does not show the step usage line the banner prints, byte for byte")
 	for _, line := range []string{usage, step} {
 		assert.Contains(t, line, "--sandbox <binary>", "the step usage line does not name the value --sandbox wants: <binary>")
 		assert.Contains(t, line, "the wall binary", "the step help does not say what <binary> is: the wall binary")
