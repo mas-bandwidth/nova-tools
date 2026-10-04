@@ -882,7 +882,7 @@ func sharedPromotionRepo(t *testing.T) *promotionRepo {
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if promotionShared.dir != "" {
-		os.RemoveAll(promotionShared.dir)
+		_ = os.RemoveAll(promotionShared.dir) // ignored: a temporary directory that may already be gone
 	}
 	os.Exit(code)
 }
