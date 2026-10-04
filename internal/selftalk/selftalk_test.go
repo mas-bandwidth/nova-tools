@@ -202,15 +202,13 @@ func TestScanAllocatesAFewTimesTheInputNotOneIntPerByte(t *testing.T) {
 	installations := ScanInstallation(text)
 	runtime.ReadMemStats(&after)
 
-	if len(claims) != 0 || len(installations) != 0 {
-		t.Fatalf("plain text must not be a finding, got claims=%#v installations=%#v", claims, installations)
-	}
+	require.Empty(t, claims, "plain text must not be a claim: %#v", claims)
+	require.Empty(t, installations, "plain text must not be an installation: %#v", installations)
 	delta := after.TotalAlloc - before.TotalAlloc
 	limit := uint64(len(text) * 8)
-	if delta >= limit {
-		t.Fatalf("scan allocated %d bytes for %d of input (%.1fx), want under 8x; one int per byte, twice, is about 16x before the copies",
-			delta, len(text), float64(delta)/float64(len(text)))
-	}
+	assert.Less(t, delta, limit,
+		"scan allocated %d bytes for %d of input (%.1fx), want under 8x; one int per byte, twice, is about 16x before the copies",
+		delta, len(text), float64(delta)/float64(len(text)))
 }
 
 // Base is what --skip matching is decided on; it must see through both

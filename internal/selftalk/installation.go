@@ -318,24 +318,24 @@ func flatAsIs(s string) bool {
 	if s == "" {
 		return false
 	}
-	prevSpace := false
+	prevBlank := false
 	for i := 0; i < len(s); i++ {
 		switch c := s[i]; c {
 		case '*', '_', '`', '>', '#', '|':
 			return false
 		case ' ':
-			if prevSpace || i == 0 {
+			if prevBlank || i == 0 {
 				return false
 			}
-			prevSpace = true
+			prevBlank = true
 		default:
 			if c < ' ' || c >= 0x80 {
 				return false
 			}
-			prevSpace = false
+			prevBlank = false
 		}
 	}
-	return !prevSpace
+	return !prevBlank
 }
 
 // sentences cuts a flattened paragraph at terminators, keeping each piece's starting line.
