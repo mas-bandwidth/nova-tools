@@ -12,7 +12,6 @@ internal/bus 17
 internal/cardhdr 10
 internal/ci/slowtests 2
 internal/dogfood 1
-internal/ghevent 4
 internal/hygiene 1
 internal/nogh 1
 internal/nsprint/fn 5
