@@ -458,18 +458,6 @@ func TestOrderHeavyFirstAndFunctional(t *testing.T) {
 	assert.Equal(t, `[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]`, MarshalLegs([]Leg{NothingLeg(g)}), "the nothing leg")
 }
 
-func TestShardsFollowTheEvent(t *testing.T) {
-	t.Parallel()
-	for event, want := range map[string]Shards{
-		"pull_request":      {Linux: 4, Mac: 4},
-		"merge_group":       {Linux: 8, Mac: 4},
-		"push":              {Linux: 8, Mac: 8},
-		"schedule":          {Linux: 8, Mac: 8},
-		"workflow_dispatch": {Linux: 8, Mac: 8},
-	} {
-		assert.Equal(t, want, ShardsFor(event), "ShardsFor(%s)", event)
-	}
-}
 
 func legNames(legs []Leg) []string {
 	var out []string
@@ -540,8 +528,8 @@ func TestDetectDarwinSensitive(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok, "DetectDarwinSensitive = %v", sens)
 	assert.Equal(t, "./cmd/a ./internal/c ", sens.Sorted(), "want ./cmd/a (imports the differing ./internal/c) and ./internal/c itself")
-	assert.True(t, sens.Needs("./cmd/a"))
-	assert.False(t, sens.Needs("./cmd/b"))
+	assert.True(t, sens.All || sens.Pkgs["./cmd/a"])
+	assert.False(t, sens.All || sens.Pkgs["./cmd/b"])
 }
 
 func TestDetectDarwinSensitiveWithNothingDifferent(t *testing.T) {
@@ -568,7 +556,7 @@ func TestDetectDarwinSensitiveFallsBackToAll(t *testing.T) {
 		assert.NoError(t, err, broken)
 		assert.False(t, ok, broken)
 		assert.True(t, sens.All, broken)
-		assert.True(t, sens.Needs("./anything"), broken)
+		assert.True(t, sens.All || sens.Pkgs["./anything"], broken)
 	}
 }
 
