@@ -37,6 +37,25 @@ func redisLedger(t *testing.T) (*record.RedisLedger, *miniredis.Miniredis) {
 	return s, mr
 }
 
+// ledgerBatchFor builds one batch over the given days: each day holds exactly one row
+// for the card with token0 = tokenVal and every other type unknown.
+func ledgerBatchFor(days []string, card string, tokenVal int64) []record.LedgerDay {
+	batch := make([]record.LedgerDay, 0, len(days))
+	for _, day := range days {
+		e := record.LedgerEntry{
+			Day:      day,
+			Card:     card,
+			Model:    "gpt-4",
+			Repo:     "nova-tools",
+			Provider: "openai",
+			Sources:  "openai:o",
+		}
+		e.Tokens, e.Known = [5]int64{tokenVal, 0, 0, 0, 0}, [5]bool{true, false, false, false, false}
+		batch = append(batch, record.LedgerDay{Day: day, Entries: []record.LedgerEntry{e}})
+	}
+	return batch
+}
+
 func TestLedgerRequiresPermissionPreflightBeforeWriting(t *testing.T) {
 	t.Parallel()
 	// Deliberately use miniredis without the unrestricted-fixture shim: it
@@ -195,25 +214,9 @@ func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 	ctx := context.Background()
 
 	testDays := []string{"2026-09-10", "2026-09-11", "2026-09-12"}
-	makeBatch := func(card string, tokenVal int64) []record.LedgerDay {
-		batch := make([]record.LedgerDay, len(testDays))
-		for i, day := range testDays {
-			e := record.LedgerEntry{
-				Day:      day,
-				Card:     card,
-				Model:    "gpt-4",
-				Repo:     "nova-tools",
-				Provider: "openai",
-				Sources:  "openai:o",
-			}
-			e.Tokens, e.Known = [5]int64{tokenVal, 0, 0, 0, 0}, [5]bool{true, false, false, false, false}
-			batch[i] = record.LedgerDay{Day: day, Entries: []record.LedgerEntry{e}}
-		}
-		return batch
-	}
 
 	// Seed with initial batch so days exist in Redis.
-	require.NoError(t, s.ReplaceLedgerDays(ctx, makeBatch("card-a", 100)), "seed failed")
+	require.NoError(t, s.ReplaceLedgerDays(ctx, ledgerBatchFor(testDays, "card-a", 100)), "seed failed")
 
 	const iterations = 40
 	var writersWg sync.WaitGroup
@@ -222,7 +225,7 @@ func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 	// Writer A writes card-a
 	go func() {
 		defer writersWg.Done()
-		batch := makeBatch("card-a", 100)
+		batch := ledgerBatchFor(testDays, "card-a", 100)
 		for i := 0; i < iterations; i++ {
 			if !assert.NoError(t, s.ReplaceLedgerDays(ctx, batch), "writer A error") {
 				return
@@ -233,7 +236,7 @@ func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 	// Writer B writes card-b
 	go func() {
 		defer writersWg.Done()
-		batch := makeBatch("card-b", 200)
+		batch := ledgerBatchFor(testDays, "card-b", 200)
 		for i := 0; i < iterations; i++ {
 			if !assert.NoError(t, s.ReplaceLedgerDays(ctx, batch), "writer B error") {
 				return
@@ -289,15 +292,22 @@ func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 	}
 }
 
+// ledgerEvalHookBase is the pass-through half both eval-injecting hooks share: they alter
+// only ProcessHook, so the dial and pipeline hooks stay the identity.
+type ledgerEvalHookBase struct{}
+
+func (ledgerEvalHookBase) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (ledgerEvalHookBase) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
 type injectEvalKeyHook struct {
+	ledgerEvalHookBase
 	fromKey string
 	toKey   string
 }
 
-func (h *injectEvalKeyHook) DialHook(next redis.DialHook) redis.DialHook { return next }
-func (h *injectEvalKeyHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
-	return next
-}
 func (h *injectEvalKeyHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		if cmd.Name() == "eval" {
@@ -322,25 +332,9 @@ func TestReplaceLedgerDaysInjectedCommandErrorLeavesPriorHashesUnchanged(t *test
 	ctx := context.Background()
 
 	testDays := []string{"2026-09-01", "2026-09-02", "2026-09-03"}
-	makeBatch := func(card string, tokenVal int64) []record.LedgerDay {
-		batch := make([]record.LedgerDay, len(testDays))
-		for i, day := range testDays {
-			e := record.LedgerEntry{
-				Day:      day,
-				Card:     card,
-				Model:    "gpt-4",
-				Repo:     "nova-tools",
-				Provider: "openai",
-				Sources:  "openai:o",
-			}
-			e.Tokens, e.Known = [5]int64{tokenVal, 0, 0, 0, 0}, [5]bool{true, false, false, false, false}
-			batch[i] = record.LedgerDay{Day: day, Entries: []record.LedgerEntry{e}}
-		}
-		return batch
-	}
 
 	// 1. Seed all three days with initial rows (token count 100).
-	seedBatch := makeBatch("card-seed", 100)
+	seedBatch := ledgerBatchFor(testDays, "card-seed", 100)
 	require.NoError(t, s.ReplaceLedgerDays(ctx, seedBatch), "seed failed")
 
 	// Verify all three days are seeded with token 100.
@@ -365,7 +359,7 @@ func TestReplaceLedgerDaysInjectedCommandErrorLeavesPriorHashesUnchanged(t *test
 	s.Client().AddHook(hook)
 
 	// Attempt ReplaceLedgerDays with a new batch of token count 999.
-	newBatch := makeBatch("card-new", 999)
+	newBatch := ledgerBatchFor(testDays, "card-new", 999)
 	err := s.ReplaceLedgerDays(ctx, newBatch)
 	require.Error(t, err, "expected ReplaceLedgerDays to fail on injected WRONGTYPE error, got nil")
 	require.ErrorContains(t, err, "WRONGTYPE", "expected error containing WRONGTYPE, got: %v", err)
@@ -407,12 +401,8 @@ func TestReplaceLedgerDaysInjectedCommandErrorLeavesPriorHashesUnchanged(t *test
 	}
 }
 
-type injectEvalMidScriptFailHook struct{}
+type injectEvalMidScriptFailHook struct{ ledgerEvalHookBase }
 
-func (h *injectEvalMidScriptFailHook) DialHook(next redis.DialHook) redis.DialHook { return next }
-func (h *injectEvalMidScriptFailHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
-	return next
-}
 func (h *injectEvalMidScriptFailHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		if cmd.Name() == "eval" {
