@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// rig is one daemon over bus2's Fake, a fake harness and a clock that moves
+// rig is one daemon over bus's Fake, a fake harness and a clock that moves
 // one second per read: no socket, no real time. The loop runs until
 // stopAfter steps (a step is one beat) or the test cancels it. Pause, which
 // the loop calls while a turn runs, waits for that turn to end (gate), so
@@ -21,8 +21,8 @@ import (
 // until the releaseAt-th pause.
 type rig struct {
 	mu        sync.Mutex
-	store     *bus2.Fake
-	bus       *bus2.Bus
+	store     *bus.Fake
+	bus       *bus.Bus
 	now       time.Time
 	delivered []string
 	hold      chan struct{} // when set, a delivery blocks until it is closed
@@ -45,8 +45,8 @@ type rig struct {
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
-	r := &rig{store: bus2.NewFake(t0, "ada", "bob"), now: t0, stopAfter: 1 << 20, gate: make(chan struct{}, 1), at: map[int]func(){}}
-	r.bus = &bus2.Bus{Store: r.store}
+	r := &rig{store: bus.NewFake(t0, "ada", "bob"), now: t0, stopAfter: 1 << 20, gate: make(chan struct{}, 1), at: map[int]func(){}}
+	r.bus = &bus.Bus{Store: r.store}
 	r.d = &Daemon{
 		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 4, Store: r.store,
 		Deliver: r,
@@ -117,16 +117,16 @@ func (r *rig) run(t *testing.T, steps int) {
 	require.NoError(t, r.d.Run(ctx))
 }
 
-func (r *rig) send(t *testing.T, from, subject, body string) bus2.Message {
+func (r *rig) send(t *testing.T, from, subject, body string) bus.Message {
 	t.Helper()
-	m, err := r.bus.Send(context.Background(), bus2.Message{From: from, To: []string{"bob"}, Subject: subject, Body: body})
+	m, err := r.bus.Send(context.Background(), bus.Message{From: from, To: []string{"bob"}, Subject: subject, Body: body})
 	require.NoError(t, err)
 	return m
 }
 
 func (r *rig) adaGot(t *testing.T) []string {
 	t.Helper()
-	got, err := r.store.Range(context.Background(), bus2.StreamOf("ada"), "-", "+", 100)
+	got, err := r.store.Range(context.Background(), bus.StreamOf("ada"), "-", "+", 100)
 	require.NoError(t, err)
 	var out []string
 	for _, e := range got {
@@ -148,7 +148,7 @@ func TestAMessageIsPushedIntoTheSessionAndAckedWhenTheTurnEndsAtZero(t *testing.
 	m := r.send(t, "ada", "hello", "are you there?")
 	r.run(t, 4)
 	require.Len(t, r.delivered, 1)
-	assert.Equal(t, Text(m), r.delivered[0], "the session reads what nova-bus2 recv prints; a plain message carries no pong line")
+	assert.Equal(t, Text(m), r.delivered[0], "the session reads what nova-bus recv prints; a plain message carries no pong line")
 	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
 	require.NoError(t, err)
 	assert.Empty(t, pending)
@@ -291,7 +291,7 @@ func TestAPassiveHarnessTakesNothingOffTheStreamAndStillAnswersTheDaemonPong(t *
 	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
 	require.NoError(t, err)
 	assert.Empty(t, pending, "nothing was taken")
-	assert.Len(t, fresh, 2, "both messages wait for the session's own nova-bus2 recv")
+	assert.Len(t, fresh, 2, "both messages wait for the session's own nova-bus recv")
 	s := r.last()
 	assert.Equal(t, Challenged, s.Challenge, "the machine saw the ping all the same")
 	assert.Equal(t, "ada", s.Seat)
@@ -325,7 +325,7 @@ func TestAStatusFileThatCannotBeWrittenIsSaidOnceAMinuteAndTheBeatGoesOn(t *test
 	assert.Equal(t, 3, said, "at the start and once a minute: %v", r.records)
 }
 
-// The pong file's at is the store's time, to the second (bus2 Send truncates
+// The pong file's at is the store's time, to the second (bus.Send truncates
 // it); the ask is the daemon's own clock. A pong recorded in the same second
 // as the ask, or on a store clock a little behind, carries an at before the
 // ask and is still the answer: the nonce says which challenge it answers,
@@ -356,7 +356,7 @@ func TestAMessageThatFailsThreeTimesIsAckedAndTheRecordSaysSo(t *testing.T) {
 	r.exit = 3
 	r.send(t, "ada", "poison", "x")
 	for _, step := range []int{4, 8} { // the claim opens between the failures
-		r.at[step] = func() { r.store.Advance(bus2.ClaimAfter) }
+		r.at[step] = func() { r.store.Advance(bus.ClaimAfter) }
 	}
 	r.run(t, 14)
 	assert.Len(t, r.delivered, MaxDeliveries, "handed in three times, then given up")
@@ -380,7 +380,7 @@ func TestAMessageThatFailsThreeTimesIsAckedAndTheRecordSaysSo(t *testing.T) {
 // against a ten-minute turn, delivered twice).
 func TestTheClaimOpensOnlyAfterTheLongestTurnIsOver(t *testing.T) {
 	t.Parallel()
-	assert.Less(t, DeliverBudget+KillDelay, bus2.ClaimAfter)
+	assert.Less(t, DeliverBudget+KillDelay, bus.ClaimAfter)
 }
 
 // deferrer is a harness whose session cannot take a turn now and nothing is

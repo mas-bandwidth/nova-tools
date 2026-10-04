@@ -267,7 +267,7 @@ red when it was set lands the moment its checks turn green, unread.
 keeps — exit codes (0 pass, 1 the check said NO, 2 could not run), **no guessed
 paths** (`refusing to guess`, never a default directory), the one-line output
 grammar, and the cap-and-count rule (`--fail-max`/`--max`, default 20, `0` means
-all). Each tool then has its own normative spec: `SPEC-BUS2.md`,
+all). Each tool then has its own normative spec: `SPEC-BUS.md`,
 `SPEC-CI.md`, `SPEC-SECRETS.md`, `SPEC-TOKENS.md`, `SPEC-UPDATE.md` and the
 rest under [docs/](.). A spec is normative — where the code and the spec
 disagree, one of them has a bug and the tests decide which. **Read the spec

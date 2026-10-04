@@ -179,7 +179,7 @@ func Head(s string, n int) string {
 type Stub struct{ Harness string }
 
 func (s Stub) Deliver(context.Context, string) (int, error) {
-	return 0, fmt.Errorf("no deliver command for %s yet; run the session's blocking read: nova-bus2 recv --as <friend>", s.Harness)
+	return 0, fmt.Errorf("no deliver command for %s yet; run the session's blocking read: nova-bus recv --as <friend>", s.Harness)
 }
 
 // Passive marks a Deliverer that cannot deliver: the daemon reads nothing

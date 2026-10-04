@@ -1,6 +1,6 @@
 // nova-friend is what a friend runs to be part of the team (docs/SPEC-FRIEND.md;
 // the model is tla/Friend.tla): one launchd agent per friend that parks on the
-// friend's nova-bus2 stream and pushes each message into the running session
+// friend's nova-bus stream and pushes each message into the running session
 // as a turn, beats to the sprint server while it does, answers the
 // coordinator's pings at once and pushes them in so the session answers as
 // its own turn, and tells the session when the coordinator goes silent. The
@@ -22,7 +22,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
@@ -33,7 +33,7 @@ import (
 
 var version string
 
-// The environment: the bus store (nova-bus2's variable) and the sprint
+// The environment: the bus store (nova-bus's variable) and the sprint
 // server (nova-sprint's), with the server's default beside it.
 const (
 	RedisEnv      = "NOVA_BUS_REDIS"
@@ -49,11 +49,11 @@ const WaitPongEvery = time.Second
 const OpenRetryMax = 30 * time.Second
 
 // world is what the tool reaches outside itself; main passes the real one,
-// a test its own over internal/bus2's Fake, a fake harness and its own
+// a test its own over internal/bus's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
 type world struct {
 	getenv    func(string) string
-	open      func(ctx context.Context, addr string) (bus2.Store, func(), error)
+	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
 	beat      func(ctx context.Context, server, friend string) error
 	launchctl friend.Launchctl
@@ -124,9 +124,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 	return friendTool(w).Run(args, stdin, stdout, stderr)
 }
 
-// openRedis dials the bus store the way nova-bus2 does (internal/redisconn,
+// openRedis dials the bus store the way nova-bus does (internal/redisconn,
 // the fleet's login from the environment, the password never on the line).
-func (w world) openRedis(ctx context.Context, addr string) (bus2.Store, func(), error) {
+func (w world) openRedis(ctx context.Context, addr string) (bus.Store, func(), error) {
 	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
 	if w.getenv(redisauth.UserEnv) != "" {
 		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
@@ -138,7 +138,7 @@ func (w world) openRedis(ctx context.Context, addr string) (bus2.Store, func(), 
 	if err != nil {
 		return nil, nil, err
 	}
-	return bus2.Redis{C: conn.Client()}, func() { conn.Close() }, nil
+	return bus.Redis{C: conn.Client()}, func() { conn.Close() }, nil
 }
 
 // stateDir is where the state files of the friend --as names live: --state-dir,
@@ -184,7 +184,7 @@ func friendTool(w world) *tool.Tool {
 		What:  "what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon",
 		Stamp: version,
 		How: `one launchd agent per friend (install) runs the daemon (run): it parks on the friend's
-nova-bus2 stream and pushes each message into the running session as a turn (the harness's
+nova-bus stream and pushes each message into the running session as a turn (the harness's
 deliver command), beats to the sprint server while the loop runs, answers the coordinator's
 PING at once (daemon-pong) and pushes it in; the session's own pong --nonce alone makes it up.
 state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.`,
@@ -314,7 +314,7 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 }
 
 // bus opens the store --redis names, or says why not (exit 2).
-func (w world) bus(c *tool.Call) (*bus2.Bus, func(), *tool.Out) {
+func (w world) bus(c *tool.Call) (*bus.Bus, func(), *tool.Out) {
 	addr := c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+")")
 	if o := c.Refused(); o != nil {
 		return nil, nil, o
@@ -325,11 +325,11 @@ func (w world) bus(c *tool.Call) (*bus2.Bus, func(), *tool.Out) {
 	if err != nil {
 		return nil, nil, tool.Refuse(err.Error())
 	}
-	return &bus2.Bus{Store: st}, closeStore, nil
+	return &bus.Bus{Store: st}, closeStore, nil
 }
 
 func answer(err error) *tool.Out {
-	var r *bus2.Refusal
+	var r *bus.Refusal
 	if errors.As(err, &r) {
 		return tool.Refuse(r.Problems...)
 	}
@@ -341,7 +341,7 @@ func answer(err error) *tool.Out {
 // tolerates a store that goes down, so one that is down at the start is no
 // reason to exit; under launchd's KeepAlive that exit was a crash loop every
 // five seconds. Each wait is said on the record.
-func (w world) openUntil(ctx context.Context, addr string, record func(string)) (bus2.Store, func()) {
+func (w world) openUntil(ctx context.Context, addr string, record func(string)) (bus.Store, func()) {
 	wait := time.Second
 	for {
 		open, cancel := context.WithTimeout(ctx, redisconn.OpenTimeout)
@@ -554,7 +554,7 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	}
 	defer closeStore()
 	line := friend.PongLine(nonce, c.Int("queue"), c.Int("working"), c.Int("width"))
-	m, err := b.Send(context.Background(), bus2.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"})
+	m, err := b.Send(context.Background(), bus.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"})
 	if err != nil {
 		return answer(err)
 	}
@@ -585,7 +585,7 @@ func (w world) ping(c *tool.Call) *tool.Out {
 	defer closeStore()
 	me, to := c.Str("as"), c.Str("to")
 	body := friend.PingText(me, since, nonce)
-	m, err := b.Send(context.Background(), bus2.Message{From: me, To: []string{to}, Subject: friend.PingPrefix + nonce, Body: body + "\n"})
+	m, err := b.Send(context.Background(), bus.Message{From: me, To: []string{to}, Subject: friend.PingPrefix + nonce, Body: body + "\n"})
 	if err != nil {
 		return answer(err)
 	}
@@ -606,7 +606,7 @@ func (w world) waitPong(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	floor := bus2.IDAt(storeNow.Add(-timeout)) // the log from the wait's own window back, never from its start
+	floor := bus.IDAt(storeNow.Add(-timeout)) // the log from the wait's own window back, never from its start
 	for {
 		got, err := b.Log(ctx, floor)
 		if err != nil {

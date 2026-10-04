@@ -43,7 +43,7 @@ func (a Agent) Args() []string {
 
 // Plist is the agent's plist: RunAtLoad and KeepAlive, so it starts at
 // login and is restarted when it dies (pending messages redeliver first,
-// nova-bus2's rule). launchd opens its own log itself, before the daemon
+// nova-bus's rule). launchd opens its own log itself, before the daemon
 // runs, and cannot open one on a network volume (EX_CONFIG, measured
 // 2026-10-03), so that log is LaunchdLog, under the home directory, and so
 // are the daemon's state files and record (DefaultStateDir).

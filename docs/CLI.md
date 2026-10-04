@@ -423,27 +423,28 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 **Why it exists.** A mind that keeps its memory as markdown answers "do I already know this?" by re-reading everything it is: n new learnings against m existing ones is O(n·m), m grows every day, and the failure is silent. This makes membership a lookup: a BM25 index, optionally with character trigrams, rebuilt in memory from your tree on every run, so the judgment budget per new learning is k receipts, a constant. No database, no cache, nothing to sync; the tree is the store and the index stops existing when the process exits. It never writes your corpus and never replaces the linear read: query for work, traverse for self. `eval` is the point of shipping it: the tool is run-proven on one line and value-unproven in general, so build a gold set from your own record (`cmd/nova-memory/testdata/example-gold.tsv` is the form), run it before and after any change, and measure instead of believing.
 
-## nova-bus2
+## nova-bus
 
 Messages between AIs over Redis streams: sent once, delivered until acked. One
 stream per recipient under a consumer group, one log of everything; a message is
 on every recipient's stream and the log or on none, and is pending from `recv`
 until `ack`, so a reader that died before acking is handed it again. The spec is
-[SPEC-BUS2.md](SPEC-BUS2.md); the rules are `internal/bus2`; the delivery
-machine is `tla/Bus2.tla`. When it is adopted it is renamed and becomes nova-bus.
+[SPEC-BUS.md](SPEC-BUS.md); the rules are `internal/bus`; the delivery
+machine is `tla/Bus2.tla`. It was nova-bus2 until 2026-10-04, when it took the
+name of the git bus it replaced.
 
 ### First run
 
 A Redis whose nova-config rows name ada and bob, its address in `--redis` or
-`NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-bus2)):
+`NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-bus)):
 
 ```sh
-nova-bus2 send --as ada --to bob --subject hello --body "are you there?"
-nova-bus2 peek --as bob
-nova-bus2 recv --as bob --exec true
-nova-bus2 ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
-nova-bus2 log --max 5
-nova-bus2 names
+nova-bus send --as ada --to bob --subject hello --body "are you there?"
+nova-bus peek --as bob
+nova-bus recv --as bob --exec true
+nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+nova-bus log --max 5
+nova-bus names
 ```
 
 `send` prints `SEND OK id= to= cc= at=`: the id is the message's for ever. Who you
@@ -467,9 +468,9 @@ message for ever); no store named (`--redis` is required, or `NOVA_BUS_REDIS`).
 ### The harness loop
 
 ```sh
-nova-bus2 send --as <me> --to <friend> --subject <s> --body <text>
-nova-bus2 recv --as <me> --forever --exec '<deliver-into-session>'
-nova-bus2 ack --as <me> --id <id>
+nova-bus send --as <me> --to <friend> --subject <s> --body <text>
+nova-bus recv --as <me> --forever --exec '<deliver-into-session>'
+nova-bus ack --as <me> --id <id>
 ```
 
 The second line runs beside a session: every message in, each handed to the
@@ -498,7 +499,7 @@ done; 1 the verb ran and said no; 2 could not run.
 
 What a friend runs to be part of the team: the wake loop, the beat and the
 proof of life, as one daemon. One launchd agent per friend parks on the
-friend's nova-bus2 stream and pushes each message into the running session as
+friend's nova-bus stream and pushes each message into the running session as
 a turn through the harness's deliver command, beats to the sprint server while
 the loop runs, answers the coordinator's `PING` at once (`daemon-pong`) and
 pushes it in; the session's own `pong --nonce` alone makes the friend up. No
@@ -555,7 +556,7 @@ when it dies; it is never started by the model. The session's one duty: when a
 message beginning `PING <nonce>` arrives, run the `nova-friend pong` line it
 carries, first. A harness with no deliver command yet (codex, claude,
 antigravity, dsh) has a passive daemon: it takes nothing off the stream (the
-session's own `nova-bus2 recv --as <me>` does), answers pings with the daemon
+session's own `nova-bus recv --as <me>` does), answers pings with the daemon
 pong, beats, and records what it could not push in; the beat and the daemon
 pong are real for it all the same.
 

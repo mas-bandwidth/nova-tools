@@ -60,26 +60,26 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	// (SPEC-TOOLWORK.md documents rule 6) reads the command text in this test;
 	// the transcript runs the same lines.
 	documentedExamples := []string{
-		`nova-bus2 send --as ada --to bob --subject hello --body "are you there?"`,
-		"nova-bus2 peek --as bob",
-		"nova-bus2 recv --as bob --exec true",
-		"nova-bus2 ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV",
-		"nova-bus2 log --max 5",
-		"nova-bus2 names",
+		`nova-bus send --as ada --to bob --subject hello --body "are you there?"`,
+		"nova-bus peek --as bob",
+		"nova-bus recv --as bob --exec true",
+		"nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV",
+		"nova-bus log --max 5",
+		"nova-bus names",
 	}
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
-	lines, err := onboarding.FirstRun(string(raw), "nova-bus2")
+	lines, err := onboarding.FirstRun(string(raw), "nova-bus")
 	require.NoError(t, err)
-	steps, err := onboarding.Steps("nova-bus2", lines)
+	steps, err := onboarding.Steps("nova-bus", lines)
 	require.NoError(t, err)
-	require.NotEmpty(t, steps, "the `### First run` block of docs/TESTS.md holds no nova-bus2 command")
+	require.NotEmpty(t, steps, "the `### First run` block of docs/TESTS.md holds no nova-bus command")
 	for _, verb := range []string{"send", "peek", "recv", "ack", "log", "names"} {
 		found := false
 		for _, s := range steps {
 			found = found || (len(s.Args) > 0 && s.Args[0] == verb)
 		}
-		assert.True(t, found, "the first run never runs `nova-bus2 %s`", verb)
+		assert.True(t, found, "the first run never runs `nova-bus %s`", verb)
 	}
 	run := documented(firstRunStore(t))
 	got := make([]onboarding.Result, 0, len(steps))
@@ -95,7 +95,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	// the banner's example block is that same sitting, line for line
 	var out, errb strings.Builder
 	require.Equal(t, 0, run0([]string{"help"}, &out, &errb), errb.String())
-	examples, err := onboarding.ExampleLines(out.String(), "nova-bus2")
+	examples, err := onboarding.ExampleLines(out.String(), "nova-bus")
 	require.NoError(t, err)
 	var doc []string
 	for _, s := range steps {

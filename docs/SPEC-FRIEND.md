@@ -10,7 +10,7 @@ is the server; both sides need to know they are connected, continually".
 ## The pattern in one sentence
 
 One daemon per friend, started by launchd and never by the model, parks on the
-friend's nova-bus2 stream and pushes each message into the running session as
+friend's nova-bus stream and pushes each message into the running session as
 a turn; it beats to the sprint server while that loop runs and only then; it
 answers the coordinator's ping at once and pushes the ping in, and the
 session's own answer, a turn carrying the ping's nonce, is the only thing that
@@ -18,10 +18,10 @@ makes the friend up.
 
 ## The data
 
-- The bus: the friend's stream `bus2:to:<friend>` (SPEC-BUS2.md). A message is
+- The bus: the friend's stream `bus2:to:<friend>` (SPEC-BUS.md). A message is
   pending from the read until the session's turn ends at exit 0, so a daemon
   that dies mid-turn is handed the message again once its claim opens, fifteen
-  minutes after the read (`ClaimAfter`, SPEC-BUS2.md: longer than the longest
+  minutes after the read (`ClaimAfter`, SPEC-BUS.md: longer than the longest
   turn, so a live daemon mid-turn is never handed its message twice).
 - The files, one writer each. The state files live in the state directory,
   `~/.nova-friend/<friend>` under the home directory unless `--state-dir` names
@@ -110,7 +110,7 @@ The friend's name comes from one place, `install --as`, written into the
 agent's command line; the daemon never takes a name from a message. The `pong`
 verb refuses a name that is not the one the daemon in that directory runs as.
 Binding the name to the store's login is owed: the bus store runs with no
-authentication tonight (SPEC-BUS2.md), and `nova-sprint friend beat <name>`
+authentication tonight (SPEC-BUS.md), and `nova-sprint friend beat <name>`
 beats whatever name it is sent.
 
 ## What is weak, and known

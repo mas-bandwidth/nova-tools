@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
@@ -21,7 +21,7 @@ var start = time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)
 // rig is the tool over one fake store with ada and bob known, a fake
 // launchctl, a fixed home and clock: no socket, no real time, no launchd.
 type rig struct {
-	store     *bus2.Fake
+	store     *bus.Fake
 	env       map[string]string
 	launchctl []string
 	now       time.Time
@@ -30,13 +30,13 @@ type rig struct {
 
 func newRig(t *testing.T, names ...string) *rig {
 	t.Helper()
-	return &rig{store: bus2.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir()}
+	return &rig{store: bus.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir()}
 }
 
 func (r *rig) world() world {
 	return world{
 		getenv: func(k string) string { return r.env[k] },
-		open: func(context.Context, string) (bus2.Store, func(), error) {
+		open: func(context.Context, string) (bus.Store, func(), error) {
 			if r.store.Fail != nil {
 				return nil, nil, r.store.Fail
 			}
@@ -115,7 +115,7 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 
 	sent := cli.Do(t, "ping", "--as", "ada", "--to", "bob", "--nonce", "abc123").Exit(0).Out("PING OK nonce=abc123 id=", " to=bob at=2026-10-04T03:00:", "NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123")
 	_ = sent
-	entries, err := r.store.Range(context.Background(), bus2.StreamOf("bob"), "-", "+", 10)
+	entries, err := r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 10)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	m := entries[0].Message()
@@ -134,7 +134,7 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(0).Out("WAIT-PONG OK nonce=abc123 from=bob at=", "queue=2 working=1 width=4 daemon=false")
 
 	// a pong in the body from another name never counts: the from is the proof
-	_, err = (&bus2.Bus{Store: r.store}).Send(context.Background(), bus2.Message{From: "ada", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("zzz999", 0, 0, 0)})
+	_, err = (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("zzz999", 0, 0, 0)})
 	require.NoError(t, err)
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "zzz999", "--timeout", "2s").Exit(1).Err("WAIT-PONG NONE")
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--json").Exit(0).Out(`"status":"ok"`, `"nonce":"abc123"`)
@@ -247,7 +247,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 		return ctx, cancel
 	}
 	opens, beats := 0, 0
-	w.open = func(context.Context, string) (bus2.Store, func(), error) {
+	w.open = func(context.Context, string) (bus.Store, func(), error) {
 		opens++
 		if opens < 4 {
 			return nil, nil, io.ErrUnexpectedEOF
@@ -274,7 +274,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	assert.Contains(t, out.String(), "opening again in 4s")
 
 	// down for good: the signal ends it, exit 0, no crash loop
-	w.open = func(context.Context, string) (bus2.Store, func(), error) { return nil, nil, io.ErrUnexpectedEOF }
+	w.open = func(context.Context, string) (bus.Store, func(), error) { return nil, nil, io.ErrUnexpectedEOF }
 	w.sleep = func(_ context.Context, d time.Duration) {
 		slept = append(slept, d)
 		if d == OpenRetryMax {
@@ -295,12 +295,12 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 func TestWaitPongReadsTheLogFromTheWaitsOwnWindow(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	b := &bus2.Bus{Store: r.store}
+	b := &bus.Bus{Store: r.store}
 	for i := 0; i < 10000; i++ { // one second of the store's clock each
-		_, err := b.Send(context.Background(), bus2.Message{From: "ada", To: []string{"bob"}, Subject: "old", Body: "x"})
+		_, err := b.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "old", Body: "x"})
 		require.NoError(t, err)
 	}
-	_, err := b.Send(context.Background(), bus2.Message{From: "bob", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("abc123", 1, 0, 4)})
+	_, err := b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("abc123", 1, 0, 4)})
 	require.NoError(t, err)
 	cli := r.cli()
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(0).Out("WAIT-PONG OK nonce=abc123 from=bob", "queue=1 working=0 width=4")

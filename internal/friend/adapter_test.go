@@ -62,7 +62,7 @@ func TestTheOtherHarnessesRefuseHonestlyAndAnUnknownOneIsNamed(t *testing.T) {
 			d, err := NewDeliverer(h, "/w/bob", "", nil, nil)
 			require.NoError(t, err)
 			_, err = d.Deliver(context.Background(), "x")
-			assert.EqualError(t, err, "no deliver command for "+h+" yet; run the session's blocking read: nova-bus2 recv --as <friend>")
+			assert.EqualError(t, err, "no deliver command for "+h+" yet; run the session's blocking read: nova-bus recv --as <friend>")
 		})
 	}
 	_, err := NewDeliverer("vim", "/w/bob", "", nil, nil)

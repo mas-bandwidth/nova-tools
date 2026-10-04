@@ -56,9 +56,9 @@ those two apart is the whole value of writing the line down.
 The `nova-secrets` fixture invokes `nova-check` in its child-command examples;
 those steps need that binary on PATH.
 
-## nova-bus2
+## nova-bus
 
-Run by `cmd/nova-bus2/firstrun_test.go` on a throwaway redis-server whose
+Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
 rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types them.
 The sitting is the loop: ada sends bob one message; bob peeks (new, not yet
@@ -72,25 +72,25 @@ write says `login=none`: on the fleet's store the identity is the login user and
 ### First run
 
 ```text
-$ nova-bus2 send --as ada --to bob --subject hello --body "are you there?"
+$ nova-bus send --as ada --to bob --subject hello --body "are you there?"
 SEND OK id=01M42BA18Y1K3SE57HE26SY8T0 to=bob cc=- at=2026-10-04T02:18:54Z login=none
 
-$ nova-bus2 peek --as bob
+$ nova-bus peek --as bob
 PEEK OK pending=0 new=1
 PEEK MESSAGE state=new id=01M42BA18Y1K3SE57HE26SY8T0 from=ada at=2026-10-04T02:18:54Z subject="hello"
 
-$ nova-bus2 recv --as bob --exec true
+$ nova-bus recv --as bob --exec true
 RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z login=none acked=true exec_exit=0 subject="hello"
 
-$ nova-bus2 ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+$ nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
 ACK OK acked=0 asked=1 login=none
 ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
 
-$ nova-bus2 log --max 5
+$ nova-bus log --max 5
 LOG OK total=1
 LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
 
-$ nova-bus2 names
+$ nova-bus names
 NAMES OK count=2
 NAMES NAME name=ada
 NAMES NAME name=bob

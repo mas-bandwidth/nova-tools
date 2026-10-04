@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
 // BeatEvery is how often the daemon beats to the sprint server while its
@@ -18,7 +18,7 @@ const BeatEvery = time.Second
 
 // MaxDeliveries is how many times a message is handed into the session
 // before the daemon gives up on it: a turn that fails leaves the message
-// pending and the bus hands it in again once its claim opens (bus2.ClaimAfter);
+// pending and the bus hands it in again once its claim opens (bus.ClaimAfter);
 // the last failure acks it, with the failure on the record, so a message the
 // session cannot take never comes back for ever.
 const MaxDeliveries = 3
@@ -47,11 +47,11 @@ const (
 // Daemon is one friend's loop: the recv loop over the friend's stream with
 // the deliver adapter, the beat, and the Machine stepped by what arrives.
 // Everything it reaches outside itself is a field, so a test runs it over
-// bus2's Fake, a fake harness and its own clock.
+// bus's Fake, a fake harness and its own clock.
 type Daemon struct {
 	Friend, Harness, Dir string
 	Width                int
-	Store                bus2.Store
+	Store                bus.Store
 	Deliver              Deliverer
 	Beat                 func(ctx context.Context) error // one beat to the sprint server
 	Now                  func() time.Time
@@ -94,9 +94,9 @@ type result struct {
 	err  error
 }
 
-// Text is a message as the session reads it, the shape nova-bus2 recv
+// Text is a message as the session reads it, the shape nova-bus recv
 // prints: the header line, a blank line, the body ending in a newline.
-func Text(m bus2.Message) string {
+func Text(m bus.Message) string {
 	body := m.Body
 	if !strings.HasSuffix(body, "\n") {
 		body += "\n"
@@ -120,7 +120,7 @@ func dash(s string) string {
 // A ping is answered twice: the daemon pong at once (transport), and the
 // session's own pong as a turn, which alone makes the friend up.
 func (d *Daemon) Run(ctx context.Context) error {
-	bus := &bus2.Bus{Store: d.Store}
+	b := &bus.Bus{Store: d.Store}
 	_, passive := d.Deliver.(interface{ Passive() })
 	d.m = Start(d.Now())
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
@@ -154,7 +154,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		storeOK := true
 		if busy == nil && !passive {
-			e, ok, err := bus.Recv(ctx, d.Friend, BeatEvery)
+			e, ok, err := b.Recv(ctx, d.Friend, BeatEvery)
 			switch {
 			case ctx.Err() != nil:
 				return nil
@@ -167,7 +167,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				msg := e.Message()
 				if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
 					if !answered[e.Entry] {
-						d.daemonPong(ctx, bus, msg, nonce)
+						d.daemonPong(ctx, b, msg, nonce)
 						answered[e.Entry] = true
 					}
 					for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
@@ -183,7 +183,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.status.StoreError = ""
 			}
 		} else { // a turn is running, or the harness is passive: peek, take nothing
-			_, fresh, err := bus.Peek(ctx, d.Friend)
+			_, fresh, err := b.Peek(ctx, d.Friend)
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -195,7 +195,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				for _, e := range fresh {
 					msg := e.Message()
 					if nonce, seat, since, isPing := ParsePing(msg.Body); isPing && !answered[e.Entry] {
-						d.daemonPong(ctx, bus, msg, nonce)
+						d.daemonPong(ctx, b, msg, nonce)
 						answered[e.Entry] = true
 						// the machine sees the ping when the daemon does: a turn longer than a window is no silence
 						for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
@@ -232,7 +232,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				}
 			}
 			if r.job.entry != "" && (ok || failed[r.job.entry] >= MaxDeliveries) {
-				if _, err := bus.AckEntry(ctx, d.Friend, r.job.entry); err != nil {
+				if _, err := b.AckEntry(ctx, d.Friend, r.job.entry); err != nil {
 					d.status.StoreError = err.Error()
 					line += " ack=failed"
 				} else {
@@ -274,7 +274,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 }
 
 // seatOf is the seat a ping names, else its sender.
-func seatOf(seat string, m bus2.Message) string {
+func seatOf(seat string, m bus.Message) string {
 	if seat == "" {
 		return m.From
 	}
@@ -284,8 +284,8 @@ func seatOf(seat string, m bus2.Message) string {
 // daemonPong answers a ping at once, from the daemon: transport is up.
 // A send that fails is the store's error on the status; the ping still
 // goes into the session.
-func (d *Daemon) daemonPong(ctx context.Context, bus *bus2.Bus, ping bus2.Message, nonce string) {
-	_, err := bus.Send(ctx, bus2.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + "\n"})
+func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, nonce string) {
+	_, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + "\n"})
 	if err != nil {
 		d.status.StoreError = "daemon pong: " + err.Error()
 	}

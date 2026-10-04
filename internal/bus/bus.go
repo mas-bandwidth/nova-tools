@@ -1,5 +1,5 @@
-// Package bus2 is the message bus between AIs over Redis streams
-// (docs/SPEC-BUS2.md; the delivery machine is tla/Bus2.tla). A message is one
+// Package bus is the message bus between AIs over Redis streams
+// (docs/SPEC-BUS.md; the delivery machine is tla/Bus2.tla). A message is one
 // stream entry, written to every recipient's stream and to the log in one
 // transaction; a recipient reads its stream through a consumer group, so a
 // message is pending from the moment it is delivered until it is acked, and a
@@ -7,7 +7,7 @@
 // apart from the transport: Bus holds the rules over a Store, the few Redis
 // commands the bus uses (redis.go is the Redis one, fake.go the one tests run
 // on), so every rule is tested with no socket.
-package bus2
+package bus
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-// The keys (SPEC-BUS2.md, the data): one stream per recipient, and one log.
+// The keys (SPEC-BUS.md, the data): one stream per recipient, and one log.
 const (
 	LogKey = "bus2:log"
 	Prefix = "bus2:to:"
@@ -30,7 +30,7 @@ const (
 // StreamOf is the recipient's stream.
 func StreamOf(name string) string { return Prefix + name }
 
-// Limits (SPEC-BUS2.md, the data).
+// Limits (SPEC-BUS.md, the data).
 const (
 	MaxBody = 1 << 20 // bytes of a body
 	MaxName = 64      // bytes of a name
@@ -40,17 +40,19 @@ const (
 // recv hands it to another. It is longer than the longest delivery a reader
 // makes (nova-friend's ten minute turn and the kill that ends it), so a live
 // reader mid-turn is never handed its message a second time; a dead one's
-// is claimed after this (SPEC-BUS2.md, the semantics; tla/Bus2.tla
+// is claimed after this (SPEC-BUS.md, the semantics; tla/Bus2.tla
 // HeldStaysHeld).
 const ClaimAfter = 15 * time.Minute
 
 // Consumer is the one consumer name of every reader: with ClaimAfter, who
-// holds an entry is told by its idle time, never by a name.
+// holds an entry is told by its idle time, never by a name. It keeps the
+// bus2 spelling with the keys: a consumer name lives in the live store's
+// pending lists, and renaming it there is a migration (SPEC-BUS.md, the data).
 const Consumer = "nova-bus2"
 
 // unknown is the refusal of a name the roster does not hold, with how to add one.
 func unknown(n string) string {
-	return fmt.Sprintf("%s is no known name; the names are nova-config's friend and machine rows (nova-bus2 names lists them); add one with nova-config friend add %s --slots 1 --tiers flash --as <you>, then nova-config apply", n, n)
+	return fmt.Sprintf("%s is no known name; the names are nova-config's friend and machine rows (nova-bus names lists them); add one with nova-config friend add %s --slots 1 --tiers flash --as <you>, then nova-config apply", n, n)
 }
 
 // nameRe is a name: lowercase letters, digits and hyphens.

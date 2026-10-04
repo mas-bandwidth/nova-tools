@@ -1,6 +1,6 @@
 //go:build functional
 
-package bus2
+package bus
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 )
 
 // live is a bus over a throwaway redis-server whose roster names ada and bob,
-// the shape internal/bus2's fake imitates; every rule the unit tests pin on
+// the shape internal/bus's fake imitates; every rule the unit tests pin on
 // the fake runs here once against the real commands.
 func live(t *testing.T) (*Bus, *redis.Client, context.Context) {
 	t.Helper()

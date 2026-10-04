@@ -24,8 +24,8 @@ var DefaultCatalog = []Entry{
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 
 	// cmd/
-	E("cmd/nova-bus2", "messages between AIs over Redis streams: one stream per recipient under a consumer group, one log, pending until acked", "go test ./cmd/nova-bus2", "go test ./cmd/nova-bus2"),
-	E("cmd/nova-friend", "what a friend runs to be part of the team: the wake loop over nova-bus2, the beat to the sprint server, and the proof of life, as one launchd daemon", "go test ./cmd/nova-friend", "go test -tags functional ./cmd/nova-friend"),
+	E("cmd/nova-bus", "messages between AIs over Redis streams: one stream per recipient under a consumer group, one log, pending until acked", "go test ./cmd/nova-bus", "go test ./cmd/nova-bus"),
+	E("cmd/nova-friend", "what a friend runs to be part of the team: the wake loop over nova-bus, the beat to the sprint server, and the proof of life, as one launchd daemon", "go test ./cmd/nova-friend", "go test -tags functional ./cmd/nova-friend"),
 	E("cmd/nova-cairn", "session checkpoints: a session's exact words kept as plain files, with an index and receipts", "go test ./cmd/nova-cairn", "go test ./cmd/nova-cairn"),
 	E("cmd/nova-decide", "typed decisions with probabilities through a backend, recorded and calibrated against their outcomes", "go test ./cmd/nova-decide", "go test ./cmd/nova-decide"),
 	E("cmd/nova-config", "permanent configuration store (Postgres), friends and machines, applied into Redis", "go test ./cmd/nova-config", "go test ./cmd/nova-config"),
@@ -50,7 +50,7 @@ var DefaultCatalog = []Entry{
 	E("internal/bounded", "bounded readers and byte buffers", "go test ./internal/bounded", "go test ./internal/bounded"),
 	E("internal/binstamp", "a binary file's stamp: a loop stops when its own binary was replaced", "go test ./internal/binstamp", "go test ./internal/binstamp"),
 	E("internal/buildinfo", "binary identity and version info", "go test ./internal/buildinfo", "go test ./internal/buildinfo"),
-	E("internal/bus2", "the message bus over Redis streams: the rules (send, recv, ack, peek, log) over a Store of the few commands used, the Redis store and the in-memory fake", "go test ./internal/bus2", "go test -tags functional ./internal/bus2"),
+	E("internal/bus", "the message bus over Redis streams: the rules (send, recv, ack, peek, log) over a Store of the few commands used, the Redis store and the in-memory fake", "go test ./internal/bus", "go test -tags functional ./internal/bus"),
 	E("internal/cairn", "the cairn store: session records, entries, the index and receipts, nested and flat", "go test ./internal/cairn", "go test ./internal/cairn"),
 	E("internal/cardcontract", "the frame around a card's task: the frame file, JOB.md, the result shape, and the shims of each model family's profile", "go test ./internal/cardcontract", "go test -tags functional ./internal/cardcontract"),
 	E("internal/cardcost", "what a card cost: a route's price sheet, a run's tokens by class, the predicted cost and a consumer card's usage record, in exact decimal arithmetic", "go test ./internal/cardcost", "go test ./internal/cardcost"),
@@ -69,7 +69,7 @@ var DefaultCatalog = []Entry{
 	E("internal/dogfood", "dogfood self-test gates", "go test ./internal/dogfood", "go test ./internal/dogfood"),
 	E("internal/filelock", "process-exclusive file locks whose holder is named in the file", "go test ./internal/filelock", "go test ./internal/filelock"),
 	E("internal/fleet", "runner fleet discovery and status", "go test ./internal/fleet", "go test ./internal/fleet"),
-	E("internal/friend", "nova-friend's rules apart from the transport: the connection and challenge machine with an injected clock, the daemon loop over bus2, the deliver adapters per harness, the state files and the launchd agent", "go test ./internal/friend", "go test ./internal/friend"),
+	E("internal/friend", "nova-friend's rules apart from the transport: the connection and challenge machine with an injected clock, the daemon loop over the bus, the deliver adapters per harness, the state files and the launchd agent", "go test ./internal/friend", "go test ./internal/friend"),
 	E("internal/fuse", "the fuse box: read and write the lockdown and quarantine state", "go test ./internal/fuse", "go test ./internal/fuse"),
 	Page("internal/ghevent", "the GitHub event Redis stream: append and read", "go test ./internal/ghevent", "go test ./internal/ghevent"),
 	E("internal/ghevent/wire", "shared GitHub event stream identity without ingestion dependencies", "go test ./internal/ci", "go test ./internal/ci"),

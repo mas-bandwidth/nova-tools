@@ -1,11 +1,11 @@
-// nova-bus2 is the message bus between AIs over Redis streams
-// (docs/SPEC-BUS2.md; the delivery machine is tla/Bus2.tla). A message goes
+// nova-bus is the message bus between AIs over Redis streams
+// (docs/SPEC-BUS.md; the delivery machine is tla/Bus2.tla). A message goes
 // to every recipient's stream and to the log in one transaction; a recipient
 // receives through its consumer group, so a message is pending until it is
 // acked and a reader that died before acking is handed it again. The verbs
 // are send, peek, recv, ack, log and names; the dispatch, the banner, the
 // help, the version verb, the refusals and the output envelope are
-// internal/tool's, and the rules are internal/bus2's.
+// internal/tool's, and the rules are internal/bus's.
 package main
 
 import (
@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
@@ -29,13 +29,13 @@ import (
 
 var version string
 
-// RedisEnv names the store when --redis does not (SPEC-BUS2.md, the config).
+// RedisEnv names the store when --redis does not (SPEC-BUS.md, the config).
 const RedisEnv = "NOVA_BUS_REDIS"
 
 // ExecBudget bounds one run of --exec's command: a delivery into a harness
 // is a write of a few lines; one that takes longer is stuck. It is also how
-// long a reader keeps a message before another may claim it (bus2.ClaimAfter).
-const ExecBudget = bus2.ClaimAfter
+// long a reader keeps a message before another may claim it (bus.ClaimAfter).
+const ExecBudget = bus.ClaimAfter
 
 // ForeverBlock is how long one read of the loop waits before it looks again
 // (so a signal is seen within it).
@@ -44,12 +44,12 @@ const ForeverBlock = 30 * time.Second
 // world is what the tool reaches outside itself: the environment, the store
 // it opens for an address, the command --exec runs, and the signals a loop
 // stops on. main passes the real one; a test passes its own over
-// internal/bus2's Fake, so no test opens a socket.
+// internal/bus's Fake, so no test opens a socket.
 type world struct {
 	getenv func(string) string
 	// open dials the store and says which user it logged in as ("" when the
 	// store has no login: the default user), the identity every verb acts as.
-	open    func(ctx context.Context, addr string) (st bus2.Store, login string, closeStore func(), err error)
+	open    func(ctx context.Context, addr string) (st bus.Store, login string, closeStore func(), err error)
 	run     func(ctx context.Context, command, stdin string, stdout, stderr io.Writer) (exit int, err error)
 	signals func(ctx context.Context) (context.Context, context.CancelFunc)
 }
@@ -76,7 +76,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 // (NOVA_REDIS_BENCH_PASSWORD when it names none); no user is the default
 // user with no password. The password is never on the line and never
 // printed (internal/redisconn).
-func (w world) openRedis(ctx context.Context, addr string) (bus2.Store, string, func(), error) {
+func (w world) openRedis(ctx context.Context, addr string) (bus.Store, string, func(), error) {
 	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
 	if w.getenv(redisauth.UserEnv) != "" {
 		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
@@ -92,7 +92,7 @@ func (w world) openRedis(ctx context.Context, addr string) (bus2.Store, string, 
 	if err != nil {
 		return nil, "", nil, err
 	}
-	return bus2.Redis{C: conn.Client()}, resolved.User, func() { conn.Close() }, nil
+	return bus.Redis{C: conn.Client()}, resolved.User, func() { conn.Close() }, nil
 }
 
 // runShell runs --exec's command through the shell with the message on its
@@ -111,7 +111,7 @@ func runShell(ctx context.Context, command, stdin string, stdout, stderr io.Writ
 
 func busTool(w world) *tool.Tool {
 	return &tool.Tool{
-		Name:  "nova-bus2",
+		Name:  "nova-bus",
 		What:  "messages between AIs over Redis streams: sent once, delivered until acked",
 		Stamp: version,
 		How: `the loop: send --as <me> --to <friend> --subject <s> --body <text> sends;
@@ -235,7 +235,7 @@ at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<t
 // bus opens the store named by --redis for a verb, or says why not: an
 // empty address is a usage refusal, a store that did not answer is one too
 // (exit 2, the banner's table), in redisconn's one line.
-func (w world) bus(c *tool.Call) (*bus2.Bus, string, func(), *tool.Out) {
+func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
 	addr := c.Want("redis", "the Redis address, host:port (or "+RedisEnv+")")
 	if o := c.Refused(); o != nil {
 		return nil, "", nil, o
@@ -246,12 +246,12 @@ func (w world) bus(c *tool.Call) (*bus2.Bus, string, func(), *tool.Out) {
 	if err != nil {
 		return nil, "", nil, tool.Refuse(err.Error())
 	}
-	return &bus2.Bus{Store: st}, login, closeStore, nil
+	return &bus.Bus{Store: st}, login, closeStore, nil
 }
 
 // identity is who the verb acts as: the user the connection logged in as,
 // which --as may repeat and never contradict (the store's login is the
-// identity, not a word on the line; SPEC-BUS2.md, the identity); with no
+// identity, not a word on the line; SPEC-BUS.md, the identity); with no
 // login user, --as alone, and the result says login=none.
 func identity(c *tool.Call, login string) (string, *tool.Out) {
 	as := c.Str("as")
@@ -278,7 +278,7 @@ func loginFact(o *tool.Out, login string) *tool.Out {
 // answer renders an error of the bus: a Refusal names the input (exit 2),
 // anything else is the store (exit 2, with redisconn's words).
 func answer(err error) *tool.Out {
-	var r *bus2.Refusal
+	var r *bus.Refusal
 	if errors.As(err, &r) {
 		return tool.Refuse(r.Problems...)
 	}
@@ -298,12 +298,12 @@ func names(csv string) []string {
 func (w world) send(c *tool.Call) *tool.Out {
 	body := c.Str("body")
 	if c.Bool("stdin") {
-		raw, err := io.ReadAll(io.LimitReader(c.Stdin, bus2.MaxBody+1))
+		raw, err := io.ReadAll(io.LimitReader(c.Stdin, bus.MaxBody+1))
 		if err != nil {
 			return tool.Refuse("--stdin: " + err.Error())
 		}
-		if len(raw) > bus2.MaxBody {
-			return tool.Refuse(fmt.Sprintf("the body on stdin is over 1 MiB; at most %d bytes", bus2.MaxBody))
+		if len(raw) > bus.MaxBody {
+			return tool.Refuse(fmt.Sprintf("the body on stdin is over 1 MiB; at most %d bytes", bus.MaxBody))
 		}
 		body = string(raw)
 	}
@@ -316,7 +316,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 	if refused != nil {
 		return refused
 	}
-	m, err := b.Send(context.Background(), bus2.Message{
+	m, err := b.Send(context.Background(), bus.Message{
 		From: as, To: names(c.Str("to")), CC: names(c.Str("cc")),
 		Subject: c.Str("subject"), Re: c.Str("re"), Body: body,
 	})
@@ -329,7 +329,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 // message is a received message as one Out: the header line's facts and the
 // body as the payload, so the text form is the header, a blank line and the
 // body, and --json carries the same under facts and payload.
-func message(m bus2.Message, login string) *tool.Out {
+func message(m bus.Message, login string) *tool.Out {
 	o := tool.Done()
 	o.Verb = "recv" // the token of the line, also when text renders it for --exec before the skeleton has
 	o.Fact("id", m.ID).Fact("from", m.From).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ",")).
@@ -339,7 +339,7 @@ func message(m bus2.Message, login string) *tool.Out {
 
 // text is the message as recv prints it and as --exec's command reads it:
 // the header line, a blank line, the body ending in a newline.
-func text(m bus2.Message, login string) string {
+func text(m bus.Message, login string) string {
 	var b strings.Builder
 	message(m, login).Render(&b, false)
 	body := m.Body
@@ -463,7 +463,7 @@ func (w world) peek(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh))
 	for _, state := range []struct {
 		name string
-		es   []bus2.Entry
+		es   []bus.Entry
 	}{{"pending", pending}, {"new", fresh}} {
 		for _, e := range state.es {
 			m := e.Message()

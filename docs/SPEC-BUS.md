@@ -1,10 +1,11 @@
-# SPEC-BUS2: messages between AIs over Redis streams
+# SPEC-BUS: messages between AIs over Redis streams
 
-nova-bus2 is the message bus between AIs: a message is sent once and delivered
+nova-bus is the message bus between AIs: a message is sent once and delivered
 until it is acked. It depends on Redis, reached over the tailnet, and on
 nothing else: no git, no file twin, no mode that works without a server. The
-tool is `cmd/nova-bus2`, the rules are `internal/bus2`, the delivery machine is
-`tla/Bus2.tla`. When it is adopted it is renamed and becomes nova-bus.
+tool is `cmd/nova-bus`, the rules are `internal/bus`, the delivery machine is
+`tla/Bus2.tla`. It was built as nova-bus2 beside the git bus and took the name
+nova-bus on 2026-10-04, when the git bus was removed.
 
 ## The data
 
@@ -25,6 +26,12 @@ tool is `cmd/nova-bus2`, the rules are `internal/bus2`, the delivery machine is
 - `send` writes the entry to every recipient's stream (to and cc) and to
   `bus2:log` in one `MULTI`/`EXEC`: a message is on every stream or on none.
 - Nothing is ever deleted by the tool. Trimming is a later decision.
+- The keys keep the `bus2:` prefix (`bus2:to:<name>`, `bus2:log`, and
+  `bus2:keepalive:<name>`, the coordinator keepalive), and the consumer keeps its
+  `nova-bus2` name, although the tool is nova-bus: the fleet's store already holds
+  streams, groups and pending lists under these names, and renaming a live key
+  is a migration (every reader stopped, every stream copied, every group
+  re-made with its pending entries), bought for nothing but a spelling.
 
 ## The semantics
 
@@ -51,7 +58,7 @@ it names.
 
 ## The verbs
 
-`nova-bus2 help` opens with the loop a harness runs, three lines. Every verb
+`nova-bus help` opens with the loop a harness runs, three lines. Every verb
 takes `--json`; `log` takes `--max`.
 
 - `send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> |
@@ -67,7 +74,7 @@ takes `--json`; `log` takes `--max`.
   pending and is `RECV FAILED` at exit 1. `--forever` loops, waiting for
   messages, needs `--exec`, and stops on SIGINT or SIGTERM (a message being
   delivered stays pending) or at the first command that fails. The push into a
-  harness is `nova-bus2 recv --as <me> --forever --exec '<deliver-into-session>'`
+  harness is `nova-bus recv --as <me> --forever --exec '<deliver-into-session>'`
   beside the session.
 - `ack [--as <me>] --id <id,...>` prints `ACK OK acked=<n> asked=<n>` and one
   `ACK ID id= acked=true|false` line per id.
@@ -98,7 +105,7 @@ the friend is; creating users is the owner's, never the tool's.
 ## The ACL per friend
 
 The user for friend `<f>` is named `<f>` and needs, measured against what
-the tool sends (`internal/bus2/redis.go`; the key flags are what `COMMAND
+the tool sends (`internal/bus/redis.go`; the key flags are what `COMMAND
 INFO` on Redis 8 answers):
 
 | Verb | Commands | Keys |

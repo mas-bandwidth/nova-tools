@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +19,7 @@ var start = time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 // clock, no seat. exec is what --exec's command does with the text it is
 // handed; signals is the loop's context, which a test cancels.
 type rig struct {
-	store   *bus2.Fake
+	store   *bus.Fake
 	env     map[string]string
 	exec    func(stdin string) int
 	execIn  []string
@@ -30,13 +30,13 @@ type rig struct {
 }
 
 func newRig(names ...string) *rig {
-	return &rig{store: bus2.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}}
+	return &rig{store: bus.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}}
 }
 
 func (r *rig) world() world {
 	return world{
 		getenv: func(k string) string { return r.env[k] },
-		open: func(context.Context, string) (bus2.Store, string, func(), error) {
+		open: func(context.Context, string) (bus.Store, string, func(), error) {
 			r.opened++
 			if r.openErr != nil {
 				return nil, "", nil, r.openErr
@@ -84,7 +84,7 @@ func TestTheToolMeetsTheSkeletonStandard(t *testing.T) {
 
 func TestBareCommandNamesTheDoor(t *testing.T) {
 	t.Parallel()
-	newRig().cli().Do(t).Exit(2).Err("BUS2 REFUSED", "nova-bus2 help")
+	newRig().cli().Do(t).Exit(2).Err("BUS REFUSED", "nova-bus help")
 }
 
 func TestSendRefusesNamingEveryProblem(t *testing.T) {
@@ -114,7 +114,7 @@ func TestSendRefusesNamingEveryProblem(t *testing.T) {
 			for _, s := range c.says {
 				got.Err(s)
 			}
-			assert.Equal(t, 0, r.store.Len(bus2.LogKey), "a refused send writes nothing")
+			assert.Equal(t, 0, r.store.Len(bus.LogKey), "a refused send writes nothing")
 		})
 	}
 }
@@ -170,7 +170,7 @@ func TestRecvExecAcksOnZeroAndKeepsThePendingMessageOnFailure(t *testing.T) {
 
 	r.exec = func(string) int { return 0 }
 	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(1).Err("RECV NONE", "nothing for bob")
-	r.store.Advance(bus2.ClaimAfter)
+	r.store.Advance(bus.ClaimAfter)
 	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(0).Out("RECV OK id="+mid, "acked=true exec_exit=0")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=0")
 }
@@ -195,7 +195,7 @@ func TestRecvForeverWantsExecAndStopsOnASignal(t *testing.T) {
 
 	r.cancel = nil
 	r.exec = func(string) int { return 1 }
-	r.store.Advance(bus2.ClaimAfter)
+	r.store.Advance(bus.ClaimAfter)
 	cli.Do(t, "recv", "--as", "bob", "--forever", "--exec", "deliver").Exit(1).Err("--exec exited 1")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=1")
 }
@@ -235,13 +235,13 @@ func TestSendReadsTheBodyFromStdinAndBoundsIt(t *testing.T) {
 	cli := r.cli()
 	cli.OKIn(t, "from stdin\n", "send", "--as", "ada", "--to", "bob", "--subject", "s", "--stdin")
 	cli.Do(t, "log", "--bodies").Exit(0).Out(`body="from stdin\n"`)
-	big := strings.Repeat("x", bus2.MaxBody+7)
+	big := strings.Repeat("x", bus.MaxBody+7)
 	cli.Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", big).Exit(2).Err("the body is 1048583 bytes, at most 1048576")
 	cli.DoIn(t, big, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--stdin").Exit(2).Err("the body on stdin is over 1 MiB; at most 1048576 bytes")
 }
 
 // The identity is the store's login user, never a word on the line
-// (SPEC-BUS2.md, the identity): with a login, --as may repeat it or be left
+// (SPEC-BUS.md, the identity): with a login, --as may repeat it or be left
 // out and any other name is refused; with none, --as is required and every
 // write says login=none.
 func TestTheIdentityIsTheLoginUser(t *testing.T) {
@@ -261,7 +261,7 @@ func TestTheIdentityIsTheLoginUser(t *testing.T) {
 	} {
 		cli.Do(t, verb...).Exit(2).Err("--as bob is not the login user ada: this connection acts as ada; drop --as, or log in as bob (NOVA_SPRINT_REDIS_USER=bob with its password)")
 	}
-	assert.Equal(t, 2, r.store.Len(bus2.LogKey), "a refused send writes nothing")
+	assert.Equal(t, 2, r.store.Len(bus.LogKey), "a refused send writes nothing")
 	cli.Do(t, "peek").Exit(0).Out("PEEK OK pending=0 new=0")
 	cli.Do(t, "recv").Exit(1).Err("RECV NONE: nothing for ada")
 	cli.Do(t, "ack", "--id", "X").Exit(0).Out("ACK OK acked=0 asked=1").NotOut("login=none")
