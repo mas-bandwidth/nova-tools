@@ -92,6 +92,20 @@ func fewReaders(s *Snapshot) string {
 	return fmt.Sprintf("%s: %s", NFewReaders, readersText(s))
 }
 
+// cannotAskWhy is the ask's refusal of a primary at an attempt no reader can be
+// asked: it needs want different readers, free is the number up with room and
+// no read card at the attempt, full the number more that are at width. A reader
+// is asked an attempt once (its read card, placed or retired, is one read per
+// reader per attempt: a read taken back away, levelled or returned counts), so
+// the readers left are new ones (reader add), or the next attempt (rework).
+func cannotAskWhy(s *Snapshot, pr *Card, attempt, want, free, full int) string {
+	return fmt.Sprintf("needs %d different readers and %d is free with no read card at attempt %d of %s (%d free but at width); a reader is asked an attempt once, whether it read it or its read was taken back, and a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, nova-sprint reader up <name>, or nova-sprint rework %s --fix <text> for a new attempt every reader may read", want, free, attempt, pr.ID, full, readersText(s), pr.ID)
+}
+
+// NoEligibleReader opens the tick's one judgment for every primary of a tick
+// the ask refused for want of readers (TickAsk): "no eligible reader for <ids>".
+const NoEligibleReader = "no eligible reader for "
+
 // awayRead says a read card is asked, not begun, of a reader that is not up:
 // the ask takes it back (retires it) and asks the primary's next reader in the
 // same step, at its attempt and with no redeal spent (tla/DirtyTick.tla,
@@ -200,8 +214,11 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 }
 
 // freeReaders is the readers the ask may ask the primary's attempt of: up,
-// with no read card of it at the attempt, placed or retired (a reader with
-// one, even retired, has read it).
+// with no read card of it at the attempt, placed or retired. A reader is
+// asked an attempt once: one read card per reader per attempt (ReadCardID),
+// so a reader with a card at this attempt (read, or taken back away, levelled
+// or returned) is not asked it again; the next attempt is read on new cards,
+// by every reader.
 func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 	var out []string
 	for _, rd := range s.Readers.Rows() {

@@ -1460,7 +1460,15 @@ id (`--op`) returns the original result, with no second counter or notification.
   as a read: the card is retired (by `returned`), and a primary no reader is
   left to read is the ask's `cannot ask` judgment (or, with fewer than two
   readers up, `fewer than two readers up`), for the coordinator (reader add,
-  rework, drop; tla/DirtyTick.tla, ReasksBounded and StrandingIsJudged). Its
+  rework, drop; tla/DirtyTick.tla, ReasksBounded and StrandingIsJudged). A
+  reader is asked an attempt once: its read card at the attempt is one read
+  per reader per attempt (`<primary>.r<attempt>.<reader>`), so a reader whose
+  read was taken back (away, levelled, returned) holds the card retired and is
+  not asked that attempt again, where the model leaves such a reader out of
+  `seen`; the next attempt is read on new cards, by every reader. The tick's
+  `cannot ask` is one judgment per tick, `no eligible reader for <ids>`, every
+  such primary a subject of it (the night of 2026-10-03: five cards whose reads
+  were taken back from five readers in turn, five judgments). Its
   member does not begin a read it returned again before
   `member.ReadStageRetry`. A return of a read the caller does not hold is
   refused, and so is a second return of a read returned and not begun since:
@@ -1848,7 +1856,7 @@ the tick would make, no other open judgment on it).
 | repair skipped changes the store refused as recorded | card (look), return, drop, rework, ack | yes |
 | an operation was stuck | check, ack | yes |
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
-| cannot ask (enough readers are up, and a primary has fewer free readers than its tier needs: one for a flash card, two for a pro card) | reader add, rework, drop, wait | no |
+| cannot ask (enough readers are up, and a primary has fewer readers with no read card at its attempt, placed or retired, than its tier needs: one for a flash card, two for a pro card; one judgment per tick, `no eligible reader for <ids>`, every such primary a subject of it) | reader add, rework (a new attempt every reader may read), drop, wait | no |
 | fewer than two readers up | reader up, reader add, wait | no |
 | no fleet member is up (when every member that beats is held, it says so and offers only fleet up and wait) | fleet beat (on a machine), fleet up (releases a hold), wait | no |
 | a card reached its bound (at its ceiling tier, flash first, section 5: an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take; or the second identical failure, section 2: two takes of the card, or two attempts of its primary, failed the same way, and the judgment names the class) | rework with a fix (a new attempt, on the next tier), drop, wait (at a redeal bound, wait only when the bound was a provider failure); when the attempt before also ended at its bound on the card's tier (section 5, the bound holds across attempts): rework with a fix on a higher tier (`--tier`, when the ladder has one), drop, and wait only when the bound was a provider failure and the provider's return has not yet lifted a bound on that tier | no |
@@ -2537,8 +2545,12 @@ the condition clears (closing a primary's last judgment in review, it writes
 the judgment the primary needs next, as every step that leaves one in review
 does): cannot ask (enough readers are up and fewer different readers than its
 tier needs, one for a flash card and two for a pro card, are free for a
-primary, who has not already read its attempt;
-one condition per primary whatever its count of free readers),
+primary with no read card at its attempt, placed or retired: a reader is
+asked an attempt once, whether it read it or its read was taken back;
+one condition per primary whatever its count of free readers, and the
+primaries of one tick one judgment, `no eligible reader for <ids>`, the ids
+those no open judgment of the type names yet, each its own subject, closed
+when it is asked),
 fewer than two readers up (the sprint's, one whatever the primaries waiting:
 the ask asks no primary that needs more readers than are up while it stands,
 section 6),

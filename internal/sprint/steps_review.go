@@ -206,7 +206,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 					full++
 				}
 			}
-			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s (%d free but at width); a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, or nova-sprint reader up <name>", want, len(chosenReaders)+len(again), attempt, c.ID, full, readersText(s)))
+			p.refuse(c.ID, cannotAskWhy(s, c, attempt, want, len(chosenReaders)+len(again), full))
 			continue
 		}
 		// the first read of a flash card's attempt is a decide read (decideFields): one
