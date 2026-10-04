@@ -392,10 +392,10 @@ func diffNamesResult(stdout, stderr *diffCapture, runErr error) ([]string, error
 // not be a coin toss.
 type ExecSSH struct{ Path string }
 
-// sshArgs are the options every invocation carries. BatchMode so a missing key
-// is a refusal now rather than a password prompt nobody is at the keyboard for,
-// and a connect timeout so a sleeping bench costs seconds rather than the run.
-func (s ExecSSH) sshArgs(machine string) []string {
+// remoteArgv is the option list every invocation carries, with the machine the
+// invocation reaches. It composes the policy and starts no child: Run, Send and
+// Fetch are the only places a child starts, and each guards the child it starts.
+func remoteArgv(machine string) []string {
 	return append(append([]string(nil), SSHOptions...), machine)
 }
 
@@ -424,7 +424,7 @@ var SSHOptions = []string{
 // machineName, the version against ValidVersion, the paths by the flags that
 // named them).
 func (s ExecSSH) Run(ctx context.Context, machine string, argv []string) (string, error) {
-	args := append(s.sshArgs(machine), argv...)
+	args := append(remoteArgv(machine), argv...)
 	testguard.RefuseHosts(s.Path, args...)
 	return runCommand(ctx, s.Path, args...)
 }
@@ -453,7 +453,7 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 		pw.CloseWithError(writeTar(pw, dir, base, allowed))
 	}()
 	defer pr.Close()
-	args := append(s.sshArgs(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
+	args := append(remoteArgv(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
 	testguard.RefuseHosts(s.Path, args...)
 	return runCommandInput(ctx, pr, "", s.Path, args...)
 }
@@ -464,7 +464,7 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 // tar. It is what makes `--from host:dir` work -- the host that has the ssh
 // trust adopting a release that lives on the host that has the cores.
 func (s ExecSSH) Fetch(ctx context.Context, machine, dir, dest string) (string, error) {
-	args := append(s.sshArgs(machine), "tar", "-C", dir, "-cf", "-", ".")
+	args := append(remoteArgv(machine), "tar", "-C", dir, "-cf", "-", ".")
 	testguard.RefuseHosts(s.Path, args...)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
