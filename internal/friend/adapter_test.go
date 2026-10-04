@@ -2,6 +2,8 @@ package friend
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -52,6 +54,32 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 	assert.ErrorContains(t, err, "no opencode session for /w/bob")
 	_, err = NewestSession(`nope`, "/w/bob")
 	assert.ErrorContains(t, err, "not a JSON list")
+}
+
+func TestOpenCodeSocketPath(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, filepath.Join("/test", "control.sock"), SocketPath("/test"))
+}
+
+func TestOpenCodeTUIRun(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	// Create mock control socket in home
+	socket := SocketPath(tmp)
+	f, err := os.Create(socket)
+	require.NoError(t, err)
+	f.Close()
+
+	// Create active state in dir/.opencode/
+	activeDir := filepath.Join(tmp, ".opencode")
+	require.NoError(t, os.MkdirAll(activeDir, 0755))
+	activeFile := filepath.Join(activeDir, "active.json")
+	require.NoError(t, os.WriteFile(activeFile, []byte("{}"), 0644))
+	assert.True(t, TUIRun(tmp, tmp))
+
+	// Test without socket
+	os.Remove(socket)
+	assert.False(t, TUIRun(tmp, tmp))
 }
 
 func TestTheOtherHarnessesRefuseHonestlyAndAnUnknownOneIsNamed(t *testing.T) {

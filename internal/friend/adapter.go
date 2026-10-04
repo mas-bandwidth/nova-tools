@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -114,15 +117,24 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	return nil, fmt.Errorf("%q is no harness; the harnesses are %s", harness, strings.Join(Harnesses, ", "))
 }
 
-// OpenCode delivers through `opencode run --session <id> --dir <dir> <text>`,
+// OpenCode delivers through the OpenCode TUI session if reachable,
+// otherwise through `opencode run --session <id> --dir <dir> <text>`,
 // which blocks for the whole turn; without a session named, the newest
 // session whose directory is Dir, from `opencode session list --format json`,
 // so a friend who starts a fresh session is still reached.
+//
+// The OpenCode TUI runs a local server; when a TUI is running in the same
+// directory, the adapter discovers its socket from opencode's state files
+// and posts the turn there directly, so it lands in the open chat window
+// as the TUI shows it. When no TUI runs, the adapter falls back to
+// resume-by-run as above.
 type OpenCode struct {
 	Dir, Session string
 	Run          Exec
-	Program      string    // "opencode" when empty
-	Out          io.Writer // where the turn's output goes, when set: the daemon's record
+	Program      string              // "opencode" when empty
+	Home         string              // OPENCODE_HOME; $OPENCODE_HOME or ~/.opencode when empty
+	Env          func(string) string // getenv; os.Getenv when nil
+	Out          io.Writer           // where the turn's output goes, when set: the daemon's record
 }
 
 func (o *OpenCode) program() string {
@@ -130,6 +142,60 @@ func (o *OpenCode) program() string {
 		return "opencode"
 	}
 	return o.Program
+}
+
+func (o *OpenCode) home() string {
+	if o.Home != "" {
+		return o.Home
+	}
+	getenv := o.Env
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if h := getenv("OPENCODE_HOME"); h != "" {
+		return h
+	}
+	h, _ := os.UserHomeDir()
+	return filepath.Join(h, ".opencode")
+}
+
+// SocketPath returns the path to opencode's control socket under home.
+func SocketPath(home string) string {
+	return filepath.Join(home, "control.sock")
+}
+
+// TUIRun returns whether opencode's TUI is running in dir, discovered from
+// opencode's state files and control socket.
+func TUIRun(home, dir string) bool {
+	socket := SocketPath(home)
+	if _, err := os.Stat(socket); err != nil {
+		return false
+	}
+	// Check for active session state in dir
+	stateFile := filepath.Join(dir, ".opencode", "active.json")
+	if _, err := os.Stat(stateFile); err != nil {
+		return false
+	}
+	return true
+}
+
+// Attach delivers a turn through opencode's running TUI by posting to its
+// control socket. Returns an error if no TUI is running.
+func (o *OpenCode) Attach(ctx context.Context, text string) error {
+	socket := SocketPath(o.home())
+	conn, err := net.DialTimeout("unix", socket, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("opencode TUI not running in %s; no control socket at %s", o.Dir, socket)
+	}
+	defer conn.Close()
+
+	req := map[string]string{
+		"session": o.Session,
+		"text":    text,
+	}
+	data, _ := json.Marshal(req)
+	_, err = conn.Write(data)
+	return err
 }
 
 // session is one row of `opencode session list --format json`.
@@ -172,6 +238,18 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 			return 0, err
 		}
 	}
+
+	// Try to deliver through the running TUI first
+	if TUIRun(o.home(), o.Dir) {
+		if err := o.Attach(ctx, text); err == nil {
+			if o.Out != nil {
+				fmt.Fprintln(o.Out, "turned: delivered via opencode TUI control socket")
+			}
+			return 0, nil
+		}
+	}
+
+	// Fall back to resume-by-run
 	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, "--dir", o.Dir, text}, "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))

@@ -94,9 +94,10 @@ The deliver adapter runs the harness directly, never through a shell, as its
 own session leader; past the ten minute budget the whole process group is
 signalled, SIGTERM then SIGKILL, so a harness that forks leaves no orphan.
 Six adapters are real: OpenCode, `opencode run --session <id> --dir <dir>
-<text>`, the newest session of the directory when none is named; Codex,
-Antigravity and Grok, each below; and DSH and Gemini, from the harness survey
-at the end. A ping pushed in carries, at its head, the exact `pong` line for
+<text>`, with TUI routing when a control socket is found at
+~/.opencode/control.sock with an active session in the working directory;
+Codex, Antigravity and Grok, each below; and DSH and Gemini, from the harness
+survey at the end. A ping pushed in carries, at its head, the exact `pong` line for
 this friend (the binary by path, the name, the directory, the store, the
 nonce), so a small model has one line to run and nothing to fill in. Claude
 has no deliver command yet: its daemon is passive, taking nothing off the
