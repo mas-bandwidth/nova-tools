@@ -171,7 +171,7 @@ func TestStoreCoverNew(t *testing.T) {
 	t.Parallel()
 
 	client := redis.NewClient(&redis.Options{Addr: "store.test:6379"})
-	defer client.Close()
+	defer func() { _ = client.Close() }() // ignored: a test fixture's cleanup; the test's own assertions are the report
 	s := New(client)
 	require.Same(t, client, s.Client())
 	require.NoError(t, New(nil).Close())
@@ -195,7 +195,7 @@ func TestStoreCoverPipelineHMGet(t *testing.T) {
 		t.Parallel()
 
 		s := New(redis.NewClient(&redis.Options{Addr: "store.test:6379"}))
-		defer s.Close()
+		defer func() { _ = s.Close() }() // ignored: a test fixture's cleanup; the test's own assertions are the report
 		_, err := s.PipelineHMGet(context.Background(), []HashRead{{Key: "", Fields: []string{"f"}}})
 		require.ErrorContains(t, err, "needs a key and fields")
 		_, err = s.PipelineHMGet(context.Background(), []HashRead{{Key: "k"}})
@@ -213,7 +213,7 @@ func TestStoreCoverPipelineHMGet(t *testing.T) {
 			o.PoolSize, o.Dialer = 1, scriptedDial(replies)
 		})
 		require.NoError(t, err)
-		defer s.Close()
+		defer func() { _ = s.Close() }() // ignored: a test fixture's cleanup; the test's own assertions are the report
 		got, err := s.PipelineHMGet(context.Background(), []HashRead{
 			{Key: "task:1", Fields: []string{"state", "owner"}},
 			{Key: "task:2", Fields: []string{"state", "owner"}},
@@ -234,7 +234,7 @@ func scriptedDial(replies []string) redis.DialHook {
 	return func(context.Context, string, string) (net.Conn, error) {
 		client, server := net.Pipe()
 		go func() {
-			defer server.Close()
+			defer func() { _ = server.Close() }() // ignored: a test fixture's connection ends when its client hangs up
 			r := bufio.NewReader(server)
 			if _, err := readCommand(r); err != nil {
 				return
