@@ -60,7 +60,8 @@ func TestSleepingMachinePausesChallengeAndSuppressesSyntheticNotices(t *testing.
 	awakeAt := localSleep.Add(5 * time.Second)
 	assert.Empty(t, m.TickWhen(awakeAt, false))
 	assert.Equal(t, Challenged, m.Challenge)
-	assert.Empty(t, m.TickWhen(m.Asked.Add(Window), false))
+	got = m.TickWhen(m.Asked.Add(Window), false)
+	assert.Equal(t, []string{"coordinator silent"}, subjects(got), "transport silence is independent of the paused session challenge")
 	assert.Equal(t, Deaf, m.Challenge, "awake time after wake still counts toward the deadline")
 }
 
