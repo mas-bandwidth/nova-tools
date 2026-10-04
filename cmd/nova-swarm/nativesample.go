@@ -64,6 +64,11 @@ const UnverifiableAfter = 5 * time.Minute
 // never under swarm.LiveSampleLimit and never over this (readLimit).
 const LiveSampleMost = 60 * time.Second
 
+// SampleRiseFloor is what the max rise between answered reads is seeded with until two
+// answers exist (fold). An outage right after the first answer extrapolates from it, so
+// that a single answered read followed by silence does not extrapolate zero.
+const SampleRiseFloor = 100
+
 // liveSampler is one launch's sampling loop.
 type liveSampler struct {
 	dataHome string
@@ -116,6 +121,9 @@ type liveSampler struct {
 	costRise *big.Rat
 	lastCost *big.Rat
 	slowest  time.Duration
+	// answers is how many answered reads have reported figures (usage.Observed), to know
+	// when two answers exist for the rise calculation.
+	answers int
 	// samples is how many reads have been ANSWERED, and inflight how many are running. The
 	// two exist so a test can prove that no sample starts while one is unanswered without
 	// reaching into the loop's own timing.
@@ -307,8 +315,16 @@ func (s *liveSampler) fold(usage swarm.ProviderUsage, err error, turns int) {
 		return
 	}
 	sum, seen, partial := usage.Budget()
-	if s.observed && sum > s.spent {
-		s.rise = max(s.rise, sum-s.spent)
+	s.answers++
+	switch {
+	case s.answers == 1:
+		s.rise = SampleRiseFloor
+	case s.answers == 2:
+		s.rise = max(0, sum-s.spent)
+	default:
+		if sum > s.spent {
+			s.rise = max(s.rise, sum-s.spent)
+		}
 	}
 	if cost, ok := new(big.Rat).SetString(usage.Values["cost"]); ok && usage.Values["cost"] != "" {
 		if s.lastCost != nil && cost.Cmp(s.lastCost) > 0 {

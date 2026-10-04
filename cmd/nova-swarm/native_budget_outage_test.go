@@ -231,3 +231,34 @@ func TestASourceThatNeverAnswersEndsUnverifiableAfterTheBound(t *testing.T) {
 	assert.Equal(t, refused.Error(), b.s.Why())
 }
 
+// An outage right after the first answer extrapolates from SampleRiseFloor until two answers
+// exist: the ceiling is enforced against the floor's extrapolation and ends unverifiable.
+func TestAnOutageAfterTheFirstAnswerExtrapolatesFromRiseFloor(t *testing.T) {
+	t.Parallel()
+	b := newOutageBench(t, nativeRunConfig{tokens: 1000})
+	b.answer = func(n int) (swarm.ProviderUsage, error) {
+		if n == 1 {
+			return usageOf(100, ""), nil // one answer only: rise seeded from SampleRiseFloor
+		}
+		return swarm.ProviderUsage{}, errors.New("refused")
+	}
+	b.s.readOnce() // first answer
+	spent, observed, _, failures, _ := b.s.Observed()
+	assert.Equal(t, 100, spent)
+	assert.True(t, observed)
+	assert.Equal(t, 0, failures)
+
+	// An outage occurs right after the first answer.
+	// With SampleRiseFloor = 100: 100 + 8*100 = 900, under ceiling
+	for i := 0; i < 8; i++ {
+		b.s.readOnce()
+	}
+	require.Empty(t, b.fired(), "under ceiling: ends nothing yet")
+
+	// 9th failed read: 100 + 9*100 = 1000, at ceiling!
+	b.s.readOnce()
+	assert.Equal(t, stoppedUnverifiable, b.fired(), "at ceiling: fires on atCeiling from seeded rise floor")
+	assert.Equal(t, stoppedUnverifiable, b.s.StopWordAtFinal(100, true, ""), "the word is kept at final")
+}
+
+
