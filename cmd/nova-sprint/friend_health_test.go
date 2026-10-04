@@ -59,6 +59,7 @@ func TestFriendHealthIsTheSeatsAndFencedByItsGeneration(t *testing.T) {
 	ta, _ := friendApp(t, "amy")
 	ta.ok("friend sync --root " + t.TempDir())
 	seen := ta.now.UTC().Format(time.RFC3339)
+	assert.Contains(t, ta.dry("friend health amy --state up --seen "+seen+" --generation 1 --dry-run"), "FRIEND-HEALTH DRY-RUN amy state=up seen="+seen+" generation=1; nothing was changed")
 	out := ta.ok("friend health amy --state up --seen " + seen + " --generation 1")
 	assert.Equal(t, "FRIEND-HEALTH OK amy state=up seen="+seen+" generation=1 status=up\n", out)
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "amy     |     0 |       0 |     8 |    0 | 0.0% | up")

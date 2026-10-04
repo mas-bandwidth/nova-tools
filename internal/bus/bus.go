@@ -179,6 +179,34 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // recipient the roster does not know (with how to add one), an empty body, a
 // body over MaxBody, a from that is unknown.
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
+	m, now, err := b.check(ctx, m)
+	if err != nil {
+		return Message{}, err
+	}
+	if m.ID, err = b.ulid(now); err != nil {
+		return Message{}, err
+	}
+	var streams []string
+	for _, n := range slices.Compact(slices.Sorted(slices.Values(slices.Concat(m.To, m.CC)))) {
+		streams = append(streams, StreamOf(n))
+	}
+	streams = append(streams, LogKey)
+	if err := b.Store.AddAll(ctx, streams, m.Fields()); err != nil {
+		return Message{}, err
+	}
+	return m, nil
+}
+
+// Check is Send that writes nothing (a send's --dry-run): every problem of the message
+// named at once, as Send names them, and the message as it would be sent, at the store's
+// time with its recipients sorted, and no id: an id is made for a message sent.
+func (b *Bus) Check(ctx context.Context, m Message) (Message, error) {
+	m, _, err := b.check(ctx, m)
+	return m, err
+}
+
+// check is the message as Send would send it, and the store's time it is stamped with.
+func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, error) {
 	var problems []string
 	for _, n := range append(append([]string{m.From}, m.To...), m.CC...) {
 		if p := CheckName(n); p != "" {
@@ -198,11 +226,11 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		problems = append(problems, "the subject is empty; it wants one line saying what the message is")
 	}
 	if len(problems) > 0 {
-		return Message{}, &Refusal{problems}
+		return Message{}, time.Time{}, &Refusal{problems}
 	}
 	names, now, err := b.Store.Roster(ctx)
 	if err != nil {
-		return Message{}, err
+		return Message{}, time.Time{}, err
 	}
 	for _, n := range append(append([]string{m.From}, m.To...), m.CC...) {
 		if !slices.Contains(names, n) {
@@ -210,23 +238,11 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		}
 	}
 	if len(problems) > 0 {
-		return Message{}, &Refusal{slices.Compact(problems)}
-	}
-	m.ID, err = b.ulid(now)
-	if err != nil {
-		return Message{}, err
+		return Message{}, time.Time{}, &Refusal{slices.Compact(problems)}
 	}
 	m.At = now.UTC().Truncate(time.Second) // the entry's at is RFC3339, to the second
 	m.To, m.CC = slices.Compact(slices.Sorted(slices.Values(m.To))), slices.Compact(slices.Sorted(slices.Values(m.CC)))
-	var streams []string
-	for _, n := range slices.Compact(slices.Sorted(slices.Values(slices.Concat(m.To, m.CC)))) {
-		streams = append(streams, StreamOf(n))
-	}
-	streams = append(streams, LogKey)
-	if err := b.Store.AddAll(ctx, streams, m.Fields()); err != nil {
-		return Message{}, err
-	}
-	return m, nil
+	return m, now, nil
 }
 
 // Recv is one message for the recipient: the oldest one delivered and not
@@ -277,12 +293,32 @@ func (b *Bus) AckEntry(ctx context.Context, as, entry string) (acked bool, err e
 // delivered, or not this recipient's) is answered acked=false, never a
 // failure: ack is idempotent.
 func (b *Bus) Ack(ctx context.Context, as string, ids []string) (map[string]bool, error) {
+	acked, entries, err := b.pendingOf(ctx, as, ids)
+	if err != nil || len(entries) == 0 {
+		return acked, err
+	}
+	if _, err := b.Store.Ack(ctx, StreamOf(as), as, entries...); err != nil {
+		return nil, err
+	}
+	return acked, nil
+}
+
+// WouldAck is Ack that writes nothing (an ack's --dry-run): each id true when it is
+// pending for the recipient, so Ack would ack it.
+func (b *Bus) WouldAck(ctx context.Context, as string, ids []string) (map[string]bool, error) {
+	acked, _, err := b.pendingOf(ctx, as, ids)
+	return acked, err
+}
+
+// pendingOf is each id true when it is among the recipient's pending entries, and those
+// entries.
+func (b *Bus) pendingOf(ctx context.Context, as string, ids []string) (map[string]bool, []string, error) {
 	if p := CheckName(as); p != "" {
-		return nil, &Refusal{[]string{p}}
+		return nil, nil, &Refusal{[]string{p}}
 	}
 	pending, err := b.pendingEntries(ctx, as)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	acked := map[string]bool{}
 	var entries []string
@@ -291,21 +327,11 @@ func (b *Bus) Ack(ctx context.Context, as string, ids []string) (map[string]bool
 		for _, e := range pending {
 			if e.Fields["id"] == id {
 				entries = append(entries, e.Entry)
+				acked[id] = true
 			}
 		}
 	}
-	if len(entries) == 0 {
-		return acked, nil
-	}
-	if _, err := b.Store.Ack(ctx, StreamOf(as), as, entries...); err != nil {
-		return nil, err
-	}
-	for _, e := range pending {
-		if _, asked := acked[e.Fields["id"]]; asked {
-			acked[e.Fields["id"]] = true
-		}
-	}
-	return acked, nil
+	return acked, entries, nil
 }
 
 // pendingLimit bounds one look at a recipient's pending entries.

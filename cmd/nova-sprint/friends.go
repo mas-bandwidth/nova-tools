@@ -417,6 +417,7 @@ func (a *app) cmdFriendHealth(args []string, stdout, stderr io.Writer) int {
 	width := fs.Int("width", 0, "what her pong said her width is")
 	reason := fs.String("reason", "", "why she is not up, shown on her row while the observation stands (her model allowance ran out)")
 	until := fs.String("until", "", "when the daemon expects her back, RFC3339, shown on her row")
+	dry := fs.Bool("dry-run", false, "check the observation and say what would be recorded; record nothing")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
@@ -444,6 +445,10 @@ func (a *app) cmdFriendHealth(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, name, "--until wants an RFC3339 time")
 		}
 		obs.Until = obs.Until.UTC()
+	}
+	if *dry {
+		fmt.Fprintf(stdout, "FRIEND-HEALTH DRY-RUN %s state=%s seen=%s generation=%d; nothing was changed\n", friend, obs.State, obs.Seen.Format(time.RFC3339), obs.Generation)
+		return 0
 	}
 	h, status, replayed, err := st.FriendHealth(context.Background(), friend, c.actor, obs, c.op)
 	if err != nil {

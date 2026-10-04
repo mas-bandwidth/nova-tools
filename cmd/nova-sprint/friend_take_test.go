@@ -59,6 +59,7 @@ func TestFriendTakeTakesBackAnUnstartedCardAndTheTickDealsItToAnother(t *testing
 	ta.ok("friend up bob")
 	ta.ok("friend beat bob")
 
+	assert.Contains(t, ta.dry("friend take amy s1-1 --dry-run"), "FRIEND-TAKE DRY-RUN friend=amy cards=s1-1 all-unstarted=false; nothing was changed")
 	out := ta.ok("friend take amy s1-1 --reason 'she is on another job'")
 	assert.Contains(t, out, "s1-1.w1 withdrawn gen=2")
 	assert.Contains(t, out, "FRIEND-TAKE OK moved=1 refused=0")

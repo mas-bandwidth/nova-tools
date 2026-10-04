@@ -165,15 +165,17 @@ first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopba
 		Verbs: []tool.Verb{
 			{
 				Name:    "send",
-				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--redis <addr>]",
+				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--redis <addr>] [--dry-run]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
+				DryRun:  true,
 				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> at=<RFC3339> bytes=<n> sha256=<hex>: the id is the
 message's for ever, and the byte count and digest are the body's as the store holds it, so a sender
 can check a --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline).
 You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
-are, and the line says login=none.`,
+are, and the line says login=none. --dry-run checks the message as send does (every problem named) and prints the
+line with no id, writing nothing.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")
 					f.Required("to", "the recipients, comma-separated names")
@@ -206,9 +208,10 @@ at=<RFC3339> subject=<s> line per message: pending is delivered and not acked, n
 			},
 			{
 				Name:    "recv",
-				Usage:   "recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>]",
+				Usage:   "recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>] [--dry-run]",
 				Example: "recv --as bob --exec true",
 				Effect:  tool.Delivery + ": moves one message to pending; with --exec it runs the command and acks on exit 0",
+				DryRun:  true,
 				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> at=<RFC3339>
 subject=<s> (login=none when the connection has no login user), a blank line, the body; or RECV
 NONE at exit 1 when nothing waits. You are the login user, as in send. The oldest message a
@@ -219,7 +222,8 @@ it pending and is RECV FAILED at exit 1. --max <n> takes up to n messages in ord
 one waiting, each printed as its own RECV OK (or handed to --exec and acked on exit 0, stopping
 at the first command that fails); --ack acks each after a plain recv prints it. --forever loops,
 waiting for messages, and needs --exec; it stops on SIGINT or SIGTERM, or at the first command
-that fails.`,
+that fails. --dry-run moves nothing: it prints RECV OK pending=<n> new=<n> next_new=<id>, what
+waits (a pending message held past fifteen minutes comes before the oldest new one).`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.Int("max", 1, "how many messages to take, in order, each its own result; 1 is one message")
@@ -250,13 +254,14 @@ that fails.`,
 			},
 			{
 				Name:    "ack",
-				Usage:   "ack [--as <me>] --id <id,...> [--redis <addr>]",
+				Usage:   "ack [--as <me>] --id <id,...> [--redis <addr>] [--dry-run]",
 				Example: "ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV",
 				Effect:  tool.Delivery + ": acks the messages on your stream",
+				DryRun:  true,
 				Detail: `Prints ACK OK acked=<n> asked=<n> (login=none when the connection has no login user), then one
 ACK ID id=<id> acked=<true|false> line per id: false when the id is not pending for you (acked
 already, never delivered, or not yours), so acking twice is safe and exits 0. You are the login
-user, as in send.`,
+user, as in send. --dry-run acks nothing: acked= says which ids are pending for you.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.Required("id", "the message ids, comma-separated, as recv printed them")
@@ -381,10 +386,15 @@ func (w world) send(c *tool.Call) *tool.Out {
 	if refused != nil {
 		return refused
 	}
-	m, err := b.Send(context.Background(), bus.Message{
+	draft := bus.Message{
 		From: as, To: names(c.Str("to")), CC: names(c.Str("cc")),
 		Subject: c.Str("subject"), Re: c.Str("re"), Body: body,
-	})
+	}
+	send := b.Send
+	if c.DryRun() {
+		send = b.Check // the message as it would be sent, with no id: nothing is written
+	}
+	m, err := send(context.Background(), draft)
 	if err != nil {
 		return answer(err)
 	}
@@ -425,6 +435,19 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	as, refused := identity(c, login)
 	if refused != nil {
 		return refused
+	}
+	if c.DryRun() {
+		// what waits, read only: the next delivered is a pending one held past fifteen
+		// minutes when there is one, else the oldest new one
+		pending, fresh, err := b.Peek(context.Background(), as)
+		if err != nil {
+			return answer(err)
+		}
+		next := "-"
+		if len(fresh) > 0 {
+			next = fresh[0].Message().ID
+		}
+		return loginFact(tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh)).Fact("next_new", next), login)
 	}
 	command := c.Str("exec")
 	ctx, stop := w.signals(context.Background())
@@ -525,7 +548,11 @@ func (w world) ack(c *tool.Call) *tool.Out {
 		return refused
 	}
 	ids := names(c.Str("id"))
-	acked, err := b.Ack(context.Background(), as, ids)
+	ack := b.Ack
+	if c.DryRun() {
+		ack = b.WouldAck // which ids are pending for you, acking none
+	}
+	acked, err := ack(context.Background(), as, ids)
 	if err != nil {
 		return answer(err)
 	}

@@ -28,6 +28,7 @@ func TestAddReplacesAndRelinkFromTheCommandLine(t *testing.T) {
 	ta.ok("drop other --reason re-cut")
 	require.Regexp(t, `(?m)^JUDGMENT .*blocked on something dropped`, ta.ok("inbox"))
 	ta.ok("add --stream s1 other-tb --one")
+	assert.Contains(t, ta.dry("relink other other-tb --dry-run"), "RELINK DRY-RUN old=other new=other-tb; nothing was changed")
 	out = ta.ok("relink other other-tb --reason 're-cut as its twin'")
 	assert.Contains(t, out, "dep3 needs other -> other-tb")
 	assert.Contains(t, ta.ok("card dep3"), "needs other-tb (ready)")

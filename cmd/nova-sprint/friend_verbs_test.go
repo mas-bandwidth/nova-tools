@@ -111,6 +111,7 @@ func TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow(t *testing.T) {
 	ta.ok("friend up bob")
 	ta.ok("friend beat bob")
 
+	assert.Contains(t, ta.dry("friend level --dry-run"), "FRIEND-LEVEL DRY-RUN up=amy,bob; nothing was changed")
 	out := ta.ok("friend level")
 	assert.Contains(t, out, "s1-2.w1 friend.amy:ready -> friend.bob:working gen=2; moved=1 to bob(1) from amy(1)")
 	assert.Contains(t, out, "FRIEND-LEVEL OK moved=1")

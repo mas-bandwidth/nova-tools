@@ -203,9 +203,10 @@ state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
+				DryRun:  true,
 				Detail: `The loop launchd runs (install writes it). Each second, when the session is free: every waiting
 message read off the stream and pushed in as ONE turn, oldest first (at most ` + fmt.Sprint(friend.MaxBatch) + `; the rest is the next
 turn), acked together when the turn ends at exit 0; a turn that fails leaves them pending, handed in
@@ -222,7 +223,9 @@ row_width=). In one-shot mode width lanes run, each its own session seeded from 
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
 next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. Prints
-one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.`,
+one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.
+--dry-run checks the flags and the harness and prints the daemon it would run (RUN DRY-RUN as= harness=
+dir= state= redis=): no store is opened and nothing is written.`,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
 					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
@@ -285,12 +288,14 @@ environment variable or a wrapper at app start. While no such monitor runs, a de
 			},
 			{
 				Name:    "ping",
-				Usage:   "ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>] [--redis <addr>]",
+				Usage:   "ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]",
 				Example: "ping --as ada --to bob --nonce abc123",
 				Effect:  tool.Delivery + ": one PING on the friend's stream, as the coordinator",
+				DryRun:  true,
 				Detail: `Sends "PING <nonce>" with the seat line (seat=<me> since=<RFC3339>) and the pong command the
 session runs; the nonce is six random characters unless --nonce names one. Prints PING OK
-nonce= id= to=. The daemon answers daemon-pong at once and acks it; the session answers pong at the head of its next turn.`,
+nonce= id= to=. The daemon answers daemon-pong at once and acks it; the session answers pong at the head of its next turn.
+--dry-run checks the PING as send checks it and sends nothing.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the coordinator")
 					f.Required("to", "the friend to ping")
@@ -302,14 +307,16 @@ nonce= id= to=. The daemon answers daemon-pong at once and acks it; the session 
 			},
 			{
 				Name:    "pong",
-				Usage:   "pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>]",
+				Usage:   "pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
 				Example: "pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
 				Effect:  tool.Delivery + ": the session's answer to a PING, one note on the bus to the coordinator, and the pong file",
+				DryRun:  true,
 				Detail: `What the session runs when a PING <nonce> arrives, first and before anything else: sends
 "pong <nonce> queue=<n> working=<n> width=<n>" to the coordinator (--to, else the seat the last
 ping named, read from the status file) and records it in the state directory (~/.nova-friend/<me>,
 or --state-dir as the daemon runs with), where the daemon reads it. The name is the daemon's: a
---as that is not the friend whose state is there is refused.`,
+--as that is not the friend whose state is there is refused. --dry-run checks the note as send checks it and prints
+the line it would send; nothing is sent and no pong file is written.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the friend the daemon in --dir runs as")
 					f.Required("nonce", "the nonce the PING carried")
@@ -421,6 +428,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 		o := tool.Refuse(err.Error())
 		o.Render(c.Stderr, c.Bool("json"))
 		return tool.Exit(2)
+	}
+	if c.DryRun() {
+		// the daemon it would run, its flags checked: no store opened, no beat, no record
+		fmt.Fprintf(c.Stdout, "RUN DRY-RUN as=%s harness=%s dir=%s state=%s redis=%s; nothing was started\n", name, c.Str("harness"), dir, state, addr)
+		return tool.Exit(0)
 	}
 	if oc, ok := deliver.(*friend.OpenCode); ok {
 		// the friend's directory as her tools name it: the symlink in the home directory too
@@ -686,7 +698,15 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	}
 	defer closeStore()
 	line := friend.PongLine(nonce, c.Int("queue"), c.Int("working"), c.Int("width"))
-	m, err := b.Send(context.Background(), bus.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"})
+	pong := bus.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"}
+	if c.DryRun() {
+		// the note checked as send checks it; nothing sent, no pong file
+		if _, err := b.Check(context.Background(), pong); err != nil {
+			return answer(err)
+		}
+		return tool.Done().Fact("nonce", nonce).Fact("to", to).Fact("line", tool.Text(line))
+	}
+	m, err := b.Send(context.Background(), pong)
 	if err != nil {
 		return answer(err)
 	}
@@ -717,7 +737,15 @@ func (w world) ping(c *tool.Call) *tool.Out {
 	defer closeStore()
 	me, to := c.Str("as"), c.Str("to")
 	body := friend.PingText(me, since, nonce)
-	m, err := b.Send(context.Background(), bus.Message{From: me, To: []string{to}, Subject: friend.PingPrefix + nonce, Body: body + "\n"})
+	ping := bus.Message{From: me, To: []string{to}, Subject: friend.PingPrefix + nonce, Body: body + "\n"}
+	if c.DryRun() {
+		// the PING checked as send checks it; nothing sent
+		if _, err := b.Check(context.Background(), ping); err != nil {
+			return answer(err)
+		}
+		return tool.Done().Fact("nonce", nonce).Fact("to", to)
+	}
+	m, err := b.Send(context.Background(), ping)
 	if err != nil {
 		return answer(err)
 	}

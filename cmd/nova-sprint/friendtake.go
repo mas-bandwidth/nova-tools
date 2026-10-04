@@ -81,6 +81,7 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	reason := fs.String("reason", "", "why the cards are taken back, kept on each card (\"taken back by the coordinator: <reason>\")")
 	all := fs.Bool("all-unstarted", false, "take every card of hers she has not started, naming no card")
+	dry := fs.Bool("dry-run", false, "say which cards would be taken back and write nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
@@ -112,6 +113,10 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed(name, err, stderr)
 	}
+	if *dry {
+		fmt.Fprintf(stdout, "FRIEND-TAKE DRY-RUN friend=%s cards=%s all-unstarted=%t; nothing was changed\n", friend, orDashStr(strings.Join(ids, ","), "-"), *all)
+		return 0
+	}
 	if *all {
 		c.says = keptSays(friend, started)
 	}
@@ -124,6 +129,7 @@ const friendLevelWords = "friend level evens the friends' ready queues as fleet 
 func (a *app) cmdFriendLevel(args []string, stdout, stderr io.Writer) int {
 	const name = "friend level"
 	fs, c := a.verbSetup(name)
+	dry := fs.Bool("dry-run", false, "say which friends are up to be levelled and write nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
@@ -151,6 +157,16 @@ func (a *app) cmdFriendLevel(args []string, stdout, stderr io.Writer) int {
 			return a.readFailed(name, err, stderr)
 		}
 		maps.Copy(r.Started, started)
+	}
+	if *dry {
+		var up []string
+		for _, f := range r.Seats {
+			if f.Status == sprint.Up {
+				up = append(up, f.Name)
+			}
+		}
+		fmt.Fprintf(stdout, "FRIEND-LEVEL DRY-RUN up=%s; nothing was changed\n", orDashStr(strings.Join(up, ","), "-"))
+		return 0
 	}
 	return a.runStep(name, *c, st, store.FriendLevelStep(r), stdout, stderr)
 }

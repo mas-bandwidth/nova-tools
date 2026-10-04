@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"io"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -15,6 +17,7 @@ import (
 func (a *app) cmdRelink(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("relink")
 	reason := fs.String("reason", "", "why the twin replaces the old card, recorded with the answer of each blocked judgment it closes")
+	dry := fs.Bool("dry-run", false, "say what would be relinked and write nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "relink", err.Error())
@@ -26,6 +29,10 @@ func (a *app) cmdRelink(args []string, stdout, stderr io.Writer) int {
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "relink", err.Error())
+	}
+	if *dry {
+		fmt.Fprintf(stdout, "RELINK DRY-RUN old=%s new=%s; nothing was changed\n", strings.Join(r.Old, ","), r.New)
+		return 0
 	}
 	return a.runStep("relink", *c, st, store.RelinkStep(r), stdout, stderr)
 }

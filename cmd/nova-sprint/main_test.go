@@ -521,3 +521,16 @@ func TestParseTakesEveryWordAfterTheTerminatorAsItIs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "--help"}, pos, "help after -- is a word")
 }
+
+// dry runs a --dry-run line and holds that it wrote nothing: the store's whole state
+// (store.Mem.Snapshot) is the same after it as before.
+func (ta *testApp) dry(line string) string {
+	ta.t.Helper()
+	before, err := ta.m.Snapshot()
+	require.NoError(ta.t, err)
+	out := ta.ok(line)
+	after, err := ta.m.Snapshot()
+	require.NoError(ta.t, err)
+	require.JSONEq(ta.t, string(before), string(after), "%s wrote to the store", line)
+	return out
+}
