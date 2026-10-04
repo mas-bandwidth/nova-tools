@@ -792,5 +792,5 @@ func TestFunctionalDealsTheHeavyPackagesOnePerLeg(t *testing.T) {
 func TestOrderHeavyFirstPutsTheBusSwarmAndSprintAhead(t *testing.T) {
 	t.Parallel()
 	got := OrderHeavyFirst([]string{"./cmd/a", "./cmd/nova-sprint", "./internal/b", "./cmd/nova-swarm", "./cmd/c", "./cmd/nova-bus"})
-	assert.Equal(t, []string{"./cmd/nova-bus", "./cmd/nova-swarm", "./cmd/nova-sprint", "./cmd/a", "./internal/b", "./cmd/c"}, got)
+	assert.Equal(t, []string{"./cmd/nova-sprint", "./cmd/nova-swarm", "./cmd/nova-bus", "./cmd/a", "./internal/b", "./cmd/c"}, got, "the three in the order given, then the rest in theirs")
 }
