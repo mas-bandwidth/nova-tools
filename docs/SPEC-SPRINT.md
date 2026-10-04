@@ -2240,6 +2240,8 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | handover | what the next seat needs, from the store, in one screen (below); `--json` |
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
 | goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
+| selftest land | lands a canned card on a scratch clone with this binary; green on a good binary, red on a broken lander |
+| server switch | `<binary> [--rollback]`: switches the server binary on disk, keeping the previous binary; with `--rollback`, rolls back if a land fails within the window; `--rollback` alone restores the previous binary |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm sprint` |
 | teardown | drops the tables, the view and every key of the sprint, of every epoch; `--confirm sprint` |
 
@@ -2579,6 +2581,17 @@ what landed and everything land said was wrong (a refused or failed batch, a ref
 batch, its remedy); a round that could not read the merge queue prints `LAND FAILED` with why,
 since an unreadable queue is not an empty one, and the next round tries again. A failure is
 printed once, when it begins: the same failure again prints nothing until it changes or clears.
+
+With `server switch <binary> [--rollback]` the coordinator or an install switches the server's
+binary file on disk, keeping the previous binary (`<target>.prev`). With `--rollback`, if a
+land fails within the rollback window (default 15 minutes, `--window`), the failed landing
+in `run --land` rolls back the binary on disk to the previous binary, causing the running loop
+to stop (`RUN STOP the binary this loop runs was replaced...`, exit 3) so its supervisor restarts
+it with the previous binary. `server switch --rollback` without a binary immediately restores
+the previous binary.
+
+`nova-sprint selftest land` lands a canned card on a scratch clone with this binary, run by
+any install before switching: green on a good binary and red on a broken lander (item 14).
 
 With `run --decide <dir>` the server keeps the record of nova-decide's layer 2 (section 2,
 the attempt decision; section 5, the grade): `<dir>/attempt.jsonl` and `<dir>/grade.jsonl`,
