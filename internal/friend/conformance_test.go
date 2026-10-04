@@ -100,6 +100,8 @@ var harnessRigs = map[string]func(t *testing.T, s *fakeSession, dir string) Deli
 	},
 	"codex": func(t *testing.T, s *fakeSession, dir string) Deliverer {
 		return &Codex{Dir: dir, Session: "thr_1", Home: t.TempDir(), Held: func(string) bool { return false },
+			Resolve: func(_, _, session string) (string, string, error) { return session, "/rollout", nil },
+			Receipt: func(string, string, string, int64) (bool, int64, error) { return true, 0, nil },
 			Run: s.exec(func(name string, args []string, _ string) (string, int, error) {
 				require.Equal(t, ResumeArgs("thr_1", args[len(args)-1]), args)
 				s.act(args[len(args)-1])

@@ -40,6 +40,9 @@ type Codex struct {
 	Held         func(lock string) bool // whether the thread's writer lock is held; FlockHeld when nil
 	Env          func(string) string    // getenv; os.Getenv when nil
 	Out          io.Writer              // where the turn's output goes, when set: the daemon's record
+	Resolve      func(home, dir, session string) (id, rollout string, err error)
+	Receipt      func(path, session, text string, from int64) (found bool, next int64, err error)
+	Pause        func(context.Context, time.Duration)
 	// App connects to the Codex app-server, through which the thread's queue is read and
 	// withdrawn from (DialCodexAppServer under the home when nil); Now is the clock a queued
 	// request's age is read by (time.Now when nil).
@@ -52,6 +55,33 @@ type Codex struct {
 	queued    int  // the thread's queue as the last delivery read it
 	queueRead bool // whether one has
 	queueSaid string
+}
+
+const CodexReceiptEvery = 100 * time.Millisecond
+
+func (c *Codex) resolve() func(string, string, string) (string, string, error) {
+	if c.Resolve != nil {
+		return c.Resolve
+	}
+	return ResolveCodexSession
+}
+
+func (c *Codex) receipt() func(string, string, string, int64) (bool, int64, error) {
+	if c.Receipt != nil {
+		return c.Receipt
+	}
+	return CodexReceipt
+}
+
+func (c *Codex) pause(ctx context.Context, d time.Duration) {
+	if c.Pause != nil {
+		c.Pause(ctx, d)
+		return
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
+	}
 }
 
 // CodexCheckRequeue is how long a request for a pong stands unread in the queue before the
@@ -197,7 +227,7 @@ func (c *Codex) withdraw(ctx context.Context, thread string, old []superseded) i
 // queueing delivers text into the open chat (routes, its queue first): its queue read before,
 // a request of text's kind that stands for it answered at once, and the requests of its kind
 // it supersedes withdrawn only once it is in. The queue's length after is kept (Queued).
-func (c *Codex) queueing(ctx context.Context, thread, text string, routes [][]string) (int, error) {
+func (c *Codex) queueing(ctx context.Context, rollout, thread, text string, routes [][]string) (int, error) {
 	items, ok := c.readQueue(ctx, thread)
 	kind, nonce, only := PongRequest(text)
 	var old []superseded
@@ -220,7 +250,7 @@ func (c *Codex) queueing(ctx context.Context, thread, text string, routes [][]st
 		}
 		old = append(old, superseded{q: q, nonce: n, why: why})
 	}
-	exit, used, err := c.routes(ctx, thread, routes)
+	exit, used, err := c.routes(ctx, rollout, thread, text, routes)
 	left := len(items)
 	if err == nil && exit == 0 {
 		if used == "queue" {
@@ -284,29 +314,61 @@ func LockPath(home, thread string) string {
 const ResumeLabel = "answered by resume, not by the open chat"
 
 func (c *Codex) Deliver(ctx context.Context, text string) (int, error) {
-	session := c.Session
-	if session == "" {
-		var err error
-		session, err = NewestCodexSession(c.home(), c.Dir)
-		if err != nil {
-			return 1, err
-		}
+	session, rollout, err := c.resolve()(c.home(), c.Dir, c.Session)
+	if err != nil {
+		return 1, err
 	}
 	queue := []string{"queue", "--thread", session, "--message", text}
 	resume := ResumeArgs(session, text)
 	if c.held()(LockPath(c.home(), session)) {
-		return c.queueing(ctx, session, text, [][]string{queue, resume})
+		return c.queueing(ctx, rollout, session, text, [][]string{queue, resume})
 	}
-	exit, _, err := c.routes(ctx, session, [][]string{resume, queue})
+	exit, _, err := c.routes(ctx, rollout, session, text, [][]string{resume, queue})
 	return exit, err
 }
 
 // routes runs each route in order until one takes the text; used is the route that did.
-func (c *Codex) routes(ctx context.Context, session string, routes [][]string) (exit int, used string, err error) {
+func (c *Codex) routes(ctx context.Context, rollout, session, text string, routes [][]string) (exit int, used string, err error) {
 	var failures []string
 	var refusal error // a provider's refusal on either route: the session, not the moment, is at fault
 	for _, args := range routes {
+		var boundary int64
+		if args[0] == "queue" {
+			_, boundary, err = c.receipt()(rollout, session, text, 0)
+			if err != nil {
+				return 0, "", Deferred{Reason: fmt.Sprintf("thread %s receipt cannot be read before queue: %v; keep it pending", session, err)}
+			}
+		}
 		out, exit, err := c.Run(ctx, c.Dir, c.program(), args, "")
+		if args[0] == "queue" {
+			if err != nil {
+				return 0, "", Deferred{Reason: fmt.Sprintf("thread %s queue may have been accepted but the command result is unknown: %v; no alternate route was tried", session, err)}
+			}
+			if ctx.Err() != nil {
+				return 0, "", Deferred{Reason: fmt.Sprintf("thread %s queue may have been accepted before cancellation; no alternate route was tried", session)}
+			}
+			if exit == 0 {
+				for ctx.Err() == nil {
+					found, next, receiptErr := c.receipt()(rollout, session, text, boundary)
+					if receiptErr != nil {
+						return 0, "", Deferred{Reason: fmt.Sprintf("thread %s queue was accepted but its receipt cannot be confirmed: %v; no alternate route was tried", session, receiptErr)}
+					}
+					boundary = next
+					if found {
+						if c.Out != nil {
+							fmt.Fprintf(c.Out, "received by open chat: codex queue --thread %s --message <text>\n", session)
+							if out != "" {
+								fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+							}
+						}
+						c.turns.saw(session, 0, nil)
+						return 0, "queue", nil
+					}
+					c.pause(ctx, CodexReceiptEvery)
+				}
+				return 0, "", Deferred{Reason: fmt.Sprintf("thread %s queue was accepted but no exact user receipt was confirmed before cancellation; no alternate route was tried", session)}
+			}
+		}
 		if exit != 0 || err != nil {
 			if _, r := refused(session, out, exit, err); refusal == nil {
 				if _, ok := r.(ProviderRefused); ok {
