@@ -93,11 +93,12 @@ usage:
   nova-config sprint set|show|history
   nova-config <kind> <verb> -h              the verb's flags (required ones marked), its effect and a worked example
 
-The store is --pg <dsn> (or NOVA_PG_DSN; never a password on the line: it is
-read from the variable NOVA_PG_PASSWORD_ENV names, NOVA_PG_PASSWORD when
-unset), or --file <path>. --redis is host:port (NOVA_SPRINT_REDIS, then
-NOVA_REDIS_ADDR, then the seat's address). --as is the name a write is
-recorded under (NOVA_FRIEND). Lose Redis: run nova-config apply.
+The store is --pg <dsn> (or NOVA_PG_DSN; the password is never on the line:
+NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password,
+NOVA_PG_PASSWORD when it is unset, and never the password itself), or --file
+<path>. --redis is host:port (NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then
+the seat's address). --as is the name a write is recorded under (NOVA_FRIEND).
+Lose Redis: run nova-config apply.
 
 Fleet apply and inventory require explicit redis_port and pg_dsn; set both
 with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>.
@@ -379,7 +380,7 @@ type conn struct{ pg, file *string }
 // storeFlags adds --pg and --file to a verb's flag set.
 func storeFlags(fs *stdflag.FlagSet) conn {
 	return conn{
-		pg:   fs.String("pg", "", "the PostgreSQL `dsn`, postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names; exclusive with --file"),
+		pg:   fs.String("pg", "", "the PostgreSQL `dsn`, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file"),
 		file: fs.String("file", "", "a local JSON file standing in for PostgreSQL, at `path` (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store"),
 	}
 }
