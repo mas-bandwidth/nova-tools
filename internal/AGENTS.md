@@ -12,6 +12,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `cairn/` | the cairn store: session records, entries, the index and receipts, nested and flat | `go test ./internal/cairn` | `go test ./internal/cairn` |
 | `cardcontract/` | the frame around a card's task: the frame file, JOB.md, the result shape, and the shims of each model family's profile | `go test ./internal/cardcontract` | `go test -tags functional ./internal/cardcontract` |
 | `cardcost/` | what a card cost: a route's price sheet, a run's tokens by class, the predicted cost and a consumer card's usage record, in exact decimal arithmetic | `go test ./internal/cardcost` | `go test ./internal/cardcost` |
+| `cardgen/` | nova-card's planner: ledger rows, findings and help to cards with PATHS, waves and the brief, pure over text | `go test ./internal/cardgen` | `go test ./internal/cardgen` |
 | `cardhdr/` | card header vocabulary and one-invariant lint | `go test ./internal/cardhdr` | `go test ./internal/cardhdr` |
 | `cardlimits/` | a card brief's refusal bound and the lint's size advice: two constants, no dependencies | `go test ./internal/cardlimits` | `go test ./internal/cardlimits` |
 | `cardtree/` | a card as a tree of steps: the step grammar, its lint, the script step the member runs with no model, the verdict per step and the remainder of a failed step | `go test ./internal/cardtree` | `go test ./internal/cardtree` |

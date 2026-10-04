@@ -410,3 +410,34 @@ under one that asks for RESULT.md, the shape above.
 `TestTheScriptedChildEndToEndInsideTheWall` runs the claude and openai children again on
 Darwin or Linux with the wall binary built by TestMain. It skips when that binary reports
 no supported backend; otherwise it asserts the named real backend and the child's job cwd.
+
+## 6. Generated cards
+
+A card is written by a program from the source the work comes from whenever the
+source is structured: a ratchet ledger of `internal/ci`, a reader's findings
+file, a tool's rendered help. `nova-card generate` is that program
+(`cmd/nova-card`; the planner is `internal/cardgen`, pure functions over text
+with no clock and no store). What it holds:
+
+- One card per file the source names, its id `<prefix>-<slug of the file>`,
+  its `RESULT:` line carrying the tier (`tier: flash|pro`), `REPO:` and `BASE:`
+  from the checkout the source was read from, `KIND: fix-red`, `DEPENDS-ON:`,
+  `PATHS:` (at most eight entries, files folded into their directory's glob
+  past that), `TEST:` and the `Deadline:` line; the six general rules quoted
+  verbatim from `nova-swarm template --name card`; the task from the source's
+  template with the rows substituted; and the template's steps.
+- The PATHS of a ledger card are the row's file, its package's test files and
+  the ledger. With a checkout, every entry is checked to exist in it.
+- Waves: cards of one ordinary ledger alternate (odd wave 1, even wave 2
+  depending on their wave 1 neighbours), because adjacent deletions of one file
+  conflict at land; a generated ledger (SPEC-SPRINT.md section 7) gets one wave
+  and no dependency.
+- Every brief is held to the lint `nova-sprint add` runs and to the template's
+  placeholders before the directory is written; one red brief and nothing is
+  written. The output is the directory, its `manifest.tsv` (id, file, test,
+  wave, deps) and one `CARDS OK dir= cards= waves= tier=` line.
+
+`nova-swarm lint --card` is the fuller contract lint and is run over a
+generated directory by the coordinator before the add; its `no-sandbox` check
+matches the word `nova-sandbox` on any line, so a card whose PATHS name
+`cmd/nova-sandbox/` draws it though the add admits the card.

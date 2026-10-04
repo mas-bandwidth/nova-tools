@@ -1,7 +1,7 @@
 // Package cardgen is nova-card's planner: it turns a structured source (a ratchet
 // ledger, a findings TSV, a tool's rendered help) into a directory of briefs that
 // `nova-sprint add --brief-dir` admits as they are. Everything here is a pure
-// function over text (docs/SPEC-CARD.md, "generated cards"): the row parsers, the
+// function over text (docs/SPEC-CARD-CONTRACT.md section 6, generated cards): the row parsers, the
 // PATHS computation, the wave assignment and the rendering take bytes and return
 // bytes, so the unit tests run on fixture ledgers with no repository, no clock and
 // no store. cmd/nova-card is the transport: it reads the worktree, resolves the
