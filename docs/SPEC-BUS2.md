@@ -49,7 +49,8 @@ it names.
 ## The verbs
 
 `nova-bus2 help` opens with the loop a harness runs, three lines. Every verb
-takes `--json`; `log` takes `--max`.
+takes `--json`; `log` takes `--max`; every verb takes `--timeout <d>` and
+`recv` takes `--block <d>` (the deadlines).
 
 - `send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> |
   --stdin) [--re <id>]` prints `SEND OK id=<id> to=<names> cc=<names>
@@ -63,7 +64,9 @@ takes `--json`; `log` takes `--max`.
   in a newline) and acks the message when it exits 0; a non-zero exit leaves it
   pending and is `RECV FAILED` at exit 1. `--forever` loops, waiting for
   messages, needs `--exec`, and stops on SIGINT or SIGTERM (a message being
-  delivered stays pending) or at the first command that fails. The push into a
+  delivered stays pending) or at the first command that fails; one wait of
+  the loop is `--block <d>` (30 s by default, its deadline the block plus
+  ten seconds, the deadlines). The push into a
   harness is `nova-bus2 recv --as <me> --forever --exec '<deliver-into-session>'`
   beside the session.
 - `ack [--as <me>] --id <id,...>` prints `ACK OK acked=<n> asked=<n>` and one
@@ -140,6 +143,53 @@ names the user and `NOVA_SPRINT_REDIS_PASSWORD_ENV` the variable that holds its
 password (`NOVA_REDIS_BENCH_PASSWORD` when it names none); never a password on
 the line or in a message. The known names are nova-config's friend rows plus
 its machine rows; no new kind or field was needed.
+
+## The deadlines
+
+Every network step the client makes is bounded (internal/redisconn): the dial
+5 s, one attempt and no second; the write of every command 5 s; the read of
+every reply 5 s; the wait for a pool connection 5 s; the open, the dial and
+the handshake together, 5 s. A command that asks the store to block (a recv
+wait) is read under the time it asked for and ten seconds more (go-redis
+v9.22.0, `cmdTimeout`). Before the rule below, that was the whole of it: a
+store that accepted and then stalled — a host whose load average is tens —
+cut one call at the connection's own bound and answered go-redis's bare
+words, measured `i/o timeout`, with no address and no remedy, and a read
+that could have been sent again failed the verb.
+
+The rule, on every store call:
+
+- A call that answers at once runs under `--timeout <d>`
+  (`bus2.CallTimeout`, 5 s by default, the same number as the connection's
+  own read bound, so the call and the connection agree); the flag is on
+  every verb and wants a Go duration above zero.
+- A blocking recv wait runs under its block plus `bus2.BlockMargin` (10 s,
+  the same margin the connection gives a blocking command), never under
+  `--timeout`: `--block <d>` (30 s by default) names how long one wait of
+  `recv --forever` looks before it looks again, so a signal is seen within
+  one wait.
+- A deadline that ran out is refused in one line that names the deadline
+  and the address and never a login or a password: `redis did not answer
+  within <d> at <host:port>: the host may be overloaded (load average), try
+  again`.
+- A read that changes nothing (the roster, pending, group info, the log,
+  the entries: what `names`, `peek` and `log` read, and the reads before a
+  write) is sent once more when the first ran past its deadline, under a
+  deadline of its own, and the second answer stands; so a verb that only
+  reads waits at most 2 × `--timeout` before its refusal.
+- A write, a delivery or an ack is sent at most once — `send`'s
+  transaction, a `recv` delivery, an `ack` — so a stalled store can
+  duplicate nothing.
+
+Measured, on a stalled in-process store (internal/bus2/timeout_test.go;
+the test's client carries 50 ms connection deadlines so the suite waits no
+wall clock, and the shipped client runs the same shapes at 5 s and block +
+10 s): a read that changes nothing is refused after its two attempts, 2
+dials, 0.10 s; a send after one, 1 dial, 0.05 s; a blocking wait cut by
+its own bound, 1 dial, 0.05 s. Before the change the same three calls
+answered `i/o timeout` at 1 dial, no retry, no address. The worst a verb
+waits is 2 × `--timeout` (a read) or one block plus the margin (a recv
+wait); nothing waits unbounded.
 
 ## Round trips
 
