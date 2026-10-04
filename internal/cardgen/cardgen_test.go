@@ -219,3 +219,13 @@ func TestMaxCutsBeforeTheWavesAreAssigned(t *testing.T) {
 	fs, _ := ParseFindings("a/x.go:1\twrong\tfix\ta TestA\nb/y.go:1\twrong\tfix\tb TestB\n")
 	assert.Len(t, PlanFindings(fs, "", "", 1).Cards, 1)
 }
+
+// A tool named twice plans one id twice; the generator refuses rather than
+// writing one file for two manifest rows.
+func TestADuplicateIDIsNamed(t *testing.T) {
+	t.Parallel()
+	a := PlanHelp("nova-x", "x\n", "", "")
+	b := PlanHelp("nova-x", "x\n", "", "")
+	assert.Equal(t, "help-nova-x", DuplicateID([]Card{a, b}))
+	assert.Equal(t, "", DuplicateID([]Card{a, PlanHelp("nova-y", "y\n", "", "")}))
+}

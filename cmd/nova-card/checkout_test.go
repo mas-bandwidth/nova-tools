@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // fixtureCheckout is a one-commit repository on branch dev with an origin, the
@@ -80,4 +82,23 @@ func TestMaxLeavesNoNeedOnACutCard(t *testing.T) {
 	assert.Contains(t, stdout, "cards=2 waves=2 tier=flash dry-run=yes")
 	assert.Contains(t, stdout, "serial-tests-cmd-b-b\tcmd/b/b_test.go\tinternal/ci TestEveryTestOpensWithTParallel\t2\tserial-tests-cmd-a-a\n")
 	assert.NotContains(t, stdout, "serial-tests-cmd-c-c", "the cut card is named nowhere")
+}
+
+// --from help with one tool named twice is refused before anything is written: the
+// two cards share one id, and one file cannot hold both.
+func TestAToolNamedTwiceIsRefusedNotOverwritten(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fixture tool is a shell script")
+	}
+	bin := t.TempDir()
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(bin, "nova-x"), []byte("#!/bin/sh\necho 'nova-x: a fixture'\n"), 0o755))
+	out := filepath.Join(t.TempDir(), "cards")
+	exit, _, stderr := runCard("generate", "--from", "help", "--tool", "nova-x", "--tool", "nova-x", "--bin-dir", bin, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", out)
+	assert.Equal(t, 2, exit)
+	assert.Contains(t, stderr, "card help-nova-x is planned twice")
+	assert.NoDirExists(t, out)
+	exit, stdout, stderr := runCard("generate", "--from", "help", "--tool", "nova-x", "--bin-dir", bin, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", out)
+	require.Equal(t, 0, exit, stderr)
+	assert.Contains(t, stdout, "cards=1 waves=1 tier=pro")
 }

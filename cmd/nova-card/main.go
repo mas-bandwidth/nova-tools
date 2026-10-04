@@ -278,6 +278,9 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	if len(plan.Cards) == 0 {
 		return refuse(stderr, "generate", "the source yields no card; nothing to write")
 	}
+	if dup := cardgen.DuplicateID(plan.Cards); dup != "" {
+		return refuse(stderr, "generate", fmt.Sprintf("card %s is planned twice (a --tool named twice?); a card is its file %s.md and a second one would overwrite it", dup, dup))
+	}
 	// render, lint, and check the paths against the checkout: nothing is written while
 	// one brief is red
 	briefs := make([]string, len(plan.Cards))

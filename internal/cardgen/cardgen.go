@@ -358,6 +358,21 @@ func Slug(file string) string {
 	return s
 }
 
+// DuplicateID is the first id two cards of a plan share, "" when every id is its own:
+// a card is written as <id>.md, so a second card of one id would overwrite the first
+// while the manifest listed both. The ledger and findings planners make ids unique
+// (uniqueID); a tool named twice to --from help does not.
+func DuplicateID(cards []Card) string {
+	seen := map[string]bool{}
+	for _, c := range cards {
+		if seen[c.ID] {
+			return c.ID
+		}
+		seen[c.ID] = true
+	}
+	return ""
+}
+
 // first is the first max cards of a plan in source order, every card when max is 0.
 func first(cards []Card, max int) []Card {
 	if max > 0 && len(cards) > max {
