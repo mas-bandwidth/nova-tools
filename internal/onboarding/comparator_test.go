@@ -147,10 +147,9 @@ func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
 	// `recorded` joined on 2026-09-30 with nova-work's first run, which runs
 	// against a recording of a public repository and whose document writes the
 	// reader's $ORG and $REPO where the recording's names are printed.
-	// `id` and `entry` joined on 2026-10-03 with nova-bus2's first run: a
-	// message's id is a ULID made from the store's time, and its entry is the
-	// stream entry id the store gave it; both belong to the run.
-	want := []string{"at", "took", "created", "tmpdir", "id", "entry", "sha", "recorded", "branch"}
+	// `id` joined on 2026-10-03 with nova-bus2's first run: a message's id is
+	// a ULID made from the store's time, so it belongs to the run.
+	want := []string{"at", "took", "created", "tmpdir", "id", "sha", "recorded", "branch"}
 	got := VolatileNames()
 	require.Equal(t, len(want), len(got), "onboarding.Volatile holds %v, want %v", got, want)
 	for i := range want {

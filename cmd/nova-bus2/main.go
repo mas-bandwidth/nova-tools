@@ -3,13 +3,12 @@
 // to every recipient's stream and to the log in one transaction; a recipient
 // receives through its consumer group, so a message is pending until it is
 // acked and a reader that died before acking is handed it again. The verbs
-// are send, recv, ack, peek, log and names; the dispatch, the banner, the
+// are send, peek, recv, ack, log and names; the dispatch, the banner, the
 // help, the version verb, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/bus2's.
 package main
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -24,121 +23,71 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus2"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 var version string
 
-// RedisEnv names the bus's own address variable; the sprint's and the
-// general one are read after it, then the seat's address (SPEC-BUS2.md, the
-// config).
+// RedisEnv names the store when --redis does not (SPEC-BUS2.md, the config).
 const RedisEnv = "NOVA_BUS_REDIS"
 
+// ExecBudget bounds one run of --exec's command: a delivery into a harness
+// is a write of a few lines; one that takes longer is stuck. It is also how
+// long a reader keeps a message before another may claim it (bus2.ClaimAfter).
+const ExecBudget = bus2.ClaimAfter
+
+// ForeverBlock is how long one read of the loop waits before it looks again
+// (so a signal is seen within it).
+const ForeverBlock = 30 * time.Second
+
 // world is what the tool reaches outside itself: the environment, the store
-// it opens for an address, the host's name (the default consumer), the
-// command --exec runs, and the signals a loop stops on. main passes the real
-// one; a test passes its own over internal/bus2's Fake, so no test opens a
-// socket.
+// it opens for an address, the command --exec runs, and the signals a loop
+// stops on. main passes the real one; a test passes its own over
+// internal/bus2's Fake, so no test opens a socket.
 type world struct {
-	getenv   func(string) string
-	hostname func() string
-	open     func(ctx context.Context, addr string) (bus2.Store, func(), error)
-	run      func(ctx context.Context, command, stdin string, stdout, stderr io.Writer) (exit int, err error)
-	signals  func(ctx context.Context) (context.Context, context.CancelFunc)
-	seat     *seatcred.Selection
+	getenv  func(string) string
+	open    func(ctx context.Context, addr string) (bus2.Store, func(), error)
+	run     func(ctx context.Context, command, stdin string, stdout, stderr io.Writer) (exit int, err error)
+	signals func(ctx context.Context) (context.Context, context.CancelFunc)
 }
 
 func realWorld() world {
-	w := world{getenv: os.Getenv, seat: new(seatcred.Selection), run: runShell,
+	w := world{getenv: os.Getenv, run: runShell,
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) {
 			return signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		}}
-	w.hostname = func() string {
-		h, err := os.Hostname()
-		if err != nil {
-			return "unknown-host" // the consumer's name is a label; --consumer names a better one
-		}
-		return h
-	}
 	w.open = w.openRedis
 	return w
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld())) }
 
-// run is the entry point apart from the process: --seat is taken off the
-// line first (as nova-table does), then the tool dispatches.
+// run is the entry point apart from the process.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
-	if w.seat != nil {
-		rest, err := w.seat.FromArgs(args, w.getenv)
-		if err != nil {
-			fmt.Fprintf(stderr, "BUS2 REFUSED: %s; run: nova-bus2 help\n", err)
-			return 2
-		}
-		args = rest
-	}
 	return busTool(w).Run(args, stdin, stdout, stderr)
 }
 
-// redisDefault is the --redis default: NOVA_BUS_REDIS, then NOVA_SPRINT_REDIS,
-// then NOVA_REDIS_ADDR, then the seat's address, as nova-sprint and
-// nova-table read theirs.
-func (w world) redisDefault() string {
-	for _, k := range []string{RedisEnv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"} {
-		if v := w.getenv(k); v != "" {
-			return v
-		}
-	}
-	if w.seat != nil {
-		return w.seat.Addr()
-	}
-	return ""
-}
-
 // openRedis dials the store through redisconn, the one way a nova tool opens
-// Redis, as the seat (--seat, NOVA_SEAT) when one is selected, else as
-// NOVA_SPRINT_REDIS_USER with the password in the variable
-// NOVA_SPRINT_REDIS_PASSWORD_ENV names (NOVA_REDIS_BENCH_PASSWORD when it
-// names none); no user is the default user with no password. The password
-// is never on the line and never printed (internal/redisconn).
+// Redis, with the fleet's login: NOVA_SPRINT_REDIS_USER names the user and
+// NOVA_SPRINT_REDIS_PASSWORD_ENV the variable that holds its password
+// (NOVA_REDIS_BENCH_PASSWORD when it names none); no user is the default
+// user with no password. The password is never on the line and never
+// printed (internal/redisconn).
 func (w world) openRedis(ctx context.Context, addr string) (bus2.Store, func(), error) {
-	o := redisconn.Options{Addr: addr}
-	getenv := w.getenv
-	if c, ok, err := w.seat.Active(); ok {
-		if err != nil {
-			return nil, nil, err
-		}
-		var password string
-		// ignored: Use fails only when its function is nil or fails, and this one does neither
-		_ = c.Password.Use(func(pw string) error { password = pw; return nil })
-		o.User, o.PasswordEnv = c.User, c.Key
-		getenv = func(k string) string {
-			if k == c.Key {
-				return password
-			}
-			return w.getenv(k)
-		}
-	} else {
-		o.Env = redisconn.Env{User: redisauth.UserEnv}
-		if w.getenv(redisauth.UserEnv) != "" {
-			o.Env.PasswordEnv = redisauth.PasswordEnvEnv
-			if w.getenv(redisauth.PasswordEnvEnv) == "" {
-				o.PasswordEnv = redisauth.DefaultPasswordEnv
-			}
+	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
+	if w.getenv(redisauth.UserEnv) != "" {
+		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
+		if w.getenv(redisauth.PasswordEnvEnv) == "" {
+			o.PasswordEnv = redisauth.DefaultPasswordEnv
 		}
 	}
-	conn, err := redisconn.Open(ctx, o, getenv)
+	conn, err := redisconn.Open(ctx, o, w.getenv)
 	if err != nil {
 		return nil, nil, err
 	}
 	return bus2.Redis{C: conn.Client()}, func() { conn.Close() }, nil
 }
-
-// ExecBudget bounds one run of --exec's command: a delivery into a harness
-// is a write of a few lines; one that takes longer is stuck.
-const ExecBudget = 60 * time.Second
 
 // runShell runs --exec's command through the shell with the message on its
 // stdin, under ExecBudget (internal/subproc: WaitDelay and the bound).
@@ -154,12 +103,6 @@ func runShell(ctx context.Context, command, stdin string, stdout, stderr io.Writ
 	return 0, err
 }
 
-// storeDetail is what every store verb's help says about the store and the
-// login (SPEC-BUS2.md, the config).
-const storeDetail = `The store is --redis <host:port>, else ` + RedisEnv + `, NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, then the
-seat's address; the login is the seat's (--seat, NOVA_SEAT), else NOVA_SPRINT_REDIS_USER with the
-password in the variable NOVA_SPRINT_REDIS_PASSWORD_ENV names (never a password on the line).`
-
 func busTool(w world) *tool.Tool {
 	return &tool.Tool{
 		Name:  "nova-bus2",
@@ -169,38 +112,28 @@ func busTool(w world) *tool.Tool {
 recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
 ack --as <me> --id <id> acks by hand after a plain recv; names: nova-config friend and machine rows.
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
-first run: a Redis naming ada and bob at --redis (else NOVA_BUS_REDIS, NOVA_REDIS_ADDR, a seat).`,
-		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing within --block; recv --exec: the command failed), 2 could not run (a flag, an input, a store that did not answer).",
+first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); user NOVA_SPRINT_REDIS_USER.`,
+		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"NONE"},
 		Verbs: []tool.Verb{
 			{
 				Name:    "send",
-				Usage:   "send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> | --file <path> | --stdin) [--re <id>] [--redis <addr>]",
+				Usage:   "send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--redis <addr>]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
-				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> at=<RFC3339>. The id is the message's for
-ever: ack takes it, --re names it, log --re finds the answers. A name is lowercase letters,
-digits and hyphens (at most 64 bytes) and must be a nova-config friend or machine row.
-` + storeDetail,
+				Detail:  "Prints SEND OK id=<ulid> to=<names> cc=<names> at=<RFC3339>; the id is the message's for ever.",
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the sender")
 					f.Required("to", "the recipients, comma-separated names")
 					f.String("cc", "", "more recipients, comma-separated names; each gets the message as well")
 					f.Required("subject", "one line saying what the message is")
-					f.String("body", "", "the message's text (or --file, or --stdin)")
-					f.String("file", "", "a file holding the message's text")
+					f.String("body", "", "the message's text (or --stdin; at most 1 MiB)")
 					f.Bool("stdin", false, "read the message's text from stdin")
 					f.String("re", "", "the id of the message this one answers")
-					f.Redis(w.redisDefault())
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
 					f.Check(func(c *tool.Call) {
-						n := 0
-						for _, k := range []string{"body", "file", "stdin"} {
-							if c.Given(k) {
-								n++
-							}
-						}
-						if n != 1 {
-							c.Problem("the body comes from exactly one of --body <text>, --file <path> or --stdin")
+						if c.Given("body") == c.Given("stdin") {
+							c.Problem("the body comes from exactly one of --body <text> or --stdin")
 						}
 					})
 				},
@@ -208,45 +141,37 @@ digits and hyphens (at most 64 bytes) and must be a nova-config friend or machin
 			},
 			{
 				Name:    "peek",
-				Usage:   "peek --as <me> [--max <n>] [--redis <addr>]",
+				Usage:   "peek --as <me> [--redis <addr>]",
 				Example: "peek --as bob",
 				Effect:  tool.Inspection,
-				Detail: `Prints PEEK OK pending=<n> new=<n>, then one PEEK MESSAGE line per message (state, id,
-from, subject, at): pending is delivered and not acked, new is never delivered. Moves nothing.
-` + storeDetail,
+				Detail: `Prints PEEK OK pending=<n> new=<n>, then one PEEK MESSAGE state=<pending|new> id=<id> from=<name>
+at=<RFC3339> subject=<s> line per message: pending is delivered and not acked, new is never delivered.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the recipient")
-					f.Max()
-					f.Redis(w.redisDefault())
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
 				},
 				Run: w.peek,
 			},
 			{
 				Name:    "recv",
-				Usage:   "recv --as <me> [--block <duration>] [--forever --exec <command>] [--exec <command>] [--consumer <name>] [--redis <addr>]",
-				Example: "recv --as bob --block 2s\nrecv --as bob --exec true",
+				Usage:   "recv --as <me> [--forever --exec <command>] [--exec <command>] [--redis <addr>]",
+				Example: "recv --as bob --exec true",
 				Effect:  tool.Delivery + ": moves one message to pending; with --exec it runs the command and acks on exit 0",
-				Detail: `Prints one message, oldest pending first (one handed out and not acked, by any consumer),
-else the oldest new one: a RECV OK header line (id, from, to, cc, subject, re, at, entry) then a
-blank line and the body; RECV NONE at exit 1 when --block runs out with none. The message stays
-pending until ack. --exec '<command>' runs the command with that same text on its stdin and acks
-the message when it exits 0; a non-zero exit leaves the message pending and is RECV FAIL at exit 1.
---forever loops over every message and needs --exec (a loop that acks nothing would hand out the
-same message for ever); it stops on SIGINT or SIGTERM, or at the first command that fails.
-` + storeDetail,
+				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> at=<RFC3339>
+subject=<s>, a blank line, the body; or RECV NONE at exit 1 when nothing waits. The oldest message a
+reader lost (delivered, not acked, idle a minute) comes first, else the oldest new one; the reader
+keeps it for a minute. --exec '<command>' runs the command with that same text on its stdin and
+acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
+it pending and is RECV FAIL at exit 1. --forever loops, waiting for messages, and needs --exec; it
+stops on SIGINT or SIGTERM, or at the first command that fails.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the recipient")
-					f.Duration("block", 0, "how long to wait for a message when none is there (0: answer at once)")
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
-					f.String("consumer", "", "this reader's name in the group (default: the host's name)")
-					f.Redis(w.redisDefault())
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
 					f.Check(func(c *tool.Call) {
 						if c.Bool("forever") && c.Str("exec") == "" {
 							c.Problem("--forever wants --exec <command>: a loop that acks nothing would hand out the same message for ever")
-						}
-						if c.Dur("block") < 0 {
-							c.Problem("--block must be zero or more")
 						}
 					})
 				},
@@ -257,39 +182,27 @@ same message for ever); it stops on SIGINT or SIGTERM, or at the first command t
 				Usage:   "ack --as <me> --id <id,...> [--redis <addr>]",
 				Example: "ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV",
 				Effect:  tool.Delivery + ": acks the messages on your stream",
-				Detail: `Prints ACK OK id=<id> acked=true|false per id: false when the id is not pending for you
-(acked already, never delivered, or not yours), so acking twice is safe and exits 0.
-` + storeDetail,
+				Detail: `Prints ACK OK acked=<n> asked=<n>, then one ACK ID id=<id> acked=<true|false> line per id: false
+when the id is not pending for you (acked already, never delivered, or not yours), so acking twice
+is safe and exits 0.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the recipient")
 					f.Required("id", "the message ids, comma-separated, as recv printed them")
-					f.Redis(w.redisDefault())
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
 				},
 				Run: w.ack,
 			},
 			{
 				Name:    "log",
-				Usage:   "log [--since <RFC3339>] [--from <name>] [--to <name>] [--re <id>] [--bodies] [--max <n>] [--redis <addr>]",
-				Example: "log --from ada --max 5",
+				Usage:   "log [--bodies] [--max <n>] [--redis <addr>]",
+				Example: "log --max 5",
 				Effect:  tool.Inspection,
-				Detail: `Prints LOG OK shown=<n> and one LOG MESSAGE line per message of the log, oldest first
-(id, from, to, cc, re, at, subject; the body too with --bodies). --to matches to and cc.
-` + storeDetail,
+				Detail: `Prints LOG OK total=<n>, then one LOG MESSAGE id=<id> from=<name> to=<names> cc=<names> re=<id>
+at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<text> too under --bodies.`,
 				Flags: func(f *tool.Flags) {
-					f.String("since", "", "keep messages at or after this instant, RFC 3339 (2026-10-03T12:00:00Z)")
-					f.String("from", "", "keep messages from this name")
-					f.String("to", "", "keep messages to or cc this name")
-					f.String("re", "", "keep messages answering this id")
 					f.Bool("bodies", false, "print each message's body as well")
 					f.Max()
-					f.Redis(w.redisDefault())
-					f.Check(func(c *tool.Call) {
-						if s := c.Str("since"); s != "" {
-							if _, err := time.Parse(time.RFC3339, s); err != nil {
-								c.Problem(fmt.Sprintf("--since %q is no instant; it wants RFC 3339 (2026-10-03T12:00:00Z)", s))
-							}
-						}
-					})
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
 				},
 				Run: w.log,
 			},
@@ -298,11 +211,11 @@ same message for ever); it stops on SIGINT or SIGTERM, or at the first command t
 				Usage:   "names [--redis <addr>]",
 				Example: "names",
 				Effect:  tool.Inspection,
-				Detail: `Prints NAMES OK count=<n> and one NAMES NAME name=<name> line per known name:
-nova-config's friend and machine rows, as applied into the store.
-` + storeDetail,
-				Flags: func(f *tool.Flags) { f.Redis(w.redisDefault()) },
-				Run:   w.names,
+				Detail:  "Prints NAMES OK count=<n>, then one NAMES NAME name=<name> line per known name: nova-config's friend and machine rows.",
+				Flags: func(f *tool.Flags) {
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
+				},
+				Run: w.names,
 			},
 		},
 	}
@@ -312,7 +225,7 @@ nova-config's friend and machine rows, as applied into the store.
 // empty address is a usage refusal, a store that did not answer is one too
 // (exit 2, the banner's table), in redisconn's one line.
 func (w world) bus(c *tool.Call) (*bus2.Bus, func(), *tool.Out) {
-	addr := c.Want("redis", "the Redis address, host:port (or "+RedisEnv+", NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a seat)")
+	addr := c.Want("redis", "the Redis address, host:port (or "+RedisEnv+")")
 	if o := c.Refused(); o != nil {
 		return nil, nil, o
 	}
@@ -347,17 +260,13 @@ func names(csv string) []string {
 
 func (w world) send(c *tool.Call) *tool.Out {
 	body := c.Str("body")
-	switch {
-	case c.Given("file"):
-		raw, err := os.ReadFile(c.Str("file"))
-		if err != nil {
-			return tool.Refuse("--file: " + err.Error())
-		}
-		body = string(raw)
-	case c.Bool("stdin"):
+	if c.Bool("stdin") {
 		raw, err := io.ReadAll(io.LimitReader(c.Stdin, bus2.MaxBody+1))
 		if err != nil {
 			return tool.Refuse("--stdin: " + err.Error())
+		}
+		if len(raw) > bus2.MaxBody {
+			return tool.Refuse(fmt.Sprintf("the body on stdin is over 1 MiB; at most %d bytes", bus2.MaxBody))
 		}
 		body = string(raw)
 	}
@@ -379,18 +288,22 @@ func (w world) send(c *tool.Call) *tool.Out {
 // message is a received message as one Out: the header line's facts and the
 // body as the payload, so the text form is the header, a blank line and the
 // body, and --json carries the same under facts and payload.
-func message(e bus2.Entry) *tool.Out {
-	m := e.Message()
+func message(m bus2.Message) *tool.Out {
 	o := tool.Done()
 	o.Verb = "recv" // the token of the line, also when text renders it for --exec before the skeleton has
 	return o.Fact("id", m.ID).Fact("from", m.From).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ",")).
-		Fact("subject", tool.Text(m.Subject)).Fact("re", m.Re).Fact("at", m.At.Format(time.RFC3339)).Fact("entry", e.Entry)
+		Fact("re", m.Re).Fact("at", m.At.Format(time.RFC3339)).Fact("subject", tool.Text(m.Subject))
 }
 
-// text is the message as recv prints it and as --exec's command reads it.
-func text(o *tool.Out, body string) string {
+// text is the message as recv prints it and as --exec's command reads it:
+// the header line, a blank line, the body ending in a newline.
+func text(m bus2.Message) string {
 	var b strings.Builder
-	o.Render(&b, false)
+	message(m).Render(&b, false)
+	body := m.Body
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
 	return b.String() + "\n" + body
 }
 
@@ -400,27 +313,32 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	as, consumer, block, command := c.Str("as"), cmp.Or(c.Str("consumer"), w.hostname()), c.Dur("block"), c.Str("exec")
+	as, command := c.Str("as"), c.Str("exec")
 	ctx, stop := w.signals(context.Background())
 	defer stop()
+	stopped := tool.Done().Note("stopped by a signal; a message being delivered stays pending")
+	// one is one recv: the result, and whether a message was delivered
 	one := func(block time.Duration) (*tool.Out, bool) {
-		e, ok, err := b.Recv(ctx, as, consumer, block)
+		e, ok, err := b.Recv(ctx, as, block)
+		if ctx.Err() != nil {
+			return stopped, false
+		}
 		if err != nil {
-			if ctx.Err() != nil {
-				return tool.Done().Note("stopped by a signal"), false
-			}
 			return answer(err), false
 		}
 		if !ok {
-			return tool.Fail("nothing for " + as + " within --block " + block.String()).As("NONE"), false
+			return tool.Fail("nothing for " + as).As("NONE"), false
 		}
-		o := message(e)
 		m := e.Message()
+		o := message(m)
 		if command == "" {
 			o.Payload = "\n" + m.Body
 			return o, true
 		}
-		exit, err := w.run(ctx, command, text(o, m.Body), c.Stderr, c.Stderr)
+		exit, err := w.run(ctx, command, text(m), c.Stderr, c.Stderr)
+		if ctx.Err() != nil {
+			return stopped, false
+		}
 		if err != nil {
 			return tool.Fail("--exec could not run: "+err.Error()).Fact("id", m.ID), false
 		}
@@ -434,32 +352,24 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		return o.Fact("acked", acked).Fact("exec_exit", 0), true
 	}
 	if !c.Bool("forever") {
-		o, _ := one(block)
+		o, _ := one(0)
 		return o
 	}
 	// the loop: every message in turn, each a line of its own, until a signal
 	// or a command that fails; a NONE is a wait that ran out, not a line
-	o := tool.Exit(0)
-	delivered := 0
-	for ctx.Err() == nil {
-		res, ok := one(cmp.Or(block, 30*time.Second))
-		if ok {
-			delivered++
-			res.Payload = ""
+	for {
+		res, ok := one(ForeverBlock)
+		switch {
+		case ok:
 			res.Render(c.Stdout, c.Bool("json"))
-			continue
-		}
-		if res.Word == "NONE" {
-			continue
-		}
-		if res.Status != tool.OK {
+		case res.Word == "NONE":
+		case res == stopped:
+			return tool.Exit(0)
+		default:
 			res.Render(c.Stderr, c.Bool("json"))
 			return tool.Exit(res.Exit)
 		}
-		break
 	}
-	fmt.Fprintf(c.Stdout, "RECV OK delivered=%d stopped=signal\n", delivered)
-	return o
 }
 
 func (w world) ack(c *tool.Call) *tool.Out {
@@ -473,21 +383,17 @@ func (w world) ack(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	o := tool.Done().Fact("acked", count(acked)).Fact("asked", len(ids))
-	for _, id := range ids {
-		o.Item("id", "id", id, "acked", acked[id])
-	}
-	return o
-}
-
-func count(m map[string]bool) int {
 	n := 0
-	for _, v := range m {
+	for _, v := range acked {
 		if v {
 			n++
 		}
 	}
-	return n
+	o := tool.Done().Fact("acked", n).Fact("asked", len(ids))
+	for _, id := range ids {
+		o.Item("id", "id", id, "acked", acked[id])
+	}
+	return o
 }
 
 func (w world) peek(c *tool.Call) *tool.Out {
@@ -496,7 +402,7 @@ func (w world) peek(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	pending, fresh, err := b.Peek(context.Background(), c.Str("as"), 0)
+	pending, fresh, err := b.Peek(context.Background(), c.Str("as"))
 	if err != nil {
 		return answer(err)
 	}
@@ -519,11 +425,7 @@ func (w world) log(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	f := bus2.Filter{From: c.Str("from"), To: c.Str("to"), Re: c.Str("re")}
-	if s := c.Str("since"); s != "" {
-		f.Since, _ = time.Parse(time.RFC3339, s) // ignored: checked by the verb's flag rule
-	}
-	got, err := b.Log(context.Background(), f)
+	got, err := b.Log(context.Background())
 	if err != nil {
 		return answer(err)
 	}

@@ -202,18 +202,6 @@ var Volatile = []VolatileField{
 		},
 	},
 	{
-		Name: "entry",
-		What: "entry= (a stream entry id the store gave this run)",
-		norm: func(Field) Norm {
-			return Norm{
-				Name:  "entry= (a stream entry id the store gave this run)",
-				Re:    regexp.MustCompile(`^entry=[0-9]+-[0-9]+$`),
-				As:    "entry=<a stream entry id the store gave this run>",
-				field: "entry",
-			}
-		},
-	},
-	{
 		Name: "sha",
 		What: "sha= (a sha this run made)",
 		// Anchored at both ends AND named, so `base_sha=` is another token and

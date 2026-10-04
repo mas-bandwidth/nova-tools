@@ -65,7 +65,7 @@ Every command carries a `### First run` transcript in its `## <tool>` section of
    is the only comparison a `firstrun_test.go` makes. Values are compared **as
    written**; the only values matched by shape are the run-owned fields of one shared
    table, `onboarding.Volatile` (`at=`, `took=`, `created=`, a temporary path, a message's
-   `id=` and its `entry=` in a stream, a fresh sha, a name a recorded fixture carries that the document writes as the reader's
+   `id=`, a fresh sha, a name a recorded fixture carries that the document writes as the reader's
    variable, and the stamp on the `branch=` a nova-secrets seal or seat inject commits on).
    A test may name a field from that table and may not invent one.
 3. **The class test asserts execution, not existence.**

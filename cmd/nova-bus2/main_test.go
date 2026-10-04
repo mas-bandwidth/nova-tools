@@ -34,8 +34,7 @@ func newRig(names ...string) *rig {
 
 func (r *rig) world() world {
 	return world{
-		getenv:   func(k string) string { return r.env[k] },
-		hostname: func() string { return "host-1" },
+		getenv: func(k string) string { return r.env[k] },
 		open: func(context.Context, string) (bus2.Store, func(), error) {
 			r.opened++
 			if r.openErr != nil {
@@ -101,7 +100,6 @@ func TestSendRefusesNamingEveryProblem(t *testing.T) {
 		{"unknown recipient", []string{"send", "--as", "ada", "--to", "zed", "--subject", "s", "--body", "x"}, nil, []string{"zed is no known name", "nova-config friend add zed"}},
 		{"no store named", []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x"}, map[string]string{}, []string{"--redis is required", RedisEnv}},
 		{"empty body", []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", " "}, nil, []string{"the body is empty"}},
-		{"missing file", []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--file", "{dir}/none.txt"}, nil, []string{"--file:", "none.txt"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -110,12 +108,7 @@ func TestSendRefusesNamingEveryProblem(t *testing.T) {
 			if c.env != nil {
 				r.env = c.env
 			}
-			dir := t.TempDir()
-			args := make([]string, len(c.args))
-			for i, a := range c.args {
-				args[i] = strings.ReplaceAll(a, "{dir}", dir)
-			}
-			got := r.cli().Do(t, args...).Exit(2).Err("SEND REFUSED")
+			got := r.cli().Do(t, c.args...).Exit(2).Err("SEND REFUSED")
 			for _, s := range c.says {
 				got.Err(s)
 			}
@@ -144,19 +137,19 @@ func TestTheLoopSendPeekRecvAckLog(t *testing.T) {
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=1", "PEEK MESSAGE state=new id="+mid+" from=ada at=2026-10-03T12:00:01Z subject=\"hello there\"")
 
 	got := cli.OK(t, "recv", "--as", "bob")
-	assert.Equal(t, "RECV OK id="+mid+" from=ada to=bob cc=ada re=- at=2026-10-03T12:00:01Z entry=1791028801000-1 subject=\"hello there\"\n\nline one\nline two\n", got.Stdout)
+	assert.Equal(t, "RECV OK id="+mid+" from=ada to=bob cc=ada re=- at=2026-10-03T12:00:01Z subject=\"hello there\"\n\nline one\nline two\n", got.Stdout)
 
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=0", "state=pending")
+	cli.Do(t, "recv", "--as", "bob").Exit(1).Err("RECV NONE: nothing for bob").NotErr("--block")
 	cli.Do(t, "recv", "--as", "ada").Exit(0).Out("RECV OK id=" + mid + " from=ada to=bob cc=ada").NotErr("REFUSED")
+	cli.Do(t, "recv", "--as", "bobb").Exit(2).Err("RECV REFUSED: bobb is no known name", "nova-config friend add bobb")
 
 	cli.Do(t, "ack", "--as", "bob", "--id", mid+",NOPE").Exit(0).Out("ACK OK acked=1 asked=2", "ACK ID id="+mid+" acked=true", "ACK ID id=NOPE acked=false")
 	cli.Do(t, "ack", "--as", "bob", "--id", mid).Exit(0).Out("ACK OK acked=0 asked=1", "acked=false")
-	cli.Do(t, "recv", "--as", "bob").Exit(1).Err("RECV NONE: nothing for bob within --block 0s")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=0")
 
-	cli.Do(t, "log", "--from", "ada", "--bodies").Exit(0).Out("LOG OK total=1", "LOG MESSAGE id="+mid+" from=ada to=bob cc=ada re=- at=2026-10-03T12:00:01Z subject=\"hello there\" body=\"line one\\nline two\\n\"")
-	cli.Do(t, "log", "--to", "zed").Exit(0).Out("LOG OK total=0")
-	cli.Do(t, "log", "--since", "yesterday").Exit(2).Err("--since \"yesterday\" is no instant")
+	cli.Do(t, "log", "--bodies").Exit(0).Out("LOG OK total=1", "LOG MESSAGE id="+mid+" from=ada to=bob cc=ada re=- at=2026-10-03T12:00:01Z subject=\"hello there\" body=\"line one\\nline two\\n\"")
+	cli.Do(t, "log", "--max", "1").Exit(0).Out("LOG OK total=1", "LOG MESSAGE").NotOut("MORE")
 	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2", "NAMES NAME name=ada", "NAMES NAME name=bob")
 	cli.Do(t, "names", "--json").Exit(0).Out(`"status":"ok"`, `"name":"ada"`)
 }
@@ -170,10 +163,12 @@ func TestRecvExecAcksOnZeroAndKeepsThePendingMessageOnFailure(t *testing.T) {
 	r.exec = func(string) int { return 3 }
 	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(1).Err("RECV FAIL id=" + mid + " exec_exit=3: --exec exited 3, so the message stays pending")
 	require.Len(t, r.execIn, 1)
-	assert.Equal(t, "RECV OK id="+mid+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:01Z entry=1791028801000-1 subject=\"s\"\n\nthe body", r.execIn[0], "the command reads what recv prints")
+	assert.Equal(t, "RECV OK id="+mid+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:01Z subject=\"s\"\n\nthe body\n", r.execIn[0], "the command reads what recv prints, the body ending in a newline")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=0")
 
 	r.exec = func(string) int { return 0 }
+	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(1).Err("RECV NONE", "nothing for bob")
+	r.store.Advance(bus2.ClaimAfter)
 	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(0).Out("RECV OK id="+mid, "acked=true exec_exit=0")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=0")
 }
@@ -183,7 +178,6 @@ func TestRecvForeverWantsExecAndStopsOnASignal(t *testing.T) {
 	r := newRig("ada", "bob")
 	cli := r.cli()
 	cli.Do(t, "recv", "--as", "bob", "--forever").Exit(2).Err("--forever wants --exec")
-	cli.Do(t, "recv", "--as", "bob", "--block", "-1s").Exit(2).Err("--block must be zero or more")
 	for _, s := range []string{"one", "two", "three"} {
 		cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", s, "--body", s)
 	}
@@ -194,45 +188,52 @@ func TestRecvForeverWantsExecAndStopsOnASignal(t *testing.T) {
 		return 0
 	}
 	got := cli.Do(t, "recv", "--as", "bob", "--forever", "--exec", "deliver").Exit(0)
-	got.Out(`subject="one"`, `subject="two"`, "RECV OK delivered=2 stopped=signal").NotOut(`subject="three"`)
-	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=1")
+	got.Out(`subject="one"`).NotOut(`subject="two"`, `subject="three"`, "stopped")
+	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=1", "state=pending", `subject="two"`)
 
 	r.cancel = nil
 	r.exec = func(string) int { return 1 }
+	r.store.Advance(bus2.ClaimAfter)
 	cli.Do(t, "recv", "--as", "bob", "--forever", "--exec", "deliver").Exit(1).Err("--exec exited 1")
-	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=0")
+	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=1")
 }
 
-func TestTheRedisDefaultIsTheBusVariableThenTheSprintsThenTheGeneral(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		env  map[string]string
-		want string
-	}{
-		{map[string]string{RedisEnv: "a:1", "NOVA_SPRINT_REDIS": "b:1", "NOVA_REDIS_ADDR": "c:1"}, "a:1"},
-		{map[string]string{"NOVA_SPRINT_REDIS": "b:1", "NOVA_REDIS_ADDR": "c:1"}, "b:1"},
-		{map[string]string{"NOVA_REDIS_ADDR": "c:1"}, "c:1"},
-		{map[string]string{}, ""},
-	}
-	for _, c := range cases {
-		t.Run(c.want, func(t *testing.T) {
-			t.Parallel()
-			r := newRig()
-			r.env = c.env
-			assert.Equal(t, c.want, r.world().redisDefault())
-		})
-	}
-}
-
-func TestSendReadsTheBodyFromAFileOrStdin(t *testing.T) {
+func TestRecvForeverJSONIsOneObjectPerMessageAndNothingElse(t *testing.T) {
 	t.Parallel()
 	r := newRig("ada", "bob")
 	cli := r.cli()
-	path := t.TempDir() + "/note.txt"
-	testkit.WriteFile(t, path, "from a file\n")
-	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "f", "--file", path)
+	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "one", "--body", "x")
+	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "two", "--body", "y")
+	r.exec = func(string) int {
+		if len(r.execIn) == 2 {
+			r.cancel()
+		}
+		return 0
+	}
+	got := cli.Do(t, "recv", "--as", "bob", "--forever", "--exec", "deliver", "--json").Exit(0)
+	lines := strings.Split(strings.TrimSpace(got.Stdout), "\n")
+	require.Len(t, lines, 1, "one object for the one message delivered, and no summary line: %q", got.Stdout)
+	assert.True(t, strings.HasPrefix(lines[0], "{") && strings.HasSuffix(lines[0], "}"), "not JSON: %q", lines[0])
+	assert.Contains(t, lines[0], `"subject":"one"`)
+	assert.Empty(t, got.Stderr)
+}
+
+func TestTheRedisDefaultIsTheBusVariableAlone(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	r.env = map[string]string{"NOVA_SPRINT_REDIS": "b:1", "NOVA_REDIS_ADDR": "c:1"}
+	r.cli().Do(t, "names").Exit(2).Err("--redis is required", RedisEnv)
+	r.env = map[string]string{RedisEnv: "a:1"}
+	r.cli().Do(t, "names").Exit(0).Out("NAMES OK count=2")
+}
+
+func TestSendReadsTheBodyFromStdinAndBoundsIt(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
 	cli.OKIn(t, "from stdin\n", "send", "--as", "ada", "--to", "bob", "--subject", "s", "--stdin")
-	cli.Do(t, "log", "--bodies").Exit(0).Out(`body="from a file\n"`, `body="from stdin\n"`)
-	big := strings.Repeat("x", bus2.MaxBody+1)
-	cli.Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", big).Exit(2).Err("at most 1048576")
+	cli.Do(t, "log", "--bodies").Exit(0).Out(`body="from stdin\n"`)
+	big := strings.Repeat("x", bus2.MaxBody+7)
+	cli.Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", big).Exit(2).Err("the body is 1048583 bytes, at most 1048576")
+	cli.DoIn(t, big, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--stdin").Exit(2).Err("the body on stdin is over 1 MiB; at most 1048576 bytes")
 }

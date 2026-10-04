@@ -25,8 +25,7 @@ import (
 // tier's. The documented lines name no --redis: each step runs with the
 // throwaway store in NOVA_BUS_REDIS, which changes what the tool dials and
 // nothing it prints. The run-owned values are the message's id (a ULID from
-// the store's time), its at and its entry (the store's stream id), named from
-// the one shared table.
+// the store's time) and its at, named from the one shared table.
 
 // firstRunStore is a throwaway redis-server whose roster names ada and bob.
 func firstRunStore(t *testing.T) string {
@@ -48,7 +47,6 @@ func documented(addr string) onboarding.Runner {
 		}
 		return ""
 	}
-	w.hostname = func() string { return "first-run" }
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		var out, errb strings.Builder
 		code := run(s.Args, strings.NewReader(""), &out, &errb, w)
@@ -64,10 +62,9 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	documentedExamples := []string{
 		`nova-bus2 send --as ada --to bob --subject hello --body "are you there?"`,
 		"nova-bus2 peek --as bob",
-		"nova-bus2 recv --as bob --block 2s",
 		"nova-bus2 recv --as bob --exec true",
 		"nova-bus2 ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV",
-		"nova-bus2 log --from ada --max 5",
+		"nova-bus2 log --max 5",
 		"nova-bus2 names",
 	}
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
@@ -91,7 +88,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		require.NoError(t, err)
 		got = append(got, res)
 	}
-	for _, p := range onboarding.CompareTranscript(steps, got, []onboarding.Field{{Name: "id"}, {Name: "at"}, {Name: "entry"}}) {
+	for _, p := range onboarding.CompareTranscript(steps, got, []onboarding.Field{{Name: "id"}, {Name: "at"}}) {
 		assert.Failf(t, "documented transcript differs", "docs/TESTS.md: %s", p)
 	}
 
