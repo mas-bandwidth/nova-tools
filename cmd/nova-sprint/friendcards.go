@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -125,6 +126,14 @@ func firstWord(s string) string {
 // maxFriendReport bounds the paragraph a friend's report puts on the work card.
 const maxFriendReport = 1024
 
+// friendReportReadCap bounds the outbox/<job>/REPORT.md friend sync reads in one
+// ReadFile: a verdict, a Head line and a first paragraph need far less than 64
+// KiB, and the paragraph is capped again by maxFriendReport when it is laid on
+// the card; a larger report is skipped whole, never read into memory
+// (docs/FRIENDS.md, the inbox/outbox standard; docs/SPEC-SPRINT.md section 1,
+// friend sync).
+const friendReportReadCap = 64 * 1024
+
 // tipFn is origin's tip of a branch of a repository (a card's REPO: line, as
 // swarm.ReadCardBase resolves it), "" when origin has no such branch; an error is a tip
 // that could not be read.
@@ -213,6 +222,48 @@ func friendInbox(dir string, p sprint.Packet) (in, why string, err error) {
 	return in, "", nil
 }
 
+// friendReadReport reads a friend's outbox/<job>/REPORT.md, but only when it is
+// a regular file and no larger than friendReportReadCap: os.ReadFile follows a
+// symlink, so a link at outbox/<job> or at REPORT.md would read a file outside
+// her working directory, and a large report is read whole into memory. friend
+// clean already treats a non-regular report as not done (friendclean.go, the
+// Lstat and Mode().IsRegular() check near line 217); sync does the same before
+// its read (docs/FRIENDS.md, the inbox/outbox standard). It returns the report
+// and a why that names the path and the reason; an empty why with an empty
+// report is "no report yet, still working" (nothing is said), and a non-empty
+// why is "skip it, still working" — the caller says the why and continues so
+// the next sync reads it again.
+func friendReadReport(dir, job string) (report, why string, err error) {
+	outDir := filepath.Join(dir, "outbox", job)
+	outName := filepath.Join("outbox", job)
+	reportName := filepath.Join(outName, "REPORT.md")
+	fi, err := os.Lstat(outDir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", "", nil
+	case err != nil:
+		return "", "", err
+	case !fi.IsDir():
+		return "", outName + " is a symlink or a file, not a directory", nil
+	}
+	fi, err = os.Lstat(filepath.Join(outDir, "REPORT.md"))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", "", nil
+	case err != nil:
+		return "", "", err
+	case !fi.Mode().IsRegular():
+		return "", reportName + " is a symlink or a non-regular file", nil
+	case fi.Size() > friendReportReadCap:
+		return "", reportName + " is larger than " + strconv.Itoa(friendReportReadCap) + " bytes", nil
+	}
+	b, err := os.ReadFile(filepath.Join(outDir, "REPORT.md"))
+	if err != nil {
+		return "", "", err
+	}
+	return string(b), "", nil
+}
+
 // friendCardsOf delivers and collects one friend's sprint cards in her working directory
 // dir: every card working on her row is written as inbox/<job>/BRIEF.md when it is not
 // there (written whole, never over a file there, by atomicfile), and finished from
@@ -254,14 +305,17 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		} else if err != nil {
 			return delivered, finished, err
 		}
-		report, err := os.ReadFile(filepath.Join(dir, "outbox", job, "REPORT.md"))
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
+		report, why, err := friendReadReport(dir, job)
 		if err != nil {
 			return delivered, finished, err
 		}
-		r, err := friendFinish(ctx, name, p, string(report), a.tip)
+		if report == "" {
+			if why != "" {
+				say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is left working, and the next sync reads it again", name, oneline.Field(p.Card), oneline.Escape(why)))
+			}
+			continue
+		}
+		r, err := friendFinish(ctx, name, p, report, a.tip)
 		if err != nil {
 			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
 			continue
