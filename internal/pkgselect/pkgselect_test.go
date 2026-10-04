@@ -763,3 +763,27 @@ func TestFanoutWithTheDarwinLegsOffIsLinuxOnly(t *testing.T) {
 	}
 	assert.Equal(t, []string{"./cmd/a", "./cmd/b"}, DropDarwinOnly(pkgs))
 }
+
+// The functional tier's six longest packages each get a leg of their own, whatever else
+// is dealt and in whatever order it arrives (a leg that held two of them ran past the
+// two-minute cap in the merge-group runs of 2026-10-04).
+func TestFunctionalDealsTheHeavyPackagesOnePerLeg(t *testing.T) {
+	t.Parallel()
+	pkgs := []string{"./cmd/a", "./cmd/nova-bus", "./cmd/b", "./cmd/nova-swarm", "./internal/atomicfile", "./internal/c", "./internal/ntable", "./internal/pkgselect", "./internal/swarm", "./internal/d"}
+	legs := Functional(pkgs, Groups{Linux: "lin", Mac: "mac"})
+	require.Len(t, legs, FunctionalShards)
+	home := map[string]int{}
+	for i, l := range legs {
+		for _, p := range strings.Fields(l.Packages) {
+			home[p] = i
+		}
+	}
+	seen := map[int]string{}
+	for _, h := range FunctionalHeavy {
+		if other, dup := seen[home[h]]; dup {
+			t.Errorf("%s and %s share leg %d", h, other, home[h]+1)
+		}
+		seen[home[h]] = h
+	}
+	assert.Len(t, home, len(pkgs), "every package is dealt once")
+}

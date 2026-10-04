@@ -141,12 +141,19 @@ func NothingLeg(g Groups) Leg {
 	return Leg{Name: "nothing", Packages: "", OS: "linux", Arch: "x64", Group: g.Linux}
 }
 
+// FunctionalHeavy are the packages whose functional tests run longest on a shared
+// runner (measured 28 to 68 s each in the merge-group runs of 2026-10-04, two of
+// them landing on one leg ran past the two-minute cap): Functional deals them
+// first, in this order, so no leg gets two while another is empty.
+var FunctionalHeavy = []string{"./cmd/nova-swarm", "./cmd/nova-bus", "./internal/pkgselect", "./internal/atomicfile", "./internal/ntable", "./internal/swarm"}
+
 // Functional deals the packages into FunctionalShards Linux legs like a pull
 // request's unit legs (the darwin-only packages have no Linux leg). The
 // functional job reads it on merge_group, schedule and workflow_dispatch only;
 // each leg's `make test-functional` runs just the tests behind the functional
 // tag. With no package it is one empty leg.
 func Functional(pkgs []string, g Groups) []FunctionalLeg {
+	pkgs = firstOf(pkgs, FunctionalHeavy)
 	groups := make([][]string, FunctionalShards)
 	f := 0
 	for _, p := range pkgs {
@@ -167,6 +174,23 @@ func Functional(pkgs []string, g Groups) []FunctionalLeg {
 		legs = []FunctionalLeg{{Name: "nothing"}}
 	}
 	return legs
+}
+
+// firstOf is pkgs with the packages named in first moved to the front, in first's order,
+// the rest in their own.
+func firstOf(pkgs, first []string) []string {
+	var out []string
+	for _, f := range first {
+		if slices.Contains(pkgs, f) {
+			out = append(out, f)
+		}
+	}
+	for _, p := range pkgs {
+		if !slices.Contains(first, p) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // MarshalLegs is the matrix as compact JSON, in field order.
