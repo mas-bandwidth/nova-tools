@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,4 +32,35 @@ func TestSnapshotListsItsRowsAndDryRunWritesNothing(t *testing.T) {
 	assert.Equal(t, 0, code, stderr)
 	assert.Contains(t, stdout, "SNAPSHOT ROW name=nova-stub")
 	assert.FileExists(t, out)
+}
+
+// TestSnapshotRefusesABinEntryWhoseNameIsNotOneTSVField pins security#81 finding 1:
+// snapshot writes a nova-* file name into the TSV, so a name holding a tab or
+// newline would forge rows past the mixed-stamp gate. An entry whose name is not
+// one TSV field is refused before running, naming the file escaped, and no --out
+// is written; an ordinary bin still snapshots.
+func TestSnapshotRefusesABinEntryWhoseNameIsNotOneTSVField(t *testing.T) {
+	t.Parallel()
+	bin := t.TempDir()
+	good := filepath.Join(bin, "nova-good")
+	require.NoError(t, os.WriteFile(good, []byte("#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
+
+	badName := "nova-b\tv9.9.9\tdeadbeefcafe\tlinux-amd64\nnova-c"
+	bad := filepath.Join(bin, badName)
+	require.NoError(t, os.WriteFile(bad, []byte("#!/bin/sh\nprintf 'nova-b v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
+
+	out := filepath.Join(t.TempDir(), "s.tsv")
+	code, stdout, stderr := runTool(t, "nova-version", "snapshot", "--bin", bin, "--out", out)
+	assert.Equal(t, 2, code, "stdout: %s\nstderr: %s", stdout, stderr)
+	assert.Contains(t, stderr, oneline.Escape(badName))
+	assert.NoFileExists(t, out)
+
+	// An ordinary bin still snapshots.
+	binOrdinary := t.TempDir()
+	ordinary := filepath.Join(binOrdinary, "nova-good")
+	require.NoError(t, os.WriteFile(ordinary, []byte("#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
+	outOrdinary := filepath.Join(t.TempDir(), "ordinary.tsv")
+	code, stdout, stderr = runTool(t, "nova-version", "snapshot", "--bin", binOrdinary, "--out", outOrdinary)
+	assert.Equal(t, 0, code, stderr)
+	assert.FileExists(t, outOrdinary)
 }

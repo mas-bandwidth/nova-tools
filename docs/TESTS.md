@@ -696,7 +696,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=26 applied=26
+CONFIG MIGRATE file=try.json from=0 to=27 applied=27
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -748,6 +748,7 @@ APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true publish
 
 $ nova-cairn index --store ./cairns
 INDEX OK sessions=1 entries=1
+INDEX SESSION session=s1 entries=1
 INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
 
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1

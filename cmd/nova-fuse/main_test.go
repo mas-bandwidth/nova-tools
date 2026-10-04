@@ -1459,12 +1459,15 @@ func TestASurfaceWithASpaceIsOneTokenInEveryField(t *testing.T) {
 	assert.Contains(t, out, `LIFT OK quarantine=my\x20surface was since=`, "LIFT must name the surface as one token, got %q", out)
 }
 
-// TestQuarantineOKNamesTheEntryItVerified. When the box already held a key folding to the
-// surface being quarantined, the verification asked Quarantined, which answers with the
-// sorted-first stored spelling -- so `quarantine discord` over a box holding `Discord`
+// TestQuarantineOKNamesTheEntryItVerified. When the box already held a key folding to
+// the surface being quarantined, the verification asked Quarantined, which answers with
+// the sorted-first stored spelling -- so `quarantine discord` over a box holding `Discord`
 // announced `QUARANTINE OK Discord since=<the old stamp>` with the new reason: a true
-// claim about a sibling entry, under the wrong name and the wrong time. The verification
-// now reads back the exact key it wrote, and the line names that entry.
+// claim about a sibling entry, under the wrong name and the wrong time. A blow onto a
+// standing fuse now keeps the standing record (see TestAReBlowKeepsTheStandingRecordAndSaysSo),
+// so the line names the STORED spelling with the STORED time and reason, and the new
+// reason only as not recorded: a true claim about the one entry, and the box is not
+// rewritten.
 func TestQuarantineOKNamesTheEntryItVerified(t *testing.T) {
 	t.Parallel()
 
@@ -1475,8 +1478,82 @@ func TestQuarantineOKNamesTheEntryItVerified(t *testing.T) {
 	now := nowish()
 	code, out, errOut := capture(t, []string{"quarantine", "--box", box, "discord", "new"}, now)
 	require.Equal(t, 0, code, "exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
-	want := "QUARANTINE OK discord since=" + stamp(now) + ": new ("
-	assert.True(t, strings.HasPrefix(out, want), "stdout = %q, want it to open with %q -- the entry that was written and read back, not its sibling", out, want)
+	want := "QUARANTINE OK Discord already=quarantined since=2020-01-01T00:00:00Z: old (standing record kept; the new reason was not recorded: new)\n"
+	assert.Equal(t, want, out, "the entry that stands, not its sibling nor a rewrite")
+}
+
+// TestAReBlowKeepsTheStandingRecordAndSaysSo. A second blow onto a fuse already
+// standing rewrote the box with no check for one, so the first at and reason of the
+// blow were gone without a word (security#74 finding 1). Both verbs now keep the
+// standing record and say so: exit 0 (the state sought holds), one OK line naming
+// already= with the stored at and reason, and the new reason only as not recorded.
+// A dry run reports the same line and writes nothing.
+func TestAReBlowKeepsTheStandingRecordAndSaysSo(t *testing.T) {
+	t.Parallel()
+
+	t.Run("quarantine keeps the first at and reason", func(t *testing.T) {
+		t.Parallel()
+
+		box := boxIn(t)
+		first := nowish()
+		mustRun(t, []string{"quarantine", "--box", box, "a-forum", "first reason"}, first)
+
+		code, out, errOut := capture(t, []string{"quarantine", "--box", box, "a-forum", "second reason"}, first.Add(time.Second))
+		require.Equal(t, 0, code, "re-blow: exit = %d, want 0, the state sought holds\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=quarantined", "stdout = %q, want the OK line to name already", out)
+		assert.Contains(t, out, stamp(first)+": first reason", "stdout = %q, want the standing record's at and reason, not the new ones", out)
+
+		b, err := fuse.ReadBox(box)
+		require.NoError(t, err, "read the box back")
+		_, standing, ok := b.Quarantined("a-forum")
+		require.True(t, ok, "a-forum must still be quarantined after the re-blow")
+		assert.Equal(t, stamp(first), standing.At, "the box must hold the FIRST at, got %q", standing.At)
+		assert.Equal(t, "first reason", standing.Reason, "the box must hold the FIRST reason, got %q", standing.Reason)
+	})
+
+	t.Run("lockdown keeps the first at and reason", func(t *testing.T) {
+		t.Parallel()
+
+		box := boxIn(t)
+		first := nowish()
+		mustRun(t, []string{"lockdown", "--box", box, "first reason"}, first)
+
+		code, out, errOut := capture(t, []string{"lockdown", "--box", box, "second reason"}, first.Add(time.Second))
+		require.Equal(t, 0, code, "re-blow: exit = %d, want 0, the state sought holds\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=blown", "stdout = %q, want the OK line to name already", out)
+		assert.Contains(t, out, stamp(first)+": first reason", "stdout = %q, want the standing record's at and reason, not the new ones", out)
+
+		b, err := fuse.ReadBox(box)
+		require.NoError(t, err, "read the box back")
+		require.NotNil(t, b.Lockdown, "the lockdown must still be blown after the re-blow")
+		assert.Equal(t, stamp(first), b.Lockdown.At, "the box must hold the FIRST at, got %q", b.Lockdown.At)
+		assert.Equal(t, "first reason", b.Lockdown.Reason, "the box must hold the FIRST reason, got %q", b.Lockdown.Reason)
+	})
+
+	t.Run("dry runs report the same and write nothing", func(t *testing.T) {
+		t.Parallel()
+
+		box := boxIn(t)
+		first := nowish()
+		mustRun(t, []string{"quarantine", "--box", box, "a-forum", "first reason"}, first)
+		mustRun(t, []string{"lockdown", "--box", box, "first reason"}, first)
+
+		code, out, errOut := capture(t, []string{"quarantine", "--box", box, "--dry-run", "a-forum", "second reason"}, first.Add(time.Second))
+		require.Equal(t, 0, code, "dry re-blow: exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=quarantined", "dry quarantine stdout = %q, want the same already line", out)
+
+		code, out, errOut = capture(t, []string{"lockdown", "--box", box, "--dry-run", "second reason"}, first.Add(2*time.Second))
+		require.Equal(t, 0, code, "dry re-blow: exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=blown", "dry lockdown stdout = %q, want the same already line", out)
+
+		b, err := fuse.ReadBox(box)
+		require.NoError(t, err, "read the box back")
+		require.NotNil(t, b.Lockdown, "the lockdown must still stand, a dry run writes nothing")
+		assert.Equal(t, stamp(first), b.Lockdown.At, "a dry run must not move the standing at, got %q", b.Lockdown.At)
+		_, standing, ok := b.Quarantined("a-forum")
+		require.True(t, ok, "a-forum must still be quarantined, a dry run writes nothing")
+		assert.Equal(t, stamp(first), standing.At, "a dry run must not move the standing at, got %q", standing.At)
+	})
 }
 
 func TestLeadingDashSurfaceWithDelimiter(t *testing.T) {

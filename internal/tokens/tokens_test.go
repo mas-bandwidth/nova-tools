@@ -2,14 +2,15 @@ package tokens
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"time"
 )
 
 // The package's own tests: the day file's round trip and its strict parse, the shrink
@@ -678,4 +679,40 @@ func TestALegacyTwelveColumnDayFileReadsWithTheUnitsColumnIgnored(t *testing.T) 
 		_, f := ParseDayFile("2026-09-21", dup)
 		assert.False(t, len(f) == 0, "a second (model, repo) row in an eleven-column file was accepted")
 	}
+}
+
+func TestCountsSetNeverWrapsPastInt64Max(t *testing.T) {
+	t.Parallel()
+
+	var c Counts
+	c.Set(Input, math.MaxInt64)
+	c.Set(Input, math.MaxInt64)
+	got, ok := c.Get(Input)
+	assert.True(t, ok)
+	assert.Equal(t, int64(math.MaxInt64), got)
+
+	dir := t.TempDir()
+	var badCounts Counts
+	badCounts.n[Input] = -1
+	badCounts.has[Input] = true
+	df := &DayFile{
+		Day: "2026-09-11",
+		Rows: []DayRow{
+			{
+				Date:   "2026-09-11",
+				Model:  "m1",
+				Repo:   "r1",
+				Counts: badCounts,
+				Basis:  UTC,
+			},
+		},
+	}
+	err := df.Save(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2026-09-11")
+	assert.Contains(t, err.Error(), "-1")
+
+	entries, readErr := os.ReadDir(dir)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries)
 }

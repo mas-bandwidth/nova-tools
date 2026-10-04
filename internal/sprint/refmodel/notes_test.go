@@ -47,6 +47,7 @@ var noteCarry = map[string]carried{
 	"Decisions":   {"decisions", ""},
 	"Marked":      {"attr", ""},
 	"Answers":     {"attr", ""},
+	"Alias":       {"left out", "the store numbers a judgment as its commit writes it (sprint.Alias)"},
 	"Suspects":    {"attr", ""},
 	"Card":        {"card", ""},
 	"Other":       {"attr", ""},

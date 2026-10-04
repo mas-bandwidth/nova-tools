@@ -9,8 +9,10 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -124,6 +126,17 @@ func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo
 	return f.Version, revisionOf(f.Version), f.Platform, src, has, true
 }
 
+// isNotOneTSVField reports whether s contains any control or whitespace
+// character that would break a TSV field or record (security#81 finding 1).
+func isNotOneTSVField(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
+}
+
 // snapshotVerb has two shapes. With --file <manifest> it scopes to the ADOPTED
 // rule-2 manifest, reading its entries the way report does,
 // and reports how many answer -- the adopted sixteen -- never how many nova-*
@@ -162,6 +175,12 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 		info, err := e.Info()
 		if err != nil || !info.Mode().IsRegular() {
 			continue
+		}
+		// SECURITY #81 finding 1: snapshot writes a nova-* file name raw into
+		// the TSV, so a name holding a tab, newline or other control/whitespace
+		// character would forge rows past the mixed-stamp gate or corrupt the TSV.
+		if isNotOneTSVField(e.Name()) {
+			return tool.Refuse(fmt.Sprintf("cannot read %s: entry name is not one TSV field", oneline.Escape(e.Name())))
 		}
 		path := filepath.Join(bin, e.Name())
 		ctx, cancel := context.WithTimeout(run, timeout)

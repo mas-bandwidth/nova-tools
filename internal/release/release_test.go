@@ -477,6 +477,30 @@ func TestCutRefusesAVersionNoLaterStepCouldCheck(t *testing.T) {
 	}
 }
 
+func TestValidVersionRefusesAPrereleaseSuffixCarryingShellSyntax(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range []string{
+		"v9.9.9-;id>pwned",
+		"v9.9.9-x/../../pwn",
+		"v9.9.9-$(id)",
+		"v9.9.9-a b",
+		"v9.9.9-`id`",
+	} {
+		if err := ValidVersion(v); err == nil {
+			assert.Error(t, err, "accepted %q", v)
+		}
+	}
+	for _, v := range []string{
+		"v0.15.3-0.20260918044559-d576bf6bbabb",
+		"v1.0.0-rc1",
+	} {
+		if err := ValidVersion(v); err != nil {
+			assert.NoError(t, err, "refused %q: %v", v, err)
+		}
+	}
+}
+
 func TestEveryReleaseVerbNamesItsMissingFlagsAtOnce(t *testing.T) {
 	t.Parallel()
 
@@ -2137,4 +2161,41 @@ func TestVerifyArtifactsReportsWhatItActuallyChecked(t *testing.T) {
 	if n, err := VerifyArtifacts(dir, arts); err == nil || n == 3 {
 		require.FailNowf(t, "assertion failed", "a changed artifact was counted as verified: n=%d err=%v", n, err)
 	}
+}
+
+// TestReadSumsRefusesAnArtifactNameTheRemoteShellWouldReadAsSyntax pins
+// security#72 finding 1 (artifact-name half): ReadSums is the one place the
+// names enter, and install writes a file under the name while adopt composes a
+// remote `rm -f` over it. A name the far shell reads as syntax must stop here,
+// with the line number, so install, adopt and pull see only safe names.
+func TestReadSumsRefusesAnArtifactNameTheRemoteShellWouldReadAsSyntax(t *testing.T) {
+	t.Parallel()
+	const sum = "73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb"
+	write := func(t *testing.T, lines ...string) string {
+		t.Helper()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, SumsFile), []byte(strings.Join(lines, "\n")+"\n"), 0o644))
+		return dir
+	}
+
+	for _, bad := range []string{"nova-a;touch pwn7", "$(id)", "nova-a`id`", "nova a", "-rf", "nova-a|id", "nova-a&id", "nova-a>x", "nova\tb", "~root"} {
+		bad := bad
+		t.Run(bad, func(t *testing.T) {
+			t.Parallel()
+			dir := write(t, sum+"  nova-bus", sum+"  "+bad)
+			_, err := ReadSums(dir)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "line 2")
+			assert.Contains(t, err.Error(), fmt.Sprintf("%q", bad))
+		})
+	}
+
+	dir := write(t, sum+"  nova-bus", sum+"  nova-update.exe", sum+"  nova_tool+1.2")
+	arts, err := ReadSums(dir)
+	require.NoError(t, err)
+	names := make([]string, 0, len(arts))
+	for _, a := range arts {
+		names = append(names, a.Name)
+	}
+	assert.Equal(t, []string{"nova-bus", "nova-update.exe", "nova_tool+1.2"}, names)
 }
