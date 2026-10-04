@@ -70,8 +70,8 @@ builder checks each line below against a screenshot at 1440 and 375 and fixes an
 from the owner edits one line here and nothing else moves.
 
 ## Page
-- Dark by default, light by a small toggle. Panels full width, stacked: header, progress bar, Work, Fleet,
-  Friends, footer. No readers or merge panel (available at ?all=1 only). No two-column layout at any width.
+- Dark only: no theme toggle (the card dash-lanes-panel.w1, 2026-10-04; the owner's line is owed). Panels full width, stacked: header, progress bar, Work, Fleet,
+  Friends, Lanes, footer. No readers or merge panel (available at ?all=1 only). No two-column layout at any width.
 - Base type 28 px (doubled). Labels and headers: system proportional face. All numbers: monospace (ui-monospace,
   Menlo), right-aligned. Headers over numeric columns right-aligned too.
 - Refresh: the page keeps `/events` open and patches in place as each copy arrives; while the stream is not open it
@@ -123,6 +123,13 @@ from the owner edits one line here and nothing else moves.
 
 ## Friends (title "Friends"): same shape as Fleet without load (ready, working, done, ok%, status; headers lowercase); honest empty
   state until the JSON carries tables.friends.
+
+## Lanes (the card dash-lanes-panel.w1, 2026-10-04; the owner's line is owed)
+- The page shows a lanes panel: one row per machine's lane of a kind, the friends or machines
+  that hold it, and those that wait, read from `nova-sprint where --json --cards` (the `lanes`
+  array, verb-lane-take-give). Names are in the order the sprint records them; an empty `lanes`
+  shows an honest empty state, as Friends does.
+- Columns: machine | kind | width | held | waiting (headers exactly so, all lowercase).
 
 ## Footer: one line, "nova-sprint" bold white, then "from https://github.com/mas-bandwidth/nova-tools" (link).
 
