@@ -479,7 +479,7 @@ func (s *sourceFlags) check(r *refusals) {
 // is named in the returned notes.
 func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
-		out = append(out, tokens.ReadClaude(it.label, it.value, rules))
+		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules))
 	}
 	scratch := s.scratch
 	if private && len(s.opencode.items) > 0 {
@@ -507,14 +507,14 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (ou
 		out = append(out, tokens.ReadOpenCode(it.label, it.value, scratch, time.Duration(s.timeout)*time.Second, rules))
 	}
 	for _, it := range s.swarm.items {
-		out = append(out, tokens.ReadSwarm(it.label, it.value, rules))
+		out = append(out, tokens.ReadSwarm(it.label, it.value, os.DirFS(it.value), rules))
 	}
 	for _, it := range s.provider.items {
 		kind, name, _ := strings.Cut(it.label, ":")
 		out = append(out, tokens.ReadProvider(kind, name, it.value, rules))
 	}
 	if s.bus != "" {
-		out = append(out, tokens.ReadBus(s.bus, rules, now)...)
+		out = append(out, tokens.ReadBus(s.bus, os.DirFS(s.bus), rules, now)...)
 	}
 	for _, src := range out {
 		keys := map[tokens.Key]bool{}

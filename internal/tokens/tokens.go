@@ -19,6 +19,7 @@ package tokens
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"slices"
@@ -647,12 +648,40 @@ func openSource(path string) (*os.File, error) {
 	return os.Open(path)
 }
 
+// openSourceFS is openSource for a filesystem the caller hands in: main passes
+// os.DirFS(dir) and a test passes fstest.MapFS, so the folding logic reads a tree without
+// a temporary directory and the open count stays honest either way.
+func openSourceFS(fsys fs.FS, name string) (fs.File, error) {
+	opens.Add(1)
+	return fsys.Open(name)
+}
+
 // maxSourceBytes bounds the ONE whole-file read. A ledger or a bus note is a record, not
 // an archive, and os.ReadFile of a runaway file took the process's memory before any
 // parser could name it. A file over this cap is refused by name rather than truncated:
 // neither caller tolerates a partial parse, so a half-read ledger would fold as a whole
 // one. 64 MiB is far past the largest real export and far short of a memory blowup.
 const maxSourceBytes = 64 << 20
+
+// cappedRead is readSource's ceiling over an already-open file, so the one cap holds for
+// os.Open and fs.FS alike.
+func cappedRead(f fs.File, name string) ([]byte, error) {
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if fi.Size() > maxSourceBytes {
+		return nil, fmt.Errorf("source %s is %d bytes, over the %d-byte cap", name, fi.Size(), maxSourceBytes)
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, maxSourceBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > maxSourceBytes {
+		return nil, fmt.Errorf("source %s grew over the %d-byte cap while being read", name, maxSourceBytes)
+	}
+	return raw, nil
+}
 
 // readSource is openSource for a whole file.
 func readSource(path string) ([]byte, error) {
@@ -662,21 +691,17 @@ func readSource(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	fi, err := f.Stat()
+	return cappedRead(f, path)
+}
+
+// readSourceFS is openSourceFS for a whole file.
+func readSourceFS(fsys fs.FS, name string) ([]byte, error) {
+	f, err := openSourceFS(fsys, name)
 	if err != nil {
 		return nil, err
 	}
-	if fi.Size() > maxSourceBytes {
-		return nil, fmt.Errorf("source %s is %d bytes, over the %d-byte cap", path, fi.Size(), maxSourceBytes)
-	}
-	raw, err := io.ReadAll(io.LimitReader(f, maxSourceBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(raw)) > maxSourceBytes {
-		return nil, fmt.Errorf("source %s grew over the %d-byte cap while being read", path, maxSourceBytes)
-	}
-	return raw, nil
+	defer f.Close()
+	return cappedRead(f, name)
 }
 
 // keyLess orders two keys of one day by (model, repo), the order a day file's rows
