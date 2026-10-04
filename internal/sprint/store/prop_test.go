@@ -571,7 +571,8 @@ func (r *propRun) answer(pick, choice int, progress bool) {
 // idle is a decision that changes nothing, or adds work: a fair coordinator
 // at the end of a run chooses another when it has one.
 var idle = map[string]bool{"stop and look": true, "look at the card": true, "look at both": true, "check": true, "wait": true,
-	"act": true, "clear": true, "add": true, "do more before going on": true, "look": true, "rank that card first": true}
+	"act": true, "clear": true, "add": true, "do more before going on": true, "look": true, "rank that card first": true,
+	"wait 10m": true, "wait 15m": true}
 
 func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool) {
 	ds := append([]string(nil), g.Decisions...)
@@ -670,8 +671,17 @@ func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool)
 		} else {
 			ack()
 		}
-	case d == "wait":
+	case d == "wait", d == "wait 10m", d == "wait 15m":
 		wait(g.ID)
+	case d == "brief":
+		// the brief is wrong, not the worker (brief_bound.go): a dealt card's brief is
+		// changed by dropping it and adding it again; the random coordinator drops it
+		drop(members, notes)
+	case strings.HasPrefix(d, "reader up "), strings.HasPrefix(d, "restart "), strings.HasPrefix(d, "fleet up ") && strings.Contains(d, "--width"):
+		// the readers behind and a member overloaded (readers_behind.go, overload.go): the
+		// remedy is a loop's or a width's, outside the store; the judgment stays and is
+		// updated in place while it holds
+		r.say("  (%s: outside the store; nothing done)", d)
 	case d == "add":
 		stream, _ := pickOf(r.cfg.streams, choice)
 		r.add(stream, nil, false)
