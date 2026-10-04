@@ -72,10 +72,10 @@ import (
 //
 // KIND: IS THE NAME SET, NOT A SECOND TABLE (#1853). `hygiene.KindDeclared` reads
 // internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
-// already refuse. The gate TABLE -- steps, control, reject tokens -- is still
-// internal/pulse/kinds.go (SPEC-TOOLWORK.md §5 rule 3) and is not on `dev`; refusing
-// `TEST: none` on a gated kind needs that table, so that half still waits. Writing
-// a second name list here would be the same mistake `validGlobs` just undid.
+// already refuse. The instruction kind is a column of that same list
+// (docs/SPEC-ISA.md): the KIND: line already names the work, and the column names
+// the instruction. A second name list here would be the same mistake `validGlobs`
+// just undid.
 
 // CardHeaderFinding is one typed-header defect: the check's token, the 1-based line it
 // sits on and the line's own text. It is the shape `cmd/nova-swarm/lint.go` prints on a
@@ -94,7 +94,7 @@ type CardHeaderFinding struct {
 // rule 1, and gap_test pins that list. Their remedies are StartNamedRemedy and
 // StopNamedRemedy below, merged into `cmd/nova-swarm/lint.go`'s cardLintRemedies.
 var CardHeaderRemedies = map[string]string{
-	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one the pool's kinds list names; the cutter writes it from the pool row and a model never does",
+	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one the pool's kinds list names; the cutter writes it from the pool row and a model never does; a declared kind whose row names no instruction kind is this finding too: name the instruction kind on that row of the one kinds list",
 	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none`",
 	"test-named":     "the card carries `TEST: [-tags <tags>] <package> <TestName>` -- the package repository-relative and the name a Go test name -- or `TEST: none <why>` where the kind declares no gate",
 	"paused":         "the coordinator paused this kind, so `cut` cuts no card of it and a card launched before the pause is `ACCEPT ABSTAIN reason=paused` at harvest; the remedy is not a rerun but `nova-pulse trust --set trial --queue <dir> --kind <kind> --who <name> --reason <text>`",
@@ -240,10 +240,6 @@ func CardPaths(raw []byte) []string {
 // cardTypedKeys is the five lines SPEC-TOOLWORK.md §5 rule 1 names, as a set.
 var cardTypedKeys = map[string]bool{"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true}
 
-// ungatedKinds is the set of kinds that may carry TEST: none. It matches the third
-// column of internal/hygiene/kinds.txt (read, probe, text, tone, report).
-var ungatedKinds = map[string]bool{"read": true, "probe": true, "text": true, "tone": true, "report": true}
-
 // cardKeyCheck is the token that answers for each typed key. LEGS: and SOURCE: have no
 // token of their own, so a stranded or repeated one answers under `kind-declared`, which
 // is the token for "the typed header is not the header the gate will read".
@@ -279,6 +275,39 @@ func validGlobs(globs []string) (string, bool) {
 		return err.Error(), false
 	}
 	return "", true
+}
+
+// instructionResolution is the instruction kind a card's KIND names, from the
+// one kinds list (docs/SPEC-ISA.md). A row that names one prints
+// `kind=<work> instruction=<instruction>`. A row that names none is
+// kind-declared: lint --card refuses it.
+func instructionResolution(work, instruction string, line int) (string, *CardHeaderFinding) {
+	if instruction == "" {
+		return "", &CardHeaderFinding{
+			Check:   "kind-declared",
+			Line:    line,
+			Excerpt: fmt.Sprintf("KIND: %q is declared but its row of the one kinds list names no instruction kind; add the instruction kind to that row of internal/hygiene/kinds.txt", work),
+		}
+	}
+	return fmt.Sprintf("kind=%s instruction=%s", work, instruction), nil
+}
+
+// InstructionKindOfCard is the instruction kind the card lint names for one
+// card, resolved from the one kinds list (docs/SPEC-ISA.md). The line is
+// `kind=<work> instruction=<instruction>`. A declared KIND whose row names none
+// returns the kind-declared finding and an empty line. A card with no declared
+// KIND returns neither: that defect is the missing-kind finding, not this one.
+func InstructionKindOfCard(raw []byte) (string, *CardHeaderFinding) {
+	block, _ := cardHeaderBlock(raw)
+	kind := block["KIND"]
+	if !kind.found || kind.value == "" || !hygiene.KindDeclared(kind.value) {
+		return "", nil
+	}
+	inst, ok := hygiene.InstructionKind(kind.value)
+	if !ok {
+		inst = ""
+	}
+	return instructionResolution(kind.value, inst, kind.line)
 }
 
 // LintCardHeader returns the typed-header findings for one card's bytes.
@@ -337,6 +366,17 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		// is refused here instead of dying at accept. The names are hygiene.Kinds(),
 		// the same set `nova-check hygiene --kind` prints when it refuses.
 		add("kind-declared", kind.line, fmt.Sprintf("KIND: %q is not a kind this toolchain declares; one of: %s", kind.value, strings.Join(hygiene.Kinds(), ", ")))
+	case hygiene.KindDeclared(kind.value):
+		// THE INSTRUCTION KIND IS A COLUMN OF THE ONE LIST (docs/SPEC-ISA.md).
+		// A declared KIND whose row names none is refused here, the same token
+		// the unknown kind uses, so lint --card prints one remedy.
+		inst, ok := hygiene.InstructionKind(kind.value)
+		if !ok {
+			inst = ""
+		}
+		if _, finding := instructionResolution(kind.value, inst, kind.line); finding != nil {
+			add(finding.Check, finding.Line, finding.Excerpt)
+		}
 	}
 
 	// 2. PATHS: is declared, and every glob is one the gate could use.
@@ -390,7 +430,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	case tl.None:
 		// TEST: none is only a declaration for ungated kinds; gated kinds strictly
 		// require a reproducing test, per the toolwork spec's typed-header rule.
-		if kind.value != "" && !ungatedKinds[kind.value] {
+		if kind.value != "" && hygiene.KindGated(kind.value) {
 			add("test-named", test.line, fmt.Sprintf("TEST: none is not allowed for kind %q; gated kinds require `TEST: <package> <TestName>`", kind.value))
 		}
 	default:

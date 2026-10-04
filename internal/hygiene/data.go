@@ -97,29 +97,71 @@ func parseKeyShapes(data string) ([]keyShape, error) {
 //go:embed kinds.txt
 var kindData string
 
+// kindRow is one row of the one kinds list. The instruction kind is a column of
+// that list (docs/SPEC-ISA.md), not a second vocabulary.
+type kindRow struct {
+	gated       bool
+	instruction string
+}
+
 var (
 	kindOnce  sync.Once
 	kindNames []string
 	kindSet   map[string]bool
+	kindRows  map[string]kindRow
 )
 
 func loadKinds() ([]string, map[string]bool) {
 	kindOnce.Do(func() {
 		kindSet = map[string]bool{}
+		kindRows = map[string]kindRow{}
 		for _, line := range strings.Split(kindData, "\n") {
 			line = strings.TrimRight(line, "\r")
 			if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 				continue
 			}
-			name := strings.TrimSpace(strings.SplitN(line, "\t", 2)[0])
+			fields := strings.Split(line, "\t")
+			name := strings.TrimSpace(fields[0])
 			if name == "" || kindSet[name] {
 				continue
 			}
+			row := kindRow{gated: true}
+			if len(fields) >= 3 && strings.TrimSpace(fields[2]) == "ungated" {
+				row.gated = false
+			}
+			if len(fields) >= 4 {
+				row.instruction = strings.TrimSpace(fields[3])
+			}
 			kindSet[name] = true
+			kindRows[name] = row
 			kindNames = append(kindNames, name)
 		}
 	})
 	return kindNames, kindSet
+}
+
+// InstructionKind is the instruction kind of a declared work kind, the column
+// of the one list (docs/SPEC-ISA.md). ok is false when name is not declared or
+// the row names no instruction kind.
+func InstructionKind(name string) (string, bool) {
+	loadKinds()
+	row, ok := kindRows[name]
+	if !ok || row.instruction == "" {
+		return "", false
+	}
+	return row.instruction, true
+}
+
+// KindGated reports the gated column of the one kinds list (docs/SPEC-ISA.md
+// keeps that column on the same list). A kind the list does not declare is
+// gated: TEST: none is not a declaration for it.
+func KindGated(name string) bool {
+	loadKinds()
+	row, ok := kindRows[name]
+	if !ok {
+		return true
+	}
+	return row.gated
 }
 
 // Kinds is the card kinds this toolchain declares, in the spec's order. A caller that
