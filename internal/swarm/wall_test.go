@@ -2,9 +2,7 @@ package swarm
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,23 +26,6 @@ func TestAFencedRunThatPublishedIsDone(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(job, "RESULT.md"), []byte("a card line 1\n"), 0o644))
 	report, ok := WallDeath(job, "a")
 	require.False(t, ok, "a run that published a result is not a wall death, got %q", report)
-}
-
-func git(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
-	return strings.TrimSpace(string(out))
-}
-
-func commit(t *testing.T, dir, name string) string {
-	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, name+".txt"), []byte(name+"\n"), 0o644))
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", name)
-	return git(t, dir, "rev-parse", "HEAD")
 }
 
 // ISSUE #644, THE OTHER HALF. The harness's own fence and the OS wall are both machinery,

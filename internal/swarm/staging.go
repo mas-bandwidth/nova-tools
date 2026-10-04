@@ -62,7 +62,6 @@ func LoadPoolIdentity(poolDir string) (StagingIdentity, error) {
 			header = false
 			continue
 		}
-		header = false
 		if len(fields) != 3 {
 			return StagingIdentity{}, fmt.Errorf("pool %s identity.tsv line %d: wants owner, name and email tab-separated; %s", poolDir, i+1, PoolIdentityRemedy)
 		}

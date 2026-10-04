@@ -18,6 +18,31 @@ import (
 // frugal with the machine's cores). The rest of the file's tests stay in the
 // unit tier.
 
+// baseRepo is a git repository with one commit holding internal/decide/decide.go
+// and nothing else under internal/decide, which is the shape of nova-tools at
+// the nx-f19 base: the package exists, entry.go does not.
+func baseRepo(t *testing.T) (dir, sha string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	dir = t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "decide"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "internal", "decide", "decide.go"), []byte("package decide\n"), 0o644))
+	git("add", ".")
+	git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base")
+	return dir, git("rev-parse", "HEAD")
+}
+
 func TestLintPathsResolveAtBase(t *testing.T) {
 	t.Parallel()
 

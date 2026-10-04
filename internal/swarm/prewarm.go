@@ -105,7 +105,7 @@ func copyLispSeed(seed, dest string) error {
 			return os.MkdirAll(out, info.Mode().Perm())
 		}
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf("Lisp seed entry %s is not a regular file", path)
+			return fmt.Errorf("lisp seed entry %s is not a regular file", path)
 		}
 		in, err := os.Open(path)
 		if err != nil {

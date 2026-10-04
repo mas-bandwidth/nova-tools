@@ -134,10 +134,7 @@ func ListenProviderProxy(cfg ProviderProxyConfig) (*ProviderProxy, error) {
 	p.harness = harness.String()
 	p.srv = &http.Server{Handler: p}
 	go func() {
-		if err := p.srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			// The run ends the card; a failed accept is a dial error, not a
-			// silent body.
-		}
+		_ = p.srv.Serve(ln) // ignored: the run ends the card; a failed accept is a dial error, not a silent body
 	}()
 	return p, nil
 }
