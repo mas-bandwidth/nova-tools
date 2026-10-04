@@ -753,8 +753,8 @@ jobs:
         # cmd/nova-ci, and the same bytes are on disk if a reader wants them.
         # The budget is 60 s by the two-minute law, except on the Intel Mac
         # benches (about 3x slower per core than a macOS runner), where the
-        # alert still prints every CI-SLOW line but the budget is 300 s until
-        # the cards make cmd/nova-swarm and internal/swarm fast. The first
+        # alert prints every CI-SLOW line and the budget is 300 s until
+        # cmd/nova-swarm and internal/swarm are fast. The first
         # night of this check found eight packages between 77 s and 272 s on
         # a macOS runner at load 60 and an Intel Mac at load 2. All of it
         # lives in the Makefile's `test` target: the Makefile is the
@@ -771,7 +771,7 @@ jobs:
         # the SLEEPS ledger. A push or a manual run tests the WHOLE tree and
         # keeps the old 60 s package budget with the ledger; a push to dev is
         # almost always proved by its merge-group run above and runs nothing.
-        # THE VERDICT IS THE SAME ON ANY MACHINE (#4413): on every leg the
+        # THE VERDICT IS THE SAME ON ANY MACHINE: on every leg the
         # CI-SLOW lines and a CI-LOAD line are printed and exit 0, and a
         # CI-SLEEPS line (a SLEEPS skip off the ledger) fails the leg, the push leg
         # included. The one leg that fails on a CI-SLOW line is the schedule
@@ -788,10 +788,8 @@ jobs:
           "$RUNNER_TEMP/ci" unit-test --packages "${{ matrix.entry.packages }}"
 
   functional:
-    # THE FUNCTIONAL TIER (nova-tools#4328; Glenn 2026-09-26 11:20 AM ET: "we
-    # should run functional tests, not on every small PR being merged or worked
-    # on, but only as we merge whole work streams, and functional tests
-    # themselves should be frugal and built wisely to not waste resources").
+    # THE FUNCTIONAL TIER: functional tests run when merging whole work streams,
+    # and are built to be frugal and avoid wasting resources.
     # A functional test is one behind `//go:build functional`: a real
     # redis-server, a real binary, a real process. It runs on merge_group (the
     # queue's run of a stream PR into dev), on the nightly schedule and by hand,
@@ -863,11 +861,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
-          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
-          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # The bench's own Go wins over a distro Go on the system path: on a Linux bench,
+          # /usr/bin/go 1.22 shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain.
+          # The newest Go under ~/sdk is preferred over a stale root-owned /usr/local/go 1.22
+          # on macOS runners that keep 1.27 in ~/sdk.
+          # The toolchain go.mod names wins when ~/sdk holds it (a runner took the newest sdk Go
           # while the release build beside it switched toolchains in the same caches): the toolchain line,
           # else the go line, which is the toolchain a go.mod without that line implies; else as before
           want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
@@ -898,8 +896,8 @@ jobs:
 
       - name: install redis-server
         if: matrix.entry.packages != ''
-        # #3113. The functional tests spawn a throwaway redis-server on
-        # loopback; the unit tier refuses one. It does not dial the fleet store.
+        # The functional tests spawn a throwaway redis-server on loopback; the
+        # unit tier refuses one. It does not dial the fleet store.
         run: |
           "$RUNNER_TEMP/ci" install-redis-server
 
@@ -923,12 +921,9 @@ jobs:
     # GitHub-hosted compute is the expensive tier, so a pull request never
     # touches it: a change's feedback path is the self-hosted matrix above.
     #
-    # THE WINDOWS ENTRY IS GONE (2026-09-18, Glenn: "drop the native windows CI
-    # runners. WSL only from now on."). This matrix ran windows-latest on every
-    # push to main and every night; it does not any more. The CL tier's Windows
-    # coverage is the lint job's `make vet-windows` cross-vet, and the real
-    # Windows suite is the certification tier's, which is a release blocker and
-    # never a CL one.
+    # NO NATIVE WINDOWS MATRIX ENTRY: the CL tier covers Windows with the
+    # lint job's `make vet-windows` cross-vet, and the real Windows suite is
+    # the certification tier's, which is a release blocker and never a CL one.
     #
     # workflow_dispatch stays in the list: a hosted-only breakage on macOS or
     # Linux still cannot be reproduced or proved fixed anywhere but here, and
@@ -941,7 +936,7 @@ jobs:
     # read, not an automatic merge gate.
     if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     #
-    # SHARDS PER OS (2026-09-26, dev push run 36269122367 at f7aa36530): at four
+    # SHARDS PER OS (dev push run 36269122367 at f7aa36530): at four
     # shards per OS, ubuntu-latest's shards 1, 2 and 4 went green at 88-95 s and
     # shard 3 was cancelled by the cap at 123 s; all four macos-latest shards
     # were cancelled at 125-173 s. The cap stays two minutes; the legs meet it by
@@ -968,10 +963,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 2
     steps:
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
-      # retry below runs; the retry itself is not tolerated, so a checkout
-      # that fails twice still fails the job: fail-closed, not fail-open.
+      # RESILIENT CHECKOUT: a transient first-fetch failure must not redden a
+      # job. Attempt one tolerates its own failure ONLY so the retry below runs;
+      # the retry itself is not tolerated, so a checkout that fails twice still
+      # fails the job: fail-closed, not fail-open.
       - name: checkout
         id: checkout
         continue-on-error: true
@@ -994,8 +989,8 @@ jobs:
         if: runner.environment == 'github-hosted'
         # Only on GitHub-hosted runners. A self-hosted runner is PERSISTENT: its Go build cache is
         # already on disk, and this step's save phase tars the whole multi-GB cache on every job,
-        # outlives the job's timeout, and is orphaned still compressing (82 of them put the Studio
-        # at load 147 on 2026-09-17). internal/ci holds the class test.
+        # outlives the job's timeout, and is orphaned still compressing (82 of them put a macOS
+        # runner at load 147). internal/ci holds the class test.
         #
         # The build cache path is per OS and the save is its own step before the tests:
         # docs/SPEC-CI.md, `hosted-shards`, says why (run 36357749371), and internal/ci's
@@ -1077,7 +1072,7 @@ jobs:
 
       - name: deal this shard's packages
         # The heavy packages first, one per shard: cmd/nova-bus (46 s -short on
-        # the Studio) and cmd/nova-merge (28 s) shared shard 3 of 4, the ubuntu
+        # a macOS runner) and cmd/nova-merge (28 s) shared shard 3 of 4, the ubuntu
         # leg the cap cancelled at 123 s, and a count-only deal kept them together
         # at eight. cmd/nova-merge is deleted and in no deal; cmd/nova-swarm
         # is the reader's other named heavy command. Then every other package
@@ -1103,9 +1098,9 @@ jobs:
         run: make vet PKGS="$HOSTED_PKGS"
 
       - name: install redis-server
-        # #3113, the hosted row. ubuntu-latest has no redis-server until apt
-        # installs it; macos-latest uses Homebrew. A service container would
-        # not put the binary on PATH, and the controls spawn their own server.
+        # ubuntu-latest has no redis-server until apt installs it; macos-latest
+        # uses Homebrew. A service container would not put the binary on PATH,
+        # and the controls spawn their own server.
         run: |
           "$RUNNER_TEMP/ci" install-redis-server
 
@@ -1128,15 +1123,13 @@ jobs:
           # TestEveryMakeTimeoutIsUnderTheJobCap). The shard travels in PKGS.
           make test-short PKGS="$HOSTED_PKGS"
 
-  # THERE IS NO HOSTED MERGE LEG SINCE 2026-09-26. The merge group's gate is the
-  # same sharded `test` legs the pull request ran, on our own benches, on the
-  # group commit (space and the Studio, under a minute each). The hosted legs
-  # (plan-merge + test-hosted-merge, Rule T of 2026-09-16) re-ran the changed
-  # packages on two-core hosted runners and crossed the two-minute cap on four
-  # of the last five queue runs (36207910988, 36208535525, 36209991791,
-  # 36211233173), each one a full PR-plus-queue round lost. Glenn 2026-09-26:
-  # "We have to speed this shit up. Less dependency on github is my bet." The
-  # clean-image property they carried moves to certification.yml (#4219).
+  # THERE IS NO HOSTED MERGE LEG. The merge group's gate is the same sharded
+  # `test` legs the pull request ran on our own benches on the group commit
+  # (a Linux bench and a macOS runner, under a minute each). The hosted legs
+  # re-ran the changed packages on two-core hosted runners and crossed the
+  # two-minute cap on four of five queue runs (36207910988, 36208535525,
+  # 36209991791, 36211233173), each one a full PR-plus-queue round lost. The
+  # clean-image property they carried moves to certification.yml.
 
   test-hosted-pr:
     # THE SANDBOX LEG, and since 2026-09-18 that is all it is. A PR that touches
