@@ -245,8 +245,8 @@ footer a:hover { color: var(--text); }
    width (contents right-aligned); 56 px gutters; ~64 px from Ready to the track and from the
    track to the figure; cells a fixed 27 x 11 px with 4 px gaps */
 .fleet .row, .friends .row { --pad: 2rem; --gap: 3.5rem; --S: 9.5rem; column-gap: var(--gap); padding: 0 var(--pad); }
-.fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + .5rem) 8rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
-.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + .5rem) 8rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr); }
+.fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) minmax(0, calc(var(--track-w, 61.75rem) + .5rem)) minmax(8rem, max-content) minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(6.5rem, 1fr); }
+.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) minmax(0, calc(var(--track-w, 61.75rem) + .5rem)) minmax(8rem, max-content) minmax(3.75rem, 1fr) minmax(5.375rem, 1fr); }
 .fleet .row > :nth-child(4), .friends .row > :nth-child(4) { margin-left: .5rem; }
 .fleet .row > :nth-child(5), .friends .row > :nth-child(5) { padding-left: .5rem; }
 .fleet .cells, .friends .cells { gap: .25rem; grid-auto-rows: .6875rem; }

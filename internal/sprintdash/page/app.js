@@ -127,7 +127,7 @@ function headRow(labels) {
 // an empty slot); cells are reused, so a refresh only repaints what changed.
 function setCells(box, classes, columns, cellRem) {
   // cellRem: fixed cell width (the fleet track, so the figure can sit right after it); else cells share the box
-  var cols = "repeat(" + Math.max(1, columns) + ", " + (cellRem ? cellRem + "rem" : "minmax(0, 1fr)") + ")";
+  var cols = "repeat(" + Math.max(1, columns) + ", " + (cellRem ? "minmax(0, " + cellRem + "rem)" : "minmax(0, 1fr)") + ")";
   if (box.style.gridTemplateColumns !== cols) box.style.gridTemplateColumns = cols;
   while (box.children.length < classes.length) box.appendChild(el("div", "cell"));
   while (box.children.length > classes.length) box.lastChild.remove();
