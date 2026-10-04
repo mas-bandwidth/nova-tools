@@ -19,9 +19,9 @@ import (
 )
 
 func init() {
-	// preflight is a read: it changes nothing and needs no actor. Every verb's
-	// class is held in the class test; this card's PATHS are the verb table's
-	// files, so the verb registers its own class beside its own code.
+	// preflight is a read: it changes nothing and needs no actor. The verb
+	// registers its own class here, beside its own code, and the class test holds
+	// every verb to one.
 	verbClasses["preflight"] = classRead
 }
 
@@ -47,9 +47,8 @@ func (a *app) cmdPreflight(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "preflight", "--brief-dir: "+err.Error())
 	}
-	if len(files) == 0 {
-		return refuse(stderr, "preflight", fmt.Sprintf("--brief-dir %s holds no *.md file", *briefDir))
-	}
+	// a directory with no *.md file is a batch of none: vacuously clean, exit 0,
+	// while a directory that cannot be read is refused above.
 	var st *store.Store
 	rs, code := a.briefRules("preflight", "", c, &st, stderr)
 	if code != 0 {
@@ -275,7 +274,7 @@ func preflightLive(snap *sprint.Snapshot) []preflightCard {
 
 // preflightOverlap answers whether two PATHS globs name any file in common: the
 // globs are equal, or one matches the other as hygiene.MatchGlob matches a path,
-// so a broad `docs/*.md` overlaps `docs/readme.md`.
+// so a broad `docs/*.md` overlaps a file below it that the glob matches.
 func preflightOverlap(a, b string) bool {
 	return a == b || hygiene.MatchGlob(a, b) || hygiene.MatchGlob(b, a)
 }

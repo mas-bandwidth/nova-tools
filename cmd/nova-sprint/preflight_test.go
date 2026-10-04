@@ -63,7 +63,7 @@ func TestPreflightReportsCollisionsAndDroppedNeeds(t *testing.T) {
 	// a overlaps the working card and b; b overlaps a; c names the dropped card;
 	// d is clean
 	writePreflightBrief(t, dir, "a", "the first (s1)", "src/live.go, docs/*.md", "", test)
-	writePreflightBrief(t, dir, "b", "the second (s1)", "docs/readme.md", "", test)
+	writePreflightBrief(t, dir, "b", "the second (s1)", "docs/SPEC-SPRINT.md", "", test)
 	writePreflightBrief(t, dir, "c", "the third (s1)", "", "gone", test)
 	writePreflightBrief(t, dir, "d", "the clean one (s1)", "src/clean.go", "", test)
 
@@ -74,7 +74,7 @@ func TestPreflightReportsCollisionsAndDroppedNeeds(t *testing.T) {
 	require.Contains(t, out, "src/live.go", "a names the colliding file: %s", out)
 	require.Contains(t, out, "live", "a names the live card: %s", out)
 	require.Contains(t, out, "PREFLIGHT b FAIL", "b overlaps a: %s", out)
-	require.Contains(t, out, "docs/readme.md", "b names its file: %s", out)
+	require.Contains(t, out, "docs/SPEC-SPRINT.md", "b names its file: %s", out)
 	require.Contains(t, out, "gone", "c names the dropped need: %s", out)
 	require.Contains(t, out, "dropped", "c names the need dropped: %s", out)
 	require.NotContains(t, out, "PREFLIGHT d FAIL", "the clean brief passes: %s", out)
