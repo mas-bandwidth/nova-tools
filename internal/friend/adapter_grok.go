@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Grok delivers into the Grok Build TUI (xAI's `grok`), which has no deliver
@@ -24,17 +26,33 @@ import (
 // appended to that file arrives in the session as a <monitor-event> user
 // turn (measured 2026-10-04 in a friend's session: a user_message_chunk at a
 // new promptIndex in its updates.jsonl). So Deliver appends the text, as
-// one line, to the wake file the open session's monitor is tailing. It is
-// accepted (exit 0) once the line is in the file and the tail was running
-// under that session; the turn runs after Deliver returns, since nothing
-// hands its end back.
+// one line, to the wake file the open session's monitor is tailing. A
+// backlog is many Deliver calls. Lines written with no gap are the flood
+// that stops the monitor, so each line after the first waits out what
+// remains of wakePace. It is accepted (exit 0) once the line is in the file
+// and the tail was running under that session; the turn runs after Deliver
+// returns, since nothing hands its end back.
 type Grok struct {
 	Dir  string    // the friend's directory: the session's cwd
 	Wake string    // the wake file, when named; else the one the session's monitor tails
 	Run  Exec      // runs ps
 	Out  io.Writer // the daemon's record, when set
 	Home string    // the grok home, ~/.grok when empty
+
+	// now and wait are the clock seam. Nil is the wall clock. Tests set both.
+	now  func() time.Time
+	wait func(context.Context, time.Duration) error
+
+	mu   sync.Mutex
+	next time.Time // when the last reserved line is due; zero before the first
 }
+
+// wakePace is the gap between wake lines from one adapter. One Deliver is
+// already one line (WakeLine). Twelve of those written together are the
+// burst that stops the monitor (docs/SPEC-FRIEND.md, the Grok adapter: a
+// flood of lines is how the harness stops a monitor). The first line is
+// immediate. A later line waits out whatever remains of this gap.
+const wakePace = time.Second
 
 func (g *Grok) home() (string, error) {
 	if g.Home != "" {
@@ -77,8 +95,23 @@ func (g *Grok) Deliver(ctx context.Context, text string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	gap, undo := g.reserveWake(g.clock())
+	if gap > 0 {
+		if err := g.waitGap(ctx, gap); err != nil {
+			undo()
+			return 0, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		undo()
+		return 0, err
+	}
 	f, err := os.OpenFile(wake, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
+		undo()
 		return 0, err
 	}
 	_, err = f.WriteString(WakeLine(text) + "\n")
@@ -86,12 +119,62 @@ func (g *Grok) Deliver(ctx context.Context, text string) (int, error) {
 		err = cerr
 	}
 	if err != nil {
+		undo()
 		return 0, err
 	}
 	if g.Out != nil {
 		fmt.Fprintln(g.Out, "one monitor event appended to "+wake+"; the turn runs after this")
 	}
 	return 0, nil
+}
+
+// clock is the adapter's clock. A nil seam is the wall clock.
+func (g *Grok) clock() time.Time {
+	if g.now != nil {
+		return g.now()
+	}
+	return time.Now()
+}
+
+// waitGap waits for the pace gap. A nil seam waits on the wall clock and
+// returns as soon as ctx ends.
+func (g *Grok) waitGap(ctx context.Context, gap time.Duration) error {
+	if g.wait != nil {
+		return g.wait(ctx, gap)
+	}
+	timer := time.NewTimer(gap)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// reserveWake books the next wake line. The first line is due now. A line
+// that arrives before a full wakePace has passed since the previous booking
+// is due then, and the returned gap is how long that still is. undo gives
+// the booking back when the line is not written. docs/SPEC-FRIEND.md, the
+// Grok adapter.
+func (g *Grok) reserveWake(now time.Time) (gap time.Duration, undo func()) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	prev := g.next
+	slot := now
+	if !prev.IsZero() && now.Before(prev.Add(wakePace)) {
+		slot = prev.Add(wakePace)
+		gap = slot.Sub(now)
+	}
+	g.next = slot
+	undo = func() {
+		g.mu.Lock()
+		if g.next.Equal(slot) {
+			g.next = prev
+		}
+		g.mu.Unlock()
+	}
+	return gap, undo
 }
 
 // WakeOf is the wake file a delivery goes to: the file a `tail` tails under
