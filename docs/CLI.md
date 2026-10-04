@@ -58,14 +58,14 @@ binaries or from this file, the runs come from receipts, and the gate is one
 exit code a release lane can call.
 
 ```
-$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
+$ nova-check dogfood record --tool nova-check --verb links --by Ada --ok \
     --notes "ran it over my own self repo before the merge; found nothing" \
     --receipts ./dogfood-receipts
-DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
+DOGFOOD RECORD OK tool=nova-check verb=links by=Ada at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-ada-8e9b64a4.json
 
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=- open=0
-DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- open=0
+DOGFOOD tool=nova-check verb=links by=Ada at=2026-09-18T09:00:00Z ok=yes issue=- open=0
 DOGFOOD OK verbs=105 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
@@ -98,7 +98,7 @@ finding and the same eight that end the receipt's filename, so a reader with an
 id can find the file:
 
 ```
-DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from Stella at 2026-09-18T09:00:00Z (no issue filed); closed by --closes 8e9b64a4 or by Stella running it again: the verb refused a relative path
+DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from Ada at 2026-09-18T09:00:00Z (no issue filed); closed by --closes 8e9b64a4 or by Ada running it again: the verb refused a relative path
 ```
 
 A `--closes` naming an id nothing carries closes nothing and leaves the edge
@@ -172,12 +172,12 @@ nothing else. A kind the tool does not hold is not answered with
 refused by name, listing the kinds there are:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
 nova-check hygiene REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
 HYGIENE OK base=main head=card paths=sign/** findings=0
 ```
 
@@ -190,10 +190,10 @@ command that prints the rest — the same run with the cap lifted, quoted so it
 can be pasted:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
+HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
 HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
@@ -207,11 +207,11 @@ travel.
 
 ```
 $ nova-check convergence --repo mas-bandwidth/nova-tools \
-    --ledger ~/rowan-new/reports/pitstop-tests-2026-09-17.md \
-    --receipts ~/rowan-working/dogfood \
-    --retired ~/rowan-working/bin/retired/README.md \
-    --bin ~/rowan-working/bin --repo-dir . \
-    --since 2026-09-18T00:00:00Z --state ~/rowan-working/convergence.json
+    --ledger ~/nova-tools/reports/pitstop-tests-2026-09-17.md \
+    --receipts ~/nova-working/dogfood \
+    --retired ~/nova-working/bin/retired/README.md \
+    --bin ~/nova-working/bin --repo-dir . \
+    --since 2026-09-18T00:00:00Z --state ~/nova-working/convergence.json
 CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting measure=rounds-per-batch batches=4 per-hour=0.25
 CONVERGENCE CLASSES now=29 before=27 ratio=1.07 trend=contracting measure=class-test-index-entries rev=04bb4e1c9f2a
 CONVERGENCE SCRIPTS now=42 before=66 ratio=0.64 trend=contracting measure=scripts-left-in-bin retired-in-window=24
@@ -544,13 +544,13 @@ nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Ada --remote origin --br
 
 A `Re:` line is how a note gets closed: your reply carrying `Re: <id>` takes that note off your open list. If a draft has no `Re:` and reads like a reply, `send` says so in one line and sends it anyway. It refuses a draft that already carries `Id:`, an unknown header key, a recipient the roster does not know, a sender with no lane, a `Re:` naming nothing, an empty body, and a checkout that is dirty, on the wrong branch, or ahead of the remote with somebody else's work. The `.nova-bus/` directory is the tool's own per-clone state, never a note, so a `<bus>/.nova-bus/defaults` file written for `inbox` does not count as a dirty checkout; a fresh clone runs `inbox` then `send` with no hand step in between. Every refusal in a draft is reported in one run. A conflict on the tool's own files never reaches you: `INDEX` and `RECEIPTS` merge as unions, `CURSOR` takes the further read, and the first send writes a `.gitattributes` so your own pulls settle the same way. The one conflict left is two benches writing the same note in the same second, which is yours to decide.
 
-**`--host <name>` says which MACHINE posted**, on `send` and on `reply`. One name can post from two places — the keeper on the Studio and the bud on the Air both post as `Rowan` — and the `[bud air]` subject convention that told them apart spent the subject line on routing. The flag writes a `Host:` line under `From:`, `inbox` prints `host=<name>` beside `from=` on the line, and a `host=<name>` line in `<bus>/.nova-bus/defaults` supplies it when the flag is absent, so a bench sets it once and every note from it says where it came from:
+**`--host <name>` says which MACHINE posted**, on `send` and on `reply`. One name can post from two places — the keeper on the desktop and the bud on the Air both post as `Ada` — and the `[bud air]` subject convention that told them apart spent the subject line on routing. The flag writes a `Host:` line under `From:`, `inbox` prints `host=<name>` beside `from=` on the line, and a `host=<name>` line in `<bus>/.nova-bus/defaults` supplies it when the flag is absent, so a bench sets it once and every note from it says where it came from:
 
 ```
-nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Rowan --host air --remote origin --branch main
+nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Ada --host air --remote origin --branch main
 ```
 
-A host is one word — lower-case letters, digits, `-`, `.` and `_`, at most 40 characters — because it is printed as one space-separated field. A draft that carries its own `Host:` line keeps it, and a `--host` naming a different machine is refused rather than guessed at, the same way `--as` is against a `From:` line that names somebody else. Everything about it is optional: a note sent without it carries no `Host:` line, lists with no `host=` field, and is byte for byte the note this tool has always written. It is not part of the id.
+A host is one word — lower-case letters, digits, `-`, `.` and `_`, at most 40 characters — because it is printed as one whitespace-separated field. A draft that carries its own `Host:` line keeps it, and a `--host` naming a different machine is refused rather than guessed at, the same way `--as` is against a `From:` line that names somebody else. Everything about it is optional: a note sent without it carries no `Host:` line, lists with no `host=` field, and is byte for byte the note this tool has always written. It is not part of the id.
 
 Four things a first draft gets wrong, and what `send` does about each, one `SEND NOTE` line per fix so nothing is rewritten silently: a markdown heading at the top becomes the `Subject:` when the draft has none; a pasted `Date:` is replaced from the clock; a missing `From:` is written from `--as`; bold asterisks around a key come off and blank lines above the header are skipped. The refusals that remain are the ones that would be a guess about what you meant.
 
@@ -609,7 +609,7 @@ It fetches every `--interval` and returns the moment your inbox would list somet
 
 ```
 WAIT BLIND commits=500 remedy="raise --max-commits or close --before <instant>"
-WAIT REFUSED: as=Johnny cursor=8cd06f5a... is further behind than this walk may cross, ...
+WAIT REFUSED: as=Ada cursor=8cd06f5a... is further behind than this walk may cross, ...
 ```
 
 exit 2. That is a loop stopping rather than a loop running green and deaf for hours. The two ways out are the ones the line names: raise the bound for this read, or `close --before <instant>` to empty the backlog the cursor is behind.
@@ -1734,7 +1734,7 @@ The per-binary deadline is thirty seconds rather than the five every other verb
 takes because of when this verb is run: right after `go install ./cmd/...`, on a
 directory of binaries this machine has never executed. The platform assesses the
 first run of a never-seen executable and charges it to that deadline — measured
-on a darwin/arm64 Studio at 164–571 ms cold against 5 ms warm when idle, and at
+on a darwin/arm64 bench at 164–571 ms cold against 5 ms warm when idle, and at
 a 7.03 s maximum while a tree compiled beside it, which is the state the
 `go install` one command earlier leaves the machine in. At five seconds that
 refused healthy binaries and named a build repair that would have found nothing
@@ -1785,10 +1785,10 @@ rule, the head commit edits `README.md`.
 ```sh
 cd "$(mktemp -d)" && git init -q && git config user.name you && git config user.email you@example.com
 echo age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata > recovery.pub
-printf 'creation_rules:\n  - path_regex: ^mini\\.yaml$\n    age: %s,%s\n' age158lrf2hlptfwl6fh280y6pq58vdmumnqzhk5vd669aqf37ca3sus9mcazh "$(cat recovery.pub)" > .sops.yaml
+printf 'creation_rules:\n  - path_regex: ^bench-a\\.yaml$\n    age: %s,%s\n' age158lrf2hlptfwl6fh280y6pq58vdmumnqzhk5vd669aqf37ca3sus9mcazh "$(cat recovery.pub)" > .sops.yaml
 echo 'the store' > README.md && git add -A && git commit -qm base
 echo 'one seat per machine' >> README.md && git commit -qam head
-printf 'mini\tmini.local\tdarwin/arm64\tbench\tmini\t10\t-\n' > ../machines.tsv
+printf 'bench-a\tbench-a.local\tdarwin/arm64\tbench\tbench-a\t10\t-\n' > ../machines.tsv
 nova-secrets gate --store . --base HEAD~1 --head HEAD --machines ../machines.tsv
 ```
 
@@ -1946,7 +1946,7 @@ its allowlist row (`pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>`, where is
 `run<id>` or a bench) names more. A `CI-LOAD load=<n> cpus=<n> per-cpu=<n>:
 measured, not a verdict` line follows (`--load` and `--cpus` give the figures by
 hand). A CI-SLOW line exits 0 (a measurement) unless `--enforce` is given, which
-only the nightly space legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
+only the nightly bench legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
 with `t.Skip("SLEEPS: ...")` that `--sleeps` does not name is a `CI-SLEEPS` line
 and exits 1 on every leg. A package `go test` served from its test cache reports a
 package elapsed near zero (`ok ... (cached)`, `"Elapsed":0`), so a cached run can
