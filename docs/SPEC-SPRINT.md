@@ -127,11 +127,20 @@ no row of the friends table, and `WHO: friend` while the table has no row
 `CARD OK` line (`--json` `who`). A card with no WHO line is a machine's, dealt
 as before. The tick's deal deals a friend's card ready, in the deal's stream
 turns, to a friend up (the friends' rule: not held, a beat within 15 s) below
-her width (her friends row's `width`; the cards on her row, ready and working,
-count against it): the friend it names, or for `WHO: friend` the friend up
-with the most free width, the first by name among equals, as the machines'
-rule fills the member with room; with none it waits ready, held by the
-no-stall rule as waiting for a friend (`sprint.FriendDeal`). The tick reads the
+her room, DealAhead (two) times her friends row's `width`, as the machines'
+rule fills a member (section 5; the cards on her row, ready and working, count
+against it; the owner, 2026-10-04: "Do it just like the fleet, you keep people
+busy by having 2X width queued up in ready per-friend"): the friend it names,
+or for `WHO: friend` the friend up with the most room free, the first by name
+among equals; with none it waits ready, held by the no-stall rule as waiting
+for a friend (`sprint.FriendDeal`). On her row the card is `working` while she
+has a lane free (her width less her working cards; dealt and taken at once)
+and `ready` behind her working cards otherwise, so her inbox holds her width
+working and as many again ready; her finish of a card takes the oldest ready
+card on her row into working in the same step (`sprint.Finish`, `friendNext`),
+no tick between, as a machine's lane that frees takes its next; the next tick
+fills her room again (`TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt`:
+width 8 with 30 waiting is 8 working and 8 ready, and a 17th on a landing). The tick reads the
 friends' records (the roster, then the beats: two round trips) only when a
 friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name
@@ -151,8 +160,13 @@ a friend.
 `friend sync`, run by the coordinator's own loop where the directories are
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
 a friend's card across the inbox/outbox standard
-(docs/FRIENDS.md, a sprint card): for each card working on a friend's row it
-writes `inbox/<job>/BRIEF.md` when that is not there (written whole by
+(docs/FRIENDS.md, a sprint card): for each card working or ready on a friend's
+row it writes `inbox/<job>/BRIEF.md` when that is not there, and keeps her
+queue file, `inbox/QUEUE.json` (nova-friend's: one record per task, its
+state `queued`, `working` or `done`; her daemon's pong reports its counts),
+saying which of her cards are `working` and which `queued` (ready behind
+them), never touching a record her session marked `done` or one the sprint
+does not name (written whole by
 `internal/atomicfile`, never over a file there; a later attempt's says it starts from the current
 tip of the card's base branch on origin, never an older base, carrying the work of the last
 attempt that pushed onto it herself (`git diff origin/<base>...<head>` shows it, redone where it
@@ -805,7 +819,8 @@ and it is the coordinator's decision, receipted.
   working together: its width working and as many again ready behind them, so
   a lane that frees takes its next card at once (the owner, 2026-10-01: "The
   WHOLE POINT of nova-sprint is to feed the fleet at width and keep it working
-  at that width until done."; "deal at most 2X width ahead per-machine in
+  at that width until done."; a friend's row is fed the same way, her finish taking her next ready
+  card itself, section 1; "deal at most 2X width ahead per-machine in
   fleet"). The member runs its width; the rest wait in its ready column, and
   its loop takes a freed lane's next card in the same pass that reports the
   finish. The fleet table shows it in the width
