@@ -132,12 +132,15 @@ func holdsPerfBuildLine(dir string) bool {
 }
 
 // testNames is the set of test, benchmark, example and fuzz names `go test
-// -list` printed. Its exit status is not read: a package that does not compile
-// lists nothing, and the caller reports it as a perf constraint with no test.
+// -list` printed. A failed listing refuses discovery: an unbuildable package
+// must not disappear from the scheduled tests or the packages vetted.
 func testNames(run Runner, root string, argv ...string) (map[string]bool, error) {
 	res, err := run(root, nil, argv...)
 	if err != nil {
 		return nil, err
+	}
+	if res.Code != 0 {
+		return nil, fmt.Errorf("%s exited %d: %s", strings.Join(argv, " "), res.Code, strings.TrimSpace(res.Stderr))
 	}
 	names := map[string]bool{}
 	for _, l := range lines(res.Stdout) {

@@ -629,6 +629,35 @@ func TestPerfRunsFindTheTestsOnlyTheTagAdds(t *testing.T) {
 	assert.False(t, f.called("go test -list . "+mod+"/internal/plain") || f.called("go test -list . "+mod+"/cmd/gone/perf"), "a package with no perf constraint, or a deprecated one, was asked for its tests")
 }
 
+func TestPerfRunsRefuseEitherFailedTestListing(t *testing.T) {
+	t.Parallel()
+	for _, listing := range []string{"go test -list . ", "go test -tags perf -list . "} {
+		t.Run(strings.TrimSpace(listing), func(t *testing.T) {
+			t.Parallel()
+			root := tree(t)
+			dir := filepath.Join(root, "internal", "perfy")
+			require.NoError(t, os.MkdirAll(dir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "x_test.go"), []byte("//go:build perf\n\npackage perfy\n"), 0o644))
+			good, broken := mod+"/internal/good", mod+"/internal/broken"
+			f := newFake(map[string]Result{
+				"go list -tags perf -f {{.ImportPath}} {{.Dir}} ./...": {Stdout: good + " " + dir + "\n" + broken + " " + dir + "\n"},
+				"go test -list . " + good:                              {Stdout: "TestBase\n"},
+				"go test -tags perf -list . " + good:                   {Stdout: "TestBase\nTestPerf\n"},
+				"go test -list . " + broken:                            {Stdout: "TestBase\n"},
+				"go test -tags perf -list . " + broken:                 {Stdout: "TestBase\nTestPerf\n"},
+			})
+			failed := listing + broken
+			f.answers[failed] = Result{Code: 1, Stdout: "TestPartial\n", Stderr: "fixture_test.go: undefined: missing\n"}
+			runs, notes, err := PerfRuns(f.run, root)
+			require.Error(t, err, "a healthy first package must not hide a later compile failure")
+			assert.Contains(t, err.Error(), failed+" exited 1")
+			assert.Contains(t, err.Error(), "undefined: missing")
+			assert.Nil(t, runs, "never publish a partial matrix")
+			assert.Nil(t, notes, "a failed compile is not a package with no perf tests")
+		})
+	}
+}
+
 func TestLiveTreeRefusesAFailedList(t *testing.T) {
 	t.Parallel()
 	f := newFake(map[string]Result{"go list ./...": {Code: 1, Stderr: "boom\n"}})

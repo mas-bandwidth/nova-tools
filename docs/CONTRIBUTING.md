@@ -142,8 +142,9 @@ certification is a blocker for the next release, never for a CL, whose gate is
 `ci-ok` — and so is the absence of one: `release.yml` refuses to publish unless the
 newest completed certification run on the tagged commit is green, so cutting a
 release begins with `gh workflow run certification.yml --ref <ref>` and waits for
-`certification-ok` before the tag is pushed. The `perf` job runs every wall-clock
-test behind `-tags perf`, one test at a time. It finds them rather than naming
+`certification-ok` before the tag is pushed. The `perf-plan` job discovers and vets
+every wall-clock test behind `-tags perf`; `perf` runs one discovered package per
+Linux runner, one test at a time. It finds them rather than naming
 them — a list of test names or packages in a workflow goes stale silently: the
 live packages holding a file whose build constraint names `perf`, and in each
 the tests `go test -tags perf -list` names and `go test -list` does not. A bound

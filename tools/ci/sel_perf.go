@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -18,7 +19,9 @@ func init() {
 
 Finds the tests only the perf build tag adds. Writes "<import path> <run regexp>", one
 line per package, to $RUNNER_TEMP/perf-runs and appends PERF_PKGS=<the packages> to
-$GITHUB_ENV. A perf-tagged package with no test behind the tag is reported and skipped;
+$GITHUB_ENV. When GITHUB_OUTPUT is set, also writes matrix=<JSON array of Package and
+Run objects> for one runner per discovered package. A perf-tagged package with no
+test behind the tag is reported and skipped;
 a tree with no perf-tagged test at all is red, because then the perf job asserts nothing.
 Only live packages are considered (internal/pkgselect/DEPRECATED).
 
@@ -69,6 +72,16 @@ func perfTestsVerb(e env, args []string, h selHost) int {
 	if err := appendGitHubFile(e.getenv, "GITHUB_ENV", "PERF_PKGS="+pkgs.String()); err != nil {
 		fmt.Fprintf(e.stderr, "perf-tests: %v\n", err)
 		return 1
+	}
+	if e.getenv("GITHUB_OUTPUT") != "" {
+		matrix, err := json.Marshal(runs)
+		if err == nil {
+			err = appendGitHubFile(e.getenv, "GITHUB_OUTPUT", "matrix="+string(matrix))
+		}
+		if err != nil {
+			fmt.Fprintf(e.stderr, "perf-tests: %v\n", err)
+			return 1
+		}
 	}
 	return 0
 }

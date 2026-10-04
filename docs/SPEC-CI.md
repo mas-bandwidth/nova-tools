@@ -1198,6 +1198,14 @@ that only fits warm would never be warmed.
 **Why the save comes before the tests.** The tests are the step the cap cancels;
 a shard whose save runs before its tests warms the shards that start after it,
 even when its own test step is cancelled.
+A separate toolchain cache carries the requested Go version from the runner's
+tool cache. Its directory is named from go.mod before restoration; setup-go then
+selects that version, installing it on a miss. The toolchain is saved immediately
+after setup. The native cache retains its existing paths and key so a cold
+toolchain miss still restores compiled dependencies. In run 37167141048, repeated
+Go installation cost 23-31 seconds and contributed to two macOS shards reaching
+the unchanged two-minute cap.
+
 **The mistake it prevents.** At too few shards per OS, a shard holding two heavy
 packages together is cancelled by the cap and turns `ci-ok` red, and a
 count-only deal keeps them together however many shards there are. A cache step
@@ -1259,11 +1267,14 @@ branch expressions are GitHub's.
 ### `cert-race-shards` — the whole-tree race run meets the cap by shards, its cache saved before the tests
 
 **The rule.** certification.yml's `test` job keeps `timeout-minutes: 2` and meets
-it by shard count: ubuntu-latest and macos-latest each run shards 1..8, every leg
+it by shard count: ubuntu-latest and macos-latest each run shards 1..16, every leg
 carrying its OS's `shards`. Its `deal this shard's packages` step is test-hosted's
 deal over the live packages (`go run ./tools/ci deal`), with the measured heavy list
 (`internal/ci`, `cmd/nova-tokens`, `cmd/nova-sandbox`,
-`cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`, `internal/bus`) dealt
+`cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`, `internal/bus`,
+`cmd/nova-sprint`, `internal/sprint/store`, `cmd/nova-swarm`,
+`internal/sprint/refmodel`, `internal/docs`, `internal/sprint`,
+`internal/redisconn`, `internal/config`, `internal/secrets`) dealt
 first, one per shard. Every shard
 restores the `<os>-gorace-` cache (the race build cache, the module cache and the
 Go toolchain's tool-cache directory, so setup-go finds the toolchain rather than
@@ -1278,7 +1289,7 @@ the race tests alone take minutes, so the cap cancels it on every push, and a
 post-step cache save never runs, so every run starts cold.
 **The test.** `TestCertificationRaceShardsPartitionTheLiveTree`
 (`internal/ci/cert_race_shards_class_test.go`): both OSes at shards 1..n with n at
-least 8; the deal step, run over the real `go list ./...`, lands every live
+least 16; the deal step, run over the real `go list ./...`, lands every live
 package in exactly one shard and no deprecated one in any; no two heavy packages
 share a shard; restore, race dependency build, save and test in that order; the
 test step carries `-race`, `-count=1` and `$HOSTED_PKGS`.
@@ -1290,6 +1301,35 @@ times one hosted certification run reports (`ok <pkg> <seconds>`, the larger of 
 two OSes); the class test does not time a hosted leg, a certification run does. The build and vet this job used to run are
 ci.yml's (lint on every event, test-hosted on push); a package's race compile in
 its shard is the macOS and Linux compile of the race build.
+
+### `cert-perf-shards` — discover every perf test once and run each package on its own runner
+
+**The rule.** certification.yml's `perf-plan` discovers the tests added by the
+`perf` tag across the live tree, vets every selected package, and saves the
+compiled cache before `perf` starts. Its complete package-and-regexp list becomes
+one Linux matrix leg per package. Each leg runs uncached, without race
+instrumentation, with `-p 1 -parallel 1` and the same 60-second test timeout.
+Both jobs keep the two-minute cap; one failed leg does not cancel the others.
+`certification-ok` requires discovery and every matrix leg to succeed.
+**The mistake it prevents.** Run 37159703304 spends 70 seconds discovering
+17 packages and reaches only the first package before the job cap cancels it.
+Separating discovery from execution gives each wall-clock leg its own job
+budget and the compiled cache. A failed ordinary or tagged test listing must fail discovery,
+because treating it as an empty list silently omits a broken package from both
+the matrix and vet.
+**The test.** `TestCertificationPerfRunsEveryDiscoveredPackage`
+(`internal/ci/cert_perf_shards_class_test.go`) holds the discovery output, complete
+matrix axis, quoted package and regexp environment values, serial test command,
+job caps, vet/cache ordering, and both aggregate dependencies.
+`TestPerfRunsRefuseEitherFailedTestListing` (`internal/pkgselect`) refuses a
+failed ordinary or tagged listing even after another package yields valid tests.
+**Its allowlist.** None.
+**Its remedy line.** Restore the complete discovered matrix and its aggregate
+dependencies, or fix the package that cannot list its tests; never skip the
+package, add a fixed test list, or raise the cap.
+**Its narrowings.** The class test reads workflow structure; it does not execute
+GitHub's matrix expansion or measure hosted runtime. The selector's negative
+controls use a fake command runner. Hosted certification measures the timing.
 
 ### `release-legs` — the release and its dry run build one leg per platform and sum the whole set on one machine
 
