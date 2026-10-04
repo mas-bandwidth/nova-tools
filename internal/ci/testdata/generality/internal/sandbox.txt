@@ -1,4 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
-internal/sandbox/pathcase.go:stella 1
+# ceiling: 1
 internal/sandbox/policy.go:space 1
