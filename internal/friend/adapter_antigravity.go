@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/user"
 	"path"
 	"path/filepath"
 	"slices"
@@ -41,6 +42,7 @@ type Antigravity struct {
 	Run          Exec
 	Out          io.Writer                  // the daemon's record, when set
 	Home         string                     // the user's home ($HOME when empty): app data under Home/.gemini/antigravity
+	User         string                     // daemon's username (current process user when empty)
 	FS           fs.FS                      // rooted at Home (os.DirFS(Home) when nil): the mailbox is read through it
 	Wait         func(context.Context) bool // one poll interval; false once ctx has ended (real time when nil)
 }
@@ -110,11 +112,19 @@ func (a *Antigravity) agentapi(ctx context.Context, port, token string, args ...
 // for the session to read the message. Every refusal is exit 1 with the
 // reason; 0 is the message read.
 func (a *Antigravity) Deliver(ctx context.Context, text string) (int, error) {
-	ps, _, err := a.Run(ctx, a.Dir, "ps", []string{"-axo", "pid=,args="}, "")
+	username := a.User
+	if username == "" {
+		current, err := user.Current()
+		if err != nil {
+			return 1, fmt.Errorf("current user: %w", err)
+		}
+		username = current.Username
+	}
+	ps, _, err := a.Run(ctx, a.Dir, "ps", []string{"-axo", "user=,pid=,args="}, "")
 	if err != nil {
 		return 1, fmt.Errorf("ps: %w", err)
 	}
-	pid, token, err := LanguageServer(ps)
+	pid, token, err := LanguageServer(ps, username)
 	if err != nil {
 		return 1, err
 	}
@@ -204,17 +214,17 @@ func (a *Antigravity) mailbox(dir string) ([]string, error) {
 }
 
 // LanguageServer finds the antigravity language server in `ps -axo
-// pid=,args=`: its pid and the CSRF token on its command line.
-func LanguageServer(ps string) (pid, token string, err error) {
+// user=,pid=,args=` belonging to username: its pid and CSRF token.
+func LanguageServer(ps, username string) (pid, token string, err error) {
 	for line := range strings.SplitSeq(ps, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 2 || !strings.HasSuffix(fields[1], "/language_server") || !slices.Contains(fields, "antigravity") {
+		if len(fields) < 3 || fields[0] != username || !strings.HasSuffix(fields[2], "/language_server") || !slices.Contains(fields, "antigravity") {
 			continue
 		}
 		if i := slices.Index(fields, "--csrf_token"); i > 0 && i+1 < len(fields) {
-			return fields[0], fields[i+1], nil
+			return fields[1], fields[i+1], nil
 		}
-		return "", "", fmt.Errorf("the antigravity language server (pid %s) runs without a --csrf_token", fields[0])
+		return "", "", fmt.Errorf("the antigravity language server (pid %s) runs without a --csrf_token", fields[1])
 	}
 	return "", "", errors.New("no antigravity language server is running: is Antigravity open?")
 }

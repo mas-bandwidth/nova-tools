@@ -104,7 +104,7 @@ ET: sent at :28, the turn's first step at :32, the friend's "got it" on
 nova-bus2 at :35.
 
 The adapter finds everything each delivery, so a restarted app is found
-again: the server's pid and CSRF token off `ps -axo pid=,args=` (the
+again: the server's pid and CSRF token off `ps -axo user=,pid=,args=` for the daemon's own user (the
 `language_server` with `--override_ide_name antigravity` and its
 `--csrf_token`), its listening ports from `lsof -Fn`, and the port that
 answers `get-conversation-metadata` for the conversation (the other is TLS).

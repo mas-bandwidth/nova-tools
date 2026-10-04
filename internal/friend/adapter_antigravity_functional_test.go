@@ -5,6 +5,7 @@ package friend
 import (
 	"context"
 	"os"
+	"os/user"
 	"strings"
 	"testing"
 	"time"
@@ -27,9 +28,11 @@ func TestAntigravityOnTheLiveHarness(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	a := &Antigravity{Dir: dir, Run: RealExec}
-	ps, _, err := RealExec(ctx, dir, "ps", []string{"-axo", "pid=,args="}, "")
+	ps, _, err := RealExec(ctx, dir, "ps", []string{"-axo", "user=,pid=,args="}, "")
 	require.NoError(t, err)
-	pid, token, err := LanguageServer(ps)
+	current, err := user.Current()
+	require.NoError(t, err)
+	pid, token, err := LanguageServer(ps, current.Username)
 	require.NoError(t, err)
 	listing, _, err := RealExec(ctx, dir, "lsof", []string{"-nP", "-a", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn"}, "")
 	require.NoError(t, err)

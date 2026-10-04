@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	agPS = `  1 /sbin/launchd
-87100 /Applications/Antigravity.app/Contents/MacOS/Antigravity
-87357 /Applications/Antigravity.app/Contents/Resources/bin/language_server --standalone --override_ide_name antigravity --https_server_port 0 --csrf_token tok-1 --app_data_dir antigravity
+	agPS = `  root 1 /sbin/launchd
+emma 87100 /Applications/Antigravity.app/Contents/MacOS/Antigravity
+emma 87357 /Applications/Antigravity.app/Contents/Resources/bin/language_server --standalone --override_ide_name antigravity --https_server_port 0 --csrf_token tok-1 --app_data_dir antigravity
 `
 	agLsof = "p87357\nf7\nn127.0.0.1:52569\nf8\nn127.0.0.1:52570\n"
 	agRows = `[{"conversation_id":"root-new","workspace_uris":"[\"file:///w/emma\"]"},
@@ -84,12 +84,13 @@ func TestAntigravityDeliversIntoTheNewestRootConversationAndAcksOnceRead(t *test
 	d, err := NewDeliverer("antigravity", "/w/emma", "", e.run, &record)
 	require.NoError(t, err)
 	a := d.(*Antigravity)
+	a.User = "emma"
 	a.Home, a.FS, a.Wait = "/home", e.fsys, e.wait
 	exit, err := a.Deliver(context.Background(), "hello there")
 	require.NoError(t, err)
 	assert.Equal(t, 0, exit)
 	require.Len(t, e.calls, 6)
-	assert.Equal(t, []string{"/w/emma", "ps", "-axo", "pid=,args="}, e.calls[0])
+	assert.Equal(t, []string{"/w/emma", "ps", "-axo", "user=,pid=,args="}, e.calls[0])
 	assert.Equal(t, []string{"/w/emma", "lsof", "-nP", "-a", "-p", "87357", "-iTCP", "-sTCP:LISTEN", "-Fn"}, e.calls[1])
 	assert.Equal(t, []string{"/w/emma", "sqlite3", "-json", "file:/home/.gemini/antigravity/conversation_summaries.db?mode=ro&immutable=1", antigravitySummaries}, e.calls[2])
 	env := []string{"/w/emma", "/usr/bin/env", "ANTIGRAVITY_LS_ADDRESS=localhost:52569", "ANTIGRAVITY_CSRF_TOKEN=tok-1", "/home/.gemini/antigravity/bin/agentapi", "get-conversation-metadata", "root-new"}
@@ -101,7 +102,7 @@ func TestAntigravityDeliversIntoTheNewestRootConversationAndAcksOnceRead(t *test
 	assert.Equal(t, "antigravity: message m-2 read by conversation root-new\n", record.String())
 
 	e = newAgExec()
-	a = &Antigravity{Dir: "/w/emma", Session: "named", Run: e.run, Home: "/home", FS: e.fsys, Wait: e.wait}
+	a = &Antigravity{User: "emma", Dir: "/w/emma", Session: "named", Run: e.run, Home: "/home", FS: e.fsys, Wait: e.wait}
 	e.fsys[".gemini/antigravity/brain/named/.system_generated/messages/read.json"] = &fstest.MapFile{Data: []byte(`{}`)}
 	_, err = a.Deliver(context.Background(), "x")
 	require.Error(t, err)
@@ -114,7 +115,7 @@ func TestAntigravityDeliversIntoTheNewestRootConversationAndAcksOnceRead(t *test
 func TestAntigravityRefusesWhatItCannotProve(t *testing.T) {
 	t.Parallel()
 	deliver := func(e *agExec) error {
-		a := &Antigravity{Dir: "/w/emma", Run: e.run, Home: "/home", FS: e.fsys, Wait: e.wait}
+		a := &Antigravity{User: "emma", Dir: "/w/emma", Run: e.run, Home: "/home", FS: e.fsys, Wait: e.wait}
 		exit, err := a.Deliver(context.Background(), "x")
 		assert.Equal(t, 1, exit)
 		return err
@@ -160,12 +161,12 @@ func TestAntigravityRefusesWhatItCannotProve(t *testing.T) {
 
 func TestAntigravityReadsTheServerTheListingAndTheReplies(t *testing.T) {
 	t.Parallel()
-	pid, token, err := LanguageServer(agPS)
+	pid, token, err := LanguageServer(agPS, "emma")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"87357", "tok-1"}, []string{pid, token})
-	_, _, err = LanguageServer("1 /sbin/launchd\n2 /x/language_server --override_ide_name windsurf --csrf_token t\n")
+	_, _, err = LanguageServer("root 1 /sbin/launchd\nemma 2 /x/language_server --override_ide_name windsurf --csrf_token t\n", "emma")
 	assert.EqualError(t, err, "no antigravity language server is running: is Antigravity open?")
-	_, _, err = LanguageServer("9 /x/language_server --override_ide_name antigravity\n")
+	_, _, err = LanguageServer("emma 9 /x/language_server --override_ide_name antigravity\n", "emma")
 	assert.EqualError(t, err, "the antigravity language server (pid 9) runs without a --csrf_token")
 
 	assert.Equal(t, []string{"52569", "52570"}, ListenPorts(agLsof))
@@ -191,4 +192,15 @@ func TestAntigravityReadsTheServerTheListingAndTheReplies(t *testing.T) {
 	assert.True(t, Read([]byte(`{"m-2":true}`), "m-2"))
 	assert.False(t, Read([]byte(`{"m-2":false}`), "m-2"))
 	assert.False(t, Read(nil, "m-2"))
+}
+
+func TestAntigravitySelectsOnlyTheDaemonsUser(t *testing.T) {
+	t.Parallel()
+	ps := "other 123 /x/language_server --override_ide_name antigravity --csrf_token foreign\n" + agPS
+	pid, token, err := LanguageServer(ps, "emma")
+	require.NoError(t, err)
+	assert.Equal(t, "87357", pid)
+	assert.Equal(t, "tok-1", token)
+	_, _, err = LanguageServer(ps, "absent")
+	assert.ErrorContains(t, err, "no antigravity language server")
 }
