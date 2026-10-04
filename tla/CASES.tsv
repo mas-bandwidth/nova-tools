@@ -307,6 +307,15 @@ MCLandBisectBrokenTipOnly.cfg	MCLandBisect.tla	invariant	GreenLanded	ignore-term
 MCLandBisectBrokenLowSide.cfg	MCLandBisect.tla	invariant	BlameIsTheTurn	ignore-terminal	landbisect	required	-
 MCLandBisectReachBlameEarly.cfg	MCLandBisect.tla	invariant	ReachBlameEarly	ignore-terminal	landbisect	required	-
 MCLandBisectReachWhole.cfg	MCLandBisect.tla	invariant	ReachWhole	ignore-terminal	landbisect	required	-
+MCLandTwoLevel.cfg	MCLandTwoLevel.tla	pass	-	ignore-terminal	landtwolevel	required	-
+MCLandTwoLevelLiveSmall.cfg	MCLandTwoLevel.tla	pass	-	ignore-terminal	landtwolevel	required	-
+MCLandTwoLevelBrokenNoRegate.cfg	MCLandTwoLevel.tla	invariant	OnlyGatedReachBase	ignore-terminal	landtwolevel	required	-
+MCLandTwoLevelBrokenPrefix.cfg	MCLandTwoLevel.tla	invariant	RecordedOnBase	ignore-terminal	landtwolevel	required	-
+MCLandTwoLevelBrokenNoopLanding.cfg	MCLandTwoLevel.tla	invariant	NoOpNoLanding	ignore-terminal	landtwolevel	required	-
+MCLandTwoLevelReachPartial.cfg	MCLandTwoLevel.tla	invariant	ReachPartial	ignore-terminal	landtwolevel	required	-
+MCLandTwoLevelReachRegateLands.cfg	MCLandTwoLevel.tla	invariant	ReachRegateLands	ignore-terminal	landtwolevel	required	-
+MCLandTwoLevelReachUnpack.cfg	MCLandTwoLevel.tla	invariant	ReachUnpack	ignore-terminal	landtwolevel	required	-
+MCLandTwoLevelReachClashRestLand.cfg	MCLandTwoLevel.tla	invariant	ReachClashRestLand	ignore-terminal	landtwolevel	required	-
 MCSprintEventsC30.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-controls-b	required	-
 MCSprintEventsW30.cfg	MCSprintEvents.tla	action	NextNotReached	ignore-terminal	sprintevents-witnesses-b	required	-
 MCLevel.cfg	MCLevel.tla	pass	-	ignore-terminal	level	required	-
