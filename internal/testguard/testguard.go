@@ -74,6 +74,14 @@ func init() { Reload() }
 // path needs it.
 func Reload() { defaultGuard.refusing.Store(os.Getenv(EnvNoHost) == "1") }
 
+// Refusing reports whether the guard is armed. It exists so a test can say
+// what it is testing without reading the environment itself.
+func Refusing() bool { return defaultGuard.Refusing() }
+
+// Refusing reports whether the guard is armed. It exists so a test can say
+// what it is testing without reading the environment itself.
+func (g *Guard) Refusing() bool { return g.refusing.Load() }
+
 // RefuseHosts is what every ssh/scp/rsync seam in this tree calls with the
 // command line it is about to run. Under the guard, and outside an AllowHosts
 // scope, it panics naming that command line; otherwise it returns immediately.

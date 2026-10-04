@@ -15,6 +15,7 @@ import (
 func TestUnsetGuardLetsTheSeamRun(t *testing.T) {
 	t.Parallel()
 	g := NewGuard(false)
+	require.False(t, g.Refusing(), "the guard must be off when the variable is unset; production pays nothing for it")
 	g.RefuseHosts("ssh", "hulk", "uptime") // must not panic
 }
 
