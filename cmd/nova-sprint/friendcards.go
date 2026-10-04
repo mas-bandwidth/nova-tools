@@ -186,9 +186,9 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 		case err != nil:
 			return r, fmt.Errorf("origin's tip of %s in %s cannot be read: %w", p.Branch, repo, err)
 		case at == "":
-			return r, fmt.Errorf("Head %s, and origin has no branch %s", head, p.Branch)
+			return r, fmt.Errorf("head %s, and origin has no branch %s", head, p.Branch)
 		case !strings.EqualFold(at, head):
-			return r, fmt.Errorf("Head %s is not origin's tip of %s, %s", head, p.Branch, at)
+			return r, fmt.Errorf("head %s is not origin's tip of %s, %s", head, p.Branch, at)
 		}
 		r.Head, r.Report = at, "friend "+name+" LAND: "+para
 	case verdict == VerdictLand:

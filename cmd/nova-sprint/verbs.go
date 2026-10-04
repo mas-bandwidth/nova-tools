@@ -643,7 +643,7 @@ var epochVerbs = map[string]bool{"finish": true, "read": true, "merge": true, "c
 // epochVerbs, except a merge run by the sprint's coordinator, which merges
 // the cards of its own read of the merge queue and names no handed card.
 func needsEpoch(verbName string, coordinator bool) bool {
-	return epochVerbs[verbName] && !(verbName == "merge" && coordinator)
+	return epochVerbs[verbName] && (verbName != "merge" || !coordinator)
 }
 
 // runStep runs a step and reports it: exit 0 when everything named moved, 1

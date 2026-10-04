@@ -181,8 +181,8 @@ func TestALandWhoseHeadIsNotOriginsTipIsRefused(t *testing.T) {
 		fail     error
 		say      string
 	}{
-		{"a forged head", tip, nil, "Head " + landHead + " is not origin's tip of sprint/s1-1.w1.g1.e0, " + tip},
-		{"no branch", "", nil, "Head " + landHead + ", and origin has no branch sprint/s1-1.w1.g1.e0"},
+		{"a forged head", tip, nil, "head " + landHead + " is not origin's tip of sprint/s1-1.w1.g1.e0, " + tip},
+		{"no branch", "", nil, "head " + landHead + ", and origin has no branch sprint/s1-1.w1.g1.e0"},
 		{"an unread tip", "", errors.New("ls-remote timed out"), "origin's tip of sprint/s1-1.w1.g1.e0 in " + friendRepo + " cannot be read: ls-remote timed out"},
 	} {
 		ta, root := friendCardApp(t, "friend amy", "amy")
