@@ -303,12 +303,7 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 			queue = nil
 		}
 		storeOK := true
-		barrierQueued := false
-		for _, j := range queue {
-			if j.entry == state.WakeBarrier && j.entry != "" {
-				barrierQueued = true
-			}
-		}
+		barrierQueued := state.WakeBarrier != "" && known[state.WakeBarrier]
 		if !passive && (state.Asleep || (state.WakeBarrier != "" && !barrierQueued && busy == nil) || (busy == nil && len(queue) == 0)) {
 			var entries []bus2.Entry
 			var err error
