@@ -122,6 +122,7 @@ func TestTheHelpPastesTheStaleRefusalItPrints(t *testing.T) {
 	// one write in, the table's epoch key says 1, and the next write at the
 	// default --epoch 0 is stale
 	require.NoError(t, c.HSet(ctx, "stale-help:epoch", "n", 1).Err())
+	var out string
 	code, out, errout = runTable(at(addr, "cell", "add", "stale-help", "build", "ready", "b1")...)
 	require.EqualValues(t, 1, code, "stale cell add: %d %s %q", code, out, errout)
 	got, _, ok := strings.Cut(errout, "\n")
