@@ -15,10 +15,6 @@ import (
 // coverUntil is the running-time deadline one Wait pins to.
 var coverUntil = coverT0.Add(30 * time.Minute)
 
-// heldByNobody is the prefix every silenceRefusal writes: the primary an ack
-// would leave held by nobody, and the command to decide instead.
-const heldByNobody = "is the last judgment on %s, which would then be held by nobody (no read outstanding, nothing the tick would do, no other judgment open on it); decide instead"
-
 // TestStepsAckCoverSilenceRefusal pins silenceRefusal: the words an ack gives for
 // the primary it would leave held by nobody. One path names the judgment's other
 // decisions as commands; the other, a judgment whose only decision is ack, falls

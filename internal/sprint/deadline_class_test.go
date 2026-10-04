@@ -39,54 +39,77 @@ func TestTheWorkStampsAreReadOnlyByWorkDeadline(t *testing.T) {
 	var bad []string
 	for _, dir := range dirs {
 		fset := token.NewFileSet()
-		pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+		files, err := readGoFiles(fset, dir)
 		require.NoError(t, err)
-		for _, pkg := range pkgs {
-			for _, f := range pkg.Files {
-				for _, decl := range f.Decls {
-					fd, ok := decl.(*ast.FuncDecl)
-					if !ok || allowed[fd.Name.Name] {
-						continue
-					}
-					ast.Inspect(fd, func(n ast.Node) bool {
-						var lits []*ast.BasicLit
-						switch x := n.(type) {
-						case *ast.CallExpr: // c.F("dealt")
-							if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "F" && len(x.Args) == 1 {
-								if l, ok := x.Args[0].(*ast.BasicLit); ok {
-									lits = append(lits, l)
-								}
-							}
-						case *ast.AssignStmt: // field := "dealt", then c.F(field); c.Fields["dealt"] on the right
-							for _, e := range x.Rhs {
-								switch y := e.(type) {
-								case *ast.BasicLit:
-									lits = append(lits, y)
-								case *ast.IndexExpr:
-									if l, ok := y.Index.(*ast.BasicLit); ok {
-										lits = append(lits, l)
-									}
-								}
-							}
-						case *ast.ValueSpec:
-							for _, e := range x.Values {
-								if l, ok := e.(*ast.BasicLit); ok {
-									lits = append(lits, l)
-								}
-							}
-						}
-						for _, lit := range lits {
-							if lit.Kind == token.STRING {
-								if v, err := strconv.Unquote(lit.Value); err == nil && stamps[v] {
-									bad = append(bad, fset.Position(lit.Pos()).String()+" "+fd.Name.Name+" reads "+v)
-								}
-							}
-						}
-						return true
-					})
+		for _, f := range files {
+			for _, decl := range f.Decls {
+				fd, ok := decl.(*ast.FuncDecl)
+				if !ok || allowed[fd.Name.Name] {
+					continue
 				}
+				ast.Inspect(fd, func(n ast.Node) bool {
+					var lits []*ast.BasicLit
+					switch x := n.(type) {
+					case *ast.CallExpr: // c.F("dealt")
+						if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "F" && len(x.Args) == 1 {
+							if l, ok := x.Args[0].(*ast.BasicLit); ok {
+								lits = append(lits, l)
+							}
+						}
+					case *ast.AssignStmt: // field := "dealt", then c.F(field); c.Fields["dealt"] on the right
+						for _, e := range x.Rhs {
+							switch y := e.(type) {
+							case *ast.BasicLit:
+								lits = append(lits, y)
+							case *ast.IndexExpr:
+								if l, ok := y.Index.(*ast.BasicLit); ok {
+									lits = append(lits, l)
+								}
+							}
+						}
+					case *ast.ValueSpec:
+						for _, e := range x.Values {
+							if l, ok := e.(*ast.BasicLit); ok {
+								lits = append(lits, l)
+							}
+						}
+					}
+					for _, lit := range lits {
+						if lit.Kind == token.STRING {
+							if v, err := strconv.Unquote(lit.Value); err == nil && stamps[v] {
+								bad = append(bad, fset.Position(lit.Pos()).String()+" "+fd.Name.Name+" reads "+v)
+							}
+						}
+					}
+					return true
+				})
 			}
 		}
 	}
 	require.Empty(t, bad, "a work stamp read outside WorkDeadline, a second clock:\n%s", strings.Join(bad, "\n"))
+}
+
+// readGoFiles parses every non-test .go file of dir, the file set parser.ParseDir
+// read with mode 0: build tags ignored, so a second clock cannot hide behind one.
+// parser.ParseDir is deprecated since Go 1.25 (staticcheck SA1019); its named
+// replacement, x/tools/go/packages, applies build constraints and would drop those
+// files, so the read stays on go/parser, one file at a time.
+func readGoFiles(fset *token.FileSet, dir string) ([]*ast.File, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var files []*ast.File
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, nil
 }

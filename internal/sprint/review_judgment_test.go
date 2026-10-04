@@ -39,12 +39,6 @@ func openTypes(w *world, id string) string {
 	return strings.Join(out, ",")
 }
 
-// ackAll acknowledges every judgment open on the subject, in one call.
-func ackAll(w *world, id string) Plan {
-	w.t.Helper()
-	return w.must(Ack(w.s, AckReq{Notes: openIDs(w, id), Reason: "seen"}))
-}
-
 func openIDs(w *world, id string) []string {
 	var ids []string
 	for _, o := range w.openOn(id) {

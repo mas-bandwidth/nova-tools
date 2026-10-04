@@ -15,21 +15,6 @@ import (
 // shortest queue, whose ties by name give every card of an idle fleet to the
 // first members.
 
-// propsAnswer is what a twin answers of the table properties a query names: the
-// ones the table holds.
-func propsAnswer(t *Table, names []string) map[string]string {
-	var out map[string]string
-	for _, n := range names {
-		if v, ok := t.Prop(n); ok {
-			if out == nil {
-				out = map[string]string{}
-			}
-			out[n] = v
-		}
-	}
-	return out
-}
-
 // fleetWorld is a world of the members up at the width (0: the default) and
 // n ready primaries in stream s1.
 func fleetWorld(t *testing.T, primaries, width int, members ...string) *world {
