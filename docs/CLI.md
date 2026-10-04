@@ -2709,3 +2709,22 @@ Reads the tree and GitHub again and writes nothing: zero differences is
 `VERIFY OK ... differences=0`, the receipt that the tree holds what GitHub
 holds. `--against <tree>` puts a second tree file where GitHub stands and reads
 no network at all.
+
+## nova-friend
+
+nova-friend is pre-alpha: not ready for production use.
+
+### First run
+
+Run `nova-friend help`, `nova-friend watch -h`, then inspect a store-free plan:
+
+```sh
+nova-friend watch --server unused:1 --friend reader --argv '["true"]' --dry-run
+```
+
+The plan starts with `WATCH OK` and does not start a child or beat. A real
+invocation needs the actual sprint server, registered identity and blocking
+command argv. `--stdin-lifetime` requires a closable pipe kept open by the
+harness. See [FRIEND-WATCH.md](FRIEND-WATCH.md) for cancellation requirements.
+There is no quickstart that writes presence: choosing an identity requires
+the actual harness session.

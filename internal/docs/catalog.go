@@ -24,6 +24,7 @@ var DefaultCatalog = []Entry{
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 
 	// cmd/
+	E("cmd/nova-friend", "foreground harness presence wrapper", "go test ./cmd/nova-friend", "go test ./cmd/nova-friend"),
 	E("cmd/nova-bus", "coordination bus inbox, send, and wait CLI", "go test ./cmd/nova-bus", "go test ./cmd/nova-bus"),
 	E("cmd/nova-cairn", "session checkpoints: a session's exact words kept as plain files, with an index and receipts", "go test ./cmd/nova-cairn", "go test ./cmd/nova-cairn"),
 	E("cmd/nova-decide", "typed decisions with probabilities through a backend, recorded and calibrated against their outcomes", "go test ./cmd/nova-decide", "go test ./cmd/nova-decide"),
@@ -68,6 +69,8 @@ var DefaultCatalog = []Entry{
 	E("internal/dogfood", "dogfood self-test gates", "go test ./internal/dogfood", "go test ./internal/dogfood"),
 	E("internal/filelock", "process-exclusive file locks whose holder is named in the file", "go test ./internal/filelock", "go test ./internal/filelock"),
 	E("internal/fleet", "runner fleet discovery and status", "go test ./internal/fleet", "go test ./internal/fleet"),
+	E("internal/friendwatch", "foreground child-owned sprint presence", "go test ./internal/friendwatch", "go test ./internal/friendwatch"),
+	E("internal/friendbus", "Redis addressed delivery prototype", "go test ./internal/friendbus", "go test ./internal/friendbus"),
 	E("internal/fuse", "the fuse box: read and write the lockdown and quarantine state", "go test ./internal/fuse", "go test ./internal/fuse"),
 	Page("internal/ghevent", "the GitHub event Redis stream: append and read", "go test ./internal/ghevent", "go test ./internal/ghevent"),
 	E("internal/ghevent/wire", "shared GitHub event stream identity without ingestion dependencies", "go test ./internal/ci", "go test ./internal/ci"),
