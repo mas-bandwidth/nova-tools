@@ -82,6 +82,12 @@ a message you can read again, or a stored edit you can inspect. You can stop at
 one tool, keep a different method, or add another when it solves a problem you
 actually have.
 
+### setup-nova-up-local.w1
+
+To set up the whole thing on one machine instead, from nothing to a first sprint, run
+`nova-up --local --dry-run` to see the plan, then `nova-up --local` to apply it; the
+[setup guide](docs/SETUP.md) walks it step by step.
+
 ## Where to go next
 
 Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is a place to begin.
