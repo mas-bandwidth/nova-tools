@@ -23,8 +23,7 @@ import (
 func TestFunctional_TwoProcessesContend(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "contend.lock")
+	path := filepath.Join(t.TempDir(), "contend.lock")
 
 	// Start Process A to take and hold the lock
 	cmdA := exec.Command(os.Args[0], "-test.run=^TestFunctional_HelperProcess$")
@@ -35,16 +34,11 @@ func TestFunctional_TwoProcessesContend(t *testing.T) {
 		"FILELOCK_HELPER_LABEL=process-A",
 	)
 	stdinA, err := cmdA.StdinPipe()
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	stdoutA, err := cmdA.StdoutPipe()
-	if err != nil {
-		require.NoError(t, err, err)
-	}
-	if err := cmdA.Start(); err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
+	err = cmdA.Start()
+	require.NoError(t, err, err)
 	defer func() {
 		_ = stdinA.Close()
 		_ = cmdA.Process.Kill()
@@ -53,18 +47,12 @@ func TestFunctional_TwoProcessesContend(t *testing.T) {
 
 	readerA := bufio.NewReader(stdoutA)
 	lineA, err := readerA.ReadString('\n')
-	if err != nil || strings.TrimSpace(lineA) != "HELD" {
-		require.Fail(t, fmt.Sprintf("Process A failed to hold lock: line=%q, err=%v", lineA, err))
-	}
+	require.True(t, err == nil && strings.TrimSpace(lineA) == "HELD", "Process A failed to hold lock: line=%q, err=%v", lineA, err)
 
 	// The file names Process A as its holder
 	stamp, err := filelock.ReadStamp(path)
-	if err != nil {
-		require.NoError(t, err, "ReadStamp failed: %v", err)
-	}
-	if stamp.PID != cmdA.Process.Pid {
-		assert.Equal(t, cmdA.Process.Pid, stamp.PID, "stamp PID = %d, want %d", stamp.PID, cmdA.Process.Pid)
-	}
+	require.NoError(t, err, "ReadStamp failed: %v", err)
+	assert.Equal(t, cmdA.Process.Pid, stamp.PID, "stamp PID = %d, want %d", stamp.PID, cmdA.Process.Pid)
 
 	// Process B attempts to acquire the lock immediately via TryLock
 	cmdB := exec.Command(os.Args[0], "-test.run=^TestFunctional_HelperProcess$")
@@ -77,9 +65,7 @@ func TestFunctional_TwoProcessesContend(t *testing.T) {
 	outB, errB := cmdB.CombinedOutput()
 	// Helper exits with 2 when ErrHeld is returned
 	var exitErr *exec.ExitError
-	if !errors.As(errB, &exitErr) || exitErr.ExitCode() != 2 {
-		require.Fail(t, fmt.Sprintf("Process B should have failed with exit code 2 (held), got output %q, err %v", string(outB), errB))
-	}
+	require.True(t, errors.As(errB, &exitErr) && exitErr.ExitCode() == 2, "Process B should have failed with exit code 2 (held), got output %q, err %v", string(outB), errB)
 
 	// Now release Process A by closing its stdin
 	_ = stdinA.Close()
@@ -94,9 +80,7 @@ func TestFunctional_TwoProcessesContend(t *testing.T) {
 		"FILELOCK_HELPER_LABEL=process-B2",
 	)
 	outB2, errB2 := cmdB2.CombinedOutput()
-	if errB2 != nil || strings.TrimSpace(string(outB2)) != "ACQUIRED" {
-		require.Fail(t, fmt.Sprintf("Process B2 failed to acquire after release: out=%q, err=%v", string(outB2), errB2))
-	}
+	require.True(t, errB2 == nil && strings.TrimSpace(string(outB2)) == "ACQUIRED", "Process B2 failed to acquire after release: out=%q, err=%v", string(outB2), errB2)
 }
 
 // TestFunctional_KilledHolderLockFreedByKernel tests that when a lock holder
@@ -105,8 +89,7 @@ func TestFunctional_TwoProcessesContend(t *testing.T) {
 func TestFunctional_KilledHolderLockFreedByKernel(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "kill_release.lock")
+	path := filepath.Join(t.TempDir(), "kill_release.lock")
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestFunctional_HelperProcess$")
 	cmd.Env = append(os.Environ(),
@@ -116,16 +99,11 @@ func TestFunctional_KilledHolderLockFreedByKernel(t *testing.T) {
 		"FILELOCK_HELPER_LABEL=killed-worker",
 	)
 	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		require.NoError(t, err, err)
-	}
-	if err := cmd.Start(); err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
+	err = cmd.Start()
+	require.NoError(t, err, err)
 
 	reader := bufio.NewReader(stdout)
 	line, err := reader.ReadString('\n')
@@ -140,17 +118,12 @@ func TestFunctional_KilledHolderLockFreedByKernel(t *testing.T) {
 
 	// The file names the holder while it is alive
 	stamp, err := filelock.ReadStamp(path)
-	if err != nil {
-		require.NoError(t, err, "ReadStamp failed: %v", err)
-	}
-	if stamp.PID != holderPID {
-		require.Fail(t, fmt.Sprintf("stamp while alive = %+v, want PID %d", stamp, holderPID))
-	}
+	require.NoError(t, err, "ReadStamp failed: %v", err)
+	require.Equal(t, holderPID, stamp.PID, "stamp while alive = %+v, want PID %d", stamp, holderPID)
 
 	// KILL the holder abruptly (SIGKILL) so it cannot run Unlock()
-	if err := cmd.Process.Kill(); err != nil {
-		require.NoError(t, err, "failed to kill child: %v", err)
-	}
+	err = cmd.Process.Kill()
+	require.NoError(t, err, "failed to kill child: %v", err)
 	_ = stdin.Close()
 	_ = cmd.Wait()
 
@@ -162,17 +135,14 @@ func TestFunctional_KilledHolderLockFreedByKernel(t *testing.T) {
 	assert.Equal(t, holderPID, left.PID, "the killed holder's note: %+v", left)
 
 	lock, err := filelock.TryLock(path, "recovery-taker")
-	if err != nil {
-		require.NoError(t, err, "TryLock failed after holder died: %v", err)
-	}
+	require.NoError(t, err, "TryLock failed after holder died: %v", err)
 	now, err := filelock.ReadStamp(path)
 	require.NoError(t, err)
 	assert.Equal(t, "recovery-taker", now.Label, "the file does not name the new holder: %+v", now)
 
 	// When recovery-taker unlocks cleanly the note is cleared.
-	if err := lock.Unlock(); err != nil {
-		require.NoError(t, err, "Unlock failed: %v", err)
-	}
+	err = lock.Unlock()
+	require.NoError(t, err, "Unlock failed: %v", err)
 	cleared, err := filelock.ReadStamp(path)
 	require.NoError(t, err)
 	assert.True(t, cleared.IsZero(), "the note after a clean unlock: %+v", cleared)

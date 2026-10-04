@@ -3,7 +3,6 @@
 package filelock
 
 import (
-	"fmt"
 	"math/rand"
 	"strings"
 	"testing"
@@ -68,9 +67,7 @@ func TestProperty_StampRoundtrip(t *testing.T) {
 		if parsed.Host != original.Host {
 			require.Equal(t, original.Host, parsed.Host, "iteration %d: Host = %q, want %q", i, parsed.Host, original.Host)
 		}
-		if !parsed.Started.Equal(original.Started) {
-			require.Fail(t, fmt.Sprintf("iteration %d: Started = %v, want %v", i, parsed.Started, original.Started))
-		}
+		require.True(t, parsed.Started.Equal(original.Started), "iteration %d: Started = %v, want %v", i, parsed.Started, original.Started)
 		if parsed.Label != cleanLabel {
 			require.Equal(t, cleanLabel, parsed.Label, "iteration %d: Label = %q, want %q", i, parsed.Label, cleanLabel)
 		}
@@ -88,8 +85,6 @@ func TestProperty_JitterBounds(t *testing.T) {
 		jittered := defaultJitter(d)
 		min := d
 		max := d + d/2 + 1
-		if jittered < min || jittered > max {
-			require.Fail(t, fmt.Sprintf("iteration %d: defaultJitter(%v) = %v; want [%v, %v]", i, d, jittered, min, max))
-		}
+		require.True(t, jittered >= min && jittered <= max, "iteration %d: defaultJitter(%v) = %v; want [%v, %v]", i, d, jittered, min, max)
 	}
 }
