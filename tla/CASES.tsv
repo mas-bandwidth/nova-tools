@@ -3,6 +3,11 @@ MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal	benchstage	required	-
 MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal	benchstage	required	-
 MCCardMachine.cfg	MCCardMachine.tla	pass	-	ignore-terminal	cardmachine	bench	layer-2-original-instance-over-budget
 MCDecideShadow.cfg	MCDecideShadow.tla	pass	-	check	decideshadow	required	-
+MCDecideShadowBrokenAlias.cfg	MCDecideShadow.tla	invariant	NoDuplicateCalls	check	decideshadow	required	-
+MCDecideShadowBrokenBudget.cfg	MCDecideShadow.tla	invariant	ReservationBudget	check	decideshadow	required	-
+MCDecideShadowBrokenSend.cfg	MCDecideShadow.tla	invariant	NoDuplicateCalls	check	decideshadow	required	-
+MCDecideShadowBrokenLabels.cfg	MCDecideShadow.tla	invariant	NoLabelsInRequest	check	decideshadow	required	-
+MCDecideShadowBrokenTruth.cfg	MCDecideShadow.tla	invariant	TruthAfterDecision	check	decideshadow	required	-
 MCEpochMemberBroken.cfg	MCEpochMemberTable.tla	invariant	NoEpochLeak	ignore-terminal	epochmembertable	required	-
 MCEpochMemberBrokenStale.cfg	MCEpochMemberTable.tla	action	StaleWritesRefuse	ignore-terminal	epochmembertable	required	-
 MCEpochMemberFixedPoint.cfg	MCEpochMemberTable.tla	pass	-	ignore-terminal	epoch-fixed-point	required	-
