@@ -160,7 +160,7 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	require.True(t, fleet.Singleton, assertionMsg144...)
 	require.Equal(t, "fleet", fleet.Table, assertionMsg144...)
 	scopedGot169 := strings.Join(fleet.FieldNames(), ",")
-	require.Equal(t, "store,coordinator,redis_port,pg_dsn", scopedGot169, "fleet fields %s", scopedGot169)
+	require.Equal(t, "store,coordinator,redis_port,pg_dsn,loops_dir", scopedGot169, "fleet fields %s", scopedGot169)
 	for _, name := range []string{"store", "coordinator"} {
 		f, ok := fleet.Field(name)
 		require.True(t, ok)
@@ -175,13 +175,14 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 			assert.False(t, f.Required, assertionMsg158...)
 		}()
 	}
-	row, err := fleet.NewRow(KindFleet, map[string]string{"store": "hulk"})
+	row, err := fleet.NewRow(KindFleet, map[string]string{"store": "hulk", "loops_dir": "~/nova-bench/loops"})
 	assertionMsg153 := []any{"fleet row %+v %v", row.Fields, err}
 	require.NoError(t, err, assertionMsg153...)
 	require.Equal(t, "hulk", row.Fields["store"], assertionMsg153...)
 	require.Equal(t, "", row.Fields["coordinator"], assertionMsg153...)
 	require.Empty(t, row.Fields["redis_port"], assertionMsg153...)
 	require.Equal(t, "", row.Fields["pg_dsn"], assertionMsg153...)
+	require.Equal(t, "~/nova-bench/loops", row.Fields["loops_dir"], assertionMsg153...)
 	{
 		_, err := fleet.NewRow(KindFleet, map[string]string{"store": "Hulk"})
 		assertionMsg156 := []any{"a ref that is not a name: %v", err}
@@ -199,19 +200,19 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 		raw  map[string]string
 		want string
 	}{
-		{"zero port", map[string]string{"redis_port": "0"}, "1 through 65535"},
-		{"empty port", map[string]string{"redis_port": ""}, "non-negative integer"},
-		{"large port", map[string]string{"redis_port": "65536"}, "1 through 65535"},
-		{"malformed dsn", map[string]string{"pg_dsn": "not a URI"}, "password-free postgres://"},
-		{"password in userinfo", map[string]string{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova"}, "carries a password"},
-		{"password in query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print"}, "carries a password"},
-		{"encoded mixed-case password key", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?%70aSsWoRd=do-not-print"}, "carries a password"},
-		{"semicolon query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print;sslmode=disable"}, "valid URI query"},
-		{"invalid query escape", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print%zz"}, "valid URI query"},
-		{"zero Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:0/nova"}, "TCP port from 1 through 65535"},
-		{"large Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:65536/nova"}, "TCP port from 1 through 65535"},
-		{"empty Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:/nova"}, "TCP port from 1 through 65535"},
-		{"nonnumeric Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:do-not-print/nova"}, "password-free postgres://"},
+		{"zero port", map[string]string{"redis_port": "0", "loops_dir": "~/nova-bench/loops"}, "1 through 65535"},
+		{"empty port", map[string]string{"redis_port": "", "loops_dir": "~/nova-bench/loops"}, "non-negative integer"},
+		{"large port", map[string]string{"redis_port": "65536", "loops_dir": "~/nova-bench/loops"}, "1 through 65535"},
+		{"malformed dsn", map[string]string{"pg_dsn": "not a URI", "loops_dir": "~/nova-bench/loops"}, "password-free postgres://"},
+		{"password in userinfo", map[string]string{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}, "carries a password"},
+		{"password in query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print", "loops_dir": "~/nova-bench/loops"}, "carries a password"},
+		{"encoded mixed-case password key", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?%70aSsWoRd=do-not-print", "loops_dir": "~/nova-bench/loops"}, "carries a password"},
+		{"semicolon query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print;sslmode=disable", "loops_dir": "~/nova-bench/loops"}, "valid URI query"},
+		{"invalid query escape", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print%zz", "loops_dir": "~/nova-bench/loops"}, "valid URI query"},
+		{"zero Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:0/nova", "loops_dir": "~/nova-bench/loops"}, "TCP port from 1 through 65535"},
+		{"large Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:65536/nova", "loops_dir": "~/nova-bench/loops"}, "TCP port from 1 through 65535"},
+		{"empty Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:/nova", "loops_dir": "~/nova-bench/loops"}, "TCP port from 1 through 65535"},
+		{"nonnumeric Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:do-not-print/nova", "loops_dir": "~/nova-bench/loops"}, "password-free postgres://"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -220,11 +221,11 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 			assert.NotContains(t, err.Error(), "do-not-print")
 		})
 	}
-	row, err = fleet.NewRow(KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"})
+	row, err = fleet.NewRow(KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"})
 	require.NoError(t, err)
 	assert.Equal(t, "6380", row.Fields["redis_port"])
 	assert.Equal(t, "postgres://user@localhost:5432/nova", row.Fields["pg_dsn"])
-	_, err = fleet.NewRow(KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost/nova?sslmode=require&application_name=nova%3Bconfig"})
+	_, err = fleet.NewRow(KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost/nova?sslmode=require&application_name=nova%3Bconfig", "loops_dir": "~/nova-bench/loops"})
 	assert.NoError(t, err, "an omitted port and a percent-encoded query value are valid")
 }
 
@@ -394,4 +395,42 @@ func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
 	assert.Equal(t, "friend amy has width 0; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", err.Error(), "one refusal")
 	assert.NoError(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "1"}}))
 	assert.Error(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "0"}}))
+}
+
+// TestLoopLogIsTheFleetRowsDirectory: the seeded loops_dir reproduces
+// today's literal; a different directory changes the log path; an empty
+// directory is refused by the fleet kind's Check with a remedy naming
+// fleet set --loops-dir.
+func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
+	t.Parallel()
+
+	fleet, _ := Lookup(KindFleet)
+
+	// The seeded value reproduces today's string for a name.
+	seeded := LoopLog("~/nova-bench/loops", "member-bench-a")
+	assert.Equal(t, "~/nova-bench/loops/member-bench-a.log", seeded)
+
+	// Another directory changes it.
+	custom := LoopLog("/custom/loops", "tick")
+	assert.Equal(t, "/custom/loops/tick.log", custom)
+
+	// An empty directory is refused by the kind's Check with a remedy.
+	for _, empty := range []string{"", "   "} {
+		row := Row{Name: KindFleet, Fields: map[string]string{"loops_dir": empty}}
+		err := fleet.Check(row)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--loops_dir wants a non-empty directory path")
+		assert.Contains(t, err.Error(), "nova-config fleet set --loops-dir")
+	}
+
+	// A missing loops_dir is also refused by the kind's Check with a remedy.
+	row := Row{Name: KindFleet, Fields: map[string]string{}}
+	err := fleet.Check(row)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--loops_dir wants a non-empty directory path")
+	assert.Contains(t, err.Error(), "nova-config fleet set --loops-dir")
+
+	// A valid non-empty directory passes Check.
+	row = Row{Name: KindFleet, Fields: map[string]string{"loops_dir": "/valid/path"}}
+	assert.NoError(t, fleet.Check(row))
 }
