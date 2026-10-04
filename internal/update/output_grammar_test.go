@@ -244,7 +244,10 @@ func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 	require.Equal(t, 0, code)
 	release := linesOf(banner, "nova-update release")
 	require.GreaterOrEqual(t, len(release), 1, banner)
-	assert.Contains(t, strings.Join(release, " "), "nova-update help release")
+	// The release entry wraps onto one indented continuation line; the words
+	// stay whole across the break.
+	assert.Contains(t, strings.Join(release, " "), "nova-tools' own release pipeline")
+	assert.Contains(t, banner, "nova-update help release prints its usage lines")
 	assert.Contains(t, banner, "Every verb but watch and release takes --json")
 	_, watch, _ := runTool(t, "nova-update", "watch", "-h")
 	assert.Contains(t, watch, "its sha= the first twelve hex")

@@ -149,7 +149,7 @@ func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 		if numbered != 6 {
 			assert.EqualValuesf(t, 6, numbered, "%s report -h carries %d manifest lines, want six:\n%s", name, numbered, h)
 		}
-		for _, want := range []string{"name<TAB>kind<TAB>installed<TAB>latest<TAB>apply<TAB>owner", "github:<owner>/<repo>", "harness, engine, model, tool or pin", "split on single spaces, no quotes, no shell"} {
+		for _, want := range []string{"name<TAB>kind<TAB>installed<TAB>latest<TAB>apply<TAB>owner", "github:<owner>/<repo>", "harness, engine, model, tool or pin", "EVERY problem"} {
 			if !strings.Contains(h, want) {
 				assert.Containsf(t, h, want, "%s report -h does not carry %q", name, want)
 			}
