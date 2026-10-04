@@ -355,3 +355,8 @@ MCServerLanesBrokenRunGone.cfg	MCServerLanes.tla	invariant	GoneNeverRuns	ignore-
 MCCoordinatorWake.cfg	MCCoordinatorWake.tla	pass	-	ignore-terminal	coordinatorwake	required	-
 MCCoordinatorWakeBrokenNoCursor.cfg	MCCoordinatorWake.tla	invariant	AtMostOnce	ignore-terminal	coordinatorwake	required	-
 MCCoordinatorWakeBrokenSkip.cfg	MCCoordinatorWake.tla	temporal	NoLapse	ignore-terminal	coordinatorwake	required	-
+MCCardISA.cfg	MCCardISA.tla	pass	-	ignore-terminal	cardisa	required	-
+MCCardISALive.cfg	MCCardISA.tla	pass	-	ignore-terminal	cardisa	required	-
+MCCardISABrokenSecondLand.cfg	MCCardISA.tla	invariant	NoCardRetiresTwice	ignore-terminal	cardisa	required	-
+MCCardISABrokenOtherBase.cfg	MCCardISA.tla	invariant	RetiredHeadOnBase	ignore-terminal	cardisa	required	-
+MCCardISABrokenWaitFirst.cfg	MCCardISA.tla	invariant	WaitDispatchesOnlyWhenOperandHolds	ignore-terminal	cardisa	required	-
