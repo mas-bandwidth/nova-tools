@@ -43,8 +43,10 @@ var DarwinOnly = []string{"./cmd/nova-sandbox", "./internal/sandbox"}
 
 // HeavyFirst are the packages the fan-out deals first, so the heaviest never
 // share a shard: dealt round-robin from the sorted list, the two heaviest sat
-// eight apart and so shared a leg on every push.
-var HeavyFirst = []string{"./cmd/nova-bus"}
+// eight apart and so shared a leg on every push. nova-swarm and nova-sprint join
+// nova-bus: their unit tests run 85 s and 40 s on the macOS legs, and two of the three on one
+// pull-request leg ran past the two-minute cap (2026-10-04, legs 1/4 and 2/4 cancelled).
+var HeavyFirst = []string{"./cmd/nova-bus", "./cmd/nova-swarm", "./cmd/nova-sprint"}
 
 // DarwinBranches are the target branches whose changes meet the darwin legs:
 // the integration branches (the concurrency group's integration list in

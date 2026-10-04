@@ -785,3 +785,12 @@ func TestFunctionalDealsTheHeavyPackagesOnePerLeg(t *testing.T) {
 	assert.Len(t, legOf, len(FunctionalHeavy), "each heavy package has a leg of its own: %v", home)
 	assert.Len(t, home, len(pkgs), "every package is dealt once")
 }
+
+// The three packages whose unit tests run longest on the macOS legs are dealt first, so no
+// pull-request leg holds two of them (legs 1/4 and 2/4 ran past the two-minute cap with
+// nova-sprint and nova-swarm each beside other packages).
+func TestOrderHeavyFirstPutsTheBusSwarmAndSprintAhead(t *testing.T) {
+	t.Parallel()
+	got := OrderHeavyFirst([]string{"./cmd/a", "./cmd/nova-sprint", "./internal/b", "./cmd/nova-swarm", "./cmd/c", "./cmd/nova-bus"})
+	assert.Equal(t, []string{"./cmd/nova-bus", "./cmd/nova-swarm", "./cmd/nova-sprint", "./cmd/a", "./internal/b", "./cmd/c"}, got)
+}
