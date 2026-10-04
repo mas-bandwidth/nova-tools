@@ -439,7 +439,7 @@ here that has one points at it.
 SHAPE wherever it stands, rather than exercising one function. It is the fix for
 a whole class made mechanical, which is the only kind of fix that survives the
 next card: a rule lands with its sweep of the tree, or it does not land
-(pit-stop ledger item 20, which lives in the `rowan-new`
+(pit-stop ledger item 20, which lives in the `ada-new`
 repository at `reports/pitstop-tests-2026-09-17.md` — a sibling checkout, not
 this one, so the citation is deliberately prose and not a link).
 
