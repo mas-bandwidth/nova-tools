@@ -2,11 +2,13 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Codex uses the writer lock to choose its first delivery route. An open chat
@@ -23,6 +25,36 @@ type Codex struct {
 	Held         func(lock string) bool // whether the thread's writer lock is held; FlockHeld when nil
 	Env          func(string) string    // getenv; os.Getenv when nil
 	Out          io.Writer              // where the turn's output goes, when set: the daemon's record
+	Resolve      func(home, dir, session string) (id, rollout string, err error)
+	Receipt      func(path, session, text string, from int64) (found bool, next int64, err error)
+	Pause        func(context.Context, time.Duration)
+}
+
+const CodexReceiptEvery = 100 * time.Millisecond
+
+func (c *Codex) resolve() func(string, string, string) (string, string, error) {
+	if c.Resolve != nil {
+		return c.Resolve
+	}
+	return ResolveCodexSession
+}
+
+func (c *Codex) receipt() func(string, string, string, int64) (bool, int64, error) {
+	if c.Receipt != nil {
+		return c.Receipt
+	}
+	return CodexReceipt
+}
+
+func (c *Codex) pause(ctx context.Context, d time.Duration) {
+	if c.Pause != nil {
+		c.Pause(ctx, d)
+		return
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
+	}
 }
 
 func (c *Codex) program() string {
@@ -73,47 +105,95 @@ func LockPath(home, thread string) string {
 const ResumeLabel = "answered by resume, not by the open chat"
 
 func (c *Codex) Deliver(ctx context.Context, text string) (int, error) {
-	session := c.Session
-	if session == "" {
-		var err error
-		session, err = NewestCodexSession(c.home(), c.Dir)
-		if err != nil {
-			return 1, err
-		}
+	session, rollout, err := c.resolve()(c.home(), c.Dir, c.Session)
+	if err != nil {
+		return 1, err
 	}
 	queue := []string{"queue", "--thread", session, "--message", text}
 	resume := ResumeArgs(session, text)
-	routes := [][]string{resume, queue}
-	if c.held()(LockPath(c.home(), session)) {
-		routes[0], routes[1] = queue, resume
+	if !c.held()(LockPath(c.home(), session)) {
+		out, exit, runErr := c.Run(ctx, c.Dir, c.program(), resume, "")
+		if exit == 0 && runErr == nil {
+			c.recordRoute(ResumeLabel+": codex "+strings.Join(ResumeArgs(session, "<text>"), " "), out)
+			return 0, nil
+		}
+		classifiedExit, classifiedErr := refused(session, out, exit, runErr)
+		outcome, queueErr := c.queue(ctx, rollout, session, text, queue, []string{routeFailure(resume, out, exit, runErr)})
+		if outcome != queueRefused {
+			return 0, queueErr
+		}
+		var provider ProviderRefused
+		if errors.As(classifiedErr, &provider) {
+			return classifiedExit, classifiedErr
+		}
+		return 0, Deferred{Reason: queueErr.Error() + "; keep it pending and retry when Codex is available"}
 	}
-	var failures []string
-	var refusal error // a provider's refusal on either route: the session, not the moment, is at fault
-	for _, args := range routes {
-		out, exit, err := c.Run(ctx, c.Dir, c.program(), args, "")
-		if exit != 0 || err != nil {
-			if _, r := refused(session, out, exit, err); refusal == nil {
-				if _, ok := r.(ProviderRefused); ok {
-					refusal = r
-				}
-			}
-			failures = append(failures, fmt.Sprintf("%s exit=%d error=%v output=%q", args[0], exit, err, strings.TrimSpace(Head(out, OutputKept))))
-			continue
-		}
-		if c.Out != nil {
-			if args[0] == "queue" {
-				fmt.Fprintf(c.Out, "queued for open chat: codex queue --thread %s --message <text> (accepted, not answered)\n", session)
-			} else {
-				fmt.Fprintln(c.Out, ResumeLabel+": codex "+strings.Join(ResumeArgs(session, "<text>"), " "))
-			}
-			if out != "" {
-				fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
-			}
-		}
+	outcome, queueErr := c.queue(ctx, rollout, session, text, queue, nil)
+	if outcome != queueRefused {
+		return 0, queueErr
+	}
+	out, resumeExit, resumeErr := c.Run(ctx, c.Dir, c.program(), resume, "")
+	if resumeExit == 0 && resumeErr == nil {
+		c.recordRoute(ResumeLabel+": codex "+strings.Join(ResumeArgs(session, "<text>"), " "), out)
 		return 0, nil
 	}
-	if refusal != nil {
-		return 1, refusal
+	classifiedExit, classifiedErr := refused(session, out, resumeExit, resumeErr)
+	var provider ProviderRefused
+	if errors.As(classifiedErr, &provider) {
+		return classifiedExit, classifiedErr
 	}
-	return 0, Deferred{Reason: fmt.Sprintf("thread %s: neither delivery route accepted the message (%s); keep it pending and retry when Codex is available", session, strings.Join(failures, "; "))}
+	return 0, Deferred{Reason: queueErr.Error() + "; " + routeFailure(resume, out, resumeExit, resumeErr) + "; keep it pending and retry when Codex is available"}
+}
+
+type queueOutcome uint8
+
+const (
+	queueConfirmed queueOutcome = iota
+	queueRefused
+	queueUnknown
+)
+
+func (c *Codex) queue(ctx context.Context, rollout, session, text string, args []string, failures []string) (queueOutcome, error) {
+	_, boundary, err := c.receipt()(rollout, session, text, 0)
+	if err != nil {
+		return queueUnknown, Deferred{Reason: fmt.Sprintf("thread %s receipt cannot be read before queue: %v; keep it pending", session, err)}
+	}
+	out, exit, runErr := c.Run(ctx, c.Dir, c.program(), args, "")
+	if runErr != nil {
+		return queueUnknown, Deferred{Reason: fmt.Sprintf("thread %s queue may have been accepted but the command result is unknown: %v; no alternate route was tried", session, runErr)}
+	}
+	if ctx.Err() != nil {
+		return queueUnknown, Deferred{Reason: fmt.Sprintf("thread %s queue may have been accepted before cancellation; no alternate route was tried", session)}
+	}
+	if exit != 0 {
+		failures = append(failures, routeFailure(args, out, exit, runErr))
+		return queueRefused, Deferred{Reason: fmt.Sprintf("thread %s: queue command refused (%s)", session, strings.Join(failures, "; "))}
+	}
+	for ctx.Err() == nil {
+		found, next, receiptErr := c.receipt()(rollout, session, text, boundary)
+		if receiptErr != nil {
+			return queueUnknown, Deferred{Reason: fmt.Sprintf("thread %s queue was accepted but its receipt cannot be confirmed: %v; no alternate route was tried", session, receiptErr)}
+		}
+		boundary = next
+		if found {
+			c.recordRoute(fmt.Sprintf("received by open chat: codex queue --thread %s --message <text>", session), out)
+			return queueConfirmed, nil
+		}
+		c.pause(ctx, CodexReceiptEvery)
+	}
+	return queueUnknown, Deferred{Reason: fmt.Sprintf("thread %s queue was accepted but no exact user receipt was confirmed before cancellation; no alternate route was tried", session)}
+}
+
+func routeFailure(args []string, out string, exit int, err error) string {
+	return fmt.Sprintf("%s exit=%d error=%v output=%q", args[0], exit, err, strings.TrimSpace(Head(out, OutputKept)))
+}
+
+func (c *Codex) recordRoute(line, out string) {
+	if c.Out == nil {
+		return
+	}
+	fmt.Fprintln(c.Out, line)
+	if out != "" {
+		fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+	}
 }
