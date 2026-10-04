@@ -286,7 +286,10 @@ type Snapshot struct {
 	// Coordinator is the sprint's coordinator: judgments are theirs to
 	// answer. Actor is who runs the step (a request's Who, when it names
 	// none).
-	Coordinator, Actor          string
+	Coordinator, Actor string
+	// SeatGeneration is the seat's generation as read with the coordinator
+	// (seat.go): FirstSeatGeneration until the seat first moves.
+	SeatGeneration              uint64
 	Work, Readers, Merge, Fleet *Table
 	Open                        []Open
 	// Answered is who answered each judgment the step names in --answers that

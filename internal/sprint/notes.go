@@ -65,8 +65,9 @@ const (
 	// The coordinator's seat moved (docs/SPEC-SPRINT.md, "Handing over the
 	// seat"): given by its holder or the owner, or taken with the owner's name,
 	// which is addressed to the holder it was taken from.
-	NSeat      = "seat"
-	NSeatTaken = "seat TAKEN"
+	NSeat           = "seat"
+	NFriendNotWoken = "a friend was not told of her card" // friend sync delivered it, and the bus message to her failed
+	NSeatTaken      = "seat TAKEN"
 
 	NReadyToAccept   = "ready to accept"    // the readers it needs said ok at its head (ReadsNeeded)
 	NReturned        = "returned to review" // sent back from merging: the coordinator decides again

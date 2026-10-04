@@ -74,6 +74,10 @@ type app struct {
 	// tip reads origin's tip of a branch (friend sync, a friend's LAND): tests give
 	// it a table of tips and open no socket.
 	tip tipFn
+	// bus sends one message on the friends' bus (internal/bus2; friend sync wakes a
+	// friend's daemon with it when it delivers her a card): tests give a recorder
+	// and open no socket.
+	bus busSendFn
 	loc *time.Location // the zone times print in: nil is the machine's local zone
 	// notify is how an interrupt reaches a command that runs until it is
 	// interrupted (where --watch): the context it returns is done at one.
@@ -181,6 +185,7 @@ func newApp(getenv func(string) string) *app {
 	a.inventory = a.readInventory
 	a.friends = a.readFriends
 	a.tip = a.branchTip
+	a.bus = a.sendBus
 	a.landRoot = defaultLandRoot
 	a.home = os.UserHomeDir
 	a.decideBackend = func(key string) decide.Backend { return decide.JevHTTP(key, decide.JevTimeout) }

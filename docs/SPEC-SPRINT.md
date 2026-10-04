@@ -94,14 +94,27 @@ counts, which stay the sprint's (her row's cards) and her width the roster's; a
 value of the wrong shape is refused, exit 2; a friend not in the record is
 refused, exit 1; `TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad`). Her status is the friends' rule (`sprint.FriendStatus`):
 `held` while the coordinator holds her (`friend down`; `friend up` releases the
-hold), whatever she beats; else `up` while her last beat is under
-`FriendDownAfter` (15 s) old; else `down`, and `down` when she has never
-beaten (`friend down` holds her and shows `held`, never `down`). A beat wakes her at once. `friend up` is not a beat: a friend released
-with no beat in the last 15 s is `down` until she beats. `friend up <friend>
---width <n>` sets her width (1 to `MaxWidth`), as `fleet up --width` sets a
-machine's, until `friend sync` sets her nova-config row's again (a release
-without it leaves the width as it is; `TestFriendUpWidthSetsHerWidthAsFleetUpWidthSetsAMembers`). A friend's statuses
-are `up`, `held` and `down`, the same words as the fleet table's. A
+hold), whatever she beats or the coordinator observes; else, once the
+coordinator has observed her (`friend health`, below), the observation's word
+alone, `up` or `down`, and never her beat again; else `up` while her last beat
+is under `FriendDownAfter` (15 s) old; else `down`, and `down` when she has
+never beaten (`friend down` holds her and shows `held`, never `down`). A beat
+wakes an unobserved friend at once. `friend up` is not a beat: a friend
+released with no beat in the last 15 s is `down` until she beats. `friend up
+<friend> --width <n>` sets her width (1 to `MaxWidth`), as `fleet up --width`
+sets a machine's, until `friend sync` sets her nova-config row's again (a
+release without it leaves the width as it is;
+`TestFriendUpWidthSetsHerWidthAsFleetUpWidthSetsAMembers`). A friend's
+statuses are `up`, `held` and `down`, the same words as the fleet table's, and
+nothing else is ever shown (the owner, 2026-10-04 11:42 AM ET: "a friend is up
+or down"; "anything but up is down"; "sleeping = down"; held means exactly one
+thing, "the coordinator has specifically decided to hold this friend"). A
+friend held or down with a reason shows it in her status cell, `down (opus
+rate limited, until 6:00 PM)`: `friend down <friend> [--reason <text>]
+[--until <RFC3339>]` records why and when the coordinator expects her back
+(the owner, 2026-10-04 11:30 AM ET: a friend's model allowance "can run
+out"), and an observation carries the same (`friend health --reason --until`);
+`where --json` carries the cell as printed. A
 friend `down` shows `working` 0 in the table, its footer and `where --json`:
 her cards stay on her row and count again when she beats, and `ready` and
 `done` are as they were (the owner, 2026-10-02 9:48 PM ET: "[a friend] being down,
@@ -124,6 +137,69 @@ the stored view `sprint` has the four tables only. Its footer is the table
 layer's: the sums of `ready`, `working`, `width` and `done`, the pooled `ok%`,
 and a blank status cell, as the fleet table's; an empty friends table is its
 header, its one rule and that footer at zero, as every empty table is.
+
+**A friend's health** (2026-10-04, with the author of the coordinator's
+daemon, nova-friend: "the coordinate daemon is the keepalive SERVER. The
+existing sprint server is the authority/table service"). The coordinator's
+daemon keeps a keepalive with every friend's daemon (SPEC-FRIEND.md: a ping,
+the daemon's pong, the session's pong with the nonce) and writes what it saw
+with `friend health <friend> --state up|asleep|down --seen <RFC3339>
+--generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>]
+[--until <RFC3339>]`: the word it observed (`up`, her session answered;
+`asleep`, her daemon answered and her session did not; `down`), the time the
+proof it rests on was seen (the session pong for `up`, the daemon pong for
+`asleep`, the judgment for `down`; the daemon's clock), the seat's generation
+it read the seat at, and what her pong said. The sprint server is the
+authority and the table and nothing more: it validates no nonce (the daemon's
+ring does), adds no challenge and no authentication; the existing local trusted
+route stays non-cryptographic.
+
+The seat carries a generation (`sprint.SeatChange.Generation`;
+`FirstSeatGeneration`, 1, from the first init with no seat record; every
+accepted `coordinator` change takes the next, `MoveSeat` on the snapshot's
+`SeatGeneration`, read with the coordinator in every step's own read, so two
+racing handovers never share one; a replayed `--op` is the recorded result
+and no second increment; init and clear never reset it; teardown removes it
+with the seat). `nova-sprint seat` is the daemons' read of it every second,
+`SEAT holder=<h> epoch=<n> generation=<g>` and `--json` `{holder, epoch,
+generation}`, three keys and no table (`store.SeatState`); `handover --json`'s
+`seat.generation` and the seat record carry it too.
+
+The fence (`sprint.NotHealth`, applied by the health step `ObserveFriend` on
+its own read of the seat, so a seat that moved between the daemon's read and
+the write refuses it): the sender (`--actor`) is the seat's holder, the
+observation names the seat's generation now, the friend is on the table, and
+the proof is newer than the row's. Each refusal is one line, exit 1, nothing
+written: `friend health is the seat's: <holder>, not <actor>`; `the seat is
+<holder>'s at generation <g>, and this observation names generation <g'>: read
+the seat again (nova-sprint seat)`; `the row holds a proof seen at <t>, and
+this one's is not newer, <t'>: an older or repeated proof renews nothing`; `no
+friend <name> on the friends table`. The same observation again (the same word,
+proof and generation) is answered as recorded, `replayed=true`, and writes
+nothing, so a proof never earns a second ten seconds. A->B->A: A's first
+seat's generation is refused under A's second. The row (`friend-health:<f>`,
+written by the step's commit as the seat record is, `OpRecord.Health`) keeps
+the word, `seen`, `generation`, the counts, the reason and the until; `where
+--json`'s friends rows carry it as `health`. The answer: `FRIEND-HEALTH OK
+<friend> state=<word> seen=<RFC3339> generation=<g> status=<up|held|down>
+[replayed=true]`, `--json` `{friend, state, seen, generation, queue, working,
+width, status, replayed}`.
+
+The table's word from an observation (`sprint.ObservedStatus`): `up` only when
+the observation says `up`, under the seat's generation now, with its proof
+under `FriendObservedDownAfter` (10 s) old; `down` otherwise, at exactly ten
+seconds, under any other generation (an old seat's proof never looks up under
+a new seat, and no fallback to her beat once observed), and for every finer
+word the row keeps (`asleep` is the daemon's, shown as `down`). The first
+valid observation makes her `up` at once. Her own `friend beat` stays what it
+is, the friend's own beat, and once she is observed it decides nothing: the
+observation wins the word. No observation holds a friend: `held` is `friend
+down` by the seat alone, lifted by `friend up`. The model is
+`tla/SeatHealth.tla` (five reversed witnesses); the tests
+`TestHealthIsFencedBySeatHolderAndGeneration`,
+`TestFirstProofIsUpAndTenSecondsWithoutOneIsDown`,
+`TestHealthReplayOrderBeatAndHold`, `TestSeatGenerationFromInitThroughHandovers`,
+`TestFriendHealthIsTheSeatsAndFencedByItsGeneration`.
 
 **A friend's card** (the owner, 2026-10-03: "Could we try expressing the work
 left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
@@ -242,7 +318,15 @@ does not level the friends (`TestFriendLevelEvensTheReadyQueuesOfAClass`,
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
 a friend's card across the inbox/outbox standard
 (docs/FRIENDS.md, a sprint card): for each card working or ready on a friend's
-row it writes `inbox/<job>/BRIEF.md` when that is not there, and keeps her
+row it writes `inbox/<job>/BRIEF.md` when that is not there and tells her so
+with one nova-bus2 message from the coordinator to her, subject `card <card>
+dealt: <the FRIEND-CARD DELIVERED line>`, the inbox path in the body (her
+daemon pushes it into her session, which the inbox file alone never does; the
+store is NOVA_BUS_REDIS); the inbox file is the record and the message a
+courtesy: a send that fails never fails the delivery, is said on sync's line
+(`FRIEND-CARD NOTE friend= card=: the bus message to her was not sent (...)`)
+and written on the card's story as one happened note, `a friend was not told
+of her card`, with the `nova-bus2 send` line to tell her by hand, and keeps her
 queue file, `inbox/QUEUE.json` (nova-friend's: one record per task, its
 state `queued`, `working` or `done`; her daemon's pong reports its counts),
 saying which of her cards are `working` and which `queued` (ready behind
@@ -2406,7 +2490,7 @@ default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, fleet
-up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, friend take, friend level, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
+up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, friend take, friend level, friend health, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it (the seat
@@ -2417,7 +2501,7 @@ read, fleet beat, friend beat) are anyone's who names the member, reader or frie
 actor is that name, whatever `--actor` or NOVA_SPRINT_ACTOR say: the record
 names the worker the verb was run as, as the server's does. The reports (merge, ci) want an
 actor; the machine's verbs (tick, run, friend clean) are recorded as the machine; the reads
-(queue, inbox, card, needs, held, sentinels, check, where, dashboard, goal show) need no actor, except `inbox
+(queue, inbox, card, needs, held, sentinels, check, where, dashboard, goal show, seat) need no actor, except `inbox
 --read`, which moves the coordinator's cursor and is the coordinator's alone:
 anyone reads the inbox, and nothing another actor does hides anything from
 the coordinator. A card's and a
@@ -2469,9 +2553,11 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 10 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
 | friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
-| friend down, friend up | hold a friend (status `held`, whatever it beats; every card dealt to her she has not started goes back to ready) and release the hold (not a beat: `down` until she beats; `--width <n>` sets her width) |
+| friend down, friend up | hold a friend (status `held`, whatever she beats or the coordinator observes; every card dealt to her she has not started goes back to ready; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (not a beat: `down` until she beats or is observed up; `--width <n>` sets her width) |
 | friend take | take back cards dealt to a friend that she has not started (`<id>...` or `--all-unstarted`), each back to ready for the friends' deal |
 | friend level | even the ready queues of the friends up within each class, as fleet level evens the members' |
+| friend health | the coordinator's observation of a friend, `friend health <friend> --state up\|asleep\|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>]`, written by the coordinator's daemon from its keepalive (section 1, a friend's health): the seat's holder alone, at the seat's generation now, with a proof newer than the row's; refused otherwise with nothing written; the same observation again is the recorded answer |
+| seat | the seat as the daemons read it every second: `SEAT holder= epoch= generation=`, `--json`; three keys, no table (section 1, a friend's health) |
 | reader add | declares readers |
 | reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
 | reader up | releases the hold; the reader's state is then its beat's |
@@ -2541,7 +2627,7 @@ every brief is clean and 1 otherwise. `--json` prints one object.
 ### Handing over the seat
 
 The holder (or the owner, `init --owner`, else NOVA_SPRINT_OWNER) gives the seat: `coordinator <name> --reason <text>`; with the holder away, `<name>` takes it with the owner's name, `coordinator <name> --take --approved-by <owner> --reason <text>`, refused without that name or with another (the owner, 2026-10-02: "you can be given coordinator status, or you can take it (with my permission only)").
-Either is one commit of the coordinator, the seat's record and a happened note, its log line `seat: <from> -> <to>: <reason>, by <actor>` or `seat TAKEN: <from> -> <to>, approved by <owner>: <reason>`; a take's note is addressed to the old holder; every coordinator verb then takes the new name and refuses the old.
+Either is one commit of the coordinator, the seat's record (with the seat's next generation: section 1, a friend's health) and a happened note, its log line `seat: <from> -> <to>: <reason>, by <actor>` or `seat TAKEN: <from> -> <to>, approved by <owner>: <reason>`; a take's note is addressed to the old holder; every coordinator verb then takes the new name and refuses the old.
 `handover` prints the holder and since when, the machine and the progress, each stream's counts, the sentinels held with what waits behind each, every open judgment with its answer lines, the members held or down and by whom, the routes disabled, the last ten decisions (release, drop, fleet down, rework with a fix, seat) with their reasons, and the lines the next seat runs first; `coordinator` prints it after the change, the leaving seat's receipt.
 `inbox --wait --push seat` writes to the holder's inbox, `~/<holder>-working/inbox/sprint-judgments/` (refused when `~/<holder>-working/inbox` is not there), reads the holder at every look, and after a seat change pushes every open judgment into the new holder's inbox; a note addressed to someone with an inbox there goes to theirs.
 The next seat runs first: `nova-sprint where`, `nova-sprint inbox --wait --push seat`, then reads this section.

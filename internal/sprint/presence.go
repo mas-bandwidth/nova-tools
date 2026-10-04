@@ -165,15 +165,20 @@ func FriendBeating(b Beat, now time.Time) bool {
 }
 
 // FriendStatus is the one rule of a friend's status at now: held while the
-// coordinator holds her (friend down), else up while her last beat is within
-// FriendDownAfter, else down (never beaten, or silent that long).
+// coordinator holds her (friend down); else, once the coordinator has observed her
+// (friend health), the observation's word under the current seat generation
+// while its proof is fresh and down otherwise (ObservedStatus: her own beat
+// never makes an observed friend up again); else up while her last beat is
+// within FriendDownAfter, else down (never beaten, or silent that long).
 // Releasing a hold (friend up) is not a beat: a friend released with no
 // recent beat is down until she beats.
-func FriendStatus(held bool, b Beat, now time.Time) string {
+func FriendStatus(f FriendPresence, now time.Time) string {
 	switch {
-	case held:
+	case f.Held:
 		return Held
-	case FriendBeating(b, now):
+	case f.Health.Observed():
+		return ObservedStatus(f.Health, f.Generation, now)
+	case FriendBeating(f.Beat, now):
 		return Up
 	}
 	return Down

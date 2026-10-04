@@ -147,8 +147,9 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 	// Queue OpenNotes
 	openCmd := pipe.HGetAll(ctx, r.key(keyOpen))
 
-	// Queue Coordinator
+	// Queue Coordinator and the seat record
 	coordCmd := pipe.Get(ctx, r.Names.Key(keyCoordinator))
+	seatCmd := pipe.Get(ctx, r.Names.Key(keySeat))
 
 	// Queue Trailing Fence (f2) at the tail of Stage 2 pipeline
 	fenceCmd, queueCmd := r.queueFence(ctx, pipe)
@@ -170,6 +171,13 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 		return nil, f2, err
 	}
 	s.Coordinator = coordVal
+	seatVal, err := seatCmd.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, f2, err
+	}
+	if s.SeatGeneration, err = seatGenerationOf(seatVal, err == nil); err != nil {
+		return nil, f2, err
+	}
 	s.Actor = st.Actor
 
 	// Decode OpenNotes

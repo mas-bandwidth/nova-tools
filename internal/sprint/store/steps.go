@@ -263,3 +263,12 @@ func FriendLevelStep(r sprint.FriendLevelReq) Step {
 	return Step{Args: ArgsOf(r), Verb: "friend level", Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendLevel(s, r) }}
 }
+
+// NoteStep writes one happened note and nothing else (friend sync: a friend
+// not told of her card): its commit appends it to the log and the inbox.
+func NoteStep(verb string, n sprint.Note) Step {
+	return Step{Verb: verb, Args: ArgsOf(n), Plan: func(s *sprint.Snapshot) sprint.Plan {
+		n.At = s.Now
+		return sprint.Plan{Notes: []sprint.Note{n}}
+	}}
+}

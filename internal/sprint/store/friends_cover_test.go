@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,7 +57,7 @@ func TestFriendsCoverUnknownFriendIsRefusedAndWritesNothing(t *testing.T) {
 			return err
 		}},
 		{"friend down", func(t *testing.T, st *Store, ctx context.Context) error {
-			return st.SetFriendHeld(ctx, "zed", true, "c", 0)
+			return st.SetFriendHeld(ctx, "zed", true, "c", "", time.Time{}, 0)
 		}},
 	}
 	for _, tt := range tests {

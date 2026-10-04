@@ -73,6 +73,9 @@ type Plan struct {
 	// Seat is the seat's change (MoveSeat): the step's commit writes the
 	// coordinator and the seat's record with its note.
 	Seat *SeatChange
+	// Health is a friend's health observed (ObserveFriend): the step's commit
+	// writes it as her record.
+	Health *FriendHealthWrite
 	// Stop is the cause the binding stops the machine with as the step commits: the
 	// tick's deal when every provider is out of credit (FundsCause words); "" is none.
 	Stop string
