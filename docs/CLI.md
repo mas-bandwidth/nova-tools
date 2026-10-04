@@ -989,6 +989,14 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
 
+`friend sync` tells a friend of each card it delivers with one message on the
+bus store `NOVA_BUS_REDIS` names, logged into with that store's own login:
+the user in `NOVA_BUS_REDIS_USER` and the password variable
+`NOVA_BUS_REDIS_PASSWORD_ENV` names, the store's default user when
+`NOVA_BUS_REDIS_USER` is unset, never the sprint store's login. A message that
+is not sent never fails the delivery: the inbox file stands, and the card's
+story says to tell her by hand ([SPEC-SPRINT.md](SPEC-SPRINT.md), friend sync).
+
 ### A card re-cut as its twin
 
 A card re-cut under a new id is its old card's twin: `add --stream s1 lint-pkg-cairn-tb

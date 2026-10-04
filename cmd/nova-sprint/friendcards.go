@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"io/fs"
 	"maps"
@@ -402,31 +401,39 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 // wakes a friend's daemon when it delivers her a card.
 const busRedisEnv = "NOVA_BUS_REDIS"
 
+// busRedisUserEnv and busRedisPasswordEnvEnv are the bus store's own login:
+// the user, and the NAME of the variable that holds its password.
+const (
+	busRedisUserEnv        = "NOVA_BUS_REDIS_USER"
+	busRedisPasswordEnvEnv = "NOVA_BUS_REDIS_PASSWORD_ENV"
+)
+
 // busSendFn sends one message on the friends' bus.
 type busSendFn func(ctx context.Context, m bus.Message) error
 
-// sendBus is the real busSendFn: the bus store dialed as nova-bus dials it
-// (internal/redisconn, the fleet's login from the environment), one message
-// sent, the connection closed.
+// sendBus is the real busSendFn: the bus store dialed with its own login
+// (busOptions, internal/redisconn), one message sent, the connection closed.
 func (a *app) sendBus(ctx context.Context, m bus.Message) error {
 	addr := a.getenv(busRedisEnv)
 	if addr == "" {
 		return errors.New(busRedisEnv + " is not set: no bus to send on")
 	}
-	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
-	if a.getenv(redisauth.UserEnv) != "" {
-		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
-		if a.getenv(redisauth.PasswordEnvEnv) == "" {
-			o.PasswordEnv = redisauth.DefaultPasswordEnv
-		}
-	}
-	conn, err := redisconn.Open(ctx, o, a.getenv)
+	conn, err := redisconn.Open(ctx, busOptions(a.getenv), a.getenv)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 	_, err = (&bus.Bus{Store: bus.Redis{C: conn.Client()}}).Send(ctx, m)
 	return err
+}
+
+// busOptions is the login sendBus dials the bus store with, the bus store's
+// own (docs/SPEC-SPRINT.md, friend sync): the user in busRedisUserEnv and the
+// password variable busRedisPasswordEnvEnv names; with no user it is the
+// store's default user. The sprint store's login is never used here: the bus
+// is a different store with its own users.
+func busOptions(getenv func(string) string) redisconn.Options {
+	return redisconn.Options{Addr: getenv(busRedisEnv), Env: redisconn.Env{User: busRedisUserEnv, PasswordEnv: busRedisPasswordEnvEnv}}
 }
 
 // wakeFriend tells the friend of the card just delivered, one bus message from

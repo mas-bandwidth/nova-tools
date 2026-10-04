@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -455,4 +457,32 @@ func TestFriendSyncDeliversHerReadyCardsAndKeepsHerQueueFile(t *testing.T) {
 	require.NoError(t, json.Unmarshal(text, &q))
 	assert.Equal(t, []friendTask{{ID: "s1-1.w1", State: "working"}, {ID: "s1-2.w1", State: "working"}, {ID: "s1-3.w1", State: "queued"}}, q.Tasks, "a finished card's record is left as it was (her session marks it done)")
 	ta.clean()
+}
+
+// Friend sync wakes a friend on the bus store with the bus store's own login
+// (docs/SPEC-SPRINT.md, friend sync): NOVA_BUS_REDIS_USER and the variable
+// NOVA_BUS_REDIS_PASSWORD_ENV names, never the sprint store's login; no bus user
+// is the store's default user. Resolve dials nothing, so no socket is opened.
+func TestFriendSyncWakesOnTheBusWithTheBusLogin(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{
+		redisauth.UserEnv:        "coordinator",
+		redisauth.PasswordEnvEnv: "P",
+		"P":                      "fake-sprint-secret",
+		busRedisEnv:              "127.0.0.1:1",
+	}
+	getenv := func(k string) string { return env[k] }
+	o, err := redisconn.Resolve(busOptions(getenv), getenv)
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1:1", o.Addr)
+	assert.Equal(t, "", o.User, "the sprint store's user is never the bus store's")
+	assert.Equal(t, "", o.PasswordEnv, "the sprint store's password variable is never the bus store's")
+
+	env[busRedisUserEnv] = "bus"
+	env[busRedisPasswordEnvEnv] = "Q"
+	env["Q"] = "fake-bus-secret"
+	o, err = redisconn.Resolve(busOptions(getenv), getenv)
+	require.NoError(t, err)
+	assert.Equal(t, "bus", o.User)
+	assert.Equal(t, "Q", o.PasswordEnv)
 }
