@@ -43,7 +43,8 @@ package or test over its budget and one CI-LOAD line; functional names the
 packages holding functional-tagged tests. local, new-rule and new-verb need a
 nova-tools checkout; github receipt writes one row of a CI run to a Redis store.
 first run: nothing to set up: slowtests --example reads a built-in event stream.
-In your own module: go test -json <packages> | nova-ci slowtests --budget 60.
+In your own module, slowtests reads the events of the packages you name, at a
+60-second budget; the commands under example: are what runs.
 
 usage, in any Go module (no state, no store):
   nova-ci help        print this banner and the verbs below (inspection)
@@ -60,7 +61,9 @@ usage, in any Go module (no state, no store):
                       line. The allowlist (pkg<TAB>test<TAB>seconds<TAB>
                       <measured>s@<where>, where is run<id> or a bench, - in
                       the test column for a package's own row) raises one
-                      package's or test's budget. The host's load average (the
+                      package's or test's budget. One row, tab-separated:
+                      pkg	TestA	4.5	3s@run1
+                      The host's load average (the
                       larger of its 1- and 5-minute figures, over its CPUs;
                       --load and --cpus give them by hand) is printed and never
                       read by the verdict. The times are a measurement: a
@@ -71,7 +74,10 @@ usage, in any Go module (no state, no store):
                       go test served from its test cache reports a package
                       elapsed near zero, so a cached run never trips a package
                       budget; its tests replay the cached times, which
-                      --test-budget still reads (measure with -count=1).
+                      --test-budget still reads (measure with -count=1). A run
+                      with more finding lines than --max prints the first --max
+                      and one CI-SLOW MORE shown=<n> total=<n> line naming the
+                      flag that prints the rest; --max 0 prints every finding.
                       --json prints the same verdict as one JSON object.
                       --max prints at most that many finding lines, then one
                       CI-SLOW MORE shown=<n> total=<n> line naming the flag
@@ -113,11 +119,13 @@ usage, in a nova-tools checkout (this repository's own CI steps):
                     [--dry-run]
                       (store write) the ci-ok job's run receipt: one ev:github
                       row of the workflow_run shape, sender runner; dialled as
-                      the environment's seat (NOVA_SPRINT_REDIS_USER). One CI
+                      the environment's seat (NOVA_SPRINT_REDIS_USER),
+                      with the password in the variable NOVA_SPRINT_REDIS_PASSWORD_ENV names, never on the line.
+                      A refused write is tried once, not retried. One CI
                       RECEIPT line. --dry-run checks the fields and prints the
                       line with ev=-, dialling nothing.
 
-exit codes: 0 done and 2 usage or could not run, for every verb; by verb:
+exit codes: 0 done, 1 the verb said no (slowtests, local, github receipt), 2 usage or could not run; by verb:
   slowtests: 0 inside budget, or CI-SLOW lines without --enforce (a
     measurement); 1 a CI-SLEEPS line, or a CI-SLOW line under --enforce
     (the check said no); 2 the invocation could not run (bad flag,

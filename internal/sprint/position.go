@@ -10,7 +10,7 @@ import "sort"
 
 // openLine is the row's cards that have not landed, in score order: the
 // stream's line as it stands. Everything below reads the line through here:
-// StopBefore, PositionWaits, Behind, WaitsFor and NeedsCycle.
+// StopBefore, PositionWaits, Behind and WaitsFor.
 func (t *Table) openLine(row string) []*Card {
 	t.index()
 	if t.lines == nil {

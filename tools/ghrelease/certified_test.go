@@ -32,8 +32,7 @@ func TestCertifiedNewerFailureAfterOlderSuccessRefusesByNamingTheRed(t *testing.
 	t.Parallel()
 	// The fixture a gate that counts any green would pass.
 	h := certHarness(t, httpAnswer("200", "OK", fixture(t, "testdata/certified/old-green-new-red.json")), 0)
-	h.wantRC(h.do("certified"), 1)
-	h.mustContain("not uniformly green")
+	h.wantRun(1, "not uniformly green", "certified")
 	h.mustContain("1 of 1 in the latest-stamp group not success")
 	h.mustContain("receipt run 1002 attempt 1, concluded failure")
 	h.mustContain("  run 1001 attempt 1 completed success updated 2026-09-14T10:00:00Z ")
@@ -45,8 +44,7 @@ func TestCertifiedNewerFailureAfterOlderSuccessRefusesByNamingTheRed(t *testing.
 func TestCertifiedARunInFlightRefusesWithTheWaitLine(t *testing.T) {
 	t.Parallel()
 	h := certHarness(t, httpAnswer("200", "OK", fixture(t, "testdata/certified/in-flight.json")), 0)
-	h.wantRC(h.do("certified"), 1)
-	h.mustContain("not yet completed")
+	h.wantRun(1, "not yet completed", "certified")
 	h.mustContain("1 certification run(s) on dr-y-run-sha not yet completed; wait for certification-ok, then re-run this workflow: gh run rerun 0000000000 -R example/repo")
 	h.mustContain("in_progress -")
 }
@@ -54,8 +52,7 @@ func TestCertifiedARunInFlightRefusesWithTheWaitLine(t *testing.T) {
 func TestCertifiedOneGreenVouchesAndPrintsTheReceipt(t *testing.T) {
 	t.Parallel()
 	h := certHarness(t, httpAnswer("200", "OK", fixture(t, "testdata/certified/single-green.json")), 0)
-	h.wantRC(h.do("certified"), 0)
-	h.mustContain("receipt run 3001 attempt 1, concluded success")
+	h.wantRun(0, "receipt run 3001 attempt 1, concluded success", "certified")
 	h.mustContain("certification runs on dr-y-run-sha: 1 completed; latest update 2026-09-14T13:00:00Z shared by 1 run(s), 0 not green;")
 	h.mustNotContain("refusing")
 }
@@ -84,8 +81,7 @@ func TestCertifiedAnAnswerThatIsNot200IsRefusedWithTheWholeResponse(t *testing.T
 		{"empty", "", 1},
 	} {
 		h := certHarness(t, c.answer, c.rc)
-		h.wantRC(h.do("certified"), 1)
-		h.mustContain(fmt.Sprintf("asking GitHub for certification runs on dr-y-run-sha did not answer 200 (gh exit %d):", c.rc))
+		h.wantRun(1, fmt.Sprintf("asking GitHub for certification runs on dr-y-run-sha did not answer 200 (gh exit %d):", c.rc), "certified")
 		if c.answer != "" {
 			h.mustContain(strings.SplitN(c.answer, "\n", 2)[0])
 		}
@@ -97,15 +93,13 @@ func TestCertifiedAListShorterThanItsTotalIsAmbiguousAndRefused(t *testing.T) {
 	t.Parallel()
 	body := `{"total_count": 3, "workflow_runs": [{"id": 1, "status": "completed", "conclusion": "success", "run_attempt": 1, "updated_at": "2026-09-14T10:00:00Z"}]}`
 	h := certHarness(t, httpAnswer("200", "OK", body), 0)
-	h.wantRC(h.do("certified"), 1)
-	h.mustContain("refusing: 3 certification runs on dr-y-run-sha but only 1 listed; the selection would be ambiguous")
+	h.wantRun(1, "refusing: 3 certification runs on dr-y-run-sha but only 1 listed; the selection would be ambiguous", "certified")
 }
 
 func TestCertifiedNoRunAtAllVouchesForNothing(t *testing.T) {
 	t.Parallel()
 	h := certHarness(t, httpAnswer("200", "OK", `{"total_count": 0, "workflow_runs": []}`), 0)
-	h.wantRC(h.do("certified"), 1)
-	h.mustContain("refusing: no completed certification run on dr-y-run-sha, so nothing vouches for this tree")
+	h.wantRun(1, "refusing: no completed certification run on dr-y-run-sha, so nothing vouches for this tree", "certified")
 	h.mustContain("receipt run none attempt 0, concluded none")
 	h.mustContain("certify it first")
 }
@@ -119,14 +113,12 @@ func TestCertifiedTheRunCarryingTheLatestUpdateDecidesNotTheHighestId(t *testing
 	  {"id": 2, "status": "completed", "conclusion": "failure", "run_attempt": 1, "updated_at": "2026-09-14T10:00:00Z", "html_url": "u2"},
 	  {"id": 1, "status": "completed", "conclusion": "success", "run_attempt": 2, "updated_at": "2026-09-14T12:00:00Z", "html_url": "u1"}]}`
 	h := certHarness(t, httpAnswer("200", "OK", body), 0)
-	h.wantRC(h.do("certified"), 0)
-	h.mustContain("receipt run 1 attempt 2, concluded success")
+	h.wantRun(0, "receipt run 1 attempt 2, concluded success", "certified")
 
 	// And the reverse: the rerun is red, the later-id run is green and older.
 	body = strings.NewReplacer(`"conclusion": "failure"`, `"conclusion": "TMP"`, `"conclusion": "success"`, `"conclusion": "failure"`, `"conclusion": "TMP"`, `"conclusion": "success"`).Replace(body)
 	h = certHarness(t, httpAnswer("200", "OK", body), 0)
-	h.wantRC(h.do("certified"), 1)
-	h.mustContain("not uniformly green")
+	h.wantRun(1, "not uniformly green", "certified")
 }
 
 func TestCertifiedTwoRunsSharingTheLatestStampWithOppositeConclusionsRefuseNamingTheRed(t *testing.T) {
@@ -141,8 +133,7 @@ func TestCertifiedTwoRunsSharingTheLatestStampWithOppositeConclusionsRefuseNamin
 		  {"id": 10, "status": "completed", "conclusion": %s, "run_attempt": 1, "updated_at": "2026-09-14T12:00:00Z"},
 		  {"id": 11, "status": "completed", "conclusion": %s, "run_attempt": 1, "updated_at": "2026-09-14T12:00:00Z"}]}`, a, b)
 		h := certHarness(t, httpAnswer("200", "OK", body), 0)
-		h.wantRC(h.do("certified"), 1)
-		h.mustContain("shared by 2 run(s), 1 not green")
+		h.wantRun(1, "shared by 2 run(s), 1 not green", "certified")
 		red := "11"
 		if green == "second" {
 			red = "10"
@@ -157,8 +148,7 @@ func TestCertifiedACancelledOrSkippedLatestRunIsNotSuccess(t *testing.T) {
 	for _, conclusion := range []string{`"cancelled"`, `"skipped"`, `"timed_out"`, `null`} {
 		body := `{"total_count": 1, "workflow_runs": [{"id": 5, "status": "completed", "conclusion": ` + conclusion + `, "run_attempt": 1, "updated_at": "2026-09-14T12:00:00Z"}]}`
 		h := certHarness(t, httpAnswer("200", "OK", body), 0)
-		h.wantRC(h.do("certified"), 1)
-		h.mustContain("not uniformly green")
+		h.wantRun(1, "not uniformly green", "certified")
 	}
 }
 
@@ -166,8 +156,7 @@ func TestCertifiedAnAnswerThatIsNotTheDocumentedListIsRefused(t *testing.T) {
 	t.Parallel()
 	for _, body := range []string{`not json`, `{"total_count": 1, "workflow_runs": ["x"]}`, `{"total_count": "?", "workflow_runs": []}`, ``} {
 		h := certHarness(t, httpAnswer("200", "OK", body), 0)
-		h.wantRC(h.do("certified"), 1)
-		h.mustContain("refusing:")
+		h.wantRun(1, "refusing:", "certified")
 		h.mustNotContain("vouch")
 	}
 }
@@ -177,8 +166,7 @@ func TestCertifiedNeedsTheWholeEnvironment(t *testing.T) {
 	for _, missing := range []string{"GITHUB_REPOSITORY", "SHA", "REF", "GITHUB_RUN_ID", "GH_TOKEN"} {
 		h := certHarness(t, httpAnswer("200", "OK", fixture(t, "testdata/certified/single-green.json")), 0)
 		delete(h.vars, missing)
-		h.wantRC(h.do("certified"), 2)
-		h.mustContain(missing + " is not set")
+		h.wantRun(2, missing+" is not set", "certified")
 		if len(h.gh.apis) != 0 {
 			t.Errorf("%s unset: GitHub was asked anyway", missing)
 		}
@@ -188,6 +176,5 @@ func TestCertifiedNeedsTheWholeEnvironment(t *testing.T) {
 func TestCertifiedTakesNoArguments(t *testing.T) {
 	t.Parallel()
 	h := certHarness(t, "", 0)
-	h.wantRC(h.do("certified", "extra"), 2)
-	h.mustContain("usage:")
+	h.wantRun(2, "usage:", "certified", "extra")
 }

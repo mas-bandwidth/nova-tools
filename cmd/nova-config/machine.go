@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -98,18 +97,6 @@ func machineLoops(ctx context.Context, st config.Store, machine string) ([]strin
 	return out, nil
 }
 
-// widthJSON is one machine's width as a program reads it.
-type widthJSON struct {
-	Machine string `json:"machine"`
-	Width   int    `json:"width"`
-	Default bool   `json:"default,omitempty"` // no width: half its cores, as fleet sync resolves it
-	Member  bool   `json:"member"`
-}
-
-func toJSON(w config.MachineWidth) widthJSON {
-	return widthJSON{Machine: w.Machine, Width: w.Width, Default: w.Default, Member: w.Member()}
-}
-
 // runMachineWidth is `machine width <name>`: the width of the sprint's member
 // on the machine, the row's width field, and whether it is a member (width
 // above 0). It reads the machine rows alone and opens no Redis.
@@ -117,7 +104,7 @@ func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Write
 	const verb = "machine width"
 	fs := verbflag.New(verb)
 	c := storeFlags(fs)
-	asJSON := fs.Bool("json", false, "print one JSON object for a program instead of the line: {\"machine\",\"width\",\"member\"}")
+	asJSON := jsonFlag(fs)
 	name, rest := nameAndRest(mustMachine(), args)
 	if code, ok := parse(fs, rest, stderr, verb); !ok {
 		return code
@@ -147,13 +134,18 @@ func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Write
 	if !found {
 		return refused(stderr, verb, "machine "+name+" not found", toolName+" machine list"+c.again())
 	}
+	// One result value, two renderings (docs/STANDARD.md, "When building a
+	// tool": never two shapes): the line is the width's own, and --json is
+	// the family's result envelope carrying the same machine, width and
+	// member facts, with default=true observable for an unset width (half
+	// the machine's cores, as nova-sprint fleet sync resolves it).
 	if *asJSON {
-		out, err := json.Marshal(toJSON(w))
-		if err != nil {
-			return refuse(stderr, verb, err.Error())
+		o := tool.Done().Fact("machine", w.Machine).Fact("width", w.Width).Fact("member", w.Member())
+		o.Verb = verb
+		if w.Default {
+			o.Fact("default", true)
 		}
-		fmt.Fprintln(stdout, string(out))
-		return 0
+		return emit(stdout, o)
 	}
 	fmt.Fprintln(stdout, w.Line())
 	return 0

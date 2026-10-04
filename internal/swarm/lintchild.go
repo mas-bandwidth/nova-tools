@@ -441,7 +441,7 @@ func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
 			}
 			for _, m := range sc.RE.FindAllStringSubmatchIndex(line, -1) {
 				at := m[2] // the command itself, group 1
-				if childNegation.MatchString(childClause(line[:at])) {
+				if childNegationInClause(childClause(line[:at])) {
 					continue
 				}
 				if sc.Allow != nil && sc.Allow(line, at) {
@@ -489,4 +489,17 @@ func childClause(before string) string {
 		return before[all[len(all)-1][1]:]
 	}
 	return before
+}
+
+// childNegationInClause reports whether the clause text before a command carries a
+// negation word within a few (three) words of the command, the only case in which a
+// negation exempts the command from its scan: a negation word farther back, in the
+// same clause, is prose about something else and the command is a command (security#66
+// finding 3).
+func childNegationInClause(clause string) bool {
+	words := strings.Fields(clause)
+	if len(words) > 3 {
+		words = words[len(words)-3:]
+	}
+	return childNegation.MatchString(strings.Join(words, " "))
 }

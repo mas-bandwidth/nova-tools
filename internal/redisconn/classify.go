@@ -63,12 +63,13 @@ func (c Class) phrase() string {
 // An error of this package keeps the class it was made with. Otherwise the
 // store's own answer decides first: a refusal the store wrote is AuthRefused
 // when it says NOAUTH or WRONGPASS and Other for anything else, never
-// Unreachable, because a store that answers was reached. Then the transport:
-// a timeout (a deadline of the context included), a failed dial, a name that
-// does not resolve, a dropped connection (EOF) and a wait for a connection
-// of the pool that ran out are Unreachable. An error that kept only its text
-// is read by the same words. Everything else, a cancelled context and a
-// closed client among it, is Other.
+// Unreachable, because a store that answers was reached. A cancelled context
+// is read next, so its identity survives the transport wrappers net and
+// go-redis put around it. Then the transport: a timeout (a deadline of the
+// context included), a failed dial, a name that does not resolve, a dropped
+// connection (EOF) and a wait for a connection of the pool that ran out are
+// Unreachable. An error that kept only its text is read by the same words.
+// Everything else, a closed client among it, is Other.
 func Classify(err error) Class {
 	if err == nil {
 		return Other
@@ -82,6 +83,14 @@ func Classify(err error) Class {
 		if startsWithAny(answered.Error(), "NOAUTH", "WRONGPASS", "ERR invalid password", "ERR invalid username-password pair") {
 			return AuthRefused
 		}
+		return Other
+	}
+	// A cancellation keeps its identity through the transport wrappers net
+	// and go-redis put around it: a *net.OpError whose Err is context.Canceled
+	// is the caller's own decision, not an unreachable store. The check comes
+	// after this package's failures and the store's typed replies above, so
+	// neither is overridden by a cancellation carried beside it.
+	if errors.Is(err, context.Canceled) {
 		return Other
 	}
 	var transport net.Error

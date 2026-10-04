@@ -72,7 +72,10 @@ Date it, cut it, relocate it, or keep it on purpose — the judgment is the
 writer's, and this tool never makes it.
 
 what a scan prints, one line each:
-  SELFTALK FAIL <file>:<line>: <SHAPE> match="<words>": <sentence>   (stderr, in line order)
+  Findings print on stderr in line order; skips, banners, the DATED count, the closing
+  count line, SKIP files=0 and NOTE print on stdout. Run with 2>/dev/null: the count
+  line, DATED and NOTE remain on stdout.
+  SELFTALK FAIL <file>:<line>: <SHAPE> match="<words>": <sentence>
                        <SHAPE> is STANDING for the first class, else the second class's shape:
                        RANKING, FORECLOSURE, VERDICT-IDIOM or TRAIT
   SELFTALK SKIP <file> (--skip)
@@ -80,6 +83,7 @@ what a scan prints, one line each:
   SELFTALK MORE kind=<class> shown=<n> total=<t> <remedy>
   SELFTALK DATED n=<k> files=<n>
   SELFTALK OK|FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> [shown=<n>]
+  SELFTALK SKIP files=0 skipped=<n> reason=all-skipped
   SELFTALK NOTE <a --skip or --rule-doc name no named file has>
   SELFTALK NOTE <what a green does and does not clear>
 match= is the words the shape's rule matched. files= counts the files scanned; claims= the
@@ -105,6 +109,7 @@ unreadable file). An all-skipped run exits 0 with SELFTALK SKIP files=0, never O
 The first run needs nothing but this binary. Write the example pages, then paste the
 lines under example: as they are:
 
+setup:
   nova-self-talk example ./pages
 
 example:

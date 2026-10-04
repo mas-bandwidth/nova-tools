@@ -225,7 +225,7 @@ func draftOpenReadFailure(busDir string, me bus.Participant, maxWords int, haveM
 		wordLimit = fmt.Sprintf("%d", maxWords)
 		wordLimitNote = fmt.Sprintf("--receipt-max-words %d is the resolved positive word-count threshold for classifying short receipts", maxWords)
 	}
-	recovery := fmt.Sprintf("nova-bus inbox --bus %s --as %s --receipt-max-words %s --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'", oneline.Escape(shellQuote(busDir)), oneline.Escape(shellQuote(me.Name)), oneline.Escape(wordLimit))
+	recovery := fmt.Sprintf("nova-bus inbox --bus %s --as %s --receipt-max-words %s --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'", oneline.Escape(oneline.ShellWord(busDir)), oneline.Escape(oneline.ShellWord(me.Name)), oneline.Escape(wordLimit))
 	recoveryNote := "--carry-history preserves existing history, avoids first-advance refusal or discarding prior notes, and --advance moves and pushes the cursor"
 	placeholders := "replace the remote and branch placeholders; " + wordLimitNote
 	var pathErr *os.PathError

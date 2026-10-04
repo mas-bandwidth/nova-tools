@@ -17,7 +17,7 @@ func TestPolishJSONLinksKeepsTotalsAndProvenance(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("[one](missing)\n[two](gone)\n"), 0600))
-	exit, stdout, stderr := runCheck(t, "links", "--dir", dir, "--json", "--fail-max", "1")
+	exit, stdout, stderr := runCheck(t, "links", "--dir", dir, "--json", "--max", "1")
 	assert.Equal(t, 1, exit)
 	assert.Empty(t, stderr)
 	var out struct {
