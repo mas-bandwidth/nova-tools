@@ -171,8 +171,9 @@ func TestAChainOfSentinelsIsReleasedOneAtATime(t *testing.T) {
 
 // H7: a card before a sentinel that is dropped is no longer before it: the
 // stop is reached with no judgment. A need the sentinel names that is
-// dropped blocks it like any waiting card; ack waives it, and it is reached.
-func TestADroppedNeedOfASentinel(t *testing.T) {
+// dropped blocks it like any waiting card; but drop of a needed card is
+// refused unless --cascade is used.
+func TestADroppedNeedOfASentinelIsRefused(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
 	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"x"}}))
@@ -183,26 +184,16 @@ func TestADroppedNeedOfASentinel(t *testing.T) {
 	open := w.openOn("stop")
 	require.Empty(t, open, "a card before the stop dropped: open %+v, waits %v", open, WaitsFor(w.s, w.s.Work.Card("stop"), nil))
 	require.Equal(t, "x", strings.Join(WaitsFor(w.s, w.s.Work.Card("stop"), nil), ","), "a card before the stop dropped: open %+v, waits %v", open, WaitsFor(w.s, w.s.Work.Card("stop"), nil))
-	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"x"}}, Reason: "obsolete"}))
-	blocked := w.openOn("stop")
-	require.Len(t, blocked, 1, "blocked: %+v", blocked)
-	require.Equal(t, NBlocked, blocked[0].Note.Type, "blocked: %+v", blocked)
-	require.Empty(t, w.s.Work.Card("stop").F("reached"), "blocked: %+v", blocked)
-	p := w.must(Ack(w.s, AckReq{Notes: []string{blocked[0].Note.ID}, Reason: "not needed", Who: "coordinator"}))
-	stop := w.s.Work.Card("stop")
-	require.Equal(t, "x", stop.F("waived"), "ack: %v", stop.Fields)
-	require.NotEmpty(t, stop.F("reached"), "ack: %v", stop.Fields)
-	require.Equal(t, Waiting, stop.Col, "ack: %v", stop.Fields)
-	require.Len(t, notesIn(p, NSentinelReached), 1, "ack: %v", stop.Fields)
-	w.clean("waived")
-	tp, _ := TickDone(w.s, TickReq{})
-	require.True(t, tp.Empty(), "the sprint is done with a sentinel waiting: %+v", tp)
-	w.must(release(w, "done", "stop"))
-	w.must(tickDone(w.s, TickReq{}))
-	done := w.notesOf(NSprintDone)
-	require.Len(t, done, 1, "the sprint is done: %+v", done)
-	require.Equal(t, "2 landed, 2 dropped", done[0].What, "the sprint is done: %+v", done)
-	w.clean("released")
+	// dropping x without cascade should be refused because stop needs it
+	p := Drop(w.s, DropReq{Sel: Sel{IDs: []string{"x"}}, Reason: "obsolete"})
+	require.Len(t, p.Refused, 1, "drop should be refused: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "x is needed by stop", "refusal should name dependant")
+	require.Contains(t, p.Refused[0].Why, "--cascade", "refusal should suggest cascade")
+	// dropping with cascade drops stop too
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"x"}}, Reason: "obsolete", Cascade: true}))
+	require.Equal(t, "", w.s.StateOf("x"), "x should be off the table")
+	require.Equal(t, "", w.s.StateOf("stop"), "stop should be off the table")
+	w.clean("dropped with cascade")
 }
 
 // H7: a sentinel with needs in two streams is reached by the landing of the

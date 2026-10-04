@@ -101,27 +101,19 @@ func TestAddRefusesACycle(t *testing.T) {
 	require.Equal(t, "p,q,r,p", strings.Join(c, ","), "NeedsCycle: %v", c)
 }
 
-// H11: a dropped need acknowledged by the coordinator is waived, by whom and
-// when, and counts as satisfied: the primary moves to ready in the ack.
-func TestAWaivedNeedIsSatisfied(t *testing.T) {
+// Dropping a needed card is refused unless Cascade is true.
+func TestDropRefusesNeededCardForWaiver(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1"}}))
-	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"}))
-	blocked := w.openOn("b")
-	require.Len(t, blocked, 1, "blocked: %v", blocked)
-	require.Equal(t, NBlocked, blocked[0].Note.Type, "blocked: %v", blocked)
-	p := w.must(Ack(w.s, AckReq{Notes: []string{blocked[0].Note.ID}, Reason: "not needed after all", Who: "coordinator"}))
-	b := w.s.Work.Card("b")
-	require.Equal(t, Ready, b.Col, "ack: %s %v (%+v)", b.Col, b.Fields, p.Units)
-	require.Equal(t, "s1-1", b.F("waived"), "ack: %s %v (%+v)", b.Col, b.Fields, p.Units)
-	require.Equal(t, "coordinator", b.F("waived_by"), "ack: %s %v (%+v)", b.Col, b.Fields, p.Units)
-	require.Equal(t, stamp(w.s.Now), b.F("waived_at"), "ack: %s %v (%+v)", b.Col, b.Fields, p.Units)
-	lawful := Lawful(p)
-	require.Empty(t, lawful.Refused, "the lifecycle refuses the waived move: %+v", lawful.Refused)
-	w.clean("waived")
-	needs, _ := NeedsOf(w.s, "b")
-	require.Len(t, needs, 1, "NeedsOf: %+v", needs)
-	require.True(t, needs[0].Waived, "NeedsOf: %+v", needs)
-	require.Equal(t, "off the table (dropped)", needs[0].State, "NeedsOf: %+v", needs)
+	// dropping s1-1 without cascade should be refused
+	p := Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"})
+	require.Len(t, p.Refused, 1, "drop should be refused: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "s1-1 is needed by b", "refusal should name dependant")
+	require.Contains(t, p.Refused[0].Why, "--cascade", "refusal should suggest cascade")
+	// dropping with cascade drops b too
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete", Cascade: true}))
+	require.Equal(t, "", w.s.StateOf("s1-1"), "s1-1 should be off the table")
+	require.Equal(t, "", w.s.StateOf("b"), "b should be off the table")
+	w.clean("dropped with cascade")
 }

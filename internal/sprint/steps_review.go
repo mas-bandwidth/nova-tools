@@ -1245,12 +1245,16 @@ type DropReq struct {
 	Reason  string
 	Answers []string
 	Who     string
+	Cascade bool
 }
 
 // Drop takes open primaries off the table with the reason: their record,
 // outcome and reason are kept; their live work card, unread read cards and
 // merge place go with them. Waiting primaries that need one are blocked, and
-// the coordinator is told.
+// the coordinator is told. If Cascade is false and a chosen card is needed by
+// other waiting cards, the drop is refused for that card, naming the
+// dependants. If Cascade is true, the dependants (and their dependants
+// recursively) are dropped in the same plan with the same reason.
 func Drop(s *Snapshot, r DropReq) Plan {
 	var p Plan
 	var all []*Card
@@ -1266,11 +1270,75 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		}
 		return ""
 	}, s.primaryCard)
-	dropping, blocked := map[string]bool{}, map[string]bool{}
+
+	// Build a map of which waiting cards need which cards.
+	neededBy := map[string][]string{} // cardID -> list of waiting card IDs that need it
+	for _, w := range s.Work.Column(Waiting) {
+		for _, need := range Split(w.F("needs")) {
+			neededBy[need] = append(neededBy[need], w.ID)
+		}
+	}
+
+	// If not cascading, check if any chosen card is needed by waiting cards
+	// that are not themselves being dropped.
+	if !r.Cascade {
+		for _, c := range chosen {
+			if dependants, ok := neededBy[c.ID]; ok {
+				var waitingDependants []string
+				for _, d := range dependants {
+					// Only refuse if the dependant is not also being dropped
+					isDropping := false
+					for _, ch := range chosen {
+						if ch.ID == d {
+							isDropping = true
+							break
+						}
+					}
+					if !isDropping {
+						waitingDependants = append(waitingDependants, d)
+					}
+				}
+				if len(waitingDependants) > 0 {
+					p.refuse(c.ID, fmt.Sprintf("%s is needed by %s; drop them too with --cascade", c.ID, strings.Join(waitingDependants, ", ")))
+				}
+			}
+		}
+		if len(p.Refused) > 0 {
+			return Lawful(p)
+		}
+	}
+
+	dropping := map[string]bool{}
 	for _, c := range chosen {
 		dropping[c.ID] = true
 	}
+
+	// If cascading, recursively add dependants to the dropping set.
+	if r.Cascade {
+		changed := true
+		for changed {
+			changed = false
+			for _, w := range s.Work.Column(Waiting) {
+				if dropping[w.ID] {
+					continue
+				}
+				for _, need := range Split(w.F("needs")) {
+					if dropping[need] {
+						dropping[w.ID] = true
+						changed = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	blocked := map[string]bool{}
 	for _, c := range chosen {
+		// If cascading, also process the dependants that were added.
+		if r.Cascade && !dropping[c.ID] {
+			continue
+		}
 		u := Unit{Key: c.ID, Stream: c.Row}
 		for _, fc := range s.Fleet.Of(c.ID) {
 			if fc.Col == Ready || fc.Col == Working || fc.Col == Withdrawn {
@@ -1308,6 +1376,60 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		answerListed(&u, s.Open, r.Answers, "drop", c.Row, "dropped "+c.ID+"; "+r.Reason, r.Who, s.Now, c.ID)
 		u.Moved = fmt.Sprintf("%s %s -> off the table (%s)", c.ID, c.Col, r.Reason)
 		p.Units = append(p.Units, u)
+	}
+	// Also process any additional dependants that were added due to cascade.
+	if r.Cascade {
+		for _, w := range s.Work.Column(Waiting) {
+			if !dropping[w.ID] {
+				continue
+			}
+			// Check if this waiting card was already processed as a chosen card.
+			alreadyProcessed := false
+			for _, c := range chosen {
+				if c.ID == w.ID {
+					alreadyProcessed = true
+					break
+				}
+			}
+			if alreadyProcessed {
+				continue
+			}
+			u := Unit{Key: w.ID, Stream: w.Row}
+			for _, fc := range s.Fleet.Of(w.ID) {
+				if fc.Col == Ready || fc.Col == Working || fc.Col == Withdrawn {
+					u.Changes = append(u.Changes, change(Fleet, removeEntry(fc, map[string]string{"dropped": stamp(s.Now)})))
+				}
+			}
+			for _, rc := range s.Readers.Of(w.ID) {
+				if rc.Col == Asked || rc.Col == Reading {
+					u.Changes = append(u.Changes, change(Readers, removeEntry(rc, map[string]string{"dropped": stamp(s.Now)})))
+				}
+			}
+			if m := s.Merge.Placed(w.ID); m != nil {
+				u.Changes = append(u.Changes, change(Merge, removeEntry(m, map[string]string{"dropped": stamp(s.Now)})))
+			}
+			u.Changes = append(u.Changes, change(Work, removeEntry(w, map[string]string{
+				"outcome": "dropped", "reason": r.Reason, "dropped_from": w.Col, "dropped_at": stamp(s.Now)})))
+			for _, w2 := range s.Work.Column(Waiting) {
+				if dropping[w2.ID] || blocked[w2.ID] || !contains(Split(w2.F("needs")), w.ID) {
+					continue
+				}
+				blocked[w2.ID] = true
+				var gone []string
+				for _, need := range Split(w2.F("needs")) {
+					if dropping[need] {
+						gone = append(gone, need)
+					}
+				}
+				if gone = unblocked(s.Open, w2.ID, gone, NBlocked); len(gone) > 0 {
+					u.Notes = append(u.Notes, blockedNote(s, w2.Row, w2.ID, r.Who, gone))
+				}
+			}
+			u.Closes = closesFor(s.Open, nil, w.ID)
+			answerListed(&u, s.Open, r.Answers, "drop", w.Row, "dropped "+w.ID+"; "+r.Reason, r.Who, s.Now, w.ID)
+			u.Moved = fmt.Sprintf("%s %s -> off the table (%s)", w.ID, w.Col, r.Reason)
+			p.Units = append(p.Units, u)
+		}
 	}
 	settle(&p, s, r.Who, dropping, dropping)
 	// Each stream counts its dropped primaries on its control card.

@@ -129,7 +129,7 @@ func TestMissingNeedWaiverDoesNotIncludeLaterMissingNeed(t *testing.T) {
 
 func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"ack", "resolve", "dropped"} {
+	for _, action := range []string{"ack", "resolve"} {
 		t.Run(action, func(t *testing.T) {
 			h := newHarness(t)
 			h.setup(1)
@@ -144,10 +144,6 @@ func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
 				h.must(AckStep(sprint.AckReq{Notes: []string{notes[0].Note.ID}, Reason: "it exists now"}))
 			case "resolve":
 				h.must(ResolveStep(sprint.ResolveReq{}))
-			case "dropped":
-				h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"later"}}, Reason: "not needed"}))
-				h.must(ResolveStep(sprint.ResolveReq{}))
-				require.Len(t, h.nOpenOf(sprint.NBlocked, "waiter"), 1, "dropped need was hidden by former missing judgment")
 			}
 			c := h.snap().Work.Card("waiter")
 			if c.Col != sprint.Waiting || c.F("waived") != "" || len(h.nOpenOf(sprint.NMissingNeed, "waiter")) != 0 {
@@ -156,6 +152,29 @@ func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
 			h.clean("dependency exists again")
 		})
 	}
+}
+
+// Dropping a needed card is refused unless Cascade is true.
+func TestDropRefusesNeededCardInMissingNeedTest(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"waiter"}, Needs: []string{"s1-1"}}))
+	seedMissingNeeds(h, "waiter", "later")
+	h.must(ResolveStep(sprint.ResolveReq{}))
+	notes := h.nOpenOf(sprint.NMissingNeed, "waiter")
+	require.Len(t, notes, 1, "missing judgment: %+v", notes)
+	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"later"}}))
+	// dropping "later" without cascade should be refused because waiter needs it
+	res := h.run(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"later"}}, Reason: "not needed"}))
+	require.Len(t, res.Refused, 1, "drop should be refused: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "later is needed by waiter", "refusal should name dependant")
+	require.Contains(t, res.Refused[0].Why, "--cascade", "refusal should suggest cascade")
+	// dropping with cascade should succeed and drop waiter too
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"later"}}, Reason: "not needed", Cascade: true}))
+	require.Equal(t, "", h.state("later"), "later should be off the table")
+	require.Equal(t, "", h.state("waiter"), "waiter should be off the table")
+	h.clean("dropped with cascade")
 }
 
 // Every missing-need judgment is written in the one tick that finds it: a

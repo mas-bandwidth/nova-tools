@@ -5,10 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // H11: card shows each need with its state and what needs the card; queue
@@ -30,19 +27,23 @@ func TestTheReadsShowTheNeeds(t *testing.T) {
 	ta.clean()
 }
 
-// card shows each waived need, by whom and when it was waived.
-func TestCardShowsTheWaivedNeeds(t *testing.T) {
+// drop of a needed card is refused unless --cascade is given.
+func TestDropRefusesNeededCard(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 1")
 	ta.ok("add --stream s2 b --needs s1-1")
-	ta.ok("drop s1-1 --reason obsolete")
-	g := ta.group(sprint.NBlocked, "s2")
-	ta.ok("ack " + g.Notes[0] + " --reason fine")
-	out := ta.ok("card --fields b")
-	require.Contains(t, out, "NEEDS s1-1 off the table (dropped) waived by ", "card b")
-	require.Contains(t, out, " at 20", "card b")
+	// drop s1-1 without cascade should be refused
+	code, out, errs := ta.do("drop s1-1 --reason obsolete")
+	require.Equal(t, 1, code, "drop of needed card should be refused: exit=%d out=%s err=%s", code, out, errs)
+	require.Contains(t, out+errs, "s1-1 is needed by b", "refusal should name dependant b")
+	require.Contains(t, out+errs, "drop them too with --cascade", "refusal should suggest cascade")
+	// drop with cascade should succeed
+	ta.ok("drop s1-1 --reason obsolete --cascade")
+	// both s1-1 and b should be dropped
+	require.Contains(t, ta.ok("card --fields s1-1"), "dropped", "s1-1 should be dropped")
+	require.Contains(t, ta.ok("card --fields b"), "dropped", "b should be dropped")
 	ta.clean()
 }
 
@@ -71,9 +72,8 @@ func TestTheCardSaysWhatHoldsIt(t *testing.T) {
 	require.Contains(t, ta.ok("card b --json"), `"held":{"id":"b","by":"d"`, "card b --json")
 }
 
-// inbox --open lists the whole needs of a blocked judgment, one per line, as
-// card --fields does; the judgment's own line previews them.
-func TestInboxOpenListsEveryDroppedNeed(t *testing.T) {
+// Dropping needed cards is refused unless --cascade is used.
+func TestDropRefusesNeededCardsForInbox(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
@@ -83,22 +83,15 @@ func TestInboxOpenListsEveryDroppedNeed(t *testing.T) {
 		ids = append(ids, "s1-"+strconv.Itoa(i))
 	}
 	ta.ok("add --stream s2 b --needs " + strings.Join(ids, ","))
-	ta.ok("drop " + strings.Join(ids, " ") + " --reason obsolete")
-	g := ta.group(sprint.NBlocked, "s2")
-	list := ta.ok("inbox --open " + g.ID)
+	// dropping all needed cards without cascade should be refused
+	code, out, errs := ta.do("drop " + strings.Join(ids, " ") + " --reason obsolete")
+	require.Equal(t, 1, code, "drop of needed cards should be refused: exit=%d out=%s err=%s", code, out, errs)
 	for _, id := range ids {
-		assert.Contains(t, list, "\n  NEEDS "+id+"\n", "inbox --open %s does not list the need %s", g.ID, id)
+		require.Contains(t, out+errs, id+" is needed by b", "refusal should name dependant for %s", id)
+		require.Contains(t, out+errs, "--cascade", "refusal should suggest cascade for %s", id)
 	}
-	assert.Contains(t, list, "... and 4 more", "the judgment's line no longer previews the needs")
-	assert.NotContains(t, ta.ok("inbox"), "NEEDS ", "inbox without --open lists needs")
-	var open struct {
-		Needs []string `json:"needs"`
-	}
-	ta.json("inbox --open "+g.ID, &open)
-	assert.Len(t, open.Needs, 12, "inbox --open --json needs: %v", open.Needs)
-	card := ta.ok("card --fields b")
-	for _, id := range ids {
-		assert.Contains(t, card, "NEEDS "+id+" ", "card --fields b lacks %s", id)
-	}
+	// dropping with cascade should succeed and drop b too
+	ta.ok("drop " + strings.Join(ids, " ") + " --reason obsolete --cascade")
+	require.Contains(t, ta.ok("card --fields b"), "dropped", "b should be dropped")
 	ta.clean()
 }

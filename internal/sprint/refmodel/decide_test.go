@@ -139,20 +139,21 @@ func TestResolveReadiesAWaitingPrimaryWhoseNeedsLanded(t *testing.T) {
 	assert.Equal(t, "s1-2 waiting -> ready", got[0].Words, "the words: %q", got[0].Words)
 }
 
-func TestResolveRaisesABlockedJudgmentOnceForADroppedNeed(t *testing.T) {
+// drop of a needed card is refused unless Cascade is true.
+func TestDropRefusesNeededCard(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
 	w.addOne(t, "s1", "s1-2", "s1-1")
-	w.must(t, sprint.Drop(w.s, sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "not wanted", Who: coordinator}))
-	// dropping told the coordinator already; the judgment is open, so the tick writes none again
-	expect(t, refmodel.ResolveMoves(w.snapshot(w.fresh()), later(0)))
-	// with the judgment closed, the tick raises it
-	snap := w.snapshot(w.fresh())
-	snap.Tables = withoutJudgments(snap.Tables, sprint.NBlocked)
-	got := refmodel.ResolveMoves(snap, later(0))
-	expect(t, got, "open a primary is blocked on something dropped [s1-2]")
-	assert.Equal(t, []string{"count=1", "needs=s1-1", "who=machine"}, got[0].Attrs, "the blocked judgment names its need: %v", got[0].Attrs)
+	// dropping s1-1 without cascade should be refused
+	p := sprint.Drop(w.s, sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "not wanted", Who: coordinator})
+	require.Len(t, p.Refused, 1, "drop should be refused: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "s1-1 is needed by s1-2", "refusal should name dependant")
+	require.Contains(t, p.Refused[0].Why, "--cascade", "refusal should suggest cascade")
+	// dropping with cascade should succeed
+	w.must(t, sprint.Drop(w.s, sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "not wanted", Who: coordinator, Cascade: true}))
+	require.Equal(t, "", w.state("s1-1"), "s1-1 should be off the table")
+	require.Equal(t, "", w.state("s1-2"), "s1-2 should be off the table")
 }
 
 func TestResolveReachesASentinelWhoseNeedsLanded(t *testing.T) {

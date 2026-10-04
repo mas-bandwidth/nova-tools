@@ -9,39 +9,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The property test's finding of seed 7, its shortest sequence as a test; and
-// the step builder's rule for two changes of one card in one step.
-
-// Seed 7: the printed ack of a group of two blocked judgments on one primary
-// (it needs two cards, both dropped) failed: the ack changed the primary
-// twice in one step. It waives both needs at once, and the primary is ready.
-func TestAckOfTwoBlockedJudgmentsOnOnePrimaryWaivesBoth(t *testing.T) {
+// Drop of a needed card is refused unless Cascade is true.
+func TestDropRefusesNeededCard(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"p3", "p4"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"p5"}, Needs: []string{"p3", "p4"}}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"p3"}}, Reason: "why"}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"p4"}}, Reason: "why"}))
-	var notes []string
-	for _, o := range h.openOf(sprint.NBlocked) {
-		notes = append(notes, o.Note.ID)
-	}
-	require.Len(t, notes, 2, "two blocked judgments: %v", notes)
-	var ack string
-	for _, c := range h.commandsOf(sprint.NBlocked) {
-		if c.Decision == "ack" {
-			ack = c.Lines[0]
-		}
-	}
-	require.Contains(t, ack, notes[0], "the printed ack does not name both: %q", ack)
-	require.Contains(t, ack, notes[1], "the printed ack does not name both: %q", ack)
-	h.must(AckStep(sprint.AckReq{Notes: notes, Reason: "none"}))
-	got := h.state("p5")
-	require.Equal(t, sprint.Ready, got, "p5 is %s", got)
-	w := h.snap().Work.Card("p5").F("waived")
-	require.True(t, w == "p3,p4" || w == "p4,p3", "waived %q", w)
-	h.clean("acked")
+	// dropping p3 without cascade should be refused
+	res := h.run(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"p3"}}, Reason: "why"}))
+	require.Len(t, res.Refused, 1, "drop p3 should be refused: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "p3 is needed by p5", "refusal should name dependant")
+	require.Contains(t, res.Refused[0].Why, "--cascade", "refusal should suggest cascade")
+	// dropping with cascade should succeed and drop p5 too
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"p3"}}, Reason: "why", Cascade: true}))
+	require.Equal(t, "", h.state("p3"), "p3 should be off the table")
+	require.Equal(t, "", h.state("p5"), "p5 should be off the table")
+	// p4 should still be ready
+	require.Equal(t, sprint.Ready, h.state("p4"), "p4 should be ready")
+	h.clean("dropped with cascade")
 }
 
 // A step whose plan changes one card twice: agreeing changes are one entry;

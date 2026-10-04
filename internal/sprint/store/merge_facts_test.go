@@ -104,8 +104,7 @@ func TestRankRefusesALandedPrimary(t *testing.T) {
 	h.must(RankStep(sprint.RankReq{IDs: []string{"s1-2"}, First: true}))
 }
 
-// add refuses a need that names no primary; a need on a primary on the
-// table, placed or kept (dropped), is admitted waiting.
+// add refuses a need that names no primary or a dropped primary.
 func TestAddRefusesANeedThatDoesNotExist(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -114,32 +113,35 @@ func TestAddRefusesANeedThatDoesNotExist(t *testing.T) {
 	require.Empty(t, res.Moved, "add with a need on no primary: moved %v refused %v", res.Moved, res.Refused)
 	require.Len(t, res.Refused, 2, "add with a need on no primary: moved %v refused %v", res.Moved, res.Refused)
 	require.Contains(t, res.Refused[0].Why, "nosuch", "add with a need on no primary: moved %v refused %v", res.Moved, res.Refused)
+	// dropping s1-2 makes it dropped; add with a need on s1-2 is now refused
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
-	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1", "b2"}, Needs: []string{"s1-1", "s1-2"}}))
-	require.Equal(t, sprint.Waiting, h.state("b1"), "b1 is %s, b2 is %s", h.state("b1"), h.state("b2"))
-	require.Equal(t, sprint.Waiting, h.state("b2"), "b1 is %s, b2 is %s", h.state("b1"), h.state("b2"))
+	res = h.run(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1", "b2"}, Needs: []string{"s1-1", "s1-2"}}))
+	require.Empty(t, res.Moved, "add with a need on dropped primary: moved %v refused %v", res.Moved, res.Refused)
+	require.Len(t, res.Refused, 2, "add with a need on dropped primary: moved %v refused %v", res.Moved, res.Refused)
+	require.Contains(t, res.Refused[0].Why, "s1-2", "add with a need on dropped primary: moved %v refused %v", res.Moved, res.Refused)
+	require.Contains(t, res.Refused[0].Why, "dropped", "add with a need on dropped primary: moved %v refused %v", res.Moved, res.Refused)
 	h.clean("added")
 }
 
-// Two needs dropped in one step give one blocked note per waiting primary.
-func TestTwoDroppedNeedsGiveOneBlockedNote(t *testing.T) {
+// Dropping needed cards is refused unless Cascade is true.
+func TestDropRefusesNeededCards(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"later"}, Needs: []string{"s1-1", "s1-2"}}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "obsolete"}))
-	notes, _, err := h.m.NotesSince(h.ctx, "", 1000)
-	require.NoError(t, err)
-	var blocked []sprint.Note
-	for _, n := range notes {
-		if n.Type == sprint.NBlocked {
-			blocked = append(blocked, n)
-		}
+	// dropping s1-1 and s1-2 without cascade should be refused
+	res := h.run(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "obsolete"}))
+	require.Len(t, res.Refused, 2, "drop should be refused: %+v", res)
+	for _, r := range res.Refused {
+		require.Contains(t, r.Why, "is needed by later", "refusal should name dependant: %s", r.Why)
+		require.Contains(t, r.Why, "--cascade", "refusal should suggest cascade: %s", r.Why)
 	}
-	require.Len(t, blocked, 1, "blocked notes: %+v", blocked)
-	require.Contains(t, blocked[0].What, "s1-1", "blocked notes: %+v", blocked)
-	require.Contains(t, blocked[0].What, "s1-2", "blocked notes: %+v", blocked)
-	h.clean("dropped")
+	// dropping with cascade should succeed and drop later too
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "obsolete", Cascade: true}))
+	require.Equal(t, "", h.state("s1-1"), "s1-1 should be off the table")
+	require.Equal(t, "", h.state("s1-2"), "s1-2 should be off the table")
+	require.Equal(t, "", h.state("later"), "later should be off the table")
+	h.clean("dropped with cascade")
 }
 
 func hasString(xs []string, x string) bool {
