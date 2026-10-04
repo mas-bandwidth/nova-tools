@@ -214,8 +214,8 @@ The answer.
 	tab := loadBus(t, writeBus(t, files))
 	ada := mustParticipant(t, tab.Config, "Ada")
 	for _, it := range tab.Inbox(ada, 40) {
-		require.False(t, it.Note.Header.ID == "bo-abcdef012345", "an answered note is still in the inbox")
-		require.False(t, it.Note.Lane == "from-ada", "my own note is in my inbox")
+		require.NotEqual(t, "bo-abcdef012345", it.Note.Header.ID, "an answered note is still in the inbox")
+		require.NotEqual(t, "from-ada", it.Note.Lane, "my own note is in my inbox")
 	}
 	// Bo's inbox holds Ada's answer and nothing of her own.
 	bo := mustParticipant(t, tab.Config, "Bo")
@@ -323,7 +323,7 @@ func TestCheckFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tab := loadBus(t, writeBus(t, tc.files))
 			ps := tab.Check()
-			require.False(t, len(ps) == 0, "check passed a bus it should have failed")
+			require.NotEmpty(t, ps, "check passed a bus it should have failed")
 			var found bool
 			for _, p := range ps {
 				if strings.Contains(p.Reason, tc.want) {
@@ -361,7 +361,7 @@ func TestCheckReportsEveryFailureNotTheFirst(t *testing.T) {
 	{
 		ps := tab.Check()
 		if len(ps) < 3 {
-			require.False(t, len(ps) < 3, "check reported %d findings over three broken files: %+v", len(ps), ps)
+			require.GreaterOrEqual(t, len(ps), 3, "check reported %d findings over three broken files: %+v", len(ps), ps)
 		}
 	}
 }
@@ -397,7 +397,7 @@ Something everyone needs, said once.
 	require.True(t, found, "a note addressed to a group Ada belongs to is not in Ada's inbox")
 	bo := mustParticipant(t, tab.Config, "Bo")
 	for _, item := range tab.Inbox(bo, 40) {
-		require.False(t, item.Note.Header.ID == "bo-333333333333", "Bo's own note is in Bo's inbox")
+		require.NotEqual(t, "bo-333333333333", item.Note.Header.ID, "Bo's own note is in Bo's inbox")
 	}
 	// And the resolution itself names every member, including the one with no lane, who is
 	// addressable and never a sender.
@@ -425,12 +425,12 @@ func TestUnreadableNotesAreNamedAndNotSilent(t *testing.T) {
 	// honestly say it was addressed to me. It is reported separately, which is the whole
 	// point.
 	for _, item := range tab.Inbox(ada, 40) {
-		require.False(t, item.Note.Path == bad[0].Path, "an unparseable note was reported as an open note addressed to me")
+		require.NotEqual(t, bad[0].Path, item.Note.Path, "an unparseable note was reported as an open note addressed to me")
 	}
 	// check still fails on both, including the one in my own lane.
 	{
 		n := len(tab.Check())
-		require.False(t, n < 2, "check found %d problems over two unreadable notes", n)
+		require.GreaterOrEqual(t, n, 2, "check found %d problems over two unreadable notes", n)
 	}
 }
 
@@ -465,7 +465,7 @@ Re lines named filenames once, and a rename orphaned this one.
 		}
 	}
 	if len(strict) < 3 {
-		require.False(t, len(strict) < 3, "Check() found %d problems, want at least the three planted: %+v", len(strict), strict)
+		require.GreaterOrEqual(t, len(strict), 3, "Check() found %d problems, want at least the three planted: %+v", len(strict), strict)
 	}
 
 	// With it, the two old ones warn and the new one still fails.

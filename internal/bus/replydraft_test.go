@@ -38,7 +38,7 @@ func TestLegacyDraftIDIsOneSegmentAndDeterministic(t *testing.T) {
 	assert.Equal(t, len("legacy-")+12, len(got), "%q is not `legacy-` and twelve hex digits", got)
 	{
 		other := LegacyDraftID("from-bo/2026-09-05T0901Z-older.md")
-		assert.False(t, other == got, "two paths composed one name: %q", got)
+		assert.NotEqual(t, got, other, "two paths composed one name: %q", got)
 	}
 	// The derived id is a name and not a proof: this asserts the FIELD's job, which is that
 	// two ordinary paths do not compose one name. What stands behind the file is the
