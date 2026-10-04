@@ -139,8 +139,9 @@ func devBehindCond(s *Snapshot) []cond {
 // PromotedReq is the coordinator's word that the sprint branch was promoted into dev: the
 // merge sha.
 type PromotedReq struct {
-	Sha string
-	Who string
+	Sha     string
+	Answers []string // the judgments it answers (answered): one naming no open judgment refuses the whole step
+	Who     string
 }
 
 var shaWord = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
@@ -173,5 +174,6 @@ func Promoted(s *Snapshot, r PromotedReq) Plan {
 		}
 	}
 	p.Units = append(p.Units, u)
+	answered(&p, s, r.Answers, r.Who)
 	return p
 }

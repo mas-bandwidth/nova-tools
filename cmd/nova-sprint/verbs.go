@@ -2521,7 +2521,7 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("promoted")
 	sha := fs.String("sha", "", "the merge commit's sha on dev, 7 to 40 hex digits (required)")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "promoted", err.Error())
@@ -2533,8 +2533,7 @@ func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "promoted", err.Error())
 	}
-	_ = ans // the judgment closes with the record itself (sprint.Promoted)
-	return a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: *sha, Who: c.actor}), stdout, stderr)
+	return a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: *sha, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
 }
 
 // cmdFunded is the coordinator's word that a provider was paid: its rest of its funds ends

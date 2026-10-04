@@ -1671,7 +1671,9 @@ one pure decision): `dev is behind: <n> cards landed on <branch> since the last 
 functional tier, queue it; then: nova-sprint promoted --sha <merge sha>` (the branch is the
 base the most of them name; with no promotion recorded, `since no promotion recorded`),
 decisions promoted and wait 30m, updated in place while it holds and closed when `promoted`
-is recorded (`TestTheTickRaisesDevBehindAtTwentyFiveLandingsOrThirtyMinutes`).
+is recorded; `promoted --answers <note>` is held as every answer is (`answered`): an answer
+naming no open judgment refuses the whole step, nothing written
+(`TestTheTickRaisesDevBehindAtTwentyFiveLandingsOrThirtyMinutes`, `TestPromotedHoldsItsAnswers`).
 
 **The lander's checks.** Each head `land` merges is checked by script, no model,
 before the batch's check runs (`internal/diffcheck`), the two checks the decide
