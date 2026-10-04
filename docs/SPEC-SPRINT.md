@@ -63,13 +63,18 @@ nova-config no longer has with her beat, and keeping the hold of a
 friend that stays; a config that cannot be read or holds no friend row is
 refused (exit 3) and changes nothing.
 
-A friend's counts are her sprint cards' (a friend's card, below), read by
-`where` from her fleet row `friend.<name>`, never from her working directory: a
-card dealt to her is `working`; a `Verdict: LAND` report (with its `Head:` the
-tip) finishes it done ok, a `Verdict: HOLD` or `FAIL` (or `FAILED`, `BROKEN`)
-report done failed, and a report with no verdict word is done failed too,
-never ok. `ready` is never a friend's card's state: the tick deals a card
-straight into `working` (`sprint.FriendDeal`). A hand-written inbox job that is
+A friend's counts are her sprint cards' (a friend's card, below) and her reads
+(a friend's read, below), read by `where` from her fleet row `friend.<name>`
+and her readers-table row `friend-<name>`, never from her working directory.
+A card dealt to her is `working`. A read asked or reading on `friend-<name>`
+counts in that same `working` cell; a read closed ok counts in `ok`, a read
+closed broken counts in `failed`. A `Verdict: LAND` report on a work card
+(with its `Head:` the tip) finishes it done ok, a `Verdict: HOLD` or `FAIL`
+(or `FAILED`, `BROKEN`) report done failed, and a report with no verdict word
+is done failed too, never ok. `ready` is never a friend's card's state: the
+tick deals a card straight into `working` (`sprint.FriendDeal`). The friends
+table gains no column for this: token counts, not dollar amounts, and the
+read's ok and broken fold into `ok` and `failed`. A hand-written inbox job that is
 no card (an `inbox/<job>/` directory named for no card of the sprint) is
 outside the sprint and is shown nowhere in the table; the coordinator's NOW.md
 is its pointer. `ready` and `working` count her cards in those states; `width`
@@ -188,9 +193,39 @@ id is not a card id or whose `inbox/<job>` is a symlink or a file (checked by
 `delivered=<n> finished=<n>` when either is above zero (`--json` `delivered`,
 `finished`, `cards`). A hand-written inbox directory that is no card of the
 sprint is outside the sprint and shown nowhere in the table: `where` counts her
-cards from her fleet row into her friends row (ready, working, done ok and
-failed; working 0 while she is down), and draws no friend's row in the fleet
-table or its `--json`.
+cards from her fleet row, and her reads from `friend-<name>`, into her friends
+row (ready, working, done ok and failed; working 0 while she is down), and
+draws no friend's row in the fleet table or its `--json`.
+
+**A friend's read.** Any read, at any tier, can be served by a friend with
+room. A reader is any unit with room whose class is at or above the read's
+class, and the ask (`sprint.Ask`) is the one dealer: the reader table and the
+friends table are two views of that pool, not two paths. The class is the tier
+the card is on, raised by the stream's or the sprint's read tier when that
+setting is stronger, on the ladder flash, pro, heavy, frontier, and it does
+not collapse frontier onto pro (`readClassOf`). `readTierOf` still collapses a
+frontier card onto pro, and that return is only the tier a fleet route is
+drawn from. A friend's class is the strongest tier her seat lists; a seat
+with no tier serves no read. Friends are asked first, by the same choice as a
+friend's work card: the friend up with the most free width, the first by name
+among equals. Her room is her width less the work cards on `friend.<name>` and
+less the reads asked or reading on `friend-<name>`. A fleet reader is asked
+only for what no friend with room and class can take, and only when the class
+is flash or pro. A frontier or heavy read is never handed to a fleet reader,
+and a unit below the class is never asked. One friend takes at most one read
+of a primary. The read card is a readers-table card, row `friend-<name>`, id
+`<primary>.r<attempt>.friend-<name>`, `reader` the same (so it agrees, and it
+counts toward acceptance the way a fleet reader's ok does), `who` =
+`friend.<name>`, `deadline` 1800 (thirty minutes, the seconds a route's
+deadline is stored as) and `due` the sprint clock plus those thirty minutes.
+No dollar amount is written on it. The first flash read may still carry the
+decide bars. Her report closes through the reader verb, not as a work finish:
+`Verdict: LAND` is ok, `Verdict: HOLD` that names a defect (a file, a line or
+a rule) is broken, and any other report leaves the read open. `friend sync`
+writes `inbox/<job>/BRIEF.md` for a read asked or reading when that file is
+absent (`WHO: friend <name>`, the attempt, the deadline stamp) and applies
+her report the same way. A friend whose seat this tick did not load keeps the
+read she holds; it is not swept onto a fleet reader.
 Her row is hidden in the stored fleet table (the table layer's row hide, when
 the deal first adds it), so the stored view `sprint` does not draw it either;
 as for any hidden row, its counts stay in that table's folded footer there,
@@ -1454,7 +1489,9 @@ id (`--op`) returns the original result, with no second counter or notification.
   closed when enough are up or no such primary waits; `reader up` and
   `reader add` answer it.
   The machine's tick asks for every such primary; `ask` is the coordinator's
-  own. Each read card the ask creates carries a route as a work card does
+  own. A read dealt to a friend is that same ask and the same readers-table
+  card, and it carries no route and no dollar amount (section 1, a friend's
+  read). Each fleet reader's read card carries a route as a work card does
   (`route`, `model`, `tokens`, `usd`, `deadline`), and `tier`, the tier it is drawn
   from: the tier of the card it reads, the tier the deal draws that card's
   work from (flash first, the tier it escalated to after; a card that pins a

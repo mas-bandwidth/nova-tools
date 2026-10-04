@@ -800,15 +800,17 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	if err != nil {
 		return whereView{}, "", err
 	}
+	readByFriend := friendReadCounts(shapeOf(shapes, sprint.Readers))
 	for i, f := range friends {
-		// the counts are the friend's sprint cards on her fleet row, and nothing
-		// else: ready, working, done ok and failed, all from the fleet table
-		// (splitFriendRows), with width and status from the roster (store.FriendRows)
+		// her sprint cards on her fleet row, and her reads on the readers-table
+		// row friend-<name>: asked and reading count as working, ok as ok,
+		// broken as failed. The same cards, two views (docs/SPEC-SPRINT.md section 1).
 		c := friendCards[f.Name]
+		rc := readByFriend[f.Name]
 		friends[i].Ready = c.Ready
-		friends[i].Working = c.Working
-		friends[i].OK = c.OK
-		friends[i].Failed = c.Failed
+		friends[i].Working = c.Working + rc.Working
+		friends[i].OK = c.OK + rc.OK
+		friends[i].Failed = c.Failed + rc.Failed
 		if f.Status == sprint.Down {
 			friends[i].Working = 0 // down, she works nothing
 		}
@@ -844,6 +846,43 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		}
 	}
 	return v, b.String(), nil
+}
+
+// shapeOf is the view's shape of one logical table, or an empty table when the
+// view did not load it.
+func shapeOf(shapes []ntable.Table, name string) ntable.Table {
+	i := slices.Index(sprint.ViewOrder, name)
+	if i < 0 || i >= len(shapes) {
+		return ntable.Table{}
+	}
+	return shapes[i]
+}
+
+// friendReadCounts is each friend's reads on her readers-table row
+// friend-<name>: asked and reading are working, ok is ok, broken is failed.
+// The friends table has no read column; these add to the columns it has
+// (docs/SPEC-SPRINT.md section 1).
+func friendReadCounts(t ntable.Table) map[string]store.FriendRow {
+	at := map[string]int{}
+	for j, c := range t.Columns {
+		at[c.Name] = j
+	}
+	count := func(r ntable.Row, col string) int {
+		if j, ok := at[col]; ok && j < len(r.Cells) {
+			return int(r.Cells[j].Count)
+		}
+		return 0
+	}
+	out := map[string]store.FriendRow{}
+	for _, r := range t.Rows {
+		name, ok := sprint.FriendOfReaderRow(r.Key)
+		if !ok {
+			continue
+		}
+		out[name] = store.FriendRow{Name: name, Working: count(r, sprint.Asked) + count(r, sprint.Reading),
+			OK: count(r, sprint.OK), Failed: count(r, sprint.Broken)}
+	}
+	return out
 }
 
 // splitFriendRows is the fleet table without the friends' rows (sprint.FriendRow), and

@@ -76,11 +76,15 @@ func FriendCard(c *Card) (name string, ok bool) {
 const friendCardWhy = "a friend's card (its brief says WHO: friend): the tick deals it to a friend up with room, never to a machine"
 
 // FriendSeat is one friend as the tick deals to her: her name, her width (the jobs she
-// works at once, her friends row's) and her status (FriendStatus: up, held or down).
+// works at once, her friends row's), her status (FriendStatus: up, held or down), the
+// classes she may serve a read at (Tiers, strongest wins; empty serves no read), and
+// her working directory when the binding loaded one (docs/SPEC-SPRINT.md section 1).
 type FriendSeat struct {
 	Name   string
 	Width  int
 	Status string
+	Tiers  []string
+	Dir    string
 }
 
 // Members is the fleet's machines: its rows but the friends' (FriendRow), in row order.
@@ -127,11 +131,7 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 			continue
 		}
 		if name == "" {
-			for _, f := range up {
-				if free[f] > 0 && (name == "" || free[f] > free[name]) {
-					name = f
-				}
-			}
+			name = pickFriend(up, free)
 		}
 		if name == "" || free[name] <= 0 {
 			continue // no friend it may go to is up with room: it waits ready

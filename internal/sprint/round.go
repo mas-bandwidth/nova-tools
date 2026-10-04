@@ -269,8 +269,11 @@ func tableRound(t *Table, name string, names []string) *round {
 // dealRound is the deal's rolling index over the fleet's members.
 func dealRound(s *Snapshot) *round { return tableRound(s.Fleet, PropDealIndex, s.Members()) }
 
-// askRound is the ask's rolling index over the readers.
-func askRound(s *Snapshot) *round { return tableRound(s.Readers, PropAskIndex, s.Readers.Rows()) }
+// askRound is the ask's rolling index over the fleet readers. A friend's
+// readers-table row is not in it (docs/SPEC-SPRINT.md section 1).
+func askRound(s *Snapshot) *round {
+	return tableRound(s.Readers, PropAskIndex, machineReaderRows(s.Readers.Rows()))
+}
 
 // The streams take turns: every step that takes cards across the
 // streams (the deal, and the withdrawn card dealt again with it; the ask; the
