@@ -4,9 +4,7 @@ package atomicfile
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,92 +172,17 @@ func TestConcurrentWriters(t *testing.T) {
 func TestFunctionalPropertyContentAndPermRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	const seed = 1
-	r := rand.New(rand.NewPCG(seed, 0x6e6f7661))
-	dir := t.TempDir()
-
-	for i := 0; i < 200; i++ {
-		target := filepath.Join(dir, fmt.Sprintf("func_prop_roundtrip_%d.dat", i))
-		data := propertyBytes(r)
-		perm := propertyPerms[r.IntN(len(propertyPerms))]
-
-		err := Write(target, data, perm)
-		require.NoError(t, err, "seed %d case %d: Write failed: %v", seed, i, err)
-
-		got, err := os.ReadFile(target)
-		require.NoError(t, err, "seed %d case %d: ReadFile failed: %v", seed, i, err)
-		require.True(t, bytes.Equal(got, data), "seed %d case %d: read content does not match written (len got=%d, want=%d)", seed, i, len(got), len(data))
-
-		info, err := os.Stat(target)
-		require.NoError(t, err, "seed %d case %d: Stat failed: %v", seed, i, err)
-		wantPerm := referencePerm(dir, fmt.Sprintf("func_prop_roundtrip_%d", i), perm)
-		require.Equal(t, wantPerm, info.Mode().Perm(), "seed %d case %d: perm mismatch: got %04o, want %04o", seed, i, info.Mode().Perm(), wantPerm)
-	}
+	propertyRoundTrip(t, t.TempDir(), "func_prop_roundtrip", 200, 1)
 }
 
 func TestFunctionalPropertyArbitraryOverwrite(t *testing.T) {
 	t.Parallel()
 
-	const seed = 2
-	r := rand.New(rand.NewPCG(seed, 0x6e6f7661))
-	dir := t.TempDir()
-	target := filepath.Join(dir, "func_prop_overwrite.dat")
-
-	var current []byte
-	for i := 0; i < 200; i++ {
-		next := propertyBytes(r)
-		perm := propertyPerms[r.IntN(len(propertyPerms))]
-
-		err := Write(target, next, perm)
-		require.NoError(t, err, "seed %d case %d: Write failed: %v", seed, i, err)
-
-		got, err := os.ReadFile(target)
-		require.NoError(t, err, "seed %d case %d: ReadFile failed: %v", seed, i, err)
-		require.True(t, bytes.Equal(got, next), "seed %d case %d: read mismatch after overwrite (len got=%d, want=%d)", seed, i, len(got), len(next))
-
-		current = next
-	}
-	_ = current
+	propertyOverwrite(t, t.TempDir(), "func_prop_overwrite.dat", 200, 2)
 }
 
 func TestFunctionalPropertyFailureIsolationOverArbitraryData(t *testing.T) {
 	t.Parallel()
 
-	const seed = 3
-	r := rand.New(rand.NewPCG(seed, 0x6e6f7661))
-	dir := t.TempDir()
-
-	failureSteps := []string{"create", "write", "sync", "close", "rename"}
-
-	for i := 0; i < 100; i++ {
-		target := filepath.Join(dir, fmt.Sprintf("func_prop_fail_%d.dat", i))
-		initialData := propertyBytes(r)
-		err := Write(target, initialData, 0o644)
-		require.NoError(t, err, "seed %d case %d: initial Write failed: %v", seed, i, err)
-
-		badData := propertyBytes(r)
-		step := failureSteps[r.IntN(len(failureSteps))]
-		injectedErr := errors.New("injected property failure")
-
-		h := defaultHooks()
-		switch step {
-		case "create":
-			h.createTemp = func(dir, base string, perm os.FileMode) (*os.File, error) { return nil, injectedErr }
-		case "write":
-			h.write = func(f *os.File, data []byte) (int, error) { return 0, injectedErr }
-		case "sync":
-			h.sync = func(f *os.File) error { return injectedErr }
-		case "close":
-			h.close = func(f *os.File) error { _ = f.Close(); return injectedErr }
-		case "rename":
-			h.rename = func(oldpath, newpath string) error { return injectedErr }
-		}
-
-		err = writeWithHooks(target, badData, 0o644, h)
-		require.Error(t, err, "seed %d case %d: writeWithHooks succeeded at step %s; want error", seed, i, step)
-
-		got, err := os.ReadFile(target)
-		require.NoError(t, err, "seed %d case %d: ReadFile failed after failure: %v", seed, i, err)
-		require.True(t, bytes.Equal(got, initialData), "seed %d case %d: target content modified on %s failure!", seed, i, step)
-	}
+	propertyFailureIsolation(t, t.TempDir(), "func_prop_fail", 100, 3)
 }

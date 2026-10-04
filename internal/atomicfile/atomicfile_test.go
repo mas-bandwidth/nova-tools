@@ -114,6 +114,12 @@ func referencePerm(dir, name string, perm os.FileMode) os.FileMode {
 	return st.Mode().Perm()
 }
 
+// requireErrNamesPath pins a refusal: an error whose text names the refused path.
+func requireErrNamesPath(t *testing.T, err error, path string) {
+	t.Helper()
+	require.Contains(t, err.Error(), path, "error %q does not name path %q", err, path)
+}
+
 func TestRefusals(t *testing.T) {
 	t.Parallel()
 
@@ -132,7 +138,7 @@ func TestRefusals(t *testing.T) {
 		target := filepath.Join(dir, tooLongBase)
 		err := Write(target, []byte("data"), 0o644)
 		require.Error(t, err, "Write with base name exceeding limit succeeded; want refusal")
-		require.Contains(t, err.Error(), target, "error %q does not name path %q", err, target)
+		requireErrNamesPath(t, err, target)
 		require.Contains(t, err.Error(), "exceeds maximum length", "error %q does not mention maximum length", err)
 	})
 
@@ -143,7 +149,7 @@ func TestRefusals(t *testing.T) {
 		require.NoError(t, err)
 		err = Write(sub, []byte("data"), 0o644)
 		require.Error(t, err, "Write over existing directory succeeded; want refusal")
-		require.Contains(t, err.Error(), sub, "error %q does not name path %q", err, sub)
+		requireErrNamesPath(t, err, sub)
 		st, err := os.Stat(sub)
 		require.NoError(t, err, "directory %q was corrupted: %v", sub, err)
 		require.True(t, st.IsDir(), "directory %q was corrupted: %v", sub, err)
@@ -160,7 +166,7 @@ func TestRefusals(t *testing.T) {
 
 		err = Write(link, []byte("replacement\n"), 0o644)
 		require.Error(t, err, "Write over symlink succeeded; want refusal")
-		require.Contains(t, err.Error(), link, "error %q does not name path %q", err, link)
+		requireErrNamesPath(t, err, link)
 
 		lst, err := os.Lstat(link)
 		require.NoError(t, err, "Lstat(%q) failed: %v", link, err)
@@ -178,7 +184,7 @@ func TestRefusals(t *testing.T) {
 
 		err = Write(broken, []byte("data\n"), 0o644)
 		require.Error(t, err, "Write over broken symlink succeeded; want refusal")
-		require.Contains(t, err.Error(), broken, "error %q does not name path %q", err, broken)
+		requireErrNamesPath(t, err, broken)
 		lst, err := os.Lstat(broken)
 		require.NoError(t, err, "broken link was modified or removed: %v", err)
 		require.NotZero(t, lst.Mode()&os.ModeSymlink, "broken link was modified or removed: %v", err)
@@ -196,7 +202,7 @@ func TestRefusals(t *testing.T) {
 
 		err = Write(target, []byte("data"), 0o644)
 		require.Error(t, err, "Write in read-only directory succeeded; want refusal")
-		require.Contains(t, err.Error(), target, "error %q does not name path %q", err, target)
+		requireErrNamesPath(t, err, target)
 	})
 
 	t.Run("parent_does_not_exist", func(t *testing.T) {
@@ -204,7 +210,7 @@ func TestRefusals(t *testing.T) {
 		missingParent := filepath.Join(dir, "no-such-parent", "file.txt")
 		err := Write(missingParent, []byte("data"), 0o644)
 		require.Error(t, err, "Write with non-existent parent succeeded; want refusal")
-		require.Contains(t, err.Error(), missingParent, "error %q does not name path %q", err, missingParent)
+		requireErrNamesPath(t, err, missingParent)
 		_, err = os.Stat(filepath.Dir(missingParent))
 		require.True(t, os.IsNotExist(err), "parent directory was created silently: %v", err)
 	})
@@ -217,7 +223,7 @@ func TestRefusals(t *testing.T) {
 		target := filepath.Join(regParent, "child.txt")
 		err = Write(target, []byte("data"), 0o644)
 		require.Error(t, err, "Write with non-dir parent succeeded; want refusal")
-		require.Contains(t, err.Error(), target, "error %q does not name path %q", err, target)
+		requireErrNamesPath(t, err, target)
 	})
 
 	t.Run("not_clean_path", func(t *testing.T) {
@@ -226,7 +232,7 @@ func TestRefusals(t *testing.T) {
 		err := Write(dirtyPath, []byte("data"), 0o644)
 		require.Error(t, err, "Write with non-clean path succeeded; want refusal")
 		require.Contains(t, err.Error(), "not clean", "error %q does not mention clean", err)
-		require.Contains(t, err.Error(), dirtyPath, "error %q does not name path %q", err, dirtyPath)
+		requireErrNamesPath(t, err, dirtyPath)
 	})
 
 	t.Run("unsupported_mode_bits", func(t *testing.T) {
@@ -235,7 +241,7 @@ func TestRefusals(t *testing.T) {
 		err := Write(target, []byte("data"), 0o4755)
 		require.Error(t, err, "Write with setuid 04755 succeeded; want refusal")
 		require.Contains(t, err.Error(), "unsupported file mode", "error %q does not mention unsupported file mode", err)
-		require.Contains(t, err.Error(), target, "error %q does not name path %q", err, target)
+		requireErrNamesPath(t, err, target)
 	})
 
 	t.Run("eval_symlinks_error", func(t *testing.T) {
@@ -248,7 +254,7 @@ func TestRefusals(t *testing.T) {
 		}
 		err := writeWithHooks(target, []byte("data"), 0o644, h)
 		require.Error(t, err, "writeWithHooks succeeded; want error")
-		require.Contains(t, err.Error(), target, "error %q does not name path %q", err, target)
+		requireErrNamesPath(t, err, target)
 		require.ErrorIs(t, err, injectedErr, "error %v does not wrap injected error %v", err, injectedErr)
 	})
 
@@ -262,7 +268,7 @@ func TestRefusals(t *testing.T) {
 		}
 		err := writeWithHooks(target, []byte("data"), 0o644, h)
 		require.Error(t, err, "writeWithHooks succeeded; want error")
-		require.Contains(t, err.Error(), target, "error %q does not name path %q", err, target)
+		requireErrNamesPath(t, err, target)
 		require.ErrorIs(t, err, injectedErr, "error %v does not wrap injected error %v", err, injectedErr)
 	})
 }
@@ -293,7 +299,7 @@ func TestParentSymlink(t *testing.T) {
 	msg := err.Error()
 	require.Contains(t, msg, "atomicfile", "error %q does not name atomicfile", msg)
 	require.Contains(t, msg, "symlink", "error %q does not say the parent is a symlink", msg)
-	require.Contains(t, msg, target, "error %q does not name path %q", msg, target)
+	requireErrNamesPath(t, err, target)
 	require.Contains(t, msg, "pass the real directory", "error %q does not name the next action", msg)
 
 	got, rerr := os.ReadFile(note)
@@ -587,13 +593,6 @@ func testStepFailure(t *testing.T, failStep string, preexisting bool) {
 	for _, e := range entries {
 		require.Equal(t, "target.txt", e.Name(), "leaked file %q in dir after %s failure", e.Name(), failStep)
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 type errReader struct{}
