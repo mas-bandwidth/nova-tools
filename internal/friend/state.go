@@ -173,11 +173,12 @@ func sessionState(stateDir string, fn func(*SessionState) (bool, error)) (retErr
 	return nil
 }
 
-// ReadSessionState returns the committed operator choice, or the zero state
-// before any sleep or wake command has run.
+// ReadSessionState reads the atomically replaced operator choice without
+// creating the state directory or taking a lock. Callers that authorize a
+// delivery must use WithSessionState instead; a missing file is zero state.
 func ReadSessionState(stateDir string) (SessionState, error) {
 	var out SessionState
-	err := WithSessionState(stateDir, func(s SessionState) error { out = s; return nil })
+	_, err := read(sessionPath(stateDir), &out)
 	return out, err
 }
 

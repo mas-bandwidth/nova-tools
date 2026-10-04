@@ -56,12 +56,13 @@ func TestTheStateFilesRoundTripAndTheQueueFileCounts(t *testing.T) {
 
 func TestSessionStateMissingAndDurableUpdates(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "not-created")
 	got, err := ReadSessionState(dir)
 	require.NoError(t, err)
 	assert.Equal(t, SessionState{}, got, "a new state directory starts with no operator choice")
-	_, err = os.Stat(sessionPath(dir))
-	assert.ErrorIs(t, err, os.ErrNotExist, "a read must not invent a sleep request")
+	_, err = os.Stat(dir)
+	assert.ErrorIs(t, err, os.ErrNotExist, "a read must not create a state directory")
 
 	got, err = UpdateSessionState(dir, func(s *SessionState) error {
 		s.Coordinator, s.Asleep, s.WakeBarrier = "coordinator", true, "123-4"
