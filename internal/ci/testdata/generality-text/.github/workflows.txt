@@ -1,5 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 9
+# ceiling: 7
 .github/workflows/ci.yml:batman 3
 .github/workflows/ci.yml:hulk 2
 .github/workflows/ci.yml:mini 1
@@ -7,5 +7,3 @@
 .github/workflows/ci.yml:studio 6
 .github/workflows/ci.yml:superman 3
 .github/workflows/ci.yml:vision 1
-.github/workflows/nightly-slow.yml:glenn 1
-.github/workflows/revert-on-red.yml:glenn 1
