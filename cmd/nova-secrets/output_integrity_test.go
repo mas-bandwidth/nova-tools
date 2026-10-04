@@ -43,16 +43,20 @@ func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
 			}
 		}
 
-		pkgsMap, err := parser.ParseDir(fset, dir, nil, parser.ImportsOnly)
-		require.NoError(t, err, "failed to parse package in %s: %v", dir, err)
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err, "failed to read package dir %s: %v", dir, err)
 
-		for _, p := range pkgsMap {
-			for fileName, f := range p.Files {
-				for _, imp := range f.Imports {
-					pathVal := strings.Trim(imp.Path.Value, `"`)
-					for _, forb := range forbiddenImports {
-						assert.NotContains(t, pathVal, forb, "%s imports %s; forbidden cryptography or keychain dependency", fileName, pathVal)
-					}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+				continue
+			}
+			fileName := filepath.Join(dir, entry.Name())
+			f, err := parser.ParseFile(fset, fileName, nil, parser.ImportsOnly)
+			require.NoError(t, err, "failed to parse %s: %v", fileName, err)
+			for _, imp := range f.Imports {
+				pathVal := strings.Trim(imp.Path.Value, `"`)
+				for _, forb := range forbiddenImports {
+					assert.NotContains(t, pathVal, forb, "%s imports %s; forbidden cryptography or keychain dependency", fileName, pathVal)
 				}
 			}
 		}
@@ -154,7 +158,7 @@ func TestOutputSizeAtTheLargestPlausibleState(t *testing.T) {
 		rules = append(rules, fmt.Sprintf("  - path_regex: ^%s$\n    age: %s,%s", fname, keyA.pubKey, recKey.pubKey))
 		var keysText strings.Builder
 		for k := 0; k < 16; k++ {
-			keysText.WriteString(fmt.Sprintf("KEY_%02d: val_%d\n", k, k))
+			fmt.Fprintf(&keysText, "KEY_%02d: val_%d\n", k, k)
 		}
 		sealFileWithSops(t, sopsPath, filepath.Join(storeDir, fname), []string{keyA.pubKey, recKey.pubKey}, keysText.String())
 	}
