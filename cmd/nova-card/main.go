@@ -354,11 +354,9 @@ func readCheckout(dir string, h *cardgen.Header) error {
 		h.Sha = sha
 	}
 	if h.Base == "" {
-		branch, err := git("rev-parse", "--abbrev-ref", "HEAD")
-		if err != nil {
-			return err
-		}
-		if branch != "HEAD" {
+		// a detached HEAD names no branch: symbolic-ref exits 1 and Base stays "",
+		// refused by the caller (internal/bus/git.go CurrentBranch reads it the same way)
+		if branch, err := git("symbolic-ref", "--quiet", "--short", "HEAD"); err == nil {
 			h.Base = branch
 		}
 	}
