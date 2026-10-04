@@ -102,6 +102,11 @@ ScnHandBack == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.hand = TRUE, !
 \* returns the read, leaving the card no reader up (STRANDED).
 ScnHandBackLapse == [ScnHandBack EXCEPT !.lapse = TRUE]
 
+\* The coordinator's --instead (#5293): c1 in review, its read on r1, and
+\* the take-back on: the read retires, r1 free to be asked again (no seen,
+\* no reask), the card placed again with any judgment closed.
+ScnInstead == [ScnHandBack EXCEPT !.hand = FALSE, !.instead = TRUE]
+
 \* THE BOUND ACROSS ATTEMPTS. c1 dealt to m1 and not taken; its worker may take
 \* it and its machine lapse and beat again, so an attempt reaches its redeal
 \* bound, and the coordinator may rework it there, naming a class and a tier;

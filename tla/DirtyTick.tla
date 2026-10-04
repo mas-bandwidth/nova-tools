@@ -492,6 +492,14 @@ ApplyR(S, e) ==
                            !.rd = [d \in Cards |-> IF d \in H THEN NoR ELSE @[d]],
                            !.askw = [d \in Cards |-> IF d \in H THEN TRUE ELSE @[d]],
                            !.q["fleet"] = @ \o [i \in 1..Cardinality(H) |-> E("readoff", Nth(H, i), Host[e.x])]]
+    [] e.k = "rinstead" ->
+         \* the coordinator takes the read back (ask --instead, #5293): it
+         \* retires, its reader free to be asked again (unlike a handback it
+         \* counts no reask and is not excluded from Cands), and the card
+         \* waits to be placed again, any judgment it held closed.
+         IF S.rd[e.c] = NoR THEN S
+         ELSE Put([S EXCEPT !.rd[e.c] = NoR, !.askw[e.c] = TRUE, !.cna[e.c] = FALSE],
+                  "work", E("tookback", e.c, "-"))
     [] e.k = "raback" -> [S EXCEPT !.stat[e.x] = "up"]
     [] OTHER -> S    \* room, echo
 
@@ -762,6 +770,14 @@ ReaderBack(r) ==
   /\ Scn.away /\ ~live[r] /\ acts < MaxActs
   /\ live' = [live EXCEPT ![r] = TRUE] /\ acts' = acts + 1 /\ UNCHANGED miss
   /\ Outside("readers", E("raback", "-", r))
+\* The coordinator takes a read back and asks another reader (ask --instead,
+\* #5293): the read retires, its reader free to be asked again (unlike a
+\* handback it counts no reask and is not excluded from Cands), the card
+\* waiting to be placed again with its judgment closed.
+ReaderInstead(c) ==
+  /\ (IF "instead" \in DOMAIN Scn THEN Scn.instead ELSE FALSE)
+     /\ rd[c] # NoR /\ acts < MaxActs
+  /\ acts' = acts + 1 /\ Outside("readers", E("rinstead", c, rd[c])) /\ UNCHANGED <<live, miss>>
 Beat(m) ==
   /\ ~live[m] /\ acts < MaxActs
   /\ live' = [live EXCEPT ![m] = TRUE] /\ acts' = acts + 1
@@ -862,6 +878,7 @@ OutsideNext ==
   \/ \E t \in Tiers : TierOK(t)
   \/ \E m \in Machines : Beat(m) \/ Lapse(m) \/ Miss(m) \/ BeatReset(m)
   \/ \E r \in Readers : ReaderAway(r) \/ ReaderBack(r)
+  \/ \E c \in Cards : ReaderInstead(c)
 Next == TickNext \/ OutsideNext
 Spec == Init /\ [][Next]_vars /\ WF_vars(TickNext)
 
