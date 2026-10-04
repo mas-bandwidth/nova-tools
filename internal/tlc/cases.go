@@ -17,7 +17,7 @@ func LoadCases(root string) ([]Case, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %s: %v", filepath.Join(dir, CasesFile), err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: a read-only file's close reports nothing the caller can act on
 	cases, err := ParseCases(f)
 	if err != nil {
 		return nil, err
