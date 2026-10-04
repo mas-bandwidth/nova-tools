@@ -1668,8 +1668,9 @@ nova-update release cycle --version v1.1.0-dev.abcdef12 --source . --out ~/nova-
 ```
 
 `cycle` is the fix-land-install cycle from the coordinator in one command: `fleet/tools.yml` with
-`--check`, then for real, limited to `--benches` and `localhost`, the build `--incremental --gate
-report --reason <why>`. Each machine's new version directory is seeded from its installed build's
+`--check`, then for real, limited to `--benches`, `localhost` and the `store_deployer` group, the
+build's schema and function library on the store running on every cycle, with the build `--incremental
+--gate report --reason <why>`. Each machine's new version directory is seeded from its installed build's
 and only the files whose `SHA256SUMS` line differs are sent; `install` leaves a binary that already
 holds the same bytes in place, so only the loops of the tools that changed restart. One `CYCLE
 BENCH host=<h> … version=<v> state=<s> installed=<n>` line per bench, then `CYCLE OK … check=<d>
