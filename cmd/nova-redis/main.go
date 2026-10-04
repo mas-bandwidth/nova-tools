@@ -103,8 +103,9 @@ missing owner or a missing, zero or negative TTL (exit 2) and writes nothing;
 an unbounded key is a bug. spill --dry-run makes every check, the login's too,
 and prints the write it would make with written=0, dialling nothing.
 recall exits 1 on a missing or expired key: scratch is allowed to miss.
-The password is read from the variable --password-env names (default
-NOVA_REDIS_PASSWORD_ENV, else NOVA_REDIS_PASSWORD), never from an argument.
+The password is read from the variable --password-env names (default: the
+variable NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD), never from
+an argument.
 --user names the ACL user to log in as (default NOVA_REDIS_USER; with
 neither, the store's default user). A --password-env that is not a variable
 name (capital letters, digits and underscores), a user name with whitespace,

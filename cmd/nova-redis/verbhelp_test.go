@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Every verb answers -h and --help with its own help on stdout at exit 0, and
@@ -31,4 +34,22 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 
 func redisRun(args []string, stdout, stderr io.Writer) int {
 	return run(args, stdout, stderr, realDeps())
+}
+
+// TestHelpSaysWhichVariableHoldsThePassword pins the rule that
+// NOVA_REDIS_PASSWORD_ENV holds the NAME of the variable the password is read
+// from, not the password itself: a reader must not export the password into it
+// (see PasswordEnvEnv in main.go, and SPEC-REDIS.md the password is read from
+// the variable --password-env names). The --password-env flag description says
+// the same.
+func TestHelpSaysWhichVariableHoldsThePassword(t *testing.T) {
+	t.Parallel()
+	var stdout bytes.Buffer
+	code := redisRun([]string{"-h"}, &stdout, io.Discard)
+	require.Equal(t, 0, code, "nova-redis -h: want exit 0")
+	out := stdout.String()
+	// The password is read from the variable NOVA_REDIS_PASSWORD_ENV names
+	// (an indirection: that variable holds a name, not a password); when it is
+	// unset the password is read from NOVA_REDIS_PASSWORD.
+	assert.Contains(t, out, "NOVA_REDIS_PASSWORD_ENV names", "help does not say NOVA_REDIS_PASSWORD_ENV names the variable that holds the password; a reader may export the password into it")
 }
