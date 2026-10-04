@@ -160,12 +160,10 @@ Run by `cmd/nova-bus2/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
 rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types them.
 The sitting is the loop: ada sends bob one message; bob peeks (new, not yet
-delivered), receives it (pending from here until acked: the header line, a blank
-line, the body), receives it again through `--exec` (the same message, pending
-first, acked when the command exits 0), acks an id that is not pending (false,
-exit 0: ack is idempotent), reads the log, and lists the names. The run-owned
-values are the message's `id=` (a ULID from the store's time), its `at=` and its
-`entry=` (the stream id the store gave it).
+delivered), receives it through `--exec` (the header line and the body go to the
+command, acked when it exits 0), acks an id that is not pending (false, exit 0: ack is idempotent), reads the
+log, and lists the names. The run-owned values are the message's `id=` (a ULID
+from the store's time) and its `at=`.
 
 ### First run
 
@@ -177,19 +175,14 @@ $ nova-bus2 peek --as bob
 PEEK OK pending=0 new=1
 PEEK MESSAGE state=new id=01M42BA18Y1K3SE57HE26SY8T0 from=ada at=2026-10-04T02:18:54Z subject="hello"
 
-$ nova-bus2 recv --as bob --block 2s
-RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z entry=1791080334622-0 subject="hello"
-
-are you there?
-
 $ nova-bus2 recv --as bob --exec true
-RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z entry=1791080334622-0 acked=true exec_exit=0 subject="hello"
+RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z acked=true exec_exit=0 subject="hello"
 
 $ nova-bus2 ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
 ACK OK acked=0 asked=1
 ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
 
-$ nova-bus2 log --from ada --max 5
+$ nova-bus2 log --max 5
 LOG OK total=1
 LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
 
