@@ -37,7 +37,7 @@ import (
 
 // DefaultRepos are the repositories the script measures when --repos is not
 // given: the two the card names, schema and nova-tools.
-var DefaultRepos = []string{"mas-bandwidth/nova-tools", "mas-bandwidth/schema"}
+var DefaultRepos = []string{"example/nova-tools", "example/schema"}
 
 // DefaultLast is how many pull requests per repository the script measures
 // when --last is not given.
