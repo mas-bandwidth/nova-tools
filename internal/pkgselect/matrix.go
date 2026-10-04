@@ -70,16 +70,11 @@ func DarwinOn(event, target string) bool {
 func DropDarwinOnly(pkgs []string) []string {
 	kept := make([]string, 0, len(pkgs))
 	for _, p := range pkgs {
-		if !IsDarwinOnly(p) {
+		if !slices.Contains(DarwinOnly, p) {
 			kept = append(kept, p)
 		}
 	}
 	return kept
-}
-
-// IsDarwinOnly reports whether pkg has no Linux leg.
-func IsDarwinOnly(pkg string) bool {
-	return slices.Contains(DarwinOnly, pkg)
 }
 
 // Shards is how many legs each runner group deals over.
@@ -148,7 +143,7 @@ func Functional(pkgs []string, g Groups) []FunctionalLeg {
 	groups := make([][]string, FunctionalShards)
 	f := 0
 	for _, p := range pkgs {
-		if IsDarwinOnly(p) {
+		if slices.Contains(DarwinOnly, p) {
 			continue
 		}
 		groups[f%FunctionalShards] = append(groups[f%FunctionalShards], p)
@@ -194,9 +189,6 @@ type DarwinSensitive struct {
 	All  bool
 	Pkgs map[string]bool
 }
-
-// Needs reports whether pkg gets a macOS leg.
-func (d DarwinSensitive) Needs(pkg string) bool { return d.All || d.Pkgs[pkg] }
 
 // Sorted is the set, sorted, as the line printed for it: each name followed by
 // one blank.
@@ -255,12 +247,16 @@ func DetectDarwinSensitive(run Runner, root string) (DarwinSensitive, bool, erro
 	differ := map[string]bool{}
 	for _, l := range linux {
 		if !inDarwin[l] {
-			differ[firstField(l)] = true
+			if f := strings.Fields(l); len(f) > 0 {
+				differ[f[0]] = true
+			}
 		}
 	}
 	for _, l := range darwin {
 		if !inLinux[l] {
-			differ[firstField(l)] = true
+			if f := strings.Fields(l); len(f) > 0 {
+				differ[f[0]] = true
+			}
 		}
 	}
 
@@ -283,14 +279,6 @@ func DetectDarwinSensitive(run Runner, root string) (DarwinSensitive, bool, erro
 	return sens, true, nil
 }
 
-func firstField(l string) string {
-	f := strings.Fields(l)
-	if len(f) == 0 {
-		return ""
-	}
-	return f[0]
-}
-
 // Fanout deals pkgs (already heavy-first) onto the runner groups for event.
 //
 // On schedule every package runs on the Linux shards, where the unit
@@ -310,20 +298,20 @@ func Fanout(event string, pkgs []string, sens DarwinSensitive, g Groups, darwin 
 	addLinux := func(p string) { linux[s%sh.Linux] = append(linux[s%sh.Linux], p); s++ }
 	for _, p := range pkgs {
 		if event == "schedule" || !darwin {
-			if IsDarwinOnly(p) {
+			if slices.Contains(DarwinOnly, p) {
 				continue
 			}
 			addLinux(p)
 			continue
 		}
-		linuxOnly := event == "merge_group" || (event == "pull_request" && !sens.Needs(p))
-		if linuxOnly && !IsDarwinOnly(p) {
+		linuxOnly := event == "merge_group" || (event == "pull_request" && !(sens.All || sens.Pkgs[p]))
+		if linuxOnly && !slices.Contains(DarwinOnly, p) {
 			addLinux(p)
 			continue
 		}
 		mac[st%sh.Mac] = append(mac[st%sh.Mac], p)
 		st++
-		if IsDarwinOnly(p) {
+		if slices.Contains(DarwinOnly, p) {
 			continue
 		}
 		addLinux(p)

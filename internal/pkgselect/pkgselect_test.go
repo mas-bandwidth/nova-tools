@@ -540,8 +540,8 @@ func TestDetectDarwinSensitive(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok, "DetectDarwinSensitive = %v", sens)
 	assert.Equal(t, "./cmd/a ./internal/c ", sens.Sorted(), "want ./cmd/a (imports the differing ./internal/c) and ./internal/c itself")
-	assert.True(t, sens.Needs("./cmd/a"))
-	assert.False(t, sens.Needs("./cmd/b"))
+	assert.True(t, sens.All || sens.Pkgs["./cmd/a"])
+	assert.False(t, sens.All || sens.Pkgs["./cmd/b"])
 }
 
 func TestDetectDarwinSensitiveWithNothingDifferent(t *testing.T) {
@@ -568,7 +568,7 @@ func TestDetectDarwinSensitiveFallsBackToAll(t *testing.T) {
 		assert.NoError(t, err, broken)
 		assert.False(t, ok, broken)
 		assert.True(t, sens.All, broken)
-		assert.True(t, sens.Needs("./anything"), broken)
+		assert.True(t, sens.All || sens.Pkgs["./anything"], broken)
 	}
 }
 
