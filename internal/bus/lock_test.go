@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -94,7 +95,14 @@ func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 				most = inside
 			}
 			mu.Unlock()
-			time.Sleep(50 * time.Millisecond)
+			// A hold of bounded WORK, not a wall-clock wait (a sleep here would be
+			// the fixed wait the unit-tier rule refuses): a fixed count of atomic
+			// adds keeps each run inside the lock long enough that a second run
+			// taking it beside the first is caught by most.
+			var hold int32
+			for range 100000 {
+				atomic.AddInt32(&hold, 1)
+			}
 			mu.Lock()
 			inside--
 			mu.Unlock()
