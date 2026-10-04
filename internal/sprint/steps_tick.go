@@ -546,7 +546,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 				cd.what += "; a second bound on tier " + cardTierOf(c) + ": not reworked on it again"
 			}
 			cd.decisions = boundDecisions(c, wc, held != "")
-			if bb, ok := AtBriefBound(c, ""); ok {
+			if bb, ok := AtBriefBound(c, "", s.AttemptsCap(c.Row)); ok {
 				// too many attempts on one brief: the brief is wrong, not the worker, and the
 				// judgment offers brief and drop, never rework (brief_bound.go)
 				cd.what = bb.String() + "; " + cd.what
@@ -713,8 +713,11 @@ func AtRedealBound(s *Snapshot, pr *Card) *Card {
 		return nil
 	}
 	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
-	if wc != nil && wc.Col == Withdrawn && redealBound(wc) && s.NextTier(pr) == "" {
-		return wc
+	if wc == nil || wc.Col != Withdrawn || !redealBound(wc) {
+		return nil
+	}
+	if _, atCap := AtBriefBound(pr, "", s.AttemptsCap(pr.Row)); s.NextTier(pr) == "" || atCap {
+		return wc // at its ceiling, or at the attempt cap: not dealt again
 	}
 	return nil
 }

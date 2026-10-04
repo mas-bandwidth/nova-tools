@@ -568,7 +568,12 @@ func Read(s *Snapshot, r ReadReq) Plan {
 				broken[pr.ID]++
 				n := judgment(NReadBroken, pr.Row, s.Now, before, pr.ID)
 				n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), r.Finding
-				if bb, ok := AtBriefBound(pr, r.Finding); ok {
+				// the card as this read leaves it: its spend counts this read's record
+				at := pr
+				if v := costs[pr.ID][FieldCostTotal]; v != "" {
+					at = withField(pr, FieldCostTotal, v)
+				}
+				if bb, ok := AtBriefBound(at, r.Finding, s.AttemptsCap(pr.Row)); ok {
 					// the same finding as the attempt before, or too many attempts on one brief:
 					// the brief is wrong, not the worker, and the judgment offers brief and drop
 					// (brief_bound.go)
@@ -1025,7 +1030,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		// the brief's bound: the same finding twice, or too many attempts on one brief, and
 		// the brief is wrong, not the worker; a --fix changes the brief not at all, so it does
 		// not lift it (brief_bound.go)
-		if bb, ok := AtBriefBound(c, brokenFindings(s, c)); ok {
+		if bb, ok := AtBriefBound(c, brokenFindings(s, c), s.AttemptsCap(c.Row)); ok {
 			p.refuse(c.ID, bb.Why())
 			stays()
 			continue
@@ -1054,6 +1059,18 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		given := reworkGiven(s, c)
 		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"], FieldFindingAttempt: c.F("attempt"),
 			"reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
+		// what this attempt found, kept for the cap's judgment (brief_bound.go, FieldFindings):
+		// its readers' finding, else the report of its failed work, else its bound's class
+		found := given["finding"]
+		if found == "" {
+			found = ownFix(s, c)
+		}
+		if found == "" && bound != nil {
+			found = BoundClass(bound)
+		}
+		if lines := findingsOf(c, c.Int("attempt"), found); len(lines) > 0 {
+			set[FieldFindings] = findingsLine(lines)
+		}
 		// the reader who found it broken checks the fix: the next attempt's first read is
 		// asked of them (Ask, finderFirst); a rework of failed work names none
 		unset := []string{"readers"}

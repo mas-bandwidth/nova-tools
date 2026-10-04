@@ -76,13 +76,15 @@ func stronger(a, b string) string {
 	return a
 }
 
-// SetReq is the coordinator's settings: with Streams, each stream's read tier;
-// without, the sprint's dealt bound and read tier. An empty value leaves that
-// setting as it is; ReadTierDefault takes one off.
+// SetReq is the coordinator's settings: with Streams, each stream's read tier and
+// attempt cap; without, the sprint's dealt bound, read tier and attempt cap
+// (brief_bound.go, AttemptsCap). An empty value leaves that setting as it is;
+// ReadTierDefault takes one off.
 type SetReq struct {
 	Streams  []string `json:",omitempty"`
 	ReadTier string   `json:",omitempty"`
 	DealtMax string   `json:",omitempty"`
+	Attempts string   `json:",omitempty"`
 	Who      string
 }
 
@@ -103,8 +105,13 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--dealt-max wants a duration above zero (6h, 90m), or "+ReadTierDefault+" for 3 times the take deadline; found "+r.DealtMax)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" {
-		why = append(why, "nothing to set: --read-tier or --dealt-max")
+	if r.Attempts != "" {
+		if _, err := ParseAttempts(r.Attempts); err != nil {
+			why = append(why, err.Error())
+		}
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.Attempts == "" {
+		why = append(why, "nothing to set: --read-tier, --dealt-max or --attempts")
 	}
 	if len(r.Streams) > 0 && r.DealtMax != "" {
 		why = append(why, "--dealt-max is the sprint's, not a stream's: nova-sprint set --dealt-max "+r.DealtMax)
@@ -121,20 +128,34 @@ func Set(s *Snapshot, r SetReq) Plan {
 	if len(r.Streams) > 0 {
 		for _, st := range r.Streams {
 			ctl := s.StreamCtl(st)
-			entry := setEntry(ctl, map[string]string{FieldReadTier: r.ReadTier})
-			moved := "stream " + st + " read-tier " + r.ReadTier
-			if r.ReadTier == ReadTierDefault {
-				entry = setEntry(ctl, nil, FieldReadTier)
-				moved = "stream " + st + " read-tier the sprint's"
+			set, unset := map[string]string{}, []string{}
+			var moved []string
+			if r.ReadTier != "" {
+				if r.ReadTier == ReadTierDefault {
+					unset = append(unset, FieldReadTier)
+					moved = append(moved, "read-tier the sprint's")
+				} else {
+					set[FieldReadTier] = r.ReadTier
+					moved = append(moved, "read-tier "+r.ReadTier)
+				}
 			}
-			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, entry)}, Moved: moved})
+			if r.Attempts != "" {
+				if r.Attempts == ReadTierDefault {
+					unset = append(unset, FieldAttempts)
+					moved = append(moved, "attempts the sprint's")
+				} else {
+					set[FieldAttempts] = r.Attempts
+					moved = append(moved, "attempts "+r.Attempts)
+				}
+			}
+			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", ")})
 		}
 		return p
 	}
 	// a property is written with its word, default included: the readers take
 	// default for none (DealtMax, readTierSetting)
 	var moved []string
-	for _, kv := range [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}} {
+	for _, kv := range [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}, {PropAttempts, r.Attempts}} {
 		if kv[1] == "" {
 			continue
 		}
@@ -153,6 +174,8 @@ func orDefault(v, name string) string {
 		return v
 	case name == PropDealtMax:
 		return fmt.Sprintf("default (%s, 3 times the take deadline)", DealtMaxDefault)
+	case name == PropAttempts:
+		return fmt.Sprintf("default (%d attempts on one brief)", AttemptsDefault)
 	}
 	return "default (each card's own tier)"
 }

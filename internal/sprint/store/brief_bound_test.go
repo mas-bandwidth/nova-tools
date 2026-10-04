@@ -78,21 +78,22 @@ func TestReworkRefusesACardWhoseLastTwoFindingsMatch(t *testing.T) {
 		h := routeHarness(t, route("flash-a", "flash"))
 		h.addReady("s1", 1, briefOf("flash", ""))
 		h.must(DealStep(sprint.DealReq{}))
-		for a := 1; a <= sprint.MaxAttemptsPerBrief; a++ {
+		for a := 1; a < sprint.AttemptsDefault; a++ {
 			h.attemptFoundBroken("s1-1", "internal/f"+string(rune('0'+a))+".go:"+string(rune('0'+a))+": wrong")
 			require.Empty(t, rework(h, ""), "attempt %d: a new finding each time is reworked", a)
 		}
 		h.attemptFoundBroken("s1-1", "internal/g.go:6: wrong")
 		refused := rework(h, "")
 		require.Len(t, refused, 1)
-		assert.Equal(t, "s1-1 has made 6 attempts since its brief last changed (its bound is 5); the brief is wrong, not the worker; "+
+		assert.Equal(t, "s1-1: brief defect after 4 attempts, nothing priced; the brief is wrong, not the worker; "+
+			"findings: attempt 1: internal/f1.go:1: wrong; attempt 2: internal/f2.go:2: wrong; attempt 3: internal/f3.go:3: wrong; attempt 4: internal/g.go:6: wrong; "+
 			"run: nova-sprint brief s1-1 --brief-file <path> (a waiting card) or drop s1-1 and add it again with the brief corrected", refused[0].Why)
 	})
 	t.Run("a card never dealt, and one whose findings differ, are at no bound", func(t *testing.T) {
 		t.Parallel()
-		_, at := sprint.AtBriefBound(&sprint.Card{ID: "x", Fields: map[string]string{"attempt": "0"}}, "f")
+		_, at := sprint.AtBriefBound(&sprint.Card{ID: "x", Fields: map[string]string{"attempt": "0"}}, "f", 0)
 		assert.False(t, at)
-		_, at = sprint.AtBriefBound(&sprint.Card{ID: "x", Fields: map[string]string{"attempt": "2", "finding": "a: one", sprint.FieldFindingAttempt: "1"}}, "b: two")
+		_, at = sprint.AtBriefBound(&sprint.Card{ID: "x", Fields: map[string]string{"attempt": "2", "finding": "a: one", sprint.FieldFindingAttempt: "1"}}, "b: two", 0)
 		assert.False(t, at)
 		assert.True(t, sprint.SameFinding("files outside PATHS: a.go", "two files outside its PATHS"), "one class however worded")
 		assert.False(t, sprint.SameFinding("", ""), "an empty finding is never the same as another")

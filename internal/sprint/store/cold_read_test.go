@@ -371,6 +371,7 @@ func TestReworkTwice(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
 	p.setup(1)
+	p.must(SetStep(sprint.SetReq{Attempts: "6", Who: p.st.Actor})) // four reworks: over the default attempt cap
 	p.toReview("h1", "s1-1")
 	rs := p.pairAsked("s1-1")
 	a, b := rs[0].F("reader"), rs[1].F("reader")

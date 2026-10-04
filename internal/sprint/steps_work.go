@@ -789,6 +789,9 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
 				tier := s.NextTier(c)
+				if _, atCap := AtBriefBound(c, "", s.AttemptsCap(c.Row)); atCap {
+					tier = "" // the attempt cap: not dealt again, the tick's judgment says so (AtRedealBound)
+				}
 				if tier == "" {
 					why := ": rework it with a fix, or drop it"
 					if held, _ := reworkAtTheSameBound(s, c, wc, ""); held != "" {
@@ -1265,7 +1268,10 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
-		if next := s.NextTier(pr); identical && next != "" {
+		// the brief's bound as this finish leaves the card (brief_bound.go): the same failure
+		// escalates below the ceiling only under the attempt cap
+		bb, atBound := AtBriefBound(withField(pr, FieldCostTotal, set[FieldCostTotal]), r.Report, s.AttemptsCap(pr.Row))
+		if next := s.NextTier(pr); identical && next != "" && !atBound {
 			// the second identical failure below its ceiling (rules 1 and 2, nova-tools#5174:
 			// "Flash first on every card; pro only on escalation"): no judgment; the primary
 			// takes the next tier and its why and goes back to ready, as a rework with no
@@ -1304,17 +1310,18 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 				n.What = r.Report
 			}
 			u.Notes = append(u.Notes, n)
+		} else if atBound {
+			// the attempt cap on one brief, whatever this attempt's failure: the brief is
+			// wrong, not the worker (brief_bound.go)
+			n := judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
+			n.Who, n.Attempt, n.What = who, attempt, bb.String()+"; attempt "+itoa(attempt)+" failed: "+r.Report
+			u.Notes = append(u.Notes, n)
 		} else if identical {
 			// the second identical failure (rule 2): the bound's judgment at once, in the words
 			// the tick holds it by (AtIdenticalFailure), never a third try on the same tier
 			n := Note{Kind: Judgment, Type: NBound, Stream: pr.Row, Primaries: []string{pr.ID}, Count: 1, At: s.Now, Who: who, Marked: true,
 				Card: c.ID, Attempt: attempt, What: identicalWorkWhat(c.ID, attempt, set[FieldFailure], pr.ID),
 				Decisions: append([]string(nil), TickDecisions[NBound]...)}
-			u.Notes = append(u.Notes, n)
-		} else if bb, ok := AtBriefBound(pr, ""); ok {
-			// too many attempts on one brief: the brief is wrong, not the worker (brief_bound.go)
-			n := judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
-			n.Who, n.Attempt, n.What = who, attempt, bb.String()+"; attempt "+itoa(attempt)+" failed: "+r.Report
 			u.Notes = append(u.Notes, n)
 		} else {
 			n := judgment(NWorkFailed, pr.Row, s.Now, pr.Int("failed"), pr.ID)
