@@ -129,8 +129,8 @@ func DropStep(r sprint.DropReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Drop(s, r) }}
 }
 
-// BriefStep is the coordinator replacing the brief of a primary that has not
-// started, on a STOPPED machine (sprint.Brief).
+// BriefStep is the coordinator replacing the briefs of primaries that have not
+// started, on a running machine as on a stopped one (sprint.Brief); all or none.
 func BriefStep(r sprint.BriefReq) Step {
 	return Step{Named: true, Args: ArgsOf(r), Verb: "brief", Load: tables(sprint.Work),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Brief(s, r) }}
