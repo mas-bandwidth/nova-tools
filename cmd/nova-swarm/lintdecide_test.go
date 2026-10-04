@@ -45,7 +45,7 @@ func TestLintDecideRefusals(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	noKey := func(string) string { return "" }
 	assert.Equal(t, 2, cmdLint([]string{"--card", card, "--decide"}, &stdout, &stderr, noKey, time.Time{}))
-	assert.Equal(t, "nova-swarm lint: --decide: Jev is asked with JEV_API_KEY, which this environment does not hold; run: nova-secrets exec --only JEV_API_KEY -- nova-swarm lint --card "+card+" --decide, or give --decide-answers <file> (no network, no key)\n", stderr.String())
+	assert.Equal(t, "nova-swarm lint: --decide: jev is asked with JEV_API_KEY, which this environment does not hold; run: nova-secrets exec --only JEV_API_KEY -- nova-swarm lint --card "+card+" --decide, or give --decide-answers <file> (no network, no key)\n", stderr.String())
 	assert.Empty(t, stdout.String(), "a refused decision lints nothing")
 	stdout.Reset()
 	answers := filepath.Join("..", "nova-decide", "testdata", "brief-answers.json")

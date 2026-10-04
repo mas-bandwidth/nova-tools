@@ -169,6 +169,8 @@ func TestNativeBudgetSitsWhereTheGrammarPutsIt(t *testing.T) {
 // fieldOf is one `k=v` field of a line, or "" when the line does not carry it. It lives in
 // this file, which no build tag guards, because every budget test reads a field of the
 // NATIVE verdict line and one of them is unix-only.
+//
+//lint:ignore U1000 used by the functional and slow tagged budget tests, which staticcheck reads without build tags
 func fieldOf(line, key string) string {
 	for _, f := range strings.Fields(line) {
 		if v, ok := strings.CutPrefix(f, key+"="); ok {

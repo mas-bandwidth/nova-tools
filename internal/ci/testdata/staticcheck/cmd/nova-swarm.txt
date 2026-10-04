@@ -1,4 +1,2 @@
 # The staticcheck findings in this package when the rule landed, one row per check; shrink-only (docs/SPEC-CI.md, staticcheck).
-# ceiling: 2
-cmd/nova-swarm:ST1005 1 measured when the rule landed; a fixed finding lowers the count
-cmd/nova-swarm:U1000 3 measured when the rule landed; a fixed finding lowers the count
+# ceiling: 0
