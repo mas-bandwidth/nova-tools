@@ -22,6 +22,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,6 +30,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -51,6 +53,13 @@ var landLedgers = []landLedger{{
 	roots: diffcheck.GeneralityRoots,
 	tests: "TestGeneralityGuardrail, TestGeneralityText",
 	run:   []string{"go", "test", "-count=1", "-timeout", "600s", "-run", "^(TestGeneralityGuardrail|TestGeneralityText)$", "./internal/ci"},
+}, {
+	// the agents map: the AGENTS.md pages, owned by TestCommittedMapMatchesTree, regenerated
+	// by go run ./tools/agentsmap (docs/SPEC-SPRINT.md section 7, land-e12-catalog-rows)
+	owns:  diffcheck.AgentsMap,
+	roots: diffcheck.AgentsMapRoots,
+	tests: "TestCommittedMapMatchesTree",
+	run:   []string{"go", "run", "./tools/agentsmap"},
 }}
 
 // landRegenPasses bounds the update runs of one resolution: an update that writes
@@ -319,4 +328,135 @@ func onDiskLink(dir string, paths []string) string {
 // combined output.
 func (l *lander) regen(ctx context.Context, dir string, run []string) (string, error) {
 	return l.goRun(ctx, dir, run, diffcheck.UpdateEnv+"=1")
+}
+
+// stageCatalogUnion resolves a merge whose unmerged paths are the agents maps plus
+// internal/docs/catalog.go, when both sides of the catalog only add rows: the union of
+// those rows, the tip's first, staged, and the maps left for the map family to regenerate
+// (docs/SPEC-SPRINT.md section 7, land-e12-catalog-rows). rest is returned without the
+// catalog when that is this merge; unchanged when it is not. card is why a conflicting
+// catalog line is not an added row (refused as any conflict is); env is a git failure.
+func (l *lander) stageCatalogUnion(ctx context.Context, dir string, rest []string) (out []string, card, env string) {
+	if !slices.Contains(rest, diffcheck.CatalogFile) {
+		return rest, "", ""
+	}
+	var maps []string
+	for _, p := range rest {
+		if p == diffcheck.CatalogFile {
+			continue
+		}
+		if !diffcheck.AgentsMap(p) || !owned(p, l.ledgers()) {
+			return rest, "", ""
+		}
+		maps = append(maps, p)
+	}
+	if len(maps) == 0 {
+		return rest, "", ""
+	}
+	if q := onDiskLink(dir, []string{diffcheck.CatalogFile}); q != "" {
+		return nil, diffcheck.CatalogFile + " conflicts and " + q + " is a symlink, which the resolution would write through", ""
+	}
+	var sides [3][]byte
+	for i := range sides {
+		res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "show", ":"+strconv.Itoa(i+1)+":"+diffcheck.CatalogFile)
+		if err != nil {
+			return nil, diffcheck.CatalogFile + " conflicts and has no stage " + strconv.Itoa(i+1) + " to resolve from", ""
+		}
+		sides[i] = res.Stdout
+	}
+	resolved, err := unionCatalogRows(sides[0], sides[1], sides[2])
+	if err != nil {
+		return nil, diffcheck.CatalogFile + " changes " + err.Error(), ""
+	}
+	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(diffcheck.CatalogFile)), resolved, 0o644); err != nil {
+		return nil, "", "the resolved " + diffcheck.CatalogFile + " could not be written: " + err.Error()
+	}
+	if _, err := l.git(ctx, dir, "add", "--", diffcheck.CatalogFile); err != nil {
+		return nil, "", "the resolved " + diffcheck.CatalogFile + " could not be staged: " + firstLine("", err)
+	}
+	return maps, "", ""
+}
+
+// unionCatalogRows is the catalog at a merge whose both sides only add rows: the base,
+// plus every row either side added, the tip's (ours) before the card's where they add
+// at the same place. A line that is not an added row is an error.
+func unionCatalogRows(base, ours, theirs []byte) ([]byte, error) {
+	bLines, _ := unionLines(base)
+	oLines, oTrail := unionLines(ours)
+	tLines, tTrail := unionLines(theirs)
+	oAt, ok := catalogInserts(bLines, oLines)
+	if !ok {
+		return nil, fmt.Errorf("a line that is not an added row")
+	}
+	tAt, ok := catalogInserts(bLines, tLines)
+	if !ok {
+		return nil, fmt.Errorf("a line that is not an added row")
+	}
+	seen := map[string]bool{}
+	for _, l := range bLines {
+		seen[l] = true
+	}
+	var out []string
+	take := func(lines []string) {
+		for _, l := range lines {
+			if seen[l] {
+				continue
+			}
+			seen[l] = true
+			out = append(out, l)
+		}
+	}
+	for i := 0; i <= len(bLines); i++ {
+		take(oAt[i])
+		take(tAt[i])
+		if i < len(bLines) {
+			out = append(out, bLines[i])
+		}
+	}
+	s := strings.Join(out, "\n")
+	if oTrail || tTrail || strings.HasSuffix(string(base), "\n") {
+		s += "\n"
+	}
+	return []byte(s), nil
+}
+
+// catalogInserts is the rows side adds before each base line (the index len(base) is
+// after the last), when side is the base plus added catalog rows and nothing else.
+func catalogInserts(base, side []string) (map[int][]string, bool) {
+	at := map[int][]string{}
+	j := 0
+	for i, b := range base {
+		var ins []string
+		for j < len(side) && side[j] != b {
+			if !addedCatalogRow(side[j]) {
+				return nil, false
+			}
+			ins = append(ins, side[j])
+			j++
+		}
+		if j == len(side) {
+			return nil, false
+		}
+		if len(ins) > 0 {
+			at[i] = ins
+		}
+		j++
+	}
+	var tail []string
+	for ; j < len(side); j++ {
+		if !addedCatalogRow(side[j]) {
+			return nil, false
+		}
+		tail = append(tail, side[j])
+	}
+	if len(tail) > 0 {
+		at[len(base)] = tail
+	}
+	return at, true
+}
+
+// addedCatalogRow says a line is a catalog row (E or Page), not a change of one.
+func addedCatalogRow(line string) bool {
+	t := strings.TrimSpace(line)
+	return (strings.HasPrefix(t, "E(") || strings.HasPrefix(t, "Page(")) && strings.Contains(t, `"`)
 }
