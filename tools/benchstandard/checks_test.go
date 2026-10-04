@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestAConformingBenchIsStandardOK(t *testing.T) {
@@ -241,7 +243,7 @@ func TestSbclRows(t *testing.T) {
 	t.Run("absent", func(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
-		os.Remove(filepath.Join(b.bin, "sbcl"))
+		require.NoError(t, os.Remove(filepath.Join(b.bin, "sbcl")))
 		code, output := b.standard()
 		wantOnlyDrift(t, code, output, "sbcl not on PATH")
 		if n := len(drifts(output)); n != 1 {
@@ -280,7 +282,7 @@ func TestSbclRows(t *testing.T) {
 		if err := os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		os.Remove(filepath.Join(b.bin, "sbcl"))
+		require.NoError(t, os.Remove(filepath.Join(b.bin, "sbcl")))
 		if err := os.Symlink(real, filepath.Join(b.bin, "sbcl")); err != nil {
 			t.Fatal(err)
 		}
@@ -313,7 +315,7 @@ func TestProRungRows(t *testing.T) {
 	}
 	// A rung file with no execute bit is not one.
 	b2 := conformingBench(t)
-	os.Remove(filepath.Join(b2.home, "nova-bench", "rungs", "pro"))
+	require.NoError(t, os.Remove(filepath.Join(b2.home, "nova-bench", "rungs", "pro")))
 	b2.setEnv("NOVA_PRO_RUNG=" + b2.write("rung", "x", false))
 	if code, _ := b2.standard(); code != 1 {
 		t.Errorf("a non-executable NOVA_PRO_RUNG satisfied the row")
@@ -323,18 +325,18 @@ func TestProRungRows(t *testing.T) {
 func TestSqliteRows(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
-	os.Remove(filepath.Join(b.bin, "sqlite3"))
+	require.NoError(t, os.Remove(filepath.Join(b.bin, "sqlite3")))
 	code, output := b.standard()
 	wantOnlyDrift(t, code, output, "sqlite3 not on PATH (want "+b.home+"/sdk/sqlite3-<ver>/bin/sqlite3)")
 
 	// One outside sdk is named with where it resolves.
 	b2 := conformingBench(t)
 	elsewhere := filepath.Join(filepath.Dir(b2.bin), "elsewhere")
-	os.MkdirAll(elsewhere, 0o755)
+	require.NoError(t, os.MkdirAll(elsewhere, 0o755))
 	real := filepath.Join(elsewhere, "sqlite3")
-	os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755)
-	os.Remove(filepath.Join(b2.bin, "sqlite3"))
-	os.Symlink(real, filepath.Join(b2.bin, "sqlite3"))
+	require.NoError(t, os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755))
+	require.NoError(t, os.Remove(filepath.Join(b2.bin, "sqlite3")))
+	require.NoError(t, os.Symlink(real, filepath.Join(b2.bin, "sqlite3")))
 	code, output = b2.standard()
 	if code != 1 || len(driftWith(output, "sqlite3 at ")) != 1 || !strings.Contains(output, "not under "+b2.home+"/sdk (want "+b2.home+"/sdk/sqlite3-<ver>/bin/sqlite3)") {
 		t.Errorf("exit %d:\n%s", code, output)
@@ -363,7 +365,7 @@ func TestSlotShareRows(t *testing.T) {
 func TestHarnessRows(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
-	os.Remove(filepath.Join(b.home, "nova-bench", "harness-v1", "opencode"))
+	require.NoError(t, os.Remove(filepath.Join(b.home, "nova-bench", "harness-v1", "opencode")))
 	code, output := b.standard()
 	wantOnlyDrift(t, code, output, "harness missing at "+b.home+"/nova-bench/harness-<ver>/opencode")
 	if len(sandboxRuns(b.h)) != 1 { // only the network probe; no canary without a harness
@@ -377,7 +379,7 @@ func TestHarnessRows(t *testing.T) {
 
 	// An executable NOVA_HARNESS is the harness whatever else is on the bench.
 	b3 := conformingBench(t)
-	os.Remove(filepath.Join(b3.home, "nova-bench", "harness-v1", "opencode"))
+	require.NoError(t, os.Remove(filepath.Join(b3.home, "nova-bench", "harness-v1", "opencode")))
 	b3.setEnv("NOVA_HARNESS=" + b3.write("nova-bench/mine/opencode", "x", true))
 	if code, output = b3.standard(); code != 0 {
 		t.Errorf("exit %d:\n%s", code, output)
@@ -530,7 +532,7 @@ func TestSandboxNetworkRows(t *testing.T) {
 	t.Run("no sandbox binary", func(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
-		os.Remove(filepath.Join(b.home, ".local", "bin", "nova-sandbox"))
+		require.NoError(t, os.Remove(filepath.Join(b.home, ".local", "bin", "nova-sandbox")))
 		code, output := b.standard()
 		if code != 1 || len(driftWith(output, "sandbox-network: "+filepath.Join(b.home, ".local/bin/nova-sandbox")+" not executable")) != 1 {
 			t.Errorf("exit %d:\n%s", code, output)
@@ -543,7 +545,7 @@ func TestSandboxNetworkRows(t *testing.T) {
 	t.Run("no probe directory can be made", func(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
-		os.RemoveAll(filepath.Join(b.home, "nova-bench"))
+		require.NoError(t, os.RemoveAll(filepath.Join(b.home, "nova-bench")))
 		_, output := b.standard()
 		if len(driftWith(output, "sandbox-network: cannot make probe dir under "+b.home+"/nova-bench")) != 1 {
 			t.Errorf("\n%s", output)
@@ -563,7 +565,7 @@ func TestNovaBinRows(t *testing.T) {
 	t.Run("a binary missing", func(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
-		os.Remove(filepath.Join(b.home, ".local", "bin", "nova-fuse"))
+		require.NoError(t, os.Remove(filepath.Join(b.home, ".local", "bin", "nova-fuse")))
 		code, output := b.standard()
 		wantOnlyDrift(t, code, output, "nova-fuse missing at "+filepath.Join(b.home, ".local/bin/nova-fuse"))
 	})
