@@ -104,8 +104,15 @@ func (l *List) Line(line string) {
 	// that nobody ever read. So the error is not discarded: the line is counted
 	// in Total, which is the truth about the state, and not in Shown, which is
 	// the truth about the output.
+	//
+	// THE FIRST FAILED WRITE IS THE DELIVERY ERROR. Err (docs/SPEC.md's one
+	// MORE-line shape, "the first write error this listing hit") answers the
+	// write that failed first, so the caller's delivery record names the failure
+	// the stream actually met; a later failure does not rewrite it.
 	if _, err := fmt.Fprintf(l.w, "%s\n", oneline.Escape(strings.TrimSuffix(line, "\n"))); err != nil {
-		l.err = err
+		if l.err == nil {
+			l.err = err
+		}
 		return
 	}
 	l.shown++
@@ -123,7 +130,15 @@ func (l *List) More() {
 	if l.total <= l.shown {
 		return
 	}
-	fmt.Fprintln(l.w, MoreLine(l.token, l.kind, l.shown, l.total, l.remedy))
+	// THE MORE LINE IS AN OUTPUT ATTEMPT LIKE ANY OTHER, under the same rules as
+	// Line: its write error is a delivery error, kept only when it is the first
+	// one, so a listing whose tail was never delivered does not answer nil to
+	// the caller that records what it delivered (docs/SPEC.md's MORE line).
+	if _, err := fmt.Fprintln(l.w, MoreLine(l.token, l.kind, l.shown, l.total, l.remedy)); err != nil {
+		if l.err == nil {
+			l.err = err
+		}
+	}
 }
 
 // MoreLine is the MORE line itself, the one spelling every listing prints:
