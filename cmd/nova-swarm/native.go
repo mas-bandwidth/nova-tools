@@ -113,6 +113,16 @@ type nativeRunConfig struct {
 	// The verb itself always names one, derived from --root when --results-root
 	// is absent, because that root was already given.
 	resultsRoot string
+	// environ is the environment this run sees as its parent's: the child's environment
+	// is built from it, a secret's value is read from it, and the wall's check is handed
+	// it. nil is production: os.Environ(). A parallel test names its own list here
+	// instead of touching the process environment, which is shared with every other
+	// test running beside it.
+	environ []string
+	// cwd is the directory a relative slot or root is resolved in. "" is production:
+	// the process's own working directory. A parallel test names its own instead of
+	// chdir-ing the process.
+	cwd string
 	// runID is this invocation's directory under <results-root>/<label>/. It is
 	// claimed once, shared by every attempt of this run, and never reused: a
 	// later invocation of the same label gets its own id, so attempt numbers
@@ -279,20 +289,20 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// `--write x/...`), and so the run's own paths cannot disagree with each other: on darwin
 	// `/var` is a symlink to `/private/var`, so an absolute spelling and a relative one of one
 	// directory came out as two different names.
-	abslot, err := swarm.AbsResolved(cfg.slotDir)
+	abslot, err := absResolvedIn(cfg.slotDir, cfg.cwd)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the slot directory %s could not be made absolute: %s", oneline.Field(cfg.slotDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
 	cfg.slotDir = abslot
-	absroot, err := swarm.AbsResolved(cfg.root)
+	absroot, err := absResolvedIn(cfg.root, cfg.cwd)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the configured root %s could not be made absolute: %s", oneline.Field(cfg.root), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
 	cfg.root = absroot
 	if strings.TrimSpace(cfg.resultsRoot) != "" {
-		absResults, err := swarm.AbsResolved(cfg.resultsRoot)
+		absResults, err := absResolvedIn(cfg.resultsRoot, cfg.cwd)
 		if err != nil {
 			refuseNative(errOut, fmt.Sprintf("the results root %s could not be made absolute: %s", oneline.Field(cfg.resultsRoot), oneline.Escape(err.Error())))
 			return nativeRunResult{}, 2
@@ -377,7 +387,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// absent or empty variable is refused HERE, before anything runs, the way run and
 		// supervise refuse it.
 		if cfg.worker.Secret != "" {
-			if _, err := swarm.SecretFromEnv(cfg.worker.Secret); err != nil {
+			if _, err := cfg.secretFromEnv(cfg.worker.Secret); err != nil {
 				refuseNative(errOut, oneline.Escape(err.Error()))
 				return nativeRunResult{}, 2
 			}
@@ -551,7 +561,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// (3d) THE GO SHIM (nova-tools#5174, cost rule 5): with the shared caches on, the go the
 	// child runs by name adds -trimpath, so the machine's warm GOCACHE serves this checkout
 	// and the card's gate does not compile the repository again (shellshim.go).
-	goBin := swarm.BenchGoBin(benchHome(cfg), os.Getenv("PATH"))
+	goBin := swarm.BenchGoBin(benchHome(cfg), cfg.getenv("PATH"))
 	if cacheDir != "" {
 		if err := writeNativeGoShim(shimDir, goBin); err != nil {
 			refuseNative(errOut, fmt.Sprintf("%s %s", oneline.Field(cfg.label), oneline.Err(err)))
@@ -827,7 +837,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	runArgv := launch[1:]
 	wall := cfg.sandbox
 	if wall == "" && !cfg.noWall {
-		found, err := exec.LookPath(swarm.SandboxBinary)
+		found, err := cfg.lookPathIn(swarm.SandboxBinary)
 		if err != nil {
 			refuseNative(errOut, fmt.Sprintf("%s no wall: %s is on no PATH entry and --sandbox names no file; name the wall with --sandbox <path> or run with --no-wall and own every read and write the child makes",
 				oneline.Field(cfg.label), oneline.Field(swarm.SandboxBinary)))
@@ -836,7 +846,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		wall = found
 	}
 	if wall != "" {
-		if len(cfg.repos) > 0 && !sandboxHostRules(wall) {
+		if len(cfg.repos) > 0 && !sandboxHostRules(wall, cfg.environ) {
 			refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 			return nativeRunResult{}, 2
 		}
@@ -879,7 +889,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin)
+	childEnv := nativeChildEnvFrom(cfg.parentEnviron(), dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin)
 	if cfg.root != "" {
 		var id swarm.StagingIdentity
 		if cfg.identity != nil {
@@ -1446,7 +1456,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	handedBack := false
 	if !res.lost && !res.idled && !res.terminated && res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) {
 		if raw, err := os.ReadFile(outLog); err == nil {
-			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: jobDir, RC: res.rc, Wall: time.Duration(res.wallSeconds * float64(time.Second)), Route: cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
+			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: jobDir, RC: res.rc, Wall: time.Duration(res.wallSeconds * float64(time.Second)), Route: cfg.model, Routes: swarm.ParseRouteList(cfg.getenv(swarm.RoutesEnv))}); ok {
 				// the cause: the session's record of the failed message, else the log's error
 				// line, else the harness's own last words (nativeprovider.go)
 				// the harness's printed refusal of the model comes first: no request was made,
@@ -1756,8 +1766,11 @@ func refuseNative(w io.Writer, reason string) {
 // so with `hosts=enforceable`. Anything else -- a check that will not run, or a line without
 // that token -- is a wall that cannot express the rule, and the run refuses rather than run
 // the card unwalled (SPEC-SANDBOX rule 1 and rule 11).
-func sandboxHostRules(sandbox string) bool {
+func sandboxHostRules(sandbox string, environ []string) bool {
 	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, sandbox, "check")
+	if environ != nil {
+		cmd.Env = environ
+	}
 	defer cancel()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1857,11 +1870,82 @@ func benchHome(cfg nativeRunConfig) string {
 	if cfg.benchHome != "" {
 		return cfg.benchHome
 	}
+	if cfg.environ != nil {
+		return cfg.getenv("HOME")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
 	return home
+}
+
+// parentEnviron is the environment this run reads as its own: the list the config
+// names, or os.Environ() when it names none (production).
+func (cfg nativeRunConfig) parentEnviron() []string {
+	if cfg.environ != nil {
+		return cfg.environ
+	}
+	return os.Environ()
+}
+
+// getenv is one variable of parentEnviron, last spelling winning, the way the OS
+// resolves duplicates.
+func (cfg nativeRunConfig) getenv(name string) string {
+	if cfg.environ == nil {
+		return os.Getenv(name)
+	}
+	value := ""
+	for _, kv := range cfg.environ {
+		if n, v, ok := strings.Cut(kv, "="); ok && n == name {
+			value = v
+		}
+	}
+	return value
+}
+
+// secretFromEnv is swarm.SecretFromEnv read over parentEnviron: the same refusal,
+// naming the variable and never its value, asked of the environment this run was
+// handed rather than of the process's own.
+func (cfg nativeRunConfig) secretFromEnv(name string) (string, error) {
+	if cfg.environ == nil {
+		return swarm.SecretFromEnv(name)
+	}
+	v := cfg.getenv(name)
+	if strings.TrimSpace(v) == "" {
+		return "", fmt.Errorf("the worker description's secret %s is absent or empty in this run's environment; the value is delivered by `nova-secrets exec`, which sets it -- run this binary under `nova-secrets exec --only %s -- <this command>` (or set %s by hand); the value is never a file", name, name, name)
+	}
+	return v, nil
+}
+
+// lookPathIn is exec.LookPath asked of parentEnviron's PATH when the config names an
+// environment, and of the process's own when it does not.
+func (cfg nativeRunConfig) lookPathIn(name string) (string, error) {
+	if cfg.environ == nil {
+		return exec.LookPath(name)
+	}
+	for _, dir := range filepath.SplitList(cfg.getenv("PATH")) {
+		if dir == "" {
+			continue
+		}
+		candidate := filepath.Join(dir, name)
+		if st, err := os.Stat(candidate); err == nil && st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", exec.ErrNotFound
+}
+
+// absResolvedIn is swarm.AbsResolved at a chosen working directory: relative
+// spellings resolve where the config says, not where the process happens to stand.
+func absResolvedIn(path, cwd string) (string, error) {
+	if cwd == "" {
+		return swarm.AbsResolved(path)
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(cwd, path)
+	}
+	return filepath.EvalSymlinks(path)
 }
 
 // benchOS is the operating system whose toolchain list the roots come from: the one a caller

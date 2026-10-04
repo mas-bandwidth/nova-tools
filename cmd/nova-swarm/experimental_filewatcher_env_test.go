@@ -11,10 +11,11 @@ import (
 // (nova-tools #2328). The control is keepNativeEnv: without OPENCODE_*, the variable is
 // dropped.
 func TestIssue2328(t *testing.T) {
+	t.Parallel()
 	const name = "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER"
-	t.Setenv(name, "1")
-
-	env := nativeChildEnv("data", "job", "tmp", "", "", "", "", "")
+	// the per-test seam: nativeChildEnvFrom takes the environment to build from, so the
+	// variable is named in the list rather than set on the whole process.
+	env := nativeChildEnvFrom([]string{name + "=1", "PATH=/bin"}, "data", "job", "tmp", "", "", "", "", "")
 	for _, kv := range env {
 		if strings.HasPrefix(kv, name+"=") {
 			return
