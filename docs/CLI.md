@@ -805,7 +805,10 @@ network message or wake the harness. Neither command proves that the session
 can be woken. Before any daemon status exists, `status` still shows the saved
 `sleep_requested` and coordinator, and reports `reported_asleep=unknown`. What a
 first run gets wrong: a `--harness` that is not one
-of opencode, codex, claude, antigravity, dsh; a `pong --as` that is not the
+of opencode, codex, claude, antigravity, dsh, gemini, copilot, cursor, amp,
+goose, kiro, cline, aider, roo, windsurf, zed, warp (the surveyed harnesses
+without a delivery route are known but passive, with their refusal reasons);
+a `pong --as` that is not the
 name the daemon whose state directory that is runs as (refused: the pong
 carries the daemon's name); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a `pong`
 with no `--to` before any ping has named a seat; a daemon whose record says
