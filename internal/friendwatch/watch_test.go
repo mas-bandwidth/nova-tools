@@ -145,3 +145,29 @@ func TestWatchParentProcess(t *testing.T) {
 		os.Exit(0)
 	}
 }
+
+func TestTimingReservesHalfPresenceWindow(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		name           string
+		every, timeout time.Duration
+		valid          bool
+	}{
+		{"default", time.Second, 3 * time.Second, true},
+		{"boundary", 4500 * time.Millisecond, 3 * time.Second, true},
+		{"past boundary", 4500*time.Millisecond + time.Nanosecond, 3 * time.Second, false},
+		{"lease interval", 15 * time.Second, time.Second, false},
+		{"nonpositive", 0, time.Second, false},
+		{"overflow", time.Duration(1<<63 - 1), time.Second, false},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			err := CheckTiming(row.every, row.timeout)
+			if row.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}

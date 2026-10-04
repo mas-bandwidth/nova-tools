@@ -20,8 +20,8 @@ func watchVerb(ctx context.Context) tool.Verb {
 			f.Required("friend", "the registered friend identity")
 			f.Required("argv", "a JSON array of direct blocking command arguments")
 			f.String("sprint", "nova-sprint", "the sprint executable")
-			f.Duration("every", time.Second, "presence interval")
-			f.Duration("timeout", 3*time.Second, "maximum time per presence beat")
+			f.Duration("every", time.Second, "presence interval; interval plus beat timeout must be at most 7.5s")
+			f.Duration("timeout", 3*time.Second, "maximum time per presence beat; together with interval at most 7.5s")
 			f.Bool("stdin-lifetime", false, "stop when the harness-owned stdin pipe closes")
 			f.Prints()
 			f.Check(func(c *tool.Call) {
@@ -29,8 +29,8 @@ func watchVerb(ctx context.Context) tool.Verb {
 				if json.Unmarshal([]byte(c.Str("argv")), &argv) != nil || len(argv) == 0 || argv[0] == "" {
 					c.Problem("--argv wants a nonempty JSON array naming a direct executable")
 				}
-				if c.Dur("every") <= 0 || c.Dur("timeout") <= 0 {
-					c.Problem("--every and --timeout want positive durations")
+				if err := friendwatch.CheckTiming(c.Dur("every"), c.Dur("timeout")); err != nil {
+					c.Problem(err.Error())
 				}
 			})
 		}, Run: func(c *tool.Call) *tool.Out {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
@@ -29,12 +30,28 @@ type Options struct {
 	Stdout, Stderr         io.Writer
 }
 
+// CheckTiming reserves half the sprint freshness window for scheduling and transport.
+// SPEC-SPRINT: FriendDownAfter marks a friend down at the freshness boundary.
+func CheckTiming(every, timeout time.Duration) error {
+	budget := sprint.FriendDownAfter / 2
+	if every <= 0 || timeout <= 0 {
+		return errors.New("--every and --timeout want positive durations")
+	}
+	if every > budget || timeout > budget-every {
+		return fmt.Errorf("--every plus --timeout wants at most %s (half the sprint presence window)", budget)
+	}
+	return nil
+}
+
 // Run beats only while its owned child runs and its invoking parent remains.
 // A failed beat cancels the wait, making store errors visible to the harness.
 // STANDARD section 1: only this invocation's child is cancelled.
 func Run(ctx context.Context, o Options) error {
 	if o.Sprint == "" || o.Server == "" || o.Friend == "" || len(o.Argv) == 0 || o.Argv[0] == "" || o.Every <= 0 || o.Timeout <= 0 || o.Parent <= 1 {
 		return errors.New("watch needs sprint executable, server, friend, direct child argv, positive durations and a live invoking parent")
+	}
+	if err := CheckTiming(o.Every, o.Timeout); err != nil {
+		return err
 	}
 	if o.Parent != os.Getppid() {
 		return errors.New("watch parent must be its actual invoking parent")

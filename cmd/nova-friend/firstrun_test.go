@@ -80,3 +80,20 @@ func TestWatchChildFailureAndHelpHaveExplicitExitCodes(t *testing.T) {
 		})
 	}
 }
+
+func TestUnsafeTimingRefusedBeforeDryRun(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		every string
+		exit  int
+	}{{"4.5s", 0}, {"4.500000001s", 2}, {"15s", 2}} {
+		t.Run(row.every, func(t *testing.T) {
+			t.Parallel()
+			var out, stderr bytes.Buffer
+			require.Equal(t, row.exit, friendTool(context.Background()).Run([]string{"watch", "--server", "unused:1", "--friend", "reader", "--argv", `["/executable-does-not-exist"]`, "--every", row.every, "--timeout", "3s", "--dry-run"}, nil, &out, &stderr))
+			if row.exit != 0 {
+				require.Contains(t, stderr.String(), "at most 7.5s")
+			}
+		})
+	}
+}

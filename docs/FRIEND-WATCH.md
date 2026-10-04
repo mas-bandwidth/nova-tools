@@ -22,7 +22,10 @@ monitor; enable it only when the harness keeps its pipe
 open throughout the wait. Tools that provide immediate stdin EOF use the default
 and their normal foreground cancellation instead.
 
-Beats run every second by default, with a three-second timeout. A failed beat
+Beats run every second by default, with a three-second timeout. The interval
+plus timeout must be at most 7.5 seconds, half the sprint's 15-second friend
+freshness window, leaving margin for scheduling and transport. Both durations
+must be positive; the wrapper refuses unsafe timing even in a dry run. A failed beat
 ends the wait and reports its bounded diagnostic. No further beats occur after
 completion. The sprint's existing presence lease expires naturally; the wrapper
 does not issue `friend down`, which could overwrite a concurrent invocation's
