@@ -31,7 +31,7 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		putReview(w, "s1-1", body, 2, 1, primHead)
 		putAttemptWork(w, "s1-1", 1, "sprint/old", start, "yes")
 		putAttemptWork(w, "s1-1", 2, branch, workHead, "")
-		require.Equal(t, cardhdr.RoutePro, w.s.readTierOf(w.s.Work.Card("s1-1")))
+		require.Equal(t, cardhdr.RouteHeavy, w.s.readTierOf(w.s.Work.Card("s1-1"))) // the collapse: frontier is read on heavy, the strongest tier a route serves
 		askReaders(t, w, []FriendSeat{frontierSeat("amy", 2, Up, dir)})
 
 		id := ReadCardID("s1-1", 2, "amy")
