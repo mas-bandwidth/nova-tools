@@ -112,10 +112,10 @@ type Box struct {
 // `lift quarantine` remove more of them, because they are one surface in both directions.
 func Surface(s string) string { return strings.ToLower(Fold(s)) }
 
-// Fold tidies text this tool is about to WRITE: every control character becomes a space,
-// then runs of whitespace collapse to a single ASCII space and the ends are trimmed. The
-// collapse is Unicode-aware, so a non-breaking space or a line separator inside the text
-// becomes an ordinary space too. It is not the defense (oneline.Escape at print time is), because a box
+// Fold tidies text this tool is about to WRITE: every control character becomes a blank,
+// then runs of whitespace collapse to a single ASCII blank and the ends are trimmed. The
+// collapse is Unicode-aware, so a non-breaking whitespace character or a line separator inside the text
+// becomes an ordinary blank too. It is not the defense (oneline.Escape at print time is), because a box
 // written by another hand still arrives holding anything at all (note 5). And it is never
 // a REFUSAL: a fuse you cannot blow is not a fuse, so a reason is accepted whatever it
 // contains and only its spelling in the file is tidied.
