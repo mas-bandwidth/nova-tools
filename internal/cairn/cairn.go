@@ -498,26 +498,8 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		source = inherited
 	}
 	final := entryPath(store, session, id)
-	raw, err := os.ReadFile(final)
-	if err != nil && !os.IsNotExist(err) {
+	if res, found, err := existingAppend(store, session, id, text, final); err != nil || found {
 		return res, err
-	}
-	if err == nil {
-		var prev entryFile
-		if err := json.Unmarshal(raw, &prev); err != nil {
-			return res, fmt.Errorf("stored entry %q is corrupt: %v", id, err)
-		}
-		if prev.Text != text {
-			return res, &ConflictError{Msg: fmt.Sprintf("entry %q already holds different prose; pick a new id", id)}
-		}
-		prevStamp, err := time.Parse(time.RFC3339Nano, prev.Stamp)
-		if err != nil {
-			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
-		}
-		if err := ensurePointer(store, session, id, prevStamp); err != nil {
-			return res, err
-		}
-		return AppendResult{Stamp: prevStamp, Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
 	}
 	rec, _ := json.Marshal(entryFile{
 		Session: session,
@@ -532,8 +514,19 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	}
 	// Atomic write per internal/atomicfile model: temporary file created
 	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
-	// atomic rename over target path.
-	if err := atomicfile.WriteFile(final, rec, 0o644); err != nil {
+	// published by exclusive hard link only where the target is absent.
+	// NoReplace keeps the SPEC-CAIRN rule that the same entry id carrying
+	// different prose is "never an overwrite" under two writers: of two
+	// appends that both read the entry absent, exactly one publishes and the
+	// other loses with os.ErrExist, then re-reads the winner and reports
+	// duplicate or conflict under the same rules a sequential retry uses. The
+	// first entry to land is immutable.
+	if err := atomicfile.WriteFile(final, rec, 0o644, atomicfile.NoReplace()); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			if res, found, rerr := existingAppend(store, session, id, text, final); rerr != nil || found {
+				return res, rerr
+			}
+		}
 		return res, err
 	}
 	if err := ensurePointer(store, session, id, stamp); err != nil {
@@ -543,6 +536,38 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		return res, err
 	}
 	return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Source: source}, nil
+}
+
+// existingAppend applies the duplicate/conflict rules of SPEC-CAIRN, "The
+// four verbs", to an entry already stored under id. found reports whether the
+// entry is present; when it is, the result carries the stored stamp, source
+// and policy with Duplicate set. An absent entry returns found=false so the
+// caller may publish. A read or decode failure, or a corrupt stored stamp, is
+// returned as an error and never overwrites the stored file.
+func existingAppend(store, session, id, text, final string) (AppendResult, bool, error) {
+	var res AppendResult
+	raw, err := os.ReadFile(final)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return res, false, nil
+		}
+		return res, false, err
+	}
+	var prev entryFile
+	if err := json.Unmarshal(raw, &prev); err != nil {
+		return res, false, fmt.Errorf("stored entry %q is corrupt: %v", id, err)
+	}
+	if prev.Text != text {
+		return res, false, &ConflictError{Msg: fmt.Sprintf("entry %q already holds different prose; pick a new id", id)}
+	}
+	prevStamp, err := time.Parse(time.RFC3339Nano, prev.Stamp)
+	if err != nil {
+		return res, false, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
+	}
+	if err := ensurePointer(store, session, id, prevStamp); err != nil {
+		return res, false, err
+	}
+	return AppendResult{Stamp: prevStamp, Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, true, nil
 }
 
 // readEntry loads one stored entry or explains its absence. It validates that
