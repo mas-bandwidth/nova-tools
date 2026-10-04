@@ -1331,6 +1331,7 @@ type RankReq struct {
 	IDs     []string
 	Score   *float64 // the new score of the first; the rest follow it
 	First   bool     // ahead of every primary of its stream
+	Before  string   // in line in front of this primary of the cards' own stream, in the order named
 	Answers []string
 	Who     string
 	Only    []string
@@ -1350,23 +1351,15 @@ func Rank(s *Snapshot, r RankReq) Plan {
 		}
 		return ""
 	}, s.primaryCard)
-	score := 0.0
-	if r.Score != nil {
-		score = *r.Score
-	} else if r.First {
-		low := 0.0
-		first := true
-		for _, c := range s.Work.Cards() {
-			if c.Placed() && (first || c.Score < low) {
-				low, first = c.Score, false
-			}
-		}
-		score = low - float64(len(chosen))
+	scores, why := rankScores(s, r, chosen)
+	if why != "" {
+		p.Refused = append(p.Refused, Refusal{Key: strings.Join(r.IDs, ","), Why: why + "; nothing was changed"})
+		return p
 	}
-	for _, c := range chosen {
+	for i, c := range chosen {
+		score := scores[i]
 		if c.Score == score {
 			p.refuse(c.ID, "already at score "+fmtScore(score))
-			score++
 			continue
 		}
 		u := Unit{Key: c.ID, Stream: c.Row}
@@ -1388,10 +1381,51 @@ func Rank(s *Snapshot, r RankReq) Plan {
 		}
 		u.Moved = fmt.Sprintf("%s score %s -> %s (%d copies)", c.ID, fmtScore(c.Score), fmtScore(score), len(u.Changes)-1)
 		p.Units = append(p.Units, u)
-		score++
 	}
 	answered(&p, s, r.Answers, r.Who)
 	return p
+}
+
+// rankScores is the new score of each chosen card, in order: from --score up by
+// one, ahead of every primary (--first), or in line in front of --before, placed
+// as add --before places cards (addScores: between the card before the anchor
+// and the anchor, the line never renumbered). --before wants a primary of the
+// chosen cards' own stream that is none of them; "" is the refusal, of the whole
+// step.
+func rankScores(s *Snapshot, r RankReq, chosen []*Card) ([]float64, string) {
+	out := make([]float64, len(chosen))
+	switch {
+	case r.Score != nil:
+		for i := range out {
+			out[i] = *r.Score + float64(i)
+		}
+	case r.First:
+		low := 0.0
+		first := true
+		for _, c := range s.Work.Cards() {
+			if c.Placed() && (first || c.Score < low) {
+				low, first = c.Score, false
+			}
+		}
+		for i := range out {
+			out[i] = low - float64(len(chosen)) + float64(i)
+		}
+	case r.Before != "":
+		anchor := s.Work.Placed(r.Before)
+		if anchor == nil {
+			return nil, "--before " + r.Before + " is no primary on the table"
+		}
+		for _, c := range chosen {
+			switch {
+			case c.ID == anchor.ID:
+				return nil, c.ID + " is the card --before names: a card is not placed before itself"
+			case c.Row != anchor.Row:
+				return nil, c.ID + " is of stream " + c.Row + " and " + anchor.ID + " of stream " + anchor.Row + ": --before orders the cards of one stream (move takes a card to another)"
+			}
+		}
+		return addScores(s, AddReq{Stream: anchor.Row, Before: r.Before}, len(chosen))
+	}
+	return out, ""
 }
 
 // CIReq records a CI observation for primaries, in any state.

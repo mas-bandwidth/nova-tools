@@ -61,7 +61,7 @@ func init() {
 		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--tier <tier>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
-		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
+		{"rank", "<id>... (--score <n> | --first | --before <id>) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
 		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>]", "brief s1-4 --brief-file s1-4.md", (*app).cmdBrief},
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
@@ -2178,15 +2178,22 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("rank")
 	score := fs.String("score", "", "the new score of the first id; the rest follow it")
 	first := fs.Bool("first", false, "ahead of every primary")
+	before := fs.String("before", "", "in line in front of this primary of the cards' own stream, in the order named, placed as add --before places cards (the line is never renumbered)")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "rank", err.Error())
 	}
-	if len(ids) == 0 || (*score == "") == !*first {
-		return refuse(stderr, "rank", "wants ids and one of --score <n>, --first")
+	given := 0
+	for _, on := range []bool{*score != "", *first, *before != ""} {
+		if on {
+			given++
+		}
 	}
-	r := sprint.RankReq{IDs: ids, First: *first, Answers: answers(*ans), Who: c.actor}
+	if len(ids) == 0 || given != 1 {
+		return refuse(stderr, "rank", "wants ids and one of --score <n>, --first, --before <id>")
+	}
+	r := sprint.RankReq{IDs: ids, First: *first, Before: *before, Answers: answers(*ans), Who: c.actor}
 	if *score != "" {
 		f, err := strconv.ParseFloat(*score, 64)
 		if err != nil {
