@@ -2709,3 +2709,48 @@ Reads the tree and GitHub again and writes nothing: zero differences is
 `VERIFY OK ... differences=0`, the receipt that the tree holds what GitHub
 holds. `--against <tree>` puts a second tree file where GitHub stands and reads
 no network at all.
+
+## nova-friend
+
+nova-friend is pre-alpha: not ready for production use.
+
+Delivers team messages to a registered native harness through a Redis-backed
+queue. An explicit adapter restores the harness session and returns durable
+receipts; a listener or registration alone does not establish that the harness
+is awake. The tool runs outside the sprint tables. Its real registration and
+delivery paths need a shared Redis address and a native adapter, so use the
+plans below to inspect the calls before connecting either one.
+
+### First run
+
+These dry-run commands read neither Redis nor the adapter file. The address and
+file are example values only; `--dry-run` stops before any connection or
+harness call.
+
+```sh
+nova-friend register --friend reader --prefix example --redis unused:1 --adapter adapter.json --dry-run
+nova-friend startup --friend reader --prefix example --redis unused:1 --adapter adapter.json --dry-run
+nova-friend listen --friend reader --prefix example --consumer worker --redis unused:1 --adapter adapter.json --dry-run
+```
+
+The command behavior and the executed first-run transcript are in
+[TESTS.md](TESTS.md#nova-friend).
+
+### register and startup
+
+Both verbs run the adapter's startup handshake, then write its session route
+to Redis. The adapter must restore an actual native session and confirm durable
+delivery identifiers and receipts before the route is recorded.
+
+### listen and serve
+
+Both verbs run a queue listener for the named friend and consumer. Messages stay
+pending until the adapter returns a durable receipt for the current session and
+route revision; failed deliveries remain inspectable and can be retried. Stop
+the process with a signal when the listener should end.
+
+### status
+
+Reads the friend's registered session from Redis. Its `awake=unknown` field is
+deliberate: session metadata is evidence of registration, not current
+availability or completed work.

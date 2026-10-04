@@ -1191,3 +1191,24 @@ prints the same plan, one `IMPORT REPO` per repository, and the `sha256` of the
 file it wrote; verify names the same `sha256`, and when the two differ it says
 `VERIFY FAIL` with one `VERIFY MISSING`, `EXTRA` or `DRIFT` line per difference.
 `differences=0` is the proof the tree holds what GitHub holds.
+
+## nova-friend
+
+The first-run plans below were run against the built command. Each exits zero
+without reading Redis or the adapter file and stops before a harness call.
+
+### First run
+
+```text
+$ nova-friend register --friend reader --prefix example --redis unused:1 --adapter adapter.json --dry-run
+REGISTER OK friend=reader action=register dry_run=true
+REGISTER NOTE plan only: no store read, harness call or registration
+
+$ nova-friend startup --friend reader --prefix example --redis unused:1 --adapter adapter.json --dry-run
+STARTUP OK friend=reader action=startup dry_run=true
+STARTUP NOTE plan only: no store read, harness call or registration
+
+$ nova-friend listen --friend reader --prefix example --consumer worker --redis unused:1 --adapter adapter.json --dry-run
+LISTEN OK friend=reader action=listen dry_run=true
+LISTEN NOTE plan only: no store read, harness call or registration
+```

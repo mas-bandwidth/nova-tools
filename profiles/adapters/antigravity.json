@@ -1,0 +1,7 @@
+{
+  "adapter": "antigravity",
+  "argv": [
+    "agentapi",
+    "send-message"
+  ]
+}
