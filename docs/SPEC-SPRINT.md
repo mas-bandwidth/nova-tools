@@ -1775,6 +1775,7 @@ the tick would make, no other open judgment on it).
 | a judgment has waited past its due time (overdue) | a decision of the judgment, wait | as the judgment |
 | a stream has made no progress past its deadline (stale) | where, queue (look), wait | no |
 | stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
+| review above its alarm, merging above its alarm, nothing ready while cards wait, the fleet works below its alarm (the backlog alarms, below) | ack (seen: quiet until the episode ends), wait | yes |
 
 A condition the tick keeps (cannot ask, fewer than two readers up, no member up, a deadline passed, an
 invariant broken; a failing reminder too) is answered for a while by
@@ -1791,7 +1792,8 @@ The machine's tick writes its own judgments (section 14): cannot ask, fewer than
 member is up, a work card or a read card past its deadline, a stream with no
 merge step past its deadline, an invariant is broken, a stall (one
 judgment for each card nothing holds, or for the stall a chain of waiting
-cards ends at; the stall judgment itself holds nothing).
+cards ends at; the stall judgment itself holds nothing), and the backlog alarms
+(below).
 
 The sprint done is no judgment. The tick's last part, done, finds the sprint
 done when nothing is waiting, ready, working, in review or merging and at least
@@ -1919,6 +1921,31 @@ a need) is held by what it waits on, which the table shows, and is never stale.
 `wait stale:<stream>~<epoch> --for <duration>` writes the time on the stream's
 control card (`stale_review`), and the stream is not shown stale before it.
 This is pull visibility; nothing claims to detect a dead process.
+
+### Backlog alarms
+
+Four conditions of the whole sprint the tick keeps (its deadlines part plans them
+with the deadlines), each off until the coordinator sets its threshold with `set`,
+the work table's properties `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready`
+(a clear starts the next epoch with none):
+
+- review above its alarm: more primaries in review than `--alarm-review <n>`;
+- merging above its alarm: more primaries merging than `--alarm-merging <n>`;
+- nothing ready while cards wait: with `--alarm-ready on`, no primary ready and one or
+  more waiting;
+- the fleet works below its alarm: the members up working fewer work cards than
+  `--alarm-fleet <percent>` (1 to 100) of their width, while a primary is ready or
+  waiting.
+
+An alarm is an episode: one judgment of the sprint (no primaries) written when its
+condition starts, never again while it stands, whatever its counts do (it is keyed by
+its type), and closed once when it ends, in the same step as one happened note to the
+coordinator, "an alarm cleared", whose text opens with the alarm's type and a colon
+and says the count now. The judgment and that note are what `inbox --wait --push`
+pushes, so an episode is pushed once when it starts and once when it ends. `ack` keeps
+it quiet until the episode ends (the next is raised again); `wait --for` until that
+much running time has passed, when one that still stands is raised again; `off` takes
+an alarm off, and an open one clears.
 
 ### Answered by nova-decide
 
@@ -2223,7 +2250,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | reader up | releases the hold; the reader's state is then its beat's |
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | stream set | `stream set <s>... --read-tier <flash|pro|default>`: the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`); `default` takes a stream's off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash or pro, or another actor |
-| set | `set [--read-tier <flash|pro|default>] [--dealt-max <duration|default>]`: the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered) and `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours); the coordinator's; refused whole, nothing written, for a tier that is not flash or pro, a bound that is not a duration above zero, nothing to set, or another actor; a clear starts the next epoch with neither |
+| set | `set [--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>]`: the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash or pro, a bound that is not a duration above zero, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. The table layer never places a removed member again within an epoch, so `add --stream <s>` of a stream removed in this epoch is refused, naming the clear, and adds it fresh after the next clear (`sprint.StreamRemove`, `sprint.RemovedStream`) |
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
@@ -2442,8 +2469,8 @@ ask (T2: as many different readers up as it needs, one for a flash card and
 two for a pro card, for each primary in review with fewer read cards than that
 at its attempt and work not failed; a read asked of a
 reader that is not up is taken back first, section 6), check (T6: section 9, and the
-no-stall rule), deadlines, overdue, done (the sprint done: the machine
-stops). Each part is
+no-stall rule), deadlines (and the backlog alarms, section 8), overdue, done
+(the sprint done: the machine stops). Each part is
 bounded per tick (200 moves, 50 notes): the rest are due, the next ticks
 catch up, and the machine line says so. A card made ready is dealt in the same
 tick. Running a tick twice in a row changes nothing the second time.

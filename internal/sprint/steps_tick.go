@@ -133,6 +133,11 @@ var TickDecisions = map[string][]string{
 	NReadLate:       {"ask --another", "wait", "drop"},
 	NMergeLate:      {"merge --stream <s>", "look", "wait"},
 	NStalled:        {"look at the card", "wait"},
+	// the backlog alarms (alarms.go): seen, or quiet for a while
+	NAlarmReview:  {"ack", "wait"},
+	NAlarmMerging: {"ack", "wait"},
+	NAlarmReady:   {"ack", "wait"},
+	NAlarmFleet:   {"ack", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -232,7 +237,8 @@ const (
 var TickStart = []TickPartDef{{PartLevel, TickLevel}, {PartLevelReads, TickLevelReads}}
 
 // TickEnd is the tick's end, once the tables are settled: what is always
-// true held, the deadlines and the overdue judgments, and the done part last.
+// true held, the deadlines (with the backlog alarms, alarms.go) and the overdue
+// judgments, and the done part last.
 // It writes notes, no table.
 var TickEnd = []TickPartDef{
 	{"check", TickCheck},
@@ -839,7 +845,8 @@ func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 
 // TickDeadlines writes one judgment for each card or stream past its
 // deadline, in running time (N4, N5, N6), and closes it when the card or the
-// stream moves.
+// stream moves. It keeps the backlog alarms too (tickAlarms, docs/SPEC-SPRINT.md
+// section 8, "Backlog alarms").
 func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	var conds []cond
@@ -909,7 +916,10 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	due := notify(&p, s, conds, []string{NWorkLate, NReadLate, NMergeLate}, r)
-	return p, due
+	// the backlog alarms, on a plan of their own: each notify closes and judges after its own closes
+	a, alarmsDue := tickAlarms(s, r)
+	p.Notes, p.Closes, p.Updates = append(p.Notes, a.Notes...), append(p.Closes, a.Closes...), append(p.Updates, a.Updates...)
+	return p, due + alarmsDue
 }
 
 // TickOverdue marks each open judgment overdue once, when it passes its due
@@ -1018,7 +1028,8 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit:
+	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit,
+		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
