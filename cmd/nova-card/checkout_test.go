@@ -102,3 +102,32 @@ func TestAToolNamedTwiceIsRefusedNotOverwritten(t *testing.T) {
 	require.Equal(t, 0, exit, stderr)
 	assert.Contains(t, stdout, "cards=1 waves=1 tier=pro")
 }
+
+// With a checkout, a help card's TEST is read off the tool's package, not assumed:
+// the test that runs the examples where there is one, the one to write where not.
+func TestAHelpCardReadsItsTestOffTheCheckout(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fixture tool is a shell script")
+	}
+	bin := t.TempDir()
+	for _, tool := range []string{"nova-x", "nova-y"} {
+		require.NoError(t, testbin.WriteExecutable(filepath.Join(bin, tool), []byte("#!/bin/sh\necho '"+tool+": a fixture'\n"), 0o755))
+	}
+	repo := t.TempDir()
+	for rel, text := range map[string]string{
+		"cmd/nova-x/main.go":          "package main\n",
+		"cmd/nova-x/firstrun_test.go": "package main\n\nfunc TestUsageBannerExamplesRun(t *testing.T) {\n\tonboarding.ExampleLines(banner, \"nova-x\")\n}\n",
+		"cmd/nova-y/main.go":          "package main\n",
+		"cmd/nova-y/y_test.go":        "package main\n",
+		"docs/CLI.md":                 "# CLI\n",
+	} {
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(text), 0o644))
+	}
+	exit, stdout, stderr := runCard("generate", "--from", "help", "--tool", "nova-x", "--tool", "nova-y", "--bin-dir", bin, "--repo-dir", repo, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", filepath.Join(t.TempDir(), "cards"), "--dry-run")
+	require.Equal(t, 0, exit, stderr)
+	assert.Contains(t, stdout, "help-nova-x\tcmd/nova-x/main.go\tcmd/nova-x TestUsageBannerExamplesRun\t1\t-\n")
+	assert.Contains(t, stdout, "help-nova-y\tcmd/nova-y/main.go\tcmd/nova-y TestHelpExampleLinesRunAsPrinted\t1\t-\n")
+}

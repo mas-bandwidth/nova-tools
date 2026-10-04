@@ -519,12 +519,48 @@ func PlanFindings(findings []Finding, prefix, tier string, max int) Plan {
 // HelpLineLimit is the width a help line keeps under (docs/STANDARD.md).
 const HelpLineLimit = 100
 
+// HelpExampleTest is the test a help card writes when its tool's package has none
+// that runs the example lines; four of the twenty tools have it by this name.
+const HelpExampleTest = "TestHelpExampleLinesRunAsPrinted"
+
+var (
+	testFuncRE    = regexp.MustCompile(`^func (Test[A-Za-z0-9_]*)\(`)
+	exampleCallRE = regexp.MustCompile(`onboarding\.ExampleLines\(`)
+)
+
+// ExampleTest is the test that holds a tool's help examples to the binary, read off
+// the texts of its package's _test.go files: HelpExampleTest when a file declares
+// it, else the first test function whose body calls onboarding.ExampleLines, else
+// "".
+func ExampleTest(texts ...string) string {
+	first := ""
+	for _, text := range texts {
+		fn := ""
+		for _, line := range strings.Split(text, "\n") {
+			if m := testFuncRE.FindStringSubmatch(line); m != nil {
+				fn = m[1]
+				if fn == HelpExampleTest {
+					return fn
+				}
+				continue
+			}
+			if first == "" && fn != "" && exampleCallRE.MatchString(line) {
+				first = fn
+			}
+		}
+	}
+	return first
+}
+
 // PlanHelp is one card for a tool from its rendered help: the lines over
 // HelpLineLimit are listed; the terms and the examples are the model's reading, so
 // the card is pro. help is the banner `tool help` printed; a tool with no long
 // line and nothing else to say still gets a card, because the examples and the
-// terms are the judgment the card asks for.
-func PlanHelp(tool, help, prefix, tier string) Card {
+// terms are the judgment the card asks for. test is the test of cmd/<tool> that
+// runs the help's example lines (ExampleTest over the package's test files), and
+// "" when the package has none or no checkout was read: then the card writes
+// HelpExampleTest first and its gate is the package.
+func PlanHelp(tool, help, test, prefix, tier string) Card {
 	if tier == "" {
 		tier = "pro"
 	}
@@ -543,12 +579,19 @@ func PlanHelp(tool, help, prefix, tier string) Card {
 	} else {
 		task += fmt.Sprintf("no line runs over %d characters. ", HelpLineLimit)
 	}
-	task += "Then: every term the help uses is defined where it first appears or is a word a stranger knows (name each undefined one and define it in place); every example line runs as printed against the built tool (run each; one that does not is corrected or dropped); the first three lines after the banner are the flow a first user needs. The help lives in cmd/" + tool + "/main.go (its usage constant); the test that holds the examples to the binary is in the same package. A change to behaviour is out of scope: words only." + draftRule
+	task += "Then: every term the help uses is defined where it first appears or is a word a stranger knows (name each undefined one and define it in place); every example line runs as printed against the built tool (run each; one that does not is corrected or dropped); the first three lines after the banner are the flow a first user needs. The help lives in cmd/" + tool + "/main.go (its usage constant); "
+	if test != "" {
+		task += "the test " + test + " in the same package holds the examples to the binary and is red before and green after. "
+	} else {
+		test = HelpExampleTest
+		task += "no test in cmd/" + tool + " runs the help's example lines through onboarding.ExampleLines: write " + test + " first, in the package's own _test.go, every example line run as printed and compared by onboarding.CompareTranscript, and the card's gate is go test ./cmd/" + tool + "/. "
+	}
+	task += "A change to behaviour is out of scope: words only." + draftRule
 	return Card{
 		ID:    prefix + "-" + Slug(tool),
 		File:  "cmd/" + tool + "/main.go",
 		Paths: MergePaths([]string{"cmd/" + tool + "/main.go", "cmd/" + tool + "/*_test.go", "docs/CLI.md"}),
-		Test:  "cmd/" + tool + " TestHelpExampleLinesRunAsPrinted",
+		Test:  "cmd/" + tool + " " + test,
 		Tier:  tier,
 		Wave:  1,
 		Kind:  "fix-red",

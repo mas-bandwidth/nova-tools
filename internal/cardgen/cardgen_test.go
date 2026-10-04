@@ -182,12 +182,12 @@ func TestFindingsAreOneCardPerFile(t *testing.T) {
 func TestHelpCardListsTheLongLines(t *testing.T) {
 	t.Parallel()
 	help := "nova-x: a tool\n\n" + strings.Repeat("x", 120) + "\nshort\n"
-	c := PlanHelp("nova-x", help, "", "")
+	c := PlanHelp("nova-x", help, "", "", "")
 	assert.Equal(t, "help-nova-x", c.ID)
 	assert.Contains(t, c.Task, "1 line(s) run over 100 characters (help line 3 (120 chars))")
 	assert.Equal(t, "cmd/nova-x TestHelpExampleLinesRunAsPrinted", c.Test)
 	assert.Empty(t, Lint(c.ID, Render(header, c)))
-	none := PlanHelp("nova-y", "short\n", "", "flash")
+	none := PlanHelp("nova-y", "short\n", "", "", "flash")
 	assert.Contains(t, none.Task, "no line runs over 100 characters")
 	assert.Equal(t, "flash", none.Tier)
 }
@@ -224,8 +224,34 @@ func TestMaxCutsBeforeTheWavesAreAssigned(t *testing.T) {
 // writing one file for two manifest rows.
 func TestADuplicateIDIsNamed(t *testing.T) {
 	t.Parallel()
-	a := PlanHelp("nova-x", "x\n", "", "")
-	b := PlanHelp("nova-x", "x\n", "", "")
+	a := PlanHelp("nova-x", "x\n", "", "", "")
+	b := PlanHelp("nova-x", "x\n", "", "", "")
 	assert.Equal(t, "help-nova-x", DuplicateID([]Card{a, b}))
-	assert.Equal(t, "", DuplicateID([]Card{a, PlanHelp("nova-y", "y\n", "", "")}))
+	assert.Equal(t, "", DuplicateID([]Card{a, PlanHelp("nova-y", "y\n", "", "", "")}))
+}
+
+// A help card's TEST is the test of the tool's package that runs the help's
+// examples, read off the package's test files: the one by the conventional name
+// when it exists, else the test that calls onboarding.ExampleLines, else the card
+// writes the conventional one and says so.
+func TestAHelpCardNamesTheTestItsPackageHas(t *testing.T) {
+	t.Parallel()
+	byName := "package main\n\nfunc TestOther(t *testing.T) {}\n\nfunc TestHelpExampleLinesRunAsPrinted(t *testing.T) {\n\tonboarding.ExampleLines(banner, \"nova-x\")\n}\n"
+	byCall := "package main\n\nfunc TestUsageBannerExamplesRun(t *testing.T) {\n\texamples, err := onboarding.ExampleLines(banner, \"nova-x\")\n}\n"
+	assert.Equal(t, "TestHelpExampleLinesRunAsPrinted", ExampleTest(byCall, byName), "the conventional name wins over the first caller")
+	assert.Equal(t, "TestUsageBannerExamplesRun", ExampleTest(byCall))
+	assert.Equal(t, "", ExampleTest("package main\n\nfunc TestNothing(t *testing.T) {}\n"))
+	assert.Equal(t, "", ExampleTest())
+
+	found := PlanHelp("nova-x", "x\n", "TestUsageBannerExamplesRun", "", "")
+	assert.Equal(t, "cmd/nova-x TestUsageBannerExamplesRun", found.Test)
+	assert.Contains(t, found.Task, "the test TestUsageBannerExamplesRun in the same package holds the examples to the binary")
+	assert.NotContains(t, found.Task, "no test in cmd/nova-x")
+	none := PlanHelp("nova-x", "x\n", "", "", "")
+	assert.Equal(t, "cmd/nova-x "+HelpExampleTest, none.Test)
+	assert.Contains(t, none.Task, "no test in cmd/nova-x runs the help's example lines through onboarding.ExampleLines: write TestHelpExampleLinesRunAsPrinted first")
+	assert.Contains(t, none.Task, "the card's gate is go test ./cmd/nova-x/")
+	for _, c := range []Card{found, none} {
+		assert.Empty(t, Lint(c.ID, Render(header, c)))
+	}
 }

@@ -268,7 +268,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 				notes = append(notes, tool+": "+err.Error())
 				continue
 			}
-			plan.Cards = append(plan.Cards, cardgen.PlanHelp(tool, help, *prefix, *tier))
+			plan.Cards = append(plan.Cards, cardgen.PlanHelp(tool, help, exampleTest(*repoDir, tool), *prefix, *tier))
 		}
 	case "":
 		return refuse(stderr, "generate", "wants --from ledger|findings|help")
@@ -395,6 +395,23 @@ func repoOfURL(url string) string {
 func existsAt(dir, p string) bool {
 	matches, err := filepath.Glob(filepath.Join(dir, filepath.FromSlash(p)))
 	return err == nil && len(matches) > 0
+}
+
+// exampleTest is the test of cmd/<tool> in the checkout that runs the help's example
+// lines (cardgen.ExampleTest over the package's _test.go files); "" with no checkout, no
+// package or no such test.
+func exampleTest(repoDir, tool string) string {
+	if repoDir == "" {
+		return ""
+	}
+	files, _ := filepath.Glob(filepath.Join(repoDir, "cmd", tool, "*_test.go"))
+	var texts []string
+	for _, f := range files {
+		if raw, err := os.ReadFile(f); err == nil {
+			texts = append(texts, string(raw))
+		}
+	}
+	return cardgen.ExampleTest(texts...)
 }
 
 // renderedHelp runs `<tool> help` and returns what it printed.
