@@ -92,7 +92,9 @@ func OpenPG(ctx context.Context, dsn string) (*PG, error) {
 func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*PG, error) {
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("postgres dsn: %w", err)
+		// The parser's text masks a password only on a best-effort basis, so the
+		// refusal names the defect class and never wraps it (docs/nova-config/README.md, "Connecting").
+		return nil, fmt.Errorf("postgres dsn could not be parsed (%T)", err)
 	}
 	_ = cfg
 	db, err := sql.Open("pgx", dsn)

@@ -312,12 +312,12 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
     Missing `--as`, `--to`, `--bus`, `--remote` or `--branch` is exit 2 naming the flag.
     No recipients come from the inventory's owner column. Only a confirmed `SEND OK`
     with `pushed=true` records delivery; failures and interrupted attempts never do.
-    The whole successful SEND line is preserved as `line=`. With `--snapshot`, the
+    The whole successful SEND line is preserved as `line=`. With `--state`, the
     pending artifact is saved before the sending child starts; without it, each
     explicit send is a new intention with in-process retry only. Help states that
     cross-process recovery needs the caller-named snapshot.
 25. **Unchanged state is the caller's to suppress, through a snapshot file the caller
-    names.** Absent `--snapshot <path>`, no file is read or written (rule 9: nothing under
+    names.** Absent `--state <path>`, no file is read or written (rule 9: nothing under
     `$HOME`, no state file of this tool's own). Present, the run reads the previous
     snapshot if any, compares per `name` the `raw` identity and the status, writes the new
     one atomically (a temp file beside it, then rename) and prints `changed=<yes|no>` on the
@@ -332,16 +332,16 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
     and `delivered`, below. **`at=` is never compared**: two snapshots differing
     only in their stamps are `changed=no` — a timestamp refresh is not a changed version.
     **Observed state and delivered state are two records**: every run
-    with `--snapshot` writes `observed`; only a `SEND OK … pushed=true` writes `delivered`,
+    with `--state` writes `observed`; only a `SEND OK … pushed=true` writes `delivered`,
     keyed by the send's scope — `as`, `to` sorted, absolute `bus`, `remote`, `branch`, and explicit `host`, joined — and
     holding the `observed` map the body carried, nova-bus's `id` and the `at`. A local-only
-    run, a `--draft`, a refused or a failed send write no `delivered`. With `--snapshot`,
+    run, a `--draft`, a refused or a failed send write no `delivered`. With `--state`,
     `--send` composes and sends when the scope has no `delivered` record, when that record's
     `observed` differs from tonight's, or when a `pending` stands (below); otherwise it
     prints `REPORT NOTE unchanged since <id> to <to>; nothing sent`, `sent=no`. The
     suppression compares against what that recipient was confirmed to have, never the last
     observation, so a report before a send, a failed send before its retry, and a snapshot
-    made for another recipient never quiet a send. Without `--snapshot` every `--send`
+    made for another recipient never quiet a send. Without `--state` every `--send`
     sends. **Preparation and pending precede mutation.** Save the delivery scope,
     exact prepared artifact and observed map atomically before starting send. A failed
     preparation cannot have delivered; an interrupted send retains the prepared ID.
@@ -354,7 +354,7 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
     another ID. Unrelated local commits are never published as a side effect of retry.
     Exit combines inventory completeness and delivery outcome; `changed=` alone never
     makes a complete invocation fail. A stateless invocation has no retained recovery
-    promise across process death; the caller chooses that by omitting `--snapshot`.
+    promise across process death; the caller chooses that by omitting `--state`.
 26. **No hidden timer, install or automatic send.** `report` has no `--watch`, no loop, no
     daemon; it runs when a person or a unit a person wrote starts it, and ends inside its
     budget. It installs nothing, pulls nothing, and no report line is a name for `apply`
@@ -410,7 +410,7 @@ nova-update example [--out <path>]
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
-nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update report --file <path> [--host <label>] [--state <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update report --store <host:port> [--timeout <d>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
@@ -434,7 +434,7 @@ name, `send` implying `--send` (rule 20), and `nova-version snapshot --file <man
 counts the adopted tools the manifest names (the opening paragraph), while snapshot's
 `--bin/--out` shape inventories a directory and `diff` compares two inventories: its
 `help` prints those lines the same way, snapshot's `--file` reading the adopted manifest
-where report's `--snapshot <path>` option is the recovery state file.
+where report's `--state <path>` option is the recovery state file.
 `nova-version report --as x --to y` prints the inventory and composes nothing (rule 26);
 the ready-to-send draft is `nova-version report --draft …`, the flag typed.
 
@@ -656,7 +656,7 @@ APPLY BEFORE name=<name> kind=<kind> installed=<v|-> path=<path|-> latest=<v> so
 APPLY RUN name=<name> argv=<n> version=<v>: <command>
 APPLY AFTER name=<name> installed=<v|-> was=<v|->
 APPLY REFUSED: <reason>; run: <command>
-REPORT <OK|FAIL> checked=<n> known=<n> unknown=<n> changed=<yes|no|-> sent=<yes|no|uncertain|-> took=<d> file=<path> host=<label|-> as=<friend|-> entries=<n> kinds=<k,k> at=<stamp> timeout=<d> budget=<d> max=<n> snapshot=<path|->
+REPORT <OK|FAIL> checked=<n> known=<n> unknown=<n> changed=<yes|no|-> sent=<yes|no|uncertain|-> took=<d> file=<path> host=<label|-> as=<friend|-> entries=<n> kinds=<k,k> at=<stamp> timeout=<d> budget=<d> max=<n> state=<path|->
 REPORT TOOL name=<name> kind=<kind> version=<v|-> raw=<first line, escaped> path=<path>
 REPORT UNKNOWN name=<name> kind=<kind> path=<path|-> raw=<line|->: <reason> (<remedy>)
 REPORT CHANGED name=<name> was=<raw|-> now=<raw|->
@@ -861,17 +861,17 @@ install` or `npm install`.
     dispatch is `REPORT FAIL`, `sent=uncertain` with its prepared ID. No absent result
     line establishes that nothing was sent. A file whose owner names a recipient and no
     `--to` never sends to her.
-25. `TestUnchangedStateIsTheCallersToSuppress`: without `--snapshot`, `HOME` and the cwd are
-    fresh temp dirs and empty after the run; `--snapshot s.json` first writes it — JSON,
+25. `TestUnchangedStateIsTheCallersToSuppress`: without `--state`, `HOME` and the cwd are
+    fresh temp dirs and empty after the run; `--state s.json` first writes it — JSON,
     `observed` keyed by `name`, each value exactly `raw`, `status`, `at`, and `delivered`
     and `pending` empty — and prints `changed=yes`; a second run with identical raw lines and an injected
     clock one hour on prints `changed=no` and no `REPORT CHANGED` line — the mutation that
     matters; a third with one raw differing prints one `REPORT CHANGED name= was= now=` and
     `changed=yes`; a tool turning UNKNOWN is a change, and back is another. Delivery, with a
-    fake `nova-bus` on `PATH`: a `--send --snapshot s.json` the fake confirms (`SEND OK …
+    fake `nova-bus` on `PATH`: a `--send --state s.json` the fake confirms (`SEND OK …
     pushed=true`) writes `delivered` for its scope, and the same send on the unchanged run
     starts no `nova-bus`, prints `REPORT NOTE unchanged since <id> to <name>; nothing sent`
-    and `sent=no` — the quiet repeat; a local-only `--snapshot` run, then the first `--send`
+    and `sent=no` — the quiet repeat; a local-only `--state` run, then the first `--send`
     for that scope, sends — a send quieted by an observation nobody was sent is the mutation
     that matters; the fake refusing (`SEND REFUSED`), then the same send unchanged, sends
     again; a send confirmed `--to <name>`, then the same observation `--to <other>`, sends; the

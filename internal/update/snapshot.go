@@ -348,21 +348,21 @@ func readSnapshot(path string) (*snapshot, error) {
 		return s, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("cannot read snapshot (supply a readable --snapshot)")
+		return nil, fmt.Errorf("cannot read snapshot (supply a readable --state)")
 	}
 	if err = validateSnapshot(b); err != nil {
-		return nil, fmt.Errorf("invalid snapshot: %s (preserve it and select a valid --snapshot)", err)
+		return nil, fmt.Errorf("invalid snapshot: %s (preserve it and select a valid --state)", err)
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
 	if err = d.Decode(s); err != nil {
-		return nil, fmt.Errorf("invalid snapshot (preserve it and select a valid --snapshot)")
+		return nil, fmt.Errorf("invalid snapshot (preserve it and select a valid --state)")
 	}
 	if d.Decode(new(any)) != io.EOF {
-		return nil, fmt.Errorf("trailing snapshot data (preserve it and select a valid --snapshot)")
+		return nil, fmt.Errorf("trailing snapshot data (preserve it and select a valid --state)")
 	}
 	if s.Observed == nil || s.Delivered == nil {
-		return nil, fmt.Errorf("incomplete snapshot (preserve it and select a valid --snapshot)")
+		return nil, fmt.Errorf("incomplete snapshot (preserve it and select a valid --state)")
 	}
 	if s.Pending == nil {
 		s.Pending = map[string]pending{}

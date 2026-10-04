@@ -125,7 +125,7 @@ func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
 	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
 	sp := filepath.Join(t.TempDir(), "s.json")
-	args := []string{"report", "--file", p, "--send", "--snapshot", sp, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main"}
+	args := []string{"report", "--file", p, "--send", "--state", sp, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main"}
 	t.Setenv("NOVA_UPDATE_BUS_MODE", "uncertain")
 	run(t, Environment{}, args...)
 	s, _ := readSnapshot(sp)
@@ -263,7 +263,7 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 			fakeBusPath(t)
 			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
-			c, _, errout := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+			c, _, errout := run(t, Environment{}, "report", "--file", p, "--send", "--state",
 				filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 				"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
 			if c != 1 {
@@ -368,7 +368,7 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 	}
 	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--state",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--budget", "60s")
 	if c != 0 {
@@ -433,7 +433,7 @@ func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
 	fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	t.Setenv("NOVA_UPDATE_BUS_MODE", "prepare-alien")
-	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--state",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
 	if c != 1 {

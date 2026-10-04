@@ -552,7 +552,7 @@ func TestRunContainerRemovesAtTheClientDeadline(t *testing.T) {
 func TestRunContainerRemovesOnInterrupt(t *testing.T) {
 	t.Parallel()
 	eng := &hangingEngine{killed: make(chan struct{})}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, ended := runContainer(ctx, eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(time.Hour), io.Discard, io.Discard)
 	if ended != "interrupted" {
@@ -665,7 +665,7 @@ func TestSetupExit(t *testing.T) {
 	if got := setupExit(context.Background()); got != exitCannotRun {
 		t.Errorf("setupExit = %d", got)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if got := setupExit(ctx); got != exitInterrupted {
 		t.Errorf("setupExit after an interrupt = %d", got)
@@ -838,7 +838,7 @@ func TestRunContainerRemovesBeforeItLogs(t *testing.T) {
 	for _, interrupt := range []bool{false, true} {
 		synctest.Test(t, func(t *testing.T) {
 			eng := &hangingEngine{killed: make(chan struct{})}
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			deadline := time.Now().Add(time.Hour)
 			if interrupt {
 				cancel()

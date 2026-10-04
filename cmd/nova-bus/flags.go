@@ -34,8 +34,9 @@ func (s *stringList) Set(v string) error {
 // beginning with a dash could otherwise author a whole line of stderr before any code
 // here ran.
 type flags struct {
-	verb string
-	fs   *flag.FlagSet
+	verb   string
+	fs     *flag.FlagSet
+	getenv func(string) string
 	// alsoRefuse, when set, is asked after the flags are parsed and the required ones
 	// checked: a line it returns is printed beside the missing-flag lines and refuses the
 	// invocation with them, so a first run names every problem it has and not the first
@@ -44,10 +45,14 @@ type flags struct {
 }
 
 func newFlags(verb string) *flags {
+	return newFlagsWith(verb, nil)
+}
+
+func newFlagsWith(verb string, getenv func(string) string) *flags {
 	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	return &flags{verb: verb, fs: fs}
+	return &flags{verb: verb, fs: fs, getenv: getenv}
 }
 
 // parse runs the flag set and enforces the no-guessing rule for every flag named in
@@ -198,7 +203,7 @@ func (f *flags) set(name string) bool {
 // NOVA_BUS_RECEIPT_MAX_WORDS environment variable. It refuses only when none of the three
 // yields a positive number, and the refusal names the two default sources as the remedy.
 func (f *flags) receiptMaxWords(flagValue int, flagWasSet bool, busDir string, stderr io.Writer) (int, bool) {
-	v, ok := resolveReceiptMaxWords(flagValue, flagWasSet, busDir)
+	v, ok := f.resolveReceiptMaxWords(flagValue, flagWasSet, busDir)
 	if !ok {
 		fmt.Fprintln(stderr, oneline.Escape(receiptMaxWordsRefusal(f.verb, flagValue)))
 		return 0, false
@@ -208,11 +213,11 @@ func (f *flags) receiptMaxWords(flagValue int, flagWasSet bool, busDir string, s
 
 // resolveReceiptMaxWords is the count the three sources give: the flag, then the file line,
 // then the variable; false when none yields a positive number.
-func resolveReceiptMaxWords(flagValue int, flagWasSet bool, busDir string) (int, bool) {
+func (f *flags) resolveReceiptMaxWords(flagValue int, flagWasSet bool, busDir string) (int, bool) {
 	if !flagWasSet {
 		if v, ok := receiptMaxWordsFromDefaults(busDir); ok {
 			flagValue = v
-		} else if v, ok := receiptMaxWordsFromEnv(); ok {
+		} else if v, ok := f.receiptMaxWordsFromEnv(); ok {
 			flagValue = v
 		}
 	}
@@ -294,8 +299,12 @@ func hostFromDefaults(busDir string) string {
 
 // receiptMaxWordsFromEnv reads NOVA_BUS_RECEIPT_MAX_WORDS, the environment default source.
 // An empty or unusable value is "absent".
-func receiptMaxWordsFromEnv() (int, bool) {
-	s := strings.TrimSpace(os.Getenv("NOVA_BUS_RECEIPT_MAX_WORDS"))
+func (f *flags) receiptMaxWordsFromEnv() (int, bool) {
+	getenv := os.Getenv
+	if f != nil && f.getenv != nil {
+		getenv = f.getenv
+	}
+	s := strings.TrimSpace(getenv("NOVA_BUS_RECEIPT_MAX_WORDS"))
 	if s == "" {
 		return 0, false
 	}

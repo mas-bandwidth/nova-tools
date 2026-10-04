@@ -2,86 +2,80 @@ package update
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
+	"context"
+	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// #3880 DONE-WHEN: two fake benches beating different nova-sprint stamps make
-// `nova-update report --store` print exactly one DRIFT line, naming the stale
-// bench, with no ssh and no bus note. The beats are what ns_bench_beat writes
-// (bench:<b>:beat, field build = the nova-sprint version line) and the
-// registry is the benches set; the store is a throwaway miniredis. ssh and git
-// on PATH are traps that leave a mark if anything runs them.
-func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
-	t.Setenv("NOVA_TEST_NO_HOST", "1")
-	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
-	trap := t.TempDir()
-	mark := filepath.Join(trap, "ran")
-	for _, tool := range []string{"ssh", "git", "gh"} {
-		script := "#!/bin/sh\necho " + tool + " >> " + mark + "\nexit 1\n"
-		if err := testbin.WriteExecutable(filepath.Join(trap, tool), []byte(script), 0o755); err != nil {
-			require.NoError(t, err, err)
-		}
-	}
-	t.Setenv("PATH", trap)
-
+// pipeStore is a miniredis fake reached in memory: the client's dialer hands
+// it one end of a net.Pipe and the fake serves the other (ServeConn), so no
+// TCP connection is made. miniredis binds a loopback listener when it starts;
+// the cleanup fails the test when anything dialled it.
+func pipeStore(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
+	t.Helper()
 	mr := miniredis.RunT(t)
-	_, _ = mr.SAdd("benches", "fresh", "stale", "quiet") // ignored: test fixture setup
+	var piped atomic.Int64
+	client := redis.NewClient(&redis.Options{
+		Addr:            "127.0.0.1:0", // never dialled (Dialer is the transport); an IP so nothing resolves it
+		DisableIdentity: true,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			near, far := net.Pipe()
+			piped.Add(1)
+			mr.Server().ServeConn(far)
+			return near, nil
+		},
+	})
+	t.Cleanup(func() {
+		_ = client.Close()
+		assert.Equal(t, piped.Load(), int64(mr.TotalConnectionCount()), "the fake took a TCP connection beside its pipes")
+	})
+	return mr, client
+}
+
+// TestFleetBuildsReadOneDriftWithoutASocket is the read and the verdict of the
+// functional TestReportStorePrintsOneDriftLineForTheStaleBench, over
+// pipeStore: readFleetBuilds reads the benches registry and every registered
+// bench's beat build in two round trips, a registered bench with no live beat
+// is not beating, and the newest build among the beating benches names the
+// stale one; once it beats the newest build too, nothing drifts.
+func TestFleetBuildsReadOneDriftWithoutASocket(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mr, client := pipeStore(t)
+	trips := redisconn.CountTrips(client)
+	_, _ = mr.SAdd(fleetRegistry, "fresh", "stale", "quiet") // ignored: test fixture setup
 	beat := func(bench, build string) {
-		mr.HSet("bench:"+bench+":beat", "host", bench, "at", "1790186398000", "build", build)
-		mr.SetTTL("bench:"+bench+":beat", 3*time.Second)
+		mr.HSet(fleetBeatKey(bench), "host", bench, "at", "1790186398000", "build", build)
+		mr.SetTTL(fleetBeatKey(bench), 3*time.Second)
 	}
 	beat("fresh", "nova-sprint 20260925120000-aaaaaaaaaaaa darwin/arm64 go1.26.1")
 	beat("stale", "nova-sprint 20260924090000-bbbbbbbbbbbb darwin/arm64 go1.26.1")
-	// quiet is registered but not beating: it says nothing, so it is not drift.
 
-	var out, errs bytes.Buffer
-	code := Run("nova-update", []string{"report", "--store", mr.Addr()}, "test", &out, &errs, Environment{})
-	all := out.String() + errs.String()
-	if code != 1 {
-		require.EqualValuesf(t, 1, code, "exit %d, want 1 (drift found)\n%s", code, all)
-	}
-	var drift []string
-	for _, l := range strings.Split(all, "\n") {
-		if strings.Contains(l, "DRIFT") {
-			drift = append(drift, l)
-		}
-	}
-	if len(drift) != 1 {
-		require.Lenf(t, drift, 1, "want exactly one DRIFT line, got %d:\n%s", len(drift), all)
-	}
-	if !strings.Contains(drift[0], "bench=stale") || !strings.Contains(drift[0], "build=20260924090000-bbbbbbbbbbbb") || !strings.Contains(drift[0], "want=20260925120000-aaaaaaaaaaaa") {
-		require.Failf(t, "", "the DRIFT line does not name the stale bench and both stamps: %s", drift[0])
-	}
-	if !strings.Contains(errs.String(), "REPORT FAILED benches=3 beating=2 current=1 drift=1 unknown=0") {
-		require.Failf(t, "", "receipt line missing or wrong:\n%s", all)
-	}
-	if strings.Contains(all, "From:") || strings.Contains(all, "NOTE") || strings.Contains(all, "sent=") {
-		require.Failf(t, "", "a bus note was written:\n%s", all)
-	}
-	if b, err := os.ReadFile(mark); err == nil {
-		require.Errorf(t, err, "report --store ran %s", strings.TrimSpace(string(b)))
-	}
+	fleet, err := readFleetBuilds(ctx, client)
+	require.NoError(t, err)
+	assert.Equal(t, []benchBuild{
+		{Bench: "fresh", Beating: true, Build: "20260925120000-aaaaaaaaaaaa"},
+		{Bench: "quiet"},
+		{Bench: "stale", Beating: true, Build: "20260924090000-bbbbbbbbbbbb"},
+	}, fleet)
+	assert.Equal(t, int64(2), trips.N(), "the registry, then every beat in one pipeline")
+	assert.Equal(t, "20260925120000-aaaaaaaaaaaa", newestBuild([]string{fleet[0].Build, fleet[2].Build}), "the stale bench is the one off the newest build")
 
-	// The stale bench updates: one beat later the fleet is current and the
-	// verb exits 0 with no DRIFT line.
 	beat("stale", "nova-sprint 20260925120000-aaaaaaaaaaaa linux/amd64 go1.26.1")
-	out.Reset()
-	errs.Reset()
-	if code := Run("nova-update", []string{"report", "--store", mr.Addr()}, "test", &out, &errs, Environment{}); code != 0 {
-		require.EqualValuesf(t, 0, code, "exit %d after the stale bench caught up\n%s%s", code, out.String(), errs.String())
-	}
-	if strings.Contains(out.String()+errs.String(), "DRIFT") || !strings.Contains(out.String(), "REPORT OK benches=3 beating=2 current=2 drift=0 unknown=0") {
-		require.Failf(t, "", "a current fleet printed:\n%s%s", out.String(), errs.String())
-	}
+	fleet, err = readFleetBuilds(ctx, client)
+	require.NoError(t, err)
+	assert.Equal(t, fleet[0].Build, fleet[2].Build, "the stale bench caught up")
 }
 
 // --store is the fleet read: it takes no manifest, no snapshot and no note, so

@@ -119,9 +119,10 @@ type app struct {
 	// wall clock.
 	gateBackend func() (decide.Backend, func() time.Time)
 	// serial is the server's one line of control (serve.go): a worker's batch
-	// and a tick of the run loop each hold it, so neither runs during the other.
+	// and a tick of the run loop each hold it, so neither runs during the other;
+	// the tick takes it at its turn, not behind every batch waiting (sprint.ControlLine).
 	// serveAddr is the store the server runs the workers' verbs on.
-	serial    sync.Mutex
+	serial    sprint.ControlLine
 	serveAddr string
 	// serving says the verb running is one a worker sent to the server (set and
 	// cleared under serial): its step names the epoch its worker holds, or is
@@ -158,6 +159,11 @@ type app struct {
 	// home is the directory a seat's inbox is under (inbox --wait --push seat:
 	// ~/<holder>-working/inbox): os.UserHomeDir unless a test sets it.
 	home func() (string, error)
+	// goos is the OS seat install writes its unit for (seatinstall.go): runtime.GOOS unless a
+	// test sets it; seatLoad, when set (a test), loads and unloads the unit in place of
+	// launchctl or systemctl --user, so a test loads nothing on its machine.
+	goos     string
+	seatLoad func(goos, op, path string) error
 	// transport carries the balance poll's requests to the providers (balance.go):
 	// nil is http.DefaultTransport, a test gives a fake.
 	transport http.RoundTripper

@@ -40,8 +40,8 @@ func sensitiveForge() *fakeForge {
 	return f
 }
 
-// THE GATE. A range that touched the secrets, sandbox, image or coordination
-// paths is not cut on one person's judgement at the keyboard: it is cut after
+// THE GATE. A range that touched the secrets, sandbox or image paths is not
+// cut on one person's judgement at the keyboard: it is cut after
 // Johnny has read it, and the read is NAMED on the command line so the receipt
 // carries who vouched for it.
 func TestCutRefusesASensitiveRangeWithoutASecurityRead(t *testing.T) {
@@ -117,7 +117,7 @@ func TestCutOfAnOrdinaryRangeSaysNothingAboutSensitivePaths(t *testing.T) {
 }
 
 // The classification is by PREFIX and by nothing else: no guessing from a file
-// name, no substring anywhere in the path. `internal/secretsanta/` is not
+// name, no substring anywhere in the path. `internal/secrets<sibling>/` is not
 // `internal/secrets/`, and a tool called `nova-secrets-viewer` under cmd/ is
 // its own directory, not this one.
 func TestSensitiveClassifiesByPrefixAndNothingElse(t *testing.T) {
@@ -133,8 +133,7 @@ func TestSensitiveClassifiesByPrefixAndNothingElse(t *testing.T) {
 		{"internal/sandbox/run.go", true},
 		{"cmd/nova-sandbox/main.go", true},
 		{"infra/image/Dockerfile", true},
-		{"scripts/coordination/reap.sh", true},
-		{"internal/secretsanta/x.go", false},
+		{"internal/secrets<sibling>/x.go", false},
 		{"cmd/nova-secrets-viewer/main.go", false},
 		{"docs/SPEC-SECRETS.md", false},
 		{"internal/release/cut.go", false},

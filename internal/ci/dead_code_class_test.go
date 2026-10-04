@@ -153,7 +153,7 @@ func findDeadCodeUnion(t *testing.T, ctx context.Context, root string) (map[stri
 func TestDeadCode(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	defer cancel()
 
 	root := repoRoot(t)

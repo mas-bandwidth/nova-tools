@@ -994,8 +994,10 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		// none up, or none below its width, and the primary waits ready for the tick's deal
 		m := ""
 		_, friend := FriendCard(c)
+		bench := Bench(c)
 		if len(up) > 0 && !friend {
-			m = rr.next(up, q, room, reworkAvoid(s, c))
+			// a bench card's next attempt goes to a member of its bench alone (bench_deal.go)
+			m = rr.next(onlyBench(up, bench), q, room, reworkAvoid(s, c))
 		}
 		if m != "" {
 			var why string
@@ -1014,6 +1016,8 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			switch {
 			case friend:
 				later = "a friend's card: the tick deals it to a friend up with room"
+			case len(bench) > 0 && len(onlyBench(up, bench)) == 0:
+				later = benchWaits(bench) // no member of its bench is up (bench_deal.go)
 			case len(up) > 0:
 				later = "no fleet member has room: the tick deals it when one has"
 			}

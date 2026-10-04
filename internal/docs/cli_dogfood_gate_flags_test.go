@@ -33,8 +33,8 @@ func TestTheCLIReferenceNamesEveryDogfoodGateFlag(t *testing.T) {
 			break
 		}
 	}
-	require.False(t, start < 0, "cmd/nova-check/dogfood.go: func cmdDogfoodGate was not found whole; this test cuts its body out of the source")
-	require.False(t, end < 0, "cmd/nova-check/dogfood.go: func cmdDogfoodGate was not found whole; this test cuts its body out of the source")
+	require.GreaterOrEqual(t, start, 0, "cmd/nova-check/dogfood.go: func cmdDogfoodGate was not found whole; this test cuts its body out of the source")
+	require.GreaterOrEqual(t, end, 0, "cmd/nova-check/dogfood.go: func cmdDogfoodGate was not found whole; this test cuts its body out of the source")
 	body := strings.Join(lines[start:end], "\n")
 
 	flagRe := regexp.MustCompile(`fs\.(Bool|String|Int|Duration)\("([^"]+)"`)

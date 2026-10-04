@@ -34,7 +34,7 @@ func lockSnapshot(ctx context.Context, path string) (func(), error) {
 		return nil, fmt.Errorf("cannot open snapshot lock (create the parent directory and check permissions)")
 	}
 	for {
-		l, err := filelock.TryLock(lock, "nova-update report --snapshot")
+		l, err := filelock.TryLock(lock, "nova-update report --state")
 		if err == nil {
 			// ignored: release has no caller to report to; the kernel lock goes with the descriptor either way
 			return func() { _ = l.Unlock() }, nil
