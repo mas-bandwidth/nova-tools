@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus2"
@@ -387,6 +388,8 @@ func TestTheClaimOpensOnlyAfterTheLongestTurnIsOver(t *testing.T) {
 // wrong (the Codex chat open in the app): every delivery is Deferred. It
 // ends the run at the thousandth.
 type deferrer struct {
+	now  func() time.Time
+	at   []time.Time
 	mu   sync.Mutex
 	n    int
 	stop func()
@@ -395,6 +398,7 @@ type deferrer struct {
 func (d *deferrer) Deliver(context.Context, string) (int, error) {
 	d.mu.Lock()
 	d.n++
+	d.at = append(d.at, d.now())
 	n := d.n
 	d.mu.Unlock()
 	if n == 1000 {
@@ -411,29 +415,35 @@ func (d *deferrer) Deliver(context.Context, string) (int, error) {
 // while the chat was open, which is its normal state).
 func TestADeferredDeliveryIsTriedAgainAndNeverGivenUpOrAcked(t *testing.T) {
 	t.Parallel()
-	r := newRig(t)
-	def := &deferrer{stop: func() { r.cancel() }}
-	r.d.Deliver, r.passive = def, true
-	r.send(t, "ada", "hello", "x")
-	r.run(t, 1000*int(RecheckEvery/BeatEvery)*4) // the ceiling, never reached: the thousandth deferral ends the run
-	assert.Equal(t, 1000, def.n, "handed in a thousand times")
-	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
-	require.NoError(t, err)
-	assert.Len(t, pending, 1, "still in hand: never acked, never given up")
-	assert.Empty(t, fresh)
-	assert.Equal(t, 0, r.last().Delivered)
-	said := 0
-	for _, line := range r.records {
-		assert.NotContains(t, line, "given_up")
-		assert.NotContains(t, line, "acked")
-		assert.NotContains(t, line, "deliveries=")
-		if strings.Contains(line, "deferred=") {
-			said++
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		def := &deferrer{stop: func() { r.cancel() }, now: func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.now }}
+		r.d.Deliver, r.passive = def, true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "hello", "x")
+		r.run(t, 1000*int(RecheckEvery/BeatEvery)*4) // the ceiling, never reached: the thousandth deferral ends the run
+		assert.Equal(t, 1000, def.n, "handed in a thousand times")
+		for i := 1; i < len(def.at); i++ {
+			assert.GreaterOrEqual(t, def.at[i].Sub(def.at[i-1]), RecheckEvery, "retry gap %d", i)
 		}
-	}
-	require.NotEmpty(t, r.records)
-	assert.Contains(t, r.records[0], `subject="hello" deferred=1: the chat is open in the app; tried again every 10s, counted toward nothing (said once per 1m0s)`)
-	elapsed := r.now.Sub(t0)
-	assert.LessOrEqual(t, said, int(elapsed/DeferredSaidEvery)+2, "said once a minute, not once a deferral: %d lines over %s", said, elapsed)
-	assert.GreaterOrEqual(t, said, int(elapsed/(DeferredSaidEvery+2*RecheckEvery))-1, "and not less often than once a minute plus a recheck")
+		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Len(t, pending, 1, "still in hand: never acked, never given up")
+		assert.Empty(t, fresh)
+		assert.Equal(t, 0, r.last().Delivered)
+		said := 0
+		for _, line := range r.records {
+			assert.NotContains(t, line, "given_up")
+			assert.NotContains(t, line, "acked")
+			assert.NotContains(t, line, "deliveries=")
+			if strings.Contains(line, "deferred=") {
+				said++
+			}
+		}
+		require.NotEmpty(t, r.records)
+		assert.Contains(t, r.records[0], `subject="hello" deferred=1: the chat is open in the app; tried again every 10s, counted toward nothing (said once per 1m0s)`)
+		elapsed := r.now.Sub(t0)
+		assert.LessOrEqual(t, said, int(elapsed/DeferredSaidEvery)+2, "said once a minute, not once a deferral: %d lines over %s", said, elapsed)
+		assert.GreaterOrEqual(t, said, int(elapsed/(DeferredSaidEvery+2*RecheckEvery))-1, "and not less often than once a minute plus a recheck")
+	})
 }
