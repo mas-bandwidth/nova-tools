@@ -279,6 +279,24 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 	}
 }
 
+func TestFriendAsleepBeatStaysInternalAndOrdinaryBeatShowsUp(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendApp(t, "amy")
+	ta.ok("friend sync")
+	ta.ok("friend beat --asleep amy")
+	assert.Equal(t, "down", ta.friendStatus()["amy"])
+	assert.NotContains(t, ta.frame(), "asleep", "the table exposes only up, down and held")
+	ta.ok("friend beat amy")
+	assert.Equal(t, "up", ta.friendStatus()["amy"])
+	ta.ok("friend down amy")
+	ta.ok("friend beat --asleep amy")
+	assert.Equal(t, "held", ta.friendStatus()["amy"])
+	ta.ok("friend up amy")
+	assert.Equal(t, "down", ta.friendStatus()["amy"])
+	ta.a.sleep(sprint.FriendDownAfter)
+	assert.Equal(t, "down", ta.friendStatus()["amy"])
+}
+
 // A friend is up while her last beat is under sprint.FriendDownAfter (15 s)
 // old and down once she has gone that long without one, or when she has
 // never beaten; a beat wakes her at once; held while friend down holds her

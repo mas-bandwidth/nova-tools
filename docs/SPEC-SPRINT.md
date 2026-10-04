@@ -3096,4 +3096,3 @@ no line of its own; `log --card <id>` and `log --json` keep each record whole. A
 removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page
 through it.
-

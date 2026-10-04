@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,45 +12,85 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCodexResumesTheNamedThreadAndLabelsTheAnswerAsResume(t *testing.T) {
+func TestCodexDeliversIntoTheOpenChatOrDefers(t *testing.T) {
 	t.Parallel()
-	fe := &fakeExec{exit: 0, out: "got it, sent on the bus.\n"}
-	var rec strings.Builder
-	c := &Codex{Dir: "/w/stella", Session: "01a104a7-04b1-7003-ad3d-781200c5ff5d", Run: fe.run, Held: func(string) bool { return false }, Out: &rec}
-	exit, err := c.Deliver(context.Background(), "ping: run the pong line")
-	require.NoError(t, err)
-	assert.Equal(t, 0, exit)
-	require.Len(t, fe.calls, 1)
-	assert.Equal(t, []string{"/w/stella", "codex", "exec", "resume", "--skip-git-repo-check", "01a104a7-04b1-7003-ad3d-781200c5ff5d", "ping: run the pong line"}, fe.calls[0])
-	assert.Equal(t, "answered by resume, not by the open chat: codex exec resume --skip-git-repo-check 01a104a7-04b1-7003-ad3d-781200c5ff5d <text>\ngot it, sent on the bus.\n", rec.String())
+	type answer struct {
+		exit int
+		err  error
+	}
+	for _, tc := range []struct {
+		name     string
+		held     bool
+		answers  []answer
+		methods  []string
+		deferred bool
+	}{
+		{"open queues", true, []answer{{0, nil}}, []string{"queue"}, false},
+		{"closed resumes", false, []answer{{0, nil}}, []string{"exec"}, false},
+		{"queue refusal resumes", true, []answer{{1, nil}, {0, nil}}, []string{"queue", "exec"}, false},
+		{"resume refusal queues", false, []answer{{1, nil}, {0, nil}}, []string{"exec", "queue"}, false},
+		{"queue exec error resumes", true, []answer{{0, errors.New("queue unavailable")}, {0, nil}}, []string{"queue", "exec"}, false},
+		{"resume exec error queues", false, []answer{{0, errors.New("resume unavailable")}, {0, nil}}, []string{"exec", "queue"}, false},
+		{"both fail open", true, []answer{{1, nil}, {0, errors.New("active writer")}}, []string{"queue", "exec"}, true},
+		{"both fail closed", false, []answer{{1, nil}, {2, nil}}, []string{"exec", "queue"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fe := &fakeExec{out: "actionable receipt\n" + strings.Repeat("x", OutputKept*2)}
+			run := func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+				out, _, _ := fe.run(ctx, dir, name, args, stdin)
+				require.LessOrEqual(t, len(fe.calls), len(tc.answers))
+				r := tc.answers[len(fe.calls)-1]
+				return out, r.exit, r.err
+			}
+			var record strings.Builder
+			var probed string
+			c := &Codex{Dir: "/project", Session: "thread-1", Home: "/codex", Program: "/bin/codex", Run: run, Out: &record, Held: func(lock string) bool { probed = lock; return tc.held }}
+			text := "literal `text` [and] $shell"
+			exit, err := c.Deliver(context.Background(), text)
+			assert.Zero(t, exit)
+			if tc.deferred {
+				var d Deferred
+				require.ErrorAs(t, err, &d)
+				assert.Contains(t, d.Reason, "queue")
+				assert.Contains(t, d.Reason, "exec")
+				assert.Contains(t, d.Reason, "actionable receipt")
+				assert.NotContains(t, d.Reason, strings.Repeat("x", OutputKept+1))
+				assert.Empty(t, record.String())
+			} else {
+				require.NoError(t, err)
+				assert.Contains(t, record.String(), "receipt")
+				if tc.methods[len(tc.methods)-1] == "queue" {
+					assert.Contains(t, record.String(), "queued for open chat")
+				} else {
+					assert.Contains(t, record.String(), ResumeLabel)
+				}
+			}
+			assert.Equal(t, filepath.Join("/codex", "thread-writer-locks", "thread-1.lock"), probed)
+			require.Len(t, fe.calls, len(tc.methods))
+			for i, method := range tc.methods {
+				want := []string{"/project", "/bin/codex"}
+				if method == "queue" {
+					want = append(want, "queue", "--thread", "thread-1", "--message", text)
+				} else {
+					want = append(want, "exec", "resume", "--skip-git-repo-check", "thread-1", text)
+				}
+				assert.Equal(t, want, fe.calls[i])
+			}
+		})
+	}
 }
 
-func TestCodexWithoutAThreadResumesTheNewestOfTheDirectory(t *testing.T) {
-	t.Parallel()
-	fe := &fakeExec{exit: 7}
-	var rec strings.Builder
-	home := codexSessions(t)
-	dir := filepath.Join(home, "project")
-	c := &Codex{Dir: dir, Home: home, Run: fe.run, Program: "/opt/codex", Held: func(string) bool { return false }, Out: &rec}
-	exit, err := c.Deliver(context.Background(), "hello")
-	require.NoError(t, err)
-	assert.Equal(t, 7, exit)
-	assert.Equal(t, [][]string{{dir, "/opt/codex", "exec", "resume", "--skip-git-repo-check", "old", "hello"}}, fe.calls)
-	assert.Equal(t, "not answered: codex exec resume exited 7 (a thread open in the Codex app refuses a resume; or no such thread)\n", rec.String())
-}
-
-func TestCodexRefusesWhileTheAppHoldsTheThreadWithoutRunningCodex(t *testing.T) {
+func TestCodexWithoutAThreadUsesTheNewestOfTheDirectory(t *testing.T) {
 	t.Parallel()
 	fe := &fakeExec{}
-	var probed string
-	c := &Codex{Dir: "/w/stella", Session: "t1", Home: "/h/.codex", Run: fe.run, Held: func(lock string) bool { probed = lock; return true }}
+	home := codexSessions(t)
+	dir := filepath.Join(home, "project")
+	c := &Codex{Dir: dir, Home: home, Run: fe.run, Held: func(string) bool { return true }}
 	exit, err := c.Deliver(context.Background(), "hello")
-	assert.Equal(t, 0, exit)
-	var deferred Deferred
-	require.ErrorAs(t, err, &deferred)
-	assert.Contains(t, deferred.Reason, "thread t1")
-	assert.Equal(t, filepath.Join("/h/.codex", "thread-writer-locks", "t1.lock"), probed)
-	assert.Empty(t, fe.calls)
+	require.NoError(t, err)
+	assert.Zero(t, exit)
+	assert.Equal(t, [][]string{{dir, "codex", "queue", "--thread", "old", "--message", "hello"}}, fe.calls)
 }
 
 func TestCodexHomeIsCodexHomeThenTheUsersDotCodex(t *testing.T) {
@@ -58,4 +99,46 @@ func TestCodexHomeIsCodexHomeThenTheUsersDotCodex(t *testing.T) {
 	h, _ := os.UserHomeDir()
 	assert.Equal(t, filepath.Join(h, ".codex"), (&Codex{Env: func(string) string { return "" }}).home())
 	assert.Equal(t, "/given", (&Codex{Home: "/given"}).home())
+}
+
+// The integration keeps the queue fallback while retaining provider failures
+// for the daemon's broken-session streak (SPEC-FRIEND, Codex).
+func TestCodexProviderRefusalKeepsQueueFallbackAndSessionIdentity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		held, queueOK bool
+	}{
+		{"resume refusal then queue accepts", false, true},
+		{"resume refusal and queue unavailable", false, false},
+		{"queue unavailable then resume refusal", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			calls := 0
+			run := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+				calls++
+				if args[0] == "queue" {
+					if tc.queueOK {
+						return "queued", 0, nil
+					}
+					return "queue unavailable", 1, nil
+				}
+				return freddyRefusal, 1, nil
+			}
+			c := &Codex{Session: "thread-x", Run: run, Held: func(string) bool { return tc.held }}
+			exit, err := c.Deliver(context.Background(), "message")
+			assert.Equal(t, 2, calls)
+			if tc.queueOK {
+				require.NoError(t, err)
+				assert.Zero(t, exit)
+			} else {
+				var refused ProviderRefused
+				require.ErrorAs(t, err, &refused)
+				assert.Equal(t, 1, exit)
+				assert.Equal(t, "thread-x", refused.Session)
+				assert.Contains(t, refused.Reason, "invalid_request_error")
+			}
+		})
+	}
 }

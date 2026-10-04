@@ -59,6 +59,11 @@ beside the friend's harness, for example in the wrapper that starts it
 and her status is up while her last beat is under `+sprint.FriendDownAfter.String()+` old, down once
 she has gone `+sprint.FriendDownAfter.String()+` without a beat or when she has never beaten (a beat
 wakes her at once), held while friend down holds her whatever she beats.
+friend beat --asleep <friend> records a contactable sleeping session: a fresh
+beat keeps the internal sleep bit while the table still shows down, and an
+ordinary beat clears recorded sleep and shows up.
+This records presence; it does not invoke the daemon's wake command. A sleeping
+friend without a fresh beat is down; a hold still shows held.
 friend up releases the hold and is not a beat: a friend released with no beat
 in the last `+sprint.FriendDownAfter.String()+` is down until she beats. A friend down shows
 working 0: her cards stay on her row and count again when she beats; ready
@@ -95,7 +100,7 @@ func friendVerbWords(name string) string {
 	sync := "The name is one friend row of the friends table. friend sync copies those rows from nova-config; a name the table lacks is refused and the line names friend sync. friend sync exits 3 when the config cannot be read or holds no friend row. nova-sprint help friend says how the friends table is kept."
 	switch name {
 	case "friend beat":
-		return "friend beat records that this friend is present, and --running the cards she is running now, which friend take and friend down leave with her. --working, --queue and --width are her own counts as her daemon keeps them, and --load her load as a percent, as fleet beat --load gives a machine's: her word, carried on where --json's friends beside the table's counts, which stay the sprint's. The friend's own machinery runs it every " + every + ". The friend is up while the last beat is under " + down + " old, and down once that long has passed with no beat, or when the friend has never beaten. A beat wakes the friend at once. Once the coordinator observes her (friend health), the observation decides her status and her beat no longer does. " + sync + "\n"
+		return "friend beat records that this friend is present, and --running the cards she is running now, which friend take and friend down leave with her. --working, --queue and --width are her own counts as her daemon keeps them, and --load her load as a percent, as fleet beat --load gives a machine's: her word, carried on where --json's friends beside the table's counts, which stay the sprint's. --asleep before the friend name records a contactable sleeping session while the table still shows down; an ordinary beat clears sleep and shows up. The friend's own machinery runs it every " + every + ". Before the coordinator observes her, a fresh ordinary beat shows up and she is down once it is " + down + " old; a hold still shows held. Once the coordinator observes her (friend health), the observation decides her status and her beat no longer does. " + sync + "\n"
 	case "friend down":
 		return "friend down holds the named friend, as fleet down holds a machine: held is the coordinator's decision alone, whatever she beats or the coordinator's daemon observes; the tick deals her nothing, and where counts working as 0 while the friend is held. Every card dealt to her that she has not started goes back to ready, as friend take --all-unstarted takes it, and the next tick deals it to a friend up with room (a card whose WHO line names her waits for her); a card she has started (a push on its branch, her beat naming it running) stays with her and finishes, each named on a NOTE line. --reason <text> and --until <RFC3339> say why and when you expect her back, shown in her status cell. friend up releases the hold. " + sync + "\n"
 	case "friend up":
@@ -221,6 +226,7 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
 	const name = "friend beat"
 	fs, c := a.verbSetup(name)
+	asleep := fs.Bool("asleep", false, "record a contactable sleeping session; an ordinary beat clears sleep")
 	running := fs.String("running", "", "the cards she is running now, comma separated (work card ids, her job names or primaries): friend take and friend down leave them with her")
 	working := fs.String("working", "", "how many jobs she is working now, as her daemon counts them")
 	queue := fs.String("queue", "", "how many jobs she holds queued, as her daemon counts them")
@@ -258,7 +264,7 @@ func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	b, err := st.FriendBeatReport(context.Background(), friend, rep, given)
+	b, err := st.FriendBeatReport(context.Background(), friend, rep, given, *asleep)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 )
 
 // The friend's files, one writer each. The state files live in the state
@@ -21,10 +22,11 @@ import (
 // coordinator's and the session's, under the working directory
 // (SPEC-FRIEND.md, the files).
 const (
-	StatusFile = "status.json"
-	PongFile   = "pong.json"
-	LogFile    = "deliver.log"
-	QueueFile  = "inbox/QUEUE.json"
+	StatusFile  = "status.json"
+	SessionFile = "session.json"
+	PongFile    = "pong.json"
+	LogFile     = "deliver.log"
+	QueueFile   = "inbox/QUEUE.json"
 )
 
 // DaemonStale is how old the status file may be while the daemon counts
@@ -55,12 +57,22 @@ type Status struct {
 	BeatError  string    `json:"beat_error,omitempty"`
 	StoreError string    `json:"store_error,omitempty"`
 	Width      int       `json:"width"`
+	Asleep     bool      `json:"asleep"`
 	// Session is SessionOK, or SessionBroken once the provider refused BrokenAfter
 	// turns in a row the same way; empty for a passive harness.
 	Session       string    `json:"session,omitempty"`
 	SessionID     string    `json:"session_id,omitempty"`
 	SessionReason string    `json:"session_reason,omitempty"`
 	BrokenAt      time.Time `json:"broken_at,omitempty"`
+}
+
+// SessionState is the durable operator choice for one running friend. It is
+// deliberately separate from Status: the daemon owns Status, while sleep and
+// wake are synchronous commands which update this one small state record.
+type SessionState struct {
+	Coordinator string `json:"coordinator,omitempty"`
+	Asleep      bool   `json:"asleep,omitempty"`
+	WakeBarrier string `json:"wake_barrier,omitempty"`
 }
 
 // Pong is the session's last answer, as the pong verb records it beside
@@ -104,8 +116,78 @@ func (q Queue) Counts() (queue, working int) {
 // names another directory: ~/.nova-friend/<friend>.
 func DefaultStateDir(home, friend string) string { return filepath.Join(home, ".nova-friend", friend) }
 
-func statusPath(stateDir string) string { return filepath.Join(stateDir, StatusFile) }
-func pongPath(stateDir string) string   { return filepath.Join(stateDir, PongFile) }
+func statusPath(stateDir string) string      { return filepath.Join(stateDir, StatusFile) }
+func sessionPath(stateDir string) string     { return filepath.Join(stateDir, SessionFile) }
+func sessionLockPath(stateDir string) string { return filepath.Join(stateDir, "session.lock") }
+func daemonLockPath(stateDir string) string  { return filepath.Join(stateDir, "daemon.lock") }
+func pongPath(stateDir string) string        { return filepath.Join(stateDir, PongFile) }
+
+// TakeDaemonLock makes the launch agent a singleton for this friend's state
+// directory. The lock file is permanent; filelock owns its contents.
+func TakeDaemonLock(stateDir, friend string) (*filelock.FileLock, error) {
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return nil, err
+	}
+	return filelock.TryLock(daemonLockPath(stateDir), "nova-friend "+friend)
+}
+
+// WithSessionState serializes a read of the durable session choice with local
+// sleep/wake commands and automatic coordinator wake. Callers must keep fn
+// short and must not perform store or harness I/O while holding the lock.
+func WithSessionState(stateDir string, fn func(SessionState) error) error {
+	return sessionState(stateDir, func(s *SessionState) (bool, error) { return false, fn(*s) })
+}
+
+// UpdateSessionState serializes one durable read/modify/write. Only the
+// current state is stored; there is no queued sleep or wake request to replay
+// after restart.
+func UpdateSessionState(stateDir string, update func(*SessionState) error) (SessionState, error) {
+	var out SessionState
+	err := sessionState(stateDir, func(s *SessionState) (bool, error) {
+		before := *s
+		if err := update(s); err != nil {
+			return false, err
+		}
+		out = *s
+		return *s != before, nil
+	})
+	if err != nil {
+		return SessionState{}, err
+	}
+	return out, err
+}
+
+func sessionState(stateDir string, fn func(*SessionState) (bool, error)) (retErr error) {
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return err
+	}
+	l, err := filelock.Lock(sessionLockPath(stateDir), "nova-friend session state", time.Second)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, l.Unlock()) }()
+	var s SessionState
+	if _, err := read(sessionPath(stateDir), &s); err != nil {
+		return err
+	}
+	shouldWrite, err := fn(&s)
+	if err != nil {
+		return err
+	}
+	if shouldWrite {
+		return write(sessionPath(stateDir), s)
+	}
+	return nil
+}
+
+// ReadSessionState reads the atomically replaced operator choice without
+// creating the state directory or taking a lock. Callers that authorize a
+// delivery must use WithSessionState instead; a missing file is zero state.
+func ReadSessionState(stateDir string) (SessionState, error) {
+	var out SessionState
+	_, err := read(sessionPath(stateDir), &out)
+	return out, err
+}
 
 // LogPath is the daemon's own log in the state directory: one line per
 // delivery (launchd's own log is elsewhere: Plist).

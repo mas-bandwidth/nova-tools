@@ -79,6 +79,91 @@ only after a session pong; a challenge is open for less than a window; the
 outage is said exactly once; only the current nonce ends a challenge; and a
 challenge ends.
 
+`run` and `install` accept `--coordinator <name>` separately from the server's
+address. A run saves an explicit coordinator in `session.json`; install carries
+the option into the launch agent, and its run saves it when the agent starts.
+The coordinator must be a valid nova-bus name because automatic wake compares
+it with a nova-bus message's `From` value. `nova-friend sleep --as <me>` records
+a local asleep marker and requires a configured coordinator. `nova-friend wake
+--as <me>` clears the marker and needs no coordinator. Neither command sends a
+wake message or proves the harness can wake. Startup does not clear an asleep
+marker; a matching ordinary coordinator message can wake the session while the
+daemon recovers pending work. A coordinator PING never wakes it.
+
+## Asleep behavior
+
+The durable session record contains one asleep bit, one configured coordinator,
+and at most one `WakeBarrier` stream-entry ID. An ordinary message whose `From`
+equals the configured coordinator can wake the session, regardless of its
+subject or body. A coordinator `PING` is the exception: the daemon answers and
+acknowledges it without waking the session, charging a delivery, or making a
+model turn. While its ID remains the saved active barrier, an entry already used to
+wake the session is not reused after local sleep or daemon restart. Once a
+non-`Deferred` completion clears it, a later redelivery can wake again.
+
+While asleep, a ping gets a `daemon-pong` marked `asleep=true` and the session
+stays asleep. A matching ordinary coordinator message first commits awake
+state. The daemon may claim ordinary messages but does not deliver, fail, or
+acknowledge them while asleep. Startup recovers every page of its own pending entries in
+batches of 128 before dispatching work; a recovery error is retried without
+dispatch, and another consumer's entries are never recovered.
+
+The wake entry is the single durable barrier: it gets the first
+non-`Deferred` delivery attempt, then held entries run in numeric stream-ID
+order. A deferred result does not clear the barrier, count as a delivery
+failure, or acknowledge the entry. Local sleep, wake, and daemon restart
+preserve it until a non-deferred completion. If local sleep arrives during a
+deferred retry, the daemon parks it; a later wake retries the barrier first.
+The start boundary is reservation under the session-state lock, so a later
+sleep does not cancel harness I/O already reserved. If persisting a completed
+barrier clear fails, the daemon stops before dispatching later entries.
+
+Sleep pauses the friend machine's unanswered-challenge clock while its
+transport-connection timer can still advance, and keeps `Up` false. A daemon
+ping response while asleep does not make the session up. Passive harnesses only
+peek; a matching ordinary coordinator entry wakes them, with repeat
+suppression for that entry during one process lifetime. Pings remain daemon
+traffic and never wake a passive session.
+
+The separate `tla/MCFriendSleep.tla` model is a finite safety projection. Its
+good v2 configuration passed independently; the model abstracts store and file
+failures, locking and cross-layer refinement, and does not cover pagination
+beyond 1,000 entries, authorization, native delivery, or liveness.
+
+## The daemon keepalive engine
+
+`internal/friend/keepalive` implements a daemon-only challenge and
+acknowledgment machine, a one-second loop, and a Redis transport on the
+dedicated `bus2:keepalive:<recipient>` lanes. Its frames never enter the
+ordinary message stream and never reach a model. Each side emits at most once
+per second; only a fresh acknowledgment of that invocation's outstanding
+challenge proves the peer, and proof expires after ten seconds. The coordinator
+batches peer frames and health observations; the friend talks only to the
+current fenced coordinator seat. The Redis lane batches appends and reads,
+retains about one minute, and carries no ordinary receive or acknowledge API.
+
+The engine runs on both sides. `nova-friend run` assigns the friend-side loop to
+the delivery daemon, using the same `--redis` and `--server` and reading the
+saved asleep choice on each tick. `nova-friend coordinate --as <coordinator>`
+runs the coordinator side: it reads the seat and configured friends through
+the sprint server, challenges each peer, and writes one fenced health batch.
+The server bridge admits only `seat --json`, `where --json`, and exactly
+`friend health --actor <coordinator> <friend> --state <up|asleep|down> --seen
+<RFC3339> --generation <positive>` with nothing else. For the write it removes
+the asserted actor pair and injects its own actor and store before dispatch. It
+rejects later `actor`, `as`, or `redis` flags. The actor remains a trusted
+private-network identity assertion, not authentication.
+
+`install --role coordinator` writes a separate launchd agent beside the
+friend's delivery agent, with separate state and log paths. It runs
+`coordinate`; the default friend role still runs `run`. Before opening the
+store, `coordinate` takes the singleton daemon lock in its separate coordinator
+state directory. A second owner exits 1 with `COORDINATE FAIL: singleton:
+<error>`. Transport, authority, and projection errors are recorded and retried
+by the loop; a fatal loop, store-open error, or lock-release error exits the
+coordinator command at 1. The good keepalive v3 TLC run still awaits independent
+review.
+
 ## The loop (internal/friend/daemon.go)
 
 Each second: the clock is stepped; when the session is free, every message
@@ -88,14 +173,15 @@ first, at most 32 messages or 256 KiB (`MaxBatch`, `BatchBytes`; the rest is
 the next turn): one envelope listing each message's id, from and subject, with
 the message as `nova-bus recv` prints it, the pong line first while a challenge
 is open, and the daemon's latest word about the coordinator; a single message
-with nothing else is its `recv` text alone. The adapter blocks for the whole
-turn; exit 0 acks every message it carried, together. Any other exit leaves
+with nothing else is its `recv` text alone. An adapter normally blocks for the
+whole turn; Codex queue acceptance is an admission result and can return before
+the model answers. Exit 0 acks every message it carried, together. Any other exit leaves
 them pending, handed in again when their claims open, and the third failure
 acks a message with `given_up=true` on the record, so a message the session
 cannot take never comes back for ever. A delivery the adapter defers,
-`Deferred`, the session unable to take a turn now with nothing wrong, such as a
-Codex thread open in the app holding its writer lock, is neither a failure nor
-an ack: the turn stays in the daemon's hand, tried again every ten seconds,
+`Deferred`, the session unable to take a turn now with nothing wrong, such as
+both Codex delivery routes failing generically, is neither a failure nor an
+ack: the turn stays in the daemon's hand, tried again every ten seconds,
 `RecheckEvery`, and counted toward nothing, so a chat open all day loses no
 message, and the record says so at the first deferral and once a minute after.
 While a turn runs: one peek, so a ping that lands during a long turn is still
@@ -146,30 +232,35 @@ answered by the daemon at once, beating, and recording a push it cannot
 deliver; so the tool is honest, and the beat and the daemon pong are real
 for it.
 
-Codex delivers by resume, not into the open chat: `codex exec resume
---skip-git-repo-check <thread> <text>` resumes the saved thread in a new codex
-process, so the thread's model answers with the friend's whole context, and
-the record labels every such turn "answered by resume, not by the open
-chat". The open chat itself is out of reach: the Codex desktop app
-(ChatGPT.app) runs its app-server on a stdio pair it owns and listens on no
-socket, and while a thread is open there the app holds its writer lock
-(`~/.codex/thread-writer-locks/<thread>.lock`), which refuses a resume
-("thread <id> already has an active writer", measured 2026-10-04 on an open
-thread, exit 1). Without --session, the adapter resolves the newest saved thread with the
-same working directory from session_meta headers and session_index updated_at
-under CODEX_HOME (otherwise ~/.codex); without a matching thread it refuses
-with a remedy rather than spawning codex. It probes that exact thread's writer
-lock first (the same flock codex takes). While held, it returns Deferred without
-running codex: no failure is counted and nothing is acked or given up, even
-after 1,000 deferrals. The daemon retries every ten seconds. The probe releases
-its brief exclusive lock before resume, so a writer can still acquire it in
-that window; this observation is not a reservation. Reaching the open chat needs the app on the shared local daemon:
-the app connects to `~/.codex/app-server-control/app-server-control.sock`
-instead of its own stdio server only when launched with
-`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1` and a daemon is already up (`codex
-app-server daemon start`; read from the app bundle, unverified); then `codex
-queue --thread <id> --message <text>` reaches the open chat, and the adapter
-should move to it.
+### Codex
+
+The adapter resolves the named thread, or the newest saved thread for its
+working directory from session headers and the session index under
+`CODEX_HOME` (otherwise `~/.codex`). It probes that exact thread's writer lock.
+When held, it tries `codex queue --thread <id> --message <text>` first. When the
+lock is free, it tries
+`codex exec resume --skip-git-repo-check <id> <text>` first. The lock probe is
+an observation, not a reservation, and the text is a literal argument, never a
+shell command.
+
+Queue acceptance is recorded as "queued for open chat", explicitly "accepted,
+not answered"; the open app may defer it until its current turn ends. Resume
+success is recorded as "answered by resume, not by the open chat". If the first
+command fails, the adapter tries the other route once, and a successful
+fallback wins. Generic errors from both routes produce `Deferred`, keeping the
+bus messages pending and charging no failed delivery. If an actual resume
+reports a recognized `ProviderRefused` and queue also fails, that typed session
+fault is preserved so repeated provider refusals can mark and report the broken
+session. No matching saved thread is a refusal with a remedy rather than
+delivery to a guessed thread.
+
+Measured with codex-cli 0.153.4 and ChatGPT 26.930.21537 build 12776 on
+2026-10-04: queued text arrived in the same open thread after its active turn
+completed, and the session replied on the bus. The app and its stdio app-server
+remained the same processes. That app retained
+`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1` from an earlier experiment, so the
+measurement does not prove the flag is required. The adapter requires no such
+flag and does not modify how the user launches the app.
 
 ### Antigravity
 
@@ -183,7 +274,7 @@ server writes the text into the conversation's mailbox,
 a high-priority message, its watcher starts a turn on it, and the session
 marks it read in `read.json` there as it takes it. Measured 2026-10-04 08:52
 ET: sent at :28, the turn's first step at :32, the friend's "got it" on
-nova-bus2 at :35.
+nova-bus at :35.
 
 The adapter finds everything each delivery, so a restarted app is found
 again: the server's pid and CSRF token off `ps -axo user=,pid=,args=` for the daemon's own user (the

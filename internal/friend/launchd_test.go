@@ -126,3 +126,17 @@ func TestThePlistWrapsTheDaemonInNovaSecretsExecForItsSecrets(t *testing.T) {
 	a.Secrets = nil
 	assert.Equal(t, "/opt/nova/bin/nova-friend", a.Args()[0], "no secrets, no wrap")
 }
+
+func TestCoordinatorRoleKeepsTheSecretsWrapper(t *testing.T) {
+	t.Parallel()
+	a := agent()
+	a.Role, a.StateDir = "coordinator", "/state"
+	a.Secrets, a.Seat, a.SecretsTool, a.Sops = []string{"TOKEN"}, "studio", "/bin/nova-secrets", "/bin/sops"
+	assert.Equal(t, []string{
+		"/bin/nova-secrets", "exec", "--store", "/home/bob/nova-bench/secrets", "--as", "studio",
+		"--key", "/home/bob/.config/nova-secrets/studio.key", "--sops", "/bin/sops", "--only", "TOKEN",
+		"--require", "TOKEN", "--", "/opt/nova/bin/nova-friend", "coordinate", "--as", "bob",
+		"--redis", "store:6379", "--server", "127.0.0.1:6390", "--state-dir", "/state",
+	}, a.Args())
+	assert.Equal(t, "com.nova.friend-coordinator-bob", a.Label())
+}

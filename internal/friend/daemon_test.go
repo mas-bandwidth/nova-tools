@@ -3,6 +3,8 @@ package friend
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +15,41 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type peekSleepStore struct {
+	*bus.Fake
+	afterRange func()
+}
+
+func (s *peekSleepStore) Range(ctx context.Context, stream, from, to string, count int) ([]bus.Entry, error) {
+	entries, err := s.Fake.Range(ctx, stream, from, to, count)
+	if s.afterRange != nil {
+		s.afterRange()
+		s.afterRange = nil
+	}
+	return entries, err
+}
+
+type joinDeliver struct {
+	stateDir string
+	exited   chan joinExit
+}
+
+type joinExit struct {
+	lockHeld bool
+	unlock   error
+}
+
+func (d joinDeliver) Deliver(ctx context.Context, _ string) (int, error) {
+	<-ctx.Done()
+	lock, err := TakeDaemonLock(d.stateDir, "bob")
+	result := joinExit{lockHeld: err != nil}
+	if err == nil {
+		result.unlock = lock.Unlock()
+	}
+	d.exited <- result
+	return 1, ctx.Err()
+}
 
 // rig is one daemon over bus's Fake, a fake harness and a clock that moves
 // one second per read: no socket, no real time. The loop runs until
@@ -71,7 +108,7 @@ func newRig(t *testing.T) *rig {
 			}
 			<-r.gate
 		},
-		Beat: func(context.Context) error {
+		Beat: func(context.Context, bool) error {
 			r.mu.Lock()
 			r.beats++
 			f, stop := r.at[r.beats], r.beats >= r.stopAfter
@@ -392,4 +429,73 @@ func TestADSHSessionUnderAPresetKeepsTheMessagePending(t *testing.T) {
 		require.NotEmpty(t, r.records)
 		assert.Contains(t, r.records[0], `subject="hello" deferred=1: session session-zhi runs under agent preset "minimal"`)
 	})
+}
+
+func TestPassiveCoordinatorMessageWakesSavedStateOnlyOnce(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Deliver, r.d.Harness, r.passive = Stub{Harness: "fake"}, "fake", true
+	r.d.StateDir = t.TempDir()
+	_, err := UpdateSessionState(r.d.StateDir, func(s *SessionState) error {
+		s.Asleep, s.Coordinator = true, "ada"
+		return nil
+	})
+	require.NoError(t, err)
+	r.send(t, "ada", "wake", "ordinary coordinator message")
+	r.at[1] = func() {
+		_, err := UpdateSessionState(r.d.StateDir, func(s *SessionState) error { s.Asleep = true; return nil })
+		require.NoError(t, err)
+	}
+	r.run(t, 4)
+	state, err := ReadSessionState(r.d.StateDir)
+	require.NoError(t, err)
+	assert.True(t, state.Asleep, "the same unconsumed entry cannot wake a second local sleep")
+	assert.Empty(t, state.WakeBarrier)
+}
+
+func TestPeekedPingUsesSleepCommittedAfterPeek(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.StateDir = t.TempDir()
+	_, err := UpdateSessionState(r.d.StateDir, func(s *SessionState) error { s.Coordinator = "ada"; return nil })
+	require.NoError(t, err)
+	store := &peekSleepStore{Fake: r.store}
+	r.d.Store = store
+	r.hold, r.releaseAt = make(chan struct{}), 5
+	r.send(t, "bob", "long", "one running turn")
+	r.at[1] = func() {
+		r.send(t, "ada", "ping", PingText("ada", t0, "n1"))
+		store.afterRange = func() {
+			_, err := UpdateSessionState(r.d.StateDir, func(s *SessionState) error { s.Asleep = true; return nil })
+			require.NoError(t, err)
+		}
+	}
+	r.run(t, 8)
+	state, err := ReadSessionState(r.d.StateDir)
+	require.NoError(t, err)
+	assert.True(t, state.Asleep)
+	assert.Empty(t, r.d.m.Nonce, "the ping observed after committed sleep does not move the connection machine")
+	assert.Contains(t, strings.Join(r.adaGot(t), "\n"), "daemon-pong n1 asleep=true")
+}
+
+func TestRunJoinsActiveDeliveryBeforeReleasingSingleton(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.StateDir = t.TempDir()
+	exited := make(chan joinExit, 1)
+	r.d.Deliver = joinDeliver{stateDir: r.d.StateDir, exited: exited}
+	r.send(t, "ada", "long", "active while state read fails")
+	r.at[1] = func() {
+		require.NoError(t, os.WriteFile(filepath.Join(r.d.StateDir, SessionFile), []byte("{"), 0o600))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancel = cancel
+	r.stopAfter = 20
+	require.ErrorContains(t, r.d.Run(ctx), SessionFile)
+	joined := <-exited
+	require.NoError(t, joined.unlock)
+	assert.True(t, joined.lockHeld, "delivery exits while the daemon still owns its singleton lock")
+	lock, err := TakeDaemonLock(r.d.StateDir, "bob")
+	require.NoError(t, err, "Run releases the singleton only after joining delivery")
+	require.NoError(t, lock.Unlock())
 }

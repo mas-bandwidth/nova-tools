@@ -137,6 +137,12 @@ WAIT-PONG OK nonce=abc123 from=bob at=2026-10-04T03:40:12Z took=1ms queue=2 work
 
 $ nova-friend status --as bob --dir ./bob
 ! STATUS NONE: no daemon has run as bob (no status file in ./home/.nova-friend/bob); run: nova-friend install --as bob --harness <h> --dir ./bob
+
+$ nova-friend sleep --as bob --coordinator ada
+SLEEP OK asleep=true coordinator=ada
+
+$ nova-friend wake --as bob
+WAKE OK asleep=false
 ```
 
 ## nova-sandbox

@@ -79,7 +79,9 @@ func TestVerbHelpNamesItsUsageAndTheColdWords(t *testing.T) {
 	}
 
 	beat := helpOf("friend", "beat", "-h")
-	assert.Contains(t, beat, "A beat wakes the friend at once.")
+	assert.Contains(t, beat, "--asleep before the friend name")
+	assert.Contains(t, beat, "table still shows down")
+	assert.Contains(t, beat, "an ordinary beat clears sleep and shows up")
 	assert.Contains(t, beat, "friend sync exits 3")
 	down := helpOf("friend", "down", "-h")
 	assert.Contains(t, down, "held is the coordinator's decision alone, whatever she beats or the coordinator's daemon observes")

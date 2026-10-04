@@ -14,6 +14,7 @@ import (
 // never started by the model (SPEC-FRIEND.md, the daemon).
 type Agent struct {
 	Friend, Harness, Dir, Session string
+	Role                          string // "friend" (the default) or "coordinator"
 	StateDir                      string // the daemon's state files, when not the default under Home
 	Width                         int
 	Binary                        string // this tool, by absolute path
@@ -34,7 +35,12 @@ type Agent struct {
 }
 
 // Label is the agent's launchd label.
-func (a Agent) Label() string { return "com.nova.friend-" + a.Friend }
+func (a Agent) Label() string {
+	if a.Role == "coordinator" {
+		return "com.nova.friend-coordinator-" + a.Friend
+	}
+	return "com.nova.friend-" + a.Friend
+}
 
 // PlistPath is where the agent's plist lives under home.
 func (a Agent) PlistPath() string {
@@ -53,6 +59,13 @@ func (a Agent) Args() []string {
 			args = append(args, "--require", name)
 		}
 		args = append(args, "--")
+	}
+	if a.Role == "coordinator" {
+		args = append(args, a.Binary, "coordinate", "--as", a.Friend, "--redis", a.Redis, "--server", a.Server)
+		if a.StateDir != "" {
+			args = append(args, "--state-dir", a.StateDir)
+		}
+		return args
 	}
 	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server, "--width", fmt.Sprint(a.Width))
 	if a.Session != "" {
@@ -180,6 +193,9 @@ func Loaded(ctx context.Context, label string, uid int, run Launchctl) bool {
 // secrets wrap by its names and seat, then the daemon's own flags, --redis
 // and --server left to the install line that gave them.
 func (a Agent) Said() string {
+	if a.Role == "coordinator" {
+		return "nova-friend coordinate --as " + a.Friend + ", with --redis and --server as given here"
+	}
 	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s --width %d, with --redis and --server as given here", a.Friend, a.Harness, a.Dir, a.Width)
 	if len(a.Secrets) == 0 {
 		return said

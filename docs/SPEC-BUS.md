@@ -173,3 +173,17 @@ its machine rows; no new kind or field was needed.
 send: two (the roster and `TIME` in one pipeline, then the transaction). recv:
 four (the roster, the group, the claim, the read). ack: four (group, pending,
 the entries, `XACK`). peek: up to four. log: one. names: one.
+
+Receive helpers preserve the CLI's one-message `Recv` default consumer.
+`RecvBatch` takes a consumer and count from 1 through 1,000, claims stale
+pending entries first with the same `ClaimAfter`, and otherwise reads new
+entries. `PendingPage` ensures the group and reads only the named consumer's
+pending entries, in numeric stream-ID order strictly after its cursor, without
+reclaiming or acknowledging them. The empty cursor starts at the beginning.
+Pages may cover a queue larger than 1,000 entries; the helper returns a next
+cursor from the last pending ID even when a message body is missing. The caller
+advances with that cursor and stops only when it is empty, never from the
+returned body count. Errors return no cursor. The stream retains entries, and
+ownership is observed when `XPENDING` is queried; consumer labels are
+conventions, not authorization boundaries. A daemon's singleton-owner protocol
+supplies its dedicated consumer and recovery ordering.
