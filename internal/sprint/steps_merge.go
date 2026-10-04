@@ -19,13 +19,23 @@ type MergeReq struct {
 	// by their order of work, often ahead of the ones a landing is building, and a
 	// report by place would then record cards that were not pushed (nova-sprint land).
 	Cards    []string
-	Conflict string   // a card of the batch that did not merge
-	Cross    string   // "<card>=<other>": a card that needs a card of another stream first
-	Red      bool     // the stream branch went red on the batch
-	Suspects []string // with Red: the cards of the batch the caller suspects
-	Rejected bool     // the merge queue rejected the batch
-	Note     string
-	Who      string
+	Conflict string // a card of the batch that did not merge
+	// ConflictKind and ConflictPaths are what the lander knows of a conflict: "file" when the
+	// paths that did not merge are files no generated ledger owns, "ledger" when one is, and
+	// the paths; written on the stream's control card with the stop (FieldConflictKind,
+	// FieldConflictPaths), which the conflict rule reads (rules.go). "" is not known.
+	ConflictKind  string   `json:",omitempty"`
+	ConflictPaths []string `json:",omitempty"`
+	Cross         string   // "<card>=<other>": a card that needs a card of another stream first
+	Red           bool     // the stream branch went red on the batch
+	Suspects      []string // with Red: the cards of the batch the caller suspects
+	Rejected      bool     // the merge queue rejected the batch
+	// BaseRed is the lander's base-gate rule's stop (docs/SPEC-SPRINT.md section 8, answered by
+	// rule): the base failed its tree gate at its tip three times, and this is the error. The
+	// stream stops with the judgment NBaseRed; no card moves.
+	BaseRed string `json:",omitempty"`
+	Note    string
+	Who     string
 	// Resolved is, by card, what its landing did beyond merging its head (docs/SPEC-SPRINT.md
 	// section 7: the generated ledgers regenerated at the merge); written on its merge card
 	// as it lands, its note on the card's timeline.
@@ -94,6 +104,15 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		return p
 	case StreamLanded:
 		p.refuse(r.Stream, "landed")
+		return p
+	}
+	if r.BaseRed != "" {
+		// the base, not a card: the stream stops with the error, every card where it is
+		set := map[string]string{"state": StreamStopped, "since": stamp(s.Now), "cause": "base"}
+		j := judgment(NBaseRed, r.Stream, s.Now, 0)
+		j.StreamLevel, j.Who, j.What = true, r.Who, cutText(r.BaseRed, MaxCardTextBytes)
+		p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "card", "other"))}, Notes: []Note{j},
+			Moved: "stream " + r.Stream + " stopped: the base fails its tree gate"})
 		return p
 	}
 	// A stuck card is a barrier: the step never passes an earlier stuck card.
@@ -177,6 +196,12 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		}
 		pr := s.Work.Placed(r.Conflict)
 		ctlSet["card"] = r.Conflict
+		if r.ConflictKind != "" {
+			ctlSet[FieldConflictKind] = r.ConflictKind
+		}
+		if len(r.ConflictPaths) > 0 {
+			ctlSet[FieldConflictPaths] = cutText(strings.Join(r.ConflictPaths, ","), MaxProviderErrorBytes)
+		}
 		u := stop("conflict", NConflict, []string{r.Conflict}, pr.Int("stuck"), "other")
 		u.Notes[len(u.Notes)-1].Card = r.Conflict
 		// a conflict stop has no cross need: whatever the card once needed
@@ -385,7 +410,7 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	if r.Did != "" {
 		set["did"] = r.Did
 	}
-	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "cause", "card", "other"))},
+	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "cause", "card", "other", FieldConflictKind, FieldConflictPaths))},
 		Moved: fmt.Sprintf("stream %s stopped -> %s; %d stuck -> queued", r.Stream, state, len(stuck))}
 	if state == StreamLanded {
 		n := happened(NStreamLanded, r.Stream, s.Now)

@@ -907,14 +907,14 @@ refusals with reasons (`REFUSED`, on stderr), and the sprint's summary
 
 ```
 nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]
-nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>]
+nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--replaces <old-id>[,<old-id>]]
 nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
 nova-sprint release <sentinel>... --reason <text> [--answers <note>]
 nova-sprint resolve [<id>...] [--stream <s>] [--limit <n>]
 nova-sprint start
 nova-sprint stop
-nova-sprint run
-nova-sprint tick
+nova-sprint run [--answer-rules=false] [--idle-alarm=false]
+nova-sprint tick [--answer-rules] [--idle-alarm]
 nova-sprint goal set <name> [--file <path>] [--to file:<path>]
 nova-sprint goal show [<name>]
 nova-sprint goal drop <name>
@@ -928,9 +928,10 @@ nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--ans
 nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]
 nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
 nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
+nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
 nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
-nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]
+nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint fleet beat <member> [--load <percent>]
@@ -965,6 +966,7 @@ nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint seat
 nova-sprint routes
+nova-sprint rules
 nova-sprint funded <provider> --reason <text>
 nova-sprint stats
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
@@ -986,6 +988,17 @@ ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
+
+### A card re-cut as its twin
+
+A card re-cut under a new id is its old card's twin: `add --stream s1 lint-pkg-cairn-tb
+--brief-file lint-pkg-cairn-tb.md --replaces lint-pkg-cairn-t` admits the twin, makes
+every waiting card that needed the old id need the twin instead (`card <dependent>` shows
+the new need), drops the old card `replaced by lint-pkg-cairn-tb`, and raises no "blocked
+on something dropped" judgment, in one step. Where the drop and the add were made apart,
+`relink lint-pkg-cairn-t lint-pkg-cairn-tb` re-points the edges and answers the blocked
+judgments of that pair. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 2, "A
+card replaced by its twin".
 
 ### Role views: what a model reads instead of the dashboard
 
@@ -1042,6 +1055,31 @@ state) and `routes` each route's `balance=`. When every provider is out of credi
 stops the machine (`machine: STOPPED (every provider is out of credit)`) and `start` is refused
 until one is paid; a provider low on funds never stops it. `funded <provider> --reason <text>`
 says one was paid. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "A provider out of funds".
+
+### Answered by rule
+
+The run loop's tick answers the mechanical judgments itself, by rule, and records each as
+`answered by rule <name>` on the log and on the card (`rule_answer`): work came back
+failed is redealt on the next route of its tier, and the second failure on a tier goes a
+tier up (flash, pro, heavy, then a friend's card); a card at its bound goes a tier up; a
+work card past its deadline is waited 30 minutes once when it made progress in the last 10,
+else returned and dealt again; a stream stopped on a conflict in a file no ledger owns has
+the card returned, the stream resumed and the card redone on the current tip; the same
+finding twice marks the card a brief defect and leaves it to you; and land gates a red base
+again after 2 and 5 minutes before the third failure stops the stream with the error. A
+reader's finding stays yours. `nova-sprint rules` prints what the rules would answer now and
+Xoff, and nova-config's sprint row turns single ones off: `nova-config sprint set
+--answer_rules_off late,conflict`, then `nova-config apply`. The contract is
+[SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-rule).
+
+### The fleet is idle
+
+When the fleet works under half its width for 5 minutes while cards wait, the run loop's
+tick pushes you one note, `the fleet is idle`: `fleet 4/68: 311 behind 21 drop-blocked
+judgments (oldest 1h50m); 89 behind md-secrets (a card reached its bound, 40m)`, every
+waiting card traced to the root of its chain and the roots named by the cards behind
+them; once an episode, and `the fleet is working again` when it recovers. `run
+--idle-alarm=false` turns it off. The contract is [SPEC-SPRINT.md section 14](SPEC-SPRINT.md#the-fleet-is-idle).
 
 ### Answering the routine judgments
 

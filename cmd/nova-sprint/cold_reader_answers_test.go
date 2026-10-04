@@ -48,7 +48,7 @@ func TestAMisspelledFlagNamesTheNearestAndTheVerbsFlags(t *testing.T) {
 	ta := newTestApp(t)
 	code, _, errs := ta.do("add --strem s1 --count 1 --one")
 	assert.Equal(t, 2, code)
-	assert.Equal(t, "nova-sprint add REFUSED: unknown flag --strem; the flags of add are --actor, --after, --allow-shared-paths, --before, --brief, --brief-dir, --brief-file, --brief-op, --count, --decide-record, --epoch, --held, --json, --max, --needs, --one and 8 more; did you mean --stream?; run: nova-sprint help add\n", errs)
+	assert.Equal(t, "nova-sprint add REFUSED: unknown flag --strem; the flags of add are --actor, --after, --allow-shared-paths, --before, --brief, --brief-dir, --brief-file, --brief-op, --count, --decide-record, --epoch, --held, --json, --max, --needs, --one and 9 more; did you mean --stream?; run: nova-sprint help add\n", errs)
 	assert.Contains(t, errs, "; run: nova-sprint help add\n")
 	assert.NotContains(t, errs, "provided but not defined")
 	code, _, errs = ta.do("fleet up m1 --wdth 3")

@@ -883,6 +883,20 @@ type ReworkReq struct {
 	// Tier, when set, is the tier every later deal of the card draws its route from
 	// (route.go, cardTier): written on the primary as FieldTier, over its brief's line 1.
 	Tier string `json:",omitempty"`
+	// PerCard is each card's own fix, tier and fields, over Fix and Tier: the tick's rule
+	// answers rework many cards in one step, each its own way (rules.go). A card that names
+	// a Rule records every judgment the rework closes on it as answered by that rule.
+	PerCard map[string]ReworkCard `json:",omitempty"`
+}
+
+// ReworkCard is one card's own rework (ReworkReq.PerCard): its fix and tier, Friend to make
+// it a friend's card (FieldWho, WhoFriend: the tick deals it to a friend), the fields Set
+// writes on the primary, and the Rule that answers, with what it Said.
+type ReworkCard struct {
+	Fix, Tier  string            `json:",omitempty"`
+	Friend     bool              `json:",omitempty"`
+	Set        map[string]string `json:",omitempty"`
+	Rule, Said string            `json:",omitempty"`
 }
 
 // ReworkResolves is the judgments a rework discharges on its primary.
@@ -927,6 +941,11 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 	moves := roundMoves{}
 	orphans := map[string]bool{}
 	for _, c := range chosen {
+		one := r.PerCard[c.ID]
+		tier := r.Tier
+		if one.Tier != "" {
+			tier = one.Tier
+		}
 		// A primary the rework refuses stays in review: the judgment it needs
 		// is written, if it has none.
 		stays := func() {
@@ -934,7 +953,11 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 				p.Notes = append(p.Notes, j)
 			}
 		}
-		if r.Tier != "" {
+		if one.Friend {
+			// a friend's card from this attempt on: the friends' deal, never a machine's
+			c = withField(c, FieldWho, WhoFriend)
+		}
+		if tier != "" {
 			// a pin is the card's whole route: no tier draws for it (route.go)
 			if m, _ := cardhdr.ReadModel(c.F("brief")); m.Pin != "" {
 				p.refuse(c.ID, "its brief pins model "+m.Pin+", which it runs on whatever its tier; rework it without --tier, or drop it and add the brief again with no model: line")
@@ -943,11 +966,12 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			}
 		}
 		bound, lift := AtRedealBound(s, c), false
-		if bound != nil {
+		if bound != nil && !one.Friend {
 			// the bound holds across attempts: never a lower tier, and a second bound on one
-			// tier only with --tier above it, or the provider back once per tier (failure.go)
+			// tier only with --tier above it, or the provider back once per tier (failure.go);
+			// a friend's card is past every tier
 			var why string
-			if why, lift = reworkAtTheSameBound(s, c, bound, r.Tier); why != "" {
+			if why, lift = reworkAtTheSameBound(s, c, bound, tier); why != "" {
 				p.refuse(c.ID, why)
 				stays()
 				continue
@@ -962,6 +986,9 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			continue
 		}
 		fix := r.Fix
+		if one.Fix != "" {
+			fix = one.Fix
+		}
 		if fix == "" {
 			if fix = cutText(ownFix(s, c), MaxCardTextBytes); fix == "" {
 				p.refuse(c.ID, "no --fix, and no finding of a broken read or report of failed work to take as its fix; give --fix <text>")
@@ -994,11 +1021,15 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			// the provider's return lifted the held bound: spent on this tier for good
 			set[FieldFailureBack] = strings.Join(append(Split(c.F(FieldFailureBack)), cardTierOf(c)), ",")
 		}
-		if r.Tier != "" {
+		if tier != "" {
 			// the card records its tier and this attempt's deal draws from it already
-			set[FieldTier] = r.Tier
-			c = withField(c, FieldTier, r.Tier)
+			set[FieldTier] = tier
+			c = withField(c, FieldTier, tier)
 		}
+		if one.Friend {
+			set[FieldWho] = WhoFriend
+		}
+		maps.Copy(set, one.Set)
 		// the head a reader passed: a next attempt that finds nothing to do at it goes back to
 		// review there, not to the coordinator as failed work (FieldPassedHead, Finish)
 		unset := []string{"readers"}
@@ -1038,8 +1069,11 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			u = Unit{Key: c.ID, Stream: c.Row, Changes: append(retire, change(Work, moveEntry(c, c.Row, Ready, set, append(unset, "result")...))),
 				Moved: c.ID + " review -> ready (rework; " + later + ")"}
 		}
-		if r.Tier != "" {
-			u.Moved += "; tier " + r.Tier
+		if tier != "" {
+			u.Moved += "; tier " + tier
+		}
+		if one.Friend {
+			u.Moved += "; a friend's card"
 		}
 		u.Moved += fmt.Sprintf("; %d read cards retired", len(retire))
 		if m := orphanMerge(s, c); m != nil {
@@ -1048,6 +1082,15 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			orphans[c.ID] = true
 		}
 		u.Closes = closesFor(s.Open, ReworkResolves, c.ID)
+		if one.Rule != "" {
+			// the rule's answer is the decided note of every judgment the rework closes
+			u.Moved += "; answered by rule " + one.Rule
+			for _, o := range u.Closes {
+				if !answeredIn(u.Notes, o.Note.ID) {
+					u.Notes = append(u.Notes, decided(o, RuleSaid(one.Rule, one.Said), r.Who, s.Now, c.ID))
+				}
+			}
+		}
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, orphans, nil)
@@ -1153,6 +1196,10 @@ type ReturnReq struct {
 	Reason  string
 	Answers []string
 	Who     string
+	// Rule, when set, is the rule that returns the cards (rules.go, the conflict rule): each
+	// is marked to be redone on the tip (FieldRuleRedo, at its attempt), and the stopped
+	// stream's judgment records the answer.
+	Rule string `json:",omitempty"`
 }
 
 // ReturnResolves is the judgments a return is a decision for: a red CI on the
@@ -1206,6 +1253,10 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		if r.Reason != "" {
 			set["return_reason"] = r.Reason
 		}
+		if r.Rule != "" {
+			set[FieldRuleRedo] = c.F("attempt")
+			set[FieldRuleAnswer] = r.Rule + ": returned to be redone on the tip at " + stamp(s.Now)
+		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Review, set))},
 			Closes: closesFor(s.Open, ReturnResolves, c.ID)}
 		if m != nil {
@@ -1219,6 +1270,13 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		// The stream's red or rejected judgment names return as a decision: the
 		// answer is recorded; the judgment stays open while the stream is stopped.
 		answerListed(&u, s.Open, r.Answers, "return", c.Row, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID)
+		if r.Rule != "" {
+			for _, o := range s.Open {
+				if o.Note.StreamLevel && o.Note.Stream == c.Row && o.Note.Card == c.ID && !answeredIn(u.Notes, o.Note.ID) {
+					u.Notes = append(u.Notes, decided(o, RuleSaid(r.Rule, "returned "+c.ID+" to be redone on the current tip"), r.Who, s.Now, c.ID))
+				}
+			}
+		}
 		// Back in review, the coordinator decides again.
 		j := judgment(NReturned, c.Row, s.Now, c.Int("returns"), c.ID)
 		j.Who, j.Attempt, j.What = r.Who, c.Int("attempt"), r.Reason
