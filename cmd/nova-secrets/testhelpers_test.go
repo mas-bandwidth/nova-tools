@@ -127,7 +127,7 @@ var (
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if builtDir != "" {
-		os.RemoveAll(builtDir)
+		_ = os.RemoveAll(builtDir) // ignored: best-effort cleanup of a temp build dir
 	}
 	os.Exit(code)
 }
