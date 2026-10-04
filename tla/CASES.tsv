@@ -320,3 +320,7 @@ MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	
 MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-
+MCSecretsSeat.cfg	MCSecretsSeat.tla	pass	-	ignore-terminal	secretsseat	required	-
+MCSecretsSeatBrokenSeatAddReplaces.cfg	MCSecretsSeat.tla	invariant	SeatFileNeverReplaced	ignore-terminal	secretsseat	required	-
+MCSecretsSeatBrokenInjectCopiesUnread.cfg	MCSecretsSeat.tla	invariant	OnlyRecipientsOpen	ignore-terminal	secretsseat	required	-
+MCSecretsSeatBrokenReceiptByValue.cfg	MCSecretsSeat.tla	invariant	ReceiptNamesCommittedBlob	ignore-terminal	secretsseat	required	-
