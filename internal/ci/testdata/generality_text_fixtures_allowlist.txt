@@ -10,7 +10,7 @@
 # row is a refusal unless the file is a capture. Checked by TestGeneralityText
 # (docs/SPEC-CI.md#generality-text).
 #
-# ceiling: 40
+# ceiling: 39
 internal/cairn/testdata/bench-b9395d11.md a captured cairn of one recorded session, including its transcript path
 internal/ci/testdata/generality-text/.github/workflows.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/@root.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
@@ -39,7 +39,6 @@ internal/ci/testdata/generality/internal/release.txt the Go scan's ledger: each 
 internal/ci/testdata/generality/internal/seatcred.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/swarm.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/testguard.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality/internal/testredis.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/textbody.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/tokens.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/typedrec.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
