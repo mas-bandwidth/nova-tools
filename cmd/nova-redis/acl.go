@@ -331,22 +331,22 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		return tool.Exit(1)
 	}
 	// A user the store lacks is created only with a password from the
-	// variable --password-env-for names: never on with none. The same
-	// refusal shape mends a live nopass flag: resetpass then a password,
-	// never resetpass alone, which would leave the user able to log in
-	// with nothing.
+	// variable --password-env-for names: never on with none. A live nopass
+	// flag is mended the same way: resetpass then a password, never
+	// resetpass alone, which would leave the user with nothing to log in
+	// with.
 	sources := c.Get("password-env-for").(passwordSources)
 	var unsourced, unsourcedNoPass []string
 	for _, u := range differ {
 		env := sources[u.Name]
-		sourced := env != "" && d.getenv(env) != ""
+		hasSource := env != "" && d.getenv(env) != ""
 		if !live[u.Name].Exists {
-			if !sourced {
+			if !hasSource {
 				unsourced = append(unsourced, u.Name)
 			}
 			continue
 		}
-		if live[u.Name].NoPass && !sourced {
+		if live[u.Name].NoPass && !hasSource {
 			unsourcedNoPass = append(unsourcedNoPass, u.Name)
 		}
 	}
