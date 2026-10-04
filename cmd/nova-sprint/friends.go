@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -275,6 +276,33 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, name, err.Error())
 	}
 	ctx := context.Background()
+	es, err := st.EpochNow(ctx)
+	if err != nil {
+		return a.readFailed(name, err, stderr)
+	}
+	if c.epoch >= 0 && uint64(c.epoch) != es.N {
+		return refuse(stderr, name, fmt.Sprintf("card %s was handed at epoch %d, and the sprint is at epoch %d; after clear, an old brief cannot take a card in a new epoch", ids[0], c.epoch, es.N))
+	}
+	for i, w := range words {
+		card := ids[i]
+		if idx := strings.LastIndexByte(w, '~'); idx != -1 {
+			j := idx + 1
+			for j < len(w) && w[j] >= '0' && w[j] <= '9' {
+				j++
+			}
+			if j == idx+1 {
+				return refuse(stderr, name, fmt.Sprintf("%s: an epoch is a whole number", w))
+			}
+			tokenEpoch, err := strconv.ParseUint(w[idx+1:j], 10, 64)
+			if err != nil {
+				return refuse(stderr, name, fmt.Sprintf("%s: an epoch is a whole number", w))
+			}
+			if tokenEpoch != es.N {
+				return refuse(stderr, name, fmt.Sprintf("card %s was handed at epoch %d, and the sprint is at epoch %d; after clear, an old brief cannot take a card in a new epoch", card, tokenEpoch, es.N))
+			}
+		}
+	}
+	c.epoch = int64(es.N)
 	if target == "" && len(ids) > 0 {
 		if s, err := st.Load(ctx, []string{sprint.Fleet}, nil); err == nil {
 			if card := s.Fleet.Card(ids[0]); card != nil && card.Placed() {
@@ -310,7 +338,9 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 		ps, _ := st.Packets(ctx, mine)
 		return ps
 	}
-	return a.runStep(name, *c, st, store.FriendTakeStep(ids, gens, target, c.actor), stdout, stderr)
+	step := store.FriendTakeStep(ids, gens, target, c.actor)
+	step.Epoch = &es.N
+	return a.runStep(name, *c, st, step, stdout, stderr)
 }
 
 // oneFriend is the one friend a verb names, or its refusal.

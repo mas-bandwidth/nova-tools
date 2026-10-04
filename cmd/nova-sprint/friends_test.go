@@ -600,3 +600,75 @@ func TestFriendE2ETiersReservationHoldAndFinish(t *testing.T) {
 	assert.Equal(t, sprint.Review, c.Primary.Col)
 	assert.Equal(t, "ok", c.Primary.F("result"))
 }
+
+// TestOldEpochFriendTakeRefusesAfterClear verifies that an old BRIEF from an earlier
+// epoch cannot take a newly recreated same-ID/same-generation card in a new epoch after clear.
+func TestOldEpochFriendTakeRefusesAfterClear(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+
+	// Clear to epoch 1
+	ta.ok("clear --confirm sprint")
+	ta.ok("friend sync --root " + root)
+	ta.ok("friend beat amy")
+
+	// Add card s1-1 in epoch 1
+	brief1 := filepath.Join(t.TempDir(), "s1-1.md")
+	require.NoError(t, os.WriteFile(brief1, []byte(passingBrief("s1-1: card in epoch 1\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy")), 0o644))
+	ta.ok("add --stream s1 --brief-dir " + filepath.Dir(brief1))
+	ta.ok("start")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root)
+
+	// Verify BRIEF was delivered at epoch 1 (job: s1-1.w1~1.g1)
+	briefFile := filepath.Join(root, "amy-working", "inbox", "s1-1.w1~1.g1", "BRIEF.md")
+	text, err := os.ReadFile(briefFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(text), "first take it: nova-sprint friend take s1-1.w1~1.g1")
+
+	// Clear to epoch 2
+	ta.ok("clear --confirm sprint")
+	ta.ok("friend sync --root " + root)
+	ta.ok("friend beat amy")
+
+	// Recreate same card s1-1 in new epoch 2
+	brief2 := filepath.Join(t.TempDir(), "s1-1.md")
+	require.NoError(t, os.WriteFile(brief2, []byte(passingBrief("s1-1: card in epoch 2\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy")), 0o644))
+	ta.ok("add --stream s1 --brief-dir " + filepath.Dir(brief2))
+	ta.ok("start")
+	ta.ok("tick")
+
+	// Verify card is in ready reserve in epoch 2
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
+
+	// Attempt to take using old BRIEF token from epoch 1: refused!
+	code, _, errs := ta.do("friend take s1-1.w1~1.g1")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "card s1-1.w1 was handed at epoch 1, and the sprint is at epoch 2; after clear, an old brief cannot take a card in a new epoch")
+
+	// Card remains in ready reserve in new epoch
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
+
+	// Also verify --epoch 1 flag is refused
+	code, _, errs = ta.do("friend take s1-1.w1 --epoch 1")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "card s1-1.w1 was handed at epoch 1, and the sprint is at epoch 2; after clear, an old brief cannot take a card in a new epoch")
+
+	// Card still remains in ready reserve
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
+
+	// Current epoch token succeeds
+	out := ta.ok("friend take s1-1.w1~2.g1")
+	assert.Contains(t, out, "FRIEND-TAKE OK")
+
+	ta.json("where", &w)
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"])
+}

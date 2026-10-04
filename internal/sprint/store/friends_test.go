@@ -1,9 +1,12 @@
 package store
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -447,37 +450,111 @@ func TestHoldVersusTakeRaceBothOrderings(t *testing.T) {
 	})
 }
 
-// TestSyncRemovalRaceWitness proves that a sync removal happening between planning
-// and execution cannot cause FriendHold or FriendRelease to recreate a zero-width/no-tier entry.
+type syncRacer struct {
+	Backend
+	KV
+	at   string
+	once sync.Once
+	do   func()
+}
+
+func (r *syncRacer) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, error) {
+	if r.at == "acquire" {
+		r.once.Do(r.do)
+	}
+	return r.Backend.Acquire(ctx, gen, op)
+}
+
+func (r *syncRacer) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Receipt, error) {
+	if r.at == "apply "+m.Table {
+		r.once.Do(r.do)
+	}
+	return r.Backend.Apply(ctx, m)
+}
+
+// TestSyncRemovalRaceWitness proves that a sync removal interleaved during a hold or take's
+// fenced transaction/plan snapshot causes fenced verification to retry on fresh state and refuse,
+// without resurrecting the removed friend or allowing stale generation claims.
 func TestSyncRemovalRaceWitness(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
+	h.startMachine()
+
+	// 1. Concurrent interleaving during FriendHoldStep:
+	// Sync friend amy (width 2, tiers: flash)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2, Tiers: []string{"flash"}}})
 	require.NoError(t, err)
 
-	// Step 1: Remove amy via SyncFriends
-	_, removed, _, err := h.st.SyncFriends(h.ctx, nil)
+	other := &Store{B: h.m, Names: h.st.Names, Actor: "other", Now: h.st.Now, NewID: func() string { return "o" }, Sleep: h.st.Sleep}
+
+	// Interleave SyncFriends removal inside Acquire of FriendHoldStep
+	rHold := &syncRacer{Backend: h.m, KV: h.m, at: "acquire", do: func() {
+		_, removed, _, err := other.SyncFriends(h.ctx, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"amy"}, removed)
+	}}
+	stHold := *h.st
+	stHold.B = rHold
+	stHold.root = h.m
+	stHold.pinned = true
+
+	resHold, err := stHold.Run(h.ctx, FriendHoldStep("amy", "glenn"))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"amy"}, removed)
+	assert.Equal(t, 2, resHold.Attempts, "must retry after concurrent interleaving moved the fence")
+	require.NotEmpty(t, resHold.Refused)
+	assert.Contains(t, resHold.Refused[0].Why, "no friend amy on the friends table")
 
-	// Step 2: FriendHoldStep for removed friend is executed.
-	// Fenced snapshot check in FriendHold detects amy is not on the friends table and refuses.
-	res := h.run(FriendHoldStep("amy", "glenn"))
-	require.NotEmpty(t, res.Refused)
-	assert.Contains(t, res.Refused[0].Why, "no friend amy on the friends table")
-
-	// Step 3: Verify roster does NOT contain amy (applyRosterChange never creates absent entries)
+	// Verify roster does NOT contain amy (never resurrected with zero-width/no-tier entry)
 	rows, err := h.st.FriendRows(h.ctx, h.now)
 	require.NoError(t, err)
 	assert.Empty(t, rows)
 
-	// Step 4: FriendReleaseStep for absent friend is also refused
-	resRelease := h.run(FriendReleaseStep("amy", "glenn"))
-	require.NotEmpty(t, resRelease.Refused)
-	assert.Contains(t, resRelease.Refused[0].Why, "no friend amy on the friends table")
+	// 2. Concurrent interleaving during FriendTakeStep:
+	// Re-sync friend amy
+	_, _, _, err = h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Tiers: []string{"flash"}}})
+	require.NoError(t, err)
+	_, err = h.st.FriendBeat(h.ctx, "amy")
+	require.NoError(t, err)
 
-	// Roster remains empty
+	// Add card and stage into friend.amy ready reserve
+	h.must(AddStep(sprint.AddReq{
+		Stream: "s1",
+		Cards: []sprint.CardAdd{
+			{ID: "s1-1", Brief: "c: card 1\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n\ntask 1"},
+		},
+	}))
+	h.machine() // drain into work ready
+	h.machine() // deal to friend.amy ready reserve
+	card := h.snap().Fleet.Card("s1-1.w1")
+	require.NotNil(t, card)
+	require.Equal(t, sprint.Ready, card.Col)
+	require.Equal(t, sprint.FriendRow("amy"), card.Row)
+	require.Equal(t, 1, card.Int("gen"))
+
+	// Interleave SyncFriends removal inside Acquire of FriendTakeStep
+	rTake := &syncRacer{Backend: h.m, KV: h.m, at: "acquire", do: func() {
+		_, removed, _, err := other.SyncFriends(h.ctx, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"amy"}, removed)
+	}}
+	stTake := *h.st
+	stTake.B = rTake
+	stTake.root = h.m
+	stTake.pinned = true
+
+	takeRes, err := stTake.Run(h.ctx, FriendTakeStep([]string{"s1-1.w1"}, map[string]int{"s1-1.w1": 1}, sprint.FriendRow("amy"), "amy"))
+	require.NoError(t, err)
+	assert.Equal(t, 2, takeRes.Attempts, "must retry after concurrent interleaving moved the fence")
+	require.NotEmpty(t, takeRes.Refused, "take must be refused on fresh snapshot after sync removal")
+
+	// Verify amy remains removed (not resurrected)
 	rowsAfter, err := h.st.FriendRows(h.ctx, h.now)
 	require.NoError(t, err)
 	assert.Empty(t, rowsAfter)
+
+	// Verify card was not claimed into working (no stale generation claims)
+	fleetCard := h.snap().Fleet.Card("s1-1.w1")
+	if fleetCard != nil {
+		assert.NotEqual(t, sprint.Working, fleetCard.Col, "card must not be in working")
+	}
 }
