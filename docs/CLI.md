@@ -447,7 +447,8 @@ nova-bus log --max 5
 nova-bus names
 ```
 
-`send` prints `SEND OK id= to= cc= at=`: the id is the message's for ever. Who you
+`send` prints `SEND OK id= to= cc= at= bytes= sha256=`: the id is the message's for ever, the
+count and the digest are the body's as the store holds it (check a file against `shasum -a 256`). Who you
 are is the user the connection logged in as (`NOVA_SPRINT_REDIS_USER`): `--as`
 may repeat it or be left out, and another name is refused; on a store with no
 users (this first run) `--as` is your word and every write says `login=none`. `peek`

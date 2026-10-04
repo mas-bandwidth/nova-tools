@@ -10,6 +10,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -127,7 +129,9 @@ first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); user N
 				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--redis <addr>]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
-				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> at=<RFC3339>; the id is the message's for ever.
+				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> at=<RFC3339> bytes=<n> sha256=<hex>: the id is the
+message's for ever, and the byte count and digest are the body's as the store holds it, so a sender
+can check a --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline).
 You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
 are, and the line says login=none.`,
@@ -323,7 +327,9 @@ func (w world) send(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	return loginFact(tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ",")).Fact("at", m.At.Format(time.RFC3339)), login)
+	sum := sha256.Sum256([]byte(m.Body))
+	return loginFact(tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ",")).Fact("at", m.At.Format(time.RFC3339)).
+		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
 }
 
 // message is a received message as one Out: the header line's facts and the

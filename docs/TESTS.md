@@ -73,7 +73,7 @@ write says `login=none`: on the fleet's store the identity is the login user and
 
 ```text
 $ nova-bus send --as ada --to bob --subject hello --body "are you there?"
-SEND OK id=01M42BA18Y1K3SE57HE26SY8T0 to=bob cc=- at=2026-10-04T02:18:54Z login=none
+SEND OK id=01M42BA18Y1K3SE57HE26SY8T0 to=bob cc=- at=2026-10-04T02:18:54Z bytes=14 sha256=cf97adc337983a14daab1089bf14c6ab50e658f0136517e0048407e786b6e745 login=none
 
 $ nova-bus peek --as bob
 PEEK OK pending=0 new=1

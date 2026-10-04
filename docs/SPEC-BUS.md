@@ -63,7 +63,10 @@ takes `--json`; `log` takes `--max`.
 
 - `send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> |
   --stdin) [--re <id>]` prints `SEND OK id=<id> to=<names> cc=<names>
-  at=<time>` (and `login=none` on a store with no users). Refuses, naming every problem at once: an unknown name (with the
+  at=<time> bytes=<n> sha256=<hex>` (and `login=none` on a store with no
+  users): the count and the digest are the body's as the store holds it, the
+  sender's check that a file arrived whole without asking the receiver. A body's
+  trailing newline is the body's and is kept by send, the store, log and recv. Refuses, naming every problem at once: an unknown name (with the
   nova-config line that adds one), a bad name, an empty body, a body over 1
   MiB, an empty subject, a body from both or neither source.
 - `recv [--as <me>] [--forever --exec <command>] [--exec <command>]` prints one

@@ -133,7 +133,7 @@ func TestTheLoopSendPeekRecvAckLog(t *testing.T) {
 	cli := r.cli()
 
 	sent := cli.OK(t, "send", "--as", "ada", "--to", "bob", "--cc", "ada", "--subject", "hello there", "--body", "line one\nline two\n")
-	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=ada at=2026-10-03T12:00:01Z login=none\n$`, sent.Stdout)
+	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=ada at=2026-10-03T12:00:01Z bytes=18 sha256=[0-9a-f]{64} login=none\n$`, sent.Stdout)
 	mid := id(t, sent.Stdout)
 
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=1", "PEEK MESSAGE state=new id="+mid+" from=ada at=2026-10-03T12:00:01Z subject=\"hello there\"")
@@ -250,7 +250,7 @@ func TestTheIdentityIsTheLoginUser(t *testing.T) {
 	r.login = "ada"
 	cli := r.cli()
 	sent := cli.OK(t, "send", "--to", "bob", "--subject", "s", "--body", "x")
-	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=- at=2026-10-03T12:00:01Z\n$`, sent.Stdout, "no login=none with a login")
+	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=- at=2026-10-03T12:00:01Z bytes=1 sha256=[0-9a-f]{64}\n$`, sent.Stdout, "no login=none with a login")
 	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x")
 	cli.Do(t, "log").Exit(0).Out("LOG OK total=2", "from=ada")
 	for _, verb := range [][]string{
@@ -270,4 +270,46 @@ func TestTheIdentityIsTheLoginUser(t *testing.T) {
 	bob.login = "bob"
 	bob.cli().Do(t, "recv").Exit(1).Err("nothing for bob")
 	bob.cli().Do(t, "recv", "--as", "ada").Exit(2).Err("--as ada is not the login user bob")
+}
+
+// The dogfood of 2026-10-04 (Rowan and Stella): a sender could not tell
+// whether a --stdin or shell-built body arrived whole without asking the
+// receiver. SEND OK carries the body's byte count and sha256 as the store
+// holds it, so `shasum -a 256 f` beside the line is the check.
+func TestSendOKCarriesTheBodysBytesAndDigest(t *testing.T) {
+	t.Parallel()
+	cli := newRig("ada", "bob").cli()
+	// sha256("are you there?"), the first run's body, by shasum -a 256
+	const digest = "cf97adc337983a14daab1089bf14c6ab50e658f0136517e0048407e786b6e745"
+	cli.Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "hello", "--body", "are you there?").Exit(0).Out(" bytes=14 sha256=" + digest + " ")
+	cli.DoIn(t, "are you there?", "send", "--as", "ada", "--to", "bob", "--subject", "hello", "--stdin").Exit(0).Out(" bytes=14 sha256=" + digest + " ")
+	cli.Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "hello", "--body", "are you there?\n", "--json").Exit(0).Out(`"bytes":15,`).NotOut(`"sha256":"` + digest + `"`)
+}
+
+// A body's trailing newline is the body's: send keeps it, the store keeps
+// it, and log and recv hand it back, so a file sent whole is read whole.
+// The text form of recv ends the body in exactly one newline whether or
+// not the body had one (the line a command reads), and the JSON payload
+// carries the body byte for byte, which is where the difference shows.
+func TestTheBodysTrailingNewlineIsKeptBySendLogAndRecv(t *testing.T) {
+	t.Parallel()
+	cli := newRig("ada", "bob").cli()
+	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "with", "--body", "x\n")
+	cli.OKIn(t, "y\n", "send", "--as", "ada", "--to", "bob", "--subject", "stdin", "--stdin")
+	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "without", "--body", "z")
+	cli.Do(t, "log", "--bodies").Exit(0).Out(`subject="with" body="x\n"`, `subject="stdin" body="y\n"`, `subject="without" body="z"`)
+	cli.Do(t, "log", "--bodies", "--json").Exit(0).Out(`"body":"x\n"`, `"body":"y\n"`, `"body":"z"`)
+	assert.True(t, strings.HasSuffix(cli.OK(t, "recv", "--as", "bob", "--json").Stdout, `"payload":"\nx\n"}`+"\n"))
+	assert.True(t, strings.HasSuffix(cli.OK(t, "recv", "--as", "bob").Stdout, "\n\ny\n"))
+	assert.True(t, strings.HasSuffix(cli.OK(t, "recv", "--as", "bob", "--json").Stdout, `"payload":"\nz"}`+"\n"))
+}
+
+// An empty recv is the verb running and saying no (the banner's exit 1):
+// RECV NONE, the tool's own word, in the text form and in the JSON's word,
+// never a refusal, and never a store error.
+func TestAnEmptyRecvIsNoneAtExitOne(t *testing.T) {
+	t.Parallel()
+	cli := newRig("ada", "bob").cli()
+	cli.Do(t, "recv", "--as", "bob").Exit(1).Err("RECV NONE: nothing for bob").NotErr("REFUSED", "FAILED")
+	cli.Do(t, "recv", "--as", "bob", "--json").Exit(1).Out(`"exit":1`, `"word":"NONE"`).NotOut(`"refused"`)
 }
