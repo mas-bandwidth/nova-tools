@@ -93,7 +93,7 @@ var Ledgers = map[string]Ledger{
 	},
 	"sleeps-skips": {
 		Name: "sleeps-skips", File: "internal/ci/sleeps-skips_allowlist.txt", Test: "internal/ci TestNoUnitTestWaitsOnTheWallClock", Tier: "flash",
-		Task: "The SLEEPS ledger {{ledger}} lists {{count}} unit test(s) of the package {{file}} that wait on the wall clock, or skip themselves with t.Skip(\"SLEEPS: ...\"): {{rows}}. Delete those rows from the ledger first, so {{test}} goes red naming each one; then make each test wait on no real time: an injected clock, testing/synctest, or a signal from the code under test in place of time.Sleep, time.After and a wall-clock deadline (docs/SPEC-TEST.md: unit tests use no real time). A test that needs real time is a functional test and moves behind the functional tag, which is reported." + draftRule,
+		Task: "The SLEEPS ledger {{ledger}} lists {{count}} unit test(s) of the package {{file}} that wait on the wall clock, or skip themselves with t.Skip(\"SLEEPS: ...\"): {{rows}}. Delete those rows from the ledger first, so {{test}} goes red naming each one; then make each test wait on no real time: an injected clock, testing/synctest, or a signal from the code under test in place of time.Sleep, time.After and a wall-clock deadline (docs/TESTING.md: unit tests use no real time). A test that needs real time is a functional test and moves behind the functional tag, which is reported." + draftRule,
 		Parse: func(line string) (Row, bool) {
 			f := strings.Split(line, "\t")
 			if len(f) < 2 || f[0] == "" || f[1] == "" {

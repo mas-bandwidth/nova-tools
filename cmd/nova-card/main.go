@@ -8,18 +8,20 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -40,7 +42,7 @@ the flow, three lines:
   nova-sprint where
 
 usage:
-  nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>]
+  nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--dry-run]
   nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>]
   nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro]
   nova-card lint --card <file> [--card <file>...]
@@ -62,7 +64,7 @@ header, a tree card's steps) and to the template's unfilled <...> lines, one LIN
 each. template prints nova-swarm's card template, the shape every generated brief has.
 
 what it prints:
-  CARDS OK dir=<dir> cards=<n> waves=<k> tier=<t> [shared-paths=yes]   then manifest.tsv in <dir>
+  CARDS OK dir=<dir> cards=<n> waves=<k> tier=<t> [shared-paths=yes]   then manifest.tsv in <dir> (--dry-run: the manifest on stdout, dry-run=yes)
   CARDS NOTE <what was skipped: a row the ledger did not read, a tool with no help>
   LINT DRIFT card=<id> check=<check> line=<n>: <excerpt>              and nothing is written
   LINT OK file=<file>
@@ -80,7 +82,7 @@ var verbs = []string{"generate", "lint", "template", "version", "help"}
 
 // effects is each verb's effect line for its -h (docs/CLI-STYLE.md rule (b)).
 var effects = map[string]string{
-	"generate": "local write: creates --out and writes one .md per card and manifest.tsv into it; nothing when a brief is red",
+	"generate": "local write: creates --out and writes one .md per card and manifest.tsv into it; nothing when a brief is red; --dry-run plans, lints and prints the manifest, and writes nothing",
 	"lint":     "inspection: reads, writes nothing",
 	"template": "inspection: prints the card template, writes nothing",
 	"version":  "inspection: prints the build identity",
@@ -192,6 +194,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	prefix := fs.String("prefix", "", "the `word` every card id opens with (default: the ledger's name, finding, or help)")
 	minutes := fs.Int("minutes", 0, "the Deadline line's `minutes` (default: 45 flash, 60 pro)")
 	maxCards := fs.Int("max", 0, "write at most this many cards, in source order; 0 is all")
+	dryRun := fs.Bool("dry-run", false, "plan and lint, print the manifest and the CARDS line, and write nothing")
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, "generate", verbflag.Explain(fs, err))
 	}
@@ -298,6 +301,14 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-card generate FAILED: %d red line(s) above; nothing written to %s\n", red, oneline.Field(*out))
 		return 1
 	}
+	if *dryRun {
+		for _, n := range notes {
+			fmt.Fprintf(stdout, "CARDS NOTE skipped %s\n", oneline.Escape(n))
+		}
+		fmt.Fprint(stdout, cardgen.Manifest(plan))
+		fmt.Fprintln(stdout, cardgen.OKLine(*out, plan)+" dry-run=yes (nothing written)")
+		return 0
+	}
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		return refuse(stderr, "generate", "cannot create --out "+*out+": "+err.Error())
 	}
@@ -329,13 +340,11 @@ var shaRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // origin's URL, the branch from HEAD's name, the sha from HEAD.
 func readCheckout(dir string, h *cardgen.Header) error {
 	git := func(args ...string) (string, error) {
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		var out, errb bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &errb
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("git %s in %s: %s", strings.Join(args, " "), dir, strings.TrimSpace(cmp(errb.String(), err.Error())))
+		res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir}, args...)
+		if err != nil {
+			return "", fmt.Errorf("git %s in %s: %s", strings.Join(args, " "), dir, strings.TrimSpace(cmp(string(res.Stderr), err.Error())))
 		}
-		return strings.TrimSpace(out.String()), nil
+		return strings.TrimSpace(string(res.Stdout)), nil
 	}
 	if h.Sha == "" {
 		sha, err := git("rev-parse", "HEAD")
@@ -393,7 +402,8 @@ func renderedHelp(binDir, tool string) (string, error) {
 	if binDir != "" {
 		bin = filepath.Join(binDir, tool)
 	}
-	cmd := exec.Command(bin, "help")
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, bin, "help")
+	defer cancel()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard

@@ -2669,7 +2669,7 @@ the last good frame and one `store unreachable since <time>` line until recovery
 nova-card is pre-alpha: not ready for production use.
 
 ```
-nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>]
+nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--dry-run]
 nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>]
 nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro]
 nova-card lint --card <file> [--card <file>...]
@@ -2741,7 +2741,9 @@ child rules, the typed header, a tree card's steps) and to the template's
 unfilled `<...>` lines before anything is written; one red brief prints its
 `LINT DRIFT card=<id> check=<check> line=<n>: <excerpt>` line and nothing is
 written, exit 1. A PATHS entry that names nothing in `--repo-dir` is the same
-refusal. An `--out` that already holds a brief is refused, exit 2.
+refusal. An `--out` that already holds a brief is refused, exit 2. `--dry-run`
+plans and lints, prints the manifest and the `CARDS OK` line with
+`dry-run=yes`, and writes nothing.
 
 ### Exit codes
 

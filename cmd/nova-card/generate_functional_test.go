@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,7 +43,7 @@ func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 	write("internal/c/c_test.go", "package c\n")
 	write("internal/ci/testdata/serial-tests_allowlist.txt", "# ceiling: 3\ncmd/a/a_test.go:TestA serial: t.Setenv\ncmd/b/b_test.go:TestB serial: t.Chdir\ninternal/c/c_test.go:TestC serial: os.Setenv\n")
 	git("init", "-q", "-b", "dev")
-	git("remote", "add", "origin", "git@github.com:example/repo.git")
+	git("remote", "add", "origin", filepath.Join(t.TempDir(), "example", "repo.git"))
 	git("add", ".")
 	git("commit", "-q", "-m", "fixture")
 
@@ -63,9 +64,8 @@ func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 	}
 	build := exec.Command("go", "build", "-o", sprint, "../nova-sprint")
 	build.Env = goenv.Clean(os.Environ())
-	if o, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building nova-sprint: %v\n%s", err, o)
-	}
+	o, err := build.CombinedOutput()
+	require.NoError(t, err, "building nova-sprint: %s", o)
 	env := append(goenv.Clean(os.Environ()), "NOVA_SPRINT_REDIS=mem:"+filepath.Join(t.TempDir(), "twin"), "NOVA_SPRINT_ACTOR=t")
 	sprintRun := func(args ...string) (int, string) {
 		t.Helper()
@@ -74,13 +74,12 @@ func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 		var b bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &b, &b
 		err := cmd.Run()
-		code := 0
-		if ee, ok := err.(*exec.ExitError); ok {
-			code = ee.ExitCode()
-		} else if err != nil {
-			t.Fatalf("nova-sprint %s: %v", strings.Join(args, " "), err)
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return ee.ExitCode(), b.String()
 		}
-		return code, b.String()
+		require.NoError(t, err, "nova-sprint %s", strings.Join(args, " "))
+		return 0, b.String()
 	}
 	code, text := sprintRun("init", "--members", "m1", "--readers", "r1")
 	require.Equal(t, 0, code, text)
