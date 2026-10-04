@@ -32,6 +32,15 @@ paths outside that root. Use `SkipOn` when a test's property cannot be
 observed on a named operating system. Domain fixtures such as a sandbox job,
 fake volume manager or egress plan stay package-specific.
 
+Use `Git` when a test must run real git — real transport only in the adapter's
+tests that need it. `Git(t, n)` builds a bare remote and n clones of it under
+`t.TempDir()`, and every command runs under a fixed identity with
+`GIT_CONFIG_GLOBAL` at an empty file inside that directory through the
+command's environment, so the machine's own git config cannot reach the test.
+`Commit(clone, files)` writes the files and commits them, `Push(clone)` pushes
+the clone's branch to the remote, and `Head(repo)` reads a HEAD sha from a
+clone or from the remote.
+
 Use `testing/synctest` for time-dependent tests first. `Waits` is only for a
 wait seam around code that must perform real I/O and cannot run in a synctest
 bubble; it records requested durations and lets the test hold or release that
