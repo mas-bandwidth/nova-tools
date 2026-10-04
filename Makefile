@@ -10,6 +10,7 @@
 
 GO ?= go
 PKGS ?= ./...
+export PKGS
 # CL_PKGS IS THE LIVING TREE, read the way ci.yml's test-packages job reads it:
 # `go run ./tools/ci select-packages --all` lists every package under cmd/,
 # internal/ and tools/ and drops the ones internal/pkgselect/DEPRECATED names (a
@@ -291,7 +292,7 @@ GOTEST_LDFLAGS ?=
 GOTEST_TAGS ?=
 test: PKGS = $(CL_PKGS)
 test:
-	@bash -o pipefail -c 'GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -p $(GOTEST_P) -parallel $(GOTEST_P) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests $(SLOWTESTS_FLAGS) $(if $(filter 1,$(SLOWTESTS_ENFORCE)),--enforce,) < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json" || { [ "$$status" -ne 0 ] || status=2; }; exit $$status'
+	@bash -o pipefail -c 'GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $$PKGS -p $(GOTEST_P) -parallel $(GOTEST_P) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests $(SLOWTESTS_FLAGS) $(if $(filter 1,$(SLOWTESTS_ENFORCE)),--enforce,) < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json" || { [ "$$status" -ne 0 ] || status=2; }; exit $$status'
 
 # THE FUNCTIONAL TIER (nova-tools#4328; Glenn 2026-09-26 11:20 AM ET: "we should
 # run functional tests, not on every small PR being merged or worked on, but
