@@ -89,12 +89,13 @@ the next turn): one envelope listing each message's id, from and subject, with
 the message as `nova-bus recv` prints it, the pong line first while a challenge
 is open, and the daemon's latest word about the coordinator; a single message
 with nothing else is its `recv` text alone. The adapter blocks for the whole
-turn; exit 0 acks every message it carried, together. Any other exit leaves
+turn; exit 0 acks every message it carried, together (for Codex queue, exit 0 is the
+command accepting the input, not the turn ending). Any other exit leaves
 them pending, handed in again when their claims open, and the third failure
 acks a message with `given_up=true` on the record, so a message the session
 cannot take never comes back for ever. A delivery the adapter defers,
-`Deferred`, the session unable to take a turn now with nothing wrong, such as a
-Codex thread open in the app holding its writer lock, is neither a failure nor
+`Deferred`, the session unable to take a turn now with nothing wrong, such as
+both Codex delivery commands being unavailable, is neither a failure nor
 an ack: the turn stays in the daemon's hand, tried again every ten seconds,
 `RecheckEvery`, and counted toward nothing, so a chat open all day loses no
 message, and the record says so at the first deferral and once a minute after.
@@ -146,30 +147,41 @@ answered by the daemon at once, beating, and recording a push it cannot
 deliver; so the tool is honest, and the beat and the daemon pong are real
 for it.
 
-Codex delivers by resume, not into the open chat: `codex exec resume
---skip-git-repo-check <thread> <text>` resumes the saved thread in a new codex
-process, so the thread's model answers with the friend's whole context, and
-the record labels every such turn "answered by resume, not by the open
-chat". The open chat itself is out of reach: the Codex desktop app
-(ChatGPT.app) runs its app-server on a stdio pair it owns and listens on no
-socket, and while a thread is open there the app holds its writer lock
-(`~/.codex/thread-writer-locks/<thread>.lock`), which refuses a resume
-("thread <id> already has an active writer", measured 2026-10-04 on an open
-thread, exit 1). Without --session, the adapter resolves the newest saved thread with the
-same working directory from session_meta headers and session_index updated_at
-under CODEX_HOME (otherwise ~/.codex); without a matching thread it refuses
-with a remedy rather than spawning codex. It probes that exact thread's writer
-lock first (the same flock codex takes). While held, it returns Deferred without
-running codex: no failure is counted and nothing is acked or given up, even
-after 1,000 deferrals. The daemon retries every ten seconds. The probe releases
-its brief exclusive lock before resume, so a writer can still acquire it in
-that window; this observation is not a reservation. Reaching the open chat needs the app on the shared local daemon:
-the app connects to `~/.codex/app-server-control/app-server-control.sock`
-instead of its own stdio server only when launched with
-`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1` and a daemon is already up (`codex
-app-server daemon start`; read from the app bundle, unverified); then `codex
-queue --thread <id> --message <text>` reaches the open chat, and the adapter
-should move to it.
+### Codex
+
+The adapter resolves the named thread, or the newest saved thread for its
+working directory from session headers and the session index under
+CODEX_HOME (otherwise ~/.codex). It probes that exact thread's writer lock.
+When held, the first command is `codex queue --thread <id> --message <text>`:
+the text is a literal argument, never a shell command. Queue acceptance is
+logged as "queued for open chat", explicitly "accepted, not answered".
+The open app can defer running queued input until its current turn ends.
+An accepted queue command does not promise an immediate model answer.
+
+When the lock is free, the first command is
+`codex exec resume --skip-git-repo-check <id> <text>`; its record says
+"answered by resume, not by the open chat". The lock probe is an observation,
+not a reservation. If the first command exits nonzero or cannot execute, the
+adapter tries the other route once. Only when both fail does it return
+Deferred, keeping the bus message pending and charging no failed delivery.
+No matching saved thread is a refusal with a remedy, rather than delivery
+to a guessed thread. The adapter does not modify how the user launches the app.
+
+Measured with codex-cli 0.153.4 and ChatGPT 26.930.21537 build 12776 on
+2026-10-04: a queue test initially produced no input while the chat's turn
+was active. Its test text arrived in the same open thread at 17:03:00.797 UTC,
+after the prior turn completed at 17:03:00.757 and the next turn started at
+17:03:00.774. The session replied on the bus at 17:03:03. The app and its own
+stdio app-server remained the same processes throughout. The earlier
+conclusion that queue could not reach that app is withdrawn: observing no
+input during an active turn did not establish failure.
+
+That app process retained CODEX_APP_SERVER_USE_LOCAL_DAEMON=1 from an earlier
+experiment. The measurement therefore does not prove that the flag is
+required or that a launch without it is equivalent. The adapter requires no
+such flag; ordinary-launch and idle-session behavior remain separate live
+checks. A later end-to-end check was sent at 17:11:00 and answered by the
+session at 17:11:10, but its transport was not independently identified.
 
 ### Antigravity
 
