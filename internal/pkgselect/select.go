@@ -226,10 +226,8 @@ func (s *selector) selectChange() (Outcome, error) {
 	changed := lines(diff.Stdout)
 	// A go.mod or go.sum change can move any package, so it puts the whole tree
 	// in scope.
-	for _, f := range changed {
-		if goModFileRe.MatchString(f) {
-			return s.listAll()
-		}
+	if slices.ContainsFunc(changed, goModFileRe.MatchString) {
+		return s.listAll()
 	}
 
 	allOut, why, err := s.goList(treeRoots...)

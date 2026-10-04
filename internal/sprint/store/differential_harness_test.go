@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1075,12 +1076,7 @@ func (h *dHarness) pick1(rng *rand.Rand, n *int) dAction {
 }
 
 func dHas(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, x)
 }
 
 func appendUniq(xs []string, x string) []string {

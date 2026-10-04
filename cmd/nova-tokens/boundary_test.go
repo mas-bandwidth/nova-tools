@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -158,10 +159,8 @@ func namesGit(lit string) bool {
 		if !strings.ContainsAny(word, `/\`) {
 			continue
 		}
-		for _, comp := range strings.FieldsFunc(word, func(r rune) bool { return r == '/' || r == '\\' }) {
-			if isGit(comp) {
-				return true
-			}
+		if slices.ContainsFunc(strings.FieldsFunc(word, func(r rune) bool { return r == '/' || r == '\\' }), isGit) {
+			return true
 		}
 	}
 	return false

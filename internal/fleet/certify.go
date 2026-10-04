@@ -648,11 +648,8 @@ func certifyRefusal(w io.Writer, err error) int {
 func workloadsFor(loads []Workload, m Machine) []Workload {
 	var out []Workload
 	for _, w := range loads {
-		for _, role := range m.Roles {
-			if w.AppliesTo(role) {
-				out = append(out, w)
-				break
-			}
+		if slices.ContainsFunc(m.Roles, w.AppliesTo) {
+			out = append(out, w)
 		}
 	}
 	sortWorkloads(out)

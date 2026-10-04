@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -138,13 +139,7 @@ func (c *Config) tableNames(sender Participant) []string {
 // verbatim -- including one nobody holds, which stays so a later refusal can name it. A
 // line with no alias comes back unchanged, word for word.
 func (c *Config) ExpandBroadcast(line string, sender Participant) string {
-	hasAlias := false
-	for _, tok := range splitAddresses(line) {
-		if c.isBroadcastAlias(tok) {
-			hasAlias = true
-			break
-		}
-	}
+	hasAlias := slices.ContainsFunc(splitAddresses(line), c.isBroadcastAlias)
 	if !hasAlias {
 		return line
 	}

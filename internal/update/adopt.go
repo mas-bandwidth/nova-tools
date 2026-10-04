@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,10 +52,8 @@ func LoadAdopt(r io.Reader) ([]AdoptCheck, error) {
 		if len(f) != 3 {
 			return nil, fmt.Errorf("line %d: %d fields, want 3 (use the three-column checks header)", line, len(f))
 		}
-		for _, v := range f {
-			if v == "" {
-				return nil, fmt.Errorf("line %d: empty field (supply check, command and owner)", line)
-			}
+		if slices.Contains(f, "") {
+			return nil, fmt.Errorf("line %d: empty field (supply check, command and owner)", line)
 		}
 		if seen[f[0]] {
 			return nil, fmt.Errorf("line %d: duplicate check %s (give each check a distinct name)", line, f[0])

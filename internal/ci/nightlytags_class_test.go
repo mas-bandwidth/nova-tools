@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -210,10 +211,8 @@ func hasLinePrefix(lines []string, prefix string) bool {
 }
 
 func appendOnce(in []string, s string) []string {
-	for _, have := range in {
-		if have == s {
-			return in
-		}
+	if slices.Contains(in, s) {
+		return in
 	}
 	return append(in, s)
 }

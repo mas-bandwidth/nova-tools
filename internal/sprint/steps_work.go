@@ -1883,12 +1883,7 @@ func without(xs, out []string) []string {
 }
 
 func contains(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, x)
 }
 
 // orderLike orders names by the rows' order, a name with no row last.

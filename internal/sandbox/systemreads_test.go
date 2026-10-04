@@ -5,6 +5,7 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -46,10 +47,8 @@ func TestLinuxWallGrantsTheResolvedResolverConfigDirectory(t *testing.T) {
 	require.NoError(t, os.Symlink(target, link))
 
 	roots := linuxRootsAt(link)
-	for _, r := range roots {
-		if r == targetDir {
-			return
-		}
+	if slices.Contains(roots, targetDir) {
+		return
 	}
 	t.Fatalf("the resolver config %s resolves to %s, whose directory %s is in no read root the wall applies (%v), so a name lookup inside the wall fails with \"Could not resolve host\" while TCP by IP still works", link, target, targetDir, roots)
 }

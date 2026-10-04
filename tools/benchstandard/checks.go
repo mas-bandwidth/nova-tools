@@ -415,13 +415,11 @@ func (w *witness) checkProRung() {
 	if rung := w.get("NOVA_PRO_RUNG"); rung != "" && w.isExec(rung) {
 		return
 	}
-	for _, rp := range []string{
+	if slices.ContainsFunc([]string{
 		filepath.Join(w.home, "nova-bench", "rungs", "pro"),
 		filepath.Join(w.home, "nova-bench", "pro"),
-	} {
-		if w.isDir(rp) {
-			return
-		}
+	}, w.isDir) {
+		return
 	}
 	w.drift("pro rung missing (no executable NOVA_PRO_RUNG, no %s/nova-bench/rungs/pro, no %s/nova-bench/pro)", w.home, w.home)
 }

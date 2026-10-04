@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -688,10 +689,8 @@ func aptInstalls(containerfile, pkg string) bool {
 		if i < 0 {
 			continue
 		}
-		for _, w := range strings.Fields(in[i:]) {
-			if w == pkg {
-				return true
-			}
+		if slices.Contains(strings.Fields(in[i:]), pkg) {
+			return true
 		}
 	}
 	return false

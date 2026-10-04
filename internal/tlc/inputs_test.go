@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -231,12 +232,7 @@ func TestEveryCaseOfTheRepositoryResolvesToItsOwnInputs(t *testing.T) {
 }
 
 func slicesContains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, s)
 }
 
 // Only the result files are inputs: an edit to any bookkeeping file (the

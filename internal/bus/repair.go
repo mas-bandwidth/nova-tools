@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1024,10 +1025,8 @@ func identityPaths(dir string) ([]string, error) {
 		if p == "" || p == "." || p == string(filepath.Separator) {
 			return
 		}
-		for _, e := range out {
-			if e == p {
-				return
-			}
+		if slices.Contains(out, p) {
+			return
 		}
 		out = append(out, p)
 	}

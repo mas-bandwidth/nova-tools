@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -341,10 +342,8 @@ func plausibleHost(h string) bool {
 	if len(labels) < 3 {
 		return false
 	}
-	for _, l := range labels {
-		if l == "" {
-			return false
-		}
+	if slices.Contains(labels, "") {
+		return false
 	}
 	tld := labels[len(labels)-1]
 	if len(tld) < 2 {

@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -210,19 +211,9 @@ func firstRunExecutes(t *testing.T, root, tool string) bool {
 		if direct[name] {
 			return true
 		}
-		for _, callee := range calls[name] {
-			if reaches(callee) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(calls[name], reaches)
 	}
-	for _, name := range tests {
-		if reaches(name) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(tests, reaches)
 }
 
 // TestFirstRunExecutesCountsOnlyInvokedCalls is the control for

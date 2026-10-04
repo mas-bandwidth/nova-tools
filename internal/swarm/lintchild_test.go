@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -452,12 +453,7 @@ func TestChildRuleSentencesAreNotViolations(t *testing.T) {
 }
 
 func contains(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, x)
 }
 
 // LIBRARIES CONSIDERED (docs/STANDARD.md section 7, library first): a card that builds code

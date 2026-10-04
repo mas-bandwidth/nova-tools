@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -156,10 +157,8 @@ func isSlowTagged(src []byte) bool {
 			return false
 		}
 		if strings.HasPrefix(line, "//go:build") {
-			for _, word := range strings.Fields(strings.NewReplacer("&&", " ", "||", " ", "(", " ", ")", " ").Replace(strings.TrimPrefix(line, "//go:build"))) {
-				if word == "slow" {
-					return true
-				}
+			if slices.Contains(strings.Fields(strings.NewReplacer("&&", " ", "||", " ", "(", " ", ")", " ").Replace(strings.TrimPrefix(line, "//go:build"))), "slow") {
+				return true
 			}
 		}
 	}

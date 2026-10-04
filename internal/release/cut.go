@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -461,11 +462,9 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err != nil {
 		return refusal(errs, "CUT", fmt.Errorf("cannot read the tags of %s: %w (ask again when the forge answers)", o.repo, err))
 	}
-	for _, tag := range tags {
-		if tag == o.version {
-			return refusal(errs, "CUT", refuse("choose the next version, or delete the tag deliberately",
-				"%s is already a tag in %s", o.version, o.repo))
-		}
+	if slices.Contains(tags, o.version) {
+		return refusal(errs, "CUT", refuse("choose the next version, or delete the tag deliberately",
+			"%s is already a tag in %s", o.version, o.repo))
 	}
 	previous := previousTag(tags)
 	var commits []Commit

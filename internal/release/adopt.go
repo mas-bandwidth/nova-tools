@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -163,10 +164,8 @@ func ValidRemotePathOn(goos, what, p string) error {
 	// The .. check runs over the FOLDED path, so that `C:\Users\..\Windows`
 	// is caught by the same clause that catches `/home/nova/../root` rather
 	// than by a second one that could fall out of step with it.
-	for _, seg := range strings.Split(RemotePath(p), "/") {
-		if seg == ".." {
-			return refuse(remedy, "%s %q climbs out of itself with ..", what, p)
-		}
+	if slices.Contains(strings.Split(RemotePath(p), "/"), "..") {
+		return refuse(remedy, "%s %q climbs out of itself with ..", what, p)
 	}
 	return nil
 }

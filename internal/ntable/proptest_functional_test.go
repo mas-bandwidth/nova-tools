@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -181,12 +182,7 @@ func propDefinition(name string) ntable.Table {
 }
 
 func isColumn(col string) bool {
-	for _, c := range propColumns {
-		if c == col {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(propColumns, col)
 }
 
 // tableOwned says a binding target is a key some nova-table owns, created

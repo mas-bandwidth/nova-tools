@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1786,12 +1787,7 @@ func (r ReadSetResult) Member(id string) (ReadSetMember, bool) {
 // IsMissing says the id was asked for and does not exist as a member of the
 // table. A missing member is an answer, not an error: it is listed in Missing.
 func (r ReadSetResult) IsMissing(id string) bool {
-	for _, m := range r.Missing {
-		if m == id {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(r.Missing, id)
 }
 
 // ReadSet reads members in one round trip from one consistent snapshot of one

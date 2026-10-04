@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -49,10 +50,8 @@ func ValidatePaths(paths []string) error {
 		if boundsNothing(p) {
 			return fmt.Errorf(`PATHS: %q matches every file there is; a card whose paths are "everything" has declared nothing`, p)
 		}
-		for _, seg := range strings.Split(p, "/") {
-			if seg == ".." {
-				return fmt.Errorf("PATHS: %q climbs out of the repository", p)
-			}
+		if slices.Contains(strings.Split(p, "/"), "..") {
+			return fmt.Errorf("PATHS: %q climbs out of the repository", p)
 		}
 	}
 	return nil

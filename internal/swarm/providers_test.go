@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -65,13 +66,7 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 				// The model placeholder should be expanded to the table's model.
 				for _, a := range expectedArgs {
 					if a == "{model}" {
-						found := false
-						for _, actual := range args {
-							if actual == p.Model {
-								found = true
-								break
-							}
-						}
+						found := slices.Contains(args, p.Model)
 						assert.True(t, found, "LaunchArgv(%q, linux) args %v do not contain model %q (placeholder {model} not expanded)", p.Name, args, p.Model)
 					}
 				}
@@ -97,13 +92,7 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 				require.NoError(t, err, "parse harness_args for %q: %v", p.Name, err)
 				for _, a := range expectedArgs {
 					if a == "{model}" {
-						found := false
-						for _, actual := range args {
-							if actual == p.Model {
-								found = true
-								break
-							}
-						}
+						found := slices.Contains(args, p.Model)
 						assert.True(t, found, "LaunchArgv(%q, darwin) args %v do not contain model %q (placeholder {model} not expanded)", p.Name, args, p.Model)
 					}
 				}

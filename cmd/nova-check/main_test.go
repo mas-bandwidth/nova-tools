@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -637,12 +638,7 @@ func TestEffectiveDenyList(t *testing.T) {
 	floor, err := check.FloorDenyExts()
 	require.NoError(t, err)
 	has := func(l []string, e string) bool {
-		for _, x := range l {
-			if x == e {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(l, e)
 	}
 
 	t.Run("--deny-ext-add keeps the whole floor and adds to it", func(t *testing.T) {

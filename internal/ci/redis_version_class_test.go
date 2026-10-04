@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -216,10 +217,8 @@ func redisVersionReadsFile(rel string) bool {
 		return false
 	}
 	f := &treeFile{Rel: rel}
-	for _, d := range redisVersionUnreadDirs {
-		if f.HasDirNamed(d) {
-			return false
-		}
+	if slices.ContainsFunc(redisVersionUnreadDirs, f.HasDirNamed) {
+		return false
 	}
 	base := rel[strings.LastIndex(rel, "/")+1:]
 	return redisVersionTextExts[filepath.Ext(rel)] || redisVersionTextNames[base]

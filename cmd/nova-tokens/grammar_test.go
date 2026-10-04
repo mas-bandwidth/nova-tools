@@ -8,6 +8,8 @@ package main
 // said so; the block did not).
 
 import (
+	"slices"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"os"
@@ -126,12 +128,7 @@ func grammarPlaceholder(name, v string, alts []string) bool {
 		if v == "" || strings.ContainsAny(v, " \t") {
 			return false
 		}
-		for _, a := range alts {
-			if v == a {
-				return false
-			}
-		}
-		return true
+		return !slices.Contains(alts, v)
 	}
 	return true
 }

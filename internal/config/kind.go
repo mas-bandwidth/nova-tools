@@ -793,10 +793,8 @@ func (f Field) Canonical(raw string) (string, error) {
 		}
 		return strconv.Itoa(n), nil
 	case TypeEnum:
-		for _, w := range f.Enum {
-			if raw == w {
-				return raw, nil
-			}
+		if slices.Contains(f.Enum, raw) {
+			return raw, nil
 		}
 		return "", fmt.Errorf("--%s %q: want one of %s", f.Name, raw, strings.Join(f.Enum, ", "))
 	case TypeList:

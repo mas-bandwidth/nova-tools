@@ -284,10 +284,8 @@ func defaultCallerHomes() []string {
 		if got, err := filepath.Abs(path); err == nil {
 			path = got
 		}
-		for _, h := range out {
-			if h == path {
-				return
-			}
+		if slices.Contains(out, path) {
+			return
 		}
 		out = append(out, path)
 	}

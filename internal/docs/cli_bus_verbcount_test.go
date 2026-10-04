@@ -2,6 +2,7 @@ package docs
 
 import (
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -139,10 +140,5 @@ func busUsageVerbs(t *testing.T) []string {
 
 // hasExactLine reports whether text holds a line equal to want.
 func hasExactLine(text, want string) bool {
-	for _, line := range strings.Split(text, "\n") {
-		if line == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(text, "\n"), want)
 }

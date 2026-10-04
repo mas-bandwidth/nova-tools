@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -143,10 +144,5 @@ func TestTwoDroppedNeedsGiveOneBlockedNote(t *testing.T) {
 }
 
 func hasString(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, x)
 }

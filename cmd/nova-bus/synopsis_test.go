@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -84,12 +85,7 @@ func readSynopsis(t *testing.T) []synopsisVerb {
 }
 
 func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(haystack, needle)
 }
 
 // TestEveryFlagInTheSynopsisIsDefinedByItsVerb is the tripwire F3 of audit packet 1 asked

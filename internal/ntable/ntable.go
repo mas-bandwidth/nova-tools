@@ -48,6 +48,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -266,12 +267,7 @@ type Table struct {
 
 // IsHidden is whether a column is kept but not drawn.
 func (t Table) IsHidden(col string) bool {
-	for _, h := range t.Hidden {
-		if h == col {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(t.Hidden, col)
 }
 
 // Footer is the footer label, DefaultFooter when unset.

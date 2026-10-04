@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -74,12 +75,7 @@ func (f *treeFile) InDir(dir string) bool {
 
 // InAnyDir reports whether the file lies under any of the given directories.
 func (f *treeFile) InAnyDir(dirs ...string) bool {
-	for _, d := range dirs {
-		if f.InDir(d) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(dirs, f.InDir)
 }
 
 // HasDirNamed reports whether any directory component of the file's path is
@@ -91,12 +87,7 @@ func (f *treeFile) HasDirNamed(name string) bool {
 	if i < 0 {
 		return false
 	}
-	for _, part := range strings.Split(rel[:i], "/") {
-		if part == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(rel[:i], "/"), name)
 }
 
 // repoTreeIndex is the whole tree, walked once.

@@ -295,10 +295,8 @@ func (t *Bus) AnswerFor(n *Note, lane string) (by string, kind AnswerKind) {
 			continue
 		}
 		for _, re := range m.Header.Re {
-			for _, k := range keys {
-				if re == k {
-					return m.Path, AnsweredByReply
-				}
+			if slices.Contains(keys, re) {
+				return m.Path, AnsweredByReply
 			}
 		}
 	}
@@ -306,10 +304,8 @@ func (t *Bus) AnswerFor(n *Note, lane string) (by string, kind AnswerKind) {
 		if r.Lane != lane {
 			continue
 		}
-		for _, k := range keys {
-			if r.Target == k {
-				return lane + "/" + ReceiptsName, HeardByReceipt
-			}
+		if slices.Contains(keys, r.Target) {
+			return lane + "/" + ReceiptsName, HeardByReceipt
 		}
 	}
 	return "", NotAnswered

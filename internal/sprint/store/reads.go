@@ -229,12 +229,7 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 }
 
 func contains(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, x)
 }
 
 // Records reads the named records of a table by identity, placed or kept, in one read

@@ -3,6 +3,7 @@ package sandbox
 import (
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,12 +86,7 @@ func TestAnOptionalRootsAncestorIsMetadataOnly(t *testing.T) {
 }
 
 func hasPath(list []string, want string) bool {
-	for _, got := range list {
-		if got == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, want)
 }
 
 // #1557: when xcode-select points at a developer dir that is not already a

@@ -79,10 +79,8 @@ func linuxRootsAt(confPath string) []string {
 	if dir == "" {
 		return roots
 	}
-	for _, r := range roots {
-		if r == dir {
-			return roots
-		}
+	if slices.Contains(roots, dir) {
+		return roots
 	}
 	return append(roots, dir)
 }

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -246,12 +247,7 @@ func installTreeSteps(card []byte, slotDir, jobDir string) ([]string, error) {
 
 // named says the wall's read flags already name dir.
 func named(flags []string, dir string) bool {
-	for _, f := range flags {
-		if f == dir {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(flags, dir)
 }
 
 // nativeStepLaunch is a script card's executor in the child's place (docs/SPEC-SPRINT.md, a
