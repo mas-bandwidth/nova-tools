@@ -53,18 +53,18 @@ databases, swarm pools, bus notes) and writes one day file per day into --out,
 one row per (day, model, repo). The repo comes from the --repos file: lines of
 <name><TAB><regexp>, and the first match on a session's path wins. check, sum
 and report read the day files back; a count a source never gave prints as -.
-first run: create a tiny transcript and rules file with the setup line above
-example:, then run the lines under example: in order.
+first run: create a tiny transcript and rules file with the lines under setup:
+above example:, then run the lines under example: in order.
 
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
                       [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
-  nova-tokens report, local: --who <name> --day <YYYY-MM-DD> --repos <file>
+  nova-tokens report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>
                       mode: local note body, printed as the tokens note artifact
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
-  nova-tokens report, store: --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+  nova-tokens report (store mode) --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
                       mode: Redis month summary
                       [--user <name>] [--password-env <NAME>]
   the local mode is selected by --who and --day; the store mode by --redis and --month; giving both --who and --redis selects the store mode (--redis wins); a mix of --who and --redis prints the store summary
@@ -168,9 +168,15 @@ is the evidence for improving the --repos file.
 
 setup:
   mkdir -p ./transcripts ./out
-  echo -n '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z",' > ./transcripts/1.jsonl
-  echo '"message":{"id":"1","model":"m","usage":{"input_tokens":1}}}' >> ./transcripts/1.jsonl
-  cp ./transcripts/1.jsonl ./session.jsonl && printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
+  printf '%s' '{"type":"assistant","timestamp":"2026-09-11T09:12:' > ./transcripts/window.jsonl
+  printf '%s' '00Z","message":{"id":"example-1","model":"claude-' >> ./transcripts/window.jsonl
+  printf '%s' 'fable-5-1","usage":{"input_tokens":812,' >> ./transcripts/window.jsonl
+  printf '%s' '"output_tokens":40,"cache_creation_input_tokens":' >> ./transcripts/window.jsonl
+  printf '%s' '1200,"cache_read_input_tokens":90000},' >> ./transcripts/window.jsonl
+  printf '%s' '"content":[{"type":"tool_use","input":{' >> ./transcripts/window.jsonl
+  printf '%s\n' '"file_path":"/work/schema/wire.md"}}]}}' >> ./transcripts/window.jsonl
+  cp ./transcripts/window.jsonl ./session.jsonl
+  printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
 
 example:
   nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
@@ -200,7 +206,7 @@ note: none of them is an instruction.
 // running it does to the world, the last line of its -h (docs/STANDARD.md section 2).
 var verbs = []struct{ name, effect string }{
 	{"fold", "local write: writes the day files in --out, holding --out/fold.lock while it writes, and with --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run reads the same sources, refuses what the real run refuses, and writes nothing (its database copy is made in a new directory under --scratch and removed before it exits)"},
-	{"report", "local write: mode: local note body, printed as the tokens note artifact; mode: Redis month summary; --note writes the note body to that file, and --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run names the note, copies the database only into a new directory under --scratch removed before it exits, and writes nothing; --redis reads the ledger store over the network, with or without --dry-run"},
+	{"report", "local write: --note writes the note body to that file, and --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run names the note, copies the database only into a new directory under --scratch removed before it exits, and writes nothing; --redis reads the ledger store over the network, with or without --dry-run"},
 	{"ledger", "delivery: writes each day file's rows to the Redis store at --redis (tokens:ledger:<day>); --dry-run reads the day files, prints what it would write, and dials no store"},
 	{"sum", string(tool.Inspection)},
 	{"check", string(tool.Inspection)},
