@@ -72,6 +72,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
 	stageWall := newSecondsFlag(fs, "stage-wall", swarm.DefaultStageTimeout, "the bound on staging each card's checkout, a `duration` or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)")
 	diskFloor := fs.Int("disk-floor", 10, "the free `GiB` the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)")
+	gocacheGiB := fs.Int("gocache-limit", int(gocache.Limit/gib), "the `GiB` the shared Go build cache is held under by the cleaner, oldest unused entries removed down to 80% of it, never one used in the last two hours (default 20; a busy machine holds its working set with more)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
 	if !f.parse(args, stderr) {
@@ -128,6 +129,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	if *diskFloor < 0 {
 		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 10)")
+	}
+	if *gocacheGiB < 1 {
+		f.add("--gocache-limit is the GiB the shared Go build cache is held under: 1 or more (default 20)")
 	}
 	// the pool identity every child commits under, from the loop's argv in nova-config;
 	// without it native reads the pool's identity.tsv
@@ -189,6 +193,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, identity: *identity,
+		cacheLimit: int64(*gocacheGiB) * gib,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
@@ -436,9 +441,10 @@ type nativeRunner struct {
 	// the cleaner's lazy work (lazyclean.go): epoch is the sprint's epoch plus one as the
 	// member's last pass read it (Epoch; 0: none read yet); oldFailed and cache are the
 	// cleaner's own, touched by no other goroutine
-	epoch     atomic.Uint64
-	oldFailed map[string]bool
-	cache     gocache.Trim
+	epoch      atomic.Uint64
+	oldFailed  map[string]bool
+	cache      gocache.Trim
+	cacheLimit int64 // --gocache-limit in bytes; 0 is gocache.Limit
 }
 
 // stageTimeout is native's --stage-timeout for each launch: the member's --stage-wall, else
