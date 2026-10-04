@@ -136,7 +136,7 @@ func classify(s string) (Shape, string) {
 	return "", ""
 }
 
-// unquote replaces every quoted span in a segment with a single space, so a shape can only ever
+// unquote replaces every quoted span in a segment with a single blank, so a shape can only ever
 // fire on words the writer wrote rather than words the writer reported.
 //
 // An unclosed quote takes the rest of the segment with it, which is deliberate: an unclosed quote
@@ -295,7 +295,7 @@ func repeat(n, count int) []int {
 
 // sentences cuts a flattened paragraph at terminators, keeping each piece's starting line.
 //
-// A TERMINATOR ONLY COUNTS WHEN A SPACE OR THE END FOLLOWS IT. Without that, "RULES.md" splits
+// A TERMINATOR ONLY COUNTS WHEN A BLANK OR THE END FOLLOWS IT. Without that, "RULES.md" splits
 // into "RULES." and "md", and a claim that spans the filename is lost -- which is the same
 // blindness flattening exists to prevent, arriving through a different door.
 func sentences(buf []byte, lines []int) []segment {
