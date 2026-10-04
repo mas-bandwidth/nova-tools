@@ -1,7 +1,6 @@
 package main
 
 import (
-	"reflect"
 	"testing"
 	"time"
 
@@ -132,9 +131,7 @@ func TestAnyUnitWithRoomAtOrAboveTheReadTierServesARead(t *testing.T) {
 
 	broken := sprint.CloseFriendRead(held, "friend-amy", id, "Verdict: HOLD\nmain.go is wrong\n", "amy")
 	wantBroken := sprint.Read(held, sprint.ReadReq{Sel: sprint.Sel{IDs: []string{id}}, As: "friend-amy", Verdict: "broken", Finding: "main.go is wrong", Who: "amy"})
-	if !reflect.DeepEqual(wantBroken, broken) {
-		t.Fatalf("HOLD closes through Read\n got %+v\nwant %+v", broken, wantBroken)
-	}
+	assert.Equal(t, wantBroken, broken, "HOLD closes through Read")
 	assert.Equal(t, sprint.Broken, broken.Units[0].Changes[0].Entry.Move.Col)
 }
 
