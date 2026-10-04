@@ -31,6 +31,15 @@ whose age key file (mode 0600) opens its file. exec decrypts only the --only nam
 into one command's environment; names reads names without decrypting; no value is printed.
 first run: keygen makes a key and prints its .sops.yaml rule; a new store is git init,
 recovery.pub, that rule and a branch with an upstream; seal writes a seat's first value.
+a first store: age-keygen -o <a key file kept off this machine> prints the public key;
+its 'Public key:' line is recovery.pub. .sops.yaml holds the rule the tests write:
+creation_rules:
+  - path_regex: ^worker\.yaml$
+    age: <seat public key>,<recovery key>
+write recovery.pub and .sops.yaml first, then:
+git init -b main <store> && git init --bare <dir> && git -C <store> remote add origin <dir> && git -C <store> add recovery.pub .sops.yaml && git -C <store> commit -m "first store" && git -C <store> push -u origin main
+a program seals the first value on stdin:
+  nova-secrets seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --stdin
 
 usage:
   nova-secrets version  print this build identity (--version also accepted)
