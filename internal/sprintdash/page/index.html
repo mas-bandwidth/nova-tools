@@ -124,7 +124,7 @@ button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 .big small { margin-left: 0.5rem; font-size: .5em; font-weight: 500; color: var(--text-2); }
 .sub { font-size: 1.625rem; line-height: 2.25rem; color: var(--text-2); }
 .sub.small { font-size: 1.25rem; line-height: 1.75rem; }
-.progress-card { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; padding: 2rem 3rem; margin-bottom: 3rem; }
+.progress-card, .wall-card { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; padding: 2rem 3rem; margin-bottom: 3rem; }
 .progress-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 1rem 2rem; margin-bottom: 1.5rem; }
 .legend { display: flex; gap: 0.5rem 2rem; flex-wrap: wrap; font-size: 1.5rem; color: var(--text-2); }
 .legend span { display: inline-flex; align-items: center; gap: 0.75rem; }
@@ -142,6 +142,13 @@ button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 .waiting { background: var(--s-waiting); } .ready { background: var(--s-ready); }
 .working { background: var(--s-working); } .review { background: var(--s-review); }
 .merging { background: var(--s-merging); } .landed { background: var(--s-landed); }
+
+/* where wall time goes: one stacked bar of the stages' medians */
+.stack { display: flex; height: 2rem; gap: 2px; border-radius: 4px; overflow: hidden; background: var(--track); }
+.stack .seg { min-width: 2px; height: 100%; }
+.seg0 { background: #7d8490; } .seg1 { background: #4a8fe0; } .seg2 { background: #3987e5; } .seg3 { background: #2a6fc4; }
+.seg4 { background: #d55181; } .seg5 { background: #e87ba4; } .seg6 { background: #c98500; } .seg7 { background: #199e70; }
+.seg8 { background: #ec835a; }
 
 /* panels */
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; min-width: 0; overflow: hidden; }
@@ -283,7 +290,7 @@ footer a:hover { color: var(--text); }
 }
 @media (max-width: 400px) {
   html { font-size: 10px; }
-  .progress-card { padding: 16px; }
+  .progress-card, .wall-card { padding: 16px; }
 }
 </style>
 </head>
@@ -337,6 +344,14 @@ footer a:hover { color: var(--text); }
     <div class="legend" id="legend"></div>
   </div>
   <div class="cells thick" id="overall"></div>
+</section>
+
+<section class="wall-card" id="wall" hidden>
+  <div class="progress-head">
+    <div class="label">Where wall time goes <span class="muted" id="wall-sub"></span></div>
+    <div class="legend" id="wall-legend"></div>
+  </div>
+  <div class="stack" id="wall-bar"></div>
 </section>
 
 <section class="panel streams">

@@ -791,7 +791,7 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			names = append(names, o.F("reader"))
 		}
 		readers := strings.Join(names, ",")
-		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, map[string]string{"readers": readers, "accepted": stamp(s.Now)})))
+		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, acceptStamps(oks, readers, s.Now))))
 		u.Moved = fmt.Sprintf("%s review -> merging queued (ok from %s)", c.ID, strings.ReplaceAll(readers, ",", ", "))
 		if retired > 0 {
 			u.Moved += fmt.Sprintf("; %d outstanding read cards retired", retired)

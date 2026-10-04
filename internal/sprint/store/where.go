@@ -35,6 +35,9 @@ type WhereRecord struct {
 	Held     int                   `json:"held"`
 	Landings []int64               `json:"landings,omitempty"`
 	Critical []sprint.CriticalCard `json:"critical,omitempty"` // the five heaviest (weight.go)
+	// Stages is the stage times of the cards landed in the last day (cycletime.go), counted
+	// from the stamps the cards carry; where --json shows it as stage_times.
+	Stages *sprint.StageTimes `json:"stages,omitempty"`
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -46,7 +49,8 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 			landed = append(landed, at)
 		}
 	}
-	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5)}
+	st := sprint.StageTimesOf(s, now)
+	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5), Stages: &st}
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -113,6 +117,7 @@ type WhereFacts struct {
 	Held      int
 	Landed    []time.Time
 	Critical  []sprint.CriticalCard // the five heaviest, from the record (weight.go)
+	Stages    *sprint.StageTimes    // the stage times of the last day's landings, from the record; nil without it (cycletime.go)
 }
 
 // WhereFacts reads the machine's records and the where record in one exchange.
@@ -144,7 +149,7 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 			}
 		}
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
-			f.Held, f.Critical = r.Held, r.Critical
+			f.Held, f.Critical, f.Stages = r.Held, r.Critical, r.Stages
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}

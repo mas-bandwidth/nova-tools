@@ -46,7 +46,7 @@ function el(tag, cls, text) {
 // cell flashes only when it goes lit <-> unlit. The clock never flashes
 // (setLiveHTML does not use these helpers).
 ["all", "all2", "pct", "eta", "eta-at", "cost", "cost-per", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
- "streams-sub", "fleet-head", "friends-sub", "readers-sub"].forEach(function (id) { var e = document.getElementById(id); if (e) quiet(e); });
+ "streams-sub", "wall-sub", "fleet-head", "friends-sub", "readers-sub"].forEach(function (id) { var e = document.getElementById(id); if (e) quiet(e); });
 function valEl(e) {
   if (!e._fv) {
     var v = document.createElement("span"); v.className = "fv";
@@ -418,6 +418,36 @@ function renderHero(d, s) {
   setText($("machine"), String(d.machine || "-").replace(/^machine:\s*/, ""));
 }
 
+// Where wall time goes: one stacked bar of each stage's median over the cards
+// landed in the last day (where --json's stage_times.overall), in the order a card
+// passes them; rework last. Hidden until a stage has a sample.
+var WALL_STAGES = [["add_to_ready", "waiting on needs"], ["ready_to_dealt", "ready to deal"], ["dealt_to_taken", "dealt to taken"],
+  ["taken_to_finished", "work"], ["finished_to_asked", "finished to asked"], ["asked_to_read", "reads"],
+  ["read_to_accepted", "read to accept"], ["queued_to_landed", "merge"], ["rework", "rework"]];
+function dur(sec) {
+  sec = Math.round(sec);
+  if (sec < 90) return sec + "s";
+  if (sec < 5400) return Math.round(sec / 60) + "m";
+  return (sec / 3600).toFixed(1) + "h";
+}
+function renderWall(d) {
+  var o = (d.stage_times && d.stage_times.overall) || {}, bar = $("wall-bar"), legend = $("wall-legend"), total = 0, parts = [];
+  WALL_STAGES.forEach(function (p, i) {
+    var st = o[p[0]];
+    if (st && st.median_s > 0) { parts.push([p, i, st]); total += st.median_s; }
+  });
+  $("wall").hidden = parts.length === 0;
+  bar.textContent = ""; legend.textContent = "";
+  parts.forEach(function (x) {
+    var seg = el("div", "seg seg" + x[1]);
+    seg.style.flex = x[2].median_s + " 1 0";
+    seg.title = x[0][1] + ": median " + dur(x[2].median_s) + ", p90 " + dur(x[2].p90_s) + " over " + x[2].n + " cards";
+    bar.appendChild(seg);
+    var k = el("span", null, x[0][1] + " " + dur(x[2].median_s)); k.title = seg.title; legend.appendChild(k);
+  });
+  setText($("wall-sub"), parts.length ? "median per stage, last 24 h: " + dur(total) : "");
+}
+
 // ---------- poll loop ----------
 var lastGood = null, inFlight = false, build = null, throughput = null, throughputMinutes = 0;
 // Readers and merge are hidden by default; ?all=1 shows them.
@@ -458,6 +488,7 @@ function render(d) {
   renderFriends(d);
   if (SHOW_ALL) renderReaders(d);
   renderHero(d, s);
+  renderWall(d);
   fitTables();
 }
 var stream = null;

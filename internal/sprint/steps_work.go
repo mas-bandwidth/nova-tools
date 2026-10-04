@@ -371,6 +371,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 			col = Waiting
 		}
 		fields := map[string]string{"kind": kind, "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
+		if col == Ready && kind == "primary" {
+			fields[StReady] = stamp(s.Now) // ready as it is added: no wait on a need
+		}
 		if r.Held {
 			fields[FieldHeld] = stamp(s.Now)
 		}
@@ -725,7 +728,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 			continue
 		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, map[string]string{StReady: stamp(s.Now)}))},
 			Moved: c.ID + " waiting -> ready"})
 	}
 	return p
@@ -747,7 +750,7 @@ func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
 			}
 			continue
 		}
-		out = append(out, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
+		out = append(out, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, map[string]string{StReady: stamp(s.Now)}))},
 			Moved: c.ID + " waiting -> ready (its needs landed)"})
 	}
 	return out
@@ -931,6 +934,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	maps.Copy(fields, s.gateFields())
 	maps.Copy(set, primary)
 	set["attempt"], set["work"] = itoa(attempt), card
+	stageDeal(set, c, s.Now)
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result")...)),
@@ -1287,6 +1291,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			cardSet[FieldUsage] = rec
 		}
 		set := map[string]string{"head": head, "result": result}
+		stageFinish(set, dealt, taken, s.Now)
 		decidedSets(r, used, pr, cardSet, set)
 		identical := false
 		if r.Failed && !passed {

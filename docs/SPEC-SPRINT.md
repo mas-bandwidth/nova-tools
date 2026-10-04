@@ -1077,6 +1077,33 @@ the pre-state does not hold it. A primary is working if and only if
 it has a live work card. Nothing retries by itself. Nothing leaves review
 except by the coordinator.
 
+### cycle-time-breakdown.w1: where a card's wall time goes
+
+The time from add to landed, measured per stage (the wall-clock lens on v1.0.0). A
+primary records its stage times on itself, in the steps that already move it, never
+from the log (`internal/sprint/cycletime.go`): `st_ready` when it is admitted ready or
+resolved, `st_dealt`, `st_taken` and `st_finished` when its work finishes (the work
+card's own stamps, and the finish, copied up), `st_first_dealt` (the first attempt's
+first deal), `st_asked` (the earliest ask) and `st_read` (the last read) of the reads
+it stands on, and `st_queued`, when accept places it in the merge queue; with the
+`admitted`, `accepted` and `landed` stamps it has always had. Accept queues the merge in
+the same step, so `accepted` and `st_queued` are one instant and the merge stage runs
+from the queue to the landing. A rework adds to `st_rework`, in seconds, the time from
+its last finish to the next attempt's first deal.
+
+`sprint.StageTimesOf` reads the stamps of the cards landed in the last 24 h and gives,
+for each stage, the median, the 90th percentile (nearest rank) and the count in seconds,
+overall and per stream: `add_to_ready`, `ready_to_dealt`, `dealt_to_taken`,
+`taken_to_finished`, `finished_to_asked`, `asked_to_read`, `read_to_accepted`,
+`queued_to_landed`, and `rework`, which is measured on the reworked cards only. A card
+missing a stage's stamp (landed before the stamps, dealt to a friend, or readied by the
+release of a held card) is left out of that stage. The tick keeps the numbers in the where record
+(`stages`), counted whenever the work table moves, so `where` reads no card; where
+`--json` carries them as `stage_times` (`{overall, streams}`), and the dashboard draws
+one stacked bar, where wall time goes, from the overall medians.
+`TestStageTimesGiveMedianAndP90PerStage` pins three cards through every stage on an
+injected clock, and `TestStageTimesWindowAndRework` the 24 h window and the rework.
+
 ## 4. Order
 
 A score is given once, at admission. Work cards, read cards and the merge place
