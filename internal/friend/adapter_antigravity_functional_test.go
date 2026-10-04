@@ -19,6 +19,7 @@ import (
 // NOVA_FRIEND_ANTIGRAVITY_DELIVER set to the text: a real turn in a
 // friend's session, never run by a build.
 func TestAntigravityOnTheLiveHarness(t *testing.T) {
+	t.Parallel()
 	dir := os.Getenv("NOVA_FRIEND_ANTIGRAVITY_DIR")
 	if dir == "" {
 		t.Skip("NOVA_FRIEND_ANTIGRAVITY_DIR names no friend's directory")
