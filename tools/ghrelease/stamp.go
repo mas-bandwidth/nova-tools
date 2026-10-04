@@ -57,7 +57,7 @@ shown cut at 200 characters and matched whole.
 func doStamp(e env, args []string) int {
 	if len(args) < 2 || len(args) > 3 {
 		fmt.Fprintf(e.stderr, "usage: %s stamp <expected-tag> <path-template> [cmd-dir]\n", tool)
-		io.WriteString(e.stderr, "  path-template holds one %s, replaced by the tool name: 'dist/%s_v1.2.3_linux_amd64'\n")
+		_, _ = io.WriteString(e.stderr, "  path-template holds one %s, replaced by the tool name: 'dist/%s_v1.2.3_linux_amd64'\n") // ignored: the exit code is the report
 		fmt.Fprintln(e.stderr, "  cmd-dir defaults to cmd")
 		return 2
 	}

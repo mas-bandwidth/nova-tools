@@ -98,7 +98,7 @@ func doBuild(e env, args []string) int {
 		fmt.Fprintf(e.stderr, "%s build: no scratch directory: %v\n", tool, err)
 		return 1
 	}
-	defer os.RemoveAll(scratch)
+	defer func() { _ = os.RemoveAll(scratch) }() // ignored: a temporary directory that may already be gone
 
 	rc := e.runner().Stream(command{
 		dir:  e.dir,
@@ -151,7 +151,7 @@ func moveFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }() // ignored: a file opened only for reading
 	fi, err := in.Stat()
 	if err != nil {
 		return err
@@ -161,7 +161,7 @@ func moveFile(src, dst string) error {
 		return err
 	}
 	if _, err := io.Copy(outf, in); err != nil {
-		outf.Close()
+		_ = outf.Close() // ignored: the copy error is the one returned
 		return err
 	}
 	if err := outf.Close(); err != nil {

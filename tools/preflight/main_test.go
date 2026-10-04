@@ -25,7 +25,7 @@ type fakeRunner struct {
 func (f *fakeRunner) run(c command) (int, error) {
 	f.calls = append(f.calls, c)
 	if c.name == "fake-gofmt" && f.fmtOut != "" && c.out != nil {
-		c.out.Write([]byte(f.fmtOut))
+		_, _ = c.out.Write([]byte(f.fmtOut)) // ignored: a write to the rig's buffer cannot fail
 	}
 	return f.codes[c.name], nil
 }
