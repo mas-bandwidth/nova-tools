@@ -92,6 +92,22 @@ func TestFlagsMayFollowTheWords(t *testing.T) {
 	}
 }
 
+// TestRowSetQuotesARowKeyWithASpaceInItsOKLine pins security#78 finding 6:
+// row set must print the row key through field, so a key holding a space is
+// quoted and a whitespace-splitting reader still sees one token.
+func TestRowSetQuotesARowKeyWithASpaceInItsOKLine(t *testing.T) {
+	t.Parallel()
+
+	addr := throwaway(t)
+	code, stdout, stderr := runTable(at(addr, "create", "demo", "--columns", "note:text:none")...)
+	require.EqualValues(t, 0, code, "create: %d stderr %q", code, stderr)
+	code, stdout, stderr = runTable(at(addr, "row", "add", "demo", "swarm: cards")...)
+	require.EqualValues(t, 0, code, "row add: %d stderr %q", code, stderr)
+	code, stdout, stderr = runTable(at(addr, "row", "set", "demo", "swarm: cards", "note=x")...)
+	require.EqualValues(t, 0, code, "row set: %d stderr %q", code, stderr)
+	assert.Equal(t, "TABLE ROW SET table=demo row=\"swarm: cards\" cols=1 trips=1\n", stdout)
+}
+
 // TestASittingThroughTheVerbs: the plain-command verbs end to end on an
 // in-process store, and the typed line each prints; a bound cell is a view
 // the cell verbs refuse, naming its owner, exit 1, and nothing is written.
