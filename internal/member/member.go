@@ -133,6 +133,12 @@ type Result struct {
 	// native's NATIVE BUDGET line says it ("tokens 509,940 of 400,000, $0.03"); Judge
 	// says it after the end (nova-tools #5094). "" when native named none.
 	Budget string
+	// Completion is why native refused the finish of a work card that ran clean: its
+	// `NATIVE REFUSED: result completion: <why>` line (completeNativeResult: a step commit
+	// git cannot resolve inside HEAD's history, a Go file gofmt will not parse, a missing
+	// output file). The result native published beside it is the child's own text, so
+	// Judge fails the finish on this reason before reading that text; "" for none.
+	Completion string
 	// Step is why a tree card failed at its first work step: `step <n> <verdict>: <words>`
 	// (treeFinish; docs/SPEC-SPRINT.md, a card is a tree of steps). Judge names it as the
 	// failed finish's reason; "" for every other card.
@@ -205,6 +211,11 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		return FinishFailed, EndStaging + ": " + r.Staging
 	case pu.Refused != "":
 		return FinishFailed, "push refused: " + pu.Refused
+	case r.Completion != "":
+		// native refused the finish: the published result is the child's own text, read
+		// by nobody as a verdict (the reader proved it, 2026-10-03: a refused finish beside
+		// a published `verdict: ok` was judged FinishOK)
+		return FinishFailed, "result completion: " + r.Completion
 	case r.End == EndProvider && r.Provider != "" && !r.Shaped:
 		// the provider failed the run and it left no result: the kind and the
 		// provider's reason, never the shape's; the sprint deals the card again. A refused

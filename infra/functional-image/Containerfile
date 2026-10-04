@@ -139,6 +139,10 @@ RUN apt-get update \
 
 COPY --from=redis-build /usr/local/bin/redis-server /usr/local/bin/redis-cli /usr/local/bin/
 COPY --from=fetch /usr/local/go /usr/local/go
+# gofmt rides in the toolchain above; named on its own line because nova-swarm's finish runs
+# it by name (completeNativeResult: the work's Go files formatted and committed at the
+# finish), and binaries.txt holds every such name to a line that carries it.
+COPY --from=fetch /usr/local/go/bin/gofmt /usr/local/go/bin/gofmt
 COPY --from=fetch /usr/local/bin/sops /usr/local/bin/age /usr/local/bin/age-keygen /usr/local/bin/
 RUN ln -s /usr/local/go/bin/go /usr/local/bin/go \
  && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
