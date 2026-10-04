@@ -244,6 +244,118 @@ func TestAStoreThatIsDownIsAnError(t *testing.T) {
 	assert.ErrorIs(t, err, f.Fail)
 	_, err = b.Names(ctx)
 	assert.ErrorIs(t, err, f.Fail)
+	_, _, err = b.Store.Tail(ctx, StreamOf("bob"))
+	assert.ErrorIs(t, err, f.Fail)
+	_, err = b.Store.BlockRead(ctx, StreamOf("bob"), "0-0", 0, 1)
+	assert.ErrorIs(t, err, f.Fail)
+}
+
+// WaitPick is the wait's decision over one batch of entries, a pure function
+// (SPEC-BUS.md, the verbs: wait): the first WaitMax entries not from the
+// waiter whose subject starts with none of the skip prefixes, and the cursor
+// past every entry the walk saw, so a skipped entry moves it.
+func TestWaitPickCountsTheFirstEntriesThatAreNotMineNorSkipped(t *testing.T) {
+	t.Parallel()
+	e := func(id, from, subject string) Entry {
+		return Entry{Stream: "s", Entry: id, Fields: map[string]string{"id": "M" + id, "from": from, "subject": subject, "body": "x"}}
+	}
+	ping := []string{"ping", "pong"}
+	cases := []struct {
+		name  string
+		me    string
+		skips []string
+		in    []Entry
+		kept  []string
+		after string
+	}{
+		{"the entries that count, in order", "bob", ping,
+			[]Entry{e("1-1", "ada", "one"), e("1-2", "ada", "two")}, []string{"1-1", "1-2"}, "1-2"},
+		{"mine and the skipped do not count", "bob", ping,
+			[]Entry{e("1-1", "bob", "mine"), e("1-2", "ada", "PING n"), e("1-3", "ada", "pong reply"), e("1-4", "ada", "real")},
+			[]string{"1-4"}, "1-4"},
+		{"the match is without case", "bob", ping,
+			[]Entry{e("1-1", "ada", "ping 1"), e("1-2", "ada", "PONG")}, nil, "1-2"},
+		{"a given list of prefixes", "bob", []string{"card "},
+			[]Entry{e("1-1", "ada", "card fg-x done"), e("1-2", "ada", "ping")}, []string{"1-2"}, "1-2"},
+		{"nothing counts, the cursor still moves", "bob", ping,
+			[]Entry{e("1-1", "bob", "a"), e("1-2", "ada", "PING")}, nil, "1-2"},
+		{"at most WaitMax, the rest for the next run", "bob", nil,
+			[]Entry{e("1-1", "ada", "a"), e("1-2", "ada", "b"), e("1-3", "ada", "c"), e("1-4", "ada", "d"), e("1-5", "ada", "e"), e("1-6", "ada", "f")},
+			[]string{"1-1", "1-2", "1-3", "1-4", "1-5"}, "1-5"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			kept, after := WaitPick(c.in, c.me, c.skips)
+			var ids []string
+			for _, k := range kept {
+				ids = append(ids, k.Entry)
+			}
+			assert.Equal(t, c.kept, ids)
+			assert.Equal(t, c.after, after)
+		})
+	}
+}
+
+// WaitArm is the cursor a wait starts from: --after when given (the tail is
+// not read), else the stream's last entry id read once, and a name the
+// roster does not hold is never given a stream to wait on (SPEC-BUS.md, the
+// semantics; the verbs: wait).
+func TestWaitArmIsTheAfterGivenElseTheStreamsLastIdOnce(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, f := rig(t, "ada", "bob")
+	_, err := b.Send(ctx, msg("ada", "bob"))
+	require.NoError(t, err)
+	stream := f.streams[StreamOf("bob")]
+	last := stream[len(stream)-1].Entry
+	f.Trips = 0
+	got, err := b.WaitArm(ctx, "bob", "")
+	require.NoError(t, err)
+	assert.Equal(t, last, got, "the arm is the stream's last entry id")
+	assert.Equal(t, 2, f.Trips, "the arm reads the roster and the stream's tail, once each")
+	f.Trips = 0
+	got, err = b.WaitArm(ctx, "bob", "9-9")
+	require.NoError(t, err)
+	assert.Equal(t, "9-9", got, "--after is the arm; the tail is not read")
+	assert.Equal(t, 1, f.Trips, "the roster alone: --after is the arm")
+	_, err = b.WaitArm(ctx, "zed", "")
+	var r *Refusal
+	require.ErrorAs(t, err, &r)
+	assert.Contains(t, err.Error(), "zed is no known name")
+}
+
+// The fake's Tail and BlockRead are the wait's store: entries past the
+// cursor answer at once, up to the count, and a block that finds nothing
+// waits its duration out on the injected Sleep, never real time.
+func TestTheFakesTailAndBlockReadAnswerPastTheCursorAndWaitOutTheBlock(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := NewFake(start, "ada", "bob")
+	last, exists, err := f.Tail(ctx, StreamOf("bob"))
+	require.NoError(t, err)
+	assert.False(t, exists, "no stream is there before anything is sent")
+	assert.Empty(t, last)
+	for _, s := range []string{"one", "two"} {
+		require.NoError(t, f.AddAll(ctx, []string{StreamOf("bob")}, map[string]string{"id": "M" + s, "from": "ada", "subject": s}))
+	}
+	last, exists, err = f.Tail(ctx, StreamOf("bob"))
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.NotEmpty(t, last)
+	got, err := f.BlockRead(ctx, StreamOf("bob"), "0-0", 0, 100)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "one", got[0].Fields["subject"])
+	got, err = f.BlockRead(ctx, StreamOf("bob"), "0-0", 0, 1)
+	require.NoError(t, err)
+	assert.Len(t, got, 1, "the count bounds the batch")
+	waited := time.Duration(0)
+	f.Sleep = func(d time.Duration) { waited += d }
+	got, err = f.BlockRead(ctx, StreamOf("bob"), last, 30*time.Second, 100)
+	require.NoError(t, err)
+	assert.Empty(t, got, "nothing past the cursor")
+	assert.Equal(t, 30*time.Second, waited, "the block waits its duration out on the injected clock")
 }
 
 func TestNamesAreSortedAndUnique(t *testing.T) {
