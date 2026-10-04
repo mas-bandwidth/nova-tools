@@ -563,6 +563,22 @@ func TestRedisCoverRemoveMachine(t *testing.T) {
 	})
 }
 
+// TestRemoveMachineIsRefusedWhileABenchDesiredHashNamesIt pins security#69
+// finding 3: removeMachine must read the bench registry set as "benches", the
+// name the function library writes, so a bench that still names the machine
+// refuses the removal.
+func TestRemoveMachineIsRefusedWhileABenchDesiredHashNamesIt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	a, c, _ := coverStore(t)
+	c.SAdd(ctx, "benches", "b1")
+	c.HSet(ctx, "bench:b1:desired", "machine", "m1")
+	err := a.removeMachine(ctx, "m1", "ada", "idem")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInUse)
+	assert.Contains(t, err.Error(), "bench:b1")
+}
+
 // TestRedisCoverHashes: readHashes reads a row's hash into a typed view,
 // writeHash replaces it whole with its set member, and removeHash takes both.
 func TestRedisCoverHashes(t *testing.T) {
