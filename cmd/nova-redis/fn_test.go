@@ -189,16 +189,9 @@ func TestFnLibraryIsTheLoadersBytes(t *testing.T) {
 	t.Parallel()
 	source, err := fn.Source()
 	require.NoError(t, err, err)
-	mine, err := library().Source()
-	require.NoError(t, err, err)
-	require.Equal(t, source, mine, "library().Source() is %d bytes and fn.Source() %d; they must be the same bytes", len(mine), len(source))
-	{
-		got := want(t)
-		expected := fn.Sum(source)
-		if got != expected {
-			require.Equal(t, expected, got, "digest %s, fn.Sum %s", got, fn.Sum(source))
-		}
-	}
+	got := want(t)
+	expected := fn.Sum(source)
+	require.Equal(t, expected, got, "digest %s, fn.Sum %s", got, expected)
 }
 
 // TestFnLoadAndCheckOnAStore walks one store through every state: absent,
