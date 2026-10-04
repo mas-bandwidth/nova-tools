@@ -48,7 +48,11 @@ func DSHSessionKey(dir string) string {
 // NewestDSHSession is the most recently modified session of dir under the
 // sessions root: the directory names are the session ids.
 func NewestDSHSession(sessions, dir string) (string, error) {
-	entries, err := os.ReadDir(filepath.Join(sessions, DSHSessionKey(dir)))
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("no dsh session for %s; start one there, or name one with --session", dir)
+	}
+	entries, err := os.ReadDir(filepath.Join(sessions, DSHSessionKey(realDir)))
 	if err != nil {
 		return "", fmt.Errorf("no dsh session for %s; start one there, or name one with --session", dir)
 	}

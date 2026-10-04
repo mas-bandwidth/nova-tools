@@ -15,7 +15,10 @@ import (
 func TestDSHAdoptsTheNewestSessionOfTheDirectoryWithTheTextOnStdin(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	key := filepath.Join(root, DSHSessionKey("/w/bob"))
+	dir := t.TempDir()
+	realDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	key := filepath.Join(root, DSHSessionKey(realDir))
 	for name, at := range map[string]time.Time{"session-old": time.Unix(10, 0), "session-new": time.Unix(20, 0)} {
 		require.NoError(t, os.MkdirAll(filepath.Join(key, name), 0o700))
 		require.NoError(t, os.Chtimes(filepath.Join(key, name), at, at))
@@ -25,12 +28,12 @@ func TestDSHAdoptsTheNewestSessionOfTheDirectoryWithTheTextOnStdin(t *testing.T)
 
 	var turn strings.Builder
 	fe := &fakeStdinExec{exit: 0, out: "got it\n"}
-	d := &DSH{Dir: "/w/bob", Run: fe.run, Sessions: root, Out: &turn}
+	d := &DSH{Dir: dir, Run: fe.run, Sessions: root, Out: &turn}
 	exit, err := d.Deliver(context.Background(), "hello\nworld")
 	require.NoError(t, err)
 	assert.Equal(t, 0, exit)
 	require.Len(t, fe.calls, 1)
-	assert.Equal(t, []string{"/w/bob", DSHProgram, "headless", "--session-id", "session-new", "-"}, fe.calls[0], "the newest session; the text is not an argument")
+	assert.Equal(t, []string{dir, DSHProgram, "headless", "--session-id", "session-new", "-"}, fe.calls[0], "the newest session; the text is not an argument")
 	assert.Equal(t, "hello\nworld", fe.stdin, "the text travels on stdin")
 	assert.Equal(t, "got it\n", turn.String(), "the turn's output goes to the daemon's record")
 
@@ -50,6 +53,23 @@ func TestDSHAdoptsTheNewestSessionOfTheDirectoryWithTheTextOnStdin(t *testing.T)
 	got, err := NewDeliverer("dsh", "/w/bob", "", nil, nil)
 	require.NoError(t, err)
 	assert.IsType(t, &DSH{}, got)
+}
+
+func TestDSHFindsTheSessionThroughADirectorySymlink(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	dir := t.TempDir()
+	realDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	alias := filepath.Join(t.TempDir(), "working")
+	require.NoError(t, os.Symlink(dir, alias))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, DSHSessionKey(realDir), "session-existing"), 0o700))
+	fe := &fakeStdinExec{}
+	d := &DSH{Dir: alias, Run: fe.run, Sessions: root}
+	_, err = d.Deliver(context.Background(), "same session")
+	require.NoError(t, err)
+	require.Len(t, fe.calls, 1)
+	assert.Equal(t, []string{alias, DSHProgram, "headless", "--session-id", "session-existing", "-"}, fe.calls[0])
 }
 
 // fakeStdinExec is fakeExec that also keeps what was handed on stdin.
