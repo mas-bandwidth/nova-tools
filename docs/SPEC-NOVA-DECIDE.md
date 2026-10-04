@@ -614,6 +614,30 @@ for a card the step refused, or when no decide lane keeps a record (a verb run w
 server). The record is the label set `nova-decide` evaluates, shadows and trains the
 judgment decision on; it duplicates no verb of `nova-decide`.
 
+### jev-shadow-judgments.w1: Jev answers every judgment in shadow
+
+The server's decide lane (`run --decide <dir>`) asks the judgment decision (the one `answer
+--decide` uses, `JudgmentSchema`) of every open routine judgment as it is raised, through the
+lane's backend, and appends the answer to `<dir>/judgment-shadow.jsonl`. It is the existing
+record format (section 4) under decision name `judgment-shadow`: `state` is the judgment's state
+as the judgment decision is asked it, every answer carries `method: "shadow"` beside its
+probabilities, and the inputs are `card`, `note`, `kind` (the judgment's type), `verb` (the
+shadow verb) and `shadow` (`true`). The id is `<card>@shadow.<note>.<12 hex of the state>`, so a
+judgment is shadowed once. A shadow record has no act: nothing is applied, written on the work
+table or listed for the coordinator, and a judgment that names a provider's refusal for want of
+payment is not asked, as the real decision does not ask it. A failed ask is a DECIDE FAILED line
+and is asked again on the next round; with no backend nothing is asked. The state carries no log
+lines, since the lane holds the work table and not the card's log.
+
+When the real answer arrives (the `judgment-answer` record above) the pair is joined by `note`
+and `card`. `nova-decide findings --record <file> --shadow <judgment-shadow.jsonl> --real
+<judgment-answer.jsonl>` prints, besides its findings, one `shadow` item per judgment kind
+(count of joined pairs, agreement percent, how many of the pairs had the shadow verb at p 0.95
+and above and the agreement percent among those) and `shadow_pending`, the shadow records with
+no real answer yet. Verbs are compared as recorded: the shadow verb is one of the judgment
+decision's, the real one any of the answer verbs, so a `recut` or `hold` never agrees. It
+duplicates no verb of `nova-decide`.
+
 ## 14. The brief decision: card quality before add
 
 **Uncalibrated.** p(converges) is a rank, not a probability, and on the only labels
