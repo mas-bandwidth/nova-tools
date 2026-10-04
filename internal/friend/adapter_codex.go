@@ -9,26 +9,12 @@ import (
 	"strings"
 )
 
-// Codex delivers through `codex exec resume --skip-git-repo-check <thread>
-// <text>`, which resumes the saved thread headlessly in a new codex process,
-// appends the text as a turn, and blocks until the model has answered. This
-// is the thread's model with the friend's whole context, but it is not the
-// open chat: the Codex desktop app (ChatGPT.app) runs its own app-server on
-// a stdio pair it owns and exposes no socket, and while a thread is open
-// there the app holds the thread's writer lock
-// (~/.codex/thread-writer-locks/<thread>.lock), so a resume is refused with
-// "thread <id> already has an active writer" (measured 2026-10-04, exit 1).
-// So a message is answered only while the chat is closed in the app, and
-// the record says on every delivery that it was answered by resume, not by
-// the open chat. The open chat is reachable only through the app's own
-// app-server, which the app connects to the shared local daemon
-// (`codex app-server daemon start`, then `codex queue --thread <id>
-// --message <text>`) only when launched with
-// CODEX_APP_SERVER_USE_LOCAL_DAEMON=1 (docs/SPEC-FRIEND.md, Codex).
-//
-// Without a thread named, the saved session headers and session index resolve
-// the newest thread whose directory is Dir before its writer lock is probed.
-// Resume names that exact thread rather than using `--last` after the probe.
+// Codex uses the writer lock to choose its first delivery route. An open chat
+// receives codex queue; a closed chat uses exec resume. A failed route tries
+// the other once, then defers without losing the message (SPEC-FRIEND.md,
+// Codex). Queue acceptance is not a completed answer: the app may start the
+// queued input only after its current turn ends.
+// Without a named session, resolve the newest saved thread for Dir first.
 type Codex struct {
 	Dir, Session string
 	Run          Exec
@@ -95,19 +81,30 @@ func (c *Codex) Deliver(ctx context.Context, text string) (int, error) {
 			return 1, err
 		}
 	}
+	queue := []string{"queue", "--thread", session, "--message", text}
+	resume := ResumeArgs(session, text)
+	routes := [][]string{resume, queue}
 	if c.held()(LockPath(c.home(), session)) {
-		return 0, Deferred{Reason: fmt.Sprintf("thread %s is open in the Codex app, which holds its writer lock; a resume cannot reach an open chat, so the message stays pending until the chat is closed", session)}
+		routes[0], routes[1] = queue, resume
 	}
-	out, exit, err := c.Run(ctx, c.Dir, c.program(), ResumeArgs(session, text), "")
-	if c.Out != nil {
-		if exit == 0 && err == nil {
-			fmt.Fprintln(c.Out, ResumeLabel+": codex "+strings.Join(ResumeArgs(session, "<text>"), " "))
-		} else {
-			fmt.Fprintf(c.Out, "not answered: codex exec resume exited %d (a thread open in the Codex app refuses a resume; or no such thread)\n", exit)
+	var failures []string
+	for _, args := range routes {
+		out, exit, err := c.Run(ctx, c.Dir, c.program(), args, "")
+		if exit != 0 || err != nil {
+			failures = append(failures, fmt.Sprintf("%s exit=%d error=%v output=%q", args[0], exit, err, strings.TrimSpace(Head(out, OutputKept))))
+			continue
 		}
-		if out != "" {
-			fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+		if c.Out != nil {
+			if args[0] == "queue" {
+				fmt.Fprintf(c.Out, "queued for open chat: codex queue --thread %s --message <text> (accepted, not answered)\n", session)
+			} else {
+				fmt.Fprintln(c.Out, ResumeLabel+": codex "+strings.Join(ResumeArgs(session, "<text>"), " "))
+			}
+			if out != "" {
+				fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+			}
 		}
+		return 0, nil
 	}
-	return exit, err
+	return 0, Deferred{Reason: fmt.Sprintf("thread %s: neither delivery route accepted the message (%s); keep it pending and retry when Codex is available", session, strings.Join(failures, "; "))}
 }
