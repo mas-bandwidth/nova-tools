@@ -1660,3 +1660,16 @@ func TestALaneThatFinishesIsRefilledInTheSamePass(t *testing.T) {
 	assert.Equal(t, 1, g.m.Running(), "the member runs at most its width")
 	assert.Equal(t, 2, acted, "one report and one start")
 }
+
+// A finish native refused for the card is failed on that reason before the published
+// result's own verdict and head are read: a pushed, shaped, ok result with a refused
+// completion is not finished work.
+func TestJudgeFailsARefusedCompletionBeforeTheResultsOwnVerdict(t *testing.T) {
+	t.Parallel()
+	fin, why := Judge(Result{Shaped: true, Verdict: "ok", Completion: "step 3 commit \"abc\": unknown"}, Push{Sha: fullSha})
+	require.Equal(t, FinishFailed, fin)
+	require.Equal(t, "result completion: step 3 commit \"abc\": unknown", why)
+	fin, why = Judge(Result{Shaped: true, Verdict: "ok", Completion: "x"}, Push{Refused: "rejected"})
+	require.Equal(t, FinishFailed, fin)
+	require.Equal(t, "push refused: rejected", why, "a refused push is git's, said first")
+}

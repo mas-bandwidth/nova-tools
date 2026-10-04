@@ -744,10 +744,16 @@ var nativeStageFail = regexp.MustCompile(`(?m)^STAGE FAIL .*\breason=(.+)$`)
 // card's finish instead of "ended without a result".
 var nativeRefusedWhy = regexp.MustCompile(`(?m)^NATIVE REFUSED: (.+)$`)
 
-// nativeYieldRefused is the one NATIVE REFUSED line that is the machine's and not the
-// card's: native could not step behind CI (yieldNative). Only this refusal ends a launch
-// as a staging refusal; every other one is the card's and stays a failed finish.
-var nativeYieldRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: (yield to CI: .+)$`)
+// nativeYieldRefused is the NATIVE REFUSED lines that are the machine's and not the
+// card's: native could not step behind CI (yieldNative), or its machine failed the finish
+// (errFinishFault: git would not answer for the checkout, no gofmt on the bench). These
+// refusals end a launch as a staging refusal; every other one is the card's and stays a
+// failed finish.
+var nativeYieldRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: ((?:yield to CI|finish fault): .+)$`)
+
+// nativeCompletionRefused is native's refusal of a clean run's finish (completeNativeResult):
+// the card's own, so the member fails the finish on it whatever the published RESULT.md says.
+var nativeCompletionRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: result completion: (.+)$`)
 
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
@@ -769,7 +775,7 @@ var (
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage, provider, refused, budget, gate, gateTests, carry string
+		var end, usage, provider, refused, completion, budget, gate, gateTests, carry string
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			carry = cardcontract.ParseCarryLine(b)
 			if m := nativeGateLine.FindSubmatch(b); m != nil {
@@ -777,6 +783,9 @@ func (c *nativeChild) Result() member.Result {
 			}
 			if m := nativeRefusedWhy.FindSubmatch(b); m != nil {
 				refused = strings.TrimSpace(string(m[1]))
+			}
+			if m := nativeCompletionRefused.FindSubmatch(b); m != nil {
+				completion = strings.TrimSpace(string(m[1]))
 			}
 			if m := nativeStageFail.FindSubmatch(b); m != nil {
 				// refused at staging: no child ran, so no result of this launch exists to read
@@ -788,7 +797,12 @@ func (c *nativeChild) Result() member.Result {
 				// refused before any child ran because this machine could not step behind CI:
 				// the machine's fault, never the card's, so it ends as a staging refusal does
 				// and the sprint deals the card to another member (StageRefused)
-				c.result = member.Result{End: member.EndStaging, Staging: strings.TrimSpace(string(m[1])), Report: "no child ran (see " + c.logPath + ")"}
+				why := strings.TrimSpace(string(m[1]))
+				report := "no child ran (see " + c.logPath + ")"
+				if strings.HasPrefix(why, "finish fault: ") {
+					report = "the member's machine failed the finish (see " + c.logPath + ")"
+				}
+				c.result = member.Result{End: member.EndStaging, Staging: why, Report: report}
 				return
 			}
 			if m := nativeRC.FindSubmatch(b); m != nil {
@@ -854,7 +868,7 @@ func (c *nativeChild) Result() member.Result {
 			// their rerun passed: the work is done as far as its gate says; the readers read it
 			verdict, report = "ok", "gate: "+gateTests+" flaky, green on the rerun; "+report
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Completion: completion, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry}
 	})
 	return c.result
 }
