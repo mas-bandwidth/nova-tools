@@ -15,7 +15,7 @@ SPRINT TABLE
 3011/33011 9.1% -> ETA
 
 work  | waiting | ready | working | review | merging | landed | cost
-readers | asked | reading | ok | broken
+readers | asked | reading | width | ok | broken
 merge | queued | merged | stuck | ci | state
 friends | ready | working | width | done | ok% | status
 fleet | ready | working | width | done | ok% | status | load
@@ -1360,11 +1360,15 @@ id (`--op`) returns the original result, with no second counter or notification.
   machine, rebalance moves them away"): every read asked or reading of a reader
   that is not up is taken back (retired by `away`) while a reader up without a
   card at its attempt could take it, and the tick's ask asks it again; with
-  none, it stays and is judged as below. Then the level: asked reads (not
-  begun) move from the reader with the largest load (asked and reading) to the
-  next reader up round the readers at or below the mean, until no two loads
-  differ by more than one, so no reader up is idle while another holds a
-  backlog. A moved read is retired (by `level`) and asked of the other reader
+  none, it stays and is judged as below. Then the level: a reader's room is
+  its width less its load (asked and reading), compared as a share of its
+  width, and asked reads (not begun) move from the reader with the least share
+  (over its width when below zero) to the reader up with the greatest share
+  that has free room, ties round the readers from the `ask_index`, while the
+  target's share after the move stays at or above the source's, so no reader
+  up has free lanes while another holds a backlog, no move fills a reader past
+  its width (a reader at width is given nothing), and the ask's placement is
+  the level's fixed point (`sprint.levelReads`, `round.levelToRoom`). A moved read is retired (by `level`) and asked of the other reader
   at the same attempt and head, its route kept, as a fresh ask (not returned,
   reasked 0); a pro card's two reads stay with two different readers, and no
   reader is asked an attempt it already had. A read is moved at most once: the
@@ -1378,8 +1382,14 @@ id (`--op`) returns the original result, with no second counter or notification.
   carries its row's, and the reader runs that many reads at once (the owner,
   2026-10-02: "why not just have as many readers as workers per-machine"); a
   reader named for no fleet row is handed no width and begins nothing. The
-  sprint holds no reader's width of its own, so readers are levelled by count
-  and none is bounded at DealAhead times a width.
+  sprint knows a reader's width the same way, derived from its fleet row
+  (`sprint.ReaderWidth`; the readers table holds no width column, and `where`
+  shows each reader's width beside reading, "-" for a reader with no row), so
+  reads are asked and levelled by room, never by count alone (the owner,
+  2026-10-03: with widths 4/8/16/16/24, count-levelling queued seven reads on
+  the two narrow machines while 31 reader slots sat idle); a reader named for
+  no fleet row keeps unbounded room, so such readers order by load alone. No
+  reader is bounded at DealAhead times a width: its room is its width.
 - A card's reads are counted by its tier (the owner, 2026-10-02, cost rule 4,
   nova-tools#5174: "Reads: one cold read per flash card on a flash route; two
   per pro card; readers still equal workers per machine"): a flash card needs
@@ -1394,13 +1404,21 @@ id (`--op`) returns the original result, with no second counter or notification.
   machine's width.
 - ask deals every primary in review that lacks reads to as many different
   readers UP as it needs (one for a flash card, TWO DIFFERENT readers for a pro
-  card), in work order, each the next reader round the readers from the readers'
-  `ask_index` that has no read card at the attempt, placed or retired. One read
-  card per reader. Reworked work is asked by the same rotation: a read is a
-  fresh child on a freshly drawn route, so the readers of an earlier attempt
-  are not preferred, and a busy reader is not asked again only to have the
-  next tick's level move the read (the owner, 2026-10-01, deleting the
-  preference for the readers kept on the primary: "yes on the decision.").
+  card), in work order, each the reader with the greatest share of room (its
+  free room, width less asked and reading, as a part of its width; widths 4
+  and 24 with ten reads: the 24 takes eight) that has free room and no read
+  card at the attempt, placed or retired, ties the next round the readers from
+  the readers' `ask_index`; the reads one ask places come off the room as it
+  goes. A reader at width is given nothing, and a primary that lacks as many
+  DIFFERENT readers with room as it needs (a pro card with all the free room
+  on one reader) waits for the next tick, due, with no judgment; the ask's
+  `cannot ask` judgment is for a primary no readers could read whatever
+  their room. One read card per reader. Reworked work is asked by the same
+  rotation: a read is a fresh child on a freshly drawn route, so the readers
+  of an earlier attempt are not preferred, and a busy reader is not asked
+  again only to have the next tick's level move the read (the owner,
+  2026-10-01, deleting the preference for the readers kept on the primary:
+  "yes on the decision.").
   A reader away or down is never asked. A read asked, and not begun, of a
   reader that is not up is taken back by the next ask (the tick's, in the same
   step that asks the primary again): its read card is retired (by `away`), the
@@ -1414,7 +1432,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   reason, no finding counts against the work and no bound of the primary is
   spent, and the next tick asks it of another reader up that has no read card
   at the attempt (the returned card retired, by `returned`), or, when none is
-  free, of the same reader again, in place; either way on a route drawn
+  free with room, of the same reader again, in place, which takes no room (its
+  reader holds the card already); either way on a route drawn
   afresh as a new read's is, leaving out the route it returned on while the
   tier has another, and drawn only when the ask is not refused, so a reader
   whose launches failed
