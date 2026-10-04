@@ -708,7 +708,8 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
+	defer func() { _ = st.Close() }()
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code
@@ -852,7 +853,8 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
+	defer func() { _ = st.Close() }()
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code
@@ -906,7 +908,8 @@ func beats(ctx context.Context, addr string, names []string, d deps) (map[string
 	if err != nil {
 		return nil, err
 	}
-	defer rs.Close()
+	// ignored: a deferred close after the beats read; the read's error is the one the caller reports
+	defer func() { _ = rs.Close() }()
 	return rs.Beats(ctx, names)
 }
 
@@ -961,7 +964,8 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
+	defer func() { _ = st.Close() }()
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code
@@ -1032,7 +1036,8 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
+	defer func() { _ = st.Close() }()
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code
@@ -1143,7 +1148,8 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
+	defer func() { _ = st.Close() }()
 	key, value := where(dsn)
 	have, err := st.Version(ctx)
 	if err != nil {
@@ -1337,7 +1343,8 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
+	defer func() { _ = st.Close() }()
 	schema, err := st.Version(ctx)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -1398,7 +1405,8 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer rs.Close()
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
+	defer func() { _ = rs.Close() }()
 	line += " redis=" + config.Value(addr)
 	o.Fact("redis", addr)
 	behind := 0
@@ -1471,7 +1479,8 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
+	defer func() { _ = st.Close() }()
 	if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 		return code
 	}
@@ -1491,7 +1500,8 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer rs.Close()
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
+	defer func() { _ = rs.Close() }()
 	word := "APPLY"
 	if *check {
 		word = "CHECK"
@@ -1632,7 +1642,8 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		if err != nil {
 			return fail(err)
 		}
-		defer rs.Close()
+		// ignored: a deferred close after the verb's answer is printed; the answer is the report
+		defer func() { _ = rs.Close() }()
 		stage = "reading the applied state"
 		if snap, err = rs.Snapshot(ctx); err != nil {
 			return fail(err)
