@@ -77,15 +77,16 @@ func init() { Reload() }
 func Reload() { defaultGuard.refusing.Store(os.Getenv(EnvNoHost) == "1") }
 
 // AllowHosts opens a scope in which a seam may run a child, and returns the
-// function that closes it. The one honest use is a test that has installed its
-// own fake on PATH:
+// function that closes it. The one honest use is a test whose fake the guard
+// cannot see for itself -- one that lives outside every temp directory, or an
+// injected runner with no fake program on PATH at all:
 //
 //	defer testguard.AllowHosts()()
 //
 // The scope is process-wide for its duration, so a test that opens one must
 // not run in parallel with a test relying on the guard. That is a narrowing,
 // written down rather than left to be discovered: the guard catches the
-// UNFAKED seam, and a test that fakes a seam declares it.
+// UNFAKED seam, and a test that fakes a seam the guard cannot see declares it.
 func AllowHosts() func() {
 	return defaultGuard.AllowHosts()
 }

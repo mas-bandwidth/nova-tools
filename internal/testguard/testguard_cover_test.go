@@ -25,8 +25,9 @@ func armDefaultGuard(t *testing.T) {
 }
 
 // TestTestguardCoverDefaultGuardSurface covers the package-level surface --
-// AllowHosts, RefuseHosts -- which every guarded seam in the tree calls and
-// which delegates to the process-wide defaultGuard. The rows run sequentially
+// RefuseHosts, which every guarded seam in the tree calls, and AllowHosts,
+// which a test opens to declare a fake the guard cannot see -- both
+// delegating to the process-wide defaultGuard. The rows run sequentially
 // (no t.Parallel below) because defaultGuard is shared state: each row arms
 // and releases it, or injects its lookPath seam, inside one subtest, so no
 // row can observe another's scope.
