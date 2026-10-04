@@ -23,7 +23,7 @@ Emit == /\ sequence < 3
                        q |-> sequence + 1, t |-> now]
            IN issued' = issued \cup {n}
         /\ sequence' = sequence + 1 /\ lastEmit' = now
-        /\ burst' = burst \/ lastEmit = now
+        /\ burst' = (burst \/ lastEmit = now)
         /\ UNCHANGED <<now, instance, peerInstance, seat, consumed, proved,
                        lastPong, invalidProof, duplicateRefresh, asleep, nativeTurns,
                        peerSequence, transitionCut, staleTransition>>
@@ -38,11 +38,11 @@ Ack(n, p, r) == /\ n \in issued /\ Admitted(n)
           /\ (p # peerInstance \/ r > peerSequence \/ Broken = "peer")
           /\ consumed' = n.q /\ peerInstance' = p /\ peerSequence' = r
           /\ transitionCut' = IF p # peerInstance THEN sequence ELSE transitionCut
-          /\ staleTransition' = staleTransition \/ n.q <= transitionCut
+          /\ staleTransition' = (staleTransition \/ n.q <= transitionCut)
           /\ proved' = TRUE /\ lastPong' = now
-          /\ invalidProof' = invalidProof \/ ~Valid(n)
-          /\ duplicateRefresh' = duplicateRefresh \/ n.q <= consumed
-                 \/ (p = peerInstance /\ r <= peerSequence)
+          /\ invalidProof' = (invalidProof \/ ~Valid(n))
+          /\ duplicateRefresh' = (duplicateRefresh \/ n.q <= consumed
+                 \/ (p = peerInstance /\ r <= peerSequence))
           /\ asleep' = IF Broken = "wake" THEN FALSE ELSE asleep
           /\ nativeTurns' = IF Broken = "turn" THEN nativeTurns + 1 ELSE nativeTurns
           /\ UNCHANGED <<now, instance, seat, issued, sequence,
