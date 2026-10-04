@@ -24,6 +24,19 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 )
 
+// countedLedgers are the shrink-only ledgers whose rows carry counts lowered in place.
+var countedLedgers = []string{allowlist.DeadCode}
+
+// isCountedLedger reports whether p is a declared counted ledger whose rows carry counts.
+func isCountedLedger(p string) bool {
+	for _, q := range countedLedgers {
+		if p == q || filepath.Base(p) == filepath.Base(q) {
+			return true
+		}
+	}
+	return false
+}
+
 // ceilingPrefix opens a list's `# ceiling: N` line (internal/ci/allowlist): the one line
 // a removal moves, down, so two sides that each lower it are both honoured by the lower.
 const ceilingPrefix = "# ceiling:"
@@ -72,11 +85,13 @@ func countAt(line string) (start, end, n int, ok bool) {
 	return start, end, n, err == nil && n > 0 && start < end
 }
 
-// rowCount is what a base line holds: its count for a counted row, 1 for a plain row
-// (held whole or gone).
-func rowCount(line string) int {
-	if _, _, n, ok := countAt(line); ok {
-		return n
+// rowCount is what a base line holds: its count for a counted row (on a counted ledger),
+// 1 for a plain row (held whole or gone).
+func rowCount(line string, counted bool) int {
+	if counted {
+		if _, _, n, ok := countAt(line); ok {
+			return n
+		}
 	}
 	return 1
 }
@@ -88,10 +103,13 @@ func withCount(line string, n int) string {
 }
 
 // sameRow says s is the base line b, as it is (n its count) or with its count changed
-// (n the new one): the same key and the same other bytes.
-func sameRow(b, s string) (n int, ok bool) {
+// (n the new one, on a counted ledger): the same key and the same other bytes.
+func sameRow(b, s string, counted bool) (n int, ok bool) {
 	if s == b {
-		return rowCount(b), true
+		return rowCount(b, counted), true
+	}
+	if !counted {
+		return 0, false
 	}
 	bs, be, _, bok := countAt(b)
 	ss, se, sn, sok := countAt(s)
@@ -108,20 +126,20 @@ func sameRow(b, s string) (n int, ok bool) {
 // same text); a side that is a subsequence of base, counts lowered or not, matches
 // whole. A line the base does not hold (a new row, a changed row, a reordering) and a
 // raised count are errors, the side's name as the caller says it.
-func sideHolds(name string, base, side []string) (held []int, err error) {
+func sideHolds(name string, base, side []string, counted bool) (held []int, err error) {
 	held = make([]int, len(base))
 	at := 0
 	for _, s := range side {
 		j, n := at, 0
 		for ok := false; j < len(base) && !ok; {
-			if n, ok = sameRow(base[j], s); !ok {
+			if n, ok = sameRow(base[j], s, counted); !ok {
 				j++
 			}
 		}
 		if j == len(base) {
 			return nil, fmt.Errorf("the %s side adds a line, which is no removal: %q", name, s)
 		}
-		if n > rowCount(base[j]) {
+		if n > rowCount(base[j], counted) {
 			return nil, fmt.Errorf("the %s side raises the count of %q, which is no removal: %q", name, base[j], s)
 		}
 		held[j], at = n, j+1
@@ -131,8 +149,9 @@ func sideHolds(name string, base, side []string) (held []int, err error) {
 
 // unionRemovals resolves a conflict in a shrink-only ledger: the base (the merge base's
 // side) less what either side took. A plain row is held or gone; a counted row (`key N
-// ...`) holds its count less what each side lowered it by (each side's removals are its
-// own, so a row both lowered is lowered by both: left + right - base), and goes at zero.
+// ...`), on a ledger that declares counts (counted), holds its count less what each side
+// lowered it by (each side's removals are its own, so a row both lowered is lowered by
+// both: left + right - base), and goes at zero.
 // The `# ceiling: N` line, when the base has one and a side lowered it, is at the lower
 // of the two sides' values (each side's is at least its own row count, so the lower is
 // at least the union's). left and right are the two sides (the tip's and the card's);
@@ -141,7 +160,8 @@ func sideHolds(name string, base, side []string) (held []int, err error) {
 // ledger that only shrinks has no such change), a side that raises a count or the
 // ceiling, and a result that is not the base's lines less some; the caller then stops as
 // any conflict does.
-func unionRemovals(base, left, right []byte) (out []byte, nLeft, nRight int, err error) {
+func unionRemovals(base, left, right []byte, counted ...bool) (out []byte, nLeft, nRight int, err error) {
+	isCounted := len(counted) > 0 && counted[0]
 	b, trailing := unionLines(base)
 	bAt, bCeil, err := ceilingOf(b)
 	if err != nil {
@@ -150,7 +170,7 @@ func unionRemovals(base, left, right []byte) (out []byte, nLeft, nRight int, err
 	ceil := bCeil
 	value := make([]int, len(b)) // what the union holds of each base line
 	for i, l := range b {
-		value[i] = rowCount(l)
+		value[i] = rowCount(l, isCounted)
 	}
 	counts := [2]int{}
 	for k, s := range [][]byte{left, right} {
@@ -170,12 +190,12 @@ func unionRemovals(base, left, right []byte) (out []byte, nLeft, nRight int, err
 				ceil = min(ceil, n)
 			}
 		}
-		held, err := sideHolds(name, b, lines)
+		held, err := sideHolds(name, b, lines, isCounted)
 		if err != nil {
 			return nil, 0, 0, err
 		}
 		for i, l := range b {
-			if took := rowCount(l) - held[i]; took > 0 {
+			if took := rowCount(l, isCounted) - held[i]; took > 0 {
 				value[i] -= took
 				if i != bAt {
 					counts[k]++
@@ -189,13 +209,13 @@ func unionRemovals(base, left, right []byte) (out []byte, nLeft, nRight int, err
 		case value[i] <= 0:
 		case i == bAt && ceil != bCeil:
 			kept = append(kept, ceilingPrefix+" "+strconv.Itoa(ceil))
-		case value[i] < rowCount(l):
+		case isCounted && value[i] < rowCount(l, isCounted):
 			kept = append(kept, withCount(l, value[i]))
 		default:
 			kept = append(kept, l)
 		}
 	}
-	if !subsetOfBase(b, kept, bAt) {
+	if !subsetOfBase(b, kept, bAt, isCounted) {
 		return nil, 0, 0, errors.New("the resolution is not the base's lines less some")
 	}
 	if len(kept) == 0 {
@@ -211,7 +231,7 @@ func unionRemovals(base, left, right []byte) (out []byte, nLeft, nRight int, err
 // subsetOfBase is the check on a resolution, apart from how it was made: out is base
 // with lines taken out, counts lowered and nothing else, the ceiling line (base's bAt,
 // when any) allowed a new value.
-func subsetOfBase(base, out []string, bAt int) bool {
+func subsetOfBase(base, out []string, bAt int, counted bool) bool {
 	if len(out) > len(base) {
 		return false
 	}
@@ -219,7 +239,7 @@ func subsetOfBase(base, out []string, bAt int) bool {
 	for _, o := range out {
 		i := at
 		for i < len(base) {
-			if n, ok := sameRow(base[i], o); (ok && n <= rowCount(base[i])) || (i == bAt && strings.HasPrefix(o, ceilingPrefix)) {
+			if n, ok := sameRow(base[i], o, counted); (ok && n <= rowCount(base[i], counted)) || (i == bAt && strings.HasPrefix(o, ceilingPrefix)) {
 				break
 			}
 			i++
@@ -282,7 +302,7 @@ func (l *lander) unionLedgers(ctx context.Context, dir string, paths []string) (
 			}
 			sides[i] = res.Stdout
 		}
-		out, nLeft, nRight, err := unionRemovals(sides[0], sides[1], sides[2])
+		out, nLeft, nRight, err := unionRemovals(sides[0], sides[1], sides[2], isCountedLedger(p))
 		if err != nil {
 			return nil, "its shrink-only ledger " + p + " conflicts and is not a union of removals: " + err.Error(), ""
 		}

@@ -58,3 +58,17 @@ func TestShrinkOnly(t *testing.T) {
 	}
 	assert.Greater(t, n, 10, "the testdata lists were read")
 }
+
+// CountedLedger names dead_code_allowlist.txt and nothing else today.
+func TestCountedLedger(t *testing.T) {
+	t.Parallel()
+	for p, want := range map[string]bool{
+		"internal/ci/testdata/dead_code_allowlist.txt":  true,
+		"dead_code_allowlist.txt":                      true,
+		"internal/ci/testdata/sharedtemp_allowlist.txt": false,
+		"internal/ci/sleeps-skips_allowlist.txt":        false,
+		"notes.tsv":                                     false,
+	} {
+		assert.Equal(t, want, CountedLedger(p), p)
+	}
+}

@@ -44,6 +44,10 @@ func TestLandResolvesAConflictInAShrinkOnlyLedgerAsTheUnionOfRemovals(t *testing
 			map[string]string{"debt/a": "", shrinkLedger: "# the shared temp ledger\n# ceiling: 2\ninternal/b\tTestB\ninternal/c\tTestC\n"},
 			map[string]string{"debt/b": "", shrinkLedger: "# the shared temp ledger\n# ceiling: 3\ninternal/a\tTestA\ninternal/c\tTestC\ninternal/d\tTestD\n"},
 			"", `its shrink-only ledger ` + shrinkLedger + ` conflicts and is not a union of removals: the right side adds a line, which is no removal: "internal/d\tTestD"`, 0, 0},
+		{"a numbered row in an uncounted ledger is not renumbered", shrinkLedger, "# the shared temp ledger\n# ceiling: 2\ninternal/a 5\tTestA\ninternal/b 3\tTestB\n",
+			map[string]string{"debt/a": "", shrinkLedger: "# the shared temp ledger\n# ceiling: 2\ninternal/a 4\tTestA\ninternal/b 3\tTestB\n"},
+			map[string]string{"debt/b": "", shrinkLedger: "# the shared temp ledger\n# ceiling: 2\ninternal/a 3\tTestA\ninternal/b 3\tTestB\n"},
+			"", `its shrink-only ledger ` + shrinkLedger + ` conflicts and is not a union of removals: the left side adds a line, which is no removal: "internal/a 4\tTestA"`, 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
