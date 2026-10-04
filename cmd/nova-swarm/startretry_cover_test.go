@@ -44,20 +44,20 @@ func TestStartretryCoverStartFailureRefusals(t *testing.T) {
 	cases := []struct {
 		name      string
 		tail      string
-		elapsed   time.Duration
+		ran       time.Duration
 		tokens    int
 		published bool
 	}{
-		{name: "a token spent", tail: startRefusal, elapsed: 3 * time.Second, tokens: 1},
-		{name: "a result published", tail: startRefusal, elapsed: 3 * time.Second, published: true},
-		{name: "past the window", tail: startRefusal, elapsed: harnessStartWindow},
-		{name: "a provider answered", tail: "rate limit 429\n", elapsed: 2 * time.Second},
-		{name: "a quiet exit", tail: "nothing to say\n", elapsed: 2 * time.Second},
+		{name: "a token spent", tail: startRefusal, ran: 3 * time.Second, tokens: 1},
+		{name: "a result published", tail: startRefusal, ran: 3 * time.Second, published: true},
+		{name: "past the window", tail: startRefusal, ran: harnessStartWindow},
+		{name: "a provider answered", tail: "rate limit 429\n", ran: 2 * time.Second},
+		{name: "a quiet exit", tail: "nothing to say\n", ran: 2 * time.Second},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cause, failed := harnessStartFailed([]byte(tc.tail), tc.elapsed, tc.tokens, tc.published)
+			cause, failed := harnessStartFailed([]byte(tc.tail), tc.ran, tc.tokens, tc.published)
 			assert.False(t, failed, "not a start that failed")
 			assert.Empty(t, cause, "a refused launch names no cause")
 		})
