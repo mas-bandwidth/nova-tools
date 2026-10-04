@@ -195,7 +195,8 @@ func TestRepairCoverProcDead(t *testing.T) {
 }
 
 // TestRepairCoverExistsInTree covers existsInTree: a path present in a tree is
-// found; a path absent from that tree is a plain "no", not an error.
+// found; a path absent from that tree is a plain "no", not an error; a git that
+// cannot answer at all is an error rather than a silent "no".
 func TestRepairCoverExistsInTree(t *testing.T) {
 	t.Parallel()
 	dir, shas := datedRepo(t)
@@ -203,6 +204,7 @@ func TestRepairCoverExistsInTree(t *testing.T) {
 		name    string
 		ref     string
 		rel     string
+		nonRepo bool
 		want    bool
 		wantErr bool
 	}{
@@ -230,10 +232,24 @@ func TestRepairCoverExistsInTree(t *testing.T) {
 			rel:  "from-ada/ghost.md",
 			want: false,
 		},
+		{
+			name: "a git that cannot answer is an error, not a no",
+			ref:  shas[0],
+			rel:  "from-ada/na.md",
+			// A directory outside any repository makes git fail with a reason
+			// existsInTree does not swallow, so the error is returned rather
+			// than read as "the path is absent".
+			nonRepo: true,
+			wantErr: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := existsInTree(dir, tc.ref, tc.rel)
+			useDir := dir
+			if tc.nonRepo {
+				useDir = t.TempDir()
+			}
+			got, err := existsInTree(useDir, tc.ref, tc.rel)
 			if tc.wantErr {
 				require.Error(t, err)
 				return
@@ -245,9 +261,10 @@ func TestRepairCoverExistsInTree(t *testing.T) {
 }
 
 // TestRepairCoverBlockingPaths covers blockingPaths: a dirty path whose content
-// differs between HEAD and the target ref blocks the fast-forward; a path that
-// does not differ and is not untracked does not; an empty dirty list refuses
-// nothing.
+// differs between HEAD and the target ref blocks the fast-forward; a dirty
+// untracked path that already exists in the target ref blocks; a path that does
+// not differ and is not untracked does not; an empty dirty list refuses nothing;
+// a ref git cannot resolve is refused rather than read as "nothing blocks".
 func TestRepairCoverBlockingPaths(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -281,6 +298,32 @@ func TestRepairCoverBlockingPaths(t *testing.T) {
 			wantBlock: nil,
 		},
 		{
+			name: "a dirty untracked path that exists in ref blocks",
+			ref: func(t *testing.T) (string, string) {
+				dir, shas := datedRepo(t)
+				// from-ada is a tracked directory in HEAD and in ref. Replacing
+				// it with an untracked regular file leaves its tracked files
+				// reported as deletions under "from-ada/..." and the file itself
+				// as "?? from-ada", so pathUntracked("from-ada") is true. The
+				// path still exists in ref, so the fast-forward would overwrite
+				// the untracked file and it blocks.
+				require.NoError(t, os.RemoveAll(filepath.Join(dir, "from-ada")))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "from-ada"), []byte("dirty\n"), 0o644))
+				return dir, shas[0]
+			},
+			dirty:     []string{"from-ada"},
+			wantBlock: []string{"from-ada"},
+		},
+		{
+			name: "a ref git cannot resolve is refused",
+			ref: func(t *testing.T) (string, string) {
+				dir, _ := datedRepo(t)
+				return dir, "no-such-ref"
+			},
+			dirty:   []string{"from-ada/na.md"},
+			wantErr: true,
+		},
+		{
 			name: "an empty dirty list refuses nothing",
 			ref: func(t *testing.T) (string, string) {
 				dir, shas := datedRepo(t)
@@ -295,7 +338,7 @@ func TestRepairCoverBlockingPaths(t *testing.T) {
 			dir, ref := tc.ref(t)
 			got, err := blockingPaths(dir, ref, tc.dirty)
 			if tc.wantErr {
-				require.Error(t, err)
+				require.ErrorContains(t, err, ref, "the refusal must name the ref it could not resolve")
 				return
 			}
 			require.NoError(t, err)
