@@ -8,6 +8,10 @@ import (
 	"strings"
 )
 
+// maxNumber is the largest issue, milestone, reference or linked-PR number the
+// tree carries: the same bound decoder.num enforces.
+const maxNumber = 1 << 31
+
 // Encode writes the tree in its canonical form: repositories sorted by name,
 // issues by number, labels and assignees sorted, every key of every record
 // always written in one order, so one tree has exactly one file. It refuses
@@ -47,6 +51,9 @@ func encodeRepo(b *bytes.Buffer, r Repo) error {
 	for i, is := range r.Issues {
 		if is.Number <= 0 {
 			return fmt.Errorf("workfile: %s: issue number %d is not positive", r.Name, is.Number)
+		}
+		if is.Number > maxNumber {
+			return fmt.Errorf("workfile: %s: issue number %d is above %d", r.Name, is.Number, maxNumber)
 		}
 		if i > 0 {
 			if is.Number <= r.Issues[i-1].Number {
@@ -113,6 +120,12 @@ func encodeIssue(b *bytes.Buffer, repo string, is Issue) error {
 	if is.Milestone == nil {
 		p("milestone", "()")
 	} else {
+		if is.Milestone.Number <= 0 {
+			return fmt.Errorf("workfile: %s: milestone number %d is not positive", at, is.Milestone.Number)
+		}
+		if is.Milestone.Number > maxNumber {
+			return fmt.Errorf("workfile: %s: milestone number %d is above %d", at, is.Milestone.Number, maxNumber)
+		}
 		p("milestone", "(:number "+strconv.Itoa(is.Milestone.Number)+" :title "+quote(is.Milestone.Title)+")")
 	}
 	p("body", quote(is.Body))
@@ -140,6 +153,9 @@ func encodeIssue(b *bytes.Buffer, repo string, is Issue) error {
 		if (r.Kind == "") != (r.Number == 0) || r.Number < 0 || r.Kind == "" && (r.Repo != "" || r.URL != "") {
 			return fmt.Errorf("workfile: %s/references: a reference has a source (a kind and a positive number) or none (no kind, number 0, no repo or url); got kind %q number %d", at, r.Kind, r.Number)
 		}
+		if r.Number > maxNumber {
+			return fmt.Errorf("workfile: %s/references: reference number %d is above %d", at, r.Number, maxNumber)
+		}
 		if i > 0 {
 			b.WriteString("\n        ")
 		}
@@ -149,6 +165,12 @@ func encodeIssue(b *bytes.Buffer, repo string, is Issue) error {
 	b.WriteString(")")
 	b.WriteString("\n      :linked-prs (")
 	for i, l := range is.LinkedPRs {
+		if l.Number <= 0 {
+			return fmt.Errorf("workfile: %s/linked-prs: pr number %d is not positive", at, l.Number)
+		}
+		if l.Number > maxNumber {
+			return fmt.Errorf("workfile: %s/linked-prs: pr number %d is above %d", at, l.Number, maxNumber)
+		}
 		s, err := kw("linked-pr state", l.State)
 		if err != nil {
 			return err

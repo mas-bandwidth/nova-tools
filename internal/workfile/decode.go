@@ -95,7 +95,7 @@ func (d decoder) str(at, key string, f worklang.Form) (string, error) {
 }
 
 func (d decoder) num(at, key string, f worklang.Form) (int, error) {
-	if f.Kind != worklang.Integer || f.Int <= 0 || f.Int > 1<<31 {
+	if f.Kind != worklang.Integer || f.Int <= 0 || f.Int > maxNumber {
 		return 0, d.errf(at, ":%s wants a positive integer", key)
 	}
 	return int(f.Int), nil
