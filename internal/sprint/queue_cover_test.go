@@ -149,6 +149,12 @@ func TestQueueCoverDrainComposesOneCardAndRefusesWhatDoesNotLineUp(t *testing.T)
 			wantWhy: "the card is not on the table",
 		},
 		{
+			name:    "a create of a card that is already there is refused",
+			q:       []QueuedChange{{Entry: qEntry(createEntry("c1", "s1", Waiting, 0, nil)), Verb: "add"}},
+			units:   0,
+			wantWhy: "it creates the card and the card is there already",
+		},
+		{
 			name: "a card created and taken off again requeues the removal",
 			q: []QueuedChange{
 				{Entry: qEntry(createEntry("c2", "s1", Ready, 1, nil)), Verb: "add"},
@@ -202,6 +208,17 @@ func TestQueueCoverDrainComposesOneCardAndRefusesWhatDoesNotLineUp(t *testing.T)
 	assert.Equal(t, "9", p.Props[0].Value, "props: %+v", p.Props)
 	assert.Equal(t, "7", p.Props[0].Was, "props: %+v", p.Props)
 	assert.False(t, p.Props[0].WasAbsent, "props: %+v", p.Props)
+
+	// Two refused cards are one invariant judgment, naming the first refusal's
+	// reason and counting the rest.
+	p = Drain(queueWorld(), []QueuedChange{
+		{Entry: &ntable.BatchMemberEntry{ID: "gone", Move: &ntable.MemberMoveOp{Row: "s1", Col: Working}}, Verb: "take"},
+		{Entry: &ntable.BatchMemberEntry{ID: "also-gone", Move: &ntable.MemberMoveOp{Row: "s1", Col: Working}}, Verb: "take"},
+	}, "machine")
+	require.Len(t, p.Refused, 2, "refused: %+v", p.Refused)
+	require.Len(t, p.Notes, 1, "the refusals raise one judgment: %+v", p.Notes)
+	assert.Contains(t, p.Notes[0].What, "; and 1 more", "what: %s", p.Notes[0].What)
+	assert.Equal(t, []string{"also-gone", "gone"}, p.Notes[0].Primaries, "the judgment names both cards, sorted: %+v", p.Notes[0])
 }
 
 func TestQueueCoverComposeQueuedTakesTheLaterChangeAndRefusesTheImpossible(t *testing.T) {
