@@ -61,7 +61,7 @@ func inspectBoxAncestorLink(path, link string, remaining []string, info os.FileI
 	uid, ok := owner(link, info)
 	if !ok || uid != 0 {
 		resolved := resolvedBoxPath(link, append(remaining, filepath.Base(path)))
-		return "", false, fmt.Errorf("box path has a symlink ancestor %s owned by a non-root user; use the resolved path %s", link, resolved)
+		return "", false, fmt.Errorf("box path ancestor %s is a symlink owned by a non-root user; use the resolved path %s", link, resolved)
 	}
 	target, err := readlink(link)
 	if err != nil {
