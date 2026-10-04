@@ -5,6 +5,7 @@ Build: 0c5803c2de40
 Score: 7/10
 
 ## Reasons
+The source under review is exactly 0c5803c2de406c1b0b2b0841f579c9bf73406b1c.
 nova-table is a strong help surface: a complete banner, per-verb and per-subverb help, an example block, and one-line refusals that name the problem and a remedy at exit 2. Two gaps cost the most. First, no verb offers --dry-run and no verb works without a live store, so an AI cannot preview a write or try a real verb before adopting; the standard's dry-run and store-free properties are unmet. Second, the primary reads (show, list, render, check, member find, cell members, view show, view list) refuse --json, so the one-value-two-renderings rule is not met and an AI must parse text tables; only batch and member read take --json. Refusals also miss the REFUSED status word, create reports one missing input per turn, and unknown names carry no nearest. A 10 would add a store-free or dry-run path, --json on every verb, one-turn refusals that name every missing input, and nearest-name hints.
 
 ## Findings
