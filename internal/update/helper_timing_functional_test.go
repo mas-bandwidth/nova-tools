@@ -9,7 +9,6 @@ import (
 )
 
 func init() {
-	fakeBusHang = func() { time.Sleep(30 * time.Second) }
 	helperTiming = func(a []string) bool {
 		switch a[0] {
 		case "hang":

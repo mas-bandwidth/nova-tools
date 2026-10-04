@@ -13,8 +13,7 @@ import (
 // #525: watch --adopt runs the coordinator's own adoption pass after every
 // rebuild and escalates refusals.
 func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
-	log := fakeBusPath(t)
-	bus := t.TempDir()
+	fb := newFakeRedisBus("coordinator", "duty")
 	checks := filepath.Join(t.TempDir(), "checks.tsv")
 	rows := []string{
 		"check\tcommand\towner",
@@ -27,9 +26,8 @@ func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
 	if err := os.WriteFile(checks, []byte(strings.Join(rows, "\n")+"\n"), 0600); err != nil {
 		require.NoError(t, err, err)
 	}
-	c, out, errs := run(t, Environment{}, "watch", "--adopt", checks,
-		"--bus", bus, "--remote", "origin", "--branch", "main",
-		"--as", "coordinator", "--to", "duty")
+	c, out, errs := run(t, fb.env(), "watch", "--adopt", checks,
+		"--redis", "127.0.0.1:6381", "--as", "coordinator", "--to", "duty")
 	combined := out + "\n" + errs
 	if c != 1 {
 		require.EqualValuesf(t, 1, c, "want exit 1 with one refusal, got %d:\n%s", c, combined)
@@ -42,13 +40,9 @@ func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
 	need(t, combined, "ADOPT ESCALATE check=snapshot-report")
 	need(t, combined, "ADOPT DONE sha=", "ok=4 refused=1")
 	need(t, combined, "ADOPT SENT")
-	b, err := os.ReadFile(log)
-	if err != nil {
-		require.NoErrorf(t, err, "coordinator posted no bus receipt: %v", err)
-	}
-	if strings.Count(string(b), "prepare\n") != 1 || strings.Count(string(b), "send\n") != 1 {
-		require.Failf(t, "", "adoption receipt was not posted once via prepare+send:\n%s", string(b))
-	}
+	msgs := fb.log(t)
+	require.Lenf(t, msgs, 1, "adoption receipt was not posted once on the bus")
+	require.Equal(t, "coordinator", msgs[0].From)
 }
 
 // The contract lives in SPEC-UPDATE.md rule 27; a paragraph renamed out of the
