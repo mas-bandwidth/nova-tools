@@ -296,7 +296,15 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			err = writeQueueFile(dir, states)
 		}
 	}()
-	for _, p := range packets {
+	for i, p := range packets {
+		if p.Kind == "read" {
+			d, f, err := a.friendReadOf(ctx, st, name, dir, p, cards[i], say)
+			delivered, finished = delivered+d, finished+f
+			if err != nil {
+				return delivered, finished, err
+			}
+			continue
+		}
 		job := friendJobOf(p)
 		in, why, err := friendInbox(dir, p)
 		if err != nil {
@@ -353,6 +361,77 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		}
 		say(fmt.Sprintf("FRIEND-CARD FINISHED friend=%s card=%s result=%s head=%s: %s", name, p.Card, result, cmp.Or(r.Head, "-"), oneline.Escape(oneline.Cap(r.Report, 200))))
 	}
+	return delivered, finished, nil
+}
+
+// friendReadOf delivers one frontier read and closes it from the friend's
+// report. The brief is the read's (sprint.FriendReadBrief: the AS A READ
+// section, the attempt's branch, start commit and head, deadline two hours
+// on the sprint clock), and the close retires the fleet card
+// (sprint.FriendReadClose). It is not a work finish. The job directory is
+// the card id, the path the ask writes, so a brief already there is kept.
+func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card, say func(string)) (delivered, finished int, err error) {
+	q := p
+	q.Epoch = 0 // inbox/<card id>, the ask's path; StoredID would be another directory after epoch 0
+	in, why, err := friendInbox(dir, q)
+	if err != nil {
+		return 0, 0, err
+	}
+	if why != "" {
+		say(fmt.Sprintf("FRIEND-READ REFUSED friend=%s card=%s: %s; nothing was written", name, oneline.Field(p.Card), oneline.Escape(why)))
+		return 0, 0, nil
+	}
+	brief := filepath.Join(in, "BRIEF.md")
+	if _, err := os.Lstat(brief); errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(in, 0o755); err != nil {
+			return 0, 0, err
+		}
+		branch, head, start := p.WorkBranch, p.Head, ""
+		if c != nil {
+			branch, head = cmp.Or(branch, c.F("branch")), cmp.Or(head, c.F("head"))
+			start = c.F("start")
+		}
+		var deadline time.Time
+		if st.Now != nil {
+			deadline = st.Now().Add(sprint.FriendReadDeadline)
+		}
+		text := sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline)
+		switch err := atomicfile.WriteFile(brief, []byte(text), 0o644, atomicfile.NoReplace()); {
+		case err == nil:
+			delivered++
+			say(fmt.Sprintf("FRIEND-READ DELIVERED friend=%s card=%s job=%s", name, p.Card, oneline.Field(p.Card)))
+		case !errors.Is(err, fs.ErrExist):
+			return delivered, finished, err
+		}
+	} else if err != nil {
+		return delivered, finished, err
+	}
+	report, why, err := friendReadReport(dir, p.Card)
+	if err != nil {
+		return delivered, finished, err
+	}
+	if report == "" {
+		if why != "" {
+			say(fmt.Sprintf("FRIEND-READ REFUSED friend=%s card=%s: %s; the card is left working, and the next sync reads it again", name, oneline.Field(p.Card), oneline.Escape(why)))
+		}
+		return delivered, finished, nil
+	}
+	primary, reportCopy, epoch := p.Primary, report, p.Epoch
+	step := store.Step{Verb: "read", Named: true, Mirrors: true, Load: []string{sprint.Fleet, sprint.Work},
+		Extras: sprint.NamedExtras(sprint.Fleet, []string{p.Card}), Actor: sprint.FriendRow(name), Epoch: &epoch,
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			return sprint.FriendReadClose(s, name, primary, reportCopy)
+		}}
+	res, err := st.Run(ctx, step)
+	if err != nil {
+		return delivered, finished, err
+	}
+	if len(res.Refused) > 0 {
+		say(fmt.Sprintf("FRIEND-READ REFUSED friend=%s card=%s: %s", name, p.Card, oneline.Escape(res.Refused[0].Why)))
+		return delivered, finished, nil
+	}
+	finished++
+	say(fmt.Sprintf("FRIEND-READ finished friend=%s card=%s", name, p.Card))
 	return delivered, finished, nil
 }
 

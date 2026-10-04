@@ -318,7 +318,11 @@ func (s *Snapshot) NextTier(c *Card) string {
 // fine?"), raised to the read tier set for its stream or the sprint when that is
 // stronger (settings.go; nova-tools#5096 item 27), never lowered. A card that pins
 // a model and names no tier is read on flash; a frontier card, a tier no route
-// serves, is read on pro.
+// serves, is read on pro. The value returned is that collapse: a route drawn for the
+// card is named from it, and route_cover's pin of the collapse (frontier to the
+// strongest tier a route serves, heavy on the harness this tree has not landed) is
+// not edited here. The tick's ask does not draw that route for a card whose read
+// tier before the collapse is frontier (friend_read.go): that ask is a friend's.
 func (s *Snapshot) readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	t := cardTier(pr, m)
