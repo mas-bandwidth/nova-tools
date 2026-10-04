@@ -462,8 +462,8 @@ type whereView struct {
 	Summary string    `json:"summary"`
 	// Tables is table -> row -> column -> cell as printed (a string); with --costs a work
 	// row carries besides its cells `per_landed` (dollars per landed card), `tiers` (its
-	// cards by their briefs' tier, counts) and `cost_by_tier` (its spend by the tier each
-	// attempt and read ran on, money strings), from store.TierCosts (sprint/cost_view.go).
+	// cards by their briefs' tier, counts) and `cost_by_tier` (its landed cost by the tier each
+	// attempt and read ran on, money strings adding up to its cost cell), from store.TierCosts (sprint/cost_view.go).
 	Tables map[string]map[string]map[string]any `json:"tables"`
 	// Tiers counts every card by its brief's tier (flash, pro, heavy, or whatever word the
 	// brief carries), with --costs; absent without it or when the cards could not be read.
@@ -561,8 +561,8 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 }
 
 // withTierCosts puts the tier counts on the view and, on each work row with cards, the
-// stream's `tiers`, `cost_by_tier` and `per_landed`, and the diagnostic `cost_no_tier` and
-// `no_tier_routes` when some record's tier cannot be found (sprint.TierCosts).
+// stream's `tiers`, `cost_by_tier` (its landed cost by tier, adding up to the cost cell) and
+// `per_landed` (sprint.TierCosts).
 func withTierCosts(v *whereView, tiers map[string]int, streams map[string]sprint.TierCosts) {
 	v.Tiers = tiers
 	for s, row := range v.Tables[sprint.Work] {
@@ -576,9 +576,6 @@ func withTierCosts(v *whereView, tiers map[string]int, streams map[string]sprint
 		}
 		if len(tc.CostByTier) > 0 {
 			row["cost_by_tier"] = tc.CostByTier
-		}
-		if tc.NoTierCost != "" { // a diagnostic, never a tier (sprint.TierCosts)
-			row["cost_no_tier"], row["no_tier_routes"] = tc.NoTierCost, tc.NoTierRoutes
 		}
 	}
 }

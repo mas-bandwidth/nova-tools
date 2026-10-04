@@ -224,11 +224,15 @@ summary line and `(tick late <n>s)`, n the whole seconds since that tick, and it
 keep the machine line where silence reads `STOPPED`. `where --json --costs` adds the cost
 visibility, read from every card's cost records in one read of the work table's cards,
 which the plain view never makes: `tiers` at the top (every card by its brief's tier) and
-on each work row `tiers`, `cost_by_tier` (the stream's spend by the tier each attempt ran
-on, so a flash card escalated to pro shows both; a record with no tier of its own takes its
-route's, and only tiers are keys) and `per_landed` (dollars per landed card), and, when some
-record's tier cannot be found (a data bug: every route has a tier), the diagnostic
-`cost_no_tier` and `no_tier_routes`; a cell stays a string. Every count cell is an ordered set.
+on each work row `tiers`, `cost_by_tier` and `per_landed` (dollars per landed card); a cell
+stays a string. `cost_by_tier` splits the row's cost cell, its landed cards' costs, by the
+tier each attempt and read ran on (a flash card escalated to pro shows both), and its tiers
+add up to the cost cell to the cent (sprint.SplitCents). Only flash, pro, heavy and frontier
+are keys: every dollar has a tier (the owner, 2026-10-04). A record's tier is its own; else
+its route's in the route table; else its route name's first word when that is a tier; else
+its model's in the route table; else its model family's (Opus, Sonnet heavy; Fable, Astra,
+Argon frontier); else the tier its card is on (sprint.RecordTier). What a card's cost holds
+that no listed record does (records past the 64 a card lists) is on the card's tier. Every count cell is an ordered set.
 The summary line shows `held=N` after the percent when cards are held back:
 waiting behind a sentinel not released, admitted held (`add --held`), or
 waiting on one of those through a need (`sprint.HeldBack`, counted by the
