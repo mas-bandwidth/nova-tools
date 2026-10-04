@@ -99,7 +99,7 @@ func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*P
 	_ = cfg
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("postgres: %w", err)
+		return nil, fmt.Errorf("postgres could not open (%T)", err)
 	}
 	db.SetMaxOpenConns(2)
 	pingCtx := ctx
