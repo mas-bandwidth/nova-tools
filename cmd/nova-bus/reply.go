@@ -395,7 +395,7 @@ func replyBody(path string, budget int, stderr io.Writer) ([]byte, int) {
 		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s cannot be read: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return nil, 2
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file was opened only for reading
 	buf := make([]byte, budget+1)
 	n, err := io.ReadFull(f, buf)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
