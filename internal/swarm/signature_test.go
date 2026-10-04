@@ -31,7 +31,6 @@ func TestEachSignatureIsDetected(t *testing.T) {
 	t.Parallel()
 
 	for _, s := range failureSignatures {
-		s := s
 		t.Run(s.signature, func(t *testing.T) {
 			sig, class, ok := findFailureSignature([]byte("a run's tail\n" + s.signature + "\nmore\n"))
 			require.True(t, ok, "the signature %q was not detected", s.signature)

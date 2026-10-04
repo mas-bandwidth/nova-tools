@@ -335,12 +335,10 @@ func (m *Mem) tableKeys(name string, t *memTable) map[string]func() {
 		ep := ep
 		out[ntable.RowsKeyAt(name, e)] = func() { ep.rows = nil }
 		for _, row := range ep.rows {
-			row := row
 			out[ntable.RowKeyAt(name, row, e)] = func() { delete(ep.texts, row) }
 		}
 	}
 	for id, mm := range t.members {
-		id, mm := id, mm
 		out[memberPrefix(t.def)+id] = func() { delete(t.members, id) }
 		if mm.placed {
 			out[ntable.CellKeyAt(name, mm.row, mm.col, mm.epoch)] = func() {

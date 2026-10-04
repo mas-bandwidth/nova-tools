@@ -127,7 +127,6 @@ func TestBatchCLIRefusesMalformedRawManifestsWithZeroMutations(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			code, stdout, stderr := runTable("batch", "--redis", addr, tc.rawJSON)
 			require.EqualValues(t, 2, code, "expected exit code 2, got %d (stdout: %q, stderr: %q)", code, stdout, stderr)

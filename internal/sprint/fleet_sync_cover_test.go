@@ -87,7 +87,6 @@ func TestFleetSyncCoverHeldInInventory(t *testing.T) {
 			held: nil,
 		},
 	} {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, c.held, HeldInInventory(c.build(t), c.want))

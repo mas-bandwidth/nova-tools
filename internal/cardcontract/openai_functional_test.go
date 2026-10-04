@@ -15,7 +15,6 @@ import (
 func TestOpenAIProfileExplainsItsWorkAndReadFrames(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{"work", "read"} {
-		kind := kind
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			r := newRig(t, "openai", kind)
@@ -151,7 +150,6 @@ func TestOpenAIRefusesWrongKindGhCommands(t *testing.T) {
 		{name: "create on read", kind: "read", line: `gh pr create --title "wrong kind" --body-file "BODY"`},
 		{name: "review on work", kind: "work", line: `gh pr review --approve --body-file "BODY"`},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := newRig(t, "openai", tc.kind)
@@ -202,7 +200,6 @@ func TestOpenAIRefusesUnrepresentablePushes(t *testing.T) {
 		{name: "extra ref", line: "git push origin HEAD main"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := newRig(t, "openai", "work")
@@ -230,7 +227,6 @@ func TestOpenAIRefusesUnsupportedTargetsAndOptionsBeforeFinishing(t *testing.T) 
 		{name: "unknown", option: "--mystery"},
 	}
 	for _, tc := range createOptions {
-		tc := tc
 		t.Run("create/"+tc.name, func(t *testing.T) {
 			t.Parallel()
 			work := newRig(t, "openai", "work")
@@ -256,7 +252,6 @@ func TestOpenAIRefusesUnsupportedTargetsAndOptionsBeforeFinishing(t *testing.T) 
 		{name: "unsupported diff option", line: func(string) string { return "gh pr diff --patch" }},
 	}
 	for _, tc := range readOptions {
-		tc := tc
 		t.Run("read/"+tc.name, func(t *testing.T) {
 			t.Parallel()
 			read := newRig(t, "openai", "read")

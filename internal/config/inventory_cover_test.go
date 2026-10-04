@@ -35,7 +35,6 @@ func TestInventoryCoverHas(t *testing.T) {
 		{"empty name", "", false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, inv.Has(tc.host))
@@ -72,7 +71,6 @@ func TestInventoryCoverUnknownHostError(t *testing.T) {
 		{"with known hosts", &UnknownHostError{Name: "ghost", Known: []string{"bench-alpha"}}, "no machine row named ghost"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.err.Error())

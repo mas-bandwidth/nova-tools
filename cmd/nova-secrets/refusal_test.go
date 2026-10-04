@@ -115,7 +115,6 @@ func TestEveryVerbHelpStatesItsEffectAndWhatEachFlagWants(t *testing.T) {
 	t.Parallel()
 	bin := buildNovaSecrets(t)
 	for _, verb := range []string{"exec", "names", "check", "gate", "keygen", "place", "placed", "seal", "seat add", "seat inject", "version"} {
-		verb := verb
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
 			stdout, stderr, code := runNovaSecrets(bin, append(strings.Fields(verb), "-h")...)

@@ -124,7 +124,6 @@ func TestFetchRefusesACountThatDisagrees(t *testing.T) {
 		{name: "comments", page: issuePage(1, 5, false, 1)},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			fk := &fake{issues: tc.page}
@@ -181,7 +180,6 @@ func TestRefuseMutation(t *testing.T) {
 		{name: "empty document", doc: ``},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Error(t, RefuseMutation(tc.doc), "%q was not refused", tc.doc)

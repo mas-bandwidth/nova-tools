@@ -94,7 +94,6 @@ func TestTestverbhelpCoverRefusalProblemsNamesEveryBrokenRefusal(t *testing.T) {
 			return 2
 		}, "left entries under its temp dir"},
 	} {
-		row := row
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Contains(t, strings.Join(RefusalProblems(row.run, c, t.TempDir()), "\n"), row.want)
@@ -129,7 +128,6 @@ func TestTestverbhelpCoverBreadcrumbAcceptsFlagUsageOrRemedy(t *testing.T) {
 		{"carries a house remedy", "send REFUSED: no store; run: nova-sprint where", true},
 		{"says nothing useful", "something bad happened", false},
 	} {
-		row := row
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, row.want, breadcrumb(row.said))
@@ -155,7 +153,6 @@ func TestTestverbhelpCoverOkClosingReadsTheLastLineOnly(t *testing.T) {
 		{"a word with = is a field", "SEND DONE CODE=OK\n", false},
 		{"no output", "", false},
 	} {
-		row := row
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, row.want, okClosing(row.out))

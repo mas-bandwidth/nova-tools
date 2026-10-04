@@ -41,7 +41,6 @@ func TestMemberCoverDrainBound(t *testing.T) {
 		// the boundary: longest+LongStall lands exactly on DrainMost.
 		{"exactly at the cap", DrainMost - LongStall, DrainMost},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := DrainBound(tc.longest)
@@ -106,7 +105,6 @@ func TestMemberCoverLongestDeadline(t *testing.T) {
 			want:     5 * time.Minute,
 		},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			m := &Member{running: tc.running}
@@ -148,7 +146,6 @@ func TestMemberCoverLastPass(t *testing.T) {
 			want:  PassTimes{},
 		},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			m := &Member{spent: tc.spent}
@@ -172,7 +169,6 @@ func TestMemberCoverWaitLong(t *testing.T) {
 		// refusal: nothing in flight, so WaitLong returns at once.
 		{"no long work returns at once", false},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			m := &Member{}

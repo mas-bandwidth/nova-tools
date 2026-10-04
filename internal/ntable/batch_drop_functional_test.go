@@ -25,7 +25,6 @@ func asReplayed(ans []any) []any {
 func TestBatchDropRemovesTheOperationRecordsAndTheNameStartsAgain(t *testing.T) {
 	t.Parallel()
 	for _, verb := range []string{"drop", "drop --definition"} {
-		verb := verb
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
 			c, ctx := probeTable(t)

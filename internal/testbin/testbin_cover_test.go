@@ -26,7 +26,6 @@ func TestTestbinCoverPlaceCopy(t *testing.T) {
 		{name: "dst replaced", content: "new\n", dst: true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

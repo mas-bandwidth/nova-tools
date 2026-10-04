@@ -105,7 +105,6 @@ func TestDryRunIsInTheHelpOfEveryVerbThatTakesIt(t *testing.T) {
 	runNovaSecrets(bin, "version")
 
 	for _, verb := range []string{"place", "seal", "seat inject"} {
-		verb := verb
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
 			out, stderr, code := runNovaSecrets(bin, append(strings.Fields(verb), "-h")...)

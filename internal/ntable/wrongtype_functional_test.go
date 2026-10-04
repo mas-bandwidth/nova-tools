@@ -47,7 +47,6 @@ func requireWrongType(t *testing.T, what string, err error, key, kind string) {
 func TestWrongTypeAtAMemberKeyIsANamedRefusal(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{"string", "list", "set", "zset"} {
-		kind := kind
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			c, ctx := probeTable(t)

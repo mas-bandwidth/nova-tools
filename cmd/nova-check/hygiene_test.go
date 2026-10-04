@@ -535,7 +535,6 @@ func TestHygieneAcceptsEveryDeclaredKind(t *testing.T) {
 	kinds := hygiene.Kinds()
 	require.NotEmpty(t, kinds, "the tool declares no kinds at all")
 	for _, kind := range kinds {
-		kind := kind
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			var out, errb bytes.Buffer

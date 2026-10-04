@@ -122,7 +122,6 @@ func TestPgCoverRedact(t *testing.T) {
 		{"unparsable", "postgres://%zz", "(unparsed dsn)"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, Redact(tc.dsn))
@@ -164,7 +163,6 @@ func TestPgCoverFieldArg(t *testing.T) {
 		{"text", Field{Type: TypeText}, "x", "x"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, fieldArg(tc.f, tc.v))

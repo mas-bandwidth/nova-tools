@@ -236,7 +236,6 @@ func TestPositiveTimeoutUnderJobCapWitnesses(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.raw, func(t *testing.T) {
 			t.Parallel()
 

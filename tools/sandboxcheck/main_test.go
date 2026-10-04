@@ -120,7 +120,6 @@ func TestNoNetworkFromTheFlagAndFromTheVariable(t *testing.T) {
 		"variable not 1": {nil, env("NOVA_CHECK_NO_NETWORK", "yes"), false},
 		"neither":        {nil, env(), false},
 	} {
-		tc := tc
 		args := append(append([]string{}, tc.args...), "--scratch", scratch(t))
 		_, out, _, _ := invoke(t, args, tc.env)
 		if got := strings.Contains(out, "CHECK SKIP name=dns_resolves reason=no_network"); got != tc.skip {

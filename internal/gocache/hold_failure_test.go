@@ -40,7 +40,6 @@ func TestHoldReportsMeasurementFailures(t *testing.T) {
 		{name: "clean cache", dry: false, clean: true, wantFailed: 0, wantSize: 5 << 10},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join(t.TempDir(), "go-build")

@@ -187,7 +187,6 @@ func TestThePrivateSnapshotIsRemovedOnEveryPathOut(t *testing.T) {
 		{"decrypt fails", "-d) exit 1 ;;", "sops -d "},
 		{"name absent", "-d) printf 'OTHER: x\\n'; exit 0 ;;", "secret DEEPSEEK_API_KEY is not in "},
 	} {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			f := newPlaceFixture(t)

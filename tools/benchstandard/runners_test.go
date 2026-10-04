@@ -60,7 +60,6 @@ func TestListenerCountMustBeExactlyOne(t *testing.T) {
 		"none": {"", "0"},
 		"two":  {"", "2"},
 	} {
-		name, tc := name, tc
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			r := withRunner(t, "3", goodUnit, "")
@@ -130,7 +129,6 @@ func TestAListenerIsUnderItsUnitByCgroupOrByMainPID(t *testing.T) {
 		{"no cgroup and no systemctl", func(r *runnerBench) {}, true, ""},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := withRunner(t, "1", goodUnit, "")
@@ -247,7 +245,6 @@ func TestRunnerUnitFileStanzas(t *testing.T) {
 			"nova-runner-1.service unit file lacks TimeoutStopSec=30s in"},
 	}
 	for name, tc := range cases {
-		name, tc := name, tc
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			r := withRunner(t, "1", tc.unit, "")

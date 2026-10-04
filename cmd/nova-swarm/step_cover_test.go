@@ -32,7 +32,6 @@ func TestStepCover(t *testing.T) {
 	self, err := os.Executable()
 	require.NoError(t, err, "os.Executable is the executor installTreeSteps returns")
 	for name, c := range installTreeStepsCoverCards {
-		c := c
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			slotDir := t.TempDir()

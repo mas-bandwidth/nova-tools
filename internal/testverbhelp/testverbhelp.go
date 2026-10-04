@@ -185,7 +185,6 @@ func Problems(run Run, c Case, spelling, dir string) []string {
 func HelpVerb(t *testing.T, run Run, tool string, verbs ...string) {
 	t.Helper()
 	for _, verb := range verbs {
-		verb := verb
 		t.Run("help "+verb, func(t *testing.T) {
 			t.Parallel()
 			var viaHelp, viaFlag, stderr bytes.Buffer

@@ -32,7 +32,6 @@ func runConcurrentAppends(t *testing.T, store, session, id string, prose []strin
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := range prose {
-		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

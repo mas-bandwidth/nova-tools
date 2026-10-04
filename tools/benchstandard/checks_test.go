@@ -475,7 +475,6 @@ func TestSandboxNetworkRows(t *testing.T) {
 		{"not a status: the sandbox did not run curl", runResult{stdout: "nova-sandbox: refused"}, ""},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := conformingBench(t)
@@ -597,7 +596,6 @@ func TestNovaBinRows(t *testing.T) {
 func TestPlaintextKeyRows(t *testing.T) {
 	t.Parallel()
 	for _, rel := range []string{".local/share/opencode/auth.json", ".config/deepseek/env"} {
-		rel := rel
 		t.Run(rel, func(t *testing.T) {
 			t.Parallel()
 			b := conformingBench(t)
@@ -700,7 +698,6 @@ func TestDiskHeadroomDriftsAndNamesTheThreeLargest(t *testing.T) {
 			"not a count": out("Filesystem\n/dev/x 1 1 lots 1% /\n"),
 			"df fails":    {err: errNoAnswer},
 		} {
-			res := res
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				b := conformingBench(t)

@@ -61,7 +61,6 @@ func TestOnboardingCoverExampleLinesReturnsTheToolLinesUnderTheHeadingCollapsed(
 		},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.desc, func(t *testing.T) {
 			t.Parallel()
 
@@ -113,7 +112,6 @@ func TestOnboardingCoverExampleLinesRefusesABannerWithoutARunnableBlock(t *testi
 		},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.desc, func(t *testing.T) {
 			t.Parallel()
 

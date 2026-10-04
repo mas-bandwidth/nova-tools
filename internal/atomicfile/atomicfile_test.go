@@ -62,7 +62,6 @@ func TestWriteSuccessAndFileModes(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -514,7 +513,6 @@ func TestStepFailureInjection(t *testing.T) {
 	steps := []string{"create", "write", "chmod", "sync", "close", "rename"}
 
 	for _, step := range steps {
-		step := step
 		t.Run(step+"_failure_target_not_preexisting", func(t *testing.T) {
 			t.Parallel()
 			testStepFailure(t, step, false)

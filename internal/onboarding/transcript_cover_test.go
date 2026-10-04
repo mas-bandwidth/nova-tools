@@ -42,7 +42,6 @@ func TestTranscriptCoverElideReturnsANormThatElidesItsPattern(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.desc, func(t *testing.T) {
 			t.Parallel()
 
@@ -88,7 +87,6 @@ func TestTranscriptCoverProblemSpeaksItsMessageAsValueAndError(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.desc, func(t *testing.T) {
 			t.Parallel()
 

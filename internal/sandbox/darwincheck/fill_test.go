@@ -193,7 +193,6 @@ func TestOptionalRootsFollowXcodeSelectLink(t *testing.T) {
 		}, []string{app}},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := optionalRoots(tc.fs, "/nowhere")

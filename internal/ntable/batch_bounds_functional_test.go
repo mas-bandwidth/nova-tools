@@ -93,7 +93,6 @@ func replyNumber(v any) string { return fmt.Sprint(v) }
 func TestBatchBoundsAreOneSet(t *testing.T) {
 	t.Parallel()
 	for _, bc := range boundCases() {
-		bc := bc
 		t.Run(bc.name, func(t *testing.T) {
 			t.Parallel()
 			c, ctx := probeTable(t)

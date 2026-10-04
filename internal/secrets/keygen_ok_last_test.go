@@ -23,7 +23,6 @@ func TestKeygenPrintsTheOKLineAfterTheRuleBlock(t *testing.T) {
 		{"with --store", "age1recovery", false},
 		{"without --store", "<recovery key>", true},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			lines := keygenLines("rowan", "/k/rowan.key", "age1pub", tc.recoveryKey, tc.placeholder)

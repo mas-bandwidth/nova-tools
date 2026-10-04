@@ -39,7 +39,6 @@ func TestOneRefusalNamesEveryMissingFlag(t *testing.T) {
 		{"gate", func() string { line, _ := RunGate(GateInput{}); return line }, []string{"--store", "--base", "--head", "run: nova-secrets gate -h"}},
 		{"exec", func() string { _, err := RunExec("", "", "", "", "", nil, nil); return errText(err) }, []string{"--store", "--as", "--key", "--sops", "--only", "no command after '--'", "--as worker"}},
 	} {
-		c := c
 		t.Run(c.verb, func(t *testing.T) {
 			t.Parallel()
 			got := c.run()
@@ -78,7 +77,6 @@ func TestOneRefusalNamesEveryWayADirectoryIsNotAStore(t *testing.T) {
 			return err
 		}},
 	} {
-		c := c
 		t.Run(c.verb, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
@@ -209,7 +207,6 @@ func TestAnAbsentSeatNamesTheSeatsAndTheVerbThatStartsOne(t *testing.T) {
 		{"no seat yet", nil, []string{"holds no seat file yet", "run: nova-secrets seal --store "}},
 		{"other seats", []string{"lead", "worker"}, []string{"its seats are lead, worker", "pass --as one of them", "run: nova-secrets seal --store "}},
 	} {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			store := t.TempDir()

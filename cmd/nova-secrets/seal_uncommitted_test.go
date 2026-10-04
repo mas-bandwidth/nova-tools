@@ -30,7 +30,6 @@ func TestSealDryRunOnAnUncommittedStoreRefusesWithTheRemedy(t *testing.T) {
 		{"the banner", []string{"help"}},
 		{"seal -h", []string{"seal", "-h"}},
 	} {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			var stdout, stderr strings.Builder

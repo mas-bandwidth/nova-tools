@@ -50,7 +50,6 @@ func TestSystemCoverLookPathFindsAProgramAndRefusesAnAbsentOne(t *testing.T) {
 		{"a name on no PATH entry is refused", "nova-cover-absent-program", false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, ok := OSSystem{}.LookPath(tc.prog)
@@ -86,7 +85,6 @@ func TestSystemCoverIsSocketRefusesAPathThatIsNotASocket(t *testing.T) {
 		{"an absent path is not a socket", filepath.Join(dir, "absent")},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.False(t, OSSystem{}.IsSocket(tc.path))

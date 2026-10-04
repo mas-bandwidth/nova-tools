@@ -29,7 +29,6 @@ func TestWidthCoverOfFindsTheNamedMachine(t *testing.T) {
 		{"last row of the list", "m4", MachineWidth{Machine: "m4", Width: 2}},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, found := WidthOf(ws, tc.ask)

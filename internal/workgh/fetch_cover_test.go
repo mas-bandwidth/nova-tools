@@ -102,7 +102,6 @@ func TestFetchCoverRepos(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			q := &reposFake{replies: tc.replies}
@@ -182,7 +181,6 @@ func TestFetchCoverReposRefusals(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			q := &reposFake{replies: tc.replies}

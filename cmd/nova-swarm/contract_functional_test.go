@@ -61,7 +61,6 @@ func TestTheScriptedChildEndToEnd(t *testing.T) {
 		t.Skip("the shims are POSIX sh; a windows bench writes none")
 	}
 	for _, family := range cardcontract.Families {
-		family := family
 		t.Run(family, func(t *testing.T) {
 			t.Parallel()
 			scriptedChild(t, family, false)
@@ -78,7 +77,6 @@ func TestTheScriptedChildEndToEndInsideTheWall(t *testing.T) {
 		t.Skipf("the repository builds real wall backends only on Darwin and Linux, not %s", runtime.GOOS)
 	}
 	for _, family := range []string{"claude", "openai"} {
-		family := family
 		t.Run(family, func(t *testing.T) {
 			t.Parallel()
 			scriptedChild(t, family, true)

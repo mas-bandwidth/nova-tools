@@ -56,7 +56,6 @@ func TestEncodeDecodeIsTheIdentity(t *testing.T) {
 		{name: "recorded", tree: recorded},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tree := tc.tree(t)
@@ -107,7 +106,6 @@ func TestTheReaderRefusesWhatTheWriterWouldNotWrite(t *testing.T) {
 		{"unsorted", `("a b" "z\"q")`, `("z\"q" "a b")`, "must be sorted"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			require.Contains(t, s, tc.from, "%s: the fixture lacks %q", tc.name, tc.from)
@@ -158,7 +156,6 @@ func TestEncodeRefusesALossyValue(t *testing.T) {
 		{"ref no kind but a url", func(t *workfile.Tree) { t.Repos[1].Issues[0].References[1].URL = "u" }},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tr := hard()
@@ -266,7 +263,6 @@ func TestDiffSeesRepeatsAndOrder(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			localWant := hard()
