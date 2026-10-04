@@ -101,6 +101,9 @@ func (g *Grok) Deliver(ctx context.Context, text string) (int, error) {
 // session whose pid is not in the listing is a stale record, not a session.
 // No window in dir is ErrNoSession.
 func WakeOf(active, listing, dir, wake string) (string, error) {
+	if wake != "" && (!filepath.IsAbs(wake) || strings.ContainsAny(wake, " \t\r\n")) {
+		return "", fmt.Errorf("the monitor's wake path must be absolute")
+	}
 	var sessions []struct {
 		PID int    `json:"pid"`
 		Cwd string `json:"cwd"`
@@ -121,10 +124,12 @@ func WakeOf(active, listing, dir, wake string) (string, error) {
 			continue
 		}
 		parent[pid] = ppid
-		if filepath.Base(f[2]) == "tail" {
-			for _, a := range f[3:] {
+		if len(f) >= 7 && filepath.Base(f[2]) == "tail" && f[3] == "-n" && f[4] == "0" && f[5] == "-F" {
+			for _, a := range f[6:] {
 				if strings.HasSuffix(a, ".wake") {
-					tails[pid] = a
+					// ps does not preserve argv boundaries: keep the whole operand
+					// so a path with spaces cannot become a different absolute file.
+					tails[pid] = strings.Join(f[6:], " ")
 				}
 			}
 		}
@@ -137,11 +142,14 @@ func WakeOf(active, listing, dir, wake string) (string, error) {
 		}
 		open++
 		for pid, file := range tails {
-			if wake != "" && file != wake {
-				continue
-			}
 			for p, hops := pid, 0; p > 1 && hops < 64; p, hops = parent[p], hops+1 {
 				if p == s.PID {
+					if !filepath.IsAbs(file) || strings.ContainsAny(file, " \t\r\n") {
+						return "", fmt.Errorf("the monitor's wake path must be absolute")
+					}
+					if wake != "" && file != wake {
+						break
+					}
 					return file, nil
 				}
 			}

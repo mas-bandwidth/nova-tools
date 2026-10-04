@@ -93,6 +93,43 @@ func TestWakeOfRefusesWhatIsNotAnOpenSessionWithAMonitor(t *testing.T) {
 	assert.ErrorContains(t, err, "active_sessions.json: not a JSON list")
 }
 
+func TestGrokRefusesAmbiguousMonitorWakePathsWithoutWriting(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"relative", "space before suffix", "truncated absolute", "named truncated absolute", "named relative", "named space"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home, dir, wake, listing := grokHouse(t)
+			monitor, named := wake, ""
+			switch name {
+			case "relative":
+				monitor = "relative.wake"
+			case "space before suffix":
+				monitor = filepath.Join(home, "two words.wake")
+			case "truncated absolute", "named truncated absolute":
+				monitor = wake + " trailing"
+				if name == "named truncated absolute" {
+					named = wake
+				}
+			case "named relative":
+				named = "relative.wake"
+			case "named space":
+				named = filepath.Join(home, "two words.wake")
+			}
+			fe := &fakeExec{out: strings.ReplaceAll(listing, wake, monitor)}
+			d, err := NewDeliverer("grok", dir, named, fe.run, nil)
+			require.NoError(t, err)
+			d.(*Grok).Home = home
+			_, err = d.Deliver(context.Background(), "must not append")
+			require.EqualError(t, err, "the monitor's wake path must be absolute")
+			got, err := os.ReadFile(wake)
+			require.NoError(t, err)
+			assert.Equal(t, "INBOX NOTE id=old\n", string(got))
+			require.Len(t, fe.calls, 1)
+			assert.Equal(t, []string{dir, "ps", "-axww", "-o", "pid=,ppid=,args="}, fe.calls[0], "only the injected read-only listing runs; no delivery process starts")
+		})
+	}
+}
+
 func TestWakeLineIsOneLine(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "nova-friend: hello", WakeLine("hello\n"))

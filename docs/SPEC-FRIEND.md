@@ -104,7 +104,11 @@ in `--dir` in the harness's `~/.grok/active_sessions.json` (pid and cwd), the
 as one line, `nova-friend: <text>` with each newline shown as ` ⏎ ` (the
 monitor makes an event per line, and a flood of lines is how the harness
 stops a monitor). `--session`, for grok, names the wake file, which must be
-the one tailed. The delivery is accepted at exit 0 once the line is in the
+the one tailed. The monitor uses `tail -n 0 -F <file>.wake`; its wake path
+must be absolute and contain no whitespace. Since `ps` does not preserve
+argument boundaries, ambiguous or multiple operands refuse with
+`the monitor's wake path must be absolute` rather than selecting a truncated
+path. The delivery is accepted at exit 0 once the line is in the
 file under a running tail; the turn runs after the adapter returns, since
 nothing hands its end back, so a second message can land during a turn and
 is the next event. Refused, with the line to run in the session, when no
