@@ -156,7 +156,7 @@ func spillVerb(d deps) tool.Verb {
 					c.Problem(fmt.Sprintf("--ttl %q is not a duration (try 10m)", c.Str("ttl")))
 				}
 				for _, e := range keyErrors(c.Str("owner"), c.Str("name"), ttl) {
-					if !(err != nil && e == errNoTTL) {
+					if err == nil || e != errNoTTL {
 						c.Problem(e.Error())
 					}
 				}
