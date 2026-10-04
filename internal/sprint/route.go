@@ -320,13 +320,16 @@ func (s *Snapshot) NextTier(c *Card) string {
 // readers being conservatively the same tier as the work being done seems
 // fine?"), raised to the read tier set for its stream or the sprint when that is
 // stronger (settings.go; nova-tools#5096 item 27), never lowered. A card that pins
-// a model and names no tier is read on flash; a frontier card, a tier no route
-// serves, is read on pro.
+// a model and names no tier is read on flash. A heavy card is read on heavy. A frontier
+// card, a tier no route serves, is read on heavy, the strongest tier a route serves: a
+// read on pro would be weaker than the writer, which item 27 refuses. (No friend takes the
+// read: a friend's card is a primary dealt to her inbox, and the readers of the reader
+// table are machines; docs/SPEC-SPRINT.md, reads.)
 func (s *Snapshot) readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	t := cardTier(pr, m)
 	if t == cardhdr.RouteFrontier {
-		t = cardhdr.RoutePro
+		t = cardhdr.RouteHeavy
 	}
 	if set := s.readTierSetting(pr.Row); set != "" {
 		t = stronger(t, set)

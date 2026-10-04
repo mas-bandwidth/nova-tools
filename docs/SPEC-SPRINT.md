@@ -1383,7 +1383,7 @@ id (`--op`) returns the original result, with no second counter or notification.
 - A card's reads are counted by its tier (the owner, 2026-10-02, cost rule 4,
   nova-tools#5174: "Reads: one cold read per flash card on a flash route; two
   per pro card; readers still equal workers per machine"): a flash card needs
-  ONE read, a pro card (or a frontier card, read on pro) TWO, from two
+  ONE read, a pro card (or a heavy card, or a frontier card, read on heavy) TWO, from two
   different readers (`sprint.ReadsNeeded`). The tier is the card's own, the tier
   it is on (section 5, flash first: flash at its first deal on a route, then the
   tier it escalated to, or the tier a rework recorded; its ceiling, line 1's
@@ -1441,8 +1441,9 @@ id (`--op`) returns the original result, with no second counter or notification.
   (`route`, `model`, `tokens`, `usd`, `deadline`), and `tier`, the tier it is drawn
   from: the tier of the card it reads, the tier the deal draws that card's
   work from (flash first, the tier it escalated to after; a card that pins a
-  model is read on line 1's tier, flash when it names none; a frontier card, a
-  tier no route serves, is read on pro; the owner, 2026-10-01: "i think readers being
+  model is read on line 1's tier, flash when it names none; a heavy card, heavy; a frontier card, a
+  tier no route serves, is read on heavy, the strongest tier a route serves (a read on pro
+  would be weaker than the writer); the owner, 2026-10-01: "i think readers being
   conservatively the same tier as the work being done seems fine?"), raised
   to the read tier set for its stream (`stream set <s> --read-tier <tier>`, the
   stream's control card's `read_tier`) or else for the sprint (`set --read-tier
