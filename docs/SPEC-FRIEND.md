@@ -20,7 +20,9 @@ makes the friend up.
 
 - The bus: the friend's stream `bus2:to:<friend>` (SPEC-BUS2.md). A message is
   pending from the read until the session's turn ends at exit 0, so a daemon
-  that dies mid-turn is handed the message again when launchd restarts it.
+  that dies mid-turn is handed the message again once its claim opens, fifteen
+  minutes after the read (`ClaimAfter`, SPEC-BUS2.md: longer than the longest
+  turn, so a live daemon mid-turn is never handed its message twice).
 - The files, under the friend's working directory, one writer each:
   `.nova-friend/status.json` (the daemon: its state, rewritten whole every five
   seconds and when it changes; a reader calls the daemon up while the file is
@@ -68,7 +70,9 @@ challenge ends.
 Each second: the clock is stepped; when the session is free, one read of the
 stream (a ping is answered by the daemon at once and the message is handed to
 the adapter, which blocks for the whole turn, and acked when the turn ends at
-exit 0; any other exit leaves it pending), else one peek, so a ping that
+exit 0; any other exit leaves it pending, handed in again when its claim opens,
+and the third failure acks it with `given_up=true` on the record, so a message
+the session cannot take never comes back for ever), else one peek, so a ping that
 lands during a long turn is still answered at once by the daemon and pushed
 in once the session is free; the worker's result; one beat to the sprint
 server (`friend beat <friend>`, a plain beat: the queue, working and width

@@ -15,6 +15,13 @@ import (
 // loop's read block: one read of the stream per beat.
 const BeatEvery = time.Second
 
+// MaxDeliveries is how many times a message is handed into the session
+// before the daemon gives up on it: a turn that fails leaves the message
+// pending and the bus hands it in again once its claim opens (bus2.ClaimAfter);
+// the last failure acks it, with the failure on the record, so a message the
+// session cannot take never comes back for ever.
+const MaxDeliveries = 3
+
 // StatusErrorEvery bounds how often a status file that cannot be written
 // is said in the record: the loop goes on beating and delivering without it.
 const StatusErrorEvery = time.Minute
@@ -107,6 +114,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.m = Start(d.Now())
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	answered := map[string]bool{} // entries whose ping the daemon has ponged
+	failed := map[string]int{}    // entries whose turn failed, and how often
 	var queue []job
 	var busy *job
 	results := make(chan result, 1)
@@ -179,16 +187,27 @@ func (d *Daemon) Run(ctx context.Context) error {
 		select {
 		case r := <-results:
 			line := fmt.Sprintf("%s subject=%q took=%s exit=%d", now.UTC().Format(time.RFC3339), r.job.subject, now.Sub(r.job.started).Round(time.Millisecond), r.exit)
-			switch {
-			case r.err != nil:
+			if r.err != nil {
 				line += " error=" + fmt.Sprintf("%q", r.err.Error())
-			case r.exit == 0 && r.job.entry != "":
+			}
+			ok := r.err == nil && r.exit == 0
+			if r.job.entry != "" && !ok {
+				failed[r.job.entry]++
+				line += fmt.Sprintf(" deliveries=%d/%d", failed[r.job.entry], MaxDeliveries)
+				if failed[r.job.entry] >= MaxDeliveries {
+					line += " given_up=true"
+				}
+			}
+			if r.job.entry != "" && (ok || failed[r.job.entry] >= MaxDeliveries) {
 				if _, err := bus.AckEntry(ctx, d.Friend, r.job.entry); err != nil {
 					d.status.StoreError = err.Error()
 					line += " ack=failed"
 				} else {
-					d.status.Delivered++
+					if ok {
+						d.status.Delivered++
+					}
 					line += " acked=true"
+					delete(failed, r.job.entry)
 				}
 			}
 			d.Record(line)

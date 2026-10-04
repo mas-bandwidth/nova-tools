@@ -37,10 +37,12 @@ const (
 )
 
 // ClaimAfter is how long a delivered message stays with its reader before
-// recv hands it to another: the budget one delivery into a harness gets. A
-// live reader keeps its message; a dead one's is claimed after this
-// (SPEC-BUS2.md, the semantics; tla/Bus2.tla HeldStaysHeld).
-const ClaimAfter = 60 * time.Second
+// recv hands it to another. It is longer than the longest delivery a reader
+// makes (nova-friend's ten minute turn and the kill that ends it), so a live
+// reader mid-turn is never handed its message a second time; a dead one's
+// is claimed after this (SPEC-BUS2.md, the semantics; tla/Bus2.tla
+// HeldStaysHeld).
+const ClaimAfter = 15 * time.Minute
 
 // Consumer is the one consumer name of every reader: with ClaimAfter, who
 // holds an entry is told by its idle time, never by a name.

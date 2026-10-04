@@ -709,10 +709,10 @@ nova-bus2 names
 `send` prints `SEND OK id= to= cc= at=`: the id is the message's for ever. `peek`
 prints `PEEK OK pending= new=` and one `PEEK MESSAGE state= id= from= at=
 subject=` line per message waiting, moving nothing. `recv` prints the oldest
-message a reader lost (delivered, not acked, idle a minute), else the oldest new
-one: a `RECV OK id= from= to= cc= re= at= subject=` line, a blank line, the
-body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the message for
-a minute. With `--exec '<command>'` the command reads that same text on its
+message a reader lost (delivered, not acked, idle fifteen minutes), else the
+oldest new one: a `RECV OK id= from= to= cc= re= at= subject=` line, a blank
+line, the body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the
+message for fifteen minutes. With `--exec '<command>'` the command reads that same text on its
 stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
 non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
 answers `acked=false` for an id that is not pending, at exit 0. What a first run

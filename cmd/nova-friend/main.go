@@ -180,8 +180,9 @@ state: <dir>/.nova-friend/{status,pong}.json and deliver.log; the queue: <dir>/i
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				Detail: `The loop launchd runs (install writes it). Each second: one read of the stream (a message is
-pushed into the session as a turn and acked when the turn ends at exit 0; a PING is answered at
-once with a daemon-pong and pushed in), one beat to the sprint server, the session's pong file
+pushed into the session as a turn and acked when the turn ends at exit 0; a turn that fails leaves it
+pending, handed in again when its claim opens, and the third failure acks it, given_up=true on the
+record; a PING is answered at once with a daemon-pong and pushed in), one beat to the sprint server, the session's pong file
 read while a challenge is open, the status file written. No ping for ` + friend.Window.String() + `: the session
 is told "coordinator silent" once, and "coordinator back" when pings resume. Prints one RUN
 line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.`,

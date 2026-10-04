@@ -159,8 +159,8 @@ at=<RFC3339> subject=<s> line per message: pending is delivered and not acked, n
 				Effect:  tool.Delivery + ": moves one message to pending; with --exec it runs the command and acks on exit 0",
 				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> at=<RFC3339>
 subject=<s>, a blank line, the body; or RECV NONE at exit 1 when nothing waits. The oldest message a
-reader lost (delivered, not acked, idle a minute) comes first, else the oldest new one; the reader
-keeps it for a minute. --exec '<command>' runs the command with that same text on its stdin and
+reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
+reader keeps it for fifteen minutes. --exec '<command>' runs the command with that same text on its stdin and
 acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
 it pending and is RECV FAIL at exit 1. --forever loops, waiting for messages, and needs --exec; it
 stops on SIGINT or SIGTERM, or at the first command that fails.`,

@@ -174,6 +174,7 @@ func TestATurnThatExitsNonZeroLeavesTheMessagePending(t *testing.T) {
 	pending, _, err := r.bus.Peek(context.Background(), "bob")
 	require.NoError(t, err)
 	assert.Len(t, pending, 1, "exit 3 acks nothing")
+	assert.Contains(t, r.records[0], "deliveries=1/3")
 	assert.Equal(t, 0, r.last().Delivered)
 	assert.Contains(t, r.records[0], "exit=3")
 }
@@ -343,4 +344,41 @@ func TestAPongStampedBeforeTheAskByTheStoresClockStillAnswers(t *testing.T) {
 	s := r.last()
 	assert.Equal(t, Quiet, s.Challenge, "the pong for the current nonce ends the challenge whatever its stamp")
 	assert.Equal(t, 1, s.Pongs)
+}
+
+// A message whose turn fails is handed in again once its claim opens, and
+// not for ever: after MaxDeliveries it is acked with the failure on the
+// record (the finding of 2026-10-04: a poison message came back every
+// minute for ever).
+func TestAMessageThatFailsThreeTimesIsAckedAndTheRecordSaysSo(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.exit = 3
+	r.send(t, "ada", "poison", "x")
+	for _, step := range []int{4, 8} { // the claim opens between the failures
+		r.at[step] = func() { r.store.Advance(bus2.ClaimAfter) }
+	}
+	r.run(t, 14)
+	assert.Len(t, r.delivered, MaxDeliveries, "handed in three times, then given up")
+	pending, _, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending, "the third failure acks it")
+	failed := 0
+	for _, line := range r.records {
+		if strings.Contains(line, "exit=3") {
+			failed++
+		}
+	}
+	assert.Equal(t, MaxDeliveries, failed, "%v", r.records)
+	assert.Contains(t, r.records[len(r.records)-1], "deliveries=3/3 given_up=true acked=true")
+	assert.Equal(t, 0, r.last().Delivered, "a message given up on was never delivered")
+}
+
+// A live reader is never handed a message a second time: the bus keeps a
+// delivered message with its reader for longer than the longest turn and
+// the kill that ends it (the finding of 2026-10-04: a one-minute claim
+// against a ten-minute turn, delivered twice).
+func TestTheClaimOpensOnlyAfterTheLongestTurnIsOver(t *testing.T) {
+	t.Parallel()
+	assert.Less(t, DeliverBudget+KillDelay, bus2.ClaimAfter)
 }
