@@ -1580,6 +1580,8 @@ First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
 `--draft` needs `--as` and `--to` and sends nothing. `--send` delivers through
 nova-bus on the Redis bus; nova-bus reads the store from `NOVA_BUS_REDIS`.
+`--send` also needs `--bus`, `--remote` and `--branch`; they scope the snapshot
+and are not passed to nova-bus.
 `watch` posts its receipt when `--bus`, `--as` and `--to` are set, by the same
 `nova-bus send --as --to --subject --stdin`, and does not take `--remote` or
 `--branch`. A busy snapshot wants the current writer to finish or a larger
@@ -1719,7 +1721,7 @@ the wrapper and the `nova-secrets exec` line).
 
 ## nova-version
 
-`nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional prepared bus delivery. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
+`nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional delivery through nova-bus on the Redis bus. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
 ### First run
 
@@ -1805,6 +1807,8 @@ First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
 `--draft` needs `--as` and `--to` and sends nothing. `--send` delivers through
 nova-bus on the Redis bus; nova-bus reads the store from `NOVA_BUS_REDIS`.
+`--send` also needs `--bus`, `--remote` and `--branch`; they scope the snapshot
+and are not passed to nova-bus.
 A busy snapshot wants the current writer to finish or a larger `--budget`; never
 remove a lock file to break a live lock.
 
