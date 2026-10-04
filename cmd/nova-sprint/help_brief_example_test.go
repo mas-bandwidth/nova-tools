@@ -153,7 +153,7 @@ func TestAddAdmitsTheBriefExampleFromHelp(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/card.md"
 	require.NoError(t, os.WriteFile(path, []byte(briefExampleCard), 0o600))
-	code, out, errs := ta.do("add --stream s1 --one --count 1 --brief-file " + path)
+	code, out, errs := ta.do("add --one --stream s1 --count 1 --brief-file " + path)
 	assert.Equal(t, 0, code, "stderr: %s", errs)
 	assert.NotContains(t, errs, "LINT DRIFT")
 	assert.NotContains(t, errs, "fails the card lint")
@@ -165,7 +165,7 @@ func TestBriefAdmitsTheBriefExampleFromHelp(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --members m1 --readers r1")
-	ta.ok("add --stream s1 --one --count 1")
+	ta.ok("add --one --stream s1 --count 1")
 	dir := t.TempDir()
 	path := dir + "/card.md"
 	require.NoError(t, os.WriteFile(path, []byte(briefExampleCard), 0o600))
