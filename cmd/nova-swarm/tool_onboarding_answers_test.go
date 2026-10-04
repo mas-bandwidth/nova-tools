@@ -124,13 +124,7 @@ func TestAVerbsHelpCarriesItsOwnExitCodes(t *testing.T) {
 	t.Parallel()
 	assert.Contains(t, usage, "\n"+exitParagraph+"\n", "the banner's paragraph is the one a verb's -h replaces")
 	last := func(args ...string) string {
-		lines := strings.Split(strings.TrimSpace(swarmHelp(t, args...)), "\n")
-		for i := len(lines) - 1; i >= 0; i-- {
-			if strings.HasPrefix(lines[i], "exit codes:") {
-				return lines[i]
-			}
-		}
-		return ""
+		return strings.Join(exitParagraphLines(swarmHelp(t, args...)), "\n")
 	}
 	assert.Equal(t, verbExit["lint"], last("lint", "-h"))
 	assert.Equal(t, verbExit["worker check"], last("worker", "check", "-h"))

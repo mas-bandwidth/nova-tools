@@ -33,9 +33,14 @@ import (
 )
 
 const usageDetails = `Table write verbs take --epoch <observed epoch> (default 0), --actor, --fence,
---idem (receipt metadata only; does not deduplicate retries) and --receipt. create also takes --epoch-key,
---epoch-field (default n), and --member-prefix (default table::member:).
-A stale epoch is refused. drop keeps the saved column definition and the
+--idem (receipt metadata only; does not deduplicate retries: a second cell add of the same member
+is refused, naming the place it already sits, and a second row add rewrites the row and keeps its
+place) and --receipt. create also takes --epoch-key, --epoch-field (default n), and --member-prefix
+(default table::member:).
+A stale epoch is refused, naming the live epoch:
+  CELL-ADD REFUSED: table "stale-help" row "build" column "ready" member "b1": requested epoch is stale, not the active epoch: requested 0, active 1; run: nova-table show 'stale-help'
+read the epoch off show <table> (it prints epoch=<n>) or off the receipt of every write (it prints
+the new one, epoch=<n>). drop keeps the saved column definition and the
 table's identity unless --definition is given, which removes both and the rows
 of every epoch (and repairs a store left with the identity alone); the
 definition snapshots of earlier epochs remain available.

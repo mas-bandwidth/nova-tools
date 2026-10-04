@@ -52,11 +52,11 @@ func decideTool(w world) *tool.Tool {
 		Name:  "nova-decide",
 		What:  "typed decisions with probabilities, recorded so each one can be calibrated against its outcome",
 		Stamp: version,
-		How: `a decision is a named schema of typed questions (choice or noul) asked over a state.
-A backend answers it: jev (TypeSafe's System One model, key from JEV_API_KEY) or fixed (a file).
-Every decision is appended to the record (--record, JSON lines); read and score judge a diff.
-outcome attaches what turned out true; calibrate prints the bar it supports; findings clusters.
-first run: from a checkout root (the examples read its testdata); fixed backend, no network or key.`,
+		How: `noul: a yes-or-no question answered with a probability of yes; choice: one option.
+a decision is a named schema of choice or noul questions over a state; jev or fixed answers:
+schema {"name":"q","questions":{"ok":{"type":"noul","instructions":"It asks."}}}
+state R? fixed answers {"ok":{"noul":0.9}} print ASK OK id=f decision=q backend=fixed recorded=new
+ASK ANSWER question=ok type=noul value=yes p=yes:0.9; exit 0 means recorded, never approved.`,
 		ExitTable: "0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).",
 		Verbs: []tool.Verb{
 			{
@@ -615,7 +615,10 @@ func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[
 
 // answered is a decision's result: its id and backend, the headline choice when the
 // schema has one (a read's verdict, an attempt's class, a grade's grade), and one
-// ANSWER item per question in name order.
+// ANSWER item per question in name order. A choice with an empty P prints p=-.
+// A wire confidence is printed beside it as confidence=<x> method=wire, and is
+// not a probability of correctness (SPEC-NOVA-DECIDE section 3). Top and Prob
+// read P only.
 func answered(d decide.Decision, recorded string) *tool.Out {
 	o := tool.Done().Fact("id", d.ID).Fact("decision", d.Decision).Fact("backend", d.Backend)
 	if d.Decision == decide.ScoreName {
@@ -624,16 +627,32 @@ func answered(d decide.Decision, recorded string) *tool.Out {
 	} else {
 		for _, head := range []string{"verdict", decide.AttemptQuestion, decide.GradeQuestion} {
 			if v, ok := d.Answers[head]; ok && v.Type == decide.Choice {
-				o.Fact(head, v.Value).Fact("p", round(v.Prob(v.Value)))
+				o.Fact(head, v.Value).Fact("p", shownP(v))
+				if v.Method != "" || v.Confidence != 0 {
+					o.Fact("confidence", v.Confidence).Fact("method", v.Method)
+				}
 			}
 		}
 	}
 	o.Fact("tokens_in", d.Usage.InputTokens).Fact("tokens_out", d.Usage.OutputTokens).Fact("recorded", recorded)
 	for _, name := range slices.Sorted(maps.Keys(d.Answers)) {
 		a := d.Answers[name]
+		if a.Method != "" || a.Confidence != 0 {
+			o.Item("answer", "question", name, "type", a.Type, "value", a.Value, "p", probs(a.P), "confidence", a.Confidence, "method", a.Method)
+			continue
+		}
 		o.Item("answer", "question", name, "type", a.Type, "value", a.Value, "p", probs(a.P))
 	}
 	return o
+}
+
+// shownP is the headline probability: empty, printed as p=-, when P is empty,
+// else the chosen option's probability. It reads P only (SPEC-NOVA-DECIDE section 3).
+func shownP(a decide.Answer) any {
+	if len(a.P) == 0 {
+		return ""
+	}
+	return round(a.Prob(a.Value))
 }
 
 // backend is the one --backend names.

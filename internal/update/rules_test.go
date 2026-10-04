@@ -269,7 +269,7 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	}
 	// The spec says nova-version's lines are the report line's flags under that
 	// name, so every flag the report line offers a plain report must appear.
-	for _, flag := range []string{"--file <manifest: " + manifestShape + ">", "--host <label>", "--snapshot <path>", "--max <n>", "--timeout <d>", "--budget <d>", "--kind <k>"} {
+	for _, flag := range []string{"--file <manifest>", "--host <label>", "--snapshot <path>", "--max <n>", "--timeout <d>", "--budget <d>", "--kind <k>"} {
 		if !strings.Contains(lines["report"], flag) {
 			assert.Failf(t, "", "nova-version's report line does not carry %s", flag)
 		}

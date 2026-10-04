@@ -176,6 +176,44 @@ func TestACLApplySetsOnlyTheUsersThatDiffer(t *testing.T) {
 	assert.Contains(t, out, "saved=no-acl-file")
 }
 
+// A live user that matches its rendering in every other way but carries the
+// nopass flag is drift: check names it and exits 1; apply refuses to mend it
+// unless a --password-env-for source names the user, and mends it with
+// resetpass and that password when one does.
+func TestANopassUserIsDrift(t *testing.T) {
+	t.Parallel()
+	f := &fakeACL{live: map[string]redisacl.Live{}, cat: redisacl.Catalog{"read": {"get"}, "write": {"set"}}}
+	code, _, errs := aclRun(t, f, append(append([]string{"apply"}, login4...), sourced...)...)
+	require.Equal(t, 0, code, errs)
+
+	l := f.live["bench"]
+	l.NoPass = true
+	f.live["bench"] = l
+
+	code, out, _ := aclRun(t, f, append([]string{"check"}, login4...)...)
+	assert.Equal(t, 1, code, out)
+	assert.Contains(t, out, "ACL DRIFT user=bench role=member nopass=true")
+	assert.Contains(t, out, "ACL CHECK DRIFT users=4 differ=1")
+	assert.Equal(t, 3, strings.Count(out, "ACL OK user="), out)
+
+	f.set = nil
+	code, out, _ = aclRun(t, f, append([]string{"apply"}, login4...)...)
+	assert.Equal(t, 1, code, out)
+	assert.Contains(t, out, "ACL APPLY REFUSED users=4 nopass=bench")
+	assert.Empty(t, f.set, "a refused apply wrote")
+
+	code, out, errs = aclRun(t, f, append(append([]string{"apply"}, login4...), sourced...)...)
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, []string{"bench"}, f.set)
+	assert.Equal(t, "resetpass", f.setRules["bench"][0], "the nopass flag goes before the new password")
+	assert.Equal(t, ">new-secret", f.setRules["bench"][1], "the user gets its password from the named variable")
+	assert.NotContains(t, out, "new-secret")
+
+	code, out, _ = aclRun(t, f, append([]string{"check"}, login4...)...)
+	assert.Equal(t, 0, code, out)
+	assert.Contains(t, out, "ACL OK user=bench")
+}
+
 // Refusals before the store: a missing --addr, an unknown subverb, a login
 // whose password variable is empty; a store failure is one FAILED line.
 func TestACLRefusals(t *testing.T) {

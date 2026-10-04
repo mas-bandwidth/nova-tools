@@ -38,6 +38,7 @@ first run: create the small markdown tree below, then run the example commands.
 
 usage:
   nova-check version [--json] print this build identity (--version also accepted)
+  nova-check <verb> -h, nova-check help <verb>   the verb's flags, its effect and exit codes
   nova-check quickstart --dir <dir> [--fail-max <n>] the two checks a first run can make
                                                      with nothing but a directory: links,
                                                      then nocode. Both run even if the
@@ -90,8 +91,15 @@ usage:
                                                      on real work, and here is how it went
   nova-check dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]
                                                      exit 1 with the verbs no non-author has
-                                                     run and the edges nobody has cleared;
-                                                     the line the release lane calls
+                                                     run and the edges nobody has cleared.
+                                                     An edge is what the run found; a
+                                                     receipt records it: --not-ok, or an
+                                                     Edge: or Edges: in the notes. The
+                                                     remedy is one nova-check dogfood record
+                                                     --ok per verb named, and per edge
+                                                     --closes <id> or the finder
+                                                     running it again. The line the release
+                                                     lane calls.
   nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir>
                          --retired <file> --since <RFC3339|24h>
         [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
@@ -104,7 +112,17 @@ usage:
                                                      shows now, --since, ratio and trend;
                                                      an unnamed optional source is ABSENT,
                                                      not zero. Exit 1 after two consecutive
-                                                     widening ticks.
+                                                     widening ticks. A widening tick is a tick whose
+                                                     <stream> moved the wrong way against
+                                                     its before: --state's last for LEDGER
+                                                     and FLEET, --since's for the rest.
+                                                     The exit-1 line prints
+                                                     trend=widening on the CONVERGENCE line,
+                                                     and the next run is
+                                                     nova-check convergence --state <file>
+                                                     again once the source moves, or
+                                                     nova-check dogfood record the finding
+                                                     the stream names.
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
                       [--ignore <word|@file>] [--write] [--exclude <prefix>]
                       [--fail-max <n>] [--dry-run]
@@ -125,8 +143,9 @@ usage:
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
 
-mkdir -p ./self/docs
-printf '# Kernel\n' > ./self/docs/SEED-CORE.md
+setup:
+  mkdir -p ./self/docs
+  printf '# Kernel\n' > ./self/docs/SEED-CORE.md
 
 example:
   nova-check quickstart --dir ./self

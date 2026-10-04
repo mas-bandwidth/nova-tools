@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -566,4 +567,43 @@ func TestFetchHeadReportsATimeoutAndToleratesTheRest(t *testing.T) {
 	refused := func(string, ...string) (string, error) { return "", errors.New("fatal: couldn't find remote ref") }
 	err = fetchHead(refused, "/repo", "abc")
 	require.NoError(t, err, "an ordinary fetch failure was reported: %v", err)
+}
+
+// A forge head that is not a whole commit id -- an option such as
+// --upload-pack=..., a ref, a short or uppercase string -- is refused, with the
+// shape named, before it can reach a git argv, and the fetch a good head takes
+// puts -- before it so git reads it only as an operand.
+func TestAForgeHeadThatIsNotAShaIsRefused(t *testing.T) {
+	t.Parallel()
+
+	bad := []string{
+		"--upload-pack=touch /tmp/pwn",
+		"-c",
+		"HEAD",
+		"abc",
+		strings.Repeat("a", 39),
+		strings.Repeat("a", 41),
+		strings.Repeat("A", 40),
+		strings.Repeat("g", 40),
+		"",
+	}
+	for _, head := range bad {
+		_, _, err := forgeHead(&fakeForge{byID: map[int]worktreePR{7: {Head: head, Base: "main", State: "open"}}}, 7)
+		if assert.Error(t, err, "a head that is not a sha was accepted: %q", head) {
+			assert.Contains(t, err.Error(), "forty lowercase hex characters", "head %q: error %v does not name the shape", head, err)
+		}
+	}
+
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	if _, _, err := forgeHead(&fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}}, 7); err != nil {
+		require.NoError(t, err, "a well-formed head %q was refused", sha)
+	}
+
+	var got []string
+	spy := func(dir string, args ...string) (string, error) {
+		got = append([]string{dir}, args...)
+		return "", nil
+	}
+	require.NoError(t, fetchHead(spy, "/repo", sha))
+	require.Equal(t, []string{"/repo", "fetch", "origin", "--", sha}, got, "the fetch argv does not put -- before the head")
 }
