@@ -5,7 +5,7 @@
 # ceiling: 34
 
 
-cmd/nova-sandbox 5
+cmd/nova-sandbox 3
 cmd/nova-swarm 3
 internal/buildinfo 1
 internal/bus 17
