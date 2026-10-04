@@ -239,7 +239,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 		}
 		rows, skipped := cardgen.ParseLedger(l, string(raw))
 		notes = append(notes, skipped...)
-		plan = cardgen.PlanLedger(l, rows, *prefix, *tier)
+		plan = cardgen.PlanLedger(l, rows, *prefix, *tier, *maxCards)
 	case "findings":
 		if *file == "" {
 			return refuse(stderr, "generate", "--from findings wants --file <tsv>")
@@ -250,7 +250,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 		}
 		findings, skipped := cardgen.ParseFindings(string(raw))
 		notes = append(notes, skipped...)
-		plan = cardgen.PlanFindings(findings, *prefix, *tier)
+		plan = cardgen.PlanFindings(findings, *prefix, *tier, *maxCards)
 	case "help":
 		if len(tools) == 0 {
 			return refuse(stderr, "generate", "--from help wants --tool <name>, one per tool")
@@ -258,6 +258,9 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 		plan = cardgen.Plan{Tier: *tier, Waves: 1}
 		if plan.Tier == "" {
 			plan.Tier = "pro"
+		}
+		if *maxCards > 0 && len(tools) > *maxCards {
+			tools = tools[:*maxCards]
 		}
 		for _, tool := range tools {
 			help, err := renderedHelp(*binDir, tool)
@@ -271,9 +274,6 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "generate", "wants --from ledger|findings|help")
 	default:
 		return refuse(stderr, "generate", fmt.Sprintf("--from %q; want ledger, findings or help", *from))
-	}
-	if *maxCards > 0 && len(plan.Cards) > *maxCards {
-		plan.Cards = plan.Cards[:*maxCards]
 	}
 	if len(plan.Cards) == 0 {
 		return refuse(stderr, "generate", "the source yields no card; nothing to write")

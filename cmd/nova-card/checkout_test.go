@@ -61,3 +61,23 @@ func TestReadCheckoutReadsTheBranchAndNoneAtADetachedHEAD(t *testing.T) {
 	assert.Equal(t, 2, exit)
 	assert.Contains(t, stderr, "no base branch")
 }
+
+// A directory cut by --max is admitted as it is: no kept card needs a cut one.
+func TestMaxLeavesNoNeedOnACutCard(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+	ledger := cardgen.Ledgers["serial-tests"]
+	for rel, text := range map[string]string{
+		"cmd/a/a_test.go": "package main\n", "cmd/b/b_test.go": "package main\n", "cmd/c/c_test.go": "package main\n",
+		ledger.File: "cmd/a/a_test.go:TestA serial: t.Setenv\ncmd/b/b_test.go:TestB serial: t.Chdir\ncmd/c/c_test.go:TestC serial: os.Setenv\n",
+	} {
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(text), 0o644))
+	}
+	exit, stdout, stderr := runCard("generate", "--from", "ledger", "--ledger", "serial-tests", "--repo-dir", repo, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", filepath.Join(t.TempDir(), "cards"), "--max", "2", "--dry-run")
+	require.Equal(t, 0, exit, stderr)
+	assert.Contains(t, stdout, "cards=2 waves=2 tier=flash dry-run=yes")
+	assert.Contains(t, stdout, "serial-tests-cmd-b-b\tcmd/b/b_test.go\tinternal/ci TestEveryTestOpensWithTParallel\t2\tserial-tests-cmd-a-a\n")
+	assert.NotContains(t, stdout, "serial-tests-cmd-c-c", "the cut card is named nowhere")
+}

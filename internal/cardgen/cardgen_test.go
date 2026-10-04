@@ -29,7 +29,7 @@ func TestLedgerRowsGroupByFileInLedgerOrder(t *testing.T) {
 	require.Len(t, rows, 5)
 	assert.Equal(t, []string{"internal/ci/testdata/serial-tests_allowlist.txt:8: this row has no colon"}, skipped)
 	assert.Equal(t, Row{File: "cmd/nova-bus/a_test.go", Key: "TestOne", Rest: "serial: t.Setenv", Line: 3}, rows[0])
-	p := PlanLedger(l, rows, "", "")
+	p := PlanLedger(l, rows, "", "", 0)
 	require.Len(t, p.Cards, 4)
 	assert.Equal(t, "serial-tests-cmd-nova-bus-a", p.Cards[0].ID)
 	assert.Len(t, p.Cards[0].Rows, 2)
@@ -42,16 +42,16 @@ func TestLedgerPathsAreTheFileItsPackageTestsAndTheLedger(t *testing.T) {
 	t.Parallel()
 	l := Ledgers["serial-tests"]
 	rows, _ := ParseLedger(l, serialFixture)
-	p := PlanLedger(l, rows, "", "")
+	p := PlanLedger(l, rows, "", "", 0)
 	assert.Equal(t, []string{"cmd/nova-bus/a_test.go", "cmd/nova-bus/*_test.go", l.File}, p.Cards[0].Paths)
 	assert.Equal(t, "internal/ci TestEveryTestOpensWithTParallel", p.Cards[0].Test)
 	// a package row (sleeps-skips) takes the package's go files
 	pkg, _ := ParseLedger(Ledgers["sleeps-skips"], "internal/bus\tTestX\t#1 calls time.Sleep\n")
-	pp := PlanLedger(Ledgers["sleeps-skips"], pkg, "", "")
+	pp := PlanLedger(Ledgers["sleeps-skips"], pkg, "", "", 0)
 	assert.Equal(t, []string{"internal/bus/*.go", Ledgers["sleeps-skips"].File}, pp.Cards[0].Paths)
 	// a bare name (transcripts) adds no package glob
 	tr, _ := ParseLedger(Ledgers["transcripts"], "nova-bus      # #1654 -- collects\n")
-	tp := PlanLedger(Ledgers["transcripts"], tr, "", "")
+	tp := PlanLedger(Ledgers["transcripts"], tr, "", "", 0)
 	assert.Equal(t, []string{Ledgers["transcripts"].File}, tp.Cards[0].Paths)
 	assert.Contains(t, tp.Cards[0].Task, "`## nova-bus` section")
 }
@@ -79,7 +79,7 @@ func TestWavesAlternateOnAnOrdinaryLedgerAndNotOnAGeneratedOne(t *testing.T) {
 	t.Parallel()
 	l := Ledgers["serial-tests"]
 	rows, _ := ParseLedger(l, serialFixture)
-	p := PlanLedger(l, rows, "", "")
+	p := PlanLedger(l, rows, "", "", 0)
 	assert.Equal(t, 2, p.Waves)
 	assert.Equal(t, []int{1, 2, 1, 2}, []int{p.Cards[0].Wave, p.Cards[1].Wave, p.Cards[2].Wave, p.Cards[3].Wave})
 	assert.Empty(t, p.Cards[0].Deps)
@@ -89,14 +89,14 @@ func TestWavesAlternateOnAnOrdinaryLedgerAndNotOnAGeneratedOne(t *testing.T) {
 
 	g := Ledgers["generality-fixtures"]
 	grows, _ := ParseLedger(g, "a/one.md recorded\nb/two.md recorded\nc/three.md recorded\n")
-	gp := PlanLedger(g, grows, "", "")
+	gp := PlanLedger(g, grows, "", "", 0)
 	assert.Equal(t, 1, gp.Waves)
 	for _, c := range gp.Cards {
 		assert.Equal(t, 1, c.Wave)
 		assert.Empty(t, c.Deps)
 	}
 	assert.Equal(t, "pro", gp.Tier)
-	assert.Equal(t, "flash", PlanLedger(g, grows, "", "flash").Tier, "--tier overrides the ledger's default")
+	assert.Equal(t, "flash", PlanLedger(g, grows, "", "flash", 0).Tier, "--tier overrides the ledger's default")
 }
 
 // Every rendered brief passes the add's lint and carries no placeholder.
@@ -123,7 +123,7 @@ func TestEveryRenderedBriefPassesTheLint(t *testing.T) {
 		}
 		rows, _ := ParseLedger(l, text)
 		require.NotEmpty(t, rows, name)
-		p := PlanLedger(l, rows, "", "")
+		p := PlanLedger(l, rows, "", "", 0)
 		for _, c := range p.Cards {
 			brief := Render(header, c)
 			assert.Empty(t, Lint(c.ID, brief), "%s: %s\n%s", name, c.ID, brief)
@@ -139,7 +139,7 @@ func TestTheLintNamesWhatTheAddWouldRefuse(t *testing.T) {
 	t.Parallel()
 	l := Ledgers["serial-tests"]
 	rows, _ := ParseLedger(l, serialFixture)
-	c := PlanLedger(l, rows, "", "").Cards[0]
+	c := PlanLedger(l, rows, "", "", 0).Cards[0]
 	good := Render(header, c)
 	bad := strings.Replace(good, "Never kill a process you did not start.", "", 1)
 	bad = strings.Replace(bad, "tier: flash", "tier: cheap", 1)
@@ -164,7 +164,7 @@ func TestFindingsAreOneCardPerFile(t *testing.T) {
 	fs, skipped := ParseFindings(tsv)
 	require.Len(t, fs, 3)
 	assert.Equal(t, []string{"findings:5: short row"}, skipped)
-	p := PlanFindings(fs, "", "")
+	p := PlanFindings(fs, "", "", 0)
 	require.Len(t, p.Cards, 2)
 	assert.Equal(t, "finding-internal-bus-send", p.Cards[0].ID)
 	assert.Equal(t, "internal/bus TestReceiptIsFsynced", p.Cards[0].Test)
@@ -200,4 +200,22 @@ func TestTheOKLineAndTheDeadline(t *testing.T) {
 	c := Card{ID: "a", File: "x/y.go", Paths: []string{"x/y.go"}, Test: "x TestA", Tier: "pro", Kind: "fix-red", Task: "Do it."}
 	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc", Minutes: 7}, c), "Deadline: finish within 7 minutes.")
 	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc", NewFiles: []string{"x/z_test.go"}}, c), "\nNEW: x/z_test.go\n")
+}
+
+// --max cuts before the waves are assigned: the kept cards' needs name kept
+// cards only, so the directory is admitted (the add refuses a need that is no card
+// of the add), and the waves and the shared flag are those of the cut plan.
+func TestMaxCutsBeforeTheWavesAreAssigned(t *testing.T) {
+	t.Parallel()
+	l := Ledgers["serial-tests"]
+	rows, _ := ParseLedger(l, serialFixture)
+	p := PlanLedger(l, rows, "", "", 2)
+	require.Len(t, p.Cards, 2)
+	assert.Equal(t, []string{p.Cards[0].ID}, p.Cards[1].Deps, "the cut neighbour is not a need")
+	assert.Equal(t, 2, p.Waves)
+	assert.False(t, p.Shared, "one wave-1 card shares the ledger with nobody")
+	assert.Len(t, PlanLedger(l, rows, "", "", 0).Cards, 4, "0 is all")
+	assert.Len(t, PlanLedger(l, rows, "", "", 9).Cards, 4, "a max past the plan keeps every card")
+	fs, _ := ParseFindings("a/x.go:1\twrong\tfix\ta TestA\nb/y.go:1\twrong\tfix\tb TestB\n")
+	assert.Len(t, PlanFindings(fs, "", "", 1).Cards, 1)
 }

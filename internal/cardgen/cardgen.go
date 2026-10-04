@@ -224,8 +224,9 @@ const MaxPaths = 8
 // odd cards are wave 1, even cards wave 2 depending on their wave-1 neighbours;
 // on a generated ledger (docs/SPEC-SPRINT.md section 7) every card is wave 1 with
 // no dependency, because land regenerates the ledger at the merged tree. prefix
-// opens every id; tier "" takes the ledger's own.
-func PlanLedger(l Ledger, rows []Row, prefix, tier string) Plan {
+// opens every id; tier "" takes the ledger's own; max keeps the first max cards (0 is
+// all), cut before the waves are assigned so no kept card needs a cut one.
+func PlanLedger(l Ledger, rows []Row, prefix, tier string, max int) Plan {
 	if tier == "" {
 		tier = l.Tier
 	}
@@ -243,6 +244,7 @@ func PlanLedger(l Ledger, rows []Row, prefix, tier string) Plan {
 		}
 		cards[i].Rows = append(cards[i].Rows, r)
 	}
+	cards = first(cards, max)
 	seen := map[string]int{}
 	for i := range cards {
 		c := &cards[i]
@@ -356,6 +358,14 @@ func Slug(file string) string {
 	return s
 }
 
+// first is the first max cards of a plan in source order, every card when max is 0.
+func first(cards []Card, max int) []Card {
+	if max > 0 && len(cards) > max {
+		return cards[:max]
+	}
+	return cards
+}
+
 func uniqueID(id string, seen map[string]int) string {
 	n := seen[id]
 	seen[id] = n + 1
@@ -438,8 +448,8 @@ func ParseFindings(text string) (findings []Finding, skipped []string) {
 // card wave 1 with no dependency (each touches its own file). The TEST is the first
 // finding's test that names one; a card with none says `TEST: none ...` and is a
 // read card is not: a finding is a fix, so the kind stays fix-red and a missing
-// test is the card's first job, said in the task.
-func PlanFindings(findings []Finding, prefix, tier string) Plan {
+// test is the card's first job, said in the task. max keeps the first max cards, 0 is all.
+func PlanFindings(findings []Finding, prefix, tier string, max int) Plan {
 	if tier == "" {
 		tier = "pro"
 	}
@@ -468,6 +478,7 @@ func PlanFindings(findings []Finding, prefix, tier string) Plan {
 		}
 		c.Task += fmt.Sprintf(" At %s: %s. Remedy: %s.", at, strings.TrimSuffix(f.What, "."), strings.TrimSuffix(f.Remedy, "."))
 	}
+	cards = first(cards, max)
 	for i := range cards {
 		c := &cards[i]
 		paths := []string{c.File}
