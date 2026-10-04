@@ -778,12 +778,10 @@ func TestFunctionalDealsTheHeavyPackagesOnePerLeg(t *testing.T) {
 			home[p] = i
 		}
 	}
-	seen := map[int]string{}
+	legOf := map[int]bool{}
 	for _, h := range FunctionalHeavy {
-		if other, dup := seen[home[h]]; dup {
-			t.Errorf("%s and %s share leg %d", h, other, home[h]+1)
-		}
-		seen[home[h]] = h
+		legOf[home[h]] = true
 	}
+	assert.Len(t, legOf, len(FunctionalHeavy), "each heavy package has a leg of its own: %v", home)
 	assert.Len(t, home, len(pkgs), "every package is dealt once")
 }
