@@ -20,8 +20,9 @@ const (
 )
 
 // ResolveDSN is the Postgres DSN a tool dials: the flag, else NOVA_PG_DSN; a
-// flag that carries a password is refused (it would be on the command line,
-// where a ps reads it); a DSN without one takes it from the variable
+// flag that carries a password is refused in every spelling the pgconn
+// parser accepts (it would be on the command line, where a ps reads it);
+// a DSN without one takes it from the variable
 // NOVA_PG_PASSWORD_ENV names, NOVA_PG_PASSWORD when unset, and a named
 // variable that is empty is refused with its name (the shape
 // internal/nsprint/redisauth keeps for Redis).
@@ -33,16 +34,24 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 	if dsn == "" {
 		return "", fmt.Errorf("--pg is required: postgres://user@host:5432/nova (or %s)", EnvPG)
 	}
+	// The boundary is the flag's own text, judged before any parse: the
+	// refusal quotes nothing, while a parse error quotes the DSN it could
+	// not read, so a flag that carries a password must never reach one. A
+	// flag whose text cannot be parsed at all is refused without echo too,
+	// because the raw text may carry a credential in a spelling
+	// flagCarriesPassword did not anticipate. A DSN from the environment is
+	// not on a command line and is never refused for its password, and a
+	// password pgconn takes from the process environment is never mistaken
+	// for one on the line.
+	if flagValue != "" && flagCarriesPassword(flagValue) {
+		return "", refuseFlagPassword()
+	}
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
-		return "", fmt.Errorf("--pg: %v; want postgres://user@host:5432/nova", err)
-	}
-	if flagValue != "" && strings.Contains(flagValue, "://") {
-		if u, err := url.Parse(flagValue); err == nil {
-			if _, has := u.User.Password(); has {
-				return "", fmt.Errorf("--pg carries a password; leave it out and export it as the variable %s names (a ps reads the line)", EnvPGPassEnv)
-			}
+		if flagValue != "" {
+			return "", refuseFlagPassword()
 		}
+		return "", fmt.Errorf("--pg: %v; want postgres://user@host:5432/nova", err)
 	}
 	if cfg.Password != "" {
 		return dsn, nil
@@ -60,6 +69,120 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 		return dsn, nil
 	}
 	return withPassword(dsn, cfg.User, pw)
+}
+
+// refuseFlagPassword is the one refusal for a flag that carries a password:
+// it names the remedy and quotes nothing, because the DSN itself may hold
+// the secret (docs/nova-config/README.md, "Connecting").
+func refuseFlagPassword() error {
+	return fmt.Errorf("--pg carries a password; leave it out and export it as the variable %s names (a ps reads the line)", EnvPGPassEnv)
+}
+
+// flagCarriesPassword reports whether the flag's DSN text names a password
+// itself, in either spelling the pgconn parser accepts: a URI userinfo or
+// query parameter, or the keyword form's password key. The same refusal
+// holds the fleet kind's stored pg_dsn (checkFleet), whose query keys it
+// matches case-insensitively; a password pgconn takes from the process
+// environment is never seen here, so it is never mistaken for one on the
+// line.
+func flagCarriesPassword(dsn string) bool {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		// The pgconn URI reader takes the userinfo from the text before the
+		// first "/", so a colon pair there is a password even where net/url
+		// reads the text as a query.
+		rest := dsn[strings.Index(dsn, "://")+len("://"):]
+		if i := strings.IndexAny(rest, "@/"); i >= 0 && rest[i] == '@' {
+			if _, _, has := strings.Cut(rest[:i], ":"); has {
+				return true
+			}
+		}
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return false
+		}
+		if _, has := u.User.Password(); has {
+			return true
+		}
+		// ignored: ParseQuery returns the pairs it read beside its error; a
+		// pair it drops (a bad escape) still reaches the parse-error refusal
+		// below, which quotes nothing.
+		query, _ := url.ParseQuery(u.RawQuery)
+		for key := range query {
+			// The pgconn URI reader trims the keyword whitespace around a
+			// query key before it reads it, so a padded key is the same
+			// password field.
+			if strings.EqualFold(strings.Trim(key, kwSpaces), "password") {
+				return true
+			}
+		}
+		return false
+	}
+	return keywordCarriesPassword(dsn)
+}
+
+// kwSpaces is the whitespace the keyword/value grammar knows, the set the
+// pgconn parser trims and breaks values on.
+const kwSpaces = " \t\n\r\v\f"
+
+// keywordCarriesPassword walks the keyword/value DSN the way the pgconn
+// parser walks it (the same whitespace set, quotes and backslash escapes),
+// long enough to find a password key; it reads no values, so a value that
+// quotes the word password is not one. A key is read before its value, so a
+// password key is refused even when its value never closes; a key whose
+// value fails to close is left to the pgconn parser, and ResolveDSN refuses
+// a flag it cannot parse without quoting it.
+func keywordCarriesPassword(dsn string) bool {
+	s := strings.TrimLeft(dsn, kwSpaces)
+	for len(s) > 0 {
+		eqIdx := strings.IndexRune(s, '=')
+		if eqIdx < 0 {
+			return false // no more pairs: the pgconn parser refuses the DSN
+		}
+		key := strings.Trim(s[:eqIdx], kwSpaces)
+		if strings.ContainsAny(key, kwSpaces) {
+			return false // a keyword with whitespace in it: the pgconn parser refuses the DSN
+		}
+		if strings.EqualFold(key, "password") {
+			return true
+		}
+		s = strings.TrimLeft(s[eqIdx+1:], kwSpaces)
+		switch {
+		case len(s) == 0:
+		case s[0] == '\'':
+			s = s[1:]
+			end := 0
+			for ; end < len(s); end++ {
+				if s[end] == '\'' {
+					break
+				}
+				if s[end] == '\\' {
+					end++
+					if end == len(s) {
+						return false // an unterminated quoted value: the pgconn parser refuses the DSN
+					}
+				}
+			}
+			if end == len(s) {
+				return false // an unterminated quoted value: the pgconn parser refuses the DSN
+			}
+			s = strings.TrimLeft(s[end+1:], kwSpaces)
+		default:
+			end := 0
+			for ; end < len(s); end++ {
+				if strings.ContainsRune(kwSpaces, rune(s[end])) {
+					break
+				}
+				if s[end] == '\\' {
+					end++ // a backslash escapes the byte after it
+					if end == len(s) {
+						break
+					}
+				}
+			}
+			s = strings.TrimLeft(s[end:], kwSpaces)
+		}
+	}
+	return false
 }
 
 // withPassword puts the password into the DSN in memory, in whichever of
