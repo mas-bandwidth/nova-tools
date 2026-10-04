@@ -1,6 +1,4 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 4
-internal/release/dogfoodgate.go:glenn 3
-internal/release/dogfoodgate.go:rowan 1
+# ceiling: 2
 internal/release/edges.go:johnny 3
 internal/release/pull.go:space 1
