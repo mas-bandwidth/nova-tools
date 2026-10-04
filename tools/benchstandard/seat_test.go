@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // secretsChecks are the times the witness ran `nova-secrets check`, the seat
@@ -172,7 +174,7 @@ func TestNoSeatKeyAtAllDrifts(t *testing.T) {
 func TestSeatCheckNeedsTheSecretsTool(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
-	os.Remove(filepath.Join(b.bin, "nova-secrets"))
+	require.NoError(t, os.Remove(filepath.Join(b.bin, "nova-secrets")))
 	code, output := b.standard()
 	wantOnlyDrift(t, code, output, "nova-secrets not on PATH for seat check of "+filepath.Join(b.home, ".config/nova-secrets/rows.key"))
 }
