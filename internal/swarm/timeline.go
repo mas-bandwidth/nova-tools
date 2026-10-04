@@ -346,22 +346,24 @@ func ProfileJobs(pattern string, stdout, stderr io.Writer) int {
 		}
 		return total / float64(n)
 	}
-	summary := fmt.Sprintf("PROFILE SUMMARY jobs=%d mean_wall=%.1f", n, mean(wallSum))
+	var summary strings.Builder
+	summary.WriteString(fmt.Sprintf("PROFILE SUMMARY jobs=%d mean_wall=%.1f", n, mean(wallSum)))
 	for _, ph := range phaseOrder {
-		summary += fmt.Sprintf(" %s=%.1f", ph, mean(phaseMeans[ph]))
+		summary.WriteString(fmt.Sprintf(" %s=%.1f", ph, mean(phaseMeans[ph])))
 	}
-	fmt.Fprintln(stdout, summary)
+	fmt.Fprintln(stdout, summary.String())
 	return 0
 }
 
 // profileLine renders one job's PROFILE line in the fixed phase order.
 func profileLine(j JobProfile) string {
-	line := fmt.Sprintf("PROFILE job=%s wall=%.1f turns=%d tools=%d",
-		scrubCell(j.Label), j.Wall, j.Turns, j.Tools)
+	var line strings.Builder
+	line.WriteString(fmt.Sprintf("PROFILE job=%s wall=%.1f turns=%d tools=%d",
+		scrubCell(j.Label), j.Wall, j.Turns, j.Tools))
 	for _, ph := range phaseOrder {
-		line += fmt.Sprintf(" %s=%.1f", ph, j.Seconds[ph])
+		line.WriteString(fmt.Sprintf(" %s=%.1f", ph, j.Seconds[ph]))
 	}
-	return line
+	return line.String()
 }
 
 // profileRows folds one job's rows: the wall is the span from the first start to the last

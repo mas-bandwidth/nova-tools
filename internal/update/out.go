@@ -99,20 +99,21 @@ func text(w io.Writer, o *tool.Out) {
 		fmt.Fprintln(w, head+": "+oneline.Escape(why)+tail)
 	}
 	for _, it := range o.Items {
-		line := token + " " + strings.ToUpper(it.Kind) + typed(it.Fields)
+		var line strings.Builder
+		line.WriteString(token + " " + strings.ToUpper(it.Kind) + typed(it.Fields))
 		said := map[string]string{}
 		for _, f := range it.Fields {
 			said[f.K] = fmt.Sprint(f.V)
 		}
 		for _, k := range prose {
 			if v, ok := said[k]; ok {
-				line += ": " + oneline.Escape(v)
+				line.WriteString(": " + oneline.Escape(v))
 			}
 		}
 		if v, ok := said["remedy"]; ok {
-			line += " (" + oneline.Escape(v) + ")"
+			line.WriteString(" (" + oneline.Escape(v) + ")")
 		}
-		fmt.Fprintln(w, line)
+		fmt.Fprintln(w, line.String())
 	}
 	for _, m := range o.More {
 		fmt.Fprintln(w, bounded.MoreLine(token, m.Kind, m.Shown, m.Total, m.Remedy))

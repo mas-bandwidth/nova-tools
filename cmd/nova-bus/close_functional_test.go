@@ -101,18 +101,18 @@ func TestCloseBeforeReceiptsOldNotesOnly(t *testing.T) {
 		mustContain(t, "stdout", "CLOSE OK closed=2 kept=1")
 	require.Falsef(t, !strings.Contains(r.stdout, "commit=") || strings.Contains(r.stdout, "commit=-"), "a writing close printed no commit:\n%s", r.stdout)
 
-	got := ""
+	var got strings.Builder
 	for _, name := range mdFiles(t, checkout, "from-ada") {
-		got += read(t, checkout, "from-ada/"+name) + "\n"
+		got.WriteString(read(t, checkout, "from-ada/"+name) + "\n")
 	}
 	for _, want := range []string{
 		"Re: bo-abcdef012345",
 		"Re: bo-111111111111",
 		"closed: unanswered before 2026-09-08T00:00:00Z",
 	} {
-		require.Containsf(t, got, want, "receipt notes do not carry %q:\n%s", want, got)
+		require.Containsf(t, got.String(), want, "receipt notes do not carry %q:\n%s", want, got.String())
 	}
-	require.NotContainsf(t, got, "bo-333333333333", "the note after the stamp was receipted:\n%s", got)
+	require.NotContainsf(t, got.String(), "bo-333333333333", "the note after the stamp was receipted:\n%s", got.String())
 	// Both old notes are Bo's, so they are closed by ONE receipt naming both -- and
 	// closed= still counts the NOTES, which is what the person asked to close.
 	{

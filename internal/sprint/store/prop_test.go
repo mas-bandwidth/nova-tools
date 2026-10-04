@@ -439,22 +439,23 @@ func (r *propRun) add(stream string, picks []int, inLine bool) {
 			req.Needs = append(req.Needs, n)
 		}
 	}
-	line := "nova-sprint add --stream " + stream + " " + id
+	var line strings.Builder
+	line.WriteString("nova-sprint add --stream " + stream + " " + id)
 	if len(req.Needs) > 0 {
-		line += " --needs " + strings.Join(req.Needs, ",")
+		line.WriteString(" --needs " + strings.Join(req.Needs, ","))
 	}
 	if inLine {
 		if s := r.snap(); s != nil {
 			for _, c := range s.Work.Cell(stream, sprint.Waiting) {
 				if sprint.IsSentinel(c) && c.F("reached") != "" {
 					req.Before = c.ID
-					line += " --before " + c.ID
+					line.WriteString(" --before " + c.ID)
 					break
 				}
 			}
 		}
 	}
-	r.run(line, AddStep(req))
+	r.run(line.String(), AddStep(req))
 	r.admitted(id)
 }
 

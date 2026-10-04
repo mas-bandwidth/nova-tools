@@ -66,11 +66,12 @@ func foldedTuples(t *testing.T, out, month string) []string {
 	}
 	var lines []string
 	for k, a := range sums {
-		line := "REPORT day=" + k[0] + " model=" + k[1] + " repo=" + k[2] + " rows=" + strconv.Itoa(a.rows)
+		var line strings.Builder
+		line.WriteString("REPORT day=" + k[0] + " model=" + k[1] + " repo=" + k[2] + " rows=" + strconv.Itoa(a.rows))
 		for ty := range tokens.NTypes {
-			line += " " + tokens.TypeNames[ty] + "=" + a.c.Cell(ty)
+			line.WriteString(" " + tokens.TypeNames[ty] + "=" + a.c.Cell(ty))
 		}
-		lines = append(lines, line)
+		lines = append(lines, line.String())
 	}
 	sort.Strings(lines)
 	return lines

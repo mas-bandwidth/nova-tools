@@ -573,14 +573,15 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		fmt.Fprintln(os.Stderr, "NOTE "+w)
 	}
 
-	report := fmt.Sprintf("DIRTY-TICK DRIVE: %d cards in %d streams on %d machines of width %d: all landed in %s over %d ticks (%.1f ticks/s)\n"+
+	var report strings.Builder
+	report.WriteString(fmt.Sprintf("DIRTY-TICK DRIVE: %d cards in %d streams on %d machines of width %d: all landed in %s over %d ticks (%.1f ticks/s)\n"+
 		"  the loop's ticks began on: %v; %d idle, %d did something, %d needed more than the four first updates (most updates in one tick: %d); the slowest tick took %s\n"+
 		"  tick-end notes: %d (one for each of the %d ticks that addressed the coordinator), the coordinator read the inbox %d times (accepted %d groups, %d refused as already accepted by the machine): %s\n"+
 		"  the streams' widest gap over %d samples: %d cards (tick %d) of a limit of %d; done by machine: %s (mean %.1f)\n  per machine (never-down machines asserted within 5%% of their own mean):\n%s",
 		total, driveStreams, driveMembers, driveWidth, wall.Round(time.Millisecond), len(ticks), float64(len(ticks))/wall.Seconds(),
 		whyCount, idle, didSomething, settle, maxOrder, slowest.Round(time.Millisecond),
 		tickEnds, wroteNote, reads, accepted, refused, strings.Join(seen, ", "),
-		len(samples), maxSpread, at, total/10, strings.Join(doneLine, " "), mean, strings.TrimRight(table.String(), "\n"))
+		len(samples), maxSpread, at, total/10, strings.Join(doneLine, " "), mean, strings.TrimRight(table.String(), "\n")))
 	for _, tk := range ticks {
 		if tk.wall == slowest {
 			var parts []string
@@ -591,12 +592,12 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 				}
 				parts = append(parts, fmt.Sprintf("%s %s", name, pt.Took.Round(time.Millisecond)))
 			}
-			report += fmt.Sprintf("\n  the slowest tick (%d) part by part: %s", tk.n, strings.Join(parts, ", "))
+			report.WriteString(fmt.Sprintf("\n  the slowest tick (%d) part by part: %s", tk.n, strings.Join(parts, ", ")))
 			break
 		}
 	}
-	fmt.Fprintln(os.Stderr, report)
-	t.Log("\n" + report + "\n  " + gate)
+	fmt.Fprintln(os.Stderr, report.String())
+	t.Log("\n" + report.String() + "\n  " + gate)
 }
 
 // machineLoad is the machine's load averages, as the kernel says them in

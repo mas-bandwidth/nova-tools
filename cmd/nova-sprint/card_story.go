@@ -279,23 +279,24 @@ func (a *app) printStory(w io.Writer, v store.CardInfo, events []storyLine, text
 		state = p.Col
 	}
 	ended := !p.Placed() || p.Col == string(sprint.Landed)
-	head := fmt.Sprintf("%s   stream %s   %s", p.ID, orDashStr(p.F("stream"), p.Row), state)
+	var head strings.Builder
+	head.WriteString(fmt.Sprintf("%s   stream %s   %s", p.ID, orDashStr(p.F("stream"), p.Row), state))
 	if at := p.F("attempt"); at != "" && at != "0" {
-		head += "   attempt " + at
+		head.WriteString("   attempt " + at)
 	}
 	if h := p.F("head"); h != "" && h != p.ID && !strings.HasPrefix(h, p.ID+".w") {
-		head += "   head " + h
+		head.WriteString("   head " + h)
 	}
 	for i := len(v.Work) - 1; i >= 0; i-- {
 		if b := v.Work[i].F("branch"); b != "" {
-			head += "   branch " + b
+			head.WriteString("   branch " + b)
 			break
 		}
 	}
 	if place != "" && !ended {
-		head += "   " + place
+		head.WriteString("   " + place)
 	}
-	fmt.Fprintln(w, oneline.Escape(head))
+	fmt.Fprintln(w, oneline.Escape(head.String()))
 	if !ended {
 		fmt.Fprintln(w, "\nnow:")
 		for _, s := range a.nowLines(v, held) {

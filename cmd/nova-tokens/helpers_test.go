@@ -116,7 +116,8 @@ func reposFile(t *testing.T, dir string) string {
 
 // msg renders one Claude Code transcript line.
 func msg(id, stamp, model string, usage map[string]int, paths ...string) string {
-	u := "{"
+	var u strings.Builder
+	u.WriteString("{")
 	first := true
 	for _, k := range []string{"input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"} {
 		v, ok := usage[k]
@@ -124,12 +125,12 @@ func msg(id, stamp, model string, usage map[string]int, paths ...string) string 
 			continue
 		}
 		if !first {
-			u += ","
+			u.WriteString(",")
 		}
 		first = false
-		u += fmt.Sprintf("%q:%d", k, v)
+		u.WriteString(fmt.Sprintf("%q:%d", k, v))
 	}
-	u += "}"
+	u.WriteString("}")
 	content := ""
 	if len(paths) > 0 {
 		quoted := make([]string, 0, len(paths))
@@ -145,7 +146,7 @@ func msg(id, stamp, model string, usage map[string]int, paths ...string) string 
 	if id != "" {
 		idField = fmt.Sprintf(`"id":%q,`, id)
 	}
-	return fmt.Sprintf(`{"type":"assistant","timestamp":%q,"message":{%s"model":%q,"usage":%s%s}}`, stamp, idField, model, u, content)
+	return fmt.Sprintf(`{"type":"assistant","timestamp":%q,"message":{%s"model":%q,"usage":%s%s}}`, stamp, idField, model, u.String(), content)
 }
 
 // fakeSqlite3 puts a stub sqlite3 on PATH whose answers come from the three files named,

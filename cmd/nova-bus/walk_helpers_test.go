@@ -28,7 +28,8 @@ func longBusOfNotes(t *testing.T, commits, notes int) (checkout, base string) {
 	// blob: the fixture's own two lines are carried into it or the notes they name leave the
 	// catalogue. It is written once, in the last commit, because it is not a note and no
 	// reader's listing depends on which commit carried it.
-	index := read(t, checkout, "from-bo/INDEX")
+	var index strings.Builder
+	index.WriteString(read(t, checkout, "from-bo/INDEX"))
 	per := notes / commits
 	var b strings.Builder
 	prev := base
@@ -49,10 +50,10 @@ func longBusOfNotes(t *testing.T, commits, notes int) (checkout, base string) {
 				"From: Bo\nTo: Ada\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: walk %d\n\nA note in the history.\n",
 				day, id, n)
 			fmt.Fprintf(&b, "M 100644 inline %s\ndata %d\n%s", path, len(note), note)
-			index += fmt.Sprintf("%s\t%s\t2026-08-%02dT00:00:00Z\tAda\t-\n", id, path, day)
+			index.WriteString(fmt.Sprintf("%s\t%s\t2026-08-%02dT00:00:00Z\tAda\t-\n", id, path, day))
 		}
 		if i == commits-1 {
-			fmt.Fprintf(&b, "M 100644 inline from-bo/INDEX\ndata %d\n%s", len(index), index)
+			fmt.Fprintf(&b, "M 100644 inline from-bo/INDEX\ndata %d\n%s", len(index.String()), index.String())
 		}
 		b.WriteString("\n")
 		prev = fmt.Sprintf(":%d", i+1)

@@ -123,17 +123,18 @@ func TestCheckRefusesAStoreItCannotReadAsCommitted(t *testing.T) {
 // but certain to show.
 func TestCheckListsFailuresInPathOrderAndCapsTheSameOnes(t *testing.T) {
 	t.Parallel()
-	rules := "creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: " + pubRowan + "," + pubRecovery + "\n"
+	var rules strings.Builder
+	rules.WriteString("creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: " + pubRowan + "," + pubRecovery + "\n")
 	files := map[string]string{"recovery.pub": pubRecovery + "\n", "rowan.yaml": sealedFor([]string{pubRowan, pubRecovery})}
 	var drifted []string
 	for i := 16; i >= 1; i-- {
 		seat := fmt.Sprintf("s%02d", i)
-		rules += "  - path_regex: ^" + seat + "\\.yaml$\n    age: " + pubRowan + "," + pubRecovery + "\n"
+		rules.WriteString("  - path_regex: ^" + seat + "\\.yaml$\n    age: " + pubRowan + "," + pubRecovery + "\n")
 		// sealed to a stranger, not the rule's seat: recipients-drift
 		files[seat+".yaml"] = sealedFor([]string{pubStranger, pubRecovery})
 		drifted = append([]string{seat + ".yaml"}, drifted...)
 	}
-	files[".sops.yaml"] = rules
+	files[".sops.yaml"] = rules.String()
 	s := newCheckStore(t, files)
 
 	listed := func(out, word string) []string {

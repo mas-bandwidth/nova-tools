@@ -1,6 +1,7 @@
 package refmodel_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -174,14 +175,14 @@ func lines(ms []refmodel.Move) []string {
 
 // show is the moves, one to a line.
 func show(ms []refmodel.Move) string {
-	s := ""
+	var s strings.Builder
 	for _, l := range lines(ms) {
-		s += "\n  " + l
+		s.WriteString("\n  " + l)
 	}
-	if s == "" {
+	if s.String() == "" {
 		return " none"
 	}
-	return s
+	return s.String()
 }
 
 // land puts a merging primary in landed without the step that lands it, which

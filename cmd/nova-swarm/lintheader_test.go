@@ -22,11 +22,12 @@ import (
 func typedCardText(t *testing.T, header ...string) string {
 	t.Helper()
 	good := strings.SplitN(lintGoodCard(), "\n", 2)
-	body := good[0] + "\n"
+	var body strings.Builder
+	body.WriteString(good[0] + "\n")
 	for _, h := range header {
-		body += h + "\n"
+		body.WriteString(h + "\n")
 	}
-	return body + good[1]
+	return body.String() + good[1]
 }
 
 func lintTrustFixture(t *testing.T, body string) string {

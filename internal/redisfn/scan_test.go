@@ -142,11 +142,12 @@ func TestScanCountsTheLocalsAsLuaDoes(t *testing.T) {
 // by a do inside a function of its expressions. Each for holds five: three
 // hidden, k and v.
 func forInFunction(plain, depth int) string {
-	text := locals("p", plain)
+	var text strings.Builder
+	text.WriteString(locals("p", plain))
 	for n := range depth {
-		text += fmt.Sprintf("for k%d, v%d in (function() do end return function() return nil end end)() do\n", n, n)
+		text.WriteString(fmt.Sprintf("for k%d, v%d in (function() do end return function() return nil end end)() do\n", n, n))
 	}
-	return text + strings.Repeat("end\n", depth) + fn("scope_probe")
+	return text.String() + strings.Repeat("end\n", depth) + fn("scope_probe")
 }
 
 func TestAForsLocalsAreNotTakenByADoInsideItsExpressions(t *testing.T) {

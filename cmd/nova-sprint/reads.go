@@ -325,23 +325,24 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	}
 	var lines []string
 	for _, x := range cards {
-		l := fmt.Sprintf("%s %s:%s:%s", x.ID, x.Table, x.Row, x.Col)
+		var l strings.Builder
+		l.WriteString(fmt.Sprintf("%s %s:%s:%s", x.ID, x.Table, x.Row, x.Col))
 		if x.Gen > 0 {
 			next := "take"
 			if x.Col == sprint.Working {
 				next = "finish"
 			}
-			l += " gen=" + strconv.Itoa(x.Gen) + " " + next + ": " + x.ID + "@" + strconv.Itoa(x.Gen) + " --epoch " + strconv.FormatUint(epoch, 10)
+			l.WriteString(" gen=" + strconv.Itoa(x.Gen) + " " + next + ": " + x.ID + "@" + strconv.Itoa(x.Gen) + " --epoch " + strconv.FormatUint(epoch, 10))
 		}
 		if len(x.WaitsFor) > 0 {
-			l += " waits for: " + sprint.Preview(x.WaitsFor, ",")
+			l.WriteString(" waits for: " + sprint.Preview(x.WaitsFor, ","))
 		}
 		for _, st := range [][2]string{{"dealt", x.Dealt}, {"taken", x.Taken}, {"asked", x.Asked}, {"begun", x.Begun}} {
 			if st[1] != "" {
-				l += " " + st[0] + "=" + st[1]
+				l.WriteString(" " + st[0] + "=" + st[1])
 			}
 		}
-		lines = append(lines, l)
+		lines = append(lines, l.String())
 	}
 	if *as != "" && len(lines) > 0 {
 		// a member's or a reader's queue: each card with its packet, when the answer carries it

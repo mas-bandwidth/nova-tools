@@ -79,12 +79,13 @@ func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testin
 	h.env["NOVA_FRIEND"] = "a1"
 	disabled := []string{"flash-mimo26pro-openrouter", "flash-luna6-opencode", "flash-luna6-openrouter", "flash-mercury-openrouter",
 		"flash-nemotron-openrouter", "flash-gemini31lite-openrouter"}
-	state := "flash-mimo26-openrouter enabled\n" // on: the script skips it; flash-luna56-opencode has no row: it is missing
+	var state strings.Builder
+	state.WriteString("flash-mimo26-openrouter enabled\n") // on: the script skips it; flash-luna56-opencode has no row: it is missing
 	for _, name := range disabled {
-		state += name + " disabled\n"
+		state.WriteString(name + " disabled\n")
 	}
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "state.txt"), []byte(state), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "state.txt"), []byte(state.String()), 0o644))
 
 	for _, args := range [][]string{
 		{"machine", "add", "m7", "--user", "u", "--seat", "s", "--slots", "8", "--width", "8", "--pg", dsn},

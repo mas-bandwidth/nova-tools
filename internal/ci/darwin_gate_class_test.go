@@ -110,16 +110,17 @@ func namesMacOSRunner(body string) bool {
 		if strings.HasPrefix(trimmed, "#") || !strings.HasPrefix(trimmed, "runs-on:") {
 			continue
 		}
-		spec := strings.TrimPrefix(trimmed, "runs-on:")
+		var spec strings.Builder
+		spec.WriteString(strings.TrimPrefix(trimmed, "runs-on:"))
 		// A block list continues on the `- item` lines below the key.
 		for j := i + 1; j < len(lines); j++ {
 			next := strings.TrimSpace(lines[j])
 			if !strings.HasPrefix(next, "- ") {
 				break
 			}
-			spec += " " + next
+			spec.WriteString(" " + next)
 		}
-		if macOSLabelRe.MatchString(spec) {
+		if macOSLabelRe.MatchString(spec.String()) {
 			return true
 		}
 	}

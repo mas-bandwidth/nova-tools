@@ -78,11 +78,12 @@ func helpStatesExitCodes(tool, help string) bool {
 		if loc == nil || strings.TrimSpace(l) == "exit codes: see `"+tool+" help`" {
 			continue
 		}
-		para := l[loc[1]:]
+		var para strings.Builder
+		para.WriteString(l[loc[1]:])
 		for j := i + 1; j < len(lines) && strings.TrimSpace(lines[j]) != ""; j++ {
-			para += "\n" + lines[j]
+			para.WriteString("\n" + lines[j])
 		}
-		if statesCodeRe.MatchString(para) {
+		if statesCodeRe.MatchString(para.String()) {
 			return true
 		}
 	}

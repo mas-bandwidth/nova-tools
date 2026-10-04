@@ -207,19 +207,19 @@ func TestTallyCountsLikeTheListing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tl := NewTally(tc.max)
-			got := ""
+			var got strings.Builder
 			for _, k := range tc.kinds {
 				if tl.Add(string(k)) {
-					got += "+"
+					got.WriteString("+")
 				} else {
-					got += "-"
+					got.WriteString("-")
 				}
 			}
-			assert.Equal(t, tc.listed, got, "listed %s shown %d total %d kinds %v; want %s %d %d", got, tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
-			assert.Equal(t, tc.shownA, tl.Shown("a"), "listed %s shown %d total %d kinds %v; want %s %d %d", got, tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
-			assert.Equal(t, tc.allA, tl.Total("a"), "listed %s shown %d total %d kinds %v; want %s %d %d", got, tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
-			if assert.NotEmpty(t, tl.Kinds(), "listed %s shown %d total %d kinds %v; want %s %d %d", got, tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA) {
-				assert.Equal(t, "a", tl.Kinds()[0], "listed %s shown %d total %d kinds %v; want %s %d %d", got, tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
+			assert.Equal(t, tc.listed, got.String(), "listed %s shown %d total %d kinds %v; want %s %d %d", got.String(), tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
+			assert.Equal(t, tc.shownA, tl.Shown("a"), "listed %s shown %d total %d kinds %v; want %s %d %d", got.String(), tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
+			assert.Equal(t, tc.allA, tl.Total("a"), "listed %s shown %d total %d kinds %v; want %s %d %d", got.String(), tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
+			if assert.NotEmpty(t, tl.Kinds(), "listed %s shown %d total %d kinds %v; want %s %d %d", got.String(), tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA) {
+				assert.Equal(t, "a", tl.Kinds()[0], "listed %s shown %d total %d kinds %v; want %s %d %d", got.String(), tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
 			}
 		})
 	}

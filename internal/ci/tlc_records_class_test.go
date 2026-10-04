@@ -366,7 +366,8 @@ func (f tlcFixture) seal(edit func(row []string) []string) {
 	if err != nil {
 		require.FailNowf(f.t, err.Error(), "")
 	}
-	out := strings.Join(tlcRunHeader, "\t") + "\n"
+	var out strings.Builder
+	out.WriteString(strings.Join(tlcRunHeader, "\t") + "\n")
 	for _, p := range plan {
 		fp, files, err := src.Fingerprint(p[0])
 		if err != nil {
@@ -381,9 +382,9 @@ func (f tlcFixture) seal(edit func(row []string) []string) {
 				continue
 			}
 		}
-		out += strings.Join(row, "\t") + "\n"
+		out.WriteString(strings.Join(row, "\t") + "\n")
 	}
-	f.write("tla/RUNS.tsv", out)
+	f.write("tla/RUNS.tsv", out.String())
 }
 
 // stale is the sorted list of cases whose records the class test calls stale,

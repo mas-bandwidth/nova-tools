@@ -130,20 +130,21 @@ func Resolve(stamped string, info *debug.BuildInfo, ok bool) string {
 // them back, and REFUSES one that is not key=value: a writer looser than its reader is a
 // refusal deferred to whoever runs the snapshot.
 func Line(tool, stamped string, extras ...string) string {
-	line := fmt.Sprintf("%s %s %s/%s %s",
+	var line strings.Builder
+	line.WriteString(fmt.Sprintf("%s %s %s/%s %s",
 		oneline.Field(tool),
 		oneline.Field(Version(stamped)),
 		oneline.Field(runtime.GOOS),
 		oneline.Field(runtime.GOARCH),
-		oneline.Field(runtime.Version()))
+		oneline.Field(runtime.Version())))
 	for _, e := range extras {
 		key, value, found := strings.Cut(e, "=")
 		if !found || key == "" || value == "" {
 			panic("buildinfo.Line: extra " + strconv.Quote(e) + " is not key=value; the extras of a version line are named facts, never loose tokens")
 		}
-		line += " " + oneline.Field(key) + "=" + oneline.Field(value)
+		line.WriteString(" " + oneline.Field(key) + "=" + oneline.Field(value))
 	}
-	return line
+	return line.String()
 }
 
 // Fields is one version line taken apart. It is what every READER of a version line in

@@ -679,15 +679,15 @@ func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
 			r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
 			r.git(r.worker, "fetch", "-q", "origin")
 			dir := t.TempDir()
-			var briefs string
+			var briefs strings.Builder
 			for _, id := range []string{"c1", "c2", "c3"} {
 				paths := id + ".txt"
 				if id == "c2" {
 					paths += ", doc.md"
 				}
-				briefs += " --brief-file " + writeNeedsBrief(t, dir, id, "Fix "+id+".\nPATHS: "+paths, "")
+				briefs.WriteString(" --brief-file " + writeNeedsBrief(t, dir, id, "Fix "+id+".\nPATHS: "+paths, ""))
 			}
-			r.ok("add --stream s1" + briefs)
+			r.ok("add --stream s1" + briefs.String())
 			heads := map[string]string{"c1": r.head("c1", "main", "c1.txt", "one\n"), "c2": r.head("c2", "main", tc.file, tc.text), "c3": r.head("c3", "main", "c3.txt", "three\n")}
 			r.queued(heads, "c1", "c2", "c3")
 			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")

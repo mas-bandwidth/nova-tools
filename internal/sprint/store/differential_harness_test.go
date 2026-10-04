@@ -187,15 +187,16 @@ func (f dFinding) Sig() string {
 		sort.Strings(sigs)
 		return act + ": " + strings.Join(sigs, " ")
 	case "refusal":
-		sig := act + ": refusal " + f.Detail[:strings.IndexByte(f.Detail+":", ':')]
+		var sig strings.Builder
+		sig.WriteString(act + ": refusal " + f.Detail[:strings.IndexByte(f.Detail+":", ':')])
 		seen := map[string]bool{}
 		for _, d := range f.Diffs {
 			if !seen[d.Sig()] {
 				seen[d.Sig()] = true
-				sig += " " + d.Sig()
+				sig.WriteString(" " + d.Sig())
 			}
 		}
-		return sig
+		return sig.String()
 	}
 	return act + ": " + f.Kind
 }

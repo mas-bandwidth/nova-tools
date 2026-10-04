@@ -164,15 +164,15 @@ func TestBatchManifestBytesBound(t *testing.T) {
 		// k distinct options, sharing what is left of the size between them
 		k := (need + 59999) / 60000
 		total := need - 3*k // each option is , " n bytes "
-		pad := ""
+		var pad strings.Builder
 		for i := range k {
 			n := total / k
 			if i < total%k {
 				n++
 			}
-			pad += `,"` + fmt.Sprintf("%04d", i) + strings.Repeat("p", n-4) + `"`
+			pad.WriteString(`,"` + fmt.Sprintf("%04d", i) + strings.Repeat("p", n-4) + `"`)
 		}
-		return boundsManifest(rev, op, entry(pad), "")
+		return boundsManifest(rev, op, entry(pad.String()), "")
 	}
 	rev := probeRev(ctx, c)
 	at := build(rev, "at", ntable.LimitManifestBytes)

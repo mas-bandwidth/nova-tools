@@ -84,25 +84,25 @@ func TestEveryKindHasAMigrationDeclaringItsColumns(t *testing.T) {
 	for i, m := range all {
 		assert.Equal(t, i+1, m.Version, "migration %s is version %d at position %d; the numbers run 1, 2, 3 with no gap", m.Name, m.Version, i+1)
 	}
-	joined := ""
+	var joined strings.Builder
 	for _, m := range all {
-		joined += m.SQL + "\n"
+		joined.WriteString(m.SQL + "\n")
 	}
 	for _, want := range []string{"CREATE SCHEMA IF NOT EXISTS config", "config.schema_migrations", "config.history", "op     text NOT NULL CHECK (op IN ('add', 'set', 'remove'))"} {
-		assert.Contains(t, joined, want, "no migration declares %q", want)
+		assert.Contains(t, joined.String(), want, "no migration declares %q", want)
 	}
 	for _, k := range Kinds {
-		assert.Contains(t, joined, "CREATE TABLE IF NOT EXISTS config."+k.Table+" (", "no migration creates config.%s for kind %s", k.Table, k.Name)
+		assert.Contains(t, joined.String(), "CREATE TABLE IF NOT EXISTS config."+k.Table+" (", "no migration creates config.%s for kind %s", k.Table, k.Name)
 		if k.Singleton {
-			assert.Contains(t, joined, "INSERT INTO config."+k.Table+" (name) VALUES ('"+k.Name+"') ON CONFLICT (name) DO NOTHING", "kind %s is a singleton and no migration creates its row", k.Name)
+			assert.Contains(t, joined.String(), "INSERT INTO config."+k.Table+" (name) VALUES ('"+k.Name+"') ON CONFLICT (name) DO NOTHING", "kind %s is a singleton and no migration creates its row", k.Name)
 		}
 		// the kind's own statements: its CREATE TABLE and every ALTER TABLE
 		// of it, so a column of the same name on another table never counts
-		own := ""
-		for _, stmt := range strings.Split(joined, ";") {
+		var own strings.Builder
+		for _, stmt := range strings.Split(joined.String(), ";") {
 			if strings.Contains(stmt, "CREATE TABLE IF NOT EXISTS config."+k.Table+" (") ||
 				strings.Contains(stmt, "ALTER TABLE config."+k.Table+" ") || strings.Contains(stmt, "ALTER TABLE config."+k.Table+"\n") {
-				own += stmt + "\n"
+				own.WriteString(stmt + "\n")
 			}
 		}
 		for _, f := range k.Fields {
@@ -111,8 +111,8 @@ func TestEveryKindHasAMigrationDeclaringItsColumns(t *testing.T) {
 				col = `"user"`
 			}
 			// a column of the CREATE TABLE, or one a later migration adds to it
-			assert.True(t, strings.Contains(own, "\n    "+col+" ") || strings.Contains(own, "\n    "+col+"\t") ||
-				strings.Contains(own, "ADD COLUMN "+col+" ") || strings.Contains(own, "ADD COLUMN IF NOT EXISTS "+col+" "),
+			assert.True(t, strings.Contains(own.String(), "\n    "+col+" ") || strings.Contains(own.String(), "\n    "+col+"\t") ||
+				strings.Contains(own.String(), "ADD COLUMN "+col+" ") || strings.Contains(own.String(), "ADD COLUMN IF NOT EXISTS "+col+" "),
 				"kind %s: field %s has no column of config.%s in any migration", k.Name, f.Name, k.Table)
 		}
 	}

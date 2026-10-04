@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,12 +45,12 @@ func TestReadRootsAreRefusedBeforeTheyReachTheWall(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, raw, 0o644))
 	w, problems := LoadWorker(path)
 	require.Len(t, problems, 3, "three read roots are wrong and the load reported %d problems: %v", len(problems), problems)
-	all := ""
+	var all strings.Builder
 	for _, p := range problems {
-		all += p.Error() + "\n"
+		all.WriteString(p.Error() + "\n")
 	}
 	for _, want := range []string{"is relative", "does not exist", "is not a directory"} {
-		assert.Contains(t, all, want, "no problem says %q:\n%s", want, all)
+		assert.Contains(t, all.String(), want, "no problem says %q:\n%s", want, all.String())
 	}
 	if assert.Len(t, w.ReadRoots, 4, "the roots are read as written, in order: %v", w.ReadRoots) {
 		assert.Equal(t, good, w.ReadRoots[0], "the roots are read as written, in order: %v", w.ReadRoots)

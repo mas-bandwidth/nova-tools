@@ -67,7 +67,8 @@ func bulkHistory(t *testing.T, checkout string, history, carried int) {
 	// The INDEX is REPLACED rather than appended to, because fast-import writes a whole
 	// blob: the fixture's own two lines have to be carried into it or the notes they name
 	// leave the index and the bus stops agreeing with itself.
-	index := read(t, checkout, "from-bo/INDEX")
+	var index strings.Builder
+	index.WriteString(read(t, checkout, "from-bo/INDEX"))
 
 	var b strings.Builder
 	const msg = "ten thousand notes"
@@ -87,9 +88,9 @@ func bulkHistory(t *testing.T, checkout string, history, carried int) {
 			"From: Bo\nTo: %s\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: bulk %d\n\nA note in the history.\n",
 			to, i%28+1, id, i)
 		fmt.Fprintf(&b, "M 100644 inline %s\ndata %d\n%s", path, len(note), note)
-		index += fmt.Sprintf("%s\t%s\t2026-08-%02dT00:00:00Z\t%s\t-\n", id, path, i%28+1, to)
+		index.WriteString(fmt.Sprintf("%s\t%s\t2026-08-%02dT00:00:00Z\t%s\t-\n", id, path, i%28+1, to))
 	}
-	fmt.Fprintf(&b, "M 100644 inline from-bo/INDEX\ndata %d\n%s", len(index), index)
+	fmt.Fprintf(&b, "M 100644 inline from-bo/INDEX\ndata %d\n%s", len(index.String()), index.String())
 	b.WriteString("\ndone\n")
 
 	cmd := exec.Command("git", "-C", checkout, "fast-import", "--quiet")
