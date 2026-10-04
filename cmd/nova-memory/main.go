@@ -967,12 +967,13 @@ func loadPinOpen(root, pin string, stderr io.Writer, open func(string) (io.ReadC
 		if err != nil {
 			// errPathEscapes is unexported; its text is the signal that an
 			// intermediate symlink left the root. Any other error keeps the
-			// missing-entry refusal.
-			msg := "does not exist under --root"
+			// missing-entry refusal. Both reasons are format literals so the
+			// print audit sees no raw argument.
 			if strings.Contains(err.Error(), "path escapes from parent") {
-				msg = "escapes --root through a symlink"
+				refuse(stderr, " boot", fmt.Sprintf("pin entry %q escapes --root through a symlink", oneline.Escape(e)))
+			} else {
+				refuse(stderr, " boot", fmt.Sprintf("pin entry %q does not exist under --root", oneline.Escape(e)))
 			}
-			refuse(stderr, " boot", fmt.Sprintf("pin entry %q %s", oneline.Escape(e), msg))
 			return 0, 0, false
 		}
 		if !fi.Mode().IsRegular() {
