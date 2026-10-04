@@ -55,7 +55,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 			"Defaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.",
 			"Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.",
 			"Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing.",
-			"Cross-process delivery recovery needs --snapshot: the snapshot saves the artifact (the note nova-bus prepared) before each send, and a note still pending (prepared, not yet confirmed sent) is retried by the same --send, never prepared again.",
+			"Cross-process delivery recovery needs --snapshot: the snapshot saves the note before each send, and a note still pending (saved, not yet confirmed sent) is resolved by the same --send first: it is found on the bus log if it landed, else sent, never composed again.",
 			"A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running.",
 		} {
 			assert.Contains(t, banner, "\n"+para+"\n", "the notes are one short paragraph per subject")

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type observed struct {
@@ -33,9 +34,9 @@ type snapshot struct {
 }
 
 // Go's decoder keeps the LAST of two identical keys and reports nothing, so a
-// prepared artifact or a snapshot can carry two different values for the same
-// field and still decode. Neither input is this tool's own: one is another
-// binary's stdout, the other a file on disk that a crash or an editor may have
+// pending note or a snapshot can carry two different values for the same
+// field and still decode. Neither input is this tool's own: one is the
+// store's reply to a past run saved to disk, the other a file on disk that a crash or an editor may have
 // touched. A second value for one field is ambiguity about an identity, and
 // ambiguity is refused before anything is mutated rather than resolved by a
 // rule nobody wrote down. The key's name is never quoted back: the name is
@@ -81,7 +82,7 @@ func foldKey(name string) (string, error) {
 
 // maxJSONDepth bounds the reader the same way every other reader here is
 // bounded. The shapes this tool decodes are three deep; anything far past that
-// is not a snapshot or an artifact, and is refused rather than descended.
+// is not a snapshot or a pending note, and is refused rather than descended.
 const maxJSONDepth = 32
 
 func walkJSON(d *json.Decoder, t json.Token, depth int) error {
@@ -143,7 +144,7 @@ func walkJSON(d *json.Decoder, t json.Token, depth int) error {
 // validateSnapshot walks the snapshot's known shape and refuses exactly the two
 // ambiguities a snapshot reader must refuse, without reaching into data it did
 // not choose. A typed object -- the snapshot itself, an observed value, a
-// delivered or pending value, and the prepared artifact a pending entry holds --
+// delivered or pending value, and the note a pending entry holds --
 // names its schema members, so a member must be spelled exactly and a member
 // holding a byte outside ASCII is refused (the decoder's fold would otherwise
 // let "ſha256" name the digest field), and two members that fold to one name are
@@ -192,11 +193,12 @@ func walkPendingValue(d *json.Decoder) error {
 
 func walkArtifact(d *json.Decoder) error {
 	return walkTyped(d, map[string]func(*json.Decoder) error{
-		"schema": skipValue,
-		"id":     skipValue,
-		"path":   skipValue,
-		"note":   skipValue,
-		"sha256": skipValue,
+		"schema":  skipValue,
+		"id":      skipValue,
+		"subject": skipValue,
+		"note":    skipValue,
+		"sha256":  skipValue,
+		"at":      skipValue,
 	})
 }
 
@@ -427,37 +429,57 @@ func snapshotScope(o options) string {
 		to[i] = strings.TrimSpace(to[i])
 	}
 	sort.Strings(to)
-	bus, _ := filepath.Abs(o.bus)
-	b, _ := json.Marshal([]string{o.as, strings.Join(to, ","), bus, o.remote, o.branch, o.host})
+	b, _ := json.Marshal([]string{o.as, strings.Join(to, ","), o.redis, o.host})
 	return string(b)
 }
 
-// validatePrepared checks the bus JSON without relying on stdout as a permission
-// grant. The bus must additionally validate the artifact before it can mutate.
-func validatePrepared(raw []byte) (string, error) {
-	var a struct{ Schema, ID, Path, Note, SHA256 string }
+// pendingSchema names the note a snapshot keeps pending (SPEC-UPDATE rule 25).
+const pendingSchema = "nova.update.pending/1"
+
+// pendingNote is the note a --send saved before it sent: the subject and body
+// the message carries, the digest of both, the id this tool names it by and
+// the instant it was saved (the floor of the log read that finds it again).
+type pendingNote struct{ Schema, ID, Subject, Note, SHA256, At string }
+
+// newPending makes the note to save: id and digest come from its content.
+func newPending(subject, note string, at time.Time) pendingNote {
+	sum := shaText(subject + "\n" + note)
+	return pendingNote{pendingSchema, "update-" + sum[:12], subject, note, sum, at.UTC().Format(time.RFC3339)}
+}
+
+// validatePending checks the pending note a snapshot holds before anything is
+// sent from it (SPEC-UPDATE rule 25): the file is not this tool's own on the
+// next run, so it is decoded strictly.
+func validatePending(raw []byte) (pendingNote, error) {
+	var a pendingNote
 	if err := noDuplicateKeys(raw); err != nil {
-		return "", fmt.Errorf("bus prepare returned an invalid artifact: %s", err)
+		return a, fmt.Errorf("pending note is invalid: %s", err)
 	}
-	// The artifact is a fixed five-field object and rule 25 calls for the EXACT
-	// prepared artifact, so its keys are required by their exact spelling rather
-	// than by whatever the decoder would match. That is what makes a lone "ID"
-	// a refusal and not a second spelling of the identity.
-	if err := exactKeys(raw, "schema", "id", "path", "note", "sha256"); err != nil {
-		return "", fmt.Errorf("bus prepare returned an invalid artifact: %s", err)
+	// The note is a fixed six-field object and rule 25 calls for the EXACT saved
+	// note, so its keys are required by their exact spelling rather than by
+	// whatever the decoder would match. That is what makes a lone "ID" a
+	// refusal and not a second spelling of the identity.
+	if err := exactKeys(raw, "schema", "id", "subject", "note", "sha256", "at"); err != nil {
+		return a, fmt.Errorf("pending note is invalid: %s", err)
 	}
+	var m struct{ Schema, ID, Subject, Note, SHA256, At string }
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
-	if d.Decode(&a) != nil || a.Schema != "nova.bus.prepared/1" || a.ID == "" || a.Path == "" || !strings.HasSuffix(a.Note, "\n") || len(a.SHA256) != 64 {
-		return "", fmt.Errorf("bus prepare returned an invalid artifact")
+	if d.Decode(&m) != nil {
+		return a, fmt.Errorf("pending note is invalid")
+	}
+	a = pendingNote(m)
+	if _, err := time.Parse(time.RFC3339, a.At); err != nil || a.Schema != pendingSchema || a.ID == "" || a.Subject == "" || strings.ContainsAny(a.Subject, "\r\n") ||
+		!strings.HasSuffix(a.Note, "\n") || len(a.SHA256) != 64 {
+		return pendingNote{}, fmt.Errorf("pending note is invalid")
 	}
 	if d.Decode(new(any)) != io.EOF {
-		return "", fmt.Errorf("bus prepare returned trailing data")
+		return pendingNote{}, fmt.Errorf("pending note has trailing data")
 	}
-	if shaText(a.Note) != a.SHA256 {
-		return "", fmt.Errorf("bus prepare digest mismatch")
+	if shaText(a.Subject+"\n"+a.Note) != a.SHA256 {
+		return pendingNote{}, fmt.Errorf("pending note digest mismatch")
 	}
-	return a.ID, nil
+	return a, nil
 }
 
 // exactKeys requires a flat object to carry exactly these keys, spelled exactly.
@@ -477,22 +499,6 @@ func exactKeys(raw []byte, want ...string) error {
 		}
 	}
 	return nil
-}
-func confirmed(line, id string) bool {
-	f := strings.Fields(line)
-	if len(f) < 3 || f[0] != "SEND" || f[1] != "OK" {
-		return false
-	}
-	haveID, pushed := false, false
-	for _, v := range f[2:] {
-		if v == "id="+id {
-			haveID = true
-		}
-		if v == "pushed=true" {
-			pushed = true
-		}
-	}
-	return haveID && pushed
 }
 func cloneObserved(m map[string]observed) map[string]observed {
 	n := map[string]observed{}

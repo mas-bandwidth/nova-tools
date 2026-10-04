@@ -169,9 +169,10 @@ func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
 // starts no bus, and a run whose children hang still ends inside its budget.
 func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	fixed := time.Date(2026, 9, 9, 12, 34, 56, 0, time.UTC)
-	env := Environment{Now: func() time.Time { return fixed }}
+	fb := newFakeRedisBus("fixture", "integrator")
+	env := fb.env()
+	env.Now = func() time.Time { return fixed }
 	snapshot := filepath.Join(t.TempDir(), "s.json")
-	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, out, errs := run(t, env, "report", "--file", p, "--as", "fixture", "--to", "integrator", "--snapshot", snapshot)
 	if c != 0 {
@@ -183,15 +184,8 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	if strings.Contains(out, "REPORT SENT") {
 		require.Fail(t, fmt.Sprintln("a report with recipients sent without --send"))
 	}
-	// A missing call log is the strongest form of the answer: the fake bus never
-	// ran at all, so it never even opened the file it logs to.
-	if _, err := os.Stat(log); err == nil {
-		if nprep, nsend := calls(t, log); nprep != 0 || nsend != 0 {
-			require.Failf(t, "", "a plain report invoked the bus: %d prepares, %d sends", nprep, nsend)
-		}
-	} else if !os.IsNotExist(err) {
-		require.Fail(t, fmt.Sprintln(err))
-	}
+	// The bus was never opened: no send was asked for.
+	require.Empty(t, fb.dialed, "a plain report opened the bus")
 	// Rule 25's injected clock: the snapshot's own stamps are that clock too, so
 	// two runs of one fixture are byte-identical and a diff means a change.
 	state, err := readSnapshot(snapshot)
@@ -274,7 +268,7 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 			assert.Failf(t, "", "nova-version's report line does not carry %s", flag)
 		}
 	}
-	for _, flag := range []string{"--bus <path>", "--remote <r>", "--branch <b>", "--as <friend>", "--to <who,who>"} {
+	for _, flag := range []string{"--redis <host:port>", "--as <friend>", "--to <who,who>"} {
 		if !strings.Contains(lines["send"], flag) {
 			assert.Failf(t, "", "nova-version's send line does not carry %s", flag)
 		}

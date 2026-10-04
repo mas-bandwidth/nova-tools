@@ -1,7 +1,6 @@
 package update
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
@@ -34,13 +34,16 @@ type Environment struct {
 	WorkerStart func(id int)
 	JobAttempt  func(index int)
 	DrainTimer  func(time.Duration) (<-chan time.Time, func() bool)
+	// Bus opens the Redis bus store at an address (SPEC-UPDATE rule 24); nil
+	// dials the fleet Redis. A test passes internal/bus's Fake.
+	Bus func(ctx context.Context, addr string) (bus.Store, func(), error)
 }
 type options struct {
-	file, host, snapshot, as, to, bus, remote, branch, target, adopt, store string
-	max                                                                     int
-	timeout, budget                                                         time.Duration
-	kinds                                                                   kindFlags
-	draft, send, dryRun                                                     bool
+	file, host, snapshot, as, to, redis, target, adopt, store string
+	max                                                       int
+	timeout, budget                                           time.Duration
+	kinds                                                     kindFlags
+	draft, send, dryRun                                       bool
 }
 type kindFlags []string
 
@@ -116,10 +119,10 @@ const updateVerbs = `usage:
   nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
   nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
   nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to
-    <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>]
+    <who,who> | --send --as <friend> --to <who,who> --redis <host:port>]
     [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
   nova-update report --store <host:port> [--timeout <d>]
-  nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to
+  nova-update watch --adopt <checks.tsv> [--redis <host:port> --as <friend> --to
     <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
   nova-update adoption --file <path> [--as <friend>] [--max <n>]
   nova-update release <cut|build|install|adopt|pull> ...
@@ -170,7 +173,7 @@ func help(name string, w io.Writer) {
 	fmt.Fprintf(w, "\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n")
 	fmt.Fprintf(w, "\nEvery verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n")
 	fmt.Fprintf(w, "\nReport needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing.\n")
-	fmt.Fprintf(w, "\nCross-process delivery recovery needs --snapshot: the snapshot saves the artifact (the note nova-bus prepared) before each send, and a note still pending (prepared, not yet confirmed sent) is retried by the same --send, never prepared again.\n")
+	fmt.Fprintf(w, "\nCross-process delivery recovery needs --snapshot: the snapshot saves the note before each send, and a note still pending (saved, not yet confirmed sent) is resolved by the same --send first: it is found on the bus log if it landed, else sent, never composed again.\n")
 	fmt.Fprintf(w, "\nA snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running.\n")
 	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
 	fmt.Fprint(w, twoBinaries())
@@ -218,8 +221,8 @@ func verbDetail(name, verb string) string {
 		"check":    "inspection: reads each tool's installed version and asks its latest source (github:, npm:, brew: and ollama: are network reads); writes nothing",
 		"status":   "inspection: the reads of check; writes nothing",
 		"apply":    "local write: runs the named entry's apply command, which installs; --dry-run starts no process and writes nothing",
-		"report":   "inspection: reads each installed version, no latest, no network; --snapshot writes its state file (local write); --send delivers the note through nova-bus (delivery); --store reads the fleet's Redis",
-		"watch":    "inspection: runs each check's command; with --bus and its four companions, delivery: the receipt goes out through nova-bus",
+		"report":   "inspection: reads each installed version, no latest, no network; --snapshot writes its state file (local write); --send delivers the note through the Redis bus (delivery); --store reads the fleet's Redis",
+		"watch":    "inspection: runs each check's command; with --redis, --as and --to, delivery: the receipt goes out through the Redis bus",
 		"adoption": "inspection: reads the ledger, writes nothing",
 		"example":  "inspection: prints the example manifest; with --out, local write: writes it, never over another file",
 		"version":  "inspection: prints this binary's version line",
@@ -378,7 +381,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	}
 	if verb == "report" {
 		reportDeliveryFlags(f, &o)
-		f.BoolVar(&o.send, "send", false, "deliver the note through nova-bus (needs --as, --to, --bus, --remote, --branch)")
+		f.BoolVar(&o.send, "send", false, "deliver the note through the Redis bus (needs --as, --to, --redis)")
 		f.StringVar(&o.store, "store", "", "a fleet Redis host:port: report every bench's nova-sprint build from its beat, instead of --file")
 	}
 	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
@@ -397,13 +400,11 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 // a draft to read, or (with --send, or nova-version's send) a delivery.
 func reportDeliveryFlags(f *flag.FlagSet, o *options) {
 	f.StringVar(&o.host, "host", "", "a label for the machine the report ran on, carried in the note's subject")
-	f.StringVar(&o.snapshot, "snapshot", "", "a state file that carries a prepared note across processes: retry the saved note, never prepare again while one is pending")
+	f.StringVar(&o.snapshot, "snapshot", "", "a state file that carries a saved note across processes: resolve the saved note, never compose again while one is pending")
 	f.BoolVar(&o.draft, "draft", false, "print the note that --send would deliver, and deliver nothing (needs --as, --to)")
 	f.StringVar(&o.as, "as", "", "the sender the note is from")
 	f.StringVar(&o.to, "to", "", "the recipients, comma-separated")
-	f.StringVar(&o.bus, "bus", "", "the bus checkout that delivers the note")
-	f.StringVar(&o.remote, "remote", "", "the bus remote")
-	f.StringVar(&o.branch, "branch", "", "the bus branch")
+	f.StringVar(&o.redis, "redis", "", "the Redis bus that delivers the note, host:port (loopback or the tailnet)")
 }
 
 // storeReport is `report --store`: every bench's nova-sprint build from
@@ -439,10 +440,8 @@ func checked(name, verb string, o options, positional []string, env Environment)
 		}
 	}
 	if o.send {
-		for _, x := range []struct{ n, v string }{{"bus", o.bus}, {"remote", o.remote}, {"branch", o.branch}} {
-			if x.v == "" {
-				missing = append(missing, "--"+x.n)
-			}
+		if o.redis == "" {
+			missing = append(missing, "--redis")
 		}
 	}
 	if len(missing) > 0 {
@@ -1070,9 +1069,4 @@ func safeRevision(rev string) string {
 		return s
 	}
 	return "revision"
-}
-
-// Kept as a narrow seam for command tests and bus delivery; no shell is involved.
-func captureRun(ctx context.Context, args []string, input []byte, cap int) ProcessResult {
-	return process(ctx, args, bytes.NewReader(input), cap)
 }

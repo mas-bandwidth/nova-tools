@@ -84,13 +84,6 @@ func TestInstalledWholeBudgetOverridesChildTimeout(t *testing.T) {
 	})
 }
 
-func TestBusBoundsCapsAttemptsAtTwentyFive(t *testing.T) {
-	t.Parallel()
-	attempts, seconds := busBounds(time.Hour)
-	assert.Equal(t, 25, attempts)
-	assert.Equal(t, 60, seconds)
-}
-
 func TestDrainAllowanceUsesPassedTimeAndFloor(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)

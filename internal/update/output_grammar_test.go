@@ -104,7 +104,7 @@ func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 		{"bad bound", []string{"check", "--file", dash, "--max", "-1"}, []string{"--max", "; run: nova-update check -h"}},
 		{"apply with no name", []string{"apply", "--file", dash}, []string{"; run: nova-update apply -h"}},
 		{"watch with no checks file", []string{"watch"}, []string{"ADOPT REFUSED: missing --adopt", "; run: nova-update watch -h"}},
-		{"watch names every missing bus flag", []string{"watch", "--adopt", adopt, "--bus", "b"}, []string{"missing --remote, --branch, --as, --to"}},
+		{"watch names every missing bus flag", []string{"watch", "--adopt", adopt, "--redis", "127.0.0.1:6381"}, []string{"missing --as, --to"}},
 		{"watch with an argument", []string{"watch", "--adopt", adopt, "x"}, []string{"; run: nova-update watch -h"}},
 		{"adoption with no file", []string{"adoption"}, []string{"missing --file", "; run: nova-update adoption -h"}},
 		{"release with no verb", []string{"release"}, []string{"RELEASE REFUSED: a release verb is required; the release verbs are cut, build, install, adopt, pull, cycle; run: nova-update help release"}},

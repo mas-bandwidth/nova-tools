@@ -123,7 +123,7 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 			},
 			{
 				Name:   "send",
-				Usage:  "send " + manifest + " --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]",
+				Usage:  "send " + manifest + " --as <friend> --to <who,who> --redis <host:port> [--snapshot <path>] [--host <label>]",
 				Effect: tool.Delivery + "; --snapshot writes its state file",
 				Detail: manifestHelp("nova-version"),
 				Flags:  func(f *tool.Flags) { reportFlags(f, false) },
@@ -147,16 +147,14 @@ func reportFlags(f *tool.Flags, report bool) {
 	f.Prints()
 	f.String("file", "", "manifest (required): "+manifestShape)
 	f.String("host", "", "execution bench label")
-	f.String("snapshot", "", "state file for delivery recovery across processes: retry the saved artifact, never prepare again while pending")
+	f.String("snapshot", "", "state file for delivery recovery across processes: resolve the saved note, never compose again while pending")
 	f.Bool("draft", false, "print the note only")
 	if report {
 		f.Bool("send", false, "explicit delivery")
 	}
 	f.String("as", "", "the sender the note is from")
 	f.String("to", "", "the recipients, comma-separated")
-	f.String("bus", "", "the bus checkout that delivers the note")
-	f.String("remote", "", "the bus remote")
-	f.String("branch", "", "the bus branch")
+	f.String("redis", "", "the Redis bus that delivers the note, host:port (loopback or the tailnet)")
 	f.Int("max", 20, "per-kind output cap; 0 is all")
 	f.Duration("timeout", 5*time.Second, "one read deadline")
 	f.Duration("budget", 60*time.Second, "whole run deadline")
@@ -166,7 +164,7 @@ func reportFlags(f *tool.Flags, report bool) {
 func reportVerb(c *tool.Call, send bool, env Environment) *tool.Out {
 	o := options{
 		file: c.Str("file"), host: c.Str("host"), snapshot: c.Str("snapshot"),
-		as: c.Str("as"), to: c.Str("to"), bus: c.Str("bus"), remote: c.Str("remote"), branch: c.Str("branch"),
+		as: c.Str("as"), to: c.Str("to"), redis: c.Str("redis"),
 		max: c.Int("max"), timeout: c.Dur("timeout"), budget: c.Dur("budget"),
 		kinds: *c.Get("kind").(*kindFlags), draft: c.Bool("draft"), send: send || (c.Given("send") && c.Bool("send")),
 	}
