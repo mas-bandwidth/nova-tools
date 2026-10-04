@@ -25,7 +25,7 @@ func TestReportRedisDialFailureStderrIsTheOneFailedLine(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err, err)
 	addr := ln.Addr().String()
-	ln.Close() // nothing listens there now: every dial is refused
+	_ = ln.Close() // ignored: nothing listens there now: every dial is refused
 
 	self, err := os.Executable()
 	require.NoError(t, err, err)

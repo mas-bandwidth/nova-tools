@@ -233,7 +233,8 @@ func fakeSqlite3Main(mode string, args []string, stdout io.Writer) int {
 		return 1
 	}
 	fmt.Fprintln(f, strings.Join(args, " "))
-	f.Close()
+	// ignored: the argv line is written unbuffered, and a lost record fails the test that reads the log back
+	_ = f.Close()
 	if len(args) == 0 {
 		return 0
 	}
@@ -262,7 +263,10 @@ func fakeSqlite3Main(mode string, args []string, stdout io.Writer) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	stdout.Write(raw)
+	if _, err := stdout.Write(raw); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 	return 0
 }
 
