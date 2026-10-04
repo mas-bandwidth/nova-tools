@@ -147,6 +147,13 @@ func TestPlanCoverOnePerCause(t *testing.T) {
 				Notes:  []Note{judgment(NWorkFailed, "s1", now, 0, "a")},
 			},
 			[]Note{judgment(NWorkFailed, "s1", now, 0, "a")}},
+		{"a judgment a unit of the plan closes keeps its subject",
+			&Snapshot{Now: now, Epoch: 1, Open: open(NWorkFailed)},
+			Plan{
+				Units: []Unit{{Key: "u", Closes: []Open{{Key: "n1|a"}}}},
+				Notes: []Note{judgment(NWorkFailed, "s1", now, 0, "a")},
+			},
+			[]Note{judgment(NWorkFailed, "s1", now, 0, "a")}},
 		{"a stream-level judgment is written as it is",
 			&Snapshot{Now: now, Epoch: 1, Open: open(NCIRed)},
 			Plan{Notes: []Note{streamLevel}},
