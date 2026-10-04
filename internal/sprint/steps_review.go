@@ -180,8 +180,10 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			// or retired (read, or taken back away, levelled or returned), is not
 			// asked it again, and a reader not up is not asked (reader away, reader
 			// up); the next attempt is read on new cards, by every reader
-			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil && s.ReaderIsUp(rd) {
-				free = append(free, rd)
+			if !have[rd] && s.ReaderIsUp(rd) {
+				if _, ok := ReadCardForAsk(s, c.ID, attempt, rd); ok {
+					free = append(free, rd)
+				}
 			}
 		}
 		want := max(0, ReadsNeeded(c)-len(all)) // a read taken back from a reader away leaves one to ask
@@ -241,7 +243,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
 			maps.Copy(fields, s.readRouteOf(ri, c, failed))
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
-			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
+			cardID, _ := ReadCardForAsk(s, c.ID, attempt, rd)
+			u.Changes = append(u.Changes, change(Readers, createEntry(cardID, rd, Asked, c.Score, fields)))
 		}
 		all = append(append(all, chosenReaders...), again...)
 		if pair := strings.Join(all, ","); !another && pair != c.F("asked") {
@@ -270,7 +273,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		asked := map[string]string{}
 		for _, rd := range append(append([]string{}, chosenReaders...), again...) {
-			asked[ReadCardID(c.ID, attempt, rd)] = Asked
+			cardID, _ := ReadCardForAsk(s, c.ID, attempt, rd)
+			asked[cardID] = Asked
 		}
 		if j, ok := reviewJudgment(s, c, reviewStep{moved: asked, closing: noteIDs(u.Closes), who: r.Who}); ok {
 			u.Notes = append(u.Notes, j)
