@@ -69,6 +69,14 @@ func TestSettingsCoverSetWritesAndRefusesWhole(t *testing.T) {
 		assert.Equal(t, "sprint read-tier pro, dealt-max 90m", p.Units[0].Moved)
 		assert.Empty(t, p.Units[0].Changes, "the sprint's settings are properties, not a card's fields")
 	})
+	t.Run("one setting only: the empty one is skipped, left as it is", func(t *testing.T) {
+		t.Parallel()
+		p := Set(settingsSnapshot(nil, "s1"), SetReq{DealtMax: "2h", Who: "coord"})
+		require.Empty(t, p.Refused)
+		require.Len(t, p.Props, 1, "the read tier named none, so none is written")
+		assert.Equal(t, PropWrite{Table: Work, Name: PropDealtMax, Value: "2h", WasAbsent: true}, p.Props[0])
+		assert.Equal(t, "sprint dealt-max 2h", p.Units[0].Moved)
+	})
 	t.Run("a stream's read tier is its control card's field", func(t *testing.T) {
 		t.Parallel()
 		p := Set(settingsSnapshot(nil, "s1"), SetReq{Streams: []string{"s1"}, ReadTier: "flash", Who: "coord"})
