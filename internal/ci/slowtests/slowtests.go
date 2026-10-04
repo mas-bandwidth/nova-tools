@@ -417,12 +417,6 @@ func topLevel(test string) string {
 	return test
 }
 
-// Sum folds the events into a report against one package budget and no
-// per-test budget: Judge with Budgets{Package: budget}.
-func Sum(events []Event, budget time.Duration) Report {
-	return Judge(events, Budgets{Package: budget.Seconds()})
-}
-
 // Judge folds the events into a report. A package's total is the sum of its
 // package-level Elapsed (Test == ""), judged against its allowlist row or
 // b.Package. With b.Test > 0 every top-level test (no "/" in its name: a
@@ -518,17 +512,6 @@ func Seconds(seconds float64) string {
 // "60s", 1.5 is "1.5s".
 func budgetText(seconds float64) string {
 	return strconv.FormatFloat(seconds, 'f', -1, 64) + "s"
-}
-
-// ExitCode is the enforced verdict (the nightly leg's): 1, the check ran and
-// said no, when any package or test is over budget or any test is an
-// unledgered SLEEPS skip, 0 when none is; 2 is left to a run that could not
-// read its input. Verdict is what a leg exits with.
-func (r Report) ExitCode() int {
-	if len(r.Over) > 0 || len(r.OverTests) > 0 || len(r.Sleepers) > 0 {
-		return 1
-	}
-	return 0
 }
 
 // OverLines is one line per over-budget package, worst first, then one per
