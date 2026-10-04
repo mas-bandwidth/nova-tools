@@ -67,6 +67,7 @@ func init() {
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
+		{"promote", "[--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "promote --dry-run", (*app).cmdPromote},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'land merges s1-4 again'", (*app).cmdResume},
 		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
 		{"fleet up", "<member> [--width <n> | --width 0]", "fleet up m1 --width 64", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
@@ -173,7 +174,7 @@ release). The
 coordinator's verbs are the coordinator's alone (the first init names it:
 --coordinator, else the actor); take, finish, read, fleet beat and friend
 beat are the workers', whose actor is the member, reader or friend named; merge and ci are
-reports; tick, run and friend clean are the machine's; the reads need no actor (inbox
+reports; tick, run, friend clean and promote are the machine's; the reads need no actor (inbox
 --read, which moves the coordinator's cursor, is the coordinator's). The seat
 moves by coordinator <name> --reason <text>: given by its holder or the owner
 (init --owner), or taken by <name> itself with --take --approved-by <owner>,
