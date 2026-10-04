@@ -68,22 +68,41 @@ func later(a, b time.Time) time.Time {
 
 // updateTimers reads both records fresh, applies fn to the timers and, unless
 // dry, writes the timers back with every timer ended more than
-// sprint.TimerKeep ago dropped.
-func (st *Store) updateTimers(ctx context.Context, dry bool, fn func(b *TimerBook, now time.Time) error) (TimerBook, error) {
-	b, err := st.TimerBook(ctx)
-	if err != nil {
-		return b, err
+// sprint.TimerKeep ago dropped. fn names the timer it changed ("" none): the
+// record is read back, and a change another remind verb overwrote at the same
+// moment (the store has no compare-and-set for a record) is made again from a
+// fresh read, up to timerWrites times. It never writes the tick's ends.
+func (st *Store) updateTimers(ctx context.Context, dry bool, fn func(b *TimerBook, now time.Time) (string, error)) (TimerBook, error) {
+	for range timerWrites {
+		b, err := st.TimerBook(ctx)
+		if err != nil {
+			return b, err
+		}
+		now := st.now()
+		id, err := fn(&b, now)
+		if err != nil || dry {
+			return b, err
+		}
+		b.Timers.All = slices.DeleteFunc(b.Timers.All, func(t sprint.Timer) bool {
+			end := ended(t, b.End(t.ID))
+			return !end.IsZero() && now.Sub(end) > sprint.TimerKeep
+		})
+		if err := st.putJSON(ctx, keyTimers, b.Timers); err != nil || id == "" {
+			return b, err
+		}
+		var back sprint.Timers
+		if err := st.getJSON(ctx, keyTimers, &back); err != nil {
+			return b, err
+		}
+		if i, j := back.Find(id), b.Timers.Find(id); i >= 0 && j >= 0 && back.All[i] == b.Timers.All[j] {
+			return b, nil
+		}
 	}
-	now := st.now()
-	if err := fn(&b, now); err != nil || dry {
-		return b, err
-	}
-	b.Timers.All = slices.DeleteFunc(b.Timers.All, func(t sprint.Timer) bool {
-		end := ended(t, b.End(t.ID))
-		return !end.IsZero() && now.Sub(end) > sprint.TimerKeep
-	})
-	return b, st.putJSON(ctx, keyTimers, b.Timers)
+	return TimerBook{}, fmt.Errorf("another remind verb kept overwriting the timers record (%d tries): this change does not stand; run it again", timerWrites)
 }
+
+// timerWrites bounds updateTimers' tries.
+const timerWrites = 3
 
 // knownActor is why the actor cannot be given a timer, "" when it can: the
 // seat's holder or a friend of the sprint.
@@ -127,9 +146,9 @@ func (st *Store) SetTimer(ctx context.Context, t sprint.Timer, dry bool) (sprint
 	if why != "" {
 		return t, timerErr("%s", why)
 	}
-	_, err = st.updateTimers(ctx, dry, func(b *TimerBook, now time.Time) error {
+	_, err = st.updateTimers(ctx, dry, func(b *TimerBook, now time.Time) (string, error) {
 		if !t.Due.After(now) {
-			return timerErr("the due time %s is not after now (%s)", t.Due.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
+			return "", timerErr("the due time %s is not after now (%s)", t.Due.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
 		}
 		live := 0
 		for _, x := range b.Timers.All {
@@ -138,13 +157,13 @@ func (st *Store) SetTimer(ctx context.Context, t sprint.Timer, dry bool) (sprint
 			}
 		}
 		if live >= sprint.MaxTimers {
-			return timerErr("%d timers are pending or missed, the most the record keeps; cancel or ack some (remind --list)", live)
+			return "", timerErr("%d timers are pending or missed, the most the record keeps; cancel or ack some (remind --list)", live)
 		}
 		t.Set = now
 		t.ID = "t" + strconv.Itoa(b.Timers.Seq+1)
 		b.Timers.Seq++
 		b.Timers.All = append(b.Timers.All, t)
-		return nil
+		return t.ID, nil
 	})
 	return t, err
 }
@@ -153,18 +172,18 @@ func (st *Store) SetTimer(ctx context.Context, t sprint.Timer, dry bool) (sprint
 // not exist is refused, naming its state. dry writes nothing.
 func (st *Store) CancelTimer(ctx context.Context, id string, dry bool) (sprint.Timer, error) {
 	var out sprint.Timer
-	_, err := st.updateTimers(ctx, dry, func(b *TimerBook, now time.Time) error {
+	_, err := st.updateTimers(ctx, dry, func(b *TimerBook, now time.Time) (string, error) {
 		i := b.Timers.Find(id)
 		if i < 0 {
-			return timerErr("no timer %s (remind --list lists them)", id)
+			return "", timerErr("no timer %s (remind --list lists them)", id)
 		}
 		t := &b.Timers.All[i]
 		if s := sprint.TimerState(*t, b.End(id)); s != sprint.TimerPending {
-			return timerErr("timer %s is %s, not pending: only a pending timer is cancelled", id, s)
+			return "", timerErr("timer %s is %s, not pending: only a pending timer is cancelled", id, s)
 		}
 		t.Cancelled = now
 		out = *t
-		return nil
+		return id, nil
 	})
 	return out, err
 }
@@ -176,16 +195,16 @@ func (st *Store) AckTimer(ctx context.Context, id string, dry bool) (sprint.Time
 	var out sprint.Timer
 	var end sprint.TimerEnd
 	changed := false
-	_, err := st.updateTimers(ctx, dry, func(b *TimerBook, now time.Time) error {
+	_, err := st.updateTimers(ctx, dry, func(b *TimerBook, now time.Time) (string, error) {
 		i := b.Timers.Find(id)
 		if i < 0 {
-			return timerErr("no timer %s (remind --list lists them)", id)
+			return "", timerErr("no timer %s (remind --list lists them)", id)
 		}
 		t := &b.Timers.All[i]
-		end = b.End(id)
+		end, changed = b.End(id), false
 		switch sprint.TimerState(*t, end) {
 		case sprint.TimerPending:
-			return timerErr("timer %s has not fired (due %s): nothing to see yet; remind --cancel %s ends it", id, t.Due.UTC().Format(time.RFC3339), id)
+			return "", timerErr("timer %s has not fired (due %s): nothing to see yet; remind --cancel %s ends it", id, t.Due.UTC().Format(time.RFC3339), id)
 		case sprint.TimerFired:
 			t.Acked, changed = now, true
 		case sprint.TimerExpired:
@@ -194,7 +213,10 @@ func (st *Store) AckTimer(ctx context.Context, id string, dry bool) (sprint.Time
 			}
 		}
 		out = *t
-		return nil
+		if !changed {
+			return "", nil
+		}
+		return id, nil
 	})
 	return out, end, changed, err
 }
@@ -207,8 +229,11 @@ func (st *Store) AckTimer(ctx context.Context, id string, dry bool) (sprint.Time
 // fires a timer twice; the notes owed are written by the next tick. A second
 // tick right after changes nothing.
 func (st *Store) timers(ctx context.Context, res *TickResult) error {
-	b, err := st.TimerBook(ctx)
-	if err != nil || len(b.Timers.All) == 0 && len(b.Ends.Ends) == 0 {
+	var b TimerBook
+	if err := st.getJSON(ctx, keyTimers, &b.Timers); err != nil || len(b.Timers.All) == 0 {
+		return err // no timers: one read; the ends of dropped ones go with the next timer's tick
+	}
+	if err := st.getJSON(ctx, keyTimerEnds, &b.Ends); err != nil {
 		return err
 	}
 	now := st.now()

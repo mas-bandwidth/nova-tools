@@ -95,3 +95,17 @@ func TestRemindRefusals(t *testing.T) {
 		assert.Contains(t, errs, "; run: ", c.line)
 	}
 }
+
+func TestRemindJudgmentOfAnEarlierHolderLeadsTheNewHoldersView(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("remind --in 1m --note 'for the seat'")
+	ta.a.sleep(time.Minute)
+	ta.ok("tick")
+	ta.ok("coordinator rowan --reason 'handing over'")
+	view := ta.ok("view coordinator")
+	lines := strings.Split(view, "\n")
+	require.GreaterOrEqual(t, len(lines), 2, "the view: %s", view)
+	assert.Contains(t, lines[1], "timer t1 (for the seat) fired", "the judgment stands in the new holder's inbox: %s", view)
+}

@@ -28,12 +28,14 @@ type timerView struct {
 	Expired time.Time `json:"expired,omitzero"`
 	Reason  string    `json:"reason,omitempty"`
 	Missed  bool      `json:"missed,omitempty"`
+	// Judged says it fired as the seat's judgment: shown to whoever holds the seat.
+	Judged bool `json:"judged,omitempty"`
 	// Ago is how long ago it fired, or was due when it never did.
 	Ago string `json:"ago,omitempty"`
 }
 
 func timerViewOf(t sprint.Timer, e sprint.TimerEnd, now time.Time) timerView {
-	v := timerView{Timer: t, State: sprint.TimerState(t, e), Fired: e.Fired, Seen: e.Seen, Expired: e.Expired, Reason: e.Reason, Missed: sprint.Missed(t, e)}
+	v := timerView{Timer: t, State: sprint.TimerState(t, e), Fired: e.Fired, Seen: e.Seen, Expired: e.Expired, Reason: e.Reason, Missed: sprint.Missed(t, e), Judged: e.Judged}
 	if v.Seen.IsZero() && v.State == sprint.TimerSeen {
 		v.Seen = t.Acked
 	}
@@ -251,15 +253,20 @@ func (a *app) timerViews(ctx context.Context, st *store.Store, whom string, miss
 	return out, nil
 }
 
-// missedItems is the holder's missed timers as the coordinator view's first
-// items: a session returning after a gap reads them before anything else.
+// missedItems is the seat's missed timers as the coordinator view's first
+// items: the holder's, and every one whose judgment stands in the inbox (fired
+// for an earlier holder), so a session returning after a gap reads them before
+// anything else.
 func (a *app) missedItems(ctx context.Context, st *store.Store, holder string) []viewItem {
-	views, err := a.timerViews(ctx, st, holder, true)
-	if err != nil || holder == "" {
-		return nil // a store that keeps no timers: none to show
+	views, err := a.timerViews(ctx, st, "", true)
+	if err != nil {
+		return nil // ignored: a store that keeps no timers has none to show, and the view reads on
 	}
 	var out []viewItem
 	for _, v := range views {
+		if v.Actor != holder && !v.Judged {
+			continue
+		}
 		out = append(out, viewItem{K: "t:" + v.ID, T: itemTimer, W: "timer " + v.State, S: v.missedLine(), Next: "nova-sprint remind --ack " + v.ID})
 	}
 	return out

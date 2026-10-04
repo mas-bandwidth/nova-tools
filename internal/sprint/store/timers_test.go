@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -303,4 +305,39 @@ func TestTimerActorLeftTheSprintExpires(t *testing.T) {
 	state, end := h.timerState(tm.ID)
 	require.Equal(t, sprint.TimerExpired, state)
 	assert.Contains(t, end.Reason, "not in the sprint")
+}
+
+// overwritingKV is the twin with another remind verb's write landing right
+// after this one's first write of the timers record.
+type overwritingKV struct {
+	*Mem
+	other string // the record the other verb writes, once
+}
+
+func (o *overwritingKV) SetKey(ctx context.Context, name, value string) error {
+	if err := o.Mem.SetKey(ctx, name, value); err != nil || name != keyTimers || o.other == "" {
+		return err
+	}
+	other := o.other
+	o.other = ""
+	return o.Mem.SetKey(ctx, name, other)
+}
+
+func TestTimerSetOverwrittenByAnotherVerbIsMadeAgain(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	first := h.setTimer(h.st.Actor, "first", time.Hour, time.Hour)
+	b, err := h.st.TimerBook(h.ctx)
+	require.NoError(t, err)
+	// the other verb read the record before this one wrote, and writes it back as it read it
+	other, err := json.Marshal(b.Timers)
+	require.NoError(t, err)
+	st := *h.st
+	st.B = &overwritingKV{Mem: h.m, other: string(other)}
+	second, err := st.SetTimer(h.ctx, sprint.Timer{Actor: h.st.Actor, Setter: h.st.Actor, Note: "second", Due: t0.Add(time.Hour)}, false)
+	require.NoError(t, err)
+	b, err = h.st.TimerBook(h.ctx)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, b.Timers.Find(first.ID), 0, "the first stands")
+	assert.GreaterOrEqual(t, b.Timers.Find(second.ID), 0, "the overwritten set was made again: %+v", b.Timers)
 }

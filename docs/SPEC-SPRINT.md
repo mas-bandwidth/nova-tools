@@ -3283,7 +3283,9 @@ seat's holder or a friend of the sprint (default: the caller); a timer for anyon
 is refused. The verbs write one record (`timers`: each timer, and when it was
 cancelled or acknowledged); the tick alone writes the other (`timer-ends`: when each
 fired, was seen or expired, and why), so a verb and a tick never overwrite each other,
-and both are in the store, so a restart of the server loses none.
+and both are in the store, so a restart of the server loses none. A verb reads its
+change back and makes it again from a fresh read when another remind verb overwrote
+it at the same moment (three tries; the record has no compare-and-set).
 
 Every tick, RUNNING or STOPPED, takes one pass over the timers (`sprint.Advance`, one
 due-check, `sprint.Reached`, which a wait operand `after <time>` can share). A pending
@@ -3299,7 +3301,8 @@ the sprint, or fired and unseen; its setter gets the note `timer expired` with t
 reason), or cancelled (`remind --cancel <id>`, pending only). `remind --list` shows each
 timer's state (pending, fired, seen, expired, cancelled), when it fired and how late;
 `--missed` shows the fired and unseen and the expired not acknowledged, and `view
-coordinator` leads with the holder's, so a session back after a gap reads "timer
+coordinator` leads with the holder's and every one whose judgment stands (fired for
+an earlier holder), so a session back after a gap reads "timer
 <id> (<note>) fired 60m ago, unseen" first; `remind --ack` takes an expired one off
 the list. A set, `--cancel` and `--ack` take `--dry-run`. tla/Timers.tla is the model.
 A crash between the ends and the notes they owe writes those notes again on the next
