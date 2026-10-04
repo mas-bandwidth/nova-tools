@@ -194,6 +194,7 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	blocked := ta.group(sprint.NBlocked, "s3")
 
 	out := ta.ok("handover")
+	assert.Contains(t, out, `Cards are admitted and released in waves of at least the fleet's width: add takes a directory of briefs, release names a wave or a sentinel, rework and drop answer a group. A single-card verb outside a judgment is the sign of doing it wrong.`)
 	for _, want := range []string{
 		"HANDOVER seat=coordinator since=init\n",
 		"STREAM s1 waiting=3 ready=1 working=0 review=0 merging=0 landed=0\n",
@@ -238,7 +239,8 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	require.Len(t, h.Decisions, 2)
 	assert.Equal(t, "drop", h.Decisions[0].Verb)
 	assert.Equal(t, "obsolete: the tool went away", h.Decisions[0].Reason)
-	assert.Len(t, h.First, 3)
+	require.Len(t, h.First, 4)
+	assert.Equal(t, `Cards are admitted and released in waves of at least the fleet's width: add takes a directory of briefs, release names a wave or a sentinel, rework and drop answer a group. A single-card verb outside a judgment is the sign of doing it wrong.`, h.First[0])
 }
 
 // inbox --wait --push seat writes to the holder's inbox, ~/<holder>-working/
