@@ -31,6 +31,16 @@ whose age key file (mode 0600) opens its file. exec decrypts only the --only nam
 into one command's environment; names reads names without decrypting; no value is printed.
 first run: keygen makes a key and prints its .sops.yaml rule; a new store is git init,
 recovery.pub, that rule and a branch with an upstream; seal writes a seat's first value.
+a first store is made by hand; no verb makes one, and these are the commands the
+tool's own tests run:
+  age-keygen -o <recovery key kept off this machine>
+    the "# public key: age1…" it prints is the one line recovery.pub holds
+  .sops.yaml holds the sops rule, one per seat:
+    creation_rules:
+      - path_regex: ^<seat>\.yaml$
+        age: <seat pub>,<recovery pub>
+  git init --bare -b main <remote> && git init -b main <store>
+  git -C <store> remote add origin <remote> && git -C <store> push -u origin main
 
 usage:
   nova-secrets version  print this build identity (--version also accepted)
@@ -95,6 +105,7 @@ example:
   nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
   nova-secrets placed --machine bench-a
   nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
+  nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --stdin --dry-run
   nova-secrets seat add --store ./secrets --as bo --pub $BO_PUB --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
   nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
   nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
