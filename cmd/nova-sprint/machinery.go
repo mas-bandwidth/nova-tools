@@ -38,7 +38,9 @@ const DashboardEnv = "NOVA_SPRINT_DASHBOARD"
 const BusEnv = "NOVA_BUS_REDIS"
 
 // outside is every reach of the check past the store: each a function a test
-// replaces.
+// replaces. A served check (self: the server answering coordinator or
+// handover in its single-threaded step) runs none of httpGet, ping and
+// launchdLoaded: the dashboard, the bus and the agents say not measured.
 type outside struct {
 	// serverAddr is the sprint's server as this process knows it: the address
 	// NOVA_SPRINT_SERVER names, or self when this process is the server.
@@ -225,7 +227,7 @@ func (a *app) machineryCheck(ctx context.Context, st *store.Store, redisAddr str
 	for _, r := range rows {
 		b := beats[r.Name]
 		f := seatcheck.FriendM{Name: r.Name, Status: r.Status, Beaten: b.Beaten(), Age: now.Sub(b.At)}
-		if r.Status == sprint.Down {
+		if r.Status == sprint.Down && !self {
 			// her agent on this host: launchd's word where there is a launchd
 			switch loaded, measured := o.launchdLoaded(ctx, o.uid(), seatcheck.Label(r.Name)); {
 			case !measured:
@@ -244,22 +246,24 @@ func (a *app) machineryCheck(ctx context.Context, st *store.Store, redisAddr str
 		dash = DashboardListen
 	}
 	m.Dashboard = seatcheck.DashM{Addr: dash}
-	status, body, err := o.httpGet(ctx, "http://"+dash+"/api/sprint")
-	m.Dashboard.Status = status
-	if err != nil {
-		m.Dashboard.Err = err.Error()
-	} else {
-		var snap struct {
-			Build string `json:"build"`
+	if !self {
+		status, body, err := o.httpGet(ctx, "http://"+dash+"/api/sprint")
+		m.Dashboard.Status = status
+		if err != nil {
+			m.Dashboard.Err = err.Error()
+		} else {
+			var snap struct {
+				Build string `json:"build"`
+			}
+			_ = json.Unmarshal(body, &snap) // ignored: a body that is no snapshot carries no build, which the judge says
+			m.Dashboard.Build = snap.Build
 		}
-		_ = json.Unmarshal(body, &snap) // ignored: a body that is no snapshot carries no build, which the judge says
-		m.Dashboard.Build = snap.Build
 	}
 
 	// 8. the bus
-	if bus := a.getenv(BusEnv); bus != "" {
-		m.Bus.Addr = bus
-		if err := o.ping(ctx, bus); err != nil {
+	m.Bus.Addr = a.getenv(BusEnv)
+	if !self && m.Bus.Addr != "" {
+		if err := o.ping(ctx, m.Bus.Addr); err != nil {
 			m.Bus.Err = err.Error()
 		}
 	}

@@ -127,3 +127,24 @@ func TestSummaryAndNeverDown(t *testing.T) {
 	assert.Equal(t, "MACHINERY DOWN n=3 of=11", r.Summary())
 	assert.Contains(t, r.JSON(), `"down":3`)
 }
+
+// A check that ran in the server's own process (Server.Self) measured nothing
+// outside the store: the dashboard, the bus and a friend's agent say so, and
+// are not DOWN for it.
+func TestServedCheckSaysNotMeasured(t *testing.T) {
+	t.Parallel()
+	m := up()
+	m.Server = ServerM{Addr: "127.0.0.1:6390", Self: true, PID: 77}
+	m.Dashboard = DashM{Addr: "127.0.0.1:7390"}
+	m.Bus = BusM{Addr: "127.0.0.1:6381"}
+	m.Friends = []FriendM{{Name: "friend-a", Status: "down"}}
+	r := Judge(m, t0)
+	note := `"not measured: the check ran in the server; run nova-sprint machinery"`
+	assert.Contains(t, lines(r), "MACHINERY server OK addr=127.0.0.1:6390 self=true pid=77\n")
+	assert.Contains(t, lines(r), "MACHINERY friends DOWN friend=friend-a beat_age=never label=com.nova.loop.friend-beat-friend-a agent="+note+" remedy=")
+	assert.Contains(t, lines(r), "MACHINERY dashboard OK addr=127.0.0.1:7390 note="+note+"\n")
+	assert.Contains(t, lines(r), "MACHINERY bus OK redis=127.0.0.1:6381 note="+note+"\n")
+	assert.Equal(t, 2, r.Down, lines(r))
+	m.Bus = BusM{}
+	assert.Contains(t, lines(Judge(m, t0)), `MACHINERY bus OK redis=none note="not configured: NOVA_BUS_REDIS is not set"`+"\n")
+}

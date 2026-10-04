@@ -36,8 +36,10 @@ const Token = "MACHINERY"
 
 // ServerM is the sprint's server as measured: the address the environment
 // names (NOVA_SPRINT_SERVER), Self when the measure ran in the server's own
-// process, the error of one verb round trip, its time, and the pid of a
-// listener on the address when it is local (0 unknown).
+// process (a served coordinator or handover), which measured nothing outside
+// the store (the dashboard, the bus, the friends' agents: NotMeasured), the
+// error of one verb round trip, its time, and the pid of a listener on the
+// address when it is local (0 unknown).
 type ServerM struct {
 	Addr   string `json:"addr"`
 	Self   bool   `json:"self,omitempty"`
@@ -176,6 +178,12 @@ func memberDown(m MemberM) bool {
 	return m.Status == "down" || (m.Status != "held" && (!m.Beaten || m.Age > MemberDownAfter))
 }
 
+// NotMeasured is what the dashboard, the bus and a friend's agent say when the
+// check ran in the server (Server.Self): the server's step is single-threaded
+// and waits on no outside probe; nova-sprint machinery, run where it is typed,
+// measures them. None is DOWN for it.
+const NotMeasured = "not measured: the check ran in the server; run nova-sprint machinery"
+
 // Label is the launchd label that beats the friend on the friends' host today
 // (com.nova.loop.friend-beat-<name>; nova-friend's agent later).
 func Label(friend string) string { return "com.nova.loop.friend-beat-" + friend }
@@ -297,9 +305,12 @@ func Judge(m Measures, now time.Time) Report {
 			case "down":
 				down++
 				f := []string{"friend=" + fr.Name, "beat_age=" + beatAge(fr.Beaten, fr.Age), "label=" + Label(fr.Name)}
-				if fr.Loaded != "" {
+				switch {
+				case fr.Loaded != "":
 					f = append(f, "agent="+q(fr.Loaded))
-				} else {
+				case m.Server.Self:
+					f = append(f, "agent="+q(NotMeasured))
+				default:
 					f = append(f, "agent="+q("not measured: no launchd on "+host))
 				}
 				add(Line{Thing: Friends, Facts: f, Remedy: Bootstrap(fr.Name)})
@@ -329,6 +340,8 @@ func Judge(m Measures, now time.Time) Report {
 		d := m.Dashboard
 		remedy := "nova-sprint dashboard --listen " + d.Addr
 		switch {
+		case m.Server.Self:
+			add(Line{Thing: Dashboard, Up: true, Facts: []string{"addr=" + d.Addr, "note=" + q(NotMeasured)}})
 		case d.Err != "":
 			add(Line{Thing: Dashboard, Facts: []string{"addr=" + d.Addr, "why=" + q(d.Err)}, Remedy: remedy})
 		case d.Status != 200:
@@ -346,6 +359,8 @@ func Judge(m Measures, now time.Time) Report {
 		switch {
 		case b.Addr == "":
 			add(Line{Thing: Bus, Up: true, Facts: []string{"redis=none", "note=" + q("not configured: NOVA_BUS_REDIS is not set")}})
+		case m.Server.Self:
+			add(Line{Thing: Bus, Up: true, Facts: []string{"redis=" + b.Addr, "note=" + q(NotMeasured)}})
 		case b.Err != "":
 			add(Line{Thing: Bus, Facts: []string{"redis=" + b.Addr, "why=" + q(b.Err)}, Remedy: "redis-cli -h " + hostOf(b.Addr) + " -p " + portOf(b.Addr) + " ping"})
 		default:

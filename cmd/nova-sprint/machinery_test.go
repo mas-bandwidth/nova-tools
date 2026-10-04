@@ -176,3 +176,43 @@ func TestMachineryBusPingUsesTheFleetSeat(t *testing.T) {
 	assert.Contains(t, err.Error(), "as user bench (password from "+redisauth.DefaultPasswordEnv+")", err.Error())
 	assert.Contains(t, err.Error(), redisauth.DefaultPasswordEnv+" is empty", err.Error())
 }
+
+// A served check (coordinator or handover answered by the server) runs inside
+// the server's single-threaded step, so it reaches nothing outside the store:
+// no GET on the dashboard, no dial of the bus, no launchctl per friend down.
+// The lines say those were not measured, and are not DOWN; nova-sprint
+// machinery, run where it is typed, measures them.
+func TestServedCheckRunsNoOutsideProbe(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1 --owner glenn")
+	ta.ok("start")
+	ta.ok("tick")
+	ta.a.friends = friendRows("friend-a")
+	ta.ok("friend sync --root " + t.TempDir())
+	ta.a.sleep(2 * time.Minute)
+	env := ta.a.getenv
+	ta.a.getenv = func(k string) string {
+		if k == BusEnv {
+			return "127.0.0.1:6381"
+		}
+		return env(k)
+	}
+	var gets, pings, launchds int
+	o := upOutside()
+	o.serverAddr = ta.a.realOutside().serverAddr
+	o.httpGet = func(context.Context, string) (int, []byte, error) { gets++; return 200, []byte(`{"build":"b1"}`), nil }
+	o.ping = func(context.Context, string) error { pings++; return nil }
+	o.launchdLoaded = func(context.Context, int, string) (bool, bool) { launchds++; return true, true }
+	ta.a.outside = o
+	ta.a.serveAddr = "mem:0"
+	ta.ok("tick")
+	out := ta.ok("handover")
+	assert.Equal(t, [3]int{0, 0, 0}, [3]int{gets, pings, launchds}, "GETs, pings, launchctls:\n%s", out)
+	note := `"not measured: the check ran in the server; run nova-sprint machinery"`
+	assert.Contains(t, out, "MACHINERY server OK addr=mem:0 self=true pid=", out)
+	assert.Contains(t, out, `MACHINERY friends DOWN friend=friend-a beat_age=never label=com.nova.loop.friend-beat-friend-a agent=`+note+" remedy=", out)
+	assert.Contains(t, out, "MACHINERY dashboard OK addr=127.0.0.1:7390 note="+note+"\n", out)
+	assert.Contains(t, out, "MACHINERY bus OK redis=127.0.0.1:6381 note="+note+"\n", out)
+	assert.Contains(t, out, "MACHINERY DOWN n=2 of=10\n", out)
+}
