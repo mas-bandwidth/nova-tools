@@ -20,8 +20,6 @@ tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a 
 
 .github/scripts/foo.sh SPEC-CI.md's invented script in `x=$(bash ...)`, shown as something that is not a producer
 .github/seat-rule-gate.sh SPEC-SECRETS.md names the workflow script that is deliberately NOT here: the rule lives in the tool instead
-docs/bus internal/bus/git.go's failure narrative: a bus directory pointed inside a larger repository
-docs/bus/from-bo/x.md the path that same narrative says git reports from the repository root
 docs/history SPEC.md's `--allow docs/history` example for subdirectory enumeration
 internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS entry card-nx-f19 named that did not exist at its base
 internal/secretsanta/ SPEC-RELEASE.md's example of what prefix matching on `internal/secrets` would also catch
@@ -43,3 +41,16 @@ internal/pulse/kinds.go internal/pulse deleted 2026-09-25 (#3969); cited as hist
 internal/pulse/manager.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/statushtmlrows.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 cmd/nova-swarm/testdata/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
+cmd/nova-bus/broadcast_functional_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/draft.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/firstrun_functional_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/verb_reply.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/version.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/wait_on_note_empty_tick_functional_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/testdata/example-bus a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/bus/draft_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/bus/git.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/bus/instrument.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/bus/note.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/bus/prepared.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+docs/SPEC-BUS-DELIVERY.md a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day

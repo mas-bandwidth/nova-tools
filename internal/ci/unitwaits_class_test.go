@@ -39,7 +39,7 @@ import (
 //
 // A wait that goes through an injected clock seam is not a wall-clock wait
 // and is not found: the test calls the seam, never package time. The seams the
-// tree already has: internal/bus lockClock, internal/swarm batchClock and pullClock,
+// tree already has: internal/swarm batchClock and pullClock,
 // internal/log.Clock, and the injected `Sleep func(time.Duration)` /
 // `now func() time.Time` fields of internal/swarm.
 //

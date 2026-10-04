@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,7 +36,7 @@ type testApp struct {
 	// quiet is the readers that do not beat: every other reader of the readers
 	// table beats with the members (a reader's own queue is its beat).
 	// sent is every message the app sent on the friends' bus.
-	sent  []bus2.Message
+	sent  []bus.Message
 	quiet map[string]bool
 }
 
@@ -48,7 +48,7 @@ func newTestApp(t *testing.T) *testApp {
 	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock(); ta.beat() }
 	ta.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return ta.m, nil }
 	// the friends' bus: every message sent is kept, none goes anywhere
-	ta.a.bus = func(_ context.Context, m bus2.Message) error {
+	ta.a.bus = func(_ context.Context, m bus.Message) error {
 		ta.mu.Lock()
 		defer ta.mu.Unlock()
 		ta.sent = append(ta.sent, m)

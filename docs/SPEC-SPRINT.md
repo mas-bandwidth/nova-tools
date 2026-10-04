@@ -319,14 +319,14 @@ does not level the friends (`TestFriendLevelEvensTheReadyQueuesOfAClass`,
 a friend's card across the inbox/outbox standard
 (docs/FRIENDS.md, a sprint card): for each card working or ready on a friend's
 row it writes `inbox/<job>/BRIEF.md` when that is not there and tells her so
-with one nova-bus2 message from the coordinator to her, subject `card <card>
+with one nova-bus message from the coordinator to her, subject `card <card>
 dealt: <the FRIEND-CARD DELIVERED line>`, the inbox path in the body (her
 daemon pushes it into her session, which the inbox file alone never does; the
 store is NOVA_BUS_REDIS); the inbox file is the record and the message a
 courtesy: a send that fails never fails the delivery, is said on sync's line
 (`FRIEND-CARD NOTE friend= card=: the bus message to her was not sent (...)`)
 and written on the card's story as one happened note, `a friend was not told
-of her card`, with the `nova-bus2 send` line to tell her by hand, and keeps her
+of her card`, with the `nova-bus send` line to tell her by hand, and keeps her
 queue file, `inbox/QUEUE.json` (nova-friend's: one record per task, its
 state `queued`, `working` or `done`; her daemon's pong reports its counts),
 saying which of her cards are `working` and which `queued` (ready behind

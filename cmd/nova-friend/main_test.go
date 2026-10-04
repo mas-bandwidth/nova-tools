@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
@@ -21,22 +22,23 @@ var start = time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)
 // rig is the tool over one fake store with ada and bob known, a fake
 // launchctl, a fixed home and clock: no socket, no real time, no launchd.
 type rig struct {
-	store     *bus2.Fake
+	store     *bus.Fake
 	env       map[string]string
 	launchctl []string
+	onPath    map[string]string // what lookPath finds, by name
 	now       time.Time
 	home      string
 }
 
 func newRig(t *testing.T, names ...string) *rig {
 	t.Helper()
-	return &rig{store: bus2.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir()}
+	return &rig{store: bus.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir()}
 }
 
 func (r *rig) world() world {
 	return world{
 		getenv: func(k string) string { return r.env[k] },
-		open: func(context.Context, string) (bus2.Store, func(), error) {
+		open: func(context.Context, string) (bus.Store, func(), error) {
 			if r.store.Fail != nil {
 				return nil, nil, r.store.Fail
 			}
@@ -52,7 +54,13 @@ func (r *rig) world() world {
 		uid:     501,
 		home:    r.home,
 		binary:  func() (string, error) { return "/opt/nova/bin/nova-friend", nil },
-		random:  func() string { return "r4nd0m" },
+		lookPath: func(name string) (string, error) {
+			if p, ok := r.onPath[name]; ok {
+				return p, nil
+			}
+			return "", errors.New("executable file not found in ")
+		},
+		random: func() string { return "r4nd0m" },
 	}
 }
 
@@ -115,7 +123,7 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 
 	sent := cli.Do(t, "ping", "--as", "ada", "--to", "bob", "--nonce", "abc123").Exit(0).Out("PING OK nonce=abc123 id=", " to=bob at=2026-10-04T03:00:", "NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123")
 	_ = sent
-	entries, err := r.store.Range(context.Background(), bus2.StreamOf("bob"), "-", "+", 10)
+	entries, err := r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 10)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	m := entries[0].Message()
@@ -134,7 +142,7 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(0).Out("WAIT-PONG OK nonce=abc123 from=bob at=", "queue=2 working=1 width=4 daemon=false")
 
 	// a pong in the body from another name never counts: the from is the proof
-	_, err = (&bus2.Bus{Store: r.store}).Send(context.Background(), bus2.Message{From: "ada", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("zzz999", 0, 0, 0)})
+	_, err = (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("zzz999", 0, 0, 0)})
 	require.NoError(t, err)
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "zzz999", "--timeout", "2s").Exit(1).Err("WAIT-PONG NONE")
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--json").Exit(0).Out(`"status":"ok"`, `"nonce":"abc123"`)
@@ -247,7 +255,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 		return ctx, cancel
 	}
 	opens, beats := 0, 0
-	w.open = func(context.Context, string) (bus2.Store, func(), error) {
+	w.open = func(context.Context, string) (bus.Store, func(), error) {
 		opens++
 		if opens < 4 {
 			return nil, nil, io.ErrUnexpectedEOF
@@ -274,7 +282,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	assert.Contains(t, out.String(), "opening again in 4s")
 
 	// down for good: the signal ends it, exit 0, no crash loop
-	w.open = func(context.Context, string) (bus2.Store, func(), error) { return nil, nil, io.ErrUnexpectedEOF }
+	w.open = func(context.Context, string) (bus.Store, func(), error) { return nil, nil, io.ErrUnexpectedEOF }
 	w.sleep = func(_ context.Context, d time.Duration) {
 		slept = append(slept, d)
 		if d == OpenRetryMax {
@@ -295,15 +303,42 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 func TestWaitPongReadsTheLogFromTheWaitsOwnWindow(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	b := &bus2.Bus{Store: r.store}
+	b := &bus.Bus{Store: r.store}
 	for i := 0; i < 10000; i++ { // one second of the store's clock each
-		_, err := b.Send(context.Background(), bus2.Message{From: "ada", To: []string{"bob"}, Subject: "old", Body: "x"})
+		_, err := b.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "old", Body: "x"})
 		require.NoError(t, err)
 	}
-	_, err := b.Send(context.Background(), bus2.Message{From: "bob", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("abc123", 1, 0, 4)})
+	_, err := b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("abc123", 1, 0, 4)})
 	require.NoError(t, err)
 	cli := r.cli()
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(0).Out("WAIT-PONG OK nonce=abc123 from=bob", "queue=1 working=0 width=4")
 	r.store.Advance(time.Minute)
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(1).Err("WAIT-PONG NONE")
+}
+
+// install --secrets NAME[,NAME] --seat <seat> writes the agent with the
+// daemon wrapped in nova-secrets exec: the programs by absolute path from
+// PATH at install, the names opened and required, the daemon after the --.
+func TestInstallSecretsWrapsTheDaemonInNovaSecretsExec(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--dry-run").Exit(2).Err("--secrets wants --seat")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,no-such", "--seat", "studio", "--dry-run").Exit(2).Err(`"no-such" is none`)
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--seat", "studio", "--dry-run").Exit(2).Err("nova-secrets is not on PATH")
+	r.onPath = map[string]string{"nova-secrets": "/opt/nova/bin/nova-secrets", "sops": "/opt/homebrew/bin/sops"}
+	wrap := "/opt/nova/bin/nova-secrets exec --store " + filepath.Join(r.home, "nova-bench", "secrets") + " --as studio --key " + filepath.Join(r.home, ".config", "nova-secrets", "studio.key") +
+		" --sops /opt/homebrew/bin/sops --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- /opt/nova/bin/nova-friend run --as bob --harness opencode --dir /w/bob --redis store.test:6379 --server 127.0.0.1:6390 --width 0"
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--dry-run").Exit(0).
+		Out("NOTE the agent runs: nova-secrets exec --as studio --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- nova-friend run --as bob --harness opencode --dir /w/bob --width 0, with --redis and --server as given here")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio").Exit(0).Out("INSTALL OK label=com.nova.friend-bob")
+	raw, err := os.ReadFile(filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
+	require.NoError(t, err)
+	var args []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "<string>"); ok && strings.HasSuffix(v, "</string>") && !strings.Contains(line, "<key>") {
+			args = append(args, strings.TrimSuffix(v, "</string>"))
+		}
+	}
+	assert.Equal(t, strings.Fields(wrap), args[:len(strings.Fields(wrap))], "the plist's ProgramArguments are the wrap, then the daemon")
 }

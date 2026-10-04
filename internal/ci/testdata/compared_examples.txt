@@ -105,12 +105,12 @@ cmd/nova-decide/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-card/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./cards
 cmd/nova-card/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-card lint --card ./cards/finding-internal-bus-send.md
 cmd/nova-card/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
-cmd/nova-bus2/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus2 send --as ada --to bob --subject hello --body "are you there?"
-cmd/nova-bus2/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus2 peek --as bob
-cmd/nova-bus2/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus2 recv --as bob --exec true
-cmd/nova-bus2/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus2 ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
-cmd/nova-bus2/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus2 log --max 5
-cmd/nova-bus2/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus2 names
+cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus send --as ada --to bob --subject hello --body "are you there?"
+cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus peek --as bob
+cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus recv --as bob --exec true
+cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus log --max 5
+cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus names
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend uninstall --as bob --dry-run
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend ping --as ada --to bob --nonce abc123

@@ -306,7 +306,7 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
     included: past `--max` tools the body carries the `MORE` line, a partial inventory that
     says so (rule 22), never a bug; `--max 0` sends them all. `--send` takes the draft's
     flags plus `--bus <path> --remote <r> --branch <b>`. Delivery uses the prepared
-    artifact protocol in [SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md): `nova-bus prepare`
+    artifact protocol of the git bus (SPEC-BUS-DELIVERY.md, retired with it 2026-10-04): `nova-bus prepare`
     validates and assigns identity without sending, then `nova-bus send --prepared-stdin`
     publishes or confirms the same artifact. The reporter does no Git of its own.
     Missing `--as`, `--to`, `--bus`, `--remote` or `--branch` is exit 2 naming the flag.

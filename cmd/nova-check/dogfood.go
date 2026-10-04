@@ -45,7 +45,7 @@ const (
 )
 
 // gitTimeoutDefault is the budget one `--repo` authorship read gets before it
-// is killed and named. It is the same minute nova-bus gives one git
+// is killed and named. It is one minute, the budget a git
 // subprocess: long enough for a cold repository, short enough that a wait has
 // an end somebody can see. toolsTimeoutDefault is that budget for the whole
 // `--tools` read, which is one `help` per binary.

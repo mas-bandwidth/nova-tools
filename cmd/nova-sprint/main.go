@@ -74,7 +74,7 @@ type app struct {
 	// tip reads origin's tip of a branch (friend sync, a friend's LAND): tests give
 	// it a table of tips and open no socket.
 	tip tipFn
-	// bus sends one message on the friends' bus (internal/bus2; friend sync wakes a
+	// bus sends one message on the friends' bus (internal/bus; friend sync wakes a
 	// friend's daemon with it when it delivers her a card): tests give a recorder
 	// and open no socket.
 	bus busSendFn

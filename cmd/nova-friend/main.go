@@ -1,6 +1,6 @@
 // nova-friend is what a friend runs to be part of the team (docs/SPEC-FRIEND.md;
 // the model is tla/Friend.tla): one launchd agent per friend that parks on the
-// friend's nova-bus2 stream and pushes each message into the running session
+// friend's nova-bus stream and pushes each message into the running session
 // as a turn, beats to the sprint server while it does, answers the
 // coordinator's pings at once and pushes them in so the session answers as
 // its own turn, and tells the session when the coordinator goes silent. The
@@ -16,13 +16,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
@@ -33,7 +35,7 @@ import (
 
 var version string
 
-// The environment: the bus store (nova-bus2's variable) and the sprint
+// The environment: the bus store (nova-bus's variable) and the sprint
 // server (nova-sprint's), with the server's default beside it.
 const (
 	RedisEnv      = "NOVA_BUS_REDIS"
@@ -49,11 +51,11 @@ const WaitPongEvery = time.Second
 const OpenRetryMax = 30 * time.Second
 
 // world is what the tool reaches outside itself; main passes the real one,
-// a test its own over internal/bus2's Fake, a fake harness and its own
+// a test its own over internal/bus's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
 type world struct {
 	getenv    func(string) string
-	open      func(ctx context.Context, addr string) (bus2.Store, func(), error)
+	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
 	beat      func(ctx context.Context, server, friend string) error
 	launchctl friend.Launchctl
@@ -63,6 +65,7 @@ type world struct {
 	uid       int
 	home      string
 	binary    func() (string, error)
+	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
 	random    func() string
 }
 
@@ -95,6 +98,7 @@ func realWorld() world {
 			}
 			return nil
 		},
+		lookPath: exec.LookPath,
 		binary: func() (string, error) {
 			p, err := os.Executable()
 			if err != nil {
@@ -124,9 +128,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 	return friendTool(w).Run(args, stdin, stdout, stderr)
 }
 
-// openRedis dials the bus store the way nova-bus2 does (internal/redisconn,
+// openRedis dials the bus store the way nova-bus does (internal/redisconn,
 // the fleet's login from the environment, the password never on the line).
-func (w world) openRedis(ctx context.Context, addr string) (bus2.Store, func(), error) {
+func (w world) openRedis(ctx context.Context, addr string) (bus.Store, func(), error) {
 	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
 	if w.getenv(redisauth.UserEnv) != "" {
 		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
@@ -138,7 +142,7 @@ func (w world) openRedis(ctx context.Context, addr string) (bus2.Store, func(), 
 	if err != nil {
 		return nil, nil, err
 	}
-	return bus2.Redis{C: conn.Client()}, func() { conn.Close() }, nil
+	return bus.Redis{C: conn.Client()}, func() { conn.Close() }, nil
 }
 
 // stateDir is where the state files of the friend --as names live: --state-dir,
@@ -184,7 +188,7 @@ func friendTool(w world) *tool.Tool {
 		What:  "what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon",
 		Stamp: version,
 		How: `one launchd agent per friend (install) runs the daemon (run): it parks on the friend's
-nova-bus2 stream and pushes each message into the running session as a turn (the harness's
+nova-bus stream and pushes each message into the running session as a turn (the harness's
 deliver command), beats to the sprint server while the loop runs, answers the coordinator's
 PING at once (daemon-pong) and pushes it in; the session's own pong --nonce alone makes it up.
 state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.`,
@@ -208,7 +212,7 @@ line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way le
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the launchd agent com.nova.friend-<me> and loads it",
 				Detail: `Writes ~/Library/LaunchAgents/com.nova.friend-<me>.plist (RunAtLoad, KeepAlive: started at login,
@@ -216,11 +220,27 @@ restarted when it dies, pending messages redelivered first), boots out whatever 
 and bootstraps the new one; running it again replaces the agent. launchd's own log goes under
 ~/Library/Logs (launchd cannot open one on a network volume), and the daemon's state files and
 record under ~/.nova-friend/<me> (a background process may not touch a removable volume without
-the person's permission); --state-dir moves them. --dry-run prints the plan and writes nothing.`,
+the person's permission); --state-dir moves them. --secrets NAME[,NAME] wraps the daemon in nova-secrets
+exec as the machine's --seat (its store under ~/nova-bench/secrets, its key under ~/.config/nova-secrets),
+opening exactly those names to the harness and refusing to start without every one; nova-secrets
+and sops are found on PATH at install and written by absolute path. --dry-run prints the plan and
+writes nothing.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
+					f.String("secrets", "", "the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec")
+					f.String("seat", "", "the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets")
 					f.String("launchd-log", "", "launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)")
+					f.Check(func(c *tool.Call) {
+						if c.Str("secrets") != "" && c.Str("seat") == "" {
+							c.Problem("--secrets wants --seat <seat>: the seat the secrets are opened as")
+						}
+						for _, name := range secretNames(c.Str("secrets")) {
+							if !secretNameRe.MatchString(name) {
+								c.Problem(fmt.Sprintf("--secrets names a secret by its variable name, letters, digits and underscores: %q is none", name))
+							}
+						}
+					})
 				},
 				Run: w.install,
 			},
@@ -314,7 +334,7 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 }
 
 // bus opens the store --redis names, or says why not (exit 2).
-func (w world) bus(c *tool.Call) (*bus2.Bus, func(), *tool.Out) {
+func (w world) bus(c *tool.Call) (*bus.Bus, func(), *tool.Out) {
 	addr := c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+")")
 	if o := c.Refused(); o != nil {
 		return nil, nil, o
@@ -325,11 +345,11 @@ func (w world) bus(c *tool.Call) (*bus2.Bus, func(), *tool.Out) {
 	if err != nil {
 		return nil, nil, tool.Refuse(err.Error())
 	}
-	return &bus2.Bus{Store: st}, closeStore, nil
+	return &bus.Bus{Store: st}, closeStore, nil
 }
 
 func answer(err error) *tool.Out {
-	var r *bus2.Refusal
+	var r *bus.Refusal
 	if errors.As(err, &r) {
 		return tool.Refuse(r.Problems...)
 	}
@@ -341,7 +361,7 @@ func answer(err error) *tool.Out {
 // tolerates a store that goes down, so one that is down at the start is no
 // reason to exit; under launchd's KeepAlive that exit was a crash loop every
 // five seconds. Each wait is said on the record.
-func (w world) openUntil(ctx context.Context, addr string, record func(string)) (bus2.Store, func()) {
+func (w world) openUntil(ctx context.Context, addr string, record func(string)) (bus.Store, func()) {
 	wait := time.Second
 	for {
 		open, cancel := context.WithTimeout(ctx, redisconn.OpenTimeout)
@@ -414,10 +434,24 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 	if log == "" {
 		log = filepath.Join(w.home, "Library", "Logs", "nova-friend-"+name+".log")
 	}
-	return friend.Agent{
+	a := friend.Agent{
 		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
 		Binary: bin, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
-	}, nil
+		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
+	}
+	if len(a.Secrets) > 0 {
+		for _, p := range []struct {
+			name string
+			to   *string
+		}{{"nova-secrets", &a.SecretsTool}, {"sops", &a.Sops}} {
+			found, err := w.lookPath(p.name)
+			if err != nil {
+				return friend.Agent{}, fmt.Errorf("--secrets wraps the daemon in nova-secrets exec, and %s is not on PATH: %v", p.name, err)
+			}
+			*p.to = found
+		}
+	}
+	return a, nil
 }
 
 func (w world) install(c *tool.Call) *tool.Out {
@@ -435,7 +469,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 			Item("plan", "command", tool.Text("write "+a.PlistPath())).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootout gui/%d/%s", w.uid, a.Label()))).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, a.PlistPath()))).
-			Note("the agent runs: nova-friend run --as " + a.Friend + " --harness " + a.Harness + " --dir " + a.Dir + " --width " + fmt.Sprint(a.Width) + ", with --redis and --server as given here")
+			Note("the agent runs: " + a.Said())
 	}
 	path, ran, err := friend.Install(context.Background(), a, w.uid, w.launchctl, func(p string, data []byte) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -554,7 +588,7 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	}
 	defer closeStore()
 	line := friend.PongLine(nonce, c.Int("queue"), c.Int("working"), c.Int("width"))
-	m, err := b.Send(context.Background(), bus2.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"})
+	m, err := b.Send(context.Background(), bus.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"})
 	if err != nil {
 		return answer(err)
 	}
@@ -585,7 +619,7 @@ func (w world) ping(c *tool.Call) *tool.Out {
 	defer closeStore()
 	me, to := c.Str("as"), c.Str("to")
 	body := friend.PingText(me, since, nonce)
-	m, err := b.Send(context.Background(), bus2.Message{From: me, To: []string{to}, Subject: friend.PingPrefix + nonce, Body: body + "\n"})
+	m, err := b.Send(context.Background(), bus.Message{From: me, To: []string{to}, Subject: friend.PingPrefix + nonce, Body: body + "\n"})
 	if err != nil {
 		return answer(err)
 	}
@@ -606,7 +640,7 @@ func (w world) waitPong(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	floor := bus2.IDAt(storeNow.Add(-timeout)) // the log from the wait's own window back, never from its start
+	floor := bus.IDAt(storeNow.Add(-timeout)) // the log from the wait's own window back, never from its start
 	for {
 		got, err := b.Log(ctx, floor)
 		if err != nil {
@@ -635,4 +669,18 @@ func (w world) waitPong(c *tool.Call) *tool.Out {
 		}
 		w.sleep(ctx, WaitPongEvery)
 	}
+}
+
+// secretNameRe is a secret's name: an environment variable's.
+var secretNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// secretNames splits --secrets, dropping empty words.
+func secretNames(csv string) []string {
+	var out []string
+	for _, w := range strings.Split(csv, ",") {
+		if w = strings.TrimSpace(w); w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
 }

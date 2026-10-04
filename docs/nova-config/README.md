@@ -215,12 +215,14 @@ Migration 0014 leaves both endpoints unset; migrations 0011 through 0013
 retain the sprint and width changes. Fleet apply and inventory refuse an
 unset endpoint; declare both with one `nova-config fleet set --redis_port
 <port> --pg_dsn <dsn>` command before applying. There is no Redis port default.
+The `bus` field is the bus store's address, host:port, applied as `fleet:bus`:
+what nova-bus reads when `NOVA_BUS_REDIS` is unset, so no friend types it.
 
 ```
 nova-config fleet set --store m2 --coordinator m1 --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova --as f1
 CONFIG SET kind=fleet name=fleet rev=3 changed=coordinator,pg_dsn,redis_port,store
 nova-config fleet show
-FLEET name=fleet store=m2 coordinator=m1 redis_port=6380 pg_dsn=postgres://nova_config@localhost:5432/nova created=<t> updated=<t>
+FLEET name=fleet store=m2 coordinator=m1 redis_port=6380 pg_dsn=postgres://nova_config@localhost:5432/nova bus=- created=<t> updated=<t>
 ```
 
 ### friend

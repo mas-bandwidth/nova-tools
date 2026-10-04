@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -140,7 +140,7 @@ func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
 	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
 	ta.mu.Lock()
-	sent := append([]bus2.Message(nil), ta.sent...)
+	sent := append([]bus.Message(nil), ta.sent...)
 	ta.mu.Unlock()
 	require.Len(t, sent, 1, "one message per delivery")
 	m := sent[0]
@@ -157,7 +157,7 @@ func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
 
 	// the bus is down: the delivery stands, sync says so, and the card's story has it
 	ta2, root2 := friendCardApp(t, "friend amy", "amy")
-	ta2.a.bus = func(_ context.Context, _ bus2.Message) error { return errors.New("dial tcp: connection refused") }
+	ta2.a.bus = func(_ context.Context, _ bus.Message) error { return errors.New("dial tcp: connection refused") }
 	ta2.ok("tick")
 	out := ta2.ok("friend sync --root " + root2)
 	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1")
@@ -166,7 +166,7 @@ func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
 	require.NoError(t, err, "the inbox file is the record")
 	story := ta2.ok("card s1-1")
 	assert.Contains(t, story, "a friend was not told of her card", story)
-	assert.True(t, strings.Contains(story, "nova-bus2 send --as coordinator --to amy"), story)
+	assert.True(t, strings.Contains(story, "nova-bus send --as coordinator --to amy"), story)
 	ta.clean()
 	ta2.clean()
 }

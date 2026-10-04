@@ -21,7 +21,7 @@ func TestTheSurveyedHarnessesRefuseWithTheirReasonAndArePassive(t *testing.T) {
 			_, passive := d.(interface{ Passive() })
 			assert.True(t, passive, "the daemon takes nothing off the stream for it")
 			_, err = d.Deliver(context.Background(), "x")
-			assert.EqualError(t, err, "no deliver command for "+h+": "+Refusals[h]+"; run the session's blocking read: nova-bus2 recv --as <friend>")
+			assert.EqualError(t, err, "no deliver command for "+h+": "+Refusals[h]+"; run the session's blocking read: nova-bus recv --as <friend>")
 		})
 	}
 }

@@ -1,6 +1,6 @@
 // Package friend is what a friend's machinery runs to be part of the team
 // (docs/SPEC-FRIEND.md; the model is tla/Friend.tla). One daemon per friend
-// parks on the friend's nova-bus2 stream and pushes each message into the
+// parks on the friend's nova-bus stream and pushes each message into the
 // running session as a turn, beats to the sprint server while it does, and
 // keeps the connection with the coordinator symmetric: a ping every window
 // from the coordinator, answered at once by the daemon and as a turn by the

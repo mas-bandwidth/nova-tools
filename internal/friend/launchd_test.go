@@ -104,3 +104,25 @@ func TestInstallBootsOutThenBootstrapsAndIsTheSameTwice(t *testing.T) {
 	assert.Equal(t, []string{"launchctl bootout gui/501/com.nova.friend-bob"}, commands)
 	assert.Equal(t, []string{a.PlistPath()}, removed)
 }
+
+// With --secrets the agent's command is nova-secrets exec around the daemon:
+// the store and key under the home directory, the seat's identity, the tool
+// and sops by absolute path, exactly the named secrets (--only) and every
+// one required, then the daemon after the --: the shape of a hand-written
+// friend agent of 2026-10-04, written by the tool instead.
+func TestThePlistWrapsTheDaemonInNovaSecretsExecForItsSecrets(t *testing.T) {
+	t.Parallel()
+	a := agent()
+	a.Secrets, a.Seat, a.SecretsTool, a.Sops = []string{"DEEPSEEK_API_KEY", "GH_TOKEN"}, "studio", "/opt/nova/bin/nova-secrets", "/opt/homebrew/bin/sops"
+	want := []string{"/opt/nova/bin/nova-secrets", "exec", "--store", "/home/bob/nova-bench/secrets", "--as", "studio", "--key", "/home/bob/.config/nova-secrets/studio.key",
+		"--sops", "/opt/homebrew/bin/sops", "--only", "DEEPSEEK_API_KEY,GH_TOKEN", "--require", "DEEPSEEK_API_KEY", "--require", "GH_TOKEN", "--",
+		"/opt/nova/bin/nova-friend", "run", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--redis", "store:6379", "--server", "127.0.0.1:6390", "--width", "4"}
+	assert.Equal(t, want, a.Args())
+	p := a.Plist()
+	for i, arg := range want {
+		assert.Contains(t, p, "<string>"+arg+"</string>", "argument %d", i)
+	}
+	assert.Less(t, strings.Index(p, "<string>--</string>"), strings.Index(p, "<string>run</string>"), "the daemon comes after the --")
+	a.Secrets = nil
+	assert.Equal(t, "/opt/nova/bin/nova-friend", a.Args()[0], "no secrets, no wrap")
+}
