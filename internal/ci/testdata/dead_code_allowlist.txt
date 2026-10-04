@@ -15,7 +15,7 @@ internal/dogfood 1
 internal/hygiene 1
 internal/nsprint/fn 5
 internal/nsprint/store 3
-internal/ntable 17
+internal/ntable 11
 internal/pkgselect 22
 internal/redisfn 9
 internal/secrets 22
