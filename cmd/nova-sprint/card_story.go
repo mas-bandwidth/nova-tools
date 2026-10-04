@@ -78,7 +78,7 @@ func tell(run []sprint.Line) []storyLine {
 	for _, l := range run {
 		if l.Note == nil {
 			moved = true
-			if l.Table == sprint.Fleet && (strings.HasSuffix(l.To, ":"+sprint.DoneOK) || strings.HasSuffix(l.To, ":"+sprint.DoneFailed)) {
+			if l.Table == sprint.Fleet && (strings.HasSuffix(l.To, ":"+sprint.DoneOK) || strings.HasSuffix(l.To, ":"+sprint.DoneFailed) || strings.HasSuffix(l.To, ":"+sprint.DoneDefect)) {
 				finished = true
 			}
 		}
@@ -371,6 +371,8 @@ func outcome(l sprint.Line) string {
 	switch {
 	case l.Note == nil && l.Table == sprint.Fleet && strings.HasSuffix(l.To, ":"+sprint.DoneFailed):
 		return "attempt " + a + " failed"
+	case l.Note == nil && l.Table == sprint.Fleet && strings.HasSuffix(l.To, ":"+sprint.DoneDefect):
+		return "attempt " + a + " held on a brief defect"
 	case l.Note == nil && l.Table == sprint.Readers && strings.HasSuffix(l.To, ":"+sprint.Broken):
 		reader, _, _ := strings.Cut(l.To, ":")
 		return reader + " found attempt " + a + " broken"

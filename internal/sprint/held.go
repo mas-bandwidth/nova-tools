@@ -613,6 +613,9 @@ func (c *held) decisions(pr *Card) []string {
 		out = append(out, "drop")
 	case pr.Col == Review && acceptable(c.s, pr):
 		out = []string{"accept", "rework", "drop"}
+	case pr.Col == Review && pr.F(FieldBriefDefect) != "":
+		// a brief defect is re-cut, never reworked (docs/SPEC-SPRINT.md section 1, a brief defect)
+		out = []string{DecisionRecut, "drop"}
 	case pr.Col == Review && pr.F("result") == "failed":
 		out = []string{"rework", "drop"}
 	case pr.Col == Review && len(liveReadsAt(c.s, pr, pr.Int("attempt"))) >= ReadsNeeded(pr):
