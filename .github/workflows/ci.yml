@@ -989,11 +989,11 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          # This workflow manages caching explicitly; do not probe for a missing go.sum.
-          cache: false
+      - name: name the Go toolchain's tool-cache directory
+        # Run 37167141048 spent 23-31 s installing Go on each macOS shard.
+        # Cache the toolchain separately so the native build cache keeps its old paths/key.
+        shell: bash
+        run: echo "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)" >> "$GITHUB_ENV"
 
       - name: cache go build and module cache
         id: gocache
@@ -1014,6 +1014,28 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
           restore-keys: |
             ${{ runner.os }}-go-
+
+      - name: restore Go toolchain cache
+        id: gotoolcache
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.GO_TOOL_DIR }}
+          key: ${{ runner.os }}-go-toolchain-${{ hashFiles('go.mod') }}
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
+
+      - name: save Go toolchain cache
+        # Save immediately after setup: a later test failure must not discard the toolchain.
+        if: runner.environment == 'github-hosted' && steps.gotoolcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.GO_TOOL_DIR }}
+          key: ${{ steps.gotoolcache.outputs.cache-primary-key }}
 
       - name: build tools/ci once
         # The verbs are built ONCE here and every later step calls the binary: `go run` compiles

@@ -1198,6 +1198,14 @@ that only fits warm would never be warmed.
 **Why the save comes before the tests.** The tests are the step the cap cancels;
 a shard whose save runs before its tests warms the shards that start after it,
 even when its own test step is cancelled.
+A separate toolchain cache carries the requested Go version from the runner's
+tool cache. Its directory is named from go.mod before restoration; setup-go then
+selects that version, installing it on a miss. The toolchain is saved immediately
+after setup. The native cache retains its existing paths and key so a cold
+toolchain miss still restores compiled dependencies. In run 37167141048, repeated
+Go installation cost 23-31 seconds and contributed to two macOS shards reaching
+the unchanged two-minute cap.
+
 **The mistake it prevents.** At too few shards per OS, a shard holding two heavy
 packages together is cancelled by the cap and turns `ci-ok` red, and a
 count-only deal keeps them together however many shards there are. A cache step
