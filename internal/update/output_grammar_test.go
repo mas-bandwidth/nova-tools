@@ -323,7 +323,7 @@ func TestExampleWritesAManifestTheFirstRunReads(t *testing.T) {
 func TestSnapshotOfAManifestTakesItsTimeout(t *testing.T) {
 	t.Parallel()
 	m := writeFile(t, "m.tsv", Header+"\nslow\ttool\tsleep 9\tgithub:example/slow\tnone\tme\n")
-	code, _, errs := runTool(t, "nova-version", "snapshot", "--file", m, "--timeout", "50ms")
+	code, _, errs := runTool(t, "nova-version", "snapshot", "--file", m, "--timeout", "200ms")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "SNAPSHOT UNKNOWN name=slow reason=timeout remedy=increase\\x20--timeout")
 }
