@@ -147,6 +147,10 @@ type Step struct {
 	// Acquire; through RouteCache when one is given (a tick's, read once).
 	Routes     bool
 	RouteCache *RouteCache
+	// Answers is the judgment ids the step answers (--answers): who answered each
+	// that is answered already is read before the step's first read of the
+	// tables (Backend.Answered) and handed to the plan (sprint.Snapshot.Answered).
+	Answers []string
 	// Prices says the step prices what a worker reports (finish, read with usage:
 	// internal/sprint/cost.go): it plans with the routes alone, the routes set and
 	// each route's record (routes.go, PriceRoutes), read before its tables. It reads
@@ -209,15 +213,17 @@ func replay(step Step, raw string) (Result, error) {
 
 // Result is what a step did.
 type Result struct {
-	Verb     string           `json:"verb"`
-	Op       string           `json:"op,omitempty"`
-	Moved    []string         `json:"moved"`
-	Refused  []sprint.Refusal `json:"refused"`
-	Notes    int              `json:"notes"`
-	Attempts int              `json:"attempts"`
-	Replay   bool             `json:"replay,omitempty"` // the recorded result of the caller's operation id
-	Repaired []string         `json:"repaired,omitempty"`
-	Pending  string           `json:"pending,omitempty"` // an operation left in the fence
+	Verb    string           `json:"verb"`
+	Op      string           `json:"op,omitempty"`
+	Moved   []string         `json:"moved"`
+	Refused []sprint.Refusal `json:"refused"`
+	Notes   int              `json:"notes"`
+	// Said is what the step tells beside its moves (sprint.Plan.Said): a NOTE line each.
+	Said     []string `json:"said,omitempty"`
+	Attempts int      `json:"attempts"`
+	Replay   bool     `json:"replay,omitempty"` // the recorded result of the caller's operation id
+	Repaired []string `json:"repaired,omitempty"`
+	Pending  string   `json:"pending,omitempty"` // an operation left in the fence
 	// Skipped is each entry a repair of this operation did not apply because
 	// its expectation no longer held: recorded with the result, so a replay of
 	// the caller's operation id returns it.
@@ -436,6 +442,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, err
 		}
 	}
+	var answered map[string]string
+	if len(step.Answers) > 0 {
+		if answered, err = st.B.Answered(ctx, step.Answers); err != nil {
+			return res, err
+		}
+	}
 	for res.Attempts < st.attempts() {
 		res.Attempts++
 		if wantLock && lock == nil && !locked {
@@ -531,6 +543,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		if step.Prices {
 			snap.Routes = priced
 		}
+		snap.Answered = answered
 		if step.Readers && step.ReaderStates != nil {
 			snap.ReaderStates = step.ReaderStates
 		} else if step.Readers {
@@ -568,6 +581,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		res.Refused = plan.Refused
 		res.Moved = nil
+		res.Said = plan.Said
 		for _, u := range plan.Units {
 			if u.Moved != "" {
 				res.Moved = append(res.Moved, u.Moved)

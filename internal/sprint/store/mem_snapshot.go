@@ -91,6 +91,8 @@ type logSnapshot struct {
 	Inbox    []noteSnapshot         `json:"inbox,omitempty"`
 	Lines    []lineSnapshot         `json:"lines,omitempty"`
 	Notes    map[string]sprint.Note `json:"notes,omitempty"`
+	Aliases  map[string]string      `json:"aliases,omitempty"`  // alias (j<n>) -> note id (sprint.Alias)
+	Answered map[string]string      `json:"answered,omitempty"` // judgment id -> who answered it
 	Open     map[string]string      `json:"open,omitempty"`
 	Cursor   string                 `json:"cursor,omitempty"`
 	// Queue is the work table's queue: the changes a verb queued that the
@@ -163,7 +165,7 @@ func (m *Mem) Snapshot() ([]byte, error) {
 		s.Dropped[n] = &residueSnap{Keys: r.keys, Table: snapTable(r.table)}
 	}
 	for e, l := range m.logs {
-		ls := &logSnapshot{Fence: l.fence, Gen: l.gen, Done: l.done, Progress: l.progress, Notes: l.notes, Open: l.open, Cursor: l.cursor, Queue: l.queue}
+		ls := &logSnapshot{Fence: l.fence, Gen: l.gen, Done: l.done, Progress: l.progress, Notes: l.notes, Aliases: l.aliases, Answered: l.answered, Open: l.open, Cursor: l.cursor, Queue: l.queue}
 		for _, n := range l.inbox {
 			ls.Inbox = append(ls.Inbox, noteSnapshot{ID: n.id, Note: n.note})
 		}
@@ -199,7 +201,7 @@ func (m *Mem) Restore(doc []byte) error {
 		dropped[n] = &memResidue{keys: keys, table: r.Table.table()}
 	}
 	for e, l := range s.Logs {
-		ml := &memLog{fence: l.Fence, gen: l.Gen, done: l.Done, progress: l.Progress, notes: l.Notes, open: l.Open, cursor: l.Cursor, queue: l.Queue}
+		ml := &memLog{fence: l.Fence, gen: l.Gen, done: l.Done, progress: l.Progress, notes: l.Notes, aliases: l.Aliases, answered: l.Answered, open: l.Open, cursor: l.Cursor, queue: l.Queue}
 		if ml.done == nil {
 			ml.done = map[string]string{}
 		}
