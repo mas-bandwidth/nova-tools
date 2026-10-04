@@ -237,8 +237,15 @@ type entry struct {
 // `--no-abbrev` because the blob id on a `--raw` row is what `git cat-file -s` is then
 // asked to size, and an abbreviation is ambiguous sooner or later -- at which point the
 // whole Check fails over a range that was fine.
+//
+// `--ignore-submodules=none` because the checked repository's own `.git/config` can set
+// `diff.ignoreSubmodules=all`, which makes this read omit an added mode-160000 gitlink
+// entirely: modeFinding's explicit submodule refusal and checkPaths never see the entry
+// and the range reports clean over a gitlink it added. configOpts blanks the global and
+// system config, not the local one, so the visibility is forced here as it is in
+// diffOpts. The subject does not choose which changes the check is shown.
 func rawDiff(ctx context.Context, repo, base, head string) ([]entry, error) {
-	out, err := gitOut(ctx, repo, "diff", "--no-ext-diff", "--no-renames", "--no-abbrev", "--raw", "-z", base, head)
+	out, err := gitOut(ctx, repo, "diff", "--no-ext-diff", "--no-renames", "--no-abbrev", "--ignore-submodules=none", "--raw", "-z", base, head)
 	if err != nil {
 		return nil, fmt.Errorf("could not read the change between %s and %s: %v", short(base), short(head), err)
 	}
@@ -461,13 +468,17 @@ var configOpts = []string{"--no-replace-objects", "-c", "core.quotePath=false"}
 //	                           checkAddedLines rests on.
 //	--no-textconv              a `diff` driver in the same file would run a program of
 //	                           the worker's choosing and diff ITS output.
+//	--ignore-submodules=none   `diff.ignoreSubmodules=all` in that same file makes git
+//	                           omit an added gitlink from every diff, so the raw read
+//	                           loses the modeFinding refusal and checkPaths never sees
+//	                           the path, and this read loses the gitlink's own lines.
 //
 // A check whose subject can choose what it is shown is not a check. There is
 // deliberately no `--attr-source` here: it reads only the committed `.gitattributes`,
 // it is git 2.42 and later, and the one check that needed it -- `git diff --check` --
 // is gone, because `--check` honours the attribute whatever `--text` says and the
 // markers are now read off these same lines.
-var diffOpts = []string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--text", "--src-prefix=a/", "--dst-prefix=b/"}
+var diffOpts = []string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--text", "--src-prefix=a/", "--dst-prefix=b/", "--ignore-submodules=none"}
 
 // diffPath reads the file name off a `+++ ` header: the unquoting first, because git
 // wraps the PREFIX inside the quotes, then the `b/` off the result. A `/dev/null`
