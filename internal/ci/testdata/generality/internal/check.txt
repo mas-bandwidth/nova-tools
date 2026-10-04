@@ -1,4 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
+# ceiling: 1
 internal/check/floors.go:space 5
-internal/check/nocode.go:space 3
