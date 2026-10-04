@@ -337,6 +337,11 @@ type Snapshot struct {
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.
 	ReaderStates map[string]string
+	// Friends are the friend seats the binding already loaded onto this
+	// snapshot, the same seats a tick's TickReq carries. nil means they were
+	// not loaded. MovesDue passes these and does not invent seats
+	// (docs/SPEC-SPRINT.md section 1, a friend's read).
+	Friends []FriendSeat
 	// Running says the machine was RUNNING as the step read the sprint: its
 	// pump accepts a primary with the ok reads it needs, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").

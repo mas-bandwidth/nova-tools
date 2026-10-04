@@ -225,7 +225,15 @@ a rule) is broken, and any other report leaves the read open. `friend sync`
 writes `inbox/<job>/BRIEF.md` for a read asked or reading when that file is
 absent (`WHO: friend <name>`, the attempt, the deadline stamp) and applies
 her report the same way. A friend whose seat this tick did not load keeps the
-read she holds; it is not swept onto a fleet reader.
+read she holds; it is not swept onto a fleet reader. `MovesDue` counts a
+primary in review as a move due when `enoughReadUnits` says the pool can
+cover its read. The seats it passes are `Snapshot.Friends`, the seats the
+binding already loaded onto that snapshot, the same list a tick holds on
+`TickReq.Friends`. It does not load a roster and it does not invent a seat.
+A snapshot whose `Friends` is nil counts a flash or pro read from the fleet
+readers alone, and does not count a frontier or heavy read. The
+stopped-machine count loads the tables and the reader states and does not
+load seats, so that count stays nil until the binding sets `Snapshot.Friends`.
 Her row is hidden in the stored fleet table (the table layer's row hide, when
 the deal first adds it), so the stored view `sprint` does not draw it either;
 as for any hidden row, its counts stay in that table's folded footer there,

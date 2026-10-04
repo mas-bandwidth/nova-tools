@@ -1209,11 +1209,15 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 // MovesDue is how many moves the tick would make on the snapshot's work and
 // fleet: primaries ready to deal, work cards withdrawn, waiting primaries
 // whose needs have all landed (a sentinel is the coordinator's release), and
-// primaries in review to ask (as TickAsk picks them).
+// primaries in review to ask (as TickAsk picks them). A review primary counts
+// when enoughReadUnits says the pool can cover it. The seats are the ones
+// already on the snapshot (Snapshot.Friends); nil means the binding did not
+// load them, and a frontier or heavy read is not counted from seats this
+// function does not have (docs/SPEC-SPRINT.md section 1, a friend's read).
 func MovesDue(s *Snapshot) int {
 	n := len(s.Fleet.Column(Withdrawn))
 	for _, c := range s.Work.Column(Review) {
-		if s.Readers != nil && c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) && s.enoughReadUnits(c, nil) {
+		if s.Readers != nil && c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) && s.enoughReadUnits(c, s.Friends) {
 			n++
 		}
 	}
