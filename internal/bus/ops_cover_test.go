@@ -82,11 +82,11 @@ func TestOpsCoverPlanCloseBuildsOneReceiptPerSenderLane(t *testing.T) {
 	before := at(stamp)
 	now := at("2026-09-12T15:00:00Z")
 	for _, tt := range []struct {
-		name    string
-		files   map[string]string
-		closed  int
-		kept    int
-		wantRe  []string
+		name   string
+		files  map[string]string
+		closed int
+		kept   int
+		wantRe []string
 	}{
 		{
 			name: "an open note with an id before the stamp closes by id",
