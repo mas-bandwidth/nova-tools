@@ -68,12 +68,13 @@ func newStart(header string) int {
 // ledger files are the only files beyond PATHS you may change"): under LedgerDir, a list
 // file named as internal/ci spells its lists (allowlist_update_test.go, listFilePatterns,
 // and the deleted-tests ledger) or a .txt shard of one of its counted-ledger directories
-// (countedShardDirectories). The class tests' fixtures beside them are not ledgers.
+// (countedShardDirectories; the lint ledgers, staticcheck and errcheck, where the base has
+// them). The class tests' fixtures beside them are not ledgers.
 const LedgerDir = "internal/ci/testdata/"
 
 var (
 	ledgerLists  = []string{"*allowlist*.txt", "*.allow", "*_examples.txt", "deleted-tests.txt"}
-	ledgerShards = []string{"discarded", "scripthide", "okonfailure", "remedy", "generality", "generality-text", "testify"}
+	ledgerShards = []string{"discarded", "scripthide", "okonfailure", "remedy", "generality", "generality-text", "testify", "staticcheck", "errcheck"}
 )
 
 // Ledger says p is a class ledger (LedgerDir).
@@ -99,6 +100,17 @@ var GeneralityRoots = []string{LedgerDir + "generality", LedgerDir + "generality
 // GeneralityRoots. The lander regenerates these at a merge (docs/SPEC-SPRINT.md section 7).
 func GeneralityLedger(p string) bool {
 	return Ledger(p) && slices.ContainsFunc(GeneralityRoots, func(r string) bool { return p == r || strings.HasPrefix(p, r+"/") })
+}
+
+// LintRoots are where the lint ledgers live: the package shards of staticcheck's and
+// errcheck's findings. Their update run (TestStaticcheckFindings and TestUncheckedErrors,
+// under -tags functional) rewrites both.
+var LintRoots = []string{LedgerDir + "staticcheck", LedgerDir + "errcheck"}
+
+// LintLedger says p is a lint ledger: a .txt shard (Ledger) under one of the LintRoots.
+// The lander regenerates these at a batch's tip, as it does the generality ledgers.
+func LintLedger(p string) bool {
+	return Ledger(p) && slices.ContainsFunc(LintRoots, func(r string) bool { return strings.HasPrefix(p, r+"/") })
 }
 
 // UpdateEnv is the variable that turns the class tests' ledger checks into a rewrite

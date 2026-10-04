@@ -47,13 +47,14 @@ func TestLandFetchIsTheBaseAndTheHeadsByIDInOneCommand(t *testing.T) {
 }
 
 // A landed batch's line and its --json item carry each step's seconds: the fetch, the
-// merges, the check, the queue read again, the push and the report.
+// merges, the checks by script, the ledgers' regeneration, the tree gate (and how many
+// gates it ran), the check, the queue read again, the push and the report.
 func TestLandSaysHowLongEachStepOfALandedBatchTook(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	landTwo(r)
 	out := r.ok("land --repo-dir " + r.clone + " --base main --check true")
-	assert.Regexp(t, regexp.MustCompile(`LAND OK stream=s1 cards=2 base=main .* fetch=\d+\.\ds merge=\d+\.\ds check=\d+\.\ds queue=\d+\.\ds push=\d+\.\ds report=\d+\.\ds`), out)
+	assert.Regexp(t, regexp.MustCompile(`LAND OK stream=s1 cards=2 base=main .* fetch=\d+\.\ds merge=\d+\.\ds script=\d+\.\ds ledger=\d+\.\ds gate=\d+\.\ds gates=\d+ check=\d+\.\ds queue=\d+\.\ds push=\d+\.\ds report=\d+\.\ds`), out)
 
 	r = newLandRig(t)
 	landTwo(r)

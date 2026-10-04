@@ -1956,49 +1956,78 @@ renamed it from the name its PATHS gives), which the review passed. A head that 
 the batch branch and ends the batch as a head in conflict does: the conflict fact
 on it names every failure, `<file>:<line>` and the rule.
 
-**The tree gate.** Every tip of the batch branch passes the tree gate before the
-next head is merged onto it, in a clone that holds a `go.mod`: the module builds
-and vets (`go build ./...`, `go vet ./...`), and when the head's merge changes a
-document or a test file (a `.md`, a `_test.go`) the packages that test the tree
-itself pass (`go test ./internal/docs/ ./internal/ci/`, those the clone has). The
-base's tip is gated once a batch, the tree tests included, before any head is
-merged: a base that is red refuses the batch, nothing pushed or reported and no
-card blamed, the reason naming the base and the run, and the remedy is to fix
-the base. A head whose merged tree is red is taken off the batch branch and ends
-the batch as a head that does not merge does, the conflict fact's note the run,
-how it ended and its output on one line (the finding; the heads before it land).
-A merge that made no commit is not gated. Every go run the lander makes in the
-clone, the gate's and the update runs below, is under `GOFLAGS=-mod=readonly`:
-no run writes `go.mod` or `go.sum` (under a caller's `-mod=mod` the update runs
-of 2026-10-03 rewrote `go.mod` and every resolution was refused for it), and a
-module that needs them changed fails the run, which is the card's finding.
-`--check` is the caller's own command on top, once a batch, as before.
+**The tree gate.** Every tip `land` pushes passes the tree gate, in a clone that
+holds a `go.mod`: the module builds and vets (`go build ./...`, `go vet ./...`),
+and when the batch changes a document, a Go file or testdata (a `.md`, a `.go`,
+a path under `testdata/`) the packages that test the tree itself pass (`go test
+./internal/docs/ ./internal/ci/`, those the clone has). The base's tip is gated
+once a batch, the tree tests included, before any head is merged: a base that is
+red refuses the batch, nothing pushed or reported and no card blamed, the reason
+naming the base and the run, and the remedy is to fix the base. The batch's heads
+are merged first, each held to the lander's checks above, and the gate runs once,
+on the batch's tip (`cmd/nova-sprint/landbatch.go`; the gate of every tip cost a
+gate a head: on 2026-10-04 a 19-card batch merged in 1418.9 s). A red tip is
+bisected over the prefixes of the batch (`tla/LandBisect.tla`): the base is green
+and the tip red, each probe gates one prefix and halves the span between the
+longest prefix known green and the shortest known red, and when they are one head
+apart that head is the one whose merge turned the tree red. It is taken off the
+batch branch and ends the batch as a head that does not merge does, the conflict
+fact's note the run, how it ended and its output on one line (the finding); the
+green prefix before it lands and the cards after it stay queued. A red batch of
+n heads costs its gate and at most ceil(log2 n) probes; where a head turns the
+tree red and every longer prefix stays red, the head blamed is the one the gate
+of every tip blamed. A batch holds at most `land --batch-max` cards (40; `run
+--land --land-batch-max`): a stream with more queued on one base lands them as
+several batches in one run, each gated and pushed. Every go run the lander makes
+in the clone, the gate's and the update runs below, is under
+`GOFLAGS=-mod=readonly`: no run writes `go.mod` or `go.sum` (under a caller's
+`-mod=mod` the update runs of 2026-10-03 rewrote `go.mod` and every resolution
+was refused for it), and a module that needs them changed fails the run, which is
+the card's finding; and under the lander's own build cache (`GOCACHE`, `.gocache`
+under the land root, beside the clones), kept warm across landings and apart from
+the machine's shared cache, which the members trim. `--check` is the caller's own
+command on top, once a batch, as before. A batch's line says each step's seconds
+(`fetch= merge= script= ledger= gate= gates= check= queue= push= report=`: the
+merges, the checks by script, the ledgers' regeneration, the tree gate with how
+many gates it ran).
 
-**The generated ledgers.** A merge that stops only on generated ledgers lands.
-The generated ledgers are the class ledgers the checks above name (a `.txt` shard
-of a counted-ledger directory or a list file, never a directory, a Go file or a
-symlink), narrowed to a family owned by named tests: today the generality family,
-the `.txt` shards under `internal/ci/testdata/generality-text/` and
-`internal/ci/testdata/generality/` and the generality text fixtures allowlist,
-owned by `TestGeneralityGuardrail` and `TestGeneralityText`. Such a ledger is
-shrink-only and a function of the tree: two cards that both delete rows and both
-move its ceiling line conflict line by line, and regenerating it at the merged
-tree gives the one answer. When every unmerged path of a head's merge is a
-generated ledger, `land` takes the tip's side of each, runs the owning tests'
-update mode (`NOVA_CI_UPDATE=1`) in the clone until a run writes nothing (at most
-four runs; the update drops the fixtures allowlist rows whose files have no
-finding any more), and commits the merge as `land <id> (sprint stream <s>)` with
-a body naming the ledgers and the tests. An update run that fails, one still
-writing at the fourth run, and one that changes or adds any file outside the
-ledgers (`git status`, untracked files included) refuse the card with the
-conflict fact, its words in the note, the merge ended and what the runs wrote
-taken back. Before any update run every path the update writes (each family's
-directories and allowlist and every tracked file it owns) and every directory on
-the way to it is held to be no symlink, in the tree (`git ls-files -s`) and on
-disk (`lstat`), whichever paths conflicted, and a link refuses the card the same
-way. Any unmerged path outside the family is refused as any conflict is. The
-landing writes the resolution on the card's merge card (`note`), and the
-card's timeline tells it on the line of its merge.
+**The generated ledgers.** A card's change to a generated ledger is not merged:
+the lander makes the ledger itself, once a batch. The generated ledgers are the
+class ledgers the checks above name (a `.txt` shard of a counted-ledger directory
+or a list file, never a directory, a Go file or a symlink), narrowed to a family
+owned by named tests: the generality family, the `.txt` shards under
+`internal/ci/testdata/generality-text/` and `internal/ci/testdata/generality/`
+and the generality text fixtures allowlist, owned by `TestGeneralityGuardrail`
+and `TestGeneralityText`; and the lint family, the `.txt` shards under
+`internal/ci/testdata/staticcheck/` and `internal/ci/testdata/errcheck/`, owned by
+`TestStaticcheckFindings` and `TestUncheckedErrors` (`-tags functional`; a base
+without them has no such shards). Such a ledger is shrink-only and a function of
+the tree: two cards that both delete rows and both move its ceiling line conflict
+line by line, and regenerating it at the merged tree gives the one answer. Each
+head's own changes to them are taken off its merge, every such file put back as
+the tip holds it and the merge amended (a child that committed its ledger is no
+change outside its `PATHS` and no stop: on 2026-10-04 five lint cards stopped the
+lint stream, thirty queued behind each, for their `errcheck` and `staticcheck`
+shards); a merge whose every unmerged path is a generated ledger takes the tip's
+side of each and is committed as `land <id> (sprint stream <s>)` with a body
+naming the ledgers. Then, as part of the gate of the batch's tip (and of each
+prefix a red tip's bisection probes), the owning tests' update mode
+(`NOVA_CI_UPDATE=1`) runs at that tree until a run writes nothing (at most four
+runs; the update drops the fixtures allowlist rows whose files have no finding
+any more), and what it wrote is amended into the batch's last merge, whose body
+names the cards and the ledgers. An update run that fails, one still writing at
+the fourth run, and one that changes or adds any file outside the ledgers (`git
+status`, untracked files included) make that prefix red, what the runs wrote
+taken back: the bisection blames the first head whose ledgers it was to make, with
+the conflict fact, its words in the note (a head whose merge stopped on them `does
+not merge`, one that changed them `changes the generated ledgers`). Before any
+update run every path the update writes (each family's directories and allowlist
+and every tracked file it owns) and every directory on the way to it is held to
+be no symlink, in the tree (`git ls-files -s`) and on disk (`lstat`), and a link
+makes the prefix red the same way. Any unmerged path outside the families is
+refused as any conflict is. The landing writes on each card's merge card (`note`)
+how its ledgers were made, and the card's timeline tells it on the line of its
+merge.
 
 **The shrink-only ledgers.** A merge that stops in a shrink-only ledger lands
 without a stop. The shrink-only ledgers are the lists whose class test in
@@ -2629,7 +2658,7 @@ command that loads it.
 | brief | replaces the brief of a primary that has not started (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."): `brief <id> (--brief <text> \| --brief-file <path>) [--rules <file>]`; the new brief is held to the card lint and the size bound as `add --brief` holds one (the same function, refused exit 2, nothing written, with the lint's own lines); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first) and for a card that is no primary or has started: only a primary waiting or ready with no work card ever dealt (attempt 0) takes one, a card dealt, working, in review, merging or landed keeps its brief, its state named, and is refused so whatever the machine's state, with what changes it instead: from review `rework <id> --fix`, the next attempt's change (from merging after a `return`); from any open state a `drop` and the new brief added as a new card; once landed, a new card. The card keeps its id, stream, score and needs; before this verb the coordinator dropped the card and added it again, which changed its id and place (`sprint.Brief`). A brief that differs from the card's in its `DEPENDS-ON:` line alone is taken in any state, on a RUNNING machine (applied by the next tick, as every work-table change is while it runs) and for a card dealt (it applies to the next attempt), and the card's needs become the line's, read as `add` reads it: re-pointing a card's needs after a drop is no change of its task (the comfort list of 2026-10-03, item 2); each need is a primary on the table and not the card itself, and a ready card takes no need that has not landed (the deal would run it first), each refused by name, nothing written; the brief decision and the grade stay (`sprint.Brief`, `briefDepends`); `brief <id> --tier <flash\|pro\|heavy\|frontier>` re-tiers the card instead (the owner, 2026-10-04: "If there are pro cards that are really heavy, then let's mark them as heavy"): the tier is pinned on the primary as `rework --tier` pins it (`tier`: every later deal and read draws from it, never escalated past it), taken in any state, on a RUNNING machine and for a card dealt, where it applies to the next attempt; refused for a card landed, a sentinel, a brief that pins a model, a word that is no class, and the tier it is pinned to already; not with --brief, --brief-file or --rules (`sprint.Brief`, `briefTier`) |
 | move | moves primaries that have not started to another stream (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."): `move <id>... --stream <s> [--before <id> \| --after <id> \| --score <n>]`, one step, all or none for the ids named; refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a card that is no primary or has started (only a primary waiting or ready with no work card ever dealt moves; a card dealt, working, in review, merging or landed keeps its stream, its state named), and for a card of the destination already (`rank` changes a place in line). The destination is placed exactly as `add` places cards (the same plan, on the sprint without the moved cards): a stream new to the sprint is made as `add --stream` makes one, the cards go in line by `--before`/`--after`/`--score`, else at the end in the order named, waiting or ready by their needs and the stream's sentinels, a reached sentinel behind them no longer reached, a cycle of needs refused naming it, and a ready card the destination would put behind a sentinel refused by the lifecycle (ready -> waiting is only the effect of inserting a sentinel; `--before` the sentinel moves it). The card is the same card moved: its id, brief, needs and admission stay, and a need naming it still holds (a need is by id) (`sprint.MoveCards`) |
 | merge | one mechanical merge step for a stream: `--batch n`, given facts; `--red [--suspect <id>...]` |
-| land | the coordinator's landing step as one command, an external delivery (a git push) and a store write (the merge step): for each stream named (`--stream`, again for more; default every stream with cards queued and not stopped), in stream order, the merge queue up to its first stuck card, in work order, cut into batches of consecutive cards whose briefs name one repository and one base (`REPO:` and `BASE:`, read as staging reads them; `--base` for a card naming none); each batch's heads merged `--no-ff` with the message `land <id> (sprint stream <s>)` onto a branch cut from the base's tip on origin, in a clone (`--repo-dir`, else a clone kept under the directory each line names, its name the readable repository and a hash of it; every clone reused has its origin's fetch URL and its one push URL held to the repository the cards name before any git, the host compared without case and the path with it); a caller's `--epoch` the sprint has left refused before any git; `--check <command>` run once per batch in the clone before the push; the queue head, its heads and attempts, and the epoch read again just before each push; the push plain, never forced, and on a rejection the base fetched and the batch rebuilt on its new tip once; then the batch reported by the merge step `merge --stream s --batch n` runs, fenced to the epoch land read and guarded in the same store step to plan only while the queue still starts with the batch's cards at the heads and attempts land read and pushed (a rework keeps a card's id and epoch, not its head); the pins are the step's arguments, so an `--op` replay returns only that batch's receipt. A head that is not a commit on origin or whose merge stops on unmerged paths (unless every one is a generated ledger, which land regenerates, or a shrink-only ledger, which land resolves as the union of both sides' removals, section 7) ends its batch before it, the cards before it land, and it is reported with `--conflict` and git's words as the note; git failing for any other reason (an identity, a hook, the disk, the network) blames no card: nothing is pushed or reported and the batch is refused; a head whose merged tree fails the tree gate (`go build ./...`, `go vet ./...`, and the tree's own test packages when it changes a document or a test file; section 7) ends its batch before it as a conflict, the run's output the note, and a base whose tip fails it refuses the batch before any merge; a check that fails, with `--red`, nothing pushed; a second rejected push, with `--rejected`. A push that landed and a report that did not (a clear, a card accepted ahead of the batch, a return, between the two) is `LAND FAILED`, exit 2, and the one remedy named is to run land again, which rereads the queue and lets its own checks decide: a card as it was is recorded with no new push (its merges and push are no-ops), a card reworked since is merged at its new head or meets a real conflict, and after a clear there is nothing to report (tla/Land.tla). A bare `merge --batch n` is never offered: after a rework the queue starts with the same ids at a head the base does not hold, and the merge step alone would record it. One line per batch, `LAND OK|REFUSED|FAILED stream= cards= base= tip= ids=<first>..<last>` (a batch whose git ran also says each step's seconds, `fetch= merge= check= queue= push= report=`, and its `--json` item `times`),
+| land | the coordinator's landing step as one command, an external delivery (a git push) and a store write (the merge step): for each stream named (`--stream`, again for more; default every stream with cards queued and not stopped), in stream order, the merge queue up to its first stuck card, in work order, cut into batches of consecutive cards whose briefs name one repository and one base (`REPO:` and `BASE:`, read as staging reads them; `--base` for a card naming none); each batch's heads merged `--no-ff` with the message `land <id> (sprint stream <s>)` onto a branch cut from the base's tip on origin, in a clone (`--repo-dir`, else a clone kept under the directory each line names, its name the readable repository and a hash of it; every clone reused has its origin's fetch URL and its one push URL held to the repository the cards name before any git, the host compared without case and the path with it); a caller's `--epoch` the sprint has left refused before any git; `--check <command>` run once per batch in the clone before the push; the queue head, its heads and attempts, and the epoch read again just before each push; the push plain, never forced, and on a rejection the base fetched and the batch rebuilt on its new tip once; then the batch reported by the merge step `merge --stream s --batch n` runs, fenced to the epoch land read and guarded in the same store step to plan only while the queue still starts with the batch's cards at the heads and attempts land read and pushed (a rework keeps a card's id and epoch, not its head); the pins are the step's arguments, so an `--op` replay returns only that batch's receipt. A head that is not a commit on origin or whose merge stops on unmerged paths (unless every one is a generated ledger, whose tip's side land takes and regenerates once a batch, or a shrink-only ledger, which land resolves as the union of both sides' removals, section 7) ends its batch before it, the cards before it land, and it is reported with `--conflict` and git's words as the note; git failing for any other reason (an identity, a hook, the disk, the network) blames no card: nothing is pushed or reported and the batch is refused; the batch, its heads merged, gated once on its tip (`go build ./...`, `go vet ./...`, and the tree's own test packages when it changes a document, a Go file or testdata; section 7) and a red tip bisected to the first head whose merge turned it red, which ends its batch before it as a conflict, the run's output the note, the heads before it landing (at most `--batch-max` cards a batch, 40, a stream with more landing as several batches), and a base whose tip fails it refuses the batch before any merge; a check that fails, with `--red`, nothing pushed; a second rejected push, with `--rejected`. A push that landed and a report that did not (a clear, a card accepted ahead of the batch, a return, between the two) is `LAND FAILED`, exit 2, and the one remedy named is to run land again, which rereads the queue and lets its own checks decide: a card as it was is recorded with no new push (its merges and push are no-ops), a card reworked since is merged at its new head or meets a real conflict, and after a clear there is nothing to report (tla/Land.tla). A bare `merge --batch n` is never offered: after a rework the queue starts with the same ids at a head the base does not hold, and the merge step alone would record it. One line per batch, `LAND OK|REFUSED|FAILED stream= cards= base= tip= ids=<first>..<last>` (a batch whose git ran also says each step's seconds, `fetch= merge= script= ledger= gate= gates= check= queue= push= report=`, and its `--json` item `times`),
  then `LAND DONE batches= cards= refused=`; `--dry-run` reads the store only and changes nothing, and refuses what land refuses before its git, in land's words: a batch whose card names no base (and no `--base`) or no repository (and no `--repo-dir`) is refused, land and dry run alike, naming every problem at once, each cause on its own line with its one next command (the
 first on the `LAND REFUSED` line, each other on a `NOTE` line and in the `--json` item's
 `also`: each head of the batch that is not a commit id, with its return), and on a twin,

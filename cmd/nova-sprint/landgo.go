@@ -8,14 +8,19 @@ package main
 // changed go.mod"), and a module that needs them changed fails the run, which is the
 // card's finding.
 //
-// The tree gate is what every tip of the batch branch passes before the next head is
-// merged: the module builds and vets (`go build ./...`, `go vet ./...`), and when a
-// head changes a Go file, a document, or testdata (.go, .md, testdata/), the packages
-// that test the tree itself (treeTests, where the clone has them) pass. The base's tip
-// is gated once a batch before any head is merged, so a base that is red refuses the
-// batch and blames no card. A head whose merged tree is red is taken off the batch branch
-// and ends the batch as a head that does not merge does, the gate's run and output its
-// finding. A clone with no go.mod has no module and no gate.
+// The tree gate is what every tip land pushes passes: the module builds and vets (`go
+// build ./...`, `go vet ./...`), and when the batch changes a Go file, a document, or
+// testdata (.go, .md, testdata/), the packages that test the tree itself (treeTests,
+// where the clone has them) pass. The base's tip is gated once a batch before any head is
+// merged, so a base that is red refuses the batch and blames no card. The batch's heads
+// are merged first and its tip gated once; a red tip is bisected to the first head whose
+// merge turned it red, which ends the batch as a head that does not merge does, the
+// gate's run and output its finding (landbatch.go). A clone with no go.mod has no module
+// and no gate.
+//
+// Every go run is under the lander's own GOCACHE (app.landGoCache: .gocache under the land
+// root, beside the clones), kept warm across landings: the machine's shared build cache is
+// one the members trim, and a gate on a trimmed cache rebuilt the module from cold.
 
 import (
 	"context"
@@ -51,7 +56,11 @@ func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...str
 	if env == nil {
 		env = os.Environ()
 	}
-	b.Cmd.Dir, b.Cmd.Env = dir, withEnv(env, append([]string{readonlyGoFlags(env)}, set...)...)
+	pin := []string{readonlyGoFlags(env)}
+	if c := l.goCache(); c != "" {
+		pin = append(pin, "GOCACHE="+c)
+	}
+	b.Cmd.Dir, b.Cmd.Env = dir, withEnv(env, append(pin, set...)...)
 	out, err := b.Cmd.CombinedOutput()
 	return string(out), b.Wrap(strings.Join(run, " "), err)
 }
@@ -245,26 +254,28 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	return ""
 }
 
-// gateCard is the tree gate on one card merged onto the batch branch at before: red, the
-// card is taken off the batch branch (reset to before) and ends the batch as a head that
-// does not merge does, the finding its reason; card and env are mergeHead's. A merge that
-// made no commit (the head is in the base already) is not gated: it changes nothing the
-// base does not hold.
-func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before string) (card, env string) {
-	after, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil || after == before {
-		return "", ""
+// goCache is the GOCACHE of the lander's go runs: its own (app.landGoCache), made on first
+// use; "" runs them in the caller's (no app, none set, or a directory that cannot be made,
+// which costs a warm cache and nothing else).
+func (l *lander) goCache() string {
+	if l.a == nil || l.a.landGoCache == nil {
+		return ""
 	}
-	changed, err := l.git(ctx, dir, "diff", "--name-only", "-M", before, after)
-	if err != nil {
-		return "", "the files the merge of " + c.id + " changed could not be listed: " + firstLine("", err)
+	dir, err := l.a.landGoCache()
+	if err != nil || !filepath.IsAbs(dir) || os.MkdirAll(dir, 0o755) != nil {
+		return ""
 	}
-	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
-	if why == "" {
-		return "", ""
+	return dir
+}
+
+// landGoCacheIn is the lander's own build cache under the land root: .gocache, a name no
+// clone's directory takes (repoDirName never starts with a dot).
+func landGoCacheIn(root func() (string, error)) func() (string, error) {
+	return func() (string, error) {
+		r, err := root()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(r, ".gocache"), nil
 	}
-	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
-		return "", "the batch branch could not be reset after " + c.id + " failed the tree gate: " + firstLine("", err)
-	}
-	return "the head " + c.head + " of " + c.id + " fails the tree gate: " + why, ""
 }

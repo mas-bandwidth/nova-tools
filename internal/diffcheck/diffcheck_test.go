@@ -151,3 +151,24 @@ func TestGeneralityLedgerIsALedgerUnderTheGeneralityRoots(t *testing.T) {
 		assert.Equal(t, want, GeneralityLedger(p), p)
 	}
 }
+
+// The lint ledgers are the .txt package shards of staticcheck's and errcheck's findings:
+// class ledgers (Ledger, so a card's change to one is no change outside its PATHS) the
+// lander regenerates; the files beside them and other shards are not.
+func TestLintLedger(t *testing.T) {
+	t.Parallel()
+	for p, want := range map[string]bool{
+		"internal/ci/testdata/errcheck/cmd/nova-memory.txt":   true,
+		"internal/ci/testdata/staticcheck/cmd/nova-redis.txt": true,
+		"internal/ci/testdata/staticcheck/@root.txt":          true,
+		"internal/ci/testdata/staticcheck":                    false,
+		"internal/ci/testdata/errcheck/x.go":                  false,
+		"internal/ci/testdata/generality/cmd/x.txt":           false,
+		"internal/ci/testdata/errcheckX/a.txt":                false,
+	} {
+		assert.Equal(t, want, LintLedger(p), p)
+		if want {
+			assert.True(t, Ledger(p), p)
+		}
+	}
+}

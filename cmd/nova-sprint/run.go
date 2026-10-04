@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/pprof"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -240,17 +241,22 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	var profile, listen, decideDir string
 	var profileTicks int
 	var land bool
+	var landBatch int
 	var rules, idle bool
 	st, c, code := a.machineVerb("run", args, stderr, answerRulesFlag(&rules, true), idleAlarmFlag(&idle, true), func(fs flagSet) {
 		fs.StringVar(&listen, "listen", "", "also be the sprint's server: the workers' verbs on this `address:port` (this machine's address on the fleet's private network; a name, a public address, a link-local address, and an every-network address are refused), where nova-swarm member --server <address>:<port> sends them, and the coordinator's verbs on 127.0.0.1 at the same port, where NOVA_SPRINT_SERVER=127.0.0.1:<port> sends them")
 		fs.StringVar(&decideDir, "decide", "", "also keep the record of the sprint's attempt and grade decisions in this `dir` (nova-decide's layer 2: attempt.jsonl, grade.jsonl): the finishes' attempt decisions recorded, every card graded before its first deal with JEV_API_KEY from this environment, and each decision's outcome attached when its card lands or is dropped, every "+DecideEvery.String())
 		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); land is then not run by hand")
+		fs.IntVar(&landBatch, "land-batch-max", landBatchMax, "with --land: the most cards one landing's batch holds (land --batch-max; 0: no cap)")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
 		fs.DurationVar(&a.tickDeadline, "tick-deadline", TickDeadline, "give up a tick that has not ended in this long: print the stacks and exit so the supervisor starts the loop again (0: wait for ever)")
 	})
 	if st == nil {
 		return code
+	}
+	if land && landBatch < 0 {
+		return refuse(stderr, "run", "--land-batch-max wants 0 (no cap) or more, not "+strconv.Itoa(landBatch))
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
 	if a.twinOpen(c.redis) {
@@ -292,6 +298,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if land {
+		a.landArgs = []string{"--batch-max", strconv.Itoa(landBatch)}
 		go a.landLoop(context.Background(), c.redis, stdout)
 	}
 	// the providers' balances, read outside every tick (balance.go)

@@ -27,7 +27,7 @@ const LandEvery = 2 * time.Second
 func (a *app) landLoop(ctx context.Context, addr string, stdout io.Writer) {
 	fmt.Fprintf(stdout, "LANDING every %s: land runs here for every stream with cards queued to merge, one landing at a time\n", LandEvery)
 	for ctx.Err() == nil {
-		a.landRound(ctx, addr, nil, stdout)
+		a.landRound(ctx, addr, a.landArgs, stdout)
 		a.sleep(LandEvery)
 	}
 }
