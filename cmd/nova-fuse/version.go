@@ -17,13 +17,6 @@ import (
 // with -ldflags "-X main.version=<tag>" (a var, because -X writes only a string var).
 var version string
 
-// cmdVersion prints the one line. It takes no flags and no arguments: one output shape
-// is one thing to agree about. The stamp is the package var a release writes with
-// -ldflags, which main passes through run (docs/STANDARD.md section 8).
-func cmdVersion(args []string, stdout, stderr io.Writer) int {
-	return cmdVersionWith(args, stdout, stderr, version)
-}
-
 // cmdVersionWith prints the one line for stamp. A test passes its own stamp
 // instead of writing the package var (docs/STANDARD.md section 8).
 func cmdVersionWith(args []string, stdout, stderr io.Writer, stamp string) int {

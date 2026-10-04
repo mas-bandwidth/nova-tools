@@ -33,10 +33,10 @@ func TestAddReadsDependsOnFromTheBrief(t *testing.T) {
 	dir := t.TempDir()
 	c0 := writeHeaderBrief(t, dir, "c0", "mas-bandwidth/nova-tools#5096", "internal/c0.go")
 	c1 := writeHeaderBrief(t, dir, "c1", "c0", "internal/c1.go")
-	assert.Contains(t, ta.ok("add --stream s c0 --brief-file "+c0), "MOVED c0 -> ready")
-	assert.Contains(t, ta.ok("add --stream s c1 --brief-file "+c1), "MOVED c1 -> waiting")
+	assert.Contains(t, ta.ok("add --stream s c0 --one --brief-file "+c0), "MOVED c0 -> ready")
+	assert.Contains(t, ta.ok("add --stream s c1 --one --brief-file "+c1), "MOVED c1 -> waiting")
 	assert.Equal(t, "c0", ta.primary("c1").F("needs"), "DEPENDS-ON: c0 is c1's need")
-	ta.ok("add --stream s c2 --brief-file " + c1 + " --needs c1")
+	ta.ok("add --stream s c2 --one --brief-file " + c1 + " --needs c1")
 	assert.Equal(t, "c1", ta.primary("c2").F("needs"), "--needs given wins over the brief's line")
 	many := t.TempDir()
 	writeHeaderBrief(t, many, "p1", "-", "internal/p1.go")
@@ -66,4 +66,32 @@ func TestAddRefusesTwoCardsNamingOneFileInPaths(t *testing.T) {
 	writeHeaderBrief(t, chained, "r1", "-", "internal/y.go")
 	writeHeaderBrief(t, chained, "r2", "r1", "internal/y.go")
 	assert.Contains(t, ta.ok("add --stream u --brief-dir "+chained), "ADD OK stream=u cards=2 before=- moved=2", "a chain shares its file in turn")
+}
+
+// A brief declares the files it shares on a SHARED: header line: a pair of cards
+// that share only files both declare is admitted without --allow-shared-paths (the
+// comfort list of 2026-10-03, item 7: cards that all touch one ledger); a shared file
+// one of them does not declare keeps the refusal, naming the file and the cards.
+func TestAddAdmitsASharedPathBothBriefsDeclare(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	write := func(dir, id, paths, shared string) {
+		t.Helper()
+		lead := "RESULT: " + id + " sha=000000000000\nKIND: fix\nDEPENDS-ON: -\nPATHS: " + paths + "\nSHARED: " + shared + "\n\nFix " + id + "."
+		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(passingBrief(lead)), 0o600))
+	}
+	dir := t.TempDir()
+	write(dir, "l1", "docs/ledger.md internal/l1.go", "docs/ledger.md")
+	write(dir, "l2", "docs/ledger.md, internal/l2.go", "docs/ledger.md")
+	assert.Contains(t, ta.ok("add --stream s --brief-dir "+dir), "ADD OK stream=s cards=2 before=- moved=2")
+
+	half := t.TempDir()
+	write(half, "h1", "docs/ledger.md internal/x.go", "docs/ledger.md")
+	write(half, "h2", "docs/ledger.md internal/x.go", "-")
+	code, _, errs := ta.do("add --stream t --brief-dir " + half)
+	require.Equal(t, 2, code)
+	assert.Contains(t, errs, "docs/ledger.md is named in PATHS by h1 and h2, and neither needs the other")
+	assert.Contains(t, errs, "internal/x.go is named in PATHS by h1 and h2, and neither needs the other")
+	assert.Contains(t, errs, "declare the file on a SHARED: line of both briefs")
 }

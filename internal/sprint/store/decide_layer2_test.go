@@ -229,7 +229,7 @@ func TestTwoDecidedNothingToDoFailuresEscalateTheCard(t *testing.T) {
 		escalated bool
 	}{{decide.ClassNothingToDo, 0.9, true}, {decide.ClassNothingToDo, 0.6, false}, {decide.ClassNeedsPro, 0.99, false}} {
 		h := flashAndPro(t)
-		h.addReady("s1", 1, briefOf("pro", ""))
+		h.onFlashBelowPro("s1")
 		h.m.SetDecideBars(Bars{AttemptNoResult: "0.7", AttemptNothingToDo: "0.7"})
 		h.startMachine()
 		h.machine()
@@ -250,10 +250,10 @@ func TestTwoDecidedNothingToDoFailuresEscalateTheCard(t *testing.T) {
 	}
 }
 
-// A card graded pro at or above the sprint row's grade bar starts on pro instead of flash,
-// when its ceiling is pro; with no bar the grade is a hint and the card starts on flash; a
-// grade under the bar, a grade of flash, and a card whose ceiling is flash start on flash.
-func TestAGradeOfProAtTheBarStartsTheCardOnPro(t *testing.T) {
+// The grade is recorded on the card and decides no tier: a brief that says pro starts on
+// pro whatever its grade or the bar, and a brief that says flash starts on flash whatever
+// its grade (line 1 is the card's starting tier; route.go startTier).
+func TestAGradeDecidesNoTierLineOneDoes(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, bar, ceiling, grade string
@@ -261,9 +261,9 @@ func TestAGradeOfProAtTheBarStartsTheCardOnPro(t *testing.T) {
 		tier                      string
 	}{
 		{"pro over the bar", "0.7", "pro", decide.GradePro, 0.81, cardhdr.RoutePro},
-		{"no bar: a hint", "", "pro", decide.GradePro, 0.99, cardhdr.RouteFlash},
-		{"pro under the bar", "0.7", "pro", decide.GradePro, 0.6, cardhdr.RouteFlash},
-		{"flash over the bar", "0.7", "pro", decide.GradeFlash, 0.9, cardhdr.RouteFlash},
+		{"no bar: pro by line 1", "", "pro", decide.GradePro, 0.99, cardhdr.RoutePro},
+		{"pro under the bar: pro by line 1", "0.7", "pro", decide.GradePro, 0.6, cardhdr.RoutePro},
+		{"graded flash, says pro: pro", "0.7", "pro", decide.GradeFlash, 0.9, cardhdr.RoutePro},
 		{"never above the ceiling", "0.7", "flash", decide.GradePro, 0.95, cardhdr.RouteFlash},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -302,7 +302,7 @@ func TestAGradeIsWrittenOnlyOnAnUngradedCardNeverDealt(t *testing.T) {
 	assert.Empty(t, s.Work.Card("s1-1").F(sprint.FieldGrade))
 	assert.Equal(t, g(0.8).String(), s.Work.Card("s1-2").F(sprint.FieldGrade))
 	assert.Equal(t, g(0.5).String(), s.Work.Card("s1-3").F(sprint.FieldGrade))
-	h.must(BriefStep(sprint.BriefReq{Cards: []sprint.BriefCard{{ID: "s1-3", Brief: briefOf("flash", "PATHS: other")}}}))
+	h.must(BriefStep(sprint.BriefReq{ID: "s1-3", Brief: briefOf("flash", "PATHS: other")}))
 	assert.Empty(t, h.snap().Work.Card("s1-3").F(sprint.FieldGrade), "a brief replaced is graded again")
 	h.clean("grades")
 }

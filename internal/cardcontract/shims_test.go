@@ -75,7 +75,7 @@ func realGit(t *testing.T) string {
 		}
 		var head [2]byte
 		n, _ := f.Read(head[:])
-		f.Close()
+		require.NoError(t, f.Close())
 		if n == 2 && head[0] == '#' && head[1] == '!' {
 			continue // a script that answers for git: a shim, not the real git
 		}

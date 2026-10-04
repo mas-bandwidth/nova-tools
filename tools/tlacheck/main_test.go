@@ -70,16 +70,6 @@ func call(t *testing.T, exec tlc.Executor, args ...string) result {
 	return do(e, out, errs, args...)
 }
 
-// tweakCall is call with a step that changes the environment before the run.
-func tweakCall(t *testing.T, exec tlc.Executor, tweak func(*env), args ...string) result {
-	t.Helper()
-	e, out, errs := testEnv(t, exec)
-	if tweak != nil {
-		tweak(&e)
-	}
-	return do(e, out, errs, args...)
-}
-
 const header = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
 
 // checkout writes a tla/ with three cases (a pass, an invariant counterexample
@@ -219,10 +209,12 @@ func TestGroupsPrintsTheRequiredGroupsAsOneLineOfJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.stdout), &groups); err != nil || !reflect.DeepEqual(groups, []string{"alpha", "beta"}) || strings.Count(r.stdout, "\n") != 1 {
 		t.Fatalf("stdout = %q (%v)", r.stdout, err)
 	}
+	// The repository's own plan.
 	r = call(t, nil, "groups", "--root", filepath.Join("..", ".."))
 	if r.code != 0 || json.Unmarshal([]byte(r.stdout), &groups) != nil || len(groups) < 5 {
 		t.Fatalf("the repository's groups: %+v", r)
 	}
+	// A root with no plan is a refusal and prints no payload.
 	r = call(t, nil, "groups", "--root", t.TempDir())
 	if r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, "the case plan is refused") {
 		t.Fatalf("a root with no plan: %+v", r)
@@ -305,7 +297,9 @@ func TestRunWritesThePlatformLabelAndNeverAHostName(t *testing.T) {
 	if strings.Contains(raw, "HOSTNAME") || strings.Contains(raw, "bench") {
 		t.Errorf("the records name a host: %q", raw)
 	}
-	if r := tweakCall(t, func(context.Context, tlc.Run, string) int { t.Error("TLC ran on an unlisted platform"); return 0 }, func(e *env) { e.goarch = "sparc" }, "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r2"), "--group", "alpha"); r.code != 2 || !strings.Contains(r.stderr, `platform "linux-sparc" is not one the runner records`) {
+	e, out, errs = testEnv(t, func(context.Context, tlc.Run, string) int { t.Error("TLC ran on an unlisted platform"); return 0 })
+	e.goarch = "sparc"
+	if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r2"), "--group", "alpha"); r.code != 2 || !strings.Contains(r.stderr, `platform "linux-sparc" is not one the runner records`) {
 		t.Errorf("an unlisted architecture: %+v", r)
 	}
 	if r := call(t, nil, "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r3"), "--group", "alpha", "--host", "x"); r.code != 2 || !strings.Contains(r.stderr, "unknown flag") {
@@ -361,8 +355,12 @@ func TestRunRefusesWhatItCannotRunAndRunsNothing(t *testing.T) {
 		{"no java", []string{"--group", "alpha"}, func(e *env) { e.lookPath = func(string) (string, error) { return "", errors.New("no") } }, "java is not on PATH"},
 	}
 	for _, tc := range tests {
+		e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { t.Errorf("%s: TLC ran", tc.name); return 0 })
+		if tc.tweak != nil {
+			tc.tweak(&e)
+		}
 		args := append([]string{"run", "--root", root, "--jar", jar, "--dir", dir()}, tc.args...)
-		r := tweakCall(t, func(context.Context, tlc.Run, string) int { t.Errorf("%s: TLC ran", tc.name); return 0 }, tc.tweak, args...)
+		r := do(e, out, errs, args...)
 		if r.code != 2 || !strings.Contains(r.stderr, tc.want) || strings.Count(r.stderr, "\n") != 1 || strings.Contains(r.stdout, "CASE") {
 			t.Errorf("%s: %+v", tc.name, r)
 		}
@@ -633,7 +631,9 @@ func TestReadmeCommandsParseUnderTheRealFlagParser(t *testing.T) {
 	shown := map[string]int{}
 	for _, args := range commands {
 		shown[args[0]]++
-		if r := tweakCall(t, func(context.Context, tlc.Run, string) int { t.Errorf("%v ran TLC", args); return 0 }, func(e *env) { e.parseOnly = true }, args...); r.code != 0 || r.stdout != "" || r.stderr != "" {
+		e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { t.Errorf("%v ran TLC", args); return 0 })
+		e.parseOnly = true
+		if r := do(e, out, errs, args...); r.code != 0 || r.stdout != "" || r.stderr != "" {
 			t.Errorf("tlacheck %s: the real parser refuses it: %+v", strings.Join(args, " "), r)
 		}
 	}
@@ -648,7 +648,9 @@ func TestReadmeCommandsParseUnderTheRealFlagParser(t *testing.T) {
 	// The control: the parser does refuse a flag it does not have, a flag after a
 	// positional and a missing flag value, so a pass above means something.
 	for _, args := range [][]string{{"run", "--dir", "x", "--bogus"}, {"merge", "--out", "o", "a.tsv", "--keep", "k"}, {"groups", "--root"}} {
-		if r := tweakCall(t, nil, func(e *env) { e.parseOnly = true }, args...); r.code != 2 {
+		e, out, errs := testEnv(t, nil)
+		e.parseOnly = true
+		if r := do(e, out, errs, args...); r.code != 2 {
 			t.Errorf("%v was parsed: %+v", args, r)
 		}
 	}
@@ -860,19 +862,30 @@ func TestReplayAndWitnessesRefuseWhatIsMissingBeforeStartingAnything(t *testing.
 			return "/usr/bin/" + name, nil
 		}
 	}
-	// An unreadable source is a refusal of the environment (exit 2), not a
-	// finding that failed.
-	missing := func(e *env) { e.lookPath = func(name string) (string, error) { return "/nonexistent/" + name, nil } }
-	if r := tweakCall(t, nil, noRedis, "witnesses", "table.lua"); r.code != 2 || !strings.Contains(r.stderr, "redis-server is not on PATH") || !strings.Contains(r.stderr, "run: tlacheck witnesses --redis-server /path/to/redis-server") {
+	e, out, errs := testEnv(t, nil)
+	noRedis(&e)
+	r := do(e, out, errs, "witnesses", "table.lua")
+	if r.code != 2 || !strings.Contains(r.stderr, "redis-server is not on PATH") || !strings.Contains(r.stderr, "run: tlacheck witnesses --redis-server /path/to/redis-server") {
 		t.Fatalf("witnesses without redis: %+v", r)
 	}
-	if r := tweakCall(t, nil, noRedis, "replay", "--root", root, "--jar", jar, "--source", "table.lua", "--dir", t.TempDir()); r.code != 2 || !strings.Contains(r.stderr, "redis-server is not on PATH") || strings.Contains(r.stdout, "REPLAY") {
+	e, out, errs = testEnv(t, nil)
+	noRedis(&e)
+	r = do(e, out, errs, "replay", "--root", root, "--jar", jar, "--source", "table.lua", "--dir", t.TempDir())
+	if r.code != 2 || !strings.Contains(r.stderr, "redis-server is not on PATH") || strings.Contains(r.stdout, "REPLAY") {
 		t.Fatalf("replay without redis: %+v", r)
 	}
-	if r := tweakCall(t, nil, missing, "witnesses", filepath.Join(t.TempDir(), "gone.lua")); r.code != 2 || strings.Contains(r.stderr, "WITNESS FAIL") {
+	// An unreadable source is a refusal of the environment (exit 2), not a
+	// finding that failed.
+	e, out, errs = testEnv(t, nil)
+	e.lookPath = func(name string) (string, error) { return "/nonexistent/" + name, nil }
+	r = do(e, out, errs, "witnesses", filepath.Join(t.TempDir(), "gone.lua"))
+	if r.code != 2 || strings.Contains(r.stderr, "WITNESS FAIL") {
 		t.Fatalf("witnesses of a missing source: %+v", r)
 	}
-	if r := tweakCall(t, nil, missing, "replay", "--root", root, "--jar", jar, "--source", filepath.Join(t.TempDir(), "gone.lua"), "--dir", t.TempDir()); r.code != 2 || strings.Contains(r.stderr, "REPLAY FAIL") {
+	e, out, errs = testEnv(t, nil)
+	e.lookPath = func(name string) (string, error) { return "/nonexistent/" + name, nil }
+	r = do(e, out, errs, "replay", "--root", root, "--jar", jar, "--source", filepath.Join(t.TempDir(), "gone.lua"), "--dir", t.TempDir())
+	if r.code != 2 || strings.Contains(r.stderr, "REPLAY FAIL") {
 		t.Fatalf("replay of a missing source: %+v", r)
 	}
 }

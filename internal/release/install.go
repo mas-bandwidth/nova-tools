@@ -46,6 +46,15 @@ func ReadSums(dir string) ([]Artifact, error) {
 			return nil, refuse("build the release again with `nova-update release build`",
 				"%s line %d names a path rather than a file: %q", SumsFile, i+1, name)
 		}
+		// The name is also written under --bin by install and interpolated into
+		// the remote `rm -f` adopt composes, which the far shell parses after ssh
+		// reassembles argv: held here to the narrowness pull already enforces
+		// (remoteArtifactName), so every caller sees only safe names
+		// (security#72 finding 1, artifact-name half).
+		if !remoteArtifactName.MatchString(name) {
+			return nil, refuse("build the release again with `nova-update release build`",
+				"%s line %d names %q, which is not a file name this tool will install or delete", SumsFile, i+1, name)
+		}
 		arts = append(arts, Artifact{Name: name, Sum: sum})
 	}
 	if len(arts) == 0 {
@@ -208,23 +217,20 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		// runtime.GOOS: the file that is verified, the path the probe runs and
 		// the rename target are all this one string.
 		target := filepath.Join(o.bin, a.Name)
-		// SKIP WHEN THE BOX ALREADY ANSWERS. The question is asked of the
-		// BINARY -- by its real name, the one it was installed under -- and
-		// not of a marker file: a marker says what somebody meant to install,
-		// and the whole point of the version verbs is to say what is actually
-		// there.
+		// THE VERSION ANSWER FILLS THE BEFORE LIST and nothing else.
+		// pruneInstalled keeps every release the bin directory answered
+		// before this install (SPEC-RELEASE, retention). A file that prints
+		// the target version can still hold other bytes, and a skip on that
+		// answer would leave them in place with a success receipt
+		// (security#72 finding 2).
 		line, err := versionOf(ctx, target)
 		if err == nil {
 			before = append(before, line)
 		}
-		if err == nil && hasToken(line, o.version) {
-			skipped++
-			continue
-		}
-		// AND WHEN ITS BYTES ARE ALREADY THESE. An --incremental build ships
-		// an unchanged tool as the earlier build's binary, which answers the
-		// earlier version; renaming identical bytes over it would only make
-		// the loop running it drain and restart on a binary nothing changed.
+		// SKIP ONLY WHEN THE BYTES ARE ALREADY THESE. An --incremental build
+		// ships an unchanged tool as the earlier build's binary; renaming
+		// identical bytes over it would only make the loop running it drain
+		// and restart on a binary nothing changed (SPEC-RELEASE, install skip).
 		if sum, err := fileSum(target); err == nil && sum == a.Sum {
 			skipped++
 			continue

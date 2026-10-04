@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
-// The coordinator's edits of primaries that have not started: brief replaces
-// a primary's brief, on a RUNNING machine as on a STOPPED one; move takes
-// primaries to another stream, on a STOPPED sprint only. Each is a pure plan
-// of a snapshot, refused for a card that has started.
+// The coordinator's edits of a STOPPED sprint's primaries that have not
+// started: brief replaces a primary's
+// brief, move takes primaries to another stream. Each is a pure plan of a
+// snapshot, refused on a RUNNING machine and for a card that has started.
 
 // stoppedOnly is the refusal of an edit on a RUNNING machine.
 func stoppedOnly(what string) string {
@@ -36,76 +37,98 @@ func unstarted(s *Snapshot, id, keeps string) string {
 	return ""
 }
 
-// BriefCard is one primary's new brief.
-type BriefCard struct {
-	ID, Brief string
-	Rules     string // the held rules file the new brief is held to by reference (FieldRules), "" when it carries its own
-}
-
-// BriefReq replaces the briefs of primaries that have not started: one card
-// (brief <id>), or one per file of a directory (brief --dir).
+// BriefReq replaces the brief of a primary that has not started.
 type BriefReq struct {
-	Cards []BriefCard
-	Who   string
+	ID, Brief, Who string
+	Rules          string   // the held rules file the new brief is held to by reference (FieldRules), "" when it carries its own
+	Needs          []string // the new brief's needs, as add reads its DEPENDS-ON: line (briefNeeds): a change to that line alone is taken in any state
+	// Tier, with no Brief, re-tiers the card (nova-sprint brief --tier): the tier every
+	// later deal of the card draws its route from, written on the primary as FieldTier
+	// as rework --tier writes it; taken in any state, on a RUNNING machine and for a card
+	// dealt (it applies to the next attempt).
+	Tier string
 }
 
-// Brief replaces primaries' briefs (nova-sprint brief; docs/SPEC-SPRINT.md,
-// the brief verb): each a primary waiting or ready with no work card dealt,
-// on a RUNNING machine as on a STOPPED one, since only a card dealt or in
-// flight holds its brief. A running machine's pump holds a card a queued
-// change names until the change drains (store.Step's Pump), so the brief is
-// in place before the card can be dealt. The card keeps its id, stream, score
-// and needs; the command line holds the brief to the card lint, and the store
-// to its bound, as add's. A card refused, or named twice, is named; the step
-// applies all or none.
+// Brief replaces a primary's brief (nova-sprint brief): on a STOPPED machine
+// only, for a primary waiting or ready with no work card dealt. The card keeps
+// its id, stream, score and needs; the command line holds the brief to the
+// card lint, and the store to its bound, as add's.
 func Brief(s *Snapshot, r BriefReq) Plan {
 	var p Plan
 	p.on(s)
-	seen := map[string]bool{}
-	for _, b := range r.Cards {
-		// a card dealt is refused with what changes it instead
-		why := unstarted(s, b.ID, "its brief")
-		c := s.Work.Placed(b.ID)
-		if why != "" && c != nil && !IsSentinel(c) {
-			why += "; " + briefStarted(c)
-		}
-		if why == "" && seen[b.ID] {
-			why = b.ID + " is named twice; nothing was changed"
-		}
-		if why != "" {
-			p.refuse(b.ID, why)
-			continue
-		}
-		seen[b.ID] = true
-		// a brief that carries its own rules names none; a grade was of the brief replaced; a
-		// replaced brief is no longer the one its brief decision was asked over, so the card
-		// names that decision no more
-		set, unset := map[string]string{"brief": b.Brief}, []string{FieldGrade, FieldBriefOp, FieldBriefRecord}
-		if b.Rules != "" {
-			set[FieldRules] = b.Rules
-		} else {
-			unset = append(unset, FieldRules)
-		}
-		if who := WhoOfBrief(b.Brief); who != "" {
-			set[FieldWho] = who // the new brief's WHO line names its worker (friend_deal.go)
-		} else {
-			unset = append(unset, FieldWho)
-		}
-		// the new brief's BENCH line names its bench (bench_deal.go): a brief step reads no
-		// fleet table, so the members it names are add's to hold
-		bench, benchWhy := BenchOfBrief(b.Brief)
-		if benchWhy != "" {
-			p.refuse(b.ID, benchWhy)
-			continue
-		}
-		if len(bench) > 0 {
-			set[FieldBench] = strings.Join(bench, ",")
-		} else {
-			unset = append(unset, FieldBench)
-		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
-			Moved: fmt.Sprintf("%s brief replaced (%d bytes) stream=%s %s", c.ID, len(b.Brief), c.Row, c.Col)})
+	if r.Tier != "" {
+		return briefTier(s, p, r)
 	}
+	if c := s.Work.Placed(r.ID); c != nil && !IsSentinel(c) && dependsOnly(c.F("brief"), r.Brief) {
+		return briefDepends(s, p, c, r)
+	}
+	// a card dealt is refused with what changes it instead, before the machine's
+	// state: stopping the machine would not let its brief be replaced
+	why := unstarted(s, r.ID, "its brief")
+	c := s.Work.Placed(r.ID)
+	if why != "" && c != nil && !IsSentinel(c) {
+		why += "; " + briefStarted(c)
+	}
+	if why == "" && s.Running {
+		why = stoppedOnly("a brief is replaced")
+	}
+	if why != "" {
+		p.refuse(r.ID, why)
+		return p
+	}
+	// a brief that carries its own rules names none; a grade was of the brief replaced; a
+	// replaced brief is no longer the one its brief decision was asked over, so the card
+	// names that decision no more
+	// the brief's bound counts attempts from here (brief_bound.go)
+	set, unset := map[string]string{"brief": r.Brief, FieldBriefAttempt: c.F("attempt")}, []string{FieldGrade, FieldBriefOp, FieldBriefRecord}
+	if r.Rules != "" {
+		set[FieldRules] = r.Rules
+	} else {
+		unset = append(unset, FieldRules)
+	}
+	if who := WhoOfBrief(r.Brief); who != "" {
+		set[FieldWho] = who // the new brief's WHO line names its worker (friend_deal.go)
+	} else {
+		unset = append(unset, FieldWho)
+	}
+	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
+		Moved: fmt.Sprintf("%s brief replaced (%d bytes) stream=%s %s", c.ID, len(r.Brief), c.Row, c.Col)})
+	return p
+}
+
+// briefTier is a card re-tiered (nova-sprint brief <id> --tier <t>; the owner, 2026-10-04:
+// "If there are pro cards that are really heavy, then let's mark them as heavy"): its tier
+// pinned to the one named, as rework --tier pins it (FieldTier: every later deal and read
+// of the card draws from it, over its brief's line 1, and the machine never escalates it
+// past it), taken in any state, on a RUNNING machine and for a card dealt, since the
+// class of model a task needs is not a change of the task: a card working finishes its
+// attempt where it is and the next attempt is dealt on the tier. A card landed, a
+// sentinel, a card whose brief pins a model, and a tier that is no class are refused.
+func briefTier(s *Snapshot, p Plan, r BriefReq) Plan {
+	c := s.Work.Placed(r.ID)
+	switch {
+	case c == nil:
+		p.refuse(r.ID, "no primary "+r.ID+" on the work table; nothing was changed")
+		return p
+	case IsSentinel(c):
+		p.refuse(r.ID, r.ID+" is a sentinel, not a primary; nothing was changed")
+		return p
+	case !cardhdr.IsRoute(r.Tier):
+		p.refuse(c.ID, "--tier wants "+cardhdr.RouteList+", found "+r.Tier+"; nothing was changed")
+		return p
+	case c.Col == Landed:
+		p.refuse(c.ID, c.ID+" is landed: a card landed keeps its tier; nothing was changed")
+		return p
+	case c.F(FieldTier) == r.Tier:
+		p.refuse(c.ID, c.ID+" is pinned to tier "+r.Tier+" already; nothing was changed")
+		return p
+	}
+	if m, _ := cardhdr.ReadModel(c.F("brief")); m.Pin != "" {
+		p.refuse(c.ID, "its brief pins model "+m.Pin+", which it runs on whatever its tier; nothing was changed")
+		return p
+	}
+	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, map[string]string{FieldTier: r.Tier}))},
+		Moved: fmt.Sprintf("%s tier pinned to %s (was %s): its next deal draws from it stream=%s %s attempt=%d", c.ID, r.Tier, orDash(c.F(FieldTier)), c.Row, c.Col, c.Int("attempt"))})
 	return p
 }
 
@@ -229,5 +252,61 @@ func MoveCards(s *Snapshot, r MoveReq) Plan {
 		}
 		p.Units = append(p.Units, u)
 	}
+	return p
+}
+
+// dependsOnly says two briefs differ in their DEPENDS-ON: line alone: the same
+// lines, in order, but for that line (cardhdr.KeyValue), which differs.
+func dependsOnly(old, brief string) bool {
+	a, b := strings.Split(old, "\n"), strings.Split(brief, "\n")
+	if len(a) != len(b) {
+		return false
+	}
+	differ := false
+	for i := range a {
+		if a[i] == b[i] {
+			continue
+		}
+		ka, _, oka := cardhdr.KeyValue(a[i])
+		kb, _, okb := cardhdr.KeyValue(b[i])
+		if !oka || !okb || ka != "DEPENDS-ON" || kb != "DEPENDS-ON" {
+			return false
+		}
+		differ = true
+	}
+	return differ
+}
+
+// briefDepends is a brief whose DEPENDS-ON: line alone changed: taken in any
+// state, on a RUNNING machine and for a card dealt (it applies to the next
+// attempt), since re-pointing a card's needs after a drop is not a change of
+// its task (the comfort list of 2026-10-03, item 2). The card's needs become
+// the line's: each a primary on the table, not the card itself; a ready card
+// takes no need that has not landed (the deal would run it first: ready ->
+// waiting is only a sentinel's effect, lifecycle.go). The brief decision and
+// the grade were over the same task and stay.
+func briefDepends(s *Snapshot, p Plan, c *Card, r BriefReq) Plan {
+	for _, n := range r.Needs {
+		nc := s.Work.Card(n)
+		switch {
+		case n == c.ID:
+			p.refuse(c.ID, "DEPENDS-ON names the card itself; nothing was changed")
+			return p
+		case nc == nil || !nc.Placed():
+			p.refuse(c.ID, "DEPENDS-ON names "+n+", which is no primary on the table; nothing was changed")
+			return p
+		case c.Col == string(Ready) && nc.Col != string(Landed):
+			p.refuse(c.ID, fmt.Sprintf("%s is ready and DEPENDS-ON names %s (%s), not landed: a ready card would be dealt before its need; nothing was changed; run: nova-sprint drop %s --reason '<why>', then nova-sprint add --stream %s %s --brief-file <path>", c.ID, n, nc.Col, c.ID, c.Row, c.ID))
+			return p
+		}
+	}
+	set, unset := map[string]string{"brief": r.Brief}, []string(nil)
+	if len(r.Needs) > 0 {
+		set["needs"] = strings.Join(r.Needs, ",")
+	} else {
+		unset = append(unset, "needs")
+	}
+	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
+		Moved: fmt.Sprintf("%s DEPENDS-ON replaced: needs %s (%d bytes) stream=%s %s", c.ID, orDash(set["needs"]), len(r.Brief), c.Row, c.Col)})
 	return p
 }

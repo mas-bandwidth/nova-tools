@@ -38,7 +38,7 @@ func TestReceiptCommittedWriteWithLostReplyIsReportedUnconfirmed(t *testing.T) {
 	// TestReceiptVerbWritesTheRowAndARefusedWriteIsExitOne does; a seatless
 	// environment connects with HELLO alone, and a command the proxy does not
 	// expect fails the test by name.
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	backend := redis.NewClient(&redis.Options{Addr: testredis.Start(t)})
 	defer backend.Close()

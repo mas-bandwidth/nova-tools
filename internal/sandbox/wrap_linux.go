@@ -22,6 +22,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -29,7 +30,11 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"syscall"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // Backend is what the SANDBOX OK line names on this platform.
@@ -260,9 +265,14 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 		// The descriptors above stderr, in order from fd 3: the probe's nonce pipe.
 		ExtraFiles: p.Extra,
 	}
-	// NO Setpgid, for the reason the darwin body gives at length: the wrapped tree stays
-	// in the CALLER's process group, because a swarm supervisor puts each job in a group
-	// of its making and reaps that group at the deadline.
+	// THE CAPS (docs/SPEC-SANDBOX.md "wall-caps-processes.w1"): a command whose stdin is
+	// not a terminal leads a process group of its own, which is what the tool counts and
+	// what it kills by, never by a pattern. A terminal keeps the caller's group: a child
+	// in a background group is stopped by SIGTTIN the moment it reads the keyboard.
+	capped := !isTerminal(stdin)
+	if capped {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 
 	// SANDBOX OK is printed and FLUSHED before the wall goes up, because past
 	// restrictSelf this process is inside it.
@@ -281,8 +291,28 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	if err := restrictSelf(rulesetFd); err != nil {
 		return ExitRefused, refuse("sandbox_failed", "landlock_restrict_self at abi %d: %v", used, err)
 	}
-	if err := cmd.Start(); err != nil {
+	restore := func() {}
+	if capped {
+		restore = lowerNproc(p.MaxProcs)
+	}
+	err = cmd.Start()
+	restore()
+	if err != nil {
 		return ExitNotExecuted, refuse("sandbox_failed", "%s could not be started inside the wall: %v", p.Command, err)
+	}
+	pgid := cmd.Process.Pid
+	killGroup := func(sig syscall.Signal) {
+		if capped {
+			// ignored: the group may already be gone; the wait on the child is the check
+			_ = syscall.Kill(-pgid, sig)
+		} else {
+			// ignored: a signal passed on to a child that may already have exited; the child's exit is the report
+			_ = cmd.Process.Signal(sig)
+		}
+	}
+	stopWatch := func() string { return "" }
+	if capped {
+		stopWatch = p.Watch(p.Tick, func() (Usage, error) { return GroupUsage(pgid) }, func() { killGroup(syscall.SIGKILL) })
 	}
 
 	sigs := make(chan os.Signal, 4)
@@ -293,10 +323,9 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 			select {
 			case s := <-sigs:
 				if sig, ok := s.(syscall.Signal); ok && cmd.Process != nil {
-					// The CHILD, not -pid: with no group of its own, -pid would name a
-					// process group this tool never created and does not own.
-					// ignored: a signal passed on to a child that may already have exited; the child's exit is the report
-					_ = cmd.Process.Signal(sig)
+					// The whole group when the tool made one, the child when it did not:
+					// -pid of a group this tool never created is not its to signal.
+					killGroup(sig)
 				}
 			case <-done:
 				return
@@ -306,7 +335,107 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	waitErr := cmd.Wait()
 	close(done)
 	signal.Stop(sigs)
+	if line := stopWatch(); line != "" {
+		// Past a cap the group was killed by the watch; this is the sweep that makes sure
+		// nothing of it is left, and the line that says why the run ended.
+		killGroup(syscall.SIGKILL)
+		awaitGroupGone(pgid)
+		fmt.Fprintf(stderr, "SANDBOX RUNAWAY %s; the process group was killed\n", line)
+		return ExitRunaway, nil
+	}
 	return statusOf(waitErr, cmd.ProcessState), nil
+}
+
+// isTerminal reports whether r is a terminal.
+func isTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	_, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
+	return err == nil
+}
+
+// lowerNproc sets RLIMIT_NPROC for the child about to be forked and returns the function
+// that puts the tool's own back. The kernel counts every task of the user, not the tree's,
+// so the limit is the machine's task total now plus TWICE the tree's cap: a floor under
+// the runaway line, not the line. The watch kills at the cap and sees the count only
+// because forks are allowed to pass it; the limit is what stops a bomb between two counts.
+func lowerNproc(maxProcs int) func() {
+	raw, err := os.ReadFile("/proc/loadavg")
+	if err != nil || maxProcs <= 0 {
+		return func() {}
+	}
+	f := strings.Fields(string(raw))
+	if len(f) < 4 {
+		return func() {}
+	}
+	_, total, ok := strings.Cut(f[3], "/")
+	n, cerr := strconv.Atoi(total)
+	if !ok || cerr != nil {
+		return func() {}
+	}
+	var old unix.Rlimit
+	if unix.Getrlimit(unix.RLIMIT_NPROC, &old) != nil {
+		return func() {}
+	}
+	lim := uint64(n + 2*maxProcs)
+	if old.Cur != unix.RLIM_INFINITY && old.Cur < lim {
+		return func() {} // the user's own limit is already tighter
+	}
+	next := old
+	next.Cur = lim
+	if unix.Setrlimit(unix.RLIMIT_NPROC, &next) != nil {
+		return func() {}
+	}
+	// ignored: the soft limit was lowered by this call and raising it back to the hard limit it came from cannot be refused
+	return func() { _ = unix.Setrlimit(unix.RLIMIT_NPROC, &old) }
+}
+
+// GroupUsage counts the live processes of group pgid and their resident bytes, read from
+// /proc with no fork: a count taken while the tree is forking must not need a fork. A
+// zombie is dead and is not counted.
+func GroupUsage(pgid int) (Usage, error) {
+	ents, err := os.ReadDir("/proc")
+	if err != nil {
+		return Usage{}, err
+	}
+	var u Usage
+	page := int64(os.Getpagesize())
+	want := strconv.Itoa(pgid)
+	for _, e := range ents {
+		if e.Name()[0] < '0' || e.Name()[0] > '9' {
+			continue
+		}
+		raw, err := os.ReadFile("/proc/" + e.Name() + "/stat")
+		if err != nil {
+			continue // gone between the listing and the read
+		}
+		s := string(raw)
+		// The comm field is parenthesised and may hold spaces and parens: the fields that
+		// matter start after the LAST ")".
+		f := strings.Fields(s[strings.LastIndexByte(s, ')')+1:])
+		// state ppid pgrp session tty tpgid flags minflt cminflt majflt cmajflt utime stime
+		// cutime cstime priority nice threads itrealvalue starttime vsize rss
+		if len(f) < 22 || f[0] == "Z" || f[2] != want {
+			continue
+		}
+		u.Procs++
+		rss, _ := strconv.ParseInt(f[21], 10, 64)
+		u.RSS += rss * page
+	}
+	return u, nil
+}
+
+// awaitGroupGone waits, bounded, for every live process of the group to be gone after a
+// SIGKILL: delivery is asynchronous and a caller told "killed" must find nothing running.
+func awaitGroupGone(pgid int) {
+	for i := 0; i < 100; i++ {
+		if u, err := GroupUsage(pgid); err == nil && u.Procs == 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // addRules is steps 2 and 3 of the spec's linux body: the roots and every --read get the

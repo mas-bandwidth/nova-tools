@@ -140,10 +140,12 @@ func (a *app) machineVerb(name string, args []string, stderr io.Writer, extra ..
 }
 
 func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
-	st, c, code := a.machineVerb("tick", args, stderr)
+	var rules, idle bool
+	st, c, code := a.machineVerb("tick", args, stderr, answerRulesFlag(&rules, false), idleAlarmFlag(&idle, false))
 	if st == nil {
 		return code
 	}
+	st.AnswerRules, st.IdleAlarm = rules, idle
 	ctx := context.Background()
 	res, err := st.Tick(ctx)
 	err = noSprintYet(err)
@@ -238,7 +240,8 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	var profile, listen, decideDir string
 	var profileTicks int
 	var land bool
-	st, c, code := a.machineVerb("run", args, stderr, func(fs flagSet) {
+	var rules, idle bool
+	st, c, code := a.machineVerb("run", args, stderr, answerRulesFlag(&rules, true), idleAlarmFlag(&idle, true), func(fs flagSet) {
 		fs.StringVar(&listen, "listen", "", "also be the sprint's server: the workers' verbs on this `address:port` (this machine's address on the fleet's private network; a name, a public address, a link-local address, and an every-network address are refused), where nova-swarm member --server <address>:<port> sends them, and the coordinator's verbs on 127.0.0.1 at the same port, where NOVA_SPRINT_SERVER=127.0.0.1:<port> sends them")
 		fs.StringVar(&decideDir, "decide", "", "also keep the record of the sprint's attempt and grade decisions in this `dir` (nova-decide's layer 2: attempt.jsonl, grade.jsonl): the finishes' attempt decisions recorded, every card graded before its first deal with JEV_API_KEY from this environment, and each decision's outcome attached when its card lands or is dropped, every "+DecideEvery.String())
 		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); land is then not run by hand")
@@ -249,6 +252,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	if st == nil {
 		return code
 	}
+	st.AnswerRules, st.IdleAlarm = rules, idle
 	if a.twinOpen(c.redis) {
 		return refuse(stderr, "run", twinMachine)
 	}
@@ -434,12 +438,8 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			return true
 		}
 		began := a.now()
-		// one tick, or one worker's batch, at a time (serve.go); the tick takes the line at
-		// its turn, after the batch in flight, not behind every batch waiting
-		// (sprint.ControlLine; docs/SPEC-SPRINT.md section 14, The server, "The tick's turn")
-		if waited := a.serial.TickLock(); waited > store.TickEvery {
-			fmt.Fprintf(stdout, "%s LINE the tick waited %s for the server's line of control (a batch or a lane held it)\n", a.now().Format("15:04:05"), waited.Round(time.Millisecond))
-		}
+		// one tick, or one worker's batch, at a time (serve.go)
+		a.serial.Lock()
 		res, err, over := a.tickWithin(func() (store.TickResult, error) { return st.Tick(ctx) }, a.tickDeadline, began, stdout, stderr)
 		if over {
 			// serial stays held: the tick's goroutine is still in its plan
@@ -530,4 +530,23 @@ machine (STOPPED, every provider is out of credit) and start is refused
 until one is paid. Low on funds never stops it. Every
 verb works in both states. run stops (exit 3) when its own binary is replaced
 on disk, so its supervisor starts the new build.`) + "\n"
+}
+
+// answerRulesFlag is run's and tick's --answer-rules: the tick answers the mechanical
+// judgments by rule (docs/SPEC-SPRINT.md section 8, answered by rule). The run loop answers
+// by default; a tick by hand only when asked, so a twin's or a test's tick is the machine's
+// moves alone unless it says so.
+func answerRulesFlag(on *bool, byDefault bool) func(flagSet) {
+	return func(fs flagSet) {
+		fs.BoolVar(on, "answer-rules", byDefault, "answer the mechanical judgments by rule, recorded \"answered by rule <name>\" (work came back failed: redealt, then a tier up; a card at its bound: a tier up, heavy to a friend; a late card: a wait once with progress, else returned and redealt; a conflict in a file no ledger owns: returned, redone on the tip, resumed; the same finding twice: marked a brief defect); nova-config's sprint row answer_rules_off turns single rules off; --answer-rules=false leaves every judgment to the coordinator (run answers by default, a tick by hand only with --answer-rules); nova-sprint rules prints what they would answer now")
+	}
+}
+
+// idleAlarmFlag is run's and tick's --idle-alarm: the tick watches for an idle fleet
+// (docs/SPEC-SPRINT.md section 14, the fleet is idle); on in the run loop, off in a tick by
+// hand unless asked.
+func idleAlarmFlag(on *bool, byDefault bool) func(flagSet) {
+	return func(fs flagSet) {
+		fs.BoolVar(on, "idle-alarm", byDefault, "when the fleet works under half its width for "+sprint.IdleWindow.String()+" while cards wait, push the coordinator one note (the inbox, and inbox --push) naming the roots the waiting cards are behind, the most cards first, once an episode, and one more when it recovers (run: on by default; a tick by hand only with --idle-alarm)")
+	}
 }

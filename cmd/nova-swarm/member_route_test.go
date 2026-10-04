@@ -155,11 +155,12 @@ func TestACardWithNoRouteAndNoOverrideIsRefused(t *testing.T) {
 func TestTheEndOfALaunchIsReadFromNativesLog(t *testing.T) {
 	t.Parallel()
 	for log, want := range map[string]string{
-		"NATIVE PROVIDER-5XX label=c1 ref=- wall=3.00s route=x next=- avoid=x\n":                        member.EndProvider,
-		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=1200/1000 stopped=budget\n":    member.EndBudget,
-		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10/1000\n":            member.EndDeadline,
-		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10 reason=terminated": "",
-		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=10/1000\n":                     "",
+		"NATIVE PROVIDER-5XX label=c1 ref=- wall=3.00s route=x next=- avoid=x\n":                         member.EndProvider,
+		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=1200/1000 stopped=budget\n":     member.EndBudget,
+		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=12/1000 stopped=unverifiable\n": member.EndUnverifiable,
+		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10/1000\n":             member.EndDeadline,
+		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10 reason=terminated":  "",
+		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=10/1000\n":                      "",
 	} {
 		assert.Equal(t, want, nativeEnd([]byte(log)), log)
 	}

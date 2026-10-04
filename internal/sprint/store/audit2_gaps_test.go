@@ -532,7 +532,7 @@ func TestAudit2ClosedAskAnotherHitsARetiredCard(t *testing.T) {
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
 	res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	require.Len(t, res.Refused, 1, "ask --another: %+v", res)
-	require.Contains(t, res.Refused[0].Why, "already read attempt", "ask --another: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "no read card at attempt", "ask --another: %+v", res)
 	require.Contains(t, res.Refused[0].Why, "reader add", "ask --another: %+v", res)
 	require.Equal(t, 1, res.Attempts, "ask --another: %+v", res)
 	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-d"}))

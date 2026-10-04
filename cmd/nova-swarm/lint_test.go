@@ -184,3 +184,56 @@ func TestAnOversizeDriftingCardIsRefusedForTheDriftAndSaysTheCeilingIsAdvisory(t
 	require.Contains(t, stdout, "LINT SIZE card=bigdrift.card bytes=", "the closing size line says advisory=true: %q", stdout)
 	require.Contains(t, stdout, "advisory=true", "the closing size line says advisory=true: %q", stdout)
 }
+
+// The no-sandbox rule is an INVOCATION of nova-sandbox, a command line, never the word: a
+// card about the tool's own help names it in a sentence, a path and a possessive, and could
+// never pass before (the night of 2026-10-03, friction 13).
+func TestLintPassesACardAboutNovaSandboxItself(t *testing.T) {
+	t.Parallel()
+
+	body := strings.Replace(lintGoodCard(), "STEP 2. Read docs/SPEC-SWARM.md first.",
+		"STEP 2. Read cmd/nova-sandbox/help.go: nova-sandbox's help must name every verb, and make `nova-sandbox help` print them in order.", 1)
+	card := writeLintCard(t, "about-sandbox.card", body)
+	exit, stdout, stderr := runSwarm(t, "lint", "--card", card)
+	require.Equal(t, 0, exit, "a card about nova-sandbox lints clean, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "LINT OK card=about-sandbox.card", "%q", stdout)
+}
+
+// An invocation at any command position drifts: first on the step, after a shell separator,
+// after an imperative run.
+func TestLintNamesEveryNovaSandboxCommandLine(t *testing.T) {
+	t.Parallel()
+
+	for _, step := range []string{
+		"STEP 2. nova-sandbox probe --secret /root/.ssh/id_rsa",
+		"STEP 2. cd repo && nova-sandbox run -- go test ./...",
+		"STEP 2. Run: nova-sandbox check",
+		"STEP 2. Then run `nova-sandbox probe` and read its output.",
+		"STEP 2. $ nova-sandbox",
+	} {
+		body := strings.Replace(lintGoodCard(), "STEP 2. Read docs/SPEC-SWARM.md first.", step, 1)
+		card := writeLintCard(t, "sandbox.card", body)
+		exit, stdout, _ := runSwarm(t, "lint", "--card", card)
+		assert.Equal(t, 1, exit, "%q: exit %d\nstdout: %s", step, exit, stdout)
+		assert.Contains(t, stdout, "LINT DRIFT card=sandbox.card no-sandbox: 4:", "%q: %q", step, stdout)
+	}
+}
+
+// `lint <file>` is `lint --card <file>`: every child tried the positional first (friction
+// 12). Two files, or both forms, are refused.
+func TestLintTakesTheCardFileAsAPositional(t *testing.T) {
+	t.Parallel()
+
+	card := writeLintCard(t, "good.card", lintGoodCard())
+	exit, stdout, stderr := runSwarm(t, "lint", card)
+	require.Equal(t, 0, exit, "lint <file>: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "LINT OK card=good.card checks=", "%q", stdout)
+	exit, _, stderr = runSwarm(t, "lint", card, "--typed")
+	require.Equal(t, 1, exit, "the flags after the file still apply: exit %d\nstderr: %s", exit, stderr)
+	exit, _, stderr = runSwarm(t, "lint", "--card", card, card)
+	require.Equal(t, 2, exit, "both forms: exit %d", exit)
+	require.Contains(t, stderr, "name two files; give one", "%q", stderr)
+	exit, _, stderr = runSwarm(t, "lint", card, card)
+	require.Equal(t, 2, exit, "two files: exit %d", exit)
+	require.Contains(t, stderr, "takes one positional argument, the --card file", "%q", stderr)
+}

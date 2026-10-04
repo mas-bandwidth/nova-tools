@@ -188,7 +188,12 @@ func sessionQuery(dataHome, query string) (string, bool) {
 // result says so, as for a run with no session record.
 //
 // offset is the harness log's size when the run began, since is when it began.
-func providerEnd(dataHome string, offset int64, since time.Time, rc int, capture []byte) (swarm.ProviderCause, bool) {
+// headless is the headless harness of the run ("" for opencode): its failure is the one its
+// own output names (swarm.HeadlessFailure), and nothing else is read.
+func providerEnd(headless, dataHome string, offset int64, since time.Time, rc int, capture []byte) (swarm.ProviderCause, bool) {
+	if headless != "" {
+		return swarm.HeadlessFailure(headless, capture)
+	}
 	if rc < 0 {
 		return swarm.ProviderCause{}, false // killed: the deadline's end, whatever the log says
 	}

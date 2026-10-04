@@ -4,6 +4,7 @@ package fn_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -26,27 +27,36 @@ func TestLoadMissingNeverReplaces(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 
-	require.NoError(t, fn.LoadMissing(ctx, c), "load into an empty store")
-	st, err := fn.Check(ctx, c)
-	require.NoError(t, err)
-	require.True(t, st.OK(), "after LoadMissing on an empty store: %+v, want the embedded library", st)
+	if err := fn.LoadMissing(ctx, c); err != nil {
+		require.NoError(t, err, "load into an empty store: %v", err)
+	}
+	if st, err := fn.Check(ctx, c); err != nil || !st.OK() {
+		require.Failf(t, "assertion failed", "after LoadMissing on an empty store: %+v %v, want the embedded library", st, err)
+	}
 
 	held := "#!lua name=" + fn.Library + "\nredis.register_function('ns_ping', function() return 'PONG' end)\n" +
 		"redis.register_function('ns_held_only', function() return 1 end)\n"
-	require.NoError(t, c.FunctionLoadReplace(ctx, held).Err())
-	require.NoError(t, fn.LoadMissing(ctx, c), "LoadMissing over a held library")
-
+	if err := c.FunctionLoadReplace(ctx, held).Err(); err != nil {
+		require.NoError(t, err, err)
+	}
+	if err := fn.LoadMissing(ctx, c); err != nil {
+		require.NoError(t, err, "LoadMissing over a held library: %v", err)
+	}
 	code, found, err := fn.Loaded(ctx, c)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, held, code, "LoadMissing replaced the held library")
+	if err != nil || !found || code != held {
+		require.Failf(t, "assertion failed", "LoadMissing replaced the held library (found %v, err %v):\n%s", found, err, code)
+	}
 
 	// A caller refused FUNCTION LIST is not the deployer: nothing, no error.
-	require.NoError(t, c.Do(ctx, "ACL", "SETUSER", "ns-seat", "reset", "on", ">pw", "~*", "+@all", "-function").Err())
+	if err := c.Do(ctx, "ACL", "SETUSER", "ns-seat", "reset", "on", ">pw", "~*", "+@all", "-function").Err(); err != nil {
+		require.NoError(t, err, err)
+	}
 	seat := redis.NewClient(&redis.Options{Addr: addr, Username: "ns-seat", Password: "pw"})
 	t.Cleanup(func() { _ = seat.Close() })
-	require.NoError(t, fn.LoadMissing(ctx, seat), "LoadMissing as a seat without FUNCTION")
-
-	code, _, _ = fn.Loaded(ctx, c)
-	require.Contains(t, code, "ns_held_only", "the seat's LoadMissing changed the library")
+	if err := fn.LoadMissing(ctx, seat); err != nil {
+		require.NoError(t, err, "LoadMissing as a seat without FUNCTION: %v", err)
+	}
+	if code, _, _ := fn.Loaded(ctx, c); !strings.Contains(code, "ns_held_only") {
+		require.Contains(t, code, "ns_held_only", "the seat's LoadMissing changed the library")
+	}
 }

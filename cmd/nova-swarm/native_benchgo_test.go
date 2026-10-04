@@ -20,8 +20,8 @@ import (
 // nativeChildEnv its goBin by hand, so removing the production call
 // swarm.BenchGoBin(benchHome(cfg), os.Getenv("PATH")) left it green). This one runs
 // nativeRun itself against a fake bench home whose sdk Go is on no PATH entry, and reads
-// the PATH the child was really handed from the run's native-argv.log: the sdk's GOROOT/bin
-// is on it. RED WITHOUT THE CALL: the child's PATH is the member's own and names no sdk.
+// the PATH the child was really handed from the run's native-argv.log: the sdk's bin and its GOROOT/bin
+// are on it. RED WITHOUT THE CALL: the child's PATH is the member's own and names no sdk.
 func TestNativeRunHandsTheChildTheBenchGo(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -57,4 +57,5 @@ func TestNativeRunHandsTheChildTheBenchGo(t *testing.T) {
 	}
 	require.NotEmpty(t, path, "the child was handed no PATH:\n%s", raw)
 	assert.Contains(t, filepath.SplitList(path), want, "the child's PATH %q does not carry the bench's sdk Go %s", path, want)
+	assert.Contains(t, filepath.SplitList(path), filepath.Join(home, "sdk", "bin"), "the child's PATH %q does not carry the bench's ~/sdk/bin", path)
 }

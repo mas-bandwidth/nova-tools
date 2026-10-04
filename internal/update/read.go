@@ -2,7 +2,6 @@ package update
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -160,10 +159,6 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 		stdoutRead.Close()
 		stderrRead.Close()
 		copyWG.Wait()
-		if ctx.Err() != nil || child.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded") {
-			r.Reason = "timeout"
-			return r
-		}
 		r.Reason = "execution failed: " + clip(err.Error(), 160)
 		return r
 	}

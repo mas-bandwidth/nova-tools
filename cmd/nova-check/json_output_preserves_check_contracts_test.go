@@ -82,6 +82,16 @@ func TestPolishUnknownVerbNamesAvailableRemedies(t *testing.T) {
 	}
 }
 
+func TestPolishHygieneHelpDescribesEveryFlag(t *testing.T) {
+	t.Parallel()
+	exit, stdout, stderr := runCheck(t, "hygiene", "-h")
+	assert.Equal(t, 0, exit)
+	assert.Empty(t, stderr)
+	for _, want := range []string{"git checkout to inspect", "base git ref", "head git ref", "allowed path globs", "allowed authors", "card kind", "finding lines", "positive seconds"} {
+		assert.Contains(t, stdout, want)
+	}
+}
+
 func TestPolishSourceFreeExampleSetup(t *testing.T) {
 	t.Parallel()
 	scratch := t.TempDir()
@@ -193,7 +203,7 @@ func TestPolishJSONUsesFlagParserValueBoundaries(t *testing.T) {
 
 func TestPolishJSONDoesNotSwallowHelp(t *testing.T) {
 	t.Parallel()
-	for _, verb := range []string{"attest", "links", "kernel", "nocode", "floors", "corpus", "spelling", "version"} {
+	for _, verb := range []string{"attest", "links", "kernel", "nocode", "floors", "corpus", "hygiene", "spelling", "version"} {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
 			exit, stdout, stderr := runCheck(t, verb, "--json", "-h")

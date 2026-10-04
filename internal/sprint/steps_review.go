@@ -84,10 +84,12 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 
 // Ask deals every primary in review that lacks reads to as many different
 // readers up as it needs (ReadsNeeded: one for a flash card, two for a pro
-// card; readers.go), in work order, each the next reader round the readers
-// (round.go: from the rolling index, wrapping, each the
-// first that has no read card at the attempt, the index moved past it: the
-// readers table's ask_index, written with the ask). Reworked work is asked by
+// card; readers.go), in work order, each the reader with the greatest share
+// of room, its free room as a part of its width (readerRooms, round.pickByRoom),
+// that has no read card at the attempt, ties round the readers (round.go:
+// from the rolling index, wrapping, the index moved past it: the readers
+// table's ask_index, written with the ask); a reader at width is given
+// nothing, and a read no reader has room for waits (TickAsk). Reworked work is asked by
 // the same rotation: a read is a fresh child on a freshly drawn route, so the
 // readers of an earlier attempt are not preferred. A read its reader handed
 // back with no verdict is not a read: it is asked of a reader
@@ -128,6 +130,10 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	}
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Review), eligible, srr), rowOf, eligible, s.primaryCard)
 	rr := askRound(s)
+	// a read goes to the reader with the greatest share of room, its free room
+	// as a part of its width (readerRooms), the reads this ask places taken
+	// off as it goes; a reader at width is given nothing
+	room := s.readerRooms(s.Readers.Rows())
 	moves := roundMoves{}
 	// a read card's route is drawn as a work card's is, from its primary's tier
 	// at that tier's rolling index on the fleet table (route.go, readRouteOf;
@@ -139,7 +145,6 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	}
 	for _, c := range chosen {
 		attempt := c.Int("attempt")
-		have := map[string]bool{}
 		var all []string
 		var takenBack []Change
 		var away []string
@@ -163,23 +168,15 @@ func Ask(s *Snapshot, r AskReq) Plan {
 				returned = append(returned, rc)
 				continue
 			}
-			have[rc.F("reader")] = true
 			all = append(all, rc.F("reader"))
 			kept = append(kept, rc)
 		}
-		var free []string
-		for _, rd := range s.Readers.Rows() {
-			// a reader with a card at this attempt, even retired, has read it
-			// and a reader not up is not asked (reader away, reader up)
-			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil && s.ReaderIsUp(rd) {
-				free = append(free, rd)
-			}
-		}
+		free := s.freeReaders(c, attempt)
 		want := max(0, ReadsNeeded(c)-len(all)) // a read taken back from a reader away leaves one to ask
 		if another {
 			want = 1
 		}
-		chosenReaders := rr.picks(want, nil, func(x string) bool { return contains(free, x) })
+		chosenReaders := rr.pickByRoom(want, free, room)
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
@@ -203,7 +200,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			retiredFrom = append(retiredFrom, rc.F("reader"))
 		}
 		if len(chosenReaders)+len(again) < want {
-			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s; a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, or nova-sprint reader up <name>", want, len(chosenReaders)+len(again), attempt, c.ID, readersText(s)))
+			full := 0
+			for _, rd := range free {
+				if room[rd].free <= 0 {
+					full++
+				}
+			}
+			p.refuse(c.ID, cannotAskWhy(s, c, attempt, want, len(chosenReaders)+len(again), full))
 			continue
 		}
 		// the first read of a flash card's attempt is a decide read (decideFields): one
@@ -249,7 +252,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			u.Moved += "; its read taken back from " + instead + " (instead)"
 		}
 		if another {
-			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded, NStalled}, c.ID)
+			u.Closes = closesFor(s.Open, []string{NReadBroken, NBriefWrong, NReadsExhausted, NStranded, NStalled}, c.ID)
 		} else {
 			u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, c.ID)
 		}
@@ -504,6 +507,13 @@ func Read(s *Snapshot, r ReadReq) Plan {
 				broken[pr.ID]++
 				n := judgment(NReadBroken, pr.Row, s.Now, before, pr.ID)
 				n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), r.Finding
+				if bb, ok := AtBriefBound(pr, r.Finding); ok {
+					// the same finding as the attempt before, or too many attempts on one brief:
+					// the brief is wrong, not the worker, and the judgment offers brief and drop
+					// (brief_bound.go)
+					n = judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
+					n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), bb.String()+"; attempt "+c.F("attempt")+" found: "+firstSentence(r.Finding)
+				}
 				u.Notes = append(u.Notes, n)
 			}
 			if moved[pr.ID] == nil {
@@ -873,10 +883,24 @@ type ReworkReq struct {
 	// Tier, when set, is the tier every later deal of the card draws its route from
 	// (route.go, cardTier): written on the primary as FieldTier, over its brief's line 1.
 	Tier string `json:",omitempty"`
+	// PerCard is each card's own fix, tier and fields, over Fix and Tier: the tick's rule
+	// answers rework many cards in one step, each its own way (rules.go). A card that names
+	// a Rule records every judgment the rework closes on it as answered by that rule.
+	PerCard map[string]ReworkCard `json:",omitempty"`
+}
+
+// ReworkCard is one card's own rework (ReworkReq.PerCard): its fix and tier, Friend to make
+// it a friend's card (FieldWho, WhoFriend: the tick deals it to a friend), the fields Set
+// writes on the primary, and the Rule that answers, with what it Said.
+type ReworkCard struct {
+	Fix, Tier  string            `json:",omitempty"`
+	Friend     bool              `json:",omitempty"`
+	Set        map[string]string `json:",omitempty"`
+	Rule, Said string            `json:",omitempty"`
 }
 
 // ReworkResolves is the judgments a rework discharges on its primary.
-var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded, NStalled, NBound}
+var ReworkResolves = []string{NWorkFailed, NReadBroken, NBriefWrong, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded, NStalled, NBound}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
 // cut into the next member round the fleet (round.go:
@@ -917,6 +941,11 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 	moves := roundMoves{}
 	orphans := map[string]bool{}
 	for _, c := range chosen {
+		one := r.PerCard[c.ID]
+		tier := r.Tier
+		if one.Tier != "" {
+			tier = one.Tier
+		}
 		// A primary the rework refuses stays in review: the judgment it needs
 		// is written, if it has none.
 		stays := func() {
@@ -924,7 +953,11 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 				p.Notes = append(p.Notes, j)
 			}
 		}
-		if r.Tier != "" {
+		if one.Friend {
+			// a friend's card from this attempt on: the friends' deal, never a machine's
+			c = withField(c, FieldWho, WhoFriend)
+		}
+		if tier != "" {
 			// a pin is the card's whole route: no tier draws for it (route.go)
 			if m, _ := cardhdr.ReadModel(c.F("brief")); m.Pin != "" {
 				p.refuse(c.ID, "its brief pins model "+m.Pin+", which it runs on whatever its tier; rework it without --tier, or drop it and add the brief again with no model: line")
@@ -933,17 +966,29 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			}
 		}
 		bound, lift := AtRedealBound(s, c), false
-		if bound != nil {
+		if bound != nil && !one.Friend {
 			// the bound holds across attempts: never a lower tier, and a second bound on one
-			// tier only with --tier above it, or the provider back once per tier (failure.go)
+			// tier only with --tier above it, or the provider back once per tier (failure.go);
+			// a friend's card is past every tier
 			var why string
-			if why, lift = reworkAtTheSameBound(s, c, bound, r.Tier); why != "" {
+			if why, lift = reworkAtTheSameBound(s, c, bound, tier); why != "" {
 				p.refuse(c.ID, why)
 				stays()
 				continue
 			}
 		}
+		// the brief's bound: the same finding twice, or too many attempts on one brief, and
+		// the brief is wrong, not the worker; a --fix changes the brief not at all, so it does
+		// not lift it (brief_bound.go)
+		if bb, ok := AtBriefBound(c, brokenFindings(s, c)); ok {
+			p.refuse(c.ID, bb.Why())
+			stays()
+			continue
+		}
 		fix := r.Fix
+		if one.Fix != "" {
+			fix = one.Fix
+		}
 		if fix == "" {
 			if fix = cutText(ownFix(s, c), MaxCardTextBytes); fix == "" {
 				p.refuse(c.ID, "no --fix, and no finding of a broken read or report of failed work to take as its fix; give --fix <text>")
@@ -965,7 +1010,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		// the finding and why ride on the primary too: a rework with no member up deals later
 		// (start), from the primary, and its child is told all the same
 		given := reworkGiven(s, c)
-		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"],
+		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"], FieldFindingAttempt: c.F("attempt"),
 			"reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
 		if bound != nil {
 			// the attempt ended at its bound: its end is the primary's record of its failed
@@ -976,11 +1021,15 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			// the provider's return lifted the held bound: spent on this tier for good
 			set[FieldFailureBack] = strings.Join(append(Split(c.F(FieldFailureBack)), cardTierOf(c)), ",")
 		}
-		if r.Tier != "" {
+		if tier != "" {
 			// the card records its tier and this attempt's deal draws from it already
-			set[FieldTier] = r.Tier
-			c = withField(c, FieldTier, r.Tier)
+			set[FieldTier] = tier
+			c = withField(c, FieldTier, tier)
 		}
+		if one.Friend {
+			set[FieldWho] = WhoFriend
+		}
+		maps.Copy(set, one.Set)
 		// the head a reader passed: a next attempt that finds nothing to do at it goes back to
 		// review there, not to the coordinator as failed work (FieldPassedHead, Finish)
 		unset := []string{"readers"}
@@ -994,10 +1043,8 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		// none up, or none below its width, and the primary waits ready for the tick's deal
 		m := ""
 		_, friend := FriendCard(c)
-		bench := Bench(c)
 		if len(up) > 0 && !friend {
-			// a bench card's next attempt goes to a member of its bench alone (bench_deal.go)
-			m = rr.next(onlyBench(up, bench), q, room, reworkAvoid(s, c))
+			m = rr.next(up, q, room, reworkAvoid(s, c))
 		}
 		if m != "" {
 			var why string
@@ -1016,16 +1063,17 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			switch {
 			case friend:
 				later = "a friend's card: the tick deals it to a friend up with room"
-			case len(bench) > 0 && len(onlyBench(up, bench)) == 0:
-				later = benchWaits(bench) // no member of its bench is up (bench_deal.go)
 			case len(up) > 0:
 				later = "no fleet member has room: the tick deals it when one has"
 			}
 			u = Unit{Key: c.ID, Stream: c.Row, Changes: append(retire, change(Work, moveEntry(c, c.Row, Ready, set, append(unset, "result")...))),
 				Moved: c.ID + " review -> ready (rework; " + later + ")"}
 		}
-		if r.Tier != "" {
-			u.Moved += "; tier " + r.Tier
+		if tier != "" {
+			u.Moved += "; tier " + tier
+		}
+		if one.Friend {
+			u.Moved += "; a friend's card"
 		}
 		u.Moved += fmt.Sprintf("; %d read cards retired", len(retire))
 		if m := orphanMerge(s, c); m != nil {
@@ -1034,6 +1082,15 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			orphans[c.ID] = true
 		}
 		u.Closes = closesFor(s.Open, ReworkResolves, c.ID)
+		if one.Rule != "" {
+			// the rule's answer is the decided note of every judgment the rework closes
+			u.Moved += "; answered by rule " + one.Rule
+			for _, o := range u.Closes {
+				if !answeredIn(u.Notes, o.Note.ID) {
+					u.Notes = append(u.Notes, decided(o, RuleSaid(one.Rule, one.Said), r.Who, s.Now, c.ID))
+				}
+			}
+		}
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, orphans, nil)
@@ -1139,6 +1196,10 @@ type ReturnReq struct {
 	Reason  string
 	Answers []string
 	Who     string
+	// Rule, when set, is the rule that returns the cards (rules.go, the conflict rule): each
+	// is marked to be redone on the tip (FieldRuleRedo, at its attempt), and the stopped
+	// stream's judgment records the answer.
+	Rule string `json:",omitempty"`
 }
 
 // ReturnResolves is the judgments a return is a decision for: a red CI on the
@@ -1192,6 +1253,10 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		if r.Reason != "" {
 			set["return_reason"] = r.Reason
 		}
+		if r.Rule != "" {
+			set[FieldRuleRedo] = c.F("attempt")
+			set[FieldRuleAnswer] = r.Rule + ": returned to be redone on the tip at " + stamp(s.Now)
+		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Review, set))},
 			Closes: closesFor(s.Open, ReturnResolves, c.ID)}
 		if m != nil {
@@ -1205,6 +1270,13 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		// The stream's red or rejected judgment names return as a decision: the
 		// answer is recorded; the judgment stays open while the stream is stopped.
 		answerListed(&u, s.Open, r.Answers, "return", c.Row, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID)
+		if r.Rule != "" {
+			for _, o := range s.Open {
+				if o.Note.StreamLevel && o.Note.Stream == c.Row && o.Note.Card == c.ID && !answeredIn(u.Notes, o.Note.ID) {
+					u.Notes = append(u.Notes, decided(o, RuleSaid(r.Rule, "returned "+c.ID+" to be redone on the current tip"), r.Who, s.Now, c.ID))
+				}
+			}
+		}
 		// Back in review, the coordinator decides again.
 		j := judgment(NReturned, c.Row, s.Now, c.Int("returns"), c.ID)
 		j.Who, j.Attempt, j.What = r.Who, c.Int("attempt"), r.Reason
@@ -1313,6 +1385,8 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		u.Moved = fmt.Sprintf("%s %s -> off the table (%s)", c.ID, c.Col, r.Reason)
 		p.Units = append(p.Units, u)
 	}
+	// the weights the drop changes: every primary the dropped cards waited on (weight.go)
+	p.Units = append(p.Units, weighUnits(s, nil, dropping)...)
 	settle(&p, s, r.Who, dropping, dropping)
 	// Each stream counts its dropped primaries on its control card.
 	for _, st := range unitStreams(p) {
@@ -1335,6 +1409,7 @@ type RankReq struct {
 	IDs     []string
 	Score   *float64 // the new score of the first; the rest follow it
 	First   bool     // ahead of every primary of its stream
+	Before  string   // in line in front of this primary of the cards' own stream, in the order named
 	Answers []string
 	Who     string
 	Only    []string
@@ -1354,23 +1429,15 @@ func Rank(s *Snapshot, r RankReq) Plan {
 		}
 		return ""
 	}, s.primaryCard)
-	score := 0.0
-	if r.Score != nil {
-		score = *r.Score
-	} else if r.First {
-		low := 0.0
-		first := true
-		for _, c := range s.Work.Cards() {
-			if c.Placed() && (first || c.Score < low) {
-				low, first = c.Score, false
-			}
-		}
-		score = low - float64(len(chosen))
+	scores, why := rankScores(s, r, chosen)
+	if why != "" {
+		p.Refused = append(p.Refused, Refusal{Key: strings.Join(r.IDs, ","), Why: why + "; nothing was changed"})
+		return p
 	}
-	for _, c := range chosen {
+	for i, c := range chosen {
+		score := scores[i]
 		if c.Score == score {
 			p.refuse(c.ID, "already at score "+fmtScore(score))
-			score++
 			continue
 		}
 		u := Unit{Key: c.ID, Stream: c.Row}
@@ -1392,10 +1459,51 @@ func Rank(s *Snapshot, r RankReq) Plan {
 		}
 		u.Moved = fmt.Sprintf("%s score %s -> %s (%d copies)", c.ID, fmtScore(c.Score), fmtScore(score), len(u.Changes)-1)
 		p.Units = append(p.Units, u)
-		score++
 	}
 	answered(&p, s, r.Answers, r.Who)
 	return p
+}
+
+// rankScores is the new score of each chosen card, in order: from --score up by
+// one, ahead of every primary (--first), or in line in front of --before, placed
+// as add --before places cards (addScores: between the card before the anchor
+// and the anchor, the line never renumbered). --before wants a primary of the
+// chosen cards' own stream that is none of them; "" is the refusal, of the whole
+// step.
+func rankScores(s *Snapshot, r RankReq, chosen []*Card) ([]float64, string) {
+	out := make([]float64, len(chosen))
+	switch {
+	case r.Score != nil:
+		for i := range out {
+			out[i] = *r.Score + float64(i)
+		}
+	case r.First:
+		low := 0.0
+		first := true
+		for _, c := range s.Work.Cards() {
+			if c.Placed() && (first || c.Score < low) {
+				low, first = c.Score, false
+			}
+		}
+		for i := range out {
+			out[i] = low - float64(len(chosen)) + float64(i)
+		}
+	case r.Before != "":
+		anchor := s.Work.Placed(r.Before)
+		if anchor == nil {
+			return nil, "--before " + r.Before + " is no primary on the table"
+		}
+		for _, c := range chosen {
+			switch {
+			case c.ID == anchor.ID:
+				return nil, c.ID + " is the card --before names: a card is not placed before itself"
+			case c.Row != anchor.Row:
+				return nil, c.ID + " is of stream " + c.Row + " and " + anchor.ID + " of stream " + anchor.Row + ": --before orders the cards of one stream (move takes a card to another)"
+			}
+		}
+		return addScores(s, AddReq{Stream: anchor.Row, Before: r.Before}, len(chosen))
+	}
+	return out, ""
 }
 
 // CIReq records a CI observation for primaries, in any state.

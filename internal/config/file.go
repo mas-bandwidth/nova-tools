@@ -83,6 +83,19 @@ func OpenFile(path string) (*FileStore, error) {
 		}
 		f.rows[kind] = map[string]Row{}
 		for name, r := range rows {
+			// the kind's row-name pattern (ValidateName in kind.go),
+			// refused at add (Kind.NewRow), is refused at open too, so a
+			// hand-edited file holds no row the tool itself refuses to add
+			// (security#69 finding 2); both halves of the row's name are
+			// checked, the map key it is filed under and the row's own
+			// Name, the half list, apply and the Redis keys read; the rows
+			// a migration makes (the fleet and sprint singletons, the
+			// tiers) match the pattern
+			for _, n := range []string{name, r.Name} {
+				if err := ValidateName(n); err != nil {
+					return nil, fmt.Errorf("--file %s holds a %s row named %q, which is not a row name", path, kind, n)
+				}
+			}
 			// a field a later migration added reads as its default, as the column would
 			for _, fl := range k.Fields {
 				if _, has := r.Fields[fl.Name]; !has {

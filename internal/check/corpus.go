@@ -341,20 +341,6 @@ func allSeparator(cells []string) bool {
 // were lost in place" — once per anchor, for an invocation mistake, which is
 // the fastest way to teach a caller to ignore the alarm.
 func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, error) {
-	return corpusFromBase(root, ledgerPath, minAnchors, as, "")
-}
-
-// corpusFromBase is Corpus with the directory a relative root resolves against
-// handed in by the caller instead of read off the process. A relative --root is
-// an ordinary invocation, and the working directory it resolves against belongs
-// to that invocation, so the caller names it and nothing moves the whole
-// process (the parallel rule's per-test seam, docs/SPEC-CI.md `parallel`). An
-// absolute root ignores base, as it ignores the process working directory; the
-// ledger keeps its own resolution.
-func corpusFromBase(root, ledgerPath string, minAnchors int, as []Anchor, base string) ([]Failure, error) {
-	if base != "" && !filepath.IsAbs(root) {
-		root = filepath.Join(base, root)
-	}
 	absRoot, resolvedRoot, err := ResolveRoot(root)
 	if err != nil {
 		return nil, err

@@ -14,12 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The guarantees of the source, its line mapping and the digest over
-// arbitrary libraries, not over examples: a fixed-seed generator makes sets
-// of small Lua files whose lines hold what the loader reads (block words,
-// comments, strings and long strings over several lines, registers) under
-// names that sort in ways a person would not guess. Fixed seeds, so a
-// failure names a library that fails again.
+// The guarantees of Source, Locate and Digest over arbitrary libraries, not
+// over examples: a fixed-seed generator makes sets of small Lua files whose
+// lines hold what the loader reads (block words, comments, strings and long
+// strings over several lines, registers) under names that sort in ways a
+// person would not guess. Fixed seeds, so a failure names a library that
+// fails again.
 
 // propertyItems are the pieces a file is made of. Each is whole Lua on its
 // own, of one line or more, so any sequence of them is a file the loader takes.
@@ -142,12 +142,11 @@ func TestPropertyEveryLineOfTheSourceMapsToItsFileAndLine(t *testing.T) {
 	t.Parallel()
 	propertyCases(t, 1, func(t *testing.T, r *rand.Rand, p propertyLibrary) {
 		lib := p.library(p.files())
-		built, err := lib.build()
+		source, err := lib.Source()
 		if err != nil {
-			assert.NoError(t, err, "build: %v", err)
+			assert.NoError(t, err, "Source: %v", err)
 			return
 		}
-		source := built.source
 		if !strings.HasSuffix(source, "\n") {
 			assert.True(t, strings.HasSuffix(source, "\n"), "the source does not end with a line break")
 			return
@@ -207,6 +206,11 @@ func TestPropertyEveryLineOfTheSourceMapsToItsFileAndLine(t *testing.T) {
 			assert.Len(t, got, len(want), "the source has %d lines, want %d:\n%s", len(got), len(want), source)
 			return
 		}
+		built, err := lib.build()
+		if err != nil {
+			assert.NoError(t, err, "build: %v", err)
+			return
+		}
 		for i, w := range want {
 			origin, ok := built.locate(i + 1)
 			if !ok || origin != w.origin {
@@ -214,6 +218,18 @@ func TestPropertyEveryLineOfTheSourceMapsToItsFileAndLine(t *testing.T) {
 			}
 			if !w.formed && got[i] != w.text {
 				assert.Failf(t, "", "line %d is %q, want %q, which is %+v", i+1, got[i], w.text, w.origin)
+			}
+		}
+		// Locate is the same mapping, asked one line at a time: a line of the
+		// case's own choosing, the first, the last, and the two outside.
+		for _, line := range []int{1 + r.IntN(len(want)), 1, len(want)} {
+			if origin, err := lib.Locate(line); err != nil || origin != want[line-1].origin {
+				assert.Failf(t, "", "Locate(%d) = %+v %v, want %+v", line, origin, err, want[line-1].origin)
+			}
+		}
+		for _, line := range []int{0, len(want) + 1} {
+			if _, err := lib.Locate(line); err == nil {
+				assert.Error(t, err, "Locate(%d) found a line outside the source's %d", line, len(want))
 			}
 		}
 	})
@@ -238,12 +254,11 @@ func TestPropertyDigestIsAFunctionOfTheContentOnly(t *testing.T) {
 	seen := map[string]string{}
 	propertyCases(t, 2, func(t *testing.T, r *rand.Rand, p propertyLibrary) {
 		lib := p.library(p.files())
-		b, err := lib.build()
+		source, err := lib.Source()
 		if err != nil {
-			assert.NoError(t, err, "build: %v", err)
+			assert.NoError(t, err, "Source: %v", err)
 			return
 		}
-		source := b.source
 		digest, err := lib.Digest()
 		if err != nil || digest != DigestOf(source) || len(digest) != DigestLength || strings.Trim(digest, "0123456789abcdef") != "" {
 			assert.Failf(t, "", "Digest = %q %v, want the %d hex digits of the source's", digest, err, DigestLength)
@@ -256,7 +271,7 @@ func TestPropertyDigestIsAFunctionOfTheContentOnly(t *testing.T) {
 		other := p.library(nil)
 		other.Files = shuffled{again, r}
 		other.Remedy, other.Bound = "another remedy", 1
-		if got, err := other.build(); err != nil || got.source != source {
+		if got, err := other.Source(); err != nil || got != source {
 			assert.Failf(t, "", "the same content gives another source (%v):\n%s\nwant:\n%s", err, got, source)
 		}
 		// One digest, one source: over every case of this test no two
@@ -272,13 +287,13 @@ func TestPropertyDigestIsAFunctionOfTheContentOnly(t *testing.T) {
 		at := r.IntN(len(data) + 1)
 		data = slices.Insert(data, at, ' ')
 		changed[name] = &fstest.MapFile{Data: data}
-		mutant, err := p.library(changed).build()
+		mutant, err := p.library(changed).Source()
 		if err != nil {
 			// A space put into a word or a sign can make a text the loader
 			// refuses ("en d"); it cannot make one it takes for the same.
 			return
 		}
-		if mutant.source == source || DigestOf(mutant.source) == digest {
+		if mutant == source || DigestOf(mutant) == digest {
 			assert.Failf(t, "", "a space at byte %d of %q changes nothing: %s", at, name, digest)
 		}
 	})

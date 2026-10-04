@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"runtime"
 	"strings"
 	"testing"
@@ -86,4 +87,10 @@ func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
 		assert.True(t, strings.HasPrefix(out.String(), "nova-fuse "), "%s: not the version line: %q", verb, out.String())
 		assert.Equal(t, 1, strings.Count(out.String(), "\n"), "%s: not the version line: %q", verb, out.String())
 	}
+}
+
+// cmdVersion is the verb with the package's own stamp, as main runs it through
+// cmdVersionWith (docs/STANDARD.md section 8); only the tests call it by this name.
+func cmdVersion(args []string, stdout, stderr io.Writer) int {
+	return cmdVersionWith(args, stdout, stderr, version)
 }

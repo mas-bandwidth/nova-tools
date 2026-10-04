@@ -29,13 +29,19 @@ var allowedGlobals = map[string]bool{
 
 // freeNames compiles one Lua file on its own (Lua 5.1, the Redis dialect) and
 // returns the globals its code reads and writes, from GETGLOBAL/SETGLOBAL in
-// every function body; a name another file declares as a local is free here.
+// every function body. A file compiled alone sees exactly what it sees inside
+// its do-block in the assembled library, so a name another file declares as
+// a local is free here.
 func freeNames(t *testing.T, name, src string) (reads, writes []string) {
 	t.Helper()
 	chunk, err := parse.Parse(strings.NewReader(src), name)
-	require.NoError(t, err, "parse %s", name)
+	if err != nil {
+		require.NoError(t, err, "parse %s: %v", name, err)
+	}
 	proto, err := lua.Compile(chunk, name)
-	require.NoError(t, err, "compile %s", name)
+	if err != nil {
+		require.NoError(t, err, "compile %s: %v", name, err)
+	}
 	r, w := map[string]bool{}, map[string]bool{}
 	var walk func(p *lua.FunctionProto)
 	walk = func(p *lua.FunctionProto) {
@@ -70,16 +76,21 @@ var (
 )
 
 // crossFileProblems runs the guard over every lua/*.lua file of fsys in load
-// order (sorted) and returns one problem line per file, with names and exports.
+// order (sorted) and returns what it finds, one line each, with the file
+// names it read and the NS fields they export.
 func crossFileProblems(t *testing.T, fsys fs.FS) (problems, names []string, exported map[string]string) {
 	t.Helper()
 	names, err := fs.Glob(fsys, "lua/*.lua")
-	require.NoError(t, err)
+	if err != nil {
+		require.NoError(t, err, err)
+	}
 	sort.Strings(names) // Source's load order
 	exported = map[string]string{}
 	for _, name := range names {
 		src, err := fs.ReadFile(fsys, name)
-		require.NoError(t, err)
+		if err != nil {
+			require.NoError(t, err, err)
+		}
 		reads, writes := freeNames(t, name, string(src))
 		for _, n := range reads {
 			if !allowedGlobals[n] {
@@ -129,14 +140,14 @@ func TestCrossFileGuardSeesTheBrokenShape(t *testing.T) {
 	t.Parallel()
 
 	broken := "local function done() return HD.ingest(nil, {}) end\nredis.register_function('x', done)\n"
-	for _, tt := range []struct{ name, src, want string }{
-		{"a bare local is a free name", broken, "HD,redis"},
-		{"a name bound from NS is not", "local HD = NS.HD\n" + broken, "NS,redis"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			reads, _ := freeNames(t, "probe.lua", tt.src)
-			require.Equal(t, tt.want, strings.Join(reads, ","), "%s reads %v", tt.name, reads)
-		})
+	reads, _ := freeNames(t, "broken.lua", broken)
+	if strings.Join(reads, ",") != "HD,redis" {
+		require.Equal(t, "HD,redis", strings.Join(reads, ","), "broken shape reads %v, want [HD redis]", reads)
+	}
+	fixed := "local HD = NS.HD\n" + broken
+	reads, _ = freeNames(t, "fixed.lua", fixed)
+	if strings.Join(reads, ",") != "NS,redis" {
+		require.Equal(t, "NS,redis", strings.Join(reads, ","), "fixed shape reads %v, want [NS redis]", reads)
 	}
 }
 
@@ -147,10 +158,12 @@ func TestCrossFileGuardBuiltinAllowanceIsExact(t *testing.T) {
 	t.Parallel()
 
 	reads, writes := freeNames(t, "builtin.lua", "return getmetatable({}), getmetatabl({})")
-	require.Equal(t, "getmetatabl,getmetatable", strings.Join(reads, ","), "builtin control reads=%v", reads)
-	require.Empty(t, writes, "builtin control writes=%v", writes)
-	require.True(t, allowedGlobals["getmetatable"], "the builtin allowance must keep getmetatable")
-	require.False(t, allowedGlobals["getmetatabl"], "the builtin allowance must refuse a near miss")
+	if strings.Join(reads, ",") != "getmetatabl,getmetatable" || len(writes) != 0 {
+		require.Failf(t, "assertion failed", "builtin control reads=%v writes=%v", reads, writes)
+	}
+	if !allowedGlobals["getmetatable"] || allowedGlobals["getmetatabl"] {
+		require.Fail(t, "builtin allowance must remain exact")
+	}
 }
 
 // TestCrossFileGuardRefusesAnUnassignedNSRead: a file that reads an NS field
@@ -160,24 +173,15 @@ func TestCrossFileGuardRefusesAnUnassignedNSRead(t *testing.T) {
 	t.Parallel()
 
 	reader := "local X = NS.later\nredis.register_function('ns_x', function() return X end)\n"
-	for _, tt := range []struct {
-		name    string
-		fsys    fstest.MapFS
-		wantLen int
-		wantSub string
-	}{
-		{"an unassigned NS read", fstest.MapFS{"lua/a.lua": {Data: []byte(reader)}}, 1, "lua/a.lua reads NS.later"},
-		{"an NS read after its assignment", fstest.MapFS{
-			"lua/a.lua": {Data: []byte("NS.later = {}\n")},
-			"lua/b.lua": {Data: []byte(reader)},
-		}, 0, ""},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			problems, _, _ := crossFileProblems(t, tt.fsys)
-			require.Len(t, problems, tt.wantLen, "problems: %v", problems)
-			if tt.wantSub != "" {
-				require.Contains(t, problems[0], tt.wantSub)
-			}
-		})
+	problems, _, _ := crossFileProblems(t, fstest.MapFS{"lua/a.lua": {Data: []byte(reader)}})
+	if len(problems) != 1 || !strings.Contains(problems[0], "lua/a.lua reads NS.later") {
+		require.Failf(t, "assertion failed", "an unassigned NS read: %v", problems)
+	}
+	problems, _, _ = crossFileProblems(t, fstest.MapFS{
+		"lua/a.lua": {Data: []byte("NS.later = {}\n")},
+		"lua/b.lua": {Data: []byte(reader)},
+	})
+	if len(problems) != 0 {
+		require.Equal(t, 0, len(problems), "an NS read after its assignment: %v", problems)
 	}
 }

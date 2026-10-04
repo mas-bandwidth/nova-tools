@@ -1,7 +1,6 @@
 package update
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -21,7 +21,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
-	"golang.org/x/sync/errgroup"
 )
 
 // Environment supplies deterministic clock/network seams. Nil values use the
@@ -36,12 +35,11 @@ type Environment struct {
 	DrainTimer  func(time.Duration) (<-chan time.Time, func() bool)
 }
 type options struct {
-	file, host, state, as, to, bus, remote, branch, target, adopt, store string
-	snapshotAlias                                                        string
-	max                                                                  int
-	timeout, budget                                                      time.Duration
-	kinds                                                                kindFlags
-	draft, send, dryRun                                                  bool
+	file, host, snapshot, as, to, target, adopt, store string
+	max                                                int
+	timeout, budget                                    time.Duration
+	kinds                                              kindFlags
+	draft, send, dryRun                                bool
 }
 type kindFlags []string
 
@@ -106,20 +104,26 @@ func flagProblem(f *flag.FlagSet, err error) error {
 // <who,who> not <recipients>, <r> and <b> for the remote and the branch, and the
 // report line's alternation showing that --send is the one that needs a bus. A
 // change here belongs in the spec first, and TestHelpIsTheSpecsVerbsBlock reads
-// the spec file and compares the two. nova-version's usage lines are its
-// verbs' own (versiontool.go). The release verbs are one line here; their own
-// lines are release.Verbs, printed by `nova-update help release`.
+// the spec file and compares the two. The lines are indented two spaces and
+// wrapped at 100 columns with a deeper continuation, as nova-ci's usage is, so
+// the report line's synopsis is not one 270-character line. nova-version's usage
+// lines are its verbs' own (versiontool.go). The release verbs are one line
+// here; their own lines are release.Verbs, printed by `nova-update help release`.
 const updateVerbs = `usage:
-nova-update example [--out <path>]
-nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
-nova-update report --file <path> [--host <label>] [--state <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update report --store <host:port> [--timeout <d>]
-nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
-nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release <cut|build|install|adopt|pull> ...   nova-tools' own release pipeline: nova-update help release prints its usage lines
-nova-update help`
+  nova-update example [--out <path>]
+  nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
+  nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to
+    <who,who> | --send --as <friend> --to <who,who>]
+    [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update report --store <host:port> [--timeout <d>]
+  nova-update watch --adopt <checks.tsv> [--as <friend> --to <who,who>] [--host <label>]
+    [--timeout <d>] [--budget <d>]
+  nova-update adoption --file <path> [--as <friend>] [--max <n>]
+  nova-update release <cut|build|install|adopt|pull> ...
+    nova-tools' own release pipeline: nova-update help release prints its usage lines
+  nova-update help`
 
 // manifestShape is the one sentence that says what the file --file names holds:
 // the rule-2 manifest, one tab-separated line per tool, written by hand in git.
@@ -157,10 +161,15 @@ func help(name string, w io.Writer) {
 	// and the help cannot drift apart. This is that string.
 	fmt.Fprintf(w, "%s\n\n", updateOpening)
 	fmt.Fprintln(w, updateVerbs)
-	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds. Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n", name)
-	note := "Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
-	note += "Cross-process delivery recovery needs --state; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A state file uses a sibling .lock file for a kernel lock; its presence never means a process is running."
-	fmt.Fprintln(w, note)
+	// The notes are one short paragraph per subject (a cold rating named the
+	// wall of text): the defaults, the --json rendering, the verbs' shape,
+	// then report's delivery and the snapshot's lock (SPEC-UPDATE rule 25).
+	fmt.Fprintf(w, "  %s version (or --version)\n", name)
+	fmt.Fprintf(w, "\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n")
+	fmt.Fprintf(w, "\nEvery verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n")
+	fmt.Fprintf(w, "\nReport needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing.\n")
+	fmt.Fprintf(w, "\nA delivery is one nova-bus send on the Redis bus (nova-bus reads its store from NOVA_BUS_REDIS); with --snapshot, a report unchanged since it was confirmed sent to the same recipients is not sent again.\n")
+	fmt.Fprintf(w, "\nA snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running.\n")
 	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
 	fmt.Fprint(w, twoBinaries())
 	fmt.Fprint(w, manifestHelp(name))
@@ -184,7 +193,9 @@ func twoBinaries() string {
 
 // manifestHelp is the manifest format in six lines, under the `report` example line so
 // `report -h` quotes it (verbflag.Excerpt reads a verb's lines with the lines indented
-// beneath them): the rule-2 file --file names, the same for both tools.
+// beneath them): the rule-2 file --file names, the same for both tools. Rule 5 is
+// worded from rule 3 (a command is argv, never a shell): the apply argv is split on
+// single spaces, no quotes, no shell, so a pipe, a glob or a $VAR is a literal argument.
 func manifestHelp(name string) string {
 	return "\nTHE MANIFEST is the file --file names, written by hand, the same for both tools:\n" +
 		"  " + name + " report --file versions.tsv     the six lines that say what versions.tsv holds:\n" +
@@ -192,7 +203,7 @@ func manifestHelp(name string) string {
 		"      2. kind is harness, engine, model, tool or pin; name is unique in the file; owner is who answers for it\n" +
 		"      3. installed is a version (v1.2.3), a command name on PATH, or an argv whose first line of output carries the version (single spaces, no quotes)\n" +
 		"      4. latest is github:<owner>/<repo>, npm:<package>, brew:<formula>, ollama:<model>:<tag> (kind model), local:<argv> (a pin takes this only), or - for not known yet\n" +
-		"      5. apply is the argv that updates it, or none; a run prints EVERY problem of the file at once, each with its line, never the first alone\n" +
+		"      5. apply is the argv that updates it, or none, split on single spaces, no quotes, no shell: a pipe, a glob or a $VAR is a literal argument; a run prints EVERY problem of the file at once, each with its line, never the first alone\n" +
 		"      6. example: go<TAB>tool<TAB>go version<TAB>local:go version<TAB>none<TAB>me\n"
 }
 
@@ -205,8 +216,8 @@ func verbDetail(name, verb string) string {
 		"check":    "inspection: reads each tool's installed version and asks its latest source (github:, npm:, brew: and ollama: are network reads); writes nothing",
 		"status":   "inspection: the reads of check; writes nothing",
 		"apply":    "local write: runs the named entry's apply command, which installs; --dry-run starts no process and writes nothing",
-		"report":   "inspection: reads each installed version, no latest, no network; --state writes its state file (local write); --send delivers the note through nova-bus (delivery); --store reads the fleet's Redis",
-		"watch":    "inspection: runs each check's command; with --bus and its four companions, delivery: the receipt goes out through nova-bus",
+		"report":   "inspection: reads each installed version, no latest, no network; --snapshot writes its state file (local write); --send delivers the note through nova-bus (delivery); --store reads the fleet's Redis",
+		"watch":    "inspection: runs each check's command; with --as and --to, delivery: the receipt goes out through nova-bus send",
 		"adoption": "inspection: reads the ledger, writes nothing",
 		"example":  "inspection: prints the example manifest; with --out, local write: writes it, never over another file",
 		"version":  "inspection: prints this binary's version line",
@@ -365,7 +376,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	}
 	if verb == "report" {
 		reportDeliveryFlags(f, &o)
-		f.BoolVar(&o.send, "send", false, "deliver the note through nova-bus (needs --as, --to, --bus, --remote, --branch)")
+		f.BoolVar(&o.send, "send", false, "deliver the note through nova-bus (needs --as, --to)")
 		f.StringVar(&o.store, "store", "", "a fleet Redis host:port: report every bench's nova-sprint build from its beat, instead of --file")
 	}
 	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
@@ -373,10 +384,6 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		// verb's help, which Run prints on stdout at exit 0 (asking is not an
 		// error).
 		return emit(refused(verb, name+" "+verb+" -h", flagProblem(f, err).Error()), verbflag.BoolAsked(args, "json"), 0, out, errs)
-	}
-	if o.snapshotAlias != "" {
-		o.state = o.snapshotAlias
-		fmt.Fprintln(errs, "NOTE --snapshot is --state")
 	}
 	if o.store != "" {
 		return emit(storeReport(name, o, f.Args(), env), asJSON, 0, out, errs)
@@ -388,22 +395,18 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 // a draft to read, or (with --send, or nova-version's send) a delivery.
 func reportDeliveryFlags(f *flag.FlagSet, o *options) {
 	f.StringVar(&o.host, "host", "", "a label for the machine the report ran on, carried in the note's subject")
-	f.StringVar(&o.state, "state", "", "a state file that carries a prepared note across processes: retry the saved note, never prepare again while one is pending")
-	f.StringVar(&o.snapshotAlias, "snapshot", "", "alias for --state, one release only: sets the same value and prints a NOTE")
+	f.StringVar(&o.snapshot, "snapshot", "", "a state file that records what was observed and what each recipient was confirmed sent: an unchanged report is not sent again")
 	f.BoolVar(&o.draft, "draft", false, "print the note that --send would deliver, and deliver nothing (needs --as, --to)")
 	f.StringVar(&o.as, "as", "", "the sender the note is from")
 	f.StringVar(&o.to, "to", "", "the recipients, comma-separated")
-	f.StringVar(&o.bus, "bus", "", "the bus checkout that delivers the note")
-	f.StringVar(&o.remote, "remote", "", "the bus remote")
-	f.StringVar(&o.branch, "branch", "", "the bus branch")
 }
 
 // storeReport is `report --store`: every bench's nova-sprint build from
 // its beat, so it takes no manifest, snapshot or note and never runs ssh.
 func storeReport(name string, o options, positional []string, env Environment) *tool.Out {
 	help := name + " report -h"
-	if o.file != "" || o.state != "" || o.draft || o.send || o.host != "" || len(positional) != 0 {
-		return refused("report", help, "--store reads the bench beats and takes no --file, --state, --host, --draft or --send (drop --store and give --file to report this machine)")
+	if o.file != "" || o.snapshot != "" || o.draft || o.send || o.host != "" || len(positional) != 0 {
+		return refused("report", help, "--store reads the bench beats and takes no --file, --snapshot, --host, --draft or --send (drop --store and give --file to report this machine)")
 	}
 	if o.timeout <= 0 {
 		return refused("report", help, "--timeout wants a positive duration")
@@ -425,13 +428,6 @@ func checked(name, verb string, o options, positional []string, env Environment)
 	}
 	if o.draft || o.send {
 		for _, x := range []struct{ n, v string }{{"as", o.as}, {"to", o.to}} {
-			if x.v == "" {
-				missing = append(missing, "--"+x.n)
-			}
-		}
-	}
-	if o.send {
-		for _, x := range []struct{ n, v string }{{"bus", o.bus}, {"remote", o.remote}, {"branch", o.branch}} {
 			if x.v == "" {
 				missing = append(missing, "--"+x.n)
 			}
@@ -542,34 +538,39 @@ type entryRead struct {
 
 func readEntries(ctx context.Context, entries []Entry, o options, env Environment, report bool) []entryRead {
 	rs := make([]entryRead, len(entries))
-	// Four concurrent reads is the limit the update check runs them on: a pool
-	// of four hand-rolled workers is replaced by an errgroup with SetLimit(4),
-	// keeping the same degree of concurrency (STANDARD §7: library first).
-	// JobAttempt is still named per entry as it is queued; WorkerStart still
-	// fires when a read begins, so a test that observes a worker start still can.
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(4)
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	var started sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		started.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			if env.WorkerStart != nil {
+				env.WorkerStart(workerID)
+			}
+			started.Done()
+			for i := range jobs {
+				e := entries[i]
+				r := entryRead{Entry: e, Installed: installed(ctx, e, o.timeout, report, env.runProcess), Latest: Read{Source: e.Latest}}
+				if !report {
+					r.Latest = Latest(ctx, e, o.timeout, env.Client)
+				} else if strings.HasPrefix(e.Latest, "local:") {
+					r.Latest = Latest(ctx, e, o.timeout, env.Client)
+				}
+				rs[i] = r
+			}
+		}(w)
+	}
+	started.Wait()
 	for i := range entries {
 		if env.JobAttempt != nil {
 			env.JobAttempt(i)
 		}
-		i := i
-		g.Go(func() error {
-			if env.WorkerStart != nil {
-				env.WorkerStart(i)
-			}
-			e := entries[i]
-			r := entryRead{Entry: e, Installed: installed(gctx, e, o.timeout, report, env.runProcess), Latest: Read{Source: e.Latest}}
-			if !report {
-				r.Latest = Latest(gctx, e, o.timeout, env.Client)
-			} else if strings.HasPrefix(e.Latest, "local:") {
-				r.Latest = Latest(gctx, e, o.timeout, env.Client)
-			}
-			rs[i] = r
-			return nil
-		})
+		jobs <- i
 	}
-	_ = g.Wait() // ignored: readEntries goroutines always return nil; they write results to their index slot
+	close(jobs)
+	wg.Wait()
 	sort.SliceStable(rs, func(i, j int) bool { return rs[i].Entry.Kind == "pin" && rs[j].Entry.Kind != "pin" })
 	return rs
 }
@@ -1057,9 +1058,4 @@ func safeRevision(rev string) string {
 		return s
 	}
 	return "revision"
-}
-
-// Kept as a narrow seam for command tests and bus delivery; no shell is involved.
-func captureRun(ctx context.Context, args []string, input []byte, cap int) ProcessResult {
-	return process(ctx, args, bytes.NewReader(input), cap)
 }
