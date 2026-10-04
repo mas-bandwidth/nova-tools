@@ -35,10 +35,6 @@ import (
 
 func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	_, bin, tree := scaffoldTree(t, "./cmd/nova-ci")
 
 	// Run new-verb verb
@@ -69,11 +65,11 @@ func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
 
 	// TESTING: the fixture test passes
 	got := runIn(t, tree, "go", "test", "-v", "-count=1", "-run", "TestCmdProbe", "./cmd/nova-ci")
-	assert.False(t, !strings.Contains(got, "PASS") && !strings.Contains(got, "ok"), "go test of the CLI verb skeleton did not pass:\n%s", got)
+	assert.True(t, strings.Contains(got, "PASS") || strings.Contains(got, "ok"), "go test of the CLI verb skeleton did not pass:\n%s", got)
 
 	// Makefile integration: make test-verb-nova-ci-probe runs and passes
 	got = runIn(t, tree, "make", "-f", "Makefile", "test-verb-nova-ci-probe")
-	assert.False(t, !strings.Contains(got, "PASS") && !strings.Contains(got, "ok"), "make test-verb-nova-ci-probe did not pass:\n%s", got)
+	assert.True(t, strings.Contains(got, "PASS") || strings.Contains(got, "ok"), "make test-verb-nova-ci-probe did not pass:\n%s", got)
 
 	// The printed case is exact: pasted under the switch, the verb runs
 	const sw = "\tswitch args[0] {\n"

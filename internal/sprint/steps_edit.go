@@ -7,9 +7,7 @@ import (
 )
 
 // The coordinator's edits of a STOPPED sprint's primaries that have not
-// started (the owner, 2026-10-01: "What other things should you be able to do
-// to mutate a stopped sprint" / "I don't want you manually hopping in and
-// working around it and doing manual stuff."): brief replaces a primary's
+// started: brief replaces a primary's
 // brief, move takes primaries to another stream. Each is a pure plan of a
 // snapshot, refused on a RUNNING machine and for a card that has started.
 

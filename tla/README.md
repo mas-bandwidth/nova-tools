@@ -36,6 +36,8 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `RouteIndex.tla` | `MCRouteIndex*` | the deal's route choice (internal/sprint/route.go): each tier's route array taken at a uint64 counter modulo its length, one step a card dealt, a redeal moved past the entries it leaves out, a pinned card moving nothing, a read card drawn from the reader tier's array at the same index; 3 routes x 2 tiers x 7 cards (one a read), three reversed witnesses (a random draw breaks RouteFair, a redeal that does not move past the excluded entry breaks ExcludedNeverDrawn, a read that leaves the index where it is breaks RouteIndexAdvancesOncePerCard) and one reach witness (ReachSkip) |
 | `Level.tla` | `MCLevel*` | the fleet's level (internal/sprint `level`, `round.levelTo`), the rebalance at the start of every tick and inside every planner that computes holds: one call's loop over every start of a bounded fleet (every up order, every start of the deal's index, members over their width, a card with a refuser). It ends by two guards, each enough alone: every move lowers the sum of squared backlogs by at least two (`PotentialFalls`), and a moved card is never queued again, so a call makes no more moves than there were ready cards (`MovesBounded`); no card lands on a member that refused it at staging, and an older card moves when the newest is blocked (`SelectionComplete`). Five reversed witnesses: the rule of the wedge of 2026-10-02 (nova-tools#5122) does not end, nor does the gap test removed, a moved card queued again moves twice, the gap tested only on the newest card stops early, the refusers not skipped lands a card on one |
 | `Land.tla` | `MCLand*` | `nova-sprint land` (cmd/nova-sprint/land.go): a batch of a stream's merge queue pushed to a remote base, then reported to the store through the merge step, with the outside between them (an accept anywhere in the queue, a return, a rework that replaces a card's head and keeps its id and epoch, another lander, a clear that moves the epoch, the base moving, a crash at any step); a head is <<card, attempt>>, and the check before the push and the push are separate steps, as in the code. It proves: the store records a card landed only at a head the base holds (LandedInBase), a card lands only with every card ahead of it (LandsInOrder), no push for a caller whose epoch the store was not at when read (CallerEpochCheckedBeforePush), no report records at an epoch the lander does not hold (ReportHoldsTheEpoch), and a batch pushed and not reported is recorded by running land again (Recovers, under fairness). It does not claim that no push follows a clear: a clear between the check and the push makes a push for an epoch just left (ReachStalePush reaches it), which nothing records and nothing undoes. Five reversed witnesses (the report before the push, the caller's epoch checked only after the push, a report with no guard, a guard on ids and not heads, a report with no epoch fence) and two reach witnesses (ReachStranded: the lander's own push for the store's epoch left unreported, marked by the ghost lpushed, to which a push for an epoch the store has left adds nothing; ReachStalePush). Recovers is proved only once the outside goes quiet (the instance caps outside events at 4), so it does not cover (a) a lander that crashes between the push and the report on every run, which never records the batch, or (b) a base that moves twice inside every read-to-push window: one rebuild, then the lander gives up (the rejected fact), every run; nothing is pushed or lost, the cards stay queued, and the coordinator resumes the stream and runs land again |
+| `BusCursor.tla` | `MCBusCursor*` | the coordination bus read cursor, open list, send index, checkout lock, and push protocol (internal/bus, docs/SPEC-BUS.md): further read wins on conflict, cursor moves only with --advance and only past acknowledged batch, one run per checkout; three reversed witnesses |
+| `UpdateApply.tla` | `MCUpdateApply*` | `internal/update` (docs/SPEC-UPDATE.md rules 7, 9, 10, 13, 13a, 24, 25, 26): one invocation of the version inventory: a run reads each entry's installed version and its latest (a read that does not answer is UNKNOWN), takes the verdict of the two reads (EQUAL, STALE, AHEAD, DIFFERENT, UNKNOWN), writes the report's state file with the CHANGED names computed against it and the deliveries it records SENT, and one apply installs the entry a person named, or prints the plan and installs nothing; an install process starts only for the entry the invocation named and never on a verdict, a dry run changes no installed version, a verdict exists only after both reads of its entry in that run, the state file holds only versions a run read to completion, a delivery is recorded SENT only after the bus's SEND OK, CHANGED names exactly the entries whose read differs from the state file, and a report that crashed between the write and the send is delivered by a later run (proved once the competing events go quiet, as `Land.tla` proves `Recovers`); three reversed witnesses |
 
 Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
 
@@ -328,7 +330,7 @@ outside is the store (up; refusing; gone from its socket path) and two
 signals. A bounded design model with reversed witnesses, not a refinement
 proof of session.go. What it leaves out is listed in its header.
 
-The signals (Stella, stella-ba91222b58ce): SIGTERM is a stop wherever it
+The signals: SIGTERM is a stop wherever it
 arrives. SIGINT inside a watch is how a watch is left, and the reader goes on
 to the next line; at the prompt or inside a verb it is a stop. A session ended
 by a stop reports the signal (143, 130), not the codes of its lines.
@@ -366,7 +368,7 @@ temp directory under a 60 s cap:
         -deadlock -metadir /tmp/tlc-$c/meta -config $cfg MCTableSession.tla > $c.log 2>&1 &
     done; wait
 
-Rowan reported the exact-head run on space on 2026-09-27. At `a03a52655`,
+The exact-head run:
 all nine configurations passed their expected outcomes in 8 s: the positive
 model retained 87,925 states and the stronger cached-error witness failed in
 5 states. The strengthened `NoFalseAlarm` rejects a cached error even while
@@ -375,7 +377,7 @@ the store remains down, matching the fresh-dial requirement.
 At model commit `b0107f910`, the added lost-reply transition and `AtMostOnce`
 invariant bring the positive run to 92,331 distinct states, thirteen invariants
 and three liveness properties. All ten configurations ran in 9 s; all eight
-negative witnesses were caught. These are Rowan's bench measurements, not a
+negative witnesses were caught. These are bench measurements, not a
 new run on the reader's machine. Inputs have up to four lines over six kinds
 of line, with and without `--keep-going`, from each state of the store.
 
@@ -387,13 +389,13 @@ of line, with and without `--keep-going`, from each state of the store.
 | `MCTableSessionBrokenStale` | NoFalseAlarm violated in 5 states: a line answers the cached error without making a fresh dial, whether or not the store recovered (ed959e1a3: session.go:88, a pool of one; go-redis v9.22.0 pool.go:692) |
 | `MCTableSessionBrokenClass` | ConnectionFailureIsTwo violated in 3 states: the store gone from its socket path, the line ends with code 1 (ed959e1a3: main.go:303) |
 | `MCTableSessionBrokenLong` | KeepGoingReadsEveryLine violated in 2 states: a line too long ends a `--keep-going` session with a line unread (ed959e1a3: session.go:135) |
-| `MCTableSessionBrokenReplay` | AtMostOnce violated in 3 states: a write's reply is lost and the write is sent again (ed959e1a3: session.go:88 opens with go-redis's command retries; v9.22.0 error.go shouldRetry answers true for io.EOF; found by Stella: code 0 and a second receipt) |
+| `MCTableSessionBrokenReplay` | AtMostOnce violated in 3 states: a write's reply is lost and the write is sent again (session.go:88 opens with go-redis's command retries; v9.22.0 error.go shouldRetry answers true for io.EOF, giving code 0 and a second receipt) |
 | `MCTableSessionBrokenOn` | StopsAtFirstFailure violated: a line is read after a failed one without `--keep-going` |
 | `MCTableSessionBrokenLast` | ExitIsHighest violated: `usage` then `ok` exits 0 |
 | `MCTableSessionBrokenInt` | StopOnlyWhenStopped violated: SIGINT inside a watch ends the session |
 
 Term, Stale, Class, Long and Replay are defects of the shell at ed959e1a3,
-reproduced on a store by the second reader or Stella and checked against
+reproduced on a store by a second reader and checked against
 the lines named. On, Last and Int are misimplementations the
 invariants are shown to catch; the code at ed959e1a3 has none of them. What a
 stop does to a verb in flight is left open: the verb may finish, or the
@@ -412,7 +414,7 @@ build of its library, FUNCTION LOAD without REPLACE, which the store refuses
 when a build is there by then. `Atomic = TRUE` is the code, FUNCTION LOAD
 REPLACE; `Atomic = FALSE` is FUNCTION DELETE followed by FUNCTION LOAD.
 `MissReplaces = TRUE` is a LoadMissing that sends REPLACE, the load of
-nova-tools #3620. What it leaves out is listed in its header.
+a miss. What it leaves out is listed in its header.
 
 Run on space, every config at once, each in its own temp directory under a
 60 s cap (no `-deadlock`: the terminal stutter is an action of the spec):
@@ -423,13 +425,13 @@ Run on space, every config at once, each in its own temp directory under a
         -metadir /tmp/tlc-$c/meta -config $c.cfg MCRedisFn.tla > $c.log 2>&1 &
     done; wait
 
-Rowan ran it on space at 2026-09-28 00:22 UTC (tla2tools v1.7.4, TLC 2.19),
+The run (tla2tools v1.7.4, TLC 2.19),
 the modules and configs matching these files by sha256, logs in
 `space:~/tla/redisfn-2/`. All seven ran in under a second. The distinct
 states of a run that stops at a violation are what the two workers had found
 by then, and vary from run to run; the length of the counterexample does not.
 The first five configs, before `Missers` was added, gave the same outcomes at
-2026-09-27 23:22 UTC (`space:~/tla/redisfn/`).
+`~/tla/redisfn/`.
 
 | config | result |
 |---|---|
@@ -439,7 +441,7 @@ The first five configs, before `Missers` was added, gave the same outcomes at
 | `MCRedisFnTwoDeployers` | Settles violated (48 distinct states), a counterexample of 10 states that goes back to its state 3 for ever: two deployers carry two builds of one library and each replaces the other's on every pass, `store.old` going 1, 2, 1 for ever. Not a witness of a misimplementation: the hazard of two deployers, which is why Ensure is for the one place that deploys and every other caller runs LoadMissing |
 | `MCRedisFnOneDeployer` | no error, 14 distinct states: the same two builds, b running Ensure once and a deploying; the library comes to rest at a's build. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, Settles |
 | `MCRedisFnLoadMissing` | no error, 25 distinct states: the rivals on a store that starts empty, a deploying and b, the older binary, running LoadMissing once. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, MissNeverReplaces, Settles, MCDeployed (the store comes to rest at the deployer's build) |
-| `MCRedisFnMissReplaces` | MissNeverReplaces violated, a counterexample of 5 states (23 distinct found): b reads the name free, a deploys build 1, b's load with REPLACE puts build 2 over it. The reversed witness for LoadMissing's FUNCTION LOAD without REPLACE (#3620); the unit test `TestLoadMissingNeverReplacesALibraryTheStoreHolds` holds the same two cases against the code, with Ensure as its own reversed witness |
+| `MCRedisFnMissReplaces` | MissNeverReplaces violated, a counterexample of 5 states (23 distinct found): b reads the name free, a deploys build 1, b's load with REPLACE puts build 2 over it. The reversed witness for LoadMissing's FUNCTION LOAD without REPLACE; the unit test `TestLoadMissingNeverReplacesALibraryTheStoreHolds` holds the same two cases against the code, with Ensure as its own reversed witness |
 
 ## nova-table's first contact (TableFirstContact)
 
@@ -507,7 +509,7 @@ under a 60 s cap:
         -deadlock -metadir /tmp/tlc-$c/meta -config $cfg MCFirstConn.tla > $c.log 2>&1 &
     done; wait
 
-Rowan ran it on space on 2026-09-28 00:40 UTC (load 11 of 32 cores), all
+The run (load 11 of 32 cores), all
 eight configs at once, the positive one with 4 workers: 3 s wall for the set.
 The instance: six counted events (sends, writes, Open's return; reads are
 uncounted, each consumes what it reads), a reply of three bytes, an answer of

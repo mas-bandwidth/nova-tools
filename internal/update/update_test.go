@@ -280,7 +280,7 @@ func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 		require.EqualValues(t, 1, code, code)
 	}
 	need(t, errs, "host=air", "REPORT TOOL name=good", "version=1.2.3-rc1+dirty", "REPORT UNKNOWN name=bad", "not_found")
-	need(t, errs, "REPORT FAIL checked=2 known=1 unknown=1")
+	need(t, errs, "REPORT FAILED checked=2 known=1 unknown=1")
 	code, out, errs = run(t, env, "report", "--file", p, "--draft", "--as", "fixture", "--to", "integrator")
 	if code != 1 || !strings.HasPrefix(out, "From: fixture\nTo: integrator\nSubject: versions on - at ") {
 		require.Failf(t, "", "%d %s %s", code, out, errs)

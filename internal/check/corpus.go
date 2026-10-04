@@ -432,12 +432,14 @@ func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, er
 		}
 
 		// A case-only rename is a real move, and a case-insensitive
-		// filesystem answers Lstat for the old spelling — so the author's
-		// Mac says green where CI on Linux says red. Lstat cannot settle
-		// this: its FileInfo.Name() is the base of the path it was HANDED,
-		// so it agrees with the ledger by construction. Only the directory
-		// knows what it actually holds — and EVERY component is checked,
-		// because a renamed directory is as real a move as a renamed file.
+		// filesystem answers Lstat under the pre-rename spelling as
+		// readily as the current one — so a run on such a filesystem says
+		// green where a case-sensitive filesystem says red. Lstat cannot
+		// settle this: its FileInfo.Name() is the base of the path it was
+		// HANDED, so it agrees with the ledger by construction. Only the
+		// directory knows what it actually holds — and EVERY component is
+		// checked, because a renamed directory is as real a move as a
+		// renamed file.
 		if bad, actual, why := dirs.spellingOf(absRoot, rel); why != "" {
 			failures = append(failures, Failure{a.Home, fmt.Sprintf("%s at %q (the directory holds %q) — a case-only rename is a real move, and this filesystem matched a different spelling (ledger:%d)", why, bad, actual, a.Line)})
 			continue

@@ -8,7 +8,7 @@
 // never happened.
 //
 // That is not hypothetical. CI's `make test` exports GOFLAGS=-json. On
-// 2026-09-18 the inner `go test` of `nova-review mutate` inherited it, came
+// a CI run, the inner `go test` inherits GOFLAGS=-json, so its output comes
 // back as a JSON stream with no `--- PASS:` line in it, and the parser counted
 // the run that stayed green as red: `MUTATE <sha> red=1 green=1 PASS` became
 // `red=2 green=0`, and three legs of integration-4 failed on a tool that was
@@ -20,7 +20,7 @@
 // filter above. The second is the same class one step further: simulate, batch
 // and review mutate run a check -- code from the tree under test -- through a
 // child, and a GH_TOKEN or any other secret-named variable the caller holds must
-// not reach a process whose code came from a pull request (#1836). The value is
+// not reach a process whose code came from a pull request. The value is
 // never read: the drop is by NAME, so a finding, a log and a diff can all be
 // read without one. A tool that needs a variable of its own appends it AFTER
 // Clean, where the last value wins.
@@ -54,7 +54,7 @@ import (
 //	*SECRET*     (GH_TOKEN, GITHUB_TOKEN), a provider key (DEEPSEEK_API_KEY) or
 //	             any other secret a caller holds. The matcher reads the name and
 //	             never the value, so nothing has to see a secret to drop it, and
-//	             a child running a pull request's code cannot read one (#1836).
+//	             a child running a pull request's code cannot read one.
 //
 // GOTMPDIR is deliberately NOT dropped: it names a location, not an output
 // shape, and a bench that sets it usually has a reason (a small /tmp). A tool
@@ -84,8 +84,7 @@ func Clean(env []string) []string {
 // harvest's argv log redact by, so there is one definition of a secret name.
 //
 // A gate runs a card's tree -- its git filters and its tests -- and the process
-// it was started in already holds the provider key, GH_TOKEN and the rest
-// (#1814 was the job shell; this is the gate's own children, #1897). The value
+// it was started in already holds the provider key, GH_TOKEN and the rest. The value
 // is never read, printed or copied: the name is what decides, and a variable
 // that does not carry one is left alone.
 func WithoutSecrets(env []string) []string {

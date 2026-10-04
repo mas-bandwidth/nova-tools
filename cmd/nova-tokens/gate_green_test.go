@@ -92,11 +92,11 @@ func TestCheckStrictRestoresEveryFindingTheGateUsedToMake(t *testing.T) {
 	wantContains(t, line, "bad=0")
 	{
 		n := strings.Count(r.stderr, "CHECK MISSING ")
-		assert.False(t, n != 36, "%d CHECK MISSING lines under --strict, want 36", n)
+		assert.Equal(t, 36, n, "%d CHECK MISSING lines under --strict, want 36", n)
 	}
 	{
 		n := strings.Count(r.stderr, "CHECK STRAY ")
-		assert.False(t, n != 4, "%d CHECK STRAY lines under --strict, want 4", n)
+		assert.Equal(t, 4, n, "%d CHECK STRAY lines under --strict, want 4", n)
 	}
 	// The strays are named by path, and the archive DIRECTORY is one of them.
 	for _, want := range []string{"README.md", "collate.log", "pre-nova-tokens", "session-151250bd-2026-09-14.md"} {
@@ -163,7 +163,7 @@ func TestSourcesUnattributedNamesThePathsThatFellToOther(t *testing.T) {
 			stems = append(stems, line)
 		}
 	}
-	require.False(t, len(stems) != 2, "%d SOURCES UNATTRIBUTED lines, want 2:\n%s", len(stems), r.stdout)
+	require.Equal(t, 2, len(stems), "%d SOURCES UNATTRIBUTED lines, want 2:\n%s", len(stems), r.stdout)
 	// One unnamed tree is ONE stem however many directories inside it were touched: the
 	// three `deepseek-working-3` paths sit in two directories and arrive as one line.
 	wantContains(t, stems[0], "stem=/Users/glenn/deepseek-working-3 tokens=3")
@@ -199,7 +199,7 @@ func TestSourcesUnattributedIsCappedWithARemedy(t *testing.T) {
 	wantExit(t, r, 0)
 	{
 		n := strings.Count(r.stdout, "SOURCES UNATTRIBUTED ")
-		assert.False(t, n != 20, "%d unattributed lines at --max 20, want 20", n)
+		assert.Equal(t, 20, n, "%d unattributed lines at --max 20, want 20", n)
 	}
 	wantContains(t, r.stdout, "SOURCES MORE kind=unattributed shown=20 total=25")
 	wantContains(t, r.stdout, "--max 0")
@@ -208,7 +208,7 @@ func TestSourcesUnattributedIsCappedWithARemedy(t *testing.T) {
 	wantExit(t, all, 0)
 	{
 		n := strings.Count(all.stdout, "SOURCES UNATTRIBUTED ")
-		assert.False(t, n != 25, "%d unattributed lines at --max 0, want all 25", n)
+		assert.Equal(t, 25, n, "%d unattributed lines at --max 0, want all 25", n)
 	}
 	wantNotContains(t, all.stdout, "SOURCES MORE kind=unattributed")
 }

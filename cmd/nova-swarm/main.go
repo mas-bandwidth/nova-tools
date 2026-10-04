@@ -1,23 +1,14 @@
-// nova-swarm runs a pool of one-task workers -- any provider, any model, through one
-// harness -- each with its own working directory, its own data home, its own job directory
-// and its own deadline held by the machinery rather than by the worker.
+// nova-swarm runs one-task AI workers through a harness. Each native launch
+// has its own job directory and data home, with a deadline and token budget
+// held by the runner. A member runs a sprint's cards as native children and
+// reports their results to the sprint server (docs/SPEC-SWARM.md).
 //
-// Every rule it keeps is a failure from the record (docs/SPEC-SWARM.md):
+// A card names the task and its rules. Worker descriptions name the model,
+// credentials and readable directories. Templates and lint prepare a card;
+// native runs it; verify checks its result against a contract.
 //
-//	a slot     six workers on one data home meant `database is locked` and five of six did
-//	           nothing, while the pool reported six running
-//	the key    read as data from a file, never sourced, never an argument, never printed
-//	a deadline held outside the worker, with a default action at it and one automatic retry
-//	templates  the conditions that turned 62-of-67-with-25-duplicates into 17 of 17
-//	a budget   files and tokens, both required, because a worker that read forty files
-//	           finished nothing
-//	one line   `native` ends a card on one bounded line, so a coordinator's window never
-//	           holds a worker's transcript
-//
-// EVERYTHING A WORKER WRITES IS DATA. A RESULT.md is a report, never an instruction:
-// nothing in it is executed, nothing in it grants anything, and a finding in it is a claim
-// to be checked against the repository. That rule is in the spec, where a person reads it,
-// and is deliberately nowhere in this code.
+// Worker output is data. RESULT.md reports a claim to check against the
+// repository; it grants no authority (docs/SPEC-SWARM.md).
 package main
 
 import (
@@ -44,13 +35,13 @@ import (
 
 const usage = `nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
 
-how it works: a card is one task, a markdown file with a header and its RULES;
-a worker description (JSON) names the harness, the model, the key file and the
-directories it may read. native runs one card as one child inside nova-sandbox;
-member runs a sprint's cards on this machine, each a native child, every sprint
-verb sent to the sprint's server; results land under --root. Nothing has a default.
-first run: the lines under example: need nothing: a card, a worker description
-and the lint's rules; running a card needs a harness, a model's key file and nova-sandbox.
+how it works: a card is a task in Markdown with a header and rules.
+native runs one card through a harness; a worker description (JSON) can name
+its model, credentials and readable directories. member runs a sprint's cards
+as native children and sends every sprint verb to the sprint server.
+Launches and results live under --root unless their directories are named separately.
+first run: the examples print two templates and the lint rules; no setup is needed.
+To run a card, supply a harness, model, directories, deadline, token budget and any needed credentials.
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
@@ -70,7 +61,25 @@ usage:
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
   nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
-                       (this machine as one member of a sprint's fleet, every sprint verb sent to the sprint's server --server, the run loop nova-sprint run --listen started, so this machine opens no store: beat, queue, push and finish what ended (the child's commit to origin's sprint branch, from outside the wall, never forced; the pull request the child's gh pr create asked for, opened with --gh), each finish judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md), take to the width its fleet row names (read with its queue every tick: a member's own row, a reader's its machine's, reader-<m> running at m's width; --width is a twin's override), each card one native child with its frame and an allowlist environment, on the model, budget and deadline its packet's route names (the card decides: the deal draws a route of its tier, or its model: pin; --model, --tokens and --deadline are the override a card with no route runs on); --pass names the secrets a child is handed, the loop record's nova-secrets keys: a loop whose harness reads its provider key from the environment carries --pass <KEY>, else its children start without it and fail at the provider; --reader runs the readers-table loop, each read on the route the ask drew from the reader tier unless --model, --tokens or --deadline is given, and a flash card's first read a decide read, asked by native with JEV_API_KEY from the reader's environment, which no child is handed (docs/SPEC-SPRINT.md section 6); a work member whose environment holds JEV_API_KEY asks the attempt decision when any take ends, in its own process, and the finish carries it (docs/SPEC-SPRINT.md section 2); a work card's red gate, its child ended not-done, is classed by native's gate decision with the same key before the take is reported (the failing tests run once at the base, bounded), each decision recorded and shown, and routed only on the sprint row's gate bars, empty by default: flaky failures rerun once, pre-existing ones never the card's (docs/SPEC-SPRINT.md section 5, the gate verdict); --identity names the pool identity every child commits under, from the loop's nova-config argv, else the pool's identity.tsv; a launch it is done with leaves no checkout behind (a failed one keeps its directory, the newest 5 of the pool), and it starts no card while the slots' volume has less free than --disk-floor GiB, default 10; each card's checkout is staged within --stage-wall, default 120s, which a slow machine's loop row names longer; a card it will not start is finished staging refused: <why>, so the sprint deals it to another member and says why)
+                       (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
+                        Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
+                        A reader uses its machine's width; --width overrides it. This machine opens no store.
+                        Each card runs as one native child with its frame and an allowlist environment.
+                        Its packet supplies the model, budget and deadline; the flags fill missing route values.
+                        --reader runs reads from the readers table; its flags override the read's route.
+                        A flash card's first read asks a decide read using JEV_API_KEY in the reader environment.
+                        The key stays with the reader process (docs/SPEC-SPRINT.md section 6).
+                        A work member with JEV_API_KEY asks an attempt decision when a take ends; the finish carries it.
+                        Native classifies a not-done child's red gate with the same key, with one bounded base test run.
+                        Decisions are recorded and routed on the sprint row's gate bars; flaky failures rerun once
+                        and pre-existing failures never count against the card (docs/SPEC-SPRINT.md sections 2 and 5).
+                        The member pushes the child's commit and opens its requested PR outside the wall, never force-pushing.
+                        Each finish is judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md).
+                        --pass names environment secrets to hand to children; a harness that needs one must receive it.
+                        --identity names the pool's commit identity; otherwise the pool's identity.tsv supplies it.
+                        Completed launches leave no checkout; each pool keeps its newest five failed launches.
+                        No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
+                        A staging refusal reports why so the sprint can deal the card to another member.)
   nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
                        (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 10, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
@@ -88,38 +97,35 @@ absent or empty, a bad invocation; 3 member: its binary was replaced on disk
 (MEMBER STOP: its supervisor starts the new one; with children running it first
 takes no new card and stops when the last is reported).
 
-NO GUESSED ANYTHING. There is no default pool, no default worker description, no
-default number of workers, no default deadline, and no default token budget.
-native requires --card; lint takes --card, or
---fleet or --rules instead; verify takes --card as an option and reads it only
-when given (because a card this tool chose would be a guess about somebody
-else's task); the remaining verbs take no card flag. --tokens is required on
-native because a budget this tool supplied would be a guess about somebody
-else's task, and --tokens unmetered is a caller's statement that this
-provider has no live accounting and the deadline is the only stop. Zero is
-refused for tokens. member takes each card's budget from the route its packet
-names, and --tokens (with --model and --deadline) only for a card with none.
+Inputs: native requires a card, harness, model, slot, root, deadline and token budget.
+Use --tokens <n> for a positive budget, or --tokens unmetered to state that the
+provider has no live accounting. The runner does not infer this from the provider.
+member uses each packet's route and fills missing model, budget or deadline
+values from its flags; a reader's flags override its route. Width comes from
+the fleet row unless --width overrides it. Other defaults are listed in each verb's -h.
+lint takes --card, --fleet or --rules; verify reads --card only when supplied.
 
-THE KEY IS READ AS DATA AND NEVER SOURCED. It lives in one file the worker
-description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it is
-never an argument, never a log line, never in a file this tool writes. The
-harness config this tool writes carries the variable's NAME, never its value.
+Credentials: a worker description names either key_file or secret.
+key_file is read as data, never sourced: one line, a bare key or NAME=<key>,
+mode 0600. secret names an environment variable. The generated harness config
+carries the variable's name, never its value. The legacy --auth option copies
+the provider's auth entry into the data home, mode 0600, and removes it when
+the run ends. A worker naming secret refuses --auth and writes no auth file.
 
-EVERY JOB RUNS INSIDE nova-sandbox (docs/SPEC-SANDBOX.md) unless the caller types
---no-wall (native and member), the one opt-out, which no card can ask for and
-which the NATIVE line names as sandbox=none-by-flag. Inside the wall the job
-directory and its data home are the only writable paths; the slot directory and
-whatever read_roots names in the worker description are readable; the key file,
-~/.ssh and the gh configuration are in neither list and the kernel denies them.
-A command that runs outside the wall and dies inside it is missing a read_roots entry.
+Sandbox: native and member use nova-sandbox unless --no-wall is explicit
+(docs/SPEC-SANDBOX.md); no card can opt out. The NATIVE line reports the opt-out
+as sandbox=none-by-flag. The job directory, data home, temporary directory and
+default shared cache are writable. The slot, harness and toolchain directories,
+worker read_roots and any borrowed Git objects are readable.
+The worker's key file is kept outside its readable roots. If a command runs
+outside the wall but fails inside it, check its dependencies and read_roots.
 
-A card to start from: nova-swarm template --name card prints one that passes
-the lint (lint --card <file> --child-rules): put it in a file, fill in its
-<...> lines (REPO: and BASE: name the repository and the branch the work starts
-from and lands on), lint it (a line still unfilled is named on a NOTE line), then
-hand it to native, or to nova-sprint add as a brief. native and member each show
-one example line in their -h, and template -h lists the lines a card needs.
-nova-swarm help <verb> (or <verb> -h) prints one verb's usage, flags and example.
+Prepare a card: save nova-swarm template --name card to a file, fill its <...>
+lines, then run nova-swarm lint --card <file> --child-rules. REPO: names the
+repository; BASE: names the branch the work starts from and lands on.
+Lint names unfilled lines in NOTE output. Hand the completed card to native,
+or to nova-sprint add as a brief. template -h lists the required card lines.
+nova-swarm help <verb> (or <verb> -h) prints its usage, flags, example and exit codes.
 
 example:
   nova-swarm template --name read-pr
@@ -210,11 +216,11 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0, before
-	// anything is read, dialed or written (the CLI style's rule (b), #4505). Only -h:
+	// anything is read, dialed or written, so help has no side effects. Only -h:
 	// every other exit of this tool is unchanged.
 	defer recoverHelp(stdout, &code)
 	// --seat <name> (or NOVA_SEAT): the Redis login is read from that seat's
-	// file through nova-secrets' library, in this process (#4052).
+	// file through the secrets library, in this process.
 	args, err := seatcred.FromArgs(args, os.Getenv)
 	if err != nil {
 		return refuse(stderr, "", err.Error())
@@ -374,7 +380,7 @@ func (f *flags) tokens(value string) (int, bool) {
 		return 0, true
 	}
 	// THE WHOLE WORD. fmt.Sscanf("%d") accepts a numeric prefix, so --tokens 50oops
-	// used to launch as 50 (review finding on PR #2131). strconv.Atoi reads the full
+	// would launch as 50 if Sscanf were used here. strconv.Atoi reads the full
 	// string and refuses overflow, so a trailing junk, a decimal, and a number that
 	// does not fit in int are all the same refusal.
 	n, err := strconv.Atoi(strings.TrimSpace(value))
@@ -402,7 +408,7 @@ func maxFlag(fs *flag.FlagSet) *int {
 
 // wantMax refuses a NEGATIVE ceiling. Zero already means all, so a negative number is a typo
 // with two readings -- and the reading this tool took was "all", on the one flag whose job
-// is to bound output, at the largest state (the new-user audit, F6, 2026-09-11).
+// is to bound output, at the largest state.
 func (f *flags) wantMax(value int) {
 	if value < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all, so a negative ceiling is a typo with two readings and this tool refuses to pick one", value))
@@ -638,7 +644,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if *noWall && *sandbox != "" {
 		f.add("--no-wall and --sandbox together: one asks for no containment at all and the other names the wall to use; pass at most one")
 	}
-	// ISSUE #881: `--worker <file>` names a worker description, and the description is the
+	// --worker <file> names a worker description, and the description is the
 	// source of the model and of the key. It is loaded HERE, before the flag checks, so a
 	// description that is not readable is one refusal and a description whose fields are
 	// wrong is the same. Without --worker, native keeps --model and --auth as today.
@@ -654,10 +660,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		}
 		w = loaded
 		if w.Secret != "" {
-			// The key is in the environment, never in a file: --auth and --config are the
-			// legacy shape's, and a description that names a secret writes no auth file and
-			// carries its own provider declaration. Both are refused where the caller can
-			// still fix them.
+			// The key is in the environment, never in a file. --auth and --config are
+			// the legacy shape's flags (still read without --worker), and a description that
+			// names a secret writes no auth file and carries its own provider declaration.
+			// Both are refused where the caller can still fix them.
 			if *auth != "" {
 				f.add("--auth is the legacy shape's and this worker description names a secret; the key comes from the environment and no auth file is written")
 			}
@@ -674,7 +680,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	f.want(*slot, "slot", "the slot directory this run executes in")
 	f.want(*root, "root", "the configured root the slot directory must sit under")
 	f.want(*deadline, "deadline", "the wall duration that kills the child (e.g. 60s, 5m)")
-	// THE WORD, READ WITH EVERY OTHER FLAG AND REFUSED WITH THEM (rule 13d). It sits in
+	// THE WORD, READ WITH EVERY OTHER FLAG AND REFUSED WITH THEM. It sits in
 	// the collector so a caller who left out the budget AND the deadline is told both in
 	// one run; and it sits HERE, above every line below that touches the disk --
 	// nativeRun's own job directory, data home and temp directory -- because 13d
@@ -711,15 +717,15 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm native: --deadline wants a positive duration: %s\n", oneline.Err(err))
 		return 2
 	}
-	// A BUDGET NEEDS A SOURCE THE TOOL CAN READ (rule 13d), AND THE INTERVAL HAS A FLOOR
+	// A BUDGET NEEDS A SOURCE THE TOOL CAN READ, AND THE INTERVAL HAS A FLOOR
 	// AND A CEILING. Both are checked HERE: after the deadline is parsed, because the
 	// interval's ceiling is the deadline; and above everything below, because 13d refuses
 	// "before any directory is made" and nativeRun's first act is to make the job
 	// directory. Neither check reads a file or starts a process.
 	//
 	// The source is the worker description's `usage`, and `opencode` when there is no
-	// `--worker` -- rule 13d's own sentence, which swarm.NativeUsageSource holds so that
-	// nobody retypes the default.
+	// `--worker`. swarm.NativeUsageSource holds that pairing so nobody retypes the
+	// default.
 	var workerForBudget *swarm.Worker
 	if workerGiven {
 		workerForBudget = &w
@@ -818,7 +824,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if workerGiven {
 		cfg.worker = &w
 	}
-	// CI over work (nova-tools#4293): this run, the wall, the harness and everything
+	// CI over work: this run, the wall, the harness and everything
 	// the card's child runs, before anything starts. The member that launched it stays
 	// at its own priority, so a busy machine still beats.
 	if !yieldNative(nativeToCI, stderr) {
@@ -828,9 +834,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 && !res.lost && !res.unrecorded {
 		return code
 	}
-	// AN UNREAD DENIAL IS NEVER AN OK (issue #1465; review finding on #1478). This is the ONE
+	// AN UNREAD DENIAL IS NEVER AN OK. This is the ONE
 	// refusal that lands AFTER the spend, and it is a refusal rather than a token on the OK
-	// line on purpose: the run of #1465 carried `rc=0 sandbox=landlock harness=ok` over a
+	// line on purpose: a past run carried `rc=0 sandbox=landlock harness=ok` over a
 	// card whose shell had been denied the toolchain, and a coordinator reading dispositions
 	// and not prose shipped a commit nobody had compiled. There is no OK line here at all.
 	//
@@ -842,7 +848,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		refuseNative(stderr, swarm.ShellDenialReason(cfg.label, res.job, res.wall, res.rc, res.shellDenial))
 		return 2
 	}
-	// OK IS A VERDICT, NOT A PUNCTUATION MARK (nova-tools #1844). This line said
+	// OK IS A VERDICT, NOT A PUNCTUATION MARK. This line said
 	// `NATIVE OK` for every run that reached it, including a run that produced NOTHING:
 	// a card came back rc=1 on both attempts, zero tokens, zero
 	// dollars, no RESULT.md and no repo -- and the launcher's one log line read
@@ -856,17 +862,17 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// The request may have been accepted and the response was lost. That is
 	// not a delivered card and not an ordinary failure the coordinator may retry.
 	verdict, why := nativeVerdictWhy(res)
-	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
+	// harness=<ok|silent> is ALWAYS present: the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
 	//
-	// AND SO IS budget= (rule 13d: "`NATIVE OK` always carries `budget=`"). It sits
+	// AND SO IS budget= -- the OK line always carries it. It sits
 	// immediately after harness= and ahead of every optional tail, where the output
 	// grammar puts it (docs/SPEC-SWARM.md, "Output grammar", the NATIVE OK line), so the
 	// fixed part of the line stays one fixed part. It is the JOB's figure -- the sum over
 	// every launch at the final read -- and never a launch's row. The VERDICT above and
 	// this field are independent: budget= and stopped= are carried by an INCOMPLETE line
-	// too, because #1844's own sentence is that "every other field is byte-for-byte the
-	// same, so a reader that parses fields still reads them all".
+	// too, because every other field is byte-for-byte the same in every line, so a
+	// reader that parses fields still reads them all.
 	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s",
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
@@ -885,26 +891,26 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout)
 	// THE PROMPT-DEFECT LINE, ON NATIVE'S OWN STDOUT AFTER THE `NATIVE` LINE, AND IN NO
-	// FILE (rule 13d, decision 16). The pool appends it to the job's RESULT.md, creating the
+	// FILE. The pool appends it to the job's RESULT.md, creating the
 	// file where the worker published none; on this route that would score the card
 	// `line1-mismatch`, and 13d promises the published report is kept byte for byte -- so
 	// here it is printed and nothing is written.
 	if res.defect != "" {
 		fmt.Fprintln(stdout, oneline.Escape(res.defect))
 	}
-	// WHICH BUDGET ENDED THE CARD, AND AT WHAT COUNT (nova-tools #5094): the member carries
+	// WHICH BUDGET ENDED THE CARD, AND AT WHAT COUNT: the member carries
 	// these words into the finish's reason, so the coordinator reads "budget: tokens 509,940
 	// of 400,000, $0.03" and not only "budget".
 	if res.stopped != "" {
 		fmt.Fprintf(stdout, "NATIVE BUDGET label=%s budget: %s\n", oneline.Field(cfg.label),
 			oneline.Escape(nativeBudgetWords(res.stopped, cfg.tokens, res.spent, res.partial, cardcost.ParseSpend(res.spend).Actual, ratText(cfg.usd))))
 	}
-	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,
+	// THE WALL REPORT: a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.
 	if res.wallReport != "" {
 		fmt.Fprintln(stdout, oneline.Escape(res.wallReport))
 	}
-	// THE REPORT LINE A WALL DEATH OWES (issue #644's follow-up): the path the wall refused,
+	// THE REPORT LINE A WALL DEATH OWES: the path the wall refused,
 	// the step the card reached, and the commits it left on its branch so a harvester can
 	// still push the work. Printed only when the wall stopped a card with no result, which is
 	// the one shape nativeRun sets res.wall for.
@@ -926,7 +932,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
 		}
 	}
-	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST (issue #2632). --sweep-now
+	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST. --sweep-now
 	// is the control: it deletes the job directory the way the bench sweep does,
 	// and only when publishNativeResults named the directory it landed in. A
 	// publish that did not land leaves the job, which is then the only copy.
@@ -979,8 +985,8 @@ func resultsRootOf(flag, root string) string {
 
 // nativeProcessExit is the process exit after a launch that started. The child's
 // code is already on the verdict line as rc=<n>. Passing 255 through made a fill
-// loop treat a finished card as a transport failure and retry it (nova-tools
-// #2058). Local ssh(1) exits 255 for any error; that is not proof the remote
+// loop treat a finished card as a transport failure and retry it.
+// Local ssh(1) exits 255 for any error; that is not proof the remote
 // command never started, so the outcome is potentially UNKNOWN and a retry
 // waits on reconciliation. A negative rc is a kill (deadline or TERM) and is
 // already exit 1.
@@ -998,11 +1004,11 @@ func nativeProcessExit(childRC int) int {
 // RESULT.md in its job directory, or in the clone the card worked in. A card that abstains
 // still writes one (it says ABSTAIN on line 2); a run that produced nothing writes none.
 //
-// A REPORT THE MACHINERY WROTE IS NOT THE CARD'S (issue #2548). A card that ended its last
+// A REPORT THE MACHINERY WROTE IS NOT THE CARD'S. A card that ended its last
 // turn with a question publishes nothing, and the run now writes `RESULT: ASKED <question>`
 // for it so the question is not lost. That file is evidence of an ABSENCE, and counting it
 // here would turn the verdict this run already prints -- `INCOMPLETE why=no-result` -- into
-// `NATIVE OK` for a card that did nothing but ask, which is the very fault #1844 made this
+// `NATIVE OK` for a card that did nothing but ask, which is the very fault that lets the
 // word earn itself. The verdict is therefore unchanged by the report, and the report is
 // where the question goes.
 //
@@ -1036,12 +1042,12 @@ func dash(s string) string {
 	return s
 }
 
-// fenceSuffix renders what the harness's OWN fence did to this card (issue #644): the empty
+// fenceSuffix renders what the harness's OWN fence did to this card: the empty
 // string when it rejected nothing, and ` fence=rejected path=<p>` naming the first path it
 // auto-rejected otherwise. It is the FIELD a reader of the NATIVE line scores the card `fence` by instead
 // of `no-result` -- the machinery fenced the card off a path its own card named, which is
 // nothing like a model that chose to publish nothing, and a coordinator reading `no-result`
-// went looking at the model for eight cards that never got to run (2026-09-16).
+// blames the model for eight cards that never got to run.
 func fenceSuffix(path string) string {
 	if strings.TrimSpace(path) == "" {
 		return ""
@@ -1051,16 +1057,16 @@ func fenceSuffix(path string) string {
 
 // termSuffix names the one clean ending a manager brings: ` reason=terminated`, so a
 // coordinator reading the NATIVE OK line knows the run was stopped from outside and never
-// reads a silent exit as a spent failure (issue #779). The token is a literal put through
+// reads a silent exit as a spent failure. The token is a literal put through
 // oneline.Field like every other tail, so it cannot carry anything past the escape.
-// stoppedSuffix renders rule 13d's one new key: ` stopped=<tokens|max_turns|max_cache_read|
+// stoppedSuffix renders the budget rule's key: ` stopped=<tokens|max_turns|max_cache_read|
 // unverifiable>` for a card the machinery stopped under that rule, and the empty string for
 // every other card.
 //
-// IT IS A KEY OF ITS OWN and NOT a second `reason=` (PR #1566 decision 17): one key with one
+// IT IS A KEY OF ITS OWN and NOT a second `reason=`: one key with one
 // meaning, which also says WHICH budget fired. `reason=terminated` stays what a TERM from
 // outside prints and the `reason=` inside the `usage=none` group stays the usage read's --
-// that those two can still meet on one line is issue #1611, deliberately not this rule's to
+// that those two can still meet on one line is deliberate, not this rule's to
 // repair.
 func stoppedSuffix(stopped string) string {
 	if stopped == "" {

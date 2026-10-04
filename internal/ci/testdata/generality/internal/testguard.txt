@@ -1,4 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
-internal/testguard/testguard.go:hulk 1
-internal/testguard/testguard.go:space 2
+# ceiling: 1
+internal/testguard/testguard.go:space 1

@@ -186,7 +186,7 @@ func TestLocalRedNamesTheTestWithItsOutput(t *testing.T) {
 	code, stdout, _ := runLocal(t, f)
 	require.Equal(t, 1, code, "exit = %d, want 1\n%s", code, stdout)
 	for _, want := range []string{
-		"PKG FAIL    0.2s example.com/m/cmd/a",
+		"PKG FAILED    0.2s example.com/m/cmd/a",
 		"RED package=example.com/m/cmd/a test=TestB",
 		"    b_test.go:9: got 1, want 2",
 		"red=1 make-exit=2",

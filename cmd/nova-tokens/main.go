@@ -5,7 +5,7 @@
 // It exists because we have an obligation to report token spend, and the first thing that
 // shape was built as — three scripts of Python under zsh — produced nine day files and
 // every way it could fail at once: five paths defaulted inside the script, so a run on
-// another bench folded the wrong bench; the old month files were REMOVED on every real
+// another bench folds the wrong bench; every path here is a flag, and the tool removes no month file on a real
 // run; nine unreadable files were one line at the bottom of a summary and the run exited
 // 0; a day could shrink silently the moment a source went quiet; two repo-attribution
 // tables in two scripts disagreed about three repos; five different caps, none a flag,
@@ -74,6 +74,7 @@ usage:
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
   nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
+                      [--role <name>] [--weights <in,cw,cr,out>]
   nova-tokens version
 
 Every verb but version takes --json: the same result as one JSON object on stdout, a
@@ -173,14 +174,14 @@ example:
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
   nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
 
-session is the coordinator's own window: it sums one Claude Code session jsonl per
+session is the caller's own window: it sums one Claude Code session jsonl per
 turn -- input, cache write, cache read, output, deduplicated on the message id so a
 streamed message counts once -- prints one SESSION line with the weighted
-fresh-input equivalent (input + 1.25 x cache write + 0.1 x cache read + 5 x output)
-and the average context per turn, and with --out folds it into the day file as the
-model the transcript names, as <model>/coordinator (a transcript that names no
-model is refused, never booked under a guess). The coordinator is a friend, and its spend is a
-line in the ledger like everybody else's.
+fresh-input equivalent (in x input + cw x cache write + cr x cache read + out x output,
+the four --weights sets) and the average context per turn, and with --out folds
+it into the day file as the model the transcript names, as <model> or, when --role
+names one, <model>/<role> (a transcript that names no model is refused, never
+booked under a guess). Its spend is a line in the ledger like every other row's.
 
 example:
   nova-tokens session --claude-session ./session.jsonl --out ./out
@@ -732,10 +733,12 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 					lists["unreadable"].Line(unreadableLine(s, "TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: why}))
 				}
 			case readErr == nil && len(findings) == 0:
-				// Merge by source BEFORE anything else touches the file: a row no declared
-				// source wrote is carried over, a row they all wrote is replaced, and a row
-				// this fold can neither keep nor recompute refuses the day. Rule 10 then
-				// compares the file with the MERGED file, which is like with like.
+				// Merge by source BEFORE anything else touches the file: a row no
+				// declared source wrote is carried over, a row they all wrote is
+				// replaced, and a row this fold can neither keep nor recompute refuses
+				// the day. Rule 10 then compares the file with the merged file, so it
+				// compares like with like and cannot hide an erased row when this run's
+				// numbers are bigger.
 				merged, retained, partials := tokens.MergeDay(old.Rows, file.Rows, declared)
 				for _, pt := range partials {
 					partial = true
@@ -814,7 +817,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// A FOLD THAT DROPPED EVERY MESSAGE FOLDED NOTHING, AND A GATE READING THE EXIT CODE MUST
 	// SEE IT. Some messages dropped is a TOKENS NOTE (the day is short and the note says
 	// so); every message dropped, with none folded, is a fold that did not do its job:
-	// exit 1 with the counts.
+	// exit 1 with the counts so the caller sees that no work was done.
 	dropped, of, allDropped := allMessagesDropped(sources)
 	bad := n("unreadable") > 0 || n("unparsed") > 0 || n("mixed") > 0 || n("conflict") > 0 ||
 		(n("shrank") > 0 && !*allowShrink) || n("partial") > 0 || allDropped
@@ -975,7 +978,7 @@ func firstUnreadableLabel(sources []*tokens.Source) string {
 // noidAndDup is the sentence for spend that was read and then dropped: a message with no
 // id is not folded (rule 4) and a repeated id is counted once. Both are numbers on a green
 // TOKENS SOURCE line and nowhere else, and 100% of a file's usage can be a message with no
-// id (lesson 95: a number is not a sentence).
+// id (a number is not a sentence).
 func noidAndDup(sources []*tokens.Source) string {
 	noid, dup, label := 0, 0, "-"
 	for _, s := range sources {
@@ -1204,10 +1207,12 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			folder.Add(src.Label, m)
 		}
 	}
-	// Rule 20: report "folds that machine's own sources for one day, the same sources and
-	// the same attribution as fold", and that includes what the fold SAYS about them: an
-	// unreadable file, a line that did not parse and a message with no id each leave a
-	// line here (rule 3: counted and printed, never skipped silently).
+	// Rule 20: report folds that the caller's own sources produce for one day, with the same
+	// sources and the same attribution as fold. That has to include what the fold SAYS about them.
+	// This verb counted only the unreadables, so a transcript line whose stamp does not
+	// parse and a message with no id -- both counted by the reader, both dropped before
+	// the body -- left no trace at all, and the friend pasted a short day onto the bus
+	// under REPORT OK (rule 3: counted and printed, never skipped silently).
 	unreadable, unparsed := 0, 0
 	for _, src := range sources {
 		for _, u := range src.Unreadables {

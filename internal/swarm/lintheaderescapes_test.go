@@ -129,7 +129,7 @@ func TestATypedHeaderBelowTheBlockIsNamedNotSkipped(t *testing.T) {
 	require.NotEmpty(t, fs, "a KIND: the gate will never read is a finding, not a pass\n%s", dumpFindings(fs))
 	require.True(t, hasCheck(fs, "kind-declared"), "the stranded line is named by its own token\n%s", dumpFindings(fs))
 	for _, f := range fs {
-		require.False(t, f.Check == "kind-declared" && f.Line != 3, "the finding names the line the stranded KIND: sits on, got %d\n%s", f.Line, dumpFindings(fs))
+		require.True(t, f.Check != "kind-declared" || f.Line == 3, "the finding names the line the stranded KIND: sits on, got %d\n%s", f.Line, dumpFindings(fs))
 	}
 }
 

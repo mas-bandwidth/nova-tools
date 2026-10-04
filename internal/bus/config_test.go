@@ -15,10 +15,13 @@ func TestLoadConfigReadsTheRoster(t *testing.T) {
 	require.NoError(t, err)
 	{
 		got := c.Senders()
-		require.False(t, len(got) != 2 || got[0] != "Ada" || got[1] != "Bo", "Senders() = %v, want [Ada Bo] -- Dana has no lane and is not a sender", got)
+		require.Equal(t, 2, len(got), "Senders() = %v, want [Ada Bo] -- Dana has no lane and is not a sender", got)
+		require.Equal(t, "Ada", got[0], "Senders() = %v, want [Ada Bo] -- Dana has no lane and is not a sender", got)
+		require.Equal(t, "Bo", got[1], "Senders() = %v, want [Ada Bo] -- Dana has no lane and is not a sender", got)
 	}
 	ada := mustParticipant(t, c, "the archivist")
-	require.False(t, ada.Name != "Ada" || ada.Slug() != "ada", "an alias resolved to %+v, want Ada with slug ada", ada)
+	require.Equal(t, "Ada", ada.Name, "an alias resolved to %+v, want Ada with slug ada", ada)
+	require.Equal(t, "ada", ada.Slug(), "an alias resolved to %+v, want Ada with slug ada", ada)
 	_, ok := c.Lookup("Adda")
 	require.False(t, ok, "a misspelling resolved; the whole point of the roster is that it does not")
 }

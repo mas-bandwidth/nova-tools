@@ -72,7 +72,7 @@ Each answer prints as one ANSWER line: a choice's value and every option's p, a 
 					f.Required("schema", "the decision's schema, a JSON file")
 					f.Required("state", "the text the decision is made over, a file, or - for stdin")
 					w.asking(f)
-					f.Op()
+					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 				},
 				Run: w.ask,
 			},
@@ -90,7 +90,7 @@ or UNSURE). The state is the card, the rule when --rule names one, and the diff,
 					f.Required("diff", "the worker's unified diff, a file")
 					f.String("rule", "", "a rule text the read holds the diff to as well, a file")
 					w.asking(f)
-					f.Op()
+					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 				},
 				Run: w.read,
 			},
@@ -109,7 +109,7 @@ The line names the top class and its p; nova-sprint land asks it as <card>@lande
 					f.Required("card", "the card the worker was given, a file")
 					f.Required("diff", "the landed unified diff, a file")
 					w.asking(f)
-					f.Op()
+					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 				},
 				Run: w.score,
 			},
@@ -127,7 +127,7 @@ the child's RESULT.md (none when --result is not given) and the member's reason 
 					f.String("result", "", "the child's RESULT.md, a file; absent when the child wrote none")
 					f.Required("reason", "the member's reason line for the take's end, as text")
 					w.asking(f)
-					f.Op()
+					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 				},
 				Run: w.attempt,
 			},
@@ -142,7 +142,7 @@ the child's RESULT.md (none when --result is not given) and the member's reason 
 				Flags: func(f *tool.Flags) {
 					f.Required("brief", "the card's brief, a file")
 					w.asking(f)
-					f.Op()
+					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 				},
 				Run: w.grade,
 			},
@@ -167,7 +167,7 @@ is, else pre-existing.`,
 					f.String("base-red", "", "the failing tests red at the card's base, comma-separated (<Test> or <pkg>.<Test>); given empty, none is")
 					f.String("bars", "", "the flaky and the pre-existing bars, <flaky>,<pre-existing>: each a probability or empty (that route taken by no failure), two set ones summing above 1; empty (the default) routes none, as the sprint row's defaults do; 0.8,0.8 is the starting point")
 					w.asking(f)
-					f.Op()
+					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 					f.Check(func(c *tool.Call) {
 						if _, err := gateBars(c.Str("bars")); err != nil {
 							c.Problem(err.Error())

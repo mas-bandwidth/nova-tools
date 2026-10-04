@@ -24,14 +24,14 @@ func TestDryRunWritesNothing(t *testing.T) {
 		want      string
 	}{
 		{"init", "", []string{"init"}, []string{}, 0, "INIT OK box="},
-		{"init over a box", quarantined, []string{"init"}, []string{}, 1, "INIT FAIL box="},
+		{"init over a box", quarantined, []string{"init"}, []string{}, 1, "INIT FAILED box="},
 		{"lockdown", quarantined, []string{"lockdown"}, []string{"why"}, 0, "LOCKDOWN OK dry_run=true: nothing written, the lockdown is not blown; a real run would blow the lockdown in the box there: why"},
 		{"lockdown with no box", "", []string{"lockdown"}, []string{"why"}, 0, "a real run would make a box there holding a blown lockdown"},
 		{"lockdown over an unreadable box", "{", []string{"lockdown"}, []string{"why"}, 0, "keep the unreadable box's bytes beside it"},
 		{"quarantine", quarantined, []string{"quarantine"}, []string{"discord", "why"}, 0, "QUARANTINE OK discord dry_run=true: nothing written, the surface is not quarantined"},
 		{"quarantine with no box", "", []string{"quarantine"}, []string{"discord", "why"}, 2, "nova-fuse quarantine REFUSED:"},
 		{"lift quarantine", quarantined, []string{"lift", "quarantine"}, []string{"a-forum"}, 0, "LIFT OK quarantine=a-forum dry_run=true: would lift it; nothing written, it still stands"},
-		{"lift what is not there", quarantined, []string{"lift", "quarantine"}, []string{"discord"}, 1, "LIFT FAIL quarantine=discord"},
+		{"lift what is not there", quarantined, []string{"lift", "quarantine"}, []string{"discord"}, 1, "LIFT FAILED quarantine=discord"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

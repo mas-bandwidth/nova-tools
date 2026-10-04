@@ -1,11 +1,9 @@
 // Package filelock is the one lock on a file across processes: the kernel's lock
 // (flock on unix, LockFileEx on Windows), released by the kernel when its holder
 // dies, with the holder's stamp written inside the file for a refusal to name. Its
-// design and invariants are tla/FileLock.tla. Two things left the package on
-// 2026-10-02 because no caller used them, and each can return with one: a probe
-// that asked without taking, and the take telling its caller whether the last
-// holder released (Previous). Release still clears the note, so a free lock
-// names nobody; the note is what a refusal reports, and nothing decides on it.
+// design and invariants are tla/FileLock.tla. Lock acquisition is exclusive, with
+// waiting or non-blocking forms; release clears the holder note, which names a holder
+// in a refusal but never affects lock decisions.
 //
 // Its callers, on unix, each the same flock on the same file its earlier binary took, so
 // an old and a new binary exclude each other across an upgrade (each package's

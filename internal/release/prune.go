@@ -11,16 +11,17 @@ import (
 
 // KeepBesides is how many release versions a root keeps BESIDES the ones it
 // must: the version just built or installed, and the version the machine was
-// running before it. Every `build --out` and `install --from` root used to keep
-// every version forever, one directory per dev build, and a machine ran out of
-// disk on it (2026-10-01: 36 versions, 9 GB on one root; 34 GB on another).
+// running before it. A root that keeps every version forever, one directory per
+// dev build, runs a machine out of disk; the measurement below is that root,
+// not a claim every machine reaches it.
+// Measurement (2026-10-01): 36 versions, 9 GB on one root; 34 GB on another.
 //
 // Three is enough to put back any of the last few builds by re-installing it
 // without a rebuild, which is the only thing an old version directory is for,
 // and it bounds a root at five versions whatever the day's build rate.
 const KeepBesides = 3
 
-// prune removes the old version directories under root and reports what it did.
+// prune removes the version directories under root that keep does not name, and reports what it did.
 // It is the LAST step of a build or an install that has already succeeded, and
 // it never fails one: a directory that cannot be removed is said on errs and
 // counted, and the verb's exit code is the build's or the install's.

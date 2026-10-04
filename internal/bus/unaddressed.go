@@ -20,7 +20,7 @@ import (
 // That is the exact shape of the failure this whole tool exists to end -- somebody wrote it,
 // it is on the bus, and no reader is ever shown it -- with the quietest cause of the lot.
 // `send` already refuses an unknown recipient, so nothing this tool writes can be one of
-// these: they are the legacy notes and the ones typed by hand in a browser, which is
+// these: the legacy notes, a shape still read, and the ones typed by hand in a browser,
 // precisely the writing the bus's form is meant to allow.
 //
 // So they are reported:

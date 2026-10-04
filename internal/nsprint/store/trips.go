@@ -11,7 +11,7 @@ import (
 // Trips counts the network round trips a Store's client makes from the moment
 // CountTrips attaches it: each single command is one, each pipeline Exec is
 // one however many commands it carries. Verbs print the count on their
-// receipt (`trips=<n>`, #3261 and #3265) so a regression to serial reads
+// receipt (`trips=<n>`) so a regression to serial reads
 // shows in the output, not only in a test.
 type Trips struct {
 	n atomic.Int64
@@ -60,7 +60,7 @@ func (t *Trips) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Proces
 
 // handshake reports a command go-redis sends while it sets up a new
 // connection (HELLO, AUTH, CLIENT SETINFO, SELECT, READONLY). Open sends
-// nothing (#3277), so the first command a verb issues also dials, and the
+// nothing, so the first command a verb issues also dials, and the
 // connection's setup runs through these hooks; like the dial, it is not one
 // of the verb's round trips.
 func handshake(c redis.Cmder) bool {

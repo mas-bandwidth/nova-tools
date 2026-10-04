@@ -185,7 +185,7 @@ it the cursor stops at the last WHOLE commit printed before the first gap, and
 never past it. Without --bodies, inbox and wait are exactly what they are today.
 
 --legacy-before draws the switch-day line on a bus that existed before this
-tool: check WARNS instead of failing on an older note's header, and inbox does
+tool: check prints a NOTE instead of failing on an older note's header, and inbox does
 not carry an older note on your open list, counting them on one INBOX LEGACY
 line instead -- notes= for the notes, unreadable= for the files that will not
 parse, which are not named one by one either once they are behind the line. A

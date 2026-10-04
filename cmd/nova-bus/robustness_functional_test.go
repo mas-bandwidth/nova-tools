@@ -170,7 +170,7 @@ func TestARebaseConflictPrintsOneActionableLineAndTheTranscriptRaw(t *testing.T)
 	r := invoke(t, theirs, "send", "--bus", second, "--stdin", "--remote", "origin", "--branch", "main").mustCode(t, 1)
 
 	lines := strings.Split(strings.TrimRight(r.stderr, "\n"), "\n")
-	require.Truef(t, strings.HasPrefix(lines[0], "SEND FAIL from-ada/"), "the first line of stderr is not the event line:\n%s", r.stderr)
+	require.Truef(t, strings.HasPrefix(lines[0], "SEND FAILED from-ada/"), "the first line of stderr is not the event line:\n%s", r.stderr)
 	for _, want := range []string{"conflicted", "was NOT pushed", "git pull --rebase"} {
 		require.Containsf(t, lines[0], want, "the actionable line does not say %q:\n%s", want, lines[0])
 	}

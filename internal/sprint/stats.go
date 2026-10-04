@@ -13,8 +13,7 @@ import (
 
 // The pass's numbers (`nova-sprint stats`): how long each stage of the epoch's
 // cards took, per member, per reader and per route, from the stamps and the usage
-// the cards already carry. The owner, 2026-10-01, on the coordinator's script over
-// 120 `card --json` dumps: "it should be a verb". Pure: the snapshot in, the
+// the cards already carry. Pure: the snapshot in, the
 // numbers out; the verb reads the snapshot once (StatsRecords) and prints them.
 
 // Measure is the median, the max and the count of one measure's samples, in

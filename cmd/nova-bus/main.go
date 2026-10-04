@@ -27,7 +27,7 @@
 //	version   prints the one version line
 //
 // And one failure that is not in that list because it arrives slowly: a tool whose read
-// cost grows with the record. inbox and check used to walk every lane on every run, so the
+// cost grows with the record: a run of inbox or check that walks every lane makes the
 // ten-thousandth note cost ten thousand parses to find. They now read from a CURSOR -- the
 // commit a reader last read to, kept in that reader's own lane and pushed like a receipt --
 // so the work is the size of the CHANGE and never the size of the bus. --full walks
@@ -175,7 +175,7 @@ func quoteList(names []string) string {
 // printTranscript puts git's own output on stderr, VERBATIM, under the one actionable line
 // that has already been printed and escaped.
 //
-// THE FAILURE THIS CLOSES: a `SEND FAIL` on a rebase conflict used to carry git's whole
+// THE FAILURE THIS CLOSES: a `SEND FAILED` on a rebase conflict would otherwise carry git's whole
 // transcript inside the reason, rendered through the one-line escape, so forty lines of git
 // arrived as one line of `\x0d\x0a` and nobody could read any of it. The one-line guarantee
 // is about the EVENT line -- the line above this, which a scanner reads -- and a transcript

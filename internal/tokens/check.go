@@ -9,31 +9,23 @@ import (
 	"strings"
 )
 
-// `check` is the GATE. It verifies what rule 13 says and nothing else: it does not ask
+// `check` is the GATE. It verifies the ledger and nothing else: it does not ask
 // whether a day's numbers are plausible, or whether a source was declared that day. A
 // missing day is NAMED and never filled.
 //
-// A GATE THAT CANNOT GO GREEN IS NOT A GATE. Measured on this repository's own
-// reports/tokens, 2026-09-18: 16 day files, 36 findings of `missing` for the 36 calendar
-// days nobody worked between 2026-07-30 and 2026-09-06, and 4 findings of `stray` for the
-// README, the collator's log, the pre-nova-tokens archive and a session note a person put
-// there on purpose. Every one of the 40 was correct by the old reading, and not one of
-// them was work anybody would do -- so the gate was a line people had learned to skip.
-// Two readings changed:
+// A CALENDAR GAP IS A FACT, NOT A FINDING. A day with no file is `missing` only when
+// something this run can read says there was spend on it: --strict says every gap
+// counts, and --no-spend <file> names the days that had none and counts the rest. With
+// neither, the gap is counted on the CHECK line as gap=<n> and nothing is named --
+// because `check` reads day files, and a day file nobody wrote is not evidence that
+// anybody worked that day.
 //
-//	A CALENDAR GAP IS A FACT, NOT A FINDING. A day with no file is `missing` only when
-//	something this run can read says there was spend on it: --strict says every gap
-//	counts, and --no-spend <file> names the days that had none and counts the rest. With
-//	neither, the gap is counted on the CHECK line as gap=<n> and nothing is named --
-//	because `check` reads day files, and a day file nobody wrote is not evidence that
-//	anybody worked that day.
-//
-//	A NON-DAY ENTRY A PERSON PUT THERE IS A NOTE, NOT A STRAY. A `*.md`, a `*.log` and a
-//	`pre-*` archive directory are counted as notes=<n> and left alone. --strict restores
-//	the old reading, where every entry that is not a day file is named.
+// A NON-DAY ENTRY A PERSON PUT THERE IS A NOTE, NOT A STRAY. A `*.md`, a `*.log` and a
+// `pre-*` archive directory are counted as notes=<n> and left alone. --strict names
+// every entry that is not a day file.
 //
 // Neither door removes anything and neither invents a number: both counts stay on the
-// CHECK line, so a person who wants the old list types --strict and gets it back whole.
+// CHECK line, so --strict restores the full listing.
 
 // FileFinding is one thing wrong with one file.
 type FileFinding struct {

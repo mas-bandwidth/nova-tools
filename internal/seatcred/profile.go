@@ -14,7 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 )
 
-// A seat profile (nova-tools#4330) is one row of a tool's seats.tsv: the seat
+// A seat profile is one row of a tool's seats.tsv: the seat
 // is a fact of the machine, not of the shell, so the fleet play writes where
 // its Redis is, the ACL user, which key of the seat's file holds that user's
 // password, and the store and age key that open the file. A tool given

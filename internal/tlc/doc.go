@@ -26,8 +26,8 @@
 // records of the cases that do not read it as they are.
 //
 // WHY THE SOURCES ARE EMBEDDED. The runner's result files are part of every
-// fingerprint (a change to how a result is read invalidates the records taken
-// with the old reading), and a binary built on one machine and run on a bench
+// fingerprint (a change to how a result is read invalidates records that
+// depend on that reading), and a binary built on one machine and run on a bench
 // has no checkout of them. The binary therefore carries the bytes it was built
 // from; internal/ci recomputes the fingerprint from the checkout's files, so a
 // binary built from other files than the ones committed writes records that

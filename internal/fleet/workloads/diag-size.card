@@ -2,13 +2,13 @@ roles: runner
 expect: ^DIAG OK
 report: yes
 
-# REPORT ONLY, deliberately: 15.7 GB of runner _diag logs across the fleet on 2026-09-18 had
-# broken nothing, and a check that fails a machine for it is a check people learn to pass
+# REPORT ONLY, deliberately: 15.7 GB of runner _diag logs across the fleet had broken
+# nothing, and a check that fails a machine for it is a check people learn to pass
 # over. It is measured, written and printed as a WARN, and it never withholds a certificate.
 #
-# THE RATE IS THE NUMBER THAT MATTERS. hulk held 3576 MB in 18167 logs with nothing older
-# than two days -- about 1.8 GB a day -- so a seven-day retention rule cannot bound it and a
-# size read alone cannot say so. The line carries MB, the age of the oldest log, and the
+# THE RATE IS THE NUMBER THAT MATTERS. A Linux bench held 3576 MB in 18167 logs with nothing
+# older than two days -- about 1.8 GB a day -- so a seven-day retention rule cannot bound it
+# and a size read alone cannot say so. The line carries MB, the age of the oldest log, and the
 # rate, so the hygiene that follows is argued from a rate and not from a snapshot.
 set -eu
 TOTAL=0
