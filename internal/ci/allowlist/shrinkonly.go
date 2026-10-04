@@ -16,8 +16,13 @@ var ShrinkOnlyOutsideTestdata = []string{
 }
 
 // growingLists are the top-level lists under diffcheck.LedgerDir that grow: the
-// deleted-tests log is appended to (classtests_class_test.go, RepeatedKeys).
-var growingLists = []string{"deleted-tests.txt"}
+// deleted-tests log is appended to (classtests_class_test.go, RepeatedKeys), and two lists
+// gain a row by hand, with no base or ceiling to refuse it: compared_examples.txt names
+// the test that executes a pasted example (ci_platforms_and_examples_test.go: an example
+// leaves unexecuted_examples.txt by being named here), and namedpaths_allowlist.txt
+// holds every name that looks like a path and is not one (namedpaths_class_test.go: a
+// new such name is a red run until it is listed).
+var growingLists = []string{"deleted-tests.txt", "compared_examples.txt", "namedpaths_allowlist.txt"}
 
 // ShrinkOnly says p (a path from the repository root, slash-separated) is a
 // shrink-only ledger: one whose class test says it only shrinks, so a change to it is a

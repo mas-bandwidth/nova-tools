@@ -1661,10 +1661,12 @@ card's timeline tells it on the line of its merge.
 without a stop. The shrink-only ledgers are the lists whose class test in
 internal/ci says they only shrink, named in one place, `allowlist.ShrinkOnly`
 (`internal/ci/allowlist/shrinkonly.go`): every top-level list file under
-`internal/ci/testdata/` but the deleted-tests log, which grows, and the unit
-tier's two lists under `internal/ci/` (`sleeps-skips_allowlist.txt`,
-`slow-tests_allowlist.txt`); the counted-ledger shards below the testdata
-directories are not, their rows carry counts lowered in place. Two cards that
+`internal/ci/testdata/` but the lists that grow (the deleted-tests log, which
+is appended to, and `compared_examples.txt` and `namedpaths_allowlist.txt`,
+which gain rows by hand), and the unit tier's two lists under `internal/ci/`
+(`sleeps-skips_allowlist.txt`, `slow-tests_allowlist.txt`); the counted-ledger
+shards below the testdata directories are not, their rows carry counts lowered
+in place. Two cards that
 each remove a row of the same ledger conflict when the rows are adjacent, and
 the one right answer is the base with both removals gone: for each such
 unmerged path `land` reads the merge's three stages (the merge base, the tip's
