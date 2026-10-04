@@ -15,13 +15,13 @@
 > fleet passes proved, or deleted. `BenchStage` is current. The table-layer models below (`TableMachine`, `MemberTable`, `EpochMemberTable`,
 > `TableEdit`, `TableOrder`, `TableSession`, `RedisFn`, `TableFirstContact`, `FirstConn`, `FuseBox`) are current.
 
-The TLA+ modules here are the specifications of the state machines this repo implements (rowan-new SPEC-COORDINATOR section 8: the backend is the state machine, the verbs are its actions; Glenn 2026-09-27: TLA+ for every state machine, every project). The findings each model produced, verified against the code by hand, are in rowan-new `specs/tla/FINDINGS.md`; the model documents (`TABLE-MODEL.md`, `MEMBER-TABLE-MODEL.md`) are copied here beside the modules they describe.
+The TLA+ modules here are the specifications of the state machines this repo implements (the repo SPEC-COORDINATOR section 8: the backend is the state machine, the verbs are its actions; the owner 2026-09-27: TLA+ for every state machine, every project). The findings each model produced, verified against the code by hand, are in the repo `specs/tla/FINDINGS.md`; the model documents (`TABLE-MODEL.md`, `MEMBER-TABLE-MODEL.md`) are copied here beside the modules they describe.
 
 | Module | Instance | What it is |
 |---|---|---|
 | `CardMachine.tla` | `MCCardMachine` | the card's life over cells (the copy model of 02_card_move.lua), the corrected design after its three findings |
-| `TableMachine.tla` | `MCTable*` | nova-table as table.lua is today at f7745885, with its actual gaps (Stella; the strict gate fails on purpose) |
-| `MemberTable.tla`, `EpochMemberTable.tla` | `MCMember*`, `MCEpochMember*` | the corrected member placement and epoch protocol (Stella): one place per table inside the epoch, lossless shape, no owned alias, stale writers refused |
+| `TableMachine.tla` | `MCTable*` | nova-table as table.lua is today at f7745885, with its actual gaps (the tester; the strict gate fails on purpose) |
+| `MemberTable.tla`, `EpochMemberTable.tla` | `MCMember*`, `MCEpochMember*` | the corrected member placement and epoch protocol (the tester): one place per table inside the epoch, lossless shape, no owned alias, stale writers refused |
 | `TableEdit.tla`, `TableOrder.tla` | `MCTableEdit*`, `MCTableOrder*` | nova-table's edit verbs and the order of its rows and columns, with reversed witnesses |
 | `TableSession.tla` | `MCTableSession*` | `nova-table shell`: lines, one connection, the store coming and going, a stop signal, the exit code (the design #4458 is held to) |
 | `RedisFn.tla` | `MCRedisFn*` | the function libraries of one Redis under several loaders (internal/redisfn: Check, Load, Ensure, LoadMissing): one holder to a function name, a refusal that writes nothing, no moment without the library, a LoadMissing that never replaces |
@@ -205,7 +205,7 @@ no longer reads). `Staged = FALSE` is table.lua at 109939a85.
 the invariants say the result is the one requested, not only a permutation.
 `Broken` names the misimplementation a witness config turns on.
 
-Run on a bench, never the Studio. Every config runs at once, each in its own
+Run on a bench, never the coordinator's machine. Every config runs at once, each in its own
 temp directory (TLC unpacks its standard modules into `java.io.tmpdir`, and
 two runs sharing one collide), each under a 60 s cap; a timeout is a failure:
 
@@ -216,7 +216,7 @@ two runs sharing one collide), each under a 60 s cap; a timeout is a failure:
         -deadlock -metadir /tmp/tlc-$c/meta -config $cfg $m > $c.log 2>&1 &
     done; wait
 
-Measured on space, 2026-09-27, load 9, all thirteen at once: 38 s wall.
+Measured on the bench, 2026-09-27, load 9, all thirteen at once: 38 s wall.
 
 | config | result | time |
 |---|---|---|
@@ -225,8 +225,8 @@ Measured on space, 2026-09-27, load 9, all thirteen at once: 38 s wall.
 | `MCTableEditBrokenText` | ShapeLosesNoText violated in 4 states: a text value set, `set --columns` without the column deletes it (line 341) | 2 s |
 | `MCTableEditBrokenLegacy` | ShapeLosesNoMember violated in 5 states: a member placed, a formula column's stored fold stops parsing, `set --columns` drops the member's column with no OCCUPIED check (line 311) | 8 s |
 | `MCTableOrder` | no error, 241,073 distinct states, depth 4, 3 rows, 3 columns: TypeOK, RefusalWritesNothing, RowMoveIsExact, RowOrderIsExact, ColMoveIsExact, AddIsExact, BindIsExact, RowSortIsExact, StandingSortHolds, ReorderIsPermutation, HeldInShape, OnlyRowDelDrops, RowsAndColumnsApart | 19 s |
-| `MCTableOrderBrokenBind` | StandingSortHolds violated: bind writes its input order under a standing sort (3ee97bea: bind never reached the standing-sort step; Stella's probe 1) | 2 s |
-| `MCTableOrderBrokenCombined` | StandingSortHolds violated: one call sets `--keep` and moves a row (3ee97bea: the guard read the sort before the edit and exempted any call with row_sort; Stella's probe 2) | 2 s |
+| `MCTableOrderBrokenBind` | StandingSortHolds violated: bind writes its input order under a standing sort (3ee97bea: bind never reached the standing-sort step; the tester's probe 1) | 2 s |
+| `MCTableOrderBrokenCombined` | StandingSortHolds violated: one call sets `--keep` and moves a row (3ee97bea: the guard read the sort before the edit and exempted any call with row_sort; the tester's probe 2) | 2 s |
 | `MCTableOrderBrokenOnce` | RowSortIsExact violated: a sort without `--keep` leaves the rows as they were | 2 s |
 | `MCTableOrderBrokenSort` | StandingSortHolds violated: row add ignores the standing sort | 2 s |
 | `MCTableOrderBrokenPrefix` | RowOrderIsExact violated: the named rows put last | 2 s |
@@ -239,7 +239,7 @@ the order model are defects that were in the code, each checked by hand
 against the lines named. The other six are misimplementations the invariants
 are shown to catch. The order model also found one defect by disagreeing with
 the code: it refuses a bind that omits a row holding a text value, and the
-kernel at 6b3346174 deleted the text (Stella's read, stella-9a49e4eda437); the
+kernel at 6b3346174 deleted the text (the tester's read, tester-9a49e4eda437); the
 kernel was changed to refuse, the model was not. Bounds of the instance: a
 combined sort-and-move places at `--first` or `--last`, a combined
 sort-and-order names one row. A depth-5 run of the edit model with one member (1,652,467
@@ -416,7 +416,7 @@ REPLACE; `Atomic = FALSE` is FUNCTION DELETE followed by FUNCTION LOAD.
 `MissReplaces = TRUE` is a LoadMissing that sends REPLACE, the load of
 a miss. What it leaves out is listed in its header.
 
-Run on space, every config at once, each in its own temp directory under a
+Run on a bench, every config at once, each in its own temp directory under a
 60 s cap (no `-deadlock`: the terminal stutter is an action of the spec):
 
     for c in MCRedisFn MCRedisFnDeleteThenLoad MCRedisFnHolderGone MCRedisFnTwoDeployers MCRedisFnOneDeployer MCRedisFnLoadMissing MCRedisFnMissReplaces; do
@@ -427,7 +427,7 @@ Run on space, every config at once, each in its own temp directory under a
 
 The run (tla2tools v1.7.4, TLC 2.19),
 the modules and configs matching these files by sha256, logs in
-`space:~/tla/redisfn-2/`. All seven ran in under a second. The distinct
+`bench:~/tla/redisfn-2/`. All seven ran in under a second. The distinct
 states of a run that stops at a violation are what the two workers had found
 by then, and vary from run to run; the length of the counterexample does not.
 The first five configs, before `Missers` was added, gave the same outcomes at
@@ -456,7 +456,7 @@ verb whose reply was lost again, `replace` loads with REPLACE, `every-miss`
 loads on every miss. What it leaves out is listed in its header; RedisFn.tla
 holds LoadMissing's read and load under racing loaders.
 
-Run on space, every config at once, each under a 60 s cap:
+Run on a bench, every config at once, each under a 60 s cap:
 
     for c in MCTableFirstContactFresh MCTableFirstContact MCTableFirstContactBrokenResendLost MCTableFirstContactBrokenReplace MCTableFirstContactBrokenEveryMiss; do
       mkdir -p /tmp/tlc-$c
@@ -464,7 +464,7 @@ Run on space, every config at once, each under a 60 s cap:
         -metadir /tmp/tlc-$c/meta -config $c.cfg MCTableFirstContact.tla > $c.log 2>&1 &
     done; wait
 
-Logs in `space:~/tla/firstcontact/`, the modules and configs matching these
+Logs in `bench:~/tla/firstcontact/`, the modules and configs matching these
 files by sha256. Each ran in under a second. The distinct states of a run that
 stops at a violation vary from run to run; the counterexample does not.
 
