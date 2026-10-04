@@ -2640,15 +2640,18 @@ func copyAuth(src, provider, dataHome string) string {
 		return fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error()))
 	}
 	if dstSt, err := os.Stat(dst); err == nil && authModeNotOwnerOnly(runtime.GOOS, dstSt.Mode()) {
-		return fmt.Sprintf("the auth copy would not be 0600: %s ended mode %04o%s", oneline.Field(dst), dstSt.Mode().Perm(), unlinkAuthCopy(dst))
+		reason := fmt.Sprintf("the auth copy would not be 0600: %s ended mode %04o", oneline.Field(dst), dstSt.Mode().Perm())
+		return reason + unlinkAuthCopy(dst)
 	}
 	ocDir := filepath.Join(dataHome, "opencode")
 	if err := os.MkdirAll(ocDir, 0o755); err != nil {
-		return fmt.Sprintf("the auth directory %s could not be made: %s%s", oneline.Field(ocDir), oneline.Escape(err.Error()), unlinkAuthCopy(dst))
+		reason := fmt.Sprintf("the auth directory %s could not be made: %s", oneline.Field(ocDir), oneline.Escape(err.Error()))
+		return reason + unlinkAuthCopy(dst)
 	}
 	ocDst := filepath.Join(ocDir, "auth.json")
 	if err := os.WriteFile(ocDst, body, 0o600); err != nil {
-		return fmt.Sprintf("the auth copy %s could not be written: %s%s%s", oneline.Field(ocDst), oneline.Escape(err.Error()), unlinkAuthCopy(ocDst), unlinkAuthCopy(dst))
+		reason := fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(ocDst), oneline.Escape(err.Error()))
+		return reason + unlinkAuthCopy(ocDst) + unlinkAuthCopy(dst)
 	}
 	return ""
 }
