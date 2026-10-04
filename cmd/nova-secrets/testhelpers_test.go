@@ -127,7 +127,7 @@ var (
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if builtDir != "" {
-		os.RemoveAll(builtDir)
+		_ = os.RemoveAll(builtDir) // ignored: teardown of the temporary build dir; a failed removal changes no test outcome and no caller can act
 	}
 	os.Exit(code)
 }
