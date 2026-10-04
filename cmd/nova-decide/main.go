@@ -615,7 +615,10 @@ func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[
 
 // answered is a decision's result: its id and backend, the headline choice when the
 // schema has one (a read's verdict, an attempt's class, a grade's grade), and one
-// ANSWER item per question in name order.
+// ANSWER item per question in name order. A choice with an empty P prints p=-.
+// A wire confidence is printed beside it as confidence=<x> method=wire, and is
+// not a probability of correctness (SPEC-NOVA-DECIDE section 3). Top and Prob
+// read P only.
 func answered(d decide.Decision, recorded string) *tool.Out {
 	o := tool.Done().Fact("id", d.ID).Fact("decision", d.Decision).Fact("backend", d.Backend)
 	if d.Decision == decide.ScoreName {
@@ -624,16 +627,32 @@ func answered(d decide.Decision, recorded string) *tool.Out {
 	} else {
 		for _, head := range []string{"verdict", decide.AttemptQuestion, decide.GradeQuestion} {
 			if v, ok := d.Answers[head]; ok && v.Type == decide.Choice {
-				o.Fact(head, v.Value).Fact("p", round(v.Prob(v.Value)))
+				o.Fact(head, v.Value).Fact("p", shownP(v))
+				if v.Method != "" || v.Confidence != 0 {
+					o.Fact("confidence", v.Confidence).Fact("method", v.Method)
+				}
 			}
 		}
 	}
 	o.Fact("tokens_in", d.Usage.InputTokens).Fact("tokens_out", d.Usage.OutputTokens).Fact("recorded", recorded)
 	for _, name := range slices.Sorted(maps.Keys(d.Answers)) {
 		a := d.Answers[name]
+		if a.Method != "" || a.Confidence != 0 {
+			o.Item("answer", "question", name, "type", a.Type, "value", a.Value, "p", probs(a.P), "confidence", a.Confidence, "method", a.Method)
+			continue
+		}
 		o.Item("answer", "question", name, "type", a.Type, "value", a.Value, "p", probs(a.P))
 	}
 	return o
+}
+
+// shownP is the headline probability: empty, printed as p=-, when P is empty,
+// else the chosen option's probability. It reads P only (SPEC-NOVA-DECIDE section 3).
+func shownP(a decide.Answer) any {
+	if len(a.P) == 0 {
+		return ""
+	}
+	return round(a.Prob(a.Value))
 }
 
 // backend is the one --backend names.
