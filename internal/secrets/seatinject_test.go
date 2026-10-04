@@ -303,3 +303,41 @@ func TestSeatInjectWalksSealsRoadToTheMerge(t *testing.T) {
 	}
 	assertNoValue(t, "progress", got)
 }
+
+// TestSeatInjectKeepsAHeldClearTokenByteForByte: a value the rule permits in the
+// clear is the target's own bytes, never decoded and re-encoded and never
+// wrapped (the E111 question, 2026-10-04): plain, single-quoted,
+// double-quoted, apostrophe-bearing and hash-bearing spellings all come out
+// exactly as they went in, while the sealed names re-seal from the source.
+func TestSeatInjectKeepsAHeldClearTokenByteForByte(t *testing.T) {
+	t.Parallel()
+
+	f := newInjectFixture(t)
+	// The target's rule permits every clear spelling this test holds.
+	mustWrite(t, filepath.Join(f.storeDir, ".sops.yaml"),
+		"creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: "+pubRowan+","+pubRecovery+
+			"\n  - path_regex: ^air\\.yaml$\n    unencrypted_regex: ^(SPACE_HOST|SINGLE_HOST|DOUBLE_HOST|APOSTROPHE_KEY|HASH_KEY)$\n    age: "+pubAir+","+pubRecovery+"\n", 0644)
+	body := "SPACE_HOST: space.example\n" +
+		"SINGLE_HOST: 'space.example'\n" +
+		"DOUBLE_HOST: \"space.example\"\n" +
+		"APOSTROPHE_KEY: 'it''s here'\n" +
+		"HASH_KEY: 'a # not a comment'\n" +
+		injectSealedBody
+	mustWrite(t, filepath.Join(f.storeDir, "air.yaml"),
+		injectTargetFile([]string{pubAir, pubRecovery}, body), 0644)
+
+	_, err := RunSeatInject(f.options("NOVA_REDIS_BENCH_PASSWORD", true))
+	require.NoError(t, err, "RunSeatInject: %v", err)
+	stdin := readMaybe(t, f.sopsStdin)
+	for _, line := range []string{
+		"SPACE_HOST: space.example\n",
+		"SINGLE_HOST: 'space.example'\n",
+		"DOUBLE_HOST: \"space.example\"\n",
+		"APOSTROPHE_KEY: 'it''s here'\n",
+		"HASH_KEY: 'a # not a comment'\n",
+	} {
+		assert.Contains(t, stdin, line, "a held clear token changed: %q\nstdin:\n%s", line, stdin)
+	}
+	assert.NotContains(t, stdin, "'''", "a held clear token was re-wrapped:\n%s", stdin)
+	assert.Contains(t, stdin, "NOVA_REDIS_BENCH_PASSWORD: 'redis_new'\n", "the sealed name did not re-seal from the source:\n%s", stdin)
+}
