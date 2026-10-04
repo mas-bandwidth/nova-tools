@@ -344,8 +344,9 @@ func (c *held) actor(pr *Card) string {
 	switch pr.Col {
 	case Working:
 		wc := s.Fleet.Placed(pr.F("work"))
-		// a friend holds her card whatever her status (no take-back): the deadline rule judges it
-		if wc == nil || wc.F("primary") != pr.ID || (wc.Col != Ready && wc.Col != Working) || s.MemberCtl(wc.Row).F("status") != Up && !IsFriendRow(wc.Row) {
+		// a friend holds her card whatever her status (no take-back), and a member held to
+		// finish (hold.go) its working cards: the deadline rule judges them
+		if wc == nil || wc.F("primary") != pr.ID || (wc.Col != Ready && wc.Col != Working) || s.MemberCtl(wc.Row).F("status") != Up && !IsFriendRow(wc.Row) && !HeldToFinish(s.MemberCtl(wc.Row)) {
 			return ""
 		}
 		field, limit, _, _ := WorkDeadline(s, wc) // the tick's own deadline
@@ -420,6 +421,9 @@ func (c *held) tickOn(pr *Card) string {
 func (c *held) judgment(pr *Card) string {
 	if IsHeld(pr) {
 		return "held by the coordinator (add --held) until release"
+	}
+	if (pr.Col == Ready || pr.Col == Waiting) && StreamHeld(c.s, pr.Row) {
+		return "its stream " + pr.Row + " is held by the coordinator until nova-sprint unhold " + pr.Row
 	}
 	if j := c.judged[pr.ID]; len(j) > 0 {
 		return "open: " + strings.Join(j, ", ")

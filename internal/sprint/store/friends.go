@@ -48,10 +48,12 @@ type friendEntry struct {
 	// Mode is her delivery mode, her nova-config row's (batch or one-shot),
 	// which her daemon reads back from her beat; empty is batch.
 	Mode string `json:"mode,omitempty"`
-	// Reason and Until are the hold's (friend down --reason --until): why,
-	// and when the coordinator expects her back.
+	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
+	// --reason): why, and when the coordinator expects her back. Return is whether
+	// the hold took her cards back (hold.go).
 	Reason string    `json:"reason,omitempty"`
 	Until  time.Time `json:"until,omitzero"`
+	Return bool      `json:"return,omitempty"`
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row

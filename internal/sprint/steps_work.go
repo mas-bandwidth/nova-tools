@@ -792,6 +792,9 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 	var p Plan
 	moves := roundMoves{}
 	ready := func(c *Card) string {
+		if StreamHeld(s, c.Row) {
+			return "its stream " + c.Row + " is held by the coordinator (hold.go): nova-sprint unhold " + c.Row + " deals it again"
+		}
 		if _, ok := FriendCard(c); ok {
 			return friendCardWhy
 		}
@@ -1567,6 +1570,16 @@ type FleetReq struct {
 	// card stays on it after the hold's redeal (memberKeeps): the sync's
 	// removal of a member with no machine row.
 	Remove bool `json:",omitempty"`
+	// Reason, with hold, is the coordinator's reason, kept on the control card
+	// (FieldHeldReason) beside its held status (hold.go).
+	Reason string `json:",omitempty"`
+	// Finish, with hold (and on a down move), lets the member's working cards finish:
+	// only its ready cards, never begun, are dealt round the fleet, and the hold
+	// is marked so (FieldHeldFinish) for the sweep to leave them (hold.go).
+	Finish bool `json:",omitempty"`
+	// keep is the streams whose cards a member's hold leaves where they are: streams
+	// held in the same step, whose hold withdraws them (hold.go).
+	keep map[string]bool
 }
 
 // Fleet brings a member up (and levels the ready queues), takes one down
@@ -1678,7 +1691,7 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 				set[FieldWidth] = w
 			}
 			if r.Op == "release" && ctl.F("held") != "" {
-				unset = append(unset, "held", FieldHeldBy)
+				unset = append(unset, "held", FieldHeldBy, FieldHeldReason, FieldHeldFinish)
 				if !comeUp {
 					line = r.Member + " released, down until it beats"
 				}
@@ -1768,11 +1781,30 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		// goes, so the sync never releases it
 		unset = append(unset, FieldHeldBy)
 	}
+	if r.Op == "hold" {
+		// the coordinator's reason and whether working cards finish (hold.go): a
+		// later hold says them again, and a hold with neither clears both
+		if r.Reason != "" {
+			set[FieldHeldReason] = r.Reason
+		} else {
+			unset = append(unset, FieldHeldReason)
+		}
+		if r.Finish {
+			set[FieldHeldFinish] = stamp(s.Now)
+			line += "; its working cards finish"
+		} else {
+			unset = append(unset, FieldHeldFinish)
+		}
+	}
 	var head []Change
 	if len(set) > 0 || len(unset) > 0 {
 		head = append(head, change(Fleet, setEntry(ctl, set, unset...)))
 	}
-	cards := append(append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...), s.Fleet.Cell(r.Member, Working)...)
+	cards := append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...)
+	if !r.Finish {
+		cards = append(cards, s.Fleet.Cell(r.Member, Working)...)
+	}
+	cards = slices.DeleteFunc(cards, func(c *Card) bool { return r.keep[c.F("stream")] })
 	SortCards(cards)
 	withdrew := 0
 	for _, c := range cards {
@@ -1842,19 +1874,26 @@ func countsByMember(n map[string]int) string {
 // member round the fleet below DealAhead times its width, at a new generation,
 // a working card's redeal counted; withdrawn, its primary ready again, when none
 // has room or no member is up. held counts what each up member holds, the
-// cards placed here included, for the level after it.
+// cards placed here included, for the level after it. A member held to finish
+// (hold with no --return, hold.go) keeps its working cards; its ready ones go.
 func sweep(s *Snapshot, p *Plan, r FleetReq, up []string, rr *round, moves roundMoves, held map[string]int) {
 	widths := memberWidths(s, up)
 	for _, m := range s.Members() {
 		ctl := s.MemberCtl(m)
-		if ctl == nil || ctl.F("status") == Up || s.Fleet.Count(m, Ready)+s.Fleet.Count(m, Working) == 0 {
+		if ctl == nil || ctl.F("status") == Up {
+			continue
+		}
+		// a member held to finish (hold with no --return, hold.go) keeps its working
+		// cards: only its ready ones, never begun, go
+		finish := HeldToFinish(ctl)
+		if n := s.Fleet.Count(m, Ready); n == 0 && (finish || s.Fleet.Count(m, Working) == 0) {
 			continue
 		}
 		why := "down"
 		if ctl.F("held") != "" {
 			why = "held"
 		}
-		q := downPlan(s, FleetReq{Op: "down", Member: m, Who: r.Who, Why: "the rebalance: cards on a " + why + " member"}, up, rr, moves, held, widths)
+		q := downPlan(s, FleetReq{Op: "down", Member: m, Who: r.Who, Why: "the rebalance: cards on a " + why + " member", Finish: finish}, up, rr, moves, held, widths)
 		p.Units = append(p.Units, q.Units...)
 		p.Refused = append(p.Refused, q.Refused...)
 	}
