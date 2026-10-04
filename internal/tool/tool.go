@@ -27,6 +27,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -89,7 +90,7 @@ var wordRe = regexp.MustCompile(`^[A-Z][A-Z0-9-]*$`)
 // a group ("fn"): `<tool> fn -h` lists the group's verbs at exit 0.
 type Verb struct {
 	Name      string
-	Usage     string         // the usage line(s) after the tool's name, one form per line
+	Usage     string         // forms after the tool's name; indented lines continue the previous form
 	Example   string         // runnable line(s) after the tool's name, for the banner's example block
 	Effect    Effect         // what running it does to the world, stated in `help <verb>`
 	Detail    string         // lines `help <verb>` prints above its flags: a format, a worked example
@@ -214,9 +215,7 @@ func (t *Tool) inGroup(args, members []string, asJSON bool, stdout, stderr io.Wr
 		fmt.Fprintln(stdout, verbflag.UsageLine(t.Name, g, subs))
 		for _, v := range t.verbs() {
 			if slices.Contains(members, v.Name) {
-				for _, l := range lines(v.Usage) {
-					fmt.Fprintf(stdout, "  %s %s\n", t.Name, l)
-				}
+				t.printUsage(stdout, v.Usage)
 			}
 		}
 		fmt.Fprintf(stdout, "`%s %s <verb> -h` lists a verb's flags.\nexit codes: %s\n", t.Name, g, t.ExitTable)
@@ -393,9 +392,7 @@ func (t *Tool) Banner() string {
 	}
 	b.WriteString("usage:\n")
 	for _, v := range t.verbs() {
-		for _, l := range lines(v.Usage) {
-			fmt.Fprintf(&b, "  %s %s\n", t.Name, l)
-		}
+		t.printUsage(&b, v.Usage)
 	}
 	fmt.Fprintf(&b, "  %s help [<verb>]\n\n", t.Name)
 	if t.UsageNote != "" {
@@ -420,16 +417,29 @@ func (t *Tool) Banner() string {
 	b.WriteString("example:\n")
 	for _, v := range t.verbs() {
 		for _, l := range lines(v.Example) {
-			fmt.Fprintf(&b, "  %s %s\n", t.Name, l)
+			fmt.Fprintf(&b, "  %s %s\n", t.Name, strings.TrimSpace(l))
 		}
 	}
 	return b.String()
 }
 
+// printUsage keeps continuation lines deeper than their synopsis so verbflag
+// includes them in verb help (docs/ONBOARDING.md point 1).
+func (t *Tool) printUsage(w io.Writer, usage string) {
+	for _, l := range lines(usage) {
+		first, _ := utf8.DecodeRuneInString(l)
+		if unicode.IsSpace(first) {
+			fmt.Fprintf(w, "  %s\n", l)
+		} else {
+			fmt.Fprintf(w, "  %s %s\n", t.Name, l)
+		}
+	}
+}
+
 func lines(s string) []string {
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
-		if l = strings.TrimSpace(l); l != "" {
+		if l = strings.TrimRightFunc(l, unicode.IsSpace); l != "" {
 			out = append(out, l)
 		}
 	}
