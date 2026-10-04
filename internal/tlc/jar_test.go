@@ -1,28 +1,20 @@
 package tlc
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func parseDuration(s string) (time.Duration, error) { return time.ParseDuration(s) }
-
 func TestFindJarPrefersTheFlagThenTheEnvironment(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	flagJar := filepath.Join(dir, "flag.jar")
-	envJar := filepath.Join(dir, "env.jar")
-	for _, p := range []string{flagJar, envJar} {
-		require.NoError(t, os.WriteFile(p, []byte(filepath.Base(p)), 0o644))
-	}
+	r := newRig(t)
+	flagJar, flagSum := r.jar("flag.jar")
+	envJar, _ := r.jar("env.jar")
 	env := func(k string) string {
 		if k == JarEnv {
 			return envJar
@@ -33,8 +25,7 @@ func TestFindJarPrefersTheFlagThenTheEnvironment(t *testing.T) {
 	require.NoError(t, err, "flag: %+v, %v", got, err)
 	require.Equal(t, flagJar, got.Path, "flag: %+v, %v", got, err)
 	require.Equal(t, "flag", got.Source, "flag: %+v, %v", got, err)
-	sum := sha256.Sum256([]byte("flag.jar"))
-	require.Equal(t, hex.EncodeToString(sum[:]), got.SHA256, "digest %s is not the jar's", got.SHA256)
+	require.Equal(t, flagSum, got.SHA256, "digest %s is not the jar's", got.SHA256)
 	got, err = FindJar("", env)
 	require.NoError(t, err, "env: %+v, %v", got, err)
 	require.Equal(t, envJar, got.Path, "env: %+v, %v", got, err)
@@ -43,11 +34,11 @@ func TestFindJarPrefersTheFlagThenTheEnvironment(t *testing.T) {
 
 func TestFindJarRefusesWhatIsNotAFile(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	r := newRig(t)
 	none := func(string) string { return "" }
 	_, err := FindJar("", none)
 	assert.ErrorContains(t, err, "neither --jar nor TLC_JAR", "no jar named")
-	for name, path := range map[string]string{"a directory": dir, "a missing file": filepath.Join(dir, "gone.jar")} {
+	for name, path := range map[string]string{"a directory": r.root, "a missing file": filepath.Join(r.root, "gone.jar")} {
 		_, err := FindJar(path, none)
 		assert.Error(t, err, "%s was accepted", name)
 	}
@@ -55,8 +46,8 @@ func TestFindJarRefusesWhatIsNotAFile(t *testing.T) {
 
 func TestFindHelperUsesTheOverrideThenPATH(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	override := filepath.Join(dir, "java")
+	r := newRig(t)
+	override := filepath.Join(r.root, "java")
 	require.NoError(t, os.WriteFile(override, nil, 0o755))
 	onPath := func(name string) (string, error) { return "/usr/bin/" + name, nil }
 	offPath := func(string) (string, error) { return "", errors.New("not found") }
@@ -74,7 +65,7 @@ func TestFindHelperUsesTheOverrideThenPATH(t *testing.T) {
 	}
 	_, err := FindHelper("java", "", offPath)
 	assert.ErrorContains(t, err, "java is not on PATH", "absent")
-	_, err = FindHelper("java", filepath.Join(dir, "gone"), onPath)
+	_, err = FindHelper("java", filepath.Join(r.root, "gone"), onPath)
 	assert.Error(t, err, "a missing override fell back to PATH")
 }
 

@@ -374,15 +374,15 @@ func (l login) options(d deps) redisconn.Options {
 // were given on the line, even empty or equal to the default (an explicit
 // flag overrides the environment, and a remedy that dropped it would log in
 // as the environment says), and when the environment set them to other than
-// the default. Every value is one POSIX shell word (shellWord). It is called
-// after check.
+// the default. Every value is one POSIX shell word (oneline.ShellWord). It is
+// called after check.
 func (l login) flags() string {
-	line := "--addr " + shellWord(*l.addr)
+	line := "--addr " + oneline.ShellWord(*l.addr)
 	if *l.user != "" || l.given("user") {
-		line += " --user " + shellWord(*l.user)
+		line += " --user " + oneline.ShellWord(*l.user)
 	}
 	if *l.passwordEnv != PasswordEnv || l.given("password-env") {
-		line += " --password-env " + shellWord(*l.passwordEnv)
+		line += " --password-env " + oneline.ShellWord(*l.passwordEnv)
 	}
 	return line
 }
@@ -485,28 +485,10 @@ func unconfirmed(conn *redisconn.Conn, store login, owner, name string, err erro
 	if inner := errors.Unwrap(err); inner != nil {
 		cause = inner
 	}
-	recall := "nova-redis recall " + store.flags() + " --owner " + shellWord(owner) + " --name " + shellWord(name)
+	recall := "nova-redis recall " + store.flags() + " --owner " + oneline.ShellWord(owner) + " --name " + oneline.ShellWord(name)
 	return tool.Fail().As("UNCONFIRMED").Fact("key", owner+":"+name).
 		Fact("err", oneline.Escape(conn.String()+": the transaction was sent and its reply was lost: "+cause.Error())).
 		Fact("remedy", tool.Text("confirmation was lost after the transaction was sent, so the write may have committed; read it back with the same login before spilling again: "+recall))
-}
-
-// shellWord is s as one POSIX shell word: as it is when it holds only
-// characters no shell treats specially, and otherwise in single quotes, each
-// single quote in it closing the quotes, written as a backslash and a quote,
-// and opening them again. The empty string is two single quotes.
-func shellWord(s string) string {
-	plain := s != ""
-	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_-.,:/@%+=", r)) {
-			plain = false
-			break
-		}
-	}
-	if plain {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // validKey is the one gate every write passes: an owner outside the store's

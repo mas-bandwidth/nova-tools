@@ -420,6 +420,58 @@ func TestCutWritesTheChangelogTagsAndSaysWhatItDid(t *testing.T) {
 	}
 }
 
+// TestPreviousTagSelectsHighestOverPrereleases pins that previousTag orders by
+// semver precedence, not by the three dotted numbers alone: a release beats the
+// prerelease of the same version, and a higher prerelease beats a lower one, so
+// the changelog range starts from the tag the fleet actually adopted.
+func TestPreviousTagSelectsHighestOverPrereleases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		tags []string
+		want string
+	}{
+		{
+			name: "release beats prerelease of same version",
+			tags: []string{"v0.15.3", "v0.16.0-rc1", "v0.16.0"},
+			want: "v0.16.0",
+		},
+		{
+			name: "higher prerelease beats lower prerelease",
+			tags: []string{"v0.15.3", "v0.16.0-rc1", "v0.16.0-rc2"},
+			want: "v0.16.0-rc2",
+		},
+		{
+			name: "highest release selected from mixed tags",
+			tags: []string{"v0.9.0", "v0.15.3", "v0.15.10", "not-a-version"},
+			want: "v0.15.10",
+		},
+		{
+			name: "no valid versions returns empty",
+			tags: []string{"not-a-version", "also-not"},
+			want: "",
+		},
+		{
+			name: "skips tags without v prefix",
+			tags: []string{"0.16.0", "v0.15.3"},
+			want: "v0.15.3",
+		},
+		{
+			name: "skips fourth number",
+			tags: []string{"v0.16.0.1", "v0.16.0"},
+			want: "v0.16.0",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := previousTag(tc.tags)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // A commit whose subject carries no (#n) is not a pull request and is not a
 // changelog line; the count says 2 because two of the three commits were.
 func TestCutCountsOnlyCommitsThatNameAPullRequest(t *testing.T) {

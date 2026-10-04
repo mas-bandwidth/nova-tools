@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -22,6 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"golang.org/x/sync/errgroup"
 )
 
 // Environment supplies deterministic clock/network seams. Nil values use the
@@ -536,39 +536,34 @@ type entryRead struct {
 
 func readEntries(ctx context.Context, entries []Entry, o options, env Environment, report bool) []entryRead {
 	rs := make([]entryRead, len(entries))
-	jobs := make(chan int)
-	var wg sync.WaitGroup
-	var started sync.WaitGroup
-	for w := 0; w < 4; w++ {
-		wg.Add(1)
-		started.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-			if env.WorkerStart != nil {
-				env.WorkerStart(workerID)
-			}
-			started.Done()
-			for i := range jobs {
-				e := entries[i]
-				r := entryRead{Entry: e, Installed: installed(ctx, e, o.timeout, report, env.runProcess), Latest: Read{Source: e.Latest}}
-				if !report {
-					r.Latest = Latest(ctx, e, o.timeout, env.Client)
-				} else if strings.HasPrefix(e.Latest, "local:") {
-					r.Latest = Latest(ctx, e, o.timeout, env.Client)
-				}
-				rs[i] = r
-			}
-		}(w)
-	}
-	started.Wait()
+	// Four concurrent reads is the limit the update check runs them on: a pool
+	// of four hand-rolled workers is replaced by an errgroup with SetLimit(4),
+	// keeping the same degree of concurrency (STANDARD §7: library first).
+	// JobAttempt is still named per entry as it is queued; WorkerStart still
+	// fires when a read begins, so a test that observes a worker start still can.
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(4)
 	for i := range entries {
 		if env.JobAttempt != nil {
 			env.JobAttempt(i)
 		}
-		jobs <- i
+		i := i
+		g.Go(func() error {
+			if env.WorkerStart != nil {
+				env.WorkerStart(i)
+			}
+			e := entries[i]
+			r := entryRead{Entry: e, Installed: installed(gctx, e, o.timeout, report, env.runProcess), Latest: Read{Source: e.Latest}}
+			if !report {
+				r.Latest = Latest(gctx, e, o.timeout, env.Client)
+			} else if strings.HasPrefix(e.Latest, "local:") {
+				r.Latest = Latest(gctx, e, o.timeout, env.Client)
+			}
+			rs[i] = r
+			return nil
+		})
 	}
-	close(jobs)
-	wg.Wait()
+	_ = g.Wait() // ignored: readEntries goroutines always return nil; they write results to their index slot
 	sort.SliceStable(rs, func(i, j int) bool { return rs[i].Entry.Kind == "pin" && rs[j].Entry.Kind != "pin" })
 	return rs
 }

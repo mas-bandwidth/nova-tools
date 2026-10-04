@@ -17,75 +17,46 @@ import (
 // The layout is the whole method: the tool is installed at a path under a fake
 // HOME and first on PATH, and every other check is left to fail and is not read.
 
-// benchWithTool is an empty bench with `tool` at `at` (relative to the home) and
-// its directory first on PATH.
-func benchWithTool(t *testing.T, tool, at string) (*bench, string) {
-	t.Helper()
-	b := emptyBench(t)
-	full := b.write(at, "#!/bin/sh\necho 'stub "+tool+" 0.0'\n", true)
-	b.setEnv("PATH=" + filepath.Dir(full))
-	return b, full
-}
-
-func wallLines(output, tool string) []string { return driftWith(output, tool+" on PATH is ") }
-
 // A tool that resolves under NO root the wall executes is one DRIFT line that
 // names the remedy: "your sbcl is in the wrong place" is a sentence somebody
 // then has to work out the right place for.
 func TestAToolTheWallCannotExecuteIsOneLineNamingTheRemedy(t *testing.T) {
 	t.Parallel()
-	b, path := benchWithTool(t, "sbcl", ".local/bin/sbcl")
-	_, output := b.standard()
-	lines := wallLines(output, "sbcl")
-	if len(lines) != 1 {
-		t.Fatalf("an sbcl at %s drew %d wall lines, want 1:\n%s", path, len(lines), output)
-	}
+	b := emptyBench(t)
+	path := b.toolOnPath("sbcl", ".local/bin/sbcl")
+	lines := b.wantWallLines("sbcl", path, 1)
 	for _, want := range []string{path, "$HOME/sdk", "sdk/sbcl-", "EXECUTE", "under NO read root the sandbox wall grants"} {
 		if !strings.Contains(lines[0], want) {
 			t.Errorf("the wall-toolchain DRIFT line does not carry %q:\n%s", want, lines[0])
 		}
 	}
 	// go is held to the same rule: the check is a loop over both.
-	bg, pathGo := benchWithTool(t, "go", ".local/bin/go")
-	_, outGo := bg.standard()
-	if got := wallLines(outGo, "go"); len(got) != 1 {
-		t.Errorf("a go at %s drew %d wall lines, want 1:\n%s", pathGo, len(got), outGo)
-	}
+	bg := emptyBench(t)
+	pathGo := bg.toolOnPath("go", ".local/bin/go")
+	bg.wantWallLines("go", pathGo, 1)
 }
 
 // The positive direction catches a check written as "always drift": $HOME/sdk
 // carries execute, so a tool under it is the conforming layout.
 func TestAToolUnderAGrantedRootDrawsNoWallLine(t *testing.T) {
 	t.Parallel()
-	b, path := benchWithTool(t, "sbcl", "sdk/sbcl-2.5.8/bin/sbcl")
-	if _, output := b.standard(); len(wallLines(output, "sbcl")) != 0 {
-		t.Errorf("an sbcl at %s is under the granted $HOME/sdk and still drifted:\n%s", path, output)
-	}
-	bg, pathGo := benchWithTool(t, "go", "sdk/go1.26.6/bin/go")
-	if _, output := bg.standard(); len(wallLines(output, "go")) != 0 {
-		t.Errorf("a go at %s is under the granted $HOME/sdk and still drifted:\n%s", pathGo, output)
-	}
+	b := emptyBench(t)
+	path := b.toolOnPath("sbcl", "sdk/sbcl-2.5.8/bin/sbcl")
+	b.wantWallLines("sbcl", path, 0)
+	bg := emptyBench(t)
+	pathGo := bg.toolOnPath("go", "sdk/go1.26.6/bin/go")
+	bg.wantWallLines("go", pathGo, 0)
 }
 
 // A tool reached through a link is judged by where it really lives.
 func TestALinkIntoSdkIsGrantedAndALinkOutOfItIsNot(t *testing.T) {
 	t.Parallel()
 	b := emptyBench(t)
-	real := b.write("sdk/sbcl-2.5.8/bin/sbcl", "#!/bin/sh\n", true)
-	if err := os.Symlink(real, filepath.Join(b.bin, "sbcl")); err != nil {
-		t.Fatal(err)
-	}
-	if _, output := b.standard(); len(wallLines(output, "sbcl")) != 0 {
-		t.Errorf("a link into sdk drifted:\n%s", output)
-	}
+	real := b.linkedTool("sbcl", "sdk/sbcl-2.5.8/bin/sbcl")
+	b.wantWallLines("sbcl", real, 0)
 	c := emptyBench(t)
-	out := c.write(".local/bin/sbcl", "#!/bin/sh\n", true)
-	if err := os.Symlink(out, filepath.Join(c.bin, "sbcl")); err != nil {
-		t.Fatal(err)
-	}
-	if _, output := c.standard(); len(wallLines(output, "sbcl")) != 1 {
-		t.Errorf("a link out of sdk did not drift:\n%s", output)
-	}
+	out := c.linkedTool("sbcl", ".local/bin/sbcl")
+	c.wantWallLines("sbcl", out, 1)
 }
 
 // The wall also grants the directory /etc/resolv.conf RESOLVES to, per machine;
@@ -94,7 +65,8 @@ func TestALinkIntoSdkIsGrantedAndALinkOutOfItIsNot(t *testing.T) {
 // acceptance is the resolver grant and not an accident of where the fixture lives.
 func TestTheResolverDirectoryTheWallGrantsIsGrantedHere(t *testing.T) {
 	t.Parallel()
-	b, path := benchWithTool(t, "sbcl", "mnt/wsl/sbcl-2.5.8/bin/sbcl")
+	b := emptyBench(t)
+	path := b.toolOnPath("sbcl", "mnt/wsl/sbcl-2.5.8/bin/sbcl")
 	wsl := filepath.Join(b.home, "mnt", "wsl")
 	if err := os.WriteFile(filepath.Join(wsl, "resolv.conf"), []byte("nameserver 10.255.255.254\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -106,15 +78,12 @@ func TestTheResolverDirectoryTheWallGrantsIsGrantedHere(t *testing.T) {
 	// The tool is at mnt/wsl/sbcl-2.5.8/bin, a subdirectory of the resolver
 	// directory, which is what "under" means.
 	b.setEnv("NOVA_RESOLV_CONF=" + link)
-	if _, output := b.standard(); len(wallLines(output, "sbcl")) != 0 {
-		t.Errorf("an sbcl at %s is under the resolver directory the wall grants and still drifted:\n%s", path, output)
-	}
+	b.wantWallLines("sbcl", path, 0)
 
-	ctl, pathCtl := benchWithTool(t, "sbcl", "mnt/wsl/sbcl-2.5.8/bin/sbcl")
+	ctl := emptyBench(t)
+	pathCtl := ctl.toolOnPath("sbcl", "mnt/wsl/sbcl-2.5.8/bin/sbcl")
 	ctl.setEnv("NOVA_RESOLV_CONF=" + filepath.Join(ctl.home, "no-resolv.conf"))
-	if _, output := ctl.standard(); len(wallLines(output, "sbcl")) != 1 {
-		t.Errorf("control: an sbcl at %s with no resolver pointing there did not drift:\n%s", pathCtl, output)
-	}
+	ctl.wantWallLines("sbcl", pathCtl, 1)
 }
 
 func TestWallExecRootsAreTheWallsTableTheResolverAndSdk(t *testing.T) {

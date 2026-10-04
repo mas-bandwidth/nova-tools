@@ -37,7 +37,7 @@ func pkgFiles(t *testing.T, pkg string) map[string]*ast.File {
 		require.NoError(t, err, err)
 		out[e.Name()] = f
 	}
-	require.False(t, len(out) == 0, "no source files under %s; this tripwire was looking in the wrong place and would have passed by checking nothing", pkg)
+	require.NotEmpty(t, out, "no source files under %s; this tripwire was looking in the wrong place and would have passed by checking nothing", pkg)
 	return out
 }
 
@@ -146,15 +146,15 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 
 	// Rule 9's block: from its numbered opening to rule 10's.
 	begin := strings.Index(spec, "\n9. **One file per day")
-	require.False(t, begin < 0, "docs/SPEC-TOKENS.md has no rule 9 opening `9. **One file per day`; this test was reading the wrong place and would have passed by checking nothing")
+	require.GreaterOrEqual(t, begin, 0, "docs/SPEC-TOKENS.md has no rule 9 opening `9. **One file per day`; this test was reading the wrong place and would have passed by checking nothing")
 	end := strings.Index(spec[begin+1:], "\n10. ")
-	require.False(t, end < 0, "docs/SPEC-TOKENS.md rule 9 has no rule 10 after it; this test could not bound rule 9's text")
+	require.GreaterOrEqual(t, end, 0, "docs/SPEC-TOKENS.md rule 9 has no rule 10 after it; this test could not bound rule 9's text")
 	rule9 := strings.Join(strings.Fields(spec[begin:begin+1+end]), " ")
 
 	// The clause that names them, bounded by the `--` that closes it.
 	const marker = "can empty a file --"
 	at := strings.Index(rule9, marker)
-	require.False(t, at < 0, "rule 9 no longer says %q before naming the calls that can empty a file; this test finds the list by that clause and could not find it", marker)
+	require.GreaterOrEqual(t, at, 0, "rule 9 no longer says %q before naming the calls that can empty a file; this test finds the list by that clause and could not find it", marker)
 	clause := rule9[at+len(marker):]
 
 	// Walk it: collect the backticked names, and skip any inside a parenthetical, which is
@@ -179,7 +179,7 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 			i++
 		case '`':
 			close := strings.IndexByte(clause[i+1:], '`')
-			require.False(t, close < 0, "rule 9's clause has an unclosed backtick; the spec's own list cannot be read")
+			require.GreaterOrEqual(t, close, 0, "rule 9's clause has an unclosed backtick; the spec's own list cannot be read")
 			name := clause[i+1 : i+1+close]
 			if depth == 0 {
 				want = append(want, name)
@@ -189,7 +189,7 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 			i++
 		}
 	}
-	require.False(t, len(want) < 5, "read only %d names out of rule 9's clause (%v); the clause's shape changed and this test would have passed by checking almost nothing", len(want), want)
+	require.GreaterOrEqual(t, len(want), 5, "read only %d names out of rule 9's clause (%v); the clause's shape changed and this test would have passed by checking almost nothing", len(want), want)
 
 	have := map[string]bool{}
 	for _, e := range rule9Emptiers {
@@ -413,7 +413,7 @@ func TestAHalfReadSuccessorDoesNotReplaceItsPredecessor(t *testing.T) {
 	wantContains(t, r.stderr, "TOKENS CONFLICT label=bus:emma day=2026-09-11")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
-		assert.False(t, err == nil, "a day folded from a successor that did not parse whole")
+		assert.Error(t, err, "a day folded from a successor that did not parse whole")
 	}
 }
 
@@ -522,7 +522,7 @@ func TestAMonthWithNoDayFilesSumsToDashesNotZeros(t *testing.T) {
 	out := mkdir(t, filepath.Join(dir, "out"))
 	r := invoke(t, "sum", "--out", out, "--month", "2026-09")
 	total := lineWith(r.stdout, "SUM TOTAL")
-	require.False(t, total == "", "no SUM TOTAL line over an empty month:\n%s%s", r.stdout, r.stderr)
+	require.NotEmpty(t, total, "no SUM TOTAL line over an empty month:\n%s%s", r.stdout, r.stderr)
 	for _, want := range []string{"input=-", "output=-", "cache_write=-", "cache_read=-", "reasoning=-"} {
 		assert.True(t, strings.Contains(total, want), "SUM TOTAL over a month with no day files is %q; want %s -- a type no source reported is a dash, never 0 (rule 15)", total, want)
 	}
@@ -670,5 +670,5 @@ func TestNoFunctionAddsOneTypeColumnIntoAnother(t *testing.T) {
 			}
 		}
 	}
-	require.False(t, checked < 5, "%d type-column writes examined; this tripwire was looking at the wrong shape and would have passed by checking nothing", checked)
+	require.GreaterOrEqual(t, checked, 5, "%d type-column writes examined; this tripwire was looking at the wrong shape and would have passed by checking nothing", checked)
 }

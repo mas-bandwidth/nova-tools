@@ -359,7 +359,7 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 
 	sawEval := false
 	for _, cmd := range cmds {
-		require.False(t, cmd == "PING", "ledger --month sent superfluous PING: saw %v", cmds)
+		require.NotEqual(t, "PING", cmd, "ledger --month sent superfluous PING: saw %v", cmds)
 		if cmd == "EVAL" {
 			sawEval = true
 		}
@@ -377,7 +377,7 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 	mu.Unlock()
 
 	for _, cmd := range cmds {
-		require.False(t, cmd == "PING", "report --redis sent superfluous PING: saw %v", cmds)
+		require.NotEqual(t, "PING", cmd, "report --redis sent superfluous PING: saw %v", cmds)
 	}
 
 	// 3. ledger --day sends no PING.
@@ -392,7 +392,7 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 
 	sawEval = false
 	for _, cmd := range cmds {
-		require.False(t, cmd == "PING", "ledger --day sent superfluous PING: saw %v", cmds)
+		require.NotEqual(t, "PING", cmd, "ledger --day sent superfluous PING: saw %v", cmds)
 		if cmd == "EVAL" {
 			sawEval = true
 		}
