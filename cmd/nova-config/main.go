@@ -165,8 +165,8 @@ func kindsUsage() string {
 // reader must scroll sideways to finish (docs/STANDARD.md, section 3).
 const maxHelpCols = 100
 
-// kindOffset is the continuation indent for a `kinds` entry: two columns for
-// the two-space indent, the kind's name and the two spaces after it.
+// kindOffset is the continuation indent for a `kinds` entry: the two-column
+// indent, the kind's name and the blank after it.
 const kindOffset = 11
 
 // wrapHelp writes one wrapped help line: head opens the first line (an indent,
