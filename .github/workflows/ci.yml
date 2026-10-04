@@ -370,7 +370,7 @@ jobs:
         # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
         # workspace borrows its objects (objects/info/alternates) and starts
         # detached at the mirror's HEAD: the fetch then carries only what the
-        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # mirror lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
         # actions/checkout keeps a workspace whose origin URL matches and whose
         # HEAD is a commit (it cleans and resets it, both no-ops here), so the
         # checkout step itself is unchanged.
@@ -393,7 +393,7 @@ jobs:
           }
           seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
 
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # RESILIENT CHECKOUT: a transient first-fetch failure must
       # not redden a job. Attempt one tolerates its own failure ONLY so the
       # retry below runs; the retry itself is not tolerated, so a checkout
       # that fails twice still fails the job: fail-closed, not fail-open.
@@ -415,13 +415,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
-          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
-          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
-          # while the release build beside it switched toolchains in the same caches): the toolchain line,
-          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          # the bench's own Go wins over a distro Go on the system path: a distro
+          # /usr/bin/go ahead of the bench's ~/go/bin leaves every PR job downloading
+          # a toolchain instead of using the installed one. The newest Go under ~/sdk
+          # comes first: macOS benches keep their newest Go there, and /usr/local/go
+          # can be a stale root-owned install. The toolchain go.mod names wins when
+          # ~/sdk holds it, so builds sharing one ~/sdk keep one toolchain: the
+          # toolchain line, else the go line, which is the toolchain a go.mod
+          # without that line implies; else as before
           want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
           [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
           sdk=
@@ -458,7 +459,7 @@ jobs:
   test:
     # THE UNIT TESTS, SHARDED, no race detector: ./cmd/* and ./internal/... in
     # twelve shards on the self-hosted Linux space runners and four on the
-    # self-hosted Intel macOS runners (batman, superman; nova-tools#3634), in parallel with fail-fast off, so a red
+    # self-hosted Intel macOS runners, in parallel with fail-fast off, so a red
     # leg does not cancel its siblings. Each leg vets and tests only its own
     # shard. Measured green end to end in run 35021822106: sixteen legs from
     # 14 s to 251 s, whole run 5 m 57 s. The whole-tree `-race` run is the
@@ -469,7 +470,7 @@ jobs:
     # carry the packages the change touched, not the whole tree; a change that
     # touched no Go package gets one leg with an empty package list that prints
     # and exits 0.
-    # ON SCHEDULE TOO, SINCE #4413: the nightly whole-tree run on the space
+    # ON SCHEDULE TOO: the nightly whole-tree run on the space
     # legs is the one place a unit wall-time budget is ENFORCED (the test
     # step's schedule branch passes SLOWTESTS_ENFORCE=1); test-packages deals
     # the schedule's tree onto space only. A red schedule run blocks nothing
@@ -496,26 +497,24 @@ jobs:
     # three space legs were CANCELLED at 2:00 having done nothing wrong, while
     # five space legs passed at 80-118 s. The cause was oversubscription, since
     # fixed: several runners share each machine (15 cores on space, 32 on the
-    # studio M3 Ultra) and each leg sized itself to the whole of it. A leg now
+    # macOS M3 Ultra) and each leg sized itself to the whole of it. A leg now
     # takes its share, the machine's own NOVA_RUNNERS_PER_MACHINE deciding how
     # many ways to split it. A ceiling that cancels honest work is not a
     # budget, it is a coin flip. Six is a hang detector for a leg measured at
     # one to two minutes; the budget itself is the run, and the run is what to
     # hold to the law. The fast jobs — lint, test-packages, lisp at 32, 11 and
     # 12 s — keep the 2 they always had.
-    # The Studio at load 55 ran a double-size shard in 6-7 min (2026-09-16 05:16Z);
-    # the cap stayed 6 by the two-minute law (internal/ci) and the shards got
-    # smaller instead. On 2026-09-19 six started cancelling honest work again:
-    # #1700 (2/4 studio, superman-nova-1) and #1714 (3/4 studio, superman-nova-2)
+    # A macOS bench at load 55 ran a double-size shard in 6-7 min. Two runs
     # were CANCELLED at 6:23 and 6:07 with every test PASS and
-    # `ok cmd/nova-merge 342.360s` in the log. Twelve is TWICE the slowest GREEN
-    # shard of the last twenty green runs (348 s, superman-nova-7, run
-    # 35457289611) — three seconds under the old cap. `studio` is a GROUP over
-    # air, batman, studio and superman, and superman is an Intel Xeon W-2191B
-    # carrying ten runners while the Studio is an M3 Ultra: one ceiling over a
-    # 2x spread censors the slower machine. The reason lives beside the number
+    # `ok cmd/nova-merge 342.360s` in the log. Twice the slowest green shard
+    # of the last twenty green runs (348 s, run 35457289611) was the size
+    # the ceiling was raised to. `studio` is a GROUP over air, batman, studio
+    # and superman, and superman is an Intel Xeon W-2191B carrying ten runners
+    # while the Studio is an M3 Ultra: one ceiling over a 2x spread censors
+    # the slower machine. In run 35950929169 all sixteen whole-tree studio
+    # shards were cancelled at 12.
+    # The reason lives beside the number
     # in internal/ci/ci_budget_test.go.
-    # PUSH STUDIO SHARDS get 20 (2026-09-24, run 35950929169: all sixteen whole-tree studio shards cancelled at 12); PR, merge-group and space legs keep 12.
     timeout-minutes: 2
     steps:
       - name: nothing to test for this change
