@@ -390,7 +390,7 @@ func TestServeFailuresHaveRemedies(t *testing.T) {
 		h.dir = filepath.Join(storeRoot, "store's space")
 		h.onLaunch = func(launchSpec) error { return errors.New("exit status 1") }
 		code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6380", "--dir", h.dir)
-		remedy := "run: ls -ld -- '" + strings.ReplaceAll(storeRoot, "'", "'\\''") + string(os.PathSeparator) + "store'\\''s space'; compare directory access and the explicit --bind/--port with the launch error and any redis-server output"
+		remedy := "run: ls -ld -- '" + strings.ReplaceAll(h.dir, "'", `'"'"'`) + "'; compare directory access and the explicit --bind/--port with the launch error and any redis-server output"
 		want := fmt.Sprintf("SERVE FAILED err=exit status 1 remedy=%q\n", remedy)
 		require.True(t, code == 1 && errb == want && len(h.launches) == 1,
 			"child failure: exit %d stderr %q launches %d", code, errb, len(h.launches))
