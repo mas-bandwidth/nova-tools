@@ -210,7 +210,7 @@ func TestTheToolListensForwardsAndStopsWhenAsked(t *testing.T) {
 			serving.Add(1)
 			go func() {
 				defer serving.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }() // ignored: the echo ends with the connection; no one reads the close error
 				_, _ = io.Copy(c, c)
 			}()
 		}
@@ -248,7 +248,7 @@ func TestTheToolListensForwardsAndStopsWhenAsked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }() // ignored: the test is done with the connection; no one reads the close error
 	if err := c.SetDeadline(time.Now().Add(farCeiling)); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestARunThatCannotListenIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer taken.Close()
+	defer func() { _ = taken.Close() }() // ignored: the listener only held the address for the refused run
 	var stdout, stderr bytes.Buffer
 	code := run(context.Background(), []string{"--listen", taken.Addr().String(), "--target", "127.0.0.1:7000", "--delay", "1ms"}, &stdout, &stderr)
 	if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "listening on") {
