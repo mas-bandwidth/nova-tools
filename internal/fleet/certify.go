@@ -324,7 +324,7 @@ func AppendCertificate(path string, c Certificate) error {
 	if err != nil {
 		return fmt.Errorf("cannot write the certificates file %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: a close after a checked write whose error is the one returned
 	_, err = io.WriteString(f, c.Row()+"\n")
 	return err
 }
@@ -731,7 +731,7 @@ func isHex(s string) bool {
 	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') && !(c >= 'A' && c <= 'F') {
 			return false
 		}
 	}
