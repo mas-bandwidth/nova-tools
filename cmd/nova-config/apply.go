@@ -65,7 +65,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }() // ignored: store successfully opened; close errors are not actionable by the caller
 	if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 		return code
 	}
@@ -85,7 +85,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer rs.Close()
+	defer func() { _ = rs.Close() }() // ignored: redis successfully opened; close errors are not actionable by the caller
 	word := "APPLY"
 	if *check {
 		word = "CHECK"
