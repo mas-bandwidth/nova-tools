@@ -2282,7 +2282,7 @@ One line per thing, `MACHINERY <thing> OK <fact>...` or `MACHINERY <thing> DOWN 
 8. `bus`: nova-bus2's Redis, NOVA_BUS_REDIS, answers the handshake when set, dialed as the store is (the one fleet seat: NOVA_SPRINT_REDIS_USER and the variable NOVA_SPRINT_REDIS_PASSWORD_ENV names, NOVA_REDIS_BENCH_PASSWORD when it names none; never a password variable of its own); unset is `not configured`, never DOWN.
 9. `inbox`: the open judgments and the oldest wait; a count over zero is not DOWN, and is the first thing the seat reads after the check.
 
-`machinery` exits 1 when anything is DOWN; `coordinator` and `handover` keep their own word and exit (the seat moved: `COORDINATOR OK`, 0; the brief printed: `HANDOVER OK`, 0), the word and the exit agreeing, and the check's DOWN lines at their head carry the remedies: the one at the seat is told. `--json` carries the report under `check` (measures, lines, down). The logic (judging measures into lines) is `internal/seatcheck`, apart from the transport (`cmd/nova-sprint/machinery.go`), so every DOWN line's text is tested with fakes and no socket.
+`machinery` exits 1 when anything is DOWN; `coordinator` and `handover` keep their own word and exit (the seat moved: `COORDINATOR OK`, 0; the brief printed: `HANDOVER OK`, 0), the word and the exit agreeing, and the check's DOWN lines at their head carry the remedies: the one at the seat is told. `--json` carries the report under `check` (measures, lines, down): `handover --json` at the top, `coordinator --json` under `handover`, once. The logic (judging measures into lines) is `internal/seatcheck`, apart from the transport (`cmd/nova-sprint/machinery.go`), so every DOWN line's text is tested with fakes and no socket.
 
 ## 12. The driver
 

@@ -102,7 +102,7 @@ func (a *app) cmdCoordinator(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("coordinator", err, stderr)
 	}
 	if c.json {
-		b, _ := json.Marshal(map[string]any{"holder": req.To, "from": holder, "by": c.actor, "taken": req.Take, "approved_by": req.ApprovedBy, "op": res.Op, "handover": h, "check": check}) // ignored: strings, a bool and a view of strings always encode
+		b, _ := json.Marshal(map[string]any{"holder": req.To, "from": holder, "by": c.actor, "taken": req.Take, "approved_by": req.ApprovedBy, "op": res.Op, "handover": h}) // ignored: strings, a bool and a view of strings always encode; the check is the handover's (h.Check), once
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}

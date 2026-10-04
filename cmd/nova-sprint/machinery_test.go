@@ -226,3 +226,25 @@ func TestHelpSaysHandoverStartsWithTheCheck(t *testing.T) {
 	assert.Equal(t, 2, strings.Count(unwrap(banner()), says), "the words section and the verbs' prose:\n%s", banner())
 	assert.Contains(t, verbEffect["handover"], "the seat check")
 }
+
+// coordinator --json carries the check once, under handover (the brief
+// starts with it), never a second time at the top.
+func TestCoordinatorJSONCarriesTheCheckOnce(t *testing.T) {
+	t.Parallel()
+	ta := seatSprint(t)
+	out := ta.ok("coordinator rowan --reason 'rowan is back' --json")
+	assert.Equal(t, 1, strings.Count(out, `"check":`), out)
+	var v struct {
+		Holder   string          `json:"holder"`
+		Handover json.RawMessage `json:"handover"`
+		Check    json.RawMessage `json:"check"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &v), out)
+	assert.Equal(t, "rowan", v.Holder)
+	assert.Nil(t, v.Check, "no top-level check")
+	var h struct {
+		Check seatcheck.Report `json:"check"`
+	}
+	require.NoError(t, json.Unmarshal(v.Handover, &h), string(v.Handover))
+	assert.Len(t, h.Check.Lines, 9)
+}
