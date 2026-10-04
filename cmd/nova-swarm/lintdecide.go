@@ -42,7 +42,7 @@ func lintBackend(answers string, getenv func(string) string) (decide.Backend, er
 	case key != "":
 		return decide.JevHTTP(key, decide.JevTimeout), nil
 	}
-	return nil, fmt.Errorf("Jev is asked with %s, which this environment does not hold", decide.JevSecret)
+	return nil, fmt.Errorf("jev is asked with %s, which this environment does not hold", decide.JevSecret)
 }
 
 // lintDecide is the card's LINT DECIDE line, asked of b.

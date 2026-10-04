@@ -123,7 +123,7 @@ func endedOnATool(dataHome string, since time.Time) bool {
 	if !ok {
 		return false // no message of this run
 	}
-	return !(role == "assistant" && finish != "" && finish != "tool-calls")
+	return role != "assistant" || finish == "" || finish == "tool-calls"
 }
 
 // sessionProviderError is the cause the session database recorded on the newest message of
