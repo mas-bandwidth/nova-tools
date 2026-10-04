@@ -165,6 +165,67 @@ func (r *round) picks(k int, taken []string, ok func(string) bool) []string {
 	return out
 }
 
+// pickByRoom is up to k names of free the ask asks, each the one with the
+// greatest share of room left (readerRoom: free room as a part of width),
+// with free room above zero, a tie going to the first from the index, each
+// scan starting past the name the one before took; a name already taken or
+// with no free room is never one, and fewer come back when fewer have room.
+// It takes each read it places off the name's room, so one ask that places
+// many reads spreads them by the room left (widths 4 and 24, ten reads: the
+// 24 takes eight), and it does not move the index: the ask that takes them
+// moves it past each (moved), in order. With every room unbounded (readers
+// named for no fleet row) the order is by load, the least loaded first.
+func (r *round) pickByRoom(k int, free []string, room map[string]readerRoom) []string {
+	var out []string
+	at := r.start()
+	n := len(r.order)
+	for len(out) < k {
+		pick := -1
+		for i := 0; i < n; i++ {
+			j := (at + i) % n
+			x := r.order[j]
+			if !contains(free, x) || contains(out, x) || room[x].free <= 0 {
+				continue
+			}
+			if pick < 0 || room[x].share() > room[r.order[pick]].share() {
+				pick = j
+			}
+		}
+		if pick < 0 {
+			break
+		}
+		out = append(out, r.order[pick])
+		room[r.order[pick]] = room[r.order[pick]].after(1)
+		at = pick + 1
+	}
+	return out
+}
+
+// levelToRoom is where the readers' level moves the newest asked read of the
+// reader with the least share of room (from), and moves the index past it:
+// the reader up with the greatest share (readerRoom), with free room so no
+// reader is filled past its width, whose share after the move would still be
+// at or above from's after it, so the move never swaps a backlog from one
+// reader to another and the next level does not move it back; a tie goes to
+// the first from the index. A reader of avoid (one with a card at the read's
+// attempt) is never the target. "" when none, and the index does not move.
+func (r *round) levelToRoom(up []string, room map[string]readerRoom, from string, avoid []string) string {
+	to := ""
+	for i := 0; i < len(r.order); i++ {
+		x := r.order[(r.start()+i)%len(r.order)]
+		if !contains(up, x) || contains(avoid, x) || room[x].free < 1 || room[x].after(1).share() < room[from].after(-1).share() {
+			continue
+		}
+		if to == "" || room[x].share() > room[to].share() {
+			to = x
+		}
+	}
+	if to != "" {
+		r.moved(to)
+	}
+	return to
+}
+
 // moved moves the index past name: the counter goes up by one for the
 // placement and by one for each name it passed over to reach name, so the next
 // scan starts at the name after it.

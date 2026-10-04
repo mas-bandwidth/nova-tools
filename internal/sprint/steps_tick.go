@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -769,7 +770,9 @@ func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 // T2. TickAsk asks as many different readers as it needs (ReadsNeeded: one
 // for a flash card, two for a pro card; cost rule 4) of every primary in
 // review whose work did not fail and that has fewer read cards than that at
-// its attempt, readers up only; a read asked of a reader that is not up is
+// its attempt, readers up with room only (each read to the reader with the
+// most free room, Ask; a primary the readers up have no room for waits, due
+// for the next tick, with no judgment); a read asked of a reader that is not up is
 // taken back, and its primary is asked again, in the same step. One that
 // cannot be asked, for want of different readers, is a judgment once (N1),
 // closed when it is asked; a primary that needs more readers than are up is
@@ -789,13 +792,26 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		return "asked, or its work failed"
 	}
 	few := false // a primary waits for more readers than are up
+	// the reads the readers up have room for (readerRooms): a primary whose
+	// reads would fill a reader past its width is not asked this tick and is
+	// due, not a judgment, as a card waits for a lane on the fleet
+	slots := 0
+	for _, rm := range s.readerRooms(s.UpReaders()) {
+		if rm.free > math.MaxInt-slots { // a reader with unbounded room: every read fits
+			slots = math.MaxInt
+			break
+		}
+		slots += max(0, rm.free)
+	}
 	for _, c := range eligibleTurns(s.Work.Column(Review), askable, askStreamRound(s)) {
+		want := ReadsNeeded(c) - len(liveReadsAt(s, c, c.Int("attempt")))
 		switch {
 		case !enoughReadersUp(s, c):
 			// an absent reader is never asked: the sprint's one judgment says so
 			few = true
-		case len(ids) < TickMaxMoves:
+		case len(ids) < TickMaxMoves && want <= slots:
 			ids = append(ids, c.ID)
+			slots -= want
 		default:
 			due++
 		}
