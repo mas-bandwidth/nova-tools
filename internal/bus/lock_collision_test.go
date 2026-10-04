@@ -39,9 +39,9 @@ func TestLockFileTransientCollisionRecoversWhenWaitBudgetAllows(t *testing.T) {
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "test.lock")
 
-	var polls int32
+	var polls atomic.Int32
 	try := func(f *os.File) (bool, bool, error) {
-		if atomic.AddInt32(&polls, 1) < 3 {
+		if polls.Add(1) < 3 {
 			// Simulate transient collision (e.g. possible delete-pending or sharing contention)
 			return false, true, syscall.Errno(5)
 		}
@@ -54,7 +54,7 @@ func TestLockFileTransientCollisionRecoversWhenWaitBudgetAllows(t *testing.T) {
 	require.NoError(t, err, "lockFile failed to recover from transient collision: %v", err)
 	defer release()
 
-	p := atomic.LoadInt32(&polls)
+	p := polls.Load()
 	require.GreaterOrEqual(t, p, int32(3), "lockFile acquired lock after %d polls, want at least 3", p)
 	waited := clk.waited()
 	require.GreaterOrEqual(t, waited, 30*time.Millisecond, "lockFile gave up after %v of virtual time, expected to wait for transient collision to clear", waited)
@@ -75,9 +75,9 @@ func TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertL
 	lockPath := filepath.Join(dir, "test.lock")
 
 	const errAccessDenied = syscall.Errno(5)
-	var polls int32
+	var polls atomic.Int32
 	try := func(f *os.File) (bool, bool, error) {
-		atomic.AddInt32(&polls, 1)
+		polls.Add(1)
 		return false, true, errAccessDenied
 	}
 
@@ -91,7 +91,7 @@ func TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertL
 	// Must have waited out the budget, in virtual time the fake advanced.
 	waited := clk.waited()
 	require.GreaterOrEqual(t, waited, 50*time.Millisecond, "lockFile aborted early after %v of virtual time, want at least 50ms budget", waited)
-	p := atomic.LoadInt32(&polls)
+	p := polls.Load()
 	require.GreaterOrEqual(t, p, int32(2), "lockFile polled %d times, want multiple retries over budget", p)
 
 	// Must preserve the actual underlying error, NOT ErrLockHeld
@@ -110,9 +110,9 @@ func TestLockFileImmediateNonblockingRejectsCollisionImmediately(t *testing.T) {
 	lockPath := filepath.Join(dir, "test.lock")
 
 	const errAccessDenied = syscall.Errno(5)
-	var attempts int32
+	var attempts atomic.Int32
 	try := func(f *os.File) (bool, bool, error) {
-		atomic.AddInt32(&attempts, 1)
+		attempts.Add(1)
 		return false, true, errAccessDenied
 	}
 
@@ -120,7 +120,7 @@ func TestLockFileImmediateNonblockingRejectsCollisionImmediately(t *testing.T) {
 	_, err := lockFile(lockPath, 0, try, clk)
 	require.Error(t, err, "lockFile with wait=0 succeeded on collision, want error")
 
-	got := atomic.LoadInt32(&attempts)
+	got := attempts.Load()
 	require.Equal(t, int32(1), got, "lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
 	waited := clk.waited()
 	require.Zero(t, waited, "lockFile with wait=0 waited %v, want an immediate return", waited)
@@ -139,9 +139,9 @@ func TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld(t *testing.T
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "test.lock")
 
-	var attempts int32
+	var attempts atomic.Int32
 	try := func(f *os.File) (bool, bool, error) {
-		atomic.AddInt32(&attempts, 1)
+		attempts.Add(1)
 		return false, true, nil // clean contention
 	}
 
@@ -149,7 +149,7 @@ func TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld(t *testing.T
 	_, err := lockFile(lockPath, 0, try, clk)
 	require.Error(t, err, "lockFile with wait=0 succeeded on clean contention, want ErrLockHeld")
 
-	got := atomic.LoadInt32(&attempts)
+	got := attempts.Load()
 	require.Equal(t, int32(1), got, "lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
 	waited := clk.waited()
 	require.Zero(t, waited, "lockFile with wait=0 waited %v, want an immediate return", waited)
