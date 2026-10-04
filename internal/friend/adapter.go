@@ -13,9 +13,9 @@ import (
 )
 
 // Harnesses are the harness names run and install take, in the order the
-// help lists them; one has a deliver command tonight, the rest refuse
+// help lists them; two have a deliver command, the rest refuse
 // honestly (Stub).
-var Harnesses = []string{"opencode", "codex", "claude", "antigravity", "dsh"}
+var Harnesses = []string{"opencode", "codex", "claude", "antigravity", "dsh", "grok"}
 
 // Deliverer pushes one text into the friend's running session as a turn
 // and blocks until the turn ends: its exit code is the harness's, 0 acking
@@ -82,6 +82,8 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	switch harness {
 	case "opencode":
 		return &OpenCode{Dir: dir, Session: session, Run: run, Out: out}, nil
+	case "grok":
+		return &Grok{Dir: dir, Wake: session, Run: run, Out: out}, nil
 	case "codex", "claude", "antigravity", "dsh":
 		return Stub{Harness: harness}, nil
 	}
