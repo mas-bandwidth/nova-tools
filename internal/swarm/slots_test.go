@@ -166,7 +166,7 @@ func TestSlotTakeWaitingSerializes(t *testing.T) {
 	require.Equal(t, "gate-owner:1", holders)
 
 	// Context cancellation aborts wait.
-	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancelCtx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, _, _, _, _, ok, err = TakeSlotLeasesWaiting(cancelCtx, store, "gate-owner", 1, "read", time.Hour, 5*time.Second, "second", pid)
 	require.ErrorIs(t, err, context.Canceled)

@@ -98,7 +98,7 @@ func TestBoundForIsTheBudgetUnlessTheCallerIsSooner(t *testing.T) {
 
 		// A caller whose own deadline is sooner than the budget keeps it.
 		sooner := time.Now().Add(k.Budget() / 2)
-		parent, stop := context.WithDeadline(context.Background(), sooner)
+		parent, stop := context.WithDeadline(t.Context(), sooner)
 		ctx, cancel = subproc.BoundFor(parent, k.Budget())
 		d, _ = ctx.Deadline()
 		cancel()
@@ -107,7 +107,7 @@ func TestBoundForIsTheBudgetUnlessTheCallerIsSooner(t *testing.T) {
 
 		// A caller whose deadline is later is cut to the budget.
 		later := time.Now().Add(2 * k.Budget())
-		parent, stop = context.WithDeadline(context.Background(), later)
+		parent, stop = context.WithDeadline(t.Context(), later)
 		ctx, cancel = subproc.BoundFor(parent, k.Budget())
 		d, _ = ctx.Deadline()
 		cancel()
@@ -146,7 +146,7 @@ func TestEveryKindEndsASlowChildAndDoesNotHangOnItsPipe(t *testing.T) {
 func TestBoundedWrapNamesADeadlineKillAndLeavesOtherErrorsAlone(t *testing.T) {
 	t.Parallel()
 
-	expired, stop := context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
+	expired, stop := context.WithDeadline(t.Context(), time.Now().Add(-time.Hour))
 	defer stop()
 	boom := errors.New("signal: killed")
 	var te *subproc.TimeoutError
@@ -156,7 +156,7 @@ func TestBoundedWrapNamesADeadlineKillAndLeavesOtherErrorsAlone(t *testing.T) {
 	require.Contains(t, te.Error(), "git status did not finish within 1m0s and was killed", "the message is %q", te.Error())
 	err = (subproc.Bounded{Ctx: context.Background(), Budget: time.Minute}).Wrap("git status", boom)
 	require.Same(t, boom, err, "an error with no deadline was changed to %v", err)
-	cancelled, cancel := context.WithCancel(context.Background())
+	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	err = (subproc.Bounded{Ctx: cancelled, Budget: time.Minute}).Wrap("git status", boom)
 	require.Same(t, boom, err, "a cancellation was reported as a deadline: %v", err)
@@ -169,7 +169,7 @@ func TestLongHasNoDeadlineAndIsCancellable(t *testing.T) {
 	t.Parallel()
 
 	script := slowChild(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	cmd := subproc.Long(ctx, script)
 	require.Equal(t, subproc.WaitDelay, cmd.WaitDelay, "Long left WaitDelay")
@@ -229,7 +229,7 @@ func TestPrepareNamesTheBudgetOnlyWhenItApplied(t *testing.T) {
 	defer b.Cancel()
 	require.Equal(t, time.Minute, b.Budget, "budget")
 	require.Equal(t, subproc.WaitDelay, b.Cmd.WaitDelay, "WaitDelay")
-	parent, stop := context.WithDeadline(context.Background(), time.Now().Add(time.Hour))
+	parent, stop := context.WithDeadline(t.Context(), time.Now().Add(time.Hour))
 	defer stop()
 	sooner := subproc.Prepare(parent, 2*time.Hour, "git", "status")
 	defer sooner.Cancel()

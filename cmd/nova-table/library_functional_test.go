@@ -6,12 +6,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/redis/go-redis/v9"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/stretchr/testify/require"
 )
@@ -84,9 +86,9 @@ func TestFreshStoreFirstVerbLoadsTheLibrary(t *testing.T) {
 	libs, err := admin.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: "nova_sprint", WithCode: true}).Result()
 	require.NoError(t, err, "FUNCTION LIST after the first verb: %v %v", libs, err)
 	require.Len(t, libs, 1, "FUNCTION LIST after the first verb: %v %v", libs, err)
-	want, err := tableLibrary().Source()
+	want, err := tableLibrary().Digest()
 	require.NoError(t, err, "%v", err)
-	require.Equal(t, want, libs[0].Code, "the store holds %d bytes of nova_sprint; want this build's %d", len(libs[0].Code), len(want))
+	require.Equal(t, want, redisfn.DigestOf(libs[0].Code), "the store holds %s; want this build's %s", redisfn.DigestOf(libs[0].Code), want)
 
 	code, out, errOut = novaTable(t, "row", "add", "demo", "build", "--redis", addr)
 	require.EqualValues(t, 0, code, "the next process on the loaded store: exit %d stdout %q stderr %q; want one round trip", code, out, errOut)

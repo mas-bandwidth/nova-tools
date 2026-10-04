@@ -337,7 +337,7 @@ read — and `convergence` is a reading of the work itself. Each is a ledger
 written in advance, read back, and held to.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, `hygiene`, `dogfood`, `convergence`, `spelling`, plus `version` and `help`.
+`corpus`, `spelling`, plus `version` and `help`; `hygiene`, `dogfood` and `convergence` moved to nova-dev (below).
 `nova-check version` is the Conventions' build line, exit 0, so a green from
 this tool names its build.
 
@@ -1380,10 +1380,43 @@ four-column table indented after a blank line is not checked. Indented rows
 
 ---
 
+### spelling — known misspellings in prose, with code blocks blanked
+
+```
+nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
+                    [--ignore <word|@file>] [--write] [--exclude <prefix>]
+                    [--max <n>] [--dry-run]
+```
+
+**Why it exists.** Prose committed into a self repo or prepared for publishing
+deserves a mechanical spelling pass. Fenced code blocks and inline code spans
+are blanked with spaces so identifiers, code snippets, and technical symbols
+are not falsely flagged as misspellings. Compares against a pure-Go corpus
+(`github.com/client9/misspell`) in US locale.
+
+**The allowlist.** Known project terms and technical words are excluded via
+`--ignore <word|@file>` (repeatable, or comma-separated). An `@file` reference
+loads words one per line, with blank lines and `#` comments ignored.
+
+**Write mode.** In check mode (default), findings are reported and the check
+exits 1 if any misspellings are found. With `--write`, corrections are applied in
+place atomically, preserving surrounding formatting, code blocks, and line
+structures, exiting 0. With `--write --dry-run`, each correction it would make is
+one `SPELLING FIX` line and the verdict is `SPELLING OK ... written=0
+dry_run=true`, exit 0, with nothing written; `--dry-run` without `--write` is
+the check mode.
+
+**Deliberately does not check:** *code blocks or identifiers.* Code is not
+prose: identifiers and code snippets in fences and backticks are skipped.
+
+---
+
+## nova-dev — this repository's own development process
+
 ### hygiene — is this branch's range clean, before anybody reads it
 
 ```
-nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"[,...] [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
+nova-dev hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"[,...] [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
 ```
 
 **Why it exists.** Four mechanical questions decide whether a range is clean
@@ -1421,10 +1454,10 @@ able to give.
 
 ```
 HYGIENE FINDING reason=<identity|out-of-path|stray-file|secret> at=<sha12>|<path>|<path>:<line>: <why>
-HYGIENE MORE kind=finding shown=<n> total=<t> nova-check hygiene --repo <dir> … --max 0
+HYGIENE MORE kind=finding shown=<n> total=<t> nova-dev hygiene --repo <dir> … --max 0
 HYGIENE OK base=<ref> head=<ref> paths=<glob,…|-> findings=0
-HYGIENE NO base=<ref> head=<ref> paths=<glob,…|-> findings=<n>
-nova-check hygiene: <what was wrong>; run: nova-check help
+HYGIENE FAILED base=<ref> head=<ref> paths=<glob,…|-> findings=<n>
+nova-dev hygiene REFUSED: <what was wrong>; run: nova-dev help
 ```
 
 The listing is capped at `--max` (default 20, `0` for all) and counted, like
@@ -1467,9 +1500,9 @@ it is shown is not a check.
 ### dogfood — has anybody but the author run it
 
 ```
-nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>] [--dry-run]
-nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
+nova-dev dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
+nova-dev dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]
+nova-dev dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
 ```
 
 **Why it exists.** *A tool is not finished until it is tested, dogfooded by
@@ -1646,7 +1679,7 @@ different lane.
 ### convergence — are we converging
 
 ```
-nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
+nova-dev convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
       [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>]
       [--state <file>] [--by <name>] [--json] [--timeout <n>] [--dry-run]
 ```
@@ -1681,36 +1714,6 @@ writes is `--state`, and that holds one number per stream; `--dry-run` takes
 the same reading and writes no `--state`, saying so in one
 `CONVERGENCE NOTE dry_run=true` line (a `dry_run` field under `--json`).
 
-### spelling — known misspellings in prose, with code blocks blanked
-
-```
-nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
-                    [--ignore <word|@file>] [--write] [--exclude <prefix>]
-                    [--fail-max <n>] [--dry-run]
-```
-
-**Why it exists.** Prose committed into a self repo or prepared for publishing
-deserves a mechanical spelling pass. Fenced code blocks and inline code spans
-are blanked with spaces so identifiers, code snippets, and technical symbols
-are not falsely flagged as misspellings. Compares against a pure-Go corpus
-(`github.com/client9/misspell`) in US locale.
-
-**The allowlist.** Known project terms and technical words are excluded via
-`--ignore <word|@file>` (repeatable, or comma-separated). An `@file` reference
-loads words one per line, with blank lines and `#` comments ignored.
-
-**Write mode.** In check mode (default), findings are reported and the check
-exits 1 if any misspellings are found. With `--write`, corrections are applied in
-place atomically, preserving surrounding formatting, code blocks, and line
-structures, exiting 0. With `--write --dry-run`, each correction it would make is
-one `SPELLING FIX` line and the verdict is `SPELLING OK ... written=0
-dry_run=true`, exit 0, with nothing written; `--dry-run` without `--write` is
-the check mode.
-
-**Deliberately does not check:** *code blocks or identifiers.* Code is not
-prose: identifiers and code snippets in fences and backticks are skipped.
-
----
 
 ## nova-self-talk — the self-talk register, classified
 

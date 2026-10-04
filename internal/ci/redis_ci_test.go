@@ -52,7 +52,7 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	// NOVA_CI=1 comes from the functional job's environment (ci.yml), which
 	// is where this file runs: it is behind the functional tag.
 	addr := testutil.Start(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	defer client.Close()

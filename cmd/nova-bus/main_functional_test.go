@@ -406,14 +406,23 @@ func TestCheckLegacyBefore(t *testing.T) {
 
 // When --receipt-max-words is absent, the value is read first from
 // <bus>/.nova-bus/defaults, then from NOVA_BUS_RECEIPT_MAX_WORDS, and refused only when
-// neither supplies one. The flag wins over both. Not t.Parallel: it moves the process-wide
-// environment, and the refusal must be seen by no other test.
+// neither supplies one. The flag wins over both.
 func TestReceiptMaxWordsDefaultsFromBusFileThenEnv(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
+	var envVal string
+	env := runEnv{
+		getenv: func(k string) string {
+			if k == "NOVA_BUS_RECEIPT_MAX_WORDS" {
+				return envVal
+			}
+			return os.Getenv(k)
+		},
+	}
 
 	// Neither flag, file nor env: the refusal names both default sources as the remedy.
-	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada").
+	env.invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada").
 		mustCode(t, 2).
 		mustContain(t, "stderr", "--receipt-max-words must be given").
 		mustContain(t, "stderr", ".nova-bus/defaults").
@@ -421,25 +430,25 @@ func TestReceiptMaxWordsDefaultsFromBusFileThenEnv(t *testing.T) {
 
 	// The file supplies the value when the flag is absent.
 	writeFile(t, checkout, ".nova-bus/defaults", "receipt-max-words=40\n")
-	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
+	env.invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "receipts=1")
 
 	// The flag wins over the file.
-	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full", "--receipt-max-words", "1").
+	env.invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full", "--receipt-max-words", "1").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "receipts=0")
 
 	// The environment supplies the value when the flag is absent and there is no file.
-	t.Setenv("NOVA_BUS_RECEIPT_MAX_WORDS", "40")
+	envVal = "40"
 	require.NoError(t, os.Remove(filepath.Join(checkout, ".nova-bus", "defaults")))
-	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
+	env.invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "receipts=1")
 
 	// The file wins over the environment.
 	writeFile(t, checkout, ".nova-bus/defaults", "receipt-max-words=1\n")
-	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
+	env.invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "receipts=0")
 }

@@ -20,8 +20,8 @@ import (
 // and `close --before` is the explicit opt-in bulk cutoff: `--advance` draws a line past the
 // history and leaves the notes behind it; `close` answers them, each with a Re line that
 // removes it from the reader's open list for good.
-func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("close")
+func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, e runEnv) int {
+	f := newFlagsWith("close", e.getenv)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	beforeFlag := f.fs.String("before", "", "every open note addressed to you and dated before this RFC 3339 instant is closed by a receipt (required)")

@@ -470,12 +470,12 @@ func TestFourReadConcurrencyLimit(t *testing.T) {
 func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	s := filepath.Join(t.TempDir(), "snapshot.json")
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	c, o, e := run(t, Environment{}, "report", "--file", p, "--snapshot", s)
+	c, o, e := run(t, Environment{}, "report", "--file", p, "--state", s)
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
 	need(t, o, "changed=yes")
-	c, o, e = run(t, Environment{}, "report", "--file", p, "--snapshot", s)
+	c, o, e = run(t, Environment{}, "report", "--file", p, "--state", s)
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
@@ -501,6 +501,67 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	} else {
 		release()
 	}
+}
+
+// The state-file flag is --state; --snapshot is its one-release alias. Both
+// name the same file and write the same bytes, and the alias prints its NOTE
+// on stderr. The clock is fixed so the one stamp the file carries does not
+// differ between the runs, and the pinned JSON is what the file held before
+// the rename: the writer is untouched, only the flag's name moved. The
+// delivery verb of the same path, nova-version send, keeps the alias too.
+func TestReportStateFlagAndItsAlias(t *testing.T) {
+	t.Parallel()
+
+	p := manifest(t, row("x", "tool", "v1.2.3", "npm:unused", "none"))
+	env := Environment{Now: func() time.Time { return time.Date(2026, 10, 2, 15, 4, 5, 0, time.UTC) }}
+	want := `{"observed":{"x":{"raw":"1.2.3","status":"known","at":"2026-10-02T15:04:05Z"}},"delivered":{},"pending":{}}` + "\n"
+	for _, tc := range []struct {
+		name  string
+		flag  string
+		alias bool
+	}{
+		{"state", "--state", false},
+		{"snapshot alias", "--snapshot", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "s.json")
+			c, out, errs := run(t, env, "report", "--file", p, tc.flag, path)
+			require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
+			state, err := readSnapshot(path)
+			require.NoError(t, err, err)
+			require.Len(t, state.Observed, 1)
+			need(t, out, "state="+path)
+			b, err := os.ReadFile(path)
+			require.NoError(t, err, err)
+			require.Equalf(t, want, string(b), "the flag %s wrote a state file whose bytes differ", tc.flag)
+			if tc.alias {
+				require.Contains(t, errs, "NOTE --snapshot is --state")
+			} else {
+				require.NotContains(t, errs, "NOTE --snapshot is --state")
+			}
+		})
+	}
+
+	// nova-version's send is the delivery verb of the same path, so the alias
+	// names the same file there too. No nova-bus answers, so the delivery fails
+	// at exit 1 after the state file is written; that the flag parsed and the
+	// file was set is what this pins, not the delivery.
+	t.Run("send alias", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "s.json")
+		var out, errs bytes.Buffer
+		c := Run("nova-version", []string{"send", "--file", p, "--snapshot", path, "--as", "fixture",
+			"--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main"}, "v0", &out, &errs, env)
+		require.EqualValuesf(t, 1, c, "%d %s %s", c, out.String(), errs.String())
+		require.NotContains(t, errs.String(), "unknown flag")
+		require.Contains(t, errs.String(), "NOTE --snapshot is --state")
+		state, err := readSnapshot(path)
+		require.NoError(t, err, err)
+		require.Len(t, state.Observed, 1)
+		// A failed send prints its lines on stderr (emit's rule), state= among them.
+		need(t, errs.String(), "state="+path)
+	})
 }
 func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 	rows := []string{}

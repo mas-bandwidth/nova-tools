@@ -12,8 +12,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("receipt")
+func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time, e runEnv) int {
+	f := newFlagsWith("receipt", e.getenv)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	remote := f.fs.String("remote", "", "the git remote to push to (required)")
@@ -45,7 +45,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if !*dryRun {
-		release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
+		release, lockErr := bus.LockCheckout(*busDir, e.lockWait())
 		if lockErr != nil {
 			fmt.Fprintf(stderr, "RECEIPT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(lockErr), "nova-bus receipt -h"))
 			return 1

@@ -19,17 +19,20 @@ tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 
 .github/scripts/foo.sh SPEC-CI.md's invented script in `x=$(bash ...)`, shown as something that is not a producer
-.github/seat-rule-gate.sh SPEC-SECRETS.md names the workflow script that is deliberately NOT here: the rule lives in the tool instead
 docs/bus internal/bus/git.go's failure narrative: a bus directory pointed inside a larger repository
 docs/bus/from-bo/x.md the path that same narrative says git reports from the repository root
 docs/history SPEC.md's `--allow docs/history` example for subdirectory enumeration
 internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS entry card-nx-f19 named that did not exist at its base
-internal/secretsanta/ SPEC-RELEASE.md's example of what prefix matching on `internal/secrets` would also catch
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
 docs/nova-lessons.md the lessons file lives in the self repository; internal/pulse/watch.go cites it as the source of its rules
-scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
+
+# The three process verbs are nova-dev's, so their files are under cmd/nova-dev; a rating is a
+# dated read of the tool at its own build, and it cites the tree as that build held it.
+cmd/nova-check/dogfood.go now cmd/nova-dev/dogfood.go; a dated rating of nova-check cites the tree at the build it read
+cmd/nova-check/hygiene.go now cmd/nova-dev/hygiene.go; a dated rating of nova-check cites the tree at the build it read
+cmd/nova-check/hygiene_test.go now cmd/nova-dev/hygiene_test.go; a dated rating of nova-check cites the tree at the build it read
 
 # internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, the owner: "Yes it's dead. remove."); the specs cite its files at named commits as history.
 internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
