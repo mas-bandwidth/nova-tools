@@ -29,11 +29,11 @@ this fetch.
 promotion to read, so nothing is fetched ("a one-parent commit: no promotion to read").
 GITHUB_EVENT_NAME names the event. The promotion branch is optional, too: dev is the
 integration branch, and sprint/foundation exists only while a promotion is in flight. When
-origin has no <branch> (git ls-remote --exit-code answers 2) there is no promotion to
-read, so nothing is fetched ("origin has no branch <branch>: no promotion to read") and
-the classtests rule excuses nothing, the safe side. Any other ls-remote failure is exit 1.
+origin has no <branch> (git ls-remote --exit-code answers 2), the fetch refuses
+("promotion branch <branch> not found on origin; run: git fetch origin <branch>") with exit 2,
+and deletes any stale local ref so it cannot excuse deletions. Any other ls-remote failure is exit 1.
 
-Exit 0 fetched or nothing to read, 1 a git command failed, 2 bad usage.
+Exit 0 fetched or nothing to read, 1 a git command failed, 2 bad usage or refused.
 
 example:
   go run ./tools/ci fetch-ancestry dev
@@ -69,15 +69,18 @@ func fetchAncestryVerb(e env, args []string, h selHost) int {
 		}
 	}
 	if *promotion {
-		// The promotion branch is optional: dev is the integration branch and
-		// sprint/foundation exists only while a promotion is in flight.
-		res, err := h.run(root, nil, "git", "ls-remote", "--exit-code", "--heads", "origin", branch)
+		// When the promotion branch is absent on origin, refuse rather than
+		// falling back to a stale local ref (issue 5161).
+		name := strings.TrimPrefix(branch, "refs/remotes/origin/")
+		name = strings.TrimPrefix(name, "refs/heads/")
+		res, err := h.run(root, nil, "git", "ls-remote", "--exit-code", "--heads", "origin", name)
 		switch {
 		case err == nil && res.Code == 2:
-			fmt.Fprintf(e.stdout, "origin has no branch %s: no promotion to read\n", branch)
-			return 0
+			h.run(root, nil, "git", "update-ref", "-d", "refs/remotes/origin/"+name)
+			fmt.Fprintf(e.stderr, "fetch-ancestry: promotion branch %s not found on origin; run: git fetch origin %s\n", name, name)
+			return 2
 		case err != nil || res.Code != 0:
-			fmt.Fprintf(e.stderr, "fetch-ancestry: git ls-remote %s failed: %s\n", branch, selWhy(res.Stderr, res.Code, err))
+			fmt.Fprintf(e.stderr, "fetch-ancestry: git ls-remote %s failed: %s\n", name, selWhy(res.Stderr, res.Code, err))
 			return 1
 		}
 	}
@@ -113,4 +116,65 @@ func selWhy(stderr string, code int, err error) string {
 		return fmt.Sprintf("exit %d: %s", code, strings.TrimSpace(stderr))
 	}
 	return fmt.Sprintf("exit %d", code)
+}
+
+// resolvePromotionBranch resolves the promotion branch's ref in root, ensuring that
+// the remote branch exists on origin rather than falling back to a stale local ref.
+// When the remote branch is absent on origin, it refuses:
+// "promotion branch <name> not found on origin; run: git fetch origin <name>".
+// Issue 5161 (control 4): an absent promotion branch must be refused, not excused.
+func resolvePromotionBranch(root, branch string, h selHost) (string, error) {
+	name := strings.TrimPrefix(branch, "refs/remotes/origin/")
+	name = strings.TrimPrefix(name, "refs/heads/")
+	if name == "" {
+		return "", fmt.Errorf("empty promotion branch name")
+	}
+
+	res, err := h.run(root, nil, "git", "ls-remote", "--exit-code", "--heads", "origin", name)
+	if err == nil && res.Code == 2 {
+		h.run(root, nil, "git", "update-ref", "-d", "refs/remotes/origin/"+name)
+		return "", fmt.Errorf("promotion branch %s not found on origin; run: git fetch origin %s", name, name)
+	}
+	if err != nil || res.Code != 0 {
+		return "", fmt.Errorf("git ls-remote %s failed: %s", name, selWhy(res.Stderr, res.Code, err))
+	}
+
+	wantRef := "refs/heads/" + name
+	found := false
+	for _, line := range strings.Split(res.Stdout, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == wantRef {
+			found = true
+			break
+		}
+	}
+	if !found {
+		h.run(root, nil, "git", "update-ref", "-d", "refs/remotes/origin/"+name)
+		return "", fmt.Errorf("promotion branch %s not found on origin; run: git fetch origin %s", name, name)
+	}
+
+	localRef := "refs/remotes/origin/" + name
+	check, err := h.run(root, nil, "git", "rev-parse", "--verify", "-q", localRef+"^{commit}")
+	if err != nil || check.Code != 0 {
+		return "", fmt.Errorf("promotion branch %s not found in local checkout; run: git fetch origin %s", name, name)
+	}
+	return localRef, nil
+}
+
+// promotionRef resolves the promotion branch's ref in root.
+func promotionRef(root, branch string, h selHost) (string, error) {
+	return resolvePromotionBranch(root, branch, h)
+}
+
+// promotionTip returns the tip commit of the promotion branch in root.
+func promotionTip(root, branch string, h selHost) (string, error) {
+	ref, err := promotionRef(root, branch, h)
+	if err != nil {
+		return "", err
+	}
+	res, err := h.run(root, nil, "git", "rev-parse", "--verify", "-q", ref+"^{commit}")
+	if err != nil || res.Code != 0 {
+		return "", fmt.Errorf("rev-parse %s failed: %s", ref, selWhy(res.Stderr, res.Code, err))
+	}
+	return strings.TrimSpace(res.Stdout), nil
 }
