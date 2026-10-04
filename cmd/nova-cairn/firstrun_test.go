@@ -6,7 +6,6 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,50 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// splitShell splits a documented command line the way a POSIX shell would
-// for the quotes this repo's examples use: double quotes group, backslash
-// escapes the next character inside them. The examples never nest quotes,
-// so anything fancier is a test bug, not a feature.
-func splitShell(cmd string) ([]string, error) {
-	var fields []string
-	var cur strings.Builder
-	inQuote := false
-	escaped := false
-	has := false
-	for _, r := range cmd {
-		switch {
-		case escaped:
-			cur.WriteRune(r)
-			escaped = false
-		case r == '\\' && inQuote:
-			escaped = true
-		case r == '"':
-			inQuote = !inQuote
-			has = true
-		case r == ' ' || r == '\t':
-			if inQuote {
-				cur.WriteRune(r)
-				break
-			}
-			if has {
-				fields = append(fields, cur.String())
-				cur.Reset()
-				has = false
-			}
-		default:
-			cur.WriteRune(r)
-			has = true
-		}
-	}
-	if inQuote || escaped {
-		return nil, errors.New("unterminated quote")
-	}
-	if has {
-		fields = append(fields, cur.String())
-	}
-	return fields, nil
-}
 
 // usageExamples returns the command lines under the banner's `example:`
 // heading. It asks for the banner, because a bare invocation is a refusal
@@ -84,10 +39,18 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 		assert.True(t, strings.HasPrefix(examples[i], want), "example %d is not %q: %q", i, want, examples[i])
 	}
 	// One store for the whole first run: the examples are a sitting, not four.
+	// The documented `./cairns` is swapped for a real directory by whole field,
+	// so a store path this OS spells with a backslash reaches the tool as one
+	// argument instead of becoming escapes the shared splitter refuses.
 	store := filepath.Join(t.TempDir(), "cairns")
 	for _, ex := range examples {
-		fields, err := splitShell(strings.ReplaceAll(ex, "./cairns", store))
+		fields, err := onboarding.SplitShell(ex)
 		require.NoError(t, err, "cannot split the usage example %q: %v", ex, err)
+		for i, f := range fields {
+			if f == "./cairns" {
+				fields[i] = store
+			}
+		}
 		assert.NotEmpty(t, cli.OK(t, fields[1:]...).Stdout, "the usage example %q printed nothing", ex)
 	}
 }
