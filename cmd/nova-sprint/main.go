@@ -97,7 +97,8 @@ type app struct {
 	// readTwins is the process's read twin of each store, by address: what
 	// its verbs last read, so a verb after the first reads only what changed
 	// (store/twin.go). It is not the mem twin above, which is a store.
-	readTwins map[string]*store.Twin
+	readTwinsMu sync.Mutex
+	readTwins   map[string]*store.Twin
 	// landRoot is the directory land keeps its clones under when it is given
 	// no --repo-dir (land.go): os.UserCacheDir's nova-sprint/land.
 	landRoot func() (string, error)
@@ -343,13 +344,16 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep, CheckTwin: a.checkTwin, ByHand: a.twinOpen(c.redis)}
 	// every verb this process runs on the store reads through one twin: a
 	// verb after the first reads only what changed (store/twin.go)
+	a.readTwinsMu.Lock()
 	if a.readTwins == nil {
 		a.readTwins = map[string]*store.Twin{}
 	}
 	if a.readTwins[c.redis] == nil {
 		a.readTwins[c.redis] = store.NewTwin()
 	}
-	st.ShareTwin(a.readTwins[c.redis])
+	tw := a.readTwins[c.redis]
+	a.readTwinsMu.Unlock()
+	st.ShareTwin(tw)
 	st.LockAfterLoss = true // a part that lost a try locks (store/lock.go)
 	if t := a.twins[c.redis]; t != nil {
 		st.NewID = t.newID
