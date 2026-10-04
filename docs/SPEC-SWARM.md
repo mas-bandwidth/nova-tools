@@ -197,9 +197,9 @@ one that has it. `native` learns the harness from the binary's name.
 
 | harness | the child | the usage |
 |---|---|---|
-| `claude` | `claude -p --model <m> --output-format json --permission-mode bypassPermissions -- <prompt>` | its one JSON result: `usage` (input, output, cache write, cache read), `total_cost_usd`, `modelUsage` names the model |
-| `codex` | `codex exec --skip-git-repo-check --json --ephemeral --dangerously-bypass-approvals-and-sandbox --model <m> -- <prompt>` | the last `turn.completed` event of its JSONL: input, cached input, cache write, output, reasoning; no cost and no model: the route's price sheet prices it |
-| `grok` | `grok --output-format json --permission-mode bypassPermissions --model <m> --single=<prompt>` | its one JSON result, the same names as claude's with `reasoning_tokens` |
+| `claude` | `claude -p --model <m> --output-format json --permission-mode bypassPermissions --disallowed-tools WebFetch,WebSearch -- <prompt>` | its one JSON result: `usage` (input, output, cache write, cache read), `total_cost_usd`, `modelUsage` names the model |
+| `codex` | `codex exec --skip-git-repo-check --json --ephemeral --dangerously-bypass-approvals-and-sandbox -c web_search="disabled" --model <m> -- <prompt>` | the last `turn.completed` event of its JSONL: input, cached input, cache write, output, reasoning; no cost and no model: the route's price sheet prices it |
+| `grok` | `grok --output-format json --permission-mode bypassPermissions --disable-web-search --model <m> --single=<prompt>` | its one JSON result, the same names as claude's with `reasoning_tokens` |
 
 The same wall, the same job directory, the same allowlist environment and the same
 deadline and idle watch as an opencode child; the permission mode is bypass because the

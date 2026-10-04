@@ -130,3 +130,23 @@ func TestDoctorReportsEachHeadlessHarness(t *testing.T) {
 		"DOCTOR HARNESS kind=codex binary=/u/bin/codex version=codex-cli 0.153.4 login=yes said=Logged in using ChatGPT\n"+
 		"DOCTOR HARNESS kind=grok binary=- version=- login=-\n", out.String())
 }
+
+// A headless harness has the same wall as an opencode child and no wider network: the
+// loopback address a providers config names for a keyless provider is opened for an opencode
+// child only, and the headless wall carries no --net-allow, and no --net-deny either (the
+// wall makes no network promise to either; the web tools are off in the argv).
+func TestAHeadlessWallOpensNoAddressBeyondAnOpencodeChilds(t *testing.T) {
+	t.Parallel()
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"provider":{"subscription-codex":{"options":{"baseURL":"http://127.0.0.1:11434/v1"}},"ollama":{"options":{"baseURL":"http://127.0.0.1:11434/v1"}}}}`), 0o644))
+
+	oc := nativeRunConfig{binary: "/usr/local/bin/opencode", model: "ollama/m", configFile: cfgPath}
+	assert.Equal(t, "127.0.0.1:11434", nativeNetAllow(oc, "ollama"), "an opencode child's keyless provider is opened by name")
+
+	hl := nativeRunConfig{binary: "/opt/bin/codex", model: "subscription-codex/m", configFile: cfgPath, slotDir: "/s", benchHome: t.TempDir(), benchOS: "linux", noSharedCaches: true}
+	assert.Empty(t, nativeNetAllow(hl, "subscription-codex"), "a headless child is granted no address, whatever a config says")
+	hl.netAllow = nativeNetAllow(hl, "subscription-codex")
+	argv := nativeSandboxArgv([]string{"codex"}, hl, "/s/data", "/s/jobs/l", "/s/tmp/l")
+	assert.NotContains(t, argv, "--net-allow")
+	assert.NotContains(t, argv, "--net-deny")
+}

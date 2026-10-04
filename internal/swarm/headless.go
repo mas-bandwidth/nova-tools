@@ -30,17 +30,21 @@ import (
 // the model, machine output, the permission mode a walled child runs under -- the wall
 // is the boundary, as it is for an opencode child whose own fence allows every tool
 // inside it (fence.go) -- and the prompt last, after `--` where the program takes one.
+// The web tools are OFF in all three, as the opencode child's fence denies webfetch
+// (fence.go FencePermission): a card's shell reaches the network as the wall allows and its
+// harness's own fetch and search tools reach nothing the wall does not, so the child has no
+// wider network than an opencode child (docs/SPEC-SWARM.md, what a card can reach).
 // An unknown kind is refused, never guessed.
 func HeadlessArgv(kind, bin, model, prompt string) ([]string, error) {
 	switch kind {
 	case harness.Claude:
-		return []string{bin, "-p", "--model", model, "--output-format", "json", "--permission-mode", "bypassPermissions", "--", prompt}, nil
+		return []string{bin, "-p", "--model", model, "--output-format", "json", "--permission-mode", "bypassPermissions", "--disallowed-tools", "WebFetch,WebSearch", "--", prompt}, nil
 	case harness.Codex:
 		// --ephemeral: no session rollout under CODEX_HOME; the usage is the final event's
-		return []string{bin, "exec", "--skip-git-repo-check", "--json", "--ephemeral", "--dangerously-bypass-approvals-and-sandbox", "--model", model, "--", prompt}, nil
+		return []string{bin, "exec", "--skip-git-repo-check", "--json", "--ephemeral", "--dangerously-bypass-approvals-and-sandbox", "-c", `web_search="disabled"`, "--model", model, "--", prompt}, nil
 	case harness.Grok:
 		// --single=<prompt>: the `=` form, so a prompt beginning with a dash is a prompt
-		return []string{bin, "--output-format", "json", "--permission-mode", "bypassPermissions", "--model", model, "--single=" + prompt}, nil
+		return []string{bin, "--output-format", "json", "--permission-mode", "bypassPermissions", "--disable-web-search", "--model", model, "--single=" + prompt}, nil
 	}
 	return nil, fmt.Errorf("%q is not a headless harness; want one of %s", kind, strings.Join(harness.Headless, ", "))
 }

@@ -669,9 +669,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// The keyless provider's loopback host:port travels to the wall as --net-allow
 	// because `(allow network-outbound (remote ip))` does not reach 127.0.0.1: a
 	// local-model card runs and dies silently without the named grant.
-	if cfg.configFile != "" {
-		cfg.netAllow = providerLoopback(cfg.configFile, provider)
-	}
+	cfg.netAllow = nativeNetAllow(cfg, provider)
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
 	// caller can prove later that neither the card nor the binary changed under it.
@@ -2980,4 +2978,16 @@ func fileSHA256(path string) (string, error) {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// nativeNetAllow is the loopback host:port the wall opens back up for this run: the keyless
+// provider's the carried config names, for an opencode child. A headless harness reaches its
+// vendor by remote ip and carries no providers config, so it is granted no address at all:
+// its wall opens nothing an opencode child's does not (docs/SPEC-SWARM.md, what a card can
+// reach).
+func nativeNetAllow(cfg nativeRunConfig, provider string) string {
+	if cfg.configFile == "" || cfg.headless() != "" {
+		return ""
+	}
+	return providerLoopback(cfg.configFile, provider)
 }

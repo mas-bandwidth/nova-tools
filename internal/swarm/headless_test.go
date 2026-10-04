@@ -1,6 +1,8 @@
 package swarm
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,13 +58,13 @@ func TestEachHeadlessHarnessHasOneArgvShape(t *testing.T) {
 	prompt := "- do the thing\n{model} stays"
 	argv, err := HeadlessArgv(harness.Claude, "/b/claude", "opus-5-5", prompt)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/b/claude", "-p", "--model", "opus-5-5", "--output-format", "json", "--permission-mode", "bypassPermissions", "--", prompt}, argv)
+	assert.Equal(t, []string{"/b/claude", "-p", "--model", "opus-5-5", "--output-format", "json", "--permission-mode", "bypassPermissions", "--disallowed-tools", "WebFetch,WebSearch", "--", prompt}, argv)
 	argv, err = HeadlessArgv(harness.Codex, "codex", "gpt-6-astra", prompt)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"codex", "exec", "--skip-git-repo-check", "--json", "--ephemeral", "--dangerously-bypass-approvals-and-sandbox", "--model", "gpt-6-astra", "--", prompt}, argv)
+	assert.Equal(t, []string{"codex", "exec", "--skip-git-repo-check", "--json", "--ephemeral", "--dangerously-bypass-approvals-and-sandbox", "-c", `web_search="disabled"`, "--model", "gpt-6-astra", "--", prompt}, argv)
 	argv, err = HeadlessArgv(harness.Grok, "grok", "grok-4.7", prompt)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"grok", "--output-format", "json", "--permission-mode", "bypassPermissions", "--model", "grok-4.7", "--single=" + prompt}, argv)
+	assert.Equal(t, []string{"grok", "--output-format", "json", "--permission-mode", "bypassPermissions", "--disable-web-search", "--model", "grok-4.7", "--single=" + prompt}, argv)
 	_, err = HeadlessArgv(harness.OpenCode, "opencode", "m", prompt)
 	assert.Error(t, err, "opencode launches through the providers table, never here")
 }
@@ -177,4 +179,26 @@ func TestAHeadlessHarnessIsPointedAtTheBenchsOwnHome(t *testing.T) {
 	assert.Equal(t, HeadlessHome{Dir: "/home/b/.codex", Env: []string{"CODEX_HOME=/home/b/.codex"}}, h)
 	h = HeadlessHomeOf(harness.Grok, "/home/b")
 	assert.Equal(t, HeadlessHome{Dir: "/home/b/.grok", Link: ".grok"}, h)
+}
+
+// The fence of an opencode child denies webfetch (FencePermission); a headless child has no
+// such config, so each argv turns its harness's own web tools off, whatever the model or the
+// prompt, and they are off in every one of the three.
+func TestEachHeadlessHarnessRunsWithItsWebToolsOff(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, FenceDeny, FencePermission("/j", nil)[FenceWebfetch], "the opencode fence the headless argv matches")
+	off := map[string][]string{
+		harness.Claude: {"--disallowed-tools", "WebFetch,WebSearch"},
+		harness.Codex:  {"-c", `web_search="disabled"`},
+		harness.Grok:   {"--disable-web-search"},
+	}
+	for _, k := range harness.Headless {
+		argv, err := HeadlessArgv(k, k, "m", "--web-search on please")
+		require.NoError(t, err)
+		end := slices.Index(argv, "--")
+		if end < 0 {
+			end = len(argv) - 1 // grok: the prompt is its last word, `--single=...`
+		}
+		assert.Contains(t, strings.Join(argv[:end], "\x00"), strings.Join(off[k], "\x00"), "%s: web tools off before the prompt", k)
+	}
 }
