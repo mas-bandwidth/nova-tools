@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -96,4 +97,30 @@ func TestAddRowsKeepsEachTablesRowsSortedAndOnce(t *testing.T) {
 	if !slices.Equal(got[sprint.Work], []string{"s1", "s2", "s3"}) || !slices.Equal(got[sprint.Fleet], []string{"m1", "m2"}) || len(got[sprint.Merge]) != 0 {
 		require.Fail(t, fmt.Sprintf("rows %v", got))
 	}
+}
+
+// TestMemApplyAnswersAnAbsentGuardWithoutACreateInsteadOfPanicking pins
+// security#78 finding 2: a guard-only member entry with Absent and no Create
+// must not dereference e.Create when no member record exists.
+func TestMemApplyAnswersAnAbsentGuardWithoutACreateInsteadOfPanicking(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMem()
+	cols, err := ntable.ParseColumns("ready")
+	require.NoError(t, err)
+	require.NoError(t, m.Create(ctx, ntable.Table{Name: "demo", Columns: cols}))
+	require.NoError(t, m.RowsAdd(ctx, "demo", []string{"r"}))
+	rev := func() string { dt, e := m.table("demo"); require.NoError(t, e); return strconv.FormatUint(dt.rev, 10) }
+	guard := ntable.BatchManifest{
+		Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev(), OperationID: "ghost-guard",
+		Members: []ntable.BatchMemberEntry{{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}}},
+	}
+	_, err = m.Apply(ctx, guard)
+	require.NoError(t, err, "a guard for an absent member is not a panic and not an error")
+	_, err = m.Apply(ctx, ntable.BatchManifest{
+		Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev(), OperationID: "ghost-guard-2",
+		Members: []ntable.BatchMemberEntry{{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "MEMBEREXISTS")
 }

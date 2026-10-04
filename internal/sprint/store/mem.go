@@ -512,7 +512,7 @@ func (t *memTable) judge(active uint64, e ntable.BatchMemberEntry) error {
 		if mm != nil {
 			return refusal("MEMBEREXISTS", "member "+e.ID+": expected absent, observed a record")
 		}
-		if !t.owned(active, e.Create.Row, e.Create.Col) {
+		if e.Create != nil && !t.owned(active, e.Create.Row, e.Create.Col) {
 			return refusal("NOCOL", "member "+e.ID+": no owned cell "+e.Create.Row+":"+e.Create.Col)
 		}
 		return nil
