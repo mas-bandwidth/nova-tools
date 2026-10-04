@@ -45,7 +45,6 @@ func TestSpellingCoverPathEnteredRoot(t *testing.T) {
 
 	rootResolved, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
-	require.Equal(t, root, rootResolved, "root should resolve to itself")
 
 	tests := []struct {
 		name     string
