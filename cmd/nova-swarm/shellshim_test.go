@@ -33,9 +33,6 @@ const shimFixtureValue = "sk-" + "notarealkey" + "0123456789abcdef"
 func TestTheCardsShellNeverSeesASecret(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS == "windows" {
-		t.Skip("the shim is a /bin/sh script; windows writes none")
-	}
 	slot := t.TempDir()
 	dir, shell, err := writeNativeShellShims(slot)
 	require.NoError(t, err, "the shims could not be written")
@@ -71,9 +68,6 @@ func TestTheCardsShellNeverSeesASecret(t *testing.T) {
 func TestTheShimNeverPrintsAValue(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS == "windows" {
-		t.Skip("the shim is a /bin/sh script; windows writes none")
-	}
 	slot := t.TempDir()
 	dir, _, err := writeNativeShellShims(slot)
 	require.NoError(t, err, "the shims could not be written")
@@ -174,9 +168,6 @@ func itoa(n int) string {
 func TestTheCardsShellReachesNoGh(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS == "windows" {
-		t.Skip("the shim is a /bin/sh script; windows writes none")
-	}
 	fake := t.TempDir()
 	counter := filepath.Join(fake, "calls")
 	require.NoError(t, testbin.WriteExecutable(filepath.Join(fake, "gh"), []byte("#!/bin/sh\necho call >> '"+counter+"'\nexit 0\n"), 0o755))
@@ -205,9 +196,6 @@ func TestTheCardsShellReachesNoGh(t *testing.T) {
 // shim, so both names resolve to the bench's sdk Go whatever PATH the member started with.
 func TestTheChildEnvResolvesTheBenchGo(t *testing.T) {
 	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("the bench layout is a link into the sdk tree")
-	}
 	home := t.TempDir()
 	sdkBin := filepath.Join(home, "sdk", "go1.26.6", "bin")
 	require.NoError(t, os.MkdirAll(sdkBin, 0o755))
@@ -245,9 +233,6 @@ func TestTheChildEnvResolvesTheBenchGo(t *testing.T) {
 // now carries ~/sdk/bin right after the shim and before the bench's GOROOT/bin.
 func TestTheChildEnvResolvesEverySdkTool(t *testing.T) {
 	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("the bench layout is a link into the sdk tree")
-	}
 	home := t.TempDir()
 	goroot := filepath.Join(home, "sdk", "go1.26.6", "bin")
 	sdkBin := filepath.Join(home, "sdk", "bin")
@@ -286,9 +271,6 @@ func TestTheChildEnvResolvesEverySdkTool(t *testing.T) {
 // wrapper).
 func TestAToolTimeoutReapsOnlyTheWrapperGroup(t *testing.T) {
 	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("the shim is a /bin/sh script; windows writes none")
-	}
 	dir, _, err := writeNativeShellShims(t.TempDir())
 	require.NoError(t, err)
 	shim := filepath.Join(dir, "sh")
@@ -331,9 +313,6 @@ func TestAToolTimeoutReapsOnlyTheWrapperGroup(t *testing.T) {
 // (nova-tools #1814, the shell wrapper).
 func TestAPipeIntoTheShimReachesTheCommand(t *testing.T) {
 	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("the shim is a /bin/sh script; windows writes none")
-	}
 	dir, _, err := writeNativeShellShims(t.TempDir())
 	require.NoError(t, err)
 	shim := filepath.Join(dir, "sh")
