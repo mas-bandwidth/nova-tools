@@ -809,7 +809,7 @@ edges: every waiting card whose needs name the old id, and did not waive it, nee
 id instead, in the same place of its needs, each id once; nothing else of it changes (its
 column, its score, its other needs, its waivers), and the card records the relink
 (`relinked`: `<old,...> -> <new> <time> by <who>`), which `card` shows with the new need.
-Two verbs make it (internal/sprint/twins.go; the model is tla/SprintRules.tla,
+Three verbs make it (internal/sprint/twins.go and recut.go; the model is tla/SprintRules.tla,
 `TwinsInherit` and `NoDanglingNeed`):
 
 - `add ... --replaces <old-id>[,<old-id>]` admits one card, the twin, and in the same step
@@ -830,6 +830,24 @@ Two verbs make it (internal/sprint/twins.go; the model is tla/SprintRules.tla,
   sentinel, an old id that is the twin, landed, or that nothing waits on, and a cycle
   (`TestRelinkRepairsTheEdgesOfADropAndAnAdd`,
   `TestRelinkIsTheCoordinatorsAndRefusesWhatCannotHold`).
+- `recut <id> (--tier <t> | --brief-file <path> [--rules <file>]) [--new <id>]`, the
+  coordinator's alone, re-cuts a card for another tier or another scope: it is `add
+  --replaces <id>` of a twin in the old card's stream, in front of it, with the old card's
+  needs (less those it waived) and the new brief's `DEPENDS-ON:` needs, held if it was held,
+  its brief and rules unless `--brief-file` names a new brief (held to the card lint as
+  `brief` holds one), pinned (`tier`) to `--tier` or else to the old card's pin, from its
+  first attempt. The twin's id is `--new`, else the old id with the next letter: `b` for a
+  card never re-cut (`lint-pkg-cairn-t` -> `lint-pkg-cairn-tb`), and for a twin that
+  replaced its id less one letter, that id with the letter after (`-tb` -> `-tc`). Refused
+  whole, nothing written, for no tier and no brief, a tier that is no class or the one the
+  card is pinned to with no brief, a card not on the table, a sentinel or landed, a model
+  the brief pins with a tier, and any refusal of the replace
+  (`TestRecutKeepsIdLineageViaReplaces`,
+  `TestRecutIsRefusedWholeWhenItChangesNothingOrCannotHold`, `TestRecutFromTheCommandLine`).
+
+A twin made by `add --replaces` or `recut` records the ids it replaced (`replaces`), the
+other end of the old card's reason `replaced by <new>`: the card's lineage, which `card
+<id> --fields` shows.
 
 A blocked judgment that names a need not replaced stays open, and its ack waives what it
 names, as before.
