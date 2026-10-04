@@ -50,7 +50,8 @@ func newRig(t *testing.T) *rig {
 	r.bus = &bus.Bus{Store: r.store}
 	r.d = &Daemon{
 		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 4, Store: r.store,
-		Deliver: r,
+		Deliver:    r,
+		SilentStop: DefaultSilentStop,
 		Now: func() time.Time {
 			r.mu.Lock()
 			defer r.mu.Unlock()
@@ -391,5 +392,279 @@ func TestADSHSessionUnderAPresetKeepsTheMessagePending(t *testing.T) {
 		}
 		require.NotEmpty(t, r.records)
 		assert.Contains(t, r.records[0], `subject="hello" deferred=1: session session-zhi runs under agent preset "minimal"`)
+	})
+}
+
+// printer is a harness whose first turn prints when the test says and ends
+// when the test releases it (or the daemon stops it); later turns end at
+// once, exit 0.
+type printer struct {
+	mu    sync.Mutex
+	calls int
+	seen  func()
+	done  chan struct{}
+}
+
+func (p *printer) Deliver(ctx context.Context, _ string) (int, error) {
+	p.mu.Lock()
+	p.calls++
+	first := p.calls == 1
+	if first {
+		p.seen, _ = ctx.Value(outputKey{}).(func())
+	}
+	p.mu.Unlock()
+	if !first {
+		return 0, nil
+	}
+	select {
+	case <-p.done:
+	case <-ctx.Done():
+	}
+	return 0, nil
+}
+
+func (p *printer) print() {
+	p.mu.Lock()
+	seen := p.seen
+	p.mu.Unlock()
+	if seen != nil {
+		seen()
+	}
+}
+
+func (p *printer) callsN() int { p.mu.Lock(); defer p.mu.Unlock(); return p.calls }
+
+// A turn that keeps working is never stopped: output every minute for
+// forty-five minutes runs on past any window (SPEC-FRIEND.md, the loop: no
+// clock bounds a turn that prints), and the message is acked at exit 0.
+func TestATurnThatKeepsWorkingIsNeverStopped(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		p := &printer{done: make(chan struct{})}
+		r.d.Deliver, r.passive = p, true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "long work", "keep going")
+		minute := int(time.Minute / BeatEvery)
+		for m := 1; m <= 45; m++ {
+			r.at[m*minute] = func() { p.print() }
+		}
+		r.at[46*minute] = func() { close(p.done) }
+		r.run(t, 50*minute)
+		assert.Equal(t, 1, p.callsN(), "one turn, never stopped and never restarted")
+		var ended string
+		for _, line := range r.records {
+			assert.NotContains(t, line, "stopping:", "a turn that prints is never stopped: %v", r.records)
+			assert.NotContains(t, line, "stopped=")
+			if strings.Contains(line, `subject="long work"`) && strings.Contains(line, "exit=") {
+				ended = line
+			}
+		}
+		require.NotEmpty(t, ended, "%v", r.records)
+		assert.Contains(t, ended, "exit=0")
+		assert.Contains(t, ended, "acked=true")
+		assert.Equal(t, 1, r.last().Delivered)
+	})
+}
+
+// silentTurn is a harness whose every turn prints nothing and ends only when
+// the daemon stops it.
+type silentTurn struct {
+	mu        sync.Mutex
+	calls     int
+	stoppedAt time.Time
+	now       func() time.Time
+}
+
+func (s *silentTurn) Deliver(ctx context.Context, _ string) (int, error) {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	<-ctx.Done()
+	s.mu.Lock()
+	if s.stoppedAt.IsZero() {
+		s.stoppedAt = s.now()
+	}
+	s.mu.Unlock()
+	return -1, errors.New("the delivery was stopped with its process group")
+}
+
+func (s *silentTurn) callsN() int { s.mu.Lock(); defer s.mu.Unlock(); return s.calls }
+
+// A turn silent for the window is stopped once: the record says no output
+// for the window, the group is signalled once, and the message stays pending
+// (SPEC-FRIEND.md, the loop: a turn that has printed nothing for
+// --silent-stop is stopped, its process group signalled).
+func TestATurnSilentForTheWindowIsStopped(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		s := &silentTurn{now: func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.now }}
+		r.d.Deliver, r.passive = s, true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "silent", "no output at all")
+		minute := int(time.Minute / BeatEvery)
+		r.run(t, 23*minute)
+		require.False(t, s.stoppedAt.IsZero(), "the silent turn was stopped")
+		assert.False(t, s.stoppedAt.Before(t0.Add(DefaultSilentStop)), "never before %s of silence: stopped at %s", DefaultSilentStop, s.stoppedAt.Sub(t0))
+		assert.True(t, s.stoppedAt.Before(t0.Add(DefaultSilentStop+5*BeatEvery)), "and at once after: stopped at %s", s.stoppedAt.Sub(t0))
+		stops := 0
+		var ended string
+		for _, line := range r.records {
+			if strings.Contains(line, "stopping: no output for 20m0s") {
+				stops++
+			}
+			if strings.Contains(line, `subject="silent"`) && strings.Contains(line, "exit=") {
+				ended = line
+			}
+		}
+		assert.Equal(t, 1, stops, "the group is signalled once: %v", r.records)
+		require.NotEmpty(t, ended, "%v", r.records)
+		assert.Contains(t, ended, `stopped="no output for 20m0s"`)
+		assert.Contains(t, ended, "deliveries=1/3", "a stopped turn is a failed delivery")
+		assert.Equal(t, 0, r.last().Delivered, "nothing acked")
+		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Len(t, pending, 1, "the message stays pending")
+		assert.Empty(t, fresh)
+	})
+}
+
+// One turn at a time per session: a message that lands while a delivery runs
+// is not delivered until that delivery ends (SPEC-FRIEND.md, the loop: while
+// a turn runs, never a second turn).
+func TestNoSecondTurnWhileOneRuns(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		p := &printer{done: make(chan struct{})}
+		r.d.Deliver, r.passive = p, true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "first", "one")
+		r.at[10] = func() { r.send(t, "ada", "second", "two") }
+		var mid int
+		r.at[50] = func() { mid = p.callsN() }
+		r.at[80] = func() { close(p.done) }
+		r.run(t, 100)
+		assert.Equal(t, 1, mid, "the second message waits while the first delivery runs")
+		assert.Equal(t, 2, p.callsN(), "it goes in once the first ends")
+		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Empty(t, pending)
+		assert.Empty(t, fresh)
+	})
+}
+
+// busyTurn is a harness that can tell whether its session is busy (Busier):
+// its first turn runs until the daemon stops it; the test holds whether the
+// session is busy and counts the asks.
+type busyTurn struct {
+	mu    sync.Mutex
+	calls int
+	asks  int
+	busy  bool
+	texts []string
+}
+
+func (b *busyTurn) Deliver(ctx context.Context, text string) (int, error) {
+	b.mu.Lock()
+	b.calls++
+	b.texts = append(b.texts, text)
+	first := b.calls == 1
+	b.mu.Unlock()
+	if !first {
+		return 0, nil
+	}
+	<-ctx.Done()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return -1, errors.New("the delivery was stopped with its process group")
+}
+
+func (b *busyTurn) Busy(context.Context) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.asks++
+	return b.busy, nil
+}
+
+func (b *busyTurn) setBusy(v bool) { b.mu.Lock(); b.busy = v; b.mu.Unlock() }
+func (b *busyTurn) callsN() int    { b.mu.Lock(); defer b.mu.Unlock(); return b.calls }
+func (b *busyTurn) asksN() int     { b.mu.Lock(); defer b.mu.Unlock(); return b.asks }
+
+// After a stopped delivery the daemon delivers into the session again only
+// once it is free: while the adapter answers Busy the next delivery defers,
+// said on the record and counted toward nothing, and once it answers free
+// the waiting messages go in as one turn (SPEC-FRIEND.md, the loop: one turn
+// at a time; a stopped process whose harness keeps the turn running never
+// gets a second turn beside it).
+func TestNoRedeliveryWhileTheSessionIsBusy(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		b := &busyTurn{busy: true}
+		r.d.Deliver, r.passive = b, true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "first", "stopped mid-turn")
+		r.at[5] = func() { r.send(t, "ada", "second", "waiting") }
+		minute := int(time.Minute / BeatEvery)
+		r.at[16*minute] = func() { r.store.Advance(bus.ClaimAfter) } // the stopped message's claim opens before the stop
+		var midCalls, midAsks int
+		r.at[24*minute] = func() { midCalls, midAsks = b.callsN(), b.asksN() }
+		r.at[25*minute] = func() { b.setBusy(false) }
+		r.run(t, 27*minute)
+		assert.Equal(t, 1, midCalls, "no redelivery while the session is busy")
+		assert.GreaterOrEqual(t, midAsks, 2, "the daemon asked, and asked again while the answer stayed busy")
+		b.mu.Lock()
+		texts := append([]string(nil), b.texts...)
+		b.mu.Unlock()
+		require.Len(t, texts, 2, "once free, the waiting messages go in: %v", texts)
+		assert.Contains(t, texts[1], "2 message(s) for you")
+		assert.Contains(t, texts[1], `subject="first"`)
+		assert.Contains(t, texts[1], `subject="second"`)
+		assert.Equal(t, 2, b.callsN())
+		said := 0
+		for _, line := range r.records {
+			if strings.Contains(line, "the session is busy") {
+				said++
+			}
+		}
+		assert.GreaterOrEqual(t, said, 2, "the deferral is said on the record")
+		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Empty(t, pending, "both messages acked at exit 0")
+		assert.Empty(t, fresh)
+	})
+}
+
+// Zero never stops: a turn that never prints runs on past any window when
+// the window is zero (SPEC-FRIEND.md, the loop: --silent-stop 0 never stops).
+func TestNoProgressZeroNeverStops(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		r.d.SilentStop = 0
+		p := &printer{done: make(chan struct{})}
+		r.d.Deliver, r.passive = p, true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "silent with zero", "no output, no stop")
+		minute := int(time.Minute / BeatEvery)
+		r.at[30*minute] = func() { close(p.done) }
+		r.run(t, 32*minute)
+		assert.Equal(t, 1, p.callsN(), "the turn ran on and ended only when its work ended")
+		for _, line := range r.records {
+			assert.NotContains(t, line, "stopping:", "zero never stops: %v", r.records)
+			assert.NotContains(t, line, "stopped=")
+		}
+		var ended string
+		for _, line := range r.records {
+			if strings.Contains(line, `subject="silent with zero"`) && strings.Contains(line, "exit=") {
+				ended = line
+			}
+		}
+		require.NotEmpty(t, ended, "%v", r.records)
+		assert.Contains(t, ended, "exit=0")
+		assert.Contains(t, ended, "acked=true")
+		assert.Equal(t, 1, r.last().Delivered)
 	})
 }

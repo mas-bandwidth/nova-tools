@@ -178,7 +178,7 @@ func friendTool(w world) *tool.Tool {
 		f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir)")
 		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
-		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
+		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on; 0 never stops")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
 		stateDir(f)
@@ -214,7 +214,11 @@ PING is answered at once with a daemon-pong and acked, never a turn; while a cha
 pong line rides at the head of the next turn. No ping for ` + friend.Window.String() + `: "coordinator silent", and
 "coordinator back" when pings resume, collapsed to the latest and said only inside a turn that
 carries messages. A turn runs as long as it prints; one silent past --silent-stop is stopped with
-its process group, the reason on the record. The same provider refusal (an invalid_request_error)
+its process group, the reason on the record; 0 never stops. One turn at a time per session: while a
+delivery runs, the daemon starts no other into the session (the next message waits; a PING is still
+answered by the daemon at once), and after a stopped or failed delivery it delivers into the session
+again only once the adapter says the session is free (Busy), deferring while it says busy. The same
+provider refusal (an invalid_request_error)
 on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
 bus; a restart clears it. The friend row's mode and width come with each beat's answer (row_mode=,

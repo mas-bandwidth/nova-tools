@@ -41,9 +41,9 @@ const (
 )
 
 // DefaultSilentStop is how long a turn may print nothing before the daemon
-// stops it (--silent-stop): a turn that prints keeps running however long
-// it takes (the finding of 2026-10-04: a fixed ten-minute cap killed a
-// friend's real work mid-turn).
+// stops it (--silent-stop; 0 never stops): a turn that prints keeps running
+// however long it takes (the finding of 2026-10-04: a fixed ten-minute cap
+// killed a friend's real work mid-turn).
 const DefaultSilentStop = 20 * time.Minute
 
 // DefaultBrokenAfter is how many turns in a row the provider must refuse
@@ -100,10 +100,11 @@ type Daemon struct {
 	// to fill in.
 	PongCommand func(nonce string) string
 	// SilentStop is how long a running turn may print nothing before it is
-	// stopped (DefaultSilentStop when zero); BrokenAfter how many turns in a
-	// row the provider refuses the same way before the session is broken
-	// (DefaultBrokenAfter when zero); Coordinator who is told of a broken
-	// session when no ping has named the seat.
+	// stopped; zero never stops (the run flag's default is DefaultSilentStop);
+	// BrokenAfter how many turns in a row the provider refuses the same way
+	// before the session is broken (DefaultBrokenAfter when zero);
+	// Coordinator who is told of a broken session when no ping has named the
+	// seat.
 	SilentStop  time.Duration
 	BrokenAfter int
 	Coordinator string
@@ -220,6 +221,10 @@ type loop struct {
 	retry                 time.Time       // when the deferred turn in hand is tried again; zero while none is
 	deferrals             int
 	deferSaid             time.Time
+	busyGate              bool      // the last delivery into the session ended stopped or failed and the adapter can tell (Busy)
+	busyRetry             time.Time // when the adapter is asked whether the session is free again; zero while none is
+	busyDeferrals         int
+	busySaid              time.Time
 	refusal               string // the last provider refusal, and how many turns in a row said it
 	streak                int
 	broken, told          bool
@@ -246,9 +251,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64)}, mode: ModeBatch}
 	_, l.passive = d.Deliver.(interface{ Passive() })
-	if l.silentStop <= 0 {
-		l.silentStop = DefaultSilentStop
-	}
 	if l.brokenAfter <= 0 {
 		l.brokenAfter = DefaultBrokenAfter
 	}
@@ -294,7 +296,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.laneStep(now, width)
 			d.status.Lanes = l.lanes.said(width)
 		case l.busy == nil && len(l.hand) > 0:
-			l.startBatch(now)
+			if l.sessionFree(now) {
+				l.startBatch(now)
+			}
 		case l.busy != nil && !l.busy.running && !l.retry.IsZero() && !now.Before(l.retry):
 			l.retry = time.Time{}
 			l.startTurn(l.busy, now, l.deliverBatch(l.busy))
@@ -537,13 +541,58 @@ func (l *loop) startBatch(now time.Time) {
 	l.startTurn(t, now, l.deliverBatch(t))
 }
 
+// sessionFree says whether the session may take the next delivery: it may,
+// unless the last delivery into it ended stopped or failed and the adapter
+// can tell (Busier; SPEC-FRIEND.md, the loop: one turn at a time) — then
+// only once Busy says the session is free, asked at most once per
+// RecheckEvery, the wait said on the record and counted toward nothing. An
+// answer that cannot be read counts as busy: a session whose state is
+// unknown must never get a second turn beside the one that may still run.
+func (l *loop) sessionFree(now time.Time) bool {
+	if !l.busyGate {
+		return true
+	}
+	if !l.busyRetry.IsZero() && now.Before(l.busyRetry) {
+		return false
+	}
+	ask, can := l.d.Deliver.(Busier)
+	if !can {
+		l.busyGate = false
+		return true
+	}
+	busy, err := ask.Busy(l.ctx)
+	d := l.d
+	reason := "the session is busy"
+	if err != nil {
+		busy = true
+		reason = "the session's state is unknown: " + err.Error()
+	}
+	if !busy {
+		l.busyGate, l.busyRetry, l.busyDeferrals, l.busySaid = false, time.Time{}, 0, time.Time{}
+		return true
+	}
+	l.busyDeferrals++
+	l.busyRetry = now.Add(RecheckEvery)
+	if l.busyDeferrals == 1 || now.Sub(l.busySaid) >= DeferredSaidEvery {
+		l.busySaid = now
+		subject := ""
+		if len(l.hand) > 0 {
+			subject = fmt.Sprintf("%q", l.hand[0].Message().Subject)
+		}
+		d.Record(fmt.Sprintf("%s subject=%s deferred=%d: %s; tried again every %s, counted toward nothing (said once per %s)",
+			now.UTC().Format(time.RFC3339), subject, l.busyDeferrals, reason, RecheckEvery, DeferredSaidEvery))
+	}
+	return false
+}
+
 // watch is the silence watch on a running turn: a turn that prints is
-// working; one silent past SilentStop is stopped, said on the record.
+// working; one silent past SilentStop is stopped, said on the record (never
+// when SilentStop is zero: 0 never stops).
 func (l *loop) watch(t *turn, now time.Time) {
 	if n := t.seen.Load(); n != t.seenN {
 		t.seenN, t.lastOut = n, now
 	}
-	if !t.stopped && now.Sub(t.lastOut) >= l.silentStop {
+	if l.silentStop > 0 && !t.stopped && now.Sub(t.lastOut) >= l.silentStop {
 		t.stopped = true
 		t.cancel()
 		l.d.Record(fmt.Sprintf("%s subject=%s stopping: no output for %s (silent since %s); its process group is signalled",
@@ -658,6 +707,20 @@ func (l *loop) batchDone(r result, now time.Time) {
 	}
 	ok := r.err == nil && r.exit == 0 && !r.t.stopped
 	line += l.settle(r.t, ok, r.err, now)
+	var providerRefusal ProviderRefused
+	switch {
+	case ok:
+		l.busyGate = false
+	case r.t.stopped || !errors.As(r.err, &providerRefusal):
+		// stopped or failed: the harness may still be running the turn on its
+		// own server, so the next delivery into the session waits for the
+		// adapter to say it is free (Busier; SPEC-FRIEND.md, the loop: one
+		// turn at a time). A turn the provider refused is not one: the
+		// session answered.
+		if _, can := l.d.Deliver.(Busier); can {
+			l.busyGate, l.busyRetry, l.busyDeferrals, l.busySaid = true, time.Time{}, 0, time.Time{}
+		}
+	}
 	for _, part := range strings.Split(line, "\n") {
 		d.Record(part)
 	}

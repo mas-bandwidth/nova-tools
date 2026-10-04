@@ -107,11 +107,23 @@ challenge is open; the status file.
 
 No clock bounds a turn: a turn that prints keeps running however long it
 takes. A turn that has printed nothing, on stdout or stderr, for `--silent-stop`
-(twenty minutes by default) is stopped, its process group signalled, and the
-record says so with the reason (`stopping: no output for 20m0s`, then
-`stopped=` on the turn's line); its messages count one failed delivery each.
-The finding of 2026-10-04: a fixed ten-minute cap killed a friend's real work
-mid-turn.
+(twenty minutes by default; 0 never stops) is stopped, its process group
+signalled, and the record says so with the reason (`stopping: no output for
+20m0s`, then `stopped=` on the turn's line); its messages count one failed
+delivery each. The finding of 2026-10-04: a fixed ten-minute cap killed a
+friend's real work mid-turn.
+
+One turn at a time per session: while a delivery runs, the daemon starts no
+other into the session (the next message waits; a ping is still answered by
+the daemon at once). After a stopped or failed delivery, the daemon delivers
+into that session again only once it is free: an adapter that can tell
+answers the optional `Busy` (`(bool, error)`, a quick probe of the harness's
+own state) and the daemon defers while it says busy, asked at most once per
+`RecheckEvery`, the wait said on the record and counted toward nothing; an
+answer that cannot be read counts as busy. A stopped process whose harness
+keeps the turn running on its own server never gets a second turn beside it.
+An adapter whose delivery returns at once, with the turn running after it, is
+unchanged.
 
 A session the provider refuses is broken, not its messages. An adapter that
 sees the turn's output (OpenCode, Codex, DSH, Gemini) reads a provider's JSON

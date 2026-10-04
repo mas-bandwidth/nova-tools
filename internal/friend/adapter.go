@@ -36,6 +36,18 @@ type Deferred struct{ Reason string }
 
 func (d Deferred) Error() string { return "deferred: " + d.Reason }
 
+// Busier is an optional Deliverer method: whether the session is busy now,
+// answered quickly (a probe of the harness's own state, never a turn). After
+// a delivery into the session ended stopped or failed, the daemon delivers
+// into it again only once Busy says it is free, asked at most once per
+// RecheckEvery and said on the record (SPEC-FRIEND.md, the loop: one turn at
+// a time): a stopped process whose harness keeps the turn running on its own
+// server never gets a second turn beside it. An adapter that cannot tell
+// does not implement it.
+type Busier interface {
+	Busy(ctx context.Context) (bool, error)
+}
+
 // Exec runs one command for an adapter: the program, its arguments and its
 // working directory, with the text on stdin, answering what it printed and
 // its exit code. The daemon passes the real one (RealExec); a test its own.
