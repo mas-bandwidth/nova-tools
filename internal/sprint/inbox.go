@@ -473,6 +473,13 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "drop":
 				add(d, cmd+"drop "+card+" --reason "+whyText+ans+" --one", resume("'dropped "+card+"'"))
 			}
+		case g.Type == NBaseRed:
+			switch d {
+			case "resume":
+				add(d, resume("'<the base passes its tree gate again>'"))
+			case "wait":
+				add(d, cmd+"wait "+first.ID+" --for 30m")
+			}
 		case g.Type == NRejected:
 			switch d {
 			case "resume":

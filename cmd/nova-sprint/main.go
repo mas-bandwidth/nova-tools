@@ -148,6 +148,9 @@ type app struct {
 	// baseGateCache is the tree gate's findings for base commit tips, by commit SHA:
 	// "" when green, cached across streams and rounds so a base is gated once.
 	baseGateCache map[string]string
+	// baseGateFails is the base-gate rule's record of base commits that failed their tree
+	// gate (landgo.go, treeGateBase), kept across rounds as the cache is.
+	baseGateFails map[string]*baseGateFail
 	// tickDeadline is how long the run loop waits for one tick (run
 	// --tick-deadline; 0, a test's loop, waits for ever); after is the clock
 	// it waits on (time.After unless a test sets it), and exit how the loop

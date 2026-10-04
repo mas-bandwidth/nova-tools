@@ -159,6 +159,9 @@ type TickReq struct {
 	// the binding with the tick when a friend's card is ready (FriendDeal);
 	// nil is none, and a friend's card waits ready.
 	Friends []FriendSeat
+	// AnswerRules says the tick answers the mechanical judgments by rule (rules.go; run
+	// --answer-rules); false leaves every judgment to the coordinator.
+	AnswerRules bool
 }
 
 func (r TickReq) who() string {
@@ -246,6 +249,18 @@ var TickEnd = []TickPartDef{
 	{"deadlines", TickDeadlines},
 	{"overdue", TickOverdue},
 	{PartDone, TickDone},
+}
+
+// TickEndAnswering is the tick's end when it answers by rule (TickReq.AnswerRules, run
+// --answer-rules): TickEnd with the rule parts (TickRules) after the deadlines, so a
+// judgment the end raises is answered in its own tick, and before the overdue part. Each
+// rule part is a step that may write any table, as a coordinator's verb does, its
+// work-table changes queued for the next pump. With the rules off the tick is TickEnd's
+// alone, as before the rules.
+func TickEndAnswering() []TickPartDef {
+	out := append([]TickPartDef(nil), TickEnd[:2]...)
+	out = append(out, TickRules...)
+	return append(out, TickEnd[2:]...)
 }
 
 // TickParts is every part with a planner in the order a tick first runs them:

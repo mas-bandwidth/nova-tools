@@ -913,8 +913,8 @@ nova-sprint release <sentinel>... --reason <text> [--answers <note>]
 nova-sprint resolve [<id>...] [--stream <s>] [--limit <n>]
 nova-sprint start
 nova-sprint stop
-nova-sprint run
-nova-sprint tick
+nova-sprint run [--answer-rules=false]
+nova-sprint tick [--answer-rules]
 nova-sprint goal set <name> [--file <path>] [--to file:<path>]
 nova-sprint goal show [<name>]
 nova-sprint goal drop <name>
@@ -931,7 +931,7 @@ nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
 nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
 nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
-nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]
+nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint fleet beat <member> [--load <percent>]
@@ -964,6 +964,7 @@ nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint seat
 nova-sprint routes
+nova-sprint rules
 nova-sprint funded <provider> --reason <text>
 nova-sprint stats
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
@@ -1027,6 +1028,22 @@ state) and `routes` each route's `balance=`. When every provider is out of credi
 stops the machine (`machine: STOPPED (every provider is out of credit)`) and `start` is refused
 until one is paid; a provider low on funds never stops it. `funded <provider> --reason <text>`
 says one was paid. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "A provider out of funds".
+
+### Answered by rule
+
+The run loop's tick answers the mechanical judgments itself, by rule, and records each as
+`answered by rule <name>` on the log and on the card (`rule_answer`): work came back
+failed is redealt on the next route of its tier, and the second failure on a tier goes a
+tier up (flash, pro, heavy, then a friend's card); a card at its bound goes a tier up; a
+work card past its deadline is waited 30 minutes once when it made progress in the last 10,
+else returned and dealt again; a stream stopped on a conflict in a file no ledger owns has
+the card returned, the stream resumed and the card redone on the current tip; the same
+finding twice marks the card a brief defect and leaves it to you; and land gates a red base
+again after 2 and 5 minutes before the third failure stops the stream with the error. A
+reader's finding stays yours. `nova-sprint rules` prints what the rules would answer now and
+Xoff, and nova-config's sprint row turns single ones off: `nova-config sprint set
+--answer_rules_off late,conflict`, then `nova-config apply`. The contract is
+[SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-rule).
 
 ### Answering the routine judgments
 

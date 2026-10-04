@@ -48,8 +48,8 @@ func init() {
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "", "stop", (*app).cmdMachineStop},
-		{"run", "", "run", (*app).cmdRun},
-		{"tick", "", "tick", (*app).cmdTick},
+		{"run", "[--answer-rules=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRun},
+		{"tick", "[--answer-rules]", "tick", (*app).cmdTick},
 		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
@@ -66,7 +66,7 @@ func init() {
 		{"relink", "<old-id>[,<old-id>...] <new-id> [--reason <text>]", "relink lint-pkg-cairn-t lint-pkg-cairn-tb --reason 're-cut as its twin'", (*app).cmdRelink},
 		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>", "brief s1-4 --brief-file s1-4.md", (*app).cmdBrief},
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
-		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
+		{"merge", "--stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'land merges s1-4 again'", (*app).cmdResume},
 		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
@@ -109,6 +109,7 @@ func init() {
 		{"handover", "", "handover", (*app).cmdHandover},
 		{"seat", "", "seat", (*app).cmdSeat},
 		{"routes", "", "routes", (*app).cmdRoutes},
+		{"rules", "", "rules", (*app).cmdRules},
 		{"stats", "", "stats", (*app).cmdStats},
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
@@ -290,6 +291,7 @@ one answer to each judgment (every one prints its own, filled in):
   stream branch red           return <suspect> --answers <note>, then resume --stream <s> --did 'returned <suspect>' --answers <note>
   needs another stream first  rank <other> --first, then resume --stream <s> once <other> has landed
   merge queue rejected        resume --stream <s> --did '<what you did>' --answers <note>
+  the base fails its gate     resume --stream <s> --did '<the base is green again>' --answers <note>  (land gated it three times: at 0, 2 and 7 minutes)
   ci red                      rework --group <id> --expect <n> --fix '<fix>' --answers <notes>
   blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
   blocked on a missing card   drop <ids> --reason '<why>' or ack <notes> --reason '<why the named missing needs can be waived>'
@@ -304,6 +306,10 @@ one answer to each judgment (every one prints its own, filled in):
   stranded in review          rework or drop (or ask, if never asked) --group <id> --expect <n> --answers <notes>
   stalled                     card <primary> (HELD says what holds it), then the decision it prints, or ack <note> --reason '<why>'
   landed work scored low      add --stream <s> '<fix id>' --brief '<the finding>', then ack <note>; or ack <note> --reason '<why it stands>'
+
+the mechanical judgments the run loop answers by rule, recorded "answered by rule <name>"
+(failed, bound, late, conflict, brief-defect, base-gate); nova-sprint rules prints what
+they would answer now, and run --answer-rules=false turns them off
 
 the routine judgments answered by nova-decide (broken, failed, blocked, stalled, conflict,
 deadline, cannot ask, ready to accept, a card at its bound), card by card:
@@ -2328,6 +2334,10 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	cross := fs.String("cross", "", "fact: <card>=<other>: the card needs <other> first; <other> is on the table, in another stream, not landed")
 	red := fs.Bool("red", false, "fact: the stream branch went red on the batch")
 	rejected := fs.Bool("rejected", false, "fact: the merge queue rejected the batch")
+	baseRed := fs.String("base-red", "", "fact: the base fails its tree gate, this the error (land's base-gate rule, after its third failure): the stream stops, no card moves")
+	conflictKind := fs.String("conflict-kind", "", "with --conflict: file (a path no generated ledger owns did not merge) or ledger; the conflict rule redoes a file conflict on the tip")
+	var conflictPaths listFlag
+	fs.Var(&conflictPaths, "conflict-path", "with --conflict: a path that did not merge; again, or comma separated, for more")
 	note := fs.String("note", "", "what the facts' source said")
 	var suspects listFlag
 	fs.Var(&suspects, "suspect", "with --red: a card of the batch suspected of turning it red; again, comma separated, or ids after it for more")
@@ -2342,20 +2352,20 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	facts := 0
-	for _, f := range []bool{*conflict != "", *cross != "", *red, *rejected} {
+	for _, f := range []bool{*conflict != "", *cross != "", *red, *rejected, *baseRed != ""} {
 		if f {
 			facts++
 		}
 	}
 	if *stream == "" || len(pos) > 0 || facts > 1 {
-		return refuse(stderr, "merge", "wants --stream <s> and at most one fact of --conflict, --cross, --red, --rejected")
+		return refuse(stderr, "merge", "wants --stream <s> and at most one fact of --conflict, --cross, --red, --rejected, --base-red")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "merge", err.Error())
 	}
 	return a.runStep("merge", *c, st, store.MergeStep(sprint.MergeReq{Stream: *stream, Batch: *batch, Conflict: *conflict, Cross: *cross,
-		Red: *red, Suspects: suspects, Rejected: *rejected, Note: *note, Who: c.actor}), stdout, stderr)
+		Red: *red, Suspects: suspects, Rejected: *rejected, BaseRed: *baseRed, ConflictKind: *conflictKind, ConflictPaths: conflictPaths, Note: *note, Who: c.actor}), stdout, stderr)
 }
 
 func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {

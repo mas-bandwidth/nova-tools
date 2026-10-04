@@ -157,8 +157,10 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 	}
 }
 
-// The base gate result is cached by base commit SHA: once gated, the same commit is
-// not re-gated on subsequent calls even if the tree on disk changes.
+// The base gate's green result is cached by base commit SHA: once gated, the same commit
+// is not re-gated on subsequent calls even if the tree on disk changes. A red one is the
+// base-gate rule's: reported with when it is gated again, and not re-gated before then
+// (base_gate_rule_test.go has the retries and the stop).
 func TestTreeGateBaseCache(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -168,20 +170,24 @@ func TestTreeGateBaseCache(t *testing.T) {
 		require.NoError(t, os.WriteFile(p, []byte(content), 0o600))
 	}
 	l := &lander{baseGateCache: map[string]string{}}
-	assert.Equal(t, "", l.treeGateBase(context.Background(), dir, "base-1"))
+	green, _ := l.treeGateBase(context.Background(), dir, "base-1")
+	assert.Equal(t, "", green)
 	assert.Equal(t, "", l.baseGateCache["base-1"])
 
 	// Corrupt main.go: cache hit for base-1 still reports green without running.
 	mainGo := filepath.Join(dir, "main.go")
 	require.NoError(t, os.WriteFile(mainGo, []byte(buildRed), 0o600))
-	assert.Equal(t, "", l.treeGateBase(context.Background(), dir, "base-1"))
+	green, _ = l.treeGateBase(context.Background(), dir, "base-1")
+	assert.Equal(t, "", green)
 
-	// A different base SHA (base-2) gates and caches the failure.
-	why := l.treeGateBase(context.Background(), dir, "base-2")
+	// A different base SHA (base-2) gates and records the failure for its retry.
+	why, stop := l.treeGateBase(context.Background(), dir, "base-2")
 	assert.Contains(t, why, "syntax error")
-	assert.Equal(t, why, l.baseGateCache["base-2"])
+	assert.False(t, stop)
+	require.NotNil(t, l.baseGateFails["base-2"])
 
-	// Restore main.go: cache hit for base-2 still reports the cached failure.
+	// Restore main.go: before its retry, base-2 still reports the failure, not re-gated.
 	require.NoError(t, os.WriteFile(mainGo, []byte(goModule["main.go"]), 0o600))
-	assert.Equal(t, why, l.treeGateBase(context.Background(), dir, "base-2"))
+	again, _ := l.treeGateBase(context.Background(), dir, "base-2")
+	assert.Equal(t, why, again)
 }

@@ -140,10 +140,12 @@ func (a *app) machineVerb(name string, args []string, stderr io.Writer, extra ..
 }
 
 func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
-	st, c, code := a.machineVerb("tick", args, stderr)
+	var rules bool
+	st, c, code := a.machineVerb("tick", args, stderr, answerRulesFlag(&rules, false))
 	if st == nil {
 		return code
 	}
+	st.AnswerRules = rules
 	ctx := context.Background()
 	res, err := st.Tick(ctx)
 	err = noSprintYet(err)
@@ -238,7 +240,8 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	var profile, listen, decideDir string
 	var profileTicks int
 	var land bool
-	st, c, code := a.machineVerb("run", args, stderr, func(fs flagSet) {
+	var rules bool
+	st, c, code := a.machineVerb("run", args, stderr, answerRulesFlag(&rules, true), func(fs flagSet) {
 		fs.StringVar(&listen, "listen", "", "also be the sprint's server: the workers' verbs on this `address:port` (this machine's address on the fleet's private network; a name, a public address, a link-local address, and an every-network address are refused), where nova-swarm member --server <address>:<port> sends them, and the coordinator's verbs on 127.0.0.1 at the same port, where NOVA_SPRINT_SERVER=127.0.0.1:<port> sends them")
 		fs.StringVar(&decideDir, "decide", "", "also keep the record of the sprint's attempt and grade decisions in this `dir` (nova-decide's layer 2: attempt.jsonl, grade.jsonl): the finishes' attempt decisions recorded, every card graded before its first deal with JEV_API_KEY from this environment, and each decision's outcome attached when its card lands or is dropped, every "+DecideEvery.String())
 		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); land is then not run by hand")
@@ -249,6 +252,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	if st == nil {
 		return code
 	}
+	st.AnswerRules = rules
 	if a.twinOpen(c.redis) {
 		return refuse(stderr, "run", twinMachine)
 	}
@@ -526,4 +530,14 @@ machine (STOPPED, every provider is out of credit) and start is refused
 until one is paid. Low on funds never stops it. Every
 verb works in both states. run stops (exit 3) when its own binary is replaced
 on disk, so its supervisor starts the new build.`) + "\n"
+}
+
+// answerRulesFlag is run's and tick's --answer-rules: the tick answers the mechanical
+// judgments by rule (docs/SPEC-SPRINT.md section 8, answered by rule). The run loop answers
+// by default; a tick by hand only when asked, so a twin's or a test's tick is the machine's
+// moves alone unless it says so.
+func answerRulesFlag(on *bool, byDefault bool) func(flagSet) {
+	return func(fs flagSet) {
+		fs.BoolVar(on, "answer-rules", byDefault, "answer the mechanical judgments by rule, recorded \"answered by rule <name>\" (work came back failed: redealt, then a tier up; a card at its bound: a tier up, heavy to a friend; a late card: a wait once with progress, else returned and redealt; a conflict in a file no ledger owns: returned, redone on the tip, resumed; the same finding twice: marked a brief defect); nova-config's sprint row answer_rules_off turns single rules off; --answer-rules=false leaves every judgment to the coordinator (run answers by default, a tick by hand only with --answer-rules); nova-sprint rules prints what they would answer now")
+	}
 }

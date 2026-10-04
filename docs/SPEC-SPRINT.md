@@ -2125,6 +2125,7 @@ the tick would make, no other open judgment on it).
 | stream stopped: stream branch red | return the suspect and resume, rework the suspect | no |
 | stream stopped: needs a card of another stream first | rank that card first (the tick resumes when it lands), wait, card (look at both), return, drop | no |
 | stream stopped: the merge queue rejected | resume, return, drop | no |
+| stream stopped: the base fails its tree gate (land's base-gate rule, its third failure; section 8, answered by rule) | resume (the base passes again), wait | no |
 | ci red on a primary | rework (with a fix), return, drop, card (look), ack (looked, nothing to do) | yes |
 | a primary came back a second time for the same cause | card (stop and look) | no |
 | a primary is blocked on something dropped | drop, ack (waives the dropped need); `relink <old> <new>` answers it when the dropped card has a twin (section 2, a card replaced by its twin) | yes |
@@ -2300,7 +2301,8 @@ This is pull visibility; nothing claims to detect a dead process.
 
 `answer` answers the routine judgments by the judgment decision
 (docs/SPEC-NOVA-DECIDE.md section 13; the owner, 2026-10-03: "Please push Jev
-wide"). The routine kinds are the ones a coordinator's own loop answered by the
+wide"). The tick's rules answer the mechanical ones first (answered by rule, below):
+`answer` reads what they leave. The routine kinds are the ones a coordinator's own loop answered by the
 printed lines: a reader found it broken, work came back failed, a primary is
 blocked on something dropped, stalled, stream stopped: conflict on a card, a
 work card is past its deadline, cannot ask, ready to accept, and a card reached
@@ -2386,6 +2388,42 @@ records under one `decide/` directory (a member's reads in `<root>/decide/read.j
 the brief's in `~/nova-sprint/decide/brief.jsonl`), and answer makes that directory
 0700, or tightens it to 0700 when it was made before, as the records hold the sprint's
 state.
+
+### Answered by rule
+
+The machine answers the mechanical judgments itself, by rule, without the coordinator (the
+owner, 2026-10-04, at 1:36 PM: "I want this sort of oh no fleet is idle, do judgement,
+release more cards thing -- i want this more automated."; that afternoon 49 judgments of
+these kinds were open, some 3h39m old). One pure function decides
+(`sprint.RuleAnswers`, internal/sprint/rules.go): for every open judgment and subject, the
+rule that answers it and its act, or `left` (it needs a mind) or `off` (its rule is turned
+off), with why. The tick applies it in its end, after the checks and the deadlines and
+before the overdue part, as five parts, each a step on a fresh read (`rule return`, `rule
+resume`, `rule rework`, `rule late`, `rule brief`), so a judgment the end raises is
+answered in its own tick, and a conflict's three moves are made in one. Each answer is a
+verb the judgment's decisions name, applied as the machine; it closes the judgment with
+the decided note `answered by rule <name>: <act>: <why>` (the log and the inbox's decided
+list), and writes `rule_answer` (`<name>: <act> at <time>`) on the card it moved. `nova-sprint
+rules` prints the same answers, read-only: one `RULE` line per judgment and subject, and
+`RULES OK judgments= acting= left= off= by=<rule>_<act>=<n>,...`.
+
+| rule | judgment | answer |
+|---|---|---|
+| `failed` | work came back failed (a take with no result is redealt by the machine, section 5, and reaches here as its bound) | the next attempt (rework, the report its fix) on the next route of its tier, the routes it drew left out; the `RuleAttemptCap`-th (2) failure on one tier (`rule_tier`, `rule_fails` on the primary) a new attempt one tier up (`rework --tier`: flash to pro to heavy, the first tier above that a route serves); past heavy, a friend's card (`who=friend`: the friends' deal gives it to a friend up with room) |
+| `bound` | a card reached its bound (its redeal bound at its ceiling, or the second identical failure) | a new attempt one tier up, as `failed`'s climb; past heavy, a friend's card. A card every member up refused at staging, or at its brief's bound, is left |
+| `late` | a work card is past its deadline | with progress in the last 10 minutes (the work card's `progress` stamp, which its worker reports; no member writes it yet, so today a late card has none) a wait of 30 minutes, once a generation (`rule_waited`); without, or after its wait, once its holder has had its own whole deadline, the card is returned and dealt again (withdrawn, the take ended: it spends a redeal, so a card late again and again reaches its bound and climbs); a card just dealt again is held until its holder's own deadline. Each answer keeps a hold on the condition until the time it names, and the tick raises it again then if it still holds. A friend's card is left: a friend keeps her cards |
+| `conflict` | stream stopped: conflict on a card, where the lander said the paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports) | the card returned to review (`rule_redo` its attempt), the stream resumed, and the card reworked with the fix `redo the same change on the current tip`; a conflict in a ledger the lander could not resolve, or one whose files the lander did not say, is left |
+| `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
+| `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
+
+A reader found it broken stays a judgment: a finding needs a mind (the same finding on the
+same card twice is a brief defect, above). So does every other type. `run` and `tick` answer
+by rule unless `--answer-rules=false` (a `tick` by hand only with `--answer-rules`); nova-config's sprint row `answer_rules_off` (a list of
+`base-gate, bound, brief-defect, conflict, failed, late`, applied to
+`sprint:answer_rules_off` and read with the routes) turns single rules off
+(`TestEachRuleHasAnOffSwitch`). The tests are internal/sprint/store/rule_answers_test.go and
+cmd/nova-sprint/base_gate_rule_test.go; the model is tla/SprintRules.tla (`RuleAnswersBounded`,
+`LadderClimbs`, `WaitOnce`, `BaseStopsOnThird`).
 
 ## 9. What is always true
 
