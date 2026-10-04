@@ -267,7 +267,7 @@ One unit per record of `nova_loops`, from the record's fields and the host's
 layout: the command is the record's `argv`, word for word (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
-record's log under the fleet row's `loops_dir` (migration 0027 seeds it to
+record's log under the fleet row's `loops_dir` (migration 0033 seeds it to
 `~/nova-bench/loops`), which the play creates. Every unit
 gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
 a `nova-swarm member`, inventory removes an older endpoint assignment from the
