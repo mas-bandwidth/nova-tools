@@ -20,10 +20,6 @@ $ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch mai
 $ nova-check convergence --repo mas-bandwidth/nova-tools \
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
-$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 $ nova-check quickstart --dir ./self
 $ nova-fuse check --box ./fuse-box.json a-forum
