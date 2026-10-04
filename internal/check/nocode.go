@@ -260,8 +260,8 @@ func ParseDenyList(spec string) ([]string, error) {
 	if spec == "" {
 		return nil, errors.New("empty deny-list specification")
 	}
-	if strings.HasPrefix(spec, "@") {
-		path := strings.TrimPrefix(spec, "@")
+	if after, ok := strings.CutPrefix(spec, "@"); ok {
+		path := after
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("deny-list file: %w", err)

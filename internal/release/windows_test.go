@@ -455,8 +455,8 @@ func TestInstallMovesARunningFileAsideWhenTheRenameIsRefused(t *testing.T) {
 	// `nova-version snapshot` (it takes nova-* only) and out of `--retire`.
 	var aside string
 	for _, r := range renames {
-		if strings.HasPrefix(r, "nova-update.exe -> ") {
-			aside = strings.TrimPrefix(r, "nova-update.exe -> ")
+		if after, ok := strings.CutPrefix(r, "nova-update.exe -> "); ok {
+			aside = after
 		}
 	}
 	if aside == "" {

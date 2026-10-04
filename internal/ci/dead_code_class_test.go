@@ -119,8 +119,8 @@ func findDeadCodeUnion(t *testing.T, ctx context.Context, root string) (map[stri
 		}
 		for _, pkg := range pkgs {
 			p := pkg.Path
-			if strings.HasPrefix(p, modulePrefix) {
-				p = strings.TrimPrefix(p, modulePrefix)
+			if after, ok := strings.CutPrefix(p, modulePrefix); ok {
+				p = after
 			}
 			for _, fn := range pkg.Funcs {
 				if fn.Marker || fn.Generated {

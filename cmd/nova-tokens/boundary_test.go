@@ -51,8 +51,8 @@ func binaryPackages(t *testing.T) []string {
 		for _, f := range pkgFiles(t, pkg) {
 			for _, imp := range f.Imports {
 				path := strings.Trim(imp.Path.Value, `"`)
-				if strings.HasPrefix(path, mod) {
-					walk(strings.TrimPrefix(path, mod))
+				if after, ok := strings.CutPrefix(path, mod); ok {
+					walk(after)
 				}
 			}
 		}

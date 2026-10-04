@@ -209,8 +209,8 @@ func ReadHEADTreeBlobs(storeDir string) (map[string]string, error) {
 	}
 	headContent := strings.TrimSpace(string(headBytes))
 	var commitSHA string
-	if strings.HasPrefix(headContent, "ref: refs/heads/") {
-		branch := strings.TrimPrefix(headContent, "ref: refs/heads/")
+	if after, ok := strings.CutPrefix(headContent, "ref: refs/heads/"); ok {
+		branch := after
 		commitSHA, err = resolveRef(gitDir, "refs/heads/"+branch)
 		if err != nil {
 			return nil, fmt.Errorf("unable to resolve branch %s: %w", branch, err)
@@ -301,8 +301,8 @@ func readLooseCommitTree(gitDir, commitSHA string) (map[string]string, error) {
 	var treeSHA string
 	lines := strings.Split(string(data), "\n")
 	for _, l := range lines {
-		if strings.HasPrefix(l, "tree ") {
-			treeSHA = strings.TrimSpace(strings.TrimPrefix(l, "tree "))
+		if after, ok := strings.CutPrefix(l, "tree "); ok {
+			treeSHA = strings.TrimSpace(after)
 			break
 		}
 	}

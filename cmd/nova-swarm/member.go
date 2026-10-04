@@ -937,8 +937,8 @@ func readResult(path string) (head, verdict, report string) {
 		if strings.HasPrefix(l, "verdict:") && verdict == "" {
 			verdict = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(l, "verdict:")))
 		}
-		if strings.HasPrefix(l, "## ") {
-			inOne = strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(l, "## ")), "one line")
+		if after, ok := strings.CutPrefix(l, "## "); ok {
+			inOne = strings.EqualFold(strings.TrimSpace(after), "one line")
 			continue
 		}
 		if inOne && l != "" && report == "" {

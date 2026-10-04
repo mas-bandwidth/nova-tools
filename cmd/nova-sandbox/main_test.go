@@ -1583,8 +1583,8 @@ func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 		case strings.Contains(line, "nova-sandbox probe "):
 			fields := strings.Fields(line)
 			for i, f := range fields {
-				if strings.HasPrefix(f, "HOME=") {
-					home = strings.Trim(strings.TrimPrefix(f, "HOME="), `"'`)
+				if after, ok := strings.CutPrefix(f, "HOME="); ok {
+					home = strings.Trim(after, `"'`)
 				}
 				if f == "nova-sandbox" {
 					argv = fields[i+1:]
@@ -1626,8 +1626,8 @@ func exampleCommands(t *testing.T, block, base string) []string {
 		if line == "" {
 			continue
 		}
-		if strings.HasSuffix(line, "\\") {
-			joined += strings.TrimSpace(strings.TrimSuffix(line, "\\")) + " "
+		if before, ok := strings.CutSuffix(line, "\\"); ok {
+			joined += strings.TrimSpace(before) + " "
 			continue
 		}
 		cmdLine := joined + line

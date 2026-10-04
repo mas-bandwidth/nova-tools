@@ -226,8 +226,8 @@ func ParseReport(data []byte) Report {
 			}
 			r.Gates = append(r.Gates, Gate{Name: cells[0], Result: result, Seconds: cells[2]})
 		case "left owed":
-			if strings.HasPrefix(trimmed, "- ") {
-				r.LeftOwed = append(r.LeftOwed, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+			if after, ok := strings.CutPrefix(trimmed, "- "); ok {
+				r.LeftOwed = append(r.LeftOwed, strings.TrimSpace(after))
 			}
 		case "one line":
 			if trimmed != "" && r.OneLine == "" {

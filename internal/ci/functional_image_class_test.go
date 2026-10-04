@@ -87,8 +87,8 @@ func containerInstructions(src string) []string {
 		if trim == "" && cur.Len() == 0 {
 			continue
 		}
-		if strings.HasSuffix(line, "\\") {
-			cur.WriteString(strings.TrimSuffix(line, "\\"))
+		if before, ok := strings.CutSuffix(line, "\\"); ok {
+			cur.WriteString(before)
 			cur.WriteString(" ")
 			continue
 		}

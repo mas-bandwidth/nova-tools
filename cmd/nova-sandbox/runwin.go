@@ -664,8 +664,8 @@ func winLongPath(p string) string {
 		return p
 	}
 	p = strings.ReplaceAll(p, "/", `\`)
-	if strings.HasPrefix(p, `\\`) {
-		return `\\?\UNC\` + strings.TrimPrefix(p, `\\`)
+	if after, ok := strings.CutPrefix(p, `\\`); ok {
+		return `\\?\UNC\` + after
 	}
 	// Only an absolute path takes the prefix: \\?\ turns off all path normalisation, so a
 	// relative path prefixed with it is not a path at all.

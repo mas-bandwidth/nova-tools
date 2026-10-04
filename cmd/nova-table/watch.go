@@ -210,10 +210,10 @@ func tablesReaderWith(
 func formatStall(tableName string, err error) string {
 	msg := err.Error()
 	prefix := "table " + tableName + ": "
-	if strings.HasPrefix(msg, prefix) {
-		msg = strings.TrimPrefix(msg, prefix)
-	} else if strings.HasPrefix(msg, "table \""+tableName+"\": ") {
-		msg = strings.TrimPrefix(msg, "table \""+tableName+"\": ")
+	if after, ok := strings.CutPrefix(msg, prefix); ok {
+		msg = after
+	} else if after, ok := strings.CutPrefix(msg, "table \""+tableName+"\": "); ok {
+		msg = after
 	}
 	if idx := strings.Index(msg, "; run: "); idx != -1 {
 		msg = msg[:idx]

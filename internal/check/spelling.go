@@ -138,8 +138,8 @@ func ParseIgnoreSpec(specs []string) ([]string, error) {
 		if spec == "" {
 			continue
 		}
-		if strings.HasPrefix(spec, "@") {
-			path := strings.TrimPrefix(spec, "@")
+		if after, ok := strings.CutPrefix(spec, "@"); ok {
+			path := after
 			fileWords, err := LoadAllowlistFile(path)
 			if err != nil {
 				return nil, err

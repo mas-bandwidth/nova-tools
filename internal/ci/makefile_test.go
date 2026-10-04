@@ -395,8 +395,8 @@ func joinContinuations(lines []string) []string {
 		if joining {
 			part = strings.TrimLeft(line, " \t")
 		}
-		if strings.HasSuffix(part, "\\") {
-			buf += strings.TrimSuffix(part, "\\") + " "
+		if before, ok := strings.CutSuffix(part, "\\"); ok {
+			buf += before + " "
 			joining = true
 			continue
 		}

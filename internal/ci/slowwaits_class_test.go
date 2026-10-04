@@ -156,8 +156,8 @@ func isSlowTagged(src []byte) bool {
 		if strings.HasPrefix(line, "package ") {
 			return false
 		}
-		if strings.HasPrefix(line, "//go:build") {
-			if slices.Contains(strings.Fields(strings.NewReplacer("&&", " ", "||", " ", "(", " ", ")", " ").Replace(strings.TrimPrefix(line, "//go:build"))), "slow") {
+		if after, ok := strings.CutPrefix(line, "//go:build"); ok {
+			if slices.Contains(strings.Fields(strings.NewReplacer("&&", " ", "||", " ", "(", " ", ")", " ").Replace(after)), "slow") {
 				return true
 			}
 		}

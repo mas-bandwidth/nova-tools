@@ -58,10 +58,10 @@ func genKey(t *testing.T, dir, name string) keyPair {
 	data, err := os.ReadFile(privPath)
 	require.NoError(t, err)
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "# public key: ") {
+		if after, ok := strings.CutPrefix(line, "# public key: "); ok {
 			return keyPair{
 				privPath: privPath,
-				pubKey:   strings.TrimSpace(strings.TrimPrefix(line, "# public key: ")),
+				pubKey:   strings.TrimSpace(after),
 			}
 		}
 	}

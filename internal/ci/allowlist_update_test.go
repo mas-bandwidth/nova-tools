@@ -218,8 +218,8 @@ func helperReadsTree(t *testing.T, root string, fset *token.FileSet, files []*tr
 				}
 				arg := call.Args[len(call.Args)-1]
 				for _, name := range r.resolve(fn, arg, 0) {
-					if strings.HasPrefix(name, "@dir:") {
-						name = "shard directory " + strings.TrimPrefix(name, "@dir:")
+					if after, ok0 := strings.CutPrefix(name, "@dir:"); ok0 {
+						name = "shard directory " + after
 					}
 					pos := fset.Position(call.Pos())
 					if rel, err := filepath.Rel(root, pos.Filename); err == nil {
@@ -308,8 +308,8 @@ func ledgerPath(value string) string {
 	if at := strings.LastIndex(clean, "internal/ci/testdata/"); at >= 0 {
 		return clean[at+len("internal/ci/testdata/"):]
 	}
-	if strings.HasPrefix(clean, "testdata/") {
-		return strings.TrimPrefix(clean, "testdata/")
+	if after, ok := strings.CutPrefix(clean, "testdata/"); ok {
+		return after
 	}
 	return strings.TrimPrefix(clean, "./")
 }

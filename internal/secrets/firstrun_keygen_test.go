@@ -112,8 +112,8 @@ func TestTheKeygenFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T)
 	pub, recovery := "", ""
 	foundKeys := false
 	for _, l := range step[1:] {
-		if strings.HasPrefix(l, rulePrefix) {
-			parts := strings.Split(strings.TrimPrefix(l, rulePrefix), ",")
+		if after, ok := strings.CutPrefix(l, rulePrefix); ok {
+			parts := strings.Split(after, ",")
 			require.Len(t, parts, 2, "the documented SECRETS RULE age line does not carry exactly two keys: %q", l)
 			pub, recovery = parts[0], parts[1]
 			foundKeys = true

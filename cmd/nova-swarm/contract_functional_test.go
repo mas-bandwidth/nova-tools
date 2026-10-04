@@ -99,8 +99,8 @@ func realWallBackend(t *testing.T) string {
 	require.Equal(t, "OK", fields[1], "malformed nova-sandbox check output: %q", string(out))
 	backend := ""
 	for _, field := range fields[2:] {
-		if strings.HasPrefix(field, "backend=") {
-			backend = strings.TrimPrefix(field, "backend=")
+		if after, ok := strings.CutPrefix(field, "backend="); ok {
+			backend = after
 			break
 		}
 	}

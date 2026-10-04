@@ -50,8 +50,8 @@ func seatWrapLines(src []byte) (lines []string, starts []int) {
 		if cur.Len() == 0 {
 			start = i + 1
 		}
-		if strings.HasSuffix(line, `\`) {
-			cur.WriteString(strings.TrimSuffix(line, `\`))
+		if before, ok := strings.CutSuffix(line, `\`); ok {
+			cur.WriteString(before)
 			cur.WriteString(" ")
 			continue
 		}

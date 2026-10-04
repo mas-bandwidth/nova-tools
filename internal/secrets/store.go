@@ -131,8 +131,8 @@ func parseSopsConfig(f io.Reader) (*SopsConfig, error) {
 			inAgeBlock = false
 			currentRule = &CreationRule{}
 			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
-			if strings.HasPrefix(rest, "path_regex:") {
-				val := strings.TrimSpace(strings.TrimPrefix(rest, "path_regex:"))
+			if after, ok := strings.CutPrefix(rest, "path_regex:"); ok {
+				val := strings.TrimSpace(after)
 				val = strings.Trim(val, `"'`)
 				currentRule.PathRegex = val
 			}
@@ -166,8 +166,8 @@ func parseSopsConfig(f io.Reader) (*SopsConfig, error) {
 			}
 		}
 
-		if strings.HasPrefix(trimmed, "age:") {
-			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "age:"))
+		if after, ok := strings.CutPrefix(trimmed, "age:"); ok {
+			val := strings.TrimSpace(after)
 			val = strings.Trim(val, `"'`)
 			if val == ">-" || val == "|" || val == "" {
 				inAgeBlock = true

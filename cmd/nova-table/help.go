@@ -113,8 +113,8 @@ func (app *application) dispatch(args []string, out, errout io.Writer) int {
 	if len(args) > 0 && isGroup(args[0]) {
 		var names []string
 		for _, c := range commands {
-			if strings.HasPrefix(c.name, args[0]+" ") {
-				names = append(names, strings.TrimPrefix(c.name, args[0]+" "))
+			if after, ok := strings.CutPrefix(c.name, args[0]+" "); ok {
+				names = append(names, after)
 			}
 		}
 		why := args[0] + " wants one of its verbs;"

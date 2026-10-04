@@ -865,8 +865,8 @@ func parseUsedMemory(info string) int64 {
 	scanner := bufio.NewScanner(strings.NewReader(info))
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "used_memory:") {
-			val := strings.TrimPrefix(line, "used_memory:")
+		if after, ok := strings.CutPrefix(line, "used_memory:"); ok {
+			val := after
 			n, _ := strconv.ParseInt(strings.TrimSpace(val), 10, 64)
 			return n
 		}
@@ -906,8 +906,8 @@ func logRedisVersion(t *testing.T, c *redis.Client) {
 	scanner := bufio.NewScanner(strings.NewReader(info))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "redis_version:") {
-			ver := strings.TrimPrefix(line, "redis_version:")
+		if after, ok := strings.CutPrefix(line, "redis_version:"); ok {
+			ver := after
 			t.Logf("redis_version: %s", strings.TrimSpace(ver))
 			return
 		}

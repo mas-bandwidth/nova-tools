@@ -55,8 +55,8 @@ func TestCatalogRoutesAndGuardsAreValid(t *testing.T) {
 		st, err := os.Stat(dirPath)
 		assert.True(t, err == nil && st.IsDir(), "catalog path %s does not exist on disk", e.Path)
 
-		if strings.HasPrefix(e.Guard, "go test ./") {
-			pkgPath := strings.TrimPrefix(e.Guard, "go test ./")
+		if after, ok := strings.CutPrefix(e.Guard, "go test ./"); ok {
+			pkgPath := after
 			pkgPath = strings.TrimSuffix(pkgPath, "/...")
 			absPkg := filepath.Join(root, filepath.FromSlash(pkgPath))
 			pst, statErr := os.Stat(absPkg)

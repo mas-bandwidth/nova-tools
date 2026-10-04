@@ -608,8 +608,8 @@ func certificationOKNeeds(src string) map[string]bool {
 			continue
 		}
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "needs:") {
-			list := strings.TrimSpace(strings.TrimPrefix(trimmed, "needs:"))
+		if after, ok := strings.CutPrefix(trimmed, "needs:"); ok {
+			list := strings.TrimSpace(after)
 			list = strings.Trim(list, "[]")
 			for _, name := range strings.Split(list, ",") {
 				if name = strings.TrimSpace(name); name != "" {
