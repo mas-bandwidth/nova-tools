@@ -987,7 +987,7 @@ FLEET-UP OK moved=1 refused=0 notes=0 op=fleet-release-t1-1
 STOPPED
 NOTE a twin beats every member at every verb: each member added is up after the next nova-sprint tick
 
-$ nova-sprint add --stream s1 --count 1
+$ nova-sprint add --stream s1 --count 1 --one
 MOVED s1-1 -> ready stream=s1 score=1
 ADD OK stream=s1 cards=1 before=- moved=1 refused=0 notes=0 op=add-t2-1
 NOTE the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>
@@ -1139,14 +1139,14 @@ TICK OK state=RUNNING idle=no moved=2 notes=0
 
 $ nova-sprint answer --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
 judgment        card  kind    verb    p     act     why
-finish-t24-1.1  s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1
-finish-t24-1.1  s1-2  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-2
+finish-t24-1.1  s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1 --one
+finish-t24-1.1  s1-2  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-2 --one
 ANSWER OK rows=2 applied=0 would_apply=0 listed=2 refused=0 failed=0 left=0 outcomes=0 bar=- record=./judgment.jsonl; run: nova-sprint inbox
 
 $ nova-sprint answer --bar 0.8 --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
 judgment        card  kind    verb    p     act      why
-finish-t24-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --op decide.finish-t24-1.1_s1-1
-finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --op decide.finish-t24-1.1_s1-2
+finish-t24-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --one --op decide.finish-t24-1.1_s1-1
+finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --one --op decide.finish-t24-1.1_s1-2
 ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
 ```
 

@@ -28,8 +28,8 @@ func TestAPinnedCardOnTheTwinIsReadBackByCardAndRoutes(t *testing.T) {
 	require.NoError(t, os.WriteFile(bad, []byte("s1: the work (s1) tier: pro\nmodel: nope\n\nThe task.\n"), 0o644))
 	for _, line := range []string{
 		"nova-sprint init --readers reader-a,reader-b --members m1:2",
-		"nova-sprint add --stream s1 --count 1 --brief-file " + pin,
-		"nova-sprint add --stream s4 --count 1",
+		"nova-sprint add --stream s1 --count 1 --one --brief-file " + pin,
+		"nova-sprint add --stream s4 --count 1 --one",
 		"nova-sprint start",
 		"nova-sprint tick",
 		"nova-sprint tick",
@@ -42,7 +42,7 @@ func TestAPinnedCardOnTheTwinIsReadBackByCardAndRoutes(t *testing.T) {
 		code, o, e := run(line)
 		require.Equal(t, 0, code, "%s\n%s%s", line, o, e)
 	}
-	code, _, e := run("nova-sprint add --stream s2 --count 1 --brief-file " + bad)
+	code, _, e := run("nova-sprint add --stream s2 --count 1 --one --brief-file " + bad)
 	assert.Equal(t, 2, code)
 	assert.Contains(t, e, "model: nope is not <provider>/<model>")
 

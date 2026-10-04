@@ -47,7 +47,7 @@ func TestAddBriefFileStoresTheBriefByteForByte(t *testing.T) {
 		path := filepath.Join(dir, strings.ReplaceAll(c.name, " ", "-")+".md")
 		require.NoError(t, os.WriteFile(path, []byte(c.file), 0o600))
 		stream := "s" + strings.ReplaceAll(c.name, " ", "")
-		ta.ok("add --stream " + stream + " --count 1 --brief-file " + path)
+		ta.ok("add --stream " + stream + " --count 1 --one --brief-file " + path)
 		ta.deal(1)
 		assert.Equal(t, c.want, ta.briefOf("m1", stream+"-1"), "%s: the packet in queue --json carries the brief", c.name)
 		var took struct{ Packets []sprint.Packet }
@@ -72,9 +72,9 @@ func TestAddBriefFileRefusals(t *testing.T) {
 	missing := filepath.Join(dir, "absent.md")
 	before := ta.applies()
 	for _, c := range []struct{ line, want string }{
-		{"add --stream s1 --count 1 --brief x --brief-file " + path, "--brief and --brief-file are two ways to give the brief"},
-		{"add --stream s1 --count 1 --brief-file " + missing, missing},
-		{"add --stream s1 --count 1 --brief-file " + dir, dir},
+		{"add --stream s1 --count 1 --one --brief x --brief-file " + path, "--brief and --brief-file are two ways to give the brief"},
+		{"add --stream s1 --count 1 --one --brief-file " + missing, missing},
+		{"add --stream s1 --count 1 --one --brief-file " + dir, dir},
 	} {
 		code, out, errs := ta.do(c.line)
 		assert.Equal(t, 2, code, "%s: exit %d, out %q, err %q; want exit 2 naming %q", c.line, code, out, errs, c.want)
@@ -175,7 +175,7 @@ func TestInboxJSONCarriesTheJudgmentsToActOn(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 3")
-	ta.ok("add --stream s2 --count 1")
+	ta.ok("add --stream s2 --count 1 --one")
 	ta.deal(4)
 	ta.failOnce("m1", "s1-1.w1@1", "the tests went red")
 	ta.failOnce("m1", "s1-2.w1@1", "the tests went red")

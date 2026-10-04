@@ -30,10 +30,11 @@ const keyWhere = "where" // STRING, the where record (JSON)
 // LandingRate may count from then on (sprint.RecentLandings), in Unix seconds,
 // oldest first.
 type WhereRecord struct {
-	Epoch    uint64  `json:"epoch"`
-	Rev      uint64  `json:"rev"`
-	Held     int     `json:"held"`
-	Landings []int64 `json:"landings,omitempty"`
+	Epoch    uint64                `json:"epoch"`
+	Rev      uint64                `json:"rev"`
+	Held     int                   `json:"held"`
+	Landings []int64               `json:"landings,omitempty"`
+	Critical []sprint.CriticalCard `json:"critical,omitempty"` // the five heaviest (weight.go)
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -45,7 +46,7 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 			landed = append(landed, at)
 		}
 	}
-	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s)}
+	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5)}
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -111,6 +112,7 @@ type WhereFacts struct {
 	Heartbeat Heartbeat
 	Held      int
 	Landed    []time.Time
+	Critical  []sprint.CriticalCard // the five heaviest, from the record (weight.go)
 }
 
 // WhereFacts reads the machine's records and the where record in one exchange.
@@ -142,7 +144,7 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 			}
 		}
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
-			f.Held = r.Held
+			f.Held, f.Critical = r.Held, r.Critical
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}

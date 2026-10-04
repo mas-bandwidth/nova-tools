@@ -333,6 +333,16 @@ func Add(s *Snapshot, r AddReq) Plan {
 	if len(pulled) > 0 {
 		p.inserting = true
 	}
+	// the weights the admission changes (weight.go): the cards admitted carry theirs, and
+	// every primary they wait on is written its new one
+	var admitted []*Card
+	for _, a := range in {
+		if !a.sent && !a.gate {
+			admitted = append(admitted, &Card{ID: a.id, Fields: map[string]string{"needs": strings.Join(a.needs, ",")}})
+		}
+	}
+	weighed := weighUnits(s, admitted, nil)
+	weights := weightsOver(append(openPrimaries(s), admitted...))
 	for _, a := range in {
 		col := Ready
 		for _, n := range a.needs {
@@ -368,6 +378,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")
+		}
+		if n := weights[a.id]; n > 0 && !a.sent && !a.gate {
+			fields[FieldBehind] = itoa(n)
 		}
 		u := Unit{Key: a.id, Stream: r.Stream, Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", a.id, col, r.Stream, fmtScore(a.score))}
 		if a.gate {
@@ -416,6 +429,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		head = nil
 		p.Units = append(p.Units, u)
 	}
+	p.Units = append(p.Units, weighed...)
 	if len(p.Units) > 0 {
 		last := &p.Units[len(p.Units)-1]
 		for _, c := range streamLine(s, r.Stream) {
@@ -1296,6 +1310,11 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			n := Note{Kind: Judgment, Type: NBound, Stream: pr.Row, Primaries: []string{pr.ID}, Count: 1, At: s.Now, Who: who, Marked: true,
 				Card: c.ID, Attempt: attempt, What: identicalWorkWhat(c.ID, attempt, set[FieldFailure], pr.ID),
 				Decisions: append([]string(nil), TickDecisions[NBound]...)}
+			u.Notes = append(u.Notes, n)
+		} else if bb, ok := AtBriefBound(pr, ""); ok {
+			// too many attempts on one brief: the brief is wrong, not the worker (brief_bound.go)
+			n := judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
+			n.Who, n.Attempt, n.What = who, attempt, bb.String()+"; attempt "+itoa(attempt)+" failed: "+r.Report
 			u.Notes = append(u.Notes, n)
 		} else {
 			n := judgment(NWorkFailed, pr.Row, s.Now, pr.Int("failed"), pr.ID)

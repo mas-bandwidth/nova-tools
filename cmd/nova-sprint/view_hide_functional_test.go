@@ -57,7 +57,7 @@ func TestTheViewShowsAStreamWithNoCards(t *testing.T) {
 	}
 
 	run("init", "--readers", "reader-a,reader-b", "--members", "m1")
-	run("add", "--stream", "a,b,c", "--count", "1")
+	run("add", "--stream", "a,b,c", "--count", "1", "--one")
 	got := frame()
 	require.True(t, has(got, "work"), "streams with a card each: the work table is drawn:\n%s", got)
 	require.Contains(t, got, "\na ", "streams with a card each: the work table is drawn:\n%s", got)
@@ -69,7 +69,7 @@ func TestTheViewShowsAStreamWithNoCards(t *testing.T) {
 	for _, stream := range []string{"\na ", "\nb ", "\nc "} {
 		require.GreaterOrEqual(t, strings.Count(got, stream), 2, "after a clear the stream row %q is in the work and merge tables, at zero:\n%s", stream, got)
 	}
-	run("add", "--stream", "b", "--count", "1")
+	run("add", "--stream", "b", "--count", "1", "--one")
 	got = frame()
 	require.True(t, has(got, "work"), "every stream is drawn, with a card or none:\n%s", got)
 	require.Contains(t, got, "\na ", "every stream is drawn, with a card or none:\n%s", got)

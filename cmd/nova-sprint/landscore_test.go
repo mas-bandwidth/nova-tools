@@ -172,7 +172,7 @@ func TestLandScoresAfterThePassAndStopsAtTheFirstFailure(t *testing.T) {
 			t.Parallel()
 			r := newLandRig(t)
 			r.ok("add --stream s1 --count 2")
-			r.ok("add --stream s2 --count 1")
+			r.ok("add --stream s2 --count 1 --one")
 			heads := map[string]string{}
 			for _, id := range []string{"s1-1", "s1-2", "s2-1"} {
 				heads[id] = r.head(id, "main", id+".txt", id+"\n")

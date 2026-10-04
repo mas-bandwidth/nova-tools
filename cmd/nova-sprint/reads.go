@@ -463,6 +463,7 @@ type whereView struct {
 	Tables      map[string]map[string]map[string]string `json:"tables"` // table -> row -> column -> cell as printed
 	Streams     []sprint.StreamClock                    `json:"streams"`
 	Stalled     []string                                `json:"stalled,omitempty"`
+	Critical    []sprint.CriticalCard                   `json:"critical,omitempty"` // the five heaviest (weight.go)
 	Coordinator string                                  `json:"coordinator,omitempty"`
 	Pending     string                                  `json:"pending,omitempty"`
 	Epoch       uint64                                  `json:"epoch"`
@@ -765,7 +766,13 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		v.Machine = st.MachineLineOf(facts.Machine, facts.Heartbeat)
 	}
 	var b strings.Builder
-	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
+	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n")
+	// the five heaviest cards, the ones the most wait on, under the summary: the tick's where
+	// record carries them (weight.go; store.WhereRecord)
+	if v.Critical = facts.Critical; len(v.Critical) > 0 {
+		b.WriteString(sprint.CriticalLine(v.Critical) + "\n")
+	}
+	b.WriteString("\n")
 	parts := map[string]string{}
 	var friendCards map[string]store.FriendRow
 	for i, t := range shapes {
@@ -1352,6 +1359,9 @@ func groupLine(g sprint.Group, now time.Time) string {
 	}
 	kind := strings.ToUpper(g.Kind)
 	l := fmt.Sprintf("%s %s %s %s", kind, g.ID, mark, g.Type)
+	if g.Behind >= sprint.CriticalBehind {
+		l = fmt.Sprintf("CRITICAL %d behind: %s", g.Behind, l) // the cards that wait on it (weight.go)
+	}
 	if g.Alias != "" {
 		l += "  alias=" + g.Alias
 	}

@@ -978,7 +978,7 @@ needs no forge:
 ```sh
 export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
 nova-sprint init --readers reader-a,reader-b --members m1
-nova-sprint add --stream s1 --count 1
+nova-sprint add --stream s1 --count 1 --one
 nova-sprint start
 nova-sprint tick
 nova-sprint tick

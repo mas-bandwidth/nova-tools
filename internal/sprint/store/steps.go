@@ -165,6 +165,12 @@ func SetStep(r sprint.SetReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Set(s, r) }}
 }
 
+// PromotedStep records a promotion of the sprint branch into dev (sprint.Promoted).
+func PromotedStep(r sprint.PromotedReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "promoted", Load: tables(sprint.Work),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Promoted(s, r) }}
+}
+
 // BalanceStep writes the providers' balances the run loop's poll read, and the rests they
 // call for (sprint.Balance; nova-tools#5199).
 func BalanceStep(r sprint.BalanceReq) Step {

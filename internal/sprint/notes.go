@@ -72,7 +72,8 @@ const (
 	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
 	NWorkFailed      = "work came back failed"
 	NReadBroken      = "a reader found it broken"
-	NReadReturned    = "a reader returned a read" // no verdict, not a read: asked again
+	NBriefWrong      = "a card has reached its bound: the brief is wrong, not the worker" // brief_bound.go
+	NReadReturned    = "a reader returned a read"                                         // no verdict, not a read: asked again
 	NConflict        = "stream stopped: conflict on a card"
 	NRed             = "stream stopped: stream branch red"
 	NCross           = "stream stopped: needs a card of another stream first"
@@ -97,6 +98,7 @@ var Decisions = map[string][]string{
 	NReturned:        {"rework", "accept", "drop"}, // accept only while its reads stand at its head
 	NWorkFailed:      {"rework with a fix", "drop"},
 	NReadBroken:      {"rework with the finding", "ask another reader", "drop"},
+	NBriefWrong:      {"brief", "drop"}, // never rework: a --fix changes the brief not at all (brief_bound.go)
 	NConflict:        {"resolve and resume", "rework", "drop"},
 	NRed:             {"take the suspect off and resume", "rework the suspect"},
 	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},

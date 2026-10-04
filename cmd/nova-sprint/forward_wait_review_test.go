@@ -13,7 +13,7 @@ func TestServerReviewWaitingInboxCannotWriteTheClientStore(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	before, err := ta.m.Cursor(context.Background())
 	require.NoError(t, err)
 	prior := ta.a.getenv

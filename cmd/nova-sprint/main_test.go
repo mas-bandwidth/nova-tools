@@ -404,7 +404,7 @@ func TestVerbLineOnAStoppedMachineHasNoETA(t *testing.T) {
 	require.Equal(t, "STOPPED  0/3 0.0%", lastLine(out), "add on a stopped machine: last line %q in %s", lastLine(out), out)
 	require.NotContains(t, out, "-> ETA", "add on a stopped machine: last line %q in %s", lastLine(out), out)
 	ta.ok("start")
-	out = ta.ok("add --stream s2 --count 1")
+	out = ta.ok("add --stream s2 --count 1 --one")
 	// the added card is queued for the next tick's pump: the table counts it
 	// once the pump has drained the queue
 	require.Equal(t, "0/3 0.0% -> ETA -  machine: running", lastLine(out), "add on a running machine: last line %q in %s", lastLine(out), out)

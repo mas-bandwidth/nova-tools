@@ -23,7 +23,7 @@ func TestAddHeldLoadsAWaveBehindAQuietSentinel(t *testing.T) {
 	require.Contains(t, out, "MOVED sentinel gate -> waiting stream=w score=1; held until release", "add --held")
 	require.NotContains(t, out, "reached", "a held sentinel is never reached")
 	ta.ok("add --stream w a b --actor lead")
-	ta.ok("add --stream v c --held --actor lead")
+	ta.ok("add --stream v c --one --held --actor lead")
 	ta.ok("start --actor lead")
 	ta.ok("tick")
 	for _, g := range ta.inboxGroups() {

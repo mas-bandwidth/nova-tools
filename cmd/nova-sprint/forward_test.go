@@ -89,7 +89,7 @@ func TestWhatTheCoordinatorRunsItself(t *testing.T) {
 		"run":                   {"run"},
 		"tick":                  {"tick"},
 		"fleet sync":            {"fleet", "sync", "--check"},
-		"a verb with its store": {"add", "--stream", "s1", "--count", "1", "--redis", "mem:" + filepath.Join(t.TempDir(), "other.twin")},
+		"a verb with its store": {"add", "--stream", "s1", "--count", "1", "--one", "--redis", "mem:" + filepath.Join(t.TempDir(), "other.twin")},
 		"a read with its store": {"where", "--redis", "mem:" + filepath.Join(t.TempDir(), "other.twin")},
 	} {
 		boss(args...)
@@ -167,7 +167,7 @@ func TestAWatchThroughTheServerSendsOneReadAFrame(t *testing.T) {
 func TestAnInboxWaitThroughTheServerPollsForATickEnd(t *testing.T) {
 	t.Parallel()
 	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1:2",
-		"nova-sprint add --stream s1 --count 1 --brief-file "+proBriefFile(t), "nova-sprint start", "nova-sprint tick", "nova-sprint tick",
+		"nova-sprint add --stream s1 --count 1 --one --brief-file "+proBriefFile(t), "nova-sprint start", "nova-sprint tick", "nova-sprint tick",
 		"nova-sprint take --as m1 --limit 1", "nova-sprint finish --as m1 --epoch 0 s1-1.w1@1")
 	clock := r.a.now()
 	r.a.now = func() time.Time { return clock } // the server's clock, still: what it prints is the same at every read
