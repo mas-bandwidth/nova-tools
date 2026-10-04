@@ -108,7 +108,8 @@ type Launchctl func(ctx context.Context, args ...string) (output string, err err
 const BootstrapTries = 5
 
 // CheckLaunchdBinary refuses a resolved executable on a removable volume.
-// Installation uses local disk for the executable as well as its log/state.
+// Installation uses local disk for the executable as well as its log/state
+// (SPEC-FRIEND, "What is weak, and known": removable-volume permissions).
 func CheckLaunchdBinary(path string) error {
 	clean := filepath.Clean(path)
 	if !filepath.IsAbs(clean) {
