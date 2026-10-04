@@ -28,8 +28,7 @@ func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
 		require.NoError(t, err, err)
 	}
 	c, out, errs := run(t, Environment{}, "watch", "--adopt", checks,
-		"--bus", bus, "--remote", "origin", "--branch", "main",
-		"--as", "coordinator", "--to", "duty")
+		"--bus", bus, "--as", "coordinator", "--to", "duty")
 	combined := out + "\n" + errs
 	if c != 1 {
 		require.EqualValuesf(t, 1, c, "want exit 1 with one refusal, got %d:\n%s", c, combined)
@@ -46,8 +45,8 @@ func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
 	if err != nil {
 		require.NoErrorf(t, err, "coordinator posted no bus receipt: %v", err)
 	}
-	if strings.Count(string(b), "prepare\n") != 1 || strings.Count(string(b), "send\n") != 1 {
-		require.Failf(t, "", "adoption receipt was not posted once via prepare+send:\n%s", string(b))
+	if strings.Count(string(b), "prepare\n") != 0 || strings.Count(string(b), "send\n") != 1 || !strings.Contains(string(b), "argv send --as coordinator --to duty --subject ") || !strings.Contains(string(b), "--stdin") {
+		require.Failf(t, "", "adoption receipt was not one Redis send:\n%s", string(b))
 	}
 }
 
