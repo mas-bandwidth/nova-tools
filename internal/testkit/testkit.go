@@ -4,8 +4,10 @@
 // tree.go), a recording wait for code a synctest bubble cannot hold
 // (waits.go) and a skip by platform (skip.go). Each helper fails the test
 // through testify's require, so a caller's setup is one line. Time in a test
-// is testing/synctest's first, a clockwork.FakeClock where code does real
-// I/O, and never a clock of the kit's own.
+// is passed in as an argument first, a kit Clock where the code takes
+// `now func() time.Time` (clock.go), testing/synctest where the code sleeps,
+// and the Waits seam where it must do real I/O; a real clock only in a
+// functional test.
 //
 // A tool's tests keep one adapter of their own, the entry point as a Main, and
 // call its methods. A tool whose entry point takes a clock, an environment or

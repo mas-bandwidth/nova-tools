@@ -41,10 +41,13 @@ command's environment, so the machine's own git config cannot reach the test.
 the clone's branch to the remote, and `Head(repo)` reads a HEAD sha from a
 clone or from the remote.
 
-Use `testing/synctest` for time-dependent tests first. `Waits` is only for a
-wait seam around code that must perform real I/O and cannot run in a synctest
-bubble; it records requested durations and lets the test hold or release that
-wait. Do not add a general-purpose fake clock to the kit.
+Time in a test is passed in as an argument first: give the code a
+`now func() time.Time` and hand it `Clock`'s `Now` in the test. Use `Clock`
+(`NewClock(start)` over a value, `Advance(d)` to move it, safe for concurrent
+use) for that code, `testing/synctest` for code that sleeps, and `Waits` for
+a wait seam around code that must perform real I/O and cannot run in a
+synctest bubble; it records requested durations and lets the test hold or
+release that wait. A real clock appears only in a functional test.
 
 Keep package-level seam swaps and their cleanup explicit next to the test or
 domain fixture that needs them. A small adapter may bind a tool's injected
