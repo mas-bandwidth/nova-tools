@@ -23,7 +23,7 @@ import (
 func skipPOSIXFakesOnWindows(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		t.Skip("card 8517: POSIX shell-script fakes and POSIX mode bits are unavailable on Windows; covered by TestSealEncryptTakesValueOnStdin")
+		t.Skip("POSIX shell-script fakes and POSIX mode bits are unavailable on Windows; covered by TestSealEncryptTakesValueOnStdin")
 	}
 }
 
