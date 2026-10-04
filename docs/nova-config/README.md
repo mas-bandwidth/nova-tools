@@ -228,7 +228,7 @@ FLEET name=fleet store=m2 coordinator=m1 redis_port=6380 pg_dsn=postgres://nova_
 ### friend
 
 What someone decides for a friend: her slots, which tiers she can do, her
-roles, and her width, the jobs she works at once. "Anything that a friend would just know, is runtime redis
+roles, her width, the jobs she works at once, and her delivery mode. "Anything that a friend would just know, is runtime redis
 data": where she runs, her harness, her logins and her wake path are her own
 presence's, never here. Who coordinates is the sprint row's.
 
@@ -238,10 +238,10 @@ CONFIG ADD kind=friend name=f1 rev=4
 nova-config friend set f1 --slots 32 --roles builder,reader --width 4 --as f1
 CONFIG SET kind=friend name=f1 rev=5 changed=roles,slots,width
 nova-config friend list
-FRIEND name=f1 slots=32 tiers=frontier,pro roles=builder,reader width=4
+FRIEND name=f1 slots=32 tiers=frontier,pro roles=builder,reader width=4 mode=batch
 CONFIG LIST kind=friend rows=1
 nova-config friend history f1
-HISTORY id=4 kind=friend name=f1 op=add actor=f1 at=<t> roles=builder slots=64 tiers=frontier,pro width=8
+HISTORY id=4 kind=friend name=f1 op=add actor=f1 at=<t> mode=batch roles=builder slots=64 tiers=frontier,pro width=8
 HISTORY id=5 kind=friend name=f1 op=set actor=f1 at=<t> roles=builder>builder,reader slots=64>32 width=8>4
 CONFIG HISTORY kind=friend name=f1 changes=2
 ```
@@ -255,7 +255,11 @@ deal's tier filter); `--roles` is a comma list of builder, may-hold, reader;
 `--width` is the jobs she works at once, which nova-sprint friend sync writes
 to her row of the friends table: at least 1, 8 when add is not given one (the
 owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends?
-Start at 8 for each?").
+Start at 8 for each?"). `--mode` is how her daemon (nova-friend run) hands her work:
+batch, the default, every waiting message in one turn of her one session, or
+one-shot, `width` lanes, each its own session of her, each handed one card per
+turn (docs/SPEC-FRIEND.md, one-shot lanes); apply writes it beside the width,
+friend sync copies it to her friends row, and her beat answers it to her daemon.
 
 ### sprint
 

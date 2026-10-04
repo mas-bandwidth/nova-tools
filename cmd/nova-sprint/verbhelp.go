@@ -36,16 +36,18 @@ var verbExit = map[string]string{
 // verbEffect is a verb's effect line, the last line of its -h, where the verb
 // states one (docs/STANDARD.md: `effect: inspection|local write|delivery`).
 var verbEffect = map[string]string{
-	"handover":      "inspection: reads the store, writes nothing",
-	"needs":         "inspection: reads the waiting cards, writes nothing",
-	"held":          "inspection: reads the held cards of the table, writes nothing",
-	"sentinels":     "inspection: reads the sentinels and what each waits on, writes nothing",
-	"reader retire": "local write: retires the named readers in the sprint's store; --dry-run writes nothing",
-	"promoted":      "local write: records the promotion in the sprint's store; --dry-run writes nothing",
-	"preflight":     "inspection: reads the briefs, the table and the repository, writes nothing",
-	"dashboard":     "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
-	"coordinator":   "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
-	"answer":        "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
+	"handover":         "inspection: reads the store, writes nothing",
+	"needs":            "inspection: reads the waiting cards, writes nothing",
+	"held":             "inspection: reads the held cards of the table, writes nothing",
+	"sentinels":        "inspection: reads the sentinels and what each waits on, writes nothing",
+	"view coordinator": "inspection: reads what needs the seat (the tables, the inbox, the friends and the machines), writes nothing",
+	"view worker":      "inspection: reads the worker's cards, their packets and its results not landed, writes nothing",
+	"reader retire":    "local write: retires the named readers in the sprint's store; --dry-run writes nothing",
+	"promoted":         "local write: records the promotion in the sprint's store; --dry-run writes nothing",
+	"preflight":        "inspection: reads the briefs, the table and the repository, writes nothing",
+	"dashboard":        "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
+	"coordinator":      "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
+	"answer":           "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
 }
 
 // commonExit is the codes of every other verb.

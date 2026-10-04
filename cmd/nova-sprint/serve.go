@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -203,6 +204,10 @@ type localHandler struct{ a *app }
 func (h localHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.a.serveHTTP(w, r, true) }
 
 func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
+	if strings.HasPrefix(r.URL.Path, viewPath) {
+		a.serveView(w, r)
+		return
+	}
 	if r.URL.Path != sprintwire.Path || r.Method != http.MethodPost {
 		http.Error(w, "the sprint server takes POST "+sprintwire.Path, http.StatusNotFound)
 		return
@@ -365,4 +370,74 @@ func runningIDs(v string) bool {
 		}
 	}
 	return true
+}
+
+// viewPath is where the server serves the role views (view.go): GET /api/view/coordinator
+// and GET /api/view/worker?as=<name>, each with since=<cursor>, and the coordinator's with
+// all=1. They are reads, served on both listeners as the workers' queue is: the fleet's
+// private network is the whole of the access control (listen).
+const viewPath = "/api/view/"
+
+// serveView runs view <role> --json for a GET, on the line of control as any verb the server
+// runs (a.serial: never during a tick), and answers its JSON, gzipped for a client that takes
+// it. A role, a name or a cursor of the wrong shape is a 400 and nothing is run; a name that
+// is no worker of the sprint is a 404; a store that did not answer is a 503; each with the
+// verb's line.
+func (a *app) serveView(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "the views are read with GET "+viewPath+"coordinator or "+viewPath+"worker?as=<name>", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	role := strings.TrimPrefix(r.URL.Path, viewPath)
+	argv := []string{"view", role, "--redis", a.serveAddr, "--actor", "", "--json"}
+	switch role {
+	case "coordinator":
+		if on, err := strconv.ParseBool(cmp.Or(q.Get("all"), "false")); err != nil {
+			http.Error(w, "all is 1 or 0, found "+oneline.Escape(q.Get("all")), http.StatusBadRequest)
+			return
+		} else if on {
+			argv = append(argv, "--all")
+		}
+	case "worker":
+		as := q.Get("as")
+		if !sprint.ValidID(as) {
+			http.Error(w, "as=<name> names one fleet member or friend (letters, digits, _ and -)", http.StatusBadRequest)
+			return
+		}
+		argv = append(argv, "--as", as)
+	default:
+		http.Error(w, "the views are "+viewPath+"coordinator and "+viewPath+"worker?as=<name>", http.StatusNotFound)
+		return
+	}
+	if since := q.Get("since"); since != "" {
+		if _, err := parseCursor(since); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		argv = append(argv, "--since", since)
+	}
+	var stdout, stderr bytes.Buffer
+	a.serial.Lock()
+	code := a.run(argv, &stdout, &stderr)
+	a.serial.Unlock()
+	switch code {
+	case 0:
+	case 1:
+		http.Error(w, strings.TrimSpace(stderr.String()), http.StatusNotFound)
+		return
+	default:
+		http.Error(w, strings.TrimSpace(stderr.String()), http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	var out io.Writer = w
+	if takesGzip(r.Header.Get("Accept-Encoding")) {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		defer func() { _ = gz.Close() }() // ignored: a reader that has gone reads no answer
+		out = gz
+	}
+	_, _ = out.Write(stdout.Bytes()) // ignored: a reader that has gone reads no answer
 }

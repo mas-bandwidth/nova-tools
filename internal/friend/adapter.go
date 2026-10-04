@@ -20,15 +20,16 @@ import (
 var Harnesses = append([]string{"opencode", "codex", "claude", "antigravity", "dsh", "gemini", "grok"}, RefusedHarnesses...)
 
 // Deliverer pushes one text into the friend's running session as a turn
-// and blocks until the turn ends: its exit code is the harness's, 0 acking
-// the message on the bus (SPEC-FRIEND.md, the deliver command).
+// and normally blocks until the turn ends. Codex queue instead confirms
+// enqueue acceptance; the app runs it after the active turn ends. Exit 0
+// acks the bus message (SPEC-FRIEND.md, the deliver command and Codex).
 type Deliverer interface {
 	Deliver(ctx context.Context, text string) (exit int, err error)
 }
 
 // Deferred is a Deliverer's answer when the session cannot take a turn now
-// and nothing has failed (the Codex chat open in the app, holding the
-// thread's writer lock). The daemon keeps the message in hand, tries again
+// and nothing has failed (for example, neither Codex queue nor resume can
+// accept it). The daemon keeps the message in hand, tries again
 // after RecheckEvery, counts nothing toward MaxDeliveries and acks nothing,
 // so a chat open all day loses no message.
 type Deferred struct{ Reason string }
@@ -198,6 +199,11 @@ type OpenCode struct {
 	Run          Exec
 	Program      string    // "opencode" when empty
 	Out          io.Writer // where the turn's output goes, when set: the daemon's record
+	// Allow is every other path the friend's directory is reached by (a
+	// symlink in the home directory): with Dir and its real path, allowed in
+	// the project config before a turn (AllowDirs), so a headless run never
+	// auto-rejects a tool call there. Nil: the config is left alone.
+	Allow []string
 }
 
 func (o *OpenCode) program() string {
@@ -234,6 +240,9 @@ func NewestSession(listing, dir string) (string, error) {
 }
 
 func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
+	if o.Allow != nil {
+		o.allow()
+	}
 	id := o.Session
 	if id == "" {
 		listing, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"session", "list", "--format", "json"}, "")

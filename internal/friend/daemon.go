@@ -107,6 +107,18 @@ type Daemon struct {
 	SilentStop  time.Duration
 	BrokenAfter int
 	Coordinator string
+	// Row is the friend's nova-config row as the daemon last read it (from
+	// its beat): her delivery mode (ModeBatch or ModeOneShot) and width,
+	// read every step so a change takes effect without a restart; nil, or
+	// empty answers, deliver in batch at Width.
+	Row func() (mode string, width int)
+	// LoadLanes and SaveLanes keep the one-shot lanes' state (ReadLanes,
+	// WriteLanes over the state files); nil keeps it in memory only.
+	LoadLanes func() (LaneState, error)
+	SaveLanes func(LaneState) error
+	// CardDone is the one bus line a lane's session sends when its card is
+	// done (nova-bus send by path, as this friend, to the coordinator).
+	CardDone func(card, to string) string
 
 	m           *Machine
 	status      Status
@@ -188,275 +200,107 @@ func oneLine(s string, n int) string {
 	return s
 }
 
-// Run is the loop until ctx ends. Each step: the clock; when the session
-// is free, every pending message read off the stream (a ping is answered by
-// the daemon at once and acked, never pushed in) and one turn started with
-// all of them; while a turn runs, one peek, so a ping arriving during a long
-// turn is still answered at once; the turn's output watched, and a turn
-// silent past SilentStop stopped; the turn's result (exit 0 acks every
-// message it carried); a beat when the store answered; the session's pong;
-// the status. The daemon's own words about the coordinator collapse to the
-// latest and ride in a turn that carries messages, never alone.
+// loop is one run of the daemon: what Run keeps between steps, shared by the
+// batch turn and the one-shot lanes.
+type loop struct {
+	d                     *Daemon
+	ctx                   context.Context
+	b                     *bus.Bus
+	passive               bool
+	silentStop            time.Duration
+	brokenAfter           int
+	answered              map[string]bool // entries whose ping the daemon has ponged
+	failed                map[string]int  // entries whose turn failed, and how often
+	hand                  []bus.Entry     // messages read and not yet in a turn, oldest first
+	inHand                map[string]bool // entries read and not yet acked or failed: in hand or in a turn
+	notice                *Push           // the latest word about the coordinator the session is owed
+	noticeTaken           *Push           // the word the last head() put in a turn
+	saidSilent            bool            // what the session last heard: the coordinator silent
+	busy                  *turn           // the batch turn under way, or deferred in hand
+	retry                 time.Time       // when the deferred turn in hand is tried again; zero while none is
+	deferrals             int
+	deferSaid             time.Time
+	refusal               string // the last provider refusal, and how many turns in a row said it
+	streak                int
+	broken, told          bool
+	results               chan result
+	lanes                 *laneSet
+	mode                  string // the mode the daemon delivers in now
+	saidMode, saidNoLanes bool
+}
+
+// Run is the loop until ctx ends. Each step: the clock; the friend's row
+// (Row: her delivery mode and width); every pending message read off the
+// stream when nothing waits on it (a ping is answered by the daemon at once
+// and acked, never pushed in), else one peek, so a ping arriving during a
+// long turn is still answered at once; each running turn's output watched,
+// and a turn silent past SilentStop stopped; the turns' results (exit 0 acks
+// every message a turn carried); then, in batch mode, one turn with every
+// waiting message when the session is free, and in one-shot mode, each free
+// lane handed its next card with the waiting messages riding along (lanes.go);
+// a beat when the store answered; the session's pong; the status. The
+// daemon's own words about the coordinator collapse to the latest and ride in
+// a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
-	b := &bus.Bus{Store: d.Store}
-	_, passive := d.Deliver.(interface{ Passive() })
-	silentStop, brokenAfter := d.SilentStop, d.BrokenAfter
-	if silentStop <= 0 {
-		silentStop = DefaultSilentStop
+	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
+		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
+		lanes: &laneSet{results: make(chan laneResult, 64)}, mode: ModeBatch}
+	_, l.passive = d.Deliver.(interface{ Passive() })
+	if l.silentStop <= 0 {
+		l.silentStop = DefaultSilentStop
 	}
-	if brokenAfter <= 0 {
-		brokenAfter = DefaultBrokenAfter
+	if l.brokenAfter <= 0 {
+		l.brokenAfter = DefaultBrokenAfter
 	}
 	d.m = Start(d.Now())
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
-	if !passive {
+	if !l.passive {
 		d.status.Session = SessionOK
-	}
-	answered := map[string]bool{} // entries whose ping the daemon has ponged
-	failed := map[string]int{}    // entries whose turn failed, and how often
-	var hand []bus.Entry          // messages read and not yet in a turn, oldest first
-	inHand := map[string]bool{}
-	var notice *Push    // the latest word about the coordinator the session is owed
-	saidSilent := false // what the session last heard: the coordinator silent
-	var busy *turn      // the turn under way, or deferred in hand
-	var retry time.Time // when the deferred turn in hand is tried again; zero while none is
-	var deferrals int
-	var deferSaid time.Time
-	var refusal string // the last provider refusal, and how many turns in a row said it
-	var streak int
-	broken, told := false, false
-	results := make(chan result, 1)
-	say := func(p Push) {
-		switch {
-		case p.Subject == "coordinator back" && !saidSilent:
-			notice = nil // the session never heard otherwise: nothing to say
-		default:
-			notice = &p
-		}
-	}
-	start := func(t *turn, now time.Time) {
-		tctx, cancel := context.WithCancel(ctx)
-		seen := &atomic.Int64{}
-		tctx = WithOutputSeen(tctx, func() { seen.Add(1) })
-		t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped = now, true, cancel, seen, 0, now, false
-		busy = t
-		go func() {
-			exit, err := d.Deliver.Deliver(tctx, t.text)
-			cancel()
-			results <- result{t, exit, err}
-		}()
-	}
-	ping := func(e bus.Entry, msg bus.Message, nonce, seat string, since, now time.Time) {
-		if answered[e.Entry] {
-			return // the machine saw it when the daemon first did
-		}
-		d.daemonPong(ctx, b, msg, nonce)
-		answered[e.Entry] = true
-		for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
-			say(p)
-		}
 	}
 	for ctx.Err() == nil {
 		now := d.Now()
 		for _, p := range d.m.Tick(now) {
-			say(p)
+			l.say(p)
 		}
-		if passive && notice != nil {
+		if l.passive && l.notice != nil {
 			// nothing can be pushed in: the session hears of it from its own read
-			d.Record(now.UTC().Format(time.RFC3339) + " not delivered: " + d.Harness + " has no deliver command: " + notice.Subject)
-			notice = nil
+			d.Record(now.UTC().Format(time.RFC3339) + " not delivered: " + d.Harness + " has no deliver command: " + l.notice.Subject)
+			l.notice = nil
 		}
-		storeOK := true
-		if busy == nil && !passive && !broken {
-			e, ok, err := b.Recv(ctx, d.Friend, BeatEvery)
-			for err == nil && ok {
-				msg := e.Message()
-				if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
-					// answered by the daemon, never pushed in: the transport is proved, and a ping is no turn
-					ping(e, msg, nonce, seat, since, now)
-					if _, aerr := b.AckEntry(ctx, d.Friend, e.Entry); aerr != nil {
-						err = aerr
-						break
-					}
-					delete(answered, e.Entry)
-				} else if !inHand[e.Entry] {
-					hand = append(hand, e)
-					inHand[e.Entry] = true
-				}
-				if len(hand) >= MaxBatch {
-					break
-				}
-				e, ok, err = b.Recv(ctx, d.Friend, 0) // the rest of what is pending, at once
-			}
-			switch {
-			case ctx.Err() != nil:
-				return nil
-			case err != nil:
-				storeOK = false
-				d.status.StoreError = err.Error()
-				d.Pause(ctx, BeatEvery)
-			default:
-				d.status.StoreError = ""
-			}
-		} else { // a turn is running, the session is broken, or the harness is passive: peek, take nothing
-			_, fresh, err := b.Peek(ctx, d.Friend)
-			if ctx.Err() != nil {
-				return nil
-			}
-			if err != nil {
-				storeOK = false
-				d.status.StoreError = err.Error()
-			} else {
-				d.status.StoreError = ""
-				for _, e := range fresh {
-					msg := e.Message()
-					if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
-						// the machine sees the ping when the daemon does: a turn longer than a window is no silence
-						ping(e, msg, nonce, seat, since, now)
-					}
-				}
-			}
-			d.Pause(ctx, BeatEvery)
+		mode, width := l.row(now)
+		storeOK := l.read(now)
+		if ctx.Err() != nil {
+			return nil
 		}
-		if busy != nil && busy.running { // the watch: a turn that prints is working
-			if n := busy.seen.Load(); n != busy.seenN {
-				busy.seenN, busy.lastOut = n, now
-			}
-			if !busy.stopped && now.Sub(busy.lastOut) >= silentStop {
-				busy.stopped = true
-				busy.cancel()
-				d.Record(fmt.Sprintf("%s subject=%s stopping: no output for %s (silent since %s); its process group is signalled",
-					now.UTC().Format(time.RFC3339), busy.subjects, silentStop, busy.lastOut.UTC().Format(time.RFC3339)))
-			}
+		for _, t := range l.turns() {
+			l.watch(t, now)
 		}
 		select {
-		case r := <-results:
-			r.t.running = false
-			var deferred Deferred
-			if errors.As(r.err, &deferred) && !r.t.stopped { // not a failure: the turn stays in hand, tried again, counted toward nothing
-				deferrals++
-				retry = now.Add(RecheckEvery)
-				if deferrals == 1 || now.Sub(deferSaid) >= DeferredSaidEvery {
-					deferSaid = now
-					d.Record(fmt.Sprintf("%s subject=%s deferred=%d: %s; tried again every %s, counted toward nothing (said once per %s)",
-						now.UTC().Format(time.RFC3339), r.t.subjects, deferrals, deferred.Reason, RecheckEvery, DeferredSaidEvery))
-				}
-				break
-			}
-			line := fmt.Sprintf("%s subject=%s messages=%d took=%s exit=%d", now.UTC().Format(time.RFC3339), r.t.subjects, len(r.t.entries), now.Sub(r.t.started).Round(time.Millisecond), r.exit)
-			if r.t.notice != nil {
-				line += fmt.Sprintf(" notice=%q", r.t.notice.Subject)
-			}
-			if r.err != nil {
-				line += " error=" + fmt.Sprintf("%q", r.err.Error())
-			}
-			if r.t.stopped {
-				line += fmt.Sprintf(" stopped=%q", "no output for "+silentStop.String())
-			}
-			ok := r.err == nil && r.exit == 0 && !r.t.stopped
-			var refused ProviderRefused
-			switch {
-			case ok:
-				streak, refusal = 0, ""
-				if len(r.t.entries) > 0 {
-					if _, err := d.Store.Ack(ctx, bus.StreamOf(d.Friend), d.Friend, r.t.entries...); err != nil {
-						d.status.StoreError = err.Error()
-						line += " ack=failed"
-					} else {
-						d.status.Delivered += len(r.t.entries)
-						line += " acked=true"
-						for _, e := range r.t.entries {
-							delete(failed, e)
-						}
-					}
-				}
-			case errors.As(r.err, &refused) && !r.t.stopped:
-				// the session is at fault, not the messages: they stay pending, counted toward nothing
-				if refused.Reason == refusal {
-					streak++
-				} else {
-					refusal, streak = refused.Reason, 1
-				}
-				line += fmt.Sprintf(" refused=%d/%d", streak, brokenAfter)
-				if streak >= brokenAfter && !broken {
-					broken = true
-					d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionBroken, refused.Session, oneLine(refused.Reason, 200), now
-					line += " session=broken"
-				}
-			default:
-				streak, refusal = 0, ""
-				var given []string
-				for _, e := range r.t.entries {
-					failed[e]++
-					if failed[e] >= MaxDeliveries {
-						given = append(given, e)
-					}
-				}
-				if len(r.t.entries) > 0 {
-					line += fmt.Sprintf(" deliveries=%d/%d", failed[r.t.entries[0]], MaxDeliveries)
-				}
-				if len(given) > 0 {
-					line += " given_up=true"
-					if len(r.t.entries) > 1 {
-						line += fmt.Sprintf(" given_up_messages=%d", len(given))
-					}
-					if _, err := d.Store.Ack(ctx, bus.StreamOf(d.Friend), d.Friend, given...); err != nil {
-						d.status.StoreError = err.Error()
-						line += " ack=failed"
-					} else {
-						line += " acked=true"
-						for _, e := range given {
-							delete(failed, e)
-						}
-					}
-				}
-			}
-			if !ok && r.t.notice != nil && notice == nil { // the word was not heard: it is owed again
-				notice = r.t.notice
-				saidSilent = r.t.notice.Subject != "coordinator silent"
-			}
-			d.Record(line)
-			if broken && !told {
-				d.Record(fmt.Sprintf("%s session %s broken: %s (%d turns in a row); delivering nothing into it until the daemon restarts, every message stays pending",
-					now.UTC().Format(time.RFC3339), d.status.SessionID, d.status.SessionReason, brokenAfter))
-			}
-			busy, retry, deferrals, deferSaid = nil, time.Time{}, 0, time.Time{}
+		case r := <-l.results:
+			l.batchDone(r, now)
+		case r := <-l.lanes.results:
+			l.laneDone(r, now)
 		default:
 		}
-		switch {
-		case busy == nil && len(hand) > 0 && !broken:
-			t := &turn{notice: notice}
-			size := 0
-			for len(hand) > 0 && (len(t.msgs) == 0 || (len(t.msgs) < MaxBatch && size+len(hand[0].Fields["body"]) <= BatchBytes)) {
-				e := hand[0]
-				hand = hand[1:]
-				delete(inHand, e.Entry)
-				t.entries, t.msgs = append(t.entries, e.Entry), append(t.msgs, e.Message())
-				size += len(e.Fields["body"])
-			}
-			var subjects []string
-			for _, m := range t.msgs {
-				subjects = append(subjects, m.Subject)
-			}
-			t.subjects = fmt.Sprintf("%q", strings.Join(subjects, " | "))
-			text := ""
-			if notice != nil {
-				text = notice.Text
-				saidSilent = notice.Subject == "coordinator silent"
-				notice = nil
-			}
-			pong := ""
-			if d.m.Challenge != Quiet && d.PongCommand != nil {
-				pong = d.PongCommand(d.m.Nonce)
-			}
-			t.text = Batch(t.msgs, text, pong)
-			start(t, now)
-		case busy != nil && !busy.running && !retry.IsZero() && !now.Before(retry):
-			retry = time.Time{}
-			start(busy, now)
+		// a change of mode waits for the other mode's turns to end
+		if mode != l.mode && l.busy == nil && !l.lanes.running() {
+			d.Record(fmt.Sprintf("%s mode: %s, from %s (the friend row)", now.UTC().Format(time.RFC3339), mode, l.mode))
+			l.mode = mode
 		}
-		if broken && !told {
-			told = d.tellBroken(ctx, b, brokenAfter)
+		d.status.Mode = l.mode
+		switch {
+		case l.broken:
+		case l.mode == ModeOneShot:
+			l.laneStep(now, width)
+			d.status.Lanes = l.lanes.said(width)
+		case l.busy == nil && len(l.hand) > 0:
+			l.startBatch(now)
+		case l.busy != nil && !l.busy.running && !l.retry.IsZero() && !now.Before(l.retry):
+			l.retry = time.Time{}
+			l.startTurn(l.busy, now, l.deliverBatch(l.busy))
+		}
+		if l.broken && !l.told {
+			l.told = d.tellBroken(ctx, l.b, l.brokenAfter)
 		}
 		if storeOK {
 			if err := d.Beat(ctx); err != nil {
@@ -472,10 +316,352 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		d.flush(now)
 	}
-	if busy != nil && busy.running {
-		busy.cancel()
-	}
 	return nil
+}
+
+// row is the mode and width the daemon delivers by: the friend's row when
+// Row says it (one-shot needs a harness that opens sessions, LaneHarness,
+// else the daemon delivers in batch and says why once), else batch at Width.
+func (l *loop) row(now time.Time) (mode string, width int) {
+	d := l.d
+	mode, width = ModeBatch, d.Width
+	if d.Row != nil {
+		m, w := d.Row()
+		if m != "" {
+			mode = m
+		}
+		if w > 0 {
+			width = w
+		}
+	}
+	if width < 1 {
+		width = 1
+	}
+	d.status.Width = width
+	if mode == ModeOneShot {
+		if _, ok := d.Deliver.(LaneHarness); !ok || l.passive {
+			if !l.saidNoLanes {
+				l.saidNoLanes = true
+				d.Record(now.UTC().Format(time.RFC3339) + " mode: the row says one-shot, and " + d.Harness + " cannot open a session per lane; delivering in batch")
+			}
+			mode = ModeBatch
+		}
+	}
+	return mode, width
+}
+
+// turns is every turn running now: the batch turn and the lanes'.
+func (l *loop) turns() []*turn {
+	var out []*turn
+	if l.busy != nil && l.busy.running {
+		out = append(out, l.busy)
+	}
+	for _, ln := range l.lanes.lanes {
+		if ln.t != nil && ln.t.running {
+			out = append(out, ln.t)
+		}
+	}
+	return out
+}
+
+func (l *loop) say(p Push) {
+	if p.Subject == "coordinator back" && !l.saidSilent {
+		l.notice = nil // the session never heard otherwise: nothing to say
+		return
+	}
+	l.notice = &p
+}
+
+// head is what heads the next turn: the word about the coordinator, taken
+// (noticeTaken keeps it, owed again if the turn fails), and the pong line
+// while a challenge is open.
+func (l *loop) head() (notice, pong string) {
+	l.noticeTaken = l.notice
+	if l.notice != nil {
+		notice = l.notice.Text
+		l.saidSilent = l.notice.Subject == "coordinator silent"
+		l.notice = nil
+	}
+	if l.d.m.Challenge != Quiet && l.d.PongCommand != nil {
+		pong = l.d.PongCommand(l.d.m.Nonce)
+	}
+	return notice, pong
+}
+
+// coordinator is who the daemon tells: the seat the last ping named, else
+// the Coordinator flag.
+func (l *loop) coordinator() string {
+	if l.d.m.Seat != "" {
+		return l.d.m.Seat
+	}
+	return l.d.Coordinator
+}
+
+// tell sends the coordinator one message, said on the record when there is
+// no one to tell or the send fails.
+func (l *loop) tell(subject, body string, now time.Time) {
+	to := l.coordinator()
+	if to == "" {
+		l.d.Record(now.UTC().Format(time.RFC3339) + " no coordinator to tell: " + subject)
+		return
+	}
+	if _, err := l.b.Send(l.ctx, bus.Message{From: l.d.Friend, To: []string{to}, Subject: subject, Body: subject + "\n" + body}); err != nil {
+		l.d.Record(now.UTC().Format(time.RFC3339) + " telling " + to + " failed: " + err.Error() + ": " + subject)
+	}
+}
+
+func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now time.Time) {
+	if l.answered[e.Entry] {
+		return // the machine saw it when the daemon first did
+	}
+	l.d.daemonPong(l.ctx, l.b, msg, nonce)
+	l.answered[e.Entry] = true
+	for _, p := range l.d.m.Ping(now, seatOf(seat, msg), since, nonce) {
+		l.say(p)
+	}
+}
+
+// read is the step's one look at the stream: every pending message taken
+// into the hand when the session can take them (no batch turn running, the
+// session not broken, the hand not full), else a peek that answers pings.
+// It answers whether the store answered.
+func (l *loop) read(now time.Time) bool {
+	d, b := l.d, l.b
+	if l.busy == nil && !l.passive && !l.broken && len(l.hand) < MaxBatch {
+		// in one-shot mode the lanes' turns run while the loop reads: it reads
+		// at once and pauses after, so a lane's result is never a block behind
+		block := BeatEvery
+		if l.mode == ModeOneShot {
+			block = 0
+			defer d.Pause(l.ctx, BeatEvery)
+		}
+		e, ok, err := b.Recv(l.ctx, d.Friend, block)
+		for err == nil && ok {
+			msg := e.Message()
+			if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
+				// answered by the daemon, never pushed in: the transport is proved, and a ping is no turn
+				l.ping(e, msg, nonce, seat, since, now)
+				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+					err = aerr
+					break
+				}
+				delete(l.answered, e.Entry)
+			} else if !l.inHand[e.Entry] {
+				l.hand = append(l.hand, e)
+				l.inHand[e.Entry] = true
+			}
+			if len(l.hand) >= MaxBatch {
+				break
+			}
+			e, ok, err = b.Recv(l.ctx, d.Friend, 0) // the rest of what is pending, at once
+		}
+		if err != nil && l.ctx.Err() == nil {
+			d.status.StoreError = err.Error()
+			if block != 0 {
+				d.Pause(l.ctx, BeatEvery)
+			}
+			return false
+		}
+		d.status.StoreError = ""
+		return true
+	}
+	// a turn is running, the session is broken, the hand is full, or the harness is passive: peek, take nothing
+	_, fresh, err := b.Peek(l.ctx, d.Friend)
+	if l.ctx.Err() != nil {
+		return false
+	}
+	ok := err == nil
+	if err != nil {
+		d.status.StoreError = err.Error()
+	} else {
+		d.status.StoreError = ""
+		for _, e := range fresh {
+			msg := e.Message()
+			if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
+				// the machine sees the ping when the daemon does: a turn longer than a window is no silence
+				l.ping(e, msg, nonce, seat, since, now)
+			}
+		}
+	}
+	d.Pause(l.ctx, BeatEvery)
+	return ok
+}
+
+// take is the messages of the hand that go in the next turn: oldest first,
+// at most MaxBatch and BatchBytes, at least one when any waits.
+func (l *loop) take() (entries []string, msgs []bus.Message) {
+	size := 0
+	for len(l.hand) > 0 && (len(msgs) == 0 || (len(msgs) < MaxBatch && size+len(l.hand[0].Fields["body"]) <= BatchBytes)) {
+		e := l.hand[0]
+		l.hand = l.hand[1:]
+		entries, msgs = append(entries, e.Entry), append(msgs, e.Message())
+		size += len(e.Fields["body"])
+	}
+	return entries, msgs
+}
+
+// startTurn runs deliver for t in its own goroutine, its context carrying the
+// watch on its output; the result goes to the batch's or the lanes' channel.
+func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
+	tctx, cancel := context.WithCancel(l.ctx)
+	seen := &atomic.Int64{}
+	tctx = WithOutputSeen(tctx, func() { seen.Add(1) })
+	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped = now, true, cancel, seen, 0, now, false
+	switch f := deliver.(type) {
+	case func(context.Context) result:
+		go func() { r := f(tctx); cancel(); l.results <- r }()
+	case func(context.Context) laneResult:
+		go func() { r := f(tctx); cancel(); l.lanes.results <- r }()
+	}
+}
+
+func (l *loop) deliverBatch(t *turn) func(context.Context) result {
+	return func(ctx context.Context) result {
+		exit, err := l.d.Deliver.Deliver(ctx, t.text)
+		return result{t, exit, err}
+	}
+}
+
+func (l *loop) startBatch(now time.Time) {
+	t := &turn{}
+	t.entries, t.msgs = l.take()
+	var subjects []string
+	for _, m := range t.msgs {
+		subjects = append(subjects, m.Subject)
+	}
+	t.subjects = fmt.Sprintf("%q", strings.Join(subjects, " | "))
+	notice, pong := l.head()
+	t.notice = l.noticeTaken
+	t.text = Batch(t.msgs, notice, pong)
+	l.busy = t
+	l.startTurn(t, now, l.deliverBatch(t))
+}
+
+// watch is the silence watch on a running turn: a turn that prints is
+// working; one silent past SilentStop is stopped, said on the record.
+func (l *loop) watch(t *turn, now time.Time) {
+	if n := t.seen.Load(); n != t.seenN {
+		t.seenN, t.lastOut = n, now
+	}
+	if !t.stopped && now.Sub(t.lastOut) >= l.silentStop {
+		t.stopped = true
+		t.cancel()
+		l.d.Record(fmt.Sprintf("%s subject=%s stopping: no output for %s (silent since %s); its process group is signalled",
+			now.UTC().Format(time.RFC3339), t.subjects, l.silentStop, t.lastOut.UTC().Format(time.RFC3339)))
+	}
+}
+
+// settle is what a turn's end does to the messages it carried, and to the
+// session's refusal streak; it answers the record's words for it. Exit 0
+// acks them together; a provider's refusal leaves them pending, counted
+// toward nothing, and the same refusal BrokenAfter turns in a row breaks the
+// session; any other failure counts toward MaxDeliveries.
+func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
+	d := l.d
+	line := ""
+	for _, e := range t.entries {
+		delete(l.inHand, e) // acked below, or pending for the claim to hand in again
+	}
+	var refused ProviderRefused
+	switch {
+	case ok:
+		l.streak, l.refusal = 0, ""
+		if len(t.entries) > 0 {
+			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
+				d.status.StoreError = err.Error()
+				line += " ack=failed"
+			} else {
+				d.status.Delivered += len(t.entries)
+				line += " acked=true"
+				for _, e := range t.entries {
+					delete(l.failed, e)
+				}
+			}
+		}
+	case errors.As(err, &refused) && !t.stopped:
+		// the session is at fault, not the messages: they stay pending, counted toward nothing
+		if refused.Reason == l.refusal {
+			l.streak++
+		} else {
+			l.refusal, l.streak = refused.Reason, 1
+		}
+		line += fmt.Sprintf(" refused=%d/%d", l.streak, l.brokenAfter)
+		if l.streak >= l.brokenAfter && !l.broken {
+			l.broken = true
+			d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionBroken, refused.Session, oneLine(refused.Reason, 200), now
+			line += " session=broken"
+		}
+	default:
+		l.streak, l.refusal = 0, ""
+		var given []string
+		for _, e := range t.entries {
+			l.failed[e]++
+			if l.failed[e] >= MaxDeliveries {
+				given = append(given, e)
+			}
+		}
+		if len(t.entries) > 0 {
+			line += fmt.Sprintf(" deliveries=%d/%d", l.failed[t.entries[0]], MaxDeliveries)
+		}
+		if len(given) > 0 {
+			line += " given_up=true"
+			if len(t.entries) > 1 {
+				line += fmt.Sprintf(" given_up_messages=%d", len(given))
+			}
+			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, given...); err != nil {
+				d.status.StoreError = err.Error()
+				line += " ack=failed"
+			} else {
+				line += " acked=true"
+				for _, e := range given {
+					delete(l.failed, e)
+				}
+			}
+		}
+	}
+	if !ok && t.notice != nil && l.notice == nil { // the word was not heard: it is owed again
+		l.notice = t.notice
+		l.saidSilent = t.notice.Subject != "coordinator silent"
+	}
+	if l.broken && !l.told {
+		line += fmt.Sprintf("\n%s session %s broken: %s (%d turns in a row); delivering nothing into it until the daemon restarts, every message stays pending",
+			now.UTC().Format(time.RFC3339), d.status.SessionID, d.status.SessionReason, l.brokenAfter)
+	}
+	return line
+}
+
+// batchDone is the batch turn's end: a deferral keeps it in hand, tried
+// again; anything else settles its messages.
+func (l *loop) batchDone(r result, now time.Time) {
+	d := l.d
+	r.t.running = false
+	var deferred Deferred
+	if errors.As(r.err, &deferred) && !r.t.stopped { // not a failure: the turn stays in hand, tried again, counted toward nothing
+		l.deferrals++
+		l.retry = now.Add(RecheckEvery)
+		if l.deferrals == 1 || now.Sub(l.deferSaid) >= DeferredSaidEvery {
+			l.deferSaid = now
+			d.Record(fmt.Sprintf("%s subject=%s deferred=%d: %s; tried again every %s, counted toward nothing (said once per %s)",
+				now.UTC().Format(time.RFC3339), r.t.subjects, l.deferrals, deferred.Reason, RecheckEvery, DeferredSaidEvery))
+		}
+		return
+	}
+	line := fmt.Sprintf("%s subject=%s messages=%d took=%s exit=%d", now.UTC().Format(time.RFC3339), r.t.subjects, len(r.t.entries), now.Sub(r.t.started).Round(time.Millisecond), r.exit)
+	if r.t.notice != nil {
+		line += fmt.Sprintf(" notice=%q", r.t.notice.Subject)
+	}
+	if r.err != nil {
+		line += " error=" + fmt.Sprintf("%q", r.err.Error())
+	}
+	if r.t.stopped {
+		line += fmt.Sprintf(" stopped=%q", "no output for "+l.silentStop.String())
+	}
+	ok := r.err == nil && r.exit == 0 && !r.t.stopped
+	line += l.settle(r.t, ok, r.err, now)
+	for _, part := range strings.Split(line, "\n") {
+		d.Record(part)
+	}
+	l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
 }
 
 // tellBroken sends the coordinator one message that the session is broken:

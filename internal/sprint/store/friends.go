@@ -45,6 +45,9 @@ type friendEntry struct {
 	// Class is her class: the tiers her nova-config row says she can do, sorted and
 	// comma joined (friend level evens the friends of one class).
 	Class string `json:"class,omitempty"`
+	// Mode is her delivery mode, her nova-config row's (batch or one-shot),
+	// which her daemon reads back from her beat; empty is batch.
+	Mode string `json:"mode,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until): why,
 	// and when the coordinator expects her back.
 	Reason string    `json:"reason,omitempty"`
@@ -57,6 +60,7 @@ type FriendSpec struct {
 	Name  string
 	Width int
 	Class string
+	Mode  string // her delivery mode, config.FriendMode of her row
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -75,6 +79,9 @@ type FriendRow struct {
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
 	Report *sprint.FriendReport `json:"report,omitempty"`
+	// Beat is when her last beat came, zero when she has never beaten: how stale her
+	// report is (view coordinator).
+	Beat time.Time `json:"beat,omitzero"`
 	// Health is the coordinator's last accepted observation of her (friend
 	// health), absent until the first.
 	Health *sprint.FriendHealth `json:"health,omitempty"`
@@ -138,11 +145,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class = s.Width, s.Class
+		e.Width, e.Class, e.Mode = s.Width, s.Class, s.Mode
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -275,7 +282,7 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 				_ = json.Unmarshal([]byte(vals[2*i+1]), &h)
 			}
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Load: b.Load, Report: b.Friend}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Load: b.Load, Report: b.Friend, Beat: b.At}
 		if h.Observed() {
 			row.Health = &h
 		}
@@ -409,4 +416,20 @@ func (st *Store) FriendHealth(ctx context.Context, friend, who string, obs sprin
 		return sprint.FriendHealth{}, "", false, errors.New(res.Refused[0].Why)
 	}
 	return obs, sprint.FriendStatus(sprint.FriendPresence{Held: e.Held, Health: obs, Generation: obs.Generation}, st.now()), false, nil
+}
+
+// FriendSpecOf is what friend sync last wrote of the friend: her width and
+// her delivery mode as her nova-config row has them, which her beat answers
+// so her daemon reads her row without reaching the config store; a friend the
+// roster lacks is refused.
+func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, error) {
+	r, _, err := st.roster(ctx)
+	if err != nil {
+		return FriendSpec{}, err
+	}
+	e, ok := r[friend]
+	if !ok {
+		return FriendSpec{}, noFriend(r, friend)
+	}
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode}, nil
 }
