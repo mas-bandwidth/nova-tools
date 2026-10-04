@@ -157,7 +157,12 @@ turn. The command runs through `/usr/bin/env` with
 `ANTIGRAVITY_LS_ADDRESS` and `ANTIGRAVITY_CSRF_TOKEN` set, the text an
 argument; the token is already on the server's own command line, readable
 by every process of the login, so the delivery exposes nothing the harness
-does not.
+does not. The app needs no special launch (no wrapper, no custom flags).
+When the app is not running (no language server in `ps` for the daemon's
+user), the delivery returns `Deferred` (`no antigravity language server is
+running: is Antigravity open?`), so the message stays pending in the daemon's
+hand, retried every ten seconds (`RecheckEvery`) and never counted toward
+failure attempts or acked.
 
 The ack: `agentapi` exits 0 on an error too (a wrong conversation, a missing
 token print `"error"` in its JSON), so the JSON is read and its exit code is

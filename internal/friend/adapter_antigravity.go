@@ -127,6 +127,9 @@ func (a *Antigravity) Deliver(ctx context.Context, text string) (int, error) {
 	}
 	pid, token, err := LanguageServer(ps, username)
 	if err != nil {
+		if errors.Is(err, ErrLanguageServerNotRunning) {
+			return 0, Deferred{Reason: err.Error()}
+		}
 		return 1, err
 	}
 	listing, _, err := a.Run(ctx, a.Dir, "lsof", []string{"-nP", "-a", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn"}, "")
@@ -218,6 +221,9 @@ func (a *Antigravity) mailbox(dir string) ([]string, error) {
 	return ids, nil
 }
 
+// ErrLanguageServerNotRunning is returned when no Antigravity language server is running.
+var ErrLanguageServerNotRunning = errors.New("no antigravity language server is running: is Antigravity open?")
+
 // LanguageServer finds the antigravity language server in `ps -axo
 // user=,pid=,args=` belonging to username: its pid and CSRF token.
 func LanguageServer(ps, username string) (pid, token string, err error) {
@@ -231,7 +237,7 @@ func LanguageServer(ps, username string) (pid, token string, err error) {
 		}
 		return "", "", fmt.Errorf("the antigravity language server (pid %s) runs without a --csrf_token", fields[1])
 	}
-	return "", "", errors.New("no antigravity language server is running: is Antigravity open?")
+	return "", "", ErrLanguageServerNotRunning
 }
 
 // ListenPorts reads the ports out of `lsof -Fn` (one n<host>:<port> line per

@@ -62,3 +62,21 @@ func TestAntigravityOnTheLiveHarness(t *testing.T) {
 	require.Equal(t, 0, exit)
 	t.Log(record.String())
 }
+
+// TestAntigravityDefersWhenNoServerForUser verifies that against real ps execution,
+// an absent language server returns Deferred rather than a failure count.
+func TestAntigravityDefersWhenNoServerForUser(t *testing.T) {
+	t.Parallel()
+	dir := os.Getenv("NOVA_FRIEND_ANTIGRAVITY_DIR")
+	if dir == "" {
+		t.Skip("NOVA_FRIEND_ANTIGRAVITY_DIR names no friend's directory")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	a := &Antigravity{Dir: dir, User: "nonexistent-user-12345", Run: RealExec}
+	exit, err := a.Deliver(ctx, "text")
+	require.Equal(t, 0, exit)
+	var deferred Deferred
+	require.ErrorAs(t, err, &deferred)
+	require.Contains(t, deferred.Reason, "no antigravity language server is running: is Antigravity open?")
+}

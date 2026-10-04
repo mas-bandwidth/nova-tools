@@ -258,3 +258,85 @@ func TestAntigravityMatchesDecodedLocalWorkspaceURIs(t *testing.T) {
 		})
 	}
 }
+
+func TestAntigravityDeliveryIsATurnInTheOpenConversation(t *testing.T) {
+	t.Parallel()
+	t.Run("delivery enters mailbox and acks once read", func(t *testing.T) {
+		t.Parallel()
+		e := newAgExec()
+		var record strings.Builder
+		d, err := NewDeliverer("antigravity", "/w/emma", "", e.run, &record)
+		require.NoError(t, err)
+		a := d.(*Antigravity)
+		a.User = "emma"
+		a.Home, a.FS, a.Wait = "/home", e.fsys, e.wait
+		exit, err := a.Deliver(context.Background(), "hello there")
+		require.NoError(t, err)
+		assert.Equal(t, 0, exit)
+		assert.Equal(t, 1, e.waits, "read one poll after it landed")
+		assert.Equal(t, "antigravity: message m-2 read by conversation root-new\n", record.String())
+	})
+
+	t.Run("an app not running defers without failure count", func(t *testing.T) {
+		t.Parallel()
+		run := func(_ context.Context, dir, name string, args []string, _ string) (string, int, error) {
+			if name == "ps" {
+				return "  root 1 /sbin/launchd\n", 0, nil
+			}
+			t.Fatalf("unexpected call: %s %v", name, args)
+			return "", 1, nil
+		}
+		a := &Antigravity{User: "emma", Dir: "/w/emma", Run: run, Home: "/home"}
+		exit, err := a.Deliver(context.Background(), "hello")
+		assert.Equal(t, 0, exit)
+		var deferred Deferred
+		require.ErrorAs(t, err, &deferred)
+		assert.Equal(t, "no antigravity language server is running: is Antigravity open?", deferred.Reason)
+	})
+
+	t.Run("an app restarted mid-run is found again on next delivery", func(t *testing.T) {
+		t.Parallel()
+		e := newAgExec()
+		a := &Antigravity{User: "emma", Dir: "/w/emma", Run: e.run, Home: "/home", FS: e.fsys, Wait: e.wait}
+		exit, err := a.Deliver(context.Background(), "first delivery")
+		require.NoError(t, err)
+		assert.Equal(t, 0, exit)
+
+		restartedPS := "  root 1 /sbin/launchd\nemma 99999 /Applications/Antigravity.app/Contents/Resources/bin/language_server --override_ide_name antigravity --csrf_token tok-2\n"
+		restartedLsof := "p99999\nn127.0.0.1:60001\n"
+		restartedMailbox := ".gemini/antigravity/brain/root-new/.system_generated/messages"
+
+		e.fsys[restartedMailbox+"/m-3.json"] = &fstest.MapFile{Data: []byte(`{"id":"m-3"}`)}
+		waits := 0
+		run := func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+			switch name {
+			case "ps":
+				return restartedPS, 0, nil
+			case "lsof":
+				return restartedLsof, 0, nil
+			case "sqlite3":
+				return e.rows, 0, nil
+			}
+			if args[0] != "ANTIGRAVITY_LS_ADDRESS=localhost:60001" || args[1] != "ANTIGRAVITY_CSRF_TOKEN=tok-2" {
+				return `{"response": {}, "error": "wrong address or token"}`, 0, nil
+			}
+			switch args[3] {
+			case "get-conversation-metadata":
+				return `{"response": {"conversationMetadata": {}}}`, 0, nil
+			case "send-message":
+				e.fsys[restartedMailbox+"/m-4.json"] = &fstest.MapFile{Data: []byte(`{"id":"m-4","renderDetails":{"messageTitle":"nova-friend"},"content":"second"}`)}
+				return `{"response": {"sendMessage": {"recipientId": "root-new"}}}`, 0, nil
+			}
+			return "", 1, nil
+		}
+		a.Run = run
+		a.Wait = func(context.Context) bool {
+			waits++
+			e.fsys[restartedMailbox+"/read.json"] = &fstest.MapFile{Data: []byte(`{"m-1":true,"m-2":true,"m-3":true,"m-4":true}`)}
+			return true
+		}
+		exit, err = a.Deliver(context.Background(), "second")
+		require.NoError(t, err)
+		assert.Equal(t, 0, exit)
+	})
+}
