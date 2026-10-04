@@ -199,7 +199,8 @@ func TestTheOKLineAndTheDeadline(t *testing.T) {
 	assert.Equal(t, 60, Deadline("pro"))
 	c := Card{ID: "a", File: "x/y.go", Paths: []string{"x/y.go"}, Test: "x TestA", Tier: "pro", Kind: "fix-red", Task: "Do it."}
 	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc", Minutes: 7}, c), "Deadline: finish within 7 minutes.")
-	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc", NewFiles: []string{"x/z_test.go"}}, c), "\nNEW: x/z_test.go\n")
+	c.New = []string{"x/z_test.go"}
+	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc"}, c), "\nNEW: x/z_test.go\n")
 }
 
 // --max cuts before the waves are assigned: the kept cards' needs name kept
@@ -254,4 +255,25 @@ func TestAHelpCardNamesTheTestItsPackageHas(t *testing.T) {
 	for _, c := range []Card{found, none} {
 		assert.Empty(t, Lint(c.ID, Render(header, c)))
 	}
+}
+
+// A findings card on a package with no test file keeps its test glob in PATHS (the
+// land holds the diff to PATHS) and names the test file it creates on NEW:, so the
+// glob that matches nothing at the base is the card's to answer, not a red line.
+func TestAPackageWithNoTestFileGetsItsTestOnTheNEWLine(t *testing.T) {
+	t.Parallel()
+	fs, _ := ParseFindings("internal/none/x.go:1\twrong\tfix\t\n")
+	c := PlanFindings(fs, "", "", 0).Cards[0]
+	NewTestFile(&c, func(glob string) bool { return glob == "internal/none/x.go" })
+	assert.Equal(t, []string{"internal/none/x.go", "internal/none/*_test.go"}, c.Paths, "the glob stays")
+	assert.Equal(t, []string{"internal/none/x_test.go"}, c.New)
+	assert.True(t, c.Creates("internal/none/*_test.go"))
+	assert.False(t, c.Creates("internal/none/x.go"))
+	brief := Render(header, c)
+	assert.Contains(t, brief, "\nPATHS: internal/none/x.go, internal/none/*_test.go\nNEW: internal/none/x_test.go\nTEST: internal/none TestFindingX\n")
+	assert.Empty(t, Lint(c.ID, brief))
+	has := c
+	has.New = nil
+	NewTestFile(&has, func(string) bool { return true })
+	assert.Empty(t, has.New, "a package with tests creates none")
 }

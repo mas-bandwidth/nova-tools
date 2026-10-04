@@ -285,15 +285,19 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	// one brief is red
 	briefs := make([]string, len(plan.Cards))
 	red := 0
-	for i, c := range plan.Cards {
-		briefs[i] = cardgen.Render(h, c)
+	for i := range plan.Cards {
+		c := &plan.Cards[i]
+		if *repoDir != "" {
+			cardgen.NewTestFile(c, func(glob string) bool { return existsAt(*repoDir, glob) })
+		}
+		briefs[i] = cardgen.Render(h, *c)
 		for _, f := range cardgen.Lint(c.ID, briefs[i]) {
 			fmt.Fprintln(stdout, oneline.Escape(f.String()))
 			red++
 		}
 		if *repoDir != "" {
 			for _, p := range c.Paths {
-				if !existsAt(*repoDir, p) {
+				if !existsAt(*repoDir, p) && !c.Creates(p) {
 					fmt.Fprintln(stdout, oneline.Escape(cardgen.LintFinding{ID: c.ID, Check: "paths-at-base", Line: 6, Excerpt: "PATHS entry " + p + " names nothing in " + *repoDir}.String()))
 					red++
 				}

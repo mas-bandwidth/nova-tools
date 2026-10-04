@@ -202,6 +202,9 @@ type Card struct {
 	Task  string
 	// Kind is the KIND: line; fix-red for every generated card today.
 	Kind string
+	// New is the NEW: line, the files the card creates (none for most): a test file
+	// in a package that has none yet (NewTestFile).
+	New []string
 }
 
 // Plan is a directory's worth of cards with what the planner had to leave out.
@@ -292,6 +295,29 @@ func ledgerPaths(file, ledger string) []string {
 		paths = append(paths, ledger)
 	}
 	return MergePaths(paths)
+}
+
+// NewTestFile marks the test file a card creates: when its package's *_test.go glob
+// names nothing at the base (exists reports it), the package has no test yet and the
+// card writes <dir>/<file>_test.go, named on its NEW: line. The glob stays in PATHS:
+// the land holds the diff to PATHS (internal/diffcheck), and the new file matches it.
+func NewTestFile(c *Card, exists func(glob string) bool) {
+	for _, p := range c.Paths {
+		if strings.HasSuffix(p, "/*_test.go") && !exists(p) {
+			c.New = append(c.New, path.Dir(p)+"/"+strings.TrimSuffix(path.Base(c.File), ".go")+"_test.go")
+		}
+	}
+}
+
+// Creates says a PATHS glob is answered by a file of the card's NEW: line: the entry
+// names nothing at the base because the card creates it.
+func (c Card) Creates(glob string) bool {
+	for _, n := range c.New {
+		if ok, _ := path.Match(glob, n); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // MergePaths drops duplicates and an entry a sibling glob already covers, then, past
@@ -601,11 +627,10 @@ func PlanHelp(tool, help, test, prefix, tier string) Card {
 
 // Header is what every brief of one generation shares.
 type Header struct {
-	Repo     string // owner/name
-	Base     string // the branch
-	Sha      string // the base sha, 40 hex
-	Minutes  int    // the deadline; 0 takes the tier's default
-	NewFiles []string
+	Repo    string // owner/name
+	Base    string // the branch
+	Sha     string // the base sha, 40 hex
+	Minutes int    // the deadline; 0 takes the tier's default
 }
 
 // Deadline is the minutes a tier gets when the header names none.
@@ -651,8 +676,8 @@ func Render(h Header, c Card) string {
 	fmt.Fprintf(&b, "KIND: %s\n", c.Kind)
 	fmt.Fprintf(&b, "DEPENDS-ON: %s\n", deps)
 	fmt.Fprintf(&b, "PATHS: %s\n", strings.Join(c.Paths, ", "))
-	if len(h.NewFiles) > 0 {
-		fmt.Fprintf(&b, "NEW: %s\n", strings.Join(h.NewFiles, ", "))
+	if len(c.New) > 0 {
+		fmt.Fprintf(&b, "NEW: %s\n", strings.Join(c.New, ", "))
 	}
 	fmt.Fprintf(&b, "TEST: %s\n", c.Test)
 	fmt.Fprintf(&b, "Deadline: finish within %d minutes.\n", minutes)

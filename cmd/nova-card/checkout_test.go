@@ -131,3 +131,20 @@ func TestAHelpCardReadsItsTestOffTheCheckout(t *testing.T) {
 	assert.Contains(t, stdout, "help-nova-x\tcmd/nova-x/main.go\tcmd/nova-x TestUsageBannerExamplesRun\t1\t-\n")
 	assert.Contains(t, stdout, "help-nova-y\tcmd/nova-y/main.go\tcmd/nova-y TestHelpExampleLinesRunAsPrinted\t1\t-\n")
 }
+
+// A findings card on a package with no test file is generated, not refused: its test
+// glob names nothing at the base because the card creates the file, said on NEW:.
+func TestAPackageWithNoTestFileIsGeneratedWithItsNEWLine(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "internal", "none"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "internal", "none", "x.go"), []byte("package none\n"), 0o644))
+	findings := filepath.Join(t.TempDir(), "f.tsv")
+	require.NoError(t, os.WriteFile(findings, []byte("internal/none/x.go:1\twrong\tfix it\t\n"), 0o644))
+	out := filepath.Join(t.TempDir(), "cards")
+	exit, stdout, stderr := runCard("generate", "--from", "findings", "--file", findings, "--repo-dir", repo, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", out)
+	require.Equal(t, 0, exit, "stdout: %s\nstderr: %s", stdout, stderr)
+	brief, err := os.ReadFile(filepath.Join(out, "finding-internal-none-x.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(brief), "\nPATHS: internal/none/x.go, internal/none/*_test.go\nNEW: internal/none/x_test.go\n")
+}
