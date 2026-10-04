@@ -88,16 +88,16 @@ first, at most 32 messages or 256 KiB (`MaxBatch`, `BatchBytes`; the rest is
 the next turn): one envelope listing each message's id, from and subject, with
 the message as `nova-bus recv` prints it, the pong line first while a challenge
 is open, and the daemon's latest word about the coordinator; a single message
-with nothing else is its `recv` text alone. The adapter blocks for the whole
-turn; exit 0 acks every message it carried, together (for Codex queue, exit 0 is the
-command accepting the input, not the turn ending). Any other exit leaves
+with nothing else is its `recv` text alone. A synchronous adapter blocks for
+the whole turn. The Codex queue route waits for the exact user input to be
+recorded in the target session; this confirms delivery, not a completed model
+answer. Exit 0 acks every message it carried, together. Any other exit leaves
 them pending, handed in again when their claims open, and the third failure
 acks a message with `given_up=true` on the record, so a message the session
 cannot take never comes back for ever. A delivery the adapter defers,
 `Deferred`, the session unable to take a turn now with nothing wrong, such as
-both Codex delivery commands being unavailable, is neither a failure nor
-an ack: the turn stays in the daemon's hand, tried again every ten seconds,
-`RecheckEvery`, and counted toward nothing, so a chat open all day loses no
+both Codex delivery routes being unavailable, is neither a failure nor an ack: the turn stays in the daemon's hand, tried again every ten
+seconds, `RecheckEvery`, and counted toward nothing, so a chat open all day loses no
 message, and the record says so at the first deferral and once a minute after.
 While a turn runs: one peek, so a ping that lands during a long turn is still
 answered at once by the daemon; never a second turn. Then the worker's result;
@@ -149,39 +149,35 @@ for it.
 
 ### Codex
 
-The adapter resolves the named thread, or the newest saved thread for its
-working directory from session headers and the session index under
-CODEX_HOME (otherwise ~/.codex). It probes that exact thread's writer lock.
-When held, the first command is `codex queue --thread <id> --message <text>`:
-the text is a literal argument, never a shell command. Queue acceptance is
-logged as "queued for open chat", explicitly "accepted, not answered".
-The open app can defer running queued input until its current turn ends.
-An accepted queue command does not promise an immediate model answer.
+Codex resolves the exact named saved thread, or the newest saved thread for
+the working directory, and its rollout JSONL under CODEX_HOME (otherwise
+`~/.codex`) before delivery. A named thread is found by its `session_meta` ID
+without imposing its old working directory on the current command. When the
+desktop app holds that thread's writer lock, the adapter runs `codex queue
+--thread <id> --message <text>` with literal arguments. Exit 0 is only queue
+admission. The adapter returns accepted only after that same rollout appends a
+complete `response_item` user message whose sole input text exactly equals the
+delivery. It ignores assistant/event records, partial final lines and bounded
+oversized records, and refuses to queue when the target rollout identity cannot
+be read. Cancellation or a receipt read error after admission returns Deferred
+and never tries resume, because the queue may still deliver and a second route
+could duplicate the turn.
 
-When the lock is free, the first command is
-`codex exec resume --skip-git-repo-check <id> <text>`; its record says
-"answered by resume, not by the open chat". The lock probe is an observation,
-not a reservation. If the first command exits nonzero or cannot execute, the
-adapter tries the other route once. Only when both fail does it return
-Deferred, keeping the bus message pending and charging no failed delivery.
-No matching saved thread is a refusal with a remedy, rather than delivery
-to a guessed thread. The adapter does not modify how the user launches the app.
+A definite queue refusal may try `codex exec resume --skip-git-repo-check
+<id> <text>` once, as direct route ordering requires; its record says
+"answered by resume, not by the open chat". With a free writer lock, resume is
+first and a failure may try queue. Provider refusals from resume remain typed
+session failures. There is no exactly-once claim: a process crash after queue
+admission but before the receipt, or a retry whose batched text changed, can
+still duplicate input because the CLI offers no idempotency key or durable
+queue-status operation. Normal-launch behavior and ten live ping/pong trials
+remain acceptance work; no special app launch is claimed here.
 
-Measured with codex-cli 0.153.4 and ChatGPT 26.930.21537 build 12776 on
-2026-10-04: a queue test initially produced no input while the chat's turn
-was active. Its test text arrived in the same open thread at 17:03:00.797 UTC,
-after the prior turn completed at 17:03:00.757 and the next turn started at
-17:03:00.774. The session replied on the bus at 17:03:03. The app and its own
-stdio app-server remained the same processes throughout. The earlier
-conclusion that queue could not reach that app is withdrawn: observing no
-input during an active turn did not establish failure.
-
-That app process retained CODEX_APP_SERVER_USE_LOCAL_DAEMON=1 from an earlier
-experiment. The measurement therefore does not prove that the flag is
-required or that a launch without it is equivalent. The adapter requires no
-such flag; ordinary-launch and idle-session behavior remain separate live
-checks. A later end-to-end check was sent at 17:11:00 and answered by the
-session at 17:11:10, but its transport was not independently identified.
+Measured 2026-10-04 with codex-cli 0.153.4: a desktop app process that retained
+`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1` appended an exact queued tracer as a user
+message in the already-open target rollout immediately after its preceding turn
+ended. This proves the receipt shape and that conditional route only. It does
+not prove delivery under an ordinary desktop launch, which remains unmeasured.
 
 ### Antigravity
 
