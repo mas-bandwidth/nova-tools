@@ -45,16 +45,17 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "hermetic git config: %v\n", err)
 			return 2
 		}
-		defer os.RemoveAll(dir)
+		defer func() { _ = os.RemoveAll(dir) }() // ignored: the test's own config dir, removed as the process exits
 		cfg := filepath.Join(dir, "gitconfig")
 		if err := os.WriteFile(cfg, []byte(noMaintenanceConfig), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "hermetic git config: %v\n", err)
 			return 2
 		}
-		os.Setenv("GIT_CONFIG_GLOBAL", cfg)
-		os.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
-		os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-		os.Setenv("GIT_TERMINAL_PROMPT", "0")
+		// ignored: the hermetic call each git-running test keeps asserts all four are set
+		_ = os.Setenv("GIT_CONFIG_GLOBAL", cfg)
+		_ = os.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
+		_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+		_ = os.Setenv("GIT_TERMINAL_PROMPT", "0")
 		// The seeded bare bus bareBus copies is made under this directory too, so it
 		// is removed with it.
 		barebusRoot = dir

@@ -91,26 +91,26 @@ func publishNoReplaceWith(dir, name string, content []byte, link, noReplace func
 		return "", err
 	}
 	if _, err := f.Write(content); err != nil {
-		f.Close()
-		os.Remove(temp)
+		_ = f.Close()       // ignored: the write already failed and is the error returned
+		_ = os.Remove(temp) // ignored: a best-effort removal of the temp file; the write error is the one returned
 		return "", err
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
-		os.Remove(temp)
+		_ = f.Close()       // ignored: the sync already failed and is the error returned
+		_ = os.Remove(temp) // ignored: a best-effort removal of the temp file; the sync error is the one returned
 		return "", err
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(temp)
+		_ = os.Remove(temp) // ignored: a best-effort removal of the temp file; the close error is the one returned
 		return "", err
 	}
 	linkErr := link(temp, final)
 	switch {
 	case linkErr == nil:
-		os.Remove(temp)
+		_ = os.Remove(temp) // ignored: a best-effort removal of the temp file now that the link landed
 		return final, nil
 	case errors.Is(linkErr, os.ErrExist):
-		os.Remove(temp)
+		_ = os.Remove(temp) // ignored: a best-effort removal of the temp file; the refusal below is the one returned
 		return "", fmt.Errorf("%s: %w", final, ErrDraftExists)
 	}
 	// The filesystem refuses hard links -- some network mounts, some container overlays,
@@ -125,10 +125,10 @@ func publishNoReplaceWith(dir, name string, content []byte, link, noReplace func
 	case renameErr == nil:
 		return final, nil
 	case errors.Is(renameErr, os.ErrExist):
-		os.Remove(temp)
+		_ = os.Remove(temp) // ignored: a best-effort removal of the temp file; the refusal below is the one returned
 		return "", fmt.Errorf("%s: %w", final, ErrDraftExists)
 	default:
-		os.Remove(temp)
+		_ = os.Remove(temp) // ignored: a best-effort removal of the temp file; the refusal below is the one returned
 		return "", fmt.Errorf("%s: link said %q and %s said %q: %w", dir, linkErr, noReplaceRenameCall, renameErr, ErrNoExclusivePublish)
 	}
 }

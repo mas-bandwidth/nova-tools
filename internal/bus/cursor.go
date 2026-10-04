@@ -886,7 +886,7 @@ func AppendIndexLine(root string, e IndexEntry) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the write error is returned, and the explicit close on success is the one reported
 	if _, err := f.WriteString(IndexLine(e) + "\n"); err != nil {
 		return err
 	}
