@@ -52,8 +52,8 @@ makes the friend up.
 - `pong <nonce> queue=<n> working=<n> width=<n>`: the session's answer, sent by
   `nova-friend pong` as the session's own turn and recorded in the pong file.
   It proves the AI. The coordinator reads it from the friend's own stream (the
-  message's `from`), never from the body: a pong is forgeable only by the
-  friend's login.
+  message's `from`), never from the body. The `from` field is routing metadata,
+  not authentication; the bus store currently has no authentication.
 - Width is the nova-config friend row's, given to the daemon at install.
 
 ## The machine (tla/Friend.tla)
@@ -86,9 +86,68 @@ coordinator name, supplied with `--coordinator` or already saved in
 `nova-sprint friend beat --asleep <me>` on its next beat. `nova-friend wake
 --as <me>` explicitly clears the marker and needs no coordinator, so it can
 recover a saved asleep state with missing coordinator configuration. Neither
-command sends a wake message or proves the harness can wake. Restarting an
-asleep daemon never clears the marker; if the saved coordinator is absent,
-startup refuses and says to run `wake` or supply `--coordinator`.
+command sends a wake message or proves the harness can wake. Startup itself
+does not clear an asleep marker; a matching coordinator message can wake the
+session while the daemon recovers pending work. If the saved coordinator is
+absent, startup refuses and says to run `wake` or supply `--coordinator`.
+
+## Asleep behavior (A3 implementation checkpoint)
+
+The durable session record contains one asleep bit, one configured coordinator,
+and at most one `WakeBarrier` stream-entry ID. A message whose `From` equals
+the configured coordinator can wake the session, regardless of its subject or
+body. `From` is routing metadata, not authentication, and there is no freshness
+check: a stale or failed redelivery from that coordinator can wake the session
+again. While its ID remains the saved active `WakeBarrier`, an entry already
+used to wake the session is not reused as a second wake after local sleep or
+daemon restart. Once a non-`Deferred` completion clears that barrier, a later
+redelivery can wake again; this does not guarantee exactly-once or fresh wake
+signals.
+
+While asleep, the daemon continues its beat with `asleep=true`; a ping still
+gets a `daemon-pong` marked `asleep=true` if it does not itself wake the
+session. A matching coordinator message first commits awake state; if that
+message is a ping, its `daemon-pong` reports awake. The active daemon may read
+ordinary messages into its own pending-entry list, but does not deliver them,
+charge a failure, or acknowledge them. It keeps entry IDs in memory and fetches
+a body when a delivery starts. The bus's ordinary 15-minute claim behavior is
+unchanged. Active-daemon startup first recovers every page of the daemon's own
+pending-entry list, in batches of 128, before dispatching
+work; a recovery error is retried without dispatch. It does not recover
+another consumer's entries.
+
+After a matching coordinator message wakes the session, that message's entry
+is the single durable barrier: it gets the first non-`Deferred` delivery
+attempt, then held entries run in numeric stream-ID order. Synthetic daemon
+notices precede ordinary held entries, except that the barrier stays first. A
+`Deferred` result does not clear the barrier, count as a delivery failure, or
+acknowledge the entry. Local sleep/wake and daemon restart preserve the barrier
+until its delivery completes non-`Deferred`. If local sleep arrives while that
+retry is deferred, the daemon parks it; a later wake retries the barrier first.
+Any non-`Deferred` completion clears the barrier, including a failed turn; that
+failure uses the normal retry count, and a third non-`Deferred` failure
+requests the usual give-up acknowledgement. Reserving a delivery under the
+session-state lock is its start boundary; harness I/O begins after unlock, so a
+later sleep does not cancel an already reserved turn. One daemon owns a state
+directory at a time. If persisting a completed barrier clear returns an error,
+the daemon stops before dispatching later held entries.
+
+Sleep pauses the friend machine's unanswered-challenge clock, while its
+transport-connection timer can still advance, and keeps `Up` false. A daemon
+beat or ping response while asleep does not make the session up. Passive
+harnesses only peek: they do not claim, acknowledge, or deliver a native turn.
+For a matching `From`, they persist the resulting awake state but remember the
+observed entry ID only in process memory. They suppress repeats for that entry
+during one process lifetime; because the message remains unconsumed, it may be
+observed again after restart.
+
+The separate `tla/MCFriendSleep.tla` model is a finite safety projection. Its
+new cases are drafts awaiting Zhi's parse/TLC review; no run record is claimed
+here. It abstracts store/file failures, locking and cross-layer refinement,
+and does not cover pagination beyond 1,000 entries, authorization, native
+delivery, or liveness. Selected Go tests cover ACK-failure and state-error
+cases, but this projection does not prove those paths executed or establish
+cross-layer behavior.
 
 ## The loop (internal/friend/daemon.go)
 
