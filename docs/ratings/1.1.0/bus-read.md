@@ -1,0 +1,38 @@
+# nova-bus READ rating, nova-tools 1.1.0
+
+Rater: GLM
+Build: 38276fa58dff
+Score: 8.5/10
+README: 8.5/10
+
+## Reasons
+Read cold as writing and as a codebase: README top to bottom, the tool's section of docs/CLI.md, its spec under docs/, then cmd/nova-bus from main into the internal packages it leans on, help read as text, nothing run.
+
+The help is the strong part, and after the 1.1.0 wave it holds on every point the standard names. The banner answers the three questions in order (cmd/nova-bus/help.go:6-14), states the exit table in the banner itself (cmd/nova-bus/help.go:16-19), gives every verb an explicit effect line from inspection to delivery (cmd/nova-bus/help.go:77-89), and the first-send block plus the example block run from the binary alone in a scratch directory. The refusal grammar is one shape everywhere and every refusal carries a remedy a cold reader can act on in one turn; every verb's `-h` prints its detail above its flags. The command reference is honest prose with measured numbers where a claim could be a hope (docs/CLI.md:527), and the cursor design says its price plainly (docs/CLI.md:648): a reader is shown an edited note again, and is never told a note is answered when it is not. The entry point is a table of verbs, each file one thing (cmd/nova-bus/main.go:96-125), names are a stranger's nouns — lane, note, receipt, cursor, roster — and the comment at the top teaches the whole tool's why in the present tense (cmd/nova-bus/main.go:1-45). The tests teach the contract: status grammar, first run, refusals in one run, each pinned against the fixture.
+
+What a 10 needs, the read found short: the read path is still one 466-line function (cmd/nova-bus/inbox.go:285) that refuses, repairs cursors, walks, bounds, prints frames and writes state in one body — the exact shape the earlier read flagged, and it is the function every reader's run goes through. The spec under docs/ says a shipped wake mode has no code while the code ships it (docs/SPEC-BUS.md:7 against cmd/nova-bus/wait.go:113), and since the spec is normative, one of the two is wrong. That wake mode is also undiscoverable from the synopses and the command reference a stranger actually reads (cmd/nova-bus/help.go:29, docs/SPEC.md:2872, docs/CLI.md:598-615). Three small costs on top: retired flags still declared, though now announced in one NOTE line (cmd/nova-bus/wait.go:112, cmd/nova-bus/wait.go:282-283); one absolute sentence about rejected pushes in the reference's opening that the bounded retry cannot promise (docs/CLI.md:428); and the checkout lock's refusal printed with the REFUSED word at exit 1 while every other REFUSED pairs with exit 2, documented in the exit table but a grammar split all the same (cmd/nova-bus/send.go:170-174, cmd/nova-bus/help.go:16-19).
+
+## Findings
+| # | where | finding | fix | size |
+|---|---|---|---|---|
+| 1 | cmd/nova-bus/inbox.go:285 | a reader tracing one inbox run walks a 466-line function that opens the bus, refuses, repairs the cursor, draws the legacy line, walks, bounds the new half, prints the three parts and writes state — one body, many verbs' worth of concern, and it is the read path every call takes | split it along the return's own three parts — scope, the new listing, the backlog frame — into named functions the help text already uses, so each reads in one screen | M |
+| 2 | docs/SPEC-BUS.md:7 | the spec's status line says the wake verb group is specified with no code, yet the wake half ships: the flag is declared (cmd/nova-bus/wait.go:113), its refusals print (cmd/nova-bus/wait.go:155), and its wake line prints (cmd/nova-bus/wait.go:828); the spec is normative, so spec and code disagree | restate the status: the wake read half is implemented and pinned by tests; the verdict receipt stays absent — or name what of the read half is still missing | M |
+| 3 | cmd/nova-bus/help.go:29 | the shipped wake mode is named in the flag list of `wait -h` but absent from the banner's wait synopsis, from the synopsis at docs/SPEC.md:2872, and from the whole wait section of the command reference (docs/CLI.md:598-615), so a reader who never opens the flag list cannot learn it exists | add it to both synopsis lines and give it one paragraph beside the other wait endings in the command reference | S |
+| 4 | cmd/nova-bus/wait.go:112 | three retired flags are still declared; each now earns one NOTE line naming them retired (cmd/nova-bus/wait.go:282-283), so the surprise is announced rather than silent, but the surface keeps three names that do nothing | keep the NOTE, and set a landing note to drop the three once the harnesses stop passing them | S |
+| 5 | docs/CLI.md:428 | the opening says a rejected push never reaches a person; bounded retry is measured (docs/CLI.md:527), yet a push exhausted past its attempt bound lands on the caller as one FAILED line with git's transcript (cmd/nova-bus/send.go:179-180) — the claim is wider than the code | soften to the measured claim: retry keeps a rejected push off the caller in the measured cases, and exhaustion is one FAILED line naming the transcript | S |
+| 6 | cmd/nova-bus/send.go:170 | a checkout held by another run prints the REFUSED word at exit 1 while every other REFUSED pairs with exit 2; the exit table names the case (cmd/nova-bus/help.go:18), so it is documented, but one word spanning two exits splits the grammar | print the lock case as FAILED at exit 1, or as REFUSED at exit 2, and keep the table in step | S |
+
+## Good, keep
+- The entry-point comment that teaches the tool by the failures it closed, in the present tense (cmd/nova-bus/main.go:1-45): a cold reader gets the verbs, the cursor's reason and the bus's one unenforced rule in one read.
+- The cursor design paragraph that states the price of the read plainly, twice, before and after the mechanism (docs/CLI.md:646-648).
+- Every verb's effect line at `-h` and in the reference, from inspection to delivery, with the exact flag that strengthens it (cmd/nova-bus/help.go:77-89).
+
+## Compared with earlier ratings
+| earlier | now | evidence |
+|---|---|---|
+| a 467-line function on the read path | STILL THERE | cmd/nova-bus/inbox.go:285, 466 lines, one function from refusal to state write |
+| 16-parameter calls | FIXED | the widest call this read found takes 9 (cmd/nova-bus/main.go:273); verbs take their inputs through the one flag seam |
+| war-story comments | CHANGED | the why-comments now state the failure each verb closes in the present tense (cmd/nova-bus/main.go:29-41, cmd/nova-bus/help.go:94-101) with no author's history in them |
+| the checkout lock refusing at exit 1 | CHANGED | the exit table in the banner names the case at exit 1 (cmd/nova-bus/help.go:16-19); the word pairing is the residue (cmd/nova-bus/send.go:170-174) |
+| retired flags still declared | CHANGED | each retired flag now earns one NOTE line naming it retired and ignored (cmd/nova-bus/wait.go:282-283) |
+| the prose promising more than bounded retries deliver | CHANGED | the reference now carries the measured attempt numbers beside the claim (docs/CLI.md:527); the absolute opening sentence remains (docs/CLI.md:428) |
