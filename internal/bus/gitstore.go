@@ -362,7 +362,7 @@ func writeCreateOnly(root, rel string, data []byte) error {
 		}
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the write error is returned, and the explicit close on success is the one reported
 	if _, err := f.Write(data); err != nil {
 		return err
 	}
@@ -383,7 +383,7 @@ func appendLines(root, rel string, lines []string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the write error is returned, and the explicit close on success is the one reported
 	for _, line := range lines {
 		if _, err := io.WriteString(f, line+"\n"); err != nil {
 			return err
@@ -450,7 +450,7 @@ func (g gitFS) Stat(name string) (fs.FileInfo, error) {
 	}
 	size, _ := git(g.dir, "cat-file", "-s", g.commit+":"+name)
 	var n int64
-	fmt.Sscanf(strings.TrimSpace(size), "%d", &n)
+	_, _ = fmt.Sscanf(strings.TrimSpace(size), "%d", &n) // ignored: a size that does not parse stays 0, and Open reads the blob's bytes without it
 	return gitInfo{name: path.Base(name), size: n}, nil
 }
 
