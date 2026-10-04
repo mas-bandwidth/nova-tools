@@ -34,7 +34,7 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 	t.Setenv("PATH", trap)
 
 	mr := miniredis.RunT(t)
-	mr.SAdd("benches", "fresh", "stale", "quiet")
+	_, _ = mr.SAdd("benches", "fresh", "stale", "quiet") // ignored: test fixture setup
 	beat := func(bench, build string) {
 		mr.HSet("bench:"+bench+":beat", "host", bench, "at", "1790186398000", "build", build)
 		mr.SetTTL("bench:"+bench+":beat", 3*time.Second)

@@ -63,7 +63,9 @@ func field(s string) string {
 // refusal is the one refusal line (STANDARD §2): what was wrong and what the
 // input wants, then the command a reader runs next.
 func refusal(w io.Writer, token, run string, err error) int {
-	fmt.Fprintf(w, "%s REFUSED: %s; run: %s\n", token, oneline.Err(err), run)
+	if _, e := fmt.Fprintf(w, "%s REFUSED: %s; run: %s\n", token, oneline.Err(err), run); e != nil && err == nil {
+		return 1
+	}
 	return 2
 }
 
@@ -150,23 +152,42 @@ func helpText(name string) string {
 	return b.String()
 }
 
-func help(name string, w io.Writer) {
+func help(name string, w io.Writer) int {
 	// SPEC-UPDATE's "The verbs" block says these lines are what help prints,
 	// BYTE FOR BYTE, and names one string in the binary as the reason the spec
 	// and the help cannot drift apart. This is that string.
-	fmt.Fprintf(w, "%s\n\n", updateOpening)
-	fmt.Fprintln(w, updateVerbs)
-	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds. Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n", name)
+	if _, err := fmt.Fprintf(w, "%s\n\n", updateOpening); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintln(w, updateVerbs); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds. Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n", name); err != nil {
+		return 1
+	}
 	note := "Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
 	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
-	fmt.Fprintln(w, note)
-	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
-	fmt.Fprint(w, twoBinaries())
-	fmt.Fprint(w, manifestHelp(name))
-	fmt.Fprintf(w, "\n%s\n\nexample:\n", exitCodes(name))
-	for _, line := range []string{"example --out versions.tsv", "report --file versions.tsv", "status --file versions.tsv", "apply --file versions.tsv go --dry-run", "version"} {
-		fmt.Fprintf(w, "  %s %s\n", name, line)
+	if _, err := fmt.Fprintln(w, note); err != nil {
+		return 1
 	}
+	if _, err := fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n"); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprint(w, twoBinaries()); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprint(w, manifestHelp(name)); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(w, "\n%s\n\nexample:\n", exitCodes(name)); err != nil {
+		return 1
+	}
+	for _, line := range []string{"example --out versions.tsv", "report --file versions.tsv", "status --file versions.tsv", "apply --file versions.tsv go --dry-run", "version"} {
+		if _, err := fmt.Fprintf(w, "  %s %s\n", name, line); err != nil {
+			return 1
+		}
+	}
+	return 0
 }
 
 // twoBinaries says, in nova-update's banner, how nova-update and nova-version
@@ -305,8 +326,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		if verb == "help" && len(args) > 0 && args[0] != "help" && !verbflag.IsHelp(args[0]) {
 			return Run(name, append(args, "--help"), stamp, out, errs, env)
 		}
-		help(name, out)
-		return 0
+		return help(name, out)
 	}
 	if verb == "version" || verb == "--version" {
 		return versionVerb(name, stamp, args, out, errs)
@@ -459,7 +479,7 @@ func checked(name, verb string, o options, positional []string, env Environment)
 		return refused(verb, help, fmt.Sprintf("cannot open %s (supply a readable --file: %s; %s example --out %s writes one to start from)", o.file, manifestShape, name, o.file))
 	}
 	entries, err := Load(file)
-	file.Close()
+	_ = file.Close() // ignored: file was opened only to be read
 	if err != nil {
 		return refused(verb, help, fmt.Sprintf("%s: %s", o.file, err))
 	}
@@ -800,9 +820,9 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	var staged []string
 	defer func() {
 		for i := len(staged) - 1; i >= 0; i-- {
-			os.Remove(staged[i])
+			_ = os.Remove(staged[i]) // ignored: staging cleanup
 		}
-		os.Remove(stage)
+		_ = os.Remove(stage) // ignored: staging cleanup
 	}()
 	inventory := func(rev string) (movedInv, error) {
 		p := runChild([]string{"git", "-C", repo, "ls-tree", "-d", "--name-only", rev + ":cmd"})
