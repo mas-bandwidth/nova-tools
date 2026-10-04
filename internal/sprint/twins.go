@@ -21,6 +21,10 @@ import (
 // <stamp> by <who>", the last relink.
 const FieldRelinked = "relinked"
 
+// FieldReplaces is a twin's record of the ids it replaced (add --replaces, recut): its
+// lineage, as the old card's reason "replaced by <new>" is the other end of it.
+const FieldReplaces = "replaces"
+
 // RelinkReq re-points every waiting card's need of an old id to its twin.
 type RelinkReq struct {
 	Old    []string
@@ -336,6 +340,7 @@ func Replace(s *Snapshot, r AddReq) Plan {
 				for k, v := range ch.Entry.Set {
 					set[k] = v
 				}
+				set[FieldReplaces] = strings.Join(r.Replaces, ",")
 				delete(set, FieldBehind)
 				if twin > 0 {
 					set[FieldBehind] = itoa(twin)
