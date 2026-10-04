@@ -87,7 +87,7 @@ func TestARedealInOneEpochPushesBothTakesAndTheReadChecksOutTheSecond(t *testing
 	t.Parallel()
 	g := newGitRepo(t)
 	h := fourMembers(t)
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 

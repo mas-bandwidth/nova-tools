@@ -257,7 +257,7 @@ JUDGMENT N3   stream stopped: stream branch red  stream=s1  size=3  waited=1m0s 
     nova-sprint resume --stream s1 --did 'returned s1-2' --answers N3
   rework the suspect:
     nova-sprint return s1-2 --reason 'suspect of the red batch' --answers N3
-    nova-sprint rework s1-2 --fix '<fix>'
+    nova-sprint rework s1-2 --fix '<fix>' --one
     nova-sprint resume --stream s1 --did 'returned s1-2 for rework' --answers N3
   resume with what you did:
     nova-sprint resume --stream s1 --did '<what you did>' --answers N3

@@ -189,7 +189,7 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s2 --count 1")
 	ta.ok("drop s2-1 --reason 'obsolete: the tool went away'")
-	ta.ok("add --stream s3 b --needs s2-1")
+	ta.ok("add --stream s3 b --one --needs s2-1")
 	ta.ok("fleet down m2")
 	blocked := ta.group(sprint.NBlocked, "s3")
 
@@ -204,6 +204,7 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 		"DECISION ",
 		" drop s2-1 by coordinator: obsolete: the tool went away\n",
 		" fleet down m2 by coordinator\n",
+		"RULE Cards are admitted and released in waves of at least the fleet's width: add takes a directory, release names a wave, rework and drop answer a group; a single-card verb outside a judgment is the sign of doing it wrong.\n",
 		"FIRST nova-sprint where\n",
 		"FIRST nova-sprint inbox --wait --push seat\n",
 		"FIRST read docs/SPEC-SPRINT.md, \"Handing over the seat\"\n",

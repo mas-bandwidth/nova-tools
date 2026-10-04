@@ -22,7 +22,7 @@ func TestReleaseIsTheCoordinators(t *testing.T) {
 	ta.ok("add --stream s1 --count 1 --actor lead --brief-file " + proBriefFile(t))
 	out := ta.ok("add --stream s1 --sentinel stop --actor lead")
 	require.Contains(t, out, "MOVED sentinel stop -> waiting stream=s1", "add --sentinel")
-	ta.ok("add --stream s2 b --needs stop --actor lead --brief-file " + proBriefFile(t))
+	ta.ok("add --stream s2 b --one --needs stop --actor lead --brief-file " + proBriefFile(t))
 	out = ta.ok("card --fields stop")
 	require.Contains(t, out, "NEEDS s1-1 ready\n", "card stop")
 	require.Contains(t, out, "NEEDED-BY b\n", "card stop")

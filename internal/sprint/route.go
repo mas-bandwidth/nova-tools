@@ -274,6 +274,9 @@ func ceilingTier(c *Card, m cardhdr.Model) string {
 	if t := c.F(FieldTier); t != "" {
 		return t
 	}
+	if t, ok := criticalTier(c, m); ok {
+		return t // a critical card runs on pro from its first deal (weight.go)
+	}
 	if m.Tier == "" {
 		return cardhdr.RouteFlash
 	}

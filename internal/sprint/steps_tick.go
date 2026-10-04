@@ -92,14 +92,17 @@ const FieldReturnedAttempt = "returned_attempt"
 
 // The tick's own notification types.
 const (
-	NResumed   = "stream resumed: the card it needed landed"
-	NCannotAsk = "cannot ask"
-	NNoMember  = "no fleet member is up"
-	NInvariant = "an invariant is broken"
-	NWorkLate  = "a work card is past its deadline"
-	NReadLate  = "a read card is past its deadline"
-	NMergeLate = "a stream has had no merge step past its deadline"
-	NBound     = "a card reached its bound"
+	NResumed    = "stream resumed: the card it needed landed"
+	NCannotAsk  = "cannot ask"
+	NNoMember   = "no fleet member is up"
+	NInvariant  = "an invariant is broken"
+	NWorkLate   = "a work card is past its deadline"
+	NReadLate   = "a read card is past its deadline"
+	NMergeLate  = "a stream has had no merge step past its deadline"
+	NBound      = "a card reached its bound"
+	NStarving   = "the fleet is starving"  // ready under twice the width while a wave is held (heldWave)
+	NOverloaded = "a member is overloaded" // three timeouts within the window (overload.go)
+	// NReadersBehind (readers_behind.go): reads asked and not begun for the window
 	// NOverdue (notes.go) is the overdue line: a happened note, once per
 	// judgment, when the judgment passes its due time.
 
@@ -118,11 +121,15 @@ const ReworkOnAHigherTier = "rework with a fix on a higher tier"
 
 // TickDecisions are the decisions open to the tick's judgments.
 var TickDecisions = map[string][]string{
-	NBound:      {"rework with a fix", "drop", "wait"},
-	NCannotAsk:  {"reader add", "rework", "drop", "wait"},
-	NFewReaders: {"reader up", "reader add", "wait"},
-	NNoMember:   {"fleet beat", "fleet up", "wait"},
-	NNoRoute:    {"route add", "look at the card", "drop", "wait"},
+	NBound:         {"rework with a fix", "drop", "wait"},
+	NCannotAsk:     {"reader add", "rework", "drop", "wait"},
+	NFewReaders:    {"reader up", "reader add", "wait"},
+	NNoMember:      {"fleet beat", "fleet up", "wait"},
+	NStarving:      {"release", "wait"},                          // the first held wave's sentinel, never a single card
+	NOverloaded:    {"fleet up <m> --width <half>", "wait 15m"},  // named per member (overload.go, Overload.Decisions)
+	NReadersBehind: {"reader up <r>", "restart <r>", "wait 10m"}, // named per reader (readers_behind.go, Behind.Decisions)
+	NDevBehind:     {"promoted", "wait 30m"},                     // promotion.go
+	NNoRoute:       {"route add", "look at the card", "drop", "wait"},
 	// a payment and a key are the owner's: no rework is offered (provider_funds.go)
 	NProviderFunds:  {"ack", "wait"}, // and "funded <provider>", named per provider (providerConds)
 	NProviderLow:    {"ack", "wait"}, // the same
@@ -539,6 +546,12 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 				cd.what += "; a second bound on tier " + cardTierOf(c) + ": not reworked on it again"
 			}
 			cd.decisions = boundDecisions(c, wc, held != "")
+			if bb, ok := AtBriefBound(c, ""); ok {
+				// too many attempts on one brief: the brief is wrong, not the worker, and the
+				// judgment offers brief and drop, never rework (brief_bound.go)
+				cd.what = bb.String() + "; " + cd.what
+				cd.decisions = append([]string(nil), Decisions[NBriefWrong]...)
+			}
 			conds = append(conds, cd)
 			continue
 		}
@@ -598,6 +611,10 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// per card (provider_funds.go)
 	pc, stop := providerConds(s)
 	conds = append(conds, pc...)
+	// a member whose cards are timing out, three within the window (overload.go)
+	conds = append(conds, overloadConds(s)...)
+	// landings on the sprint branch not promoted into dev (promotion.go)
+	conds = append(conds, devBehindCond(s)...)
 	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
 	if len(up) == 0 && len(ready) > 0 {
 		c := cond{typ: NNoMember, streamLevel: true,
@@ -608,6 +625,24 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			c.decisions = []string{"fleet up", "wait"}
 		}
 		conds = append(conds, c)
+	}
+	if sentinel := heldWave(s); sentinel != nil && len(up) > 0 {
+		// ready is kept at twice the fleet's width (the owner, 2026-10-02: "Ready always
+		// full"; 2026-10-03: "BATCH EVERYTHING"): under it while a wave is held, the tick
+		// says so every tick and offers the wave, never a single card
+		width, n := 0, 0
+		for _, m := range up {
+			width += s.Width(m)
+		}
+		for _, c := range s.Work.Column(Ready) {
+			if !IsSentinel(c) {
+				n++
+			}
+		}
+		if n < 2*width {
+			conds = append(conds, cond{typ: NStarving, streamLevel: true, primaries: []string{sentinel.ID},
+				what: fmt.Sprintf("the fleet is starving: ready %d is under twice the width %d; release a wave: nova-sprint release %s --reason '<why>'", n, 2*width, sentinel.ID)})
+		}
 	}
 	if len(up) > 0 {
 		room := widthRoom(s, up)
@@ -628,7 +663,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due
@@ -805,6 +840,8 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	if few {
 		conds = append(conds, cond{typ: NFewReaders, streamLevel: true, what: fewReaders(s)})
 	}
+	// reads asked and not begun for the window: the readers are behind (readers_behind.go)
+	conds = append(conds, readersBehindCond(s)...)
 	if len(ids) > 0 {
 		p = Ask(s, AskReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
@@ -814,7 +851,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	p.Refused = nil
-	due += notify(&p, s, conds, []string{NCannotAsk, NFewReaders}, r)
+	due += notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind}, r)
 	return p, due
 }
 
@@ -1037,7 +1074,7 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit:
+	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
@@ -1146,12 +1183,16 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 	}
 	holds := map[string]bool{}
 	updated := map[string]bool{}
-	update := func(n Note, what string) {
-		if n.What == what || updated[n.ID] {
+	update := func(n Note, what string, decisions []string) {
+		same := n.What == what && (len(decisions) == 0 || slices.Equal(n.Decisions, decisions))
+		if same || updated[n.ID] {
 			return
 		}
 		updated[n.ID] = true
 		n.What = what
+		if len(decisions) > 0 {
+			n.Decisions = append([]string(nil), decisions...) // the latest facts name the latest remedies
+		}
 		p.Updates = append(p.Updates, n)
 	}
 	due := 0
@@ -1161,8 +1202,8 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			k := condKey(c.typ, sub, c.card, c.what)
 			holds[k] = true
 			fresh = fresh || !open[k]
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders) {
-				update(n, c.what) // the latest facts, in place
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NReadersBehind || c.typ == NDevBehind) {
+				update(n, c.what, c.decisions) // the latest facts, in place
 			}
 		}
 		if !fresh {
@@ -1190,7 +1231,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 					c = s.Readers.Placed(o.Note.Card)
 				}
 				what, _, _ := strings.Cut(o.Note.What, "; at ")
-				update(o.Note, what+"; at "+placeOf(c))
+				update(o.Note, what+"; at "+placeOf(c), nil)
 			}
 			continue
 		}

@@ -233,7 +233,7 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 
 	// the readers come, and a card comes to s2
 	ta.ok("reader add reader-a reader-b")
-	ta.ok("add --stream s2 s2-2")
+	ta.ok("add --stream s2 s2-2 --one")
 	frame = ta.ok("where --all")
 	assert.Equal(t, allRow, strings.Join(rowsOf(tableOf(frame, "readers")), ","), "readers rows, %s alone:\n%s", allRow, frame)
 	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, ta.readerRows(), "where --json keeps each reader's row")

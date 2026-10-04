@@ -69,10 +69,10 @@ func TestLandReviewReportPinsTheHeadItPushed(t *testing.T) {
 func TestLandReviewReusedOperationCannotClaimAnotherBatchLanded(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 first")
+	r.ok("add --stream s1 first --one")
 	r.queued(map[string]string{"first": r.head("first", "main", "first.txt", "first\n")}, "first")
 	r.ok("land --repo-dir " + r.clone + " --base main --op repeated-land")
-	r.ok("add --stream s1 second")
+	r.ok("add --stream s1 second --one")
 	r.queued(map[string]string{"second": r.head("second", "main", "second.txt", "second\n")}, "second")
 	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main --op repeated-land")
 	if code == 0 {
