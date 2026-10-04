@@ -198,7 +198,7 @@ func hasShebang(path string) bool {
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: a read-only two-byte probe; a failed close cannot change the answer
 	buf := make([]byte, 2)
 	n, _ := f.Read(buf)
 	return n == 2 && buf[0] == '#' && buf[1] == '!'
