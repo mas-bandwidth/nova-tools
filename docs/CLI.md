@@ -550,8 +550,16 @@ rebuilt (the state files are under the home directory, out of its way).
 
 ```sh
 nova-friend install --as <me> --harness opencode --dir <my working directory> --width <n>
+nova-friend install --as <me> --harness dsh --dir <d> --width <n> --secrets DEEPSEEK_API_KEY --seat <seat>
 nova-friend status --as <me> --dir <my working directory>
 ```
+
+A harness that needs a secret in its environment gets it through `--secrets
+NAME[,NAME]` with the machine's nova-secrets `--seat`: the agent runs
+`nova-secrets exec --store ~/nova-bench/secrets --as <seat> --key
+~/.config/nova-secrets/<seat>.key --sops <sops> --only <names> --require <name>...
+-- nova-friend run ...`, nova-secrets and sops by absolute path from PATH at
+install, so the daemon starts with exactly those names and never without one.
 
 The first line is run once on the friend's machine, as the friend's login;
 launchd runs `nova-friend run` from then on, at every login, and restarts it

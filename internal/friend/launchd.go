@@ -19,6 +19,12 @@ type Agent struct {
 	Redis, Server                 string // the bus store and the sprint server
 	Home, Path                    string // the environment the agent runs in
 	LaunchdLog                    string // launchd's own stdout and stderr path, off the friend's volume
+	// Secrets are the names of the secrets the daemon needs in its environment
+	// (never values); with any, the command is wrapped in nova-secrets exec as
+	// the seat Seat, with SecretsTool and Sops by absolute path, the store under
+	// Home/nova-bench/secrets and the key under Home/.config/nova-secrets.
+	Secrets                 []string
+	Seat, SecretsTool, Sops string
 }
 
 // Label is the agent's launchd label.
@@ -29,9 +35,20 @@ func (a Agent) PlistPath() string {
 	return filepath.Join(a.Home, "Library", "LaunchAgents", a.Label()+".plist")
 }
 
-// Args is the daemon's command line.
+// Args is the daemon's command line: with Secrets, nova-secrets exec opens
+// exactly those names for the daemon (--only) and refuses to start it without
+// every one (--require), then the daemon itself after the --.
 func (a Agent) Args() []string {
-	args := []string{a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server, "--width", fmt.Sprint(a.Width)}
+	var args []string
+	if len(a.Secrets) > 0 {
+		args = []string{a.SecretsTool, "exec", "--store", filepath.Join(a.Home, "nova-bench", "secrets"), "--as", a.Seat,
+			"--key", filepath.Join(a.Home, ".config", "nova-secrets", a.Seat+".key"), "--sops", a.Sops, "--only", strings.Join(a.Secrets, ",")}
+		for _, name := range a.Secrets {
+			args = append(args, "--require", name)
+		}
+		args = append(args, "--")
+	}
+	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server, "--width", fmt.Sprint(a.Width))
 	if a.Session != "" {
 		args = append(args, "--session", a.Session)
 	}
@@ -142,4 +159,19 @@ func Uninstall(ctx context.Context, a Agent, uid int, run Launchctl, remove func
 func Loaded(ctx context.Context, label string, uid int, run Launchctl) bool {
 	_, err := run(ctx, "print", fmt.Sprintf("gui/%d/%s", uid, label))
 	return err == nil
+}
+
+// Said is the command line as a plan says it, with no path in it: the
+// secrets wrap by its names and seat, then the daemon's own flags, --redis
+// and --server left to the install line that gave them.
+func (a Agent) Said() string {
+	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s --width %d, with --redis and --server as given here", a.Friend, a.Harness, a.Dir, a.Width)
+	if len(a.Secrets) == 0 {
+		return said
+	}
+	wrap := "nova-secrets exec --as " + a.Seat + " --only " + strings.Join(a.Secrets, ",")
+	for _, name := range a.Secrets {
+		wrap += " --require " + name
+	}
+	return wrap + " -- " + said
 }

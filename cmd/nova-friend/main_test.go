@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ type rig struct {
 	store     *bus.Fake
 	env       map[string]string
 	launchctl []string
+	onPath    map[string]string // what lookPath finds, by name
 	now       time.Time
 	home      string
 }
@@ -52,7 +54,13 @@ func (r *rig) world() world {
 		uid:     501,
 		home:    r.home,
 		binary:  func() (string, error) { return "/opt/nova/bin/nova-friend", nil },
-		random:  func() string { return "r4nd0m" },
+		lookPath: func(name string) (string, error) {
+			if p, ok := r.onPath[name]; ok {
+				return p, nil
+			}
+			return "", errors.New("executable file not found in ")
+		},
+		random: func() string { return "r4nd0m" },
 	}
 }
 
@@ -306,4 +314,31 @@ func TestWaitPongReadsTheLogFromTheWaitsOwnWindow(t *testing.T) {
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(0).Out("WAIT-PONG OK nonce=abc123 from=bob", "queue=1 working=0 width=4")
 	r.store.Advance(time.Minute)
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(1).Err("WAIT-PONG NONE")
+}
+
+// install --secrets NAME[,NAME] --seat <seat> writes the agent with the
+// daemon wrapped in nova-secrets exec: the programs by absolute path from
+// PATH at install, the names opened and required, the daemon after the --.
+func TestInstallSecretsWrapsTheDaemonInNovaSecretsExec(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--dry-run").Exit(2).Err("--secrets wants --seat")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,no-such", "--seat", "studio", "--dry-run").Exit(2).Err(`"no-such" is none`)
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--seat", "studio", "--dry-run").Exit(2).Err("nova-secrets is not on PATH")
+	r.onPath = map[string]string{"nova-secrets": "/opt/nova/bin/nova-secrets", "sops": "/opt/homebrew/bin/sops"}
+	wrap := "/opt/nova/bin/nova-secrets exec --store " + filepath.Join(r.home, "nova-bench", "secrets") + " --as studio --key " + filepath.Join(r.home, ".config", "nova-secrets", "studio.key") +
+		" --sops /opt/homebrew/bin/sops --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- /opt/nova/bin/nova-friend run --as bob --harness opencode --dir /w/bob --redis store.test:6379 --server 127.0.0.1:6390 --width 0"
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--dry-run").Exit(0).
+		Out("NOTE the agent runs: nova-secrets exec --as studio --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- nova-friend run --as bob --harness opencode --dir /w/bob --width 0, with --redis and --server as given here")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio").Exit(0).Out("INSTALL OK label=com.nova.friend-bob")
+	raw, err := os.ReadFile(filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
+	require.NoError(t, err)
+	var args []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "<string>"); ok && strings.HasSuffix(v, "</string>") && !strings.Contains(line, "<key>") {
+			args = append(args, strings.TrimSuffix(v, "</string>"))
+		}
+	}
+	assert.Equal(t, strings.Fields(wrap), args[:len(strings.Fields(wrap))], "the plist's ProgramArguments are the wrap, then the daemon")
 }
