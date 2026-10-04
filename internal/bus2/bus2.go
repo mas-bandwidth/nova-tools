@@ -17,7 +17,6 @@ import (
 	"regexp"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -36,6 +35,21 @@ const (
 	MaxBody = 1 << 20 // bytes of a body
 	MaxName = 64      // bytes of a name
 )
+
+// ClaimAfter is how long a delivered message stays with its reader before
+// recv hands it to another: the budget one delivery into a harness gets. A
+// live reader keeps its message; a dead one's is claimed after this
+// (SPEC-BUS2.md, the semantics; tla/Bus2.tla HeldStaysHeld).
+const ClaimAfter = 60 * time.Second
+
+// Consumer is the one consumer name of every reader: with ClaimAfter, who
+// holds an entry is told by its idle time, never by a name.
+const Consumer = "nova-bus2"
+
+// unknown is the refusal of a name the roster does not hold, with how to add one.
+func unknown(n string) string {
+	return fmt.Sprintf("%s is no known name; the names are nova-config's friend and machine rows (nova-bus2 names lists them); add one with nova-config friend add %s --slots 1 --tiers flash --as <you>, then nova-config apply", n, n)
+}
 
 // nameRe is a name: lowercase letters, digits and hyphens.
 var nameRe = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -119,9 +133,10 @@ type Store interface {
 	// stream when it is not there (XGROUP CREATE ... 0 MKSTREAM); a group
 	// already there is fine.
 	EnsureGroup(ctx context.Context, stream, group string) error
-	// Claim hands consumer up to count entries pending for the group, whatever
-	// consumer held them and however short their idle time (XAUTOCLAIM 0 0-0).
-	Claim(ctx context.Context, stream, group, consumer string, count int) ([]Entry, error)
+	// Claim hands consumer up to count entries pending for the group that have
+	// been idle (delivered and not acked) for at least minIdle (XAUTOCLAIM
+	// <minIdle> 0-0): what a reader that died, or stalled, was holding.
+	Claim(ctx context.Context, stream, group, consumer string, minIdle time.Duration, count int) ([]Entry, error)
 	// Read hands consumer up to count entries the group has never delivered
 	// (XREADGROUP ... >), waiting up to block for one when block is above
 	// zero, else answering at once.
@@ -187,7 +202,7 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	}
 	for _, n := range append(append([]string{m.From}, m.To...), m.CC...) {
 		if !slices.Contains(names, n) {
-			problems = append(problems, fmt.Sprintf("%s is no known name; the names are nova-config's friend and machine rows (nova-bus2 names lists them); add one with nova-config friend add %s --slots 1 --tiers flash --as <you>, then nova-config apply", n, n))
+			problems = append(problems, unknown(n))
 		}
 	}
 	if len(problems) > 0 {
@@ -210,25 +225,33 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	return m, nil
 }
 
-// Recv is one message for the recipient, delivered to consumer: the oldest
-// pending one first (a message handed out and never acked, by this consumer
-// or one that died), else the oldest never delivered, waiting up to block
-// for it. ok is false when there is none. The group is made on first use.
-// (tla/Bus2.tla: Recv, PendingBeforeNew)
-func (b *Bus) Recv(ctx context.Context, as, consumer string, block time.Duration) (e Entry, ok bool, err error) {
+// Recv is one message for the recipient: the oldest one delivered and not
+// acked whose reader has had it longer than ClaimAfter (a reader that died
+// or stalled), else the oldest never delivered, waiting up to block for it.
+// ok is false when there is none. A name the roster does not hold is
+// refused, never given a stream to wait on. The group is made on first use.
+// (tla/Bus2.tla: Recv, PendingBeforeNew, HeldStaysHeld)
+func (b *Bus) Recv(ctx context.Context, as string, block time.Duration) (e Entry, ok bool, err error) {
 	if p := CheckName(as); p != "" {
 		return Entry{}, false, &Refusal{[]string{p}}
+	}
+	names, _, err := b.Store.Roster(ctx)
+	if err != nil {
+		return Entry{}, false, err
+	}
+	if !slices.Contains(names, as) {
+		return Entry{}, false, &Refusal{[]string{unknown(as)}}
 	}
 	stream := StreamOf(as)
 	if err := b.Store.EnsureGroup(ctx, stream, as); err != nil {
 		return Entry{}, false, err
 	}
-	got, err := b.Store.Claim(ctx, stream, as, consumer, 1)
+	got, err := b.Store.Claim(ctx, stream, as, Consumer, ClaimAfter, 1)
 	if err != nil {
 		return Entry{}, false, err
 	}
 	if len(got) == 0 {
-		if got, err = b.Store.Read(ctx, stream, as, consumer, block, 1); err != nil {
+		if got, err = b.Store.Read(ctx, stream, as, Consumer, block, 1); err != nil {
 			return Entry{}, false, err
 		}
 	}
@@ -298,8 +321,9 @@ func (b *Bus) pendingEntries(ctx context.Context, as string) ([]Entry, error) {
 }
 
 // Peek is what waits for the recipient, reading only: the pending entries
-// (delivered, not acked) and the new ones (never delivered), oldest first.
-func (b *Bus) Peek(ctx context.Context, as string, max int) (pending, fresh []Entry, err error) {
+// (delivered, not acked) and the new ones (never delivered), oldest first,
+// up to pendingLimit of each.
+func (b *Bus) Peek(ctx context.Context, as string) (pending, fresh []Entry, err error) {
 	if p := CheckName(as); p != "" {
 		return nil, nil, &Refusal{[]string{p}}
 	}
@@ -314,40 +338,16 @@ func (b *Bus) Peek(ctx context.Context, as string, max int) (pending, fresh []En
 		}
 		from = "(" + last
 	}
-	fresh, err = b.Store.Range(ctx, StreamOf(as), from, "+", max)
+	fresh, err = b.Store.Range(ctx, StreamOf(as), from, "+", pendingLimit)
 	return pending, fresh, err
-}
-
-// Filter is what Log keeps: each empty field keeps everything.
-type Filter struct {
-	Since    time.Time
-	From, To string // To matches a name among to or cc
-	Re       string
 }
 
 // logLimit bounds one read of the log; the caller caps what it shows.
 const logLimit = 10000
 
-// Log is the log's messages that pass the filter, oldest first.
-func (b *Bus) Log(ctx context.Context, f Filter) ([]Entry, error) {
-	from := "-"
-	if !f.Since.IsZero() {
-		from = strconv.FormatInt(f.Since.UnixMilli(), 10) + "-0"
-	}
-	all, err := b.Store.Range(ctx, LogKey, from, "+", logLimit)
-	if err != nil {
-		return nil, err
-	}
-	var kept []Entry
-	for _, e := range all {
-		m := e.Message()
-		if (f.From != "" && m.From != f.From) || (f.Re != "" && m.Re != f.Re) ||
-			(f.To != "" && !slices.Contains(m.To, f.To) && !slices.Contains(m.CC, f.To)) {
-			continue
-		}
-		kept = append(kept, e)
-	}
-	return kept, nil
+// Log is the log's messages, oldest first.
+func (b *Bus) Log(ctx context.Context) ([]Entry, error) {
+	return b.Store.Range(ctx, LogKey, "-", "+", logLimit)
 }
 
 // Names is the roster, sorted.

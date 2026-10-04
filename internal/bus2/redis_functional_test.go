@@ -49,28 +49,31 @@ func TestRedisStoreRunsTheWholeLoop(t *testing.T) {
 	}
 
 	// peek before any group exists: everything new
-	pending, fresh, err := b.Peek(ctx, "bob", 0)
+	pending, fresh, err := b.Peek(ctx, "bob")
 	require.NoError(t, err)
 	assert.Empty(t, pending)
 	assert.Len(t, fresh, 2)
 
-	e, ok, err := b.Recv(ctx, "bob", "c1", 0)
+	e, ok, err := b.Recv(ctx, "bob", 0)
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, m1.ID, e.Message().ID)
 	assert.Equal(t, "first\n", e.Message().Body)
 
-	// c1 dies; c2 gets m1 again, before m2
-	e2, ok, err := b.Recv(ctx, "bob", "c2", 0)
+	// a second reader at once: m1 is held (idle under ClaimAfter), so m2 comes
+	e2, ok, err := b.Recv(ctx, "bob", 0)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.Equal(t, m1.ID, e2.Message().ID, "pending before new (Bus2.tla PendingBeforeNew)")
-	assert.Equal(t, e.Entry, e2.Entry)
+	assert.Equal(t, m2.ID, e2.Message().ID, "a held message is not handed out twice (Bus2.tla HeldStaysHeld)")
 
-	pending, fresh, err = b.Peek(ctx, "bob", 0)
+	pending, fresh, err = b.Peek(ctx, "bob")
 	require.NoError(t, err)
-	assert.Len(t, pending, 1)
-	assert.Len(t, fresh, 1)
+	assert.Len(t, pending, 2)
+	assert.Empty(t, fresh)
+
+	_, ok, err = b.Recv(ctx, "bob", 100*time.Millisecond)
+	require.NoError(t, err)
+	assert.False(t, ok, "a block that runs out is no error, and nothing held is handed out")
 
 	acked, err := b.Ack(ctx, "bob", []string{m1.ID, "NOPE"})
 	require.NoError(t, err)
@@ -78,30 +81,32 @@ func TestRedisStoreRunsTheWholeLoop(t *testing.T) {
 	acked, err = b.Ack(ctx, "bob", []string{m1.ID})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]bool{m1.ID: false}, acked, "idempotent")
-
-	e, ok, err = b.Recv(ctx, "bob", "c2", time.Second)
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.Equal(t, m2.ID, e.Message().ID)
-	done, err := b.AckEntry(ctx, "bob", e.Entry)
+	done, err := b.AckEntry(ctx, "bob", e2.Entry)
 	require.NoError(t, err)
 	assert.True(t, done)
 
-	_, ok, err = b.Recv(ctx, "bob", "c2", 100*time.Millisecond)
+	// the reader of a message died: the store's idle clock says so, and the
+	// store's own command hands it out again (the idle is set by hand, as
+	// XAUTOCLAIM reads it, so no test waits a minute)
+	m3, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "three", Body: "third\n"})
 	require.NoError(t, err)
-	assert.False(t, ok, "a block that runs out is no error")
+	e3, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, m3.ID, e3.Message().ID)
+	require.NoError(t, c.XClaim(ctx, &redis.XClaimArgs{Stream: StreamOf("bob"), Group: "bob", Consumer: Consumer, MinIdle: 0, Messages: []string{e3.Entry}}).Err())
+	require.NoError(t, c.Do(ctx, "XCLAIM", StreamOf("bob"), "bob", Consumer, "0", e3.Entry, "IDLE", (ClaimAfter+time.Second).Milliseconds()).Err())
+	e4, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, m3.ID, e4.Message().ID, "a message its reader lost comes back after ClaimAfter (Bus2.tla PendingBeforeNew)")
 
-	got, err := b.Log(ctx, Filter{Re: m1.ID})
+	got, err := b.Log(ctx)
 	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, m2.ID, got[0].Message().ID)
-	got, err = b.Log(ctx, Filter{To: "m1"})
-	require.NoError(t, err)
-	require.Len(t, got, 1)
+	require.Len(t, got, 3)
 	assert.Equal(t, m1.ID, got[0].Message().ID)
-	got, err = b.Log(ctx, Filter{Since: m1.At.Add(time.Hour)})
-	require.NoError(t, err)
-	assert.Empty(t, got)
+	assert.Equal(t, []string{"m1"}, got[0].Message().CC)
+	assert.Equal(t, m1.ID, got[1].Message().Re)
 
 	// nothing was deleted
 	for _, k := range []string{StreamOf("bob"), StreamOf("m1"), LogKey} {
@@ -113,15 +118,20 @@ func TestRedisStoreRunsTheWholeLoop(t *testing.T) {
 
 func TestRedisStoreRefusesWhatTheFakeRefuses(t *testing.T) {
 	t.Parallel()
-	b, _, ctx := live(t)
+	b, c, ctx := live(t)
 	_, err := b.Send(ctx, Message{From: "ada", To: []string{"zed"}, Subject: "s", Body: "x"})
 	var r *Refusal
 	require.ErrorAs(t, err, &r)
 	assert.Contains(t, err.Error(), "zed is no known name")
-	pending, fresh, err := b.Peek(ctx, "nobody", 0)
+	pending, fresh, err := b.Peek(ctx, "nobody")
 	require.NoError(t, err)
 	assert.Empty(t, pending)
 	assert.Empty(t, fresh)
+	_, _, err = b.Recv(ctx, "nobody", 0)
+	require.ErrorAs(t, err, &r)
+	n, err := c.Exists(ctx, StreamOf("nobody")).Result()
+	require.NoError(t, err)
+	assert.Zero(t, n, "recv of an unknown name makes no stream")
 	acked, err := b.Ack(ctx, "nobody", []string{"X"})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]bool{"X": false}, acked)

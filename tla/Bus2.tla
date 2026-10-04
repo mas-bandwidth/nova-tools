@@ -13,7 +13,9 @@
 \*
 \* The actions are the verbs and the outside events: Send (one message to
 \* every recipient's stream and the log at once), Recv (a consumer of r takes
-\* the oldest pending message whoever held it, else the oldest new one), Ack
+\* the oldest pending message whose holder is dead, else the oldest new one;
+\* a live holder keeps its message: the code tells a dead holder by the
+\* entry's idle time past ClaimAfter), Ack
 \* (by r, of a message it was handed; again is a no-op), Crash (a consumer
 \* dies holding what it holds), Restart. The rules about one step (what a
 \* recv found, what an ack moved) are action properties over st and st'.
@@ -24,9 +26,10 @@
 \*                     between them (no MULTI/EXEC): OnEveryStreamOrNone
 \*   "newfirst"        recv reads new entries before it claims pending ones:
 \*                     PendingBeforeNew
-\*   "ownonly"         recv claims only the pending entries of its own
-\*                     consumer (XREADGROUP with 0 instead of XAUTOCLAIM), so
-\*                     what a dead consumer held is read past: PendingBeforeNew
+\*   "steal"           recv claims a pending entry whoever holds it and
+\*                     however briefly (XAUTOCLAIM with min-idle 0): a second
+\*                     reader takes a message a live one is delivering, so
+\*                     one message is delivered twice: HeldStaysHeld
 \*   "ackundelivered"  ack takes any id on the stream, delivered or not:
 \*                     AckOnlyDelivered
 \*   "ackreopens"      a second ack puts the message back on the stream as
@@ -58,9 +61,10 @@ Oldest(r, s) ==
     /\ st[m][r] = s
     /\ \A n \in Messages : st[n][r] = s => Position(m) <= Position(n)
 Has(r, s) == \E m \in Messages : st[m][r] = s
-\* The pending messages a consumer c of r may claim.
+\* The pending messages a consumer c of r may claim: the ones whose holder
+\* is dead (idle past ClaimAfter, in the code).
 Claimable(r, c) ==
-  {m \in Messages : st[m][r] = "pending" /\ (Broken # "ownonly" \/ holder[m][r] = c)}
+  {m \in Messages : st[m][r] = "pending" /\ (holder[m][r] \notin alive \/ Broken = "steal")}
 OldestClaimable(r, c) ==
   CHOOSE m \in Claimable(r, c) : \A n \in Claimable(r, c) : Position(m) <= Position(n)
 
@@ -162,12 +166,19 @@ NothingLost ==
     (m \in Sent /\ r \in to[m]) => st[m][r] \in {"new", "pending", "acked"}
 
 \* A recv that hands out a new message found nothing pending for that
-\* recipient, whoever held it: after a crash, what the dead consumer held
-\* comes first.
+\* recipient that a dead consumer held: after a crash, what the dead
+\* consumer held comes first.
 PendingBeforeNew ==
   [][\A r \in Recipients :
        (\E m \in Messages : st[m][r] = "new" /\ st'[m][r] = "pending") =>
-         (\A m \in Messages : st[m][r] # "pending")]_vars
+         (\A m \in Messages : st[m][r] = "pending" => holder[m][r] \in alive)]_vars
+
+\* A message held by a live consumer stays with it: it is delivered once
+\* while held, and only an ack or the holder's death moves it.
+HeldStaysHeld ==
+  [][\A m \in Messages, r \in Recipients :
+       (st[m][r] = "pending" /\ holder[m][r] \in alive /\ st'[m][r] = "pending") =>
+         holder'[m][r] = holder[m][r]]_vars
 
 \* Only a delivered message is acked: nothing goes from new to acked.
 AckOnlyDelivered ==

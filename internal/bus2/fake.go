@@ -31,8 +31,8 @@ type Fake struct {
 }
 
 type fakeGroup struct {
-	last    string            // last delivered entry id, "0-0" at the start
-	pending map[string]string // entry id -> consumer
+	last    string               // last delivered entry id, "0-0" at the start
+	pending map[string]time.Time // entry id -> when it was last delivered
 }
 
 // NewFake is an empty store at the instant start whose roster is names.
@@ -43,6 +43,13 @@ func NewFake(start time.Time, names ...string) *Fake {
 func (f *Fake) trip() error {
 	f.Trips++
 	return f.Fail
+}
+
+// Advance moves the clock by d: what a reader's idle time grows by.
+func (f *Fake) Advance(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.now = f.now.Add(d)
 }
 
 // Len is how many entries the stream holds.
@@ -83,7 +90,7 @@ func (f *Fake) EnsureGroup(_ context.Context, stream, group string) error {
 		return err
 	}
 	if _, ok := f.groups[stream+"/"+group]; !ok {
-		f.groups[stream+"/"+group] = &fakeGroup{last: "0-0", pending: map[string]string{}}
+		f.groups[stream+"/"+group] = &fakeGroup{last: "0-0", pending: map[string]time.Time{}}
 		if _, ok := f.streams[stream]; !ok {
 			f.streams[stream] = nil
 		}
@@ -99,7 +106,7 @@ func (f *Fake) group(stream, group string) (*fakeGroup, error) {
 	return g, nil
 }
 
-func (f *Fake) Claim(_ context.Context, stream, group, consumer string, count int) ([]Entry, error) {
+func (f *Fake) Claim(_ context.Context, stream, group, _ string, minIdle time.Duration, count int) ([]Entry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.trip(); err != nil {
@@ -111,15 +118,15 @@ func (f *Fake) Claim(_ context.Context, stream, group, consumer string, count in
 	}
 	var out []Entry
 	for _, e := range f.streams[stream] { // stream order is id order
-		if _, pending := g.pending[e.Entry]; pending && len(out) < count {
-			g.pending[e.Entry] = consumer
+		if at, pending := g.pending[e.Entry]; pending && f.now.Sub(at) >= minIdle && len(out) < count {
+			g.pending[e.Entry] = f.now
 			out = append(out, e)
 		}
 	}
 	return out, nil
 }
 
-func (f *Fake) Read(_ context.Context, stream, group, consumer string, _ time.Duration, count int) ([]Entry, error) {
+func (f *Fake) Read(_ context.Context, stream, group, _ string, _ time.Duration, count int) ([]Entry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.trip(); err != nil {
@@ -132,7 +139,7 @@ func (f *Fake) Read(_ context.Context, stream, group, consumer string, _ time.Du
 	var out []Entry
 	for _, e := range f.streams[stream] {
 		if after(e.Entry, g.last) && len(out) < count {
-			g.pending[e.Entry] = consumer
+			g.pending[e.Entry] = f.now
 			g.last = e.Entry
 			out = append(out, e)
 		}

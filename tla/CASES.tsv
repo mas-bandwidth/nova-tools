@@ -311,6 +311,6 @@ MCLevelBrokenNoSkip.cfg	MCLevel.tla	invariant	NeverOnARefuser	ignore-terminal	le
 MCBus2.cfg	MCBus2.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPartial.cfg	MCBus2.tla	invariant	OnEveryStreamOrNone	ignore-terminal	bus2	required	-
 MCBus2BrokenNewFirst.cfg	MCBus2.tla	action	PendingBeforeNew	ignore-terminal	bus2	required	-
-MCBus2BrokenOwnOnly.cfg	MCBus2.tla	action	PendingBeforeNew	ignore-terminal	bus2	required	-
+MCBus2BrokenSteal.cfg	MCBus2.tla	action	HeldStaysHeld	ignore-terminal	bus2	required	-
 MCBus2BrokenAckUndelivered.cfg	MCBus2.tla	action	AckOnlyDelivered	ignore-terminal	bus2	required	-
 MCBus2BrokenAckReopens.cfg	MCBus2.tla	action	AckedStaysAcked	ignore-terminal	bus2	required	-

@@ -49,9 +49,9 @@ func (r Redis) EnsureGroup(ctx context.Context, stream, group string) error {
 	return err
 }
 
-func (r Redis) Claim(ctx context.Context, stream, group, consumer string, count int) ([]Entry, error) {
+func (r Redis) Claim(ctx context.Context, stream, group, consumer string, minIdle time.Duration, count int) ([]Entry, error) {
 	msgs, _, err := r.C.XAutoClaim(ctx, &redis.XAutoClaimArgs{
-		Stream: stream, Group: group, Consumer: consumer, MinIdle: 0, Start: "0-0", Count: int64(count),
+		Stream: stream, Group: group, Consumer: consumer, MinIdle: minIdle, Start: "0-0", Count: int64(count),
 	}).Result()
 	if err != nil {
 		return nil, err

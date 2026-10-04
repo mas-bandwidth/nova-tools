@@ -75,7 +75,7 @@ func TestSendWritesEveryStreamAndTheLogOnce(t *testing.T) {
 		assert.Equal(t, 1, f.Len(s), s)
 	}
 	assert.Equal(t, 2, f.Trips, "a send is two trips: the roster and time, then the one transaction")
-	got, err := b.Log(context.Background(), Filter{})
+	got, err := b.Log(context.Background())
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, m, got[0].Message(), "what the log holds is what was sent")
@@ -95,42 +95,64 @@ func TestSendIdsRiseWithTime(t *testing.T) {
 func TestRecvHandsPendingBeforeNewAndAckEndsIt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	b, _ := rig(t, "ada", "bob")
+	b, f := rig(t, "ada", "bob")
 	m1, err := b.Send(ctx, msg("ada", "bob"))
 	require.NoError(t, err)
 	m2, err := b.Send(ctx, msg("ada", "bob"))
 	require.NoError(t, err)
 
-	e, ok, err := b.Recv(ctx, "bob", "c1", 0)
+	e, ok, err := b.Recv(ctx, "bob", 0)
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, m1.ID, e.Message().ID, "the oldest new message first")
 
-	// the consumer dies before acking: another consumer gets m1 again, before m2
-	e, ok, err = b.Recv(ctx, "bob", "c2", 0)
+	// a second reader at once: the live reader keeps m1, so m2 is handed out
+	e2, ok, err := b.Recv(ctx, "bob", 0)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.Equal(t, m1.ID, e.Message().ID, "a pending message is handed out before any new one (Bus2.tla PendingBeforeNew)")
+	assert.Equal(t, m2.ID, e2.Message().ID, "a message held under ClaimAfter is not handed out again (Bus2.tla HeldStaysHeld)")
 
-	acked, err := b.AckEntry(ctx, "bob", e.Entry)
+	// the reader of m1 died: after ClaimAfter it is handed out again, before anything new
+	acked, err := b.AckEntry(ctx, "bob", e2.Entry)
+	require.NoError(t, err)
+	assert.True(t, acked)
+	_, ok, err = b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	assert.False(t, ok, "nothing new, and m1 is still held")
+	f.Advance(ClaimAfter)
+	m3, err := b.Send(ctx, msg("ada", "bob"))
+	require.NoError(t, err)
+	e, ok, err = b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, m1.ID, e.Message().ID, "a pending message its reader lost is handed out before any new one (Bus2.tla PendingBeforeNew)")
+
+	acked, err = b.AckEntry(ctx, "bob", e.Entry)
 	require.NoError(t, err)
 	assert.True(t, acked)
 	acked, err = b.AckEntry(ctx, "bob", e.Entry)
 	require.NoError(t, err)
 	assert.False(t, acked, "acking twice is a no-op (Bus2.tla AckIdempotent)")
 
-	e, ok, err = b.Recv(ctx, "bob", "c2", 0)
+	e, ok, err = b.Recv(ctx, "bob", 0)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.Equal(t, m2.ID, e.Message().ID)
-	require.NoError(t, err)
-	_, ok, err = b.Recv(ctx, "bob", "c2", 0)
-	require.NoError(t, err)
-	assert.True(t, ok, "m2 is pending until acked, so it comes again")
+	assert.Equal(t, m3.ID, e.Message().ID)
 
-	_, ok, err = b.Recv(ctx, "ada", "c1", 0)
+	_, ok, err = b.Recv(ctx, "ada", 0)
 	require.NoError(t, err)
 	assert.False(t, ok, "nothing for ada")
+}
+
+func TestRecvRefusesAnUnknownNameAndMakesNoStream(t *testing.T) {
+	t.Parallel()
+	b, f := rig(t, "ada")
+	_, _, err := b.Recv(context.Background(), "bobb", 0)
+	var r *Refusal
+	require.ErrorAs(t, err, &r)
+	assert.Contains(t, err.Error(), "bobb is no known name")
+	assert.Contains(t, err.Error(), "nova-config friend add bobb")
+	assert.Equal(t, 0, f.Len(StreamOf("bobb")), "no stream was made for a name nobody can send to")
 }
 
 func TestAckByMessageIdIsIdempotent(t *testing.T) {
@@ -146,7 +168,7 @@ func TestAckByMessageIdIsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]bool{m1.ID: false}, got, "nothing is pending before a recv: no group yet")
 
-	_, _, err = b.Recv(ctx, "bob", "c1", 0)
+	_, _, err = b.Recv(ctx, "bob", 0)
 	require.NoError(t, err)
 	got, err = b.Ack(ctx, "bob", []string{m1.ID, m2.ID, "NOPE"})
 	require.NoError(t, err)
@@ -155,7 +177,7 @@ func TestAckByMessageIdIsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]bool{m1.ID: false}, got, "the same ack again changes nothing")
 
-	pending, fresh, err := b.Peek(ctx, "bob", 0)
+	pending, fresh, err := b.Peek(ctx, "bob")
 	require.NoError(t, err)
 	assert.Empty(t, pending)
 	require.Len(t, fresh, 1)
@@ -170,61 +192,39 @@ func TestPeekReadsOnly(t *testing.T) {
 		_, err := b.Send(ctx, msg("ada", "bob"))
 		require.NoError(t, err)
 	}
-	pending, fresh, err := b.Peek(ctx, "bob", 0)
+	pending, fresh, err := b.Peek(ctx, "bob")
 	require.NoError(t, err)
 	assert.Empty(t, pending)
 	assert.Len(t, fresh, 3, "before any recv every message is new")
-	_, _, err = b.Recv(ctx, "bob", "c1", 0)
+	_, _, err = b.Recv(ctx, "bob", 0)
 	require.NoError(t, err)
-	pending, fresh, err = b.Peek(ctx, "bob", 0)
+	pending, fresh, err = b.Peek(ctx, "bob")
 	require.NoError(t, err)
 	assert.Len(t, pending, 1)
 	assert.Len(t, fresh, 2)
-	pending, fresh, err = b.Peek(ctx, "bob", 0)
+	pending, fresh, err = b.Peek(ctx, "bob")
 	require.NoError(t, err)
 	assert.Len(t, pending, 1, "a peek moves nothing")
 	assert.Len(t, fresh, 2)
-	_, _, err = b.Peek(ctx, "ada", 0)
+	_, _, err = b.Peek(ctx, "ada")
 	require.NoError(t, err)
 	_, made := f.groups[StreamOf("ada")+"/ada"]
 	assert.False(t, made, "a peek makes no group")
 }
 
-func TestLogFilters(t *testing.T) {
+func TestLogIsEverythingOldestFirst(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	b, _ := rig(t, "ada", "bob", "cy")
+	b, _ := rig(t, "ada", "bob")
 	m1, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "one", Body: "x"})
 	require.NoError(t, err)
-	m2, err := b.Send(ctx, Message{From: "bob", To: []string{"ada"}, CC: []string{"cy"}, Subject: "two", Body: "x", Re: m1.ID})
+	m2, err := b.Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "two", Body: "y", Re: m1.ID})
 	require.NoError(t, err)
-	m3, err := b.Send(ctx, Message{From: "cy", To: []string{"ada"}, Subject: "three", Body: "x"})
+	got, err := b.Log(ctx)
 	require.NoError(t, err)
-	cases := []struct {
-		name string
-		f    Filter
-		want []string
-	}{
-		{"all", Filter{}, []string{m1.ID, m2.ID, m3.ID}},
-		{"from", Filter{From: "bob"}, []string{m2.ID}},
-		{"to matches cc too", Filter{To: "cy"}, []string{m2.ID}},
-		{"to", Filter{To: "ada"}, []string{m2.ID, m3.ID}},
-		{"re", Filter{Re: m1.ID}, []string{m2.ID}},
-		{"since", Filter{Since: m3.At}, []string{m3.ID}},
-		{"since after everything", Filter{Since: m3.At.Add(time.Second)}, nil},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := b.Log(ctx, c.f)
-			require.NoError(t, err)
-			var ids []string
-			for _, e := range got {
-				ids = append(ids, e.Message().ID)
-			}
-			assert.Equal(t, c.want, ids)
-		})
-	}
+	require.Len(t, got, 2)
+	assert.Equal(t, m1, got[0].Message())
+	assert.Equal(t, m2, got[1].Message())
 }
 
 func TestAStoreThatIsDownIsAnError(t *testing.T) {
@@ -234,13 +234,13 @@ func TestAStoreThatIsDownIsAnError(t *testing.T) {
 	ctx := context.Background()
 	_, err := b.Send(ctx, msg("ada", "bob"))
 	assert.ErrorIs(t, err, f.Fail)
-	_, _, err = b.Recv(ctx, "bob", "c", 0)
+	_, _, err = b.Recv(ctx, "bob", 0)
 	assert.ErrorIs(t, err, f.Fail)
-	_, _, err = b.Peek(ctx, "bob", 0)
+	_, _, err = b.Peek(ctx, "bob")
 	assert.ErrorIs(t, err, f.Fail)
 	_, err = b.Ack(ctx, "bob", []string{"X"})
 	assert.ErrorIs(t, err, f.Fail)
-	_, err = b.Log(ctx, Filter{})
+	_, err = b.Log(ctx)
 	assert.ErrorIs(t, err, f.Fail)
 	_, err = b.Names(ctx)
 	assert.ErrorIs(t, err, f.Fail)
