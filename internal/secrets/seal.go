@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
@@ -560,7 +561,7 @@ func sealDecrypt(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer safepath.RemoveUnder(os.TempDir(), tmpDir)
 
 	out, err := run(nil, sealSopsEnv(keyPath, tmpDir), "", sopsPath, "-d", filePath)
 	if err != nil {
@@ -582,7 +583,7 @@ func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile string, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer safepath.RemoveUnder(os.TempDir(), tmpDir)
 
 	out, err := run(bytes.NewReader(plaintext), sealSopsEnv(keyPath, tmpDir), storeDir, sopsPath,
 		"-e", "--filename-override", seatFile, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
