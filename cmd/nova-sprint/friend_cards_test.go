@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -77,15 +79,15 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 	assert.Contains(t, ta.ok("card s1-1"), "who=friend.amy", "card shows who")
 
 	out := ta.ok("friend sync --root " + root)
-	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1 job=s1-1.w1 branch=sprint/s1-1.w1.g1.e0")
+	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1 job=s1-1.w1.g1 branch=sprint/s1-1.w1.g1.e0")
 	assert.Contains(t, out, "delivered=1 finished=0")
-	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1", "BRIEF.md"))
+	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1.g1", "BRIEF.md"))
 	require.NoError(t, err)
 	lines := strings.Split(string(text), "\n")
-	assert.Equal(t, "STATUS: nova-sprint card s1-1.w1, epoch 0, attempt 1; push your work to the branch sprint/s1-1.w1.g1.e0; first take it: nova-sprint friend take s1-1.w1; when done, write outbox/s1-1.w1/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>", lines[0])
-	assert.Contains(t, lines[1], "Work in ~/amy-working/jobs/s1-1.w1/")
+	assert.Equal(t, "STATUS: nova-sprint card s1-1.w1, epoch 0, attempt 1; push your work to the branch sprint/s1-1.w1.g1.e0; first take it: nova-sprint friend take s1-1.w1.g1; when done, write outbox/s1-1.w1.g1/REPORT.md with Assignment: s1-1.w1.g1, Verdict: LAND|HOLD|FAIL and Head: <sha>", lines[0])
+	assert.Contains(t, lines[1], "Work in ~/amy-working/jobs/s1-1.w1.g1/")
 	assert.Contains(t, string(text), "\n\ns1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n", "the brief follows")
-	_, err = os.Stat(filepath.Join(root, "bob-working", "inbox", "s1-1.w1"))
+	_, err = os.Stat(filepath.Join(root, "bob-working", "inbox", "s1-1.w1.g1"))
 	assert.True(t, os.IsNotExist(err), "bob's inbox is not written")
 
 	// a sync after a sync delivers nothing again, and the card is no job of hers
@@ -223,15 +225,15 @@ func TestTheInboxRefusesABadCardIDAndASymlinkedJob(t *testing.T) {
 
 	elsewhere := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
-	require.NoError(t, os.Symlink(elsewhere, filepath.Join(dir, "inbox", "s1-1.w1")))
-	_, why, err = friendInbox(dir, sprint.Packet{Card: "s1-1.w1"})
+	require.NoError(t, os.Symlink(elsewhere, filepath.Join(dir, "inbox", "s1-1.w1.g1")))
+	_, why, err = friendInbox(dir, sprint.Packet{Card: "s1-1.w1", Gen: 1})
 	require.NoError(t, err)
-	assert.Contains(t, why, "inbox/s1-1.w1 is a symlink or a file, not a directory")
+	assert.Contains(t, why, "inbox/s1-1.w1.g1 is a symlink or a file, not a directory")
 
-	in, why, err := friendInbox(dir, sprint.Packet{Card: "s1-2.w1", Epoch: 3})
+	in, why, err := friendInbox(dir, sprint.Packet{Card: "s1-2.w1", Epoch: 3, Gen: 1})
 	require.NoError(t, err)
 	assert.Empty(t, why)
-	assert.Equal(t, filepath.Join(dir, "inbox", "s1-2.w1~3"), in)
+	assert.Equal(t, filepath.Join(dir, "inbox", "s1-2.w1~3.g1"), in)
 }
 
 // A twin's verbs beat its machines, never a friend's row: a twin holding a friend's card
@@ -327,22 +329,23 @@ func TestAFriendsReworkStartsFromTheTipOfItsBase(t *testing.T) {
 	assert.NotContains(t, friendBrief("amy", p), "This attempt starts")
 }
 
-// Bound generation recorded in inbox/<job>/.gen ensures an old report written for
-// generation 1 cannot finish a later generation assignment after hold/withdrawal and redeal.
-func TestBoundGenerationPreventsStaleReportFromFinishingNewAssignment(t *testing.T) {
+// Bound generation recorded in immutable per-generation job identity ensures an old report written for
+// generation 1 cannot finish a later generation assignment after hold/withdrawal and redeal, while a
+// fresh report written for the new generation succeeds.
+func TestBoundGenerationPreventsStaleReportAndFreshReportSucceeds(t *testing.T) {
 	t.Parallel()
 	ta, root := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
-	ta.ok("friend take s1-1.w1")
+	ta.ok("friend take s1-1.w1.g1")
 
-	// verify .gen was written on delivery with gen 1
-	genData, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1", ".gen"))
+	// verify gen 1 BRIEF was written under immutable path inbox/s1-1.w1.g1/BRIEF.md
+	brief1, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1.g1", "BRIEF.md"))
 	require.NoError(t, err)
-	assert.Equal(t, "1\n", string(genData))
+	assert.Contains(t, string(brief1), "Assignment: s1-1.w1.g1")
 
 	// friend writes a report for gen 1
-	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n\nDone attempt 1.\n")
+	outboxReport(t, root, "amy", "s1-1.w1.g1", "Assignment: s1-1.w1.g1\nVerdict: LAND\nHead: "+landHead+"\n\nDone attempt 1.\n")
 
 	// now coordinator holds amy before sync collects the report
 	ta.ok("friend down amy")
@@ -362,12 +365,20 @@ func TestBoundGenerationPreventsStaleReportFromFinishingNewAssignment(t *testing
 	assert.Equal(t, 3, c.Work[0].Int("gen"))
 	assert.Equal(t, sprint.Ready, c.Work[0].Col)
 
-	// friend claims the new assignment (moves to working at gen 3)
-	ta.ok("friend take s1-1.w1")
+	// sync delivers fresh brief for gen 3
+	outDeliv := ta.ok("friend sync --root " + root)
+	assert.Contains(t, outDeliv, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1 job=s1-1.w1.g3")
 
-	// sync runs: it finds the old REPORT.md in outbox, but inbox/.gen binds it to gen 1
+	// verify fresh BRIEF.md delivered for gen 3
+	brief3, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1.g3", "BRIEF.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(brief3), "Assignment: s1-1.w1.g3")
+
+	// friend claims the new assignment (moves to working at gen 3)
+	ta.ok("friend take s1-1.w1.g3")
+
+	// sync runs: only the old gen 1 report exists; it detects stale generation 1 vs 3
 	out := ta.ok("friend sync --root " + root)
-	// Finish is refused because gen 1 != 3 (world has moved on)
 	assert.Contains(t, out, "FRIEND-CARD REFUSED")
 	assert.Contains(t, out, "stale: generation 1 is not the live one (3)")
 	assert.NotContains(t, out, "FRIEND-CARD FINISHED")
@@ -377,4 +388,92 @@ func TestBoundGenerationPreventsStaleReportFromFinishingNewAssignment(t *testing
 	require.Len(t, c.Work, 1)
 	assert.Equal(t, sprint.Working, c.Work[0].Col)
 	assert.Equal(t, 3, c.Work[0].Int("gen"))
+
+	// now friend writes a fresh report for gen 3
+	outboxReport(t, root, "amy", "s1-1.w1.g3", "Assignment: s1-1.w1.g3\nVerdict: LAND\nHead: "+landHead+"\n\nDone attempt 1 gen 3.\n")
+
+	// sync finishes the fresh generation successfully
+	outFresh := ta.ok("friend sync --root " + root)
+	assert.Contains(t, outFresh, "FRIEND-CARD FINISHED friend=amy card=s1-1.w1 result=ok head="+landHead)
+	assert.Contains(t, outFresh, "finished=1")
+
+	// verify card has moved to review
+	ta.ok("tick")
+	ta.json("card s1-1", &c)
+	assert.Equal(t, sprint.Review, c.Primary.Col)
+	assert.Equal(t, "ok", c.Primary.F("result"))
+}
+
+// Stale, missing, or corrupt metadata cannot acquire authority:
+// a report with missing Assignment:, mismatched Assignment:, or older generation is refused with actionable remedy.
+func TestStaleOrMissingMetadataCannotAcquireAuthority(t *testing.T) {
+	t.Parallel()
+	noTip := func(context.Context, string, string) (string, error) { return landHead, nil }
+	p := sprint.Packet{Card: "s1-1.w1", Epoch: 0, Gen: 3, Branch: "sprint/s1-1.w1.g3.e0", Brief: "REPO: mas-bandwidth/nova-tools\n"}
+
+	// 1. Missing Assignment: line at gen > 1 is rejected
+	reportMissing := "Verdict: LAND\nHead: " + landHead + "\n\nDone.\n"
+	_, err := friendFinish(context.Background(), "amy", p, reportMissing, noTip)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "report lacks Assignment: line for generation 3; add Assignment: s1-1.w1.g3")
+
+	// 2. Corrupted / mismatched Assignment: token is rejected
+	reportCorrupt := "Assignment: invalid-token\nVerdict: LAND\nHead: " + landHead + "\n\nDone.\n"
+	_, err = friendFinish(context.Background(), "amy", p, reportCorrupt, noTip)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "report assignment invalid-token does not match current assignment s1-1.w1.g3")
+
+	// 3. Stale Assignment: from older generation is rejected
+	reportStale := "Assignment: s1-1.w1.g1\nVerdict: LAND\nHead: " + landHead + "\n\nDone.\n"
+	_, err = friendFinish(context.Background(), "amy", p, reportStale, noTip)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stale report assignment s1-1.w1.g1 (generation 1 is older than current generation 3)")
+
+	// 4. Valid Assignment: matches and succeeds
+	reportValid := "Assignment: s1-1.w1.g3\nVerdict: LAND\nHead: " + landHead + "\n\nDone.\n"
+	req, err := friendFinish(context.Background(), "amy", p, reportValid, noTip)
+	require.NoError(t, err)
+	assert.False(t, req.Failed)
+	assert.Equal(t, landHead, req.Head)
+}
+
+// Concurrent old and new deliveries cannot overwrite current identity:
+// immutable generation paths ensure separate directories and NoReplace ensures BRIEF is write-once.
+func TestConcurrentOldAndNewDeliveriesCannotOverwriteIdentity(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p1 := sprint.Packet{Card: "s1-1.w1", Gen: 1}
+	p3 := sprint.Packet{Card: "s1-1.w1", Gen: 3}
+
+	in1, why1, err := friendInbox(dir, p1)
+	require.NoError(t, err)
+	assert.Empty(t, why1)
+	assert.Equal(t, filepath.Join(dir, "inbox", "s1-1.w1.g1"), in1)
+
+	in3, why3, err := friendInbox(dir, p3)
+	require.NoError(t, err)
+	assert.Empty(t, why3)
+	assert.Equal(t, filepath.Join(dir, "inbox", "s1-1.w1.g3"), in3)
+
+	// Write gen 3 first
+	require.NoError(t, os.MkdirAll(in3, 0o755))
+	brief3 := filepath.Join(in3, "BRIEF.md")
+	require.NoError(t, atomicfile.WriteFile(brief3, []byte(friendBrief("amy", p3)), 0o644, atomicfile.NoReplace()))
+
+	// Attempted re-delivery of gen 3 fails with fs.ErrExist (NoReplace)
+	err = atomicfile.WriteFile(brief3, []byte("overwrite attempt"), 0o644, atomicfile.NoReplace())
+	assert.True(t, errors.Is(err, fs.ErrExist), "atomicfile protects existing BRIEF")
+
+	// Gen 1 delivery goes to isolated in1 path and does not touch in3
+	require.NoError(t, os.MkdirAll(in1, 0o755))
+	brief1 := filepath.Join(in1, "BRIEF.md")
+	require.NoError(t, atomicfile.WriteFile(brief1, []byte(friendBrief("amy", p1)), 0o644, atomicfile.NoReplace()))
+
+	content3, err := os.ReadFile(brief3)
+	require.NoError(t, err)
+	assert.Contains(t, string(content3), "Assignment: s1-1.w1.g3", "gen 3 identity remains intact")
+
+	content1, err := os.ReadFile(brief1)
+	require.NoError(t, err)
+	assert.Contains(t, string(content1), "Assignment: s1-1.w1.g1", "gen 1 identity remains intact")
 }

@@ -371,6 +371,19 @@ func friendTake(s *Snapshot, r TakeReq, name string) Plan {
 // her row is untouched if it holds none.
 func FriendHold(s *Snapshot, friend, who string) Plan {
 	var p Plan
+	if _, ok := s.FriendSeat(friend); !ok {
+		friends := make([]string, len(s.Friends))
+		for i, f := range s.Friends {
+			friends[i] = f.Name
+		}
+		slices.Sort(friends)
+		names := strings.Join(friends, ",")
+		if names == "" {
+			names = "none"
+		}
+		p.refuse(friend, fmt.Sprintf("no friend %s on the friends table (friends: %s): its row is nova-config's friend row; run: nova-sprint friend sync", friend, names))
+		return p
+	}
 	p.Roster = &FriendRosterChange{Hold: &FriendHoldChange{
 		Name: friend,
 		Held: true,
@@ -400,6 +413,19 @@ func FriendHold(s *Snapshot, friend, who string) Plan {
 // FriendRelease releases the coordinator's hold on a friend (friend up).
 func FriendRelease(s *Snapshot, friend, who string) Plan {
 	var p Plan
+	if _, ok := s.FriendSeat(friend); !ok {
+		friends := make([]string, len(s.Friends))
+		for i, f := range s.Friends {
+			friends[i] = f.Name
+		}
+		slices.Sort(friends)
+		names := strings.Join(friends, ",")
+		if names == "" {
+			names = "none"
+		}
+		p.refuse(friend, fmt.Sprintf("no friend %s on the friends table (friends: %s): its row is nova-config's friend row; run: nova-sprint friend sync", friend, names))
+		return p
+	}
 	p.Roster = &FriendRosterChange{Hold: &FriendHoldChange{
 		Name: friend,
 		Held: false,

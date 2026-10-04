@@ -1720,20 +1720,32 @@ func (a *app) cmdResolve(args []string, stdout, stderr io.Writer) int {
 	})
 }
 
-// cardGens splits <card>@<gen> words into ids and generations.
+// cardGens splits <card>@<gen> or <card>.g<gen> words into ids and generations.
 func cardGens(words []string) ([]string, map[string]int, error) {
 	gens := map[string]int{}
 	var ids []string
 	for _, w := range words {
-		id, g, ok := strings.Cut(w, "@")
-		if ok {
+		if id, g, ok := strings.Cut(w, "@"); ok {
 			n, err := strconv.Atoi(g)
 			if err != nil || n < 1 {
 				return nil, nil, fmt.Errorf("%s: a generation is a whole number from 1", w)
 			}
-			gens[id] = n
+			card := sprint.CardID(id)
+			gens[card] = n
+			ids = append(ids, card)
+			continue
 		}
-		ids = append(ids, id)
+		if idx := strings.LastIndex(w, ".g"); idx != -1 {
+			gStr := w[idx+2:]
+			n, err := strconv.Atoi(gStr)
+			if err == nil && n >= 1 {
+				id := sprint.CardID(w[:idx])
+				gens[id] = n
+				ids = append(ids, id)
+				continue
+			}
+		}
+		ids = append(ids, sprint.CardID(w))
 	}
 	return ids, gens, nil
 }

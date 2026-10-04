@@ -227,3 +227,257 @@ func TestSyncFriendsPreservesLiveHoldState(t *testing.T) {
 	assert.Equal(t, sprint.Down, rowsReleased[0].Status) // Down until she beats
 	assert.Equal(t, 4, rowsReleased[0].Width)
 }
+
+// TestFriendHoldZeroCards proves that holding a friend who currently has 0 cards
+// still durably commits the roster hold state.
+func TestFriendHoldZeroCards(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2, Tiers: []string{"flash"}}})
+	require.NoError(t, err)
+
+	// Hold Amy with 0 cards on her row
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", true, "glenn"))
+
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, sprint.Held, rows[0].Status)
+
+	// Release Amy with 0 cards
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", false, "glenn"))
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, sprint.Down, rows[0].Status)
+}
+
+// TestFriendDuplicateHold proves that duplicate holds or duplicate releases are idempotent.
+func TestFriendDuplicateHold(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2, Tiers: []string{"flash"}}})
+	require.NoError(t, err)
+
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", true, "glenn"))
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", true, "glenn"))
+
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Held, rows[0].Status)
+
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", false, "glenn"))
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", false, "glenn"))
+
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Down, rows[0].Status)
+}
+
+// TestFriendHoldCrashAfterRelease proves that once an operation executes Release,
+// the fence is cleared, the operation is fully committed, and a subsequent fenced
+// access does not attempt any pending repair.
+func TestFriendHoldCrashAfterRelease(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2, Tiers: []string{"flash"}}})
+	require.NoError(t, err)
+
+	snap, gen, err := h.st.Fenced(h.ctx, tables(sprint.Fleet, sprint.Work), nil, nil)
+	require.NoError(t, err)
+	snap.Friends = []sprint.FriendSeat{{Name: "amy", Width: 2, Status: sprint.Up, Tiers: []string{"flash"}}}
+	plan := sprint.Applied(snap, sprint.FriendHold(snap, "amy", "glenn"))
+	require.NotNil(t, plan.Roster)
+
+	op, err := h.st.operation("friend down", "glenn", "crash-after-release-op", plan, snap)
+	require.NoError(t, err)
+	ok, err := h.st.B.Acquire(h.ctx, gen, op)
+	require.True(t, ok)
+	require.NoError(t, err)
+
+	applied, _, err := h.st.apply(h.ctx, op)
+	require.True(t, applied)
+	require.NoError(t, err)
+
+	// Release completes the operation and deletes the fence
+	require.NoError(t, h.st.B.Release(h.ctx, op, true))
+
+	// Verify fence is clear
+	f, err := h.st.B.ReadFence(h.ctx)
+	require.NoError(t, err)
+	assert.Nil(t, f.Pending)
+
+	// Subsequent fenced read has nothing to repair
+	var repaired []string
+	_, _, err = h.st.Fenced(h.ctx, tables(sprint.Fleet), nil, &repaired)
+	require.NoError(t, err)
+	assert.Empty(t, repaired)
+
+	// Roster hold is committed
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Held, rows[0].Status)
+}
+
+// TestFriendHoldLostReplyReplay proves that replaying a previously applied
+// friend hold operation (lost reply scenario) is safe and idempotent.
+func TestFriendHoldLostReplyReplay(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2, Tiers: []string{"flash"}}})
+	require.NoError(t, err)
+
+	// Normal SetFriendHeld
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", true, "glenn"))
+
+	// Verify Held
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Held, rows[0].Status)
+
+	// Replay: run FriendHoldStep again with same parameters
+	res := h.run(FriendHoldStep("amy", "glenn"))
+	assert.Empty(t, res.Refused)
+
+	// Status remains Held
+	rowsAfter, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Held, rowsAfter[0].Status)
+}
+
+// TestHoldVersusTakeRaceBothOrderings tests concurrency between hold and take in both orderings:
+// Ordering 1: Hold commits before Take acquires -> Take loses generation fence or replans and is refused because friend is held.
+// Ordering 2: Take commits before Hold -> Hold reclaims the now-working card to Withdrawn, bumps gen, and keeps attempt count intact.
+func TestHoldVersusTakeRaceBothOrderings(t *testing.T) {
+	t.Parallel()
+
+	// Ordering 1: Hold commits before Take acquires
+	t.Run("HoldBeforeTake", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		h.startMachine()
+		_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Tiers: []string{"flash"}}})
+		require.NoError(t, err)
+		_, err = h.st.FriendBeat(h.ctx, "amy")
+		require.NoError(t, err)
+
+		h.must(AddStep(sprint.AddReq{
+			Stream: "s1",
+			Cards:  []sprint.CardAdd{{ID: "s1-1", Brief: "c: card 1\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n\ntask 1"}},
+		}))
+		h.machine() // pump to ready
+		h.machine() // deal to friend.amy ready reserve
+
+		// Amy plans a Take based on the current generation
+		snap1, gen1, err := h.st.Fenced(h.ctx, tables(sprint.Fleet, sprint.Work), nil, nil)
+		require.NoError(t, err)
+		seats1, err := h.st.FriendSeats(h.ctx, snap1.Now)
+		require.NoError(t, err)
+		snap1.Friends = seats1
+		planTake := sprint.Take(snap1, sprint.TakeReq{
+			Sel:  sprint.Sel{IDs: []string{"s1-1.w1"}},
+			As:   sprint.FriendRow("amy"),
+			Gens: map[string]int{"s1-1.w1": 1},
+			Who:  sprint.FriendRow("amy"),
+		})
+		require.NotEmpty(t, planTake.Units)
+
+		// Before Take can Acquire, Coordinator holds Amy and commits!
+		require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", true, "glenn"))
+
+		// Now Take attempts Acquire on gen1: MUST FAIL because generation changed
+		opTake, err := h.st.operation("take", "friend.amy", "op-take-stale", planTake, snap1)
+		require.NoError(t, err)
+		ok, err := h.st.B.Acquire(h.ctx, gen1, opTake)
+		assert.False(t, ok, "Acquire must fail because fence generation advanced due to Hold")
+		assert.NoError(t, err)
+
+		// If Take replans on fresh snapshot, it sees Amy is Held and is refused
+		snap2, _, err := h.st.Fenced(h.ctx, tables(sprint.Fleet, sprint.Work), nil, nil)
+		require.NoError(t, err)
+		seats2, err := h.st.FriendSeats(h.ctx, snap2.Now)
+		require.NoError(t, err)
+		snap2.Friends = seats2
+		planRetry := sprint.Take(snap2, sprint.TakeReq{
+			Sel:  sprint.Sel{IDs: []string{"s1-1.w1"}},
+			As:   sprint.FriendRow("amy"),
+			Gens: map[string]int{"s1-1.w1": 1},
+			Who:  sprint.FriendRow("amy"),
+		})
+		require.NotEmpty(t, planRetry.Refused)
+		assert.Contains(t, planRetry.Refused[0].Why, "held")
+	})
+
+	// Ordering 2: Take commits before Hold
+	t.Run("TakeBeforeHold", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		h.startMachine()
+		_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Tiers: []string{"flash"}}})
+		require.NoError(t, err)
+		_, err = h.st.FriendBeat(h.ctx, "amy")
+		require.NoError(t, err)
+
+		h.must(AddStep(sprint.AddReq{
+			Stream: "s1",
+			Cards:  []sprint.CardAdd{{ID: "s1-1", Brief: "c: card 1\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n\ntask 1"}},
+		}))
+		h.machine() // pump to ready
+		h.machine() // deal to friend.amy ready reserve
+
+		// Take commits first
+		h.must(TakeStep(sprint.TakeReq{
+			Sel:  sprint.Sel{IDs: []string{"s1-1.w1"}},
+			As:   sprint.FriendRow("amy"),
+			Gens: map[string]int{"s1-1.w1": 1},
+			Who:  sprint.FriendRow("amy"),
+		}))
+		require.Equal(t, sprint.Working, h.snap().Fleet.Card("s1-1.w1").Col)
+		assert.Equal(t, "1", h.snap().Fleet.Card("s1-1.w1").F("attempt"))
+
+		// Now Hold runs and commits: reclaims working card to Withdrawn, bumps gen 1 -> 2, attempt remains 1
+		require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", true, "glenn"))
+		c := h.snap().Fleet.Card("s1-1.w1")
+		assert.Equal(t, sprint.Withdrawn, c.Col)
+		assert.Equal(t, "2", c.F("gen"))
+		assert.Equal(t, "1", c.F("attempt"))
+
+		// Primary in Work table is back in Ready for redeal
+		assert.Equal(t, sprint.Ready, h.snap().StateOf("s1-1"))
+	})
+}
+
+// TestSyncRemovalRaceWitness proves that a sync removal happening between planning
+// and execution cannot cause FriendHold or FriendRelease to recreate a zero-width/no-tier entry.
+func TestSyncRemovalRaceWitness(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2, Tiers: []string{"flash"}}})
+	require.NoError(t, err)
+
+	// Step 1: Remove amy via SyncFriends
+	_, removed, _, err := h.st.SyncFriends(h.ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"amy"}, removed)
+
+	// Step 2: FriendHoldStep for removed friend is executed.
+	// Fenced snapshot check in FriendHold detects amy is not on the friends table and refuses.
+	res := h.run(FriendHoldStep("amy", "glenn"))
+	require.NotEmpty(t, res.Refused)
+	assert.Contains(t, res.Refused[0].Why, "no friend amy on the friends table")
+
+	// Step 3: Verify roster does NOT contain amy (applyRosterChange never creates absent entries)
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+
+	// Step 4: FriendReleaseStep for absent friend is also refused
+	resRelease := h.run(FriendReleaseStep("amy", "glenn"))
+	require.NotEmpty(t, resRelease.Refused)
+	assert.Contains(t, resRelease.Refused[0].Why, "no friend amy on the friends table")
+
+	// Roster remains empty
+	rowsAfter, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Empty(t, rowsAfter)
+}

@@ -34,11 +34,12 @@ normally do friend work."). The server keeps each eligible friend up to width
 active child agents working PLUS up to width ready-to-pull reserve staged in her
 inbox/queue, refilled on claim or completion without a coordinator nudge (Glenn,
 2026-10-03 ~13:30). It arrives as a job like any other:
-`inbox/<card>/BRIEF.md` (after a clear, `<card>~<epoch>`), written by
-`nova-sprint friend sync`. Its first line is the STATUS line:
+`inbox/<job>/BRIEF.md` (where `<job>` is the generation-bound stored id: `<card>.g<gen>`
+at epoch 0, `<card>~<epoch>.g<gen>` after a clear), written by `nova-sprint friend sync`.
+Its first line is the STATUS line:
 
 ```
-STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; first take it: nova-sprint friend take <card>; when done, write outbox/<card>/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>
+STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; first take it: nova-sprint friend take <job>; when done, write outbox/<job>/REPORT.md with Assignment: <job>, Verdict: LAND|HOLD|FAIL and Head: <sha>
 ```
 
 then the working-directory line below, a later attempt's start (the current tip
@@ -49,20 +50,26 @@ the sprint's only check of her finish is that Head is origin's tip of her
 branch) and why it exists (`This attempt exists because:`, `A reader found:`, `The coordinator
 asks:`), a blank line, and the card's brief. What a friend does with it:
 
-1. First take it: `nova-sprint friend take <card>`. This moves the card from ready
-   reserve to working on her row. A friend works up to her width at once; taking when
-   already at width is refused until an active card completes.
-2. Work in `jobs/<card>/` as for any job; commit, and push the commit to the
+1. First take it: `nova-sprint friend take <job>` (or `nova-sprint friend take <card>`).
+   This moves the card from ready reserve to working on her row. A friend works up to
+   her width at once; taking when already at width is refused until an active card completes.
+2. Work in `jobs/<job>/` as for any job; commit, and push the commit to the
    branch the STATUS line names (never another: the sprint reads and lands
    origin's tip of that branch, and nothing else).
-3. Write `outbox/<card>/REPORT.md` in this form, exactly:
+3. Write `outbox/<job>/REPORT.md` in this form, exactly:
 
    ```
+   Assignment: <job>
    Verdict: LAND
    Head: <the full 40-character sha of the commit pushed>
 
    <one paragraph: what changed and the gate's result>
    ```
+
+   `Assignment:` binds the report immutably to the claim. Reports with missing,
+   corrupt, or older generation assignments are refused with actionable remedies,
+   preventing stale reports from previous attempts or redeals from acquiring
+   authority.
 
    `LAND` is work ready for its reads and its landing; `HOLD` is work stopped
    for the coordinator's decision, `FAIL` work that could not be done; for

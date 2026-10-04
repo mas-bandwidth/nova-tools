@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,7 +185,7 @@ func TestFriendSyncWritesOnlyACardsBriefAndReadsItsReport(t *testing.T) {
 	handText, err := os.ReadFile(hand)
 	require.NoError(t, err)
 	ta.ok("friend sync --root " + root)
-	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1", "BRIEF.md"))
+	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1.g1", "BRIEF.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(text), "STATUS: nova-sprint card s1-1.w1")
 	assert.Contains(t, string(text), "WHO: friend amy")
@@ -444,12 +445,12 @@ func TestFriendTakeCommandInBriefE2E(t *testing.T) {
 	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
 
 	// verify BRIEF.md was delivered with the exact command format
-	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1", "BRIEF.md"))
+	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1.g1", "BRIEF.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(text), "first take it: nova-sprint friend take s1-1.w1")
+	assert.Contains(t, string(text), "first take it: nova-sprint friend take s1-1.w1.g1")
 
 	// execute exact command from BRIEF.md: nova-sprint friend take <job>
-	out := ta.ok("friend take s1-1.w1")
+	out := ta.ok("friend take s1-1.w1.g1")
 	assert.Contains(t, out, "MOVED s1-1.w1 fleet ready -> working friend=amy gen=1")
 	assert.Contains(t, out, "FRIEND-TAKE OK moved=1")
 
@@ -459,7 +460,143 @@ func TestFriendTakeCommandInBriefE2E(t *testing.T) {
 	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"])
 
 	// a duplicate take is refused: not in ready
-	code, _, errs := ta.do("friend take s1-1.w1")
+	code, _, errs := ta.do("friend take s1-1.w1.g1")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "not in friend.amy ready (it is friend.amy:working)")
+}
+
+// TestFriendE2ETiersReservationHoldAndFinish verifies:
+// 1. Literal BRIEF `friend take` command format.
+// 2. Pro-only and mixed-tier enforcement on public CLI.
+// 3. Ready reservation width (width active + width ready reserve).
+// 4. Hold -> ready pool -> new claim -> successful fresh finish with immutable generation report.
+func TestFriendE2ETiersReservationHoldAndFinish(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.a.tip = tipIs(t, landHead)
+	root := t.TempDir()
+	cfg := config.NewMem()
+	ta.a.friends = func(ctx context.Context, _ string) ([]config.Row, error) {
+		return cfg.List(ctx, config.KindFriend)
+	}
+
+	// amy has flash tier (width 2); bob has pro tier (width 2)
+	_, err := cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "amy", Fields: map[string]string{"width": "2", "tiers": "flash"}}, "t")
+	require.NoError(t, err)
+	_, err = cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "bob", Fields: map[string]string{"width": "2", "tiers": "pro"}}, "t")
+	require.NoError(t, err)
+
+	ta.ok("init --readers reader-a,reader-b --members m1,m2")
+	ta.ok("friend sync --root " + root)
+	ta.ok("friend beat amy")
+	ta.ok("friend beat bob")
+
+	// Add cards: 1 pro task, 4 flash tasks
+	bdir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bdir, "s1-1.md"), []byte(passingBrief("s1-1: pro card tier: pro\nREPO: mas-bandwidth/nova-tools\nWHO: friend\n")), 0o644))
+	for i := 2; i <= 5; i++ {
+		name := fmt.Sprintf("s1-%d", i)
+		require.NoError(t, os.WriteFile(filepath.Join(bdir, name+".md"), []byte(passingBrief(name+": flash card tier: flash\nREPO: mas-bandwidth/nova-tools\nWHO: friend\n")), 0o644))
+	}
+	ta.ok("add --stream s1 --brief-dir " + bdir)
+	ta.ok("start")
+	ta.ok("tick")
+
+	// Verify dealing:
+	// Pro card s1-1.w1 deals to bob's ready reserve (bob has pro)
+	// Flash cards s1-2.w1 and s1-3.w1 deal to amy's ready reserve (amy has width 2)
+	// s1-4 and s1-5 wait ready in backlog
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["bob"]["ready"])
+	assert.Equal(t, "2", w.Tables[sprint.Friends]["amy"]["ready"])
+
+	// 1. Pro-only and mixed-tier enforcement on public CLI:
+	// Amy tries to take bob's pro card: refused (not dealt to amy)
+	code, _, errs := ta.do("friend take --as friend.amy s1-1.w1.g1")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "not dealt to friend amy (it is friend.bob:ready)")
+
+	// Bob takes pro card: succeeds
+	ta.ok("friend take s1-1.w1.g1")
+	ta.json("where", &w)
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["bob"]["ready"])
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["bob"]["working"])
+
+	// Test tier refusal: update amy's config tier to pro (so she cannot do flash)
+	_, _, err = cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"tiers": "pro"}, "t")
+	require.NoError(t, err)
+	ta.ok("friend sync --root " + root)
+	code, _, errs = ta.do("friend take s1-2.w1.g1")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "cannot do tier flash (allowed: pro)")
+
+	// Restore amy's tier to flash
+	_, _, err = cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"tiers": "flash"}, "t")
+	require.NoError(t, err)
+	ta.ok("friend sync --root " + root)
+
+	// 2. Ready reservation width:
+	// Amy takes her 2 ready cards: moves them to working
+	ta.ok("friend take s1-2.w1.g1")
+	ta.ok("friend take s1-3.w1.g1")
+	ta.json("where", &w)
+	assert.Equal(t, "2", w.Tables[sprint.Friends]["amy"]["working"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["ready"])
+
+	// Next tick refills Amy's ready reserve with s1-4.w1 and s1-5.w1 (2 working + 2 ready reserve)!
+	ta.ok("tick")
+	ta.json("where", &w)
+	assert.Equal(t, "2", w.Tables[sprint.Friends]["amy"]["working"])
+	assert.Equal(t, "2", w.Tables[sprint.Friends]["amy"]["ready"])
+
+	// 3. Hold -> ready pool -> new claim -> successful fresh finish
+	// Coordinator holds amy
+	ta.ok("friend down amy")
+	ta.ok("tick") // reclaims cards: working and ready -> withdrawn, gen 1 -> 2; primaries return to ready backlog
+
+	// Amy is held, 0 working, 0 ready
+	ta.json("where", &w)
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["ready"])
+
+	// Release amy and beat
+	ta.ok("friend up amy")
+	ta.ok("friend beat amy")
+	ta.ok("tick") // redeals to ready reserve at gen 3, attempt count intact!
+
+	ta.json("where", &w)
+	assert.Equal(t, "2", w.Tables[sprint.Friends]["amy"]["ready"])
+
+	// Check card s1-2.w1 attempt and gen
+	var c cardView
+	ta.json("card s1-2", &c)
+	require.Len(t, c.Work, 1)
+	assert.Equal(t, "s1-2.w1", c.Work[0].ID)
+	assert.Equal(t, 1, c.Work[0].Int("attempt"))
+	assert.Equal(t, 3, c.Work[0].Int("gen"))
+
+	// Sync delivers fresh briefs to amy's inbox
+	ta.ok("friend sync --root " + root)
+	briefText, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-2.w1.g3", "BRIEF.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(briefText), "first take it: nova-sprint friend take s1-2.w1.g3")
+
+	// Amy takes s1-2.w1.g3
+	ta.ok("friend take s1-2.w1.g3")
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"])
+
+	// Amy writes fresh report with Assignment: s1-2.w1.g3
+	outboxReport(t, root, "amy", "s1-2.w1.g3", "Assignment: s1-2.w1.g3\nVerdict: LAND\nHead: "+landHead+"\n\nFinished flash task cleanly.\n")
+
+	// Friend sync finishes it
+	syncOut := ta.ok("friend sync --root " + root)
+	assert.Contains(t, syncOut, "FRIEND-CARD FINISHED friend=amy card=s1-2.w1 result=ok head="+landHead)
+
+	// Verify card moved to review
+	ta.ok("tick")
+	ta.json("card s1-2", &c)
+	assert.Equal(t, sprint.Review, c.Primary.Col)
+	assert.Equal(t, "ok", c.Primary.F("result"))
 }

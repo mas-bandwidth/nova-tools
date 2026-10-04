@@ -143,7 +143,8 @@ holds, so it is no machine's and no fleet verb names it), into `ready` at
 generation 1 (staged ready in reserve; dealt now, its deadline is the dealt bound
 until taken), carrying the primary's fix, finding, why and friend_width as a machine's
 deal carries them; its primary moves ready -> working. Her child agent takes it
-as its first act (`nova-sprint friend take <card>`: ready -> working on her row),
+as its first act (`nova-sprint friend take <job>`: ready -> working on her row, where
+`<job>` is `<card>.g<gen>` at epoch 0, `<card>~<epoch>.g<gen>` after a clear),
 refused when her active working cards are already at her width, when she is held
 or down, or when she lacks the card's tier; taking immediately triggers automatic
 reserve replenishment without a coordinator nudge. The fleet's members are its
@@ -153,9 +154,10 @@ touch a friend's row. A friend who goes quiet keeps her card while her deadline
 holds it, while an explicit coordinator hold (`friend down <name>`) atomically
 returns the held friend's working and ready reserve cards back to the ready pool
 without penalty (`FriendHold`), advancing the work card generation to fence any
-old assignment reports. The machines' `deal` verb refuses a friend's card, and
-`rework` of one sends its primary ready with the fix, for the tick to deal to
-a friend.
+old assignment reports. Fenced snapshots validate friend existence inside `FriendHold`
+and `FriendRelease`, refusing when the friend has been removed from the roster.
+The machines' `deal` verb refuses a friend's card, and `rework` of one sends its
+primary ready with the fix, for the tick to deal to a friend.
 
 `friend sync`, run by the coordinator's own loop where the directories are
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
@@ -169,14 +171,12 @@ does not apply), and that the Head she reports must be on that tip: the rule a m
 staged by, docs/SPEC-CARD-CONTRACT.md, where a rework starts; `TestAFriendsReworkStartsFromTheTipOfItsBase`.
 A friend has no staged commit, so nothing checks that her Head descends from that tip: the
 `ls-remote` tip check below, Head is origin's tip of her branch, is the only guard on her finish),
-`<job>` the card's id as the table layer holds it at its
-epoch (`sprint.StoredID`: the card id at epoch 0, `<card>~<epoch>` after a
-clear, so a card id a clear brings back is another job), and only the
-coordinator reaches out; once `outbox/<job>/REPORT.md` is there it finishes
-the card as the friend (`finish` at the card's generation and epoch, as
-`friend.<name>`): `Verdict: LAND` with `Head: <full sha>` is a worker's ok
-finish at origin's tip of the branch BRIEF.md names, read once by one `git
-ls-remote` of that branch in the card's `REPO:` repository (bounded at 10 s),
+`<job>` the generation-bound immutable job identifier (`<card>.g<gen>` at epoch 0, `<card>~<epoch>.g<gen>` after
+a clear), and only the coordinator reaches out; once `outbox/<job>/REPORT.md` is there carrying `Assignment: <job>`
+it finishes the card as the friend (`finish` at the card's generation and epoch, as
+`friend.<name>`): reports with missing or mismatched assignment tokens are rejected with actionable remedies.
+`Verdict: LAND` with `Head: <full sha>` is a worker's ok finish at origin's tip of the branch BRIEF.md names,
+read once by one `git ls-remote` of that branch in the card's `REPO:` repository (bounded at 10 s),
 and only when the tip is that Head: what is read and landed is what origin
 holds, never the report's word; the card goes to review, its reads and its
 landing as any card's. A Head that is not the tip is refused, one line naming

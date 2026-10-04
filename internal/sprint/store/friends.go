@@ -63,7 +63,10 @@ func applyRosterChange(r map[string]friendEntry, ch *sprint.FriendRosterChange) 
 		return
 	}
 	if h := ch.Hold; h != nil {
-		e := r[h.Name]
+		e, ok := r[h.Name]
+		if !ok {
+			return
+		}
 		if h.Held {
 			e.Held, e.At, e.By = true, h.At, h.By
 		} else {
@@ -221,13 +224,6 @@ func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, er
 // returned to the ready pool without penalty (FriendHoldStep), and the roster
 // hold state is committed under the same serialized operation.
 func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, who string) error {
-	r, _, err := st.roster(ctx)
-	if err != nil {
-		return err
-	}
-	if _, ok := r[friend]; !ok {
-		return noFriend(r, friend)
-	}
 	var step Step
 	if held {
 		step = FriendHoldStep(friend, who)

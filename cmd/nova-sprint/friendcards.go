@@ -40,8 +40,41 @@ const (
 	VerdictFail = "FAIL"
 )
 
-// friendJobOf is the job a friend's sprint card is delivered as: its stored id.
-func friendJobOf(p sprint.Packet) string { return sprint.StoredID(p.Card, p.Epoch) }
+// friendJobID returns the generation-bound immutable job identifier for a card at an epoch and generation.
+func friendJobID(card string, epoch uint64, gen int) string {
+	stored := sprint.StoredID(card, epoch)
+	if gen > 0 {
+		return fmt.Sprintf("%s.g%d", stored, gen)
+	}
+	return stored
+}
+
+// friendJobOf is the job a friend's sprint card is delivered as: its generation-bound stored id.
+func friendJobOf(p sprint.Packet) string {
+	return friendJobID(p.Card, p.Epoch, p.Gen)
+}
+
+// parseFriendJob parses an immutable job identifier (<card>.g<gen> or <card>~<epoch>.g<gen>)
+// back into card, epoch, and generation.
+func parseFriendJob(job string) (card string, epoch uint64, gen int, ok bool) {
+	idx := strings.LastIndex(job, ".g")
+	if idx == -1 {
+		return "", 0, 0, false
+	}
+	g, err := strconv.Atoi(job[idx+2:])
+	if err != nil || g < 1 {
+		return "", 0, 0, false
+	}
+	stored := job[:idx]
+	if i := strings.LastIndexByte(stored, '~'); i != -1 {
+		ep, err := strconv.ParseUint(stored[i+1:], 10, 64)
+		if err != nil {
+			return "", 0, 0, false
+		}
+		return stored[:i], ep, g, true
+	}
+	return stored, 0, g, true
+}
 
 // friendBrief is the BRIEF.md of a friend's sprint card: its STATUS line (the card, its
 // epoch and attempt, the branch to push and the report to write), the working-directory
@@ -50,7 +83,7 @@ func friendJobOf(p sprint.Packet) string { return sprint.StoredID(p.Card, p.Epoc
 func friendBrief(name string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
-	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; first take it: nova-sprint friend take %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job, job)
+	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; first take it: nova-sprint friend take %s; when done, write outbox/%s/REPORT.md with Assignment: %s, Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job, job, job)
 	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=~/%[1]s-working/.cache/go-build, and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
 	if p.Attempt > 1 {
 		b.WriteString(friendStart(p))
@@ -95,27 +128,30 @@ func friendStart(p sprint.Packet) string {
 
 // friendReportOf reads a friend's REPORT.md on a sprint card: its verdict (the first word
 // of its first Verdict: line, in upper case; "" for none), its head (the first word of its
-// first Head: line), and its first paragraph (the first block of lines that are neither a
-// key line of those two nor a markdown heading), on one line.
-func friendReportOf(report string) (verdict, head, para string) {
+// first Head: line), its assignment (the first word of its first Assignment:, Token:, or
+// Job: line), and its first paragraph (the first block of lines that are neither a key
+// line nor a markdown heading), on one line.
+func friendReportOf(report string) (verdict, head, assignment, para string) {
 	verdict, _ = reportValue(report, "verdict")
 	verdict = strings.ToUpper(strings.Trim(firstWord(verdict), "*_.,;:!"))
 	head, _ = reportValue(report, "head")
 	head = strings.Trim(firstWord(head), "*_`.,;:")
+	assignment, _ = reportValue(report, "assignment", "token", "job")
+	assignment = strings.Trim(firstWord(assignment), "*_`.,;:")
 	var lines []string
 	for _, l := range strings.Split(report, "\n") {
 		key, _, _ := strings.Cut(strings.TrimLeft(l, "#*-_ \t"), ":")
 		switch k := strings.ToLower(strings.TrimSpace(key)); {
 		case strings.TrimSpace(l) == "":
 			if len(lines) > 0 {
-				return verdict, head, strings.Join(lines, " ")
+				return verdict, head, assignment, strings.Join(lines, " ")
 			}
-		case strings.HasPrefix(strings.TrimSpace(l), "#"), k == "verdict", k == "head":
+		case strings.HasPrefix(strings.TrimSpace(l), "#"), k == "verdict", k == "head", k == "assignment", k == "token", k == "job":
 		default:
 			lines = append(lines, strings.TrimSpace(l))
 		}
 	}
-	return verdict, head, strings.Join(lines, " ")
+	return verdict, head, assignment, strings.Join(lines, " ")
 }
 
 func firstWord(s string) string {
@@ -161,10 +197,23 @@ func (a *app) branchTip(ctx context.Context, repo, branch string) (string, error
 // no REPO: line, or a tip that could not be read; the card is not finished, and the next
 // sync reads the report again.
 func friendFinish(ctx context.Context, name string, p sprint.Packet, report string, tip tipFn) (sprint.FinishReq, error) {
-	verdict, head, para := friendReportOf(report)
+	verdict, head, assignment, para := friendReportOf(report)
 	para = oneline.Cap(para, maxFriendReport)
 	row := sprint.FriendRow(name)
 	r := sprint.FinishReq{Sel: sprint.Sel{IDs: []string{p.Card}}, As: row, Gens: map[string]int{p.Card: p.Gen}, Branch: p.Branch, Who: row}
+
+	job := friendJobOf(p)
+	if assignment != "" {
+		if assignment != job && (p.Gen != 1 || (assignment != p.Card && assignment != sprint.StoredID(p.Card, p.Epoch))) {
+			if c, ep, g, ok := parseFriendJob(assignment); ok && c == p.Card && ep == p.Epoch && g < p.Gen {
+				return r, fmt.Errorf("stale report assignment %s (generation %d is older than current generation %d); update outbox/%s/REPORT.md for current assignment %s", assignment, g, p.Gen, job, job)
+			}
+			return r, fmt.Errorf("report assignment %s does not match current assignment %s; update outbox/%s/REPORT.md", assignment, job, job)
+		}
+	} else if p.Gen > 1 {
+		return r, fmt.Errorf("report lacks Assignment: line for generation %d; add Assignment: %s to outbox/%s/REPORT.md", p.Gen, job, job)
+	}
+
 	switch {
 	case verdict == VerdictLand && typedrec.IsFullSha(head):
 		// the head is origin's tip, never the report's word: what lands is what is there
@@ -207,11 +256,45 @@ func friendInbox(dir string, p sprint.Packet) (in, why string, err error) {
 	case errors.Is(err, fs.ErrNotExist):
 		return in, "", nil
 	case err != nil:
-		return "", "", err
+		return "", "", fmt.Errorf("cannot stat %s: %w", in, err)
 	case !fi.IsDir():
 		return "", "inbox/" + job + " is a symlink or a file, not a directory; run: ls -la " + in, nil
 	}
 	return in, "", nil
+}
+
+// checkStaleOutbox scans outbox for reports belonging to previous generations of the card.
+func checkStaleOutbox(dir, card string, epoch uint64, liveGen int) int {
+	outboxDir := filepath.Join(dir, "outbox")
+	entries, err := os.ReadDir(outboxDir)
+	if err != nil {
+		return 0
+	}
+	stored := sprint.StoredID(card, epoch)
+	maxStale := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == stored {
+			if _, err := os.Lstat(filepath.Join(outboxDir, name, "REPORT.md")); err == nil {
+				if 1 < liveGen && 1 > maxStale {
+					maxStale = 1
+				}
+			}
+			continue
+		}
+		c, ep, g, ok := parseFriendJob(name)
+		if ok && c == card && ep == epoch && g < liveGen {
+			if _, err := os.Lstat(filepath.Join(outboxDir, name, "REPORT.md")); err == nil {
+				if g > maxStale {
+					maxStale = g
+				}
+			}
+		}
+	}
+	return maxStale
 }
 
 // friendCardsOf delivers and collects one friend's sprint cards in her working directory
@@ -245,43 +328,53 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			continue
 		}
 		brief := filepath.Join(in, "BRIEF.md")
-		genFile := filepath.Join(in, ".gen")
 		if _, err := os.Lstat(brief); errors.Is(err, fs.ErrNotExist) {
 			if err := os.MkdirAll(in, 0o755); err != nil {
-				return delivered, finished, err
+				return delivered, finished, fmt.Errorf("cannot create inbox directory %s: %w; check directory permissions", in, err)
 			}
-			_ = os.WriteFile(genFile, []byte(strconv.Itoa(p.Gen)+"\n"), 0o644)
 			switch err := atomicfile.WriteFile(brief, []byte(friendBrief(name, p)), 0o644, atomicfile.NoReplace()); {
 			case err == nil:
 				delivered++
 				say(fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch))
 			case !errors.Is(err, fs.ErrExist):
-				return delivered, finished, err
+				return delivered, finished, fmt.Errorf("cannot write brief %s: %w; check filesystem space and permissions", brief, err)
 			}
 		} else if err != nil {
-			return delivered, finished, err
+			return delivered, finished, fmt.Errorf("cannot stat %s: %w", brief, err)
 		}
-		report, err := os.ReadFile(filepath.Join(dir, "outbox", job, "REPORT.md"))
+
+		reportPath := filepath.Join(dir, "outbox", job, "REPORT.md")
+		legacyPath := filepath.Join(dir, "outbox", sprint.StoredID(p.Card, p.Epoch), "REPORT.md")
+		report, err := os.ReadFile(reportPath)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return delivered, finished, fmt.Errorf("cannot read report %s: %w; check file permissions", reportPath, err)
+		}
 		if errors.Is(err, fs.ErrNotExist) {
-			continue
+			if p.Gen == 1 {
+				report, err = os.ReadFile(legacyPath)
+				if err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return delivered, finished, fmt.Errorf("cannot read report %s: %w; check file permissions", legacyPath, err)
+				}
+			} else {
+				if _, lerr := os.Lstat(legacyPath); lerr == nil {
+					say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: stale: generation 1 is not the live one (%d); write outbox/%s/REPORT.md for current assignment", name, p.Card, p.Gen, job))
+					continue
+				}
+			}
+			if errors.Is(err, fs.ErrNotExist) {
+				if staleGen := checkStaleOutbox(dir, p.Card, p.Epoch, p.Gen); staleGen > 0 {
+					say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: stale: generation %d is not the live one (%d); write outbox/%s/REPORT.md for current assignment", name, p.Card, staleGen, p.Gen, job))
+				}
+				continue
+			}
 		}
-		if err != nil {
-			return delivered, finished, err
-		}
+
 		if !taken[p.Card] {
 			// dealt and never taken: a report finishes only a card she took (friend take)
 			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: reported, and never taken; the card is not finished; run: nova-sprint friend take %s", name, p.Card, oneline.Field(job)))
 			continue
 		}
-		pBound := p
-		if data, err := os.ReadFile(genFile); err == nil {
-			if n, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && n > 0 {
-				pBound.Gen = n
-			}
-		} else if _, err := os.Lstat(brief); err == nil {
-			_ = os.WriteFile(genFile, []byte(strconv.Itoa(p.Gen)+"\n"), 0o644)
-		}
-		r, err := friendFinish(ctx, name, pBound, string(report), a.tip)
+		r, err := friendFinish(ctx, name, p, string(report), a.tip)
 		if err != nil {
 			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
 			continue
