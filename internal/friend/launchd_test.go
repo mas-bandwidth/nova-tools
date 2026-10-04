@@ -109,6 +109,9 @@ func TestInstallRefusesABinaryOnARemovableVolume(t *testing.T) {
 	t.Parallel()
 	a := agent()
 	a.Binary = "/Volumes/nova/nova-friend"
+	// Keep the baseline failure focused on the missing volume guard: without it,
+	// Install can write the plist and reach the launchctl callback.
+	a.LaunchdLog = filepath.Join(t.TempDir(), "launchd.log")
 	wrote := false
 	ran := false
 	path, commands, err := Install(context.Background(), a, 501,
