@@ -260,6 +260,14 @@ MCDirtyTickHandBackLapse.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-ha
 MCDirtyTickW28.cfg	MCDirtyTick.tla	invariant	StrandingIsJudged	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickHandBackLiveBound.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-handback-live	required	-
 MCDirtyTickHandBackLiveLapse.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-handback-live-lapse	required	-
+MCDirtyTickFriend.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-friend	required	-
+MCDirtyTickFriendDown.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-friend	required	-
+MCDirtyTickFriendMachine.cfg	MCDirtyTick.tla	invariant	FriendCardNeverOnAMachine	ignore-terminal	dirtytick-friend	required	-
+MCDirtyTickFriendLapse.cfg	MCDirtyTick.tla	action	FriendDownLosesNoCard	ignore-terminal	dirtytick-friend	required	-
+MCDirtyTickFriendProbeLanded.cfg	MCDirtyTick.tla	invariant	ProbeNoFriendLanded	ignore-terminal	dirtytick-friend	required	-
+MCDirtyTickFriendProbeStale.cfg	MCDirtyTick.tla	invariant	ProbeNoFriendStale	ignore-terminal	dirtytick-friend	required	-
+MCDirtyTickFriendProbeDue.cfg	MCDirtyTick.tla	invariant	ProbeNoFriendDue	ignore-terminal	dirtytick-friend	required	-
+MCDirtyTickFriendProbeFail.cfg	MCDirtyTick.tla	invariant	ProbeNoFriendFail	ignore-terminal	dirtytick-friend	required	-
 MCDirtyTickRead.cfg	MCDirtyTickRead.tla	pass	-	ignore-terminal	dirtytickread	required	-
 MCDirtyTickReadAcquire.cfg	MCDirtyTickRead.tla	invariant	TwinIsTheStore	ignore-terminal	dirtytickread-acquire	required	-
 MCDirtyTickReadHalt.cfg	MCDirtyTickRead.tla	invariant	BeganRunning	ignore-terminal	dirtytickread-halt	required	-

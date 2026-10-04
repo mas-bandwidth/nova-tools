@@ -30,7 +30,33 @@ NoReads == [c \in Cards |-> NoR]
 Empty == [m \in Machines |-> {}]
 Base == [col |-> [c \in Cards |-> "none"], rd |-> NoReads, mq |-> {}, up |-> Machines \cup Readers,
          live |-> Machines \cup Readers, away |-> FALSE, misses |-> FALSE, hand |-> FALSE, lapse |-> TRUE,
-         mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>), served |-> Cards]
+         mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>), served |-> Cards,
+         friends |-> {}, fwidth |-> [f \in {} |-> 1], forder |-> <<>>,
+         who |-> [c \in Cards |-> "machine"], friend |-> FALSE, ffin |-> FALSE, fdue |-> FALSE]
+
+\* THE FRIENDS' ROWS: one friend, friend.f1, width 1; c1 is her card (its
+\* brief says WHO: friend), every other card a machine's.
+MCFriends == {"friend.f1"}
+MCFWidth == [f \in MCFriends |-> 1]
+MCFOrder == <<"friend.f1">>
+MCWho == [c \in Cards |-> IF c = "c1" THEN "friend" ELSE "machine"]
+\* Every card added, every machine and reader up, the friend up with her
+\* events on (her beat and quiet, her finish and push, the deadline): the
+\* whole life of a friend's card beside a machine's.
+ScnFriend == [Base EXCEPT
+  !.friends = MCFriends, !.fwidth = MCFWidth, !.forder = MCFOrder, !.who = MCWho,
+  !.friend = TRUE, !.ffin = TRUE, !.fdue = TRUE,
+  !.up = Machines \cup Readers \cup MCFriends,
+  !.live = Machines \cup Readers \cup MCFriends,
+  !.mc = [r \in Machines \cup MCFriends |-> {}],
+  !.mr = [r \in Machines \cup MCFriends |-> {}]]
+\* c1 working on her row: she goes quiet and keeps it (no take-back), is
+\* collected from whatever her status, may push past her report's head, and
+\* the deadline may judge it.
+ScnFriendDown == [ScnFriend EXCEPT
+  !.col = [c \in Cards |-> IF c = "c1" THEN "working" ELSE "none"],
+  !.mc = [r \in Machines \cup MCFriends |-> IF r \in MCFriends THEN {"c1"} ELSE {}],
+  !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
 
 \* Every card added (its add queued), every machine up: the whole life.
 ScnBase == Base
@@ -114,4 +140,11 @@ ProbeNoHeldAccept == ~\E c \in Cards : col[c] = "merging" /\ ret[c]
 \* the reader that returned it; a stranded card judged.
 ProbeNoReask == \A c \in Cards : rea[c] = 0
 ProbeNoJudged == \A c \in Cards : ~cna[c]
+\* Reachability of the friends' rows: a friend's card lands; a LAND at a
+\* head origin no longer holds is refused (nothing changes); the deadline
+\* judgment opens on a friend's card; a friend's work comes back failed.
+ProbeNoFriendLanded == ~\E c \in FCards : col[c] = "landed"
+ProbeNoFriendStale == ~(act = "FriendStale")
+ProbeNoFriendDue == \A c \in Cards : ~fdue[c]
+ProbeNoFriendFail == \A c \in Cards : ~ffd[c]
 =============================================================================

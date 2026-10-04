@@ -20,6 +20,9 @@ import (
 // names it, and the fleet's members (Members) leave it out: no presence, rebalance,
 // level, sync or deal of the machines touches it, and a friend who goes quiet keeps her
 // card (no take-back) while the deadline rule holds it as it holds any work card.
+// The model is tla/DirtyTick.tla (THE FRIENDS' ROWS: the deal beside the machines',
+// a card no lapse takes back — FriendCardNeverOnAMachine, FriendDownLosesNoCard,
+// MembersExcludeFriendRows, with the witnesses "friendmachine" and "friendlapse").
 
 // FieldWho is a primary's worker as its brief's WHO line names it, written by add and
 // brief with the brief: WhoFriend for any friend, FriendRow(<name>) for one; absent on a

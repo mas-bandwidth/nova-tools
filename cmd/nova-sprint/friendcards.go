@@ -30,6 +30,10 @@ import (
 // as inbox/<job>/BRIEF.md, and finishes it from outbox/<job>/REPORT.md once she writes
 // one. <job> is the card's id as the table layer holds it at its epoch (sprint.StoredID:
 // the card id itself at epoch 0), so a card id a clear brings back is another job.
+// The model is tla/DirtyTick.tla (the friend finish: a LAND at origin's tip is a
+// member's ok finish, a LAND at a head origin no longer holds is refused with the card
+// left working for the next sync to read again, HOLD or FAIL is work that came back
+// failed, and the not-finished deadline judges her card as it judges any work card).
 
 // Verdicts of a friend's report on a sprint card: LAND is work ready to read and land at
 // its Head; HOLD and FAIL are work that came back failed.
