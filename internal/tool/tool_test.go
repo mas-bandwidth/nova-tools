@@ -2,6 +2,7 @@ package tool
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -1135,6 +1136,127 @@ func TestATopicIsNoneOfTheVerbs(t *testing.T) {
 			d := topicsTool()
 			d.Topics = append(d.Topics, Topic{Name: tc.topic, Text: "x"})
 			assert.Equal(t, []string{tc.want}, d.Problems())
+		})
+	}
+}
+
+// walkTool is a verb that prints two rows as it goes and returns the closing line.
+func walkTool(run func(c *Call) *Out) *Tool {
+	return &Tool{
+		Name: "nova-walk", What: "walks", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{{Name: "walk", Usage: "walk", Effect: Inspection, Run: run}},
+	}
+}
+
+// TestEmitPrintsItemsThenTheClosingLine pins Call.Emit (skeleton contract 2.4,
+// STANDARD §2): two items print as they go, text as item lines and --json as
+// one {"item":{...}} line each, and the Out the verb returns is the closing line.
+func TestEmitPrintsItemsThenTheClosingLine(t *testing.T) {
+	t.Parallel()
+	run := func(c *Call) *Out {
+		if c.Ctx == nil || c.Ctx.Err() != nil {
+			return Fail("no live context")
+		}
+		c.Emit("row", "i", 1)
+		c.Emit("row", "i", 2)
+		return Done()
+	}
+	text := testkit.Main(walkTool(run).Run).Run("walk")
+	assert.Equal(t, 0, text.Code, text.Stderr)
+	assert.Equal(t, "WALK ROW i=1\nWALK ROW i=2\nWALK OK\n", text.Stdout)
+	assert.Empty(t, text.Stderr)
+	js := testkit.Main(walkTool(run).Run).Run("walk", "--json")
+	assert.Equal(t, 0, js.Code, js.Stderr)
+	assert.Equal(t, "{\"item\":{\"kind\":\"row\",\"fields\":{\"i\":1}}}\n"+
+		"{\"item\":{\"kind\":\"row\",\"fields\":{\"i\":2}}}\n"+
+		"{\"result\":{\"verb\":\"walk\",\"status\":\"ok\",\"exit\":0},\"facts\":{}}\n", js.Stdout)
+	assert.Empty(t, js.Stderr)
+}
+
+// TestACancelledContextEndsTheVerb pins RunContext (skeleton contract 2.4): a
+// cancelled context ends the verb before it runs, and the closing line says so,
+// in text and in JSON.
+func TestACancelledContextEndsTheVerb(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		during bool
+		json   bool
+		stdout string
+		stderr string
+	}{
+		{"text", false, false, "", "WALK FAILED: context canceled\n"},
+		{"json", false, true, "{\"result\":{\"verb\":\"walk\",\"status\":\"failed\",\"exit\":1,\"why\":[\"context canceled\"]},\"facts\":{}}\n", ""},
+		{"cancelled while the verb runs", true, false, "", "WALK FAILED: context canceled\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if !tc.during {
+				cancel()
+			}
+			ran := false
+			tool := walkTool(func(c *Call) *Out {
+				ran = true
+				if tc.during {
+					cancel()
+				}
+				return Done()
+			})
+			args := []string{"walk"}
+			if tc.json {
+				args = append(args, "--json")
+			}
+			var out, errb bytes.Buffer
+			code := tool.RunContext(ctx, args, strings.NewReader(""), &out, &errb)
+			assert.Equal(t, 1, code, "stdout %q stderr %q", out.String(), errb.String())
+			assert.Equal(t, tc.during, ran)
+			assert.Equal(t, tc.stdout, out.String())
+			assert.Equal(t, tc.stderr, errb.String())
+		})
+	}
+}
+
+// TestProblemAsCarriesTheReason pins Call.ProblemAs (skeleton contract 2.10,
+// STANDARD §2): the refusal line carries reason=<r> before the colon, and the
+// JSON result adds "reasons" beside "why", for one reason and for two, so a
+// program reads the code and a person reads the sentence.
+func TestProblemAsCarriesTheReason(t *testing.T) {
+	t.Parallel()
+	const one = "WALK REFUSED reason=home_outside: the path is outside the home; run: nova-walk help\n"
+	const two = one + "WALK REFUSED reason=bad_flag: --n wants a number; run: nova-walk help\n"
+	const oneJSON = "{\"result\":{\"verb\":\"walk\",\"status\":\"refused\",\"exit\":2,\"remedy\":\"nova-walk help\",\"why\":[\"the path is outside the home\"],\"reasons\":[\"home_outside\"]},\"facts\":{}}\n"
+	const twoJSON = "{\"result\":{\"verb\":\"walk\",\"status\":\"refused\",\"exit\":2,\"remedy\":\"nova-walk help\",\"why\":[\"the path is outside the home\",\"--n wants a number\"],\"reasons\":[\"home_outside\",\"bad_flag\"]},\"facts\":{}}\n"
+	for _, tc := range []struct {
+		name   string
+		n      int
+		json   bool
+		stdout string
+		stderr string
+	}{
+		{"one reason, text", 1, false, "", one},
+		{"one reason, json", 1, true, oneJSON, ""},
+		{"two reasons, text", 2, false, "", two},
+		{"two reasons, json", 2, true, twoJSON, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tool := walkTool(func(c *Call) *Out {
+				c.ProblemAs("home_outside", "the path is outside the home")
+				if tc.n == 2 {
+					c.ProblemAs("bad_flag", "--n wants a number")
+				}
+				return c.Refused()
+			})
+			args := []string{"walk"}
+			if tc.json {
+				args = append(args, "--json")
+			}
+			r := testkit.Main(tool.Run).Run(args...)
+			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			assert.Equal(t, tc.stdout, r.Stdout)
+			assert.Equal(t, tc.stderr, r.Stderr)
 		})
 	}
 }
