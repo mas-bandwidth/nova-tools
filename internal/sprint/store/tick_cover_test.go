@@ -27,11 +27,11 @@ import (
 // like the real client: it refuses what the real one refuses.
 type coverClient struct {
 	redis.UniversalClient // nil: a call the cover does not name panics
-	get   func(context.Context, string) *redis.StringCmd
-	set   func(context.Context, string, any, time.Duration) *redis.StatusCmd
-	mget  func(context.Context, ...string) *redis.SliceCmd
-	fcall func(context.Context, string, []string, ...any) *redis.Cmd
-	tx    func(context.Context, func(redis.Pipeliner) error) ([]redis.Cmder, error)
+	get                   func(context.Context, string) *redis.StringCmd
+	set                   func(context.Context, string, any, time.Duration) *redis.StatusCmd
+	mget                  func(context.Context, ...string) *redis.SliceCmd
+	fcall                 func(context.Context, string, []string, ...any) *redis.Cmd
+	tx                    func(context.Context, func(redis.Pipeliner) error) ([]redis.Cmder, error)
 }
 
 func (f *coverClient) Get(ctx context.Context, key string) *redis.StringCmd {
@@ -58,8 +58,8 @@ func (f *coverClient) TxPipelined(ctx context.Context, fn func(redis.Pipeliner) 
 // queued view state's FCall, never run.
 type coverPipe struct {
 	redis.Pipeliner // nil: a call the cover does not name panics
-	set   func(context.Context, string, any, time.Duration) *redis.StatusCmd
-	fcall func(context.Context, string, []string, ...any) *redis.Cmd
+	set             func(context.Context, string, any, time.Duration) *redis.StatusCmd
+	fcall           func(context.Context, string, []string, ...any) *redis.Cmd
 }
 
 func (p *coverPipe) Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd {
