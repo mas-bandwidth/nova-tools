@@ -56,16 +56,27 @@ func copyWith(edit func(lines []string) []string) []string {
 	return edit(lines)
 }
 
+// compare runs the comparison every test here is built on -- parse the
+// document, compare it against the run -- and fails the test unless exactly
+// want problems come back, in the caller's words and naming every problem
+// drawn. It returns the problems so a caller can check their wording beside
+// the count.
+func compare(t *testing.T, what string, doc []string, run []Result, fields []Field, want int) []Problem {
+	t.Helper()
+	problems := CompareTranscript(parse(t, doc), run, fields)
+	if len(problems) != want {
+		require.FailNowf(t, "assertion failed", "%s drew %d problem(s), want %d:\n%s", what, len(problems), want, joinProblems(problems))
+	}
+	return problems
+}
+
 // The unseeded document and the run agree, line for line, in order. Without this
 // every red below would prove nothing: a comparator that failed everything would
 // pass all three seeds.
 func TestCompareAcceptsTheDocumentTheToolPrints(t *testing.T) {
 	t.Parallel()
 
-	problems := CompareTranscript(parse(t, documented), theRun(), nil)
-	if len(problems) != 0 {
-		require.FailNowf(t, "assertion failed", "the document the tool printed drew %d problem(s):\n%s", len(problems), joinProblems(problems))
-	}
+	compare(t, "the document the tool printed", documented, theRun(), nil, 0)
 }
 
 // SEED 1, one edit: a line the tool prints is dropped from the document. A
@@ -75,8 +86,7 @@ func TestCompareRejectsADroppedLine(t *testing.T) {
 	t.Parallel()
 
 	seeded := copyWith(func(lines []string) []string { return append(lines[:6:6], lines[6+1:]...) })
-	problems := CompareTranscript(parse(t, seeded), theRun(), nil)
-	require.NotEmpty(t, problems, "a line dropped from the document drew no problem; an abridged transcript passes")
+	problems := compare(t, "a line dropped from the document; an abridged transcript passes", seeded, theRun(), nil, 1)
 	assert.Contains(t, problems[0].Message, "prints 3 line(s) and the document shows 2", "the dropped line's problem does not count the lines:\n%s", problems[0].Message)
 }
 
@@ -90,10 +100,7 @@ func TestCompareRejectsAnAlteredValue(t *testing.T) {
 		lines[4] = "BUS READ topic=pit n=2"
 		return lines
 	})
-	problems := CompareTranscript(parse(t, seeded), theRun(), nil)
-	if len(problems) != 1 {
-		require.FailNowf(t, "assertion failed", "an altered value drew %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
-	}
+	problems := compare(t, "an altered value", seeded, theRun(), nil, 1)
 	assert.True(t, strings.Contains(problems[0].Message, "n=2") && strings.Contains(problems[0].Message, "n=1"), "the altered value's problem shows neither side of the difference:\n%s", problems[0].Message)
 }
 
@@ -107,10 +114,7 @@ func TestCompareRejectsAMovedLine(t *testing.T) {
 		lines[5], lines[6] = lines[6], lines[5]
 		return lines
 	})
-	problems := CompareTranscript(parse(t, seeded), theRun(), nil)
-	if len(problems) != 2 {
-		require.FailNowf(t, "assertion failed", "a moved line drew %d problem(s), want 2 (the two lines that changed places):\n%s", len(problems), joinProblems(problems))
-	}
+	problems := compare(t, "a moved line (the two lines that changed places)", seeded, theRun(), nil, 2)
 	for _, p := range problems {
 		assert.Contains(t, p.Message, "the document's line", "a moved line's problem does not name the line:\n%s", p.Message)
 	}
@@ -123,10 +127,7 @@ func TestCompareRejectsAMovedLine(t *testing.T) {
 func TestVolatileFieldOutsideTheTableIsRefused(t *testing.T) {
 	t.Parallel()
 
-	problems := CompareTranscript(parse(t, documented), theRun(), []Field{{Name: "elapsed"}})
-	if len(problems) != 1 {
-		require.FailNowf(t, "assertion failed", "an invented volatile field drew %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
-	}
+	problems := compare(t, "an invented volatile field", documented, theRun(), []Field{{Name: "elapsed"}}, 1)
 	msg := problems[0].Message
 	assert.Contains(t, msg, "elapsed", "the refusal does not name the invented field:\n%s", msg)
 	assert.Contains(t, msg, "onboarding.Volatile", "the refusal does not name the table:\n%s", msg)
@@ -167,18 +168,12 @@ func TestAVolatileFieldFromTheTableIsMatchedByShape(t *testing.T) {
 	run := theRun()
 	run[0].Stdout = "BUS POST id=3f2a1b at=2026-09-19T14:55:01Z topic=pit\n"
 
-	if problems := CompareTranscript(parse(t, documented), run, nil); len(problems) != 1 {
-		require.FailNowf(t, "assertion failed", "an instant that belongs to the run drew %d problem(s) with nothing declared, want 1:\n%s", len(problems), joinProblems(problems))
-	}
-	if problems := CompareTranscript(parse(t, documented), run, []Field{{Name: "at"}}); len(problems) != 0 {
-		require.FailNowf(t, "assertion failed", "`at` named from the table still drew %d problem(s):\n%s", len(problems), joinProblems(problems))
-	}
+	compare(t, "an instant that belongs to the run with nothing declared", documented, run, nil, 1)
+	compare(t, "`at` named from the table", documented, run, []Field{{Name: "at"}}, 0)
 	// Naming `at` normalises `at=` and NOTHING else: the id beside it on the
 	// same line is still compared as written.
 	run[0].Stdout = "BUS POST id=000000 at=2026-09-19T14:55:01Z topic=pit\n"
-	if problems := CompareTranscript(parse(t, documented), run, []Field{{Name: "at"}}); len(problems) != 1 {
-		require.FailNowf(t, "assertion failed", "a norm declared for `at` swallowed the id beside it: %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
-	}
+	compare(t, "a norm declared for `at` swallowing the id beside it", documented, run, []Field{{Name: "at"}}, 1)
 }
 
 // The one table entry a pattern cannot match is a path this run made: the test
@@ -193,13 +188,8 @@ func TestTheRunsTemporaryDirectoryIsNamedWithBothItsSpellings(t *testing.T) {
 	}
 	run := []Result{{Code: 0, Stdout: "BUS READ root=/var/folders/q5/T/nova-bus-9f3 n=0\n"}}
 
-	if problems := CompareTranscript(parse(t, doc), run, []Field{{Name: "tmpdir", Doc: "/tmp/nova-bus-1", Run: "/var/folders/q5/T/nova-bus-9f3"}}); len(problems) != 0 {
-		require.FailNowf(t, "assertion failed", "the run's directory named with both spellings still drew %d problem(s):\n%s", len(problems), joinProblems(problems))
-	}
-	problems := CompareTranscript(parse(t, doc), run, []Field{{Name: "tmpdir"}})
-	if len(problems) != 1 {
-		require.FailNowf(t, "assertion failed", "`tmpdir` named with no path drew %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
-	}
+	compare(t, "the run's directory named with both spellings", doc, run, []Field{{Name: "tmpdir", Doc: "/tmp/nova-bus-1", Run: "/var/folders/q5/T/nova-bus-9f3"}}, 0)
+	problems := compare(t, "`tmpdir` named with no path", doc, run, []Field{{Name: "tmpdir"}}, 1)
 	assert.Contains(t, problems[0].Message, "tmpdir", "the refusal does not name the field:\n%s", problems[0].Message)
 }
 
@@ -208,10 +198,7 @@ func TestTheRunsTemporaryDirectoryIsNamedWithBothItsSpellings(t *testing.T) {
 func TestAShapeFieldGivenAPathIsRefused(t *testing.T) {
 	t.Parallel()
 
-	problems := CompareTranscript(parse(t, documented), theRun(), []Field{{Name: "at", Doc: "/tmp/x", Run: "/tmp/y"}})
-	if len(problems) != 1 {
-		require.FailNowf(t, "assertion failed", "a shape field handed a path drew %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
-	}
+	compare(t, "a shape field handed a path", documented, theRun(), []Field{{Name: "at", Doc: "/tmp/x", Run: "/tmp/y"}}, 1)
 }
 
 // A comparison over no command passes by comparing nothing, so it is a problem
@@ -229,10 +216,7 @@ func TestCompareRefusesATranscriptWithNoCommand(t *testing.T) {
 func TestCompareRefusesARunThatIsShorterThanTheDocument(t *testing.T) {
 	t.Parallel()
 
-	problems := CompareTranscript(parse(t, documented), theRun()[:1], nil)
-	if len(problems) != 1 {
-		require.FailNowf(t, "assertion failed", "a short run drew %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
-	}
+	problems := compare(t, "a short run", documented, theRun()[:1], nil, 1)
 	assert.Contains(t, problems[0].Message, "2 command(s)", "the short run's problem does not count the commands:\n%s", problems[0].Message)
 }
 
@@ -278,16 +262,10 @@ func TestAVolatileEntryNeverSwallowsANeighbouringFieldsValue(t *testing.T) {
 			}
 			run := []Result{{Stdout: fmt.Sprintf("BUS READ %s=%s %s=%s\n", neighbour, tc.runValue, tc.field, tc.mine)}}
 
-			problems := CompareTranscript(parse(t, doc), run, []Field{{Name: tc.name}})
-			if len(problems) != 1 {
-				require.FailNowf(t, "assertion failed", "declaring %q normalised %s= as well: %d problem(s), want 1.\nThe entry's pattern is running over the whole line instead of the token it names -- this is #1629's ROW 1 defect (4f2d552b) in the Volatile table.\n%s",
-					tc.name, neighbour, len(problems), joinProblems(problems))
-			}
+			compare(t, fmt.Sprintf("declaring %q normalised %s= as well: the entry's pattern is running over the whole line instead of the token it names -- this is #1629's ROW 1 defect (4f2d552b) in the Volatile table", tc.name, neighbour), doc, run, []Field{{Name: tc.name}}, 1)
 			// And the entry still does its own job on its own token.
 			runOwn := []Result{{Stdout: fmt.Sprintf("BUS READ %s=%s %s=%s\n", neighbour, tc.docValue, tc.field, tc.runValue)}}
-			if problems := CompareTranscript(parse(t, doc), runOwn, []Field{{Name: tc.name}}); len(problems) != 0 {
-				require.FailNowf(t, "assertion failed", "declaring %q did not normalise its own %s=: %d problem(s), want 0:\n%s", tc.name, tc.field, len(problems), joinProblems(problems))
-			}
+			compare(t, fmt.Sprintf("declaring %q did not normalise its own %s=", tc.name, tc.field), doc, runOwn, []Field{{Name: tc.name}}, 0)
 		})
 	}
 }
@@ -309,21 +287,15 @@ func TestTheDirectoryEntryTouchesNothingButThatDirectory(t *testing.T) {
 	run := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3 home=/tmp/nova-bus-1x/cache n=0\n"}}
 	field := Field{Name: "tmpdir", Doc: "/tmp/nova-bus-1", Run: "/run/T/nova-bus-9f3"}
 
-	if problems := CompareTranscript(parse(t, doc), run, []Field{field}); len(problems) != 0 {
-		require.FailNowf(t, "assertion failed", "the run's directory was not normalised: %d problem(s):\n%s", len(problems), joinProblems(problems))
-	}
+	compare(t, "the run's directory was not normalised", doc, run, []Field{field}, 0)
 	moved := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3 home=/run/T/nova-bus-9f3x/cache n=0\n"}}
-	if problems := CompareTranscript(parse(t, doc), moved, []Field{field}); len(problems) != 1 {
-		require.FailNowf(t, "assertion failed", "a longer neighbouring path with the run directory as its prefix was swallowed: %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
-	}
+	compare(t, "a longer neighbouring path with the run directory as its prefix was swallowed", doc, moved, []Field{field}, 1)
 	descendantDoc := []string{
 		"$ nova-bus read --root /tmp/nova-bus-1",
 		"BUS READ root=/tmp/nova-bus-1/cache n=0",
 	}
 	descendantRun := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3/cache n=0\n"}}
-	if problems := CompareTranscript(parse(t, descendantDoc), descendantRun, []Field{field}); len(problems) != 0 {
-		require.FailNowf(t, "assertion failed", "a descendant of the run's directory was not normalised: %d problem(s):\n%s", len(problems), joinProblems(problems))
-	}
+	compare(t, "a descendant of the run's directory was not normalised", descendantDoc, descendantRun, []Field{field}, 0)
 }
 
 // A value that is not what the entry says it is stays on the line and is
@@ -335,9 +307,7 @@ func TestAVolatileEntryLeavesAnInvalidValueOnTheLine(t *testing.T) {
 
 	doc := []string{"$ nova-bus read", "BUS READ took=5ms"}
 	run := []Result{{Stdout: "BUS READ took=soon\n"}}
-	if problems := CompareTranscript(parse(t, doc), run, []Field{{Name: "took"}}); len(problems) != 1 {
-		require.FailNowf(t, "assertion failed", "`took=soon` was normalised as a duration: %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
-	}
+	compare(t, "`took=soon` was normalised as a duration", doc, run, []Field{{Name: "took"}}, 1)
 }
 
 func TestTookAcceptsEveryGoDuration(t *testing.T) {
@@ -347,9 +317,7 @@ func TestTookAcceptsEveryGoDuration(t *testing.T) {
 	for _, duration := range []string{"1h3m1ns", "1h3m1us", "1h3m1µs"} {
 		t.Run(duration, func(t *testing.T) {
 			run := []Result{{Stdout: "BUS READ took=" + duration + "\n"}}
-			if problems := CompareTranscript(parse(t, doc), run, []Field{{Name: "took"}}); len(problems) != 0 {
-				require.FailNowf(t, "assertion failed", "a duration accepted by time.ParseDuration drew %d problem(s):\n%s", len(problems), joinProblems(problems))
-			}
+			compare(t, "a duration accepted by time.ParseDuration", doc, run, []Field{{Name: "took"}}, 0)
 		})
 	}
 }
@@ -366,16 +334,11 @@ func TestTheRecordedEntryReplacesTheWholeNameOnly(t *testing.T) {
 	}
 	fields := []Field{{Name: "recorded", Doc: "$ORG", Run: "acme"}, {Name: "recorded", Doc: "$REPO", Run: "widget"}}
 	run := []Result{{Stdout: "REPO OK org=acme repo=acme/widget other=widgets\n"}}
-	if problems := CompareTranscript(parse(t, doc), run, fields); len(problems) != 0 {
-		require.FailNowf(t, "assertion failed", "the recorded names were not written as the reader's variables: %d problem(s):\n%s", len(problems), joinProblems(problems))
-	}
+	compare(t, "the recorded names were not written as the reader's variables", doc, run, fields, 0)
 	longer := []Result{{Stdout: "REPO OK org=acme repo=acme/widget other=widgetz\n"}}
-	if problems := CompareTranscript(parse(t, doc), longer, fields); len(problems) != 1 {
-		require.FailNowf(t, "assertion failed", "a longer name containing the recorded one was swallowed: %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
-	}
-	if problems := CompareTranscript(parse(t, doc), run, []Field{{Name: "recorded", Doc: "$ORG"}}); len(problems) != 1 || !strings.Contains(problems[0].Message, "BOTH spellings") {
-		require.FailNowf(t, "assertion failed", "a recorded name without its run spelling was not refused: %s", joinProblems(problems))
-	}
+	compare(t, "a longer name containing the recorded one was swallowed", doc, longer, fields, 1)
+	problems := compare(t, "a recorded name without its run spelling", doc, run, []Field{{Name: "recorded", Doc: "$ORG"}}, 1)
+	require.Contains(t, problems[0].Message, "BOTH spellings", "a recorded name without its run spelling was not refused: %s", joinProblems(problems))
 }
 
 // A `recorded` declaration that could turn a failing run green is refused, each
