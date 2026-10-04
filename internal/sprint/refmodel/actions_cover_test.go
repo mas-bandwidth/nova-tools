@@ -516,13 +516,21 @@ func TestActionsCoverResumed(t *testing.T) {
 }
 
 // TestActionsCoverFleetUp covers FleetUp (actions.go): a member comes up and
-// the ready queues are levelled.
+// the ready queues are levelled; a pending operation is refused, and a moves
+// map that is not the round's is refused.
 func TestActionsCoverFleetUp(t *testing.T) {
 	t.Parallel()
 	s := New(nil, []string{"m"}, "c")
 	n, err := FleetUp(s, "m", nil)
 	require.NoError(t, err)
 	assert.Equal(t, Up, n.Members["m"])
+
+	_, err = FleetUp(s, "m2", map[string]string{"x": "y"})
+	coverBadChoice(t, err)
+
+	s.Pending = "add"
+	_, err = FleetUp(s, "m", nil)
+	coverRefused(t, err)
 }
 
 // TestActionsCoverReaderLoad covers ReaderLoad (actions.go): a reader's reads
