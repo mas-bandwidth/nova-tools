@@ -91,8 +91,7 @@ func TestBuildRefusesAPlatformThatIsNotShipped(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.tools("nova-bus")
-	h.wantRC(h.do("build", "v1.2.3", "plan9", "mips", "dist"), 1)
-	h.mustContain("refusing: plan9/mips is not a shipped platform")
+	h.wantRun(1, "refusing: plan9/mips is not a shipped platform", "build", "v1.2.3", "plan9", "mips", "dist")
 	if n := len(h.runner.called()); n != 0 {
 		t.Fatalf("%d programs run before the platform was refused", n)
 	}
@@ -103,8 +102,7 @@ func TestBuildRefusesABadStampBeforeAnythingIsCompiled(t *testing.T) {
 	for _, stamp := range []string{"", "v1 2", "v1%s", "v1=2"} {
 		h := newHarness(t)
 		h.tools("nova-bus")
-		h.wantRC(h.do("build", stamp, "linux", "amd64", "dist"), 1)
-		h.mustContain("refusing: the release stamp")
+		h.wantRun(1, "refusing: the release stamp", "build", stamp, "linux", "amd64", "dist")
 		if n := len(h.runner.called()); n != 0 {
 			t.Errorf("<%q>: %d programs run after a refused stamp; the build must never start", stamp, n)
 		}
@@ -118,8 +116,7 @@ func TestBuildRequireVTagRefusesAStampThatIsNotVPrefixed(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.tools("nova-bus")
-	h.wantRC(h.do("build", "--require-v-tag", "1.2.3", "linux", "amd64", "dist"), 1)
-	h.mustContain("refusing: 1.2.3 is not a v-prefixed tag")
+	h.wantRun(1, "refusing: 1.2.3 is not a v-prefixed tag", "build", "--require-v-tag", "1.2.3", "linux", "amd64", "dist")
 	if n := len(h.runner.called()); n != 0 {
 		t.Fatalf("%d programs run", n)
 	}
@@ -133,17 +130,14 @@ func TestBuildRequireVTagRefusesAStampThatIsNotVPrefixed(t *testing.T) {
 func TestBuildWrongArgumentCountIsAUsageError(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{{"build"}, {"build", "v1", "linux", "amd64"}, {"build", "v1", "linux", "amd64", "dist", "x"}} {
-		h := newHarness(t)
-		h.wantRC(h.do(args...), 2)
-		h.mustContain("usage:")
+		newHarness(t).wantRun(2, "usage:", args...)
 	}
 }
 
 func TestBuildRefusesAnEmptyToolSet(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.wantRC(h.do("build", "v1.2.3", "linux", "amd64", "dist"), 1)
-	h.mustContain("cmd/ matched nothing: this release would ship an empty set")
+	h.wantRun(1, "cmd/ matched nothing: this release would ship an empty set", "build", "v1.2.3", "linux", "amd64", "dist")
 }
 
 func TestBuildFailsWhenTheToolchainWritesNoBinaryForATool(t *testing.T) {
@@ -151,8 +145,7 @@ func TestBuildFailsWhenTheToolchainWritesNoBinaryForATool(t *testing.T) {
 	h := newHarness(t)
 	h.tools("nova-bus", "nova-tokens")
 	h.runner.stream = fakeGoBuild("nova-tokens")
-	h.wantRC(h.do("build", "v1.2.3", "linux", "amd64", "dist"), 1)
-	h.mustContain("go build wrote no binary for nova-tokens")
+	h.wantRun(1, "go build wrote no binary for nova-tokens", "build", "v1.2.3", "linux", "amd64", "dist")
 }
 
 func TestBuildFailsWhenNovaBusIsNotInTheShippedSet(t *testing.T) {
@@ -160,8 +153,7 @@ func TestBuildFailsWhenNovaBusIsNotInTheShippedSet(t *testing.T) {
 	h := newHarness(t)
 	h.tools("nova-tokens")
 	h.runner.stream = fakeGoBuild("")
-	h.wantRC(h.do("build", "v1.2.3", "linux", "amd64", "dist"), 1)
-	h.mustContain("nova-bus is not in the shipped set")
+	h.wantRun(1, "nova-bus is not in the shipped set", "build", "v1.2.3", "linux", "amd64", "dist")
 }
 
 func TestBuildPassesTheToolchainsExitCodeOn(t *testing.T) {
@@ -179,6 +171,5 @@ func TestBuildToleratesACmdDirectoryWithAStrayFile(t *testing.T) {
 	h.write("cmd/AGENTS.md", "a file, not a tool\n", 0o644)
 	h.write("cmd/.hidden/main.go", "package main\n", 0o644)
 	h.runner.stream = fakeGoBuild("")
-	h.wantRC(h.do("build", "v1.2.3", "linux", "amd64", "dist"), 0)
-	h.mustContain("built 1 tools for linux/amd64")
+	h.wantRun(0, "built 1 tools for linux/amd64", "build", "v1.2.3", "linux", "amd64", "dist")
 }
