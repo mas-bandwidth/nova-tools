@@ -139,32 +139,6 @@ func (r *round) scan(ok func(string) bool) string {
 	return ""
 }
 
-// picks is up to k names from the index, each scan starting past the name the
-// one before took, that ok accepts and that are not taken already; fewer when
-// fewer are acceptable. It does not move the index: an ask that takes them
-// moves it past each (moved), in order.
-func (r *round) picks(k int, taken []string, ok func(string) bool) []string {
-	var out []string
-	at := r.start()
-	n := len(r.order)
-	for len(out) < k {
-		pick := -1
-		for i := 0; i < n; i++ {
-			j := (at + i) % n
-			if x := r.order[j]; ok(x) && !contains(taken, x) && !contains(out, x) {
-				pick = j
-				break
-			}
-		}
-		if pick < 0 {
-			break
-		}
-		out = append(out, r.order[pick])
-		at = pick + 1
-	}
-	return out
-}
-
 // pickByRoom is up to k names of free the ask asks, each the one with the
 // greatest share of room left (readerRoom: free room as a part of width),
 // with free room above zero, a tie going to the first from the index, each
