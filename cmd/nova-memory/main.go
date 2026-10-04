@@ -587,35 +587,29 @@ func commandLine(argv []string) string {
 }
 
 // commandLineFor is commandLine with the platform passed in, so both shells'
-// rules are testable from either one.
+// rules are testable from either one. Each argument goes through oneline.Escape
+// first, so the echo is one line whatever an argument holds; the POSIX shell's
+// one quoter is oneline.ShellWord. Windows keeps its own form, because
+// oneline.ShellWord is POSIX-only: cmd.exe and PowerShell both take a
+// double-quoted argument literally, backslashes included, which is exactly what
+// a Windows path needs, and a double quote cannot appear in a Windows path at
+// all -- one arriving from --words is doubled, which is how that shell spells
+// its own quote.
 func commandLineFor(argv []string, windows bool) string {
 	parts := make([]string, 0, len(argv))
 	for _, a := range argv {
-		parts = append(parts, shellArg(a, windows))
+		esc := oneline.Escape(a)
+		if !windows {
+			parts = append(parts, oneline.ShellWord(esc))
+			continue
+		}
+		if esc != "" && !needsQuoting(esc, true) {
+			parts = append(parts, esc)
+			continue
+		}
+		parts = append(parts, `"`+strings.ReplaceAll(esc, `"`, `""`)+`"`)
 	}
 	return strings.Join(parts, " ")
-}
-
-// shellArg renders one argument for that platform's shell, and quotes only
-// when the argument holds something the shell would otherwise act on.
-func shellArg(s string, windows bool) string {
-	esc := oneline.Escape(s)
-	if esc != "" && !needsQuoting(esc, windows) {
-		return esc
-	}
-	if windows {
-		// cmd.exe and PowerShell both take a double-quoted argument literally,
-		// backslashes included, which is exactly what a Windows path needs. A
-		// double quote cannot appear in a Windows path at all; one arriving
-		// from --words is doubled, which is how that shell spells its own
-		// quote.
-		return `"` + strings.ReplaceAll(esc, `"`, `""`) + `"`
-	}
-	// A single-quoted POSIX word is literal up to its closing quote, so the
-	// backslashes, dollars and spaces inside it survive the paste. The one
-	// character it cannot hold is its own quote, which is closed, escaped and
-	// reopened.
-	return "'" + strings.ReplaceAll(esc, "'", `'\''`) + "'"
 }
 
 // needsQuoting is true for every character but the ones a shell hands to the
