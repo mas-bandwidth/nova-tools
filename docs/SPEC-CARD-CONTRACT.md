@@ -357,11 +357,14 @@ behind and the child can edit (`git remote remove`).
 data home), `TMPDIR`, `LANG`, `LC_*`, `TERM`, `USER`, `LOGNAME`, the `GO*`, `NOVA_SWARM_*`,
 `NOVA_TEST_*`, `XDG_*` and `OPENCODE_*` families, `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`,
 and the secrets `--pass` names (the loop record's nova-secrets keys) with the worker
-description's secret; everything else is dropped. Native puts the bench's Go first on the
-child's `PATH` after its shell wrappers: the directory the bench's `go` really lives in
-(`swarm.BenchGoBin`: the first `go` in `~/sdk/bin`, `~/go/bin`, then the member's own `PATH`,
-resolved through its links), so a card's bare `go` and `gofmt` resolve whatever `PATH` the loop
-unit started the member with. Under the darwin wall, which denies `setpriority`, native
+description's secret; everything else is dropped. Native puts the bench's toolchain first on
+the child's `PATH` after its shell wrappers (`swarm.BenchPath`): the `bin` of every home root
+the wall executes, read off the wall's own root list (`~/sdk/bin`, the standard's links to
+every sdk tool), then the directory the bench's `go` really lives in (`swarm.BenchGoBin`: the
+first `go` in those, `~/go/bin`, then the member's own `PATH`, resolved through its links), so
+a card's bare `go`, `gofmt`, `dotnet` or `cargo` resolves to the toolchain the wall grants
+whatever `PATH` the loop unit started the member with, never to a stale copy on the member's
+own. Under the darwin wall, which denies `setpriority`, native
 starts the child's process group at nice 19 and the wrappers' directory carries a `nice` that
 runs its command without asking for a priority the group already has, so a gate's
 `nice -n 19` prints no warning. A name matching

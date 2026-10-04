@@ -102,7 +102,7 @@ func TestTheChildEnvPutsTheShimFirstAndPinsShell(t *testing.T) {
 
 	shim := filepath.Join("slot", "shim")
 	shell := filepath.Join(shim, "bash")
-	env := nativeChildEnv("data", "job", "tmp", "", "", shim, shell, "")
+	env := nativeChildEnv("data", "job", "tmp", "", "", shim, shell, nil)
 	path, ok := lookup(env, "PATH")
 	require.True(t, ok, "the child was handed no PATH")
 	first := strings.Split(path, string(os.PathListSeparator))[0]
@@ -124,7 +124,7 @@ func TestTheChildEnvPutsTheShimFirstAndPinsShell(t *testing.T) {
 // tests exactly as they were: no shim, no PATH edit, no SHELL.
 func TestTheChildEnvIsUnchangedWithoutAShim(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin")
-	env := nativeChildEnv("data", "job", "tmp", "", "", "", "", "")
+	env := nativeChildEnv("data", "job", "tmp", "", "", "", "", nil)
 	path, _ := lookup(env, "PATH")
 	require.Equal(t, "/usr/bin", path, "PATH = %q, want the caller's own", path)
 	_, ok := lookup(env, "SHELL")
@@ -177,7 +177,7 @@ func TestTheCardsShellReachesNoGh(t *testing.T) {
 	dir, _, err := writeNativeShellShims(t.TempDir())
 	require.NoError(t, err, "the shims could not be written: %q, %v", dir, err)
 	require.NotEmpty(t, dir, "the shims could not be written: %q, %v", dir, err)
-	env := pathWithDirFirst([]string{"PATH=" + fake + string(os.PathListSeparator) + os.Getenv("PATH")}, dir)
+	env := pathWithDirsFirst([]string{"PATH=" + fake + string(os.PathListSeparator) + os.Getenv("PATH")}, dir)
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skipf("no sh on PATH: %v", err)
@@ -213,7 +213,7 @@ func TestTheChildEnvResolvesTheBenchGo(t *testing.T) {
 
 	shim := filepath.Join("slot", "shim")
 	env := nativeChildEnv("data", "job", "tmp", "", "", shim, filepath.Join(shim, "bash"),
-		swarm.BenchGoBin(home, "/usr/bin:/bin"))
+		swarm.BenchPath(runtime.GOOS, home, "/usr/bin:/bin"))
 	path, ok := lookup(env, "PATH")
 	require.True(t, ok, "the child was handed no PATH")
 	dirs := filepath.SplitList(path)
@@ -231,4 +231,43 @@ func TestTheChildEnvResolvesTheBenchGo(t *testing.T) {
 		}
 		assert.Equal(t, want, found, "the child's %s resolves in %q, want the bench's sdk Go; PATH %q", tool, found, path)
 	}
+}
+
+// TestTheChildEnvResolvesEverySdkTool is the fleet tooling probe of 2026-10-04: the child's
+// PATH carried GOROOT/bin and nothing else of ~/sdk, so a card's `dotnet`, `cargo`, `java`
+// and the rest were "command not found" inside a wall that executes them. The child's PATH
+// now carries ~/sdk/bin right after the shim and before the bench's GOROOT/bin.
+func TestTheChildEnvResolvesEverySdkTool(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the bench layout is a link into the sdk tree")
+	}
+	home := t.TempDir()
+	goroot := filepath.Join(home, "sdk", "go1.26.6", "bin")
+	sdkBin := filepath.Join(home, "sdk", "bin")
+	require.NoError(t, os.MkdirAll(goroot, 0o755))
+	require.NoError(t, os.MkdirAll(sdkBin, 0o755))
+	exe := []byte("#!/bin/sh\nexit 0\n")
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(goroot, "go"), exe, 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(goroot, "go"), filepath.Join(sdkBin, "go")))
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(sdkBin, "dotnet"), exe, 0o755))
+	realGoroot, err := filepath.EvalSymlinks(goroot)
+	require.NoError(t, err)
+
+	shim := filepath.Join("slot", "shim")
+	env := nativeChildEnv("data", "job", "tmp", "", "", shim, filepath.Join(shim, "bash"),
+		swarm.BenchPath(runtime.GOOS, home, "/usr/bin:/bin"))
+	path, ok := lookup(env, "PATH")
+	require.True(t, ok, "the child was handed no PATH")
+	dirs := filepath.SplitList(path)
+	require.GreaterOrEqual(t, len(dirs), 3, "PATH = %q", path)
+	assert.Equal(t, []string{shim, sdkBin, realGoroot}, dirs[:3], "the shim, then ~/sdk/bin, then GOROOT/bin; PATH %q", path)
+	found := ""
+	for _, d := range dirs {
+		if fi, err := os.Stat(filepath.Join(d, "dotnet")); err == nil && fi.Mode().Perm()&0o111 != 0 {
+			found = d
+			break
+		}
+	}
+	assert.Equal(t, sdkBin, found, "the child's dotnet resolves in %q, want the bench's ~/sdk/bin; PATH %q", found, path)
 }
