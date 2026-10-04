@@ -176,7 +176,7 @@ func fillTemplate(tmpl string, in fillInput) string {
 	return out.String()
 }
 
-// agentVariable reports whether an environment variable is one of rule 9's exact
+// agentVariable reports whether an environment variable is one of the exact
 // scrub set, by name: SSH_AUTH_SOCK, SSH_AGENT_*, GPG_AGENT_INFO, *_AGENT_PID,
 // *_AGENT_INFO, *_AGENT_SOCK. It is NOT "every name containing AGENT": that width
 // was measured to drop AI_AGENT and CLAUDE_AGENT_SDK_VERSION, which say what is
@@ -190,7 +190,7 @@ func agentVariable(name string) bool {
 	return strings.HasSuffix(name, "_AGENT_PID") || strings.HasSuffix(name, "_AGENT_INFO") || strings.HasSuffix(name, "_AGENT_SOCK")
 }
 
-// childEnv is the caller's environment with rule 9's scrub set removed.
+// childEnv is the caller's environment with the agent scrub set removed.
 func childEnv(caller []string) []string {
 	var out []string
 	for _, kv := range caller {

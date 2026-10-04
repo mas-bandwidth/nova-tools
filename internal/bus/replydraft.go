@@ -24,7 +24,7 @@ const LegacyIDPrefix = "legacy-"
 // legacyIDHex is how much of the digest the derived id carries.
 const legacyIDHex = 12
 
-// LegacyDraftID is the derived id of a note written before ids: the literal `legacy-`
+// LegacyDraftID is the derived id of a legacy note without an Id line: the literal `legacy-`
 // followed by the first 12 lowercase hex digits of the SHA-256 of the note's repo-relative
 // path, exactly as that path appears on the `Re:` line the draft writes.
 //

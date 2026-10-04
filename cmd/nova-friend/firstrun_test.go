@@ -45,7 +45,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		"nova-friend install --as bob --harness opencode --dir ./bob --dry-run",
 		"nova-friend uninstall --as bob --dry-run",
 		"nova-friend ping --as ada --to bob --nonce abc123",
-		"nova-friend pong --as bob --nonce abc123 --dir ./bob --to ada --queue 2 --working 1 --width 4",
+		"nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
 		"nova-friend wait-pong --from bob --nonce abc123 --timeout 2s",
 		"nova-friend status --as bob --dir ./bob",
 	}

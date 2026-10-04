@@ -58,5 +58,5 @@ func TestTemplateHelpListsTheCardsRequiredLines(t *testing.T) {
 func TestTheBannerNamesTheExampleCard(t *testing.T) {
 	t.Parallel()
 	help := swarmHelp(t, "help")
-	assert.Contains(t, help, "nova-swarm template --name card prints one that passes", "the banner does not name template --name card as the way to an example card")
+	assert.Contains(t, help, "Prepare a card: save nova-swarm template --name card to a file", "the banner does not name template --name card as the way to an example card")
 }

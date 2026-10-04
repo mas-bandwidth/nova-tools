@@ -52,14 +52,15 @@ func TestEnsureMergeAttributes(t *testing.T) {
 	require.False(t, wrote, "the rules were written twice; every send after the first would touch a shared file for nothing")
 	again, err := os.ReadFile(filepath.Join(root, AttributesName))
 	require.NoError(t, err)
-	require.False(t, string(again) != string(first), "the second call changed the file:\n%s\n---\n%s", first, again)
+	require.Equal(t, string(first), string(again), "the second call changed the file:\n%s\n---\n%s", first, again)
 
 	// A bus that already has a .gitattributes of its own keeps it, and gains the rules.
 	other := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(other, AttributesName), []byte("*.md text\n"), 0o644))
 	{
 		wrote, err := EnsureMergeAttributes(other)
-		require.False(t, err != nil || !wrote, "EnsureMergeAttributes over an existing file = %v %v", wrote, err)
+		require.NoError(t, err, "EnsureMergeAttributes over an existing file = %v %v", wrote, err)
+		require.True(t, wrote, "EnsureMergeAttributes over an existing file = %v %v", wrote, err)
 	}
 	got, err := os.ReadFile(filepath.Join(other, AttributesName))
 	require.NoError(t, err)
@@ -164,7 +165,7 @@ func conflictedRebase(t *testing.T) (string, string) {
 // of a remote which has moved, and that is exactly the state these refusals are about.
 func TestNoRefusalRecommendsABarePush(t *testing.T) {
 	t.Parallel()
-	require.False(t, !strings.Contains(pullRebaseAdvice, "git pull --rebase && git push"), "the shared advice is %q, which is not the two commands that land a branch that is behind", pullRebaseAdvice)
+	require.True(t, strings.Contains(pullRebaseAdvice, "git pull --rebase && git push"), "the shared advice is %q, which is not the two commands that land a branch that is behind", pullRebaseAdvice)
 	for _, bad := range []string{"push or drop them first", "run git push"} {
 		require.NotContains(t, pullRebaseAdvice, bad, "the advice still says %q, which does not work against a remote that has moved", bad)
 	}

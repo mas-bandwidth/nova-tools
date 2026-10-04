@@ -21,14 +21,14 @@ import (
 
 // watch: the named tables rendered once per --every, in place on a
 // terminal (the ANSI home-and-clear sequence, then the text: a console tab
-// shows the live table with no shell loop; Glenn 2026-09-27: "create a way
-// to render this table to text, efficiently and mechanically, once
-// per-second in a console window"), or published to --out by atomic rename
-// the way the sprint table is. Efficient and mechanical: exactly one Redis
+// shows the live table with no shell loop, rendering the table to text
+// efficiently and mechanically, once per tick in a console window), or
+// published to --out by atomic rename the way the sprint table is. Efficient
+// and mechanical: exactly one Redis
 // pipeline per tick for every named table, including the first tick.
 // Each read-only snapshot holds the shape and cells; the screen holds the table and nothing
-// else (Glenn: "it should only contain that table data, no bullshit around
-// it") -- no clock, no tick time, no key names; a store that did not answer
+// else, only that table's own data with nothing around it --
+// no clock, no tick time, no key names; a store that did not answer
 // leaves the last good text standing with ONE line, store unreachable since
 // <time>, under it, and only while the read fails: no counter ticks while the
 // store answers (owner's finding on the stale counter: "I don't want to see
@@ -113,7 +113,8 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 // invariant integrity for each table and appends a stall row on violation.
 // viewReader reads the view first, every frame (one extra trip), then its
 // tables in one trip, so the tables a tab shows change by a verb and never
-// by a restart (Glenn 2026-09-27: "restarting is not cool").
+// by a restart: changing the tables a tab shows is a verb, never a
+// restart of the process.
 func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts, check bool) func(context.Context) (string, error) {
 	return viewReaderWith(c, name, opts, check, ntable.ViewGet, tableSnapshots, ntable.Check)
 }
@@ -135,7 +136,7 @@ func viewReaderWith(
 		if len(v.Tables) == 0 {
 			return oneline.Escape(v.Title) + "\n(no tables in view " + oneline.Escape(name) + ")\n", nil
 		}
-		// The view's frame (2026-09-27): the time to the second, a blank
+		// The view's frame: the time to the second, a blank
 		// line, the title, a blank line, the summary line, a blank line, the
 		// tables. Nothing else goes in. The summary line is the view's state
 		// alone while it has one ("STOPPED", nothing more), else
@@ -345,8 +346,7 @@ func publish(out, text string, stdout, stderr io.Writer, verb string) int {
 }
 
 // writeAtomic writes body to <path>.tmp.<pid> in path's own directory,
-// fsyncs it, and renames it over path, the publish the sprint table used
-// (the old nova-sprint's table_live.go): a reader sees the old text or
+// fsyncs it, and renames it over path: a reader sees the old text or
 // the new one, never half of one.
 func writeAtomic(path, body string) error {
 	if err := atomicfile.Write(filepath.Clean(path), []byte(body), 0o644); err != nil {

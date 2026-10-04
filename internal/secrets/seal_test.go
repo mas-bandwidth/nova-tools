@@ -137,7 +137,7 @@ func TestSealPipedValueLandsInEncryptStdinNotArgv(t *testing.T) {
 	line, err := RunSeal(f.options(t, "TARGET", "newsecretvalue\n", true))
 	require.NoError(t, err, "RunSeal: %v", err)
 	stdin := readMaybe(t, f.sopsStdin)
-	assert.Contains(t, stdin, "TARGET: newsecretvalue", "encrypt stdin missing the pasted value; got:\n%s", stdin)
+	assert.Contains(t, stdin, "TARGET: "+yamlSingleQuote("newsecretvalue"), "encrypt stdin missing the pasted value; got:\n%s", stdin)
 	n := strings.Count(stdin, "TARGET:")
 	assert.Equal(t, 1, n, "encrypt stdin holds %d TARGET lines, want 1:\n%s", n, stdin)
 	argv := readMaybe(t, f.sopsArgs)
@@ -178,8 +178,48 @@ func TestSealReplacesExistingNameNotDuplicated(t *testing.T) {
 	stdin := readMaybe(t, f.sopsStdin)
 	n := strings.Count(stdin, "TARGET:")
 	assert.Equal(t, 1, n, "TARGET appears %d times, want 1:\n%s", n, stdin)
-	assert.Contains(t, stdin, "TARGET: fresh", "new value missing:\n%s", stdin)
+	assert.Contains(t, stdin, "TARGET: "+yamlSingleQuote("fresh"), "new value missing:\n%s", stdin)
 	assert.Contains(t, stdin, "OTHER: keepme", "unrelated key was dropped:\n%s", stdin)
+}
+
+// TestSealQuotesTheValue pins security#64 finding 1: sealApply must render the
+// value as a YAML single-quoted scalar, the same form seat add (seatAddSelect)
+// and seat inject use. sops parses the plaintext as YAML on encrypt and
+// re-serializes it on decrypt, so an unquoted value with YAML-significant bytes
+// comes back changed: "hunter2 # tail" loses its tail as a comment, "[a, b]"
+// becomes a sequence, and leading or trailing spaces are lost. Each case must
+// land on the encrypt child's stdin quoted, and parse back byte for byte.
+func TestSealQuotesTheValue(t *testing.T) {
+	t.Parallel()
+
+	skipPOSIXFakesOnWindows(t)
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{name: "comment tail", value: "hunter2 # tail"},
+		{name: "flow sequence", value: "[a, b]"},
+		{name: "leading and trailing spaces", value: "  spaced  "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSealFixture(t, "OTHER: keepme\nTARGET: old\n")
+			_, err := RunSeal(f.options(t, "TARGET", tc.value+"\n", true))
+			require.NoError(t, err, "RunSeal: %v", err)
+			stdin := readMaybe(t, f.sopsStdin)
+			assert.Contains(t, stdin, "TARGET: "+yamlSingleQuote(tc.value),
+				"value on the encrypt stdin is not single-quoted; got:\n%s", stdin)
+
+			secrets, _, err := ParseDecryptedSecrets([]byte(stdin))
+			require.NoError(t, err, "ParseDecryptedSecrets(%q): %v", stdin, err)
+			got, ok := secrets["TARGET"]
+			require.True(t, ok && got.Loaded(), "TARGET missing from the round-tripped document:\n%s", stdin)
+			require.NoError(t, got.Use(func(v string) error {
+				assert.Equal(t, tc.value, v, "value changed on the round trip through the seat document")
+				return nil
+			}))
+		})
+	}
 }
 
 // TestReviewSealNoPRPreservesStartingDirtyWorktree: checkout -f of the

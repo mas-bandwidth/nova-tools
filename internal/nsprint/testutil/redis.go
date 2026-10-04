@@ -44,9 +44,8 @@ func Absent(t *testing.T, cause error) {
 // a NOAUTH answer to the readiness PING is a live server.
 //
 // Redis treats --port 0 as "do not listen" (it logs "Configured to not listen
-// anywhere" and exits). The ephemeral port is taken here, the way the controls
-// used to, and handed to redis-server as --port. That is a free loopback port,
-// not a dial to a bench.
+// anywhere" and exits). The ephemeral port is taken here and handed to
+// redis-server as --port. That is a free loopback port, not a dial to a bench.
 func Start(t *testing.T, extra ...string) string {
 	t.Helper()
 	bin := Program(t)

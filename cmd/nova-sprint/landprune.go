@@ -2,9 +2,9 @@ package main
 
 // The landing's cleanup (docs/SPEC-SPRINT.md, land). A landed card's commits are on the
 // base, so its branch on origin has nothing left to give; a repository that keeps one
-// branch per card of every run makes every push receive thousands of refs (the fleet pass
-// of 2026-10-01: 3,564 branches, each push 20 to 35 s, and landing is the sprint's one
-// serial stage). A batch whose report is recorded only TAGS its cards' branches: they go
+// branch per card of every run makes every push receive thousands of refs, so
+// each push takes many times longer; landing is the sprint's one
+// serial stage. A batch whose report is recorded only TAGS its cards' branches: they go
 // on a queue in this process's memory (no store field, table or column). The cleaner
 // deletes them later, many in one push, then removes the clone's remote-tracking refs of
 // branches origin no longer holds. It never runs while a landing builds or pushes: the

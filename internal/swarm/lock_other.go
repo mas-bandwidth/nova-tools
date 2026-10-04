@@ -8,12 +8,9 @@ import (
 	"path/filepath"
 )
 
-// The lock where there is no flock: Windows, which this repo publishes a binary for. An
-// exclusive create of a sibling file gives the same mutual exclusion and gives up the one
-// property that makes flock better -- the kernel does not drop it when the holder dies, so
-// a dispatcher killed holding it leaves the file behind and the next run refuses, naming
-// it. That is a refusal a person can act on rather than a corruption, and it is written
-// down here rather than discovered.
+// On platforms without flock, an exclusive sibling-file create provides mutual exclusion.
+// The sentinel remains when its holder exits, so a later attempt refuses instead of treating
+// a possibly stale lock as available.
 func tryLockFile(f *os.File) (bool, error) {
 	held, err := os.OpenFile(sentinel(f), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
@@ -22,10 +19,7 @@ func tryLockFile(f *os.File) (bool, error) {
 		}
 		return false, err
 	}
-	// THE SENTINEL IS THE LOCK, so a close that failed never took one: returning
-	// `(true, err)` had `TakeLock` report the lock untaken while the file stayed behind,
-	// and the next run refused until a person cleared a lock nobody held (read 5,
-	// finding 7). What was created here is removed here.
+	// The sentinel is the lock, so a failed close must remove it before returning the error.
 	if err := held.Close(); err != nil {
 		// ignored: a cleanup on the failure path; the close error is the one returned
 		_ = os.Remove(sentinel(f))

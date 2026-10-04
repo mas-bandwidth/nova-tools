@@ -153,7 +153,7 @@ func Ack(s *Snapshot, r AckReq) Plan {
 
 // waive is the change that records, on a waiting primary, that the
 // coordinator acknowledged its dropped or missing needs: the union named by
-// these judgments (every need of its kind for a legacy judgment naming none),
+// these judgments (a legacy judgment naming none still names every need of its kind),
 // by whom and when, and count as satisfied. A need dropped after the judgment
 // was written has its own. A primary with nothing else to wait for moves to
 // ready in the same change; a sentinel is reached instead.
@@ -253,7 +253,7 @@ func acknowledged(n Note, entries []Open, who string, now time.Time) Note {
 }
 
 // heldAfterAck says a primary is still held after an ack closes the
-// judgments in closing: the no-stall rule (Unheld, check's rule 12, the one
+// judgments in closing: the no-stall rule (Unheld, the one
 // definition of held) judged on the state after the ack, the judgments it
 // closes gone and the one the primary would need next open.
 func heldAfterAck(s *Snapshot, pr *Card, closing map[string]bool, acked []string) bool {

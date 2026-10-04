@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -15,9 +16,26 @@ import (
 // loop's read block: one read of the stream per beat.
 const BeatEvery = time.Second
 
+// MaxDeliveries is how many times a message is handed into the session
+// before the daemon gives up on it: a turn that fails leaves the message
+// pending and the bus hands it in again once its claim opens (bus2.ClaimAfter);
+// the last failure acks it, with the failure on the record, so a message the
+// session cannot take never comes back for ever.
+const MaxDeliveries = 3
+
+// RecheckEvery is how long the daemon waits before trying a deferred
+// delivery again (Deferred: the session cannot take a turn now and nothing
+// is wrong). The message stays in the daemon's hand meanwhile: it is never
+// put back on the bus, never counted toward MaxDeliveries, never acked.
+const RecheckEvery = 10 * time.Second
+
 // StatusErrorEvery bounds how often a status file that cannot be written
 // is said in the record: the loop goes on beating and delivering without it.
-const StatusErrorEvery = time.Minute
+// DeferredSaidEvery bounds how often a deferral still in hand is said.
+const (
+	StatusErrorEvery  = time.Minute
+	DeferredSaidEvery = time.Minute
+)
 
 // The subjects of the daemon's own messages on the bus.
 const (
@@ -107,9 +125,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.m = Start(d.Now())
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	answered := map[string]bool{} // entries whose ping the daemon has ponged
+	failed := map[string]int{}    // entries whose turn failed, and how often
 	var queue []job
 	var busy *job
+	var retry time.Time // when the deferred turn in hand is tried again; zero while none is
+	var deferrals int
+	var deferSaid time.Time
 	results := make(chan result, 1)
+	start := func(j job, now time.Time) {
+		j.started = now
+		busy = &j
+		go func() {
+			exit, err := d.Deliver.Deliver(ctx, j.text)
+			results <- result{j, exit, err}
+		}()
+	}
 	for ctx.Err() == nil {
 		now := d.Now()
 		for _, p := range d.m.Tick(now) {
@@ -167,10 +197,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 					if nonce, seat, since, isPing := ParsePing(msg.Body); isPing && !answered[e.Entry] {
 						d.daemonPong(ctx, bus, msg, nonce)
 						answered[e.Entry] = true
-						if passive { // the session reads it itself; the machine still sees the ping
-							for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
-								queue = append(queue, job{subject: p.Subject, text: p.Text})
-							}
+						// the machine sees the ping when the daemon does: a turn longer than a window is no silence
+						for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
+							queue = append(queue, job{subject: p.Subject, text: p.Text})
 						}
 					}
 				}
@@ -179,32 +208,53 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		select {
 		case r := <-results:
+			var deferred Deferred
+			if errors.As(r.err, &deferred) { // not a failure: the message stays in hand, tried again, counted toward nothing
+				deferrals++
+				retry = now.Add(RecheckEvery)
+				if deferrals == 1 || now.Sub(deferSaid) >= DeferredSaidEvery {
+					deferSaid = now
+					d.Record(fmt.Sprintf("%s subject=%q deferred=%d: %s; tried again every %s, counted toward nothing (said once per %s)",
+						now.UTC().Format(time.RFC3339), r.job.subject, deferrals, deferred.Reason, RecheckEvery, DeferredSaidEvery))
+				}
+				break
+			}
 			line := fmt.Sprintf("%s subject=%q took=%s exit=%d", now.UTC().Format(time.RFC3339), r.job.subject, now.Sub(r.job.started).Round(time.Millisecond), r.exit)
-			switch {
-			case r.err != nil:
+			if r.err != nil {
 				line += " error=" + fmt.Sprintf("%q", r.err.Error())
-			case r.exit == 0 && r.job.entry != "":
+			}
+			ok := r.err == nil && r.exit == 0
+			if r.job.entry != "" && !ok {
+				failed[r.job.entry]++
+				line += fmt.Sprintf(" deliveries=%d/%d", failed[r.job.entry], MaxDeliveries)
+				if failed[r.job.entry] >= MaxDeliveries {
+					line += " given_up=true"
+				}
+			}
+			if r.job.entry != "" && (ok || failed[r.job.entry] >= MaxDeliveries) {
 				if _, err := bus.AckEntry(ctx, d.Friend, r.job.entry); err != nil {
 					d.status.StoreError = err.Error()
 					line += " ack=failed"
 				} else {
-					d.status.Delivered++
+					if ok {
+						d.status.Delivered++
+					}
 					line += " acked=true"
+					delete(failed, r.job.entry)
 				}
 			}
 			d.Record(line)
-			busy = nil
+			busy, retry, deferrals, deferSaid = nil, time.Time{}, 0, time.Time{}
 		default:
 		}
-		if busy == nil && len(queue) > 0 {
+		switch {
+		case busy == nil && len(queue) > 0:
 			j := queue[0]
-			j.started = now
 			queue = queue[1:]
-			busy = &j
-			go func(j job) {
-				exit, err := d.Deliver.Deliver(ctx, j.text)
-				results <- result{j, exit, err}
-			}(j)
+			start(j, now)
+		case busy != nil && !retry.IsZero() && !now.Before(retry):
+			retry = time.Time{}
+			start(*busy, now)
 		}
 		if storeOK {
 			if err := d.Beat(ctx); err != nil {
@@ -213,8 +263,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
 			}
 		}
-		if d.m.Challenge != Quiet {
-			if p, found, err := d.Pong(); err == nil && found && !p.At.Before(d.m.Asked) {
+		if d.m.Challenge != Quiet { // the nonce says which challenge a pong answers; its at is the store's clock, never compared with ours
+			if p, found, err := d.Pong(); err == nil && found {
 				d.m.Pong(p.At, p.Nonce)
 			}
 		}

@@ -25,18 +25,18 @@ const (
 )
 
 // word is the status as the first line spells it.
-var word = map[Status]string{OK: "OK", Failed: "FAIL", Refused: "REFUSED"}
+var word = map[Status]string{OK: "OK", Failed: "FAILED", Refused: "REFUSED"}
 
 // Out is the one value every verb returns. Render writes it as typed lines:
 //
-//	<TOKEN> OK|FAIL|REFUSED k=v ...[: <why>][; run: <remedy>]   one line per why
-//	<TOKEN> <KIND> k=v ...                                      one line per item
+//	<TOKEN> OK|FAILED|REFUSED k=v ...[: <why>][; run: <remedy>]   one line per why
+//	<TOKEN> <KIND> k=v ...[: <text>]                            one line per item, the text its prose tail
 //	<TOKEN> MORE kind=<kind> shown=<n> total=<n> <remedy>       one per capped kind
 //	<TOKEN> NOTE <text>                                         one per note
 //
 // or as the JSON of the same value:
 //
-//	{"result":{"verb","status","exit","remedy","why"},"facts":{},"items":[{"kind","fields"}],
+//	{"result":{"verb","status","exit","remedy","why"},"facts":{},"items":[{"kind","fields","text"}],
 //	 "more":[{"kind","shown","total","remedy"}],"notes":[],"payload":""}
 //
 // A payload (the version line, a document a program reads) is printed as it is,
@@ -48,7 +48,7 @@ type Out struct {
 	Verb    string
 	Status  Status
 	Exit    int
-	Word    string   // the tool's own status word in place of OK or FAIL (Out.As); "" is the plain one
+	Word    string   // the tool's own status word in place of OK or FAILED (Out.As); "" is the plain one
 	Remedy  string   // what to run next: the tool's help on a refusal unless the verb names better
 	Why     []string // every reason it failed or was refused
 	Facts   Fields
@@ -79,10 +79,14 @@ type Field struct {
 // Fields keeps its keys in the order they were added, in both renderings.
 type Fields []Field
 
-// Item is one typed row: `<TOKEN> <KIND> k=v ...`.
+// Item is one typed row: `<TOKEN> <KIND> k=v ...[: <text>]`, where the text
+// is the row's prose tail (ItemText): a reason or a command, printed plain
+// after the typed fields and carried as the `text` field of the JSON, so the
+// line and the object stay one value.
 type Item struct {
 	Kind   string `json:"kind"`
 	Fields Fields `json:"fields"`
+	Text   string `json:"text,omitempty"`
 }
 
 // More stands for the items of one kind that --max did not list.
@@ -119,15 +123,15 @@ func Exit(code int) *Out {
 func (o *Out) Fact(k string, v any) *Out { o.Facts = append(o.Facts, Field{k, v}); return o }
 
 // As puts one of the tool's own status words (Tool.Words) in place of OK or
-// FAIL on the first line; the status and the exit stay: `Done().As("UNCHANGED")`
+// FAILED on the first line; the status and the exit stay: `Done().As("UNCHANGED")`
 // exits 0, and a gate that says no is `Fail(why).As("STALE")`, exit 1, apart
 // from a refusal's 2. A word the tool does not declare, or one on a refusal,
-// is turned into a FAIL naming the bug.
+// is turned into a FAILED naming the bug.
 func (o *Out) As(word string) *Out { o.Word = word; return o }
 
 // Findings names the item kinds that are a verb's findings: in the text form
 // their lines go to stderr, and the rest of a verb that ran (its first line,
-// its other items, MORE and NOTE) to stdout, whether it said OK or FAIL. A
+// its other items, MORE and NOTE) to stdout, whether it said OK or FAILED. A
 // refusal stays whole on stderr; JSON stays one object on stdout.
 func (o *Out) Findings(kinds ...string) *Out { o.findings = append(o.findings, kinds...); return o }
 
@@ -138,6 +142,17 @@ func (o *Out) Item(kind string, kv ...any) *Out {
 		it.Fields = append(it.Fields, Field{fmt.Sprint(kv[i]), kv[i+1]})
 	}
 	o.Items = append(o.Items, it)
+	return o
+}
+
+// ItemText adds one row of a kind with a prose tail: the typed fields render
+// as key=value tokens and the text renders plain after them, `: <text>`
+// (oneline.Escape), while the JSON carries it as the `text` field beside the
+// typed fields (STANDARD §2, one output structure, two renderings). A reason
+// or a command lives in the tail, never escaped into one key=value field.
+func (o *Out) ItemText(kind, text string, kv ...any) *Out {
+	o.Item(kind, kv...)
+	o.Items[len(o.Items)-1].Text = text
 	return o
 }
 
@@ -165,12 +180,12 @@ func (o *Out) Cap(max int) *Out {
 // Render writes o as typed lines, or as one JSON object when json is set, and
 // returns the exit that stands: o.Exit, or 1 when o is no JSON (a NaN or an
 // infinite float, a value of the verb's own that JSON cannot carry), which is
-// then a FAIL line naming the verb, never an empty line and a success.
+// then a FAILED line naming the verb, never an empty line and a success.
 // Every value goes through internal/oneline.
 func (o *Out) Render(w io.Writer, asJSON bool) int { return o.render(w, w, w, asJSON) }
 
 // render is Render with the lines of the finding kinds (Findings) on found,
-// and the FAIL line of a result that is no JSON on failed.
+// and the FAILED line of a result that is no JSON on failed.
 func (o *Out) render(w, found, failed io.Writer, asJSON bool) int {
 	if asJSON {
 		raw, err := marshal(o)
@@ -210,7 +225,11 @@ func (o *Out) render(w, found, failed io.Writer, asJSON bool) int {
 		if slices.Contains(o.findings, it.Kind) {
 			to = found
 		}
-		fmt.Fprintln(to, oneline.Field(token)+" "+oneline.Field(strings.ToUpper(it.Kind))+it.Fields.text())
+		line := oneline.Field(token) + " " + oneline.Field(strings.ToUpper(it.Kind)) + it.Fields.text()
+		if it.Text != "" {
+			line += ": " + oneline.Escape(it.Text)
+		}
+		fmt.Fprintln(to, line)
 	}
 	for _, m := range o.More {
 		fmt.Fprintln(w, bounded.MoreLine(token, m.Kind, m.Shown, m.Total, m.Remedy))

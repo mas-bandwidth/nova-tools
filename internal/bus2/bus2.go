@@ -37,10 +37,12 @@ const (
 )
 
 // ClaimAfter is how long a delivered message stays with its reader before
-// recv hands it to another: the budget one delivery into a harness gets. A
-// live reader keeps its message; a dead one's is claimed after this
-// (SPEC-BUS2.md, the semantics; tla/Bus2.tla HeldStaysHeld).
-const ClaimAfter = 60 * time.Second
+// recv hands it to another. It is longer than the longest delivery a reader
+// makes (nova-friend's ten minute turn and the kill that ends it), so a live
+// reader mid-turn is never handed its message a second time; a dead one's
+// is claimed after this (SPEC-BUS2.md, the semantics; tla/Bus2.tla
+// HeldStaysHeld).
+const ClaimAfter = 15 * time.Minute
 
 // Consumer is the one consumer name of every reader: with ClaimAfter, who
 // holds an entry is told by its idle time, never by a name.
@@ -345,10 +347,15 @@ func (b *Bus) Peek(ctx context.Context, as string) (pending, fresh []Entry, err 
 // logLimit bounds one read of the log; the caller caps what it shows.
 const logLimit = 10000
 
-// Log is the log's messages, oldest first.
-func (b *Bus) Log(ctx context.Context) ([]Entry, error) {
-	return b.Store.Range(ctx, LogKey, "-", "+", logLimit)
+// Log is the log's messages from the entry id from ("-" for its start),
+// oldest first, up to logLimit of them.
+func (b *Bus) Log(ctx context.Context, from string) ([]Entry, error) {
+	return b.Store.Range(ctx, LogKey, from, "+", logLimit)
 }
+
+// IDAt is the first entry id a stream could hold at t (<ms>-0): the floor of
+// a Range from that instant.
+func IDAt(t time.Time) string { return fmt.Sprintf("%d-0", t.UnixMilli()) }
 
 // Names is the roster, sorted.
 func (b *Bus) Names(ctx context.Context) ([]string, error) {

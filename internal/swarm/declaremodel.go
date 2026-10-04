@@ -9,14 +9,11 @@ import (
 // provider (`provider.<provider>.models.<model>: {}`), so the harness knows the model
 // whatever its catalog holds at start. An entry already there is kept as it is.
 //
-// THE RACE IT CLOSES (2026-10-01): every job runs the harness in a fresh data home, so
-// opencode fetches its model catalog (models.dev, 5.3 MB) at each start; when that fetch
-// is slow or loses the race it falls back to the snapshot built into the binary, which
-// predates the fleet's newer models, and the launch dies in about three seconds with
-// `ProviderModelNotFoundError` under `UnknownError: Unexpected server error`. Measured with
-// harness v1.18.20, fetch disabled, fresh home: `openrouter/x-ai/grok-4.7` is absent
-// (the snapshot offers grok-4.20, grok-4.3) until the config declares it, and then it
-// is listed.
+// Every job runs the harness in a fresh data home, so the model catalog fetches at each
+// start; when that fetch is slow or loses the race it falls back to the snapshot built
+// into the binary, which predates the newer models, and the launch fails with
+// `ProviderModelNotFoundError`. Declaring the model in the harness config prevents that
+// failure whatever the catalog fetch yields.
 //
 // ok is false when the config is not a JSON object or the model is not provider/model;
 // the body is then returned unchanged.

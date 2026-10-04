@@ -20,18 +20,25 @@ makes the friend up.
 
 - The bus: the friend's stream `bus2:to:<friend>` (SPEC-BUS2.md). A message is
   pending from the read until the session's turn ends at exit 0, so a daemon
-  that dies mid-turn is handed the message again when launchd restarts it.
-- The files, under the friend's working directory, one writer each:
-  `.nova-friend/status.json` (the daemon: its state, rewritten whole every five
-  seconds and when it changes; a reader calls the daemon up while the file is
-  under thirty seconds old), `.nova-friend/pong.json` (the `pong` verb: the
-  session's last answer), `.nova-friend/deliver.log` (the daemon: one line per
-  delivery), `inbox/QUEUE.json` (the coordinator and the session: one record
-  per task with `id`, `state` of queued, working or done, and `deliverable`).
+  that dies mid-turn is handed the message again once its claim opens, fifteen
+  minutes after the read (`ClaimAfter`, SPEC-BUS2.md: longer than the longest
+  turn, so a live daemon mid-turn is never handed its message twice).
+- The files, one writer each. The state files live in the state directory,
+  `~/.nova-friend/<friend>` under the home directory unless `--state-dir` names
+  another, never on the friend's volume (a background process on this platform
+  may not touch a removable volume without the person's permission; measured
+  2026-10-04, the mkdir refused with "operation not permitted"): `status.json`
+  (the daemon: its state, rewritten whole every five seconds and when it
+  changes; a reader calls the daemon up while the file is under thirty seconds
+  old), `pong.json` (the `pong` verb: the session's last answer), `deliver.log`
+  (the daemon: one line per delivery). The queue file is under the friend's
+  working directory: `inbox/QUEUE.json` (the coordinator and the session: one
+  record per task with `id`, `state` of queued, working or done, and
+  `deliverable`).
 - The launchd agent `com.nova.friend-<friend>`: RunAtLoad, KeepAlive, a five
   second throttle. launchd opens its own log before the daemon runs and cannot
   open one on a network volume (EX_CONFIG, measured 2026-10-03), so that log
-  is under the home directory; the daemon's record is on the friend's volume.
+  is under the home directory, beside the state directory.
 
 ## The protocol
 
@@ -68,7 +75,15 @@ challenge ends.
 Each second: the clock is stepped; when the session is free, one read of the
 stream (a ping is answered by the daemon at once and the message is handed to
 the adapter, which blocks for the whole turn, and acked when the turn ends at
-exit 0; any other exit leaves it pending), else one peek, so a ping that
+exit 0; any other exit leaves it pending, handed in again when its claim opens,
+and the third failure acks it with `given_up=true` on the record, so a message
+the session cannot take never comes back for ever; a delivery the adapter
+defers, `Deferred`, the session unable to take a turn now with nothing wrong,
+such as a Codex thread open in the app holding its writer lock, is neither a
+failure nor an ack: the message stays in the daemon's hand, tried again every
+ten seconds, `RecheckEvery`, and counted toward nothing, so a chat open all
+day loses no message, and the record says so at the first deferral and once a
+minute after), else one peek, so a ping that
 lands during a long turn is still answered at once by the daemon and pushed
 in once the session is free; the worker's result; one beat to the sprint
 server (`friend beat <friend>`, a plain beat: the queue, working and width
@@ -132,9 +147,9 @@ the daemon, and a plain `touch` launchd starts, both refused with "operation
 not permitted" where the same commands from a shell succeed, and tccd logged
 the access request). The permission is granted to the binary in the system's
 privacy settings, by the person, never by the tool, and a rebuilt binary is a
-new one to it. Until it is granted the daemon beats and answers the daemon
-pong but can neither write its state files on the volume nor run the harness
-there; the record says so once a minute.
+new one to it. The state files are out of its way, under the home directory;
+until it is granted the daemon beats and answers the daemon pong but cannot
+run the harness on the volume, and the record says so.
 
 The server side of the ping (the coordinator pinging every friend each window
 from the sprint's run loop, and the table's `awake` and `deaf` columns) is not

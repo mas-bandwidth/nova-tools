@@ -161,7 +161,7 @@ func readSerialTestsAllowlist(t *testing.T) *allowlist.List {
 	for _, row := range allow.Rows() {
 		_, reason, _ := strings.Cut(row.Text, " ")
 		reason = strings.TrimSpace(reason)
-		assert.False(t, !strings.HasPrefix(reason, "serial: ") || len(reason) == len("serial: "), "%s:%d: %q carries no `serial: <reason>`", serialTestsAllowlistPath, row.Line, row.Text)
+		assert.True(t, strings.HasPrefix(reason, "serial: ") && len(reason) != len("serial: "), "%s:%d: %q carries no `serial: <reason>`", serialTestsAllowlistPath, row.Line, row.Text)
 		at, dup := first[row.Key]
 		if !assert.False(t, dup, "%s:%d: %s is listed twice (first at line %d)", serialTestsAllowlistPath, row.Line, row.Key, at) {
 			continue

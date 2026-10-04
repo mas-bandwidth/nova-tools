@@ -11,7 +11,7 @@ import "time"
 //
 // A WAIT LOOP NEVER ENDS BY SCANNING FOR ITS OWN NAME. The reap below signals a process
 // GROUP this process started and recorded. It never matches a process by its command line:
-// that is how 19 orphaned shells happened on 2026-09-10, a loop having found itself.
+// that is how orphaned shells happened when a loop found itself.
 
 // TerminateGrace is how long a group is given to stop after the terminate and before the
 // kill. Long enough that a harness can flush what it was writing, short enough that a reap

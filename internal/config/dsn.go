@@ -35,14 +35,13 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 	}
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
+		if flagValue != "" {
+			return "", fmt.Errorf("--pg: refused without echoing the value; want postgres://user@host:5432/nova with no password, and export it as the variable %s names", EnvPGPassEnv)
+		}
 		return "", fmt.Errorf("--pg: %v; want postgres://user@host:5432/nova", err)
 	}
-	if flagValue != "" && strings.Contains(flagValue, "://") {
-		if u, err := url.Parse(flagValue); err == nil {
-			if _, has := u.User.Password(); has {
-				return "", fmt.Errorf("--pg carries a password; leave it out and export it as the variable %s names (a ps reads the line)", EnvPGPassEnv)
-			}
-		}
+	if flagValue != "" && cfg.Password != "" {
+		return "", fmt.Errorf("--pg carries a password; leave it out and export it as the variable %s names (a ps reads the line)", EnvPGPassEnv)
 	}
 	if cfg.Password != "" {
 		return dsn, nil

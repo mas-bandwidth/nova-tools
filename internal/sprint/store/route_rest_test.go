@@ -130,19 +130,33 @@ func TestAHundredRoutesRestedByRule3StayUnderThePropertyCap(t *testing.T) {
 	h.addReady("s1", 300, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
+	// One read of the fleet names the 300 dealt cards and their gens; the 300 takes
+	// then go as batched verbs (steps_work.go, takeOne and finishPlan: every named
+	// card keeps its own take and failed finish, the members' width is MaxWidth, and
+	// a set over one manifest is chunked by the store): three real failed takes per
+	// route, in four steps, not 600 one-card steps each re-reading the whole table.
+	s := h.snap()
 	byRoute := map[string][]string{}
-	for _, c := range h.snap().Fleet.Column(sprint.Ready) {
+	byMember := map[string][]string{}
+	gens := map[string]int{}
+	for _, c := range s.Fleet.Column(sprint.Ready) {
 		byRoute[c.F(sprint.FieldRoute)] = append(byRoute[c.F(sprint.FieldRoute)], c.ID)
+		byMember[c.Row] = append(byMember[c.Row], c.ID)
+		gens[c.ID] = c.Int("gen")
 	}
 	require.Len(t, byRoute, 100, "every route was dealt")
 	for name, ids := range byRoute {
 		require.Len(t, ids, 3, "%s: three takes, so the one tick rests it", name)
-		for _, id := range ids {
-			h.failTake(id, noResultLine)
-		}
+	}
+	require.Equal(t, 300, len(gens), "every dealt card is taken and failed")
+	for member, ids := range byMember {
+		h.must(TakeStep(sprint.TakeReq{As: member, Sel: sprint.Sel{IDs: ids}, Gens: gens, Who: member}))
+		h.must(FinishStep(sprint.FinishReq{As: member, Sel: sprint.Sel{IDs: ids}, Gens: gens, Failed: true,
+			Report: noResultLine, Usage: "wall=450.00s budget=1/1000", Who: member}))
 	}
 	h.machine()
-	props := h.snap().Fleet.Props()
+	s = h.snap()
+	props := s.Fleet.Props()
 	names := make([]string, 0, len(props))
 	rule3 := 0
 	for name, v := range props {
@@ -158,8 +172,8 @@ func TestAHundredRoutesRestedByRule3StayUnderThePropertyCap(t *testing.T) {
 	// provider. 4 under the cap of 64 is the headroom.
 	assert.Equal(t, 4, len(props), "100 routes rested use %d properties, headroom under %d: %v", len(props), ntable.LimitTableProps, names)
 	assert.Less(t, len(props), ntable.LimitTableProps)
-	now := h.snap().Now
-	rests := sprint.RouteRests(routes, h.snap().Fleet)
+	now := s.Now
+	rests := sprint.RouteRests(routes, s.Fleet)
 	for _, r := range routes {
 		assert.True(t, rests[r.Name].Resting(now), "%s rests from the provider's one property", r.Name)
 	}

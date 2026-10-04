@@ -152,7 +152,7 @@ on its updated time and the fields that changed: that is the check working.
 MISSING is in it and not in --tree. Nothing is read from the network. To try
 verify with no gh: save the minimal tree below as a.lisp, copy it to b.lisp
 with :archived true, and run nova-work verify --tree a.lisp --against b.lisp:
-one VERIFY DRIFT line for field=archived, under VERIFY FAIL, exit 1.
+one VERIFY DRIFT line for field=archived, under VERIFY FAILED, exit 1.
 
 the tree file (docs/SPEC-WORK-V1.md section 1.2) is one (work-tree "v1" ...)
 record. The smallest a reader accepts, one repository and no issue:

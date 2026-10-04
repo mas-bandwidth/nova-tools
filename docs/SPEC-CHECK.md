@@ -144,7 +144,7 @@ a bench or a clock; nothing below reaches a network.
 15. `TestExitOneOnlyOnTheSecondConsecutiveWidening`: one widening tick against a state file is `WARN` at exit 0, a second at the same stream is exit 1, and a contracting tick in between resets the streak.
 16. `TestWithNoStateNothingIsRemembered`: two widening runs with no `--state` are both exit 0, and neither writes a file.
 17. `TestConvergenceRefusesAMissingFlag`: each of `--repo`, `--ledger`, `--receipts`, `--retired` and `--since` omitted is exit 2 printing `refusing to guess` and naming the flag, and omitting all five names all five in one run.
-18. `TestConvergenceRefusesASinceItCannotRead`: `--since yesterday` and `--since 2026-13-40T00:00Z` each name both spellings, a `--since` after the injected clock names the clock, and neither prints a stream line.
+18. `TestConvergenceRefusesASinceItCannotRead`: a `--since` that is neither RFC3339 nor a Go duration — a bare word, or an instant that names no real day — names both spellings, a `--since` after the injected clock names the clock, and neither prints a stream line.
 19. `TestConvergenceRefusesAVersionsFileItDoesNotKnow`: a `--versions` with an unknown header, and a row of the wrong arity, are each exit 2 naming the file and the two headers it reads.
 20. `TestEveryFieldSurvivesAHostileValue`: a pull request title, a ledger cell, a stamp and a `--by` name each holding a newline, an `=` and a bidi override print as one field on one line.
 21. `TestJSONCarriesTheSameReadingAsTheLines`: `--json` parses to the same per-stream numbers, ratios, trends, verdict and absent list that the lines print, and prints no `CONVERGENCE` line.

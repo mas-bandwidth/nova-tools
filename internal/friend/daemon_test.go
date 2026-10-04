@@ -174,6 +174,7 @@ func TestATurnThatExitsNonZeroLeavesTheMessagePending(t *testing.T) {
 	pending, _, err := r.bus.Peek(context.Background(), "bob")
 	require.NoError(t, err)
 	assert.Len(t, pending, 1, "exit 3 acks nothing")
+	assert.Contains(t, r.records[0], "deliveries=1/3")
 	assert.Equal(t, 0, r.last().Delivered)
 	assert.Contains(t, r.records[0], "exit=3")
 }
@@ -207,7 +208,7 @@ func TestAPingIsAnsweredAtOnceByTheDaemonAndPushedInAndThePongEndsTheChallenge(t
 	assert.Equal(t, "n1", afterPing.Nonce)
 	assert.Equal(t, Quiet, afterPong.Challenge)
 	assert.Equal(t, 1, afterPong.Pongs)
-	// a stale pong file (an older nonce, or one from before the ask) does not answer the next
+	// a stale pong file (an older nonce) does not answer the next
 	assert.Equal(t, Challenged, r.last().Challenge, "the file still says n1")
 	assert.Equal(t, "n2", r.last().Nonce)
 }
@@ -233,16 +234,27 @@ func TestNoPingForAWindowTellsTheSessionOnceAndAPingTellsItBack(t *testing.T) {
 func TestAPingDuringALongTurnIsStillAnsweredAtOnceByTheDaemon(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	r.hold, r.releaseAt = make(chan struct{}), 3
+	// the turn runs longer than a window; the coordinator pings twice while it does
+	window := int(Window / BeatEvery)
+	r.hold, r.releaseAt = make(chan struct{}), window+20
 	r.send(t, "ada", "long", "a long task")
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
 	r.at[2] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) } // the turn is under way; a ping lands
-	r.stopAfter = 9
+	var midTurn Status
+	r.at[100] = func() {
+		midTurn = r.last()
+		r.send(t, "ada", "PING n2", PingText("ada", t0, "n2"))
+	}
+	r.stopAfter = window + 40
 	require.NoError(t, r.d.Run(ctx))
-	assert.Equal(t, []string{"daemon-pong: daemon-pong n1"}, r.adaGot(t), "answered from a peek while the turn ran, and once only")
-	require.Len(t, r.delivered, 2, "the long task, then the ping as a turn once the session was free")
+	assert.Equal(t, []string{"daemon-pong: daemon-pong n1", "daemon-pong: daemon-pong n2"}, r.adaGot(t), "answered from a peek while the turn ran, and once only")
+	assert.True(t, midTurn.LastPing.After(t0.Add(BeatEvery)) && midTurn.LastPing.Before(t0.Add(10*BeatEvery)), "the machine saw the ping when the daemon did, mid-turn: %s", midTurn.LastPing)
+	assert.Equal(t, Challenged, midTurn.Challenge)
+	require.Len(t, r.delivered, 3, "the long task, then the pings as turns once the session was free: %v", r.delivered)
 	assert.Contains(t, r.delivered[1], "PING n1")
+	assert.Contains(t, r.delivered[2], "PING n2")
+	assert.Equal(t, Connected, r.last().Connection, "pings peeked during a long turn keep the connection: no false silence")
 	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
 	require.NoError(t, err)
 	assert.Empty(t, pending)
@@ -311,4 +323,117 @@ func TestAStatusFileThatCannotBeWrittenIsSaidOnceAMinuteAndTheBeatGoesOn(t *test
 		}
 	}
 	assert.Equal(t, 3, said, "at the start and once a minute: %v", r.records)
+}
+
+// The pong file's at is the store's time, to the second (bus2 Send truncates
+// it); the ask is the daemon's own clock. A pong recorded in the same second
+// as the ask, or on a store clock a little behind, carries an at before the
+// ask and is still the answer: the nonce says which challenge it answers,
+// never the clock (the finding of 2026-10-04: such a pong was dropped for
+// ever, and the friend stayed challenged).
+func TestAPongStampedBeforeTheAskByTheStoresClockStillAnswers(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+	r.at[3] = func() {
+		r.mu.Lock()
+		r.pong, r.pongSet = Pong{Nonce: "n1", At: r.d.m.Asked.Add(-1500 * time.Millisecond), To: "ada"}, true
+		r.mu.Unlock()
+	}
+	r.run(t, 6)
+	s := r.last()
+	assert.Equal(t, Quiet, s.Challenge, "the pong for the current nonce ends the challenge whatever its stamp")
+	assert.Equal(t, 1, s.Pongs)
+}
+
+// A message whose turn fails is handed in again once its claim opens, and
+// not for ever: after MaxDeliveries it is acked with the failure on the
+// record (the finding of 2026-10-04: a poison message came back every
+// minute for ever).
+func TestAMessageThatFailsThreeTimesIsAckedAndTheRecordSaysSo(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.exit = 3
+	r.send(t, "ada", "poison", "x")
+	for _, step := range []int{4, 8} { // the claim opens between the failures
+		r.at[step] = func() { r.store.Advance(bus2.ClaimAfter) }
+	}
+	r.run(t, 14)
+	assert.Len(t, r.delivered, MaxDeliveries, "handed in three times, then given up")
+	pending, _, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending, "the third failure acks it")
+	failed := 0
+	for _, line := range r.records {
+		if strings.Contains(line, "exit=3") {
+			failed++
+		}
+	}
+	assert.Equal(t, MaxDeliveries, failed, "%v", r.records)
+	assert.Contains(t, r.records[len(r.records)-1], "deliveries=3/3 given_up=true acked=true")
+	assert.Equal(t, 0, r.last().Delivered, "a message given up on was never delivered")
+}
+
+// A live reader is never handed a message a second time: the bus keeps a
+// delivered message with its reader for longer than the longest turn and
+// the kill that ends it (the finding of 2026-10-04: a one-minute claim
+// against a ten-minute turn, delivered twice).
+func TestTheClaimOpensOnlyAfterTheLongestTurnIsOver(t *testing.T) {
+	t.Parallel()
+	assert.Less(t, DeliverBudget+KillDelay, bus2.ClaimAfter)
+}
+
+// deferrer is a harness whose session cannot take a turn now and nothing is
+// wrong (the Codex chat open in the app): every delivery is Deferred. It
+// ends the run at the thousandth.
+type deferrer struct {
+	mu   sync.Mutex
+	n    int
+	stop func()
+}
+
+func (d *deferrer) Deliver(context.Context, string) (int, error) {
+	d.mu.Lock()
+	d.n++
+	n := d.n
+	d.mu.Unlock()
+	if n == 1000 {
+		d.stop()
+	}
+	return 0, Deferred{Reason: "the chat is open in the app"}
+}
+
+// A delivery the adapter defers is neither a failure nor an ack: the
+// message stays in the daemon's hand, tried again every RecheckEvery and
+// counted toward nothing, however long the session stays unable (the
+// finding of 2026-10-04: a thread open in the Codex app refused three
+// deliveries in a row, and the give-up rule acked the message given_up=true
+// while the chat was open, which is its normal state).
+func TestADeferredDeliveryIsTriedAgainAndNeverGivenUpOrAcked(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	def := &deferrer{stop: func() { r.cancel() }}
+	r.d.Deliver, r.passive = def, true
+	r.send(t, "ada", "hello", "x")
+	r.run(t, 1000*int(RecheckEvery/BeatEvery)*4) // the ceiling, never reached: the thousandth deferral ends the run
+	assert.Equal(t, 1000, def.n, "handed in a thousand times")
+	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Len(t, pending, 1, "still in hand: never acked, never given up")
+	assert.Empty(t, fresh)
+	assert.Equal(t, 0, r.last().Delivered)
+	said := 0
+	for _, line := range r.records {
+		assert.NotContains(t, line, "given_up")
+		assert.NotContains(t, line, "acked")
+		assert.NotContains(t, line, "deliveries=")
+		if strings.Contains(line, "deferred=") {
+			said++
+		}
+	}
+	require.NotEmpty(t, r.records)
+	assert.Contains(t, r.records[0], `subject="hello" deferred=1: the chat is open in the app; tried again every 10s, counted toward nothing (said once per 1m0s)`)
+	elapsed := r.now.Sub(t0)
+	assert.LessOrEqual(t, said, int(elapsed/DeferredSaidEvery)+2, "said once a minute, not once a deferral: %d lines over %s", said, elapsed)
+	assert.GreaterOrEqual(t, said, int(elapsed/(DeferredSaidEvery+2*RecheckEvery))-1, "and not less often than once a minute plus a recheck")
 }

@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -43,6 +43,10 @@ const (
 
 // WaitPongEvery is how often wait-pong reads the log.
 const WaitPongEvery = time.Second
+
+// OpenRetryMax caps the wait between two tries of the daemon to open a store
+// that does not answer.
+const OpenRetryMax = 30 * time.Second
 
 // world is what the tool reaches outside itself; main passes the real one,
 // a test its own over internal/bus2's Fake, a fake harness and its own
@@ -74,7 +78,9 @@ func realWorld() world {
 			return signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		},
 		launchctl: func(ctx context.Context, args ...string) (string, error) {
-			out, err := exec.CommandContext(ctx, "launchctl", args...).CombinedOutput()
+			cmd, cancel := subproc.Command(ctx, subproc.Tool, "launchctl", args...)
+			defer cancel()
+			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},
 		beat: func(ctx context.Context, server, name string) error {
@@ -135,6 +141,15 @@ func (w world) openRedis(ctx context.Context, addr string) (bus2.Store, func(), 
 	return bus2.Redis{C: conn.Client()}, func() { conn.Close() }, nil
 }
 
+// stateDir is where the state files of the friend --as names live: --state-dir,
+// else the default under the home directory.
+func (w world) stateDir(c *tool.Call) string {
+	if s := c.Str("state-dir"); s != "" {
+		return s
+	}
+	return friend.DefaultStateDir(w.home, c.Str("as"))
+}
+
 func (w world) server() string {
 	if s := w.getenv(ServerEnv); s != "" {
 		return s
@@ -146,6 +161,9 @@ func friendTool(w world) *tool.Tool {
 	redis := func(f *tool.Flags) {
 		f.String("redis", w.getenv(RedisEnv), "the bus store's Redis address, host:port (default: "+RedisEnv+")")
 	}
+	stateDir := func(f *tool.Flags) {
+		f.String("state-dir", "", "where the state files live (default: ~/.nova-friend/<me>)")
+	}
 	daemonFlags := func(f *tool.Flags) {
 		f.Required("as", "your name, a nova-config friend row")
 		f.Required("harness", "the harness the session runs in: "+strings.Join(friend.Harnesses, ", "))
@@ -153,6 +171,7 @@ func friendTool(w world) *tool.Tool {
 		f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir)")
 		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
+		stateDir(f)
 		redis(f)
 		f.Check(func(c *tool.Call) {
 			if h := c.Str("harness"); h != "" && !friend.Known(h) {
@@ -168,18 +187,19 @@ func friendTool(w world) *tool.Tool {
 nova-bus2 stream and pushes each message into the running session as a turn (the harness's
 deliver command), beats to the sprint server while the loop runs, answers the coordinator's
 PING at once (daemon-pong) and pushes it in; the session's own pong --nonce alone makes it up.
-state: <dir>/.nova-friend/{status,pong}.json and deliver.log; the queue: <dir>/inbox/QUEUE.json.`,
+state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.`,
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE"},
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--redis <addr>]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>] [--redis <addr>]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				Detail: `The loop launchd runs (install writes it). Each second: one read of the stream (a message is
-pushed into the session as a turn and acked when the turn ends at exit 0; a PING is answered at
-once with a daemon-pong and pushed in), one beat to the sprint server, the session's pong file
+pushed into the session as a turn and acked when the turn ends at exit 0; a turn that fails leaves it
+pending, handed in again when its claim opens, and the third failure acks it, given_up=true on the
+record; a PING is answered at once with a daemon-pong and pushed in), one beat to the sprint server, the session's pong file
 read while a challenge is open, the status file written. No ping for ` + friend.Window.String() + `: the session
 is told "coordinator silent" once, and "coordinator back" when pings resume. Prints one RUN
 line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.`,
@@ -188,14 +208,15 @@ line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way le
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--redis <addr>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the launchd agent com.nova.friend-<me> and loads it",
 				Detail: `Writes ~/Library/LaunchAgents/com.nova.friend-<me>.plist (RunAtLoad, KeepAlive: started at login,
 restarted when it dies, pending messages redelivered first), boots out whatever that label runs,
 and bootstraps the new one; running it again replaces the agent. launchd's own log goes under
-~/Library/Logs (launchd cannot open one on a network volume); the daemon's record is
-<dir>/.nova-friend/deliver.log. --dry-run prints the plan and writes nothing.`,
+~/Library/Logs (launchd cannot open one on a network volume), and the daemon's state files and
+record under ~/.nova-friend/<me> (a background process may not touch a removable volume without
+the person's permission); --state-dir moves them. --dry-run prints the plan and writes nothing.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
@@ -233,22 +254,22 @@ nonce= id= to=. The daemon answers daemon-pong at once; the session answers pong
 			},
 			{
 				Name:    "pong",
-				Usage:   "pong --as <me> --nonce <n> [--dir <d>] [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--redis <addr>]",
-				Example: "pong --as bob --nonce abc123 --dir ./bob --to ada --queue 2 --working 1 --width 4",
+				Usage:   "pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>]",
+				Example: "pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
 				Effect:  tool.Delivery + ": the session's answer to a PING, one note on the bus to the coordinator, and the pong file",
 				Detail: `What the session runs when a PING <nonce> arrives, first and before anything else: sends
 "pong <nonce> queue=<n> working=<n> width=<n>" to the coordinator (--to, else the seat the last
-ping named, read from the status file) and records it in <dir>/.nova-friend/pong.json, where the
-daemon reads it. --dir is the current directory when not given. The name is the daemon's: a --as
-that is not the friend the daemon in --dir runs as is refused.`,
+ping named, read from the status file) and records it in the state directory (~/.nova-friend/<me>,
+or --state-dir as the daemon runs with), where the daemon reads it. The name is the daemon's: a
+--as that is not the friend whose state is there is refused.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the friend the daemon in --dir runs as")
 					f.Required("nonce", "the nonce the PING carried")
-					f.String("dir", ".", "the friend's working directory, where the state files live")
 					f.String("to", "", "the coordinator (default: the seat the last ping named)")
 					f.Int("queue", 0, "tasks queued, from your own task list")
 					f.Int("working", 0, "tasks working, from your own task list")
 					f.Int("width", 0, "your width, from the nova-config friend row")
+					stateDir(f)
 					redis(f)
 				},
 				Run: w.pong,
@@ -259,7 +280,9 @@ that is not the friend the daemon in --dir runs as is refused.`,
 				Example: "wait-pong --from bob --nonce abc123 --timeout 2s",
 				Effect:  tool.Inspection,
 				Detail: `Reads the bus log every second until a pong for the nonce from that friend's own stream (the
-message's from, never its body) is there, or --timeout (default ` + friend.Window.String() + `) runs out. Prints WAIT-PONG OK
+message's from, never its body) is there, or --timeout (default ` + friend.Window.String() + `) runs out. The log is read
+from --timeout before the wait began (the store's clock), so a pong older than the wait is not
+looked for and a long log is never read from its start. Prints WAIT-PONG OK
 nonce= from= at= queue= working= width= daemon=<true|false> (whether the daemon-pong came too),
 or WAIT-PONG NONE at exit 1.`,
 				Flags: func(f *tool.Flags) {
@@ -272,16 +295,17 @@ or WAIT-PONG NONE at exit 1.`,
 			},
 			{
 				Name:    "status",
-				Usage:   "status --as <me> --dir <d>",
+				Usage:   "status --as <me> --dir <d> [--state-dir <d>]",
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
 last_pong= pongs= queue= working= width= beats= delivered=, from the daemon's status file (up while it is
-under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file; STATUS NONE at exit 1 when no daemon
-ever ran in --dir.`,
+under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file (<dir>/inbox/QUEUE.json); STATUS NONE at
+exit 1 when no daemon ever ran as --as (no status file in the state directory).`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name")
-					f.Required("dir", "the friend's working directory, where the state files live")
+					f.Required("dir", "the friend's working directory, where the queue file lives")
+					stateDir(f)
 				},
 				Run: w.status,
 			},
@@ -312,37 +336,65 @@ func answer(err error) *tool.Out {
 	return tool.Refuse("the store did not answer: " + err.Error())
 }
 
-func (w world) run(c *tool.Call) *tool.Out {
-	b, closeStore, refused := w.bus(c)
-	if refused != nil {
-		return refused
+// openUntil opens the store, trying again after a wait that doubles from a
+// second up to OpenRetryMax, until it answers or ctx ends (nil then): the loop
+// tolerates a store that goes down, so one that is down at the start is no
+// reason to exit; under launchd's KeepAlive that exit was a crash loop every
+// five seconds. Each wait is said on the record.
+func (w world) openUntil(ctx context.Context, addr string, record func(string)) (bus2.Store, func()) {
+	wait := time.Second
+	for {
+		open, cancel := context.WithTimeout(ctx, redisconn.OpenTimeout)
+		st, closeStore, err := w.open(open, addr)
+		cancel()
+		if err == nil {
+			return st, closeStore
+		}
+		record(w.now().UTC().Format(time.RFC3339) + " store: " + err.Error() + "; opening again in " + wait.String())
+		w.sleep(ctx, wait)
+		if ctx.Err() != nil {
+			return nil, nil
+		}
+		wait = min(2*wait, OpenRetryMax)
 	}
-	defer closeStore()
-	name, dir, server := c.Str("as"), c.Str("dir"), c.Str("server")
+}
+
+func (w world) run(c *tool.Call) *tool.Out {
+	addr := c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+")")
+	if o := c.Refused(); o != nil {
+		return o
+	}
+	name, dir, server, state := c.Str("as"), c.Str("dir"), c.Str("server"), w.stateDir(c)
 	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), w.exec, c.Stdout)
 	if err != nil {
 		o := tool.Refuse(err.Error())
 		o.Render(c.Stderr, c.Bool("json"))
 		return tool.Exit(2)
 	}
+	record := func(line string) {
+		fmt.Fprintln(c.Stdout, "RUN "+line)
+		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
+	}
 	ctx, stop := w.signals(context.Background())
 	defer stop()
+	st, closeStore := w.openUntil(ctx, addr, record)
+	if st == nil {
+		return tool.Exit(0) // a signal while the store was down
+	}
+	defer closeStore()
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
-		Store: b.Store, Deliver: deliver, Now: w.now, Pause: w.sleep,
-		Beat: func(ctx context.Context) error { return w.beat(ctx, server, name) },
-		Record: func(line string) {
-			fmt.Fprintln(c.Stdout, "RUN "+line)
-			_ = friend.Record(dir, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
-		},
-		Pong:   func() (friend.Pong, bool, error) { return friend.ReadPong(dir) },
-		Status: func(s friend.Status) error { return friend.WriteStatus(dir, s) },
+		Store: st, Deliver: deliver, Now: w.now, Pause: w.sleep,
+		Beat:   func(ctx context.Context) error { return w.beat(ctx, server, name) },
+		Record: record,
+		Pong:   func() (friend.Pong, bool, error) { return friend.ReadPong(state) },
+		Status: func(s friend.Status) error { return friend.WriteStatus(state, s) },
 		PongCommand: func(nonce string) string {
 			bin, err := w.binary()
 			if err != nil {
 				bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
 			}
-			return fmt.Sprintf("%s pong --as %s --nonce %s --dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, dir, c.Str("redis"), c.Int("width"))
+			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
 		},
 	}
 	if err := d.Run(ctx); err != nil {
@@ -363,7 +415,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		log = filepath.Join(w.home, "Library", "Logs", "nova-friend-"+name+".log")
 	}
 	return friend.Agent{
-		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), Width: c.Int("width"),
+		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
 		Binary: bin, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 	}, nil
 }
@@ -432,23 +484,23 @@ func stamp(t time.Time) string {
 }
 
 func (w world) status(c *tool.Call) *tool.Out {
-	dir, name := c.Str("dir"), c.Str("as")
-	s, found, err := friend.ReadStatus(dir)
+	dir, name, state := c.Str("dir"), c.Str("as"), w.stateDir(c)
+	s, found, err := friend.ReadStatus(state)
 	if err != nil {
 		return tool.Refuse("the status file cannot be read: " + err.Error())
 	}
 	if !found {
-		return tool.Fail("no daemon has run in " + dir + "; run: nova-friend install --as " + name + " --harness <h> --dir " + dir).As("NONE")
+		return tool.Fail("no daemon has run as " + name + " (no status file in " + state + "); run: nova-friend install --as " + name + " --harness <h> --dir " + dir).As("NONE")
 	}
 	if s.Friend != name {
-		return tool.Refuse(fmt.Sprintf("the daemon in %s runs as %s, not %s", dir, s.Friend, name))
+		return tool.Refuse(fmt.Sprintf("the daemon whose state is in %s runs as %s, not %s", state, s.Friend, name))
 	}
 	now := w.now()
 	daemon := "down"
 	if now.Sub(s.At) < friend.DaemonStale {
 		daemon = "up"
 	}
-	p, _, perr := friend.ReadPong(dir)
+	p, _, perr := friend.ReadPong(state)
 	queue, working, qerr := friend.ReadQueue(dir)
 	width := s.Width
 	if p.Width > 0 {
@@ -481,20 +533,20 @@ func dash(s string) string {
 }
 
 func (w world) pong(c *tool.Call) *tool.Out {
-	dir, name, nonce := c.Str("dir"), c.Str("as"), c.Str("nonce")
-	s, found, err := friend.ReadStatus(dir)
+	name, nonce, state := c.Str("as"), c.Str("nonce"), w.stateDir(c)
+	s, found, err := friend.ReadStatus(state)
 	if err != nil {
 		return tool.Refuse("the status file cannot be read: " + err.Error())
 	}
 	if found && s.Friend != name {
-		return tool.Refuse(fmt.Sprintf("the daemon in %s runs as %s, not %s: a pong carries the daemon's name", dir, s.Friend, name))
+		return tool.Refuse(fmt.Sprintf("the daemon whose state is in %s runs as %s, not %s: a pong carries the daemon's name", state, s.Friend, name))
 	}
 	to := c.Str("to")
 	if to == "" {
 		to = s.Seat
 	}
 	if to == "" {
-		return tool.Refuse("--to is required: no ping has named a seat yet in " + dir + "; it wants the coordinator's name")
+		return tool.Refuse("--to is required: no ping has named a seat yet (no status file in " + state + "); it wants the coordinator's name")
 	}
 	b, closeStore, refused := w.bus(c)
 	if refused != nil {
@@ -507,7 +559,7 @@ func (w world) pong(c *tool.Call) *tool.Out {
 		return answer(err)
 	}
 	p := friend.Pong{Nonce: nonce, At: m.At, To: to, Queue: c.Int("queue"), Working: c.Int("working"), Width: c.Int("width")}
-	if err := friend.WritePong(dir, p); err != nil {
+	if err := friend.WritePong(state, p); err != nil {
 		return tool.Fail("sent, but the pong file was not written: "+err.Error()).Fact("id", m.ID)
 	}
 	return tool.Done().Fact("nonce", nonce).Fact("to", to).Fact("id", m.ID).Fact("at", m.At.Format(time.RFC3339))
@@ -550,8 +602,13 @@ func (w world) waitPong(c *tool.Call) *tool.Out {
 	from, nonce, timeout := c.Str("from"), c.Str("nonce"), c.Dur("timeout")
 	ctx := context.Background()
 	start := w.now()
+	_, storeNow, err := b.Store.Roster(ctx)
+	if err != nil {
+		return answer(err)
+	}
+	floor := bus2.IDAt(storeNow.Add(-timeout)) // the log from the wait's own window back, never from its start
 	for {
-		got, err := b.Log(ctx)
+		got, err := b.Log(ctx, floor)
 		if err != nil {
 			return answer(err)
 		}

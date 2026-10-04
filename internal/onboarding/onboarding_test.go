@@ -96,12 +96,3 @@ func TestTranscriptReadsANamedSubsection(t *testing.T) {
 	_, err = Transcript(twoSections, "nova-gamma", "First run")
 	require.Error(t, err, "Transcript found a section for a tool the document does not name")
 }
-
-func contains(haystack, needle string) bool {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
-}

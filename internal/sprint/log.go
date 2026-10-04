@@ -13,7 +13,7 @@ import (
 // same write as the change, and every notification the step writes is a line
 // of its own kind beside them; nothing in it is ever rewritten, and the
 // inbox's cursor never hides it. Replaying an epoch's move lines from empty
-// gives every card's place and generation (rule 13). The log has no hidden
+// gives every card's place and generation. The log has no hidden
 // lines: every line is every actor's to read.
 
 // LineMove is the kind of a card's change. A notification's line has the
@@ -184,7 +184,7 @@ func GroupSets(lines []Line) []Line {
 	return out
 }
 
-// LogViolations is rule 13 over an observed state and its epoch's log: the
+// LogViolations checks an observed state and its epoch's log: the
 // log replays to every card's place and generation (the control cards, which
 // hold a row's state and no card, aside). Judged only when no operation is
 // pending.
@@ -192,7 +192,7 @@ func LogViolations(s *Snapshot, lines []Line) []Violation {
 	return PlaceViolations(s, Replay(lines))
 }
 
-// PlaceViolations is rule 13 over an observed state and the places its
+// PlaceViolations checks an observed state and the places its
 // log replays to.
 func PlaceViolations(s *Snapshot, placed map[string]Place) []Violation {
 	var out []Violation
@@ -243,7 +243,7 @@ func NoteLine(n Note, op string) Line {
 	return Line{Kind: n.Kind, At: n.At, Epoch: IDEpoch(n.ID), Op: op, Stream: n.Stream, Actor: n.Who, Note: &nn}
 }
 
-// StreamViolations is rule 14 over the epoch's log and its inbox stream:
+// StreamViolations checks the epoch's log and its inbox stream:
 // every notification is written to both, so each notification line of the
 // log (an update aside, which rewrites an open judgment in place and is the
 // log's alone) has its entry in the inbox with the same id, kind, type and

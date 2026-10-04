@@ -33,6 +33,32 @@ func TestACallerOpOfAnotherVerbIsAConflict(t *testing.T) {
 	require.True(t, again.Replay, "start's own retry: %+v", again)
 }
 
+// S6. A caller's operation id is one word of letters, digits, '_' and '-',
+// with a '.' too, but no '/' and no '..': the shape every other identity is
+// held to (sprint.ValidID). The word becomes the operation's id family
+// (sprint.OpFamily), and a judgment id built on it becomes a file name
+// (nova-sprint inbox --wait --push writes id+".md"), so a '/' in it would
+// name a note outside the push directory (security#68 finding 1). The door
+// the '~' check guards refuses the step before anything is read or written.
+func TestACallerOpWithASlashIsRefused(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	before := h.revisions()
+	for _, op := range []string{"../../../outside", "a/b", "a..b", "a b"} {
+		step := AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"late"}})
+		step.CallerOp = op
+		_, err := h.st.Run(h.ctx, step)
+		require.ErrorContains(t, err, "one word of letters, digits", "--op %q: %v", op, err)
+	}
+	h.nothingWritten(before)
+	// a word with a dot stands: the shape nova-sprint land builds for its own
+	// steps (land.go, l.c.op + "." + r.Stream + "." + step.Args)
+	ok := AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"late"}})
+	ok.CallerOp = "land.s1-1.a1b2c3d4e5f6"
+	h.must(ok)
+}
+
 // S6. The same verb with other arguments under a recorded caller's operation
 // id is a conflict too; the same arguments replay.
 func TestACallerOpWithOtherArgumentsIsAConflict(t *testing.T) {

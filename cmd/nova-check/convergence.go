@@ -1,8 +1,9 @@
 package main
 
-// The convergence verb: are we converging? Convergence is a health metric, the
-// contraction ratio per stream, every tick; read by hand it comes from six places
-// and is a paragraph nobody can diff against the next one, so this verb reads it.
+// The convergence verb asks whether each stream is converging: it reports
+// the health metric, the contraction ratio per stream, on every tick, from
+// one place, so that one run's answer can be diffed against the next one's.
+// Answered by hand out of several places, the answer is a paragraph nobody can diff.
 //
 // Seven streams, each read from a real source through a seam: the forge, a
 // checkout, the receipts, the retired README, a bin, a version snapshot and the

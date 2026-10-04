@@ -87,10 +87,10 @@ receipt** no receipt's `--closes` names, and with `--require-all` on every verb 
 naming a tool that is not under that `cmd/` is set aside and counted on
 `DOGFOOD NOTE shipped=<n> outside=<n> cmd=<dir>`, and judges nothing.
 
-**An edge is answered, not outlived.** It used to be cleared by anybody running
-the verb again later and finding nothing — so where two people dogfood the same
-verb, the second one's pass silently closed the first one's finding, unread and
-unfiled, and the row printed that second person's `ok=yes` over it. A finding is
+**An edge is answered, not outlived.** It is not cleared by somebody else running
+the verb again later and finding nothing: where two people dogfood the same
+verb, the second one's clean pass would otherwise close the first one's finding,
+unread and unfiled, with the row printing that second person's `ok=yes` over it. A finding is
 closed by a receipt that **names** it — `dogfood record --closes <id>`, which
 anybody may write — or by **the person who found it** running the verb again and
 finding nothing. The id is the eight hex characters the gate prints beside the
@@ -163,13 +163,13 @@ those findings.
 commas. There is no default: a range checked against nobody would admit
 anybody, so the flag is required and the repository's own config is never a
 fallback. An email spelled with a bracket still inside it is refused rather
-than quietly matched against no one (#1805).
+than quietly matched against no one.
 
 `--kind` is a card kind this toolchain DECLARES, and there is no default one
 (SPEC-TOOLWORK §5 rules 3 and 6). It unlocks an allowlisted stray exception and
-nothing else, so a kind the tool does not hold used to unlock nothing and print
+nothing else. A kind the tool does not hold is not answered with
 `HYGIENE OK` — a clean answer about a shape of work that does not exist. It is
-now refused by name, listing the kinds there are (#1848):
+refused by name, listing the kinds there are:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
@@ -187,7 +187,7 @@ bound that held.
 
 Findings are capped like every listing here, and the `MORE` line carries the
 command that prints the rest — the same run with the cap lifted, quoted so it
-can be pasted (#1804):
+can be pasted:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
@@ -313,13 +313,13 @@ STATUS OK lockdown=clear quarantines=1
 STATUS OK quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token
 
 $ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
-FUSE FAIL quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
+FUSE FAILED quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
 
 $ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
 QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell the person you work with now)
 
 $ nova-fuse check --box ./fuse-box.json a-forum
-FUSE FAIL quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
+FUSE FAILED quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
 
 $ nova-fuse lift quarantine --box ./fuse-box.json a-forum
 LIFT OK quarantine=a-forum was since=2026-09-09T18:27:40Z: a post addressed me and asked for a token
@@ -479,7 +479,7 @@ INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unrea
 INBOX CURSOR commit=c8fa925d8e01c3d14372055bc325cc954a656cc4 carrying=3 pushed=true attempts=1
 ```
 
-**Reading it.** A participant with a lane can send; one without a lane (Dana) can be written to and never writes, and `--as` takes a name or any alias on that `names` line. `draft` prints the header a first note needs — `From:`, `To:` and `Subject:` — and a placeholder body, so `> draft.md` redirects it to a file and the writer replaces the `<the note goes here>` line before `send`; skip that step and `send` stops at `SEND FAIL draft.md: the body is the unedited template placeholder (<the note goes here>)`, exit 1, and nothing is written. The shipped `CURSOR` names a commit from the history the example was written in, so a copied-out bus has a new history under it and the first `inbox --advance` is refused rather than diffed from it; `--full --advance` replaces it, and the read after that is `mode=since` over the change, not the bus. To answer Bo's note, `reply` is the one line (below, under the ten verbs).
+**Reading it.** A participant with a lane can send; one without a lane (Dana) can be written to and never writes, and `--as` takes a name or any alias on that `names` line. `draft` prints the header a first note needs — `From:`, `To:` and `Subject:` — and a placeholder body, so `> draft.md` redirects it to a file and the writer replaces the `<the note goes here>` line before `send`; skip that step and `send` stops at `SEND FAILED draft.md: the body is the unedited template placeholder (<the note goes here>)`, exit 1, and nothing is written. The shipped `CURSOR` names a commit from the history the example was written in, so a copied-out bus has a new history under it and the first `inbox --advance` is refused rather than diffed from it; `--full --advance` replaces it, and the read after that is `mode=since` over the change, not the bus. To answer Bo's note, `reply` is the one line (below, under the ten verbs).
 
 ### Setting up a bus
 
@@ -709,12 +709,12 @@ nova-bus2 names
 `send` prints `SEND OK id= to= cc= at=`: the id is the message's for ever. `peek`
 prints `PEEK OK pending= new=` and one `PEEK MESSAGE state= id= from= at=
 subject=` line per message waiting, moving nothing. `recv` prints the oldest
-message a reader lost (delivered, not acked, idle a minute), else the oldest new
-one: a `RECV OK id= from= to= cc= re= at= subject=` line, a blank line, the
-body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the message for
-a minute. With `--exec '<command>'` the command reads that same text on its
+message a reader lost (delivered, not acked, idle fifteen minutes), else the
+oldest new one: a `RECV OK id= from= to= cc= re= at= subject=` line, a blank
+line, the body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the
+message for fifteen minutes. With `--exec '<command>'` the command reads that same text on its
 stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
-non-zero exit leaves it pending (`RECV FAIL ... exec_exit=<n>`, exit 1). `ack`
+non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
 answers `acked=false` for an id that is not pending, at exit 0. What a first run
 gets wrong: a name that is not a nova-config friend or machine row (`send` and
 `recv` refuse it with the `nova-config friend add` line that adds one);
@@ -772,7 +772,7 @@ A Redis whose nova-config rows name ada and bob, its address in `--redis` or
 nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 nova-friend uninstall --as bob --dry-run
 nova-friend ping --as ada --to bob --nonce abc123
-nova-friend pong --as bob --nonce abc123 --dir ./bob --to ada --queue 2 --working 1 --width 4
+nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 nova-friend status --as bob --dir ./bob
 ```
@@ -782,19 +782,22 @@ the plan (`INSTALL PLAN command=`): write the plist, boot out whatever runs
 under that label, bootstrap the new one; without `--dry-run` it does them
 (`INSTALL RAN`) and running it again replaces the agent. `ping` prints `PING OK
 nonce= id= to= at=` and the `wait-pong` line to run next. `pong` prints `PONG
-OK nonce= to= id= at=` and writes the pong file. `wait-pong` prints `WAIT-PONG
+OK nonce= to= id= at=` and writes the pong file under `~/.nova-friend/<me>`
+(the state directory, `--state-dir` to move it; the daemon and the queue file
+keep `--dir`, the friend's working directory). `wait-pong` prints `WAIT-PONG
 OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
 pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
 last_pong= queue= working= width=`, or `STATUS NONE` at exit 1 where no
 daemon ever ran. What a first run gets wrong: a `--harness` that is not one
 of opencode, codex, claude, antigravity, dsh, grok; a `pong --as` that is not the
-name the daemon in `--dir` runs as (refused: the pong carries the daemon's
-name); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a `pong`
+name the daemon whose state directory that is runs as (refused: the pong
+carries the daemon's name); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a `pong`
 with no `--to` before any ping has named a seat; a daemon whose record says
-"operation not permitted" on a removable volume, which is the system's
-privacy permission for background processes, granted to the binary by the
-person in the privacy settings and lost when the binary is rebuilt.
+"operation not permitted" running the harness on a removable volume, which is
+the system's privacy permission for background processes, granted to the
+binary by the person in the privacy settings and lost when the binary is
+rebuilt (the state files are under the home directory, out of its way).
 
 ### The daemon
 
@@ -817,13 +820,13 @@ pong are real for it all the same.
 
 | Command | What it does |
 | --- | --- |
-| `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>]` | The daemon: the recv loop with the deliver adapter, the beat, the ping and pong machine; until a signal |
+| `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>]` | The daemon: the recv loop with the deliver adapter, the beat, the ping and pong machine; until a signal |
 | `install --as <me> --harness <h> --dir <d> [...] [--launchd-log <file>] [--dry-run]` | Writes and loads the launchd agent `com.nova.friend-<me>`; idempotent |
 | `uninstall --as <me> [--dry-run]` | Boots the agent out and removes its plist |
 | `ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>]` | One `PING <nonce>` on the friend's stream, with the seat line |
-| `pong --as <me> --nonce <n> [--dir <d>] [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>]` | The session's answer: one note to the coordinator, and the pong file |
+| `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` | The session's answer: one note to the coordinator, and the pong file |
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
-| `status --as <me> --dir <d>` | The daemon's state, the last pong, the queue file's counts |
+| `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
 Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the
@@ -882,13 +885,13 @@ MIT, see [LICENSE](../LICENSE).
 ```
 nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
 
-how it works: a card is one task, a markdown file with a header and its RULES;
-a worker description (JSON) names the harness, the model, the key file and the
-directories it may read. native runs one card as one child inside nova-sandbox;
-member runs a sprint's cards on this machine, each a native child, every sprint
-verb sent to the sprint's server; results land under --root. Nothing has a default.
-first run: the lines under example: need nothing: a card, a worker description
-and the lint's rules; running a card needs a harness, a model's key file and nova-sandbox.
+how it works: a card is a task in Markdown with a header and rules.
+native runs one card through a harness; a worker description (JSON) can name
+its model, credentials and readable directories. member runs a sprint's cards
+as native children and sends every sprint verb to the sprint server.
+Launches and results live under --root unless their directories are named separately.
+first run: the examples print two templates and the lint rules; no setup is needed.
+To run a card, supply a harness, model, directories, deadline, token budget and any needed credentials.
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
@@ -907,8 +910,29 @@ usage:
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--identity <owner>,<name>,<email>]
-                       (this machine as one member of a sprint's fleet, every sprint verb sent to the sprint's server --server, the run loop nova-sprint run --listen started, so this machine opens no store: beat, queue, push and finish what ended (the child's commit to origin's sprint branch, from outside the wall, never forced; the pull request the child's gh pr create asked for, opened with --gh), each finish judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md), take to the width its fleet row names (read with its queue every tick: a member's own row, a reader's its machine's, reader-<m> running at m's width; --width is a twin's override), each card one native child with its frame and an allowlist environment, on the model, budget and deadline its packet's route names (the card decides: the deal draws a route of its tier, or its model: pin; --model, --tokens and --deadline are the override a card with no route runs on); --pass names the secrets a child is handed, the loop record's nova-secrets keys: a loop whose harness reads its provider key from the environment carries --pass <KEY>, else its children start without it and fail at the provider; --reader runs the readers-table loop, each read on the route the ask drew from the reader tier unless --model, --tokens or --deadline is given, and a flash card's first read a decide read, asked by native with JEV_API_KEY from the reader's environment, which no child is handed (docs/SPEC-SPRINT.md section 6); a work member whose environment holds JEV_API_KEY asks the attempt decision when any take ends, in its own process, and the finish carries it (docs/SPEC-SPRINT.md section 2); --identity names the pool identity every child commits under, from the loop's nova-config argv, else the pool's identity.tsv; a launch it is done with leaves no checkout behind (a failed one keeps its directory, the newest 5 of the pool), and it starts no card while the slots' volume has less free than --disk-floor GiB, default 10; a card it will not start is finished staging refused: <why>, so the sprint deals it to another member and says why)
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+                       (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
+                        Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
+                        A reader uses its machine's width; --width overrides it. This machine opens no store.
+                        Each card runs as one native child with its frame and an allowlist environment.
+                        Its packet supplies the model, budget and deadline; the flags fill missing route values.
+                        --reader runs reads from the readers table; its flags override the read's route.
+                        A flash card's first read is a decide read, asked by native with JEV_API_KEY
+                        from the reader's environment; children do not receive that key (docs/SPEC-SPRINT.md section 6).
+                        A work member with JEV_API_KEY asks the attempt decision in its own process
+                        when a take ends and carries it in its finish (docs/SPEC-SPRINT.md section 2).
+                        Native classifies a work card's red gate with the gate decision and the same key
+                        before reporting the take; failing tests run once at the base, within a bound.
+                        Decisions are recorded and routed on the sprint row's gate bars, empty by default.
+                        Flaky failures rerun once; pre-existing failures are not charged to the card
+                        (docs/SPEC-SPRINT.md section 5, the gate verdict).
+                        The member pushes the child's commit and opens its requested PR outside the wall, never force-pushing.
+                        Each finish is judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md).
+                        --pass names environment secrets to hand to children; a harness that needs one must receive it.
+                        --identity names the pool's commit identity; otherwise the pool's identity.tsv supplies it.
+                        Completed launches leave no checkout; each pool keeps its newest five failed launches.
+                        No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
+                        A staging refusal reports why so the sprint can deal the card to another member.)
   nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
                        (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 10, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
@@ -926,38 +950,35 @@ absent or empty, a bad invocation; 3 member: its binary was replaced on disk
 (MEMBER STOP: its supervisor starts the new one; with children running it first
 takes no new card and stops when the last is reported).
 
-NO GUESSED ANYTHING. There is no default pool, no default worker description, no
-default number of workers, no default deadline, and no default token budget.
-native requires --card; lint takes --card, or
---fleet or --rules instead; verify takes --card as an option and reads it only
-when given (because a card this tool chose would be a guess about somebody
-else's task); the remaining verbs take no card flag. --tokens is required on
-native because a budget this tool supplied would be a guess about somebody
-else's task, and --tokens unmetered is a caller's statement that this
-provider has no live accounting and the deadline is the only stop. Zero is
-refused for tokens. member takes each card's budget from the route its packet
-names, and --tokens (with --model and --deadline) only for a card with none.
+Inputs: native requires a card, harness, model, slot, root, deadline and token budget.
+Use --tokens <n> for a positive budget, or --tokens unmetered to state that the
+provider has no live accounting. The runner does not infer this from the provider.
+member uses each packet's route and fills missing model, budget or deadline
+values from its flags; a reader's flags override its route. Width comes from
+the fleet row unless --width overrides it. Other defaults are listed in each verb's -h.
+lint takes --card, --fleet or --rules; verify reads --card only when supplied.
 
-THE KEY IS READ AS DATA AND NEVER SOURCED. It lives in one file the worker
-description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it is
-never an argument, never a log line, never in a file this tool writes. The
-harness config this tool writes carries the variable's NAME, never its value.
+Credentials: a worker description names either key_file or secret.
+key_file is read as data, never sourced: one line, a bare key or NAME=<key>,
+mode 0600. secret names an environment variable. The generated harness config
+carries the variable's name, never its value. The legacy --auth option copies
+the provider's auth entry into the data home, mode 0600, and removes it when
+the run ends. A worker naming secret refuses --auth and writes no auth file.
 
-EVERY JOB RUNS INSIDE nova-sandbox (docs/SPEC-SANDBOX.md) unless the caller types
---no-wall (native and member), the one opt-out, which no card can ask for and
-which the NATIVE line names as sandbox=none-by-flag. Inside the wall the job
-directory and its data home are the only writable paths; the slot directory and
-whatever read_roots names in the worker description are readable; the key file,
-~/.ssh and the gh configuration are in neither list and the kernel denies them.
-A command that runs outside the wall and dies inside it is missing a read_roots entry.
+Sandbox: native uses nova-sandbox unless --no-wall is explicit
+(docs/SPEC-SANDBOX.md). A card cannot request this opt-out; the NATIVE line
+names it as sandbox=none-by-flag. The job directory, data home, temporary directory and
+default shared cache are writable. The slot, harness and toolchain directories,
+worker read_roots and any borrowed Git objects are readable.
+The worker's key file is kept outside its readable roots. If a command runs
+outside the wall but fails inside it, check its dependencies and read_roots.
 
-A card to start from: nova-swarm template --name card prints one that passes
-the lint (lint --card <file> --child-rules): put it in a file, fill in its
-<...> lines (REPO: and BASE: name the repository and the branch the work starts
-from and lands on), lint it (a line still unfilled is named on a NOTE line), then
-hand it to native, or to nova-sprint add as a brief. native and member each show
-one example line in their -h, and template -h lists the lines a card needs.
-nova-swarm help <verb> (or <verb> -h) prints one verb's usage, flags and example.
+Prepare a card: save nova-swarm template --name card to a file, fill its <...>
+lines, then run nova-swarm lint --card <file> --child-rules. REPO: names the
+repository; BASE: names the branch the work starts from and lands on.
+Lint names unfilled lines in NOTE output. Hand the completed card to native,
+or to nova-sprint add as a brief. template -h lists the required card lines.
+nova-swarm help <verb> (or <verb> -h) prints its usage, flags, example and exit codes.
 
 example:
   nova-swarm template --name read-pr
@@ -1021,28 +1042,26 @@ the verdict line last. When there is nothing to report, write `findings: 0`.
 
 ### The harness contract
 
-Every job runs inside `nova-sandbox` (docs/SPEC-SANDBOX.md). `native` proves the wall
-before launching: the job directory and its data home are the only writable paths, the
-slot directory and whatever `read_roots` names in the worker description are readable; the
-key file, `~/.ssh` and the `gh` configuration are in neither list and the kernel denies them.
+`native` runs each card inside `nova-sandbox` unless `--no-wall` is explicit
+([sandbox spec](SPEC-SANDBOX.md)). The job directory, data home, temporary
+directory and default shared cache are writable. The slot, harness and toolchain
+directories, worker `read_roots` and borrowed Git objects are readable. The
+worker's key file stays outside its readable roots. If a command runs outside
+the wall but fails inside it, check its dependencies and `read_roots`.
 
-A command that runs outside the wall and dies inside it is missing a `read_roots` entry.
+- **Working directory:** the job directory, also named by `NOVA_SWARM_JOB`. `HOME` and `XDG_DATA_HOME` name the slot's data home; `TMPDIR` names its temporary directory.
+- **Arguments:** the providers table's `harness_args`, with `{model}`, `{title}` and `{prompt}` filled from the launch. The prompt is the card text, with its result format or frame when present. `--harness` supplies the binary; the worker description's `harness_args` does not set native's arguments.
+- **Result:** the worker publishes `RESULT.md` in the job directory by writing `RESULT.md.tmp` and renaming it, so readers see a whole revision.
+- **Output:** the runner captures stdout and stderr in `<job>/harness-output.log`.
 
-- **Its working directory is the JOB directory**, and `NOVA_SWARM_JOB` is the job directory — the only place the worker writes. `XDG_DATA_HOME` is that job's own data home.
-- **Its arguments are `harness_args`**, with `{model}` replaced by the description's model, `{prompt}` by the path of the prompt file, and `{base_url}` by `base_url`. Where `harness_args` names no `{prompt}`, the prompt file is appended LAST.
-- **It publishes `RESULT.md` in the job directory**, whole, by writing `RESULT.md.tmp` and renaming it: a report is a revision, and a half-written one is never read.
-- **Its stdout and stderr are `<job>/harness-output.log`**, capturing all harness output.
+`cmd/nova-swarm/testdata/fakeharness` demonstrates the result and output contract
+without a live provider. The native tests use it to check launches and their records.
 
-`cmd/nova-swarm/testdata/fakeharness` is a harness that does exactly this in about two
-hundred lines of Go, and the whole test suite runs against it with no provider, no network
-and no key worth anything. It is the shortest way to see the contract, and to test a pool
-of your own before a real model touches it.
-
-**`native` takes no slot lease.** A bench's capacity is one number,
-`bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
-is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
-reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
-card. `--slots-store` and `--owner` flags are accepted and ignored by `native`.
+**Capacity and slot ownership.** The dealer admits cards against the bench's
+capacity, `bench:<b>:desired` in Redis; excess cards stay queued. `native`
+reads no capacity slot store, and accepts but ignores `--slots-store` and
+`--owner`. It holds a local slot lease while a launch runs so two invocations
+cannot share a data home.
 
 **The bench toolchain inside the wall.** Because `GOTOOLCHAIN=local` is pinned, the bench's
 own Go must be reachable inside the wall. `nova-swarm native` names the provisioning standard's
@@ -1052,7 +1071,7 @@ toolchain roots on the wall's argv, read-only and skipped when one is not there:
 - Launcher directories (`~/go/bin`, `/opt/homebrew/bin`) are never granted as toolchain roots.
 
 **Token budget.** Every launch requires `--tokens <n>` or `--tokens unmetered`.
-`unmetered` is the caller's statement that this provider has no live accounting and the deadline is the only stop.
+`unmetered` states that the provider has no live accounting; the deadline and other configured bounds still apply.
 
 **Deadline and process group.** The harness runs as the leader of its own process group. At
 `--deadline` or on `SIGTERM`, the machinery reaps the entire process group, writes usage,
@@ -1091,21 +1110,21 @@ shadow with, and the check passes on the PATH binary alone. No flag skips the ch
 
 nova-sprint: a sprint of work cards, dealt to a fleet of workers and read before they land
 
-One store — a Redis, or a twin file — holds one sprint as four tables (work,
-merge, readers, fleet) and the view `sprint`. A card is one unit of work in a
-stream; each tick deals ready cards to members (machines with a width), sends
-finished work to readers, queues what they pass to merge by stream, and puts
-every judgment it cannot make in the coordinator's inbox. The contract is
+One store (Redis or a twin file) holds the work, readers, merge and fleet
+tables and the `sprint` view. A card is one unit of work in a stream. Each tick
+deals ready cards to members (machines with a width), sends finished work to
+readers and queues passed work for merging by stream. Decisions it cannot
+make go to the coordinator's inbox. The contract is
 [SPEC-SPRINT.md](SPEC-SPRINT.md).
 
 ### First run
 
-No Redis, no git: `--redis mem:<file>` (or `NOVA_SPRINT_REDIS=mem:<file>`) runs
-every verb against an in-memory twin of the store kept in a file — for learning
-and tests, not for a fleet — one command at a time. These lines are one card's
-whole flow, with the store and actor set on the first line; the two stand-ins at
-the end (`finish` with no `--head`, then `merge`) record a landing with no push,
-so nothing here needs a forge:
+Try one card's whole flow with no Redis or git. `--redis mem:<file>` (or
+`NOVA_SPRINT_REDIS=mem:<file>`) loads an in-memory twin from a file and saves it
+after each command. A twin is for learning and tests; run one command at a
+time. The first line sets the store and actor. `finish` without `--head` and
+`merge` stand in for a worker's pushed commit and its landing, so this flow
+needs no forge:
 
 ```sh
 export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
@@ -1124,14 +1143,14 @@ nova-sprint merge --stream s1 --batch 1
 ```
 
 A twin beats every member and reader at every verb, so `m1` is up after the
-first tick; nothing runs between commands, so the tick is yours (`nova-sprint
-tick`), and `run`, `inbox --wait` and `where --watch` are refused. Each verb
-prints what moved (`MOVED`), what did not and why (`REFUSED`, on stderr), its
-summary line, and the sprint's line (`landed/all percent -> ETA ...`). The card
-moves ready -> working (`take`), working -> done (`finish`), is asked of both
-readers and passed (`read --ok`), and lands on `merge`. The transcript, line for
-line, is [TESTS.md](TESTS.md#nova-sprint), run by
-`cmd/nova-sprint/firstrun_test.go`.
+first tick. Nothing runs between commands: tick by hand with `nova-sprint
+tick`. `run`, `inbox --wait` and `where --watch` are refused. A card's move is
+queued until the next tick prints `MOVED drain`; the tick after `merge`
+completes its move to landed. The flow's output shows results, moves (`MOVED`),
+refusals with reasons (`REFUSED`, on stderr), and the sprint's summary
+(`landed/all percent -> ETA ...`).
+[TESTS.md](TESTS.md#nova-sprint) carries the exact transcript through `merge`;
+`cmd/nova-sprint/firstrun_test.go` runs it line by line.
 
 ### Verbs
 
@@ -1203,12 +1222,13 @@ result), `--json` and `--max <n>` (listed items; 0 is all). The coordinator's
 verbs are the coordinator's alone (the first `init` names it: `--coordinator`,
 else the actor); `take`, `finish`, `read`, `fleet beat` and `friend beat` are the
 workers', whose actor is the member, reader or friend named; `merge` and `ci`
-are reports; `tick` and `run` are the machine's; the reads need no actor. A set
-is ids, a stream, a column, `--limit n`, or an inbox group: `--group <id>`, the
-id `inbox` prints, with `--expect <n>` the size it printed, which refuses a group
-that has changed. `nova-sprint help <verb>` (or `<verb> -h`) prints one verb's
-usage, flags and exit codes; `nova-sprint help <group>` (fleet, friend, reader,
-goal, stream) one group's.
+are reports; `tick`, `run` and `friend clean` are the machine's. Reads need no
+actor except `inbox --read`, which moves the coordinator's cursor. A set is
+ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
+`--group <id>`, the id `inbox` prints, with `--expect <n>` the size it printed,
+which refuses a group that has changed. `nova-sprint help <verb>` (or
+`<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
+<group>` (fleet, friend, reader, goal, stream) prints one group's.
 
 ### A worker's own view: the dashboard's pull routes
 
@@ -1283,21 +1303,20 @@ only, until the brief record's own outcomes support a bar
 | 0 | done |
 | 1 | failed or incomplete (including refused; `start` while every provider is out of credit) |
 | 2 | usage, or a store that did not answer (`fleet sync --check`: there is drift) |
-| 3 | `fleet sync` or `friend sync` could not read the config, or `run`: its binary was replaced (its supervisor starts the new one) |
+| 3 | unreadable config (`fleet sync`, `friend sync`, `friend clean`), missing friend rows (`friend sync`, `friend clean`), or a replaced binary (`run`, `dashboard`) |
 
 ### What it does not prove
 
-The sprint is the plumbing, not the verdict. A card lands when its worker
-reports it done and its readers pass it, and the coordinator `accept`s — the
-green means the flow completed, never that the work is correct: `finish
---report done` takes the worker's word, `read --ok` takes the readers', and the
-coordinator's accept takes those. A twin is not a fleet: nothing beats or ticks
-between commands, so timing, the `run` loop, `inbox --wait` and liveness go
-unproven, and `finish` with no `--head` (then `merge`) records a landing with no
-push. The work table's cost column is, per stream, the sum of its landed cards'
-total cost in US dollars — each card's actual cost where one was priced, else its
-predicted one, `-` when none was — so a total is a ledger of recorded spend, not
-a proof of it.
+A landed card records a completed flow: the worker reports done, two different
+readers pass that head, the tick (or the coordinator's `accept`) queues it for
+merging, and the landing is reported. These are recorded judgments, not a
+proof that the work is correct. A twin exercises that flow one command at a
+time. It has no beats or ticks between commands, so it does not test fleet
+timing, the `run` loop, `inbox --wait` or liveness. `finish` without `--head`,
+then `merge`, records a landing without a push. The work table's cost column
+is, per stream, the sum of its landed cards' total cost in US dollars — each
+card's actual cost where one was priced, else its predicted one, `-` when
+none was — so a total is a ledger of recorded spend, not a proof of it.
 
 ## nova-sandbox
 
@@ -1623,7 +1642,7 @@ The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` —
 nova-tokens check --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
 ```
 
-`check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, which is the old reading whole), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `--through <YYYY-MM-DD>` asserts that the ledger is current through the specified day; when the newest folded day under `--out` is older than the given day (or if `--out` has no folded days), `check` prints `CHECK FAIL stale last=<last> through=<day>` on standard error, marks the run failed, and exits 1. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines. One `--provider xai:<label>=<file>` names one file. A missing path is `TOKENS UNREADABLE` and is not a search of a session store; a directory is not walked.
+`check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, which is the old reading whole), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `--through <YYYY-MM-DD>` asserts that the ledger is current through the specified day; when the newest folded day under `--out` is older than the given day (or if `--out` has no folded days), `check` prints `CHECK FAIL stale last=<last> through=<day>` on standard error, marks the run failed, and exits 1. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines. One `--provider xai:<label>=<file>` names one file. A missing path is `TOKENS UNREADABLE` and is not a search of a session store; a directory is not walked. `session --claude-session <jsonl>` sums one Claude Code window into one `SESSION` line and, with `--out`, folds it as one row per model the transcript names; `--role <name>` books each row as `<model>/<role>` with the role in the repo cell too — with no role the model stands alone and the repo cell is the fixed word `unattributed` — and `--weights <in,cw,cr,out>` sets the four ratios the weighted fresh-input equivalent is built from, defaulting to `1,1.25,0.1,5`, a comparison and not a price: the ratios of one vendor's published list prices; set your own.
 
 ### First run
 
@@ -1635,7 +1654,7 @@ What a first run gets wrong, and what each one wants:
 - **Expecting exit 0 with an unreadable file.** A declared source is a claim that the report covers it, so an unreadable one is one `TOKENS UNREADABLE` line, one in `unreadable=`, and exit 1 — and the day files still land. `written=true` is about the files; the exit code is about the claim.
 - **Reading a `-` as a zero.** A dash is "this source did not report that type" and a zero is a measurement. `sum` counts the dashes per column beside the totals, and nothing here folds one type into another.
 - **Sending a second tokens note for a day.** Two notes in one lane for one day are `TOKENS CONFLICT` and fold nothing, because no winner can be read off a clock, a filename or a git history. A correction names what it corrects: `supersedes=<id>[,<id>…]` in the subject, which `report --supersedes` writes for you.
-- **Reusing one label across two kinds.** A label is unique across the whole run, not per flag: `--claude bench=… --opencode bench=…` is `TOKENS REFUSED … the label bench is used twice`, exit 2, before anything is read. Two sources with one label would make the `sources` column a lie. A `--provider` is the one flag whose label carries its parser too — `--provider google:emma=<export>` — so two friends' exports from one provider are `google:emma` and `google:freddy`.
+- **Reusing one label across two kinds.** A label is unique across the whole run, not per flag: `--claude bench=… --opencode bench=…` is `TOKENS REFUSED … the label bench is used twice`, exit 2, before anything is read. Two sources with one label would make the `sources` column a lie. A `--provider` is the one flag whose label carries its parser too — `--provider google:ada=<export>` — so two friends' exports from one provider are `google:ada` and `google:lin`.
 - **Declaring one harness twice.** **One harness is one `--claude`.** This fold does not de-duplicate across sources, by design (SPEC-TOKENS, *what it deliberately does not do*), so two declared directories holding the same transcripts count every message twice and the day file, `check` and `sum` are all green about it. Measured on this bench: `~/.claude/projects/<session>/subagents/agent-*.jsonl` and `/private/tmp/claude-501/*/tasks/*.output` were the same 10,281 messages for one day, and the doubled fold said `written=true`. A fold that sees two sources feed one message id now says so on its `TOKENS NOTE` line, naming both labels and the count — it is a warning, not a correction: the numbers are still doubled and the remedy is to drop one flag.
 - **Pointing `--claude` at a directory with a scratch tree under it.** `--claude` walks every `*.jsonl` and `*.output` under the directory **recursively**, and prunes nothing: a session scratchpad, a git clone or a build tree under it is walked too. Measured: a window-only fold of 1,278 files and 739 MB took **10.4s**; adding a directory of 33 session scratchpads under `/private/tmp` took **531.7s**, 331s of it in the kernel, to find 2,612 transcripts. Nothing is skipped silently, because a silent prune is a number nobody can account for — so name the transcript directory itself, and expect the walk to cost what the tree costs.
 - **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this tool's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
@@ -2071,7 +2090,10 @@ passed. The default budget is 60 seconds per package; a package over it is a
 not a TestEvent is refused at exit 2, and so is a float flag that is not a finite
 number (`NaN`, `Inf`). `--json` prints the same verdict as one JSON object
 (`{"result":{...},"facts":{...},"items":[...]}`), and a refusal as that object
-with `"status":"refused"` on stdout. CI exceptions belong in the
+with `"status":"refused"` on stdout. A run with more than `--max` finding
+lines (20 by default) prints the first `--max` and one `CI-SLOW MORE
+shown=<n> total=<n>` line naming the flag that prints the rest; `--max 0`
+prints every finding. CI exceptions belong in the
 dated project policy, not in an assumed higher tool default.
 
 A refusal is one line, `nova-ci <verb> REFUSED: <every problem>; run: <next
@@ -2144,7 +2166,7 @@ environment's seat (`NOVA_SPRINT_REDIS_USER`, `NOVA_SPRINT_REDIS_PASSWORD_ENV`);
 `CI RECEIPT <owner/name> sha=<sha> run=<id> workflow=<name> conclusion=<word>
 pr=<n|-> ev=<stream id>`, exit 0; a write the store refuses or cannot confirm
 (`XADD ev:github: WRONGTYPE ...`, a NOPERM seat, reply loss, or a store that is
-down) is one line on stderr, `nova-ci github receipt FAIL: ...`, ending `receipt
+down) is one line on stderr, `nova-ci github receipt FAILED: ...`, ending `receipt
 write could not be confirmed: fix the store or the bench seat and rerun ci-ok`,
 exit 1, which reddens ci-ok (repeat receipts from retries or reruns are
 acceptable wake hints for consumers). `--dry-run` checks the fields and prints
@@ -2263,7 +2285,7 @@ nova-redis acl apply <login> [--password-env-for <user>=<NAME>]... [--dry-run] #
 - `--user` is the ACL user to log in as. Its default is `NOVA_REDIS_USER`, and with neither set the verb logs in as the store's default user.
 - `--password-env` names the variable that holds the password. Its default is the variable `NOVA_REDIS_PASSWORD_ENV` names, else `NOVA_REDIS_PASSWORD`. A seat whose secret has its own name (`nova-secrets exec --only <NAME>`) passes `--password-env <NAME>` and needs no copy. The password itself is never an argument.
 
-Each of these is refused (exit 2) before the dial, and the refusal names where the bad value came from, the flag or the variable. A store that cannot be reached, or a login it refuses, exits 2 in every verb. A refused invocation prints one line per problem with the line, all in one run: `nova-redis <verb> REFUSED: <what was wrong>; run: nova-redis help <verb>`. A misspelled flag is named with the flags the verb has, and an unknown verb with the verbs. Every verb but `serve` (whose output is redis-server's own) takes `--json` and prints the same result as one JSON object on stdout, refusals and failures included: `{"result":{"verb","status":"ok|failed|refused","exit","remedy","why"},"items":[{"kind":"<the line's leading words>","fields":{...}}],"notes":[...]}`; `recall --json` carries the value exactly, where the line escapes its spaces. `spill --dry-run` makes every check, the login's too, and prints `SPILL OK dry-run=true key=<k> ttl=<d> expires=<t> bytes=<n> store=<a> written=0`, dialling nothing.
+Each of these is refused (exit 2) before the dial, and the refusal names where the bad value came from, the flag or the variable. A store that cannot be reached, or a login it refuses, exits 2 in every verb. A refused invocation prints one line per problem with the line, all in one run: `<TOKEN> REFUSED: <what was wrong>; run: nova-redis help`, where `<TOKEN>` is the verb upper-cased with dashes (`SPILL`, `RECALL`, `FN-LOAD`, `ACL-CHECK`). A misspelled flag is named with the flags the verb has, and an unknown verb with the verbs. `spill` and `recall` take `--json` and print the same value as one JSON object on stdout, refusals and failures included: `{"result":{"verb","status","ok|failed|refused","exit","remedy","why"},"facts":{...},"items":[...],"notes":[...],"payload":""}`, the first line's fields under `facts` and `recall --json` carrying the value exactly, where the line escapes its spaces. `spill --dry-run` makes every check, the login's too, and prints `SPILL OK key=<k> ttl=<d> expires=<t> bytes=<n> store=<a> written=0 dry_run=true`, dialling nothing.
 - a missing or malformed `--addr`;
 - a `--password-env` that is not a variable name (capital letters, digits and underscores);
 - a user name holding whitespace;

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // TestAncestryFetchesAreOneVerb: the classtests rule reads a landing from git,
@@ -53,4 +55,53 @@ func TestAncestryFetchesAreOneVerb(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Hosted shrink-only guards read the full dev ancestry: the default branch
+// fetches before the deal, other refs fetch only when their shard selects CI.
+func TestHostedRatchetFetchesDevBeforeTests(t *testing.T) {
+	t.Parallel()
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name     string `yaml:"name"`
+				If       string `yaml:"if"`
+				Run      string `yaml:"run"`
+				Shell    string `yaml:"shell"`
+				Continue any    `yaml:"continue-on-error"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	raw := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	require.NoError(t, yaml.Unmarshal([]byte(raw), &wf))
+	job, ok := wf.Jobs["test-hosted"]
+	require.True(t, ok)
+	main, deal, fetch, test := -1, -1, -1, -1
+	for i, step := range job.Steps {
+		if strings.Contains(step.Run, ciRunner+" deal ") {
+			deal = i
+		}
+		if step.Name == "fetch dev's ancestry for a main run" {
+			main = i
+			assert.Equal(t, "github.ref_name == github.event.repository.default_branch", step.If)
+		}
+		if step.Name == "fetch dev's ancestry for the hosted ratchet" {
+			fetch = i
+			assert.Equal(t, "contains(format(' {0} ', env.HOSTED_PKGS), '/internal/ci ') && github.ref_name != github.event.repository.default_branch", step.If)
+		}
+		if step.Name == "fetch dev's ancestry for a main run" || step.Name == "fetch dev's ancestry for the hosted ratchet" {
+			assert.Equal(t, ciRunner+" fetch-ancestry dev", strings.TrimSpace(step.Run))
+			assert.Equal(t, "bash", step.Shell)
+			assert.True(t, step.Continue == nil || step.Continue == false, "fetch failure must fail the job")
+		}
+		assert.NotContains(t, step.Run, "--depth=1", "hosted guard must not narrow ancestry after a full fetch")
+		if strings.Contains(step.Run, "make test") {
+			test = i
+		}
+	}
+	require.GreaterOrEqual(t, main, 0)
+	require.GreaterOrEqual(t, deal, 0)
+	require.GreaterOrEqual(t, fetch, 0)
+	require.GreaterOrEqual(t, test, 0)
+	assert.True(t, main < deal && deal < fetch && fetch < test, "main/deal/fetch/test = %d/%d/%d/%d", main, deal, fetch, test)
 }

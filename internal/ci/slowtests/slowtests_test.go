@@ -235,6 +235,39 @@ func TestSlowTestsMeasuredWhereIsARunOrABench(t *testing.T) {
 	}
 }
 
+// The labels a row may name as where it was measured come from ci.yml alone,
+// never from a list kept beside the reader (docs/STANDARD.md section 4):
+// Benches reads the machine label of every self-hosted runs-on list and every
+// runner group a step names, once each and in the file's order, and a row
+// measured on a label the file does not name is refused with a remedy naming
+// the file.
+func TestBenchesComeFromCIYML(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `jobs:
+  list:
+    runs-on: [self-hosted, linux, x64, bench-one]
+    steps:
+      - run: ci test-matrix --linux-group bench-one --macos-group bench-two
+  leg:
+    runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.group }}"]
+  hosted:
+    runs-on: ubuntu-latest
+`
+	benches, err := Benches([]byte(fixture))
+	require.NoErrorf(t, err, "Benches(fixture): %v", err)
+	assert.Equalf(t, []string{"bench-one", "bench-two"}, benches, "Benches(fixture) = %v, want the two groups the fixture names, in its order", benches)
+
+	rows, err := parseAllowlist(strings.NewReader("internal/ci\tTestA\t2\t2s@bench-two\n"), benches)
+	require.NoErrorf(t, err, "parseAllowlist(2s@bench-two) = %v, want a row measured on a label the fixture names", err)
+	if assert.Lenf(t, rows, 1, "parseAllowlist(2s@bench-two) = %+v, %v, want one row", rows, err) {
+		assert.Equalf(t, "bench-two", rows[0].Where, "parseAllowlist(2s@bench-two) = %+v, want the label kept as where", rows)
+	}
+
+	_, err = parseAllowlist(strings.NewReader("internal/ci\tTestA\t2\t2s@bench-three\n"), benches)
+	assert.ErrorContainsf(t, err, ciYMLPath, "parseAllowlist(2s@bench-three) = %v, want a refusal naming %s, the file the labels come from", err, ciYMLPath)
+}
+
 // PROBE 6: a package over its budget whose every test is under its own (many
 // small tests, the shape of cmd/nova-swarm's 245) is one package line naming
 // its top three tests by time, and no test line.

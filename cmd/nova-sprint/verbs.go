@@ -44,7 +44,7 @@ func init() {
 		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
-		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
+		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "", "stop", (*app).cmdMachineStop},
 		{"run", "", "run", (*app).cmdRun},
@@ -52,11 +52,11 @@ func init() {
 		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
-		{"take", "--as <member> [<card>@<gen>...] [--epoch <n>] [--limit <n>]", "take --as m1 s1-1.w1@1 --epoch 0", (*app).cmdTake},
+		{"take", "--as <member> [<card>@<gen>...] [--epoch <n>] [--max <n>]", "take --as m1 s1-1.w1@1 --epoch 0", (*app).cmdTake},
 		{"finish", "--as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --head 9f3c2e1 --report 'tests green'", (*app).cmdFinish},
-		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
+		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--max <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
-		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
+		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--max <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --max 5 --epoch 0", (*app).cmdRead},
 		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--tier <tier>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
@@ -91,6 +91,7 @@ func init() {
 		{"answer", "[--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]", "answer --dry-run", (*app).cmdAnswer},
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
 		{"card", "<id>", "card s1-4", (*app).cmdCard},
+		{"needs", "[--stream <s>] [--roots]", "needs --stream s1", (*app).cmdNeeds},
 		{"log", "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", "log --card s1-4", (*app).cmdLog},
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
@@ -137,19 +138,20 @@ func groupVerbs(word string) []string {
 // point 6).
 const opening = `nova-sprint: a sprint of work cards, dealt to a fleet of workers and read before they land
 
-how it works: one store (a Redis, or a twin file) holds one sprint as four
-tables (work, merge, readers, fleet) and the view sprint. A card is one unit of
-work in a stream; each tick deals ready cards to members (machines with a
-width), sends finished work to readers, queues what they pass to merge by
-stream, and puts every judgment it cannot make in the coordinator's inbox.
-first run, no Redis (the store is the file sprint.twin):
+how it works: one store (Redis or a twin file) holds the work, readers, merge
+and fleet tables and the sprint view. A card is one unit of work in a stream.
+Each tick deals ready cards to members (machines with a width), sends finished
+work to readers and queues passed work for merging by stream. Decisions it
+cannot make go to the coordinator's inbox.
+first run: no Redis needed; the store is the file sprint.twin:
   export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
-then the card's flow under "trying it without a Redis", ticking by hand; the
-example: block is the coordinator's day on a real store, and "A real fleet"
-below connects the machines (run --listen, NOVA_SPRINT_SERVER, nova-swarm member).
-the rest: this help is long; nova-sprint help <verb> (or <verb> -h) prints one
-verb's usage, examples, flags and exit codes, and nova-sprint help <group>
-(fleet, friend, reader, goal, stream) one group's.`
+Follow the card flow under "trying it without a Redis", ticking by hand.
+For a real fleet, "A real fleet" explains the server and clients; the example:
+block shows the coordinator's day on that store.
+For one verb's usage, examples, flags and exit codes:
+  nova-sprint help <verb> (or <verb> -h)
+For one group's help: nova-sprint help <group> (fleet, friend, reader, goal,
+stream).`
 
 func banner() string {
 	var b strings.Builder
@@ -161,7 +163,9 @@ func banner() string {
 Every store verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then
 NOVA_REDIS_ADDR), --actor <name> (else NOVA_SPRINT_ACTOR; no
 default: a verb that writes wants one), --op <id> (the same id again returns
-the recorded result), --json and --max <n> (listed items; 0 is all). The
+the recorded result), --json and --max <n> (listed items, and the count of a
+set when the verb takes one; 0 is all listed; --limit is --max for one
+release). The
 coordinator's verbs are the coordinator's alone (the first init names it:
 --coordinator, else the actor); take, finish, read, fleet beat and friend
 beat are the workers', whose actor is the member, reader or friend named; merge and ci are
@@ -170,7 +174,7 @@ reports; tick, run and friend clean are the machine's; the reads need no actor (
 moves by coordinator <name> --reason <text>: given by its holder or the owner
 (init --owner), or taken by <name> itself with --take --approved-by <owner>,
 each in the log; handover prints what the next seat needs. A set is
-ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
+ids, a stream, a column, --max n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
 what did not and why (REFUSED, on stderr), its summary line, and the sprint's
@@ -196,7 +200,7 @@ A work card is named with its generation, <card>@<gen>: the generation the
 worker holds, from queue --as <member> (--json: "gen"). take by id and finish
 name it for every card; a card named without one is refused, naming the live
 generation, and a generation that is not the live one is refused as stale.
-take with no card takes the member's oldest ready cards (--limit n, default 1)
+take with no card takes the member's oldest ready cards (--max n, default 1)
 and prints each one's generation.
 
 ` + inboxExample + `
@@ -451,6 +455,37 @@ func flagRefusal(fs *flag.FlagSet, err error) error {
 	return &flagError{verbflag.Explain(fs, err) + help}
 }
 
+// bindCapAlias keeps --limit as the name of --max for one release (docs/STANDARD.md
+// section 2, one cap flag). It sets the same value; applyCapAlias prints the note.
+func bindCapAlias(fs *flag.FlagSet, usage string) {
+	if f := fs.Lookup("max"); f != nil {
+		f.Usage = usage
+	}
+	fs.Func("limit", "alias of --max, a whole number, accepted for one release", func(s string) error {
+		return fs.Set("max", s)
+	})
+}
+
+// applyCapAlias copies a given --max into the selection count, and when the old
+// name was the one given prints NOTE --limit is --max on stderr.
+func applyCapAlias(fs *flag.FlagSet, stderr io.Writer, sel *int, list int) {
+	var limitSet, maxSet bool
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "limit":
+			limitSet = true
+		case "max":
+			maxSet = true
+		}
+	})
+	if maxSet || limitSet {
+		*sel = list
+	}
+	if limitSet {
+		fmt.Fprintln(stderr, "NOTE --limit is --max")
+	}
+}
+
 // sel is the set flags of a verb.
 type sel struct {
 	stream, col string
@@ -464,7 +499,7 @@ func (s *sel) register(fs flagSet, withCol bool) {
 	if withCol {
 		fs.StringVar(&s.col, "col", "", "the cards in one column (a state)")
 	}
-	fs.IntVar(&s.limit, "limit", 0, "at most n cards, in work order; accept and ask take them in stream turns from the work table's stream index")
+	bindCapAlias(fs, "listed items of each kind (0 is all); when given, at most n cards, in work order; accept and ask take them in stream turns from the work table's stream index")
 	fs.StringVar(&s.group, "group", "", "the members of the inbox group of this id (the id inbox prints; a group number is refused)")
 	fs.IntVar(&s.expect, "expect", 0, "with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes")
 }
@@ -757,7 +792,7 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	listed(stderr, "REFUSED", why, c.max, verbName)
 	status := "OK"
 	if code != 0 {
-		status = "FAIL"
+		status = "FAILED"
 	}
 	fields := fmt.Sprintf("moved=%d refused=%d notes=%d", len(res.Moved), len(res.Refused), res.Notes)
 	if verbName == "add" {
@@ -810,7 +845,7 @@ func listed(w io.Writer, kind string, lines []string, max int, verbName string) 
 // sprintLine is the summary line: landed / all primaries, percent, ETA. A
 // STOPPED machine has no ETA, so its line is the STOPPED text the header of
 // where shows, then, with cards on the table, landed / all and the percent.
-// Every primary landed, the line has no ETA (errata 3 amendment 6): while the
+// Every primary landed, the line has no ETA: while the
 // machine runs, "N/N 100.0% done in <duration>" from its first start; once it
 // has stopped because the sprint is done, "STOPPED  N/N 100.0% done".
 func sprintLine(ctx context.Context, st *store.Store) string {
@@ -900,6 +935,12 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "init", "the sprint's owner is "+was+", and init does not change the owner; nothing was changed")
 		}
 	}
+	if *coordinator == "" {
+		*coordinator = c.actor
+	}
+	if !sprint.ValidID(*coordinator) {
+		return refuse(stderr, "init", "--coordinator wants letters, digits, _ and -: "+*coordinator)
+	}
 	if err := st.Init(ctx); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
@@ -909,9 +950,6 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 			return 1
 		}
-	}
-	if *coordinator == "" {
-		*coordinator = c.actor
 	}
 	if err := st.B.SetCoordinator(ctx, *coordinator); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
@@ -1666,7 +1704,7 @@ func (a *app) withGroup(verbName string, fs flagSet, c *common, st *store.Store,
 			listed(stderr, "ADDED", added, c.max, "inbox --open "+g.ID)
 			listed(stderr, "GONE", gone, c.max, "inbox --open "+g.ID)
 		}
-		fmt.Fprintf(stderr, "%s FAIL moved=0 group=%s size=%d expected=%d; run: nova-sprint inbox --open %s\n", token(verbName), oneline.Escape(g.ID), len(g.Members), s.expect, oneline.Escape(g.ID))
+		fmt.Fprintf(stderr, "%s FAILED moved=0 group=%s size=%d expected=%d; run: nova-sprint inbox --open %s\n", token(verbName), oneline.Escape(g.ID), len(g.Members), s.expect, oneline.Escape(g.ID))
 		return nil, 1
 	}
 	if len(g.Members) == 0 {
@@ -1693,6 +1731,7 @@ func (a *app) setVerb(verbName string, args []string, stdout, stderr io.Writer, 
 		extra(fs)
 	}
 	ids, err := parse(fs, args)
+	applyCapAlias(fs, stderr, &s.limit, c.max)
 	if err != nil {
 		return refuse(stderr, verbName, err.Error())
 	}
@@ -1740,8 +1779,10 @@ func cardGens(words []string) ([]string, map[string]int, error) {
 func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("take")
 	as := fs.String("as", "", "the fleet member taking its cards; several, comma separated, each take from their own ready queue in one step")
-	limit := fs.Int("limit", 0, "take the first n of its ready queue (default 1); with several members, n of each")
+	var limit int
+	bindCapAlias(fs, "listed items of each kind (0 is all); when given, the first n of its ready queue (omitted, 1); with several members, n of each")
 	words, err := parse(fs, args)
+	applyCapAlias(fs, stderr, &limit, c.max)
 	if err != nil {
 		return refuse(stderr, "take", err.Error())
 	}
@@ -1784,12 +1825,12 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 		ps, _ := st.Packets(ctx, mine)
 		return ps
 	}
-	if len(ids) == 0 && *limit >= 0 {
+	if len(ids) == 0 && limit >= 0 {
 		c.after = func(ctx context.Context, st *store.Store, res store.Result) []string {
-			return takeShort(ctx, st, res, members, max(*limit, 1))
+			return takeShort(ctx, st, res, members, max(limit, 1))
 		}
 	}
-	return a.runStep(name, *c, st, store.TakeStep(sprint.TakeReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Gens: gens, Who: *as}), stdout, stderr)
+	return a.runStep(name, *c, st, store.TakeStep(sprint.TakeReq{Sel: sprint.Sel{IDs: ids, Limit: limit}, As: *as, Gens: gens, Who: *as}), stdout, stderr)
 }
 
 // takeShort is why a take by count took fewer than asked, one line per member
@@ -1898,7 +1939,7 @@ func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 		instead = fs.String("instead", "", "take back this reader's read (asked or reading) of the one primary named and ask one other reader, as --another chooses")
 	}, func(ids []string, s *sel) string {
 		if *instead != "" && s.group != "" {
-			return "--instead takes back one read of one primary and asks one other reader: ask <primary> --instead <reader>, with no --another, --group, --stream or --limit; nothing was changed"
+			return "--instead takes back one read of one primary and asks one other reader: ask <primary> --instead <reader>, with no --another, --group, --stream or --max; nothing was changed"
 		}
 		return ""
 	}, func(ids []string, s *sel, c *common) store.Step {
@@ -1913,11 +1954,13 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	ok := fs.Bool("ok", false, "the read found it good")
 	broken := fs.Bool("broken", false, "the read found it broken")
 	finding := fs.String("finding", "", "what the read found; with --broken it names the file (file:line), the line, or the card's STEP or RULE the work breaks, and what to change, or the read is refused")
-	limit := fs.Int("limit", 0, "the first n of the reader's queue (default 1)")
+	var limit int
+	bindCapAlias(fs, "listed items of each kind (0 is all); when given, the first n of the reader's queue (omitted, 1)")
 	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: not a read; the next tick asks it of another reader free at the attempt, or of this reader again; no finding against the work")
 	reason := fs.String("reason", "", "with --return: why the read has no verdict (it reaches the inbox)")
 	usage := fs.String("usage", "", "with --ok, --broken or --return: what the read spent, one line (the reader passes its child's tokens, wall and cost): kept on the read card, timed and priced")
 	ids, err := parse(fs, args)
+	applyCapAlias(fs, stderr, &limit, c.max)
 	if err != nil {
 		return refuse(stderr, "read", err.Error())
 	}
@@ -1955,7 +1998,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 			return readShort(ctx, st, res, sprint.Split(*as), col)
 		}
 	}
-	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Begin: *begin,
+	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: limit}, As: *as, Begin: *begin,
 		Verdict: verdict, Finding: *finding, Return: *ret != "", Reason: *reason, Usage: *usage, Who: *as}), stdout, stderr)
 }
 
@@ -2057,12 +2100,11 @@ func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	})
 }
 
-// cmdBrief replaces the brief of a primary that has not started (the owner,
-// 2026-10-01: "What other things should you be able to do to mutate a stopped
-// sprint" / "I don't want you manually hopping in and working around it and
-// doing manual stuff."): the brief held to the card lint as add's is
-// (holdBrief), then one step (sprint.Brief), refused on a RUNNING machine and
-// for a card dealt; the card keeps its id, stream, score and needs.
+// cmdBrief replaces the brief of a primary that has not started (changing a
+// stopped sprint happens through the verbs, never by hand): the brief held to
+// the card lint as add's is (holdBrief), then one step (sprint.Brief),
+// refused on a RUNNING machine and for a card dealt; the card keeps its id,
+// stream, score and needs.
 func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("brief")
 	brief := fs.String("brief", "", fmt.Sprintf("the new brief: a child's whole brief, at most %d KiB, held to the card lint as add holds one (--rules, else the file init --rules recorded, else the built-in general rules) and refused, exit 2, nothing written, when it fails", cardlimits.MaxBriefBytes>>10))
@@ -2100,12 +2142,10 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Rules: cardRules(*brief, rs).held, Who: c.actor}), stdout, stderr)
 }
 
-// cmdMove moves unstarted primaries to another stream (the owner,
-// 2026-10-01: "What other things should you be able to do to mutate a stopped
-// sprint" / "I don't want you manually hopping in and working around it and
-// doing manual stuff."): one step (sprint.MoveCards), on a STOPPED machine,
-// each card waiting or ready with nothing dealt, placed as add places cards,
-// all or none.
+// cmdMove moves unstarted primaries to another stream (changing a stopped
+// sprint happens through the verbs, never by hand): one step (sprint.MoveCards),
+// on a STOPPED machine, each card waiting or ready with nothing dealt, placed
+// as add places cards, all or none.
 func (a *app) cmdMove(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("move")
 	stream := fs.String("stream", "", "the stream the cards move to: one of the sprint's, or a new one, made as add makes it")
@@ -2468,13 +2508,13 @@ func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, Who: c.actor}), stdout, stderr)
 }
 
-// cmdStreamRemove takes the named streams off the work and merge tables (the
-// owner, 2026-10-01: "you should have a verb to remove work streams" / "they
-// should only succeed on a STOPPED sprint machine"): each stream's row of both
-// tables, with the stream's control card the merge row holds, the one card add
-// made for it. Refused, exit 1 and nothing written, on a RUNNING machine, for
-// a stream that is no row, or for one that holds a card (sprint.StreamRemove),
-// all or none for the streams named.
+// cmdStreamRemove takes the named streams off the work and merge tables:
+// removing a work stream is a verb, one that succeeds only on a STOPPED
+// machine; it removes each stream's row of both tables, with the stream's
+// control card the merge row holds, the one card add made for it. Refused,
+// exit 1 and nothing written, on a RUNNING machine, for a stream that is no
+// row, or for one that holds a card (sprint.StreamRemove), all or none for
+// the streams named.
 func (a *app) cmdStreamRemove(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stream remove")
 	names, err := parse(fs, args)
@@ -2640,7 +2680,7 @@ func (a *app) cmdRepair(args []string, stdout, stderr io.Writer) int {
 	}
 	status := "OK"
 	if code != 0 {
-		status = "FAIL"
+		status = "FAILED"
 	}
 	fmt.Fprintf(stdout, "REPAIR %s operations=%d\n", status, len(rr))
 	return code
