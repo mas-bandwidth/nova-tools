@@ -24,6 +24,26 @@ without `REPORT.md`, and done once `REPORT.md` exists. `nova-sprint friend
 sync` reads these directories (writing in them only a sprint card's brief, below)
 into the friends table's `ready`, `working`, `done` and `ok%`.
 
+## Claude friends: one account each
+
+A Claude account is a friend of its own: a friend row with mode `one-shot`,
+the tier it can do, and `config_dir`, the account's Claude config directory,
+which each of her lanes runs `claude -p` with as `CLAUDE_CONFIG_DIR`
+(docs/SPEC-FRIEND.md, one-shot lanes). Four accounts on one machine are four
+rows, each its own working directory and daemon. The example, four heavy-tier
+rows of one person's four accounts:
+
+```
+nova-config friend add amy-a --slots 1 --tiers heavy --mode one-shot --config_dir /Users/<user>/.claude-a
+nova-config friend add amy-b --slots 1 --tiers heavy --mode one-shot --config_dir /Users/<user>/.claude-b
+nova-config friend add amy-c --slots 1 --tiers heavy --mode one-shot --config_dir /Users/<user>/.claude-c
+nova-config friend add amy-d --slots 1 --tiers heavy --mode one-shot --config_dir /Users/<user>/.claude-d
+nova-config apply --kind friend
+```
+
+A claude row in one-shot mode without `config_dir` runs no lane: her daemon
+says so on its record with the `nova-config friend set` that fixes it.
+
 ## A sprint card
 
 A card of the sprint whose brief says `WHO: friend` or `WHO: friend <name>` is
