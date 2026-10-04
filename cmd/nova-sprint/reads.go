@@ -1342,9 +1342,13 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("card")
 	atEpoch := fs.Int64("at-epoch", -1, "the primary as it was at an earlier epoch (before a clear)")
 	fields := fs.Bool("fields", false, "every field of the primary and its cards, one record a line, instead of its story")
+	brief := fs.Bool("brief", false, "the brief alone, as the card holds it, and nothing else (a card with no brief is refused, exit 1); not with --fields")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) != 1 {
 		return refuse(stderr, "card", argErr("wants one primary id ", err, pos...))
+	}
+	if *brief && *fields {
+		return refuse(stderr, "card", "--brief prints the brief alone and --fields every field: give one of them")
 	}
 	id := pos[0]
 	st, err := a.storeAt(*c, *atEpoch)
@@ -1359,6 +1363,9 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	if v.Primary == nil {
 		fmt.Fprintf(stderr, "%s card: no primary %s; run: nova-sprint where\n", prog, oneline.Escape(id))
 		return 1
+	}
+	if *brief {
+		return printBrief(stdout, stderr, id, v.Primary.F("brief"), c.json)
 	}
 	// What holds it, so nothing stalls without a named reason: an outside actor, the
 	// next tick, an open judgment, what it waits on, or the machine STOPPED.
@@ -1596,5 +1603,24 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall, orDashStr(x.RestedUntil, "-"), oneline.Field(orDashStr(x.Balance, "-")))
 	}
 	fmt.Fprintf(stdout, "ROUTES OK routes=%d\n", len(stats))
+	return 0
+}
+
+// printBrief is card --brief: the brief alone, as the card holds it, so a child
+// gets a brief's text out without the story in front of it (the owner, 2026-10-03,
+// the comfort list: "card --fields is the only way to get a brief's text out, and it
+// prints the story first"). A card with no brief is refused, exit 1, naming the
+// verb that gives one. --json is one object, id and brief.
+func printBrief(stdout, stderr io.Writer, id, brief string, asJSON bool) int {
+	if brief == "" {
+		fmt.Fprintf(stderr, "%s card: %s has no brief; run: nova-sprint brief %s --brief-file <path>\n", prog, oneline.Escape(id), oneline.Escape(id))
+		return 1
+	}
+	if asJSON {
+		b, _ := json.Marshal(map[string]string{"id": id, "brief": brief})
+		fmt.Fprintln(stdout, string(b))
+		return 0
+	}
+	fmt.Fprintln(stdout, brief)
 	return 0
 }
