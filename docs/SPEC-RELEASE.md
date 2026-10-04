@@ -369,7 +369,7 @@ reason still fails, with the existing binary put back under its own name.
 ## 12. A release is cut only when a non-author has run it
 
 The definition of done: a tool is finished when it has been **tested**, **dogfooded by somebody who
-did not write it** on real work, and the **feedback applied**. `nova-check dogfood gate` makes that
+did not write it** on real work, and the **feedback applied**. `nova-dev dogfood gate` makes that
 mechanical — receipts on disk, read against the command reference, an exit code — and the release
 verbs are its caller, so the claim that a release has been dogfooded is never just whatever the last
 person said it was. A tag cannot be quietly amended and pushed again.
@@ -377,7 +377,7 @@ person said it was. A tag cannot be quietly amended and pushed again.
 **`cut` and `build` run the gate FIRST.** Before the forge is asked anything, before a single tool is
 compiled. The gate is `internal/dogfood.Gate` in process rather than a shell out to `nova-check` — one
 process, one set of refusals, no shell to get wrong — and it is the same read
-`nova-check dogfood gate --cli <reference> --receipts <dir>` does.
+`nova-dev dogfood gate --cli <reference> --receipts <dir>` does.
 
 **An OPEN EDGE refuses.** An open edge is a verb somebody ran, that did not do what they needed, and
 that nobody has run since and said it did. Feedback *filed* is not feedback *applied*, and without the
@@ -389,7 +389,7 @@ RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or -
 
 `build` refuses the same way under `RELEASE BUILD REFUSED`, because a dev build has no tag and no
 changelog and still reaches every bench through `adopt`. The refusal shows at most ten open edges and
-points at `nova-check dogfood ledger` for the rest. The gate asks the question a release turns on, not
+points at `nova-dev dogfood ledger` for the rest. The gate asks the question a release turns on, not
 the stronger `--require-all` one: a tag held hostage to the last unrun verb in a long reference is a
 tag nobody ever cuts.
 
@@ -408,7 +408,7 @@ The set is every `cmd/nova-*` directory, the same list `build` compiles: one hel
 refuses, and so does a shipped tool's not-ok receipt on a verb the reference does not declare. A
 `cmd/` that holds no tool refuses rather than setting every receipt aside, and a tool directory that
 cannot be read refuses naming its path: an I/O error is not a tool outside the release.
-`nova-check dogfood gate --shipped <cmd dir>` is the same read.
+`nova-dev dogfood gate --shipped <cmd dir>` is the same read.
 
 **The two inputs, and the one default in this package.** `--cli` names the command reference and
 defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,

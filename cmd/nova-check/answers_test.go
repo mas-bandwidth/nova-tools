@@ -24,8 +24,7 @@ func TestEveryMistakeIsRefusedWithTheWayForward(t *testing.T) {
 		{nil, "nova-check REFUSED: no verb given; quickstart is the first run; the verbs are quickstart, attest, links"},
 		{[]string{"linsk"}, `nova-check REFUSED: unknown verb "linsk"; did you mean links? the verbs are quickstart`},
 		{[]string{"links", "--dri", "x"}, "nova-check links REFUSED: unknown flag --dri; the flags of links are"},
-		{[]string{"hygiene", "--rep", "."}, "nova-check hygiene REFUSED: unknown flag --rep;"},
-		{[]string{"hygiene", "stray"}, `nova-check hygiene REFUSED: unexpected argument "stray"`},
+		{[]string{"spelling", "--dri", "x"}, "nova-check spelling REFUSED: unknown flag --dri; the flags of spelling are"},
 		{[]string{"version", "x"}, "nova-check version REFUSED: takes no flags and no arguments"},
 		{[]string{"version", "--zz"}, "nova-check version REFUSED: takes no flags and no arguments except --json: unknown flag --zz"},
 	} {
@@ -38,13 +37,12 @@ func TestEveryMistakeIsRefusedWithTheWayForward(t *testing.T) {
 }
 
 // Every verb's -h ends its own lines with its effect, and every verb that can
-// write lists --dry-run; convergence says it reads the forge over the network.
+// write lists --dry-run.
 func TestEveryVerbHelpStatesItsEffect(t *testing.T) {
 	t.Parallel()
 	for verb, writes := range map[string]bool{
 		"quickstart": false, "attest": false, "links": false, "kernel": false, "nocode": false,
-		"floors": false, "corpus": false, "hygiene": false, "dogfood ledger": false, "dogfood gate": false,
-		"dogfood record": true, "convergence": true, "spelling": true, "version": false,
+		"floors": false, "corpus": false, "spelling": true, "version": false,
 	} {
 		exit, stdout, stderr := runCheck(t, append(strings.Fields(verb), "-h")...)
 		require.Equal(t, 0, exit, "%s -h: %s", verb, stderr)
@@ -55,8 +53,6 @@ func TestEveryVerbHelpStatesItsEffect(t *testing.T) {
 		assert.Contains(t, stdout, want, verb)
 		assert.Equal(t, writes, strings.Contains(stdout, "--dry-run"), "%s: --dry-run listed", verb)
 	}
-	_, stdout, _ := runCheck(t, "convergence", "-h")
-	assert.Contains(t, stdout, "through gh, over the network")
 }
 
 // A failed quickstart names next the failed check run alone, not the verbs a
@@ -84,46 +80,9 @@ func TestAFailedQuickstartsNextQuotesADirWithABlank(t *testing.T) {
 	assert.Contains(t, stdout, "next=nova-check links --dir '"+dir+"' (fix what it names")
 }
 
-// dogfood record names every problem of one run: the missing flags and the
-// missing verdict together.
-func TestDogfoodRecordNamesEveryProblemAtOnce(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	_, _, stderr := dogfoodRun(t, "dogfood", "record", "--cli", writeCLI(t, dir), "--tool", "nova-example", "--verb", "links", "--receipts", dir)
-	for _, want := range []string{"--by is required", "--notes is required", "state the verdict exactly once"} {
-		assert.Contains(t, stderr, want)
-	}
-}
-
-// A reference that declares no verb is refused with the shape a verb is
-// declared in.
-func TestAnEmptyReferenceIsAnsweredWithTheShape(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	cli := filepath.Join(dir, "CLI.md")
-	require.NoError(t, os.WriteFile(cli, []byte("# nothing here\n"), 0o644))
-	exit, _, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", dir)
-	assert.Equal(t, 2, exit)
-	assert.Contains(t, stderr, "a --cli reference declares a verb as a command line in a fenced block")
-}
-
-// --dry-run on the three verbs that write makes every check and writes nothing.
+// --dry-run on the verb that writes makes every check and writes nothing.
 func TestDryRunWritesNothing(t *testing.T) {
 	t.Parallel()
-
-	t.Run("dogfood record", func(t *testing.T) {
-		t.Parallel()
-		dir := t.TempDir()
-		receipts := filepath.Join(dir, "receipts")
-		exit, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", writeCLI(t, dir), "--tool", "nova-example", "--verb", "links",
-			"--by", "Ada", "--ok", "--notes", "ran it on real work", "--receipts", receipts, "--dry-run")
-		require.Equal(t, 0, exit, stderr)
-		assert.Contains(t, stdout, "DOGFOOD RECORD OK tool=nova-example verb=links by=Ada")
-		assert.Contains(t, stdout, "file="+receipts+string(filepath.Separator))
-		assert.True(t, strings.HasSuffix(stdout, ".json dry_run=true\n"), stdout)
-		_, err := os.Stat(receipts)
-		assert.True(t, os.IsNotExist(err), "a dry run made the receipts directory: %v", err)
-	})
 
 	t.Run("spelling --write", func(t *testing.T) {
 		t.Parallel()
@@ -137,18 +96,6 @@ func TestDryRunWritesNothing(t *testing.T) {
 		got, err := os.ReadFile(file)
 		require.NoError(t, err)
 		assert.Equal(t, "the recieve step\n", string(got), "a dry run edited the file")
-	})
-
-	t.Run("convergence --state", func(t *testing.T) {
-		t.Parallel()
-		f := newConvFixture(t)
-		state := filepath.Join(t.TempDir(), "state.json")
-		exit, stdout, stderr := f.run(t, "--state", state, "--dry-run")
-		require.Equal(t, 0, exit, stderr)
-		assert.Contains(t, stdout, "CONVERGENCE")
-		assert.Contains(t, stderr, "CONVERGENCE NOTE dry_run=true: --state")
-		_, err := os.Stat(state)
-		assert.True(t, os.IsNotExist(err), "a dry run wrote the state: %v", err)
 	})
 }
 
