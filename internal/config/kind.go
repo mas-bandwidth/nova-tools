@@ -375,10 +375,11 @@ func noteField(what string) Field {
 	return Field{Name: "note", Type: TypeText, Cut: true, Help: what + "; one line, empty (the default) when none; --note '' clears it"}
 }
 
-// checkFleet keeps both store endpoints explicit and safe to print. The
-// endpoints may be unset so an older fleet can migrate before an operator
-// declares them; apply and inventory refuse incomplete endpoints. loops_dir
-// must be non-empty when set.
+// checkFleet keeps both store endpoints explicit and safe to print.
+// The endpoints may be unset so an older fleet can migrate before an operator declares them.
+// Apply and inventory refuse incomplete endpoints.
+// loops_dir must be non-empty.
+// The Check refuses a missing or blank loops_dir, not only a present empty string.
 func checkFleet(r Row) error {
 	if raw := r.Fields["redis_port"]; raw != "" {
 		port, err := strconv.Atoi(raw)
@@ -388,7 +389,7 @@ func checkFleet(r Row) error {
 	}
 	loopsDir, ok := r.Fields["loops_dir"]
 	if !ok || strings.TrimSpace(loopsDir) == "" {
-		return fmt.Errorf("--loops_dir wants a non-empty directory path; run: nova-config fleet set --loops-dir <path>")
+		return fmt.Errorf("--loops_dir wants a non-empty directory path; run: nova-config fleet set --loops_dir <path>")
 	}
 	dsn, ok := r.Fields["pg_dsn"]
 	if !ok || dsn == "" {

@@ -256,10 +256,6 @@ func NewMem() *Mem {
 			for _, f := range k.Fields {
 				row.Fields[f.Name] = f.Default
 			}
-			// The fleet row's loops_dir is seeded by migration 0020.
-			if k.Name == KindFleet {
-				row.Fields["loops_dir"] = "~/nova-bench/loops"
-			}
 			if m.rows[k.Name] == nil {
 				m.rows[k.Name] = map[string]Row{}
 			}

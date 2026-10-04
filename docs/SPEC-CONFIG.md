@@ -200,9 +200,8 @@ row's.
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
 | `loops_dir` | text | | the inventory and plays: the directory where loop logs are written; seeded to `~/nova-bench/loops` | `fleet:loops_dir` |
 
-The kind's `Check` bounds `redis_port`, accepts only a password-free
-`postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`, and
-requires `loops_dir` to be non-empty when set. A refusal never reproduces a
+The kind's `Check` bounds `redis_port`, accepts only a password-free `postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`, and requires that `loops_dir` must be non-empty.
+The Check refuses a missing or blank `loops_dir`, not only a present empty string. A refusal never reproduces a
 password from the input. Fleet apply and inventory refuse either endpoint
 unset, naming one `nova-config fleet set --redis_port <port> --pg_dsn <dsn>`
 command. Migration 0014 (`0014_fleet_endpoints.sql`) leaves the port NULL and

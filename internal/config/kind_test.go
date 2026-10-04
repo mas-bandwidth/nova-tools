@@ -397,10 +397,10 @@ func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
 	assert.Error(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "0"}}))
 }
 
-// TestLoopLogIsTheFleetRowsDirectory: the seeded loops_dir reproduces
-// today's literal; a different directory changes the log path; an empty
-// directory is refused by the fleet kind's Check with a remedy naming
-// fleet set --loops-dir.
+// TestLoopLogIsTheFleetRowsDirectory pins the fleet row's directory.
+// The seeded loops_dir reproduces today's literal for a name.
+// A different directory changes the log path.
+// An empty directory is refused by the fleet kind's Check with a remedy naming nova-config fleet set --loops_dir.
 func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -420,7 +420,7 @@ func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
 		err := fleet.Check(row)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--loops_dir wants a non-empty directory path")
-		assert.Contains(t, err.Error(), "nova-config fleet set --loops-dir")
+		assert.Contains(t, err.Error(), "nova-config fleet set --loops_dir")
 	}
 
 	// A missing loops_dir is also refused by the kind's Check with a remedy.
@@ -428,7 +428,7 @@ func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
 	err := fleet.Check(row)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--loops_dir wants a non-empty directory path")
-	assert.Contains(t, err.Error(), "nova-config fleet set --loops-dir")
+	assert.Contains(t, err.Error(), "nova-config fleet set --loops_dir")
 
 	// A valid non-empty directory passes Check.
 	row = Row{Name: KindFleet, Fields: map[string]string{"loops_dir": "/valid/path"}}
