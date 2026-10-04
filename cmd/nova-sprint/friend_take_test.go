@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -155,4 +158,71 @@ func TestTheServerRunsAFriendsBeatWithTheCardsSheIsRunning(t *testing.T) {
 		_, _, why := workerVerb(argv)
 		assert.NotEmpty(t, why, "%q", argv)
 	}
+}
+
+// sentTo is the messages the app sent on the friends' bus to friend, in order.
+func (ta *testApp) sentTo(friend string) []bus.Message {
+	ta.mu.Lock()
+	defer ta.mu.Unlock()
+	var out []bus.Message
+	for _, m := range ta.sent {
+		if slices.Contains(m.To, friend) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// A card that leaves a friend without her starting it tells her (docs/SPEC-SPRINT.md section
+// 1, a friend's card taken back): the friend sync that marks it taken in her queue file
+// sends her one bus message from the coordinator, by the delivery's wake path, naming the card
+// and why; the queue file is the record, so a later sync says nothing again. A working card
+// taken and dealt to another before the sync is told too, and a send that fails is said on
+// sync's line and on the card's story, as a delivery's.
+func TestATakeBackTellsTheFriendWithOneBusMessage(t *testing.T) {
+	t.Parallel()
+	ta, root := takeApp(t, 1, nil, "amy", "bob")
+	ta.ok("friend down bob")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root)
+	require.Len(t, ta.sentTo("amy"), 1, "dealt: one message")
+	ta.ok("friend up bob")
+	ta.ok("friend beat bob")
+
+	ta.ok("friend take amy s1-1 --reason 'she is on another job'")
+	ta.ok("friend sync --root " + root)
+	sent := ta.sentTo("amy")
+	require.Len(t, sent, 2, "taken back: one message more")
+	m := sent[1]
+	assert.Equal(t, "coordinator", m.From)
+	assert.Equal(t, "card s1-1.w1 taken back: taken back by the coordinator: she is on another job", m.Subject)
+	assert.Contains(t, m.Body, "Your sprint card s1-1.w1 (attempt 1 of s1-1) is no longer yours: do not start it")
+	ta.ok("friend sync --root " + root)
+	assert.Len(t, ta.sentTo("amy"), 2, "a sync that marks nothing taken says nothing")
+
+	// her working card taken and dealt to another before the next sync: she is told it left her
+	ta2, root2 := takeApp(t, 1, nil, "amy", "bob")
+	ta2.ok("friend down bob")
+	ta2.ok("tick")
+	ta2.ok("friend sync --root " + root2)
+	ta2.ok("friend up bob")
+	ta2.ok("friend beat bob")
+	ta2.ok("friend take amy s1-1")
+	ta2.ok("tick")
+	ta2.ok("tick")
+	ta2.a.bus = func(_ context.Context, m bus.Message) error {
+		if slices.Contains(m.To, "amy") {
+			return errors.New("dial tcp: connection refused")
+		}
+		return nil
+	}
+	out := ta2.ok("friend sync --root " + root2)
+	assert.Equal(t, "taken", queueStates(t, root2, "amy")["s1-1.w1"], "it left her: not hers to start")
+	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=bob card=s1-1.w1")
+	assert.Contains(t, out, "FRIEND-CARD NOTE friend=amy card=s1-1.w1: the bus message to her was not sent (dial tcp: connection refused); her queue file marks it taken, tell her by hand")
+	story := ta2.ok("card s1-1")
+	assert.Contains(t, story, "a friend was not told of her card", story)
+	assert.Contains(t, story, "nova-bus send --as coordinator --to amy --subject 'card s1-1.w1 taken back'", story)
+	ta.clean()
+	ta2.clean()
 }

@@ -56,9 +56,16 @@ nova-sprint friend beat <friend>, which her own machinery runs every `+sprint.Fr
 beside the friend's harness, for example in the wrapper that starts it
   while :; do nova-sprint friend beat <friend> >/dev/null 2>&1; sleep 1; done &
   trap 'kill $!' EXIT
-and her status is up while her last beat is under `+sprint.FriendDownAfter.String()+` old, down once
+Until the coordinator observes her (friend health), her status is up while her last beat is under `+sprint.FriendDownAfter.String()+` old, down once
 she has gone `+sprint.FriendDownAfter.String()+` without a beat or when she has never beaten (a beat
-wakes her at once), held while friend down holds her whatever she beats.
+wakes her at once). The coordinator's daemon observes her from its keepalive with
+hers and writes it with friend health, the seat's holder alone at the seat's
+generation now. Once observed, the observation decides and her own beat never
+makes her up again: up while it says up under the seat's generation now with its proof under `+sprint.FriendObservedDownAfter.String()+` old, and down
+otherwise; asleep (her daemon answers, her session does not) is shown as down.
+Under either rule held is the coordinator's friend down alone, whatever she beats or is
+observed, and a --reason and --until given to friend down or friend health are
+shown in her status cell, as down (opus rate limited, until 6:00 PM).
 friend up releases the hold and is not a beat: a friend released with no beat
 in the last `+sprint.FriendDownAfter.String()+` is down until she beats. A friend down shows
 working 0: her cards stay on her row and count again when she beats; ready
@@ -83,7 +90,20 @@ when origin has no branch of that name, when the tip cannot be read, or when
 the card names no REPO: line; Verdict: HOLD, FAIL, FAILED or BROKEN is work
 that came back failed, and a LAND without a full sha, an empty report and any
 other verdict finish the card failed too, each with the report's first
-paragraph. card prints who=; where counts it on her friends row.`) + "\n"
+paragraph. card prints who=; where counts it on her friends row.
+
+friend sync tells her of each card it delivers with one bus message from the
+coordinator to her (the store NOVA_BUS_REDIS), subject card <card> dealt: <the
+FRIEND-CARD DELIVERED line>, the inbox path in the body, which her daemon pushes
+into her session. Her queue file, inbox/QUEUE.json, says which of her cards are
+working and which queued, and marks taken a card taken back from her (friend
+take, friend down) or dealt to another (friend level, a take dealt again), so
+her daemon starts none of them; the sync that marks a queued or working card
+taken tells her once, one bus message, subject card <card> taken back: <why>.
+A message is a courtesy and the file the record: a send that fails never fails
+the sync, is said on its line (FRIEND-CARD NOTE) and is written on the card's
+story as a friend was not told of her card, with the nova-bus send line that
+tells her by hand.`) + "\n"
 }
 
 // friendVerbWords is what friend beat, friend down, and friend up say on -h.

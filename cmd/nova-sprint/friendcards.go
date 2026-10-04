@@ -292,8 +292,8 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	// delivered, and her queue file says which are which
 	// and the ones taken back from her (sprint.FriendTake), withdrawn on her row until the deal
 	// places them again: taken in her queue file, so her daemon starts none of them
-	// a queued card no longer on her row that is dealt to another (friend level, or a take
-	// dealt again) left her: taken in her queue file too
+	// a queued or working card no longer on her row that is dealt to another (friend level, or
+	// a take dealt again) left her: taken in her queue file too, and she is told (writeQueue)
 	left := func(ids []string) (map[string]bool, error) {
 		cards, err := st.Records(ctx, sprint.Fleet, ids)
 		out := map[string]bool{}
@@ -315,7 +315,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		if _, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(queueFile))); err != nil {
 			return 0, 0, nil
 		}
-		return 0, 0, writeQueueFile(dir, states, left)
+		return 0, 0, a.writeQueue(ctx, st, name, dir, states, left, say)
 	}
 	var cards []*sprint.Card
 	for _, c := range all {
@@ -330,7 +330,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	}
 	defer func() {
 		if err == nil {
-			err = writeQueueFile(dir, states, left)
+			err = a.writeQueue(ctx, st, name, dir, states, left, say)
 		}
 	}()
 	for _, p := range packets {
@@ -429,29 +429,77 @@ func (a *app) sendBus(ctx context.Context, m bus.Message) error {
 	return err
 }
 
+// friendNews is one thing a friend is told of her card on the bus (tellFriend): the
+// event and its detail (the subject, card <card> <event>: <detail>), the body, what
+// stands when the message is not sent, what happened (the story's words), and the body
+// of the line that tells her by hand.
+type friendNews struct {
+	event, detail, body, stands, happened, hand string
+}
+
 // wakeFriend tells the friend of the card just delivered, one bus message from
 // the coordinator (the store's actor) to her: her daemon pushes it into her
-// session, which the inbox file alone never does. The message is a
-// courtesy and the inbox file is the record: a send that fails never fails
-// the delivery; it is said on sync's line and written on the card's story as
-// one happened note (NFriendNotWoken), so the coordinator sees she was not
-// told.
+// session, which the inbox file alone never does (tellFriend).
 func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sprint.Packet, brief, line string, say func(string)) error {
-	m := bus.Message{From: st.Actor, To: []string{name}, Subject: "card " + p.Card + " dealt: " + line,
-		Body: "Your sprint card " + p.Card + " (attempt " + strconv.Itoa(p.Attempt) + " of " + p.Primary + ") is in your inbox: " + brief + "\nRead it and start; its STATUS line says where to push and where to report."}
+	return a.tellFriend(ctx, st, name, p, friendNews{event: "dealt", detail: line,
+		body:   "Your sprint card " + p.Card + " (attempt " + strconv.Itoa(p.Attempt) + " of " + p.Primary + ") is in your inbox: " + brief + "\nRead it and start; its STATUS line says where to push and where to report.",
+		stands: "the inbox file stands", happened: name + " was dealt " + p.Card + " into " + brief, hand: brief}, say)
+}
+
+// tellFriend sends the friend one bus message from the coordinator (the store's actor)
+// of her card p (docs/SPEC-SPRINT.md section 1, a friend's card). The message is a
+// courtesy and the file friend sync wrote is the record: a send that fails never fails
+// the sync; it is said on sync's line and written on the card's story as one happened
+// note (NFriendNotWoken), so the coordinator sees she was not told.
+func (a *app) tellFriend(ctx context.Context, st *store.Store, name string, p sprint.Packet, n friendNews, say func(string)) error {
+	m := bus.Message{From: st.Actor, To: []string{name}, Subject: "card " + p.Card + " " + n.event + ": " + n.detail, Body: n.body}
 	err := a.bus(ctx, m)
 	if err == nil {
 		return nil
 	}
 	why := oneline.Escape(err.Error())
-	say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s card=%s: the bus message to her was not sent (%s); the inbox file stands, tell her by hand", name, p.Card, why))
-	n := sprint.Note{Kind: sprint.Happened, Type: sprint.NFriendNotWoken, Stream: p.Stream, Primaries: []string{p.Primary}, Who: st.Actor, Attempt: p.Attempt,
-		What: fmt.Sprintf("%s was dealt %s into %s, and the bus message to her failed: %s; tell her by hand: nova-bus send --as %s --to %s --subject 'card %s dealt' --body '%s'", name, p.Card, brief, why, st.Actor, name, p.Card, brief)}
-	res, err := st.Run(ctx, store.NoteStep("friend sync", n))
+	say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s card=%s: the bus message to her was not sent (%s); %s, tell her by hand", name, p.Card, why, n.stands))
+	note := sprint.Note{Kind: sprint.Happened, Type: sprint.NFriendNotWoken, Stream: p.Stream, Primaries: []string{p.Primary}, Who: st.Actor, Attempt: p.Attempt,
+		What: fmt.Sprintf("%s, and the bus message to her failed: %s; tell her by hand: nova-bus send --as %s --to %s --subject 'card %s %s' --body '%s'", n.happened, why, st.Actor, name, p.Card, n.event, n.hand)}
+	res, err := st.Run(ctx, store.NoteStep("friend sync", note))
 	if err == nil && len(res.Refused) > 0 {
 		err = errors.New(res.Refused[0].Why)
 	}
 	return err
+}
+
+// writeQueue writes the friend's queue file (writeQueueFile) and tells her, one bus message
+// a card (tellFriend), of each card it marks taken that it held queued or working: a card
+// taken back (friend take, friend down) or dealt to another (friend level, a take dealt
+// again) is not hers to start, and her daemon starts none, but her session may already be
+// reading it (docs/SPEC-SPRINT.md section 1, a friend's card taken back). The file is
+// written first and is the record, so she is told once.
+func (a *app) writeQueue(ctx context.Context, st *store.Store, name, dir string, states map[string]string, leftOf func(ids []string) (map[string]bool, error), say func(string)) error {
+	taken, err := writeQueueFile(dir, states, leftOf)
+	if err != nil || len(taken) == 0 {
+		return err
+	}
+	cards, err := st.Records(ctx, sprint.Fleet, taken)
+	if err != nil {
+		return err
+	}
+	for _, c := range cards {
+		if c == nil {
+			continue
+		}
+		why := c.F(sprint.FieldTakenBack)
+		if why == "" && c.Row != sprint.FriendRow(name) {
+			why = "dealt to " + c.Row
+		}
+		why = cmp.Or(why, "withdrawn from her row")
+		p := sprint.Packet{Card: c.ID, Primary: c.F("primary"), Stream: c.F("stream"), Attempt: c.Int("attempt")}
+		if err := a.tellFriend(ctx, st, name, p, friendNews{event: "taken back", detail: why,
+			body:   "Your sprint card " + c.ID + " (attempt " + strconv.Itoa(p.Attempt) + " of " + p.Primary + ") is no longer yours: do not start it, and stop if you have. Why: " + why + ". Your queue file marks it taken.",
+			stands: "her queue file marks it taken", happened: name + "'s card " + c.ID + " was taken back (" + why + ")", hand: "your card " + c.ID + " is taken back; do not start it"}, say); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // queueFile is the friend's queue file under her working directory, nova-friend's
@@ -476,11 +524,12 @@ type friendTask struct {
 
 // writeQueueFile keeps the friend's queue file as the sprint sees her cards: each card
 // on her row is a record, queued while it is ready behind her working cards, working
-// while it is working, and taken once the coordinator has taken it back or a queued one
-// has been dealt to another (friend level, leftOf); a record the sprint does not name, or one her session marked
+// while it is working, and taken once the coordinator has taken it back or a queued or
+// working one has been dealt to another (friend level, a take dealt again, leftOf); a record the sprint does not name, or one her session marked
 // done, is kept as it is. The file is written whole (atomicfile), and not at all when
-// nothing changes.
-func writeQueueFile(dir string, states map[string]string, leftOf func(ids []string) (map[string]bool, error)) error {
+// nothing changes. taken is the cards it marked taken that it held queued or working, once
+// the file is written: the ones she is told of (writeQueue).
+func writeQueueFile(dir string, states map[string]string, leftOf func(ids []string) (map[string]bool, error)) (taken []string, err error) {
 	path := filepath.Join(dir, filepath.FromSlash(queueFile))
 	var q friendQueue
 	before, err := os.ReadFile(path)
@@ -490,18 +539,18 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 			_ = json.Unmarshal(before, &q.Tasks)
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return nil, err
 	}
 	var gone []string
 	for _, t := range q.Tasks {
-		if _, ok := states[t.ID]; !ok && t.State == "queued" && sprint.ValidCardID(t.ID) {
+		if _, ok := states[t.ID]; !ok && (t.State == "queued" || t.State == "working") && sprint.ValidCardID(t.ID) {
 			gone = append(gone, t.ID)
 		}
 	}
 	left := map[string]bool{}
 	if len(gone) > 0 {
 		if left, err = leftOf(gone); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	seen := map[string]bool{}
@@ -509,11 +558,15 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 		if state, ok := states[t.ID]; ok {
 			seen[t.ID] = true
 			if t.State != "done" {
+				if state == queueTaken && (t.State == "queued" || t.State == "working") {
+					taken = append(taken, t.ID)
+				}
 				q.Tasks[i].State = state
 			}
 		} else if left[t.ID] {
-			// queued, and dealt to another now: it left without her starting it (friend
-			// level, or a take dealt again elsewhere), so it is not hers to start
+			// queued or working, and dealt to another now: it left without her starting it
+			// (friend level, or a take dealt again elsewhere), so it is not hers to start
+			taken = append(taken, t.ID)
 			q.Tasks[i].State = queueTaken
 		}
 	}
@@ -524,14 +577,17 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 	}
 	after, err := json.MarshalIndent(q, "", "  ")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	after = append(after, '\n')
 	if bytes.Equal(before, after) {
-		return nil
+		return nil, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		return nil, err
 	}
-	return atomicfile.WriteFile(path, after, 0o644)
+	if err := atomicfile.WriteFile(path, after, 0o644); err != nil {
+		return nil, err
+	}
+	return taken, nil
 }

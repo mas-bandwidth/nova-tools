@@ -434,6 +434,31 @@ func TestFriendHelpMatchesWhatFriendSyncDoes(t *testing.T) {
 	}
 }
 
+// The friends paragraph of nova-sprint help friend says both status rules, the beat's
+// and the coordinator's observation (friend health), and the bus messages friend sync
+// sends her: on a delivery and on a card taken back (docs/SPEC-SPRINT.md section 1, a
+// friend's health and a friend's card).
+func TestFriendHelpSaysTheObservedRuleAndTheBusMessages(t *testing.T) {
+	t.Parallel()
+	var out, errb bytes.Buffer
+	code := newApp(func(string) string { return "" }).run([]string{"help", "friend"}, &out, &errb)
+	require.Equal(t, 0, code, errb.String())
+	help := strings.Join(strings.Fields(out.String()), " ")
+	for _, want := range []string{
+		"Until the coordinator observes her (friend health), her status is up while her last beat is under " + sprint.FriendDownAfter.String() + " old",
+		"Once observed, the observation decides and her own beat never makes her up again",
+		"up while it says up under the seat's generation now with its proof under " + sprint.FriendObservedDownAfter.String() + " old, and down otherwise",
+		"asleep (her daemon answers, her session does not) is shown as down",
+		"held is the coordinator's friend down alone, whatever she beats or is observed",
+		"shown in her status cell",
+		"one bus message from the coordinator to her (the store NOVA_BUS_REDIS), subject card <card> dealt:",
+		"subject card <card> taken back: <why>",
+		"a friend was not told of her card",
+	} {
+		assert.Contains(t, help, want, "nova-sprint help friend says %q", want)
+	}
+}
+
 // A friend beats through the sprint's server as a member does: `friend beat
 // <friend>` and nothing more, its actor the friend.
 func TestAFriendBeatsThroughTheServer(t *testing.T) {
