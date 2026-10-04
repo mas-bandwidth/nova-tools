@@ -84,13 +84,23 @@ table's own formulas.
 
 A friend says she is there with `friend beat <friend>`, which her own machinery
 runs every second (`FriendBeatEvery`) beside her harness (it writes
-`friend-beat:<friend>`, the time to the second; a friend not in the record is
-refused, exit 1). Her status is the friends' rule (`sprint.FriendStatus`):
+`friend-beat:<friend>`, the time to the second, with what she reports of her
+work: `--running <id>,...`, the cards she is running now, which `friend take`
+and `friend down` leave with her, and, as `fleet beat --load` gives a
+machine's load, `--working <n>`, `--queue <n>`, `--width <n>` and `--load
+<percent>`, her own counts and load as her daemon keeps them, each kept until
+the next beat and carried on `where --json`'s `friends` beside the table's
+counts, which stay the sprint's (her row's cards) and her width the roster's; a
+value of the wrong shape is refused, exit 2; a friend not in the record is
+refused, exit 1; `TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad`). Her status is the friends' rule (`sprint.FriendStatus`):
 `held` while the coordinator holds her (`friend down`; `friend up` releases the
 hold), whatever she beats; else `up` while her last beat is under
 `FriendDownAfter` (15 s) old; else `down`, and `down` when she has never
 beaten (`friend down` holds her and shows `held`, never `down`). A beat wakes her at once. `friend up` is not a beat: a friend released
-with no beat in the last 15 s is `down` until she beats. A friend's statuses
+with no beat in the last 15 s is `down` until she beats. `friend up <friend>
+--width <n>` sets her width (1 to `MaxWidth`), as `fleet up --width` sets a
+machine's, until `friend sync` sets her nova-config row's again (a release
+without it leaves the width as it is; `TestFriendUpWidthSetsHerWidthAsFleetUpWidthSetsAMembers`). A friend's statuses
 are `up`, `held` and `down`, the same words as the fleet table's. A
 friend `down` shows `working` 0 in the table, its footer and `where --json`:
 her cards stay on her row and count again when she beats, and `ready` and
@@ -150,12 +160,83 @@ holds, so it is no machine's and no fleet verb names it), straight into
 carries them; its primary moves ready -> working. The fleet's members are its
 rows but the friends' (`Snapshot.Members`): presence, the rebalance, the
 level, `fleet sync`, the machines' deal and the shape a clear keeps never
-touch a friend's row, so a friend who goes quiet or is held keeps her card
-(no take-back), the no-stall rule holds it as hers whatever her status, and
-the deadline rule (not finished 2 hours from its deal) judges it as it judges
-any work card. The machines' `deal` verb refuses a friend's card, and
+touch a friend's row, so a friend who goes quiet keeps her card (no
+take-back by presence; the coordinator takes back what she has not started,
+below), the no-stall rule holds it as hers whatever her status, and
+the deadline rule judges it as it judges any work card, its working deadline
+by friend: the larger of 2 hours from its deal (`DeadlineUnfinished`) and
+`FriendDeadlineK` (three) times her median run wall over her last
+`FriendDeadlineSamples` (fifty) ok attempts, her run wall being her take to
+her report (`sprint.RunWall`), set on the card as `friend_deadline` (seconds)
+when it goes into working on her row (her deal, her next on a finish, a level
+or a redeal), and absent while she has no ok attempt: nova-tools#5300's member
+rule, written here for friends under its own names because #5300 was not on
+dev (`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
+`TestAFriendsNextCardsDeadlineFollowsHerRunWall`). The machines' `deal` verb refuses a friend's card, and
 `rework` of one sends its primary ready with the fix, for the tick to deal to
 a friend.
+
+**A friend's card taken back** (the owner, 2026-10-04, on cards dealt to a
+friend who would not start them, which could only be dropped and added again:
+"sounds bad, we should fix this"; `sprint.FriendTake`). `friend take <friend>
+<id>... [--reason <text>]` (the coordinator's) takes back each card named (a
+primary or its work card) that is dealt to that friend, ready or working on
+her row, and that she has not started: its work card is withdrawn on her row
+at its next generation with `taken_back` "taken back by the coordinator:
+<reason>" and `taken_from` her row, its primary goes back to ready with its
+attempt as it was (a take-back is no attempt and no failure: `take_ended` is
+not set, so no redeal of its bound is spent), and its dealt bound runs again
+from the take (`untaken_since`, `first_taken` unset). A card she has started
+is refused: a push on its branch (origin holds it: one `git ls-remote` a card,
+the tip `friend sync` reads; a tip that cannot be read, or a card with no
+`REPO:` line, counts as started, so nothing is taken from under her), her
+last beat naming it running (`friend beat --running`, by its work card id, its
+job or its primary), or finished (in review or later, no longer on her row's
+ready or working). A card not dealt to her is refused naming where it is. The
+refusals are one line each and, with ids named, all or none.
+`--all-unstarted` takes every card of hers she has not started and says each
+one she keeps on a NOTE line. A working card taken frees her lane: her oldest
+ready card not taken goes into working in the same unit, as her finish takes
+it. The friends' deal places the same work card again (`friendRedealUnit`): to
+the friend up with room its WHO line allows, never the friend it was taken
+from, at its next generation, so on its own branch, and as its own job
+(`<card>.g<gen>` from the second generation: a card dealt back to the same
+friend after a hold is a new job whose brief names its branch); a card whose
+WHO line names only the friend it was taken from waits ready, held by the
+no-stall rule as waiting on the coordinator, until it is briefed for another
+friend or dropped. While the machine runs, the take's work-table change waits
+for the pump (section 4), so the tick after the next deals it. `friend sync`
+writes a card taken back as `taken` in her queue file, so her daemon starts
+none of them. `friend down <friend>` holds her as `fleet down` holds a machine
+(the owner's ask: a held friend behaves as a held machine): the tick deals her
+nothing, and every card of hers she has not started goes back to ready the
+same way, `taken_back` naming the hold and no `taken_from`, so her own named
+cards come back to her when she is released and beats; what she has started
+stays on her row and finishes (`TestTheHoldOfAFriendWithdrawsWhatSheHasNotStartedAndKeepsTheRest`,
+`TestFriendDownGivesBackWhatSheHasNotStartedAndKeepsTheRest`).
+
+**Friend level** (the owner, 2026-10-04: "What else is like this? Missing
+verbs we need for friends, that machines already have"; `sprint.FriendLevel`).
+`friend level` (the coordinator's) evens the friends' ready queues as `fleet
+level` evens the members' (section 5), within each class: a friend's class is
+the tiers her nova-config row says she can do (`friend sync` copies them to
+the roster, sorted and comma joined), and a card moves only between friends of
+one class. Among the friends up of a class, while the largest backlog (the
+cards on her row, ready and working, less her width) of a friend with a card
+that may move and the smallest of the friends below their room (DealAhead
+times their width) differ by more than one, the newest card that may move of
+the first goes to the second at its next generation (its own branch, and its
+own job, `<card>.g<gen>`), into `working` when she has a lane free and `ready`
+behind her working cards otherwise. A card may move when its WHO line is
+`friend` (any friend), it is ready on her row, and she has not started it (a
+push on its branch, her beat naming it running); a card naming her and a
+working card stay. Each move lowers the sum of squared backlogs and a card
+moves once, so it ends. The first MOVED line ends `moved=N to
+<friend>(n),... from <friend>(n),...`. `friend sync` delivers a moved card as a
+new job to the friend it went to, and the queue file of the friend it left
+marks it `taken` (a queued record of a card now dealt to another row). The tick
+does not level the friends (`TestFriendLevelEvensTheReadyQueuesOfAClass`,
+`TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow`).
 
 `friend sync`, run by the coordinator's own loop where the directories are
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
@@ -2325,7 +2406,7 @@ default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, fleet
-up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
+up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, friend take, friend level, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it (the seat
@@ -2367,7 +2448,7 @@ command that loads it.
 | ask | deals primaries in review to the readers each needs (one for a flash card, two different readers for a pro card; section 6); `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |
 | routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish, and `rested_until`, when its rest ends while the machine rests it for children that ended with no result (section 5; `-` when it does not rest); `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` (`rested_until` only while it rests) |
-| stats | the epoch's pass in seconds, each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json` |
+| stats | the epoch's pass in seconds, each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, or for a friend's card, which reports no usage, `taken` to `reported` (her REPORT.md's time, which `friend sync` keeps on the card, no later than the finish; `TestStatsTimesAFriendsRunFromHerReport`), report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json` |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin`; `--usage <text>` (what the read spent) is kept on the read card, timed and priced (section 2, What a card cost) |
 | accept | review -> merging and into merge queued; refused without the ok reads it needs (one reader for a flash card, two different readers for a pro card); named ids all or nothing, a selection moves the eligible |
 | rework | delegates the next attempt at once with a fix (the member stages it at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, docs/SPEC-CARD-CONTRACT.md, where a rework starts), and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off and its bound's class written as the primary's record of its failed work; `--tier`: at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, heavy, frontier) or the provider its takes failed on is back, which lifts it once per tier per card; the refusal is one line naming that attempt, the class and the tiers above (section 5, the bound holds across attempts); without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; `--tier <flash|pro|heavy|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; it pins the card: the tier is its ceiling too and the machine never escalates it (section 5, flash first); a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier; one id while the inbox holds a judgment group of several naming it is refused unless `--one`: `the inbox holds a group of <n> for this card; answer the group; run: nova-sprint rework --group <id> --expect <n>; or say --one` (`TestReworkAndDropRefuseOneCardOfAGroupWithoutOne`; the group is read from the open notes alone, `store.OpenGroups`, never the whole inbox: `TestOpenGroupsAreTheInboxsJudgmentGroupsFromTheOpenNotesAlone`) |
@@ -2387,8 +2468,10 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | fleet | `up|down <member>`, `level`; down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 10 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
-| friend beat | a friend's beat, `friend beat <friend>`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and nothing more |
-| friend down, friend up | hold a friend (status `held`, whatever it beats) and release the hold (not a beat: `down` until she beats) |
+| friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
+| friend down, friend up | hold a friend (status `held`, whatever it beats; every card dealt to her she has not started goes back to ready) and release the hold (not a beat: `down` until she beats; `--width <n>` sets her width) |
+| friend take | take back cards dealt to a friend that she has not started (`<id>...` or `--all-unstarted`), each back to ready for the friends' deal |
+| friend level | even the ready queues of the friends up within each class, as fleet level evens the members' |
 | reader add | declares readers |
 | reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
 | reader up | releases the hold; the reader's state is then its beat's |
@@ -2705,7 +2788,7 @@ nothing between requests.
 
 The server runs the workers' verbs only: `take`, `finish`, `read` and `queue`, each beginning
 `<verb> --as <worker>` with one worker's name, `fleet beat <member> --load <percent>` and
-nothing more, and `friend beat <friend>` and nothing more. No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
+nothing more, and `friend beat <friend>` with its report's flags (`--running`, `--working`, `--queue`, `--width`, `--load`), each once with its value, and nothing more. No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
 `actor`: the server gives the store and the actor, and puts them before the worker's words. A
 `take`, a `finish` and a `read` name the epoch their worker holds (`--epoch`). A `queue`'s
 `--packets` is a count from 0 to 1024 and its `--have` card ids, each given once: a worker asks

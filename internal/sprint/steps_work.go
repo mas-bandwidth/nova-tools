@@ -1128,7 +1128,12 @@ type FinishReq struct {
 	// finish whose class is no-result or nothing-to-do at or above that class's bar on the
 	// card is routed by it (finishKind). A finish carrying one names one card.
 	Decided string
-	Who     string
+	// Reported is when the worker wrote its report, when the transport knows it (a
+	// friend's REPORT.md, friend sync): kept on the work card as FieldReported, no later
+	// than the finish, so the stats time a friend's run from her take to her report and
+	// her report lag from it to the finish (RunWall). Zero is unknown.
+	Reported time.Time `json:",omitzero"`
+	Who      string
 }
 
 // Finish moves work cards working -> done and their primaries working ->
@@ -1236,6 +1241,13 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			head, result, okWord, into = pr.F(FieldPassedHead), "ok", "yes", DoneOK
 		}
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
+		if !r.Reported.IsZero() {
+			at := r.Reported
+			if at.After(s.Now) {
+				at = s.Now // her clock ahead of the sprint's: never after the finish
+			}
+			cardSet[FieldReported] = stamp(at)
+		}
 		if r.Report != "" {
 			cardSet["report"] = r.Report
 		}
@@ -1350,7 +1362,9 @@ func friendNext(s *Snapshot, c *Card, u *Unit) {
 	}
 	SortCards(ready)
 	next := ready[0]
-	u.Changes = append(u.Changes, change(Fleet, moveEntry(next, c.Row, Working, takenStamps(next, s.Now), "untaken_since")))
+	name, _ := FriendOfRow(c.Row)
+	set, unset := friendTaken(s, next, name)
+	u.Changes = append(u.Changes, change(Fleet, moveEntry(next, c.Row, Working, set, unset...)))
 	u.Moved += fmt.Sprintf("; %s ready -> working (her next, taken now)", next.ID)
 }
 
@@ -1463,17 +1477,25 @@ func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 }
 
 // withdrawCard is the unit that withdraws work card c from its member, the one path of a
-// member going down (FleetStep) and of a ready card on a resting route (restWithdrawals): a
-// new generation and the withdrawn stamp, and FieldTakeEnded only when its take ended
-// (ended), which spends a redeal (redeal); its primary, working on c, goes back to ready for
-// the next deal, with a happened note of typ to its stream that says what, by who.
+// member going down (FleetStep), of a ready card on a resting route (restWithdrawals) and
+// of a friend's card taken back (FriendTake, by withdrawUnit): a new generation and the
+// withdrawn stamp, and FieldTakeEnded only when its take ended (ended), which spends a
+// redeal (redeal); its primary, working on c, goes back to ready for the next deal, with a
+// happened note of typ to its stream that says what, by who.
 func withdrawCard(s *Snapshot, c *Card, ended bool, typ, who, what string) Unit {
+	var set map[string]string
+	if ended {
+		set = map[string]string{FieldTakeEnded: stamp(s.Now)}
+	}
+	return withdrawUnit(s, c, set, nil, typ, who, what)
+}
+
+// withdrawUnit is withdrawCard with the fields extra sets and unset unsets on the card.
+func withdrawUnit(s *Snapshot, c *Card, extra map[string]string, unset []string, typ, who, what string) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"] = stamp(s.Now)
-	if ended {
-		set[FieldTakeEnded] = stamp(s.Now)
-	}
-	u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
+	maps.Copy(set, extra)
+	u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, append([]string{"taken", "dealt"}, unset...)...))},
 		Moved: fmt.Sprintf("%s withdrawn gen=%d", c.ID, c.Int("gen")+1)}
 	if what != "" {
 		u.Moved += ", " + what

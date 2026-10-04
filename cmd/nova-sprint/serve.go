@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"slices"
@@ -42,7 +43,7 @@ import (
 // workerVerb is the worker a verb of a batch acts as and how many words its
 // verb is, or why the server does not run it. A worker sends its own verbs only:
 // take, finish, read or queue, then --as and its name; or fleet beat, its name,
-// --load and a number, and nothing more; or friend beat and its name alone. The name is one worker, never a list.
+// --load and a number, and nothing more; or friend beat, its name, and its report's flags each with its value (friendBeatReport). The name is one worker, never a list.
 // No later word, wherever it stands, is a flag named as, redis or actor: the
 // server gives the store and the actor (serve puts them before the worker's
 // words, where nothing the worker sent can take them as a value or end the
@@ -66,8 +67,11 @@ func workerVerb(argv []string) (as string, words int, why string) {
 		return rest[0], 2, ""
 	}
 	if len(argv) >= 2 && argv[0] == "friend" && argv[1] == "beat" {
-		if len(argv) != 3 || !sprint.ValidID(argv[2]) {
-			return "", 0, "a friend's beat sent to the server is `friend beat <friend>` and nothing more"
+		if len(argv) < 3 || !sprint.ValidID(argv[2]) {
+			return "", 0, "a friend's beat sent to the server is `friend beat <friend>` and its report's flags (" + friendBeatServed + ") and nothing more"
+		}
+		if why := friendBeatReport(argv[3:]); why != "" {
+			return "", 0, why
 		}
 		return argv[2], 2, ""
 	}
@@ -306,4 +310,59 @@ func (a *app) listen(addr, store string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "SERVER listening on %s: the coordinator's verbs, from this machine (NOVA_SPRINT_SERVER=%s)\n", loop, loop)
 	return nil
+}
+
+// friendBeatFlags are the flags of a friend's beat the server runs, each with the shape of
+// its value: what her machinery reports of her work (friend beat).
+var friendBeatFlags = map[string]func(string) bool{
+	"--running": runningIDs,
+	"--working": wholeAtLeast(0),
+	"--queue":   wholeAtLeast(0),
+	"--width":   wholeAtLeast(1),
+	"--load": func(v string) bool {
+		f, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64)
+		return err == nil && f >= 0
+	},
+}
+
+// wholeAtLeast is the shape of a count of at least min.
+func wholeAtLeast(min int) func(string) bool {
+	return func(v string) bool {
+		n, err := strconv.Atoi(v)
+		return err == nil && n >= min
+	}
+}
+
+// friendBeatServed names friendBeatFlags for a refusal.
+var friendBeatServed = strings.Join(slices.Sorted(maps.Keys(friendBeatFlags)), ", ")
+
+// friendBeatReport is why the words after a friend's beat's name are not its report's
+// flags, each once with a value of its shape; "" when they are.
+func friendBeatReport(words []string) string {
+	seen := map[string]bool{}
+	for i := 0; i < len(words); i += 2 {
+		ok, known := friendBeatFlags[words[i]]
+		switch {
+		case !known || seen[words[i]]:
+			return "a friend's beat sent to the server takes its report's flags (" + friendBeatServed + "), each once with its value, and nothing more; found " + oneline.Escape(words[i])
+		case i+1 == len(words) || !ok(words[i+1]):
+			return "a friend's beat's " + words[i] + " wants its value"
+		}
+		seen[words[i]] = true
+	}
+	return ""
+}
+
+// runningIDs says the value is a list of card ids or job names, comma separated: letters,
+// digits, and . _ - ~ only.
+func runningIDs(v string) bool {
+	if v == "" || len(v) > 4096 {
+		return false
+	}
+	for _, r := range v {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-~,", r)) {
+			return false
+		}
+	}
+	return true
 }

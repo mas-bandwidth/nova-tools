@@ -19,7 +19,7 @@ func TestFriendRowsReturnsNameWidthStatusOnly(t *testing.T) {
 	require.NoError(t, err)
 	_, err = h.st.FriendBeat(h.ctx, "amy")
 	require.NoError(t, err)
-	require.NoError(t, h.st.SetFriendHeld(h.ctx, "bob", true, "c"))
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "bob", true, "c", 0))
 	rows, err := h.st.FriendRows(h.ctx, h.now)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)

@@ -493,6 +493,9 @@ type whereView struct {
 	Width  int    `json:"width"`
 	Buffer string `json:"buffer"`
 	Low    bool   `json:"low"`
+	// Friends is the friends table's rows with what each friend's last beat reported (her
+	// load and her own counts, friend beat), beside the table's counts, which are the sprint's.
+	Friends []store.FriendRow `json:"friends,omitempty"`
 }
 
 // dealtCard is a work card dealt to a fleet row and not finished: the row (a machine, or a
@@ -829,6 +832,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 			friends[i].Working = 0 // down, she works nothing
 		}
 	}
+	v.Friends = friends
 	ft := friendsTable(friends)
 	v.Tables[sprint.Friends] = map[string]map[string]string{}
 	for _, r := range ft.Rows {

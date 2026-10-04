@@ -44,8 +44,16 @@ const (
 	VerdictFail = "FAIL"
 )
 
-// friendJobOf is the job a friend's sprint card is delivered as: its stored id.
-func friendJobOf(p sprint.Packet) string { return sprint.StoredID(p.Card, p.Epoch) }
+// friendJobOf is the job a friend's sprint card is delivered as: its stored id, and from its
+// second generation (a card taken back and dealt again, sprint.FriendTake) .g<gen> after it, so
+// a card dealt again to the same friend is a new job whose brief names its own branch.
+func friendJobOf(p sprint.Packet) string {
+	job := sprint.StoredID(p.Card, p.Epoch)
+	if p.Gen > 1 {
+		job += ".g" + strconv.Itoa(p.Gen)
+	}
+	return job
+}
 
 // friendBrief is the BRIEF.md of a friend's sprint card: its STATUS line (the card, its
 // epoch and attempt, the branch to push and the report to write), the working-directory
@@ -238,35 +246,35 @@ func friendInbox(dir string, p sprint.Packet) (in, why string, err error) {
 // report is "no report yet, still working" (nothing is said), and a non-empty
 // why is "skip it, still working" — the caller says the why and continues so
 // the next sync reads it again.
-func friendReadReport(dir, job string) (report, why string, err error) {
+func friendReadReport(dir, job string) (report, why string, at time.Time, err error) {
 	outDir := filepath.Join(dir, "outbox", job)
 	outName := filepath.Join("outbox", job)
 	reportName := filepath.Join(outName, "REPORT.md")
 	fi, err := os.Lstat(outDir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return "", "", nil
+		return "", "", time.Time{}, nil
 	case err != nil:
-		return "", "", err
+		return "", "", time.Time{}, err
 	case !fi.IsDir():
-		return "", outName + " is a symlink or a file, not a directory", nil
+		return "", outName + " is a symlink or a file, not a directory", time.Time{}, nil
 	}
 	fi, err = os.Lstat(filepath.Join(outDir, "REPORT.md"))
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return "", "", nil
+		return "", "", time.Time{}, nil
 	case err != nil:
-		return "", "", err
+		return "", "", time.Time{}, err
 	case !fi.Mode().IsRegular():
-		return "", reportName + " is a symlink or a non-regular file", nil
+		return "", reportName + " is a symlink or a non-regular file", time.Time{}, nil
 	case fi.Size() > friendReportReadCap:
-		return "", reportName + " is larger than " + strconv.Itoa(friendReportReadCap) + " bytes", nil
+		return "", reportName + " is larger than " + strconv.Itoa(friendReportReadCap) + " bytes", time.Time{}, nil
 	}
 	b, err := os.ReadFile(filepath.Join(outDir, "REPORT.md"))
 	if err != nil {
-		return "", "", err
+		return "", "", time.Time{}, err
 	}
-	return string(b), "", nil
+	return string(b), "", fi.ModTime(), nil
 }
 
 // friendCardsOf delivers and collects one friend's sprint cards in her working directory
@@ -279,13 +287,39 @@ func friendReadReport(dir, job string) (report, why string, err error) {
 func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
 	// her working cards, then the ready ones dealt behind them (sprint.FriendDeal): both are
 	// delivered, and her queue file says which are which
-	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working, sprint.Ready)
-	if err != nil || len(cards) == 0 {
+	// and the ones taken back from her (sprint.FriendTake), withdrawn on her row until the deal
+	// places them again: taken in her queue file, so her daemon starts none of them
+	// a queued card no longer on her row that is dealt to another (friend level, or a take
+	// dealt again) left her: taken in her queue file too
+	left := func(ids []string) (map[string]bool, error) {
+		cards, err := st.Records(ctx, sprint.Fleet, ids)
+		out := map[string]bool{}
+		for _, c := range cards {
+			if c != nil && c.Row != sprint.FriendRow(name) && (c.Col == sprint.Ready || c.Col == sprint.Working || c.Col == sprint.Withdrawn) {
+				out[c.ID] = true
+			}
+		}
+		return out, err
+	}
+	all, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working, sprint.Ready, sprint.Withdrawn)
+	if err != nil {
 		return 0, 0, err
 	}
 	states := map[string]string{}
-	for _, c := range cards {
-		states[c.ID] = map[string]string{string(sprint.Working): "working", string(sprint.Ready): "queued"}[string(c.Col)]
+	if len(all) == 0 {
+		// none on her row: a queue file there still has its queued cards that left her
+		// marked taken (writeQueueFile), and none is made
+		if _, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(queueFile))); err != nil {
+			return 0, 0, nil
+		}
+		return 0, 0, writeQueueFile(dir, states, left)
+	}
+	var cards []*sprint.Card
+	for _, c := range all {
+		states[c.ID] = map[string]string{string(sprint.Working): "working", string(sprint.Ready): "queued", string(sprint.Withdrawn): queueTaken}[string(c.Col)]
+		if c.Col != sprint.Withdrawn {
+			cards = append(cards, c)
+		}
 	}
 	packets, err := st.Packets(ctx, cards)
 	if err != nil {
@@ -293,7 +327,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	}
 	defer func() {
 		if err == nil {
-			err = writeQueueFile(dir, states)
+			err = writeQueueFile(dir, states, left)
 		}
 	}()
 	for _, p := range packets {
@@ -321,7 +355,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		} else if err != nil {
 			return delivered, finished, err
 		}
-		report, why, err := friendReadReport(dir, job)
+		report, why, at, err := friendReadReport(dir, job)
 		if err != nil {
 			return delivered, finished, err
 		}
@@ -336,6 +370,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
 			continue
 		}
+		r.Reported = at
 		step := store.FinishStep(r)
 		step.Actor, step.Epoch = r.Who, &p.Epoch
 		res, err := st.Run(ctx, step)
@@ -361,6 +396,10 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 // her daemon's pong reports its counts (queue, working).
 const queueFile = "inbox/QUEUE.json"
 
+// queueTaken is the queue file's state of a card taken back from her (friend take, friend
+// down): not hers to start.
+const queueTaken = "taken"
+
 // friendQueue is the queue file's shape, as nova-friend reads it.
 type friendQueue struct {
 	Tasks []friendTask `json:"tasks"`
@@ -373,11 +412,12 @@ type friendTask struct {
 }
 
 // writeQueueFile keeps the friend's queue file as the sprint sees her cards: each card
-// on her row is a record, queued while it is ready behind her working cards and working
-// while it is working; a record the sprint does not name, or one her session marked
+// on her row is a record, queued while it is ready behind her working cards, working
+// while it is working, and taken once the coordinator has taken it back or a queued one
+// has been dealt to another (friend level, leftOf); a record the sprint does not name, or one her session marked
 // done, is kept as it is. The file is written whole (atomicfile), and not at all when
 // nothing changes.
-func writeQueueFile(dir string, states map[string]string) error {
+func writeQueueFile(dir string, states map[string]string, leftOf func(ids []string) (map[string]bool, error)) error {
 	path := filepath.Join(dir, filepath.FromSlash(queueFile))
 	var q friendQueue
 	before, err := os.ReadFile(path)
@@ -389,6 +429,18 @@ func writeQueueFile(dir string, states map[string]string) error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
+	var gone []string
+	for _, t := range q.Tasks {
+		if _, ok := states[t.ID]; !ok && t.State == "queued" && sprint.ValidCardID(t.ID) {
+			gone = append(gone, t.ID)
+		}
+	}
+	left := map[string]bool{}
+	if len(gone) > 0 {
+		if left, err = leftOf(gone); err != nil {
+			return err
+		}
+	}
 	seen := map[string]bool{}
 	for i, t := range q.Tasks {
 		if state, ok := states[t.ID]; ok {
@@ -396,6 +448,10 @@ func writeQueueFile(dir string, states map[string]string) error {
 			if t.State != "done" {
 				q.Tasks[i].State = state
 			}
+		} else if left[t.ID] {
+			// queued, and dealt to another now: it left without her starting it (friend
+			// level, or a take dealt again elsewhere), so it is not hers to start
+			q.Tasks[i].State = queueTaken
 		}
 	}
 	for _, id := range slices.Sorted(maps.Keys(states)) {

@@ -40,7 +40,7 @@ func TestTeardownLeavesTheKeysAsBeforeInit(t *testing.T) {
 		require.NoError(t, err)
 		_, err = h.st.FriendBeat(h.ctx, "friend-a")
 		require.NoError(t, err)
-		require.NoError(t, h.st.SetFriendHeld(h.ctx, "friend-b", true, "c"))
+		require.NoError(t, h.st.SetFriendHeld(h.ctx, "friend-b", true, "c", 0))
 	}
 	work()
 	during := m.Keys(h.st.Names)
