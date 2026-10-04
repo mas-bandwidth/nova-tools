@@ -96,11 +96,12 @@ func refuseFlagPassword() error {
 
 // flagCarriesPassword reports whether the flag's DSN text names a password
 // itself, in either spelling the pgconn parser accepts: a URI userinfo or
-// query parameter, or the keyword form's password key. The same refusal
-// holds the fleet kind's stored pg_dsn (checkFleet), whose query keys it
-// matches case-insensitively; a password pgconn takes from the process
-// environment is never seen here, so it is never mistaken for one on the
-// line.
+// query parameter, or the keyword form's password key. sslpassword, the
+// passphrase for the SSL client key, is a secret the parser reads the same
+// way and meets the same refusal. The same refusal holds the fleet kind's
+// stored pg_dsn (checkFleet), whose query keys it matches case-insensitively;
+// a password pgconn takes from the process environment is never seen here, so
+// it is never mistaken for one on the line.
 func flagCarriesPassword(dsn string) bool {
 	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
 		// The pgconn URI reader takes the userinfo from the text before the
@@ -127,7 +128,7 @@ func flagCarriesPassword(dsn string) bool {
 			// The pgconn URI reader trims the keyword whitespace around a
 			// query key before it reads it, so a padded key is the same
 			// password field.
-			if strings.EqualFold(strings.Trim(key, kwSpaces), "password") {
+			if isPasswordKey(strings.Trim(key, kwSpaces)) {
 				return true
 			}
 		}
@@ -139,6 +140,14 @@ func flagCarriesPassword(dsn string) bool {
 // kwSpaces is the whitespace the keyword/value grammar knows, the set the
 // pgconn parser trims and breaks values on.
 const kwSpaces = " \t\n\r\v\f"
+
+// isPasswordKey reports whether a connection key names a secret the pgconn
+// parser reads from the flag: password, or sslpassword, the passphrase for
+// the SSL client key. Both are on the command line where a ps reads them, so
+// both meet the one refusal (docs/nova-config/README.md, "Connecting").
+func isPasswordKey(key string) bool {
+	return strings.EqualFold(key, "password") || strings.EqualFold(key, "sslpassword")
+}
 
 // keywordCarriesPassword walks the keyword/value DSN the way the pgconn
 // parser walks it (the same whitespace set, quotes and backslash escapes),
@@ -158,7 +167,7 @@ func keywordCarriesPassword(dsn string) bool {
 		if strings.ContainsAny(key, kwSpaces) {
 			return false // a keyword with whitespace in it: the pgconn parser refuses the DSN
 		}
-		if strings.EqualFold(key, "password") {
+		if isPasswordKey(key) {
 			return true
 		}
 		s = strings.TrimLeft(s[eqIdx+1:], kwSpaces)
