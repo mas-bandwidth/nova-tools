@@ -3,7 +3,6 @@
 package filelock
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,45 +20,29 @@ func TestVerifyInode_EdgeCases(t *testing.T) {
 	path := filepath.Join(dir, "verify.lock")
 
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	defer f.Close()
 
 	// Normal match
 	match, err := verifyInode(f, path)
-	if err != nil || !match {
-		require.Fail(t, fmt.Sprintf("verifyInode normal = %v, %v, want true, nil", match, err))
-	}
+	require.True(t, err == nil && match, "verifyInode normal = %v, %v, want true, nil", match, err)
 
 	// File removed from disk
-	if err := os.Remove(path); err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, os.Remove(path))
 	matchRemoved, err := verifyInode(f, path)
-	if err != nil || matchRemoved {
-		assert.Fail(t, fmt.Sprintf("verifyInode removed = %v, %v, want false, nil", matchRemoved, err))
-	}
+	assert.True(t, err == nil && !matchRemoved, "verifyInode removed = %v, %v, want false, nil", matchRemoved, err)
 
 	// Recreated different file at path
-	if err := os.WriteFile(path, []byte("new"), 0666); err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("new"), 0666))
 	matchRecreated, err := verifyInode(f, path)
-	if err != nil || matchRecreated {
-		assert.Fail(t, fmt.Sprintf("verifyInode recreated = %v, %v, want false, nil", matchRecreated, err))
-	}
+	assert.True(t, err == nil && !matchRecreated, "verifyInode recreated = %v, %v, want false, nil", matchRecreated, err)
 
 	// Pass directory as fd
 	dirF, err := os.Open(dir)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	defer dirF.Close()
 	_, errDir := verifyInode(dirF, dir)
-	if errDir == nil {
-		assert.Error(t, errDir, "verifyInode on directory should error")
-	}
+	assert.Error(t, errDir, "verifyInode on directory should error")
 }
 
 func TestOpenFileSafe_FIFO(t *testing.T) {
@@ -73,15 +56,11 @@ func TestOpenFileSafe_FIFO(t *testing.T) {
 
 	// openFileSafe with O_RDONLY must not block on FIFO and must refuse it as not a regular file
 	_, err := openFileSafe(fifoPath, os.O_RDONLY, 0)
-	if err == nil {
-		require.Error(t, err, "openFileSafe on FIFO succeeded, want error")
-	}
+	require.Error(t, err, "openFileSafe on FIFO succeeded, want error")
 
 	// ReadStamp on FIFO must also not block and return error
 	_, err = ReadStamp(fifoPath)
-	if err == nil {
-		require.Error(t, err, "ReadStamp on FIFO succeeded, want error")
-	}
+	require.Error(t, err, "ReadStamp on FIFO succeeded, want error")
 }
 
 func TestMutant_VerifyInode(t *testing.T) {
@@ -99,14 +78,8 @@ func TestMutant_VerifyInode(t *testing.T) {
 	}
 
 	lock, err := tryLockWithOptions(path, "mismatch", opts)
-	if lock != nil {
-		lock.Unlock()
-		require.Fail(t, "tryLockWithOptions succeeded despite inode mismatch (mutant: verifyInode check bypassed)")
-	}
-	if err == nil || !strings.Contains(err.Error(), "failed after 5 inode collision retries") {
-		require.Fail(t, fmt.Sprintf("err = %v, want 'failed after 5 inode collision retries'", err))
-	}
-	if calls != 5 {
-		require.Equal(t, 5, calls, "verifyInode called %d times, want 5 retries", calls)
-	}
+	lock.Unlock() // nil-safe: releases a mutant lock, no-ops on nil
+	require.Nil(t, lock, "tryLockWithOptions succeeded despite inode mismatch (mutant: verifyInode check bypassed)")
+	require.True(t, err != nil && strings.Contains(err.Error(), "failed after 5 inode collision retries"), "err = %v, want 'failed after 5 inode collision retries'", err)
+	require.Equal(t, 5, calls, "verifyInode called %d times, want 5 retries", calls)
 }
