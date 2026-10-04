@@ -160,3 +160,32 @@ func TestTheRepositoryPlanLoads(t *testing.T) {
 	require.NotEmpty(t, cases, "the plan declares no case or no required group")
 	require.NotEmpty(t, RequiredGroups(cases), "the plan declares no case or no required group")
 }
+
+// The cairn group is one passing model and one reversed witness (security#73
+// finding 4): the witness is expected to violate the one-section invariant.
+func TestTheRepositoryPlanHoldsACairnModelWithItsReversedWitness(t *testing.T) {
+	t.Parallel()
+	cases, err := LoadCases(filepath.Join("..", ".."))
+	require.NoError(t, err, "tla/CASES.tsv is refused")
+	var pass, broken []Case
+	for _, c := range cases {
+		if c.Group != "cairn" {
+			continue
+		}
+		switch c.Expected {
+		case "pass":
+			pass = append(pass, c)
+		case "invariant":
+			broken = append(broken, c)
+		default:
+			t.Errorf("cairn case %s expected %s, want pass or invariant", c.Config, c.Expected)
+		}
+	}
+	require.Len(t, pass, 1, "cairn pass cases = %v", pass)
+	require.Len(t, broken, 1, "cairn invariant cases = %v", broken)
+	require.Equal(t, "MCCairn.tla", pass[0].Module, "pass module = %s", pass[0].Module)
+	require.Equal(t, "-", pass[0].Property, "pass property = %s", pass[0].Property)
+	require.Equal(t, "MCCairn.tla", broken[0].Module, "witness module = %s", broken[0].Module)
+	require.Equal(t, "MCCairnBrokenFlatAppend.cfg", broken[0].Config, "witness config = %s", broken[0].Config)
+	require.Equal(t, "AtMostOneSectionOrEntry", broken[0].Property, "witness property = %s", broken[0].Property)
+}
