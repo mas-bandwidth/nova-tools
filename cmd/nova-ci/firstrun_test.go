@@ -137,6 +137,7 @@ func runDocumented(t *testing.T, root string) onboarding.Runner {
 			if err != nil {
 				return onboarding.Result{}, err
 			}
+			// ignored: a file opened only to read the documented stdin; nothing is written through it
 			defer f.Close()
 			stdin = f
 		}

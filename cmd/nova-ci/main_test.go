@@ -183,6 +183,7 @@ func TestSlowtestsReadsTheNullDeviceAsAnEmptyStream(t *testing.T) {
 
 	null, err := os.Open(os.DevNull)
 	require.NoError(t, err)
+	// ignored: the null device opened only to read as the empty stream; nothing is written through it
 	defer null.Close()
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, null, &stdout, &stderr)

@@ -99,6 +99,7 @@ func cmdReceipt(ctx context.Context, args []string, stdout, stderr io.Writer, ge
 	if err != nil {
 		return refuse(stderr, where, oneline.Err(err))
 	}
+	// ignored: a client close after the receipt's one write was confirmed; it reports nothing the verb can act on
 	defer st.Close()
 	id, err := cireceipt.Write(ctx, st.Client(), r)
 	if err != nil {
