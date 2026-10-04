@@ -151,6 +151,7 @@ func TestWaitCoverOnNoteFramePrintsTheWake(t *testing.T) {
 		name    string
 		files   map[string]string
 		wakes   []bus.OpenEntry
+		maxNote int
 		maxByte int64
 		want    string
 	}{
@@ -188,6 +189,22 @@ func TestWaitCoverOnNoteFramePrintsTheWake(t *testing.T) {
 				"INBOX NOTE id=bo-111111111111 from=Bo addr=to at=2026-09-09T12:00:00Z path=from-bo/one.md: the subject\n" +
 				"INBOX BODY OVERSIZE id=bo-111111111111 bytes=13 max-bytes=4 path=from-bo/one.md\n",
 		},
+		{
+			name: "the max-notes cap stops the frame",
+			files: map[string]string{
+				"from-bo/one.md": wakeNote("bo-111111111111", "short"),
+				"from-bo/two.md": wakeNote("bo-222222222222", "the body text"),
+			},
+			wakes: []bus.OpenEntry{
+				wakeEntry("bo-111111111111", "from-bo/one.md"),
+				wakeEntry("bo-222222222222", "from-bo/two.md"),
+			},
+			maxNote: 1,
+			want: "WAIT OK id=bo-111111111111 from=Bo path=from-bo/one.md bytes=5\n" +
+				"INBOX NOTE id=bo-111111111111 from=Bo addr=to at=2026-09-09T12:00:00Z path=from-bo/one.md: the subject\n" +
+				"INBOX BODY id=bo-111111111111 bytes=5\nshort\n" +
+				"INBOX BODY END id=bo-111111111111\n",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -200,7 +217,11 @@ func TestWaitCoverOnNoteFramePrintsTheWake(t *testing.T) {
 			if maxByte == 0 {
 				maxByte = 1024
 			}
-			frame, err := onNoteFrame(inboxOpts{busDir: busDir, maxNotes: 5, maxBytes: maxByte}, c.wakes)
+			maxNote := c.maxNote
+			if maxNote == 0 {
+				maxNote = 5
+			}
+			frame, err := onNoteFrame(inboxOpts{busDir: busDir, maxNotes: maxNote, maxBytes: maxByte}, c.wakes)
 			require.NoError(t, err)
 			assert.Equal(t, c.want, frame)
 			assert.NotContains(t, frame, "bo-222222222222", "a wake left whole is not printed")
