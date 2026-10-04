@@ -28,13 +28,16 @@ func TestAckCombinesDependencyJudgmentsForOnePrimary(t *testing.T) {
 					h.must(ResolveStep(sprint.ResolveReq{}))
 					wants = []string{"first.bad", "second.bad"}
 				case "dropped":
-					h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "first obsolete"}))
-					h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Reason: "second obsolete"}))
+					seedDroppedNeed(h, "s1-1")
+					h.must(ResolveStep(sprint.ResolveReq{}))
+					seedDroppedNeed(h, "s1-2")
+					h.must(ResolveStep(sprint.ResolveReq{}))
 					wants = []string{"s1-1", "s1-2"}
 				case "mixed":
 					seedMissingNeeds(h, "waiter", "first.bad,s1-2")
 					h.must(ResolveStep(sprint.ResolveReq{}))
-					h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
+					seedDroppedNeed(h, "s1-2")
+					h.must(ResolveStep(sprint.ResolveReq{}))
 					wants = []string{"first.bad", "s1-2"}
 				}
 				notes := append(h.nOpenOf(sprint.NMissingNeed, "waiter"), h.nOpenOf(sprint.NBlocked, "waiter")...)
