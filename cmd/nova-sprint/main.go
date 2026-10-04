@@ -160,8 +160,9 @@ type app struct {
 	// home is the directory a seat's inbox is under (inbox --wait --push seat:
 	// ~/<holder>-working/inbox): os.UserHomeDir unless a test sets it.
 	home func() (string, error)
-	// transport carries the balance poll's requests to the providers (balance.go):
-	// nil is http.DefaultTransport, a test gives a fake.
+	// transport carries the balance poll's requests to the providers (balance.go)
+	// and the seat check's GET on the dashboard (machinery.go): nil is
+	// http.DefaultTransport, a test gives a fake.
 	transport http.RoundTripper
 	// The brief decision before add (briefdecide.go): decideBackend is the backend over
 	// the key (Jev over its real transport unless a test sets it), briefRecord the record

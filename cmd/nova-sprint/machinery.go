@@ -111,7 +111,7 @@ func (a *app) realOutside() outside {
 			if err != nil {
 				return 0, nil, err
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := (&http.Client{Transport: a.transport}).Do(req) // nil is http.DefaultTransport; a test gives a handler
 			if err != nil {
 				return 0, nil, err
 			}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -127,24 +126,24 @@ func TestSeatVerbsStartWithTheCheck(t *testing.T) {
 	assert.Equal(t, 1, h.Check.Down)
 }
 
-// The check against the twin store with a real HTTP dashboard and a real
-// sprintwire round trip to a fake server: the transport's own readers of a
-// body and an answer, not the fakes'.
+// The check against the twin store with the dashboard's handler behind the
+// app's HTTP transport and a sprintwire round trip to a fake server: the
+// transport's own readers of a body and an answer, not the fakes', and no
+// socket (the GET is handed to the handler in this process).
 func TestMachineryOverHTTP(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1 --owner glenn")
 	ta.ok("start")
 	ta.ok("tick")
-	dash := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/sprint" {
+	ta.a.transport = handlerTransport{http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != "dash.test:7390" || r.URL.Path != "/api/sprint" {
 			http.NotFound(w, r)
 			return
 		}
 		_, _ = w.Write([]byte(`{"build":"3f2a","landed":0}`))
-	}))
-	defer dash.Close()
-	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_ACTOR": "coordinator", DashboardEnv: strings.TrimPrefix(dash.URL, "http://"), ServerEnv: "127.0.0.1:1"}
+	})}
+	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_ACTOR": "coordinator", DashboardEnv: "dash.test:7390", ServerEnv: "127.0.0.1:1"}
 	ta.a.getenv = func(k string) string { return env[k] }
 	ta.a.forward = func(_ context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error) {
 		require.Equal(t, "127.0.0.1:1", addr)
@@ -158,7 +157,7 @@ func TestMachineryOverHTTP(t *testing.T) {
 	ta.a.outside = o
 	out := ta.ok("machinery")
 	assert.Contains(t, out, "MACHINERY server OK addr=127.0.0.1:1 ms=0\n", out)
-	assert.Contains(t, out, "MACHINERY dashboard OK addr="+strings.TrimPrefix(dash.URL, "http://")+" status=200 build=3f2a\n", out)
+	assert.Contains(t, out, "MACHINERY dashboard OK addr=dash.test:7390 status=200 build=3f2a\n", out)
 	assert.Contains(t, out, "MACHINERY OK n=9\n", out)
 }
 
