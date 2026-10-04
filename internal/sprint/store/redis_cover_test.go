@@ -958,6 +958,14 @@ func TestRedisCoverChangeIDs(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, got)
 	})
+	t.Run("a batch that changed no record names none", func(t *testing.T) {
+		t.Parallel()
+		// the store's cjson encodes an empty members list as an object: a
+		// properties-only apply (promoted) is no gap for the twin
+		got, err := changeIDs(changeEvent{verb: "apply", members: "[]", batchDelta: `{"changed_count":0,"members":{},"props":{"promoted_sha":"0123abc"}}`})
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
 	t.Run("a batch event without its account is refused", func(t *testing.T) {
 		t.Parallel()
 		_, err := changeIDs(changeEvent{verb: "apply"})

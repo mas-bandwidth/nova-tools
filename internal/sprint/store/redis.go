@@ -1039,14 +1039,22 @@ func changeIDs(ev changeEvent) ([]string, error) {
 	}
 	if ev.batchDelta != "" {
 		var d struct {
-			Members []struct {
-				ID string `json:"id"`
-			} `json:"members"`
+			Members json.RawMessage `json:"members"`
 		}
 		if err := json.Unmarshal([]byte(ev.batchDelta), &d); err != nil {
 			return nil, err
 		}
-		for _, m := range d.Members {
+		// a batch that changed no record (a properties-only apply, such as promoted) is
+		// encoded by the store's cjson with its empty members as {}: it names none
+		var members []struct {
+			ID string `json:"id"`
+		}
+		if m := strings.TrimSpace(string(d.Members)); m != "" && m != "{}" && m != "null" {
+			if err := json.Unmarshal(d.Members, &members); err != nil {
+				return nil, err
+			}
+		}
+		for _, m := range members {
 			out = append(out, m.ID)
 		}
 	} else if ev.verb == "apply" {
