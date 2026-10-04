@@ -39,6 +39,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
@@ -355,8 +356,13 @@ func (l login) check(d deps) error {
 // password is a store that asks for none (redisconn refuses a password
 // variable that is named and empty, and check has refused a named user
 // without one). Env is left zero, so redisconn reads no variable of its own.
+// Addr is the dialled shape: redisconn keys a Unix socket off its leading
+// slash and takes a path as given, so the unix: prefix is stripped here.
 func (l login) options(d deps) redisconn.Options {
 	o := redisconn.Options{Addr: *l.addr, User: *l.user}
+	if socket, isSocket := unixSocketPath(*l.addr); isSocket {
+		o.Addr = socket
+	}
 	if d.getenv(*l.passwordEnv) != "" {
 		o.PasswordEnv = *l.passwordEnv
 	}
@@ -384,10 +390,19 @@ func (l login) flags() string {
 // validAddr refuses an address the tool would have to guess at. The Redis
 // client fills an empty address in as localhost:6379 and an empty host as the
 // local machine, so an address that is empty, blank, or lacks a host or a
-// numeric port is refused before anything is dialled.
+// numeric port is refused before anything is dialled. A Unix socket names no
+// host and no port: the absolute path is the whole address, given bare or with
+// redis-cli's unix: prefix, and is accepted as the address (connect) dials —
+// it is the shape nova-table's first-run recipe makes.
 func validAddr(addr string) error {
 	if strings.TrimSpace(addr) == "" {
 		return errors.New("--addr is empty; give the instance as <host:port>, refusing to guess localhost")
+	}
+	if _, ok := unixSocketPath(addr); ok {
+		return nil
+	}
+	if _, prefixed := strings.CutPrefix(addr, "unix:"); prefixed {
+		return fmt.Errorf("--addr %q is not <host:port>; after unix: give the absolute path of a Unix socket, refusing to guess", addr)
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -400,6 +415,21 @@ func validAddr(addr string) error {
 		return fmt.Errorf("--addr %q needs a port from 1 to 65535; refusing to guess", addr)
 	}
 	return nil
+}
+
+// unixSocketPath is the socket path addr names: an absolute path with no
+// control character, given bare or after redis-cli's unix: prefix; ok is
+// false when addr names no Unix socket. The path may hold spaces, which a
+// file name may hold.
+func unixSocketPath(addr string) (path string, ok bool) {
+	path, _ = strings.CutPrefix(addr, "unix:")
+	if path == "" {
+		path = addr
+	}
+	if !strings.HasPrefix(path, "/") || strings.ContainsFunc(path, unicode.IsControl) {
+		return "", false
+	}
+	return path, true
 }
 
 // connect opens the store for the login check accepted through
