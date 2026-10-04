@@ -2524,6 +2524,20 @@ its own process, and answers with each verb's exit code and what it printed, one
 in order. One batch, and one tick, at a time: neither runs during the other. The server keeps
 nothing between requests.
 
+The tick's turn. The batches, the lanes beside the tick (land's reads and report, decide,
+balance) and the tick take one line of control. The batches and the lanes take it in the order
+they asked; the tick does not queue behind them. A tick that asks takes the line as soon as no
+batch waits; else its turn is due once the batches have had the line, since the tick before
+ended, for as long as that tick held it (100 ms at least, 5 s at most), and then the tick takes
+the line next, after the holder in flight and before every batch still waiting. So the tick
+waits at most its turn and one batch, however many batches wait, two ticks of a loaded server
+begin less than 15 s apart while a tick and a batch each take less than 5 s, and the batches
+keep at least half the line while the ticks take at most 5 s. A tick that waited more than
+TickEvery for the line prints `LINE the tick waited <d>`. A tick queued behind every batch
+waiting is the stall this prevents: the ticks run in a second or two and begin tens of seconds
+apart, and a RUNNING machine reads STOPPED with no stop given. `TestNoTickStepExceedsItsBound`
+holds the bound.
+
 The server runs the workers' verbs only: `take`, `finish`, `read` and `queue`, each beginning
 `<verb> --as <worker>` with one worker's name, `fleet beat <member> --load <percent>` and
 nothing more, and `friend beat <friend>` and nothing more. No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
