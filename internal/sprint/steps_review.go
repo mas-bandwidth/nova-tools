@@ -1242,15 +1242,25 @@ func orEmpty(c *Card, id string) *Card {
 // DropReq is the coordinator taking primaries off the table.
 type DropReq struct {
 	Sel
-	Reason  string
+	Reason string
+	// Cascade drops the waiting primaries that still need one named too, and
+	// their dependants, in the same plan with the same reason; without it a
+	// drop of a needed primary is refused, naming them.
+	Cascade bool
 	Answers []string
 	Who     string
 }
 
 // Drop takes open primaries off the table with the reason: their record,
 // outcome and reason are kept; their live work card, unread read cards and
-// merge place go with them. Waiting primaries that need one are blocked, and
-// the coordinator is told.
+// merge place go with them. A waiting primary that still needs one named
+// refuses the drop for that card, naming the dependants, unless the drop
+// cascades: the dependants, and their dependants, are dropped in the same
+// plan with the same reason, so no drop leaves a waiting primary on a
+// dropped need (docs/SPEC-SPRINT.md section 11, drop). Every judgment on a
+// dropped primary closes. A sprint it finishes, by dropping the last open
+// card, is found done by the tick's judgment tickDone: with nothing open and
+// a card dropped, the sprint is done.
 func Drop(s *Snapshot, r DropReq) Plan {
 	var p Plan
 	var all []*Card
@@ -1266,9 +1276,49 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		}
 		return ""
 	}, s.primaryCard)
-	dropping, blocked := map[string]bool{}, map[string]bool{}
+	dropping := map[string]bool{}
 	for _, c := range chosen {
 		dropping[c.ID] = true
+	}
+	// The waiting primaries that still need a card this drop takes off the
+	// table, read from every waiting primary's needs field, the same read the
+	// blocked judgment below writes from. One not cascaded is a refusal for
+	// the card it needs, naming them; under --cascade they, and their
+	// dependants, are dropped in the same plan with the same reason.
+	for {
+		var more []*Card
+		for _, w := range s.Work.Column(Waiting) {
+			if dropping[w.ID] {
+				continue
+			}
+			for _, n := range Split(w.F("needs")) {
+				if dropping[n] {
+					more = append(more, w)
+					break
+				}
+			}
+		}
+		if len(more) == 0 {
+			break
+		}
+		if !r.Cascade {
+			for _, c := range chosen {
+				var by []string
+				for _, w := range more {
+					if contains(Split(w.F("needs")), c.ID) {
+						by = append(by, w.ID)
+					}
+				}
+				if len(by) > 0 {
+					p.refuse(c.ID, "is needed by "+strings.Join(by, ", ")+"; drop them too with --cascade")
+				}
+			}
+			return Lawful(p)
+		}
+		for _, w := range more {
+			dropping[w.ID] = true
+			chosen = append(chosen, w)
+		}
 	}
 	for _, c := range chosen {
 		u := Unit{Key: c.ID, Stream: c.Row}
@@ -1287,23 +1337,6 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		}
 		u.Changes = append(u.Changes, change(Work, removeEntry(c, map[string]string{
 			"outcome": "dropped", "reason": r.Reason, "dropped_from": c.Col, "dropped_at": stamp(s.Now)})))
-		for _, w := range s.Work.Column(Waiting) {
-			if dropping[w.ID] || blocked[w.ID] || !contains(Split(w.F("needs")), c.ID) {
-				continue
-			}
-			// One note per waiting primary, naming every need this step drops
-			// that no blocked judgment open on it names yet.
-			blocked[w.ID] = true
-			var gone []string
-			for _, need := range Split(w.F("needs")) {
-				if dropping[need] {
-					gone = append(gone, need)
-				}
-			}
-			if gone = unblocked(s.Open, w.ID, gone, NBlocked); len(gone) > 0 {
-				u.Notes = append(u.Notes, blockedNote(s, w.Row, w.ID, r.Who, gone))
-			}
-		}
 		u.Closes = closesFor(s.Open, nil, c.ID)
 		answerListed(&u, s.Open, r.Answers, "drop", c.Row, "dropped "+c.ID+"; "+r.Reason, r.Who, s.Now, c.ID)
 		u.Moved = fmt.Sprintf("%s %s -> off the table (%s)", c.ID, c.Col, r.Reason)

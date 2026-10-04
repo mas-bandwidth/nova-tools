@@ -2084,8 +2084,10 @@ func (a *app) cmdReturn(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	var reason, ans *string
+	var cascade *bool
 	return a.setVerb("drop", args, stdout, stderr, true, func(fs flagSet) {
 		reason = fs.String("reason", "", "why it leaves the table; kept with its record")
+		cascade = fs.Bool("cascade", false, "drop the waiting primaries that still need one named too, and their dependants, in the same plan with the same reason; without it a drop of a primary waiting cards still need is refused, naming them, and nothing is written")
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if *reason == "" || len(ids) == 0 && s.stream == "" && s.col == "" {
@@ -2096,7 +2098,7 @@ func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 		c.after = func(ctx context.Context, st *store.Store, res store.Result) []string {
 			return a.droppedBriefs(ctx, st, res, *reason)
 		}
-		return store.DropStep(sprint.DropReq{Sel: s.sel(ids), Reason: *reason, Answers: answers(*ans), Who: c.actor})
+		return store.DropStep(sprint.DropReq{Sel: s.sel(ids), Reason: *reason, Cascade: *cascade, Answers: answers(*ans), Who: c.actor})
 	})
 }
 

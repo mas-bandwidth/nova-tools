@@ -3,6 +3,7 @@ package refmodel
 import (
 	"slices"
 	"sort"
+	"strings"
 )
 
 // The line numbers cited are tla/SprintTables.tla at 4bf919875, on the
@@ -650,16 +651,28 @@ func Rework(s State, p, m string) (State, error) {
 // Drop is SprintTables.tla Drop(p) (line 478): off the table. Its
 // unfinished work card is withdrawn, its outstanding read cards retire, its
 // merge place goes (the returned place too, spec section 7); work last. A
-// waiting primary that needs it is blocked. Every judgment on it closes. A
-// sprint it finishes, by dropping the last open card, is found done by the
-// tick's judgment tickDone: with nothing open and a card dropped, the sprint
-// is done.
+// waiting primary that still needs it refuses the drop, naming the
+// dependants: a need names a card that can still land, and the engine's drop
+// takes them with it under its cascade, which the model reads as one drop of
+// each, in work order (docs/SPEC-SPRINT.md section 11, drop). Every judgment
+// on it closes. A sprint it finishes, by dropping the last open card, is
+// found done by the tick's judgment tickDone: with nothing open and a card
+// dropped, the sprint is done.
 func Drop(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
 	if !s.Placedp(p) || s.InWork(p, Landed) {
 		return s, refuse("%s is not an open primary on the table", p)
+	}
+	var by []string
+	for _, q := range Keys(s.Primaries) {
+		if q != p && s.Primaries[q].State == Waiting && slices.Contains(s.Primaries[q].Needs, p) {
+			by = append(by, q)
+		}
+	}
+	if len(by) > 0 {
+		return s, refuse("%s is needed by %s; drop them too with --cascade", p, strings.Join(by, ", "))
 	}
 	n := s.Clone()
 	st := n.Primaries[p].Stream
@@ -682,12 +695,6 @@ func Drop(s State, p string) (State, error) {
 	x := n.Streams[st]
 	x.State = n.streamAfter(st, x.State, nil, []string{p})
 	n.Streams[st] = x
-	for _, q := range Keys(n.Primaries) {
-		qp := n.Primaries[q]
-		if qp.State == Waiting && slices.Contains(qp.Needs, p) && !slices.Contains(qp.Waived, p) {
-			n.open(JBlocked, q)
-		}
-	}
 	n.closeOn(p)
 	n.setPrimary(p, func(x *Primary) { x.State = Off })
 	return n, nil

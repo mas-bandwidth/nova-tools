@@ -119,8 +119,11 @@ func AddIDs(s *Snapshot, r AddReq) []string {
 }
 
 // Add admits primaries: waiting if they need something not landed, else
-// ready. A need names a primary on the table (placed or kept) or one of this
-// add. A stream's sentinels stop it by position: a card placed after an
+// ready. A need names a primary that can still land: one placed on the table
+// (waiting, ready, working, review, merging or landed, a sentinel among
+// them) or one of this add; a kept record off the table (dropped) is refused
+// with its outcome. A stream's sentinels stop it by position: a card placed
+// after an
 // unlanded sentinel of its stream waits on the latest such sentinel, and a
 // card placed in front of one is a need of it. A sentinel waits for every
 // primary of its stream that sorts before it and has not landed; inserted in
@@ -218,12 +221,21 @@ func Add(s *Snapshot, r AddReq) Plan {
 	seen := map[string]bool{}
 	for i, id := range ids {
 		needs := append([]string(nil), needsOf(i)...)
-		// missing is the needs that name no primary they may name: one on the
-		// table or one of this add (a cycle is refused below).
-		var missing []string
+		// missing is the needs that name no primary they may name: one placed
+		// on the table (waiting, ready, working, review, merging or landed, a
+		// sentinel among them) or one of this add (a cycle is refused below).
+		// A need names a card that can still land, so a kept record off the
+		// table (dropped) is refused with its outcome too.
+		var missing, dropped []string
 		for _, n := range needs {
-			if s.Work.Card(n) == nil && !adding[n] {
+			if adding[n] {
+				continue
+			}
+			switch c := s.Work.Card(n); {
+			case c == nil:
 				missing = append(missing, n)
+			case !c.Placed():
+				dropped = append(dropped, n)
 			}
 		}
 		switch {
@@ -236,12 +248,21 @@ func Add(s *Snapshot, r AddReq) Plan {
 		case s.Work.Card(id) != nil:
 			p.refuse(id, "exists already ("+placeWord(s.Work.Card(id))+")")
 			continue
-		case len(missing) > 0:
-			if len(r.Cards) > 0 {
-				p.refuse(id, fmt.Sprintf("%s: needs %s, which is no primary on the table or in this add", r.Cards[i].File, strings.Join(missing, ",")))
-			} else {
-				p.refuse(id, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
+		case len(missing) > 0 || len(dropped) > 0:
+			why := ""
+			switch {
+			case len(dropped) > 0:
+				why = "needs " + strings.Join(dropped, ",") + ", which was dropped"
+				if len(missing) > 0 {
+					why += "; needs " + strings.Join(missing, ",") + ", which is no primary on the table or in this add"
+				}
+			default:
+				why = "needs " + strings.Join(missing, ",") + ", which is no primary on the table or in this add"
 			}
+			if len(r.Cards) > 0 {
+				why = r.Cards[i].File + ": " + why
+			}
+			p.refuse(id, why)
 			continue
 		}
 		seen[id] = true
@@ -410,9 +431,6 @@ func Add(s *Snapshot, r AddReq) Plan {
 			u.Moved += "; waits behind sentinel " + a.behind
 		}
 		u.Changes = append(head, change(Work, createEntry(a.id, r.Stream, col, a.score, fields)))
-		if gone := droppedNeeds(s, a.needs); len(gone) > 0 {
-			u.Notes = append(u.Notes, blockedNote(s, r.Stream, a.id, r.Who, gone))
-		}
 		head = nil
 		p.Units = append(p.Units, u)
 	}
