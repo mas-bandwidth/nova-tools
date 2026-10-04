@@ -71,7 +71,7 @@ WHO: friend <name> (a row of the friends table; add and brief refuse any other)
 is dealt by the tick to a friend up below her width, the one it names or the
 one with the most free width, on her own fleet row friend.<name>, straight into
 working; no machine is dealt it, and no presence or rebalance takes it back: friend take
-takes back the cards she has not started.
+takes back the cards she has not started, and friend down every one.
 friend sync writes it as <friend>-working/inbox/<job>/BRIEF.md, the job
 directory <card> at epoch 0 and <card>~<epoch> after a clear (its STATUS line
 names the card, the branch to push and the report), and finishes it from
@@ -96,7 +96,7 @@ func friendVerbWords(name string) string {
 	case "friend beat":
 		return "friend beat records that this friend is present, and --running the cards she is running now, which friend take and friend down leave with her. The friend's own machinery runs it every " + every + ". The friend is up while the last beat is under " + down + " old, and down once that long has passed with no beat, or when the friend has never beaten. A beat wakes the friend at once. " + sync + "\n"
 	case "friend down":
-		return "friend down holds the named friend. The friend stays held whatever beat arrives, and where counts working as 0 while the friend is held. friend up releases the hold. " + sync + "\n"
+		return "friend down holds the named friend, as fleet down holds a machine. The friend stays held whatever beat arrives, the tick deals her nothing, and where counts working as 0 while the friend is held. Every card dealt to her that she has not started goes back to ready, as friend take --all-unstarted takes it, and the next tick deals it to a friend up with room (a card whose WHO line names her waits for her); a card she has started (a push on its branch, her beat naming it running) stays with her and finishes, each named on a NOTE line. friend up releases the hold. " + sync + "\n"
 	case "friend up":
 		return "friend up releases a hold that friend down set. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. " + sync + "\n"
 	default:
@@ -249,9 +249,20 @@ func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	if err := st.SetFriendHeld(context.Background(), friend, held, c.actor); err != nil {
+	ctx := context.Background()
+	if err := st.SetFriendHeld(ctx, friend, held, c.actor); err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
+	}
+	if held {
+		// a held friend behaves as a held machine: what she has not started goes back to
+		// ready for the friends' deal, what she has started stays with her and finishes
+		started, err := a.friendStarted(ctx, st, friend)
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		c.says = append([]string{"friend " + friend + " held"}, keptSays(friend, started)...)
+		return a.runStep(name, *c, st, store.FriendTakeStep(sprint.FriendTakeReq{Friend: friend, All: true, Hold: true, Started: started, Who: c.actor}), stdout, stderr)
 	}
 	sayOK(stdout, c.json, name, token(name)+" OK "+friend+" held="+fmt.Sprint(held), map[string]any{"friend": friend, "held": held})
 	return 0

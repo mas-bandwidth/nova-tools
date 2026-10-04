@@ -87,6 +87,29 @@ func TestTakeAllUnstartedTakesEveryOneSheHasNotStarted(t *testing.T) {
 	assert.Contains(t, hd.Why, "taken back from amy, the friend its WHO line names")
 }
 
+func TestTheHoldOfAFriendWithdrawsWhatSheHasNotStartedAndKeepsTheRest(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"))
+	dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Up})
+	w.must(FriendTake(w.s, FriendTakeReq{Friend: "amy", All: true, Hold: true, Started: map[string]string{"s1-1.w1": "a push on its branch"}}))
+	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col, "the started one stays and finishes")
+	wc := w.s.Fleet.Card("s1-2.w1")
+	assert.Equal(t, Withdrawn, wc.Col)
+	assert.Equal(t, "taken back by the hold of friend amy (friend down)", wc.F(FieldTakenBack))
+	assert.Empty(t, wc.F(FieldTakenFrom), "the hold does not keep her from it")
+
+	// held: nothing is dealt to her; released, her card comes back to her at its next generation
+	dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Held})
+	assert.Equal(t, Withdrawn, w.s.Fleet.Card("s1-2.w1").Col)
+	dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Up})
+	wc = w.s.Fleet.Card("s1-2.w1")
+	assert.Equal(t, FriendRow("amy"), wc.Row)
+	assert.Equal(t, Ready, wc.Col, "behind her working card")
+	assert.Equal(t, "3", wc.F("gen"))
+	assert.Empty(t, wc.F(FieldTakenBack))
+	assert.Empty(t, Check(w.s, nil))
+}
+
 func TestATakenCardIsDealtAgainToAnotherFriend(t *testing.T) {
 	t.Parallel()
 	w := takeWorld(t)

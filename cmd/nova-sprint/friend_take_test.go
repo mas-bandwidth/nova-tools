@@ -104,6 +104,40 @@ func TestFriendTakeRefusesAStartedCardAndAnotherFriendsCard(t *testing.T) {
 	ta.clean()
 }
 
+func TestFriendDownGivesBackWhatSheHasNotStartedAndKeepsTheRest(t *testing.T) {
+	t.Parallel()
+	ta, root := takeApp(t, 3, map[string]string{"sprint/s1-1.w1.g1.e0": landHead}, "amy")
+	ta.ok("tick") // amy at width 8: all three on her row
+	ta.ok("friend sync --root " + root)
+
+	out := ta.ok("friend down amy")
+	assert.Contains(t, out, "FRIEND-DOWN OK moved=2 refused=0")
+	assert.Contains(t, out, "NOTE friend amy held")
+	assert.Contains(t, out, "NOTE friend amy keeps s1-1.w1: a push on its branch sprint/s1-1.w1.g1.e0")
+	ta.ok("tick")
+	var c cardView
+	ta.json("card s1-1", &c)
+	assert.Equal(t, sprint.Working, c.Work[0].Col, "the started one stays with her")
+	ta.json("card s1-2", &c)
+	assert.Equal(t, sprint.Withdrawn, c.Work[0].Col, "held: nothing is dealt to her")
+	assert.Equal(t, sprint.Ready, c.Primary.Col)
+	assert.Contains(t, c.Work[0].F(sprint.FieldTakenBack), "the hold of friend amy")
+
+	// released and beating, her cards come back to her
+	ta.ok("friend up amy")
+	ta.ok("friend beat amy")
+	ta.ok("tick")
+	ta.json("card s1-2", &c)
+	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row)
+	assert.Equal(t, sprint.Working, c.Primary.Col)
+
+	// take --all-unstarted takes every one not started, and names the one she keeps
+	out = ta.ok("friend take amy --all-unstarted --reason 'rebalance'")
+	assert.Contains(t, out, "FRIEND-TAKE OK moved=2")
+	assert.Contains(t, out, "NOTE friend amy keeps s1-1.w1")
+	ta.clean()
+}
+
 // The server runs a friend's beat with what she reports, each flag once with its value,
 // and nothing more.
 func TestTheServerRunsAFriendsBeatWithTheCardsSheIsRunning(t *testing.T) {
