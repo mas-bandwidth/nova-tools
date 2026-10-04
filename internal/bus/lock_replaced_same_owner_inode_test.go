@@ -76,7 +76,8 @@ func TestLockReplacedDuringScanSameOwnerInodeSequence(t *testing.T) {
 	body("1", "")
 	// 2. (a) during the scan the own git finishes and a foreign git's lock takes the path.
 	c, err = clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { replace("foreign", other); return nil, nil }, seam, self)
-	require.False(t, c || !errors.Is(err, ErrIndexLockChanged), "2 foreign replaced during scan: c=%v err=%v", c, err)
+	require.False(t, c, "2 foreign replaced during scan: c=%v err=%v", c, err)
+	require.False(t, !errors.Is(err, ErrIndexLockChanged), "2 foreign replaced during scan: c=%v err=%v", c, err)
 	body("2", "foreign")
 	// 3. back: the foreign lock, stale, is refused by owner before any scan.
 	scanned := false
@@ -90,7 +91,8 @@ func TestLockReplacedDuringScanSameOwnerInodeSequence(t *testing.T) {
 	// with the same owner and the same mtime: only the inode differs. Not removed.
 	replace("own-a", self)
 	c, err = clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { replace("own-b", self); return nil, nil }, seam, self)
-	require.False(t, c || !errors.Is(err, ErrIndexLockChanged), "4 same owner, same mtime, new inode: c=%v err=%v", c, err)
+	require.False(t, c, "4 same owner, same mtime, new inode: c=%v err=%v", c, err)
+	require.False(t, !errors.Is(err, ErrIndexLockChanged), "4 same owner, same mtime, new inode: c=%v err=%v", c, err)
 	body("4", "own-b")
 	// 5. the lock that stayed, unchanged through a scan: cleared.
 	c, err = clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { return nil, nil }, seam, self)

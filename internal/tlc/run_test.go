@@ -136,10 +136,8 @@ func TestCheckLimits(t *testing.T) {
 	}
 }
 
-// The program is started with another working directory than the caller's, so
-// an override that is relative to the caller must be made absolute when it is
-// checked. The override is a ./bin/java of an owned directory, a symlink to the
-// helper, named relative to this test's own directory.
+// Execute starts the program in another directory, so a relative override is
+// made absolute before it is checked.
 func TestARelativeOverrideRunsInAnotherWorkingDirectory(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -159,7 +157,7 @@ func TestARelativeOverrideRunsInAnotherWorkingDirectory(t *testing.T) {
 	java, err := FindHelper("java", relative, LookPath)
 	require.NoError(t, err, "override %q resolved to %q, %v", relative, java, err)
 	require.True(t, filepath.IsAbs(java), "override %q resolved to %q, %v", relative, java, err)
-	private := t.TempDir() // the private working directory the program starts in
+	private := t.TempDir()
 	run := Run{Java: java, Dir: private, Jar: "j", Workers: 1, Config: "c", Module: "m",
 		JVM: []string{"-test.run=^TestExecuteHelper$", "tlc-helper-exit=13", "--"}}
 	got := Execute(context.Background(), run, filepath.Join(private, "out.log"))

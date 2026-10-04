@@ -71,7 +71,7 @@ func TestFarThroughARealStore(t *testing.T) {
 
 	store := Start(t)
 	link := FarLink(t, store, farStoreDelay)
-	ctx, cancel := context.WithTimeout(context.Background(), farStoreBound)
+	ctx, cancel := context.WithTimeout(t.Context(), farStoreBound)
 	t.Cleanup(cancel)
 	c := farClient(ctx, t, link.Addr())
 
