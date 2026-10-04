@@ -1,0 +1,229 @@
+package friend
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+)
+
+// BeatEvery is how often the daemon beats to the sprint server while its
+// loop runs: the sprint's own number (internal/sprint FriendBeatEvery, one
+// second; a friend is down after fifteen without one). It is also the
+// loop's read block: one read of the stream per beat.
+const BeatEvery = time.Second
+
+// The subjects of the daemon's own messages on the bus.
+const (
+	DaemonPongSubject = "daemon-pong"
+	PongSubject       = "pong"
+	PingPrefix        = "PING "
+)
+
+// Daemon is one friend's loop: the recv loop over the friend's stream with
+// the deliver adapter, the beat, and the Machine stepped by what arrives.
+// Everything it reaches outside itself is a field, so a test runs it over
+// bus2's Fake, a fake harness and its own clock.
+type Daemon struct {
+	Friend, Harness, Dir string
+	Width                int
+	Store                bus2.Store
+	Deliver              Deliverer
+	Beat                 func(ctx context.Context) error // one beat to the sprint server
+	Now                  func() time.Time
+	// Pause waits d when the store did not: after a read that answered at
+	// once (blocked false: an error, or a store that does not block), and
+	// while a delivery runs and the loop only peeks.
+	Pause  func(ctx context.Context, d time.Duration)
+	Record func(line string) // one line per delivery, to the daemon's log
+	// Pong is the session's recorded answer, read each step while a
+	// challenge is open (ReadPong over the state files).
+	Pong func() (Pong, bool, error)
+	// Status receives the daemon's state whenever it changes, and every
+	// StatusEvery (WriteStatus over the state files).
+	Status func(Status) error
+
+	m        *Machine
+	status   Status
+	written  time.Time
+	written0 Status
+}
+
+// job is one thing owed to the session: a bus message (acked after exit 0)
+// or a push of the daemon's own.
+type job struct {
+	entry   string // the stream entry to ack, "" for a push
+	id      string
+	subject string
+	text    string
+	started time.Time
+}
+
+type result struct {
+	job  job
+	exit int
+	err  error
+}
+
+// Text is a message as the session reads it, the shape nova-bus2 recv
+// prints: the header line, a blank line, the body ending in a newline.
+func Text(m bus2.Message) string {
+	body := m.Body
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return fmt.Sprintf("RECV OK id=%s from=%s to=%s cc=%s re=%s at=%s subject=%q\n\n%s",
+		m.ID, m.From, dash(strings.Join(m.To, ",")), dash(strings.Join(m.CC, ",")), dash(m.Re), m.At.Format(time.RFC3339), m.Subject, body)
+}
+
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// Run is the loop until ctx ends. Each step: the clock; one read of the
+// stream when the session is free (a message is handed to the adapter and
+// acked when its turn ends at exit 0), else one peek so a ping arriving
+// during a long turn is still answered at once by the daemon; the worker's
+// result; a beat when the store answered; the session's pong; the status.
+// A ping is answered twice: the daemon pong at once (transport), and the
+// session's own pong as a turn, which alone makes the friend up.
+func (d *Daemon) Run(ctx context.Context) error {
+	bus := &bus2.Bus{Store: d.Store}
+	d.m = Start(d.Now())
+	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
+	answered := map[string]bool{} // entries whose ping the daemon has ponged
+	var queue []job
+	var busy *job
+	results := make(chan result, 1)
+	for ctx.Err() == nil {
+		now := d.Now()
+		for _, p := range d.m.Tick(now) {
+			queue = append(queue, job{subject: p.Subject, text: p.Text})
+		}
+		storeOK := true
+		if busy == nil {
+			e, ok, err := bus.Recv(ctx, d.Friend, BeatEvery)
+			switch {
+			case ctx.Err() != nil:
+				return nil
+			case err != nil:
+				storeOK = false
+				d.status.StoreError = err.Error()
+				d.Pause(ctx, BeatEvery)
+			case ok:
+				d.status.StoreError = ""
+				msg := e.Message()
+				if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
+					if seat == "" {
+						seat = msg.From
+					}
+					if !answered[e.Entry] {
+						d.daemonPong(ctx, bus, msg, nonce)
+						answered[e.Entry] = true
+					}
+					for _, p := range d.m.Ping(now, seat, since, nonce) {
+						queue = append(queue, job{subject: p.Subject, text: p.Text})
+					}
+				}
+				queue = append(queue, job{entry: e.Entry, id: msg.ID, subject: msg.Subject, text: Text(msg)})
+			default:
+				d.status.StoreError = ""
+			}
+		} else {
+			_, fresh, err := bus.Peek(ctx, d.Friend)
+			if ctx.Err() != nil {
+				return nil
+			}
+			if err != nil {
+				storeOK = false
+				d.status.StoreError = err.Error()
+			} else {
+				d.status.StoreError = ""
+				for _, e := range fresh {
+					msg := e.Message()
+					if nonce, _, _, isPing := ParsePing(msg.Body); isPing && !answered[e.Entry] {
+						d.daemonPong(ctx, bus, msg, nonce)
+						answered[e.Entry] = true
+					}
+				}
+			}
+			d.Pause(ctx, BeatEvery)
+		}
+		select {
+		case r := <-results:
+			line := fmt.Sprintf("%s subject=%q took=%s exit=%d", now.UTC().Format(time.RFC3339), r.job.subject, now.Sub(r.job.started).Round(time.Millisecond), r.exit)
+			switch {
+			case r.err != nil:
+				line += " error=" + fmt.Sprintf("%q", r.err.Error())
+			case r.exit == 0 && r.job.entry != "":
+				if _, err := bus.AckEntry(ctx, d.Friend, r.job.entry); err != nil {
+					d.status.StoreError = err.Error()
+					line += " ack=failed"
+				} else {
+					d.status.Delivered++
+					line += " acked=true"
+				}
+			}
+			d.Record(line)
+			busy = nil
+		default:
+		}
+		if busy == nil && len(queue) > 0 {
+			j := queue[0]
+			j.started = now
+			queue = queue[1:]
+			busy = &j
+			go func(j job) {
+				exit, err := d.Deliver.Deliver(ctx, j.text)
+				results <- result{j, exit, err}
+			}(j)
+		}
+		if storeOK {
+			if err := d.Beat(ctx); err != nil {
+				d.status.BeatError = err.Error()
+			} else {
+				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
+			}
+		}
+		if d.m.Challenge != Quiet {
+			if p, found, err := d.Pong(); err == nil && found && !p.At.Before(d.m.Asked) {
+				d.m.Pong(p.At, p.Nonce)
+			}
+		}
+		d.flush(now)
+	}
+	return nil
+}
+
+// daemonPong answers a ping at once, from the daemon: transport is up.
+// A send that fails is the store's error on the status; the ping still
+// goes into the session.
+func (d *Daemon) daemonPong(ctx context.Context, bus *bus2.Bus, ping bus2.Message, nonce string) {
+	_, err := bus.Send(ctx, bus2.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + "\n"})
+	if err != nil {
+		d.status.StoreError = "daemon pong: " + err.Error()
+	}
+}
+
+// flush writes the status when it changed, and every StatusEvery anyway,
+// so a reader tells a live daemon from a dead one by the file's age.
+func (d *Daemon) flush(now time.Time) {
+	s := d.status
+	s.Connection, s.LastPing, s.Seat, s.SeatSince = d.m.Connection, d.m.LastPing, d.m.Seat, d.m.SeatSince
+	s.Challenge, s.Nonce, s.LastPong, s.Pongs = d.m.Challenge, d.m.Nonce, d.m.LastPong, d.m.Pongs
+	s.At = time.Time{}
+	s.LastBeat = time.Time{}
+	if s == d.written0 && now.Sub(d.written) < StatusEvery {
+		return
+	}
+	d.written0, d.written = s, now
+	s.At, s.LastBeat = now, d.status.LastBeat
+	if err := d.Status(s); err != nil {
+		d.Record(now.UTC().Format(time.RFC3339) + " status: " + err.Error())
+	}
+}

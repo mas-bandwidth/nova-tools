@@ -1,0 +1,26 @@
+//go:build unix
+
+package friend
+
+import (
+	"os/exec"
+	"syscall"
+	"time"
+)
+
+// ownGroup makes cmd a session leader of its own, so a Cancel signals the
+// group (every process the harness forked) and WaitDelay then kills it.
+func ownGroup(cmd *exec.Cmd, killDelay time.Duration) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	}
+	cmd.WaitDelay = killDelay
+}
+
+// killGroup ends every process left in the group led by pid.
+func killGroup(pid int) { _ = syscall.Kill(-pid, syscall.SIGKILL) } // ignored: a group already gone is the state wanted
+
+// GroupAlive says whether any process of the group led by pid is still
+// there (a signal of 0 to the group), for a test of the kill.
+func GroupAlive(pid int) bool { return syscall.Kill(-pid, 0) == nil }
