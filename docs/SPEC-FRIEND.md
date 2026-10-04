@@ -31,7 +31,9 @@ makes the friend up.
   (the daemon: its state, rewritten whole every five seconds and when it
   changes; a reader calls the daemon up while the file is under thirty seconds
   old), `pong.json` (the `pong` verb: the session's last answer), `deliver.log`
-  (the daemon: one line per delivery). The queue file is under the friend's
+  (the daemon: one line per delivery), and `session.json` (the local
+  `sleep`/`wake` commands and daemon: the selected coordinator name and the
+  persistent asleep marker). The queue file is under the friend's
   working directory: `inbox/QUEUE.json` (the coordinator and the session: one
   record per task with `id`, `state` of queued, working or done, and
   `deliverable`).
@@ -72,6 +74,22 @@ only after a session pong; a challenge is open for less than a window; the
 outage is said exactly once; only the current nonce ends a challenge; and a
 challenge ends.
 
+`run` and `install` accept `--coordinator <name>` separately from the sprint
+server's `--server <addr>`. A run saves an explicit coordinator in
+`session.json`; install carries the option into the launch agent, and its run
+saves it when the agent starts. The coordinator must be a valid nova-bus2 name
+(lowercase ASCII letters, digits and hyphens, up to 64 characters), because
+automatic wake compares it with a nova-bus2 message's `From` value.
+`nova-friend sleep --as <me>` records a local asleep marker; it requires a
+coordinator name, supplied with `--coordinator` or already saved in
+`session.json`. The daemon reports that marker with
+`nova-sprint friend beat --asleep <me>` on its next beat. `nova-friend wake
+--as <me>` explicitly clears the marker and needs no coordinator, so it can
+recover a saved asleep state with missing coordinator configuration. Neither
+command sends a wake message or proves the harness can wake. Restarting an
+asleep daemon never clears the marker; if the saved coordinator is absent,
+startup refuses and says to run `wake` or supply `--coordinator`.
+
 ## The loop (internal/friend/daemon.go)
 
 Each second: the clock is stepped; when the session is free, one read of the
@@ -88,8 +106,9 @@ day loses no message, and the record says so at the first deferral and once a
 minute after), else one peek, so a ping that
 lands during a long turn is still answered at once by the daemon and pushed
 in once the session is free; the worker's result; one beat to the sprint
-server (`friend beat <friend>`, a plain beat: the queue, working and width
-flags are owed on the server's side); the pong file, while a challenge is
+server (`friend beat [--asleep] <friend>`; the coordinator name is session
+configuration, while queue, working and width flags are owed on the server's
+side); the pong file, while a challenge is
 open; the status file.
 
 The deliver adapter runs the harness directly, never through a shell, as its
@@ -111,9 +130,11 @@ real for them.
 The friend's name comes from one place, `install --as`, written into the
 agent's command line; the daemon never takes a name from a message. The `pong`
 verb refuses a name that is not the one the daemon in that directory runs as.
-Binding the name to the store's login is owed: the bus store runs with no
-authentication tonight (SPEC-BUS2.md), and `nova-sprint friend beat <name>`
-beats whatever name it is sent.
+The optional coordinator name is local configuration for asleep-state
+reporting, not a credential or authorization fence. Binding friend names to the
+store's login is owed: the bus store runs with no authentication tonight
+(SPEC-BUS2.md), and `nova-sprint friend beat <name>` beats whatever name it is
+sent.
 
 ## What is weak, and known
 

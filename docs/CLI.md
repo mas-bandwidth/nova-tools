@@ -754,7 +754,9 @@ done; 1 the verb ran and said no; 2 could not run.
 ## nova-friend
 
 What a friend runs to be part of the team: the wake loop, the beat and the
-proof of life, as one daemon. One launchd agent per friend parks on the
+proof of life, as one daemon. Local `sleep` and `wake` commands persist the
+session's contactable-asleep choice for that daemon. One launchd agent per
+friend parks on the
 friend's nova-bus2 stream and pushes each message into the running session as
 a turn through the harness's deliver command, beats to the sprint server while
 the loop runs, answers the coordinator's `PING` at once (`daemon-pong`) and
@@ -769,8 +771,12 @@ A Redis whose nova-config rows name ada and bob, its address in `--redis` or
 `NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-friend)):
 
 ```sh
-nova-friend install --as bob --harness opencode --dir ./bob --dry-run
+nova-friend install --as bob --harness opencode --dir ./bob --coordinator ada --dry-run
 nova-friend uninstall --as bob --dry-run
+nova-friend sleep --as bob --coordinator ada --dry-run
+nova-friend sleep --as bob --coordinator ada
+nova-friend wake --as bob --dry-run
+nova-friend wake --as bob
 nova-friend ping --as ada --to bob --nonce abc123
 nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
@@ -788,8 +794,17 @@ keep `--dir`, the friend's working directory). `wait-pong` prints `WAIT-PONG
 OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
 pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
-last_pong= queue= working= width=`, or `STATUS NONE` at exit 1 where no
-daemon ever ran. What a first run gets wrong: a `--harness` that is not one
+last_pong= queue= working= width= sleep_requested=<true|false>
+reported_asleep=<true|false> coordinator=`, or `STATUS NONE` at exit 1 where no
+daemon ever ran. `sleep_requested` and `coordinator` come from local session
+state; `reported_asleep` is the daemon's last status and can lag until its next
+beat. `sleep --dry-run` and `wake --dry-run` report plans without changing
+session state. `sleep` needs a coordinator saved with `run --coordinator` or
+supplied directly. `wake` is a local operator override and does not send a
+network message or wake the harness. Neither command proves that the session
+can be woken. Before any daemon status exists, `status` still shows the saved
+`sleep_requested` and coordinator, and reports `reported_asleep=unknown`. What a
+first run gets wrong: a `--harness` that is not one
 of opencode, codex, claude, antigravity, dsh; a `pong --as` that is not the
 name the daemon whose state directory that is runs as (refused: the pong
 carries the daemon's name); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a `pong`
@@ -802,7 +817,7 @@ rebuilt (the state files are under the home directory, out of its way).
 ### The daemon
 
 ```sh
-nova-friend install --as <me> --harness opencode --dir <my working directory> --width <n>
+nova-friend install --as <me> --harness opencode --dir <my working directory> --width <n> [--coordinator <name>]
 nova-friend status --as <me> --dir <my working directory>
 ```
 
@@ -820,9 +835,12 @@ pong are real for it all the same.
 
 | Command | What it does |
 | --- | --- |
-| `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>]` | The daemon: the recv loop with the deliver adapter, the beat, the ping and pong machine; until a signal |
-| `install --as <me> --harness <h> --dir <d> [...] [--launchd-log <file>] [--dry-run]` | Writes and loads the launchd agent `com.nova.friend-<me>`; idempotent |
+| `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--coordinator <name>] [--width <n>] [--state-dir <d>]` | The daemon: the recv loop with the deliver adapter, the beat, the ping and pong machine; until a signal |
+| `install --as <me> --harness <h> --dir <d> [...] [--coordinator <name>] [--launchd-log <file>] [--dry-run]` | Writes and loads the launchd agent `com.nova.friend-<me>`; idempotent |
 | `uninstall --as <me> [--dry-run]` | Boots the agent out and removes its plist |
+| `sleep --as <me> [--coordinator <name>] [--state-dir <d>] [--dry-run]` | Saves a contactable-asleep marker for the daemon's next beat; needs a coordinator |
+| `wake --as <me> [--state-dir <d>] [--dry-run]` | Clears the saved asleep marker locally; does not wake or contact the harness |
+| `status --as <me> --dir <d> [--state-dir <d>]` | Shows daemon-reported asleep state separately from locally requested sleep state |
 | `ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>]` | One `PING <nonce>` on the friend's stream, with the seat line |
 | `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` | The session's answer: one note to the coordinator, and the pong file |
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
@@ -1188,7 +1206,7 @@ nova-sprint fleet down <member>
 nova-sprint fleet sync [--check] [--pg <dsn>]
 nova-sprint fleet level
 nova-sprint friend sync [--pg <dsn>]
-nova-sprint friend beat <friend>
+nova-sprint friend beat [--asleep] <friend>
 nova-sprint friend down <friend>
 nova-sprint friend up <friend>
 nova-sprint reader add <reader>...
