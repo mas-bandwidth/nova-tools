@@ -147,6 +147,7 @@ type Store interface {
 	Ack(ctx context.Context, stream, group string, entries ...string) (int64, error)
 	// Pending is the entry ids pending for the group, up to count (XPENDING).
 	Pending(ctx context.Context, stream, group string, count int) ([]string, error)
+	PendingPage(ctx context.Context, stream, group, consumer, after string, count int) ([]string, error)
 	// Group is the group's last delivered entry id, and whether the group is
 	// there at all (XINFO GROUPS).
 	Group(ctx context.Context, stream, group string) (lastDelivered string, exists bool, err error)
@@ -234,31 +235,9 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 // refused, never given a stream to wait on. The group is made on first use.
 // (tla/Bus2.tla: Recv, PendingBeforeNew, HeldStaysHeld)
 func (b *Bus) Recv(ctx context.Context, as string, block time.Duration) (e Entry, ok bool, err error) {
-	if p := CheckName(as); p != "" {
-		return Entry{}, false, &Refusal{[]string{p}}
-	}
-	names, _, err := b.Store.Roster(ctx)
-	if err != nil {
+	got, err := b.RecvBatch(ctx, as, Consumer, block, 1)
+	if err != nil || len(got) == 0 {
 		return Entry{}, false, err
-	}
-	if !slices.Contains(names, as) {
-		return Entry{}, false, &Refusal{[]string{unknown(as)}}
-	}
-	stream := StreamOf(as)
-	if err := b.Store.EnsureGroup(ctx, stream, as); err != nil {
-		return Entry{}, false, err
-	}
-	got, err := b.Store.Claim(ctx, stream, as, Consumer, ClaimAfter, 1)
-	if err != nil {
-		return Entry{}, false, err
-	}
-	if len(got) == 0 {
-		if got, err = b.Store.Read(ctx, stream, as, Consumer, block, 1); err != nil {
-			return Entry{}, false, err
-		}
-	}
-	if len(got) == 0 {
-		return Entry{}, false, nil
 	}
 	return got[0], true, nil
 }
