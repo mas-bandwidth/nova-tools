@@ -53,4 +53,5 @@ func TestHelpSaysHowAStoreIsMade(t *testing.T) {
 	assert.Contains(t, help, "age-keygen -o", "help does not name the command that makes recovery.pub")
 	assert.Contains(t, help, "creation_rules:\n  - path_regex: ^worker\\.yaml$\n    age: <seat public key>,<recovery key>", "help does not show the sops rule body")
 	assert.Contains(t, help, "nova-secrets seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --stdin", "help does not show seal with --stdin in its example")
+	assert.Contains(t, help, "git -C <store> add recovery.pub .sops.yaml && git -C <store> commit", "help does not commit recovery.pub and .sops.yaml before the first push")
 }
