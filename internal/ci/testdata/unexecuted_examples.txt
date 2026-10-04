@@ -17,9 +17,9 @@ $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
 $ nova-bus names --bus ./bus
 $ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
+$ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 $ nova-check convergence --repo mas-bandwidth/nova-tools \
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
-$ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 $ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
