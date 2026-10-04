@@ -53,26 +53,28 @@ databases, swarm pools, bus notes) and writes one day file per day into --out,
 one row per (day, model, repo). The repo comes from the --repos file: lines of
 <name><TAB><regexp>, and the first match on a session's path wins. check, sum
 and report read the day files back; a count a source never gave prints as -.
-first run: create a tiny transcript and rules file with the setup line above
-example:, then run the lines under example: in order.
+first run: create a tiny transcript and rules file with the lines under setup:
+above example:, then run the lines under example: in order.
 
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
                       [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
-  nova-tokens report --who <name> --day <YYYY-MM-DD> --repos <file>
+  nova-tokens report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>
                       mode: local note body, printed as the tokens note artifact
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
-  nova-tokens report --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+  nova-tokens report (store mode) --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
                       mode: Redis month summary
                       [--user <name>] [--password-env <NAME>]
+  the local mode is selected by --who and --day; the store mode by --redis and --month; giving both --who and --redis selects the store mode (--redis wins); a mix of --who and --redis prints the store summary
   nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
                       [--user <name>] [--password-env <NAME>] [--dry-run]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
   nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
+                      one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals
   nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
                       [--role <name>] [--weights <in,cw,cr,out>]
   nova-tokens version
@@ -164,7 +166,17 @@ sources --unattributed prints the path stems that were SEEN and matched no rule,
 first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
 is the evidence for improving the --repos file.
 
-  mkdir -p ./transcripts ./out && printf '%s\n' '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{"id":"example-1","model":"claude-fable-5-1","usage":{"input_tokens":812,"output_tokens":40,"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' > ./transcripts/window.jsonl && cp ./transcripts/window.jsonl ./session.jsonl && printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
+setup:
+  mkdir -p ./transcripts ./out
+  printf '%s' '{"type":"assistant","timestamp":"2026-09-11T09:12:' > ./transcripts/window.jsonl
+  printf '%s' '00Z","message":{"id":"example-1","model":"claude-' >> ./transcripts/window.jsonl
+  printf '%s' 'fable-5-1","usage":{"input_tokens":812,' >> ./transcripts/window.jsonl
+  printf '%s' '"output_tokens":40,"cache_creation_input_tokens":' >> ./transcripts/window.jsonl
+  printf '%s' '1200,"cache_read_input_tokens":90000},' >> ./transcripts/window.jsonl
+  printf '%s' '"content":[{"type":"tool_use","input":{' >> ./transcripts/window.jsonl
+  printf '%s\n' '"file_path":"/work/schema/wire.md"}}]}}' >> ./transcripts/window.jsonl
+  cp ./transcripts/window.jsonl ./session.jsonl
+  printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
 
 example:
   nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts

@@ -16,9 +16,8 @@
 // thing this repository's tools never do.
 //
 // The script is a //go:build ignore file on purpose, the Go shape of a
-// scripts/ entry: it is run as a file, not built into the binary, because
-// wiring a `timing` verb into nova-ci's dispatch is one case line in
-// cmd/nova-ci/main.go, and this card's PATHS does not name that file. Run it
+// scripts/ entry: it is run as a file, not built into the nova-ci binary,
+// because it is a one-off measurement, not a verb of the command. Run it
 // from a checkout of the repo:
 //
 //	go run cmd/nova-ci/timing.go --log <events log>

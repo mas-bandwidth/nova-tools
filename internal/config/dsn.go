@@ -54,7 +54,7 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		if flagValue != "" {
-			return "", refuseFlagPassword()
+			return "", fmt.Errorf("--pg: cannot be read, so it is refused as a flag that carries a password; want postgres://user@host:5432/nova with no password, and export it as the variable %s names", EnvPGPassEnv)
 		}
 		return "", fmt.Errorf("%s could not be parsed; want postgres://user@host:5432/nova (%T)", EnvPG, err)
 	}
@@ -91,7 +91,7 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 // it names the remedy and quotes nothing, because the DSN itself may hold
 // the secret (docs/nova-config/README.md, "Connecting").
 func refuseFlagPassword() error {
-	return fmt.Errorf("--pg: carries a password; leave it out and export it as the variable %s names (a ps reads the line)", EnvPGPassEnv)
+	return fmt.Errorf("--pg carries a password; leave it out and export it as the variable %s names (a ps reads the line)", EnvPGPassEnv)
 }
 
 // flagCarriesPassword reports whether the flag's DSN text names a password

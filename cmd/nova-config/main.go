@@ -71,7 +71,9 @@ table of rows in PostgreSQL's schema config, which migrate makes; every write
 adds a history row naming who made it. apply copies the rows into Redis, the
 view the fleet reads; inventory prints that view for Ansible. --file <path>
 keeps the rows in a local JSON file instead, to try every verb with no database.
-first run: the example: lines need no database and write only ./try.json; the fleet's store is export NOVA_PG_DSN=postgres://user@host:5432/db, then migrate.
+first run: the example: lines need no database and write only ./try.json; the fleet's store is
+  export NOVA_PG_DSN=postgres://user@host:5432/db
+then migrate.
 
 usage:
   nova-config help [<verb>]
@@ -79,8 +81,10 @@ usage:
   nova-config kinds [--json]
   nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]
   nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]
-  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>] [--kind <kind>] [--dry-run] [--json]
-  nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>]
+  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>]
+                    [--kind <kind>] [--dry-run] [--json]
+  nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
+                        [--timeout <duration>]
   nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]
   nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]
   nova-config <kind> remove <name> --as <name> [--dry-run] [--json]
@@ -89,9 +93,11 @@ usage:
   nova-config <kind> history <name> [--json]
   nova-config machine width <name> [--json]
   nova-config machine self [--check] [--json]
-  nova-config fleet set|show|history        one row each, no name: fleet and sprint have no add, remove or list
+  nova-config fleet set|show|history        one row each, no name:
+                                            fleet and sprint have no add, remove or list
   nova-config sprint set|show|history
-  nova-config <kind> <verb> -h              the verb's flags (required ones marked), its effect and a worked example
+  nova-config <kind> <verb> -h              the verb's flags (required ones marked),
+                                            its effect and a worked example
 
 The store is --pg <dsn> (or NOVA_PG_DSN; the password is never on the line:
 NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password,
@@ -103,7 +109,9 @@ Lose Redis: run nova-config apply.
 Fleet apply and inventory require explicit redis_port and pg_dsn; set both
 with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>.
 
-exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run: ready=no, nothing attempted), 2 could not run (usage, or a store that did not answer); machine self: 2 not a row, 3 unreadable
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+ready=no, nothing attempted), 2 could not run (usage, or a store that did not answer);
+machine self: 2 not a row, 3 unreadable
 
 `
 
@@ -120,12 +128,13 @@ example:
 `
 
 // kindsUsage is the per-kind part of the banner, from the descriptors: what
-// the kind is and its fields' names, the required ones first.
+// the kind is and its fields' names, the required ones first. Every line is
+// wrapped at maxHelpCols with a continuation indent.
 func kindsUsage() string {
 	var b strings.Builder
 	b.WriteString("kinds (nova-config <kind> add -h describes each field):\n")
 	for _, k := range config.Kinds {
-		fmt.Fprintf(&b, "  %-8s %s\n", k.Name, k.Doc)
+		b.WriteString(wrapHelp(fmt.Sprintf("  %-8s", k.Name), k.Doc, kindOffset))
 		var req, opt []string
 		for _, f := range k.Fields {
 			if f.Required {
@@ -148,9 +157,47 @@ func kindsUsage() string {
 		if len(opt) > 0 {
 			line += strings.Join(opt, " ")
 		}
-		fmt.Fprintf(&b, "  %-8s %s\n", "", line)
+		b.WriteString(wrapHelp(strings.Repeat(" ", kindOffset-1), line, kindOffset))
 	}
 	return b.String()
+}
+
+// maxHelpCols is the column the help wraps at: a line past it is a wall a
+// reader must scroll sideways to finish (docs/STANDARD.md, section 3).
+const maxHelpCols = 100
+
+// kindOffset is the continuation indent for a `kinds` entry: two columns for
+// the two-blank indent, the eight-column kind name and the blank after it.
+const kindOffset = 11
+
+// wrapHelp writes one wrapped help line: head opens the first line (an indent,
+// and the kind's name padded for a kind's first line), body is the prose, and
+// cont is the column the continuation lines align under. The wrap is at a
+// blank on or before maxHelpCols, and never inside a word. The head and the
+// continuation column are set by the caller so the wrapped prose still reads
+// as the entry it belongs to.
+func wrapHelp(head, body string, cont int) string {
+	if body == "" {
+		return head + "\n"
+	}
+	if len(head)+1+len(body) <= maxHelpCols {
+		return head + " " + body + "\n"
+	}
+	var b strings.Builder
+	b.WriteString(head + " ")
+	col := len(head) + 1
+	for i, word := range strings.Fields(body) {
+		if i > 0 && col+1+len(word) > maxHelpCols {
+			b.WriteString("\n" + strings.Repeat(" ", cont))
+			col = cont
+		} else if i > 0 {
+			b.WriteByte(' ')
+			col++
+		}
+		b.WriteString(word)
+		col += len(word)
+	}
+	return b.String() + "\n"
 }
 
 // banner is what help prints.

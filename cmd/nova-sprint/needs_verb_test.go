@@ -1,0 +1,95 @@
+package main
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// needs prints one stream's waiting cards as a dependency graph: the chain
+// order from the roots down (a card after every card it needs; the work order
+// within a depth), each card with its unmet needs and their states, the roots
+// marked, each card's depth, the width at each depth, and a closing count of
+// the cards whose needs name a dropped or absent id (one card once, however
+// many of its needs name one). A card whose need is off the table (dropped)
+// is a root at depth 0 with no tick run.
+func TestNeedsPrintsRootsDepthAndWidthOfAWaitingChain(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1,m2")
+	// The scores put the s2 chain in reverse work order: d sorts first, a
+	// last, so only the chain order (a card after every card it needs) can
+	// print the chain from its root down.
+	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s2 a --needs s1-1 --score 9")
+	ta.ok("add --stream s2 b --needs a --score 8")
+	ta.ok("add --stream s2 c --needs b --score 7")
+	ta.ok("add --stream s2 d --needs c --score 6")
+	ta.ok("add --stream s1 x")
+	ta.ok("add --stream s1 y")
+	ta.ok("add --stream s1 m --needs x,y")
+	ta.ok("drop s1-1 --reason obsolete")
+	ta.ok("drop x --reason obsolete")
+	ta.ok("drop y --reason obsolete")
+
+	out := ta.ok("needs --stream s2")
+	rootAt := strings.Index(out, "depth=0 ROOT a needs s1-1 dropped")
+	bAt := strings.Index(out, "depth=1 b needs a waiting")
+	cAt := strings.Index(out, "depth=2 c needs b waiting")
+	dAt := strings.Index(out, "depth=3 d needs c waiting")
+	require.Greater(t, rootAt, -1, "a is the root at depth 0, on the dropped need")
+	require.Greater(t, bAt, rootAt, "b needs the waiting a, at depth 1, after it in chain order")
+	require.Greater(t, cAt, bAt, "c at depth 2, after b in chain order")
+	require.Greater(t, dAt, cAt, "d at depth 3, after c in chain order")
+	require.Contains(t, out, "depth 0: 1, depth 1: 1, depth 2: 1, depth 3: 1", "the width at each depth")
+	require.Contains(t, out, "NEEDS stream=s2 cards=4 dropped-or-absent=1", "a's one dropped need counts a once")
+
+	s1 := ta.ok("needs --stream s1")
+	require.Contains(t, s1, "depth=0 ROOT m needs x dropped, y dropped", "m names both its dropped needs")
+	require.Contains(t, s1, "NEEDS stream=s1 cards=1 dropped-or-absent=1", "m's two dropped needs count the one card once")
+
+	roots := ta.ok("needs --stream s2 --roots")
+	require.Contains(t, roots, "depth=0 ROOT a", "--roots keeps the roots")
+	require.NotContains(t, roots, "depth=1 b", "--roots drops the cards below the roots")
+	require.Contains(t, roots, "depth 0: 1, depth 1: 1, depth 2: 1, depth 3: 1", "--roots keeps the widths")
+
+	var v struct {
+		Streams []struct {
+			Stream string `json:"stream"`
+			Cards  []struct {
+				ID    string `json:"id"`
+				Depth int    `json:"depth"`
+				Root  bool   `json:"root"`
+			} `json:"cards"`
+		} `json:"streams"`
+		Cards   int `json:"cards"`
+		Orphans int `json:"dropped_or_absent"`
+	}
+	ta.json("needs --stream s2", &v)
+	require.Len(t, v.Streams, 1, "one stream in the JSON view")
+	require.Equal(t, "s2", v.Streams[0].Stream, "the stream the verb names")
+	require.Len(t, v.Streams[0].Cards, 4, "every waiting card")
+	for i, id := range []string{"a", "b", "c", "d"} {
+		require.Equal(t, id, v.Streams[0].Cards[i].ID, "the chain's card %d", i)
+		require.Equal(t, i, v.Streams[0].Cards[i].Depth, "%s at depth %d", id, i)
+	}
+	require.True(t, v.Streams[0].Cards[0].Root, "a is a root")
+	require.False(t, v.Streams[0].Cards[1].Root, "b waits on the root, no root itself")
+	require.Equal(t, 1, v.Orphans, "s2's dropped-or-absent count: a's card once")
+
+	var w struct {
+		Streams []struct {
+			Stream  string `json:"stream"`
+			Orphans int    `json:"dropped_or_absent"`
+		} `json:"streams"`
+		Cards   int `json:"cards"`
+		Orphans int `json:"dropped_or_absent"`
+	}
+	ta.json("needs", &w)
+	require.Len(t, w.Streams, 2, "both streams' waiting cards in the whole view")
+	require.Equal(t, 1, w.Streams[1].Orphans, "s1's count: m's two dropped needs are one card")
+	require.Equal(t, 5, w.Cards, "every waiting card of the sprint")
+	require.Equal(t, 2, w.Orphans, "the sprint's count of the cards on a dropped or absent need: a and m")
+	ta.clean()
+}
