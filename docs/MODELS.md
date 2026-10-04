@@ -23,7 +23,7 @@ is here.
 | `opencode/gemini-*` | `opencode` | `~/.local/share/opencode/auth.json`, key under `opencode` | metered credit | OpenCode Zen; independent second reads only |
 | `opencode/grok-*` | `opencode` | `~/.local/share/opencode/auth.json`, key under `opencode` | metered credit | OpenCode Zen; independent second reads only |
 | `inception/mercury-2.5` | `inception` | provider block `inception` | metered | Inception; fast |
-| `ollama/north-mini-code-32k` | `ollama` | keyless, `127.0.0.1:11434` | — | local; one slot; never a bench; the harness does not parse its tool calls |
+| `ollama/north-example-code-32k` | `ollama` | keyless, `127.0.0.1:11434` | — | local; one slot; never a bench; the harness does not parse its tool calls |
 | `ollama/laguna` tags | `ollama` | keyless, `127.0.0.1:11434` | — | local; one slot; never a bench; the harness does not parse its tool calls |
 | `ollama/granite` tags | `ollama` | keyless, `127.0.0.1:11434` | — | local; one slot; never a bench; the harness does not parse its tool calls |
 
@@ -34,4 +34,4 @@ is here.
    written from this file, and a config rewrite never drops one.
 3. **Keys are owned.** A key file is never read by a tool or a person other than
    the owner.
-4. **Space keys come by hand.** Space gets its key files by hand.
+4. **The bench keys come by hand.** The bench gets its key files by hand.
