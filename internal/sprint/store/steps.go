@@ -246,3 +246,14 @@ func GradeStep(r sprint.GradeReq) Step {
 	return Step{Named: true, Args: ArgsOf(r), Verb: "grade", Actor: sprint.MachineActor, Load: tables(sprint.Work), Extras: sprint.NamedExtras(sprint.Work, ids),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Grade(s, r) }}
 }
+
+// FriendTakeStep takes back a friend's cards she has not started (friend take), or every
+// one of them for her hold (friend down).
+func FriendTakeStep(r sprint.FriendTakeReq) Step {
+	verb := "friend take"
+	if r.Hold {
+		verb = "friend down"
+	}
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: verb, Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendTake(s, r) }}
+}

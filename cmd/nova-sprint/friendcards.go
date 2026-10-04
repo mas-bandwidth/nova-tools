@@ -44,8 +44,16 @@ const (
 	VerdictFail = "FAIL"
 )
 
-// friendJobOf is the job a friend's sprint card is delivered as: its stored id.
-func friendJobOf(p sprint.Packet) string { return sprint.StoredID(p.Card, p.Epoch) }
+// friendJobOf is the job a friend's sprint card is delivered as: its stored id, and from its
+// second generation (a card taken back and dealt again, sprint.FriendTake) .g<gen> after it, so
+// a card dealt again to the same friend is a new job whose brief names its own branch.
+func friendJobOf(p sprint.Packet) string {
+	job := sprint.StoredID(p.Card, p.Epoch)
+	if p.Gen > 1 {
+		job += ".g" + strconv.Itoa(p.Gen)
+	}
+	return job
+}
 
 // friendBrief is the BRIEF.md of a friend's sprint card: its STATUS line (the card, its
 // epoch and attempt, the branch to push and the report to write), the working-directory
@@ -279,13 +287,19 @@ func friendReadReport(dir, job string) (report, why string, err error) {
 func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
 	// her working cards, then the ready ones dealt behind them (sprint.FriendDeal): both are
 	// delivered, and her queue file says which are which
-	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working, sprint.Ready)
-	if err != nil || len(cards) == 0 {
+	// and the ones taken back from her (sprint.FriendTake), withdrawn on her row until the deal
+	// places them again: taken in her queue file, so her daemon starts none of them
+	all, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working, sprint.Ready, sprint.Withdrawn)
+	if err != nil || len(all) == 0 {
 		return 0, 0, err
 	}
 	states := map[string]string{}
-	for _, c := range cards {
-		states[c.ID] = map[string]string{string(sprint.Working): "working", string(sprint.Ready): "queued"}[string(c.Col)]
+	var cards []*sprint.Card
+	for _, c := range all {
+		states[c.ID] = map[string]string{string(sprint.Working): "working", string(sprint.Ready): "queued", string(sprint.Withdrawn): queueTaken}[string(c.Col)]
+		if c.Col != sprint.Withdrawn {
+			cards = append(cards, c)
+		}
 	}
 	packets, err := st.Packets(ctx, cards)
 	if err != nil {
@@ -361,6 +375,10 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 // her daemon's pong reports its counts (queue, working).
 const queueFile = "inbox/QUEUE.json"
 
+// queueTaken is the queue file's state of a card taken back from her (friend take, friend
+// down): not hers to start.
+const queueTaken = "taken"
+
 // friendQueue is the queue file's shape, as nova-friend reads it.
 type friendQueue struct {
 	Tasks []friendTask `json:"tasks"`
@@ -373,8 +391,8 @@ type friendTask struct {
 }
 
 // writeQueueFile keeps the friend's queue file as the sprint sees her cards: each card
-// on her row is a record, queued while it is ready behind her working cards and working
-// while it is working; a record the sprint does not name, or one her session marked
+// on her row is a record, queued while it is ready behind her working cards, working
+// while it is working, and taken once the coordinator has taken it back; a record the sprint does not name, or one her session marked
 // done, is kept as it is. The file is written whole (atomicfile), and not at all when
 // nothing changes.
 func writeQueueFile(dir string, states map[string]string) error {

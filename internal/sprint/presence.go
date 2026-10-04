@@ -76,6 +76,16 @@ type Beat struct {
 	How     string         `json:"how,omitempty"`
 	Samples []LoadSample   `json:"samples,omitempty"`
 	Meter   hostload.State `json:"meter"`
+	// Friend is what a friend's beat reports of her work (friend beat); nil on a
+	// machine's beat.
+	Friend *FriendReport `json:"friend,omitempty"`
+}
+
+// FriendReport is what a friend's machinery reports with her beat: the cards she is
+// running (work card ids or her job names), which friend take and friend down leave
+// with her (FriendTake).
+type FriendReport struct {
+	Running []string `json:"running,omitempty"`
 }
 
 // Beaten says the member has beaten at least once.

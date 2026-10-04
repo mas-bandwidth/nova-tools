@@ -131,6 +131,8 @@ func verbProse(name string) string {
 		return releaseHoldWords
 	case "friend beat", "friend down", "friend up":
 		return friendVerbWords(name)
+	case "friend take":
+		return friendTakeWords
 	default:
 		return ""
 	}

@@ -149,8 +149,16 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 }
 
 // FriendBeat writes one beat of the friend at the store's clock, to the
-// second; a friend the roster lacks is refused and nothing is written.
+// second, reporting nothing more; a friend the roster lacks is refused and
+// nothing is written.
 func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, error) {
+	return st.FriendBeatReport(ctx, friend, sprint.FriendReport{})
+}
+
+// FriendBeatReport is FriendBeat with what her machinery reports of her work
+// (sprint.FriendReport: the cards she is running, which friend take and friend
+// down keep with her), kept on the beat until the next replaces it.
+func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint.FriendReport) (sprint.Beat, error) {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
 		return sprint.Beat{}, err
@@ -158,7 +166,7 @@ func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, er
 	if _, ok := r[friend]; !ok {
 		return sprint.Beat{}, noFriend(r, friend)
 	}
-	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second)}
+	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second), Friend: &rep}
 	out, err := json.Marshal(b)
 	if err != nil {
 		return b, err
@@ -271,4 +279,20 @@ func (st *Store) FriendNames(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return slices.Sorted(maps.Keys(r)), nil
+}
+
+// FriendBeatOf is the friend's last beat; the zero beat when she has never beaten.
+func (st *Store) FriendBeatOf(ctx context.Context, friend string) (sprint.Beat, error) {
+	var b sprint.Beat
+	kv, err := st.rootKV()
+	if err != nil || kv == nil {
+		return b, err
+	}
+	raw, ok, err := kv.GetKey(ctx, friendBeatKey(friend))
+	if err != nil || !ok {
+		return b, err
+	}
+	// ignored: an unreadable record is no beat, which the next beat replaces (FriendRows)
+	_ = json.Unmarshal([]byte(raw), &b)
+	return b, nil
 }

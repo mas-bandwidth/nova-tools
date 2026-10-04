@@ -1444,17 +1444,25 @@ func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 }
 
 // withdrawCard is the unit that withdraws work card c from its member, the one path of a
-// member going down (FleetStep) and of a ready card on a resting route (restWithdrawals): a
-// new generation and the withdrawn stamp, and FieldTakeEnded only when its take ended
-// (ended), which spends a redeal (redeal); its primary, working on c, goes back to ready for
-// the next deal, with a happened note of typ to its stream that says what, by who.
+// member going down (FleetStep), of a ready card on a resting route (restWithdrawals) and
+// of a friend's card taken back (FriendTake, by withdrawUnit): a new generation and the
+// withdrawn stamp, and FieldTakeEnded only when its take ended (ended), which spends a
+// redeal (redeal); its primary, working on c, goes back to ready for the next deal, with a
+// happened note of typ to its stream that says what, by who.
 func withdrawCard(s *Snapshot, c *Card, ended bool, typ, who, what string) Unit {
+	var set map[string]string
+	if ended {
+		set = map[string]string{FieldTakeEnded: stamp(s.Now)}
+	}
+	return withdrawUnit(s, c, set, nil, typ, who, what)
+}
+
+// withdrawUnit is withdrawCard with the fields extra sets and unset unsets on the card.
+func withdrawUnit(s *Snapshot, c *Card, extra map[string]string, unset []string, typ, who, what string) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"] = stamp(s.Now)
-	if ended {
-		set[FieldTakeEnded] = stamp(s.Now)
-	}
-	u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
+	maps.Copy(set, extra)
+	u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, append([]string{"taken", "dealt"}, unset...)...))},
 		Moved: fmt.Sprintf("%s withdrawn gen=%d", c.ID, c.Int("gen")+1)}
 	if what != "" {
 		u.Moved += ", " + what
