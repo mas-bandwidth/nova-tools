@@ -147,7 +147,7 @@ type Library struct {
 
 	// Glob names the files of Files that belong to the library, in the
 	// syntax of path.Match: "lua/*.lua". Every match must be a file that can
-	// be read and that holds more than white space.
+	// be read and that holds more than whitespace.
 	Glob string
 
 	// Prelude is Lua placed before the first file, outside every file's
