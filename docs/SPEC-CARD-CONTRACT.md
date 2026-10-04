@@ -244,6 +244,13 @@ hand-back (the member) and at the record (the store); refused, the read stays th
 report or hand back (`TestAuthoritativeBrokenReadFindingBoundary`). A file is any name with an
 extension, `a.go` too; `e.g.` and `i.e.` are not, since a dot follows.
 
+### script-cards-self-verify.w1: a script read's finding
+
+A read of a script card that a script reader found identical to its program's output reports `verdict: ok`
+with a `report:` line beginning `script read: ` (what was run, at which start commit, against which
+head, and the bytes compared). A script reader that found a difference reports nothing of its own: it
+reads the card as a model reader and gives that read's verdict (docs/SPEC-SPRINT.md section 6, the script read).
+
 ## 4. The finish
 
 A work card's finish is judged in one place, `member.Judge`, cited from the model's `Finish`:
