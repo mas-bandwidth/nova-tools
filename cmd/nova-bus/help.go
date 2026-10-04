@@ -67,8 +67,7 @@ first send, from nothing, in a scratch directory (writes only ./bus and ./d.md):
   printf '%s\n' '{"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"},{"name":"Bo","lane":"from-bo","git_name":"Bo","git_email":"bo@example.com"}]}' > bus/participants.json
   git -C bus add participants.json
   git -C bus -c user.name=Ada -c user.email=ada@example.com commit -qm roster
-  nova-bus draft --bus bus --as Ada --to Bo --subject hello > d.md
-  (then replace <the note goes here> in d.md)
+  nova-bus draft --bus bus --as Ada --to Bo --subject hello > d.md   (then replace the placeholder)
   nova-bus send --bus bus --file d.md --as Ada --remote origin --branch main --no-push
   nova-bus inbox --bus bus --as Bo --receipt-max-words 20
 

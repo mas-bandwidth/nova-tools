@@ -68,6 +68,53 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		}
 		assert.LessOrEqualf(t, len(line), 100, "a banner line runs past 100 columns:\n%s", line)
 	}
+
+	// The banner's first-send recipe runs as printed: its own functional test
+	// (TestTheBannersFirstSendRecipeRunsAsPrinted) reads every indented line under
+	// "first send, from nothing", strips a comment only where two spaces and an open
+	// parenthesis stand on the SAME line, and dispatches on each remaining command's
+	// first word -- a parenthetical on a line of its own reaches that dispatch as a
+	// command the runner does not know, so the recipe line and its trailing
+	// parenthetical must stay one line. The unit tier holds the same shape: after that
+	// strip, every recipe line opens with a command the functional runner can run.
+	var recipe []string
+	bannerLines := strings.Split(banner, "\n")
+	for i := 0; i < len(bannerLines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(bannerLines[i]), "first send, from nothing") {
+			for i++; i < len(bannerLines) && !strings.HasPrefix(bannerLines[i], "  git "); i++ {
+			}
+			for ; i < len(bannerLines) && strings.HasPrefix(bannerLines[i], "  ") && strings.TrimSpace(bannerLines[i]) != ""; i++ {
+				recipe = append(recipe, strings.TrimSpace(bannerLines[i]))
+			}
+		}
+	}
+	require.NotEmpty(t, recipe, "the banner prints no first-send recipe lines")
+	for _, line := range recipe {
+		command := line
+		if j := strings.Index(command, "  ("); j >= 0 {
+			command = strings.TrimSpace(command[:j])
+		}
+		for _, part := range strings.Split(command, " && ") {
+			fields := strings.Fields(part)
+			require.NotEmptyf(t, fields, "the recipe prints an empty command line: %q", line)
+			switch fields[0] {
+			case "cd", "git", "printf", "nova-bus":
+			default:
+				assert.Failf(t, "a recipe line is not a command the runner can run",
+					"the recipe runs %q, which TestTheBannersFirstSendRecipeRunsAsPrinted does not know how to run (line %q)", part, line)
+			}
+		}
+	}
+	// The draft line of the recipe keeps its trailing parenthetical on the same line:
+	// that is the shape the functional runner strips as the recipe's comment.
+	draftLine := ""
+	for _, line := range recipe {
+		if strings.HasPrefix(line, "nova-bus draft") {
+			draftLine = line
+		}
+	}
+	require.NotEmptyf(t, draftLine, "the recipe prints no draft line: %q", recipe)
+	assert.Containsf(t, draftLine, "  (then replace", "the recipe's draft line lost its trailing parenthetical on the same line: %q", draftLine)
 }
 
 func busRun(args []string, stdout, stderr io.Writer) int {
