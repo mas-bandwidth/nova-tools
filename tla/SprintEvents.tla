@@ -806,8 +806,8 @@ PlanAsk(k) ==
   IN IF Frozen(p) THEN Held(k)
      ELSE IF col[p] = "review" /\ fld[p].result = "ok" /\ ~fld[p].bound
      THEN CHOOSE one \in UNION {{IF able = {}
-                              THEN PlanU(k, <<U("cannotask", p, None, None)>>, FALSE)
-                              ELSE PlanU(k, <<U("ask", p, one, {one})>>, FALSE) : one \in {able}}} : TRUE
+                              THEN {PlanU(k, <<U("cannotask", p, None, None)>>, FALSE)}
+                              ELSE {PlanU(k, <<U("ask", p, one, {one})>>, FALSE) : one \in able}}} : TRUE
      ELSE Plan0(k)
 PlanAccept(k) ==
   LET p == k[2] IN
