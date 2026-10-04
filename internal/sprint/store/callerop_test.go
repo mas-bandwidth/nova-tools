@@ -52,6 +52,11 @@ func TestACallerOpWithASlashIsRefused(t *testing.T) {
 		require.ErrorContains(t, err, "one word of letters, digits", "--op %q: %v", op, err)
 	}
 	h.nothingWritten(before)
+	// a word with a dot stands: the shape nova-sprint land builds for its own
+	// steps (land.go, l.c.op + "." + r.Stream + "." + step.Args)
+	ok := AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"late"}})
+	ok.CallerOp = "land.s1-1.a1b2c3d4e5f6"
+	h.must(ok)
 }
 
 // S6. The same verb with other arguments under a recorded caller's operation
