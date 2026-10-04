@@ -143,7 +143,6 @@ cmd/nova-update/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineFo
 cmd/nova-version/firstrun_test.go:TestExecutableFirstRun serial: t.Chdir
 cmd/nova-version/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
 cmd/nova-version/friendsequence_test.go:TestFriendSequenceSnapshotReport serial: t.Setenv
-internal/check/corpus_test.go:TestARelativeRootIsNotReadAsASymlinkEscape serial: t.Chdir
 internal/nsprint/store/store_test.go:TestOpenAuthenticatesFromEnv serial: t.Setenv
 internal/nsprint/testutil/github_test.go:TestGitHubStubInterceptsHTTPCalls serial: t.Setenv
 internal/nsprint/testutil/github_test.go:TestGitHubStubStartsCleanly serial: t.Setenv
