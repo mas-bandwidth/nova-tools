@@ -2637,8 +2637,9 @@ tick: the one writer of the sprint, beside the store. A worker started with `nov
 own machine. A request is a batch: the worker's verbs, each the argument list it would give
 `nova-sprint`, in the order to run them. The server runs each through the verb's own code, in
 its own process, and answers with each verb's exit code and what it printed, one answer a verb,
-in order. One batch, and one tick, at a time: neither runs during the other. The server keeps
-nothing between requests.
+in order. One verb that writes, and one tick, at a time: neither runs during the other (the beats
+and the reads run on lanes beside them; "A verb is answered within a second" below). The server
+keeps nothing between requests.
 
 The server runs the workers' verbs only: `take`, `finish`, `read` and `queue`, each beginning
 `<verb> --as <worker>` with one worker's name, `fleet beat <member> --load <percent>` and
@@ -2726,6 +2727,32 @@ the tailnet address are the ones that listen, and the coordinator's verbs listen
 the same port. The server checks no credential (the owner: "I am OK
 with relying on tailnet as secure"): what can reach the address can run a worker's verb as any
 worker, and nothing else.
+
+A verb is answered within a second (`ServeWait`), whatever the tick or the lander is doing
+(cmd/nova-sprint/lanes.go; tla/ServerLine.tla). Measured 2026-10-04 from 12:52 PM ET, from the
+server's log (tick-stall-cause): the ticks ran in 0.1 to 2.1 s and began 11 to 40 s apart, land's
+one-read queue phase took 14.9 to 19.4 s and its report 8.9 to 25.6 s, and `POST /verbs` took 5
+to 15 s or ran past the client's 8 s, from 2:13 PM failing every friend's beat. No step was long:
+every holder of the one line of control waited behind every other. A batch held the line for its
+whole verb list; every friend's beat, every second, and every worker's queue, every pass, took
+the line though none moves a card; and a batch whose sender had given up still waited, then ran.
+So: the beats (`fleet beat`, `friend beat`) run on a beats lane and the reads (`queue`, `where`,
+`card`, `log`, `needs`) on a reads lane, each lane its own lock over its own view of the store
+(its own connection and read twin), so no tick, landing step, decide or balance round or worker's
+write holds them, and they hold none. Every other verb takes the line for itself alone, never for
+its batch. A verb waits for its lane or the line at most `ServeWait`, on the server's own clock;
+past it the verb is answered exit 2, `busy`, naming what it waited for, and every later verb of
+its batch is answered busy too, all having run nothing and changed nothing: its sender sends them
+again. A free lock is taken at once, on no clock; the take a busy verb gave up stays in the lock's
+order and frees it at once when it comes, running nothing. A batch whose sender has gone (its
+connection closed) runs nothing more: each verb not yet begun is answered `not run`. A twin's
+server opens no lanes (the twin is one file the process saves after each verb) and runs every
+verb on the line, bounded the same way. `ServerLine.tla` models the line, the two lanes, the bound,
+the sender going and the abandoned take, with six reversed witnesses (the beats on the line, a
+batch holding the line for all its verbs, no bound, a gone sender's verb run, a batch going on
+past a busy verb, an abandoned take that runs its verb) and one reach witness (a beat answered
+while a landing's step holds the line). `TestVerbAnsweredWhileLandInProgress`,
+`TestABatchWhoseSenderHasGoneIsNotRun`.
 
 A worker whose answer was lost sends the verb again with the same operation id (`--op`): a
 committed operation returns its recorded result and changes nothing twice; a refusal, or a take

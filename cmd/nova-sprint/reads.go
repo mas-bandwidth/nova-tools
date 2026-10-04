@@ -584,7 +584,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	ctx := context.Background()
 	if *watch && isTwin(c.redis) {
 		// before the watch draws anything: a twin has no machine to watch
-		if _, err := a.backend(ctx, c.redis, sprint.Names{}); err == nil && a.twinOpen(c.redis) {
+		if _, err := a.open(ctx, c.redis, sprint.Names{}); err == nil && a.twinOpen(c.redis) {
 			return refuse(stderr, "where", twinMachine)
 		}
 	}

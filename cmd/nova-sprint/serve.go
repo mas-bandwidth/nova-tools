@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -147,22 +147,42 @@ var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sy
 // worker sent. A verb the server does not run (workerVerb) is answered as a
 // usage refusal, exit 2, and the batch goes on: every verb has its own answer.
 // Local batches run any verb the server runs (verbArgs.unserved), while fleet
-// batches run a worker's verbs only.
-// One batch, and one tick, at a time (a.serial): the lock is taken here, after
-// the request is read whole, and released before any answer is written, so a
-// slow worker never holds the tick.
+// batches run a worker's verbs only. A batch from no connection (a test, the
+// driver) has no sender to lose: serveCtx is the listener's.
 func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response {
-	a.serial.Lock()
-	defer a.serial.Unlock()
-	defer func() { a.serving = false }()
+	return a.serveCtx(context.Background(), req, local)
+}
+
+// serveCtx is serveFrom for a sender that may go (ctx: its request's). Each verb takes
+// its lane or the line for itself alone (lanes.go), after the request is read whole, and
+// frees it before the next verb: a beat or a read never waits for a tick, a landing's
+// step or a worker's write, a write never waits for a whole batch, and none waits past
+// ServeWait. A verb answered busy stops its batch: every later verb is answered busy too,
+// having run nothing, so the batch's order holds. A batch whose sender has gone runs
+// nothing more.
+func (a *app) serveCtx(ctx context.Context, req sprintwire.Request, local bool) sprintwire.Response {
 	out := sprintwire.Response{Results: make([]sprintwire.Result, len(req.Verbs))}
+	var stopped error
 	for i, argv := range req.Verbs {
+		if stopped == nil && ctx.Err() != nil {
+			stopped = errGone
+		}
+		if stopped != nil {
+			if errors.Is(stopped, errBusy) {
+				out.Results[i] = unrun(argv, errBusy)
+			} else {
+				out.Results[i] = unrun(argv, errGone)
+			}
+			continue
+		}
 		var args []string
+		var name string
+		serving := false
 		as, words, why := workerVerb(argv)
 		switch {
 		case why == "":
 			// a worker's write names the epoch its worker holds, whoever sent it (runStep)
-			a.serving = true
+			serving, name = true, strings.Join(argv[:words], " ")
 			args = slices.Concat(argv[:words], []string{"--redis", a.serveAddr, "--actor", as}, argv[words:])
 		case local:
 			v := readVerb(argv)
@@ -170,7 +190,7 @@ func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response 
 				// a worker's verb is held to the epoch its worker holds whatever its words
 				// (runStep); who acts is the caller's --actor, and no one when it gave none,
 				// never whoever the server's own environment names
-				a.serving = verbClasses[v.name] == classWorker
+				serving, name = verbClasses[v.name] == classWorker, v.name
 				args = slices.Concat(argv[:v.words], []string{"--redis", a.serveAddr, "--actor", ""}, argv[v.words:])
 			}
 		}
@@ -182,9 +202,12 @@ func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response 
 			out.Results[i] = sprintwire.Result{Code: 2, Stderr: fmt.Sprintf("%s server: %s: %s; nothing was changed\n", prog, oneline.Escape(verb), oneline.Escape(why))}
 			continue
 		}
-		var stdout, stderr bytes.Buffer
-		code := a.run(args, &stdout, &stderr)
-		out.Results[i] = sprintwire.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}
+		res, err := a.serveOne(ctx, name, args, serving)
+		if err != nil {
+			stopped = err
+			res = unrun(argv, err)
+		}
+		out.Results[i] = res
 	}
 	return out
 }
@@ -231,7 +254,7 @@ func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 		out = gz
 	}
 	// ignored: a worker that has gone reads no answer; what ran is in the sprint's log
-	_ = json.NewEncoder(out).Encode(a.serveFrom(req, local))
+	_ = json.NewEncoder(out).Encode(a.serveCtx(r.Context(), req, local))
 }
 
 // takesGzip says a request's Accept-Encoding names gzip and does not refuse it (q=0).
@@ -289,6 +312,7 @@ func (a *app) listen(addr, store string, stdout io.Writer) error {
 		lns[addr] = a
 	}
 	a.serveAddr = store
+	a.openLanes()
 	for at, h := range lns {
 		ln, err := net.Listen("tcp", at)
 		if err != nil {
