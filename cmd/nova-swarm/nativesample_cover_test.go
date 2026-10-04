@@ -91,8 +91,10 @@ func TestNativesampleCoverReadOnce(t *testing.T) {
 			assert.False(t, observed, "a data home that reports nothing is an absence, never a figure")
 			if tc.wantErrPart != "" {
 				assert.ErrorContains(t, lastErr, tc.wantErrPart, "a failed read carries the reason it gave")
+				assert.Equal(t, lastErr.Error(), s.Why(), "Why is the last failed read's reason, in its own words, for the NATIVE BUDGET line")
 			} else {
 				assert.NoError(t, lastErr, "an answered read carries no error")
+				assert.Empty(t, s.Why(), "an answered read leaves nothing for the line to carry")
 			}
 			assert.Equal(t, 1, maxFlight, "readOnce brackets its read with enter and leave, so no two overlap")
 			assert.Empty(t, s.StopWordAtFinal(0, false, ""), "a sample that saw nothing fires no budget")

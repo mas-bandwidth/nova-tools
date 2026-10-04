@@ -329,6 +329,21 @@ func (s *liveSampler) Observed() (spent int, observed, partial bool, failures in
 	return s.spent, s.observed, s.partial, s.failures, s.lastErr
 }
 
+// Why is the reason the last failed read gave, in its own words, or "" when the last read
+// answered. It is what an unverifiable end carries onto the NATIVE BUDGET line: three reads
+// that each did not answer within the limit and three that each exited on a locked database
+// both end a card `stopped=unverifiable`, and the member that reads the line cannot tell
+// one from the other without it (superman, 2026-10-03: 32 cards ended this way in three
+// bursts, and the record said only that the source stopped answering).
+func (s *liveSampler) Why() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastErr == nil {
+		return ""
+	}
+	return s.lastErr.Error()
+}
+
 // Counts is how many samples were answered and whether any two ever overlapped. It exists
 // for the tests that hold "no sample starts while one is unanswered".
 func (s *liveSampler) Counts() (answered, maxInFlight int) {
@@ -341,8 +356,9 @@ func (s *liveSampler) Counts() (answered, maxInFlight int) {
 // cost (the harness's own figure, to the cent and rounded up): the words of the NATIVE
 // BUDGET line, which the member carries into the finish's reason after the end
 // (nova-tools #5094): "tokens 509,940 of 400,000, $0.03". tokens is the --tokens budget,
-// 0 when unmetered; cost is the job's spend= cost, "" when the harness reported none.
-func nativeBudgetWords(stopped string, tokens, spent int, partial bool, cost, usd string) string {
+// 0 when unmetered; cost is the job's spend= cost, "" when the harness reported none; why
+// is the last failed read's reason for an unverifiable end, "" for every other stop.
+func nativeBudgetWords(stopped string, tokens, spent int, partial bool, cost, usd, why string) string {
 	count := groupThousands(spent)
 	if partial {
 		count += "+"
@@ -364,6 +380,11 @@ func nativeBudgetWords(stopped string, tokens, spent int, partial bool, cost, us
 	case stoppedTokens:
 		return "tokens " + count + ", " + money
 	case stoppedUnverifiable:
+		// why is the last failed read's own reason (liveSampler.Why), and it rides inside
+		// the sentence so that the figures keep their place at the end of the line.
+		if why != "" {
+			return "unverifiable: the usage source stopped answering (last read: " + why + "), tokens " + count + ", " + money
+		}
 		return "unverifiable: the usage source stopped answering, tokens " + count + ", " + money
 	}
 	return stopped + ", tokens " + groupThousands(spent) + ", " + money
