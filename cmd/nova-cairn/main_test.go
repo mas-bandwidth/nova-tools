@@ -183,6 +183,30 @@ func TestConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 	require.Contains(t, out, "INDEX ENTRY session=alpha entry=e", "per-session index printed %q", out)
 }
 
+// TestIndexSessionCountsOnlyTheSelection pins the --session coverage fix:
+// index --session reports the count the selection covers, not the whole store,
+// and prints an INDEX SESSION line for every session in the selection, entries
+// or none, so an empty session is found.
+func TestIndexSessionCountsOnlyTheSelection(t *testing.T) {
+	t.Parallel()
+
+	c := newRig(t)
+	c.ok("open", "--session", "s1", "--publish", "manual")
+	c.ok("append", "--session", "s1", "--entry", "e1", "--text", "words of s1", "--publish", "manual")
+	c.ok("open", "--session", "s2", "--publish", "manual")
+
+	// An empty session is counted and named: sessions= is the selection's count,
+	// not the store's, and INDEX SESSION lists it with entries=0.
+	out := c.ok("index", "--session", "s2")
+	printed(t, out, "INDEX SESSION session=s2 entries=0", "INDEX OK sessions=1 entries=0")
+	require.NotContains(t, out, "sessions=2", "sessions= counted the whole store, not the selection: %s", out)
+
+	// The full index names every session, empty or not.
+	out = c.ok("index")
+	printed(t, out, "INDEX SESSION session=s1 entries=1", "INDEX SESSION session=s2 entries=0",
+		"INDEX OK sessions=2 entries=1")
+}
+
 func TestLifecycleVerbsStayRefused(t *testing.T) {
 	t.Parallel()
 
