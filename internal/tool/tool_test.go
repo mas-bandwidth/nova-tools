@@ -272,6 +272,45 @@ func TestAResultThatIsNoJSONIsAFail(t *testing.T) {
 	assert.Contains(t, w.String(), "LOAD FAILED: the result is no JSON")
 }
 
+// bidi spells a code point as a string, and bidiEscape its six-character JSON
+// escape text, without putting either the character or a \u sequence into this
+// file: an invisible bidi control in a source file is exactly the thing a reader
+// could not see, the spelling internal/oneline's own test uses.
+func bidi(cp rune) string       { return string(cp) }
+func bidiEscape(cp rune) string { return fmt.Sprintf("%su%04x", backslash, cp) }
+
+const backslash = "\x5c" // one backslash
+
+// TestJSONRenderingEscapesBidiControlsInStrings pins the JSON rendering's half of
+// the one-line guarantee: the typed rendering escapes the bidi controls
+// (oneline.Escape), and --json must not hand a reader the raw runes instead. A
+// stored snippet holding U+202E, the right-to-left override, reorders the line
+// a person or terminal reads while the JSON parses to the same string, and the
+// corpus writer controls the snippet.
+func TestJSONRenderingEscapesBidiControlsInStrings(t *testing.T) {
+	t.Parallel()
+	fact := "ok" + bidi(0x202e) + "hello" + bidi(0x2067) + "there"
+	snippet := "plain" + bidi(0x202e) + "snippet" + bidi(0x2067) + "tail"
+	o := Done().Fact("why", fact).Item("hit", "snippet", snippet)
+	o.Verb, o.token = "demo", "DEMO"
+	var js bytes.Buffer
+	require.Equal(t, 0, o.Render(&js, true))
+	raw := js.String()
+	assert.Contains(t, raw, bidiEscape(0x202e), "the override must be spelled as its escape, not carried raw")
+	assert.Contains(t, raw, bidiEscape(0x2067), "the isolate must be spelled as its escape, not carried raw")
+	assert.NotContains(t, raw, bidi(0x202e), "a raw override reorders the line for the reader")
+	assert.NotContains(t, raw, bidi(0x2067), "a raw isolate reorders the line for the reader")
+	var j struct {
+		Facts map[string]string `json:"facts"`
+		Items []struct {
+			Fields map[string]string `json:"fields"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &j))
+	assert.Equal(t, fact, j.Facts["why"], "the escape decodes to the same string: the JSON is lossless")
+	assert.Equal(t, snippet, j.Items[0].Fields["snippet"], "the escape decodes to the same string: the JSON is lossless")
+}
+
 func demo() *Tool {
 	return &Tool{
 		Name:      "nova-demo",
