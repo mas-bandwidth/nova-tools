@@ -42,7 +42,10 @@ var treeTests = []string{"internal/docs", "internal/ci"}
 func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...string) (string, error) {
 	b := subproc.Prepare(ctx, landGoBudget, run[0], run[1:]...)
 	defer b.Cancel()
-	env := l.a.gitEnv
+	var env []string
+	if l.a != nil {
+		env = l.a.gitEnv
+	}
 	if env == nil {
 		env = os.Environ()
 	}
@@ -124,6 +127,20 @@ func gateWhy(run []string, err error, out string) string {
 		}
 	}
 	return strings.Join(run, " ") + ": " + oneline.Err(err) + ": " + oneline.Cap(strings.Join(lines, " | "), 1500)
+}
+
+// treeGateBase gates the base's tip at baseSha, caching the result so the same base
+// commit is not re-gated across streams or ticks: "" when green, else the finding.
+func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string) string {
+	if l.baseGateCache == nil {
+		l.baseGateCache = map[string]string{}
+	}
+	if why, cached := l.baseGateCache[baseSha]; cached {
+		return why
+	}
+	why := l.treeGate(ctx, dir, true)
+	l.baseGateCache[baseSha] = why
+	return why
 }
 
 // treeGate runs the gate on the clone's tree, the tree tests too when tests: "" when it

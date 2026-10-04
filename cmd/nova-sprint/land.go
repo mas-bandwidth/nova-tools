@@ -248,8 +248,9 @@ type lander struct {
 	ledgerLog []string
 	// gate is the gate decision's backend, clock, bars and record for a red batch gate
 	// (landgate.go), nil when none is made; gateNote says why none is, once.
-	gate     *landGate
-	gateNote string
+	gate          *landGate
+	gateNote      string
+	baseGateCache map[string]string // base commit SHA -> finding ("" when green)
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -295,7 +296,10 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s land: the sprint is at epoch %d, not %d (cleared since): nothing was fetched, pushed or reported; run: nova-sprint where\n", prog, st.PinnedEpoch(), c.epoch)
 		return 1
 	}
-	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}}
+	if a.baseGateCache == nil {
+		a.baseGateCache = map[string]string{}
+	}
+	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, baseGateCache: a.baseGateCache}
 	if *check != "" && !*dry {
 		a.serial.Lock()
 		l.gate, l.gateNote = a.landGate(context.Background(), st)
@@ -911,7 +915,11 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
 	}
-	if why := l.treeGate(ctx, dir, true); why != "" {
+	baseSha, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return nil, failed, "the base " + base + " has no tip in " + dir + ": " + firstLine("", err)
+	}
+	if why := l.treeGateBase(ctx, dir, baseSha); why != "" {
 		return nil, failed, "the base " + base + " fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: " + why
 	}
 	for i := range cards {

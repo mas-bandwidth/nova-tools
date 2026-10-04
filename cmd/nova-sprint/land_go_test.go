@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // withEnv replaces a variable the environment holds and adds one it does not, the rest
@@ -136,4 +140,33 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 			r.clean()
 		})
 	}
+}
+
+// The base gate result is cached by base commit SHA: once gated, the same commit is
+// not re-gated on subsequent calls even if the tree on disk changes.
+func TestTreeGateBaseCache(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for f, content := range goModule {
+		p := filepath.Join(dir, f)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(content), 0o600))
+	}
+	l := &lander{baseGateCache: map[string]string{}}
+	assert.Equal(t, "", l.treeGateBase(context.Background(), dir, "base-1"))
+	assert.Equal(t, "", l.baseGateCache["base-1"])
+
+	// Corrupt main.go: cache hit for base-1 still reports green without running.
+	mainGo := filepath.Join(dir, "main.go")
+	require.NoError(t, os.WriteFile(mainGo, []byte(buildRed), 0o600))
+	assert.Equal(t, "", l.treeGateBase(context.Background(), dir, "base-1"))
+
+	// A different base SHA (base-2) gates and caches the failure.
+	why := l.treeGateBase(context.Background(), dir, "base-2")
+	assert.Contains(t, why, "syntax error")
+	assert.Equal(t, why, l.baseGateCache["base-2"])
+
+	// Restore main.go: cache hit for base-2 still reports the cached failure.
+	require.NoError(t, os.WriteFile(mainGo, []byte(goModule["main.go"]), 0o600))
+	assert.Equal(t, why, l.treeGateBase(context.Background(), dir, "base-2"))
 }
