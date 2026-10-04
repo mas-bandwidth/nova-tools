@@ -172,11 +172,12 @@ func TestHeadlessLoginIsReadFromTheStatusVerb(t *testing.T) {
 // Each harness runs from a private home under the child's data home, never the bench's own
 // ~/.<kind>: the child is pointed at it by name where the program reads one, and grok, which
 // reads HOME alone, finds it where HOME puts it. Of the bench's login only the credential
-// file is named for copying.
+// file is named for copying, and claude, whose file is a refreshable OAuth login, names
+// none: it is handed its token by name instead.
 func TestAHeadlessHarnessRunsFromAPrivateHome(t *testing.T) {
 	t.Parallel()
 	h := HeadlessHomeOf(harness.Claude, "/home/b", "/s/data")
-	assert.Equal(t, HeadlessHome{Source: "/home/b/.claude", Dir: "/s/data/.claude", Env: []string{"CLAUDE_CONFIG_DIR=/s/data/.claude"}, Login: []string{".credentials.json"}}, h)
+	assert.Equal(t, HeadlessHome{Source: "/home/b/.claude", Dir: "/s/data/.claude", Env: []string{"CLAUDE_CONFIG_DIR=/s/data/.claude"}, Token: ClaudeTokenEnv}, h)
 	h = HeadlessHomeOf(harness.Codex, "/home/b", "/s/data")
 	assert.Equal(t, HeadlessHome{Source: "/home/b/.codex", Dir: "/s/data/.codex", Env: []string{"CODEX_HOME=/s/data/.codex"}, Login: []string{"auth.json"}}, h)
 	h = HeadlessHomeOf(harness.Grok, "/home/b", "/s/data")
@@ -210,5 +211,31 @@ func TestEachHeadlessHarnessRunsWithItsWebToolsOff(t *testing.T) {
 			end = len(argv) - 1 // grok: the prompt is its last word, `--single=...`
 		}
 		assert.Contains(t, strings.Join(argv[:end], "\x00"), strings.Join(off[k], "\x00"), "%s: web tools off before the prompt", k)
+	}
+}
+
+// claude's `.credentials.json` is a refreshable OAuth login: a copy per launch would take the
+// refresh a turn makes into the copy, which the next launch discards, and the bench's own
+// refresh token would go stale. So claude's private home names no credential file to copy, and
+// its login is the long-lived token the run hands it by name (CLAUDE_CODE_OAUTH_TOKEN, a
+// --pass secret), which needs no keychain inside the wall. A run that hands no token is told
+// so, naming the remedy; the note never carries a value.
+func TestClaudesLoginIsAHandedTokenNeverACopyOfItsRefreshableFile(t *testing.T) {
+	t.Parallel()
+	h := HeadlessHomeOf(harness.Claude, "/home/b", "/s/data")
+	assert.Empty(t, h.Login, "claude's refreshable credential file is never copied per launch")
+	assert.Equal(t, "CLAUDE_CODE_OAUTH_TOKEN", h.Token)
+	for _, k := range []string{harness.Codex, harness.Grok} {
+		assert.Empty(t, HeadlessHomeOf(k, "/home/b", "/s/data").Token, "%s reads its login from its file", k)
+		assert.Empty(t, HeadlessTokenNote(HeadlessHomeOf(k, "/home/b", "/s/data"), nil), k)
+	}
+
+	assert.Empty(t, HeadlessTokenNote(h, []string{"PATH=/bin", "CLAUDE_CODE_OAUTH_TOKEN=fake-token-value"}))
+	for _, env := range [][]string{nil, {"PATH=/bin"}, {"CLAUDE_CODE_OAUTH_TOKEN="}, {"CLAUDE_CODE_OAUTH_TOKEN=  "}, {"XCLAUDE_CODE_OAUTH_TOKEN=fake"}} {
+		note := HeadlessTokenNote(h, env)
+		assert.Contains(t, note, "CLAUDE_CODE_OAUTH_TOKEN", "%q", env)
+		assert.Contains(t, note, "--pass CLAUDE_CODE_OAUTH_TOKEN", "%q: the note names the remedy", env)
+		assert.NotContains(t, note, "fake", "%q: the note carries no value", env)
+		assert.NotContains(t, note, "\n", "%q: one line", env)
 	}
 }

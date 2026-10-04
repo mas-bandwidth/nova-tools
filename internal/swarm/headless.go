@@ -56,30 +56,58 @@ func HeadlessArgv(kind, bin, model, prompt string) ([]string, error) {
 // never mounted, readable or writable: it holds the whole login, the interactive history,
 // the harness's config and hooks, and a write there is a code path outside the wall. What
 // the harness needs of it is its credential file alone, Login, copied into Dir before the
-// launch (docs/SPEC-SWARM.md, what a card can reach). The harness is pointed at Dir by name
-// in Env (claude: CLAUDE_CONFIG_DIR, codex: CODEX_HOME) or, grok reading HOME alone, by
-// being where HOME puts it.
+// launch (docs/SPEC-SWARM.md, what a card can reach), or, for a harness whose file is a
+// refreshable OAuth login, no file at all: its login is the token the run hands it by name,
+// Token. The harness is pointed at Dir by name in Env (claude: CLAUDE_CONFIG_DIR, codex:
+// CODEX_HOME) or, grok reading HOME alone, by being where HOME puts it.
 type HeadlessHome struct {
 	Source string   // the harness's own directory on the bench, where Login is copied from
 	Dir    string   // the private home under the data home
 	Env    []string // NAME=value entries the child carries, nil when the harness reads none
 	Login  []string // the credential files, by name, copied from Source to Dir: nothing else is
+	Token  string   // the environment name the harness reads its login from in place of a file, "" for none
 }
 
 // HeadlessHomeOf is HeadlessHome for one harness: Source under the bench's home directory,
-// Dir under the child's data home. The credential file is claude's `.credentials.json` (a
-// machine that keeps it in the OS keychain has none to copy), codex's and grok's `auth.json`.
+// Dir under the child's data home. codex's and grok's credential file is `auth.json`.
+// claude's `.credentials.json` is a refreshable OAuth login: a copy taken per launch takes
+// the refresh a turn makes, the next launch discards the copy, and the bench's own refresh
+// token goes stale; and a machine that keeps the login in the macOS keychain has no file to
+// copy and no keychain inside the wall. So claude copies nothing, and its login is the
+// long-lived token in ClaudeTokenEnv, which the run hands it by name (a --pass secret).
 func HeadlessHomeOf(kind, benchHome, dataHome string) HeadlessHome {
 	h := HeadlessHome{Source: filepath.Join(benchHome, "."+kind), Dir: filepath.Join(dataHome, "."+kind)}
 	switch kind {
 	case harness.Claude:
-		h.Env, h.Login = []string{"CLAUDE_CONFIG_DIR=" + h.Dir}, []string{".credentials.json"}
+		h.Env, h.Token = []string{"CLAUDE_CONFIG_DIR=" + h.Dir}, ClaudeTokenEnv
 	case harness.Codex:
 		h.Env, h.Login = []string{"CODEX_HOME=" + h.Dir}, []string{"auth.json"}
 	default:
 		h.Login = []string{"auth.json"}
 	}
 	return h
+}
+
+// ClaudeTokenEnv is the environment name claude reads its long-lived login token from
+// (`claude setup-token`), the bench's nova-secrets key a member hands its children with
+// --pass. The value is never written to a file, never printed, and unset in every shell the
+// harness starts (cmd/nova-swarm shellshim.go).
+const ClaudeTokenEnv = "CLAUDE_CODE_OAUTH_TOKEN"
+
+// HeadlessTokenNote is the one line a run says when its harness reads its login from h.Token
+// and env, the child's environment, carries no value for it: the harness will answer logged
+// out, a provider failure of class auth, and the line names the remedy. "" when the harness
+// reads no token or env carries one. The line names the variable, never a value.
+func HeadlessTokenNote(h HeadlessHome, env []string) string {
+	if h.Token == "" {
+		return ""
+	}
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, h.Token+"="); ok && strings.TrimSpace(v) != "" {
+			return ""
+		}
+	}
+	return fmt.Sprintf("the harness reads its login from %s and this run hands it none, so it answers logged out (class auth); start the member under nova-secrets exec with --pass %s", h.Token, h.Token)
 }
 
 // HeadlessLoginArgv is the verb that says whether a headless harness is logged in,
