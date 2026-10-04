@@ -141,6 +141,9 @@ type app struct {
 	// landCtx is the land loop's context while it runs a land (landOnce): the landed
 	// diffs' scoring runs under it, so the loop's shutdown ends the pass; nil is none.
 	landCtx context.Context
+	// baseGateCache is the tree gate's findings for base commit tips, by commit SHA:
+	// "" when green, cached across streams and rounds so a base is gated once.
+	baseGateCache map[string]string
 	// tickDeadline is how long the run loop waits for one tick (run
 	// --tick-deadline; 0, a test's loop, waits for ever); after is the clock
 	// it waits on (time.After unless a test sets it), and exit how the loop

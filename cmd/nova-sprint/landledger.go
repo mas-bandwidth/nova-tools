@@ -27,12 +27,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // landLedger is a family of generated, shrink-only files and the tests that own them: the
@@ -59,9 +57,6 @@ var landLedgers = []landLedger{{
 // fails once with "updated, rerun", and a ledger that reads another (the text scan
 // reads the Go scan's shards) settles on the next pass.
 const landRegenPasses = 4
-
-// landRegenBudget bounds one update run: a build and two tests of one package.
-const landRegenBudget = 15 * time.Minute
 
 // owned says one of the ledgers owns p.
 func owned(p string, ledgers []landLedger) bool {
@@ -320,16 +315,8 @@ func onDiskLink(dir string, paths []string) string {
 	return ""
 }
 
-// regen runs one update run in the clone, in the caller's environment with the update
-// variable set; its combined output.
+// regen runs one update run in the clone (goRun) with the update variable set; its
+// combined output.
 func (l *lander) regen(ctx context.Context, dir string, run []string) (string, error) {
-	b := subproc.Prepare(ctx, landRegenBudget, run[0], run[1:]...)
-	defer b.Cancel()
-	env := l.a.gitEnv
-	if env == nil {
-		env = os.Environ()
-	}
-	b.Cmd.Dir, b.Cmd.Env = dir, append(slices.Clone(env), diffcheck.UpdateEnv+"=1")
-	out, err := b.Cmd.CombinedOutput()
-	return string(out), b.Wrap(strings.Join(run, " "), err)
+	return l.goRun(ctx, dir, run, diffcheck.UpdateEnv+"=1")
 }
