@@ -7,7 +7,7 @@
 .github/workflows/ci.yml:hulk 23
 .github/workflows/ci.yml:mini 1
 .github/workflows/ci.yml:rowan 1
-.github/workflows/ci.yml:space 34
+.github/workflows/ci.yml:space 32
 .github/workflows/ci.yml:studio 39
 .github/workflows/ci.yml:superman 16
 .github/workflows/ci.yml:vision 9
