@@ -1020,7 +1020,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	stream := fs.String("stream", "", "the stream the primaries belong to, for life; with --count, several streams comma separated, one step")
 	count := fs.Int("count", 0, "admit n primaries with generated ids <stream>-<n>")
 	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table or of this add (default: the brief's Needs: or DEPENDS-ON: line; with a brief per card, added to each card's own)")
-	brief := fs.String("brief", "", fmt.Sprintf("the brief: a child's whole brief, at most %d KiB (the card lint advises %d bytes), held to the card lint (the sentences of the rules file: --rules, else the one init --rules recorded, else the built-in general rules; nova-swarm template --name card prints a card that passes the general ones, nova-swarm lint --rules lists them) and refused, exit 2, nothing written, when it fails; a card with no brief is not linted; under JEV_API_KEY each card's brief is then asked nova-decide's brief decision (one BRIEF line per card, an uncalibrated rank) and refused under the sprint row's decide_brief_bar, empty by default", cardlimits.MaxBriefBytes>>10, cardlimits.BriefAdvisoryBytes))
+	brief := fs.String("brief", "", fmt.Sprintf("the brief: a child's whole brief, at most %d KiB (the card lint advises %d bytes), held to the card lint (the sentences of the rules file: --rules, else the one init --rules recorded, else the built-in general rules; a friend's card, WHO: friend, is held to the friend rule set instead: its own rules line `RULES: <the friend's own rules>`, not the child's RULES paragraph, and a refusal names the rule set that applies, friend or child; nova-swarm template --name card prints a card that passes the general ones, nova-swarm lint --rules lists them) and refused, exit 2, nothing written, when it fails; a card with no brief is not linted; under JEV_API_KEY each card's brief is then asked nova-decide's brief decision (one BRIEF line per card, an uncalibrated rank) and refused under the sprint row's decide_brief_bar, empty by default", cardlimits.MaxBriefBytes>>10, cardlimits.BriefAdvisoryBytes))
 	var briefFiles stringList
 	fs.Var(&briefFiles, "brief-file", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; given once with ids, --count or --sentinel, the brief of the cards they name; given alone or again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir")
 	briefDir := fs.String("brief-dir", "", "one card per *.md file in this directory, in byte order of file name, each card's id its file's name without .md (a1.md is a1); not with --brief-file")
@@ -1440,15 +1440,19 @@ func modelLinesWhy(why string) string {
 	return "the brief's model lines: " + why + "; line 1 names `tier: flash|pro|frontier`, and a pinned card carries `model: <provider>/<model>` (with `tokens: <n>|unmetered` and `deadline: <seconds>`) under it"
 }
 
-// lintBriefReads holds one brief to the card lint's child rules and to its
-// model lines: it returns the model-line why ("" when the lines read) and the
-// lint findings. The single-brief and many-brief paths both call it, so one
-// brief is held the same however it is given.
+// lintBriefReads holds one brief to the rule set that applies, and to its model
+// lines: a friend's card to the friend rule set (docs/SPEC-SPRINT.md section 1),
+// any other brief to the child rule set. It returns the model-line why ("" when
+// the lines read) and the lint findings. The single-brief and many-brief paths
+// both call it, so one brief is held the same however it is given.
 func lintBriefReads(brief string, rs ruleSet) (modelWhy string, findings []swarm.CardHeaderFinding) {
 	if _, why := cardhdr.ReadModel(brief); why != "" {
 		return why, nil
 	}
-	if rs = cardRules(brief, rs); rs.held != "" {
+	rs = cardRules(brief, rs)
+	if w, why := cardhdr.ReadWho(brief); why == "" && w.Friend {
+		findings = swarm.LintFriendCard([]byte(brief), rs.rules)
+	} else if rs.held != "" {
 		// rules by reference: the member injects the held file at stage time, so the brief
 		// is linted as the child is handed it (nova-tools#5174 rule 6)
 		findings = swarm.LintCardChildByReference([]byte(brief), rs.rules)
@@ -1468,8 +1472,13 @@ func lintBriefReads(brief string, rs ruleSet) (modelWhy string, findings []swarm
 // (swarm.OwnRulesName: fleet/child-rules.txt for this repository, fleet/child-rules.<repo>.txt
 // for another that has one; rs itself for a brief naming no repository), and rs carried, as
 // before rules by reference, for a repository the members hold no file for; rs carried when
-// the members do not hold it. Its held name is the one the card names (sprint.FieldRules).
+// the members do not hold it. A friend's card that carries its own rules line names no held
+// file (docs/SPEC-SPRINT.md section 1): nothing appends the child's RULES paragraph. Its held
+// name is the one the card names (sprint.FieldRules).
 func cardRules(brief string, rs ruleSet) ruleSet {
+	if swarm.FriendCarriesOwnRules(brief) {
+		return ruleSet{rules: rs.rules}
+	}
 	if rs.held == "" {
 		return rs
 	}
@@ -1502,6 +1511,7 @@ func lintBriefFiles(cards []sprint.CardAdd, rs ruleSet, max int, stderr io.Write
 	}
 	var all []finding
 	var failed []string
+	var failedBriefs []string
 	for _, c := range cards {
 		modelWhy, findings := lintBriefReads(c.Brief, rs)
 		if modelWhy != "" {
@@ -1511,6 +1521,7 @@ func lintBriefFiles(cards []sprint.CardAdd, rs ruleSet, max int, stderr io.Write
 			continue
 		}
 		failed = append(failed, c.File)
+		failedBriefs = append(failedBriefs, c.Brief)
 		for _, f := range findings {
 			all = append(all, finding{c.File, f, cardRules(c.Brief, rs).rules})
 		}
@@ -1529,7 +1540,7 @@ func lintBriefFiles(cards []sprint.CardAdd, rs ruleSet, max int, stderr io.Write
 	if more {
 		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=add --max 0\n", len(all))
 	}
-	return refuse(stderr, "add", fmt.Sprintf("the brief of %s fails the card lint (%s); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", strings.Join(failed, ", "), findingsCount(len(all))))
+	return refuse(stderr, "add", fmt.Sprintf("the brief of %s fails the card lint (%s); %s", strings.Join(failed, ", "), findingsCount(len(all)), lintRuleSetClause(failedBriefs)))
 }
 
 // ruleSet is the rule set a brief is held to, and held, the base name of the rules file the
@@ -1658,7 +1669,30 @@ func lintBrief(verbName, brief string, rs ruleSet, max int, stderr io.Writer) in
 	if more {
 		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=%s --max 0\n", len(findings), verbName)
 	}
-	return refuse(stderr, verbName, fmt.Sprintf("the brief fails the card lint (%s); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", findingsCount(len(findings))))
+	return refuse(stderr, verbName, fmt.Sprintf("the brief fails the card lint (%s); %s", findingsCount(len(findings)), lintRuleSetClause([]string{brief})))
+}
+
+// lintRuleSetClause is the refusal's rule-set clause (docs/SPEC-SPRINT.md section 1,
+// a friend's card): it names the rule set that applies, friend or child. A call whose
+// failing briefs are both names each.
+func lintRuleSetClause(briefs []string) string {
+	friend, child := false, false
+	for _, b := range briefs {
+		w, why := cardhdr.ReadWho(b)
+		if why == "" && w.Friend {
+			friend = true
+		} else {
+			child = true
+		}
+	}
+	switch {
+	case friend && !child:
+		return "the rule set that applies is the friend rule set, not the child rule set; a friend's card carries its own rules line `RULES: <the friend's own rules>` and not the child's RULES paragraph; run: nova-swarm template --name card"
+	case friend && child:
+		return "the rule set that applies is the friend rule set for a friend's card and the child rule set for any other; a friend's card carries its own rules line `RULES: <the friend's own rules>`, and a child's card carries every rule of its rule set; run: nova-swarm template --name card"
+	default:
+		return "the rule set that applies is the child rule set; a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card"
+	}
 }
 
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {

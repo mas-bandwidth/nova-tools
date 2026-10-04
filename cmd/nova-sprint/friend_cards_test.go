@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -336,6 +337,68 @@ func TestFleetSyncLeavesAFriendsRowAndCard(t *testing.T) {
 	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row, "her card stays on her row")
 	assert.Equal(t, sprint.Working, c.Work[0].Col)
 	assert.Contains(t, ta.ok("friend sync --root "+root), "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1")
+}
+
+// A friend's card is held to the friend rule set, not the child's RULES paragraph
+// (docs/SPEC-SPRINT.md section 1). One that carries its own rules line is admitted
+// with no child paragraph and names no held file. One that carries neither is
+// refused, and the refusal names the friend rule set. A machine's card is refused
+// naming the child rule set. A forbidden command is still a command.
+func TestAddAcceptsAFriendCardWithItsOwnRules(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendApp(t, "amy")
+	ta.ok("friend sync --root " + t.TempDir())
+	dir := t.TempDir()
+	own := "s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n\nThe task.\n\n" + swarm.FriendOwnRulesLineText + "\n"
+	require.NotContains(t, own, "Work only in the job directory this card names.", "the card carries no child RULES paragraph")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "s1-1.md"), []byte(own), 0o644))
+	out := ta.ok("add --stream s1 --brief-dir " + dir)
+	assert.Contains(t, out, "MOVED")
+	_, _, _, f, ok := ta.m.Record(sprint.Work, "s1-1")
+	require.True(t, ok)
+	assert.Contains(t, f["brief"], swarm.FriendOwnRulesLineText)
+	assert.NotContains(t, f["brief"], "RULES.\n")
+	assert.Empty(t, f[sprint.FieldRules], "the default set names no held file")
+
+	bare := filepath.Join(t.TempDir(), "s1-2.md")
+	require.NoError(t, os.WriteFile(bare, []byte("s1-2: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n\nThe task.\n"), 0o644))
+	code, _, errs := ta.do("add --stream s1 --brief-file " + bare)
+	require.Equal(t, 2, code, "a friend card with no rules line: exit %d\n%s", code, errs)
+	assert.Contains(t, errs, "the rule set that applies is the friend rule set")
+	assert.NotContains(t, errs, "the rule set that applies is the child rule set")
+	assert.Contains(t, errs, "rule-own-rules")
+	assert.NotContains(t, errs, "rule-worktree", "the child sentences are not what a friend's card lacks")
+
+	code, _, errs = ta.do("add --stream s2 --count 1 --brief 'handle the empty case'")
+	require.Equal(t, 2, code, "a machine card with no RULES paragraph: exit %d\n%s", code, errs)
+	assert.Contains(t, errs, "the rule set that applies is the child rule set")
+	assert.NotContains(t, errs, "the friend rule set")
+	assert.Contains(t, errs, "rule-worktree")
+
+	bad := filepath.Join(t.TempDir(), "s1-3.md")
+	require.NoError(t, os.WriteFile(bad, []byte(own+"\nSTEP 2. redis-server --port 7000\n"), 0o644))
+	code, _, errs = ta.do("add --stream s1 --brief-file " + bad)
+	require.Equal(t, 2, code, "a forbidden command on a friend's card: exit %d\n%s", code, errs)
+	assert.Contains(t, errs, "step-redis-server")
+	assert.Contains(t, errs, "the rule set that applies is the friend rule set")
+
+	// under the held file the same line admits the card and it names no child file
+	tb := newTestApp(t)
+	cfg := config.NewMem()
+	tb.a.friends = func(ctx context.Context, _ string) ([]config.Row, error) {
+		return cfg.List(ctx, config.KindFriend)
+	}
+	addFriendRow(t, cfg, "amy")
+	tb.ok("init --readers reader-a --members m1 --rules " + ourRulesFile)
+	tb.ok("friend sync --root " + t.TempDir())
+	held := t.TempDir()
+	text := "h1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n\nThe task.\n\n" + swarm.FriendOwnRulesLineText + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(held, "h1.md"), []byte(text), 0o644))
+	tb.ok("add --stream s1 --brief-dir " + held)
+	assert.Empty(t, tb.cardRulesOf("h1"), "a friend's card carries its own rules and names no child file")
+	_, _, _, hf, ok := tb.m.Record(sprint.Work, "h1")
+	require.True(t, ok)
+	assert.NotContains(t, hf["brief"], "RULES.\n")
 }
 
 func TestAddHoldsTheWhoLineToTheFriendsTable(t *testing.T) {

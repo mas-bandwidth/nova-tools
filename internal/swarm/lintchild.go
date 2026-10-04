@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 )
 
@@ -100,6 +101,23 @@ const EmptyCardCheck = "empty"
 
 // EmptyCardRemedy is what that token wants, in the remedies' table shape.
 const EmptyCardRemedy = "the card is empty, and a card is a child's whole brief: `nova-swarm template --name card` prints one that passes; put it in the file and fill in its <...> lines"
+
+// FriendOwnRulesCheck is the finding a friend's card draws when it carries no
+// rules line of its own (docs/SPEC-SPRINT.md section 1, a friend's card). The
+// child rule set's quoted sentences are not this finding.
+const FriendOwnRulesCheck = "rule-own-rules"
+
+// FriendOwnRulesLineText is a filled own-rules line: the one line a friend's
+// card carries instead of the child's RULES paragraph.
+const FriendOwnRulesLineText = "RULES: work stays in the job this card names, and the report says what was not done."
+
+// FriendOwnRulesRemedy is what FriendOwnRulesCheck wants. It names the rule set
+// that applies: the friend's, not the child's.
+const FriendOwnRulesRemedy = "the rule set that applies is the friend rule set, not the child rule set: a friend's card carries its own rules line `RULES: <the friend's own rules>`, one line, filled in, and does not carry the child's RULES paragraph"
+
+// friendOwnRulesRE is the friend's own rules line: `RULES:` and the text after
+// it. The child's RULES paragraph opens `RULES.` and is not this line.
+var friendOwnRulesRE = regexp.MustCompile(`^[ \t]*(?:[-*][ \t]+)?RULES:[ \t]*(.*)$`)
 
 // LibrariesConsideredRemedy is what that token wants, in the remedies' table shape.
 const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>`, filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
@@ -304,6 +322,8 @@ func ChildRemedy(rules []ChildRule, check string) string {
 		return LibrariesConsideredRemedy
 	case EmptyCardCheck:
 		return EmptyCardRemedy
+	case FriendOwnRulesCheck:
+		return FriendOwnRulesRemedy
 	}
 	return ""
 }
@@ -399,6 +419,80 @@ func ReadChildRules(path string) ([]ChildRule, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return rules, nil
+}
+
+// FriendCarriesOwnRules reports whether brief is a friend's card (cardhdr.ReadWho)
+// that carries its own rules line (docs/SPEC-SPRINT.md section 1, a friend's card).
+// A bad WHO line is not a friend's card.
+func FriendCarriesOwnRules(brief string) bool {
+	w, why := cardhdr.ReadWho(brief)
+	if why != "" || !w.Friend {
+		return false
+	}
+	_, _, filled, _ := friendOwnRules(brief)
+	return filled
+}
+
+// friendOwnRules reads the friend's own rules line. filled is a line whose text
+// says something; present is any `RULES:` line, filled or not.
+func friendOwnRules(brief string) (at int, text string, filled, present bool) {
+	sc := bufio.NewScanner(strings.NewReader(brief))
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	n := 0
+	for sc.Scan() {
+		n++
+		line := strings.TrimRight(sc.Text(), "\r")
+		m := friendOwnRulesRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		if childLibrariesFilled(m[1]) {
+			return n, line, true, true
+		}
+		if !present {
+			at, text, present = n, line, true
+		}
+	}
+	return at, text, false, present
+}
+
+// LintFriendCard is the friend rule set (docs/SPEC-SPRINT.md section 1, a friend's
+// card): the card's own rules line, then the step scans and the libraries check of
+// the child set it is handed. The child's quoted sentences are not required, so a
+// friend's card needs no RULES paragraph.
+func LintFriendCard(raw []byte, rules []ChildRule) []CardHeaderFinding {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return []CardHeaderFinding{{Check: EmptyCardCheck, Line: 1, Excerpt: "the card is empty"}}
+	}
+	var out []CardHeaderFinding
+	if at, text, filled, present := friendOwnRules(string(raw)); !filled {
+		if present {
+			out = append(out, CardHeaderFinding{Check: FriendOwnRulesCheck, Line: at, Excerpt: "unfilled: " + strings.TrimSpace(text)})
+		} else {
+			out = append(out, CardHeaderFinding{Check: FriendOwnRulesCheck, Line: 1, Excerpt: "missing: RULES: <the friend's own rules, one line>"})
+		}
+	}
+	for _, f := range LintCardChildWith(raw, rules) {
+		if quotedRuleMissing(f, rules) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// quotedRuleMissing reports a finding that a child sentence is not quoted. The
+// libraries check is not one: it is a filled line, not a sentence of the paragraph.
+func quotedRuleMissing(f CardHeaderFinding, rules []ChildRule) bool {
+	for _, r := range rules {
+		if r.Name == LibrariesConsideredName {
+			continue
+		}
+		if f.Check == "rule-"+r.Name {
+			return true
+		}
+	}
+	return false
 }
 
 // LintCardChild returns the child-rule findings for one card under the default rules.
