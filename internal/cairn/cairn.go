@@ -331,7 +331,7 @@ func appendFlat(store, session, path, id, text string, now time.Time, publish st
 	if err != nil {
 		return res, err
 	}
-	defer lock.Unlock()
+	defer lock.Unlock() // ignored: the entry is on disk by then; the OS drops the flock when the file closes and the next take finds it free
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
