@@ -1,7 +1,7 @@
 ----------------------------- MODULE CairnStore -----------------------------
 \* The cairn store: session records, atomic entry files, append-only event log,
 \* index, coverage ledger, and publication states.
-\* Models internal/cairn/cairn.go (:1-30, :391-496, :551-668, :818-898)
+\* Models internal/cairn/cairn.go (:1-31, :444-517, :551-668, :818-898)
 \* and docs/SPEC-CAIRN.md ("The four verbs", :24-124).
 \*
 \* THE STATE.
@@ -27,13 +27,13 @@
 \*
 \* THE ACTIONS.
 \*   Open                       starts or re-starts a session idempotently;
-\*                              never touches another session (cairn.go:391-393)
+\*                              never touches another session (cairn.go:444-447)
 \*   Append                     stores exact prose under a stable id with a
 \*                              clock stamp; a retry of the same request is
 \*                              Duplicate=true and no second entry; the same id
 \*                              with different prose is a conflict, never an
 \*                              overwrite; persisted=true before success is
-\*                              reported, published separately (cairn.go:455-461)
+\*                              reported, published separately (cairn.go:551-562)
 \*   IndexCoverage              bounded read over the log and store entries;
 \*                              builds entry index and updates coverage ledger
 \*                              (cairn.go:818-898)
@@ -139,7 +139,7 @@ Init ==
     /\ writtenText = [s \in Sessions, e \in EntryIDs |-> None]
     /\ crashedAfterEntry = [s \in Sessions, e \in EntryIDs |-> FALSE]
 
-\* Open: starts or re-starts a session idempotently; never touches another session (cairn.go:391-393, :444-496).
+\* Open: starts or re-starts a session idempotently; never touches another session (cairn.go:444-517).
 Open(s, pub, src) ==
     IF s \in FlatSessions
     THEN UNCHANGED vars
@@ -152,7 +152,7 @@ Open(s, pub, src) ==
                              published, persisted, reported, writtenText, crashedAfterEntry>>
 
 \* Append: stores exact prose under stable id; retry is Duplicate=true; conflicting prose refused;
-\* persisted=true before success reported, published separately (cairn.go:455-461, :551-668).
+\* persisted=true before success reported, published separately (cairn.go:551-668).
 Append(s, e, text) ==
     /\ \/ sessions[s].open
        \/ flatFiles[s].exists
