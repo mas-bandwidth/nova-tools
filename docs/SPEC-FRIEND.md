@@ -204,7 +204,7 @@ app-server daemon start`; read from the app bundle, unverified); then `codex
 queue --thread <id> --message <text>` reaches the open chat, and the adapter
 should move to it.
 
-Claude has no deliver command yet: their daemon is
+Claude has no deliver command yet: its daemon is
 passive, taking nothing off the stream (the session's own blocking read does), peeking so a ping is
 still answered by the daemon at once, beating, and recording a push it
 cannot deliver; so the tool is honest, and the beat and the daemon pong are
@@ -251,7 +251,7 @@ harness's own order for its agents. The mailbox and `agentapi` are the
 harness's internals for its subagents and scheduled tasks, not a documented
 API; a release that moves them breaks this adapter, and the functional test
 (`NOVA_FRIEND_ANTIGRAVITY_DIR`) says so.
-Grok, the Grok Build TUI (xAI's `grok`), is the second real adapter, by the
+Grok, the Grok Build TUI (xAI's `grok`), has a delivery adapter through the
 only door the open window has. The harness has no deliver verb, no leader
 socket unless leader mode is on, and `grok -p <text> --resume <id>` runs the
 turn in a second process over the same transcript, not in the window the
