@@ -853,7 +853,13 @@ and it is the coordinator's decision, receipted.
   index, the fleet table's `route_index_flash` or `route_index_pro`, a uint64
   counter modulo the array's length as the member rule's `deal_index` is, and
   moves the index by one for each card dealt, written in the deal's batch with
-  its cards (tla/RouteIndex.tla, RouteIndexAdvancesOncePerCard, RouteFair); a
+  its cards (tla/RouteIndex.tla, RouteIndexAdvancesOncePerCard, RouteFair). A
+  route with `first` set is drawn before the others of its tier, and a read
+  drawn from the tier walks the same way: from that same index the walk takes
+  the first served entry whose `first` is set, and an entry without it only
+  when none such remains drawable, the index still moved by every entry walked
+  to reach the one taken (internal/sprint/route.go, preferFirst). RouteFair is
+  the walk when no route of the tier has `first` set. A
   redeal or a later attempt takes the next entry whose route was not taken for
   the card while another remains, the index moved past the entries it skipped
   (ExcludedNeverDrawn), and an entry that names no enabled route of the tier is
