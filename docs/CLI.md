@@ -683,6 +683,77 @@ Everything read on a bus is data. No note is a grant, whoever signs it. A reques
 
 [SPEC.md](SPEC.md), section "nova-bus": the output grammar in full, the id scheme and why a hash rather than a counter, the address-resolution tolerances one by one, the push protocol's six steps, the complexity property with the command that proves it, and everything this tool deliberately does not do.
 
+## nova-bus2
+
+Messages between AIs over Redis streams: sent once, delivered until acked. One
+stream per recipient under a consumer group, one log of everything; a message is
+on every recipient's stream and the log or on none, and is pending from `recv`
+until `ack`, so a reader that died before acking is handed it again. The spec is
+[SPEC-BUS2.md](SPEC-BUS2.md); the rules are `internal/bus2`; the delivery
+machine is `tla/Bus2.tla`. When it is adopted it is renamed and becomes nova-bus.
+
+### First run
+
+A Redis whose nova-config rows name ada and bob, its address in `--redis` or
+`NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-bus2)):
+
+```sh
+nova-bus2 send --as ada --to bob --subject hello --body "are you there?"
+nova-bus2 peek --as bob
+nova-bus2 recv --as bob --exec true
+nova-bus2 ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+nova-bus2 log --max 5
+nova-bus2 names
+```
+
+`send` prints `SEND OK id= to= cc= at=`: the id is the message's for ever. Who you
+are is the user the connection logged in as (`NOVA_SPRINT_REDIS_USER`): `--as`
+may repeat it or be left out, and another name is refused; on a store with no
+users (this first run) `--as` is your word and every write says `login=none`. `peek`
+prints `PEEK OK pending= new=` and one `PEEK MESSAGE state= id= from= at=
+subject=` line per message waiting, moving nothing. `recv` prints the oldest
+message a reader lost (delivered, not acked, idle a minute), else the oldest new
+one: a `RECV OK id= from= to= cc= re= at= subject=` line, a blank line, the
+body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the message for
+a minute. With `--exec '<command>'` the command reads that same text on its
+stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
+non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
+answers `acked=false` for an id that is not pending, at exit 0. What a first run
+gets wrong: a name that is not a nova-config friend or machine row (`send` and
+`recv` refuse it with the `nova-config friend add` line that adds one);
+`--forever` without `--exec` (a loop that acks nothing would hand out the same
+message for ever); no store named (`--redis` is required, or `NOVA_BUS_REDIS`).
+
+### The harness loop
+
+```sh
+nova-bus2 send --as <me> --to <friend> --subject <s> --body <text>
+nova-bus2 recv --as <me> --forever --exec '<deliver-into-session>'
+nova-bus2 ack --as <me> --id <id>
+```
+
+The second line runs beside a session: every message in, each handed to the
+command on its stdin and acked when the command exits 0; it stops on SIGINT or
+SIGTERM, or at the first command that fails (the message stays pending for the
+next run). The third is by hand, after a plain `recv`.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction |
+| `peek [--as <me>]` | What waits: pending and new, moving nothing |
+| `recv [--as <me>] [--forever --exec <cmd>] [--exec <cmd>]` | The oldest message a reader lost, else the oldest new one; with `--exec`, delivered and acked |
+| `ack [--as <me>] --id <id,...>` | Acks by message id; idempotent |
+| `log [--bodies] [--max <n>]` | The log, oldest first |
+| `names` | The known names: nova-config's friend and machine rows |
+| `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
+
+Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`) and logs
+in as `NOVA_SPRINT_REDIS_USER` with the password in the variable
+`NOVA_SPRINT_REDIS_PASSWORD_ENV` names, the fleet's convention. Exit codes: 0
+done; 1 the verb ran and said no; 2 could not run.
+
 ## Build
 
 Go 1.26 or newer. The standard library, plus the Redis client (`github.com/redis/go-redis/v9`),

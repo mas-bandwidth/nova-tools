@@ -153,6 +153,46 @@ DRAFT OK path=./drafts/2026-09-12T2015Z-re-bo-ce10834fbfea.md re=bo-ce10834fbfea
 
 Ada's first line above is the refusal worth meeting here rather than on a live bus: **the example bus ships a `CURSOR` naming a commit from the history it was written in**, and copying it out gives it a new one, so that commit is not an ancestor of `HEAD`. The tool says so instead of diffing from it, and names the way out. Her `--full --advance` replaces it, and the read after that is `mode=since` over `changed=2` — two changed lane paths. That is the property the whole design is for, and it is visible in one pair of lines.
 
+## nova-bus2
+
+Run by `cmd/nova-bus2/firstrun_test.go` on a throwaway redis-server whose
+`friends` set names ada and bob (what `nova-config apply` writes for two friend
+rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types them.
+The sitting is the loop: ada sends bob one message; bob peeks (new, not yet
+delivered), receives it through `--exec` (the header line and the body go to the
+command, acked when it exits 0), acks an id that is not pending (false, exit 0: ack is idempotent), reads the
+log, and lists the names. The run-owned values are the message's `id=` (a ULID
+from the store's time) and its `at=`. The throwaway store has no users, so every
+write says `login=none`: on the fleet's store the identity is the login user and
+`--as` may be left out.
+
+### First run
+
+```text
+$ nova-bus2 send --as ada --to bob --subject hello --body "are you there?"
+SEND OK id=01M42BA18Y1K3SE57HE26SY8T0 to=bob cc=- at=2026-10-04T02:18:54Z login=none
+
+$ nova-bus2 peek --as bob
+PEEK OK pending=0 new=1
+PEEK MESSAGE state=new id=01M42BA18Y1K3SE57HE26SY8T0 from=ada at=2026-10-04T02:18:54Z subject="hello"
+
+$ nova-bus2 recv --as bob --exec true
+RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z login=none acked=true exec_exit=0 subject="hello"
+
+$ nova-bus2 ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+ACK OK acked=0 asked=1 login=none
+ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
+
+$ nova-bus2 log --max 5
+LOG OK total=1
+LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
+
+$ nova-bus2 names
+NAMES OK count=2
+NAMES NAME name=ada
+NAMES NAME name=bob
+```
+
 ## nova-sandbox
 
 Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/path/to/pool` standing in for yours, and the lines are what the platform prints with the paths shortened.
