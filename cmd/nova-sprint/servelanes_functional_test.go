@@ -1,4 +1,4 @@
-//go:build functional
+//go:build functional && slow
 
 package main
 
@@ -36,10 +36,11 @@ import (
 // second; the run with the lanes off is the same load with every verb on the line.
 // Libraries considered: httptest and the repo's own far link; nothing new.
 func TestServerAnswersUnderTheLoadOfTheAfternoon(t *testing.T) {
+	t.Parallel()
 	for _, lanes := range []bool{true, false} {
 		t.Run(map[bool]string{true: "lanes", false: "every-verb-on-the-line"}[lanes], func(t *testing.T) {
 			got := afternoonLoad(t, lanes, 20*time.Second)
-			for _, class := range []string{"beat", "read", "queue"} {
+			for _, class := range []string{"slow-step", "beat", "read", "queue"} {
 				t.Logf("%-5s %s", class, got[class])
 			}
 			if lanes {
@@ -105,23 +106,34 @@ func afternoonLoad(t *testing.T, lanes bool, span time.Duration) map[string]late
 	t.Cleanup(local.Close)
 	st, _, code := a.machineVerb("run", nil, &bytes.Buffer{})
 	require.NotNil(t, st, "run exit=%d", code)
+	var mu sync.Mutex
+	got := map[string]latencies{}
 	loopCtx, stop := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { defer wg.Done(); a.runLoop(loopCtx, st, 20, 0, io.Discard, io.Discard) }()
-	// the slow step: the line held 1.5 s of every 2 s
+	// the slow step: real store work holding the line, ten whole reads of the sprint a
+	// turn, again as soon as the line comes back to it (the line is first in, first out,
+	// so every verb waiting gets its turn between two)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		heavy := []string{"where", "--json", "--cards", "--redis", addr}
 		for loopCtx.Err() == nil {
 			a.serial.Lock()
-			time.Sleep(1500 * time.Millisecond)
+			began := time.Now()
+			for range 10 {
+				a.run(heavy, io.Discard, io.Discard)
+			}
+			mu.Lock()
+			l := got["slow-step"]
+			l.all = append(l.all, time.Since(began))
+			l.max = max(l.max, time.Since(began))
+			got["slow-step"] = l
+			mu.Unlock()
 			a.serial.Unlock()
-			time.Sleep(500 * time.Millisecond)
 		}
 	}()
-	var mu sync.Mutex
-	got := map[string]latencies{}
 	client := func(srv *httptest.Server) sprintwire.Client {
 		return sprintwire.Client{Addr: strings.TrimPrefix(srv.URL, "http://"), HTTP: &http.Client{Timeout: 10 * time.Second}}
 	}
