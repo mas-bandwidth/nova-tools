@@ -124,7 +124,7 @@ func TestWorklangReader(t *testing.T) {
 				t.Parallel()
 				_, err := worklang.Read("tree.lisp", []byte(src), testLimits())
 				require.Error(t, err, "%q was read instead of refused", src)
-				assertRefusal(t, err)
+				_ = assertRefusal(t, err) // ignored: the helper asserts the refusal; this case pins no field of it
 			})
 		}
 		t.Run("zero-limits", func(t *testing.T) {
