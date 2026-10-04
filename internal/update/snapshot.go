@@ -386,7 +386,7 @@ func writeSnapshot(path string, s *snapshot) error {
 		return fmt.Errorf("cannot create snapshot temporary file (create its parent directory)")
 	}
 	temp := f.Name()
-	defer os.Remove(temp)
+	defer func() { _ = os.Remove(temp) }() // ignored: temp file cleanup
 	if err = f.Chmod(0600); err == nil {
 		_, err = f.Write(b)
 	}

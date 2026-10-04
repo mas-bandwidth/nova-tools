@@ -36,7 +36,7 @@ func TestStellaSnapshotWriterPreservesOtherSnapshotsTemp(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: test fixture file handle
 	if _, err = f.WriteString("synthetic B bytes"); err != nil {
 		require.NoError(t, err, err)
 	}
