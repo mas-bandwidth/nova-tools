@@ -455,7 +455,7 @@ func firstTry(why string, lookPath func(string) (string, error)) string {
 		strings.ReplaceAll(bin, "'", `'\''`) + `' --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes && echo "--redis $d/redis.sock"`
 }
 
-// field is a value of a key=value field: quoted when it holds a space, a
+// field is a value of a key=value field: quoted when it holds whitespace, a
 // tab or a quote (nova-sprint's spelling), else as it is.
 func field(s string) string {
 	if s == "" || strings.ContainsAny(s, " \t\"") {
