@@ -141,9 +141,10 @@ first>` and `STOP: <the condition that ends the task>`. The card lint checks the
 (`internal/swarm/lintheader.go`, tokens `start-named` and `stop-named`): line 1's tier is the
 condition, read as the sprint writes it (`tier: flash` or `tier: pro`), and a tier flash brief
 missing either line is refused, the finding naming the missing line; for tier pro, or no tier,
-the same finding is advice (`cmd/nova-swarm/lint.go`'s `cardLintAdvisory`), and the verdict
-stands. A brief with no stopping condition lets a flash child read past its budget, which is
-what these two lines bound.
+the same finding is advice, and the verdict stands. The lint decides that by tier before it
+consults its advisory set, so a tier flash brief's missing line cannot be downgraded to a note.
+A brief with no stopping condition lets a flash child read past its budget, which is what these
+two lines bound.
 
 **The head a stage checks out.** The stage checks out the frame's commit only when its tree is
 in the stage: else it fetches that head from origin by sha (`git fetch --refetch origin <sha>`:

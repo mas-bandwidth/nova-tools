@@ -41,6 +41,8 @@ func fullHeader() []string {
 		"TEST: internal/swarm TestCardHeaderMissingKindDrawsKindDeclared",
 		"LEGS: go",
 		"SOURCE: mas-bandwidth/nova-tools#1651",
+		"START: internal/swarm/lintheader.go",
+		"STOP: the gate prints its last line",
 	}
 }
 
@@ -327,14 +329,21 @@ func tierCard(tier string, header ...string) []byte {
 // A tier flash brief whose header carries START: but no STOP: line is refused: the
 // finding names the missing line (docs/SPEC-CARD-CONTRACT.md §2, the brief's header
 // grammar; the check sits beside the TEST: rules in LintCardHeader). A tier pro brief
-// without it is advice, not a refusal: the same header draws nothing to refuse and the
-// verdict stands, the tokens held advisory by cmd/nova-swarm/lint.go's cardLintAdvisory.
-// RED BEFORE: on base the flash brief passes the header lint with no stop-named finding.
+// without it draws the same finding, which cmd/nova-swarm/lint.go prints as a note, so
+// its verdict stands. RED BEFORE: on base the flash brief passes the header lint with
+// no stop-named finding, and the pro brief draws no finding at all.
 func TestAFlashBriefWithoutStopIsRefusedAndAProBriefIsNoted(t *testing.T) {
 	t.Parallel()
 
-	// the flash brief carries START: and no STOP: line.
-	h := append(append([]string{}, fullHeader()...), "START: internal/swarm/lintheader.go")
+	// the brief carries every typed line and START:, but no STOP: line.
+	h := []string{
+		"KIND: fix-red",
+		"PATHS: internal/swarm/lintheader.go, internal/swarm/lintheader_test.go",
+		"TEST: internal/swarm TestAFlashBriefWithoutStopIsRefusedAndAProBriefIsNoted",
+		"START: internal/swarm/lintheader.go",
+	}
+
+	// the flash brief is refused, and the finding names the missing line.
 	fs := LintCardHeader(tierCard("flash", h...), nil, true)
 	f := drew(t, fs, "stop-named")
 	assert.Contains(t, f.Excerpt, "STOP:", "the finding names the missing line: %q", f.Excerpt)
@@ -347,9 +356,9 @@ func TestAFlashBriefWithoutStopIsRefusedAndAProBriefIsNoted(t *testing.T) {
 	fs = LintCardHeader(tierCard("flash", withStop...), nil, true)
 	require.Empty(t, fs, "a flash brief with both lines is clean, drew %v", fs)
 
-	// the pro brief: the missing STOP: line is a note, not a refusal, and the verdict
-	// stands.
+	// the pro brief draws the same finding; cmd/nova-swarm/lint.go prints it as a note,
+	// so the verdict stands.
 	fs = LintCardHeader(tierCard("pro", h...), nil, true)
-	assert.False(t, checks(fs)["stop-named"], "a tier pro brief is not refused for a missing STOP:, drew %v", checks(fs))
-	require.Empty(t, fs, "the pro verdict stands: a complete header missing START: and STOP: draws nothing to refuse, drew %v", fs)
+	pf := drew(t, fs, "stop-named")
+	assert.Contains(t, pf.Excerpt, "STOP:", "the note names the missing line: %q", pf.Excerpt)
 }

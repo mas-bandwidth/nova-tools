@@ -36,9 +36,10 @@ import (
 //	START: <files or packages to read first>
 //	STOP: <the condition that ends the task>
 //
-// A tier flash card missing either is refused with the token `start-named` or
-// `stop-named`; for tier pro, or no tier, the same finding is advice, the tokens held
-// by `cmd/nova-swarm/lint.go`'s cardLintAdvisory.
+// A brief is a card that names a tier, or one the caller declares typed; a missing
+// either line draws the token `start-named` or `stop-named`. `cmd/nova-swarm/lint.go`
+// refuses that finding for a tier flash brief and prints it as a note for tier pro, or
+// no tier, so a flash child with no stopping condition cannot read past its budget.
 //
 // THREE READERS, ONE GRAMMAR. `cut` renders the lines, `internal/pulse/cardheader.go`
 // reads them at the gate (T03, PR #1721 at f927bccc), and the lint checks them on the
@@ -88,12 +89,25 @@ type CardHeaderFinding struct {
 // CardHeaderRemedies is what each of the four tokens wants, in one line, in the same
 // table shape the twelve older tokens use: a check without a remedy costs a card writer
 // a guess per drift (#1464), and `nova-swarm lint --rules` prints these beside them.
+//
+// The two brief-grammar tokens are not in this map: CardHeaderChecks is the four of §5
+// rule 1, and gap_test pins that list. Their remedies are StartNamedRemedy and
+// StopNamedRemedy below, merged into `cmd/nova-swarm/lint.go`'s cardLintRemedies.
 var CardHeaderRemedies = map[string]string{
 	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one the pool's kinds list names; the cutter writes it from the pool row and a model never does",
 	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none`",
 	"test-named":     "the card carries `TEST: [-tags <tags>] <package> <TestName>` -- the package repository-relative and the name a Go test name -- or `TEST: none <why>` where the kind declares no gate",
 	"paused":         "the coordinator paused this kind, so `cut` cuts no card of it and a card launched before the pause is `ACCEPT ABSTAIN reason=paused` at harvest; the remedy is not a rerun but `nova-pulse trust --set trial --queue <dir> --kind <kind> --who <name> --reason <text>`",
 }
+
+// StartNamedRemedy and StopNamedRemedy are what the two brief-grammar tokens want, in one
+// line, the same contract as CardHeaderRemedies. They are separate from that map because
+// CardHeaderChecks is the four tokens of §5 rule 1; `cmd/nova-swarm/lint.go` merges these
+// into its cardLintRemedies, so a start-named or stop-named line names its remedy.
+const (
+	StartNamedRemedy = "the brief carries `START: <files or packages to read first>`, the files or packages the child reads before it spends; it names where the work begins, so the reading is bounded before a token is spent"
+	StopNamedRemedy  = "the brief carries `STOP: <the condition that ends the task>`, the condition that ends the task; it bounds a flash child's reading, which otherwise runs past its budget"
+)
 
 // CardHeaderChecks is every token this file draws, in one byte-stable order.
 func CardHeaderChecks() []string {
@@ -243,9 +257,10 @@ var cardKeyCheck = map[string]string{
 
 // StartNamedCheck and StopNamedCheck are the tokens for the two reading lines of the
 // brief's header grammar: `START: <files or packages to read first>` and
-// `STOP: <the condition that ends the task>` (docs/SPEC-CARD-CONTRACT.md §2). A tier
-// flash brief missing either is refused; for tier pro, or no tier, the finding is
-// advice, held advisory by `cmd/nova-swarm/lint.go`'s cardLintAdvisory.
+// `STOP: <the condition that ends the task>` (docs/SPEC-CARD-CONTRACT.md §2). A brief
+// missing either draws the finding; `cmd/nova-swarm/lint.go` refuses it for a tier
+// flash brief and prints it as a note for tier pro, or no tier. Both carry a remedy in
+// StartNamedRemedy and StopNamedRemedy above, so the note names what to write.
 const (
 	StartNamedCheck = "start-named"
 	StopNamedCheck  = "stop-named"
@@ -401,18 +416,19 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	}
 
 	// 5. START: and STOP: name where the child reads first and where it ends
-	// (docs/SPEC-CARD-CONTRACT.md §2, the header grammar). The RESULT line carries the
-	// tier as the sprint writes it, read by cardhdr.ReadModel, the one parser of it;
-	// a tier flash card missing either line is refused, because a flash child with no
-	// stopping condition reads past its budget. For tier pro, or no tier, the same
-	// finding is advice: the tokens sit in `cmd/nova-swarm/lint.go`'s cardLintAdvisory
-	// and change no verdict.
-	if m, _ := cardhdr.ReadModel(string(raw)); m.Tier == cardhdr.RouteFlash {
+	// (docs/SPEC-CARD-CONTRACT.md §2, the header grammar). A brief is a card that names
+	// a tier, or one the caller declares typed (`required`), so its missing reading line
+	// is a finding. The RESULT line carries the tier as the sprint writes it, read by
+	// cardhdr.ReadModel, the one parser of it; `cmd/nova-swarm/lint.go` refuses the
+	// finding for a tier flash brief, whose child with no stopping condition reads past
+	// its budget, and prints it as a note for tier pro, or no tier.
+	m, _ := cardhdr.ReadModel(string(raw))
+	if required || m.Tier != "" {
 		if f := h["START"]; !f.found {
-			add(StartNamedCheck, 1, "no START: line under the contract line; a tier flash brief names the files or packages to read first")
+			add(StartNamedCheck, 1, "no START: line under the contract line; the brief names the files or packages to read first")
 		}
 		if f := h["STOP"]; !f.found {
-			add(StopNamedCheck, 1, "no STOP: line under the contract line; a tier flash brief names the condition that ends the task")
+			add(StopNamedCheck, 1, "no STOP: line under the contract line; the brief names the condition that ends the task")
 		}
 	}
 	return out
