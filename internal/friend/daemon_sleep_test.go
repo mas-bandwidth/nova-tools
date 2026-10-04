@@ -6,6 +6,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,6 +38,55 @@ func TestDaemonSleepHoldsWithoutAttempt(t *testing.T) {
 		require.Len(t, entries, 1)
 		require.True(t, r.last().Asleep)
 	})
+}
+
+func TestAsleepPingReplyReflectsCoordinatorAuthority(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		from       string
+		wantAsleep bool
+	}{
+		{name: "noncoordinator", from: "bob", wantAsleep: true},
+		{name: "coordinator", from: "ada", wantAsleep: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				r := asleepRig(t, "")
+				ping := r.send(t, tc.from, "ping", "PING n1\nseat=ada since=2026-10-04T03:00:00Z\n")
+				r.run(t, 8)
+				state, err := ReadSessionState(r.d.StateDir)
+				require.NoError(t, err)
+				require.Equal(t, tc.wantAsleep, state.Asleep)
+				if tc.wantAsleep {
+					require.Empty(t, r.delivered, "noncoordinator PING cannot start a session turn")
+					require.Empty(t, r.d.m.Nonce, "noncoordinator PING does not change the challenge")
+					require.Empty(t, state.WakeBarrier)
+				} else {
+					require.Len(t, r.delivered, 1)
+					require.Contains(t, r.delivered[0], ping.ID, "the coordinator PING is delivered after durable wake")
+					require.Empty(t, state.WakeBarrier, "successful first attempt completes its priority barrier")
+					require.NotEqual(t, Quiet, r.d.m.Challenge, "the authorized PING reaches the machine")
+				}
+				stream, err := r.store.Range(context.Background(), bus2.StreamOf(tc.from), "-", "+", 100)
+				require.NoError(t, err)
+				var daemonPongs []string
+				for _, e := range stream {
+					msg := e.Message()
+					if msg.Subject == DaemonPongSubject && msg.Re == ping.ID {
+						daemonPongs = append(daemonPongs, msg.Body)
+					}
+				}
+				require.Len(t, daemonPongs, 1)
+				if tc.wantAsleep {
+					require.Contains(t, daemonPongs[0], "asleep=true")
+				} else {
+					require.NotContains(t, daemonPongs[0], "asleep=true", "coordinator wake is durable before its daemon pong")
+				}
+			})
+		})
+	}
 }
 
 func TestDaemonSleepLargeBacklogCoordinatorFirst(t *testing.T) {
