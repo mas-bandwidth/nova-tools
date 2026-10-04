@@ -9,13 +9,14 @@ package main
 //     ACL RENDER OK users=<n> functions=<n> library=<digest>.
 //   - acl check reads the live ACL (ACL GETUSER per user, ACL CAT for what
 //     the categories mean on that store) and writes nothing: ACL OK, ACL
-//     DRIFT (what apply would add and remove) or ACL MISSING per user, then
+//     DRIFT (what apply would add and remove, and a live nopass flag, which
+//     the rendering never carries) or ACL MISSING per user, then
 //     ACL CHECK OK|DRIFT; exit 1 on any drift.
 //   - acl apply is the same comparison, then ACL SETUSER for each user that
 //     differs (ACL SET lines) and ACL SAVE when the store keeps an ACL file;
 //     --dry-run prints ACL WOULD-SET and writes nothing. A password is never
-//     set or read: a user keeps the one it has, and a new user has none
-//     until its seat's password is set.
+//     read: a user keeps the one it has, a new user and one the store shows
+//     as nopass get one only from the variable --password-env-for names.
 //
 // check and apply log in as --user with the password in --password-env, the
 // admin user that may run ACL, through connect as every nova-redis verb does.
@@ -139,7 +140,10 @@ func (s aclStore) SetUser(ctx context.Context, name string, rules []string) erro
 
 func (s aclStore) Save(ctx context.Context) (bool, error) {
 	err := s.c.Do(ctx, "ACL", "SAVE").Err()
-	if err != nil && strings.Contains(err.Error(), "ACL file") {
+	// Only the store's own not-configured answer means it keeps no ACL file;
+	// a real SAVE failure on a store that has one names the ACL file too,
+	// and is a failure: the users would live in memory until a restart.
+	if err != nil && strings.Contains(err.Error(), "This Redis instance is not configured to use an ACL file") {
 		return false, nil // the store keeps its ACL in its config, not a file: the users last until it restarts
 	}
 	return err == nil, err
@@ -287,15 +291,23 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	var differ []redisacl.User
 	for _, u := range users {
 		dr := redisacl.Compare(u, live[u.Name], cat)
+		// The live nopass flag is drift beside the Compare result: the
+		// rendering carries no password rule, so a user with it
+		// authenticates with any password.
+		nopass := !dr.Missing && live[u.Name].NoPass
+		fields := strings.TrimPrefix(dr.Fields(), " ")
+		if nopass {
+			fields = strings.TrimPrefix(fields+" nopass=true", " ")
+		}
 		switch {
-		case dr.None():
+		case dr.None() && !nopass:
 			line(c.Stdout, "ACL OK", "user", u.Name, "role", u.Role)
 		case dr.Missing:
 			line(c.Stdout, "ACL MISSING", "user", u.Name, "role", u.Role)
 			differ = append(differ, u)
 		default:
 			// Fields is the drift as the line spells it; --json carries every name.
-			line(c.Stdout, "ACL DRIFT", "user", u.Name, "role", u.Role, "drift", bare{strings.TrimPrefix(dr.Fields(), " "), dr})
+			line(c.Stdout, "ACL DRIFT", "user", u.Name, "role", u.Role, "drift", bare{fields, dr})
 			differ = append(differ, u)
 		}
 	}
@@ -319,21 +331,35 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		return tool.Exit(1)
 	}
 	// A user the store lacks is created only with a password from the
-	// variable --password-env-for names: never on with none.
+	// variable --password-env-for names: never on with none. The same
+	// refusal shape mends a live nopass flag: resetpass then a password,
+	// never resetpass alone, which would leave the user able to log in
+	// with nothing.
 	sources := c.Get("password-env-for").(passwordSources)
-	var unsourced []string
+	var unsourced, unsourcedNoPass []string
 	for _, u := range differ {
-		if live[u.Name].Exists {
+		env := sources[u.Name]
+		sourced := env != "" && d.getenv(env) != ""
+		if !live[u.Name].Exists {
+			if !sourced {
+				unsourced = append(unsourced, u.Name)
+			}
 			continue
 		}
-		if env := sources[u.Name]; env == "" || d.getenv(env) == "" {
-			unsourced = append(unsourced, u.Name)
+		if live[u.Name].NoPass && !sourced {
+			unsourcedNoPass = append(unsourcedNoPass, u.Name)
 		}
 	}
 	if len(unsourced) > 0 {
 		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "missing", free(strings.Join(unsourced, ",")),
 			"", why("a user the store lacks is created only with a password"),
 			"", next("nova-redis acl apply "+store.flags()+" --password-env-for "+unsourced[0]+"=<VARIABLE> (the variable set, under nova-secrets exec --only <VARIABLE>)"))
+		return tool.Exit(1)
+	}
+	if len(unsourcedNoPass) > 0 {
+		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "nopass", free(strings.Join(unsourcedNoPass, ",")),
+			"", why("a live user that carries nopass is mended only with a password from the variable --password-env-for names"),
+			"", next("nova-redis acl apply "+store.flags()+" --password-env-for "+unsourcedNoPass[0]+"=<VARIABLE> (the variable set, under nova-secrets exec --only <VARIABLE>)"))
 		return tool.Exit(1)
 	}
 	if c.DryRun() {
@@ -345,9 +371,13 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	}
 	for i, u := range differ {
 		rules := u.Rules
-		if !live[u.Name].Exists {
+		switch {
+		case !live[u.Name].Exists:
 			// The password goes to the store as a rule and nowhere else.
 			rules = append([]string{">" + d.getenv(sources[u.Name])}, rules...)
+		case live[u.Name].NoPass:
+			// resetpass drops the nopass flag; the new password takes its place.
+			rules = append([]string{"resetpass", ">" + d.getenv(sources[u.Name])}, rules...)
 		}
 		if err := srv.SetUser(ctx, u.Name, rules); err != nil {
 			line(c.Stdout, "ACL APPLY FAILED", "users", len(users), "set", i, "user", u.Name)
