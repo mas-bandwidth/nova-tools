@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# nova-dashboard-pull: STOPGAP until nova-sprint dashboard publish (card dashboard-publish-verb,
+# a Go verb that replaces this loop; no shell scripts in products). Installed by
+# fleet/roles/public-dashboard.
+#
+# Keeps the public dashboard's files on this machine so the web server serves them itself and
+# the dashboard host sees one request per second whatever the viewer count:
+#   - api/sprint.json (and .gz): <upstream>/api/sprint, fetched once per second;
+#   - landings.json (and .gz): <upstream>/landings.json, every LANDINGS_EVERY seconds;
+#   - the page and its assets: fetched again when the snapshot's build changes.
+# Each file is written under the temp directory and renamed into place. A failed fetch keeps
+# the last file, so an unreachable upstream leaves the last snapshot, which the page shows stale.
+set -u
+up=${NOVA_DASHBOARD_UPSTREAM:?NOVA_DASHBOARD_UPSTREAM is not set}
+site=${NOVA_DASHBOARD_SITE:?NOVA_DASHBOARD_SITE is not set}
+tmp=${NOVA_DASHBOARD_TMP:?NOVA_DASHBOARD_TMP is not set}
+landings_every=${NOVA_DASHBOARD_LANDINGS_EVERY:-60}
+sync_every=30 # seconds between attempts at a page sync that failed
+# The page's assets beyond index.html and app.js. One the upstream answers 404 is not served
+# here either; any other failure fails the sync, so a new page never links an old asset.
+assets=(nunito-800.woff2 OFL.txt logo-tile-192.png logo-tile-384.png favicon.svg favicon.png logo-icon.png)
+
+# fetch PATH FILE [TIMEOUT]: prints the HTTP status (000 when no answer); 0 only on a 200.
+fetch() {
+	local code
+	code=$(curl -sS --max-time "${3:-2}" -o "$2" -w '%{http_code}' "$up$1" 2>/dev/null) || code=${code:-000}
+	echo "$code"
+	[ "$code" = 200 ]
+}
+
+# publish SRC DEST [gz]: rename SRC onto DEST; with gz, a gzip sidecar DEST.gz first. When the
+# sidecar cannot be made the old one is removed, so it never shadows the new file.
+publish() {
+	if [ "${3:-}" = gz ]; then
+		if ! { gzip -6 -c "$1" >"$1.gz" && mv -f "$1.gz" "$2.gz"; }; then
+			echo "gzip of $2 failed; serving it uncompressed"
+			rm -f "$2.gz"
+		fi
+	fi
+	mv -f "$1" "$2"
+}
+
+# sync_static: the page and its assets, assets first so a new page never names one not yet here.
+sync_static() {
+	local n code got=() gone=()
+	fetch / "$tmp/s.index.html" 5 >/dev/null || return 1
+	fetch /app.js "$tmp/s.app.js" 5 >/dev/null || return 1
+	for n in "${assets[@]}"; do
+		code=$(fetch "/$n" "$tmp/s.$n" 5)
+		case $code in 200) got+=("$n") ;; 404) gone+=("$n") ;; *) return 1 ;; esac
+	done
+	for n in "${got[@]}"; do
+		case $n in *.svg | *.txt) publish "$tmp/s.$n" "$site/$n" gz ;; *) publish "$tmp/s.$n" "$site/$n" ;; esac
+	done
+	for n in "${gone[@]}"; do rm -f "$site/$n" "$site/$n.gz"; done
+	publish "$tmp/s.app.js" "$site/app.js" gz
+	publish "$tmp/s.index.html" "$site/index.html" gz
+}
+
+# now_cs: centiseconds of the monotonic clock (immune to the wall clock stepping).
+now_cs() {
+	local u
+	read -r u _ </proc/uptime
+	echo $((10#${u/./}))
+}
+
+mkdir -p "$site/api" || exit 1
+# The build of the page on disk, kept across restarts so a restart never takes an old page as
+# the current build's.
+synced=$(cat "$tmp/synced-build" 2>/dev/null) sync_at=-$sync_every land_at=-$landings_every ok=0 failed=0 logged=$SECONDS
+next=$(now_cs)
+while :; do
+	if fetch /api/sprint "$tmp/api.json" >/dev/null && build=$(jq -er 'select(type == "object") | .build // ""' "$tmp/api.json"); then
+		# Until the page of a new build is here, the snapshot carries the build of the page that
+		# is, so open pages do not reload onto the old page and keep it as the new build's.
+		if [ "$build" != "$synced" ] && [ -n "$synced" ]; then
+			jq -c --arg b "$synced" '.build = $b' "$tmp/api.json" >"$tmp/api.held.json" && mv -f "$tmp/api.held.json" "$tmp/api.json"
+		fi
+		publish "$tmp/api.json" "$site/api/sprint.json" gz
+		ok=$((ok + 1))
+		if [ "$build" != "$synced" ] && ((SECONDS - sync_at >= sync_every)); then
+			sync_at=$SECONDS
+			if sync_static; then
+				echo "page synced for build $build"
+				echo "$build" >"$tmp/synced-build"
+				synced=$build sync_at=-$sync_every
+			else
+				echo "page sync for build $build failed; the last page stays, next try in $sync_every s"
+			fi
+		fi
+	else
+		failed=$((failed + 1))
+	fi
+	if ((SECONDS - land_at >= landings_every)); then
+		land_at=$SECONDS
+		if fetch /landings.json "$tmp/landings.json" >/dev/null && jq -e 'type == "object"' "$tmp/landings.json" >/dev/null; then
+			publish "$tmp/landings.json" "$site/landings.json" gz
+		fi
+	fi
+	if ((SECONDS - logged >= 60)); then
+		echo "api fetches ok=$ok failed=$failed in $((SECONDS - logged)) s"
+		ok=0 failed=0 logged=$SECONDS
+	fi
+	# One fetch per second: wait for the next whole second after the last start; a late fetch
+	# starts the next at once and never bursts to catch up.
+	next=$((next + 100))
+	now=$(now_cs)
+	if ((now >= next || next - now > 100)); then
+		next=$now
+	else
+		sleep "$(printf '%d.%02d' $(((next - now) / 100)) $(((next - now) % 100)))"
+	fi
+done

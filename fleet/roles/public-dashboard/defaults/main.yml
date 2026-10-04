@@ -1,0 +1,14 @@
+---
+# Required, from the inventory (no value here names a machine):
+#   public_dashboard_upstream: the dashboard server's base URL, http://<host>:<port>
+#   public_dashboard_sites: the Caddy site addresses that serve the page, e.g. ["http://<public ip>"]
+
+# The directory the files live under: site/ is served, tmp/ is where the puller writes before
+# each rename (the same filesystem, so a rename is atomic).
+public_dashboard_dir: /var/www/sprint
+# The system user the puller runs as and that owns the directory.
+public_dashboard_user: nova-dashboard
+# How often the puller fetches landings.json, in seconds (/api/sprint is once per second).
+public_dashboard_landings_every: 60
+# Cache-Control on the page's unversioned assets (the font, its licence, an unversioned logo).
+public_dashboard_asset_max_age: 3600

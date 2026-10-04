@@ -1,0 +1,9 @@
+# An example inventory for public-dashboard.yml. The addresses are placeholders
+# (192.0.2.0/24 and 198.51.100.0/24 are reserved for documentation): replace them.
+public_dashboard:
+  hosts:
+    web-a:
+      ansible_host: 192.0.2.20
+      public_dashboard_upstream: http://198.51.100.5:7390
+      public_dashboard_sites:
+        - http://192.0.2.20

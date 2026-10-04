@@ -1,0 +1,91 @@
+---
+# The public sprint dashboard served by Caddy from local files, kept fresh by one puller.
+# The puller starts and fills the site before the Caddyfile changes, so the switch from any
+# earlier configuration never serves an empty directory.
+
+- name: the inventory names the upstream and the sites
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - public_dashboard_upstream is defined
+      - public_dashboard_upstream is match('^https?://')
+      - public_dashboard_sites is defined
+      - public_dashboard_sites is not string
+      - public_dashboard_sites | length > 0
+    fail_msg: "public-dashboard role: set public_dashboard_upstream (http://host:port) and public_dashboard_sites (a list) in the inventory"
+
+- name: the puller's tools
+  ansible.builtin.apt:
+    name: [caddy, curl, jq, gzip]
+    state: present
+
+- name: the puller's system user
+  ansible.builtin.user:
+    name: "{{ public_dashboard_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ public_dashboard_dir }}"
+    create_home: false
+
+- name: the dashboard directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ public_dashboard_user }}"
+    group: "{{ public_dashboard_user }}"
+    mode: "0755"
+  loop:
+    - "{{ public_dashboard_dir }}"
+    - "{{ public_dashboard_dir }}/site"
+    - "{{ public_dashboard_dir }}/site/api"
+    - "{{ public_dashboard_dir }}/tmp"
+
+- name: the puller (STOPGAP until nova-sprint dashboard publish)
+  ansible.builtin.copy:
+    src: nova-dashboard-pull
+    dest: /usr/local/libexec/nova-dashboard-pull
+    owner: root
+    group: root
+    mode: "0755"
+  notify: restart the puller
+
+- name: the puller's unit
+  ansible.builtin.template:
+    src: nova-dashboard-pull.service.j2
+    dest: /etc/systemd/system/nova-dashboard-pull.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart the puller
+
+- name: the puller runs
+  ansible.builtin.systemd:
+    name: nova-dashboard-pull.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  # a first --check has not written the unit, so systemd does not know it yet
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: restart the puller now when it changed, before the site is checked
+  ansible.builtin.meta: flush_handlers
+
+- name: the site has the page and a snapshot
+  ansible.builtin.wait_for:
+    path: "{{ item }}"
+    timeout: 60
+  loop:
+    - "{{ public_dashboard_dir }}/site/index.html"
+    - "{{ public_dashboard_dir }}/site/app.js"
+    - "{{ public_dashboard_dir }}/site/api/sprint.json"
+  when: not ansible_check_mode
+
+- name: the Caddyfile serves the files
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    owner: root
+    group: root
+    mode: "0644"
+    validate: caddy validate --adapter caddyfile --config %s
+  notify: reload caddy

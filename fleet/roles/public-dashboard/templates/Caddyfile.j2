@@ -1,0 +1,30 @@
+# /etc/caddy/Caddyfile: written by fleet/roles/public-dashboard (nova-tools); edits here are lost.
+# The public sprint dashboard, served from files on this machine. nova-dashboard-pull (STOPGAP
+# until nova-sprint dashboard publish) refreshes them from the dashboard server, once per second
+# for the snapshot, so viewer traffic never reaches that server. No reverse_proxy.
+(sprint_dashboard) {
+	root * {{ public_dashboard_dir }}/site
+	route {
+		# The page tries a server-sent event stream first and polls when it is refused.
+		respond /events 404
+		respond /healthz "ok" 200
+		header Cache-Control "public, max-age={{ public_dashboard_asset_max_age }}"
+		@versioned {
+			query v=*
+			file
+		}
+		header @versioned Cache-Control "public, max-age=31536000, immutable"
+		@fresh path / /index.html /api/sprint /landings.json
+		header @fresh Cache-Control "public, max-age=1"
+		rewrite /api/sprint /api/sprint.json
+		file_server {
+			precompressed gzip
+		}
+	}
+}
+{% for site in public_dashboard_sites %}
+
+{{ site }} {
+	import sprint_dashboard
+}
+{% endfor %}

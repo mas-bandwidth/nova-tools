@@ -1,0 +1,25 @@
+# /etc/systemd/system/nova-dashboard-pull.service: written by fleet/roles/public-dashboard
+[Unit]
+Description=nova dashboard puller (STOPGAP until nova-sprint dashboard publish): one fetch of the dashboard per second, served from {{ public_dashboard_dir }}/site
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ public_dashboard_user }}
+Group={{ public_dashboard_user }}
+Environment=NOVA_DASHBOARD_UPSTREAM={{ public_dashboard_upstream }}
+Environment=NOVA_DASHBOARD_SITE={{ public_dashboard_dir }}/site
+Environment=NOVA_DASHBOARD_TMP={{ public_dashboard_dir }}/tmp
+Environment=NOVA_DASHBOARD_LANDINGS_EVERY={{ public_dashboard_landings_every }}
+ExecStart=/usr/local/libexec/nova-dashboard-pull
+Restart=always
+RestartSec=1
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths={{ public_dashboard_dir }}
+
+[Install]
+WantedBy=multi-user.target

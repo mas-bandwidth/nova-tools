@@ -1,0 +1,14 @@
+# public-dashboard.yml: the public sprint dashboard, served by Caddy from files on the web
+# machine and refreshed by one puller, so the dashboard server sees one request per second
+# whatever the viewer count (roles/public-dashboard/README.md).
+#
+#   ansible-playbook -i <your inventory> fleet/public-dashboard.yml --check --diff | cat
+#   ansible-playbook -i <your inventory> fleet/public-dashboard.yml | cat
+#
+# inventory.public-dashboard.example.yml shows the inventory shape, with placeholder hosts.
+- name: the public sprint dashboard
+  hosts: public_dashboard
+  gather_facts: false
+  become: true
+  roles:
+    - public-dashboard
