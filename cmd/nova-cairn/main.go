@@ -15,6 +15,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,11 +25,36 @@ import (
 
 var version string
 
-func main() { os.Exit(cairnTool().Main()) }
+func main() { os.Exit(cairnTool(app{}).Main()) }
+
+// app is the tool's environment: the working directory a relative path
+// resolves under. In production the zero value delegates to the process's own
+// directory -- a relative path reaches the OS as typed and resolves against
+// it, as before this seam. A test hands the tool a directory of its own
+// (docs/STANDARD.md section 8: the environment and working directory are
+// injected through the code's config, never set with t.Setenv or a Chdir),
+// the rule cmd/nova-bus's runEnv set.
+type app struct {
+	workingDir string
+}
+
+// resolve is a caller's path against the app's working directory (section 8's
+// injected environment): a relative path joins under the directory the
+// instance names; an absolute path, an empty one and an instance naming no
+// directory pass through as typed, and the OS resolves them against the
+// process's directory.
+func (a app) resolve(path string) string {
+	if path != "" && !filepath.IsAbs(path) && a.workingDir != "" {
+		return filepath.Join(a.workingDir, path)
+	}
+	return path
+}
 
 var publishes = strings.Join(cairn.Policies, ", ")
 
-func cairnTool() *tool.Tool {
+// cairnTool is the tool's definition with its verbs bound to one app, so every
+// path a verb touches resolves under the app's working directory.
+func cairnTool(a app) *tool.Tool {
 	return &tool.Tool{
 		Name:  "nova-cairn",
 		What:  "a session's words, kept durably as plain files you can come back to",
@@ -63,7 +89,7 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 					now(f)
 					checkPublish(f)
 				},
-				Run: open,
+				Run: a.open,
 			},
 			{
 				Name:    "append",
@@ -94,7 +120,7 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 						}
 					})
 				},
-				Run: appendEntry,
+				Run: a.appendEntry,
 			},
 			{
 				Name:    "index",
@@ -107,7 +133,7 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 					checkID(f, "session")
 					f.Max()
 				},
-				Run: index,
+				Run: a.index,
 			},
 			{
 				Name:    "receipt",
@@ -120,7 +146,7 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 					checkID(f, "entry")
 					f.Bool("text", false, "include the entry's stored words as a quoted text fact")
 				},
-				Run: receipt,
+				Run: a.receipt,
 			},
 		},
 	}
@@ -204,14 +230,15 @@ func refusal(err error) *tool.Out {
 	return tool.Refuse(err.Error())
 }
 
-func open(c *tool.Call) *tool.Out {
+func (a app) open(c *tool.Call) *tool.Out {
 	store, session, publish, stamp := c.Str("store"), c.Str("session"), c.Str("publish"), clock(c)
+	at := a.resolve(store)
 	var rec cairn.OpenRecord
 	var err error
 	if c.DryRun() {
-		rec, err = cairn.PlanOpen(store, session, c.Str("source"), stamp, publish)
-	} else if err = cairn.Open(store, session, c.Str("source"), stamp, publish); err == nil {
-		rec, err = cairn.ReadOpen(store, session)
+		rec, err = cairn.PlanOpen(at, session, c.Str("source"), stamp, publish)
+	} else if err = cairn.Open(at, session, c.Str("source"), stamp, publish); err == nil {
+		rec, err = cairn.ReadOpen(at, session)
 	}
 	if err != nil {
 		return refusal(err)
@@ -220,11 +247,11 @@ func open(c *tool.Call) *tool.Out {
 		Fact("publish", publish).Fact("stamp", stampOf(stamp))
 }
 
-func appendEntry(c *tool.Call) *tool.Out {
+func (a app) appendEntry(c *tool.Call) *tool.Out {
 	store, session, entry := c.Str("store"), c.Str("session"), c.Str("entry")
 	words := c.Str("text")
 	if c.Given("file") {
-		raw, err := readWords(c.Str("file"), c.Stdin)
+		raw, err := a.readWords(c.Str("file"), c.Stdin)
 		if err != nil {
 			return tool.Refuse(err.Error())
 		}
@@ -234,7 +261,7 @@ func appendEntry(c *tool.Call) *tool.Out {
 	if c.DryRun() {
 		write = cairn.PlanAppend
 	}
-	res, err := write(store, session, entry, words, c.Str("source"), clock(c), c.Str("publish"))
+	res, err := write(a.resolve(store), session, entry, words, c.Str("source"), clock(c), c.Str("publish"))
 	if err != nil {
 		o := refusal(err)
 		if o.Status == tool.Failed { // a conflict names what it is about
@@ -249,18 +276,18 @@ func appendEntry(c *tool.Call) *tool.Out {
 
 // readWords reads the exact words from a file, or from stdin when the path
 // is -. The bytes are never trimmed: trimming would file other words than
-// the caller chose.
-func readWords(name string, stdin io.Reader) ([]byte, error) {
+// the caller chose. A file path resolves under the app's working directory.
+func (a app) readWords(name string, stdin io.Reader) ([]byte, error) {
 	if name == "-" {
 		return io.ReadAll(stdin)
 	}
-	return os.ReadFile(name)
+	return os.ReadFile(a.resolve(name))
 }
 
 // index lists every entry; the coverage counts on its first line are never
 // capped, so the total is carried whether or not --max elides entries.
-func index(c *tool.Call) *tool.Out {
-	store := c.Str("store")
+func (a app) index(c *tool.Call) *tool.Out {
+	store := a.resolve(c.Str("store"))
 	all, total, err := cairn.Index(store, c.Str("session"), 0)
 	if err != nil {
 		return refusal(err)
@@ -272,8 +299,9 @@ func index(c *tool.Call) *tool.Out {
 	return o
 }
 
-func receipt(c *tool.Call) *tool.Out {
-	rc, err := cairn.Receipt(c.Str("store"), c.Str("session"), c.Str("entry"))
+func (a app) receipt(c *tool.Call) *tool.Out {
+	store := a.resolve(c.Str("store"))
+	rc, err := cairn.Receipt(store, c.Str("session"), c.Str("entry"))
 	if err != nil {
 		return refusal(err)
 	}
@@ -281,7 +309,7 @@ func receipt(c *tool.Call) *tool.Out {
 		Fact("bytes", rc.Bytes).Fact("source", sourceOf(rc.Source)).Fact("persisted", true).
 		Fact("published", false).Fact("publish", rc.Policy)
 	if c.Bool("text") {
-		text, err := cairn.EntryText(c.Str("store"), c.Str("session"), c.Str("entry"))
+		text, err := cairn.EntryText(store, c.Str("session"), c.Str("entry"))
 		if err != nil {
 			return refusal(err)
 		}

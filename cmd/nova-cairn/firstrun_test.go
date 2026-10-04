@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,6 +91,7 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 // rather than rewriting the path: a rewritten one is no longer the line the
 // document promised, which is what the old test's `localize` gave up.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-cairn")
@@ -107,20 +109,27 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	assert.Subset(t, verbs, []string{"open", "append", "index", "receipt"}, "the `### First run` block never runs one of the four verbs; the first sitting is all four")
 
 	// ONE store for the whole sitting: the transcript opens a record and then
-	// appends to it, and a fresh directory per line would unmake that.
-	t.Chdir(t.TempDir())
-	for _, p := range onboarding.Execute(steps, runDocumented) {
+	// appends to it, and a fresh directory per line would unmake that. The
+	// sitting runs in a directory handed to the tool as its working directory,
+	// never in the process's: the documented `./cairns` resolves under it
+	// (docs/STANDARD.md section 8: the working directory is injected through
+	// the code's config, never set with a Chdir).
+	run := testkit.Main(cairnTool(app{workingDir: t.TempDir()}).Run)
+	for _, p := range onboarding.Execute(steps, runDocumented(run)) {
 		assert.Fail(t, p.Error())
 	}
 }
 
-// runDocumented calls this binary's own entry point with the documented
-// arguments. nova-cairn's first run reads nothing on stdin.
-func runDocumented(s onboarding.Step) (onboarding.Result, error) {
-	if s.Stdin != "" {
-		return onboarding.Result{}, errReadsNothing
+// runDocumented calls the tool instance the test built, in the working
+// directory the instance names, with the documented arguments. nova-cairn's
+// first run reads nothing on stdin.
+func runDocumented(cli testkit.Main) onboarding.Runner {
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		if s.Stdin != "" {
+			return onboarding.Result{}, errReadsNothing
+		}
+		return onboarding.Result(cli.Run(s.Args...)), nil
 	}
-	return onboarding.Result(cli.Run(s.Args...)), nil
 }
 
 type readsNothing struct{}
