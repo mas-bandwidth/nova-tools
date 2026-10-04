@@ -7,6 +7,9 @@ README: 8/10
 
 ## Reasons
 
+This rating reads source snapshot 0c5803c2de406c1b0b2b0841f579c9bf73406b1c and
+nothing after it: every file:line below is that revision.
+
 The README line for the tool is README.md:34: "checks over markdown records
 and repositories, each finding named by file and line", and the binary's banner
 opens with the same sentence (cmd/nova-check/main.go:26), so the row and line 1
@@ -43,8 +46,8 @@ do.
 
 | # | where | finding | fix | size |
 |---|---|---|---|---|
-| 1 | docs/CLI.md:7 | One binary carries eleven verbs across five unrelated layers: record checks, a branch accept gate, a family dogfood ledger, a forge-reading convergence reading and a spell-checker. The synopsis alone is eighteen dense lines, and the README sentence covers only the record checks. | Give hygiene, dogfood, convergence and spelling their own binaries, or make the banner name the layers and let each verb say which layer it is. | L |
-| 2 | docs/CLI.md:172 | The shipped worked examples use a colleague's first name as the git identity and a second person's home directory as the ledger path, while the README uses a generic placeholder; the tree carries a shrink-only debt ledger for these names (internal/ci/testdata/generality-text/docs.txt:3). A stranger cannot resolve them and the generality rule forbids them. | Use the same generic placeholder the README uses, everywhere. | M |
+| 1 | docs/CLI.md:7 | One binary carries eleven verbs across five unrelated layers: record checks, a branch accept gate, a family dogfood ledger, a forge-reading convergence reading and a spell-checker. The synopsis alone is fifteen dense lines, and the README sentence covers only the record checks. | Give hygiene, dogfood, convergence and spelling their own binaries, or make the banner name the layers and let each verb say which layer it is. | L |
+| 2 | docs/CLI.md:172,207 | The shipped worked examples use a colleague's first name as the git identity and a second person's home directory as the ledger path, while the README uses a generic placeholder; the tree carries a shrink-only debt ledger for these names (internal/ci/testdata/generality-text/docs.txt:3). A stranger cannot resolve them and the generality rule forbids them. | Use the same generic placeholder the README uses, everywhere. | M |
 | 3 | cmd/nova-check/hygiene.go:43 | Two cap flags for one idea inside one tool: seven listing verbs take --fail-max (cmd/nova-check/main.go:331) and hygiene takes --max, against the standard's one --max with its MORE line. | Rename hygiene's flag to fail-max, or move every listing verb to --max. | S |
 | 4 | cmd/nova-check/main.go:1 | main.go holds dispatch plus eight verb handlers and the shared parse and cap helpers in 877 lines, while hygiene, dogfood, convergence, spelling and staged each have their own file. The split is inconsistent and the entry file does many things. | Move each record-check handler beside its verb file so main.go is dispatch and the shared helpers only. | M |
 | 5 | internal/check/links.go:44 | The exported Links wrapper is reached only by tests; the production path calls LinksExcluding and LinksFiles. It is a second entry point kept alive by its own test. | Delete it and point the tests at LinksExcluding. | S |
