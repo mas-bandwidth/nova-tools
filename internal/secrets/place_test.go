@@ -29,7 +29,7 @@ func TestPlaceSSHSeamPanicsUnderTheGuard(t *testing.T) {
 		r := recover()
 		require.NotNil(t, r, "sshPlaceSecret ran a child under the guard; an unfaked seam must refuse before it reaches a host")
 		msg, _ := r.(string)
-		for _, want := range []string{testguard.EnvNoHost, "ssh", "bench.invalid", "testguard.AllowHosts"} {
+		for _, want := range []string{testguard.EnvNoHost, "ssh", "bench.invalid", "a fake on PATH must live under a temp directory; inject the fake the seam takes"} {
 			assert.Contains(t, msg, want, "the panic must name %q so the reader sees the command and the remedy; got %q", want, msg)
 		}
 	}()

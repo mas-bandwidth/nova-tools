@@ -26,7 +26,7 @@ func TestArmedGuardNamesTheCommandAndTheRemedy(t *testing.T) {
 		r := recover()
 		require.NotNil(t, r, "an armed guard must refuse the seam")
 		msg, _ := r.(string)
-		for _, want := range []string{EnvNoHost, `"ssh"`, `"hulk"`, `"bash -s"`, "testguard.AllowHosts"} {
+		for _, want := range []string{EnvNoHost, `"ssh"`, `"hulk"`, `"bash -s"`, "a fake on PATH must live under a temp directory; inject the fake the seam takes"} {
 			assert.Contains(t, msg, want, "the refusal must carry %s; got %q", want, msg)
 		}
 	}()
@@ -55,20 +55,4 @@ func TestAFakeOnPATHIsNotAHost(t *testing.T) {
 	}
 	g.RefuseHosts("ssh", "hulk", "uptime") // must not panic
 	g.RefuseHosts(fake, "hulk", "uptime")  // named by absolute path, the same answer
-}
-
-func TestAllowHostsIsScopedAndNests(t *testing.T) {
-	t.Parallel()
-	g := NewGuard(true)
-	outer := g.AllowHosts()
-	inner := g.AllowHosts()
-	inner()
-	g.RefuseHosts("ssh", "hulk") // the outer scope still stands
-	inner()                      // closing twice is not a second decrement
-	g.RefuseHosts("ssh", "hulk")
-	outer()
-	defer func() {
-		require.NotNil(t, recover(), "the guard must be armed again once every scope has closed")
-	}()
-	g.RefuseHosts("ssh", "hulk")
 }
