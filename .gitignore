@@ -43,7 +43,7 @@ tending/
 # A worker's scratch notes, never committed (eleven PRs were held in one night for one).
 /notes.txt
 
-# Test scratch: internal/bus's TestMain writes throwaway hermetic gitconfigs under TMPDIR.
+# Test scratch: a TestMain's throwaway files under the tree.
 /.tmp/
 
 # a card's TMPDIR lives beside the clone, never in it (79 junk files reached dev on 2026-09-18)

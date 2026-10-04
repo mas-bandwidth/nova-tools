@@ -134,14 +134,14 @@ func TestDeprecatedPackagesAreDroppedAndKeepLinesKept(t *testing.T) {
 		"./cmd/old",
 		"./cmd/older",
 		"cmd/old/sub",
-		mod + "/cmd/nova-bus",
+		mod + "/cmd/nova-swarm",
 	}
 	want := []string{
 		"./internal/nsprint/store",
 		mod + "/internal/nsprint/verbflag",
 		"./internal/nsprintx",
 		"./cmd/older",
-		mod + "/cmd/nova-bus",
+		mod + "/cmd/nova-swarm",
 	}
 	assert.Equal(t, want, d.Live(in), "a path drops that package and everything under it, a keep line keeps one, a name that only starts the same is another package")
 }
@@ -406,9 +406,9 @@ func TestDealPutsHeavyFirstOnePerShardThenRoundRobin(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		pkgs = append(pkgs, fmt.Sprintf("%s/cmd/p%02d", mod, i))
 	}
-	pkgs = append(pkgs[:3], append([]string{mod + "/cmd/nova-bus"}, pkgs[3:]...)...)
+	pkgs = append(pkgs[:3], append([]string{mod + "/cmd/nova-swarm"}, pkgs[3:]...)...)
 	pkgs = append(pkgs, mod+"/internal/heavy2")
-	heavy := []string{"cmd/nova-bus", "internal/heavy2"}
+	heavy := []string{"cmd/nova-swarm", "internal/heavy2"}
 	seen := map[string]int{}
 	home := map[string]int{}
 	for i := 1; i <= 4; i++ {
@@ -422,7 +422,7 @@ func TestDealPutsHeavyFirstOnePerShardThenRoundRobin(t *testing.T) {
 	for _, p := range pkgs {
 		assert.Equal(t, 1, seen[p], "%s dealt %d times", p, seen[p])
 	}
-	assert.Equal(t, 1, home[mod+"/cmd/nova-bus"], "the heavy packages are on shards 1 and 2")
+	assert.Equal(t, 1, home[mod+"/cmd/nova-swarm"], "the heavy packages are on shards 1 and 2")
 	assert.Equal(t, 2, home[mod+"/internal/heavy2"])
 	// the first other package takes the shard after the heavy ones, then round robin
 	assert.Equal(t, []int{3, 4, 1, 2}, []int{home[mod+"/cmd/p01"], home[mod+"/cmd/p02"], home[mod+"/cmd/p03"], home[mod+"/cmd/p04"]}, "round robin after the heavy: p01..p04")
@@ -430,9 +430,9 @@ func TestDealPutsHeavyFirstOnePerShardThenRoundRobin(t *testing.T) {
 
 func TestDealMatchesOnAPathSuffixNotASubstring(t *testing.T) {
 	t.Parallel()
-	got, err := Deal([]string{mod + "/cmd/nova-bus-extra", mod + "/cmd/nova-bus"}, []string{"cmd/nova-bus"}, 2, 1)
+	got, err := Deal([]string{mod + "/cmd/nova-swarm-extra", mod + "/cmd/nova-swarm"}, []string{"cmd/nova-swarm"}, 2, 1)
 	require.NoError(t, err)
-	assert.Equal(t, []string{mod + "/cmd/nova-bus"}, got, "shard 1 is only the exact heavy package")
+	assert.Equal(t, []string{mod + "/cmd/nova-swarm"}, got, "shard 1 is only the exact heavy package")
 }
 
 func TestDealRefusesAShardThatIsNotOne(t *testing.T) {
@@ -445,14 +445,14 @@ func TestDealRefusesAShardThatIsNotOne(t *testing.T) {
 
 func TestOrderHeavyFirstAndFunctional(t *testing.T) {
 	t.Parallel()
-	all := []string{"./cmd/a", "./cmd/nova-sandbox", "./cmd/nova-bus", "./cmd/b", "./internal/sandbox", "./cmd/c", "./cmd/d", "./cmd/e"}
+	all := []string{"./cmd/a", "./cmd/nova-sandbox", "./cmd/nova-swarm", "./cmd/b", "./internal/sandbox", "./cmd/c", "./cmd/d", "./cmd/e"}
 	ordered := OrderHeavyFirst(all)
-	assert.Equal(t, "./cmd/nova-bus", ordered[0], "the heavy package first")
+	assert.Equal(t, "./cmd/nova-swarm", ordered[0], "the heavy package first")
 	assert.Len(t, ordered, len(all))
 	assert.Equal(t, "./cmd/a", ordered[1], "the rest in order")
 	g := Groups{Linux: "lin", Mac: "mac"}
 	got := MarshalLegs(Functional(ordered, g))
-	want := `[{"name":"1/4 lin","packages":"./cmd/nova-bus ./cmd/d"},{"name":"2/4 lin","packages":"./cmd/a ./cmd/e"},{"name":"3/4 lin","packages":"./cmd/b"},{"name":"4/4 lin","packages":"./cmd/c"}]`
+	want := `[{"name":"1/4 lin","packages":"./cmd/nova-swarm ./cmd/d"},{"name":"2/4 lin","packages":"./cmd/a ./cmd/e"},{"name":"3/4 lin","packages":"./cmd/b"},{"name":"4/4 lin","packages":"./cmd/c"}]`
 	assert.Equal(t, want, got, "Functional: the darwin-only packages have no Linux leg")
 	assert.Equal(t, `[{"name":"nothing","packages":""}]`, MarshalLegs(Functional(nil, g)), "Functional of nothing")
 	assert.Equal(t, `[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]`, MarshalLegs([]Leg{NothingLeg(g)}), "the nothing leg")

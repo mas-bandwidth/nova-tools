@@ -167,8 +167,8 @@ matrix on main too, so the ruleset check never changes shape.
 The built binary is smoke-tested for `nova-check nocode` and for the specific
 properties that job names — not for all of `nocode`, and four of those steps are
 skipped on Windows, the platform those steps most needed to cover. Everything
-else, including all of `nova-fuse`, `nova-memory`, `nova-self-talk` and
-`nova-bus`, rests on package tests. A third-party import would show up as a
+else, including all of `nova-fuse`, `nova-memory` and `nova-self-talk`,
+rests on package tests. A third-party import would show up as a
 `go.mod` diff and could not arrive silently, but no check asserts the
 standard-library rule as a rule. Nothing mechanical reads intent.
 
@@ -267,7 +267,7 @@ red when it was set lands the moment its checks turn green, unread.
 keeps — exit codes (0 pass, 1 the check said NO, 2 could not run), **no guessed
 paths** (`refusing to guess`, never a default directory), the one-line output
 grammar, and the cap-and-count rule (`--fail-max`/`--max`, default 20, `0` means
-all). Each tool then has its own normative spec: `SPEC-BUS.md`,
+all). Each tool then has its own normative spec: `SPEC-BUS2.md`,
 `SPEC-CI.md`, `SPEC-SECRETS.md`, `SPEC-TOKENS.md`, `SPEC-UPDATE.md` and the
 rest under [docs/](.). A spec is normative — where the code and the spec
 disagree, one of them has a bug and the tests decide which. **Read the spec

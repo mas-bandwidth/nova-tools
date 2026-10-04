@@ -214,7 +214,7 @@ macOS job examples (replace /path/to with your own paths):
 `
 
 // version is empty in every ordinary build and is the one override: a release
-// stamps it with -ldflags "-X main.version=<tag>", the shape cmd/nova-bus uses.
+// stamps it with -ldflags "-X main.version=<tag>", the shape every tool uses.
 var version string
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ())) }

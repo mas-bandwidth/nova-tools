@@ -942,34 +942,6 @@ shape that hurt is written inline. And only LISTINGS are read: `os.Stat`,
 `os.Open` and `os.RemoveAll` over one named path in the shared directory are
 questions about that path, which no sibling job can answer wrongly.
 
-### `busprogress` — progress never enters a protocol stream
-
-**The rule.** The rule has two halves: a program that takes over 0.1 s says
-what it is doing on stderr, AND a progress line never enters a stream a consumer
-parses. Every package that starts `nova-bus` and READS what it said asks
-`internal/bus` — `bus.IsProgress(` or the one classifier that does, `Classify(` —
-whether a line is progress.
-**The mistake it prevents.** `nova-bus`'s since-walk narrates `INBOX WALK
-commits=1/1 notes=0 elapsed=3ms` on stderr exactly as the first half asks; a
-consumer that merges stdout and stderr on purpose, so an `INBOX REFUSED` is
-never lost, and whose classifier's default case PRINTS, relays the progress line
-as a bus line, counts it as a change in the world, and ends a poll before the
-mail arrives.
-**The test.** `TestEveryNovaBusConsumerDropsProgressLines`
-(`internal/ci/busprogress_class_test.go`); the producer half it indexes is
-`TestProgressNeverEntersTheProtocolStream` in `cmd/nova-bus`, and the consumer half is this test itself.
-**Its allowlist.** None. The registry is `internal/bus/protocol.go` and a
-consumer either reaches it or discards both streams; a start that reads nothing
-back is not a consumer and is not held to this.
-**Its remedy line.** `<pkg> reads nova-bus's output and nothing in its package
-reaches internal/bus.IsProgress; a progress line on stderr will be parsed as
-protocol -- drop progress through the registry, or read stdout alone`.
-**Its narrowings.** It is per-PACKAGE and textual: a package that names
-`bus.IsProgress(` anywhere satisfies it, even if the one reader that matters does
-not call it, and a consumer that starts `nova-bus` through an indirection the
-walk cannot see is invisible. The registry file's existence is asserted, not its
-contents.
-
 ### `outputs` — no multi-line value written to a step output
 
 **The rule.** `$GITHUB_OUTPUT` and `$GITHUB_ENV` are `key=value` FILES, one pair
@@ -1164,7 +1136,7 @@ server by an absolute path is not caught by the shim.
 **The rule.** ci.yml's `test-hosted` keeps `timeout-minutes: 2` and meets it by
 shard count: ubuntu-latest runs shards 1..6 and macos-latest 1..8, every leg
 carrying its OS's `shards`. The `deal this shard's packages` step places the
-heavy package (`cmd/nova-bus`) first, then every other package round-robin in
+heavy package (`cmd/nova-swarm`) first, then every other package round-robin in
 `go list` order; vet and test both read the deal's `HOSTED_PKGS`. The Go cache
 is restored at the path Go uses on each OS (`~/Library/Caches/go-build` on
 macOS, `~/.cache/go-build` on Linux, plus `~/go/pkg/mod`) by
@@ -1252,7 +1224,7 @@ it by shard count: ubuntu-latest and macos-latest each run shards 1..16, every l
 carrying its OS's `shards`. Its `deal this shard's packages` step is test-hosted's
 deal over the live packages (`go run ./tools/ci deal`), with the measured heavy list
 (`internal/ci`, `cmd/nova-tokens`, `cmd/nova-sandbox`,
-`cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`, `internal/bus`,
+`cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`,
 `cmd/nova-sprint`, `internal/sprint/store`, `cmd/nova-swarm`,
 `internal/sprint/refmodel`, `internal/docs`, `internal/sprint`,
 `internal/redisconn`, `internal/config`, `internal/secrets`) dealt
@@ -2134,7 +2106,7 @@ value (the real clock handed to a seam), or a `context.WithTimeout` /
 refused unless internal/ci/sleeps-skips_allowlist.txt names the package
 directory and the top-level function it is written in. A wait through an
 injected clock seam is not a wall-clock wait and is not found: the seams the
-tree has are internal/bus's lockClock, internal/swarm's
+tree has are internal/swarm's
 batchClock and pullClock, internal/log.Clock and
 the injected `Sleep func(time.Duration)` and `now func() time.Time` fields of
 internal/swarm.
@@ -2271,10 +2243,9 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 9. `TestNoTestComparesAPathAgainstASlashLiteral` — a path is never compared against a `/`-containing literal; compare `filepath.ToSlash(got)` or build the want side with `filepath.Join`.
 10. `TestToolRunsInTestsWriteIntoATempDir` — a test that runs a tool names every output path inside `t.TempDir()`, never a relative literal that lands in the tree.
 11. `TestNoTestGlobsTheSharedTempDir` — no `_test.go` lists (`Glob`/`ReadDir`) a directory built from `os.TempDir()`; it reads only its own `t.TempDir()`.
-12. `TestEveryNovaBusConsumerDropsProgressLines` — every package that starts `nova-bus` and reads its output routes lines through `bus.IsProgress(`/`Classify(` so progress never enters a parsed protocol stream.
-13. `TestNoMultiLineValueIsWrittenToAStepOutput` — a variable assigned from a one-item-per-line producer without a single-line guard may not be written to `$GITHUB_OUTPUT`/`$GITHUB_ENV`.
-14. `TestNoTestAssertsAWallClockBoundUnderTenSeconds` — no `_test.go` carries a literal duration under ten seconds where the test leans on the wall clock; thirty seconds is the generous bound, or `// wall-ok:`.
-15. `TestCIBuildTestLintCommandsGoThroughMake` — every build/test/vet/format command in `ci.yml` is a `make` invocation.
+12. `TestNoMultiLineValueIsWrittenToAStepOutput` — a variable assigned from a one-item-per-line producer without a single-line guard may not be written to `$GITHUB_OUTPUT`/`$GITHUB_ENV`.
+13. `TestNoTestAssertsAWallClockBoundUnderTenSeconds` — no `_test.go` carries a literal duration under ten seconds where the test leans on the wall clock; thirty seconds is the generous bound, or `// wall-ok:`.
+14. `TestCIBuildTestLintCommandsGoThroughMake` — every build/test/vet/format command in `ci.yml` is a `make` invocation.
 16. `TestMakefileIsTheOneEntry` — the Makefile declares `build`, `test`, `test-full`, `lint`, `check`, `clean`, `help` as phony targets, with `check` the union of CI's gates.
 19. `TestNoCacheStepRunsOnASelfHostedRunner` — every `actions/cache` step in `ci.yml` is `github-hosted`-only and every `setup-go` says `cache: false`.
 20. `TestEveryActionIsPinnedBySHA` — every `uses:` in `ci.yml` and `certification.yml` is `owner/action@<40-hex-sha>`.

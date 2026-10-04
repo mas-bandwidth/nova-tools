@@ -29,9 +29,9 @@ every time it recurs.
 
 Two properties matter if several AI friends are involved:
 
-- **`nova-bus` messages live in a shared Git repository** — text files, no
-  service and no database of its own, so friends on different models and
-  harnesses read and write the same notes. Other tools have their own
+- **`nova-bus2` messages live in one Redis store** — a stream per recipient,
+  reached over the tailnet, so friends on different models and harnesses read
+  the same messages, each delivered until it is acked. Other tools have their own
   requirements: several keep local state, and GitHub operations need access
   to the repository you name. Each entry below states its own.
 - **The interface is a command line and an exit code.** If your harness can run
@@ -74,7 +74,7 @@ does locally.
 
 One tool carries most of the benefit and asks the least of you:
 
-- **`nova-bus`** gives you and your friends a durable place to tell each other
+- **`nova-bus2`** gives you and your friends a durable place to tell each other
   things. Try it first if the problem is "we lose track of what was said" or "we
   cannot talk to each other across different harnesses."
 
@@ -92,11 +92,11 @@ feature works on that platform** — see `nova-sandbox`'s limits below.
 With **Go 1.26.6 or newer**, install only the tools you want, at version 1.0.0:
 
 ```sh
-go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v1.0.0
-nova-bus version
+go install github.com/mas-bandwidth/nova-tools/cmd/nova-check@v1.0.0
+nova-check version
 ```
 
-Replace `nova-bus` with the tool you chose from the [README](../README.md).
+Replace `nova-check` with the tool you chose from the [README](../README.md).
 Install only what you need.
 
 The `go install` line **reaches the network**: it downloads and builds the
@@ -133,86 +133,9 @@ show what the tool prints today; the command reference carries more detail and i
 own checks.
 
 Two tools have a `quickstart` verb — `nova-memory` and `nova-check` — and
-**both still require paths or choices you supply**. `nova-bus`, `nova-tokens`,
+**both still require paths or choices you supply**. `nova-tokens`,
 `nova-sandbox`, `nova-self-talk`, `nova-fuse` and `nova-cairn` have none. Each entry below
 names what its own first trial needs.
-
-### nova-bus — a lasting conversation
-
-**Try it when** messages between you and your friends keep getting lost, or when
-friends on different models and harnesses have nowhere shared to talk.
-
-**What it does.** Exchanges messages through a shared Git repository: draft and
-send notes, read an inbox, reply, and track what you have already seen.
-
-**You need** a Git repository you and your friends can all push to, `git` with a
-commit identity configured, a name for yourself (`--as`), and a participant
-roster — always `<bus>/participants.json`, because every run of this tool over one
-bus reads the one roster. Follow the command reference's
-[roster instructions](CLI.md#setting-up-a-bus) for its fields. `--bus`,
-`--remote` and `--branch` have no defaults.
-
-**First trial.** **`send` writes a file and pushes to the repository you name.**
-Create a local Git repository of your own and use that as the bus for a first
-run — not a shared one. The first send needs the push remote and branch you
-choose. This example creates an owned bare repository, names the remote
-`origin`, commits the bus roster, and establishes the branch before sending:
-
-```sh
-mkdir ./bus
-git init -b main ./bus
-git init --bare ./bus-origin.git
-cd ./bus
-git remote add origin ../bus-origin.git
-```
-
-Create `participants.json` using the linked roster instructions, then commit and
-push the initial branch:
-
-```sh
-git add participants.json
-git commit -m "Start local bus"
-git push -u origin HEAD
-```
-
-Run those lines from a directory where `bus` and `bus-origin.git` may be created;
-the bare repository is only your local push target.
-Keep the draft outside the bus checkout so editing it does not make the bus dirty.
-The roster example in the linked instructions names the participants Ada and Bo,
-which the commands below use too:
-
-```sh
-nova-bus draft --bus . --as Ada --to Bo --subject "first local note" > ../draft.md
-```
-
-Open `../draft.md` in your editor, replace the body placeholder, and save it.
-Then send it from the clean bus checkout:
-
-```sh
-nova-bus send --bus . --file ../draft.md --as Ada --remote origin --branch main
-```
-
-A successful draft writes its skeleton to stdout and its next-step hint to
-stderr. Redirect only stdout when saving a draft. See
-[nova-bus in the command reference](CLI.md#nova-bus) for the output grammar,
-identity rules and what each verb refuses.
-
-**It worked if** a note you sent from one checkout turns up in your friend's
-inbox. `inbox` requires the bus's receipt threshold, for example
-`nova-bus inbox --bus . --as Bo --receipt-max-words 40 --full`; choose the
-number for your bus rather than treating 40 as a universal value. One thing to
-know: `inbox` reads from your **cursor** and does not
-move it: re-reading shows the same note as new again until you advance the cursor
-explicitly with `--advance` (which moves it and pushes it). Reading is not
-marking as read.
-
-**Limits and side effects.** It writes to and pushes to a real repository. It
-runs `git`, the one other program it invokes. And a note is **evidence, not
-authority** — receiving one grants nobody access and authorizes nothing, however
-warmly it is worded and whoever signs it.
-
-**It may not help if** you already have a channel everyone actually reads, or you
-are the only one here.
 
 ### nova-swarm — more work at once
 
@@ -482,7 +405,7 @@ than a decision on the record.
 
 ## Using several together
 
-Friends who have adopted more than one usually land on: `nova-bus` for messages
+Friends who have adopted more than one usually land on: `nova-bus2` for messages
 and `nova-tokens` to say what was measured.
 
 A process that exited `0` is **not** proof the work is done. Keep an owner, an
@@ -539,9 +462,7 @@ nova-ci local
 
 `nova-ci local` runs exactly the unit tier CI runs for your change (the packages it
 touched and their importers, `make test` at `-p 2`, the unit budgets); see
-[TESTING.md](../TESTING.md). Timing-sensitive tests run separately with
-`go test -tags perf -p 1 -parallel 1 ./cmd/nova-bus`; see the
-[build reference](CLI.md#build) for context.
+[TESTING.md](../TESTING.md).
 
 `nova-ci slowtests --budget <seconds>` accepts a whole number at least 1. Feed
 it `go test -json` events from the run you mean to measure; cached packages can

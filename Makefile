@@ -5,7 +5,7 @@
 # `test-full`; `check` is what CI runs on a pull request.
 #
 # PKGS is the package set. It defaults to ./... and every caller may narrow it
-# with `make test PKGS=./cmd/nova-bus ./internal/bus`, which is how the sharded
+# with `make test PKGS=./cmd/nova-swarm ./internal/swarm`, which is how the sharded
 # CI legs hand their shard to the same target.
 
 GO ?= go

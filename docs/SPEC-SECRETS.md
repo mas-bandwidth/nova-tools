@@ -729,7 +729,7 @@ the variable the tool that acts already reads.
 |---|---|---|---|
 | a pool's provider | `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `INCEPTION_API_KEY` | `swarm-<name>` | pool workers and the gemini CLI — one key per pool file |
 | DeepSeek | `DEEPSEEK_API_KEY` | `<seat>` | OpenCode workers, dispatched by the scheduler |
-| GitHub, **org roles** | `GH_TOKEN` | `<seat>` | `gh`, nova-bus, scheduled pushes |
+| GitHub, **org roles** | `GH_TOKEN` | `<seat>` | `gh`, scheduled pushes |
 | GitHub, **the store's own repositories** | `GH_TOKEN` | `<keeper-seat>` | the keeper's own pushes and pull requests against the store, without an org role |
 | space, who and where | `SPACE_USER`, `SPACE_HOST` | `<seat>` | the profiling launcher; the key itself lives on the seat, per **The model** |
 | email, send and its fallback | `SMTP_PASSWORD`, `SMTP_PASSWORD_BACKUP` | `<keeper-seat>` | email producer |
@@ -1067,7 +1067,7 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
     **fail**. It skips with a stated reason when `nova-sandbox` is not built, never vacuously.
 16. `TestNoKeychainAndNoCryptoDependency` — a source tripwire: no `security` invocation, no
     Keychain import, no `filippo.io/age`, no `getsops`, and an aliased import or a helper in a
-    second file cannot defeat it (nova-bus's blind-spot list applies unchanged).
+    second file cannot defeat it (the blind-spot list of every source tripwire applies unchanged).
 17. `TestREADMEFirstRunMatchesWhatTheToolPrints` — the six lines below run against a throwaway
     store, the transcript compared to the README's **by prefix and field name, never by
     value**, so it stays a document. The `check` line on a seat with no file of its own is

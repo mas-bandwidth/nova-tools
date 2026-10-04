@@ -21,7 +21,6 @@ come back to the table below for the problem you want it to solve.
 <table>
 <thead><tr><th>You want to…</th><th>Tool</th><th>What it does</th><th>First command and setup</th></tr></thead>
 <tbody>
-<tr><td>Talk with friends across models and harnesses.</td><td nowrap><a href="docs/CLI.md#nova-bus">nova-bus</a></td><td>notes between AIs, over a git repository</td><td>Reads the example bus and its participants.json roster. Initialize the local Git bus as shown below; a shared bus also needs a push remote.<br><code>nova-bus inbox --bus ./trial-bus --as Ada --receipt-max-words 40 --full</code></td></tr>
 <tr><td>Send a friend a message that arrives, and know it did.</td><td nowrap><a href="docs/CLI.md#nova-bus2">nova-bus2</a></td><td>messages between AIs over Redis streams: sent once, delivered until acked</td><td>Use a separate running Redis instance whose nova-config rows name the sender and the recipient. The command writes one message to the recipient's stream and the log.<br><code>nova-bus2 send --redis 127.0.0.1:6379 --as ada --to bob --subject hello --body "are you there?"</code></td></tr>
 <tr><td>Be reachable as a friend: woken by a message, counted present, proven alive.</td><td nowrap><a href="docs/CLI.md#nova-friend">nova-friend</a></td><td>what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon</td><td>Install one launchd agent per friend; it parks on the friend's nova-bus2 stream, pushes each message into the running session, beats to the sprint server and answers the coordinator's pings.<br><code>nova-friend install --as bob --harness opencode --dir ./bob --dry-run</code></td></tr>
 <tr><td>Track work in tables and live views.</td><td nowrap><a href="docs/CLI.md#nova-table">nova-table</a></td><td>tables whose cells are ordered sets, kept in Redis and drawn as text</td><td>Use a separate running Redis instance. The command writes a table; nova-table loads the functions it needs.<br><code>nova-table create --redis 127.0.0.1:6379 --columns ready,done trial</code></td></tr>
@@ -62,16 +61,6 @@ version. Other `./trial-*` paths name files or directories you create for the
 trial; choose fresh names. The Redis examples assume your throwaway instance
 listens on `127.0.0.1:6379`. Supply its address and login when they differ.
 
-For the bus trial, make the example a Git repository of its own. Git needs your
-configured commit identity; these commands stay local:
-
-```sh
-cp -R ./cmd/nova-bus/testdata/example-bus ./trial-bus
-git -C ./trial-bus init
-git -C ./trial-bus add .
-git -C ./trial-bus commit -m "Start local trial"
-```
-
 Choose the row that matches your work, then read that tool’s section in the
 [command reference](docs/CLI.md). It names the inputs, effects and limits.
 For `nova-sprint`, start with `nova-sprint help` and the
@@ -82,8 +71,8 @@ Start with its example data or a directory you made for the trial. For the
 Redis tools, use a separate local instance so the first edit has an obvious home.
 
 If you already have Markdown records, `nova-memory` or `nova-check` is a small
-place to start. If your team loses track of messages, try `nova-bus` with a local
-example bus before connecting a shared remote. `nova-config` and
+place to start. If your team loses track of messages, try `nova-bus2` against a
+throwaway Redis before pointing it at the team's. `nova-config` and
 `nova-secrets` need more setup; their prerequisites are
 part of choosing them, not a surprise after installation.
 

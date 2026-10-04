@@ -1293,7 +1293,7 @@ seen red before it is trusted.
 ## The work list
 
 The tool is Go under `cmd/nova-tokens` and `internal/tokens`, built the way
-`cmd/nova-bus` is: no hardcoded paths, no default paths, the exit grammar
+`cmd/nova-check` is: no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard: a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report

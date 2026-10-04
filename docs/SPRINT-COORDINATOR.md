@@ -356,8 +356,8 @@ at the landed sha, with `NOVA_SPRINT_REDIS` naming the store for the inventory, 
 
 ## 8. The hourly habits
 
-- The bus. `nova-bus inbox --bus <bus> --as <coordinator> --receipt-max-words 40 --bodies` lists the notes
-  addressed to the coordinator; each is answered and receipted with `nova-bus receipt`.
+- The bus. `nova-bus2 peek --as <coordinator>` lists what waits for the coordinator; `nova-bus2 recv`
+  takes one in, answered with `nova-bus2 send --re <id>` and acked.
 - Friends' outboxes. A friend works only inside its own directory: a job is delivered as
   `~/<friend>-working/inbox/<job>/BRIEF.md` and collected from `~/<friend>-working/outbox/<job>/REPORT.md`,
   whose `Verdict:` line holds the result. After PR 5126 `nova-sprint friend sync [--root <dir>]` reads those
