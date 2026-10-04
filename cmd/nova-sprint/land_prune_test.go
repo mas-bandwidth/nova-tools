@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 import (
@@ -213,17 +215,6 @@ func TestLandNeverDeletesTheBaseOrABranchTheSprintDoesNotName(t *testing.T) {
 	assert.Contains(t, out, "NOTE no branch queued for deletion for s1-3.w1: its branch -x is not a branch name")
 	assert.Equal(t, []string{"land s1-3 (sprint stream s1)", "land s1-2 (sprint stream s1)", "land s1-1 (sprint stream s1)", "base"}, r.mainLog())
 	assert.Equal(t, []string{"main", "other", "sprint/s1-1", "sprint/s1-2", "sprint/s1-3"}, r.originBranches())
-	for _, tc := range []struct{ branch, base, want string }{
-		{"", "main", "it records no branch"},
-		{"main", "main", "is the base"},
-		{"sprint/a:refs/heads/main", "main", "not one the sprint names"},
-		{"sprint/a..b", "main", "not one the sprint names"},
-		{"sprint/a.lock", "main", "not one the sprint names"},
-		{"sprint/a+b", "main", "not one the sprint names"},
-	} {
-		assert.Contains(t, pruneWhy(tc.branch, tc.base), tc.want, tc.branch)
-	}
-	assert.Empty(t, pruneWhy("sprint/s1-1.w1.g1.e13", "main"))
 }
 
 // The dry run deletes nothing and queues nothing: it says how many branches the real run

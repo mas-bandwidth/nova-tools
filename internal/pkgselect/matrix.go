@@ -42,12 +42,12 @@ type Groups struct{ Linux, Mac string }
 var DarwinOnly = []string{"./cmd/nova-sandbox", "./internal/sandbox"}
 
 // LinuxOnly are the packages a pull request never deals to the macOS legs: their unit
-// tests cost more than a macOS runner's two cores give in the two-minute cap (cmd/nova-sprint
-// about 335 CPU-seconds, cmd/nova-swarm about 200), so those legs were cancelled at the cap
-// in every pull-request run of 2026-10-04. Linux runs them in every pull request and in
-// the merge group, and cmd/nova-sprint is leaving this repository (nova-tools#5309).
-// A push and the nightly run still deal them to macOS.
-var LinuxOnly = []string{"./cmd/nova-sprint", "./cmd/nova-swarm"}
+// tests cost more than a macOS runner's two cores give in the two-minute cap (cmd/nova-swarm
+// about 200 CPU-seconds), so those legs were cancelled at the cap in every pull-request
+// run of 2026-10-04. Linux runs them in every pull request and in the merge group; a push
+// and the nightly run still deal them to macOS. cmd/nova-sprint is not on it: its lander
+// tests on real git and go are in the functional tier.
+var LinuxOnly = []string{"./cmd/nova-swarm"}
 
 // HeavyFirst are the packages the fan-out deals first, so the heaviest never
 // share a shard: dealt round-robin from the sorted list, the two heaviest sat
