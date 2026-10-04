@@ -64,7 +64,7 @@ func TestCountedLedger(t *testing.T) {
 	t.Parallel()
 	for p, want := range map[string]bool{
 		"internal/ci/testdata/dead_code_allowlist.txt":  true,
-		"dead_code_allowlist.txt":                      true,
+		"dead_code_allowlist.txt":                       true,
 		"internal/ci/testdata/sharedtemp_allowlist.txt": false,
 		"internal/ci/sleeps-skips_allowlist.txt":        false,
 		"notes.tsv":                                     false,
