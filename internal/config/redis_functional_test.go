@@ -661,7 +661,7 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	firstRunTrips := trips.N() - before
 	t.Logf("first run trips = %d (baseline was 42)", firstRunTrips)
-	require.LessOrEqual(t, firstRunTrips, int64(38), "first run took %d trips, want <= 38: 30 for the four first kinds, 1 each for the loop and route kinds with no row, and 6 for the tier kind's two rows (was 42 before batching cuts)", firstRunTrips)
+	require.LessOrEqual(t, firstRunTrips, int64(41), "first run took %d trips, want <= 41: 30 for the four first kinds, 1 each for the loop and route kinds with no row, and 9 for the tier kind's three rows (flash, heavy, pro; was 42 before batching cuts)", firstRunTrips)
 
 	// 2. Steady apply: nothing changed; Cut 1 skips the stamps (18 -> 6)
 	before = trips.N()

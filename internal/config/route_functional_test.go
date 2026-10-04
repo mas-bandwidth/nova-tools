@@ -140,7 +140,7 @@ func TestTheTierArrayRoundTripsAndApplyWritesIt(t *testing.T) {
 	st := migrated(t)
 	tiers, err := st.List(ctx, KindTier)
 	require.NoError(t, err)
-	require.Len(t, tiers, 2, "migrate makes flash and pro")
+	require.Len(t, tiers, 3, "migrate makes flash, heavy and pro")
 	for _, row := range []Row{
 		newRoute(t, "flash-a", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600"}),
 		newRoute(t, "flash-off", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600", "enabled": "false", "note": "off for the test"}),
@@ -168,5 +168,5 @@ func TestTheTierArrayRoundTripsAndApplyWritesIt(t *testing.T) {
 	require.NoError(t, err)
 	applyKinds(t, st, ap, "t")
 	assert.Equal(t, "flash-a,flash-a", c.HGet(ctx, TierKey("flash"), "routes").Val())
-	assert.ElementsMatch(t, []string{"flash", "pro"}, c.SMembers(ctx, TiersKey).Val())
+	assert.ElementsMatch(t, []string{"flash", "heavy", "pro"}, c.SMembers(ctx, TiersKey).Val())
 }
