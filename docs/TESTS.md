@@ -748,7 +748,6 @@ APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true publish
 
 $ nova-cairn index --store ./cairns
 INDEX OK sessions=1 entries=1
-INDEX SESSION session=s1 entries=1
 INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
 
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
