@@ -11,7 +11,7 @@ import (
 
 // The final primary can land after a returned read is reasked in place and
 // replaced: the obsolete reader's delayed verdict cannot satisfy acceptance.
-func TestTheLastCardLandsAfterReplacingItsReaskedReader(t *testing.T) {
+func TestTheLastCardStagesAfterReplacingItsReaskedReader(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	r.a.serveAddr = "mem:0"
@@ -52,10 +52,10 @@ func TestTheLastCardLandsAfterReplacingItsReaskedReader(t *testing.T) {
 		require.Equal(t, 0, res.Code, "%s\n%s%s", line, res.Stdout, res.Stderr)
 	}
 	r.ok("start")
-	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main --check 'test -f last.txt'"), "LAND DONE batches=1 cards=1 refused=0")
-	assert.Contains(t, r.ok("tick"), "the sprint is done")
-	assert.Contains(t, r.ok("where"), "DONE")
-	assert.Contains(t, r.ok("stop"), "before=STOPPED after=STOPPED unchanged")
-	assert.Equal(t, map[string]string{"s1-1": "landed/merged"}, r.places("s1-1"))
+	assert.Contains(t, r.ok(checkedStage("land --repo-dir "+r.clone+" --base main --check 'test -f last.txt'")), "LAND DONE batches=1 cards=1 refused=0")
+	assert.NotContains(t, r.ok("tick"), "the sprint is done", "staging the final card does not finish the sprint")
+	assert.NotContains(t, r.ok("where"), "\nDONE\n")
+	assert.Contains(t, r.ok("stop"), "before=RUNNING after=STOPPED")
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"))
 	r.clean()
 }

@@ -15,7 +15,7 @@ func TestSprintDoneOutlastsAnAddOfNoCardAndIsNeverOverdue(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	accepted(w, "s1-1")
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1"}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1"}))
 	w.must(Add(w.s, AddReq{Stream: "s2"}))
 	p, _ := TickDone(w.s, TickReq{})
 	require.NotNil(t, w.s.StreamCtl("s2"), "an add that only opens a stream: s2 %v, done %+v", w.s.StreamCtl("s2") != nil, p)

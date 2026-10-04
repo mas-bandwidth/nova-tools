@@ -281,7 +281,7 @@ func (w *crWorld) round(r int) {
 					req.Cross = q[0].ID + "=" + others[w.rng.IntN(len(others))]
 				}
 			}
-			h.run(MergeStep(req))
+			h.run(devFixtureMergeStep(req))
 		}
 		h.clean(fmt.Sprintf("round %d after the merger", r))
 	}

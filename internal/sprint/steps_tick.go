@@ -482,7 +482,7 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 		var ids []string
 		for _, c := range stuck {
 			need := c.F("need_card")
-			landed = landed && need != "" && s.StateOf(need) == Landed
+			landed = landed && need != "" && Delivered(s, need)
 			ids = append(ids, c.ID)
 		}
 		if !landed {
@@ -1305,7 +1305,12 @@ func SprintDoneCounts(s *Snapshot) (landed, dropped int, done bool) {
 			return 0, 0, false
 		}
 	}
-	landed = len(s.Work.Column(Landed))
+	for _, c := range s.Work.Column(Landed) {
+		if !Delivered(s, c.ID) {
+			return 0, 0, false
+		}
+		landed++
+	}
 	for _, row := range s.Work.Rows() {
 		dropped += s.StreamCtl(row).Int("dropped")
 	}

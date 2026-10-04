@@ -122,7 +122,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	w.clean("fixed work returned")
 
 	// Merge the one accepted primary; the stream is not landed until all are.
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 10}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Batch: 10}))
 	require.Equal(t, Landed, w.state("s1-1"), "merge: %s", w.state("s1-1"))
 	require.Equal(t, Merged, w.s.Merge.Placed("s1-1").Col, "merge: %s", w.state("s1-1"))
 	require.Len(t, w.notesOf(NStartedMerging), 1, "merge notes: started %d batch %d landed %d", len(w.notesOf(NStartedMerging)), len(w.notesOf(NBatchLanded)), len(w.notesOf(NStreamLanded)))
@@ -195,14 +195,14 @@ func TestMergeFactsStopTheStreamAndResumeMovesIt(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 3)
 	accepted(w, "s1-1", "s1-2", "s1-3")
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-2"}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-2"}))
 	ctl := w.s.StreamCtl("s1")
 	require.Equal(t, StreamStopped, ctl.F("state"), "conflict: state %s", ctl.F("state"))
 	require.Equal(t, Stuck, w.s.Merge.Placed("s1-2").Col, "conflict: state %s", ctl.F("state"))
 	require.Equal(t, Merging, w.state("s1-2"), "conflict: state %s", ctl.F("state"))
 	require.Len(t, w.openOn(StreamSubject("s1")), 1, "a stopped stream with no open judgment")
 	w.clean("stopped")
-	p := MergeStep(w.s, MergeReq{Stream: "s1", Batch: 2})
+	p := devMergeFixture(w.s, MergeReq{Stream: "s1", Batch: 2})
 	require.Empty(t, p.Units, "a stopped stream merged: %+v", p)
 	require.Len(t, p.Refused, 1, "a stopped stream merged: %+v", p)
 	// Answering the stream's judgment elsewhere leaves it open: rule 9.
@@ -215,7 +215,7 @@ func TestMergeFactsStopTheStreamAndResumeMovesIt(t *testing.T) {
 	require.Equal(t, Queued, w.s.Merge.Placed("s1-2").Col, "resume did not move the stream")
 	require.Empty(t, w.openOn(StreamSubject("s1")), "resume did not move the stream")
 	w.clean("resumed")
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 10}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Batch: 10}))
 	require.Equal(t, StreamLanded, w.s.StreamCtl("s1").F("state"), "stream not landed: %s", w.s.StreamCtl("s1").F("state"))
 	require.Len(t, w.notesOf(NStreamLanded), 1, "stream not landed: %s", w.s.StreamCtl("s1").F("state"))
 	w.clean("landed")
@@ -223,14 +223,14 @@ func TestMergeFactsStopTheStreamAndResumeMovesIt(t *testing.T) {
 	// Red stops the stream the same way; the second stuck is marked.
 	w2 := setup(t, 2)
 	accepted(w2, "s1-1", "s1-2")
-	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1", Red: true}))
+	w2.must(devMergeFixture(w2.s, MergeReq{Stream: "s1", Red: true}))
 	require.Equal(t, "red", w2.s.StreamCtl("s1").F("cause"), "red: %v", w2.notesOf(NRed))
 	require.Len(t, w2.notesOf(NRed), 1, "red: %v", w2.notesOf(NRed))
 	require.Equal(t, 2, w2.notesOf(NRed)[0].Count, "red: %v", w2.notesOf(NRed))
 	w2.must(Resume(w2.s, ResumeReq{Stream: "s1", Did: "reverted the suspect"}))
-	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1", Conflict: "s1-1"}))
+	w2.must(devMergeFixture(w2.s, MergeReq{Stream: "s1", Conflict: "s1-1"}))
 	w2.must(Resume(w2.s, ResumeReq{Stream: "s1"}))
-	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1", Conflict: "s1-1"}))
+	w2.must(devMergeFixture(w2.s, MergeReq{Stream: "s1", Conflict: "s1-1"}))
 	last := w2.notesOf(NConflict)
 	require.True(t, last[len(last)-1].Marked, "a second stuck for the same cause is not marked: %+v", last[len(last)-1])
 	require.Contains(t, last[len(last)-1].Decisions, RepeatDecision, "a second stuck for the same cause is not marked: %+v", last[len(last)-1])
@@ -301,7 +301,7 @@ func TestResolveMovesWhenNeedsLand(t *testing.T) {
 	p := w.must(Resolve(w.s, ResolveReq{}))
 	require.Empty(t, p.Units, "resolved before the need landed")
 	accepted(w, "s1-1")
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1"}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1"}))
 	w.must(Resolve(w.s, ResolveReq{}))
 	require.Equal(t, Ready, w.state("b"), "b is %s", w.state("b"))
 	w.clean("resolved")
@@ -432,4 +432,22 @@ func TestNoExportedFieldOfATableGivesItsCardsOrRows(t *testing.T) {
 	}
 	want := []string{"Name", "Epoch", "Revision", "Texts"}
 	require.Equal(t, want, exported, "the exported fields of a table are %v, want %v: a card or a row would be read past the index", exported, want)
+}
+
+// A new verified landing does not make an older branch-only label proof, and
+// cannot close a stream containing that unresolved historical delivery.
+func TestTheStreamStaysOpenWithAnUnverifiedHistoricalLanding(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 2)
+	land(w, "s1-1")
+	old := w.s.Work.Card("s1-1")
+	delete(old.Fields, "dev_branch")
+	w.s.Work.Put(old)
+	land(w, "s1-2")
+	require.NotEqual(t, StreamLanded, w.s.StreamCtl("s1").F("state"))
+	_, _, done := SprintDoneCounts(w.s)
+	require.False(t, done)
+	require.Equal(t, Landed, old.Col, "delivery audit silently rewrites history")
+	require.True(t, Delivered(w.s, "s1-2"))
+	require.False(t, Delivered(w.s, "s1-1"))
 }

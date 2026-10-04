@@ -37,7 +37,7 @@ func TestTheCardCarriesEveryConsumerWhoeverIsRemoved(t *testing.T) {
 	// attempt 2 finishes
 	ta.ok("rework s1-1 --fix 'handle the empty case'")
 	ta.ok("take --as m1 s1-1.w2@1")
-	ta.ok("finish --as m1 s1-1.w2@1" + use("0.004"))
+	ta.pinnedFixtureFinish("finish --as m1 s1-1.w2@1" + use("0.004"))
 
 	// the reads: one handed back by its reader, asked of another, then two ok
 	ta.ok("ask")
@@ -83,8 +83,8 @@ func TestTheCardCarriesEveryConsumerWhoeverIsRemoved(t *testing.T) {
 
 	// the landing puts the card's total in the stream's cell, and a replay changes nothing
 	ta.ok("accept --stream s1")
-	ta.ok("merge --stream s1 --op land-s1")
-	ta.ok("merge --stream s1 --op land-s1")
+	ta.verifiedLanding("merge --stream s1 --op land-s1")
+	ta.verifiedLanding("merge --stream s1 --op land-s1")
 	cells := ta.costCells()
 	assert.Equal(t, "$0.01", cells["s1"])
 	assert.Equal(t, "$0.01", cells[""])

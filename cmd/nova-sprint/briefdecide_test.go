@@ -375,8 +375,9 @@ func TestACardsEndAttachesToItsBrief(t *testing.T) {
 	r.a.briefRecord = func() (string, error) { return record, nil }
 	r.ok("add --stream s2 s2-1 s2-2 --brief-file " + writeNeedsBrief(t, t.TempDir(), "x", "Do it. converges=0.6", ""))
 	r.queued(map[string]string{"s2-1": r.head("s2-1", "main", "one.txt", "one\n"), "s2-2": r.head("s2-2", "main", "two.txt", "two\n")}, "s2-1", "s2-2")
-	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	require.Equal(t, 0, code, out+errs)
 	assert.NotContains(t, out, "brief decision")
-	assert.Equal(t, map[string]string{"a1": "dropped: obsolete", "s2-1": "landed: landed at attempt 1", "s2-2": "landed: landed at attempt 1"}, endsOf(t, record))
+	assert.Equal(t, map[string]string{"a1": "dropped: obsolete"}, endsOf(t, record), "work-branch staging is not a card outcome")
+	assert.Equal(t, map[string]string{"s2-1": "merging/queued", "s2-2": "merging/queued"}, r.places("s2-1", "s2-2"))
 }

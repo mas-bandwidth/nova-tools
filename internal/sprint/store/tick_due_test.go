@@ -21,7 +21,7 @@ import (
 // Only the tick's resolve can move those primaries on.
 func (h *harness) landUnresolved(stream string) {
 	h.t.Helper()
-	step := MergeStep(sprint.MergeReq{Stream: stream, Batch: 100})
+	step := devFixtureMergeStep(sprint.MergeReq{Stream: stream, Batch: 100})
 	plan := step.Plan
 	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
 		p := plan(s)

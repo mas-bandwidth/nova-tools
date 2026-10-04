@@ -11,7 +11,7 @@ import (
 func landedCards(w *world, ids ...string) {
 	w.t.Helper()
 	accepted(w, ids...)
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Cards: ids}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Cards: ids}))
 }
 
 // A landed batch's scores are written on its cards, and the cards whose top class meets

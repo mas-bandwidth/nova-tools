@@ -626,7 +626,7 @@ func TestG3TheWalkNamesAStepThatWritesTheWorkTableAndIsNotThePump(t *testing.T) 
 	h.readAll()
 	x.tick()
 	x.rec.take()
-	merge := MergeStep(sprint.MergeReq{Stream: "s1", Batch: 2})
+	merge := devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 2})
 	merge.Pump = true
 	x.rec.set("merge/resume")
 	h.must(merge)
@@ -763,7 +763,7 @@ func TestW12TheTicksOwnEntriesToTheWorkQueueWakeTheNextTick(t *testing.T) {
 	h.st.Updates[2].Parts = append([]sprint.TickPartDef{{Name: "land", Fn: func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
 		if !fired {
 			fired = true
-			h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 2}))
+			h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 2}))
 		}
 		return sprint.Plan{}, 0
 	}}}, inner...)

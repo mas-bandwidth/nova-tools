@@ -29,7 +29,7 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 		if work[i] != "" {
 			line += " --usage '" + work[i] + "'"
 		}
-		ta.ok(line)
+		ta.pinnedFixtureFinish(line)
 	}
 	ta.ok("ask")
 	for i := range work {
@@ -42,7 +42,7 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 			if rd.usage != "" {
 				line += " --usage '" + rd.usage + "'"
 			}
-			ta.ok(line)
+			ta.pinnedFixtureFinish(line)
 		}
 	}
 	ta.ok("accept --stream " + stream)
@@ -50,9 +50,9 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 	if len(mergeOp) > 0 {
 		// the same merge twice under one op id: the second returns the first's result
 		merge += " --op " + mergeOp[0]
-		ta.ok(merge)
+		ta.verifiedLanding(merge)
 	}
-	ta.ok(merge)
+	ta.verifiedLanding(merge)
 	ta.ok("tick")
 }
 
@@ -136,7 +136,7 @@ func TestALandingCountsAReadReturnedAndRetired(t *testing.T) {
 	ta.ok("start")
 	ta.ok("tick")
 	ta.ok("take --as m1 s1-1.w1@1")
-	ta.ok("finish --as m1 s1-1.w1@1 --usage 'input=1 actual_usd=0.1 actual_by=harness'")
+	ta.pinnedFixtureFinish("finish --as m1 s1-1.w1@1 --usage 'input=1 actual_usd=0.1 actual_by=harness'")
 	ta.ok("ask")
 	var asked []string
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
@@ -154,7 +154,7 @@ func TestALandingCountsAReadReturnedAndRetired(t *testing.T) {
 		ta.ok("read --as " + rd + " --ok s1-1.r1." + rd + " --usage 'input=1 actual_usd=0.003 actual_by=harness'")
 	}
 	ta.ok("accept --stream s1")
-	ta.ok("merge --stream s1")
+	ta.verifiedLanding("merge --stream s1")
 	ta.ok("tick")
 	var v cardView
 	ta.json("card s1-1", &v)

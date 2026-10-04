@@ -238,7 +238,7 @@ func TestD6StuckCardsAndResume(t *testing.T) {
 	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"b1"}}))
 	accepted(w, "s1-1", "s1-2", "s1-3")
 	score := w.s.Merge.Card("s1-2").Score
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Cross: "s1-2=b1"}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Cross: "s1-2=b1"}))
 	st := w.s.Merge.Card("s1-2")
 	require.Equal(t, Stuck, st.Col, "cross: %+v", st)
 	require.Equal(t, "b1", st.F("need_card"), "cross: %+v", st)
@@ -256,7 +256,7 @@ func TestD6StuckCardsAndResume(t *testing.T) {
 	p = Resume(w.s, ResumeReq{Stream: "s1"})
 	require.Len(t, p.Refused, 1, "ranking the needed card resolved it: %+v", p)
 	accepted(w, "b1")
-	w.must(MergeStep(w.s, MergeReq{Stream: "s2"}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s2"}))
 	w.must(Resume(w.s, ResumeReq{Stream: "s1", Did: "b1 landed"}))
 	resumed := w.s.Merge.Card("s1-2")
 	require.Equal(t, Queued, resumed.Col, "resumed card: %+v", resumed)
@@ -267,7 +267,7 @@ func TestD6StuckCardsAndResume(t *testing.T) {
 	// The barrier: with a stuck card at s1-2, only the cards before it merge.
 	w.s.Merge.Card("s1-2").Col = Stuck
 	w.s.Merge.cells = nil
-	p = MergeStep(w.s, MergeReq{Stream: "s1", Batch: 10})
+	p = devMergeFixture(w.s, MergeReq{Stream: "s1", Batch: 10})
 	for _, u := range p.Units {
 		require.NotEqual(t, "s1-3", u.Key, "the merge step passed a stuck card: %+v", p.Units)
 	}
@@ -360,7 +360,7 @@ func TestF3ReturnAnswersAndAckCloses(t *testing.T) {
 	o := w.openOn("s1-1")
 	require.Len(t, o, 1, "return left the red CI open, or opened no returned judgment: %v", o)
 	require.Equal(t, NReturned, o[0].Note.Type, "return left the red CI open, or opened no returned judgment: %v", o)
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Red: true}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Red: true}))
 	red := w.openOn(StreamSubject("s1"))[0].Note.ID
 	p := w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-2"}}, Answers: []string{red}, Reason: "the suspect"}))
 	require.Len(t, w.openOn(StreamSubject("s1")), 1, "the stream's red judgment: open %v, answered %v", w.openOn(StreamSubject("s1")), p.Units[0].Notes)
@@ -451,7 +451,7 @@ func TestG4StreamStateIsKeptTrue(t *testing.T) {
 	st = w.s.StreamCtl("s1").F("state")
 	require.Equal(t, StreamWaiting, st, "return of the only queued card: %s", st)
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1"}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1"}))
 	st = w.s.StreamCtl("s1").F("state")
 	require.Equal(t, StreamWaiting, st, "the last queued card landed, s1-3 still open: the stream is %s, want waiting", st)
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-3"}}, Reason: "not needed"}))

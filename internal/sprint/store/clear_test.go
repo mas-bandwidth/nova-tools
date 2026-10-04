@@ -23,8 +23,8 @@ func midFlight(t *testing.T) *harness {
 	h.setup(7)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"later"}, Needs: []string{"s1-6"}}))
 	h.through("s1-1", "s1-2", "s1-3")
-	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
-	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Conflict: "s1-2"}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Conflict: "s1-2"}))
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-4", "s1-5"}}}))
 	s := h.snap()
 	c := s.Fleet.Card("s1-4.w1")
@@ -89,7 +89,7 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	for name, step := range map[string]Step{
 		"finish": FinishStep(sprint.FinishReq{As: before.Fleet.Card("s1-5.w1").Row, Sel: sprint.Sel{IDs: []string{"s1-5.w1"}}, Gens: map[string]int{"s1-5.w1": 1}}),
 		"read":   ReadStep(sprint.ReadReq{As: before.Readers.Of("s1-4")[1].F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{before.Readers.Of("s1-4")[1].ID}}}),
-		"merge":  MergeStep(sprint.MergeReq{Stream: "s1"}),
+		"merge":  devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}),
 	} {
 		step.Epoch = &held
 		res, err := h.st.Run(h.ctx, step)
@@ -116,7 +116,7 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	// The same ids run again, to landed, in the new epoch.
 	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 3}))
 	h.through("s1-1", "s1-2", "s1-3")
-	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}))
 	if s := h.snap(); s.StateOf("s1-1") != sprint.Landed || s.StateOf("s1-3") != sprint.Landed {
 		require.Failf(t, "", "the same ids again: %s %s", s.StateOf("s1-1"), s.StateOf("s1-3"))
 	}

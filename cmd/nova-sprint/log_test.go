@@ -82,20 +82,20 @@ func TestCardTellsTheStory(t *testing.T) {
 	ta.ok("rework s1-1")
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w2@1")
-	ta.ok("finish --as m1 s1-1.w2@1 --head h2 --report 'handled; tests green'")
+	ta.pinnedFixtureFinish("finish --as m1 s1-1.w2@1 --head h2 --report 'handled; tests green'")
 	ta.ok("ask")
 	ta.ok("read --as reader-a --ok s1-1.r2.reader-a --finding 'the empty case is tested'")
 	ta.ok("read --as reader-b --ok s1-1.r2.reader-b --finding 'fine'")
 	ta.ok("accept s1-1")
-	ta.ok("merge --stream s1")
+	ta.verifiedLanding("merge --stream s1")
 	out = ta.ok("card s1-1")
 	for _, want := range []string{
-		"s1-1   stream s1   landed   attempt 2   head h2",
+		"s1-1   stream s1   landed   attempt 2   head " + fixtureCommit("h2"),
 		"  attempt 1\n",
 		`m1 finished attempt 1: FAILED. "the tests went red"`,
 		"  attempt 2, because attempt 1 failed\n",
 		`s1-1 reworked by coordinator: attempt 2; answers "work came back failed"`,
-		`m1 finished attempt 2: ok, head h2. "handled; tests green"`,
+		`m1 finished attempt 2: ok, head ` + fixtureCommit("h2") + `. "handled; tests green"`,
 		"reader-a and reader-b asked to read attempt 2 by coordinator",
 		`reader-a read attempt 2: ok. "the empty case is tested"`,
 		"merged into s1 and landed by coordinator",
@@ -146,7 +146,7 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 	assert.Contains(t, ta.ok("queue --as m1"), "  why this attempt exists:\n    attempt 1 failed: the tests went red")
 	assert.Equal(t, 1, strings.Count(ta.ok("card s1-1"), "check the nil slice too"), "card says the fix once")
 	assert.Contains(t, ta.ok("card s1-1"), "attempt 2 was given:\n  because:\n    attempt 1 failed: the tests went red\n  the fix:\n    check the nil slice too")
-	ta.ok("finish --as m1 s1-1.w2@1 --head h2 --branch feature/empty-2 --base feature/empty --report 'handled; tests green'")
+	ta.pinnedFixtureFinish("finish --as m1 s1-1.w2@1 --head h2 --branch feature/empty-2 --base feature/empty --report 'handled; tests green'")
 	ta.ok("ask")
 	out = ta.ok("queue --as reader-a")
 	for _, want := range []string{"PACKET s1-1.r2.reader-a attempt=2", "  work: attempt 2 by m1", "  head: h2", "  branch: feature/empty-2", "  base: feature/empty",

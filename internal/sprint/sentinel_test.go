@@ -10,7 +10,7 @@ import (
 // mergeOne lands the head of a stream's queue: one merge step, batch 1.
 func mergeOne(w *world, stream string) Plan {
 	w.t.Helper()
-	p := w.must(MergeStep(w.s, MergeReq{Stream: stream, Batch: 1}))
+	p := w.must(devMergeFixture(w.s, MergeReq{Stream: stream, Batch: 1}))
 	w.clean("merged in " + stream)
 	return p
 }
@@ -311,4 +311,33 @@ func TestASentinelInsertedInLine(t *testing.T) {
 	p = Add(w.s, AddReq{Stream: "s1", IDs: []string{"x"}, Sentinel: true, After: "s1-5"})
 	require.Len(t, p.Refused, 1, "no room: %+v", p)
 	require.Contains(t, p.Refused[0].Why, "no score lies between", "no room: %+v", p)
+}
+
+// Historical column values remain evidence to audit, not development proof.
+// Both missing and old-epoch receipts must keep positional sentinels blocked.
+func TestASentinelWaitsForHistoricalLandingWithoutCurrentDevProof(t *testing.T) {
+	t.Parallel()
+	for _, disposition := range []string{"missing receipt", "old epoch receipt"} {
+		t.Run(disposition, func(t *testing.T) {
+			t.Parallel()
+			w := setup(t, 1)
+			land(w, "s1-1")
+			w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
+			c := w.s.Work.Card("s1-1")
+			if disposition == "missing receipt" {
+				delete(c.Fields, "dev_branch")
+			} else {
+				c.Fields["dev_epoch"] = itoa(int(w.s.Epoch) + 1)
+			}
+			w.s.Work.Put(c)
+			stop := w.s.Work.Card("stop")
+			require.Equal(t, []string{c.ID}, PositionWaits(w.s, stop, nil))
+			p := release(w, "checked", stop.ID)
+			require.Empty(t, p.Units)
+			require.Len(t, p.Refused, 1)
+			require.Contains(t, p.Refused[0].Why, c.ID)
+			require.Equal(t, Landed, c.Col, "migration inspection rewrites historical state")
+			require.Equal(t, Waiting, stop.Col)
+		})
+	}
 }

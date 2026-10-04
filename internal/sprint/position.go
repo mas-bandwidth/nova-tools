@@ -11,7 +11,7 @@ import "sort"
 // openLine is the row's cards that have not landed, in score order: the
 // stream's line as it stands. Everything below reads the line through here:
 // StopBefore, PositionWaits, Behind, WaitsFor and NeedsCycle.
-func (t *Table) openLine(row string) []*Card {
+func (t *Table) openLine(row string, snapshot *Snapshot) []*Card {
 	t.index()
 	if t.lines == nil {
 		t.lines = map[string][]*Card{}
@@ -21,8 +21,10 @@ func (t *Table) openLine(row string) []*Card {
 	}
 	var l []*Card
 	for _, st := range States {
-		if st != Landed {
-			l = append(l, t.cells[[2]string{row, string(st)}]...)
+		for _, c := range t.cells[[2]string{row, string(st)}] {
+			if st != Landed || !Delivered(snapshot, c.ID) {
+				l = append(l, c)
+			}
 		}
 	}
 	SortCards(l)
@@ -34,7 +36,7 @@ func (t *Table) openLine(row string) []*Card {
 // the last one before it that has not landed (landing: this step lands it).
 // nil when none.
 func StopBefore(s *Snapshot, stream string, score float64, landing map[string]bool) *Card {
-	line, stops := s.Work.lineStops(stream)
+	line, stops := s.Work.lineStops(stream, s)
 	k := sort.Search(len(line), func(i int) bool { return line[i].Score >= score })
 	// the last sentinel before the place, found by the line's index of its
 	// sentinels, not by a walk back over every card of the line for each
@@ -54,8 +56,8 @@ func StopBefore(s *Snapshot, stream string, score float64, landing map[string]bo
 
 // lineStops is the row's open line and, for each place in it, the place of
 // the last sentinel at or before it (-1 for none): built once with the line.
-func (t *Table) lineStops(row string) ([]*Card, []int) {
-	line := t.openLine(row)
+func (t *Table) lineStops(row string, snapshot *Snapshot) ([]*Card, []int) {
+	line := t.openLine(row, snapshot)
 	if t.stops == nil {
 		t.stops = map[string][]int{}
 	}
@@ -93,7 +95,7 @@ func PositionWaits(s *Snapshot, c *Card, landing map[string]bool) []string {
 		return nil
 	}
 	var out []string
-	for _, x := range s.Work.openLine(c.Row) {
+	for _, x := range s.Work.openLine(c.Row, s) {
 		if x.Score >= c.Score {
 			break
 		}
@@ -108,7 +110,7 @@ func PositionWaits(s *Snapshot, c *Card, landing map[string]bool) []string {
 // release lets go.
 func Behind(s *Snapshot, st *Card) []*Card {
 	var out []*Card
-	for _, x := range s.Work.openLine(st.Row) {
+	for _, x := range s.Work.openLine(st.Row, s) {
 		if x.Score > st.Score && x.Col == string(Waiting) && !IsSentinel(x) {
 			if b := StopBefore(s, x.Row, x.Score, nil); b != nil && b.ID == st.ID {
 				out = append(out, x)

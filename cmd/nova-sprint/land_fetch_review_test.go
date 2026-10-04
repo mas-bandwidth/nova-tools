@@ -22,7 +22,7 @@ func landsBoth(t *testing.T, r *landRig, headOf func(string) string) (int, strin
 		heads[id] = headOf(r.head(id, "main", id+".txt", id+"\n"))
 	}
 	r.queued(heads, "s1-1", "s1-2")
-	return r.do("land --repo-dir " + r.clone + " --base main")
+	return r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 }
 
 // shaRE admits an abbreviated head ("hex, abbreviated or whole"), and a card
@@ -38,7 +38,7 @@ func TestLandLandsACardFinishedAtAnAbbreviatedHead(t *testing.T) {
 	assert.Equal(t, 0, code, "%s%s", out, errs)
 	assert.NotContains(t, errs, "is missing: origin holds no such commit")
 	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
-	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/queued"}, r.places("s1-1", "s1-2"))
 }
 
 // A remote that serves only what it advertises (git protocol v0 without
@@ -59,8 +59,8 @@ func TestLandLandsAHeadBehindItsBranchTipFromARemoteThatServesOnlyAdvertisedRefs
 	r.git(r.worker, "switch", "-q", "sprint/s1-1")
 	r.commit("later.txt", "later\n", "later on the card's branch")
 	r.git(r.worker, "push", "-q", "origin", "sprint/s1-1")
-	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	assert.Equal(t, 0, code, "%s%s", out, errs)
 	assert.NotContains(t, errs, "is missing: origin holds no such commit")
-	assert.Equal(t, map[string]string{"s1-1": "landed/merged"}, r.places("s1-1"))
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"))
 }

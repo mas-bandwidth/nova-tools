@@ -305,7 +305,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 			col = Waiting
 		}
 		for _, n := range a.needs {
-			if s.StateOf(n) != Landed {
+			if !Delivered(s, n) {
 				col = Waiting
 			}
 		}
@@ -336,7 +336,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 	for _, a := range in {
 		col := Ready
 		for _, n := range a.needs {
-			if s.StateOf(n) != Landed {
+			if !Delivered(s, n) {
 				col = Waiting
 			}
 		}
@@ -380,7 +380,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 			u.Moved = "sentinel " + u.Moved
 			var open []string
 			for _, n := range a.needs {
-				if s.StateOf(n) != Landed {
+				if !Delivered(s, n) {
 					open = append(open, n)
 				}
 			}
@@ -505,7 +505,7 @@ func NamedWaits(s *Snapshot, c *Card, landing map[string]bool) []string {
 	var out []string
 	waived := Split(c.F("waived"))
 	for _, n := range Split(c.F("needs")) {
-		if s.StateOf(n) != Landed && !landing[n] && !contains(waived, n) {
+		if !Delivered(s, n) && !landing[n] && !contains(waived, n) {
 			out = append(out, n)
 		}
 	}

@@ -33,7 +33,7 @@ func TestLandFetchIsTheBaseAndTheHeadsByIDInOneCommand(t *testing.T) {
 	heads := landTwo(r)
 	trace := filepath.Join(r.dir, "git-trace")
 	r.a.gitEnv = append(slices.Clone(r.env), "GIT_TRACE="+trace)
-	out := r.ok("land --repo-dir " + r.clone + " --base main")
+	out := r.ok(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
 	b, err := os.ReadFile(trace)
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestLandSaysHowLongEachStepOfALandedBatchTook(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	landTwo(r)
-	out := r.ok("land --repo-dir " + r.clone + " --base main --check true")
+	out := r.ok(checkedStage("land --repo-dir " + r.clone + " --base main --check 'test -f README && git diff --check'"))
 	assert.Regexp(t, regexp.MustCompile(`LAND OK stream=s1 cards=2 base=main .* fetch=\d+\.\ds merge=\d+\.\ds check=\d+\.\ds queue=\d+\.\ds push=\d+\.\ds report=\d+\.\ds`), out)
 
 	r = newLandRig(t)
@@ -60,7 +60,7 @@ func TestLandSaysHowLongEachStepOfALandedBatchTook(t *testing.T) {
 	var v struct {
 		Items []landBatch `json:"items"`
 	}
-	r.json("land --repo-dir "+r.clone+" --base main", &v)
+	r.json(checkedStage("land --repo-dir "+r.clone+" --base main"), &v)
 	require.Len(t, v.Items, 1)
 	require.NotNil(t, v.Items[0].Times, "a landed batch's item has its times")
 	assert.Equal(t, "ok", v.Items[0].Status)

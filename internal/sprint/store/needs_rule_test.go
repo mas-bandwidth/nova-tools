@@ -98,7 +98,7 @@ func (h *harness) nToMerging(ids ...string) {
 
 func (h *harness) nLandStream(stream string) {
 	h.t.Helper()
-	h.nDo(MergeStep(sprint.MergeReq{Stream: stream, Batch: 1000}))
+	h.nDo(devFixtureMergeStep(sprint.MergeReq{Stream: stream, Batch: 1000}))
 }
 
 func TestStampsOnEveryPath(t *testing.T) {
@@ -335,7 +335,7 @@ func TestRepairSkipsTheWaiterOfASkippedLanding(t *testing.T) {
 	h.nToMerging("s1-1")
 	st := *h.st
 	st.B = h.outsideWrite("s1-1")
-	_, err := st.Run(h.ctx, MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
+	_, err := st.Run(h.ctx, devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
 	var cut *CutError
 	require.ErrorAs(t, err, &cut, "not cut: %v", err)
 	h.tick(time.Hour)

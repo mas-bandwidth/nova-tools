@@ -35,7 +35,7 @@ func TestTheTicksResolveOverAManyCardSprint(t *testing.T) {
 	s := resolveWorld(t, 300, 300)
 	p, _ := TickResolve(s, TickReq{})
 	require.Empty(t, p.Units, "resolve moved %d: every waiting primary waits on s1-300", len(p.Units))
-	line, stops := s.Work.lineStops("s2")
+	line, stops := s.Work.lineStops("s2", s)
 	require.Len(t, line, 300, "s2's line: %d cards, last stop %d; want 300 and none", len(line), stops[len(stops)-1])
 	require.EqualValues(t, -1, stops[len(stops)-1], "s2's line: %d cards, last stop %d; want 300 and none", len(line), stops[len(stops)-1])
 	gate := &Card{ID: "s2-gate", Row: "s2", Col: string(Waiting), Score: (line[99].Score + line[100].Score) / 2, Fields: map[string]string{"kind": Sentinel}}

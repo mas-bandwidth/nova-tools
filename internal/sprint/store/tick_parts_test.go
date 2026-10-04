@@ -187,14 +187,14 @@ func TestTheTickResumesACrossStopWhenTheCardLands(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"a"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b"}}))
 	h.through("a", "b")
-	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Cross: "a=b"}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Cross: "a=b"}))
 	st := h.snap().StreamCtl("s1").F("state")
 	require.Equal(t, string(sprint.StreamStopped), st, "s1 is %s", st)
 	h.startMachine()
 	h.machine()
 	st = h.snap().StreamCtl("s1").F("state")
 	require.Equal(t, string(sprint.StreamStopped), st, "resumed before b landed: %s", st)
-	h.must(MergeStep(sprint.MergeReq{Stream: "s2"}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s2"}))
 	h.machine()
 	s := h.snap()
 	if st := s.StreamCtl("s1").F("state"); st != sprint.StreamMerging || s.Merge.Placed("a").Col != sprint.Queued {
@@ -287,7 +287,7 @@ func TestDeadlinesCountRunningTimeAndNotifyOnce(t *testing.T) {
 	h.tick(sprint.DeadlineMergeIdle + time.Minute)
 	h.machine()
 	require.Len(t, h.openOf(sprint.NMergeLate), 1, "the idle stream: %d", len(h.openOf(sprint.NMergeLate)))
-	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))
 	h.machine()
 	require.Empty(t, h.openOf(sprint.NMergeLate), "the idle stream's judgment outlived the merge")
 }
@@ -387,7 +387,7 @@ func sprintOf(t *testing.T, n, stopAt int) *harness {
 		}
 		for _, s := range []string{"s1", "s2", "s3"} {
 			h.run(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{Stream: s}}))
-			h.run(MergeStep(sprint.MergeReq{Stream: s, Batch: 5}))
+			h.run(devFixtureMergeStep(sprint.MergeReq{Stream: s, Batch: 5}))
 		}
 		h.tick(time.Second)
 		s := h.snap()

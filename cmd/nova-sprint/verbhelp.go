@@ -27,7 +27,7 @@ var verbExit = map[string]string{
 	"run":         "exit codes: 0 stopped (an interrupt), 2 usage or a store that did not answer, 3 its binary was replaced on disk (its supervisor starts the new one)",
 	"fleet sync":  "exit codes: 0 done (--check: no drift), 1 refused, 2 usage, a store that did not answer, or (--check) there is drift, 3 the config could not be read",
 	"friend sync": "exit codes: 0 done, 1 refused (a friend row's name, or a working directory that cannot be read), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
-	"land":        "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
+	"land":        "exit codes: 0 every batch staged (--dry-run: would stage), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
 	"check":       "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
 	"answer":      "exit codes: 0 done (each routine judgment's card applied or listed; --every: the machine is STOPPED), 1 a line applied was refused or a decision's backend failed, 2 usage, an actor not the coordinator, or a sprint that did not answer",
 	"dashboard":   "exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)",
@@ -37,6 +37,7 @@ var verbExit = map[string]string{
 // states one (docs/STANDARD.md: `effect: inspection|local write|delivery`).
 var verbEffect = map[string]string{
 	"handover":    "inspection: reads the store, writes nothing",
+	"promote":     "delivery: checks a reviewed exact candidate, enqueues its GitHub PR, and records landing only after fresh dev ancestry; --dry-run reads the store only",
 	"dashboard":   "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
 	"coordinator": "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
 	"answer":      "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",

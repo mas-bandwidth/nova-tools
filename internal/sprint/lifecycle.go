@@ -171,7 +171,7 @@ func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 		}
 		var open []string
 		for _, n := range needs {
-			if contains(waived, n) || landing[n] || pre != nil && pre.StateOf(n) == Landed {
+			if contains(waived, n) || landing[n] || pre != nil && Delivered(pre, n) {
 				continue
 			}
 			open = append(open, n)
@@ -216,6 +216,8 @@ func unlawful(u Unit, p *Plan) string {
 			to = e.Move.Col
 		}
 		switch {
+		case from == Merging && to == Landed && !sentinel && !landedEntryVerified(p.pre, e):
+			return "the lifecycle lands ordinary work only with a verified dev receipt; run: nova-sprint promote --dry-run"
 		case from == Waiting && to == Landed && !(p.releasing && sentinel):
 			return "the lifecycle lands from waiting only a sentinel, and only by release"
 		case from == Ready && to == Waiting && !p.inserting:

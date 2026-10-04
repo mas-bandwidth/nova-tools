@@ -44,6 +44,15 @@ func newLandRig(t *testing.T) *landRig {
 	return r
 }
 
+// checkedStage gives legacy real-Git integration fixtures an exact-tip tree check.
+// It does not provide development proof, trigger scoring, or remove work branches.
+func checkedStage(line string) string {
+	if strings.Contains(line, "--check") || strings.Contains(line, "--dry-run") {
+		return line
+	}
+	return line + " --check 'test -f README && git diff --check'"
+}
+
 // git runs git in dir and returns its trimmed stdout.
 func (r *landRig) git(dir string, args ...string) string {
 	r.t.Helper()
@@ -139,14 +148,14 @@ func TestLandMergesAStreamInQueueOrderAsOneBatch(t *testing.T) {
 		heads[id] = r.head(id, "main", id+".txt", id+"\n")
 	}
 	r.queued(heads, "s1-1", "s1-2", "s1-3")
-	out := r.ok("land --repo-dir " + r.clone + " --base main --check 'test -f s1-1.txt && test -f s1-3.txt'")
+	out := r.ok(checkedStage("land --repo-dir " + r.clone + " --base main --check 'test -f s1-1.txt && test -f s1-3.txt'"))
 	tip := r.git(r.remote, "rev-parse", "main")
 	assert.Contains(t, out, "LAND OK stream=s1 cards=3 base=main tip="+tip+" ids=s1-1..s1-3")
 	assert.Contains(t, out, "LAND DONE batches=1 cards=3 refused=0")
 	assert.Equal(t, []string{"land s1-3 (sprint stream s1)", "land s1-2 (sprint stream s1)", "land s1-1 (sprint stream s1)", "base"}, r.mainLog())
-	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged", "s1-3": "landed/merged"}, r.places("s1-1", "s1-2", "s1-3"))
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/queued", "s1-3": "merging/queued"}, r.places("s1-1", "s1-2", "s1-3"))
 	// nothing is left queued: the next land lands nothing and says so
-	assert.Contains(t, r.ok("land --repo-dir "+r.clone), "LAND DONE batches=0 cards=0 refused=0")
+	assert.Contains(t, r.ok(checkedStage("land --repo-dir "+r.clone+" --base main")), "LAND DONE batches=0 cards=0 refused=0")
 	r.clean()
 }
 
@@ -167,9 +176,9 @@ func TestLandFetchesTheBaseAndTheBatchsHeadsAndNoOtherBranch(t *testing.T) {
 	r.git(r.worker, "switch", "-q", "--no-track", "-c", "other", "refs/remotes/origin/main")
 	r.commit("other.txt", "other\n", "not of this batch")
 	r.git(r.worker, "push", "-q", "origin", "other")
-	out := r.ok("land --repo-dir " + r.clone + " --base main")
+	out := r.ok(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
-	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/queued"}, r.places("s1-1", "s1-2"))
 	refs := r.git(r.clone, "for-each-ref", "--format=%(refname)", "refs/remotes/origin")
 	assert.NotContains(t, refs, "refs/remotes/origin/other", "a branch that is no card of the batch is not fetched")
 	assert.NotContains(t, refs, "refs/remotes/origin/sprint/", "the batch's heads are fetched by their ids, not as branches")
@@ -195,13 +204,13 @@ func TestLandStopsAtAHeadThatDoesNotMerge(t *testing.T) {
 			r.ok("add --stream s1 --count 3")
 			heads := map[string]string{"s1-1": r.head("s1-1", "main", "s1-1.txt", "one\n"), "s1-2": tc.second(r), "s1-3": r.head("s1-3", "main", "s1-3.txt", "three\n")}
 			r.queued(heads, "s1-1", "s1-2", "s1-3")
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 			assert.Equal(t, 1, code)
 			assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
 			assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=s1-2 fact=conflict reason=the head "+heads["s1-2"]+" of s1-2 "+tc.why)
 			assert.Contains(t, errs, "LAND DONE batches=1 cards=1 refused=1")
 			assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "base"}, r.mainLog())
-			assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck", "s1-3": "merging/queued"}, r.places("s1-1", "s1-2", "s1-3"))
+			assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/stuck", "s1-3": "merging/queued"}, r.places("s1-1", "s1-2", "s1-3"))
 			assert.Equal(t, "stopped conflict", r.streamState("s1"))
 			assert.Contains(t, r.ok("inbox"), "stream stopped: conflict on a card")
 			r.clean()
@@ -222,7 +231,7 @@ func TestLandRebuildsOnceOnAMovedBase(t *testing.T) {
 		state  string
 		places string
 	}{
-		{"moved once", 1, 0, "LAND OK stream=s1 cards=2", "landed", "landed/merged"},
+		{"moved once", 1, 0, "LAND OK stream=s1 cards=2", "merging", "merging/queued"},
 		{"moved twice", 2, 1, "LAND REFUSED stream=s1 cards=2 base=main tip=- ids=s1-1..s1-2 dir=", "stopped rejected", "merging/queued"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -238,7 +247,7 @@ func TestLandRebuildsOnceOnAMovedBase(t *testing.T) {
 					r.moveBase("main", "moved"+strconv.Itoa(attempt)+".txt")
 				}
 			}
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 			assert.Equal(t, tc.code, code, out+errs)
 			assert.Contains(t, out+errs, tc.want)
 			assert.Equal(t, []int{1, 2}, pushes)
@@ -284,13 +293,13 @@ func TestLandReportsItsCardsWhenAnotherIsQueuedAheadUnderThePush(t *testing.T) {
 			accept("s1-1")
 		}
 	}
-	code, out, errs := r.do("land --stream s1 --repo-dir " + r.clone + " --base main")
+	code, out, errs := r.do(checkedStage("land --stream s1 --repo-dir " + r.clone + " --base main"))
 	assert.Equal(t, 0, code, out+errs)
 	assert.Contains(t, out, "LAND OK stream=s1 cards=2")
-	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "landed/merged", "s1-3": "landed/merged"}, r.places("s1-1", "s1-2", "s1-3"), "the batch pushed is the batch recorded, and the card accepted since waits for the next landing")
-	code, out, errs = r.do("land --stream s1 --repo-dir " + r.clone + " --base main")
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/queued", "s1-3": "merging/queued"}, r.places("s1-1", "s1-2", "s1-3"), "the batch pushed is the batch recorded, and the card accepted since waits for the next landing")
+	code, out, errs = r.do(checkedStage("land --stream s1 --repo-dir " + r.clone + " --base main"))
 	assert.Equal(t, 0, code, out+errs)
-	assert.Equal(t, "landed/merged", r.places("s1-1")["s1-1"])
+	assert.Equal(t, "merging/queued", r.places("s1-1")["s1-1"])
 	r.clean()
 }
 
@@ -303,11 +312,11 @@ func TestLandSaysLoudlyWhenAPushedBatchIsNotReported(t *testing.T) {
 	r.ok("add --stream s1 --count 2")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2", "main", "b.txt", "b\n")}, "s1-1", "s1-2")
 	r.a.beforePush = func(int) { r.ok("return s1-1 --reason 'taken back under the push'") }
-	code, _, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	code, _, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	assert.Equal(t, 2, code)
 	tip := r.git(r.remote, "rev-parse", "main")
 	assert.Contains(t, errs, "LAND FAILED stream=s1 cards=2 base=main tip="+tip+" ids=s1-1..s1-2")
-	assert.Contains(t, errs, "and NOT reported (s1: the merge queue of s1 no longer holds s1-1 (landed, stuck or returned since it was read)")
+	assert.Contains(t, errs, "but receipt not recorded (s1: the merge queue of s1 no longer holds s1-1 (landed, stuck or returned since it was read)")
 	assert.Contains(t, errs, "run land again, which rereads the queue and lets its checks decide")
 	assert.Contains(t, errs, ": nova-sprint land --stream s1\n")
 	assert.NotContains(t, errs, "merge --stream", "a bare merge step would pass the head guard")
@@ -316,10 +325,10 @@ func TestLandSaysLoudlyWhenAPushedBatchIsNotReported(t *testing.T) {
 	assert.Equal(t, map[string]string{"s1-1": "review/returned", "s1-2": "merging/queued"}, r.places("s1-1", "s1-2"))
 	// running land again recovers the pushed and unreported card (tla/Land.tla, Recovers)
 	r.a.beforePush = nil
-	out := r.ok("land --repo-dir " + r.clone + " --base main")
+	out := r.ok(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main tip="+tip+" ids=s1-2")
 	assert.Equal(t, tip, r.git(r.remote, "rev-parse", "main"), "the recovery pushed nothing new")
-	assert.Equal(t, "landed/merged", r.places("s1-2")["s1-2"])
+	assert.Equal(t, "merging/queued", r.places("s1-2")["s1-2"])
 	r.clean()
 }
 
@@ -330,7 +339,7 @@ func TestLandACheckThatFailsPushesNothing(t *testing.T) {
 	r.ok("add --stream s1 --count 2")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2", "main", "b.txt", "b\n")}, "s1-1", "s1-2")
 	before := r.git(r.remote, "rev-parse", "main")
-	code, _, errs := r.do("land --repo-dir " + r.clone + " --base main --check 'echo the tests are red; exit 3'")
+	code, _, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main --check 'echo the tests are red; exit 3'"))
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=2 base=main tip=- ids=s1-1..s1-2")
 	assert.Contains(t, errs, "fact=red reason=the check echo the tests are red; exit 3 failed: exit status 3: the tests are red")
@@ -348,7 +357,7 @@ func TestLandDryRunChangesNothing(t *testing.T) {
 	r.ok("add --stream s1 --count 2")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2", "main", "b.txt", "b\n")}, "s1-1", "s1-2")
 	before, applies := r.git(r.remote, "rev-parse", "main"), r.applies()
-	out := r.ok("land --repo-dir " + r.clone + " --base main --dry-run")
+	out := r.ok(checkedStage("land --repo-dir " + r.clone + " --base main --dry-run"))
 	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main tip=- ids=s1-1..s1-2 dir="+r.clone+" dry_run=yes")
 	assert.Contains(t, out, "LAND DONE batches=1 cards=2 refused=0 dry_run=yes")
 	var v struct {
@@ -356,7 +365,7 @@ func TestLandDryRunChangesNothing(t *testing.T) {
 		Cards  int         `json:"cards"`
 		Items  []landBatch `json:"items"`
 	}
-	r.json("land --repo-dir "+r.clone+" --base main --dry-run", &v)
+	r.json(checkedStage("land --repo-dir "+r.clone+" --base main --dry-run"), &v)
 	require.Len(t, v.Items, 1)
 	assert.Equal(t, "ok", v.Status)
 	assert.Equal(t, 2, v.Cards)
@@ -389,17 +398,17 @@ func TestLandTwoStreamsAsTheirOwnBatches(t *testing.T) {
 		heads[id] = r.head(id, base, id+".txt", id+"\n")
 	}
 	r.queued(heads, "a", "b", "c", "d")
-	out := r.ok("land")
+	out := r.ok(checkedStage("land"))
 	kept := filepath.Join(r.dir, "land", repoDirName(r.remote))
 	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
-	assert.Contains(t, out, "ids=a..b repo="+r.remote+" dir="+kept)
+	assert.Contains(t, out, "ids=a..b delivery=staged repo="+r.remote+" dir="+kept)
 	assert.Contains(t, out, "LAND OK stream=s2 cards=1 base=main")
 	assert.Contains(t, out, "LAND OK stream=s2 cards=1 base=alt")
 	assert.Contains(t, out, "LAND DONE batches=3 cards=4 refused=0")
 	assert.Less(t, strings.Index(out, "stream=s1"), strings.Index(out, "stream=s2"))
 	assert.Equal(t, []string{"land c (sprint stream s2)", "land b (sprint stream s1)", "land a (sprint stream s1)", "base"}, r.mainLog())
 	assert.Equal(t, "land d (sprint stream s2)", r.git(r.remote, "log", "-1", "--format=%s", "alt"))
-	assert.Equal(t, map[string]string{"a": "landed/merged", "b": "landed/merged", "c": "landed/merged", "d": "landed/merged"}, r.places("a", "b", "c", "d"))
+	assert.Equal(t, map[string]string{"a": "merging/queued", "b": "merging/queued", "c": "merging/queued", "d": "merging/queued"}, r.places("a", "b", "c", "d"))
 	r.clean()
 }
 
@@ -464,7 +473,7 @@ func TestLandReviewClonesOfTwoRepositoriesNeverShareADirectory(t *testing.T) {
 	r.ok("add --stream s1 a --brief-file " + path)
 	r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
 	before, otherBefore := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
-	code, _, errs := r.do("land")
+	code, _, errs := r.do(checkedStage("land"))
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "the card names the repository "+r.remote+" and the clone "+kept+" fetches from "+other+"; nothing was fetched or pushed")
 	assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
@@ -480,7 +489,7 @@ func TestLandReviewAWrongEpochPushesNothing(t *testing.T) {
 	r.ok("add --stream s1 --count 1")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 	before, applies := r.git(r.remote, "rev-parse", "main"), r.applies()
-	code, _, errs := r.do("land --repo-dir " + r.clone + " --base main --epoch 999")
+	code, _, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main --epoch 999"))
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "the sprint is at epoch 0, not 999 (cleared since): nothing was fetched, pushed or reported; run: nova-sprint where")
 	assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
@@ -499,7 +508,7 @@ func TestLandReviewAGitEnvironmentFailureBlamesNoCard(t *testing.T) {
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2", "main", "b.txt", "b\n")}, "s1-1", "s1-2")
 	r.a.gitEnv = append(append([]string(nil), r.env...), "GIT_AUTHOR_NAME=", "GIT_COMMITTER_NAME=")
 	before := r.git(r.remote, "rev-parse", "main")
-	code, _, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	code, _, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=2 base=main tip=- ids=s1-1..s1-2")
 	assert.Contains(t, errs, "the merge of s1-1 failed in git, not on its changes")
@@ -545,7 +554,7 @@ func TestLandRefusesAReworkedHeadAndLandsItOnTheNextRun(t *testing.T) {
 		r.ok("read --as reader-b --ok --limit 100")
 		r.ok("accept --read-ok")
 	}
-	code, _, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	code, _, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "LAND FAILED stream=s1 cards=1")
 	assert.Contains(t, errs, "s1-1 is at attempt 2 head "+replacement+" now, not attempt 1 head "+old)
@@ -556,9 +565,9 @@ func TestLandRefusesAReworkedHeadAndLandsItOnTheNextRun(t *testing.T) {
 	assert.Equal(t, "attempt 1\n", r.git(r.remote, "show", "main:a.txt")+"\n")
 	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"))
 	r.a.beforePush = nil
-	out := r.ok("land --repo-dir " + r.clone + " --base main")
+	out := r.ok(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	assert.Contains(t, out, "LAND OK stream=s1 cards=1")
-	assert.Equal(t, "landed/merged", r.places("s1-1")["s1-1"])
+	assert.Equal(t, "merging/queued", r.places("s1-1")["s1-1"])
 	assert.Equal(t, "attempt 2", r.git(r.remote, "show", "main:b.txt"), "the landed attempt is the one the base holds")
 	r.clean()
 }
@@ -571,13 +580,13 @@ func TestLandAReusedOpLandsTheNewBatchForReal(t *testing.T) {
 	r := newLandRig(t)
 	r.ok("add --stream s1 first")
 	r.queued(map[string]string{"first": r.head("first", "main", "a.txt", "a\n")}, "first")
-	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main --op repeated-land"), "LAND OK stream=s1 cards=1")
+	assert.Contains(t, r.ok(checkedStage("land --repo-dir "+r.clone+" --base main --op repeated-land")), "LAND OK stream=s1 cards=1")
 	r.ok("add --stream s1 second")
 	r.queued(map[string]string{"second": r.head("second", "main", "b.txt", "b\n")}, "second")
-	out := r.ok("land --repo-dir " + r.clone + " --base main --op repeated-land")
+	out := r.ok(checkedStage("land --repo-dir " + r.clone + " --base main --op repeated-land"))
 	assert.Contains(t, out, "LAND OK stream=s1 cards=1")
 	assert.Contains(t, out, "ids=second")
-	assert.Equal(t, map[string]string{"first": "landed/merged", "second": "landed/merged"}, r.places("first", "second"))
+	assert.Equal(t, map[string]string{"first": "merging/queued", "second": "merging/queued"}, r.places("first", "second"))
 	assert.Equal(t, []string{"land second (sprint stream s1)", "land first (sprint stream s1)", "base"}, r.mainLog())
 	r.clean()
 }
@@ -610,7 +619,7 @@ func TestLandHoldsEveryPushURLToTheRepository(t *testing.T) {
 			r.ok("add --stream s1 a --brief-file " + path)
 			r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
 			before, otherBefore := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
-			code, _, errs := r.do("land --repo-dir " + r.clone)
+			code, _, errs := r.do(checkedStage("land --repo-dir " + r.clone))
 			assert.Equal(t, 1, code)
 			assert.Contains(t, errs, tc.want)
 			assert.Contains(t, errs, "nothing was fetched or pushed")
@@ -642,10 +651,10 @@ func TestLandChecksNewFilesAgainstTheTypedHeader(t *testing.T) {
 			head := r.head("a", "main", tc.file, "added\n")
 			r.queued(map[string]string{"a": head}, "a")
 			before := r.git(r.remote, "rev-parse", "main")
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 			if tc.landed {
 				assert.Equal(t, 0, code, out+errs)
-				assert.Equal(t, map[string]string{"a": "landed/merged"}, r.places("a"))
+				assert.Equal(t, map[string]string{"a": "merging/queued"}, r.places("a"))
 				assert.Equal(t, "added", r.git(r.remote, "show", "main:"+tc.file))
 			} else {
 				assert.Equal(t, 1, code, out+errs)
@@ -690,12 +699,12 @@ func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
 			r.ok("add --stream s1" + briefs)
 			heads := map[string]string{"c1": r.head("c1", "main", "c1.txt", "one\n"), "c2": r.head("c2", "main", tc.file, tc.text), "c3": r.head("c3", "main", "c3.txt", "three\n")}
 			r.queued(heads, "c1", "c2", "c3")
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 			assert.Equal(t, 1, code, out+errs)
 			assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
 			assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=c2 fact=conflict reason=the head "+heads["c2"]+" of c2 "+tc.why)
 			assert.Equal(t, []string{"land c1 (sprint stream s1)", "the doc", "base"}, r.mainLog())
-			assert.Equal(t, map[string]string{"c1": "landed/merged", "c2": "merging/stuck", "c3": "merging/queued"}, r.places("c1", "c2", "c3"))
+			assert.Equal(t, map[string]string{"c1": "merging/queued", "c2": "merging/stuck", "c3": "merging/queued"}, r.places("c1", "c2", "c3"))
 			r.clean()
 		})
 	}

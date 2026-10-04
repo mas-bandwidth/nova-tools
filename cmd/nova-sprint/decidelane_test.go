@@ -69,12 +69,12 @@ func TestTheDecideLaneGradesRecordsAndAttachesOutcomes(t *testing.T) {
 	require.NoError(t, err)
 	var o, e bytes.Buffer
 	ta.beat()
-	code := ta.a.run(ta.withEpoch([]string{"finish", "--as", "m1", "s1-1.w1@" + gens["s1-1.w1"], "--report", "done", "--decision", string(raw)}), &o, &e)
+	code := ta.a.run(ta.withEpoch([]string{"finish", "--as", "m1", "s1-1.w1@" + gens["s1-1.w1"], "--report", "done", "--head", fixtureCommit("x"), "--decision", string(raw)}), &o, &e)
 	require.Equal(t, 0, code, e.String())
 	code, _, errs := ta.do("finish --as m1 s1-2.w1@" + gens["s1-2.w1"] + " --decision '{\"id\":\"not one\"}'")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "finish REFUSED: --decision: ", "a decision that does not fit is refused, nothing finished")
-	ta.ok("finish --as m1 s1-2.w1@" + gens["s1-2.w1"] + " s1-3.w1@" + gens["s1-3.w1"])
+	ta.pinnedFixtureFinish("finish --as m1 s1-2.w1@" + gens["s1-2.w1"] + " s1-3.w1@" + gens["s1-3.w1"])
 	assert.Contains(t, ta.ok("card s1-1"), "decided=done:0.90", "the ATTEMPT line shows the decision")
 	ta.ok("ask --limit 100")
 	ta.ok("read --as reader-a --ok --limit 100")
@@ -82,7 +82,7 @@ func TestTheDecideLaneGradesRecordsAndAttachesOutcomes(t *testing.T) {
 	ta.ok("drop s1-3 --reason 'out of scope'")
 	assert.Contains(t, round(), "DECIDE recorded=1 graded=0 written=0 attached=1", "the decision recorded; s1-3's grade labelled dropped, read unplaced")
 	ta.ok("accept --read-ok")
-	ta.ok("merge --stream s1 --batch 10")
+	ta.verifiedLanding("merge --stream s1 --batch 10")
 	assert.Contains(t, round(), "DECIDE recorded=0 graded=0 written=0 attached=3")
 	assert.Empty(t, round(), "every outcome attached once")
 

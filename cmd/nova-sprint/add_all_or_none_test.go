@@ -138,12 +138,12 @@ func TestAVerbWhoseDisplaySyncFailsAfterItsWriteReportsOK(t *testing.T) {
 			ta.ok("add --stream s1 --sentinel stop")
 			ta.deal(1)
 			ta.ok("take --as m1 s1-1.w1@1")
-			ta.ok("finish --as m1 s1-1.w1@1")
+			ta.pinnedFixtureFinish("finish --as m1 s1-1.w1@1")
 			ta.ok("ask")
 			ta.ok("read --as reader-a --ok s1-1.r1.reader-a")
 			ta.ok("read --as reader-b --ok s1-1.r1.reader-b")
 			ta.ok("accept s1-1")
-			ta.ok("merge --stream s1")
+			ta.verifiedLanding("merge --stream s1")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -165,6 +165,9 @@ func TestAVerbWhoseDisplaySyncFailsAfterItsWriteReportsOK(t *testing.T) {
 					}
 				}
 				code, out, errs := ta.do(tc.line)
+				if tc.name == "merge" {
+					code, out, errs = ta.verifiedLandingResult(tc.line)
+				}
 				ta.m.Fail = nil
 				line := resultLine(out, errs, tc.token)
 				require.Equal(t, 0, code, "armed=%v: %s%s", armed, out, errs)
@@ -191,7 +194,7 @@ func (ta *testApp) toMergingAdded(stream string) {
 	for _, c := range q.Cards {
 		words = append(words, c.ID+"@"+strconv.Itoa(c.Gen))
 	}
-	ta.ok("finish --as m1 " + strings.Join(words, " "))
+	ta.pinnedFixtureFinish("finish --as m1 " + strings.Join(words, " "))
 	ta.ok("ask --limit 100")
 	ta.ok("read --as reader-a --ok --limit 100")
 	ta.ok("read --as reader-b --ok --limit 100")

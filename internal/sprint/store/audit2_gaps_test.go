@@ -600,7 +600,7 @@ func TestNoStoredIDReachesTheCoordinator(t *testing.T) {
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-3"}}}))
 	h.nReadAll("s1-3", "ok") // ready to accept
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-3"}}}))
-	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "s1-3"})) // a stopped stream
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "s1-3"})) // a stopped stream
 	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-4"}}, Red: true, Run: "r1"}))
 	v := h.a2Inbox()
 	types := map[string]bool{}

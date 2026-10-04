@@ -22,7 +22,7 @@ func TestLandRereadRefusesAnotherOriginPushURLBeforeChangingEitherRepository(t *
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 	want, otherWant := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
 
-	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	assert.NotEqual(t, 0, code, out+errs)
 	assert.Equal(t, want, r.git(r.remote, "rev-parse", "main"), "the card repository must not change")
 	assert.Equal(t, otherWant, r.git(other, "rev-parse", "main"), "the configured push destination must not change")

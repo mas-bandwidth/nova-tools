@@ -22,7 +22,7 @@ import (
 func (h *harness) landThrough(stream string, ids ...string) {
 	h.t.Helper()
 	h.through(ids...)
-	h.must(MergeStep(sprint.MergeReq{Stream: stream, Batch: len(ids)}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: stream, Batch: len(ids)}))
 }
 
 // machineRecord is the machine's state record.

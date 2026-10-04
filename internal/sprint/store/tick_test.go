@@ -80,7 +80,7 @@ func (h *harness) landAll(stream string) {
 	h.t.Helper()
 	h.run(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{Stream: stream}}))
 	if len(h.snap().Merge.Cell(stream, sprint.Queued)) > 0 { // a merge step wants something queued
-		h.must(MergeStep(sprint.MergeReq{Stream: stream, Batch: 100}))
+		h.must(devFixtureMergeStep(sprint.MergeReq{Stream: stream, Batch: 100}))
 	}
 }
 

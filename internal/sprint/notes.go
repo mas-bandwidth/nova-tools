@@ -37,6 +37,7 @@ func SplitOpen(all []Open) (judgments, acked []Open) {
 const (
 	NStartedMerging = "stream started merging"
 	NBatchLanded    = "batch landed"
+	NBatchStaged    = "batch staged"
 	NStreamLanded   = "stream landed"
 	NWorkOK         = "work came back ok"
 	NMemberUp       = "fleet member up"

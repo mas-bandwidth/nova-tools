@@ -46,7 +46,7 @@ func TestTriggerLandingResolvesWaiters(t *testing.T) {
 	h.setup(1)
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"s2-1"}, Needs: []string{"s1-1"}}))
 	h.through("s1-1")
-	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))
 	h.readInbox()
 	require.Equal(t, sprint.Landed, h.state("s1-1"), "s1-1 %s, s2-1 %s", h.state("s1-1"), h.state("s2-1"))
 	require.Equal(t, sprint.Ready, h.state("s2-1"), "s1-1 %s, s2-1 %s", h.state("s1-1"), h.state("s2-1"))

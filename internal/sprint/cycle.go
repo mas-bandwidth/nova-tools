@@ -78,7 +78,7 @@ func (g *needGraph) line(stream string) *gateLine {
 	if l := g.lines[stream]; l != nil {
 		return l
 	}
-	cards := append([]*Card(nil), g.s.Work.openLine(stream)...)
+	cards := append([]*Card(nil), g.s.Work.openLine(stream, g.s)...)
 	cards = append(cards, g.addsOf[stream]...)
 	SortCards(cards)
 	l := &gateLine{ids: make([]string, len(cards)), at: make(map[string]int, len(cards)), prev: make([]int, len(cards))}

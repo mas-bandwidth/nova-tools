@@ -145,7 +145,7 @@ func TestLandResolvesAConflictOnlyInGeneratedLedgers(t *testing.T) {
 			heads := map[string]string{"s1-1": r.card("s1-1", tc.first), "s1-2": r.card("s1-2", tc.second)}
 			r.queued(heads, "s1-1", "s1-2")
 			before := r.git(r.remote, "rev-parse", "main")
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 			if tc.runs > 0 {
 				runs, err := os.ReadFile(count)
 				require.NoError(t, err)
@@ -156,7 +156,7 @@ func TestLandResolvesAConflictOnlyInGeneratedLedgers(t *testing.T) {
 				assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=s1-2 fact=conflict reason=the head "+heads["s1-2"]+" of s1-2 does not merge")
 				assert.Contains(t, errs, tc.why)
 				assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "the debt", "base"}, r.mainLog())
-				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
+				assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
 				assert.Empty(t, r.git(r.clone, "status", "--porcelain", "--untracked-files=all"), "the refused merge is aborted and what the update wrote is gone")
 				r.clean()
 				return
@@ -169,9 +169,10 @@ func TestLandResolvesAConflictOnlyInGeneratedLedgers(t *testing.T) {
 			assert.Equal(t, "one", r.git(r.remote, "show", "main:notes.tsv"))
 			body := r.git(r.remote, "log", "-1", "--format=%b", "main")
 			assert.Contains(t, body, "The generated ledgers "+fakeLedger+" conflicted. The tip's side was taken and TestFakeLedger regenerated them at the merged tree (NOVA_CI_UPDATE=1).")
-			assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
+			assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/queued"}, r.places("s1-1", "s1-2"))
 			story := r.ok("card s1-2")
-			assert.Contains(t, story, "merged into s1 and landed by coordinator in a batch of 2 (with s1-1), ci green; the generated ledgers "+fakeLedger+" conflicted and were regenerated at the merge by TestFakeLedger (NOVA_CI_UPDATE=1)")
+			assert.NotContains(t, story, "and landed", "ledger regeneration stages the exact checked tree without claiming development landing")
+			assert.Equal(t, r.git(r.remote, "rev-parse", "main"), r.primary("s1-2").F("staged_tip"))
 			assert.NotContains(t, r.ok("card s1-1"), "regenerated", "a card that merged plainly says nothing more")
 			r.clean()
 		})
@@ -217,12 +218,12 @@ func TestLandRefusesAResolutionThroughASymlink(t *testing.T) {
 				require.NoError(t, os.MkdirAll(filepath.Join(r.clone, filepath.Dir(linked)), 0o755))
 				require.NoError(t, os.Symlink(outside, filepath.Join(r.clone, linked)))
 			}
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 			assert.Equal(t, 1, code, out+errs)
 			assert.Contains(t, errs, "ids=s1-2 fact=conflict reason=the head "+heads["s1-2"]+" of s1-2 does not merge")
 			assert.Contains(t, errs, "its generated ledgers conflict and "+linked+" is a symlink, which an update would write through")
 			assert.NoFileExists(t, filepath.Join(outside, "leak.txt"), "no update ran through the link")
-			assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
+			assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
 			r.clean()
 		})
 	}

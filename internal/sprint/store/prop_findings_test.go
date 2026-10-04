@@ -38,7 +38,7 @@ func TestACrossStopsCommandsNameTheStuckCardAndTheCardItNeeds(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"p8"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"p10"}, Needs: []string{"p8"}}))
 	h.through("p8")
-	h.must(MergeStep(sprint.MergeReq{Stream: "s2", Cross: "p8=p10"}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s2", Cross: "p8=p10"}))
 	got := map[string]string{}
 	for _, c := range h.commandsOf(sprint.NCross) {
 		got[c.Decision] = strings.Join(c.Lines, " && ")

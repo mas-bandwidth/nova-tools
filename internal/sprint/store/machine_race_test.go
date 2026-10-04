@@ -65,7 +65,7 @@ func raceScene(t *testing.T) *harness {
 	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s3", IDs: []string{"a"}}))
 	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s2", IDs: []string{"acc", "rv"}}))
 	h.through("a", "b", "acc")
-	h.must(MergeStep(sprint.MergeReq{Stream: "s3", Cross: "a=b"}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s3", Cross: "a=b"}))
 	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s3", IDs: []string{"w"}, Needs: []string{"b"}}))
 	// acc back to review with two oks (return), rv to review unasked
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"acc"}}, Reason: "hold"}))
@@ -74,7 +74,7 @@ func raceScene(t *testing.T) *harness {
 	c := s.Fleet.Card(s.Work.Card("rv").F("work"))
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
-	h.must(MergeStep(sprint.MergeReq{Stream: "s2", Batch: 1}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s2", Batch: 1}))
 	require.Equal(t, sprint.Landed, h.state("b"), "b %s", h.state("b"))
 	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 4}))
 	h.clean("scene")

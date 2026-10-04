@@ -12,7 +12,7 @@ func land(w *world, ids ...string) {
 	w.t.Helper()
 	for _, id := range ids {
 		accepted(w, id)
-		w.must(MergeStep(w.s, MergeReq{Stream: w.s.Work.Card(id).Row, Batch: 1}))
+		w.must(devMergeFixture(w.s, MergeReq{Stream: w.s.Work.Card(id).Row, Batch: 1}))
 		require.Equal(w.t, Landed, w.state(id), "%s is %s", id, w.state(id))
 		w.clean("landed " + id)
 	}

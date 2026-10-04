@@ -19,9 +19,9 @@ func TestLandReviewAnArrivalAheadCannotReplaceThePushedBatch(t *testing.T) {
 		newHead := r.head("newcomer", "main", "newcomer.txt", "newcomer\n")
 		r.queued(map[string]string{"newcomer": newHead}, "newcomer")
 	}
-	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	assert.Equal(t, 0, code, "a completed unchanged batch is reportable despite the arrival: %s%s", out, errs)
-	assert.Equal(t, map[string]string{"original": "landed/merged", "newcomer": "merging/queued"}, r.places("original", "newcomer"), "%s%s", out, errs)
+	assert.Equal(t, map[string]string{"original": "merging/queued", "newcomer": "merging/queued"}, r.places("original", "newcomer"), "%s%s", out, errs)
 	assert.Equal(t, []string{"land original (sprint stream s1)", "base"}, r.mainLog(), "only the selected batch reached the base")
 	r.clean()
 }

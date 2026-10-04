@@ -188,7 +188,7 @@ func TestACutAfterEachWriteIsFinishedByRepair(t *testing.T) {
 			p.toReview("h1", "s1-1")
 			p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
 		}, func(p *probe) Step { return ReworkStep(sprint.ReworkReq{Sel: ids("s1-1"), Fix: "f"}) }, []string{"t-fleet", "t-readers", "t-work"}},
-		{"merge", func(p *probe) { p.through("s1-1") }, func(p *probe) Step { return MergeStep(sprint.MergeReq{Stream: "s1"}) }, []string{"t-merge", "t-work"}},
+		{"merge", func(p *probe) { p.through("s1-1"); p.harness.must(fixtureAcceptedHeadsStep("s1")) }, func(p *probe) Step { return devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}) }, []string{"t-merge", "t-work"}},
 		{"drop", func(p *probe) { p.through("s1-1") }, func(p *probe) Step { return DropStep(sprint.DropReq{Sel: ids("s1-1"), Reason: "x"}) }, []string{"t-merge", "t-work"}},
 		{"withdraw", func(p *probe) {
 			p.do("deal", DealStep(sprint.DealReq{Sel: ids("s1-1")}))
@@ -274,7 +274,7 @@ func everyVerb() map[string]Step {
 		"return":   ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{Stream: "s1"}}),
 		"drop":     DropStep(sprint.DropReq{Sel: ids("s1-2"), Reason: "x"}),
 		"rank":     RankStep(sprint.RankReq{IDs: []string{"s1-2"}, First: true}),
-		"merge":    MergeStep(sprint.MergeReq{Stream: "s1"}),
+		"merge":    devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}),
 		"resume":   ResumeStep(sprint.ResumeReq{Stream: "s1"}),
 		"fleet up": FleetStep(sprint.FleetReq{Op: "up", Member: "m9"}),
 		"level":    FleetStep(sprint.FleetReq{Op: "level"}),
@@ -338,7 +338,7 @@ func TestAcceptRetiresAReadOutstanding(t *testing.T) {
 	p.read(rs[1].F("reader"), rs[1].ID, "ok")
 	p.do("accept", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}))
 	assert.Empty(t, p.inv("accepted with a third read outstanding"), "a legal sequence breaks rule 3")
-	p.do("merge", MergeStep(sprint.MergeReq{Stream: "s1"}))
+	p.do("merge", devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}))
 	p.read(rs[2].F("reader"), rs[2].ID, "broken")
 }
 
@@ -442,14 +442,14 @@ func TestMergeOrderConflictAndCrossNeed(t *testing.T) {
 	p := newProbe(t)
 	p.setup(5)
 	p.through("s1-1", "s1-2", "s1-3", "s1-4", "s1-5")
-	p.do("merge batch 2", MergeStep(sprint.MergeReq{Stream: "s1", Batch: 2}))
+	p.do("merge batch 2", devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 2}))
 	if p.state("s1-1") != sprint.Landed || p.state("s1-2") != sprint.Landed || p.state("s1-3") != sprint.Merging {
 		assert.Fail(t, "batch not in score order")
 	}
 	// conflict on the second card of the next batch (s1-4 of s1-3,s1-4)
-	p.do("merge conflict s1-4", MergeStep(sprint.MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-4"}))
+	p.do("merge conflict s1-4", devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-4"}))
 	t.Logf("open on stream: %d", len(p.openOn("stream:s1")))
-	p.do("merge while stopped", MergeStep(sprint.MergeReq{Stream: "s1"}))
+	p.do("merge while stopped", devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}))
 	// return s1-3 (it re-enters later) while stopped
 	p.do("return s1-3", ReturnStep(sprint.ReturnReq{Sel: ids("s1-3")}))
 	p.do("rework s1-3", ReworkStep(sprint.ReworkReq{Sel: ids("s1-3"), Fix: "f"}))
@@ -478,15 +478,15 @@ func TestMergeOrderConflictAndCrossNeed(t *testing.T) {
 	// cross-stream: s2's b1 stuck on conflict (stopped); s1-4 needs b1
 	p.do("add s2", AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1", "b2"}}))
 	p.through("b1", "b2")
-	p.do("s2 conflict b1", MergeStep(sprint.MergeReq{Stream: "s2", Conflict: "b1"}))
-	p.do("s1 cross s1-3=b1", MergeStep(sprint.MergeReq{Stream: "s1", Cross: "s1-3=b1"}))
+	p.do("s2 conflict b1", devFixtureMergeStep(sprint.MergeReq{Stream: "s2", Conflict: "b1"}))
+	p.do("s1 cross s1-3=b1", devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Cross: "s1-3=b1"}))
 	p.do("resume s1 (b1 unlanded)", ResumeStep(sprint.ResumeReq{Stream: "s1"}))
 	p.do("resume s2", ResumeStep(sprint.ResumeReq{Stream: "s2", Did: "fixed"}))
-	p.do("merge s2", MergeStep(sprint.MergeReq{Stream: "s2", Batch: 1}))
+	p.do("merge s2", devFixtureMergeStep(sprint.MergeReq{Stream: "s2", Batch: 1}))
 	p.do("resume s1 (b1 landed)", ResumeStep(sprint.ResumeReq{Stream: "s1"}))
-	p.do("merge s1", MergeStep(sprint.MergeReq{Stream: "s1"}))
-	p.do("merge s1 again", MergeStep(sprint.MergeReq{Stream: "s1"}))
-	p.do("merge s2 again", MergeStep(sprint.MergeReq{Stream: "s2"}))
+	p.do("merge s1", devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}))
+	p.do("merge s1 again", devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}))
+	p.do("merge s2 again", devFixtureMergeStep(sprint.MergeReq{Stream: "s2"}))
 	for _, id := range []string{"s1-3", "s1-4", "s1-5", "b1", "b2"} {
 		t.Logf("%s: %s", id, p.state(id))
 	}
@@ -502,7 +502,7 @@ func TestACrossFactIsChecked(t *testing.T) {
 			p := newProbe(t)
 			p.setup(2)
 			p.through("s1-1", "s1-2")
-			res := p.do("cross s1-1="+other, MergeStep(sprint.MergeReq{Stream: "s1", Cross: "s1-1=" + other}))
+			res := p.do("cross s1-1="+other, devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Cross: "s1-1=" + other}))
 			assert.NotEmpty(t, res.Refused, "NOTE: the cross fact s1-1=%s was accepted: %v", other, res.Moved)
 			res = p.do("resume", ResumeStep(sprint.ResumeReq{Stream: "s1"}))
 			t.Logf("resume: %+v", res.Refused)
@@ -516,7 +516,7 @@ func TestResumeAtOnceAfterRedIsRefused(t *testing.T) {
 	p := newProbe(t)
 	p.setup(2)
 	p.through("s1-1", "s1-2")
-	p.do("merge red", MergeStep(sprint.MergeReq{Stream: "s1", Red: true}))
+	p.do("merge red", devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Red: true}))
 	res := p.do("resume at once", ResumeStep(sprint.ResumeReq{Stream: "s1"}))
 	assert.Empty(t, res.Moved, "resume after red without --did moved: %v", res.Moved)
 }

@@ -73,7 +73,7 @@ func TestLateWritersOfEveryKind(t *testing.T) {
 		"finish": FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-5.w1"}}, Gens: map[string]int{"s1-5.w1": 1}}),
 		"begin":  ReadStep(sprint.ReadReq{As: rc[1].F("reader"), Begin: true, Sel: sprint.Sel{IDs: []string{rc[1].ID}}}),
 		"report": ReadStep(sprint.ReadReq{As: rc[0].F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}),
-		"merge":  MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}),
+		"merge":  devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}),
 		"accept": AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-4"}}}),
 		"rework": ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-4"}}, Fix: "x"}),
 		"drop":   DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-7"}}, Reason: "x"}),
@@ -235,7 +235,7 @@ func TestOldEpochUnchangedByReuse(t *testing.T) {
 	was := dump()
 	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 4}))
 	h.through("s1-1", "s1-2", "s1-3", "s1-4")
-	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}))
 	s := h.snap()
 	require.Equal(t, sprint.Landed, s.StateOf("s1-4"), "s1-4 %s", s.StateOf("s1-4"))
 	now := dump()

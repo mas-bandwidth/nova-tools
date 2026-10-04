@@ -32,7 +32,7 @@ type landResult struct {
 // landJSON runs a land line with --json and returns its exit and its result.
 func (r *landRig) landJSON(line string) (int, landResult) {
 	r.t.Helper()
-	code, out, errs := r.do(line + " --json")
+	code, out, errs := r.do(checkedStage(line + " --json"))
 	var v landResult
 	require.NoError(r.t, json.Unmarshal([]byte(out), &v), "%s: %s%s", line, out, errs)
 	return code, v
@@ -92,7 +92,7 @@ func TestLandDryRunRefusesAHeadThatIsNotACommitAsLandDoes(t *testing.T) {
 	assert.Equal(t, "ok", real.Items[0].Status)
 	assert.Equal(t, "conflict", real.Items[1].Fact)
 	assert.Equal(t, dry.Items[1].Reason, real.Items[1].Reason, "the dry run's words are land's")
-	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
 }
 
 // A batch land cannot place is refused naming every problem at once, the dry
@@ -104,7 +104,7 @@ func TestLandNamesEveryProblemOfABatchAtOnce(t *testing.T) {
 	r.queuedOneWithoutHead()
 	applies := r.applies()
 	for _, line := range []string{"land --dry-run", "land"} {
-		code, _, errs := r.do(line)
+		code, _, errs := r.do(checkedStage(line))
 		assert.Equal(t, 1, code, line)
 		require.Contains(t, errs, "reason=", line)
 		reason := errs[strings.Index(errs, "reason="):]

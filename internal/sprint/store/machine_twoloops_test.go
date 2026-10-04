@@ -66,7 +66,7 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 			}
 			w.coordinate(r)
 			for _, st := range []string{"s1", "s2", "s3"} {
-				run(MergeStep(sprint.MergeReq{Stream: st, Batch: 3}))
+				run(devFixtureMergeStep(sprint.MergeReq{Stream: st, Batch: 3}))
 			}
 			h.tick(time.Second)
 		}

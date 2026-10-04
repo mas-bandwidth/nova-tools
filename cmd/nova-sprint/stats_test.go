@@ -29,7 +29,7 @@ func statsSprint(t *testing.T) *testApp {
 	step(2)
 	ta.ok("take --as m1 s1-1.w1@1")
 	step(10)
-	ta.ok("finish --as m1 s1-1.w1@1" + usage("8.00s", "deepseek-v4-flash"))
+	ta.pinnedFixtureFinish("finish --as m1 s1-1.w1@1" + usage("8.00s", "deepseek-v4-flash"))
 	step(2)
 	ta.ok("take --as m1 s1-2.w1@1")
 	step(2)
@@ -39,7 +39,7 @@ func statsSprint(t *testing.T) *testApp {
 	step(4)
 	ta.ok("take --as m1 s1-2.w1@" + gen)
 	step(10)
-	ta.ok("finish --as m1 s1-2.w1@" + gen + usage("6.00s", "deepseek-v4-flash"))
+	ta.pinnedFixtureFinish("finish --as m1 s1-2.w1@" + gen + usage("6.00s", "deepseek-v4-flash"))
 	ta.ok("ask")
 	ta.ok("ask s1-1 s1-2 --another") // a flash card is read once: each one more reader, both read by both
 	step(3)
@@ -51,7 +51,7 @@ func statsSprint(t *testing.T) *testApp {
 	step(10)
 	ta.ok("accept --stream s1")
 	step(5)
-	ta.ok("merge --stream s1")
+	ta.verifiedLanding("merge --stream s1")
 	ta.ok("tick")
 	return ta
 }

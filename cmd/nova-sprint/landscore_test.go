@@ -57,7 +57,7 @@ func TestLandScoresEveryLandedHeadAndJudgesTheBatchOnce(t *testing.T) {
 		heads[id] = r.head(id, "main", id+".txt", id+"\n")
 	}
 	r.queued(heads, "s1-1", "s1-2", "s1-3")
-	out := r.ok("land --repo-dir " + r.clone + " --base main")
+	out := r.devOK("land --repo-dir " + r.clone + " --base main")
 	assert.Contains(t, out, "LAND OK stream=s1 cards=3")
 	assert.Contains(t, out, " scored=3 judged=yes")
 	assert.Equal(t, int32(3), scorer.asks.Load(), "one score a landed head")
@@ -111,7 +111,7 @@ func TestLandWithoutAKeyOrABarLandsAndJudgesNothing(t *testing.T) {
 			r.ok("add --stream s1 --count 2")
 			heads := map[string]string{"s1-1": r.head("s1-1", "main", "s1-1.txt", "one\n"), "s1-2": r.head("s1-2", "main", "s1-2.txt", "two\n")}
 			r.queued(heads, "s1-1", "s1-2")
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			code, out, errs := r.devDo("land --repo-dir " + r.clone + " --base main")
 			assert.Equal(t, 0, code, errs)
 			assert.Contains(t, out, "LAND OK stream=s1 cards=2")
 			assert.Contains(t, out+errs, tc.says)
@@ -185,7 +185,7 @@ func TestLandScoresAfterThePassAndStopsAtTheFirstFailure(t *testing.T) {
 				return r.places("s2-1")["s2-1"] == "landed/merged" && r.places("s1-2")["s1-2"] == "landed/merged"
 			}
 			r.a.scoreBackend, r.a.landCtx = f, ctx
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			code, out, errs := r.devDo("land --repo-dir " + r.clone + " --base main")
 			assert.Equal(t, 0, code, errs)
 			assert.Contains(t, out, "LAND OK stream=s1 cards=2")
 			assert.Contains(t, out, "LAND OK stream=s2 cards=1")

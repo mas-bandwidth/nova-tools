@@ -21,7 +21,7 @@ func TestTheServerLandsWhatIsQueued(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	r.ok("add --stream s1 --count 2")
-	more := []string{"--repo-dir", r.clone, "--base", "main"}
+	more := []string{"--repo-dir", r.clone, "--base", "main", "--check", "test -f README && git diff --check"}
 	var out bytes.Buffer
 	assert.Equal(t, 0, r.a.landRound(context.Background(), "mem:0", more, &out))
 	assert.Empty(t, out.String(), "nothing is queued: nothing is said")
@@ -39,7 +39,7 @@ func TestTheServerLandsWhatIsQueued(t *testing.T) {
 	assert.Equal(t, 1, pushes)
 	assert.Contains(t, out.String(), "LAND OK stream=s1 cards=2")
 	assert.NotContains(t, out.String(), "LAND DONE")
-	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/queued"}, r.places("s1-1", "s1-2"))
 	assert.Contains(t, r.ok("log"), "by coordinator", "the landing is the coordinator's")
 
 	out.Reset()

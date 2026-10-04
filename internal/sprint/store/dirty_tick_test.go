@@ -65,7 +65,7 @@ func TestOnlyThePumpWritesTheWorkTable(t *testing.T) {
 	h.machine() // the pump accepts both (two ok reads): merging
 	st = h.table().StateOf("s1-1")
 	require.Equal(t, sprint.Merging, st, "s1-1 is %s after the pump, want merging", st)
-	merge := MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1})
+	merge := devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 1})
 	still("the merge", func() { h.must(merge) })
 	st = h.table().StateOf("s1-1")
 	require.Equal(t, sprint.Merging, st, "the stored s1-1 is %s before the tick, want merging: the merge landed it itself", st)
@@ -465,7 +465,7 @@ func TestAMergeBeforeThePumpSeesTheQueuedAccept(t *testing.T) {
 	st := h.table().StateOf("s1-1")
 	require.Equal(t, sprint.Review, st, "the accept's work change is not queued: s1-1 is %s on the table", st)
 	h.clean("accepted, before the pump")
-	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))
 	h.clean("merged, before the pump")
 	h.machine()
 	for _, id := range []string{"s1-1", "s1-2"} {

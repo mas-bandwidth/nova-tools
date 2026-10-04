@@ -62,58 +62,38 @@ const landCheckBudget = 30 * time.Minute
 // `nova-sprint land -h` quotes.
 func landWords() string {
 	return strings.TrimSpace(`
-Landing, the coordinator's: an external delivery (git pushes the base) and a store write (the merge step):
+Work-branch staging, the coordinator's: git delivery and a store receipt, never final landing:
   nova-sprint land --stream s1 --check 'make test'
-    merges each queued card's head (--no-ff) in queue order onto a branch cut
-    from origin's base, one batch per run of cards naming one REPO: and BASE:
-    (--base for a card naming none); runs --check once per batch; pushes, never
-    forced, rebuilding once on a moved base; then reports the batch as merge
-    --stream s1 --batch <n> does. A head missing or in conflict ends the batch
-    before it and is reported as merge --conflict, a red check as --red, a
-    second rejected push as --rejected. Each head merged is checked first, by
-    script and no model: a head whose diff changes a file outside its brief's
-    PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
-    prose, ends the batch as a head in conflict does. A conflict only in the
-    generated ledgers lands: the tip's side, then their tests' update run
-    (NOVA_CI_UPDATE=1) to a fixed point, one commit; any other conflict stops
-    the stream, and after resume land merges the head again. The clone is --repo-dir,
-    else the dir= each line names; git uses the caller's environment. After
-    the whole pass each landed merge diff is scored (nova-decide's score
-    decision, with the key JEV_API_KEY holds, a minute for the pass; recorded in
-    decide/score.jsonl under the land root): a batch whose cards' top class meets
-    the sprint row's decide_score_bar (empty: none) raises one judgment, landed
-    work scored low, listing them (scored=, judged=).
+    merges the accepted compatible prefix onto its brief BASE, runs the exact-tip check,
+    and pushes without force. The staged receipt retains merging/queued ownership;
+    dependencies, sentinels and final completion stay held. No branch cleanup runs.
+    A missing head, conflict, red check or rejected push stops the prefix and records
+    its existing coordinator escalation. A staged identical head/attempt is skipped.
   nova-sprint land --stream s1 --dry-run
-    reads the store only: no git, no push, no report. The window: land pins
-    each card's head and attempt as it reads them; a caller's --epoch is held
-    before any git, the queue, the heads and the epoch again just before the
-    push, and the report lands the batch, its cards by name, only while the queue
-    holds each of them at that head at that epoch (one store step); a card
-    accepted or ranked ahead since changes nothing. A clear, a return, a
-    rework or a crash after the check leaves the push unreported (LAND
-    FAILED, exit 2; run land again, never a bare merge, and its own checks
-    decide: an unchanged card is recorded with no new push, a reworked one
-    merged at its new head or met in conflict); a clear there pushes for an epoch
-    just left: nothing is recorded for it, and the push is not undone.
-  nova-sprint land --stream s1
-    run again, it recovers once the outside is quiet (tla/Land.tla, Recovers),
-    not otherwise: a run cut short between the push and the report on every
-    try never reports; and a base that moves twice between the read and the
-    push gives up (one rebuild, then the rejected fact, the stream stopped):
-    nothing is pushed or lost and the cards stay queued; resume the stream
-    (nova-sprint resume --stream s1 --did 'the base moved') and run land again.`) + "\n"
+    inspects the store only; no git, push or receipt. A work BASE is mandatory;
+    dev delivery uses promote and the reviewed ordinary GitHub queue.
+  nova-sprint promote --stream s1 --dry-run
+    prints the staged compatible prefix and holistic cross-stream inventory hash.
+    Supply a built exact candidate, its dev PR, coordinator review record and check
+    to promote. Queueing remains pending; only fresh dev ancestry plus exact CI,
+    review and epoch/head/attempt proof permits the final landed transition.
+  nova-sprint land --stream s1 --check 'make test'
+    run again after a staging push/report crash; immutable tip/head verification and
+    epoch/attempt guards recover the receipt without redealing or discarding work.
+    A conflict outside generated ledgers requires coordinator review, not blind merge.`) + "\n"
 }
 
 // landBatch is one batch's outcome, a line of output and an item of --json.
 type landBatch struct {
-	Stream string   `json:"stream"`
-	Status string   `json:"status"` // ok, refused, failed
-	Cards  int      `json:"cards"`
-	IDs    []string `json:"ids"`
-	Repo   string   `json:"repo,omitempty"`
-	Base   string   `json:"base,omitempty"`
-	Dir    string   `json:"dir,omitempty"`
-	Tip    string   `json:"tip,omitempty"`
+	Stream   string   `json:"stream"`
+	Status   string   `json:"status"`             // ok, refused, failed
+	Delivery string   `json:"delivery,omitempty"` // staged or dev-landed
+	Cards    int      `json:"cards"`
+	IDs      []string `json:"ids"`
+	Repo     string   `json:"repo,omitempty"`
+	Base     string   `json:"base,omitempty"`
+	Dir      string   `json:"dir,omitempty"`
+	Tip      string   `json:"tip,omitempty"`
 	// Fact is the merge fact reported for a refusal (conflict, red,
 	// rejected); empty when nothing was reported and the store is unchanged,
 	// and always empty in a dry run, which reports nothing.
@@ -162,6 +142,9 @@ func (b landBatch) line() string {
 	}
 	l := fmt.Sprintf("LAND %s stream=%s cards=%d base=%s tip=%s ids=%s", strings.ToUpper(b.Status), oneline.Field(b.Stream), b.Cards,
 		oneline.Field(dashed(b.Base)), tip, oneline.Field(idSpan(b.IDs)))
+	if b.Delivery != "" {
+		l += " delivery=" + b.Delivery
+	}
 	if b.Repo != "" {
 		l += " repo=" + oneline.Field(b.Repo)
 	}
@@ -473,6 +456,9 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 				lc.base = cb.Ref
 			}
 		}
+		if lc.primary != nil && lc.primary.F("staged_head_pin") == lc.head && lc.primary.F("staged_attempt") == lc.attempt && lc.primary.F("staged_returns") == lc.primary.F("returns") && lc.primary.F("staged_base") == lc.base && lc.primary.F("staged_tip") != "" {
+			continue
+		}
 		cards = append(cards, lc)
 	}
 	for len(cards) > 0 {
@@ -499,6 +485,14 @@ var shaRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 // goes on to its next batch), ok is false when a push landed and its report
 // did not.
 func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (landed, ok bool) {
+	if cards[0].base == "dev" {
+		l.out = append(l.out, landBatch{Stream: stream, Status: "refused", Reason: "dev delivery uses the reviewed GitHub queue; run: nova-sprint promote --dry-run"})
+		return false, true
+	}
+	if l.check == "" && !l.dry {
+		l.out = append(l.out, landBatch{Stream: stream, Status: "refused", Reason: "work-branch staging requires an exact-tip check; run: nova-sprint land --check <command>"})
+		return false, true
+	}
 	ids := make([]string, len(cards))
 	for i, c := range cards {
 		ids[i] = c.id
@@ -562,7 +556,7 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		since(&b.Times.Push, start)
 		if err == nil {
 			b.Tip = tip
-			if !l.landed(b, stream, cards[:len(merged)]) {
+			if !l.staged(ctx, b, stream, cards[:len(merged)]) {
 				return false, false
 			}
 			if failed.id != "" {
@@ -706,14 +700,14 @@ func againRemedy(stream string) string {
 
 // landed reports a pushed batch through the merge step; false (and the line
 // FAILED, with land again as the remedy) when the store did not take it.
-func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
+func (l *lander) landed(b landBatch, stream string, pins []landCard, receipt *sprint.DevReceipt) bool {
 	ids := make([]string, len(pins))
 	for i, c := range pins {
 		ids[i] = c.id
 	}
 	b.Cards, b.IDs = len(ids), ids
 	start := time.Now()
-	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
+	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Dev: receipt, Who: l.c.actor}, pins)
 	if b.Times != nil {
 		since(&b.Times.Report, start)
 	}
@@ -723,7 +717,15 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		l.out = append(l.out, b)
 		return false
 	}
-	b.Status = "ok"
+	l.finalizeDelivery(b, stream, pins)
+	return true
+}
+
+// finalizeDelivery retries the existing post-delivery effects independently of
+// the store transition. Their existing idempotent identities survive a crash
+// after the verified receipt was committed.
+func (l *lander) finalizeDelivery(b landBatch, stream string, pins []landCard) {
+	b.Status, b.Delivery = "ok", "dev-landed"
 	// pushed AND reported: only now are its cards' branches tagged for the cleanup (a
 	// batch pushed and not reported keeps them: land is run again and may need the heads)
 	l.tag(context.Background(), &b, pins)
@@ -736,7 +738,6 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	l.out = append(l.out, b)
 	// its diffs are scored after the whole pass (landscore.go): a score never holds a landing
 	l.toScore = append(l.toScore, scoreJob{at: len(l.out) - 1, stream: stream, pins: pins})
-	return true
 }
 
 // movedExactly says the step's moved lines are the landings of ids, each once and no
@@ -861,7 +862,7 @@ func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 			return fmt.Sprintf("the merge queue of %s no longer holds %s (landed, stuck or returned since it was read); run land again", stream, c.id)
 		}
 		pr := s.Work.Placed(c.id)
-		if pr == nil || pr.F("head") != c.head || pr.F("attempt") != c.attempt {
+		if pr == nil || pr.F("head") != c.head || pr.F("attempt") != c.attempt || c.primary != nil && pr.F("returns") != c.primary.F("returns") {
 			return fmt.Sprintf("%s is at attempt %s head %s now, not attempt %s head %s as it was read and built (reworked since); run land again", c.id, dashed(pr.F("attempt")), dashed(pr.F("head")), dashed(c.attempt), dashed(c.head))
 		}
 	}

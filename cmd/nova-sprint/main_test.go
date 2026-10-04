@@ -196,7 +196,7 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 		for _, c := range q.Cards {
 			words = append(words, c.ID+"@1")
 		}
-		ta.ok("finish --as " + m + " " + strings.Join(words, " "))
+		ta.pinnedFixtureFinish("finish --as " + m + " " + strings.Join(words, " "))
 	}
 	ta.ok("ask")
 	for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
@@ -205,7 +205,7 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 	ta.clean()
 	out = ta.ok("accept --read-ok")
 	require.Contains(t, out, "ACCEPT OK moved=4", "accept")
-	ta.ok("merge --stream s1 --batch 10")
+	ta.verifiedLanding("merge --stream s1 --batch 10")
 	// the landings are queued for the next tick's pump, which drains them, and
 	// the tick's done part stops the machine of a sprint that is done
 	ta.ok("tick")
@@ -238,7 +238,7 @@ func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
 	ta.ok("take --as m1 --limit 3")
 	ta.ok("tick") // the third is dealt when the member's ready queue has room
 	ta.ok("take --as m1 --limit 3")
-	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
+	ta.pinnedFixtureFinish("finish --as m1 s1-1.w1@1 s1-2.w1@1")
 	code, _, errs := ta.do("finish --as m1 s1-3.w1@1 --failed --report 'tests red'")
 	require.Equal(t, 0, code, "finish failed: %s", errs)
 	out := ta.ok("inbox")
@@ -271,7 +271,7 @@ func TestAStoppedStreamWaitsForResume(t *testing.T) {
 	ta.ok("start")
 	ta.ok("tick")
 	ta.ok("take --as m1 --limit 2")
-	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
+	ta.pinnedFixtureFinish("finish --as m1 s1-1.w1@1 s1-2.w1@1")
 	ta.ok("ask")
 	ta.ok("read --as reader-a --ok --limit 5")
 	ta.ok("read --as reader-b --ok --limit 5")
@@ -283,7 +283,7 @@ func TestAStoppedStreamWaitsForResume(t *testing.T) {
 	require.Equal(t, 1, code, "merge of a stopped stream: %s", errs)
 	require.Contains(t, errs, "stopped", "merge of a stopped stream: %s", errs)
 	ta.ok("resume --stream s1 --did 'rebased s1-2'")
-	ta.ok("merge --stream s1")
+	ta.verifiedLanding("merge --stream s1")
 	ta.ok("tick") // the pump drains the landings the merge queued
 	var w whereView
 	ta.json("where", &w)
@@ -307,8 +307,8 @@ func TestAStaleFinishIsRefusedAndARetryReplays(t *testing.T) {
 	require.Equal(t, 1, code, "a stale finish: %d %s", code, errs)
 	require.Contains(t, errs, "stale", "a stale finish: %d %s", code, errs)
 	ta.ok("take --as m2 --limit 5")
-	first := ta.ok("finish --as m2 " + card + "@2 --op w-1")
-	again := ta.ok("finish --as m2 " + card + "@2 --op w-1")
+	first := ta.pinnedFixtureFinish("finish --as m2 " + card + "@2 --op w-1")
+	again := ta.pinnedFixtureFinish("finish --as m2 " + card + "@2 --op w-1")
 	require.Contains(t, again, "replay=yes", "retry:\n%s\n%s", first, again)
 	require.Equal(t, strings.Count(first, "MOVED"), strings.Count(again, "MOVED"), "retry:\n%s\n%s", first, again)
 	code, _, errs = ta.do("finish --as m2 " + card)

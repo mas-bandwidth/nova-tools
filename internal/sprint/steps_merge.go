@@ -11,6 +11,10 @@ import (
 // caller. The step never decides: what merged, what conflicted and the CI
 // result are facts.
 type MergeReq struct {
+	// Stage records integration on a work branch without satisfying dependencies.
+	Stage *StageReceipt
+	// Dev is the verified development-branch receipt required for final landing.
+	Dev    *DevReceipt
 	Stream string
 	Batch  int
 	// Cards, when given, is the batch by name: exactly these cards of the stream's
@@ -35,6 +39,12 @@ type MergeReq struct {
 // streamDone says every primary of the stream on the table has landed, given
 // the ones about to land, and at least one has.
 func streamDone(s *Snapshot, stream string, landing int) bool {
+	// Historical branch-only labels cannot certify a completed dev stream.
+	for _, c := range s.Work.Cell(stream, Landed) {
+		if !Delivered(s, c.ID) {
+			return false
+		}
+	}
 	landed := s.Work.Count(stream, Landed) + landing
 	open := 0
 	for _, st := range []State{Waiting, Ready, Working, Review, Merging} {
@@ -57,7 +67,7 @@ func crossRefusal(s *Snapshot, stream, card, other string) string {
 		return "the other card " + other + " is not on the table; the other card is placed, in another stream, not landed"
 	case oc.Row == stream:
 		return "the other card " + other + " is in the same stream " + stream + "; the other card is in another stream"
-	case oc.Col == Landed:
+	case Delivered(s, other):
 		return "the other card " + other + " (stream " + oc.Row + ") has landed already; nothing to wait for"
 	}
 	return ""
@@ -240,6 +250,13 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		u.Moved = fmt.Sprintf("stream %s stopped: the merge queue rejected a batch of %d", r.Stream, len(ids))
 		p.Units = append(p.Units, u)
 	default:
+		if r.Stage != nil {
+			return stageBatch(s, r, batch)
+		}
+		if why := validateDevReceipt(s, r, batch); why != "" {
+			p.refuse(r.Stream, why)
+			return p
+		}
 		// A card queued in merge but not merging in work is refused; the
 		// stream's control change and its notes ride on the first card that
 		// lands, and the batch note lists only the cards that landed.
@@ -303,7 +320,8 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 				merged["note"] = v
 			}
 			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, merged)))
-			set := map[string]string{"ci": "green", "landed": now}
+			set := devFields(r.Dev, c.ID)
+			set["ci"], set["landed"] = "green", now
 			if v := costs[c.ID]; v != "" {
 				set[FieldCost] = v
 			}
@@ -367,7 +385,7 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 		if ctl.F("cause") != "cross" {
 			break // only a cross stop waits for a need
 		}
-		if need := c.F("need_card"); need != "" && s.StateOf(need) != Landed {
+		if need := c.F("need_card"); need != "" && !Delivered(s, need) {
 			p.refuse(r.Stream, fmt.Sprintf("unresolved: %s needs %s (stream %s) landed first, and it is %s", c.ID, need, orDash(c.F("need_stream")), orDash(s.StateOf(need))))
 			return p
 		}

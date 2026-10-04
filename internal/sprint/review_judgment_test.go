@@ -205,7 +205,7 @@ func TestReworkOfNoNamedCardTakesReviewAndTheBoundedReadyCards(t *testing.T) {
 func stoppedForConflict(t *testing.T) *world {
 	w := setup(t, 3)
 	accepted(w, "s1-1", "s1-2", "s1-3")
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-2"}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-2"}))
 	return w
 }
 

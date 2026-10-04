@@ -88,7 +88,7 @@ func TestLandRerunsARedCheckOnceWhenItsFailuresAreFlaky(t *testing.T) {
 			}
 			r.ok("add --stream s1 --count 1")
 			r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main --check " + redCheck(t, r.dir, tc.again))
+			code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main --check " + redCheck(t, r.dir, tc.again)))
 			assert.Equal(t, tc.code, code, out+errs)
 			assert.Contains(t, out+errs, tc.says)
 			assert.Equal(t, tc.asks, fake.asks)
@@ -135,7 +135,7 @@ func TestLandKeepsARedBatchRedWithNoGateDecision(t *testing.T) {
 			}
 			r.ok("add --stream s1 --count 1")
 			r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main --check " + redCheck(t, r.dir, false))
+			code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main --check " + redCheck(t, r.dir, false)))
 			assert.Equal(t, 1, code, out+errs)
 			assert.Contains(t, out+errs, tc.says)
 			assert.NotContains(t, out+errs, "LAND OK")

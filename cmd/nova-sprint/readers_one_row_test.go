@@ -116,8 +116,8 @@ func TestWhereMergeTableIsOneRowTheSumsAndTheWorstCIAndState(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.toMerging("s1", "s2", "s3")
-	ta.ok("merge --stream s1 --red --suspect s1-2") // s1 stopped, ci red
-	ta.ok("merge --stream s2 --batch 1")            // s2 lands one, ci green
+	ta.ok("merge --stream s1 --red --suspect s1-2")   // s1 stopped, ci red
+	ta.verifiedLanding("merge --stream s2 --batch 1") // s2 lands one, ci green
 
 	var v struct {
 		Tables map[string]map[string]map[string]string

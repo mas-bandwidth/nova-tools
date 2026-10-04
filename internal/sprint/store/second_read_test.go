@@ -95,7 +95,7 @@ func TestTheStreamStateThroughAStreamsLife(t *testing.T) {
 	st("rework s1-1", sprint.StreamWaiting)
 	p.through("s1-2")
 	st("accept s1-2", sprint.StreamMerging)
-	p.do("merge s1-2", MergeStep(sprint.MergeReq{Stream: "s1"}))
+	p.do("merge s1-2", devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}))
 	st("merge s1-2 (lands)", sprint.StreamWaiting)
 	// s1-1's fixed work
 	c := p.snap().Fleet.Card("s1-1.w2")
@@ -109,7 +109,7 @@ func TestTheStreamStateThroughAStreamsLife(t *testing.T) {
 	}
 	p.do("accept s1-1", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}))
 	st("accept s1-1 again", sprint.StreamMerging)
-	p.do("merge conflict", MergeStep(sprint.MergeReq{Stream: "s1", Conflict: "s1-1"}))
+	p.do("merge conflict", devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Conflict: "s1-1"}))
 	st("conflict", sprint.StreamStopped)
 	p.do("return from stuck", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1")}))
 	st("return from stuck (stopped stays)", sprint.StreamStopped)
@@ -147,7 +147,7 @@ func TestReturnAndDropAnswerTheStreamJudgmentsThatListThem(t *testing.T) {
 				case "cross":
 					req.Cross = "s1-1=s2-1"
 				}
-				p.do("merge "+kind, MergeStep(req))
+				p.do("merge "+kind, devFixtureMergeStep(req))
 				o := p.openOn("stream:s1")
 				require.Len(t, o, 1, "open on stream: %v", o)
 				nid := o[0].Note.ID
@@ -273,7 +273,7 @@ func TestEveryTextFieldIsBounded(t *testing.T) {
 	}
 	over("return reason", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1"), Reason: long}))
 	over("ci note", CIStep(sprint.CIReq{Sel: ids("s1-1"), Red: true, Note: long}))
-	p.do("red", MergeStep(sprint.MergeReq{Stream: "s1", Red: true}))
+	p.do("red", devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Red: true}))
 	over("did", ResumeStep(sprint.ResumeReq{Stream: "s1", Did: long}))
 	require.Equal(t, string(sprint.StreamStopped), p.ctl("s1").F("state"), "a refused step moved something")
 	require.Equal(t, sprint.Merging, p.state("s1-1"), "a refused step moved something")

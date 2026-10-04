@@ -543,7 +543,7 @@ func (r *propRun) merge(stream string, b, fact int, suspect bool) {
 			line += " --cross " + req.Cross
 		}
 	}
-	r.run(line, MergeStep(req))
+	r.run(line, devFixtureMergeStep(req))
 }
 
 // answer is the coordinator answering the judgment group at pick with the

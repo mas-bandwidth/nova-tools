@@ -36,7 +36,7 @@ func TestCRResolveBoundLeavesTheRestWaitingForever(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"root"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 250, Needs: []string{"root"}}))
 	h.through("root")
-	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}))
 	require.Equal(t, sprint.Landed, h.state("root"), "root %s", h.state("root"))
 	h.startMachine()
 	h.crTicks(5, "after the landing")
@@ -80,7 +80,7 @@ func TestCRResolveThatLosesToOtherWritersIsNeverRetried(t *testing.T) {
 	h.through("a")
 	h.startMachine()
 	h.machine()
-	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
+	h.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1"}))
 	h.st.B = &loseResolve{Mem: h.m, left: FenceTries}
 	res, err := h.st.Tick(h.ctx)
 	require.NoError(t, err, "tick: %v", err)

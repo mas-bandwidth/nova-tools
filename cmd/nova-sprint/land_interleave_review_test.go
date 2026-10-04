@@ -33,14 +33,14 @@ func TestServerReviewLandingAllowsATickAndCoordinatorWriteBeforePush(t *testing.
 		interleaved++
 	}
 	var out bytes.Buffer
-	code := r.a.landRound(context.Background(), "mem:0", []string{"--repo-dir", r.clone, "--base", "main"}, &out)
+	code := r.a.landRound(context.Background(), "mem:0", []string{"--repo-dir", r.clone, "--base", "main", "--check", "test -f README && git diff --check"}, &out)
 	require.Equal(t, 0, code, out.String())
 	assert.Equal(t, 1, interleaved)
 	// While RUNNING, the existing engine drains producer updates on the next tick.
 	r.a.serial.Lock()
 	r.ok("tick")
 	r.a.serial.Unlock()
-	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/queued"}, r.places("s1-1", "s1-2"))
 	assert.Equal(t, []string{"land s1-2 (sprint stream s1)", "land s1-1 (sprint stream s1)", "base"}, r.mainLog())
 	assert.Contains(t, out.String(), "LAND OK")
 	r.clean()

@@ -76,7 +76,7 @@ func TestAMergeFactNamesACardOfTheBatch(t *testing.T) {
 		{Stream: "s1", Batch: 1, Conflict: "s1-2"},
 		{Stream: "s1", Batch: 1, Cross: "s1-2=s2-1"},
 	} {
-		p := MergeStep(w.s, r)
+		p := devMergeFixture(w.s, r)
 		require.Empty(t, p.Units, "%+v: %+v", r, p)
 		require.Len(t, p.Refused, 1, "%+v: %+v", r, p)
 		require.Equal(t, "s1-2", p.Refused[0].Key, "%+v: %+v", r, p)
@@ -85,7 +85,7 @@ func TestAMergeFactNamesACardOfTheBatch(t *testing.T) {
 	require.Equal(t, Queued, w.s.Merge.Placed("s1-1").Col, "a refused fact moved a card")
 	require.Equal(t, Queued, w.s.Merge.Placed("s1-2").Col, "a refused fact moved a card")
 	require.Equal(t, StreamMerging, w.s.StreamCtl("s1").F("state"), "a refused fact moved a card")
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-2"}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-2"}))
 	require.Equal(t, Stuck, w.s.Merge.Placed("s1-2").Col, "a conflict inside the batch")
 	require.Equal(t, Queued, w.s.Merge.Placed("s1-1").Col, "a conflict inside the batch")
 	w.clean("stuck")
@@ -129,10 +129,10 @@ func TestTheSprintIsDoneOnce(t *testing.T) {
 	p, _ := TickDone(w.s, req)
 	require.True(t, p.Empty(), "done too early, or the drop not counted: %+v %q", p, w.s.StreamCtl("s2").F("dropped"))
 	require.Equal(t, "1", w.s.StreamCtl("s2").F("dropped"), "done too early, or the drop not counted: %+v %q", p, w.s.StreamCtl("s2").F("dropped"))
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Batch: 1}))
 	p, _ = TickDone(w.s, req)
 	require.True(t, p.Empty(), "done with s1-2 merging: %+v", p)
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Batch: 1}))
 	require.Empty(t, w.notesOf(NSprintDone), "the merge step wrote the sprint done: %+v", w.notesOf(NSprintDone))
 	w.tick(90 * time.Minute)
 	w.must(tickDone(w.s, req))
@@ -163,7 +163,7 @@ func TestTheSprintIsDoneOnce(t *testing.T) {
 	// The last open primary dropped: done, once the tick looks.
 	w2 := setup(t, 2)
 	accepted(w2, "s1-1")
-	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1"}))
+	w2.must(devMergeFixture(w2.s, MergeReq{Stream: "s1"}))
 	w2.must(Drop(w2.s, DropReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
 	w2.must(tickDone(w2.s, TickReq{}))
 	done = w2.notesOf(NSprintDone)
@@ -181,11 +181,11 @@ func TestLandingResolvesWhatWaitsOnIt(t *testing.T) {
 	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1"}}))
 	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"c"}, Needs: []string{"s1-1", "s1-2"}}))
 	accepted(w, "s1-1", "s1-2")
-	p := w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
+	p := w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Batch: 1}))
 	require.Equal(t, Ready, w.state("b"), "after s1-1 landed: b %s, c %s (%+v)", w.state("b"), w.state("c"), p.Units)
 	require.Equal(t, Waiting, w.state("c"), "after s1-1 landed: b %s, c %s (%+v)", w.state("b"), w.state("c"), p.Units)
 	w.clean("b ready")
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
+	w.must(devMergeFixture(w.s, MergeReq{Stream: "s1", Batch: 1}))
 	require.Equal(t, Ready, w.state("c"), "after s1-2 landed: c %s", w.state("c"))
 	w.clean("c ready")
 }

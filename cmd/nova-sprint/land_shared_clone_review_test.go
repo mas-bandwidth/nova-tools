@@ -21,7 +21,7 @@ func TestLandReviewAnotherBuildInTheCloneCannotBecomeFalseLand(t *testing.T) {
 		// The first operation of another build cuts from the fetched base.
 		r.git(r.clone, "switch", "--no-track", "--force-create", "land/other", "refs/remotes/origin/main")
 	}
-	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 	if code == 0 {
 		res, err := gitrun.Run(context.Background(), gitrun.Options{C: r.remote, Env: r.env, OwnRepo: true},
 			"merge-base", "--is-ancestor", head, "refs/heads/main")

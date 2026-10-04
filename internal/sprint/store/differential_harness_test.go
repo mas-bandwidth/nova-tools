@@ -8,6 +8,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -330,6 +331,25 @@ func (h *dHarness) observe() refmodel.State {
 	if mach.Running() {
 		o.Machine = refmodel.Running
 	}
+	// The reference model names fixture content by its work-card label.
+	// Production receipts retain full Git identities; map only explicitly tagged
+	// fixture identities back for the abstraction, preserving all comparisons.
+	for _, name := range []string{sprint.Work, sprint.Readers} {
+		for _, c := range s.T(name).Cards() {
+			if label := c.F("fixture_head_label"); label != "" {
+				pid := c.ID
+				if name == sprint.Readers {
+					pid = c.F("primary")
+				}
+				if pr := s.Work.Card(pid); pr != nil {
+					sum := sha256.Sum256([]byte(pid + "@" + pr.F("attempt") + ":" + label))
+					if c.F("head") == fmt.Sprintf("%x", sum[:20]) {
+						c.Fields["head"] = label
+					}
+				}
+			}
+		}
+	}
 	a := refmodel.Abstract(o)
 	a.Coordinator = dCoordinator
 	return a
@@ -545,7 +565,7 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 		case "rejected":
 			r.Rejected = true
 		}
-		return run(MergeStep(r)), cutOK
+		return run(devFixtureMergeStep(r)), cutOK
 	case "resume":
 		return run(ResumeStep(sprint.ResumeReq{Stream: a.Stream, Did: a.Did})), cutOK
 	case "fleet":

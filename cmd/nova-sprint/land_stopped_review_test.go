@@ -28,12 +28,12 @@ func TestReviewLandDoesNotPushALaterStreamStoppedDuringTheFirstBatch(t *testing.
 		}
 	}
 
-	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	code, out, errs := r.do(checkedStage("land --repo-dir " + r.clone + " --base main"))
 
 	assert.Equal(t, 1, code, "the stopped stream is refused before push: %s%s", out, errs)
 	assert.Equal(t, 1, pushes, "only the first stream reaches a push")
 	assert.Equal(t, "stopped red", r.streamState("s2"))
-	assert.Equal(t, map[string]string{"first": "landed/merged", "held": "merging/queued"}, r.places("first", "held"))
+	assert.Equal(t, map[string]string{"first": "merging/queued", "held": "merging/queued"}, r.places("first", "held"))
 	assert.Equal(t, []string{"land first (sprint stream s1)", "base"}, r.mainLog(), "the held stream's work never reaches origin")
 	assert.NotContains(t, out+errs, "LAND FAILED", "a stop already read before pushing must not become an unreported delivery")
 }

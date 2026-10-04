@@ -522,7 +522,7 @@ func TestRedisALateWriterAfterAClearIsRefused(t *testing.T) {
 		"take":   TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{IDs: []string{"s1-3.w1"}}, Gens: map[string]int{"s1-3.w1": 1}}),
 		"finish": FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-3.w1"}}, Gens: map[string]int{"s1-3.w1": 1}}),
 		"report": ReadStep(sprint.ReadReq{As: rc[0].F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}),
-		"merge":  MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}),
+		"merge":  devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}),
 		"accept": AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}),
 		"drop":   DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-4"}}, Reason: "x"}),
 		"fleet":  FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}),
@@ -646,7 +646,7 @@ func TestRedisTeardownLeavesNoKeyAndNothingElse(t *testing.T) {
 	a := liveHarnessOn(t, c, "f-")
 	a.setup(3)
 	a.through("s1-1", "s1-2")
-	a.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
+	a.must(devFixtureMergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
 	for i := 0; i < 2; i++ {
 		_, err := a.st.Clear(ctx)
 		require.NoError(t, err)
