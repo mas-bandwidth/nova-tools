@@ -175,6 +175,9 @@ func TestSealDryRunRefusesWhereTheRealRunRefuses(t *testing.T) {
 	skipPOSIXFakesOnWindows(t)
 
 	f := newSealFixture(t, "TARGET: old\n")
+	// A seat file with no matching rule: the refusal is the rule's, not the absent-file
+	// refusal a seal of a file that is not there gets first (SPEC-SECRETS rule 12).
+	require.NoError(t, os.WriteFile(filepath.Join(f.storeDir, "stranger.yaml"), []byte("sops:\nPLAINTEXT\n"), 0644))
 	before := treeOf(t, f.storeDir)
 
 	noRule := f.options(t, "TARGET", "", true)

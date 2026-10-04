@@ -382,6 +382,45 @@ func TestSealEncryptTakesValueOnStdin(t *testing.T) {
 	assert.Contains(t, string(out), "ENC[marker]", "encrypt stdout not returned: %q", out)
 }
 
+// TestSealIntoAnAbsentSeatFileNeedsTheTargetKey pins SPEC-SECRETS rule 12 and the
+// model's refusal invariant: a seat file is written only by a key that opens it, or by
+// seat add out of a seat the operator can open. `seal` proves the caller holds such a key
+// by decrypting the target first, so a target that is not there has no key to prove and
+// is refused; a rule alone is not the wall. Without this, any holder of any store key
+// with a merged rule for <new>.yaml writes <new>.yaml by seal (tla/SecretsSeat.tla, the
+// Seal action: an absent file needs a rule but no recipient key).
+func TestSealIntoAnAbsentSeatFileNeedsTheTargetKey(t *testing.T) {
+	t.Parallel()
+
+	skipPOSIXFakesOnWindows(t)
+	f := newSealFixture(t, "")
+	// The store carries a rule for new.yaml and no new.yaml. The key on this machine
+	// (rowan) is not a recipient of that rule.
+	require.NoError(t, os.WriteFile(filepath.Join(f.storeDir, ".sops.yaml"),
+		[]byte("creation_rules:\n  - path_regex: ^new\\.yaml$\n    age: "+pubStranger+","+pubRecovery+"\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(f.storeDir, "recovery.pub"), []byte(pubRecovery+"\n"), 0644))
+	require.NoError(t, os.Remove(filepath.Join(f.storeDir, "rowan.yaml")))
+
+	// The strict fake sops, reached through a symlink beside the fixture so its own
+	// sops.args and sops.stdin are the ones this test reads (the fake refuses what real
+	// sops refuses, per SPEC-SECRETS rule 12's red tests).
+	strictSops := filepath.Join(f.dir, "sops-strict")
+	require.NoError(t, os.Symlink(sharedFakeSops, strictSops))
+
+	opts := f.options(t, "TARGET", "newsecretvalue\n", true)
+	opts.AsName = "new"
+	opts.SopsPath = strictSops
+
+	_, err := RunSeal(opts)
+	require.Error(t, err, "seal created new.yaml from a rule alone, with a key the rule does not name")
+	assert.Contains(t, err.Error(), "new.yaml does not exist in the store", "the refusal does not name the absent file: %v", err)
+	assert.Contains(t, err.Error(), "seat add", "the refusal does not name the verb that gives a new seat its first values: %v", err)
+	assert.Contains(t, err.Error(), "SPEC-SECRETS rule 12", "the refusal does not cite the spec rule: %v", err)
+	assert.NoFileExists(t, filepath.Join(f.storeDir, "new.yaml"), "the refused seal wrote the file anyway")
+	args := readMaybe(t, f.sopsArgs)
+	assert.NotContains(t, args, "-e", "the refused seal ran a sops encrypt:\n%s", args)
+}
+
 func initTrackedGitStore(t *testing.T, storeDir string) {
 	t.Helper()
 	remote := t.TempDir()

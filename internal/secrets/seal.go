@@ -159,6 +159,16 @@ func RunSeal(opts SealOptions) (line string, err error) {
 		return sealDryRun(opts, carry, targetFile)
 	}
 
+	// An absent seat file has no key to prove: `seal` decrypts the target before it
+	// writes, and a file that is not there is not decrypted. A rule alone is not the
+	// wall, so a holder of any other store key cannot create <new>.yaml by seal. A new
+	// seat's first values come from seat add, out of a seat the operator can open
+	// (SPEC-SECRETS rule 12; tla/SecretsSeat.tla Seal: an absent file needs a rule but
+	// no recipient key).
+	if err := sealTargetMustExist(seatFile, targetFile); err != nil {
+		return "", err
+	}
+
 	value, err := readSealValue(opts)
 	if err != nil {
 		return "", err
@@ -430,24 +440,28 @@ func sealRecipients(storeDir, seatFile string) ([]string, error) {
 // makes, to say whether NAME is added or replaced, and no value reaches a line.
 func sealDryRun(opts SealOptions, carry sealCarry, targetFile string) (string, error) {
 	seatFile := carry.seatFile
+	// The store the plan reads at HEAD comes first: an uncommitted store has no plan to
+	// make. Then the target must exist; a rule alone is not the wall (SPEC-SECRETS rule
+	// 12), and the dry run refuses an absent seat file exactly as the real run does.
+	home, err := carry.preflight()
+	if err != nil {
+		return "", err
+	}
+	if err := sealTargetMustExist(seatFile, targetFile); err != nil {
+		return "", err
+	}
 	recipients, err := sealRecipients(opts.StoreDir, seatFile)
 	if err != nil {
 		return "", err
 	}
 	action := "add"
-	if _, statErr := os.Stat(targetFile); statErr == nil {
-		opts.say("reading %s", seatFile)
-		existing, err := sealDecrypt(carry.run, opts.SopsPath, opts.KeyPath, targetFile)
-		if err != nil {
-			return "", err
-		}
-		if sealHas(existing, opts.Name) {
-			action = "replace"
-		}
-	}
-	home, err := carry.preflight()
+	opts.say("reading %s", seatFile)
+	existing, err := sealDecrypt(carry.run, opts.SopsPath, opts.KeyPath, targetFile)
 	if err != nil {
 		return "", err
+	}
+	if sealHas(existing, opts.Name) {
+		action = "replace"
 	}
 	lines := []string{fmt.Sprintf("SECRETS SEAL PLAN write=%s action=%s name=%s seat=%s recipients=%s value=not read (dry run)",
 		oneline.Field(targetFile), action, oneline.Field(opts.Name), oneline.Field(opts.AsName), oneline.Field(strings.Join(recipients, ",")))}
@@ -455,6 +469,21 @@ func sealDryRun(opts SealOptions, carry sealCarry, targetFile string) (string, e
 	lines = append(lines, fmt.Sprintf("SECRETS SEAL DRY-RUN OK name=%s seat=%s nothing written, no value read, no push, no gh call",
 		oneline.Field(opts.Name), oneline.Field(opts.AsName)))
 	return strings.Join(lines, "\n"), nil
+}
+
+// sealTargetMustExist refuses an absent seat file: `seal` proves the caller holds a key
+// that opens the target by decrypting it first, so a file that is not there has no key to
+// prove and a rule alone is not the wall. A new seat's first values come from seat add,
+// out of a seat the operator can open (SPEC-SECRETS rule 12; tla/SecretsSeat.tla Seal:
+// an absent file needs a rule but no recipient key).
+func sealTargetMustExist(seatFile, targetFile string) error {
+	if _, err := os.Stat(targetFile); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%s does not exist in the store; a new seat is given its first values by seat add, never by seal (SPEC-SECRETS rule 12)", seatFile)
+		}
+		return fmt.Errorf("unable to read %s: %w", targetFile, err)
+	}
+	return nil
 }
 
 // sealHas reports whether the decrypted seat file already holds name: the same line
@@ -549,12 +578,11 @@ func runStty(tty *os.File, arg string) error {
 }
 
 // sealDecrypt reads the seat file's plaintext through a sops pipe, never a file in the
-// clear. An absent seat file starts from nothing, so a new name can be added.
+// clear. The file must exist: a new seat's first values come from `seat add`, so an
+// absent target is a refusal the caller names (SPEC-SECRETS rule 12; tla/SecretsSeat.tla
+// Seal: an absent file needs a rule but no recipient key).
 func sealDecrypt(run execCommand, sopsPath, keyPath, filePath string) ([]byte, error) {
 	if _, err := os.Stat(filePath); err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
 	tmpDir, err := os.MkdirTemp("", "nova-secrets-seal-*")

@@ -198,7 +198,8 @@ func TestAFirstStoreRefusalSaysWhatIsMissingAndHowToMakeIt(t *testing.T) {
 }
 
 // TestAnAbsentSeatNamesTheSeatsAndTheVerbThatStartsOne: the refusal for a seat with no
-// file names the store's seats, or, in a store with none, the seal that writes the first.
+// file names the store's seats, or, in a store with none, seat add, which gives a new
+// seat its first values (SPEC-SECRETS rule 12), never seal.
 func TestAnAbsentSeatNamesTheSeatsAndTheVerbThatStartsOne(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -206,8 +207,8 @@ func TestAnAbsentSeatNamesTheSeatsAndTheVerbThatStartsOne(t *testing.T) {
 		seats []string
 		want  []string
 	}{
-		{"no seat yet", nil, []string{"holds no seat file yet", "run: nova-secrets seal --store "}},
-		{"other seats", []string{"lead", "worker"}, []string{"its seats are lead, worker", "pass --as one of them", "run: nova-secrets seal --store "}},
+		{"no seat yet", nil, []string{"holds no seat file yet", "run: nova-secrets seat add --store "}},
+		{"other seats", []string{"lead", "worker"}, []string{"its seats are lead, worker", "pass --as one of them", "run: nova-secrets seat add --store "}},
 	} {
 		c := c
 		t.Run(c.name, func(t *testing.T) {

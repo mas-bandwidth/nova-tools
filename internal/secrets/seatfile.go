@@ -176,7 +176,8 @@ func gitFileRemedy(dir string) string {
 }
 
 // seatAbsent refuses a seat with no file in the store, naming the seats the store does
-// hold, or, when it holds none, the verb that writes a seat's first value.
+// hold, or, when it holds none, the verb that gives a new seat its first values: seat add
+// out of a seat the operator can open, never seal (SPEC-SECRETS rule 12).
 func seatAbsent(storeDir, asName string) error {
 	var seats []string
 	if entries, err := os.ReadDir(storeDir); err == nil {
@@ -187,8 +188,8 @@ func seatAbsent(storeDir, asName string) error {
 		}
 	}
 	if len(seats) == 0 {
-		return fmt.Errorf("seat file %s.yaml is absent: store %s holds no seat file yet; seal writes a seat's first value: run: nova-secrets seal --store %s --as %s --key <path> --sops <path> --name <NAME>", asName, storeDir, storeDir, asName)
+		return fmt.Errorf("seat file %s.yaml is absent: store %s holds no seat file yet; a new seat is given its first values by seat add, never by seal: run: nova-secrets seat add --store %s --as %s --pub <age1…> --from <source seat> --only <NAME,…> --key <path> --sops <path>", asName, storeDir, storeDir, asName)
 	}
 	sort.Strings(seats)
-	return fmt.Errorf("seat file %s.yaml is absent in store %s; its seats are %s: pass --as one of them; seal starts a new seat: run: nova-secrets seal --store %s --as %s --key <path> --sops <path> --name <NAME>", asName, storeDir, strings.Join(seats, ", "), storeDir, asName)
+	return fmt.Errorf("seat file %s.yaml is absent in store %s; its seats are %s: pass --as one of them; a new seat is given its first values by seat add, never by seal: run: nova-secrets seat add --store %s --as %s --pub <age1…> --from <source seat> --only <NAME,…> --key <path> --sops <path>", asName, storeDir, strings.Join(seats, ", "), storeDir, asName)
 }
