@@ -199,6 +199,11 @@ type OpenCode struct {
 	Run          Exec
 	Program      string    // "opencode" when empty
 	Out          io.Writer // where the turn's output goes, when set: the daemon's record
+	// Allow is every other path the friend's directory is reached by (a
+	// symlink in the home directory): with Dir and its real path, allowed in
+	// the project config before a turn (AllowDirs), so a headless run never
+	// auto-rejects a tool call there. Nil: the config is left alone.
+	Allow []string
 }
 
 func (o *OpenCode) program() string {
@@ -235,6 +240,9 @@ func NewestSession(listing, dir string) (string, error) {
 }
 
 func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
+	if o.Allow != nil {
+		o.allow()
+	}
 	id := o.Session
 	if id == "" {
 		listing, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"session", "list", "--format", "json"}, "")

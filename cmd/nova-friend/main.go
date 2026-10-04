@@ -57,7 +57,7 @@ type world struct {
 	getenv    func(string) string
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
-	beat      func(ctx context.Context, server, friend string) error
+	beat      func(ctx context.Context, server, friend string) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -86,17 +86,20 @@ func realWorld() world {
 			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},
-		beat: func(ctx context.Context, server, name string) error {
+		beat: func(ctx context.Context, server, name string) (string, error) {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 			res, err := sprintwire.Client{Addr: server}.Do(ctx, []string{"friend", "beat", name})
 			if err != nil {
-				return err
+				return "", err
 			}
-			if len(res) != 1 || res[0].Code != 0 {
-				return fmt.Errorf("friend beat refused: %s", strings.TrimSpace(res[0].Stderr))
+			if len(res) != 1 {
+				return "", fmt.Errorf("friend beat: the server answered %d results, want 1", len(res))
 			}
-			return nil
+			if res[0].Code != 0 {
+				return "", fmt.Errorf("friend beat refused: %s", strings.TrimSpace(res[0].Stderr))
+			}
+			return res[0].Stdout, nil
 		},
 		lookPath: exec.LookPath,
 		binary: func() (string, error) {
@@ -214,10 +217,23 @@ carries messages. A turn runs as long as it prints; one silent past --silent-sto
 its process group, the reason on the record. The same provider refusal (an invalid_request_error)
 on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
-bus; a restart clears it. Prints one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a
-delivery under way left pending.`,
-				Flags: func(f *tool.Flags) { daemonFlags(f); f.Prints() },
-				Run:   w.run,
+bus; a restart clears it. The friend row's mode and width come with each beat's answer (row_mode=,
+row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
+memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
+REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
+next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. Prints
+one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.`,
+				Flags: func(f *tool.Flags) {
+					daemonFlags(f)
+					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
+					f.Check(func(c *tool.Call) {
+						if m := c.Str("mode"); m != "" && m != friend.ModeBatch && m != friend.ModeOneShot {
+							c.Problem(fmt.Sprintf("--mode %q wants batch or one-shot", m))
+						}
+					})
+					f.Prints()
+				},
+				Run: w.run,
 			},
 			{
 				Name:    "install",
@@ -331,7 +347,7 @@ or WAIT-PONG NONE at exit 1.`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> (broken: session_id= broken_at= reason=), and for harness grok route=<push|defer>,
+last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> (broken: session_id= broken_at= reason=; one-shot: lanes=), and for harness grok route=<push|defer>,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
 ` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
@@ -406,6 +422,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 		o.Render(c.Stderr, c.Bool("json"))
 		return tool.Exit(2)
 	}
+	if oc, ok := deliver.(*friend.OpenCode); ok {
+		// the friend's directory as her tools name it: the symlink in the home directory too
+		oc.Allow = []string{}
+		if alias := filepath.Join(w.home, name+"-working"); fileThere(alias) {
+			oc.Allow = append(oc.Allow, alias)
+		}
+	}
+	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width)
+	rowMode, rowWidth := "", 0
 	record := func(line string) {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
@@ -421,7 +446,31 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: st, Deliver: deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
-		Beat:   func(ctx context.Context) error { return w.beat(ctx, server, name) },
+		Beat: func(ctx context.Context) error {
+			answer, err := w.beat(ctx, server, name)
+			if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
+				rowMode, rowWidth = m, wd
+			}
+			return err
+		},
+		Row: func() (string, int) {
+			if m := c.Str("mode"); m != "" {
+				return m, rowWidth // the override, for a test
+			}
+			return rowMode, rowWidth
+		},
+		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
+		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
+		CardDone: func(card, to string) string {
+			busBin, err := w.lookPath("nova-bus")
+			if err != nil {
+				busBin = "nova-bus" // ignored: the name on PATH stands in when it is not found
+			}
+			if to == "" {
+				to = "<the coordinator>"
+			}
+			return fmt.Sprintf(`%s send --as %s --to %s --subject "card %s done" --body "<the first line of your REPORT.md>" --redis %s`, busBin, name, to, card, c.Str("redis"))
+		},
 		Record: record,
 		Pong:   func() (friend.Pong, bool, error) { return friend.ReadPong(state) },
 		Status: func(s friend.Status) error { return friend.WriteStatus(state, s) },
@@ -569,7 +618,10 @@ func (w world) status(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).
 		Fact("connection", s.Connection).Fact("seat", dash(s.Seat)).Fact("last_ping", stamp(s.LastPing)).Fact("ping_age", age(now, s.LastPing)).
 		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("pong_age", age(now, p.At)).Fact("pongs", s.Pongs).
-		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session))
+		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
+	if s.Lanes != "" {
+		o.Fact("lanes", tool.Text(s.Lanes))
+	}
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
@@ -729,4 +781,10 @@ func secretNames(csv string) []string {
 		}
 	}
 	return out
+}
+
+// fileThere says whether path is there, a symlink counting as itself.
+func fileThere(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }

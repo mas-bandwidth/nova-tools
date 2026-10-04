@@ -93,7 +93,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width", scopedGot97, "friend fields %s, want slots,tiers,roles,width", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -546,4 +546,13 @@ func TestTheSprintRowHoldsTheJudgmentBar(t *testing.T) {
 	assert.Equal(t, TypeDecimal, bar.Type)
 	assert.NoError(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "0.9"}}))
 	assert.ErrorContains(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "1.5"}}), "want --decide_judgment_bar <p>, a probability")
+}
+
+// A friend row's mode is batch unless it says one-shot: FriendMode reads a row
+// written before migration 0030 (no field) as the default.
+func TestAFriendRowsModeDefaultsToBatch(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, FriendModeBatch, FriendMode(Row{Name: "amy", Fields: map[string]string{}}))
+	assert.Equal(t, FriendModeOneShot, FriendMode(Row{Name: "amy", Fields: map[string]string{"mode": "one-shot"}}))
+	assert.Equal(t, []string{"batch", "one-shot"}, FriendModes)
 }

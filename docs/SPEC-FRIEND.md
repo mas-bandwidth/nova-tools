@@ -258,6 +258,73 @@ window's pid and `route=defer` with that line when none does. A wake path
 that is not absolute, or that the process listing cannot show whole, is
 still a refusal and nothing is written.
 
+## One-shot lanes (internal/friend/lanes.go)
+
+A friend's delivery mode is a column of her nova-config friend row, `mode`,
+`batch` (the default, and what every row before migration 0030 has) or
+`one-shot`: `nova-config friend set bob --mode one-shot --width 1`. The
+owner, 2026-10-04: "one-shot friends are configured via nova-config", and,
+for a flash-class friend who answers each turn in seconds and stops, "we could
+have one shot friends, have one-shots, per-lane ... so [she] can still be
+wide, it's just 8 [of her]". `nova-config apply` writes the mode beside the
+width into `friend:<f>:desired`, `nova-sprint friend sync` copies both onto
+her sprint roster row, and her beat answers them (`FRIEND-BEAT OK ...
+row_mode=<mode> row_width=<n>`), so the daemon reads her row every second
+from the beat it already sends and a change takes effect without a restart
+(the change of mode waits for the other mode's turns to end). `run --mode`
+overrides the row, for a test.
+
+In one-shot mode the daemon runs `width` lanes. Each lane is its own session
+of the friend in the same harness and directory, opened by the daemon when
+the lane starts, seeded from her own identity files (`AGENTS.md` and
+`memory/`, in the working directory or its `<friend>/`), and kept for the
+lane's life in `lanes.json` in the state directory, so a restart keeps it. A
+free lane takes the next card of `inbox/QUEUE.json`, in the file's order,
+that is `queued`, delivered (`inbox/<id>~<epoch>/BRIEF.md`, the highest
+epoch), not done (no `outbox/<id>~<epoch>/RESULT.md`), and not held by
+another lane or set aside, and hands it as one turn with three steps: do the
+card from its brief; write its `REPORT.md` and `RESULT.md`; send one bus line
+(the exact `nova-bus send` to the coordinator, printed in the turn). Bus
+messages ride only inside a card's turn, oldest first, with the pong line and
+the word about the coordinator; with no card to ride with they wait, pending.
+The lane waits for the turn to end and looks for the card's `RESULT.md`:
+there, the card is done and the lane takes the next; absent, the same card
+is handed again once, and after `CardTurns` (two) turns without it the card
+is set aside (recorded in `lanes.json`, never handed again by this daemon),
+and the coordinator is told once on the bus, `friend <name>: card <id> not
+finished after 2 turns (lane <n>): <reason>`. The reason is the last turn's:
+a permission the harness refused, a turn stopped silent, the provider's
+refusal, an exit code, or a turn that ended with no `RESULT.md`. Lanes never
+share a turn, and a lane never runs two. A lane beyond a width since lowered
+finishes its card and takes no other. The silence watch, the provider's
+refusal streak and the broken session are the batch turn's, across every
+lane.
+
+Only a harness that can open a session and deliver into a named one has
+lanes (`LaneHarness`; OpenCode today: `opencode run --dir <dir> <seed>` with no
+`--session` opens one, found as the session the listing of the directory
+gained, and `opencode run --session <id>` takes each card). On any other
+harness a one-shot row is delivered in batch, said once in the record.
+
+OpenCode's headless run auto-rejects any tool call that would prompt (measured
+2026-10-04, twice on one friend: `external_directory` for a path through the
+symlink in the home directory, and another refusal that ended a turn in 12
+seconds). Before each turn the adapter writes the friend's directory into her
+project config, `<dir>/opencode.json`, under `permission.external_directory`
+as `<path>/**: allow`, for the directory as given, its real path, and the
+home directory's `<friend>-working` symlink when there is one, merged into
+what the file holds and written only when it changes (a config that cannot
+be written is said in the record and the turn goes ahead). The schema is
+OpenCode's documented permission map; it is not yet measured on a live lane.
+A refusal the turn's output still shows is the lane's `rejected=` on the
+record and the card's reason.
+
+Open design question, not built (the owner, 2026-10-04 1:45 PM: "tbd."): a
+per-friend `tier` on the row (flash, pro, heavy, frontier), defaulted from a
+small table of known models (a flash model is a one-shot by nature), giving
+smart defaults the row's `mode` and `width` override, and the deal giving a
+friend no card above her tier.
+
 ## Identity
 
 The friend's name comes from one place, `install --as`, written into the

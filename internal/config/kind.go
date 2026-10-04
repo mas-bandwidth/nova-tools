@@ -199,6 +199,30 @@ func FriendWidth(r Row) int {
 	return r.Int("width")
 }
 
+// FriendModes are how a friend's daemon (nova-friend run) hands her work:
+// batch, every waiting message as one turn of her one session; one-shot,
+// width lanes, each its own session of her, handed one card per turn and
+// waiting for that card's RESULT.md before the next (docs/SPEC-FRIEND.md,
+// one-shot lanes; the owner, 2026-10-04: "so [she] can still be wide, it's
+// just 8 [of her]").
+var FriendModes = []string{FriendModeBatch, FriendModeOneShot}
+
+// The delivery modes, and the default a row without one has.
+const (
+	FriendModeBatch   = "batch"
+	FriendModeOneShot = "one-shot"
+	DefaultFriendMode = FriendModeBatch
+)
+
+// FriendMode is a friend row's delivery mode: its mode field,
+// DefaultFriendMode when the row has none.
+func FriendMode(r Row) string {
+	if m := r.Fields["mode"]; m != "" {
+		return m
+	}
+	return DefaultFriendMode
+}
+
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
 // instead). A width that failed its own validation is absent and skipped.
@@ -365,12 +389,13 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, and her delivery mode",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
+			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {

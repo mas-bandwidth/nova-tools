@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
@@ -174,7 +176,7 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z pong_age=2m1s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 session=-",
+		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z pong_age=2m1s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 session=- mode=-",
 			"NOTE the last beat failed: the sprint server at 127.0.0.1:6390 did not answer")
 	r.now = start.Add(friend.DaemonStale)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")
@@ -219,12 +221,12 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string) error {
+	w.beat = func(context.Context, string, string) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
 		}
-		return nil
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2", nil
 	}
 	dir := t.TempDir()
 	var out, errb strings.Builder
@@ -237,7 +239,9 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, "bob", s.Friend)
 	assert.Equal(t, 3, beats)
 	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
-
+	assert.Equal(t, 2, s.Width, "the row's width, read from the beat's answer, over --width")
+	assert.Equal(t, "batch", s.Mode, "the row says one-shot; claude opens no session per lane")
+	assert.Contains(t, out.String(), "cannot open a session per lane; delivering in batch")
 }
 
 // A store that is down when the daemon starts is no reason to exit: under launchd's
@@ -264,12 +268,12 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	}
 	var slept []time.Duration
 	w.sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
-	w.beat = func(context.Context, string, string) error {
+	w.beat = func(context.Context, string, string) (string, error) {
 		beats++
 		if beats == 2 {
 			cancel()
 		}
-		return nil
+		return "", nil
 	}
 	var out, errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
@@ -355,7 +359,7 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		Session: friend.SessionBroken, SessionID: "ses_x", SessionReason: "invalid_request_error: bad input", BrokenAt: start.Add(-time.Minute)}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out(`delivered=0 session=broken session_id=ses_x broken_at=2026-10-04T02:59:00Z reason="invalid_request_error: bad input"`,
+		Out(`delivered=0 session=broken mode=- session_id=ses_x broken_at=2026-10-04T02:59:00Z reason="invalid_request_error: bad input"`,
 			"NOTE the session is broken: the provider refused the same way turn after turn")
 }
 
@@ -377,4 +381,73 @@ func TestInstallCarriesTheCoordinatorAndANonDefaultSilentStop(t *testing.T) {
 	assert.NotContains(t, string(raw), "--silent-stop", "the defaults are not written")
 	assert.NotContains(t, string(raw), "--broken-after")
 	assert.NotContains(t, string(raw), "--coordinator")
+}
+
+// The row's one-shot mode, read from the beat, wires the lanes end to end:
+// the lane opens its own session of the friend through opencode (a run with
+// no --session, seeded from her own files), keeps it in the state directory,
+// hands it the queued card with the bus line to send, and the friend's
+// directory is allowed in her project config, the home directory's symlink
+// to it too.
+func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, "ada", "bob")
+		r.onPath = map[string]string{"nova-bus": "/opt/nova/bin/nova-bus"}
+		w := r.world()
+		var cancel context.CancelFunc
+		w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+			ctx, cancel = context.WithCancel(ctx)
+			return ctx, cancel
+		}
+		w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("I am bob.\n"), 0o644))
+		require.NoError(t, os.Symlink(dir, filepath.Join(r.home, "bob-working")))
+		var mu sync.Mutex
+		var runs []string
+		lists := 0
+		w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if args[0] == "session" {
+				lists++
+				if lists == 1 {
+					return "[]", 0, nil
+				}
+				return `[{"id":"ses_lane1","directory":"` + dir + `","updated":1}]`, 0, nil
+			}
+			runs = append(runs, strings.Join(args, " "))
+			return "ok\n", 0, nil
+		}
+		beats := 0
+		w.beat = func(context.Context, string, string) (string, error) {
+			beats++
+			if beats == 12 {
+				cancel()
+			}
+			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
+		}
+		var out, errb strings.Builder
+		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+		require.Equal(t, 0, code, errb.String())
+		require.GreaterOrEqual(t, len(runs), 2, "%v\n%s", runs, out.String())
+		assert.True(t, strings.HasPrefix(runs[0], "run --dir "+dir+" You are bob: one of 1 one-shot lanes of bob, this is lane 1"), runs[0])
+		assert.Contains(t, runs[0], "Read "+filepath.Join(dir, "AGENTS.md")+" first")
+		assert.True(t, strings.HasPrefix(runs[1], "run --session ses_lane1 --dir "+dir+" nova-friend: lane 1 of 1: one card this turn, c1."), runs[1])
+		assert.Contains(t, runs[1], `3. Send one bus line: /opt/nova/bin/nova-bus send --as bob --to ada --subject "card c1 done" --body "<the first line of your REPORT.md>" --redis store.test:6379`)
+		lanes, err := friend.ReadLanes(friend.DefaultStateDir(r.home, "bob"))
+		require.NoError(t, err)
+		assert.Equal(t, map[int]string{1: "ses_lane1"}, lanes.Sessions)
+		raw, err := os.ReadFile(filepath.Join(dir, "opencode.json"))
+		require.NoError(t, err)
+		assert.Contains(t, string(raw), `"`+filepath.Join(r.home, "bob-working")+`/**": "allow"`)
+		s, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+		require.NoError(t, err)
+		assert.Equal(t, "one-shot", s.Mode)
+		assert.Contains(t, out.String(), "lane=1 session=ses_lane1")
+	})
 }
