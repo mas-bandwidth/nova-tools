@@ -7,4 +7,3 @@ cmd/nova-sandbox/run.go:glenn 1
 cmd/nova-sandbox/run.go:studio 1
 cmd/nova-sandbox/runwin.go:glenn 1
 cmd/nova-sandbox/runwin.go:space 2
-cmd/nova-sandbox/runwin_windows.go:space 1
