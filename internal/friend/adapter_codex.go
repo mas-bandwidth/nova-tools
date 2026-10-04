@@ -26,9 +26,9 @@ import (
 // --message <text>`) only when launched with
 // CODEX_APP_SERVER_USE_LOCAL_DAEMON=1 (docs/SPEC-FRIEND.md, Codex).
 //
-// Without a thread named, `--last` resumes the newest recorded thread whose
-// directory is Dir (codex filters by the working directory), so a friend who
-// starts a fresh thread there is still reached.
+// Without a thread named, the saved session headers and session index resolve
+// the newest thread whose directory is Dir before its writer lock is probed.
+// Resume names that exact thread rather than using `--last` after the probe.
 type Codex struct {
 	Dir, Session string
 	Run          Exec
@@ -82,13 +82,21 @@ func LockPath(home, thread string) string {
 const ResumeLabel = "answered by resume, not by the open chat"
 
 func (c *Codex) Deliver(ctx context.Context, text string) (int, error) {
-	if c.Session != "" && c.held()(LockPath(c.home(), c.Session)) {
-		return 1, fmt.Errorf("thread %s is open in the Codex app, which holds its writer lock; a resume cannot reach an open chat, so the message stays pending until the chat is closed", c.Session)
+	session := c.Session
+	if session == "" {
+		var err error
+		session, err = NewestCodexSession(c.home(), c.Dir)
+		if err != nil {
+			return 1, err
+		}
 	}
-	out, exit, err := c.Run(ctx, c.Dir, c.program(), ResumeArgs(c.Session, text), "")
+	if c.held()(LockPath(c.home(), session)) {
+		return 1, fmt.Errorf("thread %s is open in the Codex app, which holds its writer lock; a resume cannot reach an open chat, so the message stays pending until the chat is closed", session)
+	}
+	out, exit, err := c.Run(ctx, c.Dir, c.program(), ResumeArgs(session, text), "")
 	if c.Out != nil {
 		if exit == 0 && err == nil {
-			fmt.Fprintln(c.Out, ResumeLabel+": codex "+strings.Join(ResumeArgs(c.Session, "<text>"), " "))
+			fmt.Fprintln(c.Out, ResumeLabel+": codex "+strings.Join(ResumeArgs(session, "<text>"), " "))
 		} else {
 			fmt.Fprintf(c.Out, "not answered: codex exec resume exited %d (a thread open in the Codex app refuses a resume; or no such thread)\n", exit)
 		}
