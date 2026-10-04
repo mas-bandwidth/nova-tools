@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -165,11 +166,11 @@ first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopba
 		Verbs: []tool.Verb{
 			{
 				Name:    "send",
-				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--redis <addr>] [--dry-run]",
+				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--redis <addr>] [--dry-run]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
 				DryRun:  true,
-				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> at=<RFC3339> bytes=<n> sha256=<hex>: the id is the
+				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> [kind=<k>] at=<RFC3339> bytes=<n> sha256=<hex>: the id is the
 message's for ever, and the byte count and digest are the body's as the store holds it, so a sender
 can check a --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline).
 You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
@@ -184,6 +185,7 @@ line with no id, writing nothing.`,
 					f.String("body", "", "the message's text (or --stdin; at most 1 MiB)")
 					f.Bool("stdin", false, "read the message's text from stdin")
 					f.String("re", "", "the id of the message this one answers")
+					f.String("kind", bus.KindStatus, "the kind of message, one of "+strings.Join(bus.Kinds, ", ")+": what a reader filters on")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 					f.Check(func(c *tool.Call) {
 						if c.Given("body") == c.Given("stdin") {
@@ -195,24 +197,26 @@ line with no id, writing nothing.`,
 			},
 			{
 				Name:    "peek",
-				Usage:   "peek [--as <me>] [--redis <addr>]",
+				Usage:   "peek [--as <me>] [--kind <k>[,<k>]] [--redis <addr>]",
 				Example: "peek --as bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints PEEK OK pending=<n> new=<n>, then one PEEK MESSAGE state=<pending|new> id=<id> from=<name>
-at=<RFC3339> subject=<s> line per message: pending is delivered and not acked, new is never delivered.`,
+[kind=<k>] at=<RFC3339> subject=<s> line per message: pending is delivered and not acked, new is never delivered.
+--kind <k>[,<k>] lists only messages of those kinds; kind=<k> is left off a status's line.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.String("kind", "", "only these kinds, comma-separated, of "+strings.Join(bus.Kinds, ", ")+" (default: every kind)")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 				},
 				Run: w.peek,
 			},
 			{
 				Name:    "recv",
-				Usage:   "recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>] [--dry-run]",
+				Usage:   "recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>] [--dry-run]",
 				Example: "recv --as bob --exec true",
 				Effect:  tool.Delivery + ": moves one message to pending; with --exec it runs the command and acks on exit 0",
 				DryRun:  true,
-				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> at=<RFC3339>
+				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> [kind=<k>] at=<RFC3339>
 subject=<s> (login=none when the connection has no login user), a blank line, the body; or RECV
 NONE at exit 1 when nothing waits. You are the login user, as in send. The oldest message a
 reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
@@ -223,9 +227,14 @@ one waiting, each printed as its own RECV OK (or handed to --exec and acked on e
 at the first command that fails); --ack acks each after a plain recv prints it. --forever loops,
 waiting for messages, and needs --exec; it stops on SIGINT or SIGTERM, or at the first command
 that fails. --dry-run moves nothing: it prints RECV OK pending=<n> new=<n> next_new=<id>, what
-waits (a pending message held past fifteen minutes comes before the oldest new one).`,
+waits (a pending message held past fifteen minutes comes before the oldest new one).
+--kind <k>[,<k>] takes only messages of those kinds, in --all, --max, --forever and --dry-run too: a
+message of another kind is skipped, neither acked nor held, and the next recv without the filter
+gets it. kind=<k> is left off the line of a status (the default), so an absent kind is a status, as for a message sent
+before kinds existed.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.String("kind", "", "only these kinds, comma-separated, of "+strings.Join(bus.Kinds, ", ")+" (default: every kind); others are left for the next reader")
 					f.Int("max", 1, "how many messages to take, in order, each its own result; 1 is one message")
 					f.Bool("all", false, "take every message waiting, in order, each its own result")
 					f.Bool("ack", false, "ack each message after printing it (a plain recv leaves it pending)")
@@ -275,7 +284,7 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 				Example: "log --max 5",
 				Effect:  tool.Inspection,
 				Detail: `Prints LOG OK total=<n>, then one LOG MESSAGE id=<id> from=<name> to=<names> cc=<names> re=<id>
-at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<text> too under --bodies.`,
+[kind=<k>] at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<text> too under --bodies.`,
 				Flags: func(f *tool.Flags) {
 					f.Bool("bodies", false, "print each message's body as well")
 					f.Max()
@@ -388,7 +397,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 	}
 	draft := bus.Message{
 		From: as, To: names(c.Str("to")), CC: names(c.Str("cc")),
-		Subject: c.Str("subject"), Re: c.Str("re"), Body: body,
+		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body,
 	}
 	send := b.Send
 	if c.DryRun() {
@@ -399,8 +408,27 @@ func (w world) send(c *tool.Call) *tool.Out {
 		return answer(err)
 	}
 	sum := sha256.Sum256([]byte(m.Body))
-	return loginFact(tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ",")).Fact("at", m.At.Format(time.RFC3339)).
+	o := tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ","))
+	return loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
 		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
+}
+
+// kindFact adds kind=<k> to a result when the message is not a status: a
+// message without the word is a status, so the common line is unchanged.
+func kindFact(o *tool.Out, m bus.Message) *tool.Out {
+	if k := m.KindName(); k != bus.KindStatus {
+		o.Fact("kind", k)
+	}
+	return o
+}
+
+// kindItem is the key and value kind=<k> for an item's fields when the
+// message is not a status, as kindFact leaves it out for a status.
+func kindItem(m bus.Message) []any {
+	if k := m.KindName(); k != bus.KindStatus {
+		return []any{"kind", k}
+	}
+	return nil
 }
 
 // message is a received message as one Out: the header line's facts and the
@@ -410,7 +438,8 @@ func message(m bus.Message, login string) *tool.Out {
 	o := tool.Done()
 	o.Verb = "recv" // the token of the line, also when text renders it for --exec before the skeleton has
 	o.Fact("id", m.ID).Fact("from", m.From).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ",")).
-		Fact("re", m.Re).Fact("at", m.At.Format(time.RFC3339))
+		Fact("re", m.Re)
+	kindFact(o, m).Fact("at", m.At.Format(time.RFC3339))
 	return loginFact(o, login).Fact("subject", tool.Text(m.Subject))
 }
 
@@ -436,6 +465,10 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	if refused != nil {
 		return refused
 	}
+	kinds := names(c.Str("kind"))
+	if p := bus.CheckKinds(kinds...); p != "" {
+		return tool.Refuse(p)
+	}
 	if c.DryRun() {
 		// what waits, read only: the next delivered is a pending one held past fifteen
 		// minutes when there is one, else the oldest new one
@@ -443,6 +476,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		if err != nil {
 			return answer(err)
 		}
+		pending, fresh = bus.FilterKinds(pending, kinds), bus.FilterKinds(fresh, kinds)
 		next := "-"
 		if len(fresh) > 0 {
 			next = fresh[0].Message().ID
@@ -455,7 +489,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	stopped := tool.Done().Note("stopped by a signal; a message being delivered stays pending")
 	// one is one recv: the result, and whether a message was delivered
 	one := func(block time.Duration) (*tool.Out, bool) {
-		e, ok, err := b.Recv(ctx, as, block)
+		e, ok, err := b.RecvKinds(ctx, as, block, kinds)
 		if ctx.Err() != nil {
 			return stopped, false
 		}
@@ -579,10 +613,15 @@ func (w world) peek(c *tool.Call) *tool.Out {
 	if refused != nil {
 		return refused
 	}
+	kinds := names(c.Str("kind"))
+	if p := bus.CheckKinds(kinds...); p != "" {
+		return tool.Refuse(p)
+	}
 	pending, fresh, err := b.Peek(context.Background(), as)
 	if err != nil {
 		return answer(err)
 	}
+	pending, fresh = bus.FilterKinds(pending, kinds), bus.FilterKinds(fresh, kinds)
 	o := tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh))
 	for _, state := range []struct {
 		name string
@@ -590,7 +629,7 @@ func (w world) peek(c *tool.Call) *tool.Out {
 	}{{"pending", pending}, {"new", fresh}} {
 		for _, e := range state.es {
 			m := e.Message()
-			o.Item("message", "state", state.name, "id", m.ID, "from", m.From, "at", m.At.Format(time.RFC3339), "subject", tool.Text(m.Subject))
+			o.Item("message", slices.Concat([]any{"state", state.name, "id", m.ID, "from", m.From}, kindItem(m), []any{"at", m.At.Format(time.RFC3339), "subject", tool.Text(m.Subject)})...)
 		}
 	}
 	return o
@@ -609,7 +648,7 @@ func (w world) log(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("total", len(got))
 	for _, e := range got {
 		m := e.Message()
-		kv := []any{"id", m.ID, "from", m.From, "to", strings.Join(m.To, ","), "cc", strings.Join(m.CC, ","), "re", m.Re, "at", m.At.Format(time.RFC3339), "subject", tool.Text(m.Subject)}
+		kv := slices.Concat([]any{"id", m.ID, "from", m.From, "to", strings.Join(m.To, ","), "cc", strings.Join(m.CC, ","), "re", m.Re}, kindItem(m), []any{"at", m.At.Format(time.RFC3339), "subject", tool.Text(m.Subject)})
 		if c.Bool("bodies") {
 			kv = append(kv, "body", tool.Text(m.Body))
 		}
