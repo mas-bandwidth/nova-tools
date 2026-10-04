@@ -31,7 +31,7 @@ import (
 // BusDateLayout is how nova-bus writes a note's Date line.
 const BusDateLayout = "Mon Jan  2 15:04:05 UTC 2006"
 
-// SubjectPrefix opens every tokens note's subject, exactly: lower case, one space.
+// SubjectPrefix opens every tokens note's subject, exactly: lower case, one blank.
 const SubjectPrefix = "tokens "
 
 // reposComment is the one comment shape a body may carry meaning, and it carries no number.
