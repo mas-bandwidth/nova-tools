@@ -127,11 +127,6 @@ var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // -- so this changes nothing about any path that is not a windows one.
 func RemotePath(p string) string { return strings.ReplaceAll(p, `\`, "/") }
 
-// ValidRemotePath refuses anything that could be more than a path on the far
-// side, for a far side that is not windows. It is ValidRemotePathOn with no
-// target named, kept because that is what most of this estate wants to say.
-func ValidRemotePath(what, p string) error { return ValidRemotePathOn("", what, p) }
-
 // ValidRemotePathOn refuses anything that could be more than a path on the far
 // side. It also refuses a RELATIVE path, because the binary this verb runs
 // there must be named absolutely: a relative path resolves against whatever

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -132,34 +131,6 @@ func TestOpsCoverHeldRefusesWhilePendingAndWhenTheFenceIsLost(t *testing.T) {
 			}
 			h.m.Fail = nil
 			tc.want(t, h, hd)
-		})
-	}
-}
-
-// TestOpsCoverCountAnswersTheNamedColumn covers count's three answers: the
-// named column's count, and zero when the table has no such column or the
-// row's cells stop short of it.
-func TestOpsCoverCountAnswersTheNamedColumn(t *testing.T) {
-	t.Parallel()
-	table := ntable.Table{Name: "t", Columns: []ntable.Column{{Name: "a"}, {Name: "b"}}}
-	tests := []struct {
-		name  string
-		col   string
-		cells int
-		want  int64
-	}{
-		{name: "the named column's count", col: "b", cells: 2, want: 5},
-		{name: "a column the table does not have", col: "z", cells: 2, want: 0},
-		{name: "a row whose cells stop short of the column", col: "b", cells: 1, want: 0},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			row := ntable.Row{Key: "r"}
-			for i := 0; i < tc.cells; i++ {
-				row.Cells = append(row.Cells, ntable.Cell{Count: int64(4 + i)})
-			}
-			assert.Equal(t, tc.want, count(table, row, tc.col))
 		})
 	}
 }

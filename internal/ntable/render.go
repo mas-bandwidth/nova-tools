@@ -23,7 +23,7 @@ type RenderOpts struct {
 	// sprint's stream block keeps its names 25 wide); 0 fits the labels.
 	LabelWidth int
 	// Title is the table's name, printed in the top-left cell, the header
-	// of the row-label column (Glenn 2026-09-27: "tables need a title";
+	// of the row-label column (the owner 2026-09-27: "tables need a title";
 	// "the title goes where 'row' is currently").
 	Title string
 }
@@ -35,20 +35,20 @@ type RenderOpts struct {
 // are separated by " | " and the rule joins dashes with "-+-". A cell whose
 // set did not come back prints "?", and so does a fold over it. The last
 // column is padded only when it is right-aligned, so no line ends in a
-// space. A table always renders, with its header and its footer, and with no
-// body line when it has no row (Glenn 2026-09-30, the owner's ruling: tables
+// blank. A table always renders, with its header and its footer, and with no
+// body line when it has no row (the owner 2026-09-30, the owner's ruling: tables
 // and rows always show, empty or not); with no body line the footer sits under
 // the header's one rule, and the rule above the footer is not drawn (the owner,
 // 2026-10-02: "when the work stream table is empty, please just show the
 // summary row" / "not the extra --------------------+-----------+----------- etc.").
 //
-// The row's label is always the first column (Glenn 2026-09-27, the live
+// The row's label is always the first column (the owner 2026-09-27, the live
 // session: eight benches rendered as eight anonymous rows of numbers), put
 // in front of every declared column, and the footer label prints under it
 // instead of eating the first count column's fold. Its header is the
 // table's name when the caller gives one (opts.Title), else "row". A text
 // column is a column like any other: it prints the row's value (row set),
-// blank when the row has none; it never stands in for the label (Stella's
+// blank when the row has none; it never stands in for the label (a reviewer's
 // read of #4456: a value in a leading text column made the row's key
 // vanish; "the row identity must still have its own visible cell").
 // Display values are escaped before measuring widths: stored text cannot add
@@ -57,14 +57,14 @@ func Render(t Table, opts RenderOpts) string {
 	rows := make([]Row, 0, len(t.Rows))
 	for _, r := range t.Rows {
 		if r.Hidden {
-			continue // a hidden row stays in the folds (Glenn 2026-09-27: "hide the rows a-z but keep them there logically")
+			continue // a hidden row stays in the folds (the owner 2026-09-27: "hide the rows a-z but keep them there logically")
 		}
 		rows = append(rows, r)
 	}
 	// cols is what is printed; src[j] is the definition's column behind
 	// cols[j], or -1 for the row-label column put in front.
 	// hidden columns stay in the table (read, and formulas use them) and
-	// are not drawn (Glenn 2026-09-27: "Keep it, since the calculations
+	// are not drawn (the owner 2026-09-27: "Keep it, since the calculations
 	// depend on it, but hide that column")
 	cols := make([]Column, 0, len(t.Columns))
 	src := make([]int, 0, len(t.Columns))
@@ -145,7 +145,7 @@ func Render(t Table, opts RenderOpts) string {
 				pad(&l, s, widths[j], right[j], last)
 			}
 		}
-		// a blank left-aligned last cell leaves no trailing space
+		// a blank left-aligned last cell leaves no trailing whitespace
 		b.WriteString(strings.TrimRight(l.String(), " "))
 		b.WriteByte('\n')
 	}
@@ -375,7 +375,7 @@ func countValue(cols []Column, r Row, j int) (int64, bool) {
 
 // formulaText prints a formula cell: a sum as a count; a percentage with one
 // decimal ("33.3%"), "0.0%" when its denominator is known to be zero, "?"
-// when a count it reads did not come back (Stella's read of #4456: an unread
+// when a count it reads did not come back (a reviewer's read of #4456: an unread
 // dependency propagates; pct(<col>) reads every count column of the row).
 func formulaText(cols []Column, c Column, r Row, j int) string {
 	if IsSum(c.Projection) {
@@ -392,7 +392,7 @@ func formulaText(cols []Column, c Column, r Row, j int) string {
 	return pctText(v)
 }
 
-// pctText prints a percentage with one decimal always, "50.0%" (Glenn
+// pctText prints a percentage with one decimal always, "50.0%" (the owner
 // 2026-09-27: "standardize on one decimal point of precision for the %,
 // even if it is .0").
 func pctText(v float64) string {

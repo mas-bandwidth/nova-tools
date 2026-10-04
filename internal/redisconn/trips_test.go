@@ -109,7 +109,7 @@ func TestTripsDoNotCountAConnectionsSetup(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379", Dialer: store.dial})
 	t.Cleanup(func() { _ = client.Close() })
 	trips := CountTrips(client)
-	ctx := WithTripLabel(context.Background(), "first")
+	ctx := context.Background()
 	if err := client.Set(ctx, "k", "v", 0).Err(); err != nil {
 		require.NoError(t, err, err)
 	}
@@ -117,8 +117,8 @@ func TestTripsDoNotCountAConnectionsSetup(t *testing.T) {
 	if len(sent) < 3 || sent[0] != "1: hello 3" || sent[len(sent)-1] != "1: set k v" {
 		require.FailNowf(t, "", "the store received %q; want a handshake of several commands and then the command", sent)
 	}
-	if trips.N() != 1 || trips.Of("first") != 1 {
-		assert.Failf(t, "", "a command that set its connection up with %d commands took %d trips, %d under its label; want 1 and 1", len(sent)-1, trips.N(), trips.Of("first"))
+	if trips.N() != 1 {
+		assert.EqualValues(t, 1, trips.N(), "a command that set its connection up with %d commands took %d trips; want 1", len(sent)-1, trips.N())
 	}
 	pipe := client.Pipeline()
 	pipe.Get(ctx, "a")
@@ -165,59 +165,6 @@ func TestTripsDoNotCountTheSetupOfAConnectionDialedLater(t *testing.T) {
 	}
 }
 
-// TestTripLabels: a trip is counted under the label its context carries, and
-// under a context derived from that one; the counts by label are the
-// caller's own copy.
-func TestTripLabels(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	if got := TripLabel(ctx); got != "" {
-		assert.Empty(t, got, "a context with no label reads %q", got)
-	}
-	read := WithTripLabel(ctx, "read")
-	type key struct{}
-	derived, cancel := context.WithCancel(context.WithValue(read, key{}, 1))
-	defer cancel()
-	if TripLabel(read) != "read" || TripLabel(derived) != "read" {
-		assert.Failf(t, "", "labels %q and %q; want read and read", TripLabel(read), TripLabel(derived))
-	}
-	if got := TripLabel(WithTripLabel(read, "write")); got != "write" {
-		assert.EqualValues(t, "write", got, "a label over a label reads %q; want the newer", got)
-	}
-
-	conn, _ := opened(t, accepting)
-	client := conn.Client()
-	trips := CountTrips(client)
-	for _, c := range []context.Context{ctx, read, read, derived, WithTripLabel(ctx, "write"), WithTripLabel(read, "")} {
-		if err := client.Set(c, "k", "v", 0).Err(); err != nil {
-			require.NoError(t, err, err)
-		}
-	}
-	pipe := client.Pipeline()
-	pipe.Get(read, "a")
-	if _, err := pipe.Exec(WithTripLabel(ctx, "batch")); err != nil {
-		require.NoError(t, err, err)
-	}
-	if trips.N() != 7 {
-		assert.EqualValues(t, 7, trips.N(), "%d trips; want 7", trips.N())
-	}
-	want := map[string]int64{"read": 3, "write": 1, "batch": 1}
-	got := trips.ByLabel()
-	if !reflect.DeepEqual(got, want) {
-		assert.Equal(t, want, got, "by label %v; want %v", got, want)
-	}
-	for label, n := range map[string]int64{"read": 3, "write": 1, "batch": 1, "": 0, "absent": 0} {
-		if trips.Of(label) != n {
-			assert.EqualValues(t, n, trips.Of(label), "Of(%q) = %d; want %d", label, trips.Of(label), n)
-		}
-	}
-	got["read"] = 99
-	got["new"] = 1
-	if !reflect.DeepEqual(trips.ByLabel(), want) {
-		assert.Equal(t, want, trips.ByLabel(), "a change to the map ByLabel returned changed the counter: %v", trips.ByLabel())
-	}
-}
-
 // TestTripsOfNothing: a nil counter has counted nothing.
 func TestTripsOfNothing(t *testing.T) {
 	t.Parallel()
@@ -236,7 +183,7 @@ func TestTwoCountersEachCount(t *testing.T) {
 	t.Parallel()
 	conn, _ := opened(t, accepting)
 	client := conn.Client()
-	ctx := WithTripLabel(context.Background(), "read")
+	ctx := context.Background()
 	first := CountTrips(client)
 	if err := client.Get(ctx, "k").Err(); err != nil {
 		require.NoError(t, err, err)
@@ -247,8 +194,8 @@ func TestTwoCountersEachCount(t *testing.T) {
 			require.NoError(t, err, err)
 		}
 	}
-	if first.N() != 3 || second.N() != 2 || first.Of("read") != 3 || second.Of("read") != 2 {
-		assert.Failf(t, "", "the counters read %d (%d) and %d (%d); want 3 and 2", first.N(), first.Of("read"), second.N(), second.Of("read"))
+	if first.N() != 3 || second.N() != 2 {
+		assert.Failf(t, "", "the counters read %d and %d; want 3 and 2", first.N(), second.N())
 	}
 }
 
@@ -266,13 +213,13 @@ func TestTripsFromManyGoroutines(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ctx := WithTripLabel(context.Background(), fmt.Sprint("worker-", w))
+			ctx := context.Background()
 			for i := 0; i < each; i++ {
 				if err := client.Set(ctx, "k", "v", 0).Err(); err != nil {
 					errs <- err
 					return
 				}
-				_ = trips.N() + trips.Of("worker-0") + int64(len(trips.ByLabel()))
+				_ = trips.N() + int64(len(trips.ByLabel()))
 			}
 		}()
 	}
@@ -283,11 +230,6 @@ func TestTripsFromManyGoroutines(t *testing.T) {
 	}
 	if trips.N() != workers*each {
 		assert.EqualValues(t, workers*each, trips.N(), "%d trips; want %d", trips.N(), workers*each)
-	}
-	for w := 0; w < workers; w++ {
-		if n := trips.Of(fmt.Sprint("worker-", w)); n != each {
-			assert.EqualValues(t, each, n, "worker %d: %d trips; want %d", w, n, each)
-		}
 	}
 	if faults := store.faults(); len(faults) != 0 {
 		assert.Len(t, faults, 0, "%q", faults)

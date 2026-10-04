@@ -195,7 +195,7 @@ func TestReportRedisRefusesWithoutMonth(t *testing.T) {
 }
 
 // TestLedgerRefusesWithoutRedisAndNamesAMissingDay: `ledger` wants its store named, and a
-// day with no file is a NO naming the fold, with nothing written for it.
+// day with no file is a FAILED naming the fold, with nothing written for it.
 func TestLedgerRefusesWithoutRedisAndNamesAMissingDay(t *testing.T) {
 	t.Parallel()
 
@@ -206,8 +206,8 @@ func TestLedgerRefusesWithoutRedisAndNamesAMissingDay(t *testing.T) {
 	addr, mr := ledgerRedis(t)
 	r = invoke(t, "ledger", "--out", out, "--day", "2026-09-11", "--redis", addr)
 	wantExit(t, r, 1)
-	wantContains(t, r.stdout, "LEDGER BAD day=2026-09-11 why=no day file; fold --day 2026-09-11 first")
-	wantContains(t, r.stdout, "LEDGER NO day=2026-09-11 days=0 rows=0 bad=1")
+	wantContains(t, r.stdout, "LEDGER FAILED day=2026-09-11 why=no day file; fold --day 2026-09-11 first")
+	wantContains(t, r.stdout, "LEDGER FAILED day=2026-09-11 days=0 rows=0 bad=1")
 	{
 		keys := mr.Keys()
 		require.Equal(t, 0, len(keys), "a missing day wrote %v", keys)
@@ -227,11 +227,11 @@ func TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly(t *testing.T) {
 	t.Setenv("LEDGER_TEST_PW", "sesame")
 	r = invoke(t, "report", "--redis", addr, "--month", "2026-09", "--password-env", "LEDGER_TEST_PW")
 	wantExit(t, r, 1)
-	wantContains(t, r.stdout, "REPORT NO month=2026-09 source=redis indexed=0")
+	wantContains(t, r.stdout, "REPORT FAILED month=2026-09 source=redis indexed=0")
 }
 
 // TestReportRedisNoIndexedDaysExitsOne and TestReportRedisPartialMonthNamesIndexedMissing
-// cover #3462: a month with no indexed calendar-day keys is REPORT NO exit 1, and a month
+// cover #3462: a month with no indexed calendar-day keys is REPORT FAILED exit 1, and a month
 // with only some days indexed names indexed and missing on the OK line.
 func TestReportRedisNoIndexedDaysExitsOne(t *testing.T) {
 	t.Parallel()
@@ -239,7 +239,7 @@ func TestReportRedisNoIndexedDaysExitsOne(t *testing.T) {
 	addr, _ := ledgerRedis(t)
 	r := invoke(t, "report", "--redis", addr, "--month", "2026-08")
 	wantExit(t, r, 1)
-	wantContains(t, r.stdout, "REPORT NO month=2026-08 source=redis indexed=0")
+	wantContains(t, r.stdout, "REPORT FAILED month=2026-08 source=redis indexed=0")
 }
 
 func TestReportRedisPartialMonthNamesIndexedMissing(t *testing.T) {

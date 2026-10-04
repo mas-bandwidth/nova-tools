@@ -12,10 +12,21 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/check"
 )
 
+// checkSpellingText is the tests' in-memory seam over the live checker: one
+// text, markdown when the options or the filename say so. The package's
+// exported one went when no tool reached it; the tools reach the same
+// CheckText through the file checks.
+func checkSpellingText(filename, text string, opts check.SpellingOptions) ([]check.SpellingFinding, string, error) {
+	checker := check.NewSpellingChecker(opts.Ignore)
+	isMD := opts.Markdown || check.IsMarkdown(filename)
+	findings, updated := checker.CheckText(filename, text, isMD)
+	return findings, updated, nil
+}
+
 func TestSpellingSeededMisspellings(t *testing.T) {
 	t.Parallel()
 	text := "I recieve mail.\nWe seperate the parts.\nIt occured to me.\n"
-	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{})
+	findings, _, err := checkSpellingText("test.md", text, check.SpellingOptions{})
 	require.NoError(t, err, "unexpected error: %v", err)
 	require.Len(t, findings, 3, "got %d findings, want 3: %+v", len(findings), findings)
 
@@ -40,7 +51,7 @@ func TestSpellingSeededMisspellings(t *testing.T) {
 func TestSpellingBritishVariantsToUS(t *testing.T) {
 	t.Parallel()
 	text := "The colour of the code.\nWe optimise the loop.\n"
-	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{})
+	findings, _, err := checkSpellingText("test.md", text, check.SpellingOptions{})
 	require.NoError(t, err, "unexpected error: %v", err)
 	require.Len(t, findings, 2, "got %d findings, want 2: %+v", len(findings), findings)
 	assert.Equal(t, "colour", findings[0].Original, "finding 0 mismatch: %+v", findings[0])
@@ -53,7 +64,7 @@ func TestSpellingAllowlist(t *testing.T) {
 	t.Parallel()
 	text := "The colour of the cairn.\n"
 	opts := check.SpellingOptions{Ignore: []string{"colour"}}
-	findings, _, err := check.CheckSpellingText("test.md", text, opts)
+	findings, _, err := checkSpellingText("test.md", text, opts)
 	require.NoError(t, err, "unexpected error: %v", err)
 	assert.Empty(t, findings, "expected colour to be ignored, got: %+v", findings)
 }
@@ -63,7 +74,7 @@ func TestSpellingAllowlistCaseInsensitive(t *testing.T) {
 	for _, word := range []string{"colour", "Colour", "COLOUR"} {
 		text := "The " + word + " of the cairn.\n"
 		opts := check.SpellingOptions{Ignore: []string{"Colour"}}
-		findings, _, err := check.CheckSpellingText("test.md", text, opts)
+		findings, _, err := checkSpellingText("test.md", text, opts)
 		require.NoError(t, err, "unexpected error: %v", err)
 		assert.Empty(t, findings, "expected %q to be ignored by allowlist entry, got: %+v", word, findings)
 	}
@@ -79,7 +90,7 @@ func TestSpellingAllowlistFile(t *testing.T) {
 
 	opts := check.SpellingOptions{Ignore: []string{"@" + listFile}}
 	text := "We optimise the colour.\n"
-	findings, _, err := check.CheckSpellingText("test.md", text, opts)
+	findings, _, err := checkSpellingText("test.md", text, opts)
 	require.NoError(t, err, "unexpected error: %v", err)
 	assert.Empty(t, findings, "expected findings to be empty with allowlist file, got: %+v", findings)
 }
@@ -87,7 +98,7 @@ func TestSpellingAllowlistFile(t *testing.T) {
 func TestSpellingFencedCodeBlockBlanking(t *testing.T) {
 	t.Parallel()
 	text := "Prose before.\n```go\nrecieve := seperate(occured)\n```\nProse after with colour.\n"
-	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{})
+	findings, _, err := checkSpellingText("test.md", text, check.SpellingOptions{})
 	require.NoError(t, err, "unexpected error: %v", err)
 	require.Len(t, findings, 1, "got %d findings, want 1: %+v", len(findings), findings)
 	assert.Equal(t, 5, findings[0].Line, "finding line or word mismatch: %+v", findings[0])
@@ -97,7 +108,7 @@ func TestSpellingFencedCodeBlockBlanking(t *testing.T) {
 func TestSpellingTildeFencedCodeBlock(t *testing.T) {
 	t.Parallel()
 	text := "Prose before.\n~~~python\nrecieve = 1\n~~~\nProse after with colour.\n"
-	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{})
+	findings, _, err := checkSpellingText("test.md", text, check.SpellingOptions{})
 	require.NoError(t, err, "unexpected error: %v", err)
 	require.Len(t, findings, 1, "got %d findings, want 1: %+v", len(findings), findings)
 	assert.Equal(t, 5, findings[0].Line, "finding line or word mismatch: %+v", findings[0])
@@ -107,7 +118,7 @@ func TestSpellingTildeFencedCodeBlock(t *testing.T) {
 func TestSpellingInlineCodeSpanBlanking(t *testing.T) {
 	t.Parallel()
 	text := "The `recieve` identifier is code, but occured is prose.\n"
-	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{})
+	findings, _, err := checkSpellingText("test.md", text, check.SpellingOptions{})
 	require.NoError(t, err, "unexpected error: %v", err)
 	require.Len(t, findings, 1, "got %d findings, want 1: %+v", len(findings), findings)
 	assert.Equal(t, "occured", findings[0].Original, "expected occured, got %+v", findings[0])
@@ -116,7 +127,7 @@ func TestSpellingInlineCodeSpanBlanking(t *testing.T) {
 func TestSpellingUnmatchedBacktickLiteral(t *testing.T) {
 	t.Parallel()
 	text := "A stray ` and then recieve.\n"
-	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{})
+	findings, _, err := checkSpellingText("test.md", text, check.SpellingOptions{})
 	require.NoError(t, err, "unexpected error: %v", err)
 	require.Len(t, findings, 1, "got %d findings, want 1: %+v", len(findings), findings)
 	assert.Equal(t, "recieve", findings[0].Original, "expected recieve, got %+v", findings[0])
@@ -125,7 +136,7 @@ func TestSpellingUnmatchedBacktickLiteral(t *testing.T) {
 func TestSpellingUnclosedFenceBlanksToEnd(t *testing.T) {
 	t.Parallel()
 	text := "Prose before.\n```go\nrecieve := 1\nseperate := 2\n"
-	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{})
+	findings, _, err := checkSpellingText("test.md", text, check.SpellingOptions{})
 	require.NoError(t, err, "unexpected error: %v", err)
 	assert.Empty(t, findings, "expected unclosed fence to blank to end, got: %+v", findings)
 }
@@ -193,7 +204,7 @@ func TestSpellingCheckPatterns(t *testing.T) {
 func TestSpellingMultilineCodeSpan(t *testing.T) {
 	t.Parallel()
 	text := "Code `recieve\nseperate` remains code.\n"
-	findings, updated, err := check.CheckSpellingText("code.md", text, check.SpellingOptions{Markdown: true})
+	findings, updated, err := checkSpellingText("code.md", text, check.SpellingOptions{Markdown: true})
 	require.NoError(t, err)
 	assert.Empty(t, findings, "expected 0 findings for multiline code span, got %+v", findings)
 	assert.Equal(t, text, updated, "updated = %q, want %q", updated, text)
@@ -202,7 +213,7 @@ func TestSpellingMultilineCodeSpan(t *testing.T) {
 func TestSpellingContainerFences(t *testing.T) {
 	t.Parallel()
 	text := "> ```go\n> func recieve() {}\n> ```\n> ~~~python\n> recieve = 1\n> ~~~\nProse after with colour.\n"
-	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{Markdown: true})
+	findings, _, err := checkSpellingText("test.md", text, check.SpellingOptions{Markdown: true})
 	require.NoError(t, err)
 	require.Len(t, findings, 1, "got %d findings, want 1: %+v", len(findings), findings)
 	assert.Equal(t, "colour", findings[0].Original, "expected colour, got %+v", findings[0])
@@ -212,7 +223,7 @@ func TestSpellingEscapedBackticks(t *testing.T) {
 	t.Parallel()
 	// An odd number of backslashes escapes the backtick, so recieve is prose.
 	escaped := "A literal \\`recieve\\` here.\n"
-	findings, _, err := check.CheckSpellingText("test.md", escaped, check.SpellingOptions{Markdown: true})
+	findings, _, err := checkSpellingText("test.md", escaped, check.SpellingOptions{Markdown: true})
 	require.NoError(t, err)
 	if len(findings) != 1 || findings[0].Original != "recieve" {
 		assert.Failf(t, "assertion failed", "expected recieve to be flagged when backtick is escaped, got %+v", findings)
@@ -220,7 +231,7 @@ func TestSpellingEscapedBackticks(t *testing.T) {
 
 	// An even number of backslashes escapes the backslash, so backtick starts a code span.
 	unescaped := "A literal \\\\`recieve\\\\` here.\n"
-	findings2, _, err := check.CheckSpellingText("test.md", unescaped, check.SpellingOptions{Markdown: true})
+	findings2, _, err := checkSpellingText("test.md", unescaped, check.SpellingOptions{Markdown: true})
 	require.NoError(t, err)
 	assert.Empty(t, findings2, "expected 0 findings when backtick is not escaped, got %+v", findings2)
 }
@@ -229,7 +240,7 @@ func TestSpellingBlankLineTerminatesSpan(t *testing.T) {
 	t.Parallel()
 	// A code span cannot cross a blank line (CommonMark 0.31.2).
 	text := "`start\n\nrecieve`\n"
-	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{Markdown: true})
+	findings, _, err := checkSpellingText("test.md", text, check.SpellingOptions{Markdown: true})
 	require.NoError(t, err)
 	if len(findings) != 1 || findings[0].Original != "recieve" {
 		assert.Failf(t, "assertion failed", "expected recieve to be flagged across blank line, got %+v", findings)
@@ -314,8 +325,8 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 	t.Run("list-item-code-fence", func(t *testing.T) {
 		t.Parallel()
 		text := "- ```go\n  func recieve() {}\n  ```\n"
-		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
-		require.NoError(t, err, "CheckSpellingText error: %v", err)
+		findings, updated, err := checkSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		require.NoError(t, err, "checkSpellingText error: %v", err)
 		assert.Empty(t, findings, "expected 0 findings in list fence, got: %+v", findings)
 		assert.Equal(t, text, updated, "updated = %q, want %q", updated, text)
 	})
@@ -323,8 +334,8 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 	t.Run("blockquote-ends-fence", func(t *testing.T) {
 		t.Parallel()
 		text := "> ```go\n> recieve\n\nrecieve in prose.\n"
-		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
-		require.NoError(t, err, "CheckSpellingText error: %v", err)
+		findings, updated, err := checkSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		require.NoError(t, err, "checkSpellingText error: %v", err)
 		require.Len(t, findings, 1, "expected 1 finding for prose after blockquote fence, got: %+v", findings)
 		assert.Equal(t, "recieve", findings[0].Original, "unexpected finding: %+v", findings[0])
 		assert.Equal(t, 4, findings[0].Line, "unexpected finding: %+v", findings[0])
@@ -335,8 +346,8 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 	t.Run("blank-line-inside-list-fence", func(t *testing.T) {
 		t.Parallel()
 		text := "- ```go\n  func recieve() {}\n\n  var seperate = 1\n  ```\n"
-		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
-		require.NoError(t, err, "CheckSpellingText error: %v", err)
+		findings, updated, err := checkSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		require.NoError(t, err, "checkSpellingText error: %v", err)
 		assert.Empty(t, findings, "expected 0 findings in list fence with blank line, got: %+v", findings)
 		assert.Equal(t, text, updated, "updated = %q, want %q", updated, text)
 	})
@@ -344,8 +355,8 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 	t.Run("loose-list-blank-line-before-fence", func(t *testing.T) {
 		t.Parallel()
 		text := "-   intro\n\n    ~~~go\n    func recieve() {}\n    ~~~\n"
-		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
-		require.NoError(t, err, "CheckSpellingText error: %v", err)
+		findings, updated, err := checkSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		require.NoError(t, err, "checkSpellingText error: %v", err)
 		assert.Empty(t, findings, "expected 0 findings in loose list fence, got: %+v", findings)
 		assert.Equal(t, text, updated, "updated = %q, want %q", updated, text)
 	})
@@ -353,8 +364,8 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 	t.Run("loose-list-unclosed-fence-ends-at-list-exit", func(t *testing.T) {
 		t.Parallel()
 		text := "- intro\n\n  ~~~go\n  recieve\n\nrecieve in prose.\n"
-		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
-		require.NoError(t, err, "CheckSpellingText error: %v", err)
+		findings, updated, err := checkSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		require.NoError(t, err, "checkSpellingText error: %v", err)
 		require.Len(t, findings, 1, "expected 1 finding for prose after loose list fence, got: %+v", findings)
 		assert.Equal(t, "recieve", findings[0].Original, "unexpected finding: %+v", findings[0])
 		assert.Equal(t, 6, findings[0].Line, "unexpected finding: %+v", findings[0])
@@ -365,8 +376,8 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 	t.Run("tab-stop-marker-indentation", func(t *testing.T) {
 		t.Parallel()
 		text := "-\t~~~go\n  recieve in prose.\n"
-		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
-		require.NoError(t, err, "CheckSpellingText error: %v", err)
+		findings, updated, err := checkSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		require.NoError(t, err, "checkSpellingText error: %v", err)
 		require.Len(t, findings, 1, "expected 1 finding for prose outside tab-indented list item, got: %+v", findings)
 		assert.Equal(t, "recieve", findings[0].Original, "unexpected finding: %+v", findings[0])
 		assert.Equal(t, 2, findings[0].Line, "unexpected finding: %+v", findings[0])
@@ -378,8 +389,8 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 		t.Parallel()
 		for _, prefix := range []string{"> - ", "> -\t"} {
 			text := prefix + "~~~go\n>   func recieve() {}\n>   ~~~\n"
-			findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
-			require.NoError(t, err, "CheckSpellingText error: %v", err)
+			findings, updated, err := checkSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+			require.NoError(t, err, "checkSpellingText error: %v", err)
 			assert.Empty(t, findings, "prefix %q: expected 0 findings in quoted list fence, got: %+v", prefix, findings)
 			assert.Equal(t, text, updated, "prefix %q: updated = %q, want %q", prefix, updated, text)
 		}
@@ -388,8 +399,8 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 	t.Run("quoted-list-varying-indent-preserve-code", func(t *testing.T) {
 		t.Parallel()
 		text := "   > - ~~~go\n>   func recieve() {}\n>   ~~~\n"
-		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
-		require.NoError(t, err, "CheckSpellingText error: %v", err)
+		findings, updated, err := checkSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		require.NoError(t, err, "checkSpellingText error: %v", err)
 		assert.Empty(t, findings, "expected 0 findings in quoted list fence with shorter quote prefix, got: %+v", findings)
 		assert.Equal(t, text, updated, "updated = %q, want %q", updated, text)
 	})
@@ -397,8 +408,8 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 	t.Run("quoted-list-varying-indent-correct-prose", func(t *testing.T) {
 		t.Parallel()
 		text := "> - ~~~go\n   > recieve in prose.\n"
-		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
-		require.NoError(t, err, "CheckSpellingText error: %v", err)
+		findings, updated, err := checkSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		require.NoError(t, err, "checkSpellingText error: %v", err)
 		require.Len(t, findings, 1, "expected 1 finding for prose outside list item with longer quote prefix, got: %+v", findings)
 		assert.Equal(t, "recieve", findings[0].Original, "unexpected finding: %+v", findings[0])
 		assert.Equal(t, 2, findings[0].Line, "unexpected finding: %+v", findings[0])
