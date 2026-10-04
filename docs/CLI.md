@@ -1555,9 +1555,13 @@ UNKNOWN. A row holding a whole argv (`go version`) is run as written.
 Use `nova-update help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. Updates require an explicit `nova-update apply --file ... name`;
 models are listed for the owner to evaluate and pull themselves. No timer is installed.
-For recovery across process death, name `--snapshot`; retries retain the prepared
-note. Version statuses should go to your chosen integrator, with optional Cc;
-participation and updates remain voluntary.
+For recovery across process death, name `--snapshot`; an unchanged observation
+sends nothing. `--send` delivers one note through nova-bus on the Redis bus:
+`nova-bus send --as <sender> --to <recipients> --subject <one line> --stdin`.
+nova-bus reads the store from `NOVA_BUS_REDIS`. A confirmed `SEND OK id=<id>`
+line is what the receipt records. `watch --adopt` with `--bus`, `--as` and `--to`
+posts the adoption receipt the same way. Version statuses should go to your chosen
+integrator, with optional Cc; participation and updates remain voluntary.
 
 `status` is `check` with every entry's line shown, the current ones too, exit 0 when
 every entry is equal and 1 when any differs; it writes nothing. `apply --dry-run`
@@ -1574,9 +1578,12 @@ nova-update apply --file versions.tsv go --dry-run
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
-`--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
-`--remote` and `--branch`. A busy snapshot wants the current writer to finish
-or a larger `--budget`; never remove a lock file to break a live lock.
+`--draft` needs `--as` and `--to` and sends nothing. `--send` delivers through
+nova-bus on the Redis bus; nova-bus reads the store from `NOVA_BUS_REDIS`.
+`watch` posts its receipt when `--bus`, `--as` and `--to` are set, by the same
+`nova-bus send --as --to --subject --stdin`, and does not take `--remote` or
+`--branch`. A busy snapshot wants the current writer to finish or a larger
+`--budget`; never remove a lock file to break a live lock.
 
 ### The release verb
 
@@ -1782,14 +1789,19 @@ Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
 `platform=`, are accepted as metadata. A binary that prints no version line is
 refused by name; a partial inventory is not reported as complete. For recovery
-across process death, name `--snapshot`; retries retain the prepared note.
-Version reports can be sent to the recipient you select, with optional Cc.
+across process death, name `--snapshot`; an unchanged observation sends nothing.
+`--send` delivers one note through nova-bus on the Redis bus:
+`nova-bus send --as <sender> --to <recipients> --subject <one line> --stdin`.
+nova-bus reads the store from `NOVA_BUS_REDIS`. A confirmed `SEND OK id=<id>`
+line is what the receipt records. Version reports can be sent to the recipient
+you select, with optional Cc.
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
-`--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
-`--remote` and `--branch`. A busy snapshot wants the current writer to finish
-or a larger `--budget`; never remove a lock file to break a live lock.
+`--draft` needs `--as` and `--to` and sends nothing. `--send` delivers through
+nova-bus on the Redis bus; nova-bus reads the store from `NOVA_BUS_REDIS`.
+A busy snapshot wants the current writer to finish or a larger `--budget`; never
+remove a lock file to break a live lock.
 
 
 ## nova-secrets
