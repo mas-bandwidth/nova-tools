@@ -47,6 +47,9 @@ func newTestApp(t *testing.T) *testApp {
 	// run's wait on a quiet log steps the clock by the time it may take
 	ta.m.LogWait = func(d time.Duration) { ta.a.sleep(d) }
 	ta.a.meter = hostload.Source{NCPU: 4, Load1: func() (float64, bool) { return 1, true }}
+	// the seat check's reaches past the store are fakes that say everything is up
+	// (machinery_test.go): a test of the check gives its own
+	ta.a.outside = upOutside()
 	// every part a tick plans on its twin is checked against a fresh read
 	ta.a.checkTwin = func(twin, fresh *sprint.Snapshot) error {
 		if d := store.TwinDiff(twin, fresh); d != "" {

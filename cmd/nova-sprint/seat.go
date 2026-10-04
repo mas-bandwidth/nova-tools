@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -67,6 +68,14 @@ func (a *app) cmdCoordinator(args []string, stdout, stderr io.Writer) int {
 	if why := sprint.NotSeat(holder, req); why != "" {
 		return refuse(stderr, "coordinator", why)
 	}
+	// the seat check comes before anything else (docs/SPEC-SPRINT.md, "The seat
+	// check"): the seat moves whatever it says, and the one taking it is told
+	// check; the verb's word and exit are the move's own (the seat moved: OK,
+	// 0), and the check's DOWN lines carry their remedies
+	check := a.machineryCheck(ctx, st, c.redis)
+	if !c.json {
+		fmt.Fprint(stdout, check.Text())
+	}
 	how := "given"
 	if req.Take {
 		how = "taken approved_by=" + oneline.Field(req.ApprovedBy)
@@ -87,17 +96,17 @@ func (a *app) cmdCoordinator(args []string, stdout, stderr io.Writer) int {
 		// the seat moved since the check above: the step read it again
 		return refuse(stderr, "coordinator", res.Refused[0].Why)
 	}
-	h, text, err := a.handover(ctx, st)
+	h, err := a.handoverWith(ctx, st, check)
 	if err != nil {
 		return a.readFailed("coordinator", err, stderr)
 	}
 	if c.json {
-		b, _ := json.Marshal(map[string]any{"holder": req.To, "from": holder, "by": c.actor, "taken": req.Take, "approved_by": req.ApprovedBy, "op": res.Op, "handover": h}) // ignored: strings, a bool and a view of strings always encode
+		b, _ := json.Marshal(map[string]any{"holder": req.To, "from": holder, "by": c.actor, "taken": req.Take, "approved_by": req.ApprovedBy, "op": res.Op, "handover": h, "check": check}) // ignored: strings, a bool and a view of strings always encode
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
 	fmt.Fprintf(stdout, "COORDINATOR OK %s\n", said)
-	fmt.Fprint(stdout, text)
+	fmt.Fprint(stdout, a.handoverText(h, false)) // the check was printed first
 	return 0
 }
 
@@ -110,10 +119,12 @@ func (a *app) cmdHandover(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "handover", err.Error())
 	}
-	h, text, err := a.handover(context.Background(), st)
+	h, text, err := a.handover(context.Background(), st, c.redis)
 	if err != nil {
 		return a.readFailed("handover", err, stderr)
 	}
+	// the brief printed is HANDOVER OK, exit 0, whatever the check at its head
+	// says: the word and the exit agree, and the DOWN lines carry their remedies
 	if c.json {
 		b, _ := json.Marshal(h) // ignored: a view of strings, numbers and times always encodes
 		fmt.Fprintln(stdout, string(b))
@@ -125,19 +136,21 @@ func (a *app) cmdHandover(args []string, stdout, stderr io.Writer) int {
 
 // handoverView is what the next seat needs, as handover --json carries it.
 type handoverView struct {
-	At        time.Time       `json:"at"`
-	Seat      seatView        `json:"seat"`
-	Owner     string          `json:"owner,omitempty"`
-	Machine   string          `json:"machine"`
-	Summary   string          `json:"summary"`
-	Streams   []streamCounts  `json:"streams"`
-	Sentinels []sentinelView  `json:"sentinels"`
-	Judgments []inboxJudgment `json:"judgments"`
-	Members   []memberView    `json:"members"`
-	Routes    routesView      `json:"routes"`
-	Decisions []decisionView  `json:"decisions"`
-	First     []string        `json:"first"`
-	groups    []sprint.Group  // the open judgments, as inbox prints them
+	At time.Time `json:"at"`
+	// Check is the seat check (machinery.go): the brief starts with it.
+	Check     seatcheck.Report `json:"check"`
+	Seat      seatView         `json:"seat"`
+	Owner     string           `json:"owner,omitempty"`
+	Machine   string           `json:"machine"`
+	Summary   string           `json:"summary"`
+	Streams   []streamCounts   `json:"streams"`
+	Sentinels []sentinelView   `json:"sentinels"`
+	Judgments []inboxJudgment  `json:"judgments"`
+	Members   []memberView     `json:"members"`
+	Routes    routesView       `json:"routes"`
+	Decisions []decisionView   `json:"decisions"`
+	First     []string         `json:"first"`
+	groups    []sprint.Group   // the open judgments, as inbox prints them
 }
 
 // seatView is the holder and the last change of the seat; Since is nil while
@@ -193,20 +206,29 @@ var decisionVerbs = []string{"release", "drop", "fleet hold", "rework"}
 // with what waits behind each, every open judgment with its answer lines, the
 // members held or down and by whom, the routes disabled, the last decisions
 // from the log with their reasons, and the lines the next seat runs first.
-func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, string, error) {
+func (a *app) handover(ctx context.Context, st *store.Store, redis string) (handoverView, string, error) {
+	h, err := a.handoverWith(ctx, st, a.machineryCheck(ctx, st, redis))
+	if err != nil {
+		return h, "", err
+	}
+	return h, a.handoverText(h, true), nil
+}
+
+// handoverWith is the handover read with the seat check already made.
+func (a *app) handoverWith(ctx context.Context, st *store.Store, check seatcheck.Report) (handoverView, error) {
 	now := a.now()
-	h := handoverView{At: now, Streams: []streamCounts{}, Sentinels: []sentinelView{}, Judgments: []inboxJudgment{}, Members: []memberView{},
+	h := handoverView{At: now, Check: check, Streams: []streamCounts{}, Sentinels: []sentinelView{}, Judgments: []inboxJudgment{}, Members: []memberView{},
 		Decisions: []decisionView{}, Routes: routesView{Disabled: []string{}}}
 	v, _, err := a.where(ctx, st, defaultStale, false) // the view carries every table; the frame is not drawn here
 	if err != nil {
-		return h, "", err
+		return h, err
 	}
 	h.Seat.Holder, h.Machine, h.Summary = v.Coordinator, v.Machine, v.Summary
 	if v.Seat != nil {
 		h.Seat.Since, h.Seat.Last = &v.Seat.At, v.Seat
 	}
 	if h.Owner, err = a.owner(ctx, st); err != nil {
-		return h, "", err
+		return h, err
 	}
 	for _, s := range sortedKeys(v.Tables[sprint.Work]) {
 		sc := streamCounts{Stream: s, Counts: map[string]int{}}
@@ -219,7 +241,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	}
 	snap, err := st.Load(ctx, []string{sprint.Work}, nil)
 	if err != nil {
-		return h, "", err
+		return h, err
 	}
 	for _, s := range snap.Streams() {
 		for _, c := range snap.Work.Cell(s, string(sprint.Waiting)) {
@@ -235,7 +257,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	}
 	in, err := st.Inbox(ctx, defaultDeadline, defaultStale, 10000)
 	if err != nil {
-		return h, "", err
+		return h, err
 	}
 	for _, g := range in.Groups {
 		if g.Kind == sprint.Judgment {
@@ -245,7 +267,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	h.Judgments, _ = inboxActs(h.groups, now)
 	rs, _, err := st.Routes(ctx)
 	if err != nil {
-		return h, "", err
+		return h, err
 	}
 	for _, r := range rs {
 		if r.Enabled {
@@ -256,7 +278,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	}
 	lines, err := st.Log(ctx)
 	if err != nil {
-		return h, "", err
+		return h, err
 	}
 	heldBy := map[string]string{}
 	seen := map[string]bool{}
@@ -282,7 +304,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 		}
 	}
 	h.First = []string{"nova-sprint where", "nova-sprint inbox --wait --push " + pushSeat, `read docs/SPEC-SPRINT.md, "Handing over the seat"`}
-	return h, a.handoverText(h), nil
+	return h, nil
 }
 
 // decisionOf is the log line as one of the coordinator's decisions: a seat
@@ -315,9 +337,14 @@ func decisionOf(l sprint.Line) (decisionView, bool) {
 	return decisionView{At: l.At, Verb: l.Verb, What: what, By: l.Actor, Reason: reason}, true
 }
 
-// handoverText is the handover in lines a person reads in one screen.
-func (a *app) handoverText(h handoverView) string {
+// handoverText is the handover in lines a person reads in one screen, the
+// seat check first when withCheck (coordinator prints the check before the
+// move and the brief after it).
+func (a *app) handoverText(h handoverView, withCheck bool) string {
 	var b strings.Builder
+	if withCheck {
+		b.WriteString(h.Check.Text())
+	}
 	line := func(format string, args ...any) { fmt.Fprintln(&b, oneline.Escape(fmt.Sprintf(format, args...))) }
 	head := "HANDOVER seat=" + h.Seat.Holder + " since=init"
 	if s := h.Seat.Last; s != nil {

@@ -138,8 +138,9 @@ func flagWord(words []string, name string) (value string, ok bool) {
 // work for seconds or minutes outside the store (land's git, the driver), fleet sync and
 // friend sync, which read the config store with their caller's own credentials, friend
 // clean, which works on the directories of the machine it runs on, and dashboard, which
-// serves a page until it is interrupted and reads through the server.
-var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend clean", "dashboard", "answer"}
+// serves a page until it is interrupted and reads through the server; machinery measures the
+// server from where it is typed (one round trip), so it is never answered by the server.
+var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend clean", "dashboard", "answer", "machinery"}
 
 // serveFrom is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The

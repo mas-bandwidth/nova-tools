@@ -79,8 +79,8 @@ type MemberM struct {
 }
 
 // FriendM is one friend: her status as the friends table shows it, her last
-// beat's age, and, when the host is the one that beats her, whether her
-// launchd agent is loaded ("loaded", "not loaded"; "" when not measured).
+// beat's age, and, on a host with a launchd, whether her launchd agent is
+// loaded there ("loaded", "not loaded"; "" where it was not measured).
 type FriendM struct {
 	Name   string        `json:"name"`
 	Status string        `json:"status"`
@@ -130,11 +130,9 @@ type Measures struct {
 	Dashboard DashM     `json:"dashboard"`
 	Bus       BusM      `json:"bus"`
 	Inbox     InboxM    `json:"inbox"`
-	// Host is the short host name the check ran on; FriendHost is the host
-	// whose launchd agents beat the friends (the Studio). UID is the user id
-	// for launchctl's domain.
-	Host       string `json:"host"`
-	FriendHost string `json:"friend_host"`
+	// Host is the short host name the check ran on: the server's unit is
+	// named by it.
+	Host string `json:"host"`
 	// Errs is each thing whose probe failed outright (a table that could not
 	// be read), by thing: the line says so and is DOWN.
 	Errs map[string]string `json:"errs,omitempty"`
@@ -165,7 +163,18 @@ const (
 	// LoopSilence is how long the run loop goes unseen (no heartbeat written,
 	// ticking or looking) before it is DOWN: the store's MachineSilence.
 	LoopSilence = 15 * time.Second
+	// MemberDownAfter is how long a fleet member goes without a beat before it
+	// is down by measurement, whatever the fleet table says (the table's status
+	// is the tick's, and lags when the loop is down too): the sprint's
+	// MissedBeatsDown windows of BeatDeadline.
+	MemberDownAfter = 3 * 15 * time.Second
 )
+
+// memberDown says the member is down: the fleet table says so, or it is not
+// held and its beat is older than MemberDownAfter (or never).
+func memberDown(m MemberM) bool {
+	return m.Status == "down" || (m.Status != "held" && (!m.Beaten || m.Age > MemberDownAfter))
+}
 
 // Label is the launchd label that beats the friend on the friends' host today
 // (com.nova.loop.friend-beat-<name>; nova-friend's agent later).
@@ -262,11 +271,11 @@ func Judge(m Measures, now time.Time) Report {
 		var up, held int
 		var down, remedies []string
 		for _, mm := range m.Fleet {
-			switch mm.Status {
-			case "down":
+			switch {
+			case memberDown(mm):
 				down = append(down, mm.Name+":"+beatAge(mm.Beaten, mm.Age))
 				remedies = append(remedies, "nova-config loop show "+MemberLoop(mm.Name))
-			case "held":
+			case mm.Status == "held":
 				held++
 			default:
 				up++
@@ -290,8 +299,8 @@ func Judge(m Measures, now time.Time) Report {
 				f := []string{"friend=" + fr.Name, "beat_age=" + beatAge(fr.Beaten, fr.Age), "label=" + Label(fr.Name)}
 				if fr.Loaded != "" {
 					f = append(f, "agent="+q(fr.Loaded))
-				} else if m.FriendHost != "" && m.Host != m.FriendHost {
-					f = append(f, "agent="+q("not measured: her agent is on "+m.FriendHost))
+				} else {
+					f = append(f, "agent="+q("not measured: no launchd on "+host))
 				}
 				add(Line{Thing: Friends, Facts: f, Remedy: Bootstrap(fr.Name)})
 			case "held":

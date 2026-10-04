@@ -13,6 +13,7 @@
 # exec.CommandContext or exec.LookPath as a string literal or a package-level
 # constant, and holds this list to that set in both directions: a program run
 # and not listed is red, and a row that no file runs any more is red. The rows
+launchctl	absent	nova-sprint machinery reads it only on darwin (runtime.GOOS), where a friend down is a launchd agent to load; the functional tier is linux and the check says the agent was not measured
 # below `[unscanned]` are programs the tier needs that a name in a Go file does
 # not show (a script, a list of candidates, a path built at run time); the
 # Containerfile must still carry them.

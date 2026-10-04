@@ -95,6 +95,7 @@ var DefaultCatalog = []Entry{
 	E("internal/sandbox", "OS isolation primitives (seatbelt/landlock)", "go test ./internal/sandbox", "go test ./internal/sandbox"),
 	E("internal/scaffold", "scaffolding engine for class rules and CLI verbs", "go test ./internal/scaffold", "go test ./internal/scaffold"),
 	E("internal/secrets", "zero-leak memory and file vault", "go test ./internal/secrets", "go test ./internal/secrets"),
+	E("internal/seatcheck", "the seat check's judge (nova-sprint machinery, first in coordinator and handover): the machinery's measures into one line per thing, up or DOWN with the remedy", "go test ./internal/seatcheck", "go test ./internal/seatcheck"),
 	E("internal/seatcred", "a seat's Redis login read through the secrets library (--seat, NOVA_SEAT)", "go test ./internal/seatcred/...", "go test ./internal/seatcred/..."),
 	E("internal/selftalk", "agent self-talk journal stream", "go test ./internal/selftalk", "go test ./internal/selftalk"),
 	E("internal/shippedsmoke", "the smoke test of a shipped nova-check binary, behind the shippedsmoke build tag, run by the certification workflow", "go test -tags shippedsmoke ./internal/shippedsmoke", "NOVA_SHIPPED_BIN=<binary> go test -tags shippedsmoke -v ./internal/shippedsmoke"),

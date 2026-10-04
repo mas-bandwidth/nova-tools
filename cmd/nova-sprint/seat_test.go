@@ -26,6 +26,7 @@ func seatSprint(t *testing.T) *testApp {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1,m2 --owner glenn")
 	ta.ok("add --stream s1 --count 2")
+	ta.ok("tick") // the seat check reads the loop's heartbeat: a store never ticked is a loop DOWN
 	return ta
 }
 
@@ -92,7 +93,8 @@ func TestTheSeatIsTheHoldersOrTheOwnersToGive(t *testing.T) {
 	assert.NotContains(t, ta.ok("log"), "seat", "a refused seat change wrote to the log")
 
 	out := ta.ok("coordinator rowan --reason 'glenn moves the seat' --actor glenn --dry-run")
-	assert.Equal(t, "COORDINATOR DRY-RUN holder=rowan from=coordinator by=glenn given; nothing was changed\n", out)
+	assert.True(t, strings.HasPrefix(out, "MACHINERY server OK "), "the seat check comes first, dry run or not:\n%s", out)
+	assert.True(t, strings.HasSuffix(out, "MACHINERY OK n=9\nCOORDINATOR DRY-RUN holder=rowan from=coordinator by=glenn given; nothing was changed\n"), out)
 	assert.Equal(t, "coordinator", ta.holder(), "--dry-run moved the seat")
 	out = ta.ok("coordinator rowan --reason 'glenn moves the seat' --actor glenn")
 	assert.Contains(t, out, "COORDINATOR OK holder=rowan from=coordinator by=glenn given\n", out)
@@ -175,6 +177,7 @@ func TestATakeWithoutTheOwnersNameIsRefused(t *testing.T) {
 		}
 		return env(k)
 	}
+	ta2.ok("tick")
 	ta2.ok("coordinator rowan --take --approved-by glenn --reason r --actor rowan")
 	assert.Equal(t, "rowan", ta2.holder())
 }
@@ -192,6 +195,7 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	ta.ok("add --stream s3 b --needs s2-1")
 	ta.ok("fleet down m2")
 	blocked := ta.group(sprint.NBlocked, "s3")
+	ta.ok("tick")
 
 	out := ta.ok("handover")
 	for _, want := range []string{
