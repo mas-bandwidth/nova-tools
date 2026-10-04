@@ -56,7 +56,7 @@ func workTool(gh github) *tool.Tool {
 		Stamp: version,
 		How: `import reads every issue through your gh login, read-only, into one tree file.
 --dry-run reads GitHub exactly as the import does (every issue, the same calls) and writes nothing.
-verify reads GitHub again: one MISSING, EXTRA or DRIFT line per difference; none is the proof.
+verify compares the tree with GitHub; no differences means it matches.
 verify --against compares two tree files and reads no network (a minimal tree: verify -h).
 first run: gh logged in (gh auth status); export ORG and REPO, a repository you can read.`,
 		ExitTable: "0 done, or verify found no difference; 1 verify found differences, or an import's " +
