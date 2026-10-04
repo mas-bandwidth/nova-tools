@@ -410,7 +410,7 @@ func connect(ctx context.Context, store login, d deps) (*redisconn.Conn, error) 
 // store, the login, what came back and the next step. That text is the
 // line's reason, after the key and the class, printed as prose a person can
 // read (`: redis at <addr> as <user>: unreachable: <cause>; next: <step>`),
-// never as a typed field, which would hex-escape its every space. A store
+// never as a typed field, which would hex-escape every blank in it. A store
 // that could not be reached and a login it refused could not run at all: the
 // line leads with REFUSED at exit 2, the pairing internal/tool's Status states for a
 // verb that could not run (STANDARD §2's exit table), and the fix is the
