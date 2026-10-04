@@ -25,7 +25,7 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 	snapshot := filepath.Join(dir, "s.json")
 	first := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
 	var goodOut bytes.Buffer
-	if rc := Run("nova-update", []string{"report", "--file", first, "--state", snapshot}, "test", &goodOut, &goodOut, Environment{}); rc != 0 {
+	if rc := Run("nova-update", []string{"report", "--file", first, "--snapshot", snapshot}, "test", &goodOut, &goodOut, Environment{}); rc != 0 {
 		require.EqualValuesf(t, 0, rc, "exit %d\n%s", rc, goodOut.String())
 	}
 	settled, err := os.ReadFile(snapshot)
@@ -110,7 +110,7 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 	assertBytes(foreign, foreignBytes)
 
 	var finalOut bytes.Buffer
-	if rc := Run("nova-update", []string{"report", "--file", second, "--state", snapshot}, "test", &finalOut, &finalOut, Environment{}); rc != 0 {
+	if rc := Run("nova-update", []string{"report", "--file", second, "--snapshot", snapshot}, "test", &finalOut, &finalOut, Environment{}); rc != 0 {
 		require.EqualValuesf(t, 0, rc, "a later reporter could not use the surviving snapshot: exit %d\n%s", rc, finalOut.String())
 	}
 	state, err := readSnapshot(snapshot)
@@ -147,7 +147,7 @@ func TestSnapshotRenameBarrierHelper(t *testing.T) {
 		return os.Rename(oldPath, newPath)
 	}
 	os.Exit(Main("nova-update", []string{"report", "--file", os.Getenv("NOVA_SNAPSHOT_MANIFEST"),
-		"--state", os.Getenv("NOVA_SNAPSHOT_PATH")}, "test", os.Stdout, os.Stderr))
+		"--snapshot", os.Getenv("NOVA_SNAPSHOT_PATH")}, "test", os.Stdout, os.Stderr))
 }
 
 // SPEC-UPDATE: "Those three usage lines are the string `nova-update help` prints,

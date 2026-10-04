@@ -49,7 +49,8 @@ type Packet struct {
 	Route    string `json:"route,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
-	USD      string `json:"usd,omitempty"` // the dollar budget, a decimal; "" for none (#5094)
+	USD      string `json:"usd,omitempty"`     // the dollar budget, a decimal; "" for none (#5094)
+	Harness  string `json:"harness,omitempty"` // the harness the route names (internal/harness); "" is opencode
 	Deadline int    `json:"deadline,omitempty"`
 	// Tier is the tier the card's route is drawn from when the sprint decided it
 	// and not the brief's line 1: a read's read tier (route.go, readTierOf), a work
@@ -154,7 +155,7 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 	}
 	// a work card's route, or a read card's: the ask draws a read's as the deal
 	// draws a work card's (route.go), so a reader needs no --model
-	p.Route, p.Model, p.Tokens, p.USD, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.F(FieldUSD), c.Int(FieldDeadline)
+	p.Route, p.Model, p.Tokens, p.USD, p.Harness, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.F(FieldUSD), c.F(FieldHarness), c.Int(FieldDeadline)
 	if p.Tier = c.F(FieldTier); p.Tier == "" && p.Kind == "work" && primary != nil {
 		p.Tier = primary.F(FieldTier)
 	}

@@ -9,7 +9,7 @@ import (
 // packages in `go list` order (stable: go list sorts).
 //
 // THE HEAVY PACKAGES FIRST, ONE PER SHARD. heavy names packages by a trailing
-// path (`cmd/nova-bus` matches `<module>/cmd/nova-bus`); the k-th heavy name
+// path (`cmd/nova-swarm` matches `<module>/cmd/nova-swarm`); the k-th heavy name
 // takes shard k (mod shards), so no two heavy packages share a shard while
 // there are shards for them, and every other package goes round-robin in list
 // order, continuing after the heavy ones: the first takes shard

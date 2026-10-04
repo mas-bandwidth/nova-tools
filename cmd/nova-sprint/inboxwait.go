@@ -48,13 +48,6 @@ const tickEndPoll = time.Second
 // machineRunning is the machine line of a running machine (store.MachineLine).
 const machineRunning = "machine: running"
 
-// lineRunning says a machine line is a running machine's: "machine: running",
-// or with its late tick, "machine: running (tick late 16s)", which is no stop
-// (docs/SPEC-SPRINT.md section 14).
-func lineRunning(line string) bool {
-	return line == machineRunning || strings.HasPrefix(line, machineRunning+" (")
-}
-
 // inboxSource is where inbox --wait reads: the store itself, or the sprint's
 // server. Each read is one exchange, and a source holds nothing between them.
 type inboxSource interface {
@@ -296,7 +289,7 @@ func (a *app) waitNew(ctx context.Context, src inboxSource, fresh func(inboxLook
 		}
 		look = l
 		groups, err := fresh(look)
-		if err != nil || len(groups) > 0 || (running && !lineRunning(look.machine)) {
+		if err != nil || len(groups) > 0 || (running && look.machine != machineRunning) {
 			return groups, look, err
 		}
 	}
@@ -360,11 +353,11 @@ func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch 
 	if err != nil {
 		return a.waitFailed(err, stderr)
 	}
-	fresh, after, err := a.waitNew(ctx, src, seenFresh(seenKeys(first.groups)), lineRunning(first.machine), timeout)
+	fresh, after, err := a.waitNew(ctx, src, seenFresh(seenKeys(first.groups)), first.machine == machineRunning, timeout)
 	if err != nil {
 		return a.waitFailed(err, stderr)
 	}
-	stopped := lineRunning(first.machine) && !lineRunning(after.machine)
+	stopped := first.machine == machineRunning && after.machine != machineRunning
 	sayWoke(fresh, stopped, timeout, asJSON, stdout, stderr)
 	// The wait ended: read the inbox itself.
 	res, err := a.ask(ctx, addr, []string{"inbox"}, without(fs, args, "wait", "timeout", "push"))
@@ -420,7 +413,7 @@ func (a *app) pushLoop(ctx context.Context, src inboxSource, dir string, timeout
 		if ctx.Err() != nil {
 			return 0
 		}
-		running := lineRunning(look.machine)
+		running := look.machine == machineRunning
 		fresh, look, err = a.waitNew(ctx, src, func(l inboxLook) ([]sprint.Group, error) {
 			p.follow(l.holder, false, stdout, stderr)
 			return p.unseen(l)
@@ -428,7 +421,7 @@ func (a *app) pushLoop(ctx context.Context, src inboxSource, dir string, timeout
 		if err != nil {
 			return a.waitFailed(err, stderr)
 		}
-		if running && !lineRunning(look.machine) && ctx.Err() == nil {
+		if running && look.machine != machineRunning && ctx.Err() == nil {
 			if asJSON {
 				b, _ := json.Marshal(map[string]any{"machine": look.machine, "at": a.now()}) // ignored: strings and a time always encode
 				fmt.Fprintln(stdout, string(b))

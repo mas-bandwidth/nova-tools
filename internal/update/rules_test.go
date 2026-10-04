@@ -173,7 +173,7 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	snapshot := filepath.Join(t.TempDir(), "s.json")
 	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	c, out, errs := run(t, env, "report", "--file", p, "--as", "fixture", "--to", "integrator", "--state", snapshot)
+	c, out, errs := run(t, env, "report", "--file", p, "--as", "fixture", "--to", "integrator", "--snapshot", snapshot)
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
 	}
@@ -186,8 +186,8 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	// A missing call log is the strongest form of the answer: the fake bus never
 	// ran at all, so it never even opened the file it logs to.
 	if _, err := os.Stat(log); err == nil {
-		if nprep, nsend := calls(t, log); nprep != 0 || nsend != 0 {
-			require.Failf(t, "", "a plain report invoked the bus: %d prepares, %d sends", nprep, nsend)
+		if nsend := calls(t, log); nsend != 0 {
+			require.Failf(t, "", "a plain report invoked the bus: %d sends", nsend)
 		}
 	} else if !os.IsNotExist(err) {
 		require.Fail(t, fmt.Sprintln(err))
@@ -269,12 +269,12 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	}
 	// The spec says nova-version's lines are the report line's flags under that
 	// name, so every flag the report line offers a plain report must appear.
-	for _, flag := range []string{"--file <manifest>", "--host <label>", "--state <path>", "--max <n>", "--timeout <d>", "--budget <d>", "--kind <k>"} {
+	for _, flag := range []string{"--file <manifest>", "--host <label>", "--snapshot <path>", "--max <n>", "--timeout <d>", "--budget <d>", "--kind <k>"} {
 		if !strings.Contains(lines["report"], flag) {
 			assert.Failf(t, "", "nova-version's report line does not carry %s", flag)
 		}
 	}
-	for _, flag := range []string{"--bus <path>", "--remote <r>", "--branch <b>", "--as <friend>", "--to <who,who>"} {
+	for _, flag := range []string{"--as <friend>", "--to <who,who>"} {
 		if !strings.Contains(lines["send"], flag) {
 			assert.Failf(t, "", "nova-version's send line does not carry %s", flag)
 		}
@@ -283,7 +283,7 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 
 // #592: the snapshot verb is callable, yet help never printed it. Its whole
 // usage line belongs beside report so a reader discovers the inventory verb,
-// distinguishable from report's unrelated --state <path> option by the verb
+// distinguishable from report's unrelated --snapshot <path> option by the verb
 // spelling and its --bin/--out flags (docs/SPEC-VERSION.md).
 func TestHelpNamesTheSnapshotVerb(t *testing.T) {
 	t.Parallel()

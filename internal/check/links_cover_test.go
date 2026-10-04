@@ -73,7 +73,8 @@ func TestLinksCoverChecksExactlyTheListedFiles(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir, err := filepath.EvalSymlinks(t.TempDir()) // macOS: /var is a link to /private/var, and LinksFiles resolves the root
+			require.NoError(t, err)
 			writeTree(t, dir, tt.files)
 			listed := make([]string, 0, len(tt.listed))
 			for _, f := range tt.listed {

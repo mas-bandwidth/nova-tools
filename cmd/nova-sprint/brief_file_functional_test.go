@@ -44,11 +44,11 @@ func TestAddBriefFileOnTheStore(t *testing.T) {
 	bare := filepath.Join(t.TempDir(), "bare.md")
 	require.NoError(t, os.WriteFile(bare, []byte("Fix the empty case.\n"), 0o600))
 	var out, errb bytes.Buffer
-	code := a.run([]string{"add", "--stream", "s0", "--count", "1", "--brief-file", bare}, &out, &errb)
+	code := a.run([]string{"add", "--stream", "s0", "--count", "1", "--one", "--brief-file", bare}, &out, &errb)
 	require.Equal(t, 2, code, "a brief without the child rules: exit %d, out %q, err %q; want exit 2 with the lint's lines", code, out.String(), errb.String())
 	require.Contains(t, errb.String(), "LINT DRIFT brief rule-worktree", "a brief without the child rules: exit %d, out %q, err %q; want exit 2 with the lint's lines", code, out.String(), errb.String())
 	require.Zero(t, out.Len(), "a brief without the child rules: exit %d, out %q, err %q; want exit 2 with the lint's lines", code, out.String(), errb.String())
-	run("add", "--stream", "s1", "--count", "1", "--brief-file", path)
+	run("add", "--stream", "s1", "--count", "1", "--one", "--brief-file", path)
 	run("fleet", "beat", "m1")
 	run("start")
 	run("tick") // the fleet update, last in the tick, brings m1 up

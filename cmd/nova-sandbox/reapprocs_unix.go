@@ -15,8 +15,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
+
+// runGroupUsage is the run verb's count of a tree, for the wall's caps: the same count the
+// bare form's wall takes (internal/sandbox, "wall-caps-processes.w1").
+func init() { runGroupUsage = sandbox.GroupUsage }
 
 // procQueryBound is how long lsof or ps may take. A reap that hangs on a wedged
 // filesystem is worse than one that says it could not look: the caller is told and the

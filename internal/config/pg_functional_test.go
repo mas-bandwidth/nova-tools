@@ -381,14 +381,8 @@ func TestMigrationEighteenGivesEveryFriendAWidthOfEight(t *testing.T) {
 		require.NoError(t, err, f)
 	}
 	require.NoError(t, st.applyOne(ctx, eighteen))
-	widths := func() map[string]string {
-		rows, err := st.List(ctx, KindFriend)
-		require.NoError(t, err)
-		out := map[string]string{}
-		for _, r := range rows {
-			out[r.Name] = r.Fields["width"]
-		}
-		return out
+	widths := func() map[string]string { // by SQL: the store's List reads the columns of every later migration too
+		return columnOf(t, st, "width")
 	}
 	assert.Equal(t, map[string]string{"f1": "8", "f2": "8", "f3": "8", "f4": "8", "f5": "8", "f6": "8"}, widths(), "every friend there before 0018 has width 8")
 
@@ -471,4 +465,57 @@ func TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 	_, err = openPGWithin(dctx, dsn, time.Nanosecond)
 	require.Error(t, err, "the caller's deadline should govern")
 	require.Error(t, dctx.Err(), "the caller's context should be done")
+}
+
+// columnOf is one column of every friend row, by name, read by SQL so a test
+// that stops the migrations part way reads only what exists.
+func columnOf(t *testing.T, st *PG, column string) map[string]string {
+	t.Helper()
+	rows, err := st.db.QueryContext(context.Background(), `SELECT name, `+column+`::text FROM config.friends`)
+	require.NoError(t, err)
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var name, v string
+		require.NoError(t, rows.Scan(&name, &v))
+		out[name] = v
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+// 0030 gives every friend a delivery mode (docs/SPEC-FRIEND.md, one-shot
+// lanes): each friend row there before it is batch, what every daemon did
+// before, a row added after takes batch, a mode that is neither is refused by
+// the column's CHECK, and the file run again keeps a mode set since.
+func TestMigrationThirtyGivesEveryFriendTheBatchMode(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := OpenPG(ctx, server.Database(t))
+	require.NoError(t, err)
+	defer st.Close()
+	all, err := Migrations()
+	require.NoError(t, err)
+	var thirty Migration
+	for _, m := range all {
+		if m.Version == 30 {
+			thirty = m
+			break
+		}
+		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+	}
+	require.Equal(t, "0030_friend_mode.sql", thirty.Name)
+	for _, f := range []string{"f1", "f2"} {
+		_, err = st.db.ExecContext(ctx, `INSERT INTO config.friends (name, slots, tiers, roles) VALUES ($1, 2, 'flash', '')`, f)
+		require.NoError(t, err, f)
+	}
+	require.NoError(t, st.applyOne(ctx, thirty))
+	assert.Equal(t, map[string]string{"f1": "batch", "f2": "batch"}, columnOf(t, st, "mode"), "every friend there before 0030 is batch")
+	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET mode = 'one-shot' WHERE name = 'f2'`)
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET mode = 'lanes' WHERE name = 'f1'`)
+	require.Error(t, err, "a mode that is neither is refused by the CHECK")
+	_, err = st.db.ExecContext(ctx, thirty.SQL)
+	require.NoError(t, err, "the file runs again")
+	assert.Equal(t, map[string]string{"f1": "batch", "f2": "one-shot"}, columnOf(t, st, "mode"), "a mode set since is kept")
 }

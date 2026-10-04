@@ -14,7 +14,7 @@ import (
 // can see what to wait for or kill.
 //
 // It is an flock rather than a file whose existence means "held", for the reason
-// internal/bus gives: the kernel drops it when the process dies, so a fold killed mid-run
+// a sentinel file cannot: the kernel drops it when the process dies, so a fold killed mid-run
 // leaves nothing for the next one to clear. The pid is written INSIDE the locked file so
 // the name in the refusal is the holder's own, never a stale sentinel's. On unix the lock
 // is internal/filelock's (tla/FileLock.tla), the same flock on the same file the earlier

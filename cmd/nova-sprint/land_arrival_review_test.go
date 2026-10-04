@@ -11,11 +11,11 @@ import (
 func TestLandReviewAnArrivalAheadCannotReplaceThePushedBatch(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 original")
+	r.ok("add --stream s1 original --one")
 	head := r.head("original", "main", "original.txt", "original\n")
 	r.queued(map[string]string{"original": head}, "original")
 	r.a.beforePush = func(int) {
-		r.ok("add --stream s1 newcomer --before original")
+		r.ok("add --stream s1 newcomer --one --before original")
 		newHead := r.head("newcomer", "main", "newcomer.txt", "newcomer\n")
 		r.queued(map[string]string{"newcomer": newHead}, "newcomer")
 	}

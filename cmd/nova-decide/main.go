@@ -242,18 +242,54 @@ caught, negatives bounced), and the CATCH-ALL bar: the highest that still flags 
 				Run: calibrate,
 			},
 			{
+				Name:   "import",
+				Usage:  "import --record <file> [--verdicts <glob>] [--judgments <dir> --log <file>] [--reports <glob>]",
+				Effect: tool.LocalWrite + "; it appends to --record one labelled decision per item read, and leaves an item recorded before",
+				Detail: `Loads finished decisions as labelled records, so they can be read, calibrated and trained on:
+--verdicts: heavy-read VERDICT.md files, the first word of the first line is the label (ACCEPT, REWORK, ...);
+--judgments with --log: a directory of judgment files (<judgment id>.md) labelled by the verb of the line a
+nova-sprint log --json export holds that answers it; one nothing answers is counted as unanswered, not recorded;
+--reports: REPORT.md files whose first line is "Verdict: HOLD", labelled HOLD.
+An id comes from the source path and content, so a second import adds nothing. Prints IMPORT OK with
+<kind>_new and <kind>_existing for verdict, judgment and report. The decisions are named import-<kind>.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("record", "the record file the labelled decisions are appended to")
+					f.String("verdicts", "", "a glob of heavy-read VERDICT.md files")
+					f.String("judgments", "", "a directory of judgment files, <judgment id>.md; needs --log")
+					f.String("log", "", "a nova-sprint log --json export holding the answers to the judgments")
+					f.String("reports", "", "a glob of REPORT.md files; those beginning Verdict: HOLD are imported")
+					f.Check(func(c *tool.Call) {
+						if c.Str("verdicts") == "" && c.Str("judgments") == "" && c.Str("reports") == "" {
+							c.Problem("no source: give --verdicts, --judgments with --log, or --reports")
+						}
+						if (c.Str("judgments") == "") != (c.Str("log") == "") {
+							c.Problem("--judgments and --log go together: a judgment file holds no answer, the log export does")
+						}
+					})
+				},
+				Run: w.importRecords,
+			},
+			{
 				Name:    "findings",
-				Usage:   "findings --record <file> [--since <time>] [--bar <p>]",
+				Usage:   "findings --record <file> [--since <time>] [--bar <p>] [--shadow <file> --real <file>]",
 				Example: "findings --record " + fixture + "record.jsonl --since 2026-10-01",
 				Effect:  tool.Inspection,
 				Detail: `Clusters the score decisions made since --since by every class each gives a p at or above
 --bar: one FINDING line per class (count, cards), most cards first; unnamed is p(defect) at or
-above the bar with no class there. A class that keeps coming back is a finder rule or class test owed.`,
+above the bar with no class there. A class that keeps coming back is a finder rule or class test owed. With --shadow (the
+judgment-shadow record) and --real (the judgment-answer record) it also joins each shadow answer
+to the real one by note and card and prints one SHADOW line per judgment kind: pairs, agreement
+percent, and agreement at p 0.95 and above.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("record", "the record file")
 					f.String("since", "", "the window's start, RFC 3339 or a date (2006-01-02, UTC); default: seven days before now")
 					f.String("bar", "0.5", "the p at or above which a class counts, a probability")
+					f.String("shadow", "", "the judgment-shadow record, to score Jev's shadow answers per judgment kind")
+					f.String("real", "", "the judgment-answer record the shadow answers are joined to")
 					f.Check(func(c *tool.Call) {
+						if (c.Str("shadow") == "") != (c.Str("real") == "") {
+							c.Problem("--shadow and --real go together: a shadow answer is scored against the real one")
+						}
 						if _, err := since(c.Str("since"), time.Time{}); err != nil {
 							c.Problem(err.Error())
 						}
@@ -385,6 +421,21 @@ func (w world) findings(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("scored", scored).Fact("classes", len(clusters)).Fact("bar", round(bar)).Fact("since", from.Format(time.RFC3339))
 	for _, cl := range clusters {
 		o.Item("finding", "class", cl.Class, "count", cl.Count, "cards", strings.Join(cl.Cards, ","))
+	}
+	if c.Str("shadow") == "" {
+		return o
+	}
+	shadows, err := decide.Load(c.Str("shadow"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	real, err := decide.Load(c.Str("real"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	o.Fact("shadow_pending", decide.ShadowPending(shadows, real))
+	for _, a := range decide.ShadowAgreement(shadows, real) {
+		o.Item("shadow", "kind", a.Kind, "count", a.Count, "agree_pct", a.Pct, "high_count", a.HighCount, "high_agree_pct", a.HighPct)
 	}
 	return o
 }
@@ -692,6 +743,20 @@ func (w world) outcome(c *tool.Call) *tool.Out {
 		return tool.Refuse(err.Error())
 	}
 	return tool.Done().Fact("id", id).Fact("decision", d.Decision).Fact("label", d.Outcome.Label).Fact("changed", changed)
+}
+
+// importRecords is import: decide.Import over the sources named, counted per kind.
+func (w world) importRecords(c *tool.Call) *tool.Out {
+	res, err := decide.Import(c.Str("record"), decide.ImportSources{Verdicts: c.Str("verdicts"), Judgments: c.Str("judgments"),
+		Log: c.Str("log"), Reports: c.Str("reports")}, w.now())
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	o := tool.Done()
+	for _, k := range decide.ImportKinds {
+		o.Fact(k+"_new", res.Kinds[k].New).Fact(k+"_existing", res.Kinds[k].Existing)
+	}
+	return o.Fact("unanswered", res.Unanswered)
 }
 
 func calibrate(c *tool.Call) *tool.Out {

@@ -9,8 +9,10 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -124,6 +126,17 @@ func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo
 	return f.Version, revisionOf(f.Version), f.Platform, src, has, true
 }
 
+// isNotOneTSVField reports whether s contains any control or whitespace
+// character that would break a TSV field or record (security#81 finding 1).
+func isNotOneTSVField(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
+}
+
 // snapshotVerb has two shapes. With --file <manifest> it scopes to the ADOPTED
 // rule-2 manifest, reading its entries the way report does,
 // and reports how many answer -- the adopted sixteen -- never how many nova-*
@@ -155,13 +168,21 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 	run, cancelRun := context.WithTimeout(context.Background(), budget)
 	defer cancelRun()
 	var rows []snapRow
+	var skipped []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "nova-") {
 			continue
 		}
 		info, err := e.Info()
 		if err != nil || !info.Mode().IsRegular() {
+			skipped = append(skipped, e.Name())
 			continue
+		}
+		// SECURITY #81 finding 1: snapshot writes a nova-* file name raw into
+		// the TSV, so a name holding a tab, newline or other control/whitespace
+		// character would forge rows past the mixed-stamp gate or corrupt the TSV.
+		if isNotOneTSVField(e.Name()) {
+			return tool.Refuse(fmt.Sprintf("cannot read %s: entry name is not one TSV field", oneline.Escape(e.Name())))
 		}
 		path := filepath.Join(bin, e.Name())
 		ctx, cancel := context.WithTimeout(run, timeout)
@@ -249,6 +270,13 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", r.name, r.stamp, r.revision, r.platform)
 		o.Item("row", "name", r.name, "stamp", r.stamp, "revision", r.revision, "platform", r.platform)
+	}
+	// SECURITY #81 finding 2: every nova-* non-directory entry skipped for
+	// not being a regular file (e.g. a symlink or failed Info) is noted on the
+	// success output so omitted binaries are never silent (SPEC-VERSION item 2).
+	sort.Strings(skipped)
+	for _, name := range skipped {
+		o.Note(fmt.Sprintf("%s: symlink, not a regular file; not snapshotted", oneline.Quote(name)))
 	}
 	if dryRun { // the skeleton adds dry_run=true
 		return o.Note("dry run: " + outPath + " not written")

@@ -31,7 +31,7 @@ const loopField = "nova_loops"
 type Snapshot struct {
 	// Machines are the machine views by name: user, seat, slots, runners.
 	Machines map[string]View
-	// Fleet is the fleet row's view: store, coordinator, redis_port, pg_dsn.
+	// Fleet is the fleet row's view: store, coordinator, redis_port, pg_dsn, bus.
 	Fleet View
 	// Loops are the loop views by name, nil when the loop kind was never
 	// applied (no rev:loop in config:decl).
@@ -74,8 +74,8 @@ type AnsibleInventory struct {
 
 // InventoryLoop is one loop record as a host variable: the loop kind's
 // fields, typed (docs/FLEET.md, "Loops"). Log is the view's log, which the
-// loop kind derives from the fleet's loops_dir and the name
-// (<loops_dir>/<name>.log) and never takes typed.
+// loop kind derives from the name (~/nova-bench/loops/<name>.log) and never
+// takes typed.
 type InventoryLoop struct {
 	Name      string   `json:"name"`
 	Argv      []string `json:"argv"`
@@ -99,6 +99,13 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		return nil, err
 	}
 	names := slices.Sorted(maps.Keys(snap.Machines))
+	// A hostile or stale Redis write cannot shape the hosts the plays act
+	// on: only a row name passes (docs/SPEC-CONFIG.md; security#69 finding 4).
+	for _, m := range names {
+		if !NamePattern.MatchString(m) {
+			return nil, fmt.Errorf("machine %q is not a row name (lower-case letters, digits and dashes)", m)
+		}
+	}
 
 	loops, err := hostLoops(snap)
 	if err != nil {
@@ -365,7 +372,6 @@ type fixture struct {
 		Coordinator string `yaml:"coordinator"`
 		RedisPort   *int   `yaml:"redis_port"`
 		PGDSN       string `yaml:"pg_dsn"`
-		LoopsDir    string `yaml:"loops_dir"`
 	} `yaml:"fleet"`
 	// Loops is a pointer so a fixture without the key is a fleet whose
 	// loops were never applied, and `loops: {}` one that runs none.
@@ -418,7 +424,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 	if f.Fleet.RedisPort != nil {
 		redisPort = strconv.Itoa(*f.Fleet.RedisPort)
 	}
-	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN, "loops_dir": f.Fleet.LoopsDir}
+	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN}
 	snap.Revs[KindMachine], snap.Revs[KindFleet] = 1, 1
 	if f.Loops != nil {
 		snap.Loops = map[string]View{}
@@ -435,7 +441,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 				"name": n, "machine": l.Machine, "argv": string(argv), "seat": l.Seat,
 				"keys": strings.Join(keys, ","), "every": strconv.Itoa(l.Every),
 				"keepalive": strconv.FormatBool(l.Keepalive),
-				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(f.Fleet.LoopsDir, n),
+				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(n),
 			}
 		}
 	}

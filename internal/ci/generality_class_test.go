@@ -43,6 +43,8 @@ import (
 //   occurrences (e.g. "mas-bandwidth mas-bandwidth" or "mas-bandwidth/mas-bandwidth")
 //   and repeated names on one line are individually counted.
 // - Compound standard library names (e.g. TrimSpace, TrimLeadingSpace, IsSpace) are excluded.
+// - A token that is also an English word, in an English phrase (englishPhrases: "leave
+//   space for", "disk space"), is the word; bare, or beside a bare article, it is the name.
 // - Go package import declarations (including "github.com/mas-bandwidth/nova-tools/...")
 //   are identified via real AST import specs and excluded as language-level imports.
 // - Explicitly marked documentation examples in real AST comments (e.g. lines with "e.g.",
@@ -63,7 +65,7 @@ import (
 const generalityAllowlistPath = "testdata/generality"
 
 // forbiddenTokens is the curated inventory of friend/person names, hostnames,
-// tailnet nodes, and GitHub accounts that are matched as words.
+// tailnet nodes, and GitHub accounts.
 var forbiddenTokens = map[string]bool{
 	"alex":           true,
 	"antman":         true,
@@ -79,40 +81,12 @@ var forbiddenTokens = map[string]bool{
 	"mas-bandwidth":  true,
 	"mini":           true,
 	"rowan":          true,
+	"space":          true,
 	"spacegame":      true,
 	"stella":         true,
 	"studio":         true,
 	"superman":       true,
 	"vision":         true,
-}
-
-// commonWordMachines are machine names that are also common English words.
-// They are matched only in host positions (<name>.local, @<name>, ssh <name>,
-// <name>: as a host:path, --machine <name>, a hostname column, /Users/<name>, ~<name>).
-var commonWordMachines = map[string]bool{
-	"space": true,
-}
-
-type hostPositionMatcher struct {
-	dotLocal *regexp.Regexp
-	atName   *regexp.Regexp
-	sshName  *regexp.Regexp
-	hostPath *regexp.Regexp
-	machine  *regexp.Regexp
-	userPath *regexp.Regexp
-	tilde    *regexp.Regexp
-}
-
-var commonWordMachineMatchers = map[string]hostPositionMatcher{
-	"space": {
-		dotLocal: regexp.MustCompile(`(?i)\bspace\.local\b`),
-		atName:   regexp.MustCompile(`(?i)@space\b`),
-		sshName:  regexp.MustCompile(`(?i)\bssh\s+(?:[^\s@]+@)?space\b`),
-		hostPath: regexp.MustCompile("(?i)\\bspace:(?:[0-9]+|[/~.][^\\s\"'`]*|[a-zA-Z0-9_.-]+/[^\\s\"'`]*)"),
-		machine:  regexp.MustCompile(`(?i)-{1,2}machine(?:=|\s+)space\b`),
-		userPath: regexp.MustCompile(`(?i)(?:/Users/|/home/|[A-Za-z]:[/\\]Users[/\\])space\b`),
-		tilde:    regexp.MustCompile(`(?i)~space\b`),
-	},
 }
 
 // ignoredCompoundWords contains standard Go library identifiers whose camelCase
@@ -125,6 +99,17 @@ var ignoredCompoundWords = map[string]bool{
 
 var reWord = regexp.MustCompile(`[a-zA-Z0-9]+`)
 var reAccount = regexp.MustCompile(`(?i)mas-bandwidth`)
+
+// englishPhrases are the English phrases in which a token that is also an ordinary word
+// is that word and no host: group 1 is the word, blanked before the scan. The machine
+// name "space" is the one such token today ("leave space for the footer" drew a finding
+// on the night of 2026-10-03); a phrase is a neighbouring word that makes a sentence of
+// it, never a bare article, so `bench=space`, `the space row` and `space` as a name
+// still count. A token used as a word in another phrase is a row here.
+var englishPhrases = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(?:leave|leaves|leaving|left|disk|free|enough|more|no|blank|white|trailing|leading|single|double|extra|some|much|little|of)\s+(space)\b`),
+	regexp.MustCompile(`(?i)\b(space)(?:\s+(?:for|between|left|after|before|around|bar|character|characters|than|on\s+disk|to\s+spare)\b|-separated|-delimited)`),
+}
 
 // isMarkedDocExample reports whether a comment line is an explicit documentation example.
 func isMarkedDocExample(comment string) bool {
@@ -265,158 +250,6 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 	return clean
 }
 
-// extractCommonWordMachineTokens returns tokens for machine names that are common English words
-// (e.g. "space"), which are matched only in host positions (<name>.local, @<name>, ssh <name>,
-// <name>: as a host:path, --machine <name>, a hostname column, /Users/<name>, ~<name>).
-// Matched positions are blanked in textBuf and the updated string is returned.
-func extractCommonWordMachineTokens(text string, textBuf []byte) ([]string, string) {
-	var tokens []string
-
-	for mach, matcher := range commonWordMachineMatchers {
-		// 1. Hostname column:
-		// Check tab-separated columns
-		if strings.Contains(text, "\t") {
-			colStart := 0
-			for {
-				colEnd := strings.Index(text[colStart:], "\t")
-				var actualEnd int
-				if colEnd == -1 {
-					actualEnd = len(text)
-				} else {
-					actualEnd = colStart + colEnd
-				}
-				cell := text[colStart:actualEnd]
-				trimmed := strings.TrimSpace(cell)
-				if strings.EqualFold(trimmed, mach) {
-					tokens = append(tokens, mach)
-					for i := colStart; i < actualEnd; i++ {
-						textBuf[i] = ' '
-					}
-				}
-				if colEnd == -1 {
-					break
-				}
-				colStart = actualEnd + 1
-			}
-			text = string(textBuf)
-		}
-
-		// Check markdown pipe table columns if line starts and ends with '|'
-		trimmedLine := strings.TrimSpace(text)
-		if strings.HasPrefix(trimmedLine, "|") && strings.HasSuffix(trimmedLine, "|") {
-			colStart := 0
-			for {
-				colEnd := strings.Index(text[colStart:], "|")
-				var actualEnd int
-				if colEnd == -1 {
-					actualEnd = len(text)
-				} else {
-					actualEnd = colStart + colEnd
-				}
-				cell := text[colStart:actualEnd]
-				trimmed := strings.TrimSpace(cell)
-				if strings.EqualFold(trimmed, mach) {
-					tokens = append(tokens, mach)
-					for i := colStart; i < actualEnd; i++ {
-						textBuf[i] = ' '
-					}
-				}
-				if colEnd == -1 {
-					break
-				}
-				colStart = actualEnd + 1
-			}
-			text = string(textBuf)
-		}
-
-		// 2. <name>.local
-		for _, m := range matcher.dotLocal.FindAllStringIndex(text, -1) {
-			start, end := m[0], m[1]
-			if isBoundaryBefore(text, start) && isBoundaryAfter(text, end) {
-				tokens = append(tokens, mach)
-				for i := start; i < end; i++ {
-					textBuf[i] = ' '
-				}
-			}
-		}
-		text = string(textBuf)
-
-		// 3. @<name>
-		for _, m := range matcher.atName.FindAllStringIndex(text, -1) {
-			start, end := m[0], m[1]
-			if isBoundaryAfter(text, end) {
-				tokens = append(tokens, mach)
-				for i := start; i < end; i++ {
-					textBuf[i] = ' '
-				}
-			}
-		}
-		text = string(textBuf)
-
-		// 4. ssh <name>
-		for _, m := range matcher.sshName.FindAllStringIndex(text, -1) {
-			start, end := m[0], m[1]
-			if isBoundaryBefore(text, start) && isBoundaryAfter(text, end) {
-				tokens = append(tokens, mach)
-				for i := start; i < end; i++ {
-					textBuf[i] = ' '
-				}
-			}
-		}
-		text = string(textBuf)
-
-		// 5. <name>: as host:path
-		for _, m := range matcher.hostPath.FindAllStringIndex(text, -1) {
-			start, end := m[0], m[1]
-			if isBoundaryBefore(text, start) {
-				tokens = append(tokens, mach)
-				for i := start; i < end; i++ {
-					textBuf[i] = ' '
-				}
-			}
-		}
-		text = string(textBuf)
-
-		// 6. --machine <name>
-		for _, m := range matcher.machine.FindAllStringIndex(text, -1) {
-			start, end := m[0], m[1]
-			if isBoundaryBefore(text, start) && isBoundaryAfter(text, end) {
-				tokens = append(tokens, mach)
-				for i := start; i < end; i++ {
-					textBuf[i] = ' '
-				}
-			}
-		}
-		text = string(textBuf)
-
-		// 7. /Users/<name>, /home/<name>
-		for _, m := range matcher.userPath.FindAllStringIndex(text, -1) {
-			start, end := m[0], m[1]
-			if isBoundaryBefore(text, start) && isBoundaryAfter(text, end) {
-				tokens = append(tokens, mach)
-				for i := start; i < end; i++ {
-					textBuf[i] = ' '
-				}
-			}
-		}
-		text = string(textBuf)
-
-		// 8. ~<name>
-		for _, m := range matcher.tilde.FindAllStringIndex(text, -1) {
-			start, end := m[0], m[1]
-			if isBoundaryBefore(text, start) && isBoundaryAfter(text, end) {
-				tokens = append(tokens, mach)
-				for i := start; i < end; i++ {
-					textBuf[i] = ' '
-				}
-			}
-		}
-		text = string(textBuf)
-	}
-
-	return tokens, text
-}
-
 // extractTokensFromText returns all forbidden tokens found in a text fragment.
 // Boundaries are scanned without consuming boundary characters so adjacent occurrences
 // (e.g. "mas-bandwidth mas-bandwidth" or "mas-bandwidth/mas-bandwidth") and repeated
@@ -424,16 +257,10 @@ func extractCommonWordMachineTokens(text string, textBuf []byte) ([]string, stri
 func extractTokensFromText(text string) []string {
 	var tokens []string
 
-	textBuf := []byte(text)
-
-	// 1. Common-word machines (matched only in host positions)
-	commonTokens, updatedText := extractCommonWordMachineTokens(text, textBuf)
-	tokens = append(tokens, commonTokens...)
-	text = updatedText
-
-	// 2. Check for hyphenated account name: mas-bandwidth without consuming boundary delimiters.
+	// 1. Check for hyphenated account name: mas-bandwidth without consuming boundary delimiters.
 	// Matched on original bytes using case-insensitive regex to prevent UTF-8 byte-length drift
 	// when Unicode characters precede the token.
+	textBuf := []byte(text)
 	matches := reAccount.FindAllStringIndex(text, -1)
 	for _, m := range matches {
 		start := m[0]
@@ -447,6 +274,11 @@ func extractTokensFromText(text string) []string {
 		}
 	}
 	text = string(textBuf)
+
+	// 2. An ordinary English word that is also a token is blanked in its phrase.
+	for _, re := range englishPhrases {
+		text = blankGroup(text, re, 1)
+	}
 
 	// 3. Scan individual words and handle camelCase transitions
 	words := reWord.FindAllString(text, -1)
@@ -720,19 +552,11 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 		{"whitespace", nil},
 		{"namespace", nil},
 		{"workspace", nil},
-		{"bench=space", nil},
-		{"ssh space", []string{"space"}},
-		{"host space.local", []string{"space"}},
-		{"user@space", []string{"space"}},
-		{"space:/var/log", []string{"space"}},
-		{"redis space:6380", []string{"space"}},
-		{"--machine space", []string{"space"}},
-		{"--machine=space", []string{"space"}},
-		{"space\tbench\tlinux", []string{"space"}},
-		{"col1\tspace\tcol3", []string{"space"}},
-		{"/Users/space/jobs", []string{"space"}},
-		{"/home/space/jobs", []string{"space"}},
-		{"cd ~space/repo", []string{"space"}},
+		{"bench=space", []string{"space"}},
+		{"the space row is down", []string{"space"}},
+		{"leave space for the footer", nil},
+		{"// no disk space left; a space-separated list; one space between words", nil},
+		{"\"Leave space for the footer\"", nil},
 		{"mas-bandwidth/nova-tools", []string{"mas-bandwidth"}},
 		{"rowan@mas-bandwidth.com", []string{"mas-bandwidth", "rowan"}},
 		{"// bench name (e.g. \"hulk\", \"space\")", nil},
@@ -759,10 +583,9 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 	}
 }
 
-// TestGeneralitySpaceHostPositions pins that common-word machine names like 'space'
-// pass in ordinary Go syntax (identifiers, struct tags, plain string literals),
-// but are refused when appearing in host positions within Go code.
-func TestGeneralitySpaceHostPositions(t *testing.T) {
+// TestGeneralitySpaceHasNoSyntaxException: the machine name counts wherever
+// it appears in Go syntax, as an identifier, a struct tag or a string.
+func TestGeneralitySpaceHasNoSyntaxException(t *testing.T) {
 	t.Parallel()
 
 	backtick := string(rune(96))
@@ -772,11 +595,9 @@ func TestGeneralitySpaceHostPositions(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"identifiers-pass", "internal/client/use.go", "package client\nfunc use(space string) { _ = space }\n", 0},
-		{"json-tag-pass", "internal/client/types.go", "package client\ntype R struct { Name string " + backtick + "json:\"space\"" + backtick + " }\n", 0},
-		{"literal-pass", "internal/client/host.go", "package client\nconst host = \"space\"\n", 0},
-		{"host-dot-local", "internal/client/host.go", "package client\nconst host = \"space.local\"\n", 1},
-		{"host-ssh", "internal/client/host.go", "package client\nconst cmd = \"ssh space\"\n", 1},
+		{"identifiers", "internal/client/use.go", "package client\nfunc use(space string) { _ = space }\n", 2},
+		{"json-tag", "internal/client/types.go", "package client\ntype R struct { Name string " + backtick + "json:\"space\"" + backtick + " }\n", 1},
+		{"literal", "internal/client/host.go", "package client\nconst host = \"space\"\n", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

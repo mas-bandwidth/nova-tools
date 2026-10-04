@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 )
 
 // A BUDGET NEEDS A SOURCE THE TOOL CAN READ, AND THAT IS CHECKED BEFORE ANYTHING IS MADE.
@@ -67,6 +69,10 @@ func NativeBudgetSourceRefusal(source string, tokens int, unmetered, usd bool, w
 	switch source {
 	case UsageNone:
 		return fmt.Sprintf("%s wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read", why)
+	case harness.Claude, harness.Codex, harness.Grok:
+		// a headless harness prints its own usage when it ends (headless.go): the final
+		// read is the source, and no program beside the harness is needed to read it
+		return ""
 	case UsageOpenCode, "":
 		if !SQLiteOnPath() {
 			return fmt.Sprintf("%s is read from the harness's own database with `%s -readonly`, and %s is on no PATH entry of this bench; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Install %s on this bench, or launch with --tokens unmetered and no max_turns or max_cache_read", why, SQLiteBinary, SQLiteBinary, SQLiteBinary)
@@ -106,10 +112,9 @@ func SQLiteOnPath() bool {
 // `native` takes the same flag and the same default.
 const DefaultUsageInterval = 5 * time.Second
 
-// UsageIntervalFloor is the shortest interval `native` accepts. An interval under
-// one second could end an honest card on three quick reads -- three failed reads in a row
-// end a card `budget-unverifiable`, and at a tenth of a second that is a third of a second
-// of bad luck rather than a source that has really stopped answering.
+// UsageIntervalFloor is the shortest interval `native` accepts. Each sample launches
+// sqlite3 against the harness's own live database, and under a second that is more launches
+// than there is anything new to read.
 const UsageIntervalFloor = time.Second
 
 // NativeUsageIntervalRefusal is the reason `native` refuses an interval, or "" when it takes
@@ -119,7 +124,7 @@ const UsageIntervalFloor = time.Second
 func NativeUsageIntervalRefusal(interval, deadline time.Duration) string {
 	switch {
 	case interval < UsageIntervalFloor:
-		return fmt.Sprintf("--usage-interval is at least %s, got %s; three failed reads in a row end a card budget-unverifiable, and under a second that is a moment's bad luck rather than a source that has stopped answering", UsageIntervalFloor, interval)
+		return fmt.Sprintf("--usage-interval is at least %s, got %s; each sample launches %s against the harness's own live database, and under a second that is more launches than there is anything new to read", UsageIntervalFloor, interval, SQLiteBinary)
 	case deadline > 0 && interval >= deadline:
 		return fmt.Sprintf("--usage-interval is shorter than --deadline, got %s against a deadline of %s; at or past the deadline no sample would ever run and the budget could not fire", interval, deadline)
 	}
