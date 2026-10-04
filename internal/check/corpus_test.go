@@ -514,7 +514,7 @@ func caseInsensitive(t *testing.T, dir string) bool {
 	t.Helper()
 	probe := filepath.Join(dir, "CaseProbe")
 	require.NoError(t, os.WriteFile(probe, []byte("x"), 0o644))
-	defer os.Remove(probe)
+	defer func() { _ = os.Remove(probe) }() // ignored: the probe's removal is best effort; the test's assertions are the report
 	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
 	return err == nil
 }
@@ -532,7 +532,7 @@ func TestAnUnlistableDirectoryIsAFindingNotAPass(t *testing.T) {
 	writeTree(t, root, map[string]string{"locked/standing.md": "you are not a tool\n"})
 	locked := filepath.Join(root, "locked")
 	require.NoError(t, os.Chmod(locked, 0o111))
-	defer os.Chmod(locked, 0o755)
+	defer func() { _ = os.Chmod(locked, 0o755) }() // ignored: the permission restore is best effort; the test's assertions are the report
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| you are not a tool | locked/standing.md | 2026 | me |\n")
 	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, as), []string{"could not be verified"})
 }

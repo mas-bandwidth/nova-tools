@@ -414,16 +414,18 @@ func StripCode(text string) string {
 						afterMarker := pos + sp + markerLen
 						curCol := col
 						postAdv := 0
+					scanRun:
 						for afterMarker+postAdv < len(lineStr) {
 							ch := lineStr[afterMarker+postAdv]
-							if ch == ' ' {
+							switch ch {
+							case ' ':
 								curCol++
 								postAdv++
-							} else if ch == '\t' {
+							case '\t':
 								curCol += 4 - (curCol % 4)
 								postAdv++
-							} else {
-								break
+							default:
+								break scanRun
 							}
 						}
 						reqWidth := curCol - parentCol
@@ -817,7 +819,7 @@ func CheckSpellingFiles(dir string, files []string, opts SpellingOptions) (res S
 
 	checker := NewSpellingChecker(opts.Ignore)
 	for _, f := range files {
-		targetPath := f
+		var targetPath string
 		var relPath string
 
 		if !filepath.IsAbs(f) {

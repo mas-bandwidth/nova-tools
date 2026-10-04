@@ -539,7 +539,7 @@ func peekTwoFile(p string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file is opened only for reading; readFirstTwo's error is the one returned
 	return readFirstTwo(f)
 }
 
