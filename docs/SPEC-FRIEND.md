@@ -143,8 +143,8 @@ children's; OpenCode is above.
 | warp (Oz) | no | none local: `oz run message send` is between cloud runs; `oz agent run` starts a new run | — | — | — |
 
 The two installed harnesses have adapters (`adapter_dsh.go`, `adapter_gemini.go`);
-the rest are `Refused` (`adapter_refused.go`): known to `install --harness`,
-passive like the stubs, refusing every delivery with the one-line reason above.
+the rest are `Stub` with a surveyed reason (`adapter_refused.go`): known to
+`install --harness`, passive, refusing every delivery with the one-line reason above.
 Not measured: whether `dsh headless` adopts a session the desktop app holds
 open (a `session.lock` sits in every session directory), and whether the
 desktop app shows the pushed turn live or on its next load.

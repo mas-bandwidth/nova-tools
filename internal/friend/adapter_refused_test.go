@@ -17,6 +17,7 @@ func TestTheSurveyedHarnessesRefuseWithTheirReasonAndArePassive(t *testing.T) {
 			require.True(t, Known(h), "a surveyed harness is a harness name install takes")
 			d, err := NewDeliverer(h, "/w/bob", "", nil, nil)
 			require.NoError(t, err)
+			assert.Equal(t, Stub{Harness: h, Reason: Refusals[h]}, d, "one passive adapter carries the surveyed reason")
 			_, passive := d.(interface{ Passive() })
 			assert.True(t, passive, "the daemon takes nothing off the stream for it")
 			_, err = d.Deliver(context.Background(), "x")

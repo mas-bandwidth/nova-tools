@@ -1,10 +1,5 @@
 package friend
 
-import (
-	"context"
-	"fmt"
-)
-
 // Refusals are the harnesses of the survey of 2026-10-04 (SPEC-FRIEND.md,
 // the harness survey) with no adapter: each the one-line reason, the route
 // the vendor documents where there is one, and what would make it real.
@@ -26,16 +21,3 @@ var Refusals = map[string]string{
 
 // RefusedHarnesses lists Refusals in a fixed order, for the registry.
 var RefusedHarnesses = []string{"copilot", "cursor", "amp", "goose", "kiro", "cline", "aider", "roo", "windsurf", "zed", "warp"}
-
-// Refused is a surveyed harness with no adapter: it refuses every delivery
-// with its reason and the way a session of it still reads the bus. Passive,
-// like Stub: the daemon takes nothing off the stream for it.
-type Refused struct{ Harness, Reason string }
-
-func (r Refused) Deliver(context.Context, string) (int, error) {
-	return 0, fmt.Errorf("no deliver command for %s: %s; run the session's blocking read: nova-bus2 recv --as <friend>", r.Harness, r.Reason)
-}
-
-// Passive marks a Deliverer that cannot deliver: the daemon reads nothing
-// for it.
-func (Refused) Passive() {}
