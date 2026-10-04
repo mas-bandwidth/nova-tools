@@ -2,7 +2,7 @@ package release
 
 // THE DEFINITION OF DONE, IN FRONT OF THE TAG.
 //
-// Glenn, 2026-09-18: a tool is finished when it has been tested, dogfooded by
+// The coordinator, 2026-09-18: a tool is finished when it has been tested, dogfooded by
 // somebody who did NOT write it on real work, the edges that found have been
 // filed, and the fixes have been applied. `nova-check dogfood gate` made that
 // mechanical -- receipts on disk, read against the command reference, an exit
@@ -22,7 +22,7 @@ package release
 // shell: `nova-check dogfood gate --cli <cli> --receipts <dir>` is
 // internal/dogfood.Gate over dogfood.ParseCLI and dogfood.ReadReceipts, and
 // calling it directly is one process, one set of refusals, and no shell to get
-// wrong (Glenn, 2026-09-17: no shell for coordination).
+// wrong (the coordinator, 2026-09-17: no shell for coordination).
 
 import (
 	"errors"
@@ -44,7 +44,7 @@ import (
 // the alternative -- a release lane that silently skips the gate whenever
 // somebody forgets a flag -- fails in the direction that lets a tool ship. It
 // is used only when it EXISTS, and what was used is named on the line.
-var DefaultReceiptsDir = filepath.Join("rowan-working", "dogfood")
+var DefaultReceiptsDir = filepath.Join("nova-working", "dogfood")
 
 // DogfoodWaiveFlag and DogfoodReasonFlag are the way past the gate, spelled in
 // one place so the remedy a person is handed is the flag they then type.
@@ -84,7 +84,7 @@ func addDogfoodFlags(f *flag.FlagSet, o *options, cliDefault string) {
 	f.StringVar(&o.reason, "reason", "", "why the gate was waived; it goes on the line and into the changelog")
 }
 
-// dogfoodFindingCap bounds the refusal. Tool output costs tokens (Glenn,
+// dogfoodFindingCap bounds the refusal. Tool output costs tokens (the coordinator,
 // 2026-09-11): the COUNT is the answer, the first few edges are the orientation,
 // and a person who wants all of them runs the ledger.
 const dogfoodFindingCap = 10
