@@ -79,44 +79,47 @@ func TestCompareAcceptsTheDocumentTheToolPrints(t *testing.T) {
 	compare(t, "the document the tool printed", documented, theRun(), nil, 0)
 }
 
-// SEED 1, one edit: a line the tool prints is dropped from the document. A
-// comparator that asks only whether each documented line was printed stays green
-// here, which is exactly how an abridged transcript survived.
-func TestCompareRejectsADroppedLine(t *testing.T) {
+func TestCompareRejectsSeededDifferences(t *testing.T) {
 	t.Parallel()
-
-	seeded := copyWith(func(lines []string) []string { return append(lines[:6:6], lines[6+1:]...) })
-	problems := compare(t, "a line dropped from the document; an abridged transcript passes", seeded, theRun(), nil, 1)
-	assert.Contains(t, problems[0].Message, "prints 3 line(s) and the document shows 2", "the dropped line's problem does not count the lines:\n%s", problems[0].Message)
-}
-
-// SEED 2, one edit: a value on a documented line is altered. Every value is
-// compared as written unless it is named from the Volatile table, so this is red
-// with no normalisation declared.
-func TestCompareRejectsAnAlteredValue(t *testing.T) {
-	t.Parallel()
-
-	seeded := copyWith(func(lines []string) []string {
-		lines[4] = "BUS READ topic=pit n=2"
-		return lines
-	})
-	problems := compare(t, "an altered value", seeded, theRun(), nil, 1)
-	assert.True(t, strings.Contains(problems[0].Message, "n=2") && strings.Contains(problems[0].Message, "n=1"), "the altered value's problem shows neither side of the difference:\n%s", problems[0].Message)
-}
-
-// SEED 3, one edit: two lines of one command's output change places. The set of
-// lines is unchanged and the count is unchanged, so this is the seed that a
-// `printed map[string]bool` cannot see.
-func TestCompareRejectsAMovedLine(t *testing.T) {
-	t.Parallel()
-
-	seeded := copyWith(func(lines []string) []string {
-		lines[5], lines[6] = lines[6], lines[5]
-		return lines
-	})
-	problems := compare(t, "a moved line (the two lines that changed places)", seeded, theRun(), nil, 2)
-	for _, p := range problems {
-		assert.Contains(t, p.Message, "the document's line", "a moved line's problem does not name the line:\n%s", p.Message)
+	for _, tc := range []struct {
+		name      string
+		edit      func(lines []string) []string
+		want      int
+		checkMsgs func(*testing.T, []Problem)
+	}{
+		{
+			"dropped line", func(lines []string) []string { return append(lines[:6:6], lines[6+1:]...) }, 1,
+			func(t *testing.T, problems []Problem) {
+				assert.Contains(t, problems[0].Message, "prints 3 line(s) and the document shows 2")
+			},
+		},
+		{
+			"altered value", func(lines []string) []string {
+				lines[4] = "BUS READ topic=pit n=2"
+				return lines
+			}, 1,
+			func(t *testing.T, problems []Problem) {
+				assert.True(t, strings.Contains(problems[0].Message, "n=2") && strings.Contains(problems[0].Message, "n=1"))
+			},
+		},
+		{
+			"moved line", func(lines []string) []string {
+				lines[5], lines[6] = lines[6], lines[5]
+				return lines
+			}, 2,
+			func(t *testing.T, problems []Problem) {
+				for _, p := range problems {
+					assert.Contains(t, p.Message, "the document's line")
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			seeded := copyWith(tc.edit)
+			problems := compare(t, tc.name, seeded, theRun(), nil, tc.want)
+			tc.checkMsgs(t, problems)
+		})
 	}
 }
 
@@ -159,46 +162,30 @@ func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
 	}
 }
 
-// A field named from the table IS matched by shape, on both sides, so a
-// transcript whose instant belongs to the run is green -- and the failure
+// A field from the table is matched by shape on both sides; the failure
 // message still says what was not compared.
 func TestAVolatileFieldFromTheTableIsMatchedByShape(t *testing.T) {
 	t.Parallel()
-
 	run := theRun()
 	run[0].Stdout = "BUS POST id=3f2a1b at=2026-09-19T14:55:01Z topic=pit\n"
-
-	compare(t, "an instant that belongs to the run with nothing declared", documented, run, nil, 1)
-	compare(t, "`at` named from the table", documented, run, []Field{{Name: "at"}}, 0)
-	// Naming `at` normalises `at=` and NOTHING else: the id beside it on the
-	// same line is still compared as written.
+	compare(t, "instant undeclared", documented, run, nil, 1)
+	compare(t, "instant declared", documented, run, []Field{{Name: "at"}}, 0)
 	run[0].Stdout = "BUS POST id=000000 at=2026-09-19T14:55:01Z topic=pit\n"
-	compare(t, "a norm declared for `at` swallowing the id beside it", documented, run, []Field{{Name: "at"}}, 1)
+	compare(t, "declared norm covers only its field", documented, run, []Field{{Name: "at"}}, 1)
 }
 
-// The one table entry a pattern cannot match is a path this run made: the test
-// supplies both spellings, and a missing one is refused rather than applied as a
-// pattern that would match every path in the transcript.
-func TestTheRunsTemporaryDirectoryIsNamedWithBothItsSpellings(t *testing.T) {
+// Paths require both spellings; a shape field cannot have a path.
+func TestPathAndShapeFieldRules(t *testing.T) {
 	t.Parallel()
-
 	doc := []string{
 		"$ nova-bus read --root /tmp/nova-bus-1",
 		"BUS READ root=/tmp/nova-bus-1 n=0",
 	}
 	run := []Result{{Code: 0, Stdout: "BUS READ root=/var/folders/q5/T/nova-bus-9f3 n=0\n"}}
-
-	compare(t, "the run's directory named with both spellings", doc, run, []Field{{Name: "tmpdir", Doc: "/tmp/nova-bus-1", Run: "/var/folders/q5/T/nova-bus-9f3"}}, 0)
-	problems := compare(t, "`tmpdir` named with no path", doc, run, []Field{{Name: "tmpdir"}}, 1)
-	assert.Contains(t, problems[0].Message, "tmpdir", "the refusal does not name the field:\n%s", problems[0].Message)
-}
-
-// A shape field carries no path, and handing it one is refused: it would mean
-// the test believes the table entry is something other than what it is.
-func TestAShapeFieldGivenAPathIsRefused(t *testing.T) {
-	t.Parallel()
-
-	compare(t, "a shape field handed a path", documented, theRun(), []Field{{Name: "at", Doc: "/tmp/x", Run: "/tmp/y"}}, 1)
+	compare(t, "tmpdir with both spellings", doc, run, []Field{{Name: "tmpdir", Doc: "/tmp/nova-bus-1", Run: "/var/folders/q5/T/nova-bus-9f3"}}, 0)
+	problems := compare(t, "tmpdir missing run spelling", doc, run, []Field{{Name: "tmpdir"}}, 1)
+	assert.Contains(t, problems[0].Message, "tmpdir")
+	compare(t, "shape field with path refused", documented, theRun(), []Field{{Name: "at", Doc: "/tmp/x", Run: "/tmp/y"}}, 1)
 }
 
 // A comparison over no command passes by comparing nothing, so it is a problem

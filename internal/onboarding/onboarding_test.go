@@ -53,48 +53,69 @@ ALPHA STALE
 
 func TestSectionNamesKeepsOrderAndRepeats(t *testing.T) {
 	t.Parallel()
-
 	got := SectionNames(twoSections)
 	want := []string{"nova-alpha", "nova-beta", "nova-alpha"}
-	require.Equal(t, len(want), len(got), "SectionNames = %q, want %q", got, want)
+	require.Equal(t, len(want), len(got))
 	for i := range want {
-		require.Equal(t, want[i], got[i], "SectionNames = %q, want %q", got, want)
+		require.Equal(t, want[i], got[i])
 	}
 }
 
 func TestRepeatedSectionsNamesTheOneWrittenTwice(t *testing.T) {
 	t.Parallel()
-
-	got := RepeatedSections(twoSections)
-	require.Equal(t, []string{"nova-alpha"}, got, "RepeatedSections = %q, want [nova-alpha]", got)
-	none := RepeatedSections("## a\n\n## b\n")
-	require.Empty(t, none, "RepeatedSections of a healthy document = %q, want none", none)
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want []string
+	}{
+		{"document with repeats", twoSections, []string{"nova-alpha"}},
+		{"healthy document", "## a\n\n## b\n", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := RepeatedSections(tc.doc)
+			require.Equal(t, tc.want, got)
+		})
+	}
 }
 
-// A repeated name is invisible to Section, which is the whole danger: it answers
-// happily and names the first half. This pins that reading so the next person to
-// wonder why a section drifted unwatched finds the answer in a test.
+// Repeated names are invisible to Section: it answers the first half. FirstRun
+// of a repeated section also reads the first, so any later section unread becomes
+// undocumented.
 func TestSectionReadsOnlyTheFirstOfTwo(t *testing.T) {
 	t.Parallel()
-
 	body, ok := Section(twoSections, "nova-alpha")
-	require.True(t, ok, "Section did not find nova-alpha")
+	require.True(t, ok)
 	lines, err := FirstRun(twoSections, "nova-alpha")
 	require.NoError(t, err)
-	require.True(t, len(lines) == 2, "FirstRun read %q; it reads the FIRST `## nova-alpha`, and the second is read by nobody", lines)
-	require.True(t, lines[0] == "$ nova-alpha go", "FirstRun read %q; it reads the FIRST `## nova-alpha`, and the second is read by nobody", lines)
-	require.NotContains(t, body, "ALPHA STALE", "Section reached into the second `## nova-alpha`; this test's premise is gone")
+	require.Len(t, lines, 2)
+	require.Equal(t, "$ nova-alpha go", lines[0])
+	require.NotContains(t, body, "ALPHA STALE")
 }
 
 func TestTranscriptReadsANamedSubsection(t *testing.T) {
 	t.Parallel()
-
-	lines, err := Transcript(twoSections, "nova-alpha", "Refusals")
-	require.NoError(t, err)
-	require.True(t, len(lines) == 2, "Transcript(Refusals) = %q", lines)
-	require.True(t, lines[0] == "$ nova-alpha", "Transcript(Refusals) = %q", lines)
-	_, err = Transcript(twoSections, "nova-beta", "Refusals")
-	require.Error(t, err, "Transcript found a `### Refusals` that nova-beta does not have")
-	_, err = Transcript(twoSections, "nova-gamma", "First run")
-	require.Error(t, err, "Transcript found a section for a tool the document does not name")
+	for _, tc := range []struct {
+		name string
+		doc  string
+		tool string
+		sub  string
+		ok   bool
+	}{
+		{"valid subsection", twoSections, "nova-alpha", "Refusals", true},
+		{"missing subsection", twoSections, "nova-beta", "Refusals", false},
+		{"missing tool", twoSections, "nova-gamma", "First run", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lines, err := Transcript(tc.doc, tc.tool, tc.sub)
+			if tc.ok {
+				require.NoError(t, err)
+				require.Len(t, lines, 2)
+				require.Equal(t, "$ nova-alpha", lines[0])
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
 }

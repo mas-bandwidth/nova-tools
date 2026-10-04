@@ -15,62 +15,111 @@ import (
 func TestOpeningSentenceIsOneSentenceNamingTheTool(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	got, err := OpeningSentence(r.banner("nova-foo: notes between AIs, over a git repository", "", "usage:"), r.tool)
-	require.NoError(t, err, "a good line 1: got %q, %v", got, err)
-	require.Equal(t, "notes between AIs, over a git repository", got, "a good line 1: got %q, %v", got, err)
-	for _, tc := range []struct{ name, banner, want string }{
-		{"a usage line", r.banner("nova-foo check --file <path>"), `must open with "nova-foo: "`},
-		{"another tool's name", r.banner("nova-bar: does a thing well"), `must open with "nova-foo: "`},
-		{"a dash for the colon", r.banner("nova-foo — owns the thing it owns"), `must open with "nova-foo: "`},
-		{"two words", r.banner("nova-foo: the bus"), "fewer than three words"},
-		{"two sentences", r.banner("nova-foo: it reads notes. It writes notes too"), "sentence break"},
-		{"a closing full stop", r.banner("nova-foo: it reads notes and writes them."), "sentence break"},
-		{"a pointer in place of the answer", r.banner("nova-foo: the ingestion fuse (see docs/SPEC.md)"), "points at a document"},
-		{"flags on line 1", r.banner("nova-foo: check --file <path> and report"), "usage line"},
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  string
+		good  bool
+	}{
+		{"valid opening", []string{"nova-foo: notes between AIs, over a git repository", "", "usage:"}, "notes between AIs, over a git repository", true},
+		{"a usage line", []string{"nova-foo check --file <path>"}, `must open with "nova-foo: "`, false},
+		{"another tool's name", []string{"nova-bar: does a thing well"}, `must open with "nova-foo: "`, false},
+		{"a dash for the colon", []string{"nova-foo — owns the thing it owns"}, `must open with "nova-foo: "`, false},
+		{"two words", []string{"nova-foo: the bus"}, "fewer than three words", false},
+		{"two sentences", []string{"nova-foo: it reads notes. It writes notes too"}, "sentence break", false},
+		{"a closing full stop", []string{"nova-foo: it reads notes and writes them."}, "sentence break", false},
+		{"a pointer in place of the answer", []string{"nova-foo: the ingestion fuse (see docs/SPEC.md)"}, "points at a document", false},
+		{"flags on line 1", []string{"nova-foo: check --file <path> and report"}, "usage line", false},
 	} {
-		r.refuses(tc.name, tc.banner, tc.want)
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := OpeningSentence(r.banner(tc.lines...), r.tool)
+			if tc.good {
+				require.NoError(t, err)
+				require.Equal(t, tc.want, got)
+			} else {
+				assert.ErrorContains(t, err, tc.want)
+			}
+		})
 	}
 }
 
 func TestHowItWorksOpensNearTheTop(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	got := HowItWorksLine(r.banner("nova-foo: does a thing well", "", "how it works: a box is a file.", "first run: init.", "", "usage:"))
-	require.Equal(t, 3, got, "HowItWorksLine = %d, want 3", got)
-	r.foundAt(r.banner("nova-foo: does a thing well", "", "usage:", strings.Repeat("  nova-foo x\n", 14)+"how it works: too late"), 0)
-	r.foundAt(r.banner("nova-foo: does a thing well", "", "How it works is below."), 0)
+	for _, tc := range []struct {
+		name string
+		line []string
+		want int
+	}{
+		{"early position", []string{"nova-foo: does a thing well", "", "how it works: a box is a file.", "first run: init.", "", "usage:"}, 3},
+		{"after usage", []string{"nova-foo: does a thing well", "", "usage:", strings.Repeat("  nova-foo x\n", 14) + "how it works: too late"}, 0},
+		{"no how it works", []string{"nova-foo: does a thing well", "", "How it works is below."}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := HowItWorksLine(r.banner(tc.line...))
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func TestExampleCommandsCountsTheToolsLinesOnly(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	r.commands(r.banner(
-		"usage:",
-		"  nova-foo run",
-		"",
-		"example:",
-		"  nova-foo check",
-		"  mkdir -p /tmp/x/home",
-		"  HOME=/tmp/x/home nova-foo probe --write /tmp/x",
-		"  nova-foo run --write /tmp/x \\",
-		"    -- nova-foo inside",
-		"  nova-bar other",
-		"",
-		"  nova-foo after the block",
-	),
-		"nova-foo check",
-		"HOME=/tmp/x/home nova-foo probe --write /tmp/x",
-		`nova-foo run --write /tmp/x \`,
-	)
-	r.commands(r.banner("usage:", "  nova-foo run"))
-	r.commands(r.banner("example:", "  FOO-BAR=1 nova-foo x", "  1X=2 nova-foo y"))
+	for _, tc := range []struct {
+		name string
+		text []string
+		want []string
+	}{
+		{
+			"extracts tool lines from example block",
+			[]string{
+				"usage:",
+				"  nova-foo run",
+				"",
+				"example:",
+				"  nova-foo check",
+				"  mkdir -p /tmp/x/home",
+				"  HOME=/tmp/x/home nova-foo probe --write /tmp/x",
+				"  nova-foo run --write /tmp/x \\",
+				"    -- nova-foo inside",
+				"  nova-bar other",
+				"",
+				"  nova-foo after the block",
+			},
+			[]string{
+				"nova-foo check",
+				"HOME=/tmp/x/home nova-foo probe --write /tmp/x",
+				`nova-foo run --write /tmp/x \`,
+			},
+		},
+		{"no example block", []string{"usage:", "  nova-foo run"}, nil},
+		{"no tool lines", []string{"example:", "  FOO-BAR=1 nova-foo x", "  1X=2 nova-foo y"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r.commands(r.banner(tc.text...), tc.want...)
+		})
+	}
 }
 
 func TestHowItWorksLengthStopsAtTheFirstRunOrABlankLine(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	r.counted(r.banner("nova-foo: does a thing well", "", "how it works: one", "two", "three", "four", "five", "first run: init.", "", "usage:"), 5)
-	got := HowItWorksLength(r.banner("nova-foo: does a thing well", "", "how it works: one", "two", "three", "four", "five", "six", "", "usage:"))
-	assert.True(t, got == 6 && got > HowItWorksMaxLines, "HowItWorksLength = %d for a six-line paragraph ending at a blank line, want 6 (over %d)", got, HowItWorksMaxLines)
-	r.counted(r.banner("nova-foo: does a thing well", "", "usage:"), 0)
+	for _, tc := range []struct {
+		name string
+		line []string
+		want int
+	}{
+		{"stops at first run", []string{"nova-foo: does a thing well", "", "how it works: one", "two", "three", "four", "five", "first run: init.", "", "usage:"}, 5},
+		{"stops at blank line", []string{"nova-foo: does a thing well", "", "how it works: one", "two", "three", "four", "five", "six", "", "usage:"}, 6},
+		{"no how it works", []string{"nova-foo: does a thing well", "", "usage:"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := HowItWorksLength(r.banner(tc.line...))
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
