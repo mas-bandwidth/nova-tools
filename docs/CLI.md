@@ -1034,7 +1034,7 @@ nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<ot
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint fleet beat <member> [--load <percent>]
-nova-sprint fleet up <member> [--width <n>]
+nova-sprint fleet up <member> [--width <n>] [--deadline <duration|default>]
 nova-sprint fleet down <member>
 nova-sprint fleet sync [--check] [--pg <dsn>]
 nova-sprint fleet level

@@ -29,7 +29,11 @@ it beats (status held); fleet up releases the hold, adding a member the
 sprint does not know. Each says where the cards went on its MOVED line: down
 "moved=N to <member>(n),...; stayed=K withdrawn: <ids>" (a card no member up
 has room for is withdrawn and dealt again where there is room), up
-"moved=N to <member>(n) from <member>(n),..." (the level). The load cell is the machine's CPU busy percent of all
+"moved=N to <member>(n) from <member>(n),..." (the level). fleet up --deadline <d> pins
+the deadline every card dealt to the member gets (--deadline default takes the
+pin off): a card's deadline is otherwise the larger of its own and three times
+the member's median run wall over its last fifty ok attempts, so a slow
+machine does not time out twice as often. The load cell is the machine's CPU busy percent of all
 its cores (the one-minute load average over the cores where that cannot be
 measured), the highest of the last `+sprint.LoadWindow.String()+`.
 
@@ -70,8 +74,8 @@ reader holds a read (asked, reading, ok or broken).`) + "\n"
 // counts as a beat of the member, and brings it up at once when it is alive, and sets its
 // width when width is above zero; down holds it down; level evens the ready
 // queues.
-func (a *app) fleetStep(st *store.Store, op, member, who string, width int) store.Step {
-	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width}
+func (a *app) fleetStep(st *store.Store, op, member, who string, width int, deadline int, deadlineOff bool) store.Step {
+	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width, Deadline: deadline, DeadlineOff: deadlineOff}
 	switch op {
 	case "up":
 		r.Op = "release"

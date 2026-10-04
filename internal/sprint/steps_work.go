@@ -904,6 +904,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 		set = map[string]string{}
 	}
 	work, primary := splitRoute(route)
+	s.dealDeadline(m, work) // the member's deadline, from the card's own (deadline.go)
 	for k, v := range work {
 		if v != "" {
 			fields[k] = v
@@ -963,6 +964,7 @@ func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexe
 	maps.Copy(set, bars)
 	unset = append(unset, none...)
 	work, primary := splitRoute(route)
+	s.dealDeadline(m, work) // the member's deadline, from the card's own (deadline.go)
 	for k, v := range work {
 		if v == "" {
 			unset = append(unset, k)
@@ -1494,6 +1496,10 @@ type FleetReq struct {
 	// Width, above zero, is the member's width set by up or release (the
 	// machine's child cap, width.go); zero leaves the width as it is.
 	Width int `json:",omitempty"`
+	// Deadline, above zero, is the member's pinned deadline in seconds set by up or
+	// release (deadline.go); DeadlineOff takes the pin off; neither leaves it as it is.
+	Deadline    int  `json:",omitempty"`
+	DeadlineOff bool `json:",omitempty"`
 	// Sync, with Op sync, is every machine the inventory says is a member
 	// and its width (fleet_sync.go); Member is empty.
 	Sync []SyncMember `json:",omitempty"`
@@ -1607,6 +1613,9 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			if r.Width > 0 {
 				fields[FieldWidth] = itoa(r.Width)
 			}
+			if r.Deadline > 0 {
+				fields[FieldMemberDeadline] = itoa(r.Deadline)
+			}
 			head = append(head, change(Fleet, createEntry(CtlID(r.Member), r.Member, Ctl, 0, fields)))
 		default:
 			set := map[string]string{}
@@ -1617,6 +1626,12 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			}
 			if r.Width > 0 && ctl.F(FieldWidth) != itoa(r.Width) {
 				set[FieldWidth] = itoa(r.Width)
+			}
+			if r.Deadline > 0 && ctl.F(FieldMemberDeadline) != itoa(r.Deadline) {
+				set[FieldMemberDeadline] = itoa(r.Deadline)
+			}
+			if r.DeadlineOff && ctl.F(FieldMemberDeadline) != "" {
+				unset = append(unset, FieldMemberDeadline)
 			}
 			if r.Op == "release" && ctl.F("held") != "" {
 				unset = append(unset, "held", FieldHeldBy)
@@ -1630,6 +1645,12 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		}
 		if r.Width > 0 && (ctl == nil || ctl.F(FieldWidth) != itoa(r.Width)) {
 			line += " width=" + itoa(r.Width)
+		}
+		if r.Deadline > 0 && (ctl == nil || ctl.F(FieldMemberDeadline) != itoa(r.Deadline)) {
+			line += " deadline=" + itoa(r.Deadline) + "s (pinned)"
+		}
+		if r.DeadlineOff && ctl != nil && ctl.F(FieldMemberDeadline) != "" {
+			line += " deadline=the card's, or " + itoa(DeadlineK) + " times the member's median run wall (the pin taken off)"
 		}
 		if comeUp {
 			level(s, &p, orderLike(s.Members(), append(liveFor(s, r), r.Member), r.Member), rr, moves, nil)
@@ -1725,6 +1746,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 				moves[c.ID] = m
 				q[m]++
 				set := nextGen(c, m, s.Now)
+				s.movedDeadline(m, c, set) // the new member's deadline (deadline.go)
 				if taken {
 					set["redeals"] = itoa(c.Int("redeals") + 1)
 				}
@@ -1877,7 +1899,9 @@ func levelWith(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, h
 		// had ready cards, whatever the target (tla/Level.tla, MovesBounded)
 		queues[long] = append(q[:i:i], q[i+1:]...)
 		moves[c.ID] = to
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, to, Ready, nextGen(c, to, s.Now)))},
+		set := nextGen(c, to, s.Now)
+		s.movedDeadline(to, c, set) // the new member's deadline (deadline.go)
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, to, Ready, set))},
 			Moved: fmt.Sprintf("%s %s:ready -> %s:ready gen=%d", c.ID, long, to, c.Int("gen")+1)})
 	}
 }

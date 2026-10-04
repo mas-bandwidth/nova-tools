@@ -1005,7 +1005,7 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	}
 	var memberNames []string
 	for _, m := range specs {
-		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width), steps, stderr); code != 0 {
+		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width, 0, false), steps, stderr); code != 0 {
 			return code
 		}
 		memberNames = append(memberNames, m.Name)
@@ -2334,9 +2334,10 @@ func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	name := "fleet " + op
 	fs, c := a.verbSetup(name)
-	var width *string
+	var width, deadline *string
 	if op == "up" {
 		width = fs.String("width", "", fmt.Sprintf("the member's width: the most work cards it runs at once; the deal holds it at %d times that, ready and working; 1 to %d (default: as it is, %d for a new member)", sprint.DealAhead, sprint.MaxWidth, sprint.DefaultWidth))
+		deadline = fs.String("deadline", "", fmt.Sprintf("pin the deadline every card dealt to the member gets, a duration (45m, 2700s); default takes the pin off: each card's own deadline, or %d times the member's median run wall over its last %d ok attempts, whichever is larger", sprint.DeadlineK, sprint.DeadlineSamples))
 	}
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -2351,6 +2352,12 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, name, "--width: "+err.Error())
 		}
 	}
+	d, off := 0, false
+	if deadline != nil && *deadline != "" {
+		if d, off, err = sprint.ParseDeadline(*deadline); err != nil {
+			return refuse(stderr, name, err.Error())
+		}
+	}
 	member := ""
 	if len(pos) == 1 {
 		member = pos[0]
@@ -2359,7 +2366,7 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor, w), stdout, stderr)
+	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor, w, d, off), stdout, stderr)
 }
 
 func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
