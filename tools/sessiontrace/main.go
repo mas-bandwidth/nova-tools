@@ -327,6 +327,7 @@ func runTLC(ctx context.Context, root, jar, out string, traces []trace) (int, st
 	if err != nil {
 		return 0, "", err
 	}
+	// ignored: a removal of this run's own temp scratch dir, which may already be gone
 	defer os.RemoveAll(scratch)
 	logPath := filepath.Join(out, "tlc.log")
 	log, err := os.Create(logPath)
