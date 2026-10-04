@@ -94,3 +94,26 @@ func TestLineHoldsWhateverTheStampContains(t *testing.T) {
 	require.Len(t, fields, 4, "want 4 fields whatever the stamp holds, got %d: %q", len(fields), line)
 	assert.Contains(t, line, `v1.2.3\x0a`, "the stamp is escaped rather than dropped or printed raw: %q", line)
 }
+
+// TestParseRefusesADuplicateExtraKey checks that Parse refuses version lines with
+// duplicate extra keys, rather than accepting them silently.
+func TestParseRefusesADuplicateExtraKey(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantOK  bool
+	}{
+		{"duplicate build= keys", "nova-example v1.2.3 darwin/arm64 go1.27.1 build=a build=b", false},
+		{"distinct extra keys", "nova-example v1.2.3 darwin/arm64 go1.27.1 build=a backend=b", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, ok := Parse(tt.input)
+			assert.Equal(t, tt.wantOK, ok, "%s: ok = %v, want %v", tt.name, ok, tt.wantOK)
+		})
+	}
+}
