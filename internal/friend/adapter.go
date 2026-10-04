@@ -54,6 +54,8 @@ const DeliverBudget = 10 * time.Minute
 // budget or a cancel the whole group is signalled, SIGTERM then SIGKILL after
 // KillDelay: a harness that forks (opencode run does) leaves no orphan
 // behind a timeout (the finding of 2026-10-04: subproc.Long sets no group).
+// On a nonzero exit the output carries the head of stderr after stdout: a
+// harness says why it refused there (dsh does).
 func RealExec(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
 	return realExec(ctx, DeliverBudget, KillDelay, dir, name, args, stdin)
 }
@@ -64,9 +66,9 @@ func realExec(ctx context.Context, budget, killDelay time.Duration, dir, name st
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(stdin)
-	var out strings.Builder
+	var out, stderr strings.Builder
 	cmd.Stdout = &out
-	cmd.Stderr = io.Discard
+	cmd.Stderr = &stderr
 	ownGroup(cmd)
 	cmd.WaitDelay = killDelay // the pipes close this long after the group is signalled
 	err := cmd.Run()
@@ -78,7 +80,7 @@ func realExec(ctx context.Context, budget, killDelay time.Duration, dir, name st
 		if ctx.Err() != nil {
 			return out.String(), exitErr.ExitCode(), fmt.Errorf("the delivery ran past %s and was stopped with its process group", budget)
 		}
-		return out.String(), exitErr.ExitCode(), nil
+		return out.String() + Head(stderr.String(), OutputKept), exitErr.ExitCode(), nil
 	}
 	return out.String(), 0, err
 }

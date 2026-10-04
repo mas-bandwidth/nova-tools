@@ -257,3 +257,9 @@ the rest are `Stub` with a surveyed reason (`adapter_refused.go`): known to
 Not measured: whether `dsh headless` adopts a session the desktop app holds
 open (a `session.lock` sits in every session directory), and whether the
 desktop app shows the pushed turn live or on its next load.
+A session that has selected an agent preset is refused by the one-shot runner
+whatever the text (exit 1, "runs under agent preset ..., which the one-shot
+runner does not compose"; measured 2026-10-04 on a "minimal" session), so the
+adapter answers Deferred: the message stays pending, never given up, and the
+reason tells the friend to start a session without a preset or read the bus with
+`nova-bus recv`.
