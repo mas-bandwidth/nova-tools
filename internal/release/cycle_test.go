@@ -52,17 +52,20 @@ func playOutput(state string, failed string, hosts ...string) string {
 }
 
 // cycleRig is a checkout with a play, an artifact root and a receipts
-// directory, and a clock that moves a minute a reading.
+// directory, and a clock that moves a minute a reading. The inventory is a
+// real script that lists, because cycle runs it with --list before any play.
 func cycleRig(t *testing.T, plays ...string) (args []string, deps Deps, play *fakeAnsible) {
 	t.Helper()
 	source := sourceTree(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(source, "fleet"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(source, "fleet", "tools.yml"), []byte("- hosts: all\n"), 0o644))
+	inventory := filepath.Join(t.TempDir(), "nova-inventory")
+	require.NoError(t, os.WriteFile(inventory, []byte("#!/bin/sh\necho '{}'\n"), 0o755))
 	now := time.Date(2026, 10, 2, 13, 0, 0, 0, time.UTC)
 	play = &fakeAnsible{answers: plays}
 	deps = Deps{Ansible: play, Now: func() time.Time { now = now.Add(time.Minute); return now }}
 	args = []string{"cycle", "--version", "v1.1.0-dev.c2", "--source", source, "--out", t.TempDir(),
-		"--inventory", "/fleet/nova-inventory", "--benches", "batman,vision", "--reason", "the member fix",
+		"--inventory", inventory, "--benches", "batman,vision", "--reason", "the member fix",
 		"--receipts", t.TempDir(), "--ansible", "/usr/bin/ansible-playbook"}
 	return args, deps, play
 }
@@ -144,4 +147,37 @@ func TestCycleRefusesBeforeAnyPlay(t *testing.T) {
 		assert.Contains(t, e.String(), tc.want)
 		assert.Empty(t, play.runs)
 	}
+}
+
+// TestCycleRefusesAnInventoryThatCannotList pins the one --list cycle runs
+// before any play (docs/FLEET.md, "An adopter's path"): a wrapper that cannot
+// reach the store is refused with its own line and the fix, and no play runs;
+// a wrapper that lists carries the cycle into the check play as before.
+func TestCycleRefusesAnInventoryThatCannotList(t *testing.T) {
+	t.Parallel()
+	inv := filepath.Join(t.TempDir(), "nova-inventory")
+	require.NoError(t, os.WriteFile(inv, []byte("#!/bin/sh\necho 'nova-config inventory REFUSED: redis: read the applied names: NOAUTH Authentication required.' >&2\nexit 1\n"), 0o755))
+	args, deps, play := cycleRig(t)
+	args[slices.Index(args, "--inventory")+1] = inv
+	var o, e bytes.Buffer
+	assert.Equal(t, 1, Run("nova-update", args, &o, &e, deps))
+	assert.Contains(t, e.String(), "CYCLE REFUSED", e.String())
+	assert.Contains(t, e.String(), inv)
+	assert.Contains(t, e.String(), "NOAUTH")
+	assert.Contains(t, e.String(), "NOVA_SPRINT_REDIS_USER")
+	assert.Empty(t, play.runs, "no play runs on an inventory that cannot list")
+
+	good := filepath.Join(t.TempDir(), "nova-inventory")
+	calls := filepath.Join(t.TempDir(), "calls")
+	require.NoError(t, os.WriteFile(good, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> "+calls+"\necho '{}'\n"), 0o755))
+	args, deps, play = cycleRig(t, playOutput("WOULD-INSTALL", "", "batman", "vision"))
+	args[slices.Index(args, "--inventory")+1] = good
+	o.Reset()
+	e.Reset()
+	assert.Equal(t, 0, Run("nova-update", append(args, "--dry-run"), &o, &e, deps), e.String())
+	require.Len(t, play.runs, 1, "the cycle proceeds to the check play")
+	assert.Equal(t, "--check", play.runs[0][len(play.runs[0])-1])
+	called, err := os.ReadFile(calls)
+	require.NoError(t, err)
+	assert.Equal(t, "--list\n", string(called), "the inventory is listed once, with --list")
 }
