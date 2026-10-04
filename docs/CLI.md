@@ -430,8 +430,7 @@ stream per recipient under a consumer group, one log of everything; a message is
 on every recipient's stream and the log or on none, and is pending from `recv`
 until `ack`, so a reader that died before acking is handed it again. The spec is
 [SPEC-BUS.md](SPEC-BUS.md); the rules are `internal/bus`; the delivery
-machine is `tla/Bus2.tla`. It was nova-bus2 until 2026-10-04, when it took the
-name of the git bus it replaced.
+machine is `tla/Bus2.tla`.
 
 ### First run
 
