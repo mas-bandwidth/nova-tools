@@ -256,18 +256,6 @@ func TestInboxJSONCarriesTheJudgmentsToActOn(t *testing.T) {
 	require.NotEqual(t, sprint.NWorkFailed, in.Judgments[0].Type, "the judgments after the answers: %+v", in.Judgments)
 }
 
-// byType is the judgment of a type.
-func byType(t *testing.T, js []inboxJudgment, typ string) inboxJudgment {
-	t.Helper()
-	for _, j := range js {
-		if j.Type == typ {
-			return j
-		}
-	}
-	t.Fatalf("no judgment %q in %+v", typ, js)
-	return inboxJudgment{}
-}
-
 // byStream is the judgment of a stream.
 func byStream(t *testing.T, js []inboxJudgment, stream string) inboxJudgment {
 	t.Helper()
