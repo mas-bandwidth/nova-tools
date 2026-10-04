@@ -101,21 +101,25 @@ func friendLoad(s *Snapshot, name string) int {
 }
 
 // FriendDeal deals the friends' cards (in the order given, the deal's stream turns) to
-// the friends up, each within her width: a card naming a friend goes to her while she is
-// up and below her width, and waits ready otherwise; a card for any friend goes to the
-// friend up with the most free width, the first by name among equals, as the machines'
-// rule fills the member with room. Each is its next attempt's work card, created on the
-// friend's row in working at generation 1 (dealt and taken now: its deadline is the
-// working one), carrying the primary's fix, finding and why as a machine's deal does; its
-// primary moves ready -> working. The friend's row is declared by the plan the first
-// time she is dealt to.
+// the friends up, each within her room, DealAhead times her width, as the machines'
+// deal fills a member (the owner, 2026-10-04: "Do it just like the fleet, you keep
+// people busy by having 2X width queued up in ready per-friend"): a card naming a
+// friend goes to her while she is up and below her room, and waits ready otherwise; a
+// card for any friend goes to the friend up with the most room free, the first by name
+// among equals. Each is its next attempt's work card, created on the friend's row at
+// generation 1, in working while she has a lane free (her width less her working cards;
+// dealt and taken now: its deadline is the working one) and ready behind them otherwise
+// (her finish takes the next: Finish), carrying the primary's fix, finding and why as a
+// machine's deal does; its primary moves ready -> working. The friend's row is declared
+// by the plan the first time she is dealt to.
 func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 	var p Plan
-	free := map[string]int{}
+	free, lanes := map[string]int{}, map[string]int{}
 	var up []string
 	for _, f := range seats {
 		if f.Status == Up {
-			free[f.Name] = f.Width - friendLoad(s, f.Name)
+			free[f.Name] = DealAhead*f.Width - friendLoad(s, f.Name)
+			lanes[f.Name] = f.Width - s.Fleet.Count(FriendRow(f.Name), Working)
 			up = append(up, f.Name)
 		}
 	}
@@ -142,30 +146,40 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 			continue
 		}
 		free[name]--
+		col := Ready
+		if lanes[name] > 0 {
+			lanes[name]--
+			col = Working
+		}
 		row := FriendRow(name)
 		if !s.Fleet.HasRow(row) && !declared[row] {
 			p.Rows = append(p.Rows, RowAdd{Fleet, row})
 			declared[row] = true
 		}
-		p.Units = append(p.Units, friendDealUnit(s, c, card, row))
+		p.Units = append(p.Units, friendDealUnit(s, c, card, row, col))
 	}
 	return Lawful(p)
 }
 
-// friendDealUnit is one friend's card dealt: its work card on her row in working, and its
-// primary ready -> working on it.
-func friendDealUnit(s *Snapshot, c *Card, card, row string) Unit {
+// friendDealUnit is one friend's card dealt: its work card on her row, in working (taken
+// now) or ready behind her working cards, and its primary ready -> working on it.
+func friendDealUnit(s *Snapshot, c *Card, card, row, col string) Unit {
 	attempt := c.Int("attempt") + 1
 	now := stamp(s.Now)
 	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": row,
-		"dealt": now, "first_dealt": now, "taken": now, "first_taken": now}
+		"dealt": now, "first_dealt": now}
+	if col == Working {
+		fields["taken"], fields["first_taken"] = now, now
+	} else {
+		fields["untaken_since"] = now
+	}
 	for _, k := range []string{"fix", "finding", "why"} {
 		if v := c.F(k); v != "" {
 			fields[k] = v
 		}
 	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
-		change(Fleet, createEntry(card, row, Working, c.Score, fields)),
+		change(Fleet, createEntry(card, row, col, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, map[string]string{"attempt": itoa(attempt), "work": card}, "result")),
-	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s (a friend's card: friend sync delivers it to her inbox)", c.ID, c.Col, card, row)}
+	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s %s (a friend's card: friend sync delivers it to her inbox)", c.ID, c.Col, card, row, col)}
 }

@@ -514,8 +514,9 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		return strings.Join(held, "; "), "", true
 	case Ready:
 		if name, ok := FriendCard(pr); ok {
-			// a friend's card waits for a friend up below her width (FriendDeal), whose
-			// beats and widths are the friends' records, not the tables'
+			// a friend's card waits for a friend up below her room, DealAhead times her
+			// width (FriendDeal), whose beats and widths are the friends' records, not
+			// the tables'
 			if name == "" {
 				name = "any friend"
 			}

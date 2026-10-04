@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -273,14 +277,25 @@ func friendReadReport(dir, job string) (report, why string, err error) {
 // outside her working directory. It says what it did, a line each, and how many it
 // delivered and finished.
 func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
-	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working)
+	// her working cards, then the ready ones dealt behind them (sprint.FriendDeal): both are
+	// delivered, and her queue file says which are which
+	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working, sprint.Ready)
 	if err != nil || len(cards) == 0 {
 		return 0, 0, err
+	}
+	states := map[string]string{}
+	for _, c := range cards {
+		states[c.ID] = map[string]string{string(sprint.Working): "working", string(sprint.Ready): "queued"}[string(c.Col)]
 	}
 	packets, err := st.Packets(ctx, cards)
 	if err != nil {
 		return 0, 0, err
 	}
+	defer func() {
+		if err == nil {
+			err = writeQueueFile(dir, states)
+		}
+	}()
 	for _, p := range packets {
 		job := friendJobOf(p)
 		in, why, err := friendInbox(dir, p)
@@ -339,4 +354,65 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		say(fmt.Sprintf("FRIEND-CARD FINISHED friend=%s card=%s result=%s head=%s: %s", name, p.Card, result, cmp.Or(r.Head, "-"), oneline.Escape(oneline.Cap(r.Report, 200))))
 	}
 	return delivered, finished, nil
+}
+
+// queueFile is the friend's queue file under her working directory, nova-friend's
+// daemon's: one record per task, its state queued, working or done;
+// her daemon's pong reports its counts (queue, working).
+const queueFile = "inbox/QUEUE.json"
+
+// friendQueue is the queue file's shape, as nova-friend reads it.
+type friendQueue struct {
+	Tasks []friendTask `json:"tasks"`
+}
+
+type friendTask struct {
+	ID          string `json:"id"`
+	State       string `json:"state"`
+	Deliverable string `json:"deliverable,omitempty"`
+}
+
+// writeQueueFile keeps the friend's queue file as the sprint sees her cards: each card
+// on her row is a record, queued while it is ready behind her working cards and working
+// while it is working; a record the sprint does not name, or one her session marked
+// done, is kept as it is. The file is written whole (atomicfile), and not at all when
+// nothing changes.
+func writeQueueFile(dir string, states map[string]string) error {
+	path := filepath.Join(dir, filepath.FromSlash(queueFile))
+	var q friendQueue
+	before, err := os.ReadFile(path)
+	if err == nil {
+		if json.Unmarshal(before, &q) != nil {
+			// ignored: a file that is no queue is replaced by one (the bare list form is read too)
+			_ = json.Unmarshal(before, &q.Tasks)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	seen := map[string]bool{}
+	for i, t := range q.Tasks {
+		if state, ok := states[t.ID]; ok {
+			seen[t.ID] = true
+			if t.State != "done" {
+				q.Tasks[i].State = state
+			}
+		}
+	}
+	for _, id := range slices.Sorted(maps.Keys(states)) {
+		if !seen[id] {
+			q.Tasks = append(q.Tasks, friendTask{ID: id, State: states[id]})
+		}
+	}
+	after, err := json.MarshalIndent(q, "", "  ")
+	if err != nil {
+		return err
+	}
+	after = append(after, '\n')
+	if bytes.Equal(before, after) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return atomicfile.WriteFile(path, after, 0o644)
 }
