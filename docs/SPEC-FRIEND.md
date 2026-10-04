@@ -185,6 +185,23 @@ marks it read in `read.json` there as it takes it. Measured 2026-10-04 08:52
 ET: sent at :28, the turn's first step at :32, the friend's "got it" on
 nova-bus2 at :35.
 
+Ten consecutive open-session runs measured on 2026-10-04 (Antigravity 2.19.1,
+session `fa76bcf6-e79d-42c2-be38-aa95ded5247c`, transcript
+`~/.gemini/antigravity/brain/fa76bcf6-e79d-42c2-be38-aa95ded5247c/.system_generated/logs/transcript.jsonl`),
+each sent via `nova-friend ping` and verified via
+`nova-friend wait-pong --nonce <n> --timeout 60s` (accepting only the session pong):
+- Run 1 (nonce `51qjmx`): sent at 2026-10-04T14:20:04Z, turn seen at 2026-10-04T14:20:08Z (line 4272), pong at 2026-10-04T14:20:11Z (line 4274), 7 s
+- Run 2 (nonce `cbpukf`): sent at 2026-10-04T14:20:36Z, turn seen at 2026-10-04T14:20:36Z (line 4282), pong at 2026-10-04T14:20:39Z (line 4284), 3 s
+- Run 3 (nonce `jtzfzq`): sent at 2026-10-04T14:21:19Z, turn seen at 2026-10-04T14:21:19Z (line 4288), pong at 2026-10-04T14:21:22Z (line 4290), 3 s
+- Run 4 (nonce `7qohp5`): sent at 2026-10-04T14:22:25Z, turn seen at 2026-10-04T14:22:25Z (line 4294), pong at 2026-10-04T14:22:29Z (line 4296), 4 s
+- Run 5 (nonce `ddawfw`): sent at 2026-10-04T14:23:16Z, turn seen at 2026-10-04T14:23:16Z (line 4300), pong at 2026-10-04T14:23:18Z (line 4302), 2 s
+- Run 6 (nonce `1e4ybj`): sent at 2026-10-04T14:24:16Z, turn seen at 2026-10-04T14:24:16Z (line 4310), pong at 2026-10-04T14:24:20Z (line 4312), 4 s
+- Run 7 (nonce `c5xm91`): sent at 2026-10-04T14:25:16Z, turn seen at 2026-10-04T14:25:16Z (line 4316), pong at 2026-10-04T14:25:23Z (line 4318), 7 s
+- Run 8 (nonce `6f5s7d`): sent at 2026-10-04T14:26:16Z, turn seen at 2026-10-04T14:26:16Z (line 4326), pong at 2026-10-04T14:26:19Z (line 4328), 3 s
+- Run 9 (nonce `qblpsq`): sent at 2026-10-04T14:27:16Z, turn seen at 2026-10-04T14:27:16Z (line 4332), pong at 2026-10-04T14:27:19Z (line 4334), 3 s
+- Run 10 (nonce `95q7zb`): sent at 2026-10-04T14:28:16Z, turn seen at 2026-10-04T14:28:20Z (line 4346), pong at 2026-10-04T14:28:24Z (line 4348), 8 s
+All ten runs passed within 2–8 seconds (well under the 60 s threshold).
+
 The adapter finds everything each delivery, so a restarted app is found
 again: the server's pid and CSRF token off `ps -axo user=,pid=,args=` for the daemon's own user (the
 `language_server` with `--override_ide_name antigravity` and its
@@ -198,7 +215,12 @@ turn. The command runs through `/usr/bin/env` with
 `ANTIGRAVITY_LS_ADDRESS` and `ANTIGRAVITY_CSRF_TOKEN` set, the text an
 argument; the token is already on the server's own command line, readable
 by every process of the login, so the delivery exposes nothing the harness
-does not.
+does not. The app needs no special launch (no wrapper, no custom flags).
+When the app is not running (no language server in `ps` for the daemon's
+user), the delivery returns `Deferred` (`no antigravity language server is
+running: is Antigravity open?`), so the message stays pending in the daemon's
+hand, retried every ten seconds (`RecheckEvery`) and never counted toward
+failure attempts or acked.
 
 The ack: `agentapi` exits 0 on an error too (a wrong conversation, a missing
 token print `"error"` in its JSON), so the JSON is read and its exit code is
