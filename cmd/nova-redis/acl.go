@@ -14,9 +14,10 @@ package main
 //     ACL CHECK OK|DRIFT; exit 1 on any drift.
 //   - acl apply is the same comparison, then ACL SETUSER for each user that
 //     differs (ACL SET lines) and ACL SAVE when the store keeps an ACL file;
-//     --dry-run prints ACL WOULD-SET and writes nothing. A password is never
-//     read: a user keeps the one it has, a new user and one the store shows
-//     as nopass get one only from the variable --password-env-for names.
+//     --dry-run prints ACL WOULD-SET for every rendered user from this build
+//     alone, opens no store and writes nothing. A password is never read: a
+//     user keeps the one it has, a new user and one the store shows as nopass
+//     get one only from the variable --password-env-for names.
 //
 // check and apply log in as --user with the password in --password-env, the
 // admin user that may run ACL, through connect as every nova-redis verb does.
