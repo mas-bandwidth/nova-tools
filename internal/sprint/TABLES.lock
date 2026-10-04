@@ -85,6 +85,19 @@
 # are as they were. No column changed, so the lines below are unchanged. Held by
 # TestAFriendsStatusIsTheFriendsRuleOverItsBeatsAndItsHold and
 # TestADownFriendShowsNoneWorking.
+#
+# Change, 2026-10-04, asked by Glenn in words: "trust but VERIFY"; "I want to trust the
+# ok%"; "Mechanical. You know the drill."; "Are they actually doing the work that is shown
+# in the friend table? Really?"; "i don't want dollar amounts for friends. token counts
+# are fine." The fleet's and the friends' ok and failed (hidden, under done and ok%) count
+# the readers' verdicts only: a worker's finish, ok or failed, moves its work card to the
+# fleet's new hidden column finished, and a reader's verdict moves it to ok (read ok by the
+# readers it needs) or failed (read broken) (sprint.TickVerdicts, verdicts.go). A friend's
+# card past its deadline unfinished is a redeal, never a failure: the new column redealt,
+# shown on the fleet and the friends tables after ok%, counts the cards taken back from a
+# row (sprint.TickFriendRedeal). A live store's fleet table is given both columns with
+# nova-table col add before this build ticks it. Held by TestSprintTablesAreLocked and
+# TestOkPercentCountsReaderVerdictsOnlyAndADeadlineIsARedeal.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
@@ -109,9 +122,11 @@ fleet.working count sum shown
 fleet.width text sum shown
 fleet.done sum(ok+failed) sum shown
 fleet.okpct pct(ok/ok+failed) pooled shown label=ok%
+fleet.redealt count sum shown
 fleet.status text none shown
 fleet.load text none shown
 fleet.withdrawn count sum hidden
+fleet.finished count sum hidden
 fleet.ok count sum hidden
 fleet.failed count sum hidden
 fleet.ctl first none hidden
@@ -120,6 +135,7 @@ friends.working count sum shown
 friends.width text sum shown
 friends.done sum(ok+failed) sum shown
 friends.okpct pct(ok/ok+failed) pooled shown label=ok%
+friends.redealt count sum shown
 friends.status text none shown
 friends.ok count sum hidden
 friends.failed count sum hidden

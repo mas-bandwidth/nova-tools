@@ -221,7 +221,7 @@ var TickTables = []TableUpdate{
 	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {"deal", TickDeal}, {"accept", TickAccept}}},
 	{Readers, []TickPartDef{{"ask", TickAsk}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
-	{Fleet, []TickPartDef{{"presence", TickPresence}}},
+	{Fleet, []TickPartDef{{"presence", TickPresence}, {"verdicts", TickVerdicts}, {"friend redeal", TickFriendRedeal}}},
 }
 
 // PartLevel and PartLevelReads are the tick start's parts: the fleet's and the
@@ -873,6 +873,9 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// lapses again and again cannot reset them, and the time a card spends
 	// withdrawn counts.
 	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
+		if IsFriendRow(c.Row) {
+			continue // a friend's card past its deadline is redealt (TickFriendRedeal), never judged late
+		}
 		field, limit, word, own := WorkDeadline(s, c)
 		at, ok := late(field, c, limit)
 		if !ok {

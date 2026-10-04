@@ -166,17 +166,11 @@ func TestAFriendWhoGoesQuietKeepsHerCardAndTheDeadlineHoldsIt(t *testing.T) {
 	// she holds it before its deadline, whatever her status
 	mustHold(t, running(w), "s1-1", HeldByActor)
 
-	// past the working deadline the tick's late judgment names it, as any work card's
+	// past the working deadline the tick redeals it (TickFriendRedeal), never a late judgment
 	w.tick(DeadlineUnfinished + time.Minute)
-	p, _ = TickDeadlines(w.s, TickReq{})
-	var late []Note
-	for _, n := range p.Notes {
-		if n.Type == NWorkLate {
-			late = append(late, n)
-		}
-	}
-	require.Len(t, late, 1)
-	assert.Contains(t, late[0].What, "s1-1.w1")
+	p, _ = TickFriendRedeal(w.s, TickReq{})
+	require.Len(t, p.Units, 1)
+	assert.Contains(t, p.Units[0].Moved, "s1-1.w1 working -> redealt")
 }
 
 func TestAReworkOfAFriendsCardWaitsReadyForAFriend(t *testing.T) {

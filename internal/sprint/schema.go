@@ -48,12 +48,13 @@ var AllOrder = []string{Work, Readers, Merge, Friends, Fleet}
 
 // FriendsDef is the friends table's shape: the fleet table's columns but load.
 // ready and working count her job cards in those states; width is her width
-// as text, summed; ok and failed (hidden) count her jobs done ok and done
-// failed, and done and ok% are the table's formulas over them, the footer
-// pooling ok% over the friends; status is text with no fold. The rows are the
+// as text, summed; redealt counts her cards taken back past their deadline
+// (TickFriendRedeal); ok and failed (hidden) count her cards the readers read ok
+// and broken (verdicts.go), and done and ok% are the table's formulas over them,
+// the footer pooling ok% over the friends; status is text with no fold. The rows are the
 // friends'; where draws them from store.FriendRows.
 func FriendsDef() ntable.Table {
-	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,ok,failed")
+	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,redealt,status:text,ok,failed")
 	if err != nil {
 		panic(fmt.Sprintf("sprint table %s: %v", Friends, err))
 	}
@@ -92,7 +93,8 @@ const (
 // withdrawn (hidden) holds a work card withdrawn because no member was up, so
 // that the tick deals the same card again rather than cutting another: the table
 // layer never places a removed member again. ok and failed (hidden) hold the
-// member's finished work cards, finished ok and finished failed. done and ok%
+// member's work cards the readers gave a verdict on, read ok and read broken
+// (verdicts.go; the owner, 2026-10-04: "I want to trust the ok%"). done and ok%
 // are the table's own formulas over them, computed at render and never
 // written: done is sum(ok+failed), ok% (the column okpct) is
 // pct(ok/ok+failed), and the footer pools ok% over the members. ctl (hidden)
@@ -106,6 +108,12 @@ const (
 	Status     = "status"
 	Load       = "load"
 	Withdrawn  = "withdrawn"
+	// Finished (hidden) holds a work card its worker finished, ok or failed, that no
+	// reader has given a verdict on yet: its worker's word alone, counted in no ok%
+	// (verdicts.go). Redealt holds a friend's card taken off her row past its deadline
+	// unfinished, a redeal and never a failure (TickFriendRedeal).
+	Finished = "finished"
+	Redealt  = "redealt"
 )
 
 // Stream states (the merge table's state column).
@@ -246,8 +254,8 @@ func (n Names) Definitions() []ntable.Table {
 		mk(Work, "waiting,ready,working,review,merging,landed,cost:text:sum"),
 		mk(Readers, "asked,reading,ok,broken"),
 		mk(Merge, "queued,merged,stuck,ci:text,state:text,since:text,returned,ctl:first:none", Since, Returned, Ctl),
-		mk(Fleet, "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,ctl:first:none",
-			Withdrawn, DoneOK, DoneFailed, Ctl),
+		mk(Fleet, "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,redealt,status:text,load:text,withdrawn,finished,ok,failed,ctl:first:none",
+			Withdrawn, Finished, DoneOK, DoneFailed, Ctl),
 	}
 }
 

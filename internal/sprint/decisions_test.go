@@ -131,7 +131,7 @@ func TestD3AssignmentGeneration(t *testing.T) {
 	other := w.s.Fleet.Card("s1-1.w1").Row
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: other}))
 	done := w.s.Fleet.Card("s1-1.w1")
-	require.Equal(t, DoneOK, done.Col, "a done card was redistributed: %+v", done)
+	require.Equal(t, Finished, done.Col, "a done card was redistributed: %+v", done)
 	require.Equal(t, other, done.Row, "a done card was redistributed: %+v", done)
 	require.Equal(t, "2", done.F("gen"), "a done card was redistributed: %+v", done)
 	// a level move and a withdrawal change the generation too

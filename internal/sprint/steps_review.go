@@ -953,6 +953,9 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		broken := 0
 		var retire []Change
+		// the readers' verdict on the attempt is counted before its read cards are retired
+		// (verdicts.go): the tick would find them gone
+		verdict, _, counted := verdictChange(c, s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))), readsAt(s, c, c.Int("attempt")))
 		if bound != nil {
 			retire = append(retire, change(Fleet, removeEntry(bound, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
 		}
@@ -1024,6 +1027,9 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			u.Moved += "; tier " + r.Tier
 		}
 		u.Moved += fmt.Sprintf("; %d read cards retired", len(retire))
+		if counted {
+			u.Changes = append([]Change{verdict}, u.Changes...)
+		}
 		if m := orphanMerge(s, c); m != nil {
 			u.Changes = append(u.Changes, change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream")))
 			u.Moved += "; its orphan merge card off " + m.Col

@@ -1209,9 +1209,11 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if head == "" {
 			head = c.ID
 		}
-		result, okWord, into := "ok", "yes", DoneOK
+		// the worker's word, ok or failed, moves the card to finished and counts in no ok%:
+		// the readers' verdict moves it on (verdicts.go, docs/SPEC-SPRINT.md section 1)
+		result, okWord := "ok", "yes"
 		if r.Failed {
-			result, okWord, into = "failed", "no", DoneFailed
+			result, okWord = "failed", "no"
 		}
 		// A rework whose child found nothing to do, or committed nothing, at the head an
 		// earlier attempt pushed and a reader passed is no failed work: the card was right.
@@ -1219,7 +1221,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		// (docs/SPEC-SPRINT.md section 6; Rework sets FieldPassedHead).
 		passed := r.Failed && r.Head == "" && IsNothingNew(r.Report) && pr.F(FieldPassedHead) != ""
 		if passed {
-			head, result, okWord, into = pr.F(FieldPassedHead), "ok", "yes", DoneOK
+			head, result, okWord = pr.F(FieldPassedHead), "ok", "yes"
 		}
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
 		if r.Report != "" {
@@ -1248,7 +1250,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, cardTierOf(pr), set)
 		}
 		addConsumer(pr, set, workConsumer(s, c, 0, result, rec))
-		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
+		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, Finished, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
 		if next := s.NextTier(pr); identical && next != "" {
