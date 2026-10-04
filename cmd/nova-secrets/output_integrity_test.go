@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/tools/go/packages"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
@@ -43,11 +43,22 @@ func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
 			}
 		}
 
-		pkgsMap, err := parser.ParseDir(fset, dir, nil, parser.ImportsOnly)
+		// parser.ParseDir is deprecated since Go 1.25 (SA1019); packages.Load
+		// is the replacement it names and sees build tags.
+		cfg := &packages.Config{
+			Fset:  fset,
+			Mode:  packages.NeedName | packages.NeedFiles | packages.NeedSyntax,
+			Tests: true,
+		}
+		loaded, err := packages.Load(cfg, dir)
 		require.NoError(t, err, "failed to parse package in %s: %v", dir, err)
 
-		for _, p := range pkgsMap {
-			for fileName, f := range p.Files {
+		for _, p := range loaded {
+			for _, f := range p.Syntax {
+				if f == nil {
+					continue
+				}
+				fileName := filepath.Base(fset.Position(f.Pos()).Filename)
 				for _, imp := range f.Imports {
 					pathVal := strings.Trim(imp.Path.Value, `"`)
 					for _, forb := range forbiddenImports {
@@ -154,7 +165,7 @@ func TestOutputSizeAtTheLargestPlausibleState(t *testing.T) {
 		rules = append(rules, fmt.Sprintf("  - path_regex: ^%s$\n    age: %s,%s", fname, keyA.pubKey, recKey.pubKey))
 		var keysText strings.Builder
 		for k := 0; k < 16; k++ {
-			keysText.WriteString(fmt.Sprintf("KEY_%02d: val_%d\n", k, k))
+			fmt.Fprintf(&keysText, "KEY_%02d: val_%d\n", k, k)
 		}
 		sealFileWithSops(t, sopsPath, filepath.Join(storeDir, fname), []string{keyA.pubKey, recKey.pubKey}, keysText.String())
 	}
