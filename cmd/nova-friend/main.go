@@ -540,7 +540,7 @@ func (w world) sleepFriend(c *tool.Call) *tool.Out {
 		return tool.Done().Fact("asleep", true).Fact("coordinator", state.Coordinator).Fact("dry_run", true).
 			Note("plan only; the session state was not changed")
 	}
-	state, err := friend.UpdateSessionState(stateDir, func(s *friend.SessionState) error {
+	state, err = friend.UpdateSessionState(stateDir, func(s *friend.SessionState) error {
 		if coordinator != "" {
 			s.Coordinator = coordinator
 		}
