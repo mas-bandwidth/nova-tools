@@ -167,7 +167,7 @@ func kindsUsage() string {
 const maxHelpCols = 100
 
 // kindOffset is the continuation indent for a `kinds` entry: two columns for
-// the two-space indent, the eight-column kind name and the space after it.
+// the two-blank indent, the eight-column kind name and the blank after it.
 const kindOffset = 11
 
 // wrapHelp writes one wrapped help line: head opens the first line (an indent,
