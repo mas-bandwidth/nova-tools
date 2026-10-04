@@ -380,7 +380,7 @@ func TestPgDSNKeepsThePasswordOffTheLine(t *testing.T) {
 	assert.NoError(t, err, "keyword dsn: %q %v", got, err)
 	assert.Equal(t, `host=127.0.0.1 user=nova_config dbname=nova password='it\'s'`, got, "keyword dsn: %q %v", got, err)
 	_, errCheck347 := pgDSN("postgres://[bad", env(nil))
-	assert.ErrorContains(t, errCheck347, "carries a password", "unparsable: %v", errCheck347)
+	assert.ErrorContains(t, errCheck347, "--pg:", "unparsable: %v", errCheck347)
 }
 
 func TestRedisAddressAndActorFallBackToTheEnvironment(t *testing.T) {
@@ -477,13 +477,13 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	// The fleet: one row, there from the start, set without a name, its
 	// history the sets alone.
 	out, _ = step(0, "fleet", "show")
-	require.Equal(t, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- loops_dir=~/nova-bench/loops created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
+	require.Equal(t, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- loops_dir=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
 	out, _ = step(0, "fleet", "history")
 	require.Equal(t, "CONFIG HISTORY kind=fleet name=fleet changes=0\n", out, "fleet history before a set: %q", out)
-	_, errs = step(1, "fleet", "set", "--store", "space")
+	_, errs = step(1, "fleet", "set", "--store", "space", "--loops_dir", "~/nova-bench/loops")
 	require.Equal(t, "nova-config fleet set REFUSED: --store space names no machine row; run: nova-config machine list\n", errs, "fleet set naming no machine: %q", errs)
-	out, _ = step(0, "fleet", "set", "--store", "hulk", "--coordinator", "studio")
-	require.Equal(t, "CONFIG SET kind=fleet name=fleet rev=8 changed=coordinator,store\n", out, "fleet set: %q", out)
+	out, _ = step(0, "fleet", "set", "--store", "hulk", "--coordinator", "studio", "--loops_dir", "~/nova-bench/loops")
+	require.Equal(t, "CONFIG SET kind=fleet name=fleet rev=8 changed=coordinator,loops_dir,store\n", out, "fleet set: %q", out)
 	out, _ = step(0, "fleet", "show")
 	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=hulk coordinator=studio redis_port=- pg_dsn=- loops_dir=~/nova-bench/loops created="), "fleet show: %q", out)
 	_, errs = step(1, "machine", "remove", "hulk")
@@ -493,7 +493,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	out, _ = step(0, "fleet", "history")
 	lines = strings.Split(strings.TrimSpace(out), "\n")
 	require.Len(t, lines, 3, "fleet history:\n%s", out)
-	require.True(t, strings.HasSuffix(lines[0], " coordinator=->studio store=->hulk"), "fleet history:\n%s", out)
+	require.True(t, strings.HasSuffix(lines[0], " coordinator=->studio loops_dir=->~/nova-bench/loops store=->hulk"), "fleet history:\n%s", out)
 	require.True(t, strings.HasSuffix(lines[1], " store=hulk>-"), "fleet history:\n%s", out)
 	require.Equal(t, "CONFIG HISTORY kind=fleet name=fleet changes=2", lines[2], "fleet history:\n%s", out)
 	step(0, "machine", "remove", "hulk")
@@ -559,7 +559,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
 	step(0, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier", "--roles", "builder")
 	step(0, "friend", "add", "stella", "--slots", "32", "--tiers", "frontier,pro")
-	step(0, "fleet", "set", "--coordinator", "studio", "--redis_port", "6380", "--pg_dsn", dsn)
+	step(0, "fleet", "set", "--coordinator", "studio", "--redis_port", "6380", "--pg_dsn", dsn, "--loops_dir", "~/nova-bench/loops")
 	step(0, "sprint", "set", "--coordinator", "rowan")
 	out, errs = step(1, "status")
 	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(n)+" machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 route=0 route_rev=0 tier=2 tier_rev=0 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 route_applied=0 tier_applied=0\n", out, "status behind: %q %q", out, errs)
@@ -617,7 +617,7 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 	step(0, "migrate")
 	step(0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "64", "--runners", "1")
 	step(0, "machine", "add", "bench-beta", "--user", "user-b", "--seat", "seat-beta", "--slots", "40", "--runners", "0")
-	step(0, "fleet", "set", "--store", "bench-beta", "--coordinator", "bench-alpha", "--redis_port", "6380", "--pg_dsn", dsn)
+	step(0, "fleet", "set", "--store", "bench-beta", "--coordinator", "bench-alpha", "--redis_port", "6380", "--pg_dsn", dsn, "--loops_dir", "~/nova-bench/loops")
 
 	// Apply so Redis and Postgres are synchronized
 	step(0, "apply", "--kind", "machine")

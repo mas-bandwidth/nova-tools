@@ -35,7 +35,7 @@ func TestFileFleetEndpointsStayPartialUntilApply(t *testing.T) {
 			}
 			step("migrate")
 			step("machine", "add", "bench-beta", "--user", "u", "--seat", "s", "--slots", "4")
-			step(append([]string{"fleet", "set", "--store", "bench-beta"}, tc.fields...)...)
+			step(append([]string{"fleet", "set", "--store", "bench-beta", "--loops_dir", "~/nova-bench/loops"}, tc.fields...)...)
 			path := filepath.Join(h.dir, "try.json")
 			before, err := os.ReadFile(path)
 			require.NoError(t, err)

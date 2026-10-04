@@ -549,40 +549,65 @@ func TestTheSprintRowHoldsTheJudgmentBar(t *testing.T) {
 	assert.ErrorContains(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "1.5"}}), "want --decide_judgment_bar <p>, a probability")
 }
 
-// TestLoopLogIsTheFleetRowsDirectory: the seeded loops_dir reproduces
-// today's literal; a different directory changes the log path; an empty
-// directory is refused by the fleet kind's Check with a remedy naming
-// fleet set --loops_dir.
+// noLibrary is the RedisApplier with Prepare answered: miniredis has no
+// FUNCTION command, and the fleet and loop writes apply makes are plain SET,
+// SADD and HSET that need no library.
+type noLibrary struct{ *RedisApplier }
+
+func (noLibrary) Prepare(context.Context) error { return nil }
+
+// TestLoopLogIsTheFleetRowsDirectory: a loop's log path is the fleet row's
+// loops_dir and its name, so the value migration 0027 seeds reproduces
+// today's literal, another directory changes it, and a row that carries no
+// directory is refused by the kind's Check with a remedy naming the set that
+// declares one. apply writes that path into the loop's hash, on a first
+// apply and on a later one of the loop kind alone.
 func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
 	t.Parallel()
 
+	ctx := context.Background()
 	fleet, _ := Lookup(KindFleet)
+	machine, _ := Lookup(KindMachine)
+	loop, _ := Lookup(KindLoop)
 
-	// The seeded value reproduces today's string for a name.
-	seeded := LoopLog("~/nova-bench/loops", "member-bench-a")
-	assert.Equal(t, "~/nova-bench/loops/member-bench-a.log", seeded)
-
-	// Another directory changes it.
-	custom := LoopLog("/custom/loops", "tick")
-	assert.Equal(t, "/custom/loops/tick.log", custom)
-
-	// An empty directory is refused by the kind's Check with a remedy.
-	for _, empty := range []string{"", "   "} {
-		row := Row{Name: KindFleet, Fields: map[string]string{"loops_dir": empty}}
-		err := fleet.Check(row)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "--loops_dir wants a non-empty directory path")
-		assert.Contains(t, err.Error(), "nova-config fleet set --loops_dir")
+	assert.Equal(t, "~/nova-bench/loops/member-m1.log", LoopLog("~/nova-bench/loops", "member-m1"), "the seeded value reproduces today's string for a name")
+	assert.Equal(t, "/var/loops/tick.log", LoopLog("/var/loops", "tick"), "another directory changes it")
+	for _, raw := range []map[string]string{{}, {"loops_dir": ""}, {"loops_dir": "   "}} {
+		_, err := fleet.NewRow(KindFleet, raw)
+		require.Error(t, err, "a row carrying %q", raw["loops_dir"])
+		assert.ErrorContains(t, err, "--loops_dir wants a non-empty directory path")
+		assert.ErrorContains(t, err, "nova-config fleet set --loops_dir")
 	}
+	assert.NoError(t, fleet.Check(Row{Name: KindFleet, Fields: map[string]string{"loops_dir": "/valid/path"}}))
 
-	// A missing loops_dir is also refused by the kind's Check with a remedy.
-	row := Row{Name: KindFleet, Fields: map[string]string{}}
-	err := fleet.Check(row)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--loops_dir wants a non-empty directory path")
-	assert.Contains(t, err.Error(), "nova-config fleet set --loops_dir")
+	// A fleet row as migration 0027 seeds it, one machine and one loop on
+	// it, applied into a store that holds none of them yet.
+	st := NewMem()
+	m1, err := machine.NewRow("m1", map[string]string{"user": "u", "seat": "s", "slots": "4"})
+	require.NoError(t, err)
+	_, err = st.Insert(ctx, KindMachine, m1, "t")
+	require.NoError(t, err)
+	_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}, "t")
+	require.NoError(t, err)
+	l1, err := loop.NewRow("member-m1", map[string]string{"machine": "m1", "argv": `["/bin/member"]`, "keepalive": "true"})
+	require.NoError(t, err)
+	_, err = st.Insert(ctx, KindLoop, l1, "t")
+	require.NoError(t, err)
 
-	// A valid non-empty directory passes Check.
-	row = Row{Name: KindFleet, Fields: map[string]string{"loops_dir": "/valid/path"}}
-	assert.NoError(t, fleet.Check(row))
+	applier, c, _ := coverStore(t)
+	a := noLibrary{applier}
+	_, err = Apply(ctx, st, a, KindFleet, "t", false, func(Op) {})
+	require.NoError(t, err)
+	_, err = Apply(ctx, st, a, KindLoop, "t", false, func(Op) {})
+	require.NoError(t, err)
+	assert.Equal(t, "~/nova-bench/loops/member-m1.log", c.HGet(ctx, LoopKey("member-m1"), "log").Val(), "the first apply writes the seeded path")
+
+	// A later run that applies the loop kind alone reads no fleet row, so
+	// the applied key answers: the rewritten hash keeps the same log.
+	_, _, err = st.Update(ctx, KindLoop, "member-m1", map[string]string{"every": "60", "keepalive": "false"}, "t")
+	require.NoError(t, err)
+	_, err = Apply(ctx, st, noLibrary{&RedisApplier{Client: c}}, KindLoop, "t", false, func(Op) {})
+	require.NoError(t, err)
+	assert.Equal(t, "60", c.HGet(ctx, LoopKey("member-m1"), "every").Val(), "the loop kind alone wrote the row again")
+	assert.Equal(t, "~/nova-bench/loops/member-m1.log", c.HGet(ctx, LoopKey("member-m1"), "log").Val(), "the applied fleet row is the directory")
 }
