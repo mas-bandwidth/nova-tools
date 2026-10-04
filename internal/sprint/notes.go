@@ -118,6 +118,7 @@ var Decisions = map[string][]string{
 	NSprintDone:      {"clear", "add"},
 	NSentinelReached: {"release", "do more before going on", "drop"},
 	NScoredLow:       {"add a repair card", "ack"}, // landed: a rework is a new card; ack accepts the landing
+	NTimer:           {"ack"},                      // a timer the actor set woke it: nothing to decide
 	NStalled:         {"look at the card", "wait"}, // each stall names its own
 }
 

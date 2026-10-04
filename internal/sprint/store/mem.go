@@ -1038,6 +1038,16 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 			}
 			m.kv[friendHealthKey(op.Health.Friend)] = string(rec)
 		}
+		if op.Timers != nil {
+			rec, err := json.Marshal(op.Timers)
+			if err != nil {
+				return err
+			}
+			if m.kv == nil {
+				m.kv = map[string]string{}
+			}
+			m.kv[keyTimers] = string(rec)
+		}
 	}
 	l.fence = nil
 	return nil
