@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // machineName is what may be handed to ssh as a destination. It is deliberately
@@ -352,6 +354,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// machine gets bytes this host has already checked.
 	fromHost, fromDir, remoteFrom := RemoteFrom(o.from)
 	localRoot := o.from
+	verified := false
 	if remoteFrom {
 		if o.stage == "" {
 			return refusal(errs, "ADOPT", refuse("pass --stage <dir> to say where the fetched release lands",
@@ -423,9 +426,22 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 		localRoot = o.stage
 		into := ArtifactDir(o.stage, o.version, goos, goarch)
-		if err := os.MkdirAll(into, 0o755); err != nil {
-			return refusal(errs, "ADOPT", fmt.Errorf("cannot create %s: %w (name a writable --stage)", into, err))
+		if err := os.MkdirAll(filepath.Dir(into), 0o755); err != nil {
+			return refusal(errs, "ADOPT", fmt.Errorf("cannot create the parent of %s: %w (name a writable --stage)", into, err))
 		}
+		// SPEC-RELEASE, "What adopt does with it": unverified fetched bits
+		// cannot become a later local source. Own a fresh private leaf so
+		// refusing this fetch never removes an operator's existing files.
+		if err := os.Mkdir(into, 0o700); err != nil {
+			return refusal(errs, "ADOPT", fmt.Errorf("cannot create a fresh fetch directory %s: %w (name a writable --stage without this version and platform)", into, err))
+		}
+		defer func() {
+			if !verified {
+				if err := safepath.RemoveUnder(o.stage, into); err != nil {
+					progress(errs, "cannot remove refused fetch %s: %v; remove its unverified files before using this stage again", into, err)
+				}
+			}
+		}()
 		remoteArtifacts := path.Join(fromDir, o.version, goos+"-"+goarch)
 		progress(errs, "fetching %s from %s:%s", o.version, fromHost, remoteArtifacts)
 		if output, err := ssh.Fetch(ctx, fromHost, remoteArtifacts, into); err != nil {
@@ -463,6 +479,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if _, err := VerifyArtifacts(local, arts); err != nil {
 		return refusal(errs, "ADOPT", err)
 	}
+	verified = true
 	// THE RELEASE INSTALLS ITSELF. The nova-update that runs the remote
 	// install is the one this verb just copied there, so a machine with no
 	// nova-tools at all -- a bench provisioned this morning -- adopts with the

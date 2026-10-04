@@ -383,6 +383,51 @@ func TestWholeTreeFromTheTrackedFiles(t *testing.T) {
 	assert.Equal(t, []string{"./cmd/foo", "./internal/bar", "./internal/ci", "./internal/docs"}, got, "tree from files")
 }
 
+// A tracked directory whose name is shell syntax is not a package. The name
+// would be interpolated into a shell by make test PKGS=, so treeFromFiles
+// returns a *ListError that names the directory, and Select --all does the
+// same through dotted. A tree of ordinary names still passes. The test does
+// not start a shell.
+func TestWholeTreeRefusesAPackageDirectoryWithShellSyntax(t *testing.T) {
+	t.Parallel()
+	const badDir = "internal/p';id>x;'"
+	const badFile = badDir + "/a.go"
+	root := tree(t)
+	p := filepath.Join(root, filepath.FromSlash(badFile))
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte("package p\n"), 0o644))
+	dep, err := LoadDeprecated(root)
+	require.NoError(t, err)
+
+	s := &selector{
+		run: newFake(map[string]Result{lsFilesCmd: {Stdout: tracked() + badFile + "\x00"}}).run,
+		o:   Options{Root: root},
+		dep: dep,
+	}
+	got, err := s.treeFromFiles()
+	var le *ListError
+	require.ErrorAs(t, err, &le, "treeFromFiles returned %q", got)
+	assert.Contains(t, le.Text, "./"+badDir)
+	assert.Empty(t, got)
+
+	f := newFake(map[string]Result{
+		listTree: {Stdout: imports("cmd/foo", "internal/bar", badDir)},
+	})
+	out, err := Select(f.run, Options{Root: root, All: true})
+	require.ErrorAs(t, err, &le, "Select --all returned %q", out.Packages)
+	assert.Contains(t, le.Text, "./"+badDir)
+	assert.Empty(t, out.Packages)
+
+	s = &selector{
+		run: newFake(map[string]Result{lsFilesCmd: {Stdout: tracked()}}).run,
+		o:   Options{Root: root},
+		dep: dep,
+	}
+	ok, err := s.treeFromFiles()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"./cmd/foo", "./internal/bar", "./internal/ci", "./internal/docs"}, ok, "a normal tree still passes")
+}
+
 func TestSelectRefusesWithNoBase(t *testing.T) {
 	t.Parallel()
 	_, err := Select(newFake(nil).run, Options{Root: tree(t)})
