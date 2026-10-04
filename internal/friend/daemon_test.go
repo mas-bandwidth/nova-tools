@@ -447,3 +447,40 @@ func TestADeferredDeliveryIsTriedAgainAndNeverGivenUpOrAcked(t *testing.T) {
 		assert.GreaterOrEqual(t, said, int(elapsed/(DeferredSaidEvery+2*RecheckEvery))-1, "and not less often than once a minute plus a recheck")
 	})
 }
+
+// The DSH adapter over a session under an agent preset, through the daemon:
+// every delivery is refused by the one-shot runner, the message stays in
+// hand and is never given up (the finding of 2026-10-04: Zhi's session runs
+// preset "minimal", and the third refusal would have acked her message).
+func TestADSHSessionUnderAPresetKeepsTheMessagePending(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		var mu sync.Mutex
+		calls := 0
+		refuse := func(context.Context, string, string, []string, string) (string, int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls++
+			if calls == 10 {
+				r.cancel()
+			}
+			return `dsh: session "session-zhi" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n", 1, nil
+		}
+		r.d.Deliver, r.passive = &DSH{Dir: "/w/zhi", Session: "session-zhi", Run: refuse, Program: "dsh"}, true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "hello", "x")
+		r.run(t, 10*int(RecheckEvery/BeatEvery)*4) // the ceiling, never reached: the tenth refusal ends the run
+		assert.Equal(t, 10, calls, "handed in again after each refusal, beyond the three a failure gets")
+		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Len(t, pending, 1, "still in hand: never acked, never given up")
+		assert.Empty(t, fresh)
+		for _, line := range r.records {
+			assert.NotContains(t, line, "given_up")
+			assert.NotContains(t, line, "acked")
+		}
+		require.NotEmpty(t, r.records)
+		assert.Contains(t, r.records[0], `subject="hello" deferred=1: session session-zhi runs under agent preset "minimal"`)
+	})
+}

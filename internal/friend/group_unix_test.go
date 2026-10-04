@@ -51,3 +51,17 @@ func TestADeliveryWithinTheBudgetAnswersTheExitCode(t *testing.T) {
 	assert.Equal(t, 3, exit)
 	assert.Equal(t, "in\n", out, "stdin reaches the command")
 }
+
+// A harness says why it refused on stderr (dsh does), so a nonzero exit's
+// output carries stderr after stdout; a turn that answered keeps stdout only.
+func TestAFailedDeliveryCarriesStderrInItsOutput(t *testing.T) {
+	t.Parallel()
+	out, exit, err := realExec(context.Background(), 10*time.Second, time.Second, t.TempDir(), "/bin/sh", []string{"-c", "echo said; echo why >&2; exit 1"}, "")
+	require.NoError(t, err)
+	assert.Equal(t, 1, exit)
+	assert.Equal(t, "said\nwhy\n", out)
+	out, exit, err = realExec(context.Background(), 10*time.Second, time.Second, t.TempDir(), "/bin/sh", []string{"-c", "echo said; echo noise >&2"}, "")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, "said\n", out)
+}

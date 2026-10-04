@@ -85,3 +85,29 @@ func (f *fakeStdinExec) run(_ context.Context, dir, name string, args []string, 
 	f.stdin = stdin
 	return f.out, f.exit, nil
 }
+
+// A session that runs under an agent preset is refused by dsh's one-shot
+// runner, whatever the text (measured 2026-10-04 12:50 PM ET on Zhi's
+// session, preset "minimal"): nothing has failed that a retry fixes and
+// nothing was delivered, so the delivery is Deferred, never a failure the
+// daemon gives up on. Any other nonzero exit stays the harness's exit.
+func TestDSHDefersASessionUnderAPresetTheOneShotRunnerDoesNotCompose(t *testing.T) {
+	t.Parallel()
+	refusal := `dsh: session "session-zhi" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n"
+	var turn strings.Builder
+	fe := &fakeStdinExec{exit: 1, out: refusal}
+	d := &DSH{Dir: "/w/zhi", Session: "session-zhi", Run: fe.run, Program: "dsh", Out: &turn}
+	exit, err := d.Deliver(context.Background(), "hello")
+	assert.Equal(t, 0, exit)
+	var deferred Deferred
+	require.ErrorAs(t, err, &deferred)
+	assert.Contains(t, deferred.Reason, `session-zhi runs under agent preset "minimal"`)
+	assert.Contains(t, deferred.Reason, "nova-bus recv", "says what the friend does")
+	assert.Empty(t, turn.String(), "the daemon says the reason, once a minute; the refusal is not written every recheck")
+
+	fe = &fakeStdinExec{exit: 1, out: "dsh: unknown session \"session-gone\"\n"}
+	d = &DSH{Dir: "/w/zhi", Session: "session-gone", Run: fe.run, Program: "dsh"}
+	exit, err = d.Deliver(context.Background(), "hello")
+	require.NoError(t, err, "any other refusal is a failed delivery, as before")
+	assert.Equal(t, 1, exit)
+}
