@@ -38,14 +38,14 @@ func TestTheGateBannerNamesTheFlagItsOwnRefusalTellsYouToPass(t *testing.T) {
 	require.NotEmpty(t, seen, "the refusal names no flag, so this test would check nothing:\n%s", refusal)
 
 	code, stdout, helpErr := dogfoodRun(t, "help")
-	require.EqualValues(t, 0, code, "`nova-check help` exit %d, want 0\nstderr: %s", code, helpErr)
+	require.EqualValues(t, 0, code, "`nova-dev help` exit %d, want 0\nstderr: %s", code, helpErr)
 	gateLines := []string{}
 	for _, l := range strings.Split(stdout, "\n") {
-		if strings.Contains(l, "nova-check dogfood gate") {
+		if strings.Contains(l, "nova-dev dogfood gate") {
 			gateLines = append(gateLines, l)
 		}
 	}
-	require.EqualValues(t, 1, len(gateLines), "the banner has %d lines naming `nova-check dogfood gate`, want exactly 1:\n%s", len(gateLines), stdout)
+	require.EqualValues(t, 1, len(gateLines), "the banner has %d lines naming `nova-dev dogfood gate`, want exactly 1:\n%s", len(gateLines), stdout)
 	banner := gateLines[0]
 
 	for flag := range seen {

@@ -271,6 +271,29 @@ cannot demonstrate `floors` by itself. That check compares a derived core with
 the matching source seed it came from; name a core and source pair you own rather
 than borrowing an unrelated `SEED.md` merely to make the command pass.
 
+## nova-dev
+
+Fixture: `cmd/nova-dev/testdata/example-dogfood`, a command reference the
+size of a first run and the receipts two friends left against it.
+
+### First run
+
+```
+$ nova-dev dogfood ledger --cli ./cmd/nova-dev/testdata/example-dogfood/CLI.md --receipts ./cmd/nova-dev/testdata/example-dogfood/receipts
+DOGFOOD tool=nova-example verb=quickstart by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-example verb=links by=Ada at=2026-09-18T09:00:00Z ok=yes issue=- open=0
+DOGFOOD tool=nova-example verb=nocode by=Lin at=2026-09-18T10:15:00Z ok=no issue=1301 open=1
+DOGFOOD tool=nova-dev verb=dogfood ledger by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-dev verb=dogfood record by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-dev verb=dogfood gate by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-dev verb=hygiene by=nobody at=- ok=- issue=- open=0
+DOGFOOD OK verbs=7 dogfooded=2 by-nonauthor=1 open-edges=1 unfiled=0 unmatched=0
+```
+
+`record` appends one receipt and checks its spelling against the same list
+the ledger reads; `gate` is the same read with an exit code, for the release
+lane to call.
+
 ### hygiene, on a branch
 
 The four checks the accept gate runs, over a two-commit lab: `main` with one
@@ -278,14 +301,14 @@ file, `card` with the fix on it and then a commit by somebody outside the pool
 that also strays outside the card's paths.
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
+$ nova-dev hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
 HYGIENE OK base=main head=card paths=sign/** findings=0
 
-$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
+$ nova-dev hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
+HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
+HYGIENE MORE kind=finding shown=2 total=4 nova-dev hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
+HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
 The `MORE` line is the same run with the cap lifted, quoted so it can be pasted
@@ -293,28 +316,28 @@ back — it is the command that prints the rest, and it carries the
 `--identity`, `--paths` and `--kind` without which it would not run at all:
 
 ```
-$ nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
+$ nova-dev hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS: sign/**
+HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
+HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS:
 HYGIENE FINDING reason=stray-file at=sign/RESULT.md: an added file matching the stray list's RESULT.md
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
+HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
 `--identity` takes one pair of angle brackets. A second pair is refused rather
 than matched against nobody:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Ada <<ada@example.com>>"
-nova-check hygiene REFUSED: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
+$ nova-dev hygiene --repo . --base main --head card --identity "Ada <<ada@example.com>>"
+nova-dev hygiene: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-dev help
 ```
 
 `--kind` is a card kind the toolchain declares, and there is no default one. One
 it does not hold is refused by name rather than left to unlock nothing:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-nova-check hygiene REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+$ nova-dev hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
+nova-dev hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-dev help
 ```
 
 ## nova-self-talk
@@ -336,16 +359,16 @@ lost one would be hiding the thing the tool exists to say.
 ```
 $ nova-self-talk ./pages/journal.md   # Stderr: whole
 ! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
 SELFTALK DATED n=1 files=1
 SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
 SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
 SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule
-! SELFTALK FAIL ./pages/RULES.md:8: VERDICT-IDIOM match="dead as a practice": A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
+! SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM match="dead as a practice": A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
 ! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
 SELFTALK DATED n=1 files=2
 SELFTALK FAIL files=2 claims=2 standing=1 installations=2 dated=1 shown=3
 SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
@@ -353,7 +376,7 @@ SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): regi
 $ nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
 SELFTALK SKIP ./pages/RULES.md (--skip)
 ! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
 SELFTALK DATED n=1 files=1
 SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
 SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
@@ -374,7 +397,7 @@ $ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
 FUSE FAILED quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
 
 $ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
-QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell the person you work with now)
+QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)
 
 $ nova-fuse check --box ./fuse-box.json a-forum
 FUSE FAILED quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
@@ -392,26 +415,26 @@ Fixture: `cmd/nova-memory/testdata/corpus`.
 
 ```
 $ nova-memory quickstart --root ./corpus
-QUICKSTART RUN root=./corpus steps=3 channels=bm25 k=3/2 words-source=corpus-top-terms candidate=corpus-first-paragraph words="glazing minutes pressure"
+QUICKSTART RUN root=./corpus steps=3 channels=bm25 k=3/2 words=glazing\x20signal\x20tide words-source=corpus-top-terms candidate=corpus-first-paragraph
 $ nova-memory stats --root ./corpus
-STATS OK schema=nova-memory/2 files=6 chunks=20 bytes=4866 vocab=380 avg-terms=39.3 build=822.917µs
+STATS OK schema=nova-memory/1 files=6 chunks=23 bytes=4866 vocab=382 avg-terms=34.8 build=520.916µs
 STATS OK class=. chunks=3
 STATS OK class=log chunks=4
-STATS OK class=notes chunks=13
-$ nova-memory search --root ./corpus --channels bm25 --k 3 glazing minutes pressure
-SEARCH OK hits=3 k=3 channels=bm25 files=6 chunks=20: query="glazing minutes pressure"
-SEARCH CAL score=4.05 score-channel=bm25 probe=unrelated-control
-SEARCH HIT rank=1 score=3.48 score-channel=bm25 fused=0.01667 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:13 "Measured over one winter: glazing washed weekly held its polish; glazing\nwashed monthly needed grinding twice. The weekl…"
-SEARCH HIT rank=2 score=3.12 score-channel=bm25 fused=0.01639 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
-SEARCH HIT rank=3 score=2.97 score-channel=bm25 fused=0.01613 class=notes name=fog-signal type=measured root=./corpus: notes/fog-signal.md:8 "The diaphone runs on compressed air, and the compressor needs eleven minutes\nto bring the receiver to working pressure f…"
+STATS OK class=notes chunks=16
+$ nova-memory search --root ./corpus --channels bm25 --k 3 glazing signal tide
+SEARCH OK hits=3 k=3 channels=bm25 files=6 chunks=23: query="glazing signal tide"
+SEARCH CAL score=4.41 score-channel=bm25 probe=unrelated-control
+SEARCH HIT rank=1 score=4.57 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
+SEARCH HIT rank=2 score=2.81 score-channel=bm25 fused=0.01639 class=log name=- type=- root=./corpus: log/1974-03-11.md:3 "Onshore gale most of the day, easing after dark. Washed the glazing at first\nlight before the wind got up again — see …"
+SEARCH HIT rank=3 score=2.35 score-channel=bm25 fused=0.01613 class=notes name=fog-signal type=measured root=./corpus: notes/fog-signal.md:6 "# The fog signal"
 SEARCH NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
 QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: HANDBOOK.md:3
 $ nova-memory check --root ./corpus --channels bm25 --k 2 -
-MEMORY OK candidates=1 source=- k=2 channels=bm25 files=6 chunks=20
-MEMORY CAL score=4.05 score-channel=bm25 probe=unrelated-control
+MEMORY OK candidates=1 source=- k=2 channels=bm25 files=6 chunks=23
+MEMORY CAL score=4.41 score-channel=bm25 probe=unrelated-control
 MEMORY CAND n=1: "This fixture corpus belongs to an invented lighthouse station. It exists so\nthat nova-memory's verbs…"
-MEMORY HIT cand=1 rank=1 score=90.20 score-channel=bm25 fused=0.01667 class=. name=- type=- root=./corpus: HANDBOOK.md:3 "This fixture corpus belongs to an invented lighthouse station. It exists so\nthat nova-memory's verbs can be exercised …"
-MEMORY HIT cand=1 rank=2 score=15.01 score-channel=bm25 fused=0.01639 class=log name=- type=- root=./corpus: log/1974-03-11.md:11 "Left a note to write up the [[storm-glass]] readings against the barometer\none day, because the two disagree in a way th…"
+MEMORY HIT cand=1 rank=1 score=90.38 score-channel=bm25 fused=0.01667 class=. name=- type=- root=./corpus: HANDBOOK.md:3 "This fixture corpus belongs to an invented lighthouse station. It exists so\nthat nova-memory's verbs can be exercised …"
+MEMORY HIT cand=1 rank=2 score=15.70 score-channel=bm25 fused=0.01639 class=log name=- type=- root=./corpus: log/1974-03-11.md:11 "Left a note to write up the [[storm-glass]] readings against the barometer\none day, because the two disagree in a way th…"
 MEMORY NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
 MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours
 MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
@@ -421,20 +444,20 @@ QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults:
 
 ```
 $ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
-SEARCH OK hits=3 k=3 channels=bm25 files=6 chunks=20: query="lantern glazing brass"
-SEARCH CAL score=4.05 score-channel=bm25 probe=unrelated-control
-SEARCH HIT rank=1 score=5.33 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
-SEARCH HIT rank=2 score=5.02 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:8 "The lantern glazing collects a salt haze on every onshore wind, and the haze\nis not visible from inside the lightroom at…"
-SEARCH HIT rank=3 score=3.14 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:3 "Onshore gale most of the day, easing after dark. Washed the glazing at first\nlight before the wind got up again — see …"
+SEARCH OK hits=3 k=3 channels=bm25 files=6 chunks=23: query="lantern glazing brass"
+SEARCH CAL score=4.41 score-channel=bm25 probe=unrelated-control
+SEARCH HIT rank=1 score=5.25 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
+SEARCH HIT rank=2 score=4.95 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:8 "The lantern glazing collects a salt haze on every onshore wind, and the haze\nis not visible from inside the lightroom at…"
+SEARCH HIT rank=3 score=3.00 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:3 "Onshore gale most of the day, easing after dark. Washed the glazing at first\nlight before the wind got up again — see …"
 SEARCH NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
 
 $ nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
-MEMORY OK candidates=1 source=draft.md k=3 channels=bm25 files=6 chunks=20
-MEMORY CAL score=4.05 score-channel=bm25 probe=unrelated-control
+MEMORY OK candidates=1 source=draft.md k=3 channels=bm25 files=6 chunks=23
+MEMORY CAL score=4.41 score-channel=bm25 probe=unrelated-control
 MEMORY CAND n=1: "The lantern glazing is cleaned with two cloths, one for the brass and one for the glass, before the …"
-MEMORY HIT cand=1 rank=1 score=13.62 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
-MEMORY HIT cand=1 rank=2 score=11.40 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:8 "The lantern glazing collects a salt haze on every onshore wind, and the haze\nis not visible from inside the lightroom at…"
-MEMORY HIT cand=1 rank=3 score=7.56 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:3 "Onshore gale most of the day, easing after dark. Washed the glazing at first\nlight before the wind got up again — see …"
+MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
+MEMORY HIT cand=1 rank=2 score=11.97 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:8 "The lantern glazing collects a salt haze on every onshore wind, and the haze\nis not visible from inside the lightroom at…"
+MEMORY HIT cand=1 rank=3 score=7.89 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:3 "Onshore gale most of the day, easing after dark. Washed the glazing at first\nlight before the wind got up again — see …"
 MEMORY NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
 MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours
 MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
@@ -696,7 +719,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=26 applied=26
+CONFIG MIGRATE file=try.json from=0 to=19 applied=19
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -753,102 +776,6 @@ INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
 RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual
 ```
-
-## nova-decide
-
-Fixture: `cmd/nova-decide/testdata/`: a schema and a state, a card and its
-diff, a child's RESULT.md, a red gate's go test output, a card to add
-(`greet.md`), the fixed backend's answers for each decision (ask, read, score,
-attempt, grade, gate, brief), and a record of eight labelled read decisions and
-five score decisions of landed diffs. Every line below uses the fixed backend,
-so it needs no network and no key; `cmd/nova-decide/firstrun_test.go` runs each
-`$` line from a checkout root in one sitting, with `./decisions.jsonl` a file in
-the test's own directory. The ids come from `--op`, so every line reads the same
-twice.
-
-### First run
-
-```text
-$ nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
-ASK OK id=first decision=reply backend=fixed tokens_in=0 tokens_out=0 recorded=new
-ASK ANSWER question=asks_something type=noul value=yes p=yes:0.94
-ASK ANSWER question=kind type=choice value=request p=question:0.08,report:0.05,request:0.87
-
-$ nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
-READ OK id=card-1 decision=read backend=fixed verdict=LAND p=0.92 tokens_in=0 tokens_out=0 recorded=new
-READ ANSWER question=defect type=noul value=no p=yes:0.04
-READ ANSWER question=does_task type=noul value=yes p=yes:0.96
-READ ANSWER question=inside_paths type=noul value=yes p=yes:0.99
-READ ANSWER question=lines_changed type=noul value=yes p=yes:0.97
-READ ANSWER question=verdict type=choice value=LAND p=BOUNCE:0.05,LAND:0.92,UNSURE:0.03
-
-$ nova-decide score --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab
-SCORE OK id=card-1@landed@0123456789ab decision=score backend=fixed top=record_made_claim p=0.08 tokens_in=0 tokens_out=0 recorded=new
-SCORE ANSWER question=asserted_data_cut type=noul value=no p=yes:0.05
-SCORE ANSWER question=comment_contradicts_code type=noul value=no p=yes:0.05
-SCORE ANSWER question=cut_citation type=noul value=no p=yes:0.07
-SCORE ANSWER question=defect type=noul value=no p=yes:0.06
-SCORE ANSWER question=does_task type=noul value=yes p=yes:0.95
-SCORE ANSWER question=fenced_block_edit type=noul value=no p=yes:0.03
-SCORE ANSWER question=inside_paths type=noul value=yes p=yes:0.99
-SCORE ANSWER question=invented_reason type=noul value=no p=yes:0.06
-SCORE ANSWER question=ledger_ceiling type=noul value=no p=yes:0.03
-SCORE ANSWER question=lines_changed type=noul value=yes p=yes:0.96
-SCORE ANSWER question=load_bearing_word_cut type=noul value=no p=yes:0.04
-SCORE ANSWER question=record_made_claim type=noul value=no p=yes:0.08
-SCORE ANSWER question=renamed_file_assumed type=noul value=no p=yes:0.02
-SCORE ANSWER question=stranded_fragment type=noul value=no p=yes:0.04
-SCORE ANSWER question=test_weakened type=noul value=no p=yes:0.02
-SCORE ANSWER question=verdict type=choice value=LAND p=BOUNCE:0.05,LAND:0.92,UNSURE:0.03
-
-$ nova-decide attempt --brief ./cmd/nova-decide/testdata/card.md --result ./cmd/nova-decide/testdata/result.md --reason "verdict not-done: tests red in internal/decide" --backend fixed --answers ./cmd/nova-decide/testdata/attempt-answers.json --record ./decisions.jsonl --op c1@1
-ATTEMPT OK id=c1@1 decision=attempt backend=fixed class=needs-pro p=0.78 tokens_in=0 tokens_out=0 recorded=new
-ATTEMPT ANSWER question=class type=choice value=needs-pro p=done:0.04,needs-pro:0.78,no-result:0.08,nothing-to-do:0.02,provider-failure:0.02,wrong-scope:0.06
-
-$ nova-decide grade --brief ./cmd/nova-decide/testdata/card.md --backend fixed --answers ./cmd/nova-decide/testdata/grade-answers.json --record ./decisions.jsonl --op c1@grade
-GRADE OK id=c1@grade decision=grade backend=fixed grade=flash p=0.71 tokens_in=0 tokens_out=0 recorded=new
-GRADE ANSWER question=grade type=choice value=flash p=flash:0.71,pro:0.08,script:0.21
-
-$ nova-decide gate --output ./cmd/nova-decide/testdata/gate-output.txt --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --base-red TestPortInUse --backend fixed --answers ./cmd/nova-decide/testdata/gate-answers.json --record ./decisions.jsonl --op c1@1@gate
-GATE OK op=c1@1@gate decision=gate backend=fixed failures=2 route=caused
-GATE FAILURE key=example/tools/internal/serve.TestPortInUse id=c1@1@gate/example/tools/internal/serve.TestPortInUse class=flaky p=caused:0.06,flaky:0.86,pre-existing:0.08 route=caused recorded=new
-GATE FAILURE key=example/tools/internal/greet.TestGreetNamesTheReader id=c1@1@gate/example/tools/internal/greet.TestGreetNamesTheReader class=flaky p=caused:0.06,flaky:0.86,pre-existing:0.08 route=caused recorded=new
-
-$ nova-decide brief --card ./cmd/nova-decide/testdata/greet.md --backend fixed --answers ./cmd/nova-decide/testdata/brief-answers.json --record ./decisions.jsonl
-BRIEF OK decision=brief backend=fixed cards=1 asked=1 existing=0 failed=0
-BRIEF CARD id=greet op=greet@brief-825042ac p_converges=0.72 minutes=under-10 failed=- uncalibrated=true recorded=new
-
-$ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
-OUTCOME OK id=card-1 decision=read label=ok changed=true
-
-$ nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
-CALIBRATE OK decision=read schema=505bd379c3753631 question=defect option=yes positives=3 negatives=5 skipped=0 auc=0.933
-CALIBRATE BAR at=0.5 caught=2 of=3 bounced=1 of_negatives=5
-CALIBRATE BAR at=0.7 caught=2 of=3 bounced=0 of_negatives=5
-CALIBRATE BAR at=0.9 caught=0 of=3 bounced=0 of_negatives=5
-CALIBRATE CATCH-ALL at=0.45 caught=3 of=3 bounced=1 of_negatives=5
-
-$ nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01
-FINDINGS OK scored=5 classes=4 bar=0.5 since=2026-10-01T00:00:00Z
-FINDINGS FINDING class=stranded_fragment count=2 cards=s1-1,s1-2
-FINDINGS FINDING class=cut_citation count=2 cards=s1-1,s1-3
-FINDINGS FINDING class=invented_reason count=1 cards=s1-2
-FINDINGS FINDING class=unnamed count=1 cards=s1-4
-```
-
-The ask, read, score, attempt, grade, gate, brief and outcome lines write
-`./decisions.jsonl`; calibrate and findings read the fixture record, because a
-calibration wants positives and negatives both and findings wants scores to
-cluster. The fixed backend answers every failure of the gate alike, and with no
-`--bars` (the sprint row's default) every failure is recorded with its class and
-routed caused, the take as reported; `--bars 0.8,0.8` routes both flaky. With
-`--backend jev` the same `ask`, `read`, `score`, `attempt`, `grade`, `gate` and
-`brief` lines ask the model instead, under `nova-secrets exec --only
-JEV_API_KEY`, and all but the brief's lines carry the tokens spent, each failure
-of a gate on its own. The gate decision's calibration records (base run, and
-base not run) are `internal/decide/testdata/gate-calibration-*.jsonl`. The
-brief's op id ends in the hex of the schema and the card, so a reworded schema
-or card changes it and this transcript names the change.
 
 ## nova-redis
 
@@ -1026,8 +953,8 @@ FINISH OK moved=1 refused=0 notes=1 op=finish-t24-1
 
 $ nova-sprint tick
 MOVED drain: s1-1.w1 working -> done ok; s1-1 working -> review (finish by m1)
-MOVED ask: s1-1 asked of reader-a
-TABLES rows changed: work=1 readers=1 merge=0 fleet=0
+MOVED ask: s1-1 asked of reader-a, reader-b
+TABLES rows changed: work=1 readers=2 merge=0 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=0
 0/1 0.0% -> ETA -  machine: running
 
@@ -1036,160 +963,74 @@ MOVED s1-1.r1.reader-a asked -> reading
 READ OK moved=1 refused=0 notes=0 op=read-t27-1
 0/1 0.0% -> ETA -  machine: running
 
-$ nova-sprint read --as reader-a --ok --epoch 0
-MOVED s1-1.r1.reader-a reading -> ok
+$ nova-sprint read --as reader-b --begin --epoch 0
+MOVED s1-1.r1.reader-b asked -> reading
 READ OK moved=1 refused=0 notes=0 op=read-t28-1
 0/1 0.0% -> ETA -  machine: running
 
+$ nova-sprint read --as reader-a --ok --epoch 0
+MOVED s1-1.r1.reader-a reading -> ok
+READ OK moved=1 refused=0 notes=0 op=read-t29-1
+0/1 0.0% -> ETA -  machine: running
+
+$ nova-sprint read --as reader-b --ok --epoch 0
+MOVED s1-1.r1.reader-b reading -> ok
+READ OK moved=1 refused=0 notes=0 op=read-t30-1
+0/1 0.0% -> ETA -  machine: running
+
 $ nova-sprint tick
-MOVED drain: s1-1 asked of reader-a (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by reader-a)
-MOVED accept: s1-1 review -> merging queued (ok from reader-a)
+MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by reader-a); s1-1.r1.reader-b reading -> ok (read by reader-b)
+MOVED accept: s1-1 review -> merging queued (ok from reader-a, reader-b)
 TABLES rows changed: work=1 readers=0 merge=1 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=2
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint merge --stream s1 --batch 1
 MOVED s1-1 merging -> landed
-MERGE OK moved=1 refused=0 notes=2 op=merge-t32-1
+MERGE OK moved=1 refused=0 notes=2 op=merge-t34-1
 0/1 0.0% -> ETA -  machine: running
-```
-
-### Answered by nova-decide
-
-The routine judgments answered by the judgment decision
-([SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-nova-decide)): two cards
-come back failed in one note, and `answer` asks the decision for each
-card. With no `decide_judgment_bar` set (the sprint row ships it empty) and no
-`--bar`, it applies nothing: it records each decision and lists what a bar would
-apply. Given `--bar 0.8` it applies the recorded decisions, asking nothing again,
-and reworks each card by the line the inbox prints for it alone, each line carrying
-the decision's op id (`--op decide.<decision id>`), recorded as `applying` before it
-runs and `applied` after, so a pass stopped between the two is finished by the next
-through the same op and nothing is applied twice. The backend is
-the fixed one (`--backend fixed`), answering from
-`cmd/nova-sprint/testdata/judgment-answers.json` whatever the state, so no key or
-network is needed; with Jev it is `nova-secrets exec --only JEV_API_KEY --
-nova-sprint answer`. Run from a checkout root over a fresh twin, with
-the first run's environment, by `cmd/nova-sprint/answer_transcript_test.go`,
-which keeps the record in a temporary directory and prints it as
-`./judgment.jsonl`; nothing else is normalised.
-
-```text
-$ nova-sprint init --readers reader-a,reader-b --members m1
-INIT OK tables=work,readers,merge,fleet view=sprint readers=reader-a,reader-b
-MOVED m1 added, down until it beats
-FLEET-UP OK moved=1 refused=0 notes=0 op=fleet-release-t1-1
-STOPPED
-NOTE a twin beats every member at every verb: each member added is up after the next nova-sprint tick
-
-$ nova-sprint add --stream s1 --count 2
-MOVED s1-1 -> ready stream=s1 score=1
-MOVED s1-2 -> ready stream=s1 score=2
-ADD OK stream=s1 cards=2 before=- moved=2 refused=0 notes=0 op=add-t2-1
-NOTE the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>
-STOPPED  0/2 0.0%
-
-$ nova-sprint start
-START OK before=STOPPED after=RUNNING changed
-nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
-0/2 0.0% -> ETA -  machine: running
-
-$ nova-sprint tick
-MOVED presence: m1 up
-TABLES rows changed: work=0 readers=0 merge=0 fleet=1
-TICK OK state=RUNNING idle=no moved=1 notes=2
-0/2 0.0% -> ETA -  machine: running
-
-$ nova-sprint tick
-MOVED deal: s1-1 work ready -> working card=s1-1.w1 member=m1 (fleet ready)
-MOVED deal: s1-2 work ready -> working card=s1-2.w1 member=m1 (fleet ready)
-TABLES rows changed: work=1 readers=0 merge=0 fleet=1
-TICK OK state=RUNNING idle=no moved=2 notes=1
-0/2 0.0% -> ETA -  machine: running
-
-$ nova-sprint take --as m1 --max 2 --epoch 0
-MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
-MOVED s1-2.w1 fleet ready -> working member=m1 gen=1
-PACKET s1-1.w1 attempt=1 gen=1 epoch=0
-  branch: sprint/s1-1.w1.g1.e0
-  base: the stream's base
-  notes: none
-  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
-PACKET s1-2.w1 attempt=1 gen=1 epoch=0
-  branch: sprint/s1-2.w1.g1.e0
-  base: the stream's base
-  notes: none
-  report it: nova-sprint finish --as m1 s1-2.w1@1 --epoch 0 --branch sprint/s1-2.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
-TAKE OK moved=2 refused=0 notes=0 op=take-t23-1
-0/2 0.0% -> ETA -  machine: running
-
-$ nova-sprint finish --as m1 s1-1.w1@1 s1-2.w1@1 --epoch 0 --failed --report 'the tests went red'
-MOVED s1-1.w1 working -> done failed; s1-1 working -> review
-MOVED s1-2.w1 working -> done failed; s1-2 working -> review
-FINISH OK moved=2 refused=0 notes=1 op=finish-t24-1
-0/2 0.0% -> ETA -  machine: running
-
-$ nova-sprint tick
-MOVED drain: s1-1.w1 working -> done failed; s1-1 working -> review (finish by m1)
-MOVED drain: s1-2.w1 working -> done failed; s1-2 working -> review (finish by m1)
-TABLES rows changed: work=1 readers=0 merge=0 fleet=0
-TICK OK state=RUNNING idle=no moved=2 notes=0
-0/2 0.0% -> ETA -  machine: running
-
-$ nova-sprint answer --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
-judgment        card  kind    verb    p     act     why
-finish-t24-1.1  s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1
-finish-t24-1.1  s1-2  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-2
-ANSWER OK rows=2 applied=0 would_apply=0 listed=2 refused=0 failed=0 left=0 outcomes=0 bar=- record=./judgment.jsonl; run: nova-sprint inbox
-
-$ nova-sprint answer --bar 0.8 --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
-judgment        card  kind    verb    p     act      why
-finish-t24-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --op decide.finish-t24-1.1_s1-1
-finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --op decide.finish-t24-1.1_s1-2
-ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
 ```
 
 ## nova-work
 
 Run by `cmd/nova-work/firstrun_test.go` against a recorded conversation with
 GitHub (`internal/workgh/testdata/reliable`: one public repository of twenty
-issues, read at fifteen a page), so no network is used and no process is
-started. `$ORG` and `$REPO` are yours: the test stands them for the recording's
-organization and repository, and the counts below are that repository's. `gh=`
-names the gh a run used; yours is the gh on your PATH, and here it is `./gh`,
-where the test says it found one, while every call is answered from the
-recording. The `sha256` is the tree file's, and the tree records the instant it
-was fetched, so it differs on every real run; the test passes a fixed time in
-so the value below reproduces. `./tree.lisp` is a file in a directory of the
-test's own. The usage banner's `example:` block is this same sitting, line for
-line.
+issues, read at fifteen a page), so no network is used. `$ORG` and `$REPO` are
+yours: the test stands them for the recording's organization and repository,
+and the counts below are that repository's. The first line of every run names
+the gh it found; yours is the gh on your PATH, and here it is `./gh`, a stand-in
+that answers each call from the recording. The `sha256` is the tree file's, and
+the tree records the instant it was fetched, so it differs on every real run;
+the test fixes its clock so the value below reproduces. `./tree.lisp` is a file
+in a directory of the test's own. The usage banner's `example:` block is this
+same sitting, line for line.
 
 Requires: a gh login that can read the repository (`gh auth status`); import
-(the dry run too) and verify read GitHub through gh and write nothing there.
+and verify read GitHub through gh and write nothing there.
 
 ### First run
 
 ```text
 $ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
-IMPORT OK org=$ORG out=- repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 gh=./gh dry_run=true
-IMPORT PLAN repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
-IMPORT REPO repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
-IMPORT NOTE the dry run read GitHub as the import does (calls=3, read-only) and wrote nothing
+GH OK path=./gh
+PLAN OK org=$ORG repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
+REPO OK repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
+IMPORT OK org=$ORG out=- repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 dry_run=true
 
 $ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp
-IMPORT OK org=$ORG out=./tree.lisp repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 gh=./gh
-IMPORT PLAN repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
-IMPORT REPO repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
+GH OK path=./gh
+PLAN OK org=$ORG repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
+REPO OK repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
+IMPORT OK org=$ORG out=./tree.lisp repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 dry_run=false
 
 $ nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15
-VERIFY OK tree=./tree.lisp sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 repos=1 issues=20 comments=74 calls=3 points=3 rest=0 seconds=0.0 differences=0 missing=0 extra=0 drift=0 gh=./gh
+GH OK path=./gh
+VERIFY OK tree=./tree.lisp sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 repos=1 issues=20 comments=74 calls=3 points=3 rest=0 seconds=0.0 differences=0
 ```
 
-The dry run is not offline: it reads GitHub exactly as the import does (every
-issue, read-only, the same calls) and writes nothing, and its last line says so.
-`est_calls` is the calls the import will spend, checked against `max_calls`
-before any issue is read, and `out=-` says no file was written. The import
-prints the same plan, one `IMPORT REPO` per repository, and the `sha256` of the
-file it wrote; verify names the same `sha256`, and when the two differ it says
-`VERIFY FAILED` with one `VERIFY MISSING`, `EXTRA` or `DRIFT` line per difference.
-`differences=0` is the proof the tree holds what GitHub holds.
+The dry run is the plan and nothing else: `est_calls` is the calls the import
+will spend, checked against `max_calls` before any issue is read, and `out=-`
+says no file was written. The import prints the same plan, one `REPO OK` per
+repository, and the `sha256` of the file it wrote; verify names the same
+`sha256` and prints one `MISSING`, `EXTRA` or `DRIFT` line per difference above
+its summary. `differences=0` is the proof the tree holds what GitHub holds.

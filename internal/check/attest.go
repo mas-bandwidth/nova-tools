@@ -1,10 +1,7 @@
-// Package check implements seven of the ten record-layer checks behind
-// nova-check; the other three live elsewhere because none is about one self
-// repo. dogfood is internal/dogfood, because its records are receipts about
-// the family's tools; hygiene is internal/hygiene, because its subject is a
-// branch's range and the accept gate and the merge lane run the same function
-// over it; convergence is internal/converge, because its records are readings
-// of the work itself rather than of a self repo.
+// Package check implements seven record-layer checks behind nova-check:
+// boot attestation, link integrity, the kernel size budget, the self/machinery
+// separation, the SEED-CORE ↔ SEED.md floor-set parity, the protected corpus,
+// and spelling.
 // Each function returns (result, failures, error): failures mean the check
 // ran and said NO (exit 1 at the CLI); a non-nil error means the check could
 // not run at all (exit 2). See SPEC.md for what each check asserts and,

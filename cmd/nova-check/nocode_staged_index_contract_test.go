@@ -27,9 +27,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -155,6 +158,21 @@ func TestIssue2296(t *testing.T) {
 	t.Run("TestNoCodeStagedSaysNo", noCodeStagedSaysNo)
 	t.Run("TestNoCodeStagedRefusals", noCodeStagedRefusals)
 	t.Run("TestNoCodeStagedRootAndBase", noCodeStagedRootAndBase)
+}
+
+// fakeBin writes one executable fake and returns its path: the git fake the
+// staged refusals below run against, which answers `git diff-index` with a
+// record of its own and execs the real git for everything else the verb asks.
+// The fake is a shell script, so the test that runs it is skipped where there
+// is no shell to run it.
+func fakeBin(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the git fake is a shell script, and this machine has no shell to run it")
+	}
+	path := filepath.Join(dir, name)
+	require.NoError(t, testbin.WriteExecutable(path, []byte("#!/bin/sh\n"+body), 0o755))
+	return path
 }
 
 func TestNoCodeStagedClassifiesTheIndex(t *testing.T) {

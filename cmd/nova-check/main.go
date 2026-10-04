@@ -2,14 +2,13 @@
 // quickstart (links, then nocode), boot attestation, link integrity, the
 // kernel size budget, the self/machinery separation (nocode, and nocode
 // --staged over the git index), the floor-set parity of a derived door and its
-// source, the protected corpus, branch hygiene, the dogfood ledger (record,
-// ledger, gate), convergence and spelling. Exit 0 pass, 1 check failed, 2 could
-// not run.
+// source, the protected corpus, and spelling. The repository's own process
+// checks (dogfood, convergence, hygiene) are nova-dev's. Exit 0 pass, 1 check
+// failed, 2 could not run.
 //
 // Every path and every budget comes from a flag. There are no defaults: a
-// missing flag is a refusal, never a guess. Three verbs write, each only when
-// asked and each with --dry-run: dogfood record appends a receipt, spelling
-// --write edits files, convergence --state stores its streak.
+// missing flag is a refusal, never a guess. One verb writes, only when asked
+// and with --dry-run: spelling --write edits files in place.
 package main
 
 import (
@@ -29,11 +28,11 @@ import (
 
 const usage = `nova-check: checks over markdown records and repositories, each finding named by file and line
 
-how it works: most verbs inspect named paths and keep no state between runs.
-dogfood record appends a receipt; spelling --write edits files in place (--dry-run: neither writes).
-convergence reads forge data through gh, an optional checkout through git, and
-the files you name; --state stores its two-tick streak. Other repository checks
-read the manifests, ledgers and receipts you name.
+how it works: links, quickstart, nocode and spelling run on any markdown
+tree; attest, kernel, floors and corpus need a seed's files (a manifest, a
+budget, a door and its source, a ledger of yours). No verb needs this
+repository: its own process checks (dogfood, convergence, hygiene) moved to
+nova-dev. spelling --write edits files in place (--dry-run: writes nothing).
 first run: create the small markdown tree below, then run the example commands.
 
 usage:
@@ -71,58 +70,7 @@ usage:
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
                                                      protected material is still where the
                                                      ledger says it is
-  nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"
-        [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
-                                                     the four mechanical checks the accept
-                                                     gate runs, on a branch, before you ask
-                                                     a friend for a read: identity,
-                                                     out-of-path, stray-file, secret.
-                                                     --paths is the card's bound; with none
-                                                     the line says paths=- and out-of-path
-                                                     is skipped, never silently passed.
-  nova-check dogfood ledger --cli <file> --receipts <dir> [--authors <file>] [--repo <dir>]
-                                                     one row per verb the command reference
-                                                     declares: who has run it, when, and
-                                                     whether it did what they needed
-  nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok)
-                            --notes <text> [--issue <n>] [--closes <id>] --receipts <dir>
-                            [--tools-timeout <s>] [--max <n>] [--dry-run]
-                                                     append one receipt: I ran this verb,
-                                                     on real work, and here is how it went
-  nova-check dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]
-                                                     exit 1 with the verbs no non-author has
-                                                     run and the edges nobody has cleared.
-                                                     An edge is what the run found; a
-                                                     receipt records it: --not-ok, or an
-                                                     Edge: or Edges: in the notes. The
-                                                     remedy is one nova-check dogfood record
-                                                     --ok per verb named, and per edge
-                                                     --closes <id> or the finder
-                                                     running it again. The line the release
-                                                     lane calls.
-  nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir>
-                         --retired <file> --since <RFC3339|24h>
-        [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
-        [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--dry-run]
-                                                     LANDING and PRS read the forge through
-                                                     gh; CLASSES reads the optional checkout
-                                                     through git. SCRIPTS, EDGES, FLEET and
-                                                     LEDGER read the named paths. --state
-                                                     stores the two-tick streak. Each stream
-                                                     shows now, --since, ratio and trend;
-                                                     an unnamed optional source is ABSENT,
-                                                     not zero. Exit 1 after two consecutive
-                                                     widening ticks. A widening tick is a tick whose
-                                                     <stream> moved the wrong way against
-                                                     its before: --state's last for LEDGER
-                                                     and FLEET, --since's for the rest.
-                                                     The exit-1 line prints
-                                                     trend=widening on the CONVERGENCE line,
-                                                     and the next run is
-                                                     nova-check convergence --state <file>
-                                                     again once the source moves, or
-                                                     nova-check dogfood record the finding
-                                                     the stream names.
+
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
                       [--ignore <word|@file>] [--write] [--exclude <prefix>]
                       [--max <n>] [--dry-run]
@@ -131,9 +79,9 @@ usage:
                                                      are blanked so code is not prose;
                                                      --write fixes misspellings in place
 
-  --json           on attest, links, kernel, nocode, floors, corpus, hygiene, spelling
-                   and version: structured findings and totals; convergence uses
-                   its reading object. quickstart and dogfood use typed lines.
+  --json           on attest, links, kernel, nocode, floors, corpus, spelling
+                   and version: structured findings and totals. quickstart
+                   uses typed lines.
 
   --max <n>        on quickstart, attest, links, nocode, corpus and spelling: how many
                    FAILED lines to print before one MORE line stands for the
@@ -202,20 +150,6 @@ func hintFor(name string) string {
 		return "  " + ledgerHint + "\n"
 	case "root":
 		return "  " + rootHint + "\n"
-	case "cli":
-		return "  " + cliHint + "\n"
-	case "tools":
-		return "  " + toolsHint + "\n"
-	case "receipts":
-		return "  " + receiptsHint + "\n"
-	case "tool":
-		return "  " + toolHint + "\n"
-	case "verb":
-		return "  " + verbHint + "\n"
-	case "by":
-		return "  " + byHint + "\n"
-	case "notes":
-		return "  " + notesHint + "\n"
 	}
 	return ""
 }
@@ -237,40 +171,29 @@ func refuse(stderr io.Writer, where, what string) int {
 }
 
 // verbs is every first word run dispatches, for the unknown-verb answer.
-var verbs = []string{"quickstart", "attest", "links", "kernel", "nocode", "floors", "corpus", "hygiene", "dogfood", "convergence", "spelling", "version"}
+var verbs = []string{"quickstart", "attest", "links", "kernel", "nocode", "floors", "corpus", "spelling", "version"}
 
 // effects is each verb's effect, the line its -h ends its own lines with, in
 // the grammar every tool's help uses: inspection, local write or delivery, and
 // the flag that changes it.
 var effects = map[string]string{
-	"quickstart":     "inspection: reads the directory, writes nothing",
-	"attest":         "inspection: reads the manifest and the files it names, writes nothing",
-	"links":          "inspection: reads the markdown under --dir, writes nothing",
-	"kernel":         "inspection: reads the one file, writes nothing",
-	"nocode":         "inspection: reads the tree, or with --staged the git index, writes nothing",
-	"floors":         "inspection: reads the two files, writes nothing",
-	"corpus":         "inspection: reads the ledger and the files it names, writes nothing",
-	"hygiene":        "inspection: reads the repository through git, writes nothing",
-	"dogfood":        "inspection for ledger and gate; local write for record, which appends one receipt (--dry-run writes none)",
-	"dogfood ledger": "inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing",
-	"dogfood gate":   "inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing",
-	"dogfood record": "local write: appends one receipt file to --receipts (--dry-run writes none)",
-	"convergence":    "local write: --state stores the two-tick streak (--dry-run writes none); LANDING and PRS read the forge through gh, over the network, and CLASSES reads --repo-dir through git",
-	"spelling":       "local write: --write edits the files in place (--dry-run, or no --write, writes nothing)",
-	"version":        "inspection: prints this build identity",
+	"quickstart": "inspection: reads the directory, writes nothing",
+	"attest":     "inspection: reads the manifest and the files it names, writes nothing",
+	"links":      "inspection: reads the markdown under --dir, writes nothing",
+	"kernel":     "inspection: reads the one file, writes nothing",
+	"nocode":     "inspection: reads the tree, or with --staged the git index, writes nothing",
+	"floors":     "inspection: reads the two files, writes nothing",
+	"corpus":     "inspection: reads the ledger and the files it names, writes nothing",
+	"spelling":   "local write: --write edits the files in place (--dry-run, or no --write, writes nothing)",
+	"version":    "inspection: prints this build identity",
 }
 
-// verbHelp is the lines run adds to a verb's -h: its effect, and for the
-// dogfood verbs the shape of the command reference they read.
+// verbHelp is the lines run adds to a verb's -h: its effect.
 func verbHelp(verb string) string {
-	lines := ""
-	if strings.HasPrefix(verb, "dogfood") {
-		lines = "  " + cliShapeHint + "\n"
-	}
 	if e := effects[verb]; e != "" {
-		lines += "effect: " + e + "\n"
+		return "effect: " + e + "\n"
 	}
-	return lines
+	return ""
 }
 
 // refuseRan is what a check that ran and answered no costs: one line naming the
@@ -307,12 +230,6 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		return cmdFloors(args[1:], stdout, stderr)
 	case "corpus":
 		return cmdCorpus(args[1:], stdout, stderr)
-	case "hygiene":
-		return cmdHygiene(args[1:], stdout, stderr)
-	case "dogfood":
-		return cmdDogfood(args[1:], stdout, stderr)
-	case "convergence":
-		return cmdConvergence(args[1:], stdout, stderr)
 	case "spelling":
 		return cmdSpelling(args[1:], stdout, stderr)
 	case "version", "--version":
