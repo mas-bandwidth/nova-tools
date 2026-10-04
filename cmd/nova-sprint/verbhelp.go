@@ -40,7 +40,7 @@ var verbEffect = map[string]string{
 	"needs":         "inspection: reads the waiting cards, writes nothing",
 	"held":          "inspection: reads the held cards of the table, writes nothing",
 	"sentinels":     "inspection: reads the sentinels and what each waits on, writes nothing",
-	"reader retire": "local write: retires the named readers in the sprint's store; --dry-run writes nothing",
+	"reader retire": "local write: retires the named readers in the sprint's store; a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it; --dry-run writes nothing",
 	"preflight":     "inspection: reads the briefs, the table and the repository, writes nothing",
 	"dashboard":     "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
 	"coordinator":   "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
