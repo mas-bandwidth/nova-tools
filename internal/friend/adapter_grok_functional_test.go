@@ -16,6 +16,7 @@ import (
 // grok session). The reply is the session's to give on the bus; this
 // proves acceptance only.
 func TestGrokDeliveryReachesTheLiveSession(t *testing.T) {
+	t.Parallel()
 	dir, text := os.Getenv("NOVA_FRIEND_GROK_DIR"), os.Getenv("NOVA_FRIEND_GROK_TEXT")
 	if dir == "" || text == "" {
 		t.Skip("NOVA_FRIEND_GROK_DIR and NOVA_FRIEND_GROK_TEXT name a live grok session and the line")

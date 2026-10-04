@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -23,7 +24,7 @@ func grokHouse(t *testing.T) (home, dir, wake, listing string) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(wake), 0o755))
 	require.NoError(t, os.WriteFile(wake, []byte("INBOX NOTE id=old\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(home, "active_sessions.json"),
-		[]byte(`[{"session_id":"01a1","pid":94410,"cwd":"`+dir+`","opened_at":"2026-10-04T02:02:49Z"}]`), 0o644))
+		[]byte(`[{"session_id":"01a1","pid":94410,"cwd":`+strconv.Quote(dir)+`,"opened_at":"2026-10-04T02:02:49Z"}]`), 0o644))
 	listing = "38163 38155 tail -n 0 -F " + wake + "\n38155 94410 /bin/zsh -c snap=$(command cat <&3)\n94410  7509 grok\n    1     0 /sbin/launchd\n"
 	return home, dir, wake, listing
 }
