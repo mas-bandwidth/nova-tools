@@ -46,15 +46,31 @@ const (
 	stoppedUSD          = "usd"
 )
 
-// unverifiableSamples is how many CONSECUTIVE failed reads end a card: "a read that fails
-// ... on three consecutive samples ends the card exactly as the
-// budget does ... two failures and then an answer end nothing".
-const unverifiableSamples = 3
+// A FAILED READ NEVER ENDS A CARD BY ITSELF. Three failed reads in a row used to end it
+// `stopped=unverifiable`: on the night of 2026-10-03 one member ended 32 cards that way in three
+// machine-wide bursts (6, 17 and 6 cards within seconds of each other) because every sqlite3
+// launch stalled in the machine's own directory lookups while its Wi-Fi flapped, and each end
+// was charged to its card. Now the sampler keeps the last answer and, while reads fail,
+// enforces the ceiling against that answer plus a bounded extrapolation: the most the spend
+// rose between two answered reads, once for each failed sample since (fold). The card ends
+// unverifiable only once no read has answered for UnverifiableAfter AND that figure is at
+// the ceiling; a source that answers again resumes the budget on what it says. A read that
+// fails is tried once more at once before it is counted (readOnce), and the limit a read is
+// given follows the slowest answered read (readLimit).
+const UnverifiableAfter = 5 * time.Minute
+
+// LiveSampleMost bounds the limit one read is given: four times the slowest answered read,
+// never under swarm.LiveSampleLimit and never over this (readLimit).
+const LiveSampleMost = 60 * time.Second
 
 // liveSampler is one launch's sampling loop.
 type liveSampler struct {
 	dataHome string
 	interval time.Duration
+	// now is the clock and read the one read (swarm.ReadJobUsageLiveWithin); nil is each
+	// one's own, a test gives its fakes.
+	now  func() time.Time
+	read func(dataHome string, limit time.Duration) (swarm.ProviderUsage, error)
 	// THE BUDGETS THIS SAMPLER WATCHES. tokens/unmetered belong to the token budget, worker
 	// carries the card budget's max_turns and max_cache_read, and logPath is the capture the turn count is
 	// asked of -- `<job>/harness-output.log` on this route and never `harness.log`.
@@ -90,6 +106,15 @@ type liveSampler struct {
 	// lastErr is the reason the most recent failed read gave, for the line that reports an
 	// unverifiable end.
 	lastErr error
+	// answered is when a read last answered (the start, until one has); rise is the most
+	// the spend rose between two answered reads and costRise the most the cost did, with
+	// lastCost the cost the last answer reported: what an outage's extrapolation is made of
+	// (atCeiling). slowest is the longest an answered read took (readLimit).
+	answered time.Time
+	rise     int
+	costRise *big.Rat
+	lastCost *big.Rat
+	slowest  time.Duration
 	// samples is how many reads have been ANSWERED, and inflight how many are running. The
 	// two exist so a test can prove that no sample starts while one is unanswered without
 	// reaching into the loop's own timing.
@@ -118,12 +143,39 @@ func startLiveSampler(dataHome string, interval time.Duration, cfg nativeRunConf
 		cardLabel: cfg.label,
 		stop:      make(chan struct{}), fired: make(chan string, 1),
 	}
+	s.answered = s.clock()
 	if interval <= 0 || dataHome == "" {
 		s.Stop()
 		return s
 	}
 	go s.loop()
 	return s
+}
+
+// clock is now: the sampler's own, else the wall's.
+func (s *liveSampler) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// reader is the one read: the sampler's own, else rule 13d's live read.
+func (s *liveSampler) reader() func(string, time.Duration) (swarm.ProviderUsage, error) {
+	if s.read != nil {
+		return s.read
+	}
+	return swarm.ReadJobUsageLiveWithin
+}
+
+// readLimit is what the next read is given: four times the slowest answered read, never
+// under swarm.LiveSampleLimit and never over LiveSampleMost. A machine whose every sqlite3
+// launch stalls (one member, 2026-10-03: about 0.8 s in directory lookups) answers slowly and
+// honestly, and a fixed limit counted its answers as failures.
+func (s *liveSampler) readLimit() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return min(max(swarm.LiveSampleLimit, 4*s.slowest), LiveSampleMost)
 }
 
 // Fired is the channel the ONE stop word arrives on. The launch's select reads it beside
@@ -198,7 +250,18 @@ func (s *liveSampler) loop() {
 // counted as a failed read.
 func (s *liveSampler) readOnce() {
 	s.enter()
-	usage, err := swarm.ReadJobUsageLive(s.dataHome)
+	began, limit := s.clock(), s.readLimit()
+	usage, err := s.reader()(s.dataHome, limit)
+	if err != nil {
+		// a read that fails is tried once more at once before it is counted: one launch
+		// that stalled is not a source that stopped answering
+		usage, err = s.reader()(s.dataHome, limit)
+	}
+	if took := s.clock().Sub(began); err == nil {
+		s.mu.Lock()
+		s.slowest = max(s.slowest, took)
+		s.mu.Unlock()
+	}
 	s.leave()
 	// THE CARD'S OWN TURN COUNT is read OUTSIDE the lock, because it opens a file: the count is
 	// the harness log's assistant turns, "or the usage row count where the log has
@@ -222,17 +285,20 @@ func (s *liveSampler) fold(usage swarm.ProviderUsage, err error, turns int) {
 		// leaves the budget unable to fire and the deadline to end the job.
 		s.failures++
 		s.lastErr = err
-		// A NUMERIC BUDGET THE TOOL HAS STOPPED BEING ABLE TO SEE is a budget the caller
-		// believes is enforced and is not. It ends the card exactly as the budget does.
-		// An `unmetered` card with no card budget has nothing to verify, so a reader that
-		// fails costs it nothing -- there is no promise to break.
-		if s.watching() && s.failures >= unverifiableSamples && s.reached == "" {
+		// A NUMERIC BUDGET THE TOOL HAS STOPPED BEING ABLE TO SEE is enforced against the
+		// last answer plus the extrapolation (atCeiling), and ends the card only once the
+		// source has not answered for UnverifiableAfter and that figure is at the ceiling
+		// (the comment on UnverifiableAfter). An `unmetered` card with no card budget has
+		// nothing to verify, so a reader that fails costs it nothing -- there is no promise
+		// to break.
+		if s.watching() && s.reached == "" && s.clock().Sub(s.answered) >= UnverifiableAfter && s.atCeiling() {
 			s.reached = stoppedUnverifiable
 			s.fire(stoppedUnverifiable)
 		}
 		return
 	}
 	s.failures, s.lastErr = 0, nil
+	s.answered = s.clock()
 	if !usage.Observed {
 		// Nothing reported yet. It is an absence, so it changes no figure: a zero here
 		// would be a measurement the harness never made. The budget cannot fire, and the
@@ -240,6 +306,17 @@ func (s *liveSampler) fold(usage swarm.ProviderUsage, err error, turns int) {
 		return
 	}
 	sum, seen, partial := usage.Budget()
+	if s.observed && sum > s.spent {
+		s.rise = max(s.rise, sum-s.spent)
+	}
+	if cost, ok := new(big.Rat).SetString(usage.Values["cost"]); ok && usage.Values["cost"] != "" {
+		if s.lastCost != nil && cost.Cmp(s.lastCost) > 0 {
+			if rose := new(big.Rat).Sub(cost, s.lastCost); s.costRise == nil || rose.Cmp(s.costRise) > 0 {
+				s.costRise = rose
+			}
+		}
+		s.lastCost = cost
+	}
 	s.spent, s.partial, s.observed = sum, partial, seen > 0
 	if s.reached != "" {
 		return
@@ -274,6 +351,22 @@ func (s *liveSampler) fold(usage swarm.ProviderUsage, err error, turns int) {
 		s.reached = stoppedTokens
 		s.fire(stoppedTokens)
 	}
+}
+
+// atCeiling says whether the spend extrapolated over the failed samples since the last
+// answer is at a ceiling: the last answer plus the most it ever rose between two answers,
+// once per failed sample, against the token budget and against the dollar budget. A
+// sampler that never saw a figure, or never saw it rise, extrapolates nothing: the deadline
+// ends such a card, as it does one whose source reports nothing.
+func (s *liveSampler) atCeiling() bool {
+	if s.observed && !s.unmetered && s.tokens > 0 && s.spent+s.failures*s.rise >= s.tokens {
+		return true
+	}
+	if s.usd != nil && s.lastCost != nil && s.costRise != nil {
+		cost := new(big.Rat).Add(s.lastCost, new(big.Rat).Mul(s.costRise, big.NewRat(int64(s.failures), 1)))
+		return cost.Cmp(s.usd) >= 0
+	}
+	return false
 }
 
 // watching says whether this sampler has a promise to keep: a numeric budget, or a card
@@ -333,7 +426,7 @@ func (s *liveSampler) Observed() (spent int, observed, partial bool, failures in
 // answered. It is what an unverifiable end carries onto the NATIVE BUDGET line: three reads
 // that each did not answer within the limit and three that each exited on a locked database
 // both end a card `stopped=unverifiable`, and the member that reads the line cannot tell
-// one from the other without it (superman, 2026-10-03: 32 cards ended this way in three
+// one from the other without it (one member, 2026-10-03: 32 cards ended this way in three
 // bursts, and the record said only that the source stopped answering).
 func (s *liveSampler) Why() string {
 	s.mu.Lock()

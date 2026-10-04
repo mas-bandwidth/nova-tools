@@ -120,11 +120,12 @@ func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
 	return foldOpenCodeRows(rows)
 }
 
-// LiveSampleLimit is what ONE live sample is given, whatever the interval (SPEC-SWARM rule
-// 13d): "a read is given 5 seconds whatever the interval, no sample starts while one is
+// LiveSampleLimit is the least ONE live sample is given, whatever the interval (SPEC-SWARM
+// rule 13d): "a read is given 5 seconds whatever the interval, no sample starts while one is
 // unanswered, a read still unanswered at its limit is abandoned and counted as a failed
-// read". It is a fixed number rather than a function of the interval because at a short
-// interval three slow reads would end an honest card `budget-unverifiable`.
+// read". The sampler raises it against the slowest read that answered (nova-swarm's
+// liveSampler.readLimit), and never relates it to the interval: at a short interval slow
+// reads would be counted as failures.
 const LiveSampleLimit = 5 * time.Second
 
 // ReadJobUsageLive is rule 13d's LIVE sample: the same statement readOpenCodeUsage runs,
@@ -145,6 +146,12 @@ const LiveSampleLimit = 5 * time.Second
 // cases rule 13d keeps apart -- nothing observed, a partial observation, a read that FAILS
 // -- are the caller's to tell apart, and this function's error is the third of them.
 func ReadJobUsageLive(dataHome string) (ProviderUsage, error) {
+	return ReadJobUsageLiveWithin(dataHome, LiveSampleLimit)
+}
+
+// ReadJobUsageLiveWithin is ReadJobUsageLive with the read given limit instead of
+// LiveSampleLimit.
+func ReadJobUsageLiveWithin(dataHome string, limit time.Duration) (ProviderUsage, error) {
 	path, err := findOpenCodeStore(dataHome)
 	if err != nil {
 		return ProviderUsage{}, err
@@ -156,7 +163,7 @@ func ReadJobUsageLive(dataHome string) (ProviderUsage, error) {
 		return ProviderUsage{}, fmt.Errorf("%w: the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
 			ErrNoSQLite, path, SQLiteBinary, SQLiteBinary)
 	}
-	rows, err := queryOpenCode(path, LiveSampleLimit)
+	rows, err := queryOpenCode(path, limit)
 	if err != nil {
 		return ProviderUsage{}, err
 	}

@@ -546,7 +546,7 @@ findings: 2
 
 ```
 $ nova-swarm native --tokens unmetered --usage-interval 900ms … --deadline 30s
-! nova-swarm native: --usage-interval is at least 1s, got 900ms; three failed reads in a row end a card budget-unverifiable, and under a second that is a moment's bad luck rather than a source that has stopped answering
+! nova-swarm native: --usage-interval is at least 1s, got 900ms; each sample launches sqlite3 against the harness's own live database, and under a second that is more launches than there is anything new to read
 
 $ nova-swarm native --tokens unmetered --usage-interval 30s … --deadline 30s
 ! nova-swarm native: --usage-interval is shorter than --deadline, got 30s against a deadline of 30s; at or past the deadline no sample would ever run and the budget could not fire
