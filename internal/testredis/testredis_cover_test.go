@@ -111,12 +111,12 @@ func TestTestredisCover(t *testing.T) {
 
 	t.Run("Stop kills the process and waits for the exit channel", func(t *testing.T) {
 		t.Parallel()
-		// A process id that is not running on this machine: Kill returns an
-		// error that Stop ignores, and the exited channel is pre-closed, so
-		// Stop returns at once.
+		// A process id above the kernel's PID_MAX_LIMIT, which no live
+		// process can ever hold: Kill returns an error that Stop ignores,
+		// and the exited channel is pre-closed, so Stop returns at once.
 		stub := func() *Server {
 			return &Server{
-				cmd:    &exec.Cmd{Process: &os.Process{Pid: 999999}},
+				cmd:    &exec.Cmd{Process: &os.Process{Pid: 2147483647}},
 				exited: make(chan struct{}),
 			}
 		}
