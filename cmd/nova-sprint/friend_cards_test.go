@@ -208,6 +208,24 @@ func TestALandWhoseHeadIsNotOriginsTipIsRefused(t *testing.T) {
 	}
 }
 
+// A friend's Head line may spell the sha in upper or mixed case: a sha is
+// case-insensitive hex, so the head word friendReportOf returns is lower cased, an
+// upper-case full sha takes the LAND branch, the tip is read and compared, and the
+// card lands at origin's tip in origin's spelling (docs/SPEC-SPRINT.md section 1,
+// friend sync: Head is origin's tip of her branch).
+func TestAnUpperCaseHeadStillMatchesTheTip(t *testing.T) {
+	t.Parallel()
+	upper := strings.ToUpper(landHead)
+	r, err := friendFinish(context.Background(), "amy",
+		sprint.Packet{Card: "c.w1", Gen: 1, Branch: "sprint/c.w1.g1.e0",
+			Brief: "c.w1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy"},
+		"Verdict: LAND\nHead: "+upper+"\n\nDone.\n",
+		tipIs(t, landHead))
+	require.NoError(t, err)
+	assert.False(t, r.Failed, "an upper-case Head is a full sha: the LAND branch reads the tip")
+	assert.Equal(t, landHead, r.Head, "the card lands at origin's tip, in origin's spelling")
+}
+
 // friend sync writes only inside the friend's working directory: a card id that is not
 // one, or an inbox/<job> that is a symlink, is refused and nothing is written.
 func TestTheInboxRefusesABadCardIDAndASymlinkedJob(t *testing.T) {
