@@ -37,19 +37,19 @@ func ReadSums(dir string) ([]Artifact, error) {
 		}
 		sum, name, ok := strings.Cut(line, "  ")
 		if !ok || sum == "" || name == "" {
-			return nil, refuse("build the release again with `nova-update release build`",
+			return nil, refuse("build the release again with `nova-release build`",
 				"%s line %d is not a sha256sum line: %q", SumsFile, i+1, line)
 		}
 		// A name with a separator in it would install outside --bin. The
 		// build writes bare names; anything else is not this file's.
 		if strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
-			return nil, refuse("build the release again with `nova-update release build`",
+			return nil, refuse("build the release again with `nova-release build`",
 				"%s line %d names a path rather than a file: %q", SumsFile, i+1, name)
 		}
 		arts = append(arts, Artifact{Name: name, Sum: sum})
 	}
 	if len(arts) == 0 {
-		return nil, refuse("build the release again with `nova-update release build`",
+		return nil, refuse("build the release again with `nova-release build`",
 			"%s lists no artifact", SumsFile)
 	}
 	sort.Slice(arts, func(i, j int) bool { return arts[i].Name < arts[j].Name })
@@ -176,7 +176,7 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	if err != nil {
 		if os.IsNotExist(err) {
 			return refusal(errs, "INSTALL", refuse(
-				fmt.Sprintf("build it first: nova-update release build --version %s --out %s --source <checkout>", o.version, o.from),
+				fmt.Sprintf("build it first: nova-release build --version %s --out %s --source <checkout>", o.version, o.from),
 				"there is no %s for %s at %s", o.version, goos+"-"+goarch, dir))
 		}
 		return refusal(errs, "INSTALL", err)
@@ -333,8 +333,8 @@ func atomicInstall(src, dst string) error { return installFile(src, dst, os.Rena
 // WINDOWS WILL NOT REPLACE A FILE THAT IS OPEN FOR EXECUTION. The rename is the
 // whole install on unix, where replacing a running binary is ordinary and the
 // running process keeps its inode; on windows the same call fails with a
-// sharing violation, and the file it fails on is very often nova-update.exe
-// replacing ITSELF -- `adopt` runs the release's own nova-update.exe on the
+// sharing violation, and the file it fails on is very often nova-release.exe
+// replacing ITSELF -- `adopt` runs the release's own nova-release.exe on the
 // bench, and that process is holding its own image open while it installs. A
 // perfectly good release would report INSTALL FAIL on the one tool that matters
 // most, on the one platform nobody here can reproduce it on.

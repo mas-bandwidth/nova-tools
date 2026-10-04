@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +16,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func init() {
+	// Initialize signal handling machinery outside synctest bubbles so that
+	// ensureSigM does not allocate its channels inside a synctest bubble.
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt)
+	signal.Stop(ch)
+}
 
 // deadlineFake accepts exactly the version transport the inventory invokes,
 // and reports timeout only when the propagated deadline expires in virtual time.

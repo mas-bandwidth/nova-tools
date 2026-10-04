@@ -133,7 +133,7 @@ func RemotePath(p string) string { return strings.ReplaceAll(p, `\`, "/") }
 // side. It also refuses a RELATIVE path, because the binary this verb runs
 // there must be named absolutely: a relative path resolves against whatever
 // directory the remote shell happens to start in, and a bare name would resolve
-// against $PATH -- which is how a machine ends up running a nova-update that is
+// against $PATH -- which is how a machine ends up running a nova-release that is
 // not the one just verified and sent.
 //
 // goos is the TARGET's, and the only thing it decides is whether the drive form
@@ -294,7 +294,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		o.version = v
 	}
 	// INSTALL ON THE COORDINATOR FIRST, THEN ADOPT. `adopt` is not a courier:
-	// it is this host's nova-update reading a release, verifying it, and
+	// it is this host's nova-release reading a release, verifying it, and
 	// running THIS RELEASE'S install on every machine. A coordinator behind
 	// the release it is fanning out is a coordinator whose own verb may not
 	// understand what it is holding -- and the fourth dogfood met exactly that
@@ -303,8 +303,8 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if deps.Self != nil {
 		if self := deps.Self(); olderThan(self, o.version) {
 			return refusal(errs, "ADOPT", refuse(
-				fmt.Sprintf("install it here first: nova-update release install --from %s --version %s --bin <dir>, then adopt with the new binary", o.from, o.version),
-				"this nova-update is %s and the release being adopted is %s: the install every machine runs is the one this host is holding", self, o.version))
+				fmt.Sprintf("install it here first: nova-release install --from %s --version %s --bin <dir>, then adopt with the new binary", o.from, o.version),
+				"this nova-release is %s and the release being adopted is %s: the install every machine runs is the one this host is holding", self, o.version))
 		}
 	}
 	// EVERY HOST AND PATH IS VALIDATED BEFORE ANY REMOTE COMMAND IS COMPOSED,
@@ -467,7 +467,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return refusal(errs, "ADOPT", refuse(
-				fmt.Sprintf("build it first: nova-update release build --version %s --out %s --source <checkout> --platform %s-%s", o.version, o.from, goos, goarch),
+				fmt.Sprintf("build it first: nova-release build --version %s --out %s --source <checkout> --platform %s-%s", o.version, o.from, goos, goarch),
 				"there is nothing to adopt: no %s for %s at %s", o.version, goos+"-"+goarch, local))
 		}
 		return refusal(errs, "ADOPT", err)
@@ -480,16 +480,16 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		return refusal(errs, "ADOPT", err)
 	}
 	verified = true
-	// THE RELEASE INSTALLS ITSELF. The nova-update that runs the remote
+	// THE RELEASE INSTALLS ITSELF. The nova-release that runs the remote
 	// install is the one this verb just copied there, so a machine with no
 	// nova-tools at all -- a bench provisioned this morning -- adopts with the
 	// same command as one that is a version behind.
 	// The file is named for the TARGET platform, never this host: adopting a
 	// windows bench from the coordinator's machine must look for, send and run
-	// `nova-update.exe`. A bare `nova-update` there is a path that exists
+	// `nova-release.exe`. A bare `nova-release` there is a path that exists
 	// nowhere in the release, and the machine would refuse with `command not
 	// found` for a mistake made on this side.
-	updateFile := ToolFile("nova-update", goos)
+	updateFile := ToolFile("nova-release", goos)
 	var carriesUpdate bool
 	for _, a := range arts {
 		if a.Name == updateFile {
@@ -497,7 +497,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 	}
 	if !carriesUpdate {
-		return refusal(errs, "ADOPT", refuse("build from a checkout that has cmd/nova-update",
+		return refusal(errs, "ADOPT", refuse("build from a checkout that has cmd/nova-release",
 			"this release carries no %s, so no machine could run the install", updateFile))
 	}
 	localSums, err := os.ReadFile(filepath.Join(local, SumsFile))
@@ -555,7 +555,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		// SHA256SUMS -- not that the checksum file is present. A killed
 		// transfer leaves SHA256SUMS and a handful of binaries; trusting
 		// that directory is how the next adopt skips the stream and then
-		// cannot find nova-update (#1981).
+		// cannot find the release binary (#1981).
 		sent := "yes"
 		remote, catErr := ssh.Run(ctx, machine, []string{"cat", path.Join(remoteDir, SumsFile)})
 		heldSums := catErr == nil && sameSums(remote, localSums)
@@ -614,7 +614,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			}
 		}
 		argv := []string{
-			remoteTool, "release", "install",
+			remoteTool, "install",
 			"--from", dest, "--version", o.version, "--bin", bin,
 			"--platform", goos + "-" + goarch,
 		}

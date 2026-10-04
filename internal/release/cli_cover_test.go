@@ -35,21 +35,21 @@ func TestCliCoverMain(t *testing.T) {
 			stamp:    "v0.17.0",
 			args:     []string{"help"},
 			wantCode: 0,
-			wantIn:   []string{"nova-update release cut", "nova-update release cycle", "exit codes:"},
+			wantIn:   []string{"nova-release cut", "nova-release cycle", "exit codes:"},
 		},
 		{
 			name:     "no-verb-refuses-naming-the-verbs",
 			stamp:    "v0.17.0",
 			args:     nil,
 			wantCode: 2,
-			wantErr:  []string{"RELEASE REFUSED", "a release verb is required", "run: nova-update help release"},
+			wantErr:  []string{"RELEASE REFUSED", "a verb is required", "run: nova-release help"},
 		},
 		{
 			name:     "unknown-verb-refuses-naming-the-verbs",
 			stamp:    "v0.17.0",
 			args:     []string{"launch"},
 			wantCode: 2,
-			wantErr:  []string{`RELEASE REFUSED: unknown release verb "launch"`, "run: nova-update help release"},
+			wantErr:  []string{`RELEASE REFUSED: unknown verb "launch"`, "run: nova-release help"},
 		},
 		{
 			name: "adopt-threads-the-stamp-and-refuses-a-stale-coordinator",
@@ -67,7 +67,7 @@ func TestCliCoverMain(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var out, errs bytes.Buffer
-			code := Main("nova-update", tc.args, tc.stamp, &out, &errs)
+			code := Main("nova-release", tc.args, tc.stamp, &out, &errs)
 			assert.Equal(t, tc.wantCode, code, "stderr=%s stdout=%s", errs.String(), out.String())
 			for _, want := range tc.wantIn {
 				assert.Contains(t, out.String(), want)
