@@ -514,12 +514,21 @@ func open(store, session, source string, now time.Time, publish string, write bo
 	if err != nil {
 		return OpenRecord{}, err
 	}
-	// A re-open writes nothing: the record already stands, in whichever shape
-	// the store keeps it. A flat file counts, or open would write a second
-	// record beside one already being appended to.
+	// A re-open of a nested record whose initial open was interrupted before
+	// logging (sessions/<id>.md exists, but log.jsonl has no open record) heals
+	// the open by logging it now with the caller's source and publish policy
+	// (docs/SPEC-CAIRN.md; security#73 finding 2). A flat file stays a no-op.
 	if _, flat, ok := locateRecord(store, session); ok {
-		if flat || !rec.Found {
+		if flat {
 			return rec, nil
+		}
+		if !rec.Found {
+			planned := OpenRecord{Source: source, Publish: publish, Found: true}
+			if !write {
+				return planned, atomicfile.CheckAppend(filepath.Join(store, "log.jsonl"))
+			}
+			stamp := now.UTC().Format(time.RFC3339Nano)
+			return planned, appendLog(store, "open", session, "", stamp, publish, source)
 		}
 		if rec.Publish != publish || (source != "" && source != rec.Source) {
 			again := []string{"--store", store, "--session", session}

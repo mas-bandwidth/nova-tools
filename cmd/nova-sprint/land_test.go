@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,8 +30,10 @@ type landRig struct {
 
 func newLandRig(t *testing.T) *landRig {
 	t.Helper()
+	// the go tests run under GOFLAGS=-json (make test): a go run of the gate inherits it, and
+	// `go vet -json` exits 0 on a finding, so the gate would pass what it must refuse
 	r := &landRig{testApp: newTestApp(t), dir: t.TempDir()}
-	r.env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+	r.env = append(slices.DeleteFunc(os.Environ(), func(e string) bool { return strings.HasPrefix(e, "GOFLAGS=") }), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_NAME=lander", "GIT_AUTHOR_EMAIL=lander@example.invalid", "GIT_COMMITTER_NAME=lander", "GIT_COMMITTER_EMAIL=lander@example.invalid")
 	r.remote, r.worker, r.clone = filepath.Join(r.dir, "remote.git"), filepath.Join(r.dir, "worker"), filepath.Join(r.dir, "clone")
 	r.git("", "init", "-q", "--bare", "-b", "main", r.remote)
