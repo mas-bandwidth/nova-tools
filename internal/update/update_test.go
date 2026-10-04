@@ -370,7 +370,7 @@ func TestFourReadLimitAndOverallBudget(t *testing.T) {
 			entries[i] = Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: []string{"1.0.0"}, Latest: "npm:pkg"}
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		defer cancel()
 
 		r := readEntries(ctx, entries, options{timeout: time.Minute}, Environment{Client: client}, false)
@@ -489,7 +489,7 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	blocked, cancel2 := context.WithCancel(context.Background())
+	blocked, cancel2 := context.WithCancel(t.Context())
 	cancel2()
 	if release, err := lockSnapshot(blocked, s); err == nil {
 		release()

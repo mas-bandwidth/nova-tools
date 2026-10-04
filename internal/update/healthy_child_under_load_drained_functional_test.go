@@ -19,7 +19,7 @@ func TestDeadlineHealthyChildUnderLoadIsFullyDrained(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	p := process(ctx, args, nil, ChildCap)
 	if p.Reason != "" {
