@@ -44,6 +44,7 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 )
 
 // Publish policies name who publishes a checkpoint and when. This package
@@ -278,6 +279,17 @@ func conflict(store, session, id string) error {
 	}
 }
 
+// flatLockTimeout is how long a flat append waits for an exclusive lock on
+// the sibling lock file.
+const flatLockTimeout = 10 * time.Second
+
+// flatLockFile is the sibling lock file for a flat record: .<session>.md.lock
+// under the store. It does not end in .md, so Coverage and flatIndexRows skip it
+// (docs/SPEC-CAIRN.md; security#73 finding 1).
+func flatLockFile(store, session string) string {
+	return filepath.Join(store, "."+session+".md.lock")
+}
+
 // appendFlat files one entry into a flat record: a dated section at the end of
 // the file, in the file's own shape (one blank line between sections), the
 // words under it. A retry with the same id and the same words adds nothing;
@@ -285,11 +297,42 @@ func conflict(store, session, id string) error {
 // store. No index is written and no directory appears beside the file. The
 // flat format stores no policy, so publish "" reports PublishUnknown. With
 // write false nothing is written: the result is the plan.
+//
+// An actual write holds an exclusive lock on the sibling lock file around the
+// read-decide-append using internal/filelock (docs/SPEC-CAIRN.md, tla/FileLock.tla;
+// security#73 finding 1). A dry run (write false) neither takes the lock nor
+// creates the file; the duplicate and conflict rules run on the re-read inside
+// the lock.
 func appendFlat(store, session, path, id, text string, now time.Time, publish string, write bool) (AppendResult, error) {
 	var res AppendResult
 	if publish == "" {
 		publish = PublishUnknown
 	}
+	if !write {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return res, err
+		}
+		if prev, found := findFlat(raw, id); found {
+			if prev.body != strings.TrimSpace(text) {
+				return res, conflict(store, session, id)
+			}
+			stamp, err := time.Parse(time.RFC3339Nano, prev.stamp)
+			if err != nil {
+				return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
+			}
+			return AppendResult{Stamp: stamp, Persisted: true, Policy: publish, Duplicate: true}, nil
+		}
+		stamp := now.UTC().Truncate(time.Second)
+		return AppendResult{Stamp: stamp, Policy: publish}, atomicfile.CheckAppend(path)
+	}
+
+	lock, err := filelock.Lock(flatLockFile(store, session), "nova-cairn append", flatLockTimeout)
+	if err != nil {
+		return res, err
+	}
+	defer lock.Unlock()
+
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return res, err
@@ -305,9 +348,6 @@ func appendFlat(store, session, path, id, text string, now time.Time, publish st
 		return AppendResult{Stamp: stamp, Persisted: true, Policy: publish, Duplicate: true}, nil
 	}
 	stamp := now.UTC().Truncate(time.Second)
-	if !write {
-		return AppendResult{Stamp: stamp, Policy: publish}, atomicfile.CheckAppend(path)
-	}
 	var b strings.Builder
 	if len(raw) > 0 && !strings.HasSuffix(string(raw), "\n") {
 		b.WriteString("\n")
