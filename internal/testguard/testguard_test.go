@@ -15,7 +15,6 @@ import (
 func TestUnsetGuardLetsTheSeamRun(t *testing.T) {
 	t.Parallel()
 	g := NewGuard(false)
-	require.False(t, g.Refusing(), "the guard must be off when the variable is unset; production pays nothing for it")
 	g.RefuseHosts("ssh", "hulk", "uptime") // must not panic
 }
 
@@ -26,7 +25,7 @@ func TestArmedGuardNamesTheCommandAndTheRemedy(t *testing.T) {
 		r := recover()
 		require.True(t, r != nil, "an armed guard must refuse the seam")
 		msg, _ := r.(string)
-		for _, want := range []string{EnvNoHost, `"ssh"`, `"hulk"`, `"bash -s"`, "testguard.AllowHosts"} {
+		for _, want := range []string{EnvNoHost, `"ssh"`, `"hulk"`, `"bash -s"`, "a fake on PATH must live under a temp directory"} {
 			assert.Contains(t, msg, want, "the refusal must carry %s; got %q", want, msg)
 		}
 	}()

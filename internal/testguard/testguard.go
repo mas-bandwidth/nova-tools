@@ -74,14 +74,6 @@ func init() { Reload() }
 // path needs it.
 func Reload() { defaultGuard.refusing.Store(os.Getenv(EnvNoHost) == "1") }
 
-// Refusing reports whether the guard is armed. It exists so a test can say
-// what it is testing without reading the environment itself.
-func Refusing() bool { return defaultGuard.Refusing() }
-
-// Refusing reports whether the guard is armed. It exists so a test can say
-// what it is testing without reading the environment itself.
-func (g *Guard) Refusing() bool { return g.refusing.Load() }
-
 // RefuseHosts is what every ssh/scp/rsync seam in this tree calls with the
 // command line it is about to run. Under the guard it panics naming that
 // command line, unless the program resolves inside a temp directory;
@@ -115,7 +107,7 @@ func (g *Guard) RefuseHosts(program string, args ...string) {
 	}
 	panic(fmt.Sprintf(
 		"%s=1: a test reached a host through an unfaked seam: %s; "+
-			"inject the fake the seam takes, or install a fake on PATH and declare it with testguard.AllowHosts()",
+			"a fake on PATH must live under a temp directory; inject the fake the seam takes",
 		EnvNoHost, commandLine(program, args)))
 }
 
