@@ -458,8 +458,8 @@ func joinWrapper() {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if rec := os.Getenv("NOVA_UPDATE_JOIN_RECORD"); rec != "" {
-		_ = os.WriteFile(rec, []byte(fmt.Sprintf("boundary=%s observed=%t killed-alive=%t group-gone=%t\nbus said: %s\n",
-			boundary, observed, alive, gone, clip(strings.TrimSpace(said.String()), 2000))), 0600)
+		_ = os.WriteFile(rec, fmt.Appendf(nil, "boundary=%s observed=%t killed-alive=%t group-gone=%t\nbus said: %s\n",
+			boundary, observed, alive, gone, clip(strings.TrimSpace(said.String()), 2000)), 0600)
 	}
 	// Whatever happened, this process says nothing a caller could read as a
 	// confirmation, which is the whole point of a lost answer.

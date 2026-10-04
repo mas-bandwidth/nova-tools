@@ -387,7 +387,7 @@ func TestWaitGoesOnWhenTheLockChangesDuringTheScan(t *testing.T) {
 	replace := func() {
 		n++
 		require.NoError(t, os.Rename(lock, fmt.Sprintf("%s.old%d", lock, n)))
-		require.NoError(t, os.WriteFile(lock, []byte(fmt.Sprintf("replacement %d", n)), 0o600))
+		require.NoError(t, os.WriteFile(lock, fmt.Appendf(nil, "replacement %d", n), 0o600))
 		require.NoError(t, os.Chtimes(lock, old, old))
 	}
 	var restoreSecond func()

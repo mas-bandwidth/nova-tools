@@ -730,7 +730,7 @@ func (o operation) write(ctx context.Context, c redis.Cmdable, fn string, option
 	}
 	if len(wire) >= 7 {
 		var delta BatchDelta
-		if err := json.Unmarshal([]byte(fmt.Sprint(wire[6])), &delta); err == nil {
+		if err := json.Unmarshal(fmt.Append(nil, wire[6]), &delta); err == nil {
 			r.BatchDelta = &delta
 		}
 	}
@@ -1730,7 +1730,7 @@ func batchReceipt(manifest BatchManifest, cmd *redis.Cmd) (Receipt, error) {
 	}
 	if len(wire) >= 7 {
 		var delta BatchDelta
-		if err := json.Unmarshal([]byte(fmt.Sprint(wire[6])), &delta); err != nil {
+		if err := json.Unmarshal(fmt.Append(nil, wire[6]), &delta); err != nil {
 			return Receipt{}, fmt.Errorf("unmarshal batch delta: %w (raw: %s)", err, fmt.Sprint(wire[6]))
 		}
 		r.BatchDelta = &delta

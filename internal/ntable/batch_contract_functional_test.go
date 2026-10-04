@@ -431,7 +431,7 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 	assert.Equal(t, strconv.FormatUint(rcpt1.Before, 10), fmt.Sprint(ev1["rev_before"]), "ev1 revs = (%v, %v), want (%d, %d)", ev1["rev_before"], ev1["rev_after"], rcpt1.Before, rcpt1.After)
 	assert.Equal(t, strconv.FormatUint(rcpt1.After, 10), fmt.Sprint(ev1["rev_after"]), "ev1 revs = (%v, %v), want (%d, %d)", ev1["rev_before"], ev1["rev_after"], rcpt1.Before, rcpt1.After)
 	var streamDelta1 ntable.BatchDelta
-	require.NoError(t, json.Unmarshal([]byte(fmt.Sprint(ev1["batch_delta"])), &streamDelta1), "unmarshal stream batch_delta")
+	require.NoError(t, json.Unmarshal(fmt.Append(nil, ev1["batch_delta"]), &streamDelta1), "unmarshal stream batch_delta")
 	assert.Equal(t, "op-create-m1-m2", streamDelta1.OperationID, "streamDelta1 mismatch: %+v", streamDelta1)
 	assert.Equal(t, 2, streamDelta1.ChangedCount, "streamDelta1 mismatch: %+v", streamDelta1)
 	assert.Equal(t, 0, streamDelta1.GuardCount, "streamDelta1 mismatch: %+v", streamDelta1)
@@ -700,7 +700,7 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 		}
 		replayedCount++
 		var args []string
-		require.NoError(t, json.Unmarshal([]byte(fmt.Sprint(v["args"])), &args), "unmarshal event args")
+		require.NoError(t, json.Unmarshal(fmt.Append(nil, v["args"]), &args), "unmarshal event args")
 		tableName := args[0]
 		opID := args[1]
 

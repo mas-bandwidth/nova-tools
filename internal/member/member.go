@@ -1027,7 +1027,7 @@ func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Pack
 		var t takeOut
 		if err := json.Unmarshal(out, &t); err != nil {
 			// an answer that is not the take's JSON is no answer: nothing is started
-			return 0, []byte(fmt.Sprintf("take: not JSON: %v", err))
+			return 0, fmt.Appendf(nil, "take: not JSON: %v", err)
 		}
 		packets = t.Packets
 	}

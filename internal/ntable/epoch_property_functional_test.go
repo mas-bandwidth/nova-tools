@@ -299,7 +299,7 @@ func (h *epochProperty) receipt(a epochAction, opts ntable.WriteOptions, r ntabl
 	require.Equal(h, r.Before+1, r.After, "returned receipt differs from stream: %+v / %+v", r, event)
 	require.Equal(h, v["outcome"], r.Outcome, "returned receipt differs from stream: %+v / %+v", r, event)
 	var args []string
-	require.NoError(h, json.Unmarshal([]byte(fmt.Sprint(v["args"])), &args), "receipt args")
+	require.NoError(h, json.Unmarshal(fmt.Append(nil, v["args"]), &args), "receipt args")
 	expected := a.wire()
 	require.Len(h, args, len(expected), "receipt args=%v, want %v", args, expected)
 	for i, value := range expected {
@@ -321,11 +321,11 @@ func (h *epochProperty) receipt(a epochAction, opts ntable.WriteOptions, r ntabl
 		}
 	}
 	var changes []change
-	require.NoError(h, json.Unmarshal([]byte(fmt.Sprint(v["members"])), &changes), "receipt members")
+	require.NoError(h, json.Unmarshal(fmt.Append(nil, v["members"]), &changes), "receipt members")
 	slices.SortFunc(changes, func(a, b change) int { return strings.Compare(a.ID, b.ID) })
 	require.Equal(h, expectedChanges, changes, "receipt member delta")
 	var cells []string
-	require.NoError(h, json.Unmarshal([]byte(fmt.Sprint(v["cells"])), &cells), "receipt cells")
+	require.NoError(h, json.Unmarshal(fmt.Append(nil, v["cells"]), &cells), "receipt cells")
 	for _, row := range []string{"r1", "r2"} {
 		for _, col := range []string{"a", "b"} {
 			at := row + ":" + col
@@ -393,7 +393,7 @@ func (h *epochProperty) step(a epochAction) {
 			// Replay only the validated durable receipt; never a.wire().
 			v := sourceEvent.Values
 			var args []string
-			require.NoError(h, json.Unmarshal([]byte(fmt.Sprint(v["args"])), &args), "replay args")
+			require.NoError(h, json.Unmarshal(fmt.Append(nil, v["args"]), &args), "replay args")
 			wire := make([]any, len(args), len(args)+1)
 			for j := range args {
 				wire[j] = args[j]

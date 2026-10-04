@@ -205,12 +205,12 @@ func TestNoFileContentOrCallerArgumentCanForgeALine(t *testing.T) {
 	// A key name in a sealed file (sops leaves key names in the clear), read by names,
 	// check and exec. Written as a YAML double-quoted scalar so every control survives.
 	yamlKey := strconv.Quote(forge)
-	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(fmt.Sprintf(`creation_rules:
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), fmt.Appendf(nil, `creation_rules:
   - path_regex: ^rowan\.yaml$
     age: %s,%s
   - path_regex: ^evil\.yaml$
     age: %s,%s
-`, keyA.pubKey, recKey.pubKey, keyA.pubKey, recKey.pubKey)), 0644)
+`, keyA.pubKey, recKey.pubKey, keyA.pubKey, recKey.pubKey), 0644)
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "evil.yaml"), []string{keyA.pubKey, recKey.pubKey}, yamlKey+": v\n")
 	commitAndPush(t, storeDir)
 

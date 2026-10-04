@@ -334,7 +334,7 @@ func TestReadProcViewRecordsTheOwner(t *testing.T) {
 					if !ok {
 						return nil, &fs.PathError{Op: "open", Path: name, Err: syscall.EACCES}
 					}
-					return []byte(fmt.Sprintf("Name:\tgit\nUid:\t%d\t%d\t%d\t%d\n", owner, owner, owner, owner)), nil
+					return fmt.Appendf(nil, "Name:\tgit\nUid:\t%d\t%d\t%d\t%d\n", owner, owner, owner, owner), nil
 				}
 				return []byte(cmdline), nil
 			},

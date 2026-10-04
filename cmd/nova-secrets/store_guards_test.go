@@ -213,7 +213,7 @@ func TestTheLauncherOrderWorksWithTheStoreFullyDenied(t *testing.T) {
 	keyA := genKey(t, td, "keya")
 	recKey := genKey(t, td, "rec")
 	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
-	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(fmt.Sprintf("creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: %s,%s\n", keyA.pubKey, recKey.pubKey)), 0644)
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), fmt.Appendf(nil, "creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: %s,%s\n", keyA.pubKey, recKey.pubKey), 0644)
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_launcher_value\n")
 	commitAndPush(t, storeDir)
 

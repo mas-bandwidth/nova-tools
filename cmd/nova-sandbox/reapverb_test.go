@@ -89,7 +89,7 @@ func (b *reapBench) volume(t *testing.T, name, disk string) string {
 func (b *reapBench) owner(t *testing.T, mount string, pid int, start string) {
 	t.Helper()
 	b.starts[pid] = start
-	err := os.WriteFile(filepath.Join(mount, ownerMarker), []byte(fmt.Sprintf("pid=%d\nstart=%s\n", pid, start)), 0o600)
+	err := os.WriteFile(filepath.Join(mount, ownerMarker), fmt.Appendf(nil, "pid=%d\nstart=%s\n", pid, start), 0o600)
 	require.NoError(t, err, "write the owner marker: %v", err)
 }
 

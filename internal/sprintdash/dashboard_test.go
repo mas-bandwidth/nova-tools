@@ -46,7 +46,7 @@ func newRig(t *testing.T) *rig {
 
 // where is a where --json object with landed cards.
 func where(landed int) []byte {
-	return []byte(fmt.Sprintf(`{"at":"2026-10-02T19:00:00Z","landed":%d,"all":100,"summary":"x","tables":{"work":{}}}`, landed))
+	return fmt.Appendf(nil, `{"at":"2026-10-02T19:00:00Z","landed":%d,"all":100,"summary":"x","tables":{"work":{}}}`, landed)
 }
 
 func (r *rig) advance(d time.Duration) { r.now = r.now.Add(d) }
