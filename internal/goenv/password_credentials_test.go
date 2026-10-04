@@ -52,8 +52,8 @@ func TestGateEnvironmentsDropPasswordCredentials(t *testing.T) {
 				name, entry := name, name+"=not-a-real-secret-marker"
 				t.Run(s.name+"/"+name, func(t *testing.T) {
 					t.Parallel()
-					got := s.fn([]string{"PATH=/usr/bin", entry, "HOME=/home/rowan"})
-					assert.Equal(t, []string{"PATH=/usr/bin", "HOME=/home/rowan"}, got,
+					got := s.fn([]string{"PATH=/usr/bin", entry, "HOME=/home/user"})
+					assert.Equal(t, []string{"PATH=/usr/bin", "HOME=/home/user"}, got,
 						"%s kept the credential %q", s.name, name)
 				})
 			}
@@ -64,7 +64,7 @@ func TestGateEnvironmentsDropPasswordCredentials(t *testing.T) {
 		t.Parallel()
 		env := []string{
 			"PATH=/usr/bin",
-			"HOME=/home/rowan",
+			"HOME=/home/user",
 			"LANG=en_US.UTF-8",
 			"TERM=xterm-256color",
 			"NOVA_SWARM_JOB=a-job",
@@ -83,7 +83,7 @@ func TestGateEnvironmentsDropPasswordCredentials(t *testing.T) {
 		for _, s := range gateScrubbers() {
 			t.Run(s.name, func(t *testing.T) {
 				t.Parallel()
-				env := []string{"PATH=/usr/bin", "PGPASSWORD=not-a-real-secret-marker", "HOME=/home/rowan"}
+				env := []string{"PATH=/usr/bin", "PGPASSWORD=not-a-real-secret-marker", "HOME=/home/user"}
 				before := append([]string(nil), env...)
 				_ = s.fn(env)
 				require.Equal(t, before, env, "%s modified its input: %q", s.name, env)
@@ -99,9 +99,9 @@ func TestGateEnvironmentsDropPasswordCredentials(t *testing.T) {
 			"GITHUB_TOKEN=a-forge-token",
 			"DEEPSEEK_API_KEY=a-provider-key",
 			"aws_secret_access_key=a-lower-case-secret",
-			"HOME=/home/rowan",
+			"HOME=/home/user",
 		}
-		want := []string{"PATH=/usr/bin", "HOME=/home/rowan"}
+		want := []string{"PATH=/usr/bin", "HOME=/home/user"}
 		for _, s := range gateScrubbers() {
 			t.Run(s.name, func(t *testing.T) {
 				t.Parallel()
