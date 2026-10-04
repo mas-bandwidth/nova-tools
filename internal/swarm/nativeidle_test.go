@@ -81,7 +81,6 @@ func (b *idleBench) tick(t *testing.T, at time.Duration) (IdleEnd, bool) {
 	case b.ticks <- now:
 		return IdleEnd{}, false
 	}
-	return IdleEnd{}, false
 }
 
 // TestWatchIdleEndsAStillCardAtItsIdleWindowAndNotAtItsDeadline: the whole point. A log that
