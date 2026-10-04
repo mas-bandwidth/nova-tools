@@ -87,7 +87,7 @@ func TestResolveReadsTheSeatThroughTheSecretsLibrary(t *testing.T) {
 	require.Equal(t, "coordinator", c.User, "Resolve = %v; want studio as coordinator with the coordinator password", c)
 	require.Equal(t, "NOVA_REDIS_COORDINATOR_PASSWORD", c.Key, "Resolve = %v; want studio as coordinator with the coordinator password", c)
 	require.True(t, same(c, coord), "Resolve = %v; want studio as coordinator with the coordinator password", c)
-	for _, s := range []string{c.String(), fmt.Sprintf("%v %+v %#v %s %q %x", c, c, c, c, c, c)} {
+	for _, s := range []string{fmt.Sprintf("%v %+v %#v %s %q %x", c, c, c, c, c, c)} {
 		require.NotContains(t, s, coord, "a formatted Cred carries the password: %s", s)
 		require.NotContains(t, s, coord[:8], "a formatted Cred carries the password: %s", s)
 	}

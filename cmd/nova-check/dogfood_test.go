@@ -122,7 +122,7 @@ func TestDogfoodLedgerNamesAReceiptItCannotReadAndPrintsNoLedger(t *testing.T) {
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
 	require.EqualValues(t, 1, code, "exit %d, want 1", code)
 	require.NotContains(t, stdout, "DOGFOOD OK", "a ledger was printed over records it could not read:\n%s", stdout)
-	require.True(t, strings.Contains(stderr, "DOGFOOD FAIL") && strings.Contains(stderr, "broken.json"), "stderr does not name the bad record:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "DOGFOOD FAILED") && strings.Contains(stderr, "broken.json"), "stderr does not name the bad record:\n%s", stderr)
 }
 
 func TestDogfoodLedgerNotesAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
@@ -307,10 +307,10 @@ func TestDogfoodGateCapsItsFindingsAndSaysHowToSeeTheRest(t *testing.T) {
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
 	require.NoError(t, os.MkdirAll(receipts, 0o755))
-	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all", "--fail-max", "1", "--allow-empty")
+	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all", "--max", "1", "--allow-empty")
 	require.EqualValues(t, 1, code, "exit %d, want 1", code)
 	require.EqualValues(t, 1, strings.Count(stderr, "DOGFOOD GATE FAIL tool="), "the cap did not hold:\n%s", stderr)
-	require.Contains(t, stderr, "--fail-max", "a cap with no remedy is censorship:\n%s", stderr)
+	require.Contains(t, stderr, "--max", "a cap with no remedy is censorship:\n%s", stderr)
 	require.Contains(t, stderr, "shown=1", "no count line:\n%s", stderr)
 	// The first run of this verb against the repository's own reference printed
 	// `DOGFOOD\x20GATE MORE`: bounded escapes the token it is given, so the token
@@ -397,6 +397,11 @@ func TestDogfoodLedgerReadsAuthorshipFromGit(t *testing.T) {
 		cmd.Env = append(os.Environ(),
 			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 			"GIT_AUTHOR_DATE=2026-09-18T09:00:00Z", "GIT_COMMITTER_DATE=2026-09-18T09:00:00Z",
+			// The author name is pinned beside the committer's: an ambient
+			// GIT_AUTHOR_NAME on the machine would otherwise answer the git
+			// read with a different name than the receipt carries, and the
+			// test would judge the room instead of the ledger.
+			"GIT_AUTHOR_NAME=Rowan Claude",
 			"GIT_COMMITTER_NAME=Rowan Claude", "GIT_COMMITTER_EMAIL=rowan@mas-bandwidth.com")
 		{
 			out, err := cmd.CombinedOutput()

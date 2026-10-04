@@ -27,10 +27,10 @@ import (
 // possible mechanism, these errnos do not uniquely identify it.
 //
 // These are transient collisions during lock handover, not permanent permission denials
-// or live lock holders. If wait > 0, tryLockFile marks them retryable so LockFile can wait
-// out the handover window; if the denial persists until the budget expires (e.g. genuine
-// permission restriction on .held), LockFile preserves and returns the real access denied
-// error rather than falsely claiming another process holds the lock.
+// or live lock holders. If wait > 0, tryLockFile marks them retryable so the bounded
+// wait can wait out the handover window; if the denial persists until the budget expires
+// (e.g. genuine permission restriction on .held), the take preserves and returns the real
+// access denied error rather than falsely claiming another process holds the lock.
 
 const (
 	errorAccessDenied     = syscall.Errno(5)

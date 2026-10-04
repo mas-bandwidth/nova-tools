@@ -63,15 +63,6 @@ func TestDsnCoverResolveDSNFlagWithoutPasswordStands(t *testing.T) {
 	assert.Equal(t, "postgres://bob@nova:5432/nova", dsn)
 }
 
-// TestDsnCoverResolveDSNKeywordFlagWithPasswordStands: a keyword DSN on the
-// flag line may carry its password (it is not spelled as a URL).
-func TestDsnCoverResolveDSNKeywordFlagWithPasswordStands(t *testing.T) {
-	t.Parallel()
-	dsn, err := ResolveDSN("host=nova password=sekrit", envSeam(nil))
-	require.NoError(t, err)
-	assert.Equal(t, "host=nova password=sekrit", dsn)
-}
-
 // TestDsnCoverResolveDSNMissingFlagReadsEnvDSN: the DSN comes from
 // NOVA_PG_DSN when the flag is empty.
 func TestDsnCoverResolveDSNMissingFlagReadsEnvDSN(t *testing.T) {

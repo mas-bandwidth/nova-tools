@@ -234,7 +234,10 @@ func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 	t.Parallel()
 	linesOf := func(s, prefix string) (lines []string) {
 		for _, l := range strings.Split(s, "\n") {
-			if strings.HasPrefix(l, prefix) {
+			// The usage lines are indented two spaces and wrapped, so a line is
+			// read after its indent: the pointer sentence stands on a wrapped
+			// continuation of its own line.
+			if strings.HasPrefix(strings.TrimSpace(l), prefix) {
 				lines = append(lines, l)
 			}
 		}
@@ -244,7 +247,7 @@ func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 	require.Equal(t, 0, code)
 	release := linesOf(banner, "nova-update release")
 	require.Len(t, release, 1, banner)
-	assert.Contains(t, release[0], "nova-update help release")
+	assert.Contains(t, banner, "nova-update help release")
 	assert.Contains(t, banner, "Every verb but watch and release takes --json")
 	_, watch, _ := runTool(t, "nova-update", "watch", "-h")
 	assert.Contains(t, watch, "its sha= the first twelve hex")

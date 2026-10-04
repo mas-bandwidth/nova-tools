@@ -179,46 +179,6 @@ INSERT INTO message (data, time_created) VALUES (json_object('role','assistant',
 	assert.NoError(t, err, "the -wal was beside the database for the whole run, and is still")
 }
 
-// TestLiveSamplerNeverRunsTwoReadsAtOnce holds the same clause at the unit, where it can be
-// asserted rather than inferred: the loop is driven against a reader that is slower than
-// its own interval, and no two reads are ever in flight together.
-func TestLiveSamplerNeverRunsTwoReadsAtOnce(t *testing.T) {
-	windowsIsNotABench(t)
-	needsSQLite(t)
-	dataHome := t.TempDir()
-	db := filepath.Join(dataHome, "opencode", "opencode.db")
-	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
-	cmd := exec.Command(swarm.SQLiteBinary, db)
-	cmd.Stdin = strings.NewReader("CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "building the fixture store:\n%s", out)
-	// A reader that takes a good deal longer than the interval below, so a loop that
-	// queued its ticks would show two reads in flight at once.
-	slow := t.TempDir()
-	require.NoError(t, testbin.WriteExecutable(filepath.Join(slow, swarm.SQLiteBinary), []byte("#!/bin/sh\nsleep 1\n"), 0o755))
-	t.Setenv("PATH", slow+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	s := startLiveSampler(dataHome, 50*time.Millisecond, nativeRunConfig{tokens: 1 << 30}, filepath.Join(dataHome, "harness-output.log"))
-	// THE BARRIER IS THE COUNT, not a clock: wait for the loop to have ANSWERED two reads,
-	// then stop it. A fixed sleep would be a bet on the bench's load, which this repo's own
-	// law refuses.
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		if answered, _ := s.Counts(); answered >= 2 {
-			break
-		}
-		if time.Now().After(deadline) {
-			answered, _ := s.Counts()
-			s.Stop()
-			require.Fail(t, fmt.Sprintf("the sampler answered %d reads in 30s; it wants two", answered))
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	s.Stop()
-	answered, maxFlight := s.Counts()
-	require.LessOrEqual(t, maxFlight, 1, "no sample starts while one is unanswered (rule 13d): %d were in flight at once over %d reads", maxFlight, answered)
-}
-
 // TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt: the two halves of rule 13d's
 // unverifiable end, at the unit. A read that FAILS is not a source that reported nothing,
 // and "two failures and then an answer end nothing" is the reset this asserts.

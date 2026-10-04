@@ -57,7 +57,7 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	deadline := time.Now().Add(testWaitBound())
 	for {
 		owns, oerr := gitOwnsCheckout(dir)
-		require.False(t, oerr != nil && !scanUnknownElsewhere(t, oerr, lock), oerr)
+		require.True(t, oerr == nil || scanUnknownElsewhere(t, oerr, lock), oerr)
 		if owns {
 			break
 		}
@@ -79,7 +79,7 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	deadline = time.Now().Add(testWaitBound())
 	for {
 		owns, oerr := gitOwnsCheckout(dir)
-		require.False(t, oerr != nil && !scanUnknownElsewhere(t, oerr, lock), oerr)
+		require.True(t, oerr == nil || scanUnknownElsewhere(t, oerr, lock), oerr)
 		if oerr == nil && !owns {
 			break
 		}
@@ -100,7 +100,7 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	deadline = time.Now().Add(testWaitBound())
 	for {
 		cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
-		require.False(t, err != nil && !scanUnknownElsewhere(t, err, lock), "stale lock with no git: cleared=%v err=%v", cleared, err)
+		require.True(t, err == nil || scanUnknownElsewhere(t, err, lock), "stale lock with no git: cleared=%v err=%v", cleared, err)
 		if err == nil {
 			require.True(t, cleared, "stale lock with no git: cleared=%v err=%v", cleared, err)
 			break
@@ -175,7 +175,7 @@ func TestStaleLockStaysForCwdGitWithoutDashC(t *testing.T) {
 	require.True(t, saw, "cwd git with no -C was not recorded as an owner")
 	rep, err := ClearStaleIndexLock(dir, time.Now())
 	if err != nil || rep.Cleared {
-		require.False(t, err != nil || rep.Cleared, "cleared=%v err=%v, want the lock left because the cwd git owns the checkout", rep.Cleared, err)
+		require.True(t, err == nil && !rep.Cleared, "cleared=%v err=%v, want the lock left because the cwd git owns the checkout", rep.Cleared, err)
 	}
 	{
 		_, statErr := os.Lstat(lock)

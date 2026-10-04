@@ -38,7 +38,7 @@ import (
 const ReplyPrefix = "Re: "
 
 // ReplySubject is one subject reduced to what is compared: a leading `Re: ` removed, and
-// the surrounding space with it.
+// the surrounding whitespace with it.
 //
 // It is CASE-SENSITIVE past that point, on purpose and against the grain of most mail
 // tools. A subject on this bus is a line of prose written by a person, `the gate` and
@@ -50,7 +50,7 @@ func ReplySubject(s string) string {
 	for {
 		trimmed := strings.TrimPrefix(out, ReplyPrefix)
 		if trimmed == out {
-			// `Re:` with no space after it is the same word with a typo in the spacing,
+			// `Re:` with no whitespace after it is the same word with a typo in the spacing,
 			// and it is the shape a hand-written subject arrives in often enough to read.
 			trimmed = strings.TrimPrefix(out, strings.TrimSpace(ReplyPrefix))
 			if trimmed == out {

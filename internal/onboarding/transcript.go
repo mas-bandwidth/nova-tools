@@ -171,15 +171,20 @@ func Steps(tool string, lines []string) ([]Step, error) {
 // have to run a shell for, and it says so instead of running a truncated
 // command and comparing the wrong output.
 func cutRedirect(cmd string) (string, string, error) {
+	// An operator inside a quoted argument is the argument's own text, not
+	// shell syntax, so the scan below reads quotes the way SplitShell does:
+	// single-quoted text is literal, and inside a double-quoted run a backslash
+	// escapes only isDoubleQuoteEscapable's four characters.
 	for _, unsupported := range []string{"|", ">", "&&", ";", "$("} {
-		if strings.Contains(cmd, unsupported) {
+		if outsideQuotes(cmd, unsupported) >= 0 {
 			return "", "", fmt.Errorf("holds %q, which this harness does not run; a transcript line is one command", unsupported)
 		}
 	}
-	head, tail, found := strings.Cut(cmd, "<")
-	if !found {
+	at := outsideQuotes(cmd, "<")
+	if at < 0 {
 		return cmd, "", nil
 	}
+	head, tail := cmd[:at], cmd[at+1:]
 	path := strings.TrimSpace(tail)
 	if path == "" {
 		return "", "", fmt.Errorf("ends in `<` and names no file to read")
@@ -188,6 +193,36 @@ func cutRedirect(cmd string) (string, string, error) {
 		return "", "", fmt.Errorf("redirects from %q, which is more than one word", path)
 	}
 	return strings.TrimSpace(head), path, nil
+}
+
+// outsideQuotes returns the index of the first occurrence of token in cmd that
+// stands outside any single- or double-quoted argument, or -1. It reads the
+// same quote grammar SplitShell reads: a single-quoted run is literal, and
+// inside a double-quoted run a backslash escapes only isDoubleQuoteEscapable's
+// four characters, so an escaped double quote does not end the run.
+func outsideQuotes(cmd, token string) int {
+	var quote byte
+	for i := 0; i < len(cmd); i++ {
+		c := cmd[i]
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case quote == '"':
+			switch {
+			case c == '\\' && i+1 < len(cmd) && isDoubleQuoteEscapable(cmd[i+1]):
+				i++
+			case c == '"':
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case strings.HasPrefix(cmd[i:], token):
+			return i
+		}
+	}
+	return -1
 }
 
 // cutDeclaration separates a trailing `# Platform: ...` or `# Requires: ...`
@@ -259,17 +294,28 @@ func lastComment(cmd string) (string, string, bool) {
 	// BOTH quotes, because SplitShell reads both. Tracking only the double
 	// quote cut `--body 'a # Platform: x'` in half and then reported the
 	// remainder as an unterminated quote -- a defect reported as a different
-	// defect, which is worse than not noticing it.
-	var quote rune
-	for i, r := range cmd {
+	// defect, which is worse than not noticing it. The double-quoted run also
+	// honours isDoubleQuoteEscapable, as SplitShell does: without it the `"`
+	// in `--body "a \" # Platform: x"` ended the run early and the in-argument
+	// `# Platform:` was read as a declaration.
+	var quote byte
+	for i := 0; i < len(cmd); i++ {
+		c := cmd[i]
 		switch {
-		case quote != 0:
-			if r == quote {
+		case quote == '\'':
+			if c == '\'' {
 				quote = 0
 			}
-		case r == '"' || r == '\'':
-			quote = r
-		case r == '#' && i > 0 && (cmd[i-1] == ' ' || cmd[i-1] == '\t'):
+		case quote == '"':
+			switch {
+			case c == '\\' && i+1 < len(cmd) && isDoubleQuoteEscapable(cmd[i+1]):
+				i++
+			case c == '"':
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '#' && i > 0 && (cmd[i-1] == ' ' || cmd[i-1] == '\t'):
 			decl := strings.TrimSpace(cmd[i+1:])
 			for _, key := range []string{"Platform:", "Requires:", "Stderr:"} {
 				if strings.HasPrefix(decl, key) {

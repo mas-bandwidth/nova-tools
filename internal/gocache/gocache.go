@@ -82,12 +82,23 @@ type Trim struct {
 }
 
 // Hold measures the whole cache in one round and trims it in a second: a one-shot caller's
-// trim, Dirs ignored.
+// trim, Dirs ignored. The measurement round runs first, over every subdirectory; the trim round
+// re-reads them and suppresses re-reporting a failure the measurement already recorded
+// (`t.failed[sub]`). That would swallow a shard that could not be read, so Hold carries the
+// measurement round's failure count and first diagnostic into the returned Count. Removed and
+// Freed still come from the trim round alone (the measurement round removes nothing: cutoff is
+// math.MinInt64 until the cache is measured), and Size is the final measurement (docs/STANDARD.md,
+// the silent rule; SPEC-CI.md, `silent`).
 func Hold(dir string, now time.Time, b Bounds) Count {
 	var t Trim
 	b.Dirs = Subdirs
-	t.Round(dir, now, b)
-	return t.Round(dir, now, b)
+	measured := t.Round(dir, now, b)
+	trim := t.Round(dir, now, b)
+	trim.Failed += measured.Failed
+	if measured.Why != "" {
+		trim.Why = measured.Why
+	}
+	return trim
 }
 
 // Round reads b.Dirs of the cache's subdirectories, the next ones in turn, and, once the

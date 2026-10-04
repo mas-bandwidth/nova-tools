@@ -43,13 +43,16 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 		{`nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep"`,
 			[]string{"APPEND OK session=s1 entry=e1 source=- persisted=true published=false publish=manual duplicate=false stamp=2026-01-01T00:00:00Z"}},
 		{"nova-cairn index --store ./cairns",
-			[]string{"INDEX OK sessions=1 entries=1", "INDEX ENTRY session=s1 entry=e1 stamp=2026-01-01T00:00:00Z bytes=17 source=-"}},
+			[]string{"INDEX OK sessions=1 entries=1", "INDEX SESSION session=s1 entries=1", "INDEX ENTRY session=s1 entry=e1 stamp=2026-01-01T00:00:00Z bytes=17 source=-"}},
 		{"nova-cairn receipt --store ./cairns --session s1 --entry e1 --text",
 			[]string{`RECEIPT OK session=s1 entry=e1 stamp=2026-01-01T00:00:00Z bytes=17 source=- persisted=true published=false publish=manual text="the words to keep"`}},
 	}
 	examples := usageExamples(t)
 	require.Len(t, examples, len(sitting), "want an open, an append, an index and a receipt example under `example:`, got %q", examples)
 	// One store for the whole first run: the examples are a sitting, not four.
+	// The documented `./cairns` is swapped for a real directory by whole field,
+	// so a store path this OS spells with a backslash reaches the tool as one
+	// argument instead of becoming escapes the shared splitter refuses.
 	store := filepath.Join(t.TempDir(), "cairns")
 	norms := []onboarding.Norm{onboarding.Path("./cairns", store), onboarding.Instant("stamp")}
 	for i, s := range sitting {

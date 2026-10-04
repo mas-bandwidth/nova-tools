@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -303,14 +302,6 @@ func clock(stamp string) string {
 		return "-"
 	}
 	return t.Local().Format("15:04:05")
-}
-
-func count(t ntable.Table, row ntable.Row, col string) int64 {
-	j := t.Column(col)
-	if j < 0 || j >= len(row.Cells) {
-		return 0
-	}
-	return row.Cells[j].Count
 }
 
 // InboxView is the inbox as read: its groups, and the last stream id read.
