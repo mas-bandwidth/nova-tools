@@ -42,5 +42,5 @@ func (g *Gemini) Deliver(ctx context.Context, text string) (int, error) {
 	if g.Out != nil && out != "" {
 		fmt.Fprintln(g.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	return exit, err
+	return refused(GeminiArgs(g.Session, "")[2], out, exit, err)
 }

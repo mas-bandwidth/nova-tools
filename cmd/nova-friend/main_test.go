@@ -174,7 +174,7 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z pong_age=2m1s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2",
+		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z pong_age=2m1s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 session=-",
 			"NOTE the last beat failed: the sprint server at 127.0.0.1:6390 did not answer")
 	r.now = start.Add(friend.DaemonStale)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")
@@ -341,4 +341,40 @@ func TestInstallSecretsWrapsTheDaemonInNovaSecretsExec(t *testing.T) {
 		}
 	}
 	assert.Equal(t, strings.Fields(wrap), args[:len(strings.Fields(wrap))], "the plist's ProgramArguments are the wrap, then the daemon")
+}
+
+// A broken session is in the status line, with its id and the provider's
+// reason, and a note on what to do (the finding of 2026-10-04: Freddy's
+// session refused every turn for two hours and status said nothing).
+func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	dir := t.TempDir()
+	state := friend.DefaultStateDir(r.home, "bob")
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
+		Session: friend.SessionBroken, SessionID: "ses_x", SessionReason: "invalid_request_error: bad input", BrokenAt: start.Add(-time.Minute)}))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
+		Out(`delivered=0 session=broken session_id=ses_x broken_at=2026-10-04T02:59:00Z reason="invalid_request_error: bad input"`,
+			"NOTE the session is broken: the provider refused the same way turn after turn")
+}
+
+// The daemon's new flags reach the agent's command line when they are set
+// and not the default, so a reinstall with the same flags writes the same
+// plist.
+func TestInstallCarriesTheCoordinatorAndANonDefaultSilentStop(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--coordinator", "ada", "--silent-stop", "30m").Exit(0)
+	raw, err := os.ReadFile(plist)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "<string>--coordinator</string>\n    <string>ada</string>\n    <string>--silent-stop</string>\n    <string>30m0s</string>")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(0)
+	raw, err = os.ReadFile(plist)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "--silent-stop", "the defaults are not written")
+	assert.NotContains(t, string(raw), "--broken-after")
+	assert.NotContains(t, string(raw), "--coordinator")
 }

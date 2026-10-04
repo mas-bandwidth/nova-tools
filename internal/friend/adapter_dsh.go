@@ -101,7 +101,7 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 	if d.Out != nil && out != "" {
 		fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	return exit, err
+	return refused(id, out, exit, err)
 }
 
 // dshPresetRefusal is the one-shot runner's refusal of a session under an

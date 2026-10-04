@@ -502,11 +502,16 @@ done; 1 the verb ran and said no; 2 could not run.
 
 What a friend runs to be part of the team: the wake loop, the beat and the
 proof of life, as one daemon. One launchd agent per friend parks on the
-friend's nova-bus stream and pushes each message into the running session as
-a turn through the harness's deliver command, beats to the sprint server while
-the loop runs, answers the coordinator's `PING` at once (`daemon-pong`) and
-pushes it in; the session's own `pong --nonce` alone makes the friend up. No
-ping for a window and the session is told the coordinator is silent, once. The
+friend's nova-bus stream and, whenever the session is free, pushes every
+waiting message into the running session as one turn through the harness's
+deliver command, beats to the sprint server while the loop runs, answers the
+coordinator's `PING` at once (`daemon-pong`) and never makes a turn of it; the
+session's own `pong --nonce`, its line at the head of the next turn, alone
+makes the friend up. No ping for a window and the session is told the
+coordinator is silent, once, inside a turn that carries messages. A turn runs as
+long as it prints (`--silent-stop`, twenty minutes of silence, stops it); the
+same provider refusal three turns in a row (`--broken-after`) marks the session
+broken, delivers nothing more, and tells the coordinator. The
 spec is [SPEC-FRIEND.md](SPEC-FRIEND.md); the rules are `internal/friend`; the
 machine is `tla/Friend.tla`.
 
@@ -535,7 +540,8 @@ keep `--dir`, the friend's working directory). `wait-pong` prints `WAIT-PONG
 OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
 pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
-last_pong= queue= working= width=`, or `STATUS NONE` at exit 1 where no
+last_pong= queue= working= width= session=<ok|broken>` (broken: `session_id=
+broken_at= reason=`), or `STATUS NONE` at exit 1 where no
 daemon ever ran. What a first run gets wrong: a `--harness` that is not one
 of opencode, codex, claude, antigravity, dsh, gemini, grok, copilot, cursor,
 amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (the surveyed harnesses

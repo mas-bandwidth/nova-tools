@@ -55,6 +55,12 @@ type Status struct {
 	BeatError  string    `json:"beat_error,omitempty"`
 	StoreError string    `json:"store_error,omitempty"`
 	Width      int       `json:"width"`
+	// Session is SessionOK, or SessionBroken once the provider refused BrokenAfter
+	// turns in a row the same way; empty for a passive harness.
+	Session       string    `json:"session,omitempty"`
+	SessionID     string    `json:"session_id,omitempty"`
+	SessionReason string    `json:"session_reason,omitempty"`
+	BrokenAt      time.Time `json:"broken_at,omitempty"`
 }
 
 // Pong is the session's last answer, as the pong verb records it beside

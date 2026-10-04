@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Agent is one friend's launchd agent: the daemon as launchd runs it,
@@ -25,6 +26,11 @@ type Agent struct {
 	// Home/nova-bench/secrets and the key under Home/.config/nova-secrets.
 	Secrets                 []string
 	Seat, SecretsTool, Sops string
+	// Coordinator, SilentStop and BrokenAfter are the daemon's flags of the
+	// same names, written only when set and not the default.
+	Coordinator string
+	SilentStop  time.Duration
+	BrokenAfter int
 }
 
 // Label is the agent's launchd label.
@@ -54,6 +60,15 @@ func (a Agent) Args() []string {
 	}
 	if a.StateDir != "" {
 		args = append(args, "--state-dir", a.StateDir)
+	}
+	if a.Coordinator != "" {
+		args = append(args, "--coordinator", a.Coordinator)
+	}
+	if a.SilentStop > 0 && a.SilentStop != DefaultSilentStop {
+		args = append(args, "--silent-stop", a.SilentStop.String())
+	}
+	if a.BrokenAfter > 0 && a.BrokenAfter != DefaultBrokenAfter {
+		args = append(args, "--broken-after", fmt.Sprint(a.BrokenAfter))
 	}
 	return args
 }
