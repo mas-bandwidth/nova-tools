@@ -83,7 +83,10 @@ func Source() (string, error) {
 }
 
 // Load installs the complete library atomically. REPLACE permits an updated
-// binary to deploy its exact embedded version without a delete/load gap.
+// binary to deploy its exact embedded version without a delete/load gap. It is
+// a live test fixture for other packages (the functional suites load a real
+// library into their store with it); upgrading a deployed library remains the
+// deploy's job (`nova-sprint fn load`, which uses redisfn.Ensure).
 func Load(ctx context.Context, client *redis.Client) error {
 	source, err := Source()
 	if err != nil {
@@ -98,13 +101,13 @@ func Load(ctx context.Context, client *redis.Client) error {
 // LoadMissing installs the embedded library only when the server holds no
 // nova_sprint library, and never replaces one it holds. A verb that
 // loads on the way to its FCALL (card push, drain and release, the
-// reconciler's calls and expire duty) runs whatever binary its host has; with
-// Load, an older binary REPLACEd the deployed library with its own and every
-// function added since can vanish from the store, leaving newer callers without
-// the functions they need. Upgrading the library is the
-// deploy's job (`nova-sprint fn load`, which uses redisfn.Ensure). A caller whose ACL
-// refuses FUNCTION LIST is not the deployer: it loads nothing and its FCALL
-// answers for the store.
+// reconciler's calls and expire duty) runs whatever binary its host has; a
+// REPLACE on that path lets an older binary overwrite the deployed library
+// with its own and every function added since can vanish from the store,
+// leaving newer callers without the functions they need. Upgrading the
+// library is the deploy's job (`nova-sprint fn load`, which uses
+// redisfn.Ensure). A caller whose ACL refuses FUNCTION LIST is not the
+// deployer: it loads nothing and its FCALL answers for the store.
 func LoadMissing(ctx context.Context, client *redis.Client) error {
 	libs, err := client.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: Library}).Result()
 	if err != nil {
@@ -164,66 +167,4 @@ func FromList(libs []redis.Library) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// State is what fn check found on a server.
-type State struct {
-	Want    string // Sum of the embedded source
-	Loaded  string // Sum of the loaded code, "" when missing
-	Missing bool
-	Ping    string // the FCALL ns_ping 0 reply, or the error text
-}
-
-// OK is true when the loaded library is the embedded one and ns_ping answers PONG.
-func (s State) OK() bool { return !s.Missing && s.Loaded == s.Want && s.Ping == "PONG" }
-
-// PingSkipped is State.Ping when Check did not call ns_ping because the
-// server does not hold the embedded source.
-const PingSkipped = "skipped"
-
-// Check reads the loaded library and, only when the server holds exactly the
-// embedded source, calls FCALL ns_ping 0 (ns_ping carries no no-writes flag,
-// so FCALL_RO would refuse it). When the library is missing or stale, the
-// ns_ping the server would run is not ours (another library, or an older
-// body, may write), so Check skips the call and reports Ping=PingSkipped; it
-// changes nothing.
-func Check(ctx context.Context, client *redis.Client) (State, error) {
-	source, err := Source()
-	if err != nil {
-		return State{}, err
-	}
-	code, found, err := Loaded(ctx, client)
-	if err != nil {
-		return State{Want: Sum(source)}, err
-	}
-	st, ours := judge(source, code, found)
-	if !ours {
-		return st, nil
-	}
-	reply, err := client.FCall(ctx, "ns_ping", nil).Result()
-	st.Ping = PingReply(reply, err)
-	return st, nil
-}
-
-func judge(source, code string, found bool) (State, bool) {
-	st := State{Want: Sum(source)}
-	if !found {
-		st.Missing = true
-	} else {
-		st.Loaded = Sum(code)
-	}
-	if !found || code != source {
-		st.Ping = PingSkipped
-		return st, false
-	}
-	return st, true
-}
-
-// PingReply is State.Ping for an FCALL ns_ping 0 answer: the reply, or the
-// error text.
-func PingReply(reply any, err error) string {
-	if err != nil {
-		return err.Error()
-	}
-	return fmt.Sprint(reply)
 }
