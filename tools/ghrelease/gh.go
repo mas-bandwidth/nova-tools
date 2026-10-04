@@ -45,7 +45,7 @@ func (e env) client() ghClient {
 
 // hasStatus reports whether the first line of `gh api -i` output is an HTTP
 // status line carrying the code: "HTTP/2.0 200 OK". The code must be followed
-// by a space, as it is in every status line that has a reason phrase, and a
+// by a blank, as it is in every status line that has a reason phrase, and a
 // line that is not a status line at all (a gh error, an empty answer) carries
 // no code.
 func hasStatus(out string, code string) bool {
@@ -55,8 +55,8 @@ func hasStatus(out string, code string) bool {
 }
 
 // answerBody is what `gh api -i` printed after its headers: everything after
-// the first blank line that follows the status line. A line of only white
-// space is blank, and an answer with no blank line has no body.
+// the first blank line that follows the status line. A line of only
+// whitespace is blank, and an answer with no blank line has no body.
 func answerBody(out string) string {
 	lines := strings.Split(out, "\n")
 	for i := 1; i < len(lines); i++ {
@@ -67,7 +67,7 @@ func answerBody(out string) string {
 	return ""
 }
 
-// hasSpace reports whether s carries white space: the class that would split a
+// hasSpace reports whether s carries whitespace: the class that would split a
 // linker flag or a path.
 func hasSpace(s string) bool {
 	return strings.IndexFunc(s, unicode.IsSpace) >= 0
