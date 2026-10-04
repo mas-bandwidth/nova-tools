@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -143,4 +144,46 @@ func TestATakeRefusesAnOwnerWithSeparators(t *testing.T) {
 		require.True(t, ok, "an owner without separators still takes")
 		require.Equal(t, 1, granted, "an owner without separators takes its one lease")
 	})
+}
+
+// TakeSlotLeasesWaiting waits when capacity is occupied and grants once free (docs/SPEC-SWARM.md, "Bench slot leases").
+func TestSlotTakeWaitingSerializes(t *testing.T) {
+	t.Parallel()
+
+	store := writeSlotStore(t, "capacity\t1\nreserve\t0\ngate-owner\t1\n")
+	now := time.Now().UTC()
+	pid := os.Getpid()
+
+	ids1, _, _, _, _, ok, err := TakeSlotLeasesKind(store, "gate-owner", 1, "read", time.Hour, "first", now, pid)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, ids1, 1)
+
+	// Refuses immediately when occupied with 0 wait.
+	_, _, _, _, holders, ok, err := TakeSlotLeasesWaiting(context.Background(), store, "gate-owner", 1, "read", time.Hour, 0, "second", pid)
+	require.NoError(t, err)
+	require.False(t, ok, "must refuse when occupied with 0 wait")
+	require.Equal(t, "gate-owner:1", holders)
+
+	// Context cancellation aborts wait.
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, _, _, _, ok, err = TakeSlotLeasesWaiting(cancelCtx, store, "gate-owner", 1, "read", time.Hour, 5*time.Second, "second", pid)
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, ok)
+
+	// Release first lease.
+	rel, err := ReleaseSlotLeasesByID(store, ids1, pid)
+	require.NoError(t, err)
+	require.Equal(t, 1, rel)
+
+	// Second take acquires now that capacity is free.
+	ids2, _, _, _, _, ok, err := TakeSlotLeasesWaiting(context.Background(), store, "gate-owner", 1, "read", time.Hour, time.Second, "second", pid)
+	require.NoError(t, err)
+	require.True(t, ok, "must acquire after first releases")
+	require.Len(t, ids2, 1)
+
+	rel2, err := ReleaseSlotLeasesByID(store, ids2, pid)
+	require.NoError(t, err)
+	require.Equal(t, 1, rel2)
 }

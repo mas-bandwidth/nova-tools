@@ -791,6 +791,7 @@ usage:
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
   nova-swarm slots list --store <dir>
+  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
