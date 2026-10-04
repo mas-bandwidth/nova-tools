@@ -70,10 +70,30 @@ func Select(run Runner, o Options) (Outcome, error) {
 }
 
 type selector struct {
-	run Runner
-	o   Options
-	dep *Deprecated
-	mod string // the module's import-path prefix, with its trailing slash
+	run    Runner
+	o      Options
+	dep    *Deprecated
+	mod    string // the module's import-path prefix, with its trailing slash
+	dirErr error  // set by dotted when a directory is outside packageDirClass
+}
+
+// packageDirClass is the charset a selected directory may have. The package
+// list is interpolated into a shell by make test PKGS=, so a directory outside
+// this class is not a package: the selection fails with a *ListError that
+// names it, the same way a local path that cannot be listed fails.
+// docs/SPEC-CI.md (`selection`) is the design of that list.
+// TestWholeTreeRefusesAPackageDirectoryWithShellSyntax holds the boundary.
+const packageDirClass = `^[A-Za-z0-9._~/+-]+$`
+
+var packageDirRe = regexp.MustCompile(packageDirClass)
+
+// refusePackageDir returns a *ListError naming dir when dir is outside
+// packageDirClass, and nil when the directory may be selected.
+func refusePackageDir(dir string) error {
+	if packageDirRe.MatchString(dir) {
+		return nil
+	}
+	return &ListError{Text: fmt.Sprintf("select-packages: refusing directory %q; rename it to match %s\n", dir, packageDirClass)}
 }
 
 var listFailureRe = regexp.MustCompile(`cannot|no such file`)
@@ -122,15 +142,24 @@ func (s *selector) failed(errText string) (Outcome, error) {
 	return Outcome{}, &ListError{Text: "ERROR select-packages: go list failed; failing the job rather than testing nothing (re-run on a healthy runner):\n" + errText}
 }
 
-// dotted returns the package list as ./<dir>.
+// dotted returns the package list as ./<dir>. A directory outside
+// packageDirClass is not a package: dirErr is a *ListError naming it and the
+// list is nil. listAll still returns s.dep.Live(s.dotted(pkgs)), the text
+// internal/ci pins, and reads dirErr before that return.
 func (s *selector) dotted(importPaths []string) []string {
+	s.dirErr = nil
 	out := make([]string, 0, len(importPaths))
 	for _, l := range importPaths {
 		l = strings.TrimSpace(l)
 		if l == "" {
 			continue
 		}
-		out = append(out, "./"+strings.TrimPrefix(l, s.mod))
+		dir := "./" + strings.TrimPrefix(l, s.mod)
+		if err := refusePackageDir(dir); err != nil {
+			s.dirErr = err
+			return nil
+		}
+		out = append(out, dir)
 	}
 	return out
 }
@@ -144,6 +173,10 @@ func (s *selector) listAll() (Outcome, error) {
 	}
 	if why != "" {
 		return s.failed(why)
+	}
+	s.dotted(pkgs)
+	if s.dirErr != nil {
+		return Outcome{}, s.dirErr
 	}
 	return Outcome{Packages: s.dep.Live(s.dotted(pkgs))}, nil
 }
@@ -171,7 +204,11 @@ func (s *selector) treeFromFiles() ([]string, error) {
 		if err != nil || hasBuildLine(b) {
 			continue
 		}
-		dirs["./"+path.Dir(f)] = true
+		dir := "./" + path.Dir(f)
+		if err := refusePackageDir(dir); err != nil {
+			return nil, err
+		}
+		dirs[dir] = true
 	}
 	out := slices.Sorted(maps.Keys(dirs))
 	return s.dep.Live(out), nil
@@ -240,6 +277,9 @@ func (s *selector) selectChange() (Outcome, error) {
 		return s.failed(why)
 	}
 	all := s.dotted(allOut)
+	if s.dirErr != nil {
+		return Outcome{}, s.dirErr
+	}
 
 	// The changed .go files name the directories that moved; their import paths
 	// are the `want` set.
