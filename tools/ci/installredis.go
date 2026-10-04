@@ -108,7 +108,7 @@ func (h installHost) buildRedisFromSource() int {
 		fmt.Fprintf(h.stderr, "%v\n", err)
 		return 1
 	}
-	defer os.RemoveAll(work)
+	defer func() { _ = os.RemoveAll(work) }() // ignored: work is this function's own MkdirTemp scratch and may already be gone
 	tarball := filepath.Join(work, "redis.tar.gz")
 	tree := filepath.Join(work, "redis-"+redisSourceVersion)
 	steps := [][]string{

@@ -63,7 +63,7 @@ func (f *selFake) answer(c cmdSpec) (string, int, error) {
 		return "", 0, fmt.Errorf("selFake: no reply for %q", key)
 	}
 	if c.Stderr != nil {
-		io.WriteString(c.Stderr, r.err)
+		_, _ = io.WriteString(c.Stderr, r.err)
 	}
 	return r.out, r.code, nil
 }

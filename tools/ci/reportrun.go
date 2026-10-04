@@ -118,7 +118,7 @@ func readCardEnv(path string, getenv func(string) string) (map[string]string, er
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file is open only for reading and the scan's error is the one returned
 	out := map[string]string{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {

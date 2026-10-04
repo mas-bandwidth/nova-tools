@@ -74,7 +74,7 @@ func lispTest(e env, r cmdRunner, pid int, args []string) int {
 		fmt.Fprintf(e.stderr, "lisp-test: cannot create %s\n", tmp)
 		return 1
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }() // ignored: tmp is this function's own scratch and may already be gone
 	fmt.Fprintf(e.stderr, "lisp-test: TMPDIR=%s\n", tmp)
 
 	code, err := r.Run(cmdSpec{

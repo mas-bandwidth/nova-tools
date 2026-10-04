@@ -32,7 +32,7 @@ func (f *fakeCmdRunner) Run(c cmdSpec) (int, error) {
 	}
 	out, code, err := answer(c)
 	if out != "" && c.Stdout != nil {
-		io.WriteString(c.Stdout, out)
+		_, _ = io.WriteString(c.Stdout, out)
 	}
 	if err != nil {
 		return -1, err
