@@ -773,9 +773,10 @@ func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 // its attempt, readers up with room only (each read to the reader with the
 // most free room, Ask; a primary the readers up have no room for waits, due
 // for the next tick, with no judgment); a read asked of a reader that is not up is
-// taken back, and its primary is asked again, in the same step. One that
-// cannot be asked, for want of different readers, is a judgment once (N1),
-// closed when it is asked; a primary that needs more readers than are up is
+// taken back, and its primary is asked again, in the same step. The primaries
+// that cannot be asked, for want of different readers, are one judgment per
+// tick (N1, NCannotAsk: "no eligible reader for <ids>", cannotAskCond), each
+// closed when its primary is asked; a primary that needs more readers than are up is
 // not asked, and one judgment says so (NFewReaders, the sprint's, once per
 // tick-end): with one reader up the flash cards are asked and the pro cards
 // wait. The
@@ -824,14 +825,41 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	if len(ids) > 0 {
 		p = Ask(s, AskReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
-	for _, x := range p.Refused {
-		if pr := s.Work.Placed(x.Key); pr != nil {
-			conds = append(conds, cond{typ: NCannotAsk, stream: pr.Row, primaries: []string{pr.ID}, what: x.Why})
-		}
-	}
+	conds = append(conds, cannotAskCond(s, p.Refused)...)
 	p.Refused = nil
 	due += notify(&p, s, conds, []string{NCannotAsk, NFewReaders}, r)
 	return p, due
+}
+
+// cannotAskCond is the tick's condition for the primaries the ask refused for
+// want of readers (Ask, cannotAskWhy): one judgment, "no eligible reader for
+// <ids>" with the first such refusal's reason, in the stream of its first
+// primary, every such primary of the tick a subject of it. The ids it names
+// are the primaries no open judgment of the type names yet, and notify writes
+// it on those alone, keeping the rest open: a card is never silent in review
+// for want of a reader, and five stranded cards are one judgment, not five
+// (the night of 2026-10-03: five cards, five readers, five judgments).
+func cannotAskCond(s *Snapshot, refused []Refusal) []cond {
+	var all, fresh []string
+	stream, why := "", ""
+	for _, x := range refused {
+		pr := s.Work.Placed(x.Key)
+		if pr == nil {
+			continue
+		}
+		all = append(all, pr.ID)
+		if len(closesFor(s.Open, []string{NCannotAsk}, pr.ID)) > 0 {
+			continue
+		}
+		if len(fresh) == 0 {
+			stream, why = pr.Row, x.Why
+		}
+		fresh = append(fresh, pr.ID)
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	return []cond{{typ: NCannotAsk, stream: stream, primaries: all, what: NoEligibleReader + strings.Join(fresh, ", ") + ": " + why}}
 }
 
 // T6. TickCheck holds the state to what is always true (section 9): each
@@ -1172,19 +1200,28 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 	}
 	due := 0
 	for _, c := range conds {
-		fresh := false
+		// the subjects no judgment of the condition is open on: a grouped
+		// condition (cannotAskCond) is written on those alone, so a primary
+		// judged already is not the subject of a second judgment of the type
+		var fresh []string
 		for _, sub := range c.subjects() {
 			k := condKey(c.typ, sub, c.card, c.what)
 			holds[k] = true
-			fresh = fresh || !open[k]
+			if !open[k] {
+				fresh = append(fresh, sub)
+			}
 			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders) {
 				update(n, c.what) // the latest facts, in place
 			}
 		}
-		if !fresh {
+		if len(fresh) == 0 {
 			continue
 		}
-		n := Note{Kind: Judgment, Type: c.typ, Stream: c.stream, Primaries: c.primaries, Count: len(c.primaries), What: c.what,
+		primaries := c.primaries
+		if !c.streamLevel {
+			primaries = fresh
+		}
+		n := Note{Kind: Judgment, Type: c.typ, Stream: c.stream, Primaries: primaries, Count: len(primaries), What: c.what,
 			Who: who, At: s.Now, StreamLevel: c.streamLevel, Marked: true, Card: c.card}
 		n.Decisions = append([]string(nil), c.decisions...)
 		if len(n.Decisions) == 0 {
@@ -1215,7 +1252,17 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 	}
 	// A primary in review whose last judgment the tick closes (its late read
 	// reported, say) gets the judgment it needs after it, as every step that
-	// leaves a primary in review does.
+	// leaves a primary in review does; the reads the plan places (the ask's,
+	// closing "cannot ask") are its reads too, so a primary asked this tick
+	// is not judged stranded as never asked.
+	moved := map[string]string{}
+	for _, u := range p.Units {
+		for _, ch := range u.Changes {
+			if ch.Table == Readers && ch.Entry.Create != nil {
+				moved[ch.Entry.ID] = ch.Entry.Create.Col
+			}
+		}
+	}
 	seen := map[string]bool{}
 	for _, o := range p.Closes {
 		pr := s.Work.Placed(o.Subject())
@@ -1223,7 +1270,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			continue
 		}
 		seen[pr.ID] = true
-		if j, ok := reviewJudgment(s, pr, reviewStep{closing: closing, writes: p.Notes, who: who}); ok {
+		if j, ok := reviewJudgment(s, pr, reviewStep{moved: moved, closing: closing, writes: p.Notes, who: who}); ok {
 			p.Notes = append(p.Notes, j)
 		}
 	}

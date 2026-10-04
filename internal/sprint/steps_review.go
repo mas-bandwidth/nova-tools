@@ -175,8 +175,11 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		var free []string
 		for _, rd := range s.Readers.Rows() {
-			// a reader with a card at this attempt, even retired, has read it
-			// and a reader not up is not asked (reader away, reader up)
+			// a reader is asked an attempt once: one read card per reader per
+			// attempt (ReadCardID), so a reader with a card at this attempt, placed
+			// or retired (read, or taken back away, levelled or returned), is not
+			// asked it again, and a reader not up is not asked (reader away, reader
+			// up); the next attempt is read on new cards, by every reader
 			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil && s.ReaderIsUp(rd) {
 				free = append(free, rd)
 			}
@@ -215,7 +218,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 					full++
 				}
 			}
-			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s (%d free but at width); a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, or nova-sprint reader up <name>", want, len(chosenReaders)+len(again), attempt, c.ID, full, readersText(s)))
+			p.refuse(c.ID, cannotAskWhy(s, c, attempt, want, len(chosenReaders)+len(again), full))
 			continue
 		}
 		// the first read of a flash card's attempt is a decide read (decideFields): one
