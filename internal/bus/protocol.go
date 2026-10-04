@@ -83,7 +83,7 @@ func IsProtocol(line string) bool {
 }
 
 // hasTokenPrefix matches a prefix on TOKEN boundaries: the line is the prefix,
-// or the prefix followed by a space. A substring match would make "INBOX OK" a
+// or the prefix followed by a blank. A substring match would make "INBOX OK" a
 // prefix of a line nobody wrote and "INBOX WALK" a prefix of "INBOX WALKER".
 func hasTokenPrefix(line string, prefixes []string) bool {
 	line = strings.TrimRight(line, "\r")
