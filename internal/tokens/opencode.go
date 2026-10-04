@@ -259,13 +259,13 @@ func copyFile(from, to string) error {
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }() // ignored: the file is opened only for reading
 	dst, err := os.Create(to)
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(dst, src); err != nil {
-		dst.Close()
+		_ = dst.Close() // ignored: the copy error is the one returned
 		return err
 	}
 	return dst.Close()

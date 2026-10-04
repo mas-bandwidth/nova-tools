@@ -119,7 +119,7 @@ func ReadClaudeSession(path string) (SessionSum, error) {
 	if err != nil {
 		return SessionSum{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file is opened only for reading
 
 	type turn struct {
 		day                                  string

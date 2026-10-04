@@ -23,7 +23,7 @@ func stageOldFold(t *testing.T, path string) *os.File {
 	t.Helper()
 	old, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	require.NoError(t, err)
-	t.Cleanup(func() { old.Close() })
+	t.Cleanup(func() { _ = old.Close() }) // ignored: a test fixture closed at cleanup; the test's own assertions are the report
 	require.NoError(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "stage the old fold's flock")
 	require.NoError(t, old.Truncate(0))
 	_, err = old.WriteAt([]byte("424242\n"), 0)
@@ -62,7 +62,7 @@ func TestTheNewFoldKeepsAnOldOneOut(t *testing.T) {
 
 	old, err := os.OpenFile(path, os.O_RDWR, 0)
 	require.NoError(t, err)
-	defer old.Close()
+	defer func() { _ = old.Close() }() // ignored: a test fixture closed at cleanup; the test's own assertions are the report
 	require.Error(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "an old fold took the lock while the new one held it")
 
 	raw, err := os.ReadFile(path)
