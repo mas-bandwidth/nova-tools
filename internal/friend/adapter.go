@@ -15,7 +15,7 @@ import (
 // Harnesses are the harness names run and install take, in the order the
 // help lists them; one has a deliver command tonight, the rest refuse
 // honestly (Stub).
-var Harnesses = []string{"opencode", "codex", "claude", "antigravity", "dsh"}
+var Harnesses = append([]string{"opencode", "codex", "claude", "antigravity", "dsh", "gemini"}, RefusedHarnesses...)
 
 // Deliverer pushes one text into the friend's running session as a turn
 // and blocks until the turn ends: its exit code is the harness's, 0 acking
@@ -82,8 +82,15 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	switch harness {
 	case "opencode":
 		return &OpenCode{Dir: dir, Session: session, Run: run, Out: out}, nil
-	case "codex", "claude", "antigravity", "dsh":
+	case "codex", "claude", "antigravity":
 		return Stub{Harness: harness}, nil
+	case "dsh":
+		return &DSH{Dir: dir, Session: session, Run: run, Out: out}, nil
+	case "gemini":
+		return &Gemini{Dir: dir, Session: session, Run: run, Out: out}, nil
+	}
+	if reason, ok := Refusals[harness]; ok {
+		return Refused{Harness: harness, Reason: reason}, nil
 	}
 	return nil, fmt.Errorf("%q is no harness; the harnesses are %s", harness, strings.Join(Harnesses, ", "))
 }

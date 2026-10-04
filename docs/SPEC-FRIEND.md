@@ -115,3 +115,36 @@ from the sprint's run loop, and the table's `awake` and `deaf` columns) is not
 here; `ping` and `wait-pong` run the canary by hand. The beat carries no
 numbers until `friend beat` takes them. A session that reads the bus itself
 (the stub harnesses) proves nothing to the daemon until it runs `pong`.
+
+## The harness survey (2026-10-04)
+
+Glenn: "We should try to do this for all major harnesses." The rule of the
+survey: a push is a turn landing in the friend's EXISTING session, which the
+model answers; a resume with a new prompt counts when the same session
+continues (the same id, the same record); an app-server, IPC or MCP that takes
+a user turn counts; a URL scheme that opens a new chat does not. Installed
+means on the Studio, that day. Claude, Codex, Grok and Antigravity are other
+children's; OpenCode is above.
+
+| harness | installed here | push route | command or frame | proven | needs from Glenn |
+|---|---|---|---|---|---|
+| dsh (DeepSeek Harness) | yes: `/Applications/DeepSeek Harness.app`, v0.2.0-rc.2, CLI at `Contents/Resources/runtime/cli/bin/dsh`, nothing on PATH | the headless profile adopts a persisted session (`~/.dsh/sessions/<key>/<id>`), shared with the desktop app | `dsh headless --session-id <id> -` in the friend's dir, text on stdin; newest `session-*` of `<key>` when none is named | yes, 2026-10-04 on a throwaway session: adopted (turn 2 in the same record, 9 KB to 16 KB); unknown id exit 1; another directory exit 1 ("recorded in"); the turn itself stopped at the provider: `MISSING_CREDENTIAL`, 0 tokens spent | store DEEPSEEK_API_KEY for the headless profile (the web Models page, or the daemon's environment); the desktop app's key is not seen by it |
+| gemini (Gemini CLI) | yes: `/opt/homebrew/bin/gemini` 0.46.0 (brew gemini-cli) | `--resume <uuid>` keeps the session id and chat file (`ChatRecordingService.initialize`, read in the bundle); `latest` is the project's newest | `gemini --skip-trust --resume <id\|latest> --prompt=<text>` in the friend's dir | mechanics only, 2026-10-04: a session file was written under `~/.gemini/tmp/<project>/chats/`, `--resume <bad uuid>` exits 42; the turn itself got 429 `rateLimitExceeded` on the account's free tier before any token | a Gemini quota (the free tier was exhausted at 8:51 AM ET); or a GEMINI_API_KEY in the daemon's environment |
+| copilot (GitHub Copilot CLI) | no | programmatic mode resumes a session: `-p` with `--resume`; session state under `~/.copilot/session-state/`; an SDK talks JSON-RPC to `copilot --headless` | `copilot -p <text> --resume <id> --allow-all-tools -s` | no | `curl -fsSL https://gh.io/copilot-install \| bash` and `copilot login` |
+| cursor (cursor-agent, the app) | no (no `agent`, no Cursor.app) | the CLI resumes a chat by id; the app has no documented IPC into an open chat | `agent -p --resume <chatId> --output-format text <text>` | no | `curl https://cursor.com/install -fsS \| bash` and `agent login` (or CURSOR_API_KEY) |
+| amp | no | execute mode into a thread | `amp -x --thread-id <id> <text>` | no | install and AMP_API_KEY (`sgamp_...`) |
+| goose | no | `goose run` resumes a named session | `goose run -n <name> -r -t <text>` | no | install and a provider key (`goose configure`) |
+| kiro (kiro-cli, the app) | no | `kiro-cli chat` resumes a session by id; the app has no documented IPC | `kiro-cli chat --resume-id <id> --no-interactive <text>` | no | install and `kiro-cli login` (Builder ID) |
+| cline (CLI, VS Code) | no (no VS Code, no `cline`) | the CLI runs a session by id against the Cline hub (`CLINE_HUB_ADDRESS`, 127.0.0.1:25463) | `cline --id <session> --auto-approve true <text>` | no | `npm i -g cline` and `cline auth` |
+| aider | no | none: no session to adopt; `--restore-chat-history` replays a (summarised) history file into a new process | — | — | — |
+| roo (Roo Code) | no | none from outside: `RooCodeAPI.sendMessage` is in-process VS Code, for other extensions; the IPC socket starts and cancels tasks | — | — | — |
+| windsurf | no | none documented into a running Cascade | — | — | — |
+| zed | no | none: Zed is the ACP client; no CLI, scheme or IPC reaches a thread | — | — | — |
+| warp (Oz) | no | none local: `oz run message send` is between cloud runs; `oz agent run` starts a new run | — | — | — |
+
+The two installed harnesses have adapters (`adapter_dsh.go`, `adapter_gemini.go`);
+the rest are `Refused` (`adapter_refused.go`): known to `install --harness`,
+passive like the stubs, refusing every delivery with the one-line reason above.
+Not measured: whether `dsh headless` adopts a session the desktop app holds
+open (a `session.lock` sits in every session directory), and whether the
+desktop app shows the pushed turn live or on its next load.
