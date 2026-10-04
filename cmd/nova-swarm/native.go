@@ -2628,7 +2628,7 @@ func copyAuth(src, provider, dataHome string) string {
 	drop := func(reason string, copies ...string) string {
 		for _, p := range copies {
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-				reason = fmt.Sprintf("%s; the refused copy %s could not be removed: %s", reason, oneline.Field(p), oneline.Escape(err.Error()))
+				reason = fmt.Sprintf("%s; the refused copy %s could not be removed: %s", oneline.Escape(reason), oneline.Field(p), oneline.Escape(err.Error()))
 			}
 		}
 		return reason
