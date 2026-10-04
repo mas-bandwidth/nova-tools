@@ -59,7 +59,13 @@ func DealStep(r sprint.DealReq) Step {
 
 // TakeStep is a worker taking work cards.
 func TakeStep(r sprint.TakeReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "take", Load: tables(sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
+	load := tables(sprint.Fleet)
+	friends := false
+	if sprint.IsFriendRow(r.As) {
+		load = tables(sprint.Fleet, sprint.Work) // a friend's take holds the dealt bound, the work table's (sprint.DealtMax)
+		friends = true
+	}
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "take", Load: load, Friends: friends, Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Take(s, r) }}
 }
 
@@ -191,6 +197,69 @@ func FleetStep(r sprint.FleetReq) Step {
 	// a sync names every member it writes: it applies all or none
 	return Step{Named: r.Op == "sync", Args: ArgsOf(r), Verb: "fleet " + r.Op, Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FleetStep(s, r) }}
+}
+
+// FriendHoldStep holds a friend's row, withdrawing its cards back to ready.
+func FriendHoldStep(friend, who string) Step {
+	return Step{
+		Verb:    "friend down",
+		Load:    tables(sprint.Fleet, sprint.Work),
+		Friends: true,
+		Mirrors: true,
+		Plan:    func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendHold(s, friend, who) },
+	}
+}
+
+// FriendReleaseStep releases a hold on a friend's row.
+func FriendReleaseStep(friend, who string) Step {
+	return Step{
+		Verb:    "friend up",
+		Load:    tables(sprint.Fleet),
+		Friends: true,
+		Mirrors: true,
+		Plan:    func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendRelease(s, friend, who) },
+	}
+}
+
+// FriendSyncStep synchronizes the friends roster.
+func FriendSyncStep(specs []sprint.FriendSpec, who string) Step {
+	return Step{
+		Verb:    "friend sync",
+		Load:    tables(sprint.Fleet),
+		Friends: true,
+		Mirrors: true,
+		Plan:    func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendSync(s, specs, who) },
+	}
+}
+
+// FriendTakeStep takes work cards on a friend's row.
+func FriendTakeStep(ids []string, gens map[string]int, as, who string) Step {
+	return Step{
+		Named:   len(ids) > 0,
+		Verb:    "friend take",
+		Load:    tables(sprint.Fleet, sprint.Work),
+		Friends: true,
+		Extras:  sprint.NamedExtras(sprint.Fleet, ids),
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			target := as
+			if target != "" && !sprint.IsFriendRow(target) {
+				target = sprint.FriendRow(target)
+			}
+			if target == "" && len(ids) > 0 {
+				c := s.Fleet.Card(ids[0])
+				if c != nil && c.Placed() {
+					if name, ok := sprint.FriendOfRow(c.Row); ok {
+						target = sprint.FriendRow(name)
+					}
+				}
+			}
+			actor := who
+			if actor == "" {
+				actor = target
+			}
+			return sprint.Take(s, sprint.TakeReq{Sel: sprint.Sel{IDs: ids}, As: target, Gens: gens, Who: actor})
+		},
+	}
 }
 
 // CIStep records a CI observation.

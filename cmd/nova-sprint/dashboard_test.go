@@ -129,6 +129,7 @@ func TestWhereCardsIsWhatThePullRoutesRead(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
+	ta.ok("friend take s1-1.w1")
 	assert.NotContains(t, ta.ok("where --json"), `"cards"`)
 	code, _, errs := ta.do("where --cards")
 	assert.Equal(t, 2, code)

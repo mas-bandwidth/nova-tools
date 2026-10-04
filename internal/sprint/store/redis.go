@@ -512,6 +512,10 @@ func (r *Redis) Release(ctx context.Context, op OpRecord, commit bool) error {
 		return err
 	}
 	prefix := `{"id":` + string(id) + `,`
+	watchKeys := []string{fence}
+	if commit && op.Roster != nil {
+		watchKeys = append(watchKeys, r.Names.Key(keyFriends))
+	}
 	for i := 0; i < 8; i++ {
 		err = r.C.Watch(ctx, func(tx *redis.Tx) error {
 			cur, err := tx.GetRange(ctx, fence, 0, int64(len(prefix)-1)).Result()
@@ -521,17 +525,49 @@ func (r *Redis) Release(ctx context.Context, op OpRecord, commit bool) error {
 			if cur != prefix {
 				return nil // empty (released) or another operation's
 			}
+			var rosterVal *string
+			var beatsToDel []string
+			if commit && op.Roster != nil {
+				raw, rerr := tx.Get(ctx, r.Names.Key(keyFriends)).Result()
+				if rerr != nil && !errors.Is(rerr, redis.Nil) {
+					return rerr
+				}
+				rosterMap, rerr := readRoster(raw)
+				if rerr != nil {
+					return rerr
+				}
+				var removed []string
+				if op.Roster.Sync != nil {
+					removed = removedFriends(rosterMap, op.Roster.Sync.Specs)
+				}
+				applyRosterChange(rosterMap, op.Roster)
+				b, rerr := json.Marshal(rosterMap)
+				if rerr != nil {
+					return rerr
+				}
+				str := string(b)
+				rosterVal = &str
+				for _, n := range removed {
+					beatsToDel = append(beatsToDel, r.Names.Key(friendBeatKey(n)))
+				}
+			}
 			_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
 				if commit {
 					if err := r.commit(ctx, p, op); err != nil {
 						return err
+					}
+					if rosterVal != nil {
+						p.Set(ctx, r.Names.Key(keyFriends), *rosterVal, 0)
+					}
+					if len(beatsToDel) > 0 {
+						p.Del(ctx, beatsToDel...)
 					}
 				}
 				p.Del(ctx, fence)
 				return nil
 			})
 			return err
-		}, fence)
+		}, watchKeys...)
 		// The fence moved while this release was prepared: another writer
 		// finishing the same operation released it, or took the fence after;
 		// read it again, and release only if it still holds this operation.

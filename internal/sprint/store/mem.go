@@ -235,6 +235,13 @@ func (m *Mem) SettleEpoch(_ context.Context, n uint64) error {
 	return nil
 }
 
+// SetEpoch sets the current epoch, for tests.
+func (m *Mem) SetEpoch(n uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.epochSet, m.epochN, m.epoch = true, n, n
+}
+
 var errLost = errors.New("the store did not answer")
 
 func (m *Mem) fail(point string) error {
@@ -1013,6 +1020,28 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 				m.kv = map[string]string{}
 			}
 			m.kv[keyCoordinator], m.kv[keySeat] = op.Seat.Holder, rec
+		}
+		if op.Roster != nil {
+			r, err := readRoster(m.kv[keyFriends])
+			if err != nil {
+				return err
+			}
+			var removed []string
+			if op.Roster.Sync != nil {
+				removed = removedFriends(r, op.Roster.Sync.Specs)
+			}
+			applyRosterChange(r, op.Roster)
+			b, err := json.Marshal(r)
+			if err != nil {
+				return err
+			}
+			if m.kv == nil {
+				m.kv = map[string]string{}
+			}
+			m.kv[keyFriends] = string(b)
+			for _, n := range removed {
+				delete(m.kv, friendBeatKey(n))
+			}
 		}
 	}
 	l.fence = nil

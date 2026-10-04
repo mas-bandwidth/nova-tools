@@ -76,6 +76,7 @@ func init() {
 		{"friend beat", "<friend>", "friend beat friend-a", (*app).cmdFriendBeat},
 		{"friend down", "<friend>", "friend down friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(true, args, o, e) }},
 		{"friend up", "<friend>", "friend up friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(false, args, o, e) }},
+		{"friend take", "<card>... [--as <friend>]", "friend take s1-1.w1", (*app).cmdFriendTake},
 		{"friend clean", "[--pg <dsn> | --file <path>] [--root <dir>] [--days <n>] [--dry-run]", "friend clean --dry-run", (*app).cmdFriendClean},
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
 		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
@@ -615,13 +616,13 @@ func needsEpoch(verbName string, coordinator bool) bool {
 // confirm.
 func (a *app) runStep(verbName string, c common, st *store.Store, step store.Step, stdout, stderr io.Writer) int {
 	ctx := context.Background()
-	if a.serving && c.epoch < 0 {
+	if a.serving && !c.hasEpoch {
 		// a worker's write through the server runs at the epoch its worker holds, as the
 		// verb parsed it: with none (or one a later word undid) the step could run in a
 		// sprint the worker has not read, a clear later (serve.go)
 		return refuse(stderr, strings.TrimSuffix(verbName, " by id"), "a worker's verb sent to the server names the epoch its worker holds, --epoch <n> (queue prints it), and this one runs at none; nothing was changed")
 	}
-	if epochVerbs[verbName] && c.epoch < 0 {
+	if epochVerbs[verbName] && !c.hasEpoch {
 		coordinator := false
 		if verbName == "merge" {
 			if name, err := st.B.Coordinator(ctx); err == nil {
@@ -638,9 +639,8 @@ func (a *app) runStep(verbName string, c common, st *store.Store, step store.Ste
 		}
 	}
 	step.CallerOp = c.op
-	if c.epoch >= 0 {
-		e := uint64(c.epoch)
-		step.Epoch = &e
+	if c.hasEpoch {
+		step.Epoch = &c.epoch
 	}
 	res, err := st.Run(ctx, step)
 	if c.packets != nil && err == nil {
@@ -1719,20 +1719,32 @@ func (a *app) cmdResolve(args []string, stdout, stderr io.Writer) int {
 	})
 }
 
-// cardGens splits <card>@<gen> words into ids and generations.
+// cardGens splits <card>@<gen> or <card>.g<gen> words into ids and generations.
 func cardGens(words []string) ([]string, map[string]int, error) {
 	gens := map[string]int{}
 	var ids []string
 	for _, w := range words {
-		id, g, ok := strings.Cut(w, "@")
-		if ok {
+		if id, g, ok := strings.Cut(w, "@"); ok {
 			n, err := strconv.Atoi(g)
 			if err != nil || n < 1 {
 				return nil, nil, fmt.Errorf("%s: a generation is a whole number from 1", w)
 			}
-			gens[id] = n
+			card := sprint.CardID(id)
+			gens[card] = n
+			ids = append(ids, card)
+			continue
 		}
-		ids = append(ids, id)
+		if idx := strings.LastIndex(w, ".g"); idx != -1 {
+			gStr := w[idx+2:]
+			n, err := strconv.Atoi(gStr)
+			if err == nil && n >= 1 {
+				id := sprint.CardID(w[:idx])
+				gens[id] = n
+				ids = append(ids, id)
+				continue
+			}
+		}
+		ids = append(ids, sprint.CardID(w))
 	}
 	return ids, gens, nil
 }
@@ -1743,7 +1755,11 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 	limit := fs.Int("limit", 0, "take the first n of its ready queue (default 1); with several members, n of each")
 	words, err := parse(fs, args)
 	if err != nil {
-		return refuse(stderr, "take", err.Error())
+		msg := err.Error()
+		if a.serving && !strings.Contains(msg, "nothing was changed") {
+			msg += "; nothing was changed"
+		}
+		return refuse(stderr, "take", msg)
 	}
 	ids, gens, err := cardGens(words)
 	if err != nil {

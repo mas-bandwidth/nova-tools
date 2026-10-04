@@ -337,6 +337,9 @@ type Snapshot struct {
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.
 	ReaderStates map[string]string
+	// Friends is each friend of the roster with her width, status, and tiers,
+	// read by a step that deals or takes (FriendDeal, friendTake); nil is none read.
+	Friends []FriendSeat
 	// Running says the machine was RUNNING as the step read the sprint: its
 	// pump accepts a primary with the ok reads it needs, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").
@@ -381,6 +384,16 @@ func (s *Snapshot) StreamCtl(stream string) *Card { return s.Merge.Placed(CtlID(
 
 // MemberCtl is a fleet member's control card.
 func (s *Snapshot) MemberCtl(member string) *Card { return s.Fleet.Placed(CtlID(member)) }
+
+// FriendSeat returns the friend seat of name, or false if not known.
+func (s *Snapshot) FriendSeat(name string) (FriendSeat, bool) {
+	for _, f := range s.Friends {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return FriendSeat{}, false
+}
 
 // UpMembers is the fleet members whose status is up, in row order.
 func (s *Snapshot) UpMembers() []string {

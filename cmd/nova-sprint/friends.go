@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,6 +93,8 @@ func friendVerbWords(name string) string {
 		return "friend down holds the named friend. The friend stays held whatever beat arrives, and where counts working as 0 while the friend is held. friend up releases the hold. " + sync + "\n"
 	case "friend up":
 		return "friend up releases a hold that friend down set. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. " + sync + "\n"
+	case "friend take":
+		return "friend take claims one or more cards dealt to a friend, moving them from ready reserve to working on her row and starting their deadline. " + sync + "\n"
 	default:
 		return ""
 	}
@@ -172,7 +175,7 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Tiers: sprint.Split(r.Fields["tiers"])})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -247,6 +250,110 @@ func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) 
 	}
 	sayOK(stdout, c.json, name, token(name)+" OK "+friend+" held="+fmt.Sprint(held), map[string]any{"friend": friend, "held": held})
 	return 0
+}
+
+func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
+	const name = "friend take"
+	fs, c := a.verbSetup(name)
+	as := fs.String("as", "", "the friend taking her cards (friend.<name> or <name>; inferred from card if omitted)")
+	words, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	ids, gens, err := cardGens(words)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	if len(ids) == 0 {
+		return refuse(stderr, name, "wants one or more cards: nova-sprint friend take <card>...")
+	}
+	target := *as
+	if target != "" {
+		c.orActor(strings.TrimPrefix(target, "friend."))
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	ctx := context.Background()
+	es, err := st.EpochNow(ctx)
+	if err != nil {
+		return a.readFailed(name, err, stderr)
+	}
+	if c.hasEpoch && c.epoch != es.N {
+		return refuse(stderr, name, fmt.Sprintf("card %s was handed at epoch %d, and the sprint is at epoch %d; after clear, an old brief cannot take a card in a new epoch", ids[0], c.epoch, es.N))
+	}
+	for i, w := range words {
+		card := ids[i]
+		base := w
+		if idx := strings.LastIndex(w, ".g"); idx != -1 {
+			if _, err := strconv.Atoi(w[idx+2:]); err == nil {
+				base = w[:idx]
+			}
+		} else if idx := strings.LastIndex(w, "@"); idx != -1 {
+			if _, err := strconv.Atoi(w[idx+1:]); err == nil {
+				base = w[:idx]
+			}
+		}
+		if idx := strings.LastIndexByte(base, '~'); idx != -1 {
+			epochStr := base[idx+1:]
+			if epochStr == "" || strings.Count(base, "~") > 1 {
+				return refuse(stderr, name, fmt.Sprintf("%s: an epoch is a whole number", w))
+			}
+			for _, ch := range epochStr {
+				if ch < '0' || ch > '9' {
+					return refuse(stderr, name, fmt.Sprintf("%s: an epoch is a whole number", w))
+				}
+			}
+			tokenEpoch, err := strconv.ParseUint(epochStr, 10, 64)
+			if err != nil {
+				return refuse(stderr, name, fmt.Sprintf("%s: an epoch is a whole number", w))
+			}
+			if tokenEpoch != es.N {
+				return refuse(stderr, name, fmt.Sprintf("card %s was handed at epoch %d, and the sprint is at epoch %d; after clear, an old brief cannot take a card in a new epoch", card, tokenEpoch, es.N))
+			}
+		}
+	}
+	c.epoch = es.N
+	c.hasEpoch = true
+	if target == "" && len(ids) > 0 {
+		if s, err := st.Load(ctx, []string{sprint.Fleet}, nil); err == nil {
+			if card := s.Fleet.Card(ids[0]); card != nil && card.Placed() {
+				if friend, ok := sprint.FriendOfRow(card.Row); ok {
+					target = sprint.FriendRow(friend)
+					c.orActor(friend)
+					st.Actor = friend
+				}
+			}
+		}
+	}
+	c.packets = func(ctx context.Context, st *store.Store, res store.Result) []sprint.Packet {
+		taken := map[string]bool{}
+		for _, m := range res.Moved {
+			if f := strings.Fields(m); len(f) > 0 {
+				taken[f[0]] = true
+			}
+		}
+		row := target
+		if !strings.HasPrefix(row, "friend.") && row != "" {
+			row = sprint.FriendRow(row)
+		}
+		cs, err := st.ReadCells(ctx, sprint.Fleet, row, sprint.Working)
+		if err != nil {
+			return nil
+		}
+		var mine []*sprint.Card
+		for _, x := range cs {
+			if taken[x.ID] {
+				mine = append(mine, x)
+			}
+		}
+		ps, _ := st.Packets(ctx, mine)
+		return ps
+	}
+	step := store.FriendTakeStep(ids, gens, target, c.actor)
+	step.Epoch = &es.N
+	return a.runStep(name, *c, st, step, stdout, stderr)
 }
 
 // oneFriend is the one friend a verb names, or its refusal.

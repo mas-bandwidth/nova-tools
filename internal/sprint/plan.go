@@ -70,6 +70,9 @@ type Plan struct {
 	// Seat is the seat's change (MoveSeat): the step's commit writes the
 	// coordinator and the seat's record with its note.
 	Seat *SeatChange
+	// Roster is the friends roster's change (FriendHold, FriendRelease, FriendSync):
+	// the step's commit applies it to the friends record atomically in Release.
+	Roster *FriendRosterChange
 	// Stop is the cause the binding stops the machine with as the step commits: the
 	// tick's deal when every provider is out of credit (FundsCause words); "" is none.
 	Stop string
