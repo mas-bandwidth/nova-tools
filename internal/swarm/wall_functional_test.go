@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,23 @@ import (
 // not unit tests (Glenn 2026-09-26, nova-tools#4328: unit tests under 2 s and
 // frugal with the machine's cores). The rest of the file's tests stay in the
 // unit tier.
+
+func git(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
+	return strings.TrimSpace(string(out))
+}
+
+func commit(t *testing.T, dir, name string) string {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name+".txt"), []byte(name+"\n"), 0o644))
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", name)
+	return git(t, dir, "rev-parse", "HEAD")
+}
 
 // TestAWallDeathNamesItsPathAndKeepsItsCommits: the same auto-reject line, no RESULT.md, and
 // one commit in ./repo past its base. The death is a WALL that names the rejected path and

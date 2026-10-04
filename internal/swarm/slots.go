@@ -352,7 +352,7 @@ func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Du
 	// file from outside the store into its queue (security#66 finding 2). Refuse it
 	// at take, the one-line check the label already pays at reap.
 	if strings.ContainsAny(owner, `/\`) || strings.Contains(owner, "..") {
-		return nil, 0, 0, 0, "", false, fmt.Errorf("owner has no path separators or ..")
+		return nil, 0, 0, 0, "", false, fmt.Errorf("owner has no path separators or .. components")
 	}
 	// The store is read once here so that a store that was never `slots init`ed says so
 	// in its own sentence before this run makes a lock file inside it.
