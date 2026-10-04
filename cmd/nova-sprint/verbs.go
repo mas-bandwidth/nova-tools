@@ -83,7 +83,7 @@ func init() {
 		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
-		{"stream set", "<stream>... --read-tier <flash|pro|default>", "stream set skips --read-tier pro", (*app).cmdStreamSet},
+		{"stream set", "<stream>... [--read-tier <flash|pro|default>] [--release <name|none>]", "stream set s1 s2 --release v1.2.0", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
@@ -96,7 +96,7 @@ func init() {
 		{"log", "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", "log --card s1-4", (*app).cmdLog},
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
-		{"where", "[--watch] [--every <duration>] [--all] [--json [--cards]]", "where", (*app).cmdWhere},
+		{"where", "[--watch] [--every <duration>] [--all] [--json [--cards]] [--release <name>]", "where", (*app).cmdWhere},
 		{"dashboard", "[--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none] [--logo <file>] [--every <duration>]", "dashboard --listen 127.0.0.1:7390 --pull 127.0.0.1:7395", (*app).cmdDashboard},
 		{"handover", "", "handover", (*app).cmdHandover},
 		{"routes", "", "routes", (*app).cmdRoutes},
@@ -2449,7 +2449,9 @@ for the streams named. A clear does not bring a removed stream back, and its
 name is added again only after the next clear. stream set <s> --read-tier pro
 puts the reads of the stream's cards on pro, over the sprint's read tier (set
 --read-tier); a read tier raises a card's reads and never lowers them below the
-card's own tier, and default takes the stream's off.`) + "\n"
+card's own tier, and default takes the stream's off. stream set <s> --release
+v1.2.0 puts the stream in release v1.2.0 (none takes it out), and where
+--release v1.2.0 counts the cards left in each stream of it.`) + "\n"
 }
 
 // cmdSet writes the sprint's settings (sprint.Set): its read tier, the tier every
@@ -2490,23 +2492,25 @@ func (a *app) cmdFunded(args []string, stdout, stderr io.Writer) int {
 	return a.runStep("funded", *c, st, store.FundedStep(sprint.FundedReq{Provider: pos[0], Reason: *reason, Who: c.actor}), stdout, stderr)
 }
 
-// cmdStreamSet writes the read tier of the streams named (sprint.Set), over the
-// sprint's.
+// cmdStreamSet writes the read tier and the release of the streams named
+// (sprint.Set; docs/SPEC-SPRINT.md section 11, stream set): a read tier over the
+// sprint's, and the release the stream's cards count toward (where --release).
 func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stream set")
 	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash or pro; default takes it off: the sprint's)")
+	release := fs.String("release", "", "the release the stream's cards count toward, one word (v1.2.0); where --release <name> counts the cards left in it; none takes the stream out of its release")
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	if len(names) == 0 || *tier == "" {
-		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|default>")
+	if len(names) == 0 || *tier == "" && *release == "" {
+		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|default> or --release <name|none>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, Who: c.actor}), stdout, stderr)
+	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, Release: *release, Who: c.actor}), stdout, stderr)
 }
 
 // cmdStreamRemove takes the named streams off the work and merge tables:

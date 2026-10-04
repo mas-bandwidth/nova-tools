@@ -76,19 +76,23 @@ func stronger(a, b string) string {
 	return a
 }
 
-// SetReq is the coordinator's settings: with Streams, each stream's read tier;
-// without, the sprint's dealt bound and read tier. An empty value leaves that
-// setting as it is; ReadTierDefault takes one off.
+// SetReq is the coordinator's settings: with Streams, each stream's read tier and
+// release (release.go); without, the sprint's dealt bound and read tier. An empty
+// value leaves that setting as it is; ReadTierDefault takes a read tier off and
+// ReleaseNone a release.
 type SetReq struct {
 	Streams  []string `json:",omitempty"`
 	ReadTier string   `json:",omitempty"`
 	DealtMax string   `json:",omitempty"`
+	Release  string   `json:",omitempty"`
 	Who      string
 }
 
-// Set writes the settings: refused whole, writing nothing, for an actor who is not
-// the coordinator, a read tier that is not flash, pro or default, a dealt bound that
-// is not a positive duration, nothing to set, or a stream that is not a stream.
+// Set writes the settings (docs/SPEC-SPRINT.md section 11, set and stream set):
+// refused whole, writing nothing, for an actor who is not the coordinator, a read
+// tier that is not flash, pro or default, a dealt bound that is not a positive
+// duration, a release that is not one word (ValidRelease) or names no stream,
+// nothing to set, or a stream that is not a stream.
 func Set(s *Snapshot, r SetReq) Plan {
 	var p Plan
 	var why []string
@@ -103,11 +107,20 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--dealt-max wants a duration above zero (6h, 90m), or "+ReadTierDefault+" for 3 times the take deadline; found "+r.DealtMax)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" {
+	if r.Release != "" && r.Release != ReleaseNone && !ValidRelease(r.Release) {
+		why = append(why, "--release wants one word of letters, digits, '.', '_' and '-' (v1.2.0), or "+ReleaseNone+" to take it off; found "+r.Release)
+	}
+	switch {
+	case len(r.Streams) > 0 && r.ReadTier == "" && r.Release == "":
+		why = append(why, "nothing to set: --read-tier or --release")
+	case len(r.Streams) == 0 && r.ReadTier == "" && r.DealtMax == "" && r.Release == "":
 		why = append(why, "nothing to set: --read-tier or --dealt-max")
 	}
 	if len(r.Streams) > 0 && r.DealtMax != "" {
 		why = append(why, "--dealt-max is the sprint's, not a stream's: nova-sprint set --dealt-max "+r.DealtMax)
+	}
+	if len(r.Streams) == 0 && r.Release != "" {
+		why = append(why, "--release is a stream's, not the sprint's: nova-sprint stream set <stream>... --release "+r.Release)
 	}
 	for _, st := range r.Streams {
 		if s.StreamCtl(st) == nil {
@@ -120,14 +133,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 	}
 	if len(r.Streams) > 0 {
 		for _, st := range r.Streams {
-			ctl := s.StreamCtl(st)
-			entry := setEntry(ctl, map[string]string{FieldReadTier: r.ReadTier})
-			moved := "stream " + st + " read-tier " + r.ReadTier
-			if r.ReadTier == ReadTierDefault {
-				entry = setEntry(ctl, nil, FieldReadTier)
-				moved = "stream " + st + " read-tier the sprint's"
-			}
-			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, entry)}, Moved: moved})
+			p.Units = append(p.Units, streamSetUnit(s.StreamCtl(st), st, r))
 		}
 		return p
 	}
@@ -155,4 +161,31 @@ func orDefault(v, name string) string {
 		return fmt.Sprintf("default (%s, 3 times the take deadline)", DealtMaxDefault)
 	}
 	return "default (each card's own tier)"
+}
+
+// streamSetUnit is one stream's settings as one change of its control card: the
+// read tier and the release named, each written, or unset by its word for none
+// (ReadTierDefault, ReleaseNone).
+func streamSetUnit(ctl *Card, st string, r SetReq) Unit {
+	set := map[string]string{}
+	var unset, moved []string
+	switch r.ReadTier {
+	case "":
+	case ReadTierDefault:
+		unset = append(unset, FieldReadTier)
+		moved = append(moved, "read-tier the sprint's")
+	default:
+		set[FieldReadTier] = r.ReadTier
+		moved = append(moved, "read-tier "+r.ReadTier)
+	}
+	switch r.Release {
+	case "":
+	case ReleaseNone:
+		unset = append(unset, FieldRelease)
+		moved = append(moved, "release none")
+	default:
+		set[FieldRelease] = r.Release
+		moved = append(moved, "release "+r.Release)
+	}
+	return Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", ")}
 }

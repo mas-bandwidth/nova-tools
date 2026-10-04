@@ -26,6 +26,9 @@ type StreamClock struct {
 	// Quiet is the time wait set on the stream's stale judgment (FieldStaleReview):
 	// not shown stale before it.
 	Quiet time.Time `json:",omitzero"`
+	// Release is the release the stream's cards count toward, its control card's
+	// FieldRelease (stream set <s> --release <name>; release.go); "" for none.
+	Release string `json:",omitempty"`
 }
 
 // Stalled says a stream that has not landed has made no progress for longer

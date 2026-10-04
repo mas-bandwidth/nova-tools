@@ -562,6 +562,9 @@ type whereRun struct {
 	every   time.Duration
 	stale   time.Duration
 	atEpoch int64
+	// release, when named, draws that release's streams and the cards left in
+	// each (whereRelease) in the frame's place
+	release string
 }
 
 func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
@@ -572,6 +575,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
+	release := fs.String("release", "", "the streams of this release (stream set <s> --release <name>) and the cards left in each, in the tables' place")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "where", argErr("takes no words ", err, pos...))
@@ -595,7 +599,10 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if *cards && !c.json {
 		return refuse(stderr, "where", "--cards is a field of the JSON view: give --json with it")
 	}
-	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, every: *every, stale: *stale, atEpoch: *atEpoch}
+	if *release != "" && (*all || *cards) {
+		return refuse(stderr, "where", "--release draws the release's streams in the tables' place: give it without --all and --cards")
+	}
+	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, every: *every, stale: *stale, atEpoch: *atEpoch, release: *release}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -631,6 +638,9 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
 			}
 			return "", refuse(stderr, "where", err.Error()), false
+		}
+		if r.release != "" {
+			return a.whereRelease(ctx, st, r, stderr)
 		}
 		v, frame, err := a.where(ctx, st, r.stale, r.all)
 		if err != nil {
