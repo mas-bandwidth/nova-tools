@@ -404,9 +404,9 @@ func noCodeStagedRefusals(t *testing.T) {
 esac
 `, tc.record, real))
 			orig := os.Getenv("PATH")
-			os.Setenv("PATH", bin+string(os.PathListSeparator)+orig)
+			require.NoError(t, os.Setenv("PATH", bin+string(os.PathListSeparator)+orig))
 			exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
-			os.Setenv("PATH", orig)
+			require.NoError(t, os.Setenv("PATH", orig))
 			refused(t, tc.name, exit, stderr, tc.want)
 			assert.EqualValues(t, "", stdout, "%s printed to stdout: %q", tc.name, stdout)
 		})
