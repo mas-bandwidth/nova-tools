@@ -25,15 +25,15 @@ var swarmAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"member.go|cmdMember|note": "passNote's one line, a literal with no argument interpolated",
-		"step.go|cmdStep|rem":      "the second named verbatim site: the remainder is a CARD, a document the coordinator redirects into a brief file for nova-sprint add, the bytes of the card it was handed with its base rewritten and two header lines added (cardtree.Remainder); escaping it would fold the card into one unusable line. TestTheStepVerbRunsAScriptCardInItsWallAndPrintsTheRemainder asserts its lines.",
-		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
-		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
-		"main.go|wantCount|name":   "a required count flag's name, a literal at every call site in this file",
-		"main.go|wantCount|wants":  "the guidance that count flag wants, a literal at every call site in this file",
-		"main.go|refused|f.verb":   "the verb's own name, the value newFlags stored from that literal",
-		"main.go|cmdTemplate|body": "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
-		"native.go|nativeRun|line": "the line NewWallReader announces a refusal on: swarm.WallRefusedLine builds the whole line and puts the kind, the path, the task and the step through oneline.Field inside itself, so what arrives at this closure is already one safe token, and escaping it a second time would fold it into one unreadable form. TestNativeIdleZeroWatchesNothing asserts the line this site prints byte for byte.",
+		"member.go|cmdMember|note":    "passNote's one line, a literal with no argument interpolated",
+		"step.go|cmdStep|rem":         "the second named verbatim site: the remainder is a CARD, a document the coordinator redirects into a brief file for nova-sprint add, the bytes of the card it was handed with its base rewritten and two header lines added (cardtree.Remainder); escaping it would fold the card into one unusable line. TestTheStepVerbRunsAScriptCardInItsWallAndPrintsTheRemainder asserts its lines.",
+		"main.go|want|name":           "a required flag's name, a literal at every call site in this file",
+		"main.go|want|wants":          "the guidance that flag wants, a literal at every call site in this file",
+		"main.go|wantCount|name":      "a required count flag's name, a literal at every call site in this file",
+		"main.go|wantCount|wants":     "the guidance that count flag wants, a literal at every call site in this file",
+		"main.go|refused|f.verb":      "the verb's own name, the value newFlags stored from that literal",
+		"main.go|cmdTemplate|body":    "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
+		"native.go|initRunState|line": "the line NewWallReader announces a refusal on: swarm.WallRefusedLine builds the whole line and puts the kind, the path, the task and the step through oneline.Field inside itself, so what arrives at this closure is already one safe token, and escaping it a second time would fold it into one unreadable form. TestNativeIdleZeroWatchesNothing asserts the line this site prints byte for byte.",
 
 		// a verb's -h with its own exit codes (verbhelp.go)
 		"verbhelp.go|recoverHelp|help": "a verb's help, what verbflag.RecoverWith prints: lines of this package's usage const, flag names and their usage literals, the verb's example and exit lines, all constants; never an argument the caller typed",
