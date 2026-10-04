@@ -143,3 +143,4 @@ This specification is locked. No line changes without his words, quoted here wit
 - 2026-10-03 11:30 AM, the owner, a quoted change after the lock: "nova sprint website is not updating once
   per-second. something is chug." The page's refresh is the event stream, the timer's poll its fallback (the
   Refresh line above); nothing else moves.
+- 2026-10-03 10:50 PM, the owner, a quoted change after the lock: "for the sprint dashboard, make reviewing, merging and working states all pulse, and pulse them out of phase, so it looks like they do a wave from left to right". In the progress bar the working, review and merging cells pulse (opacity 1 to .55, 2 s, ease-in-out, without end), each cell 80 ms behind the one to its left, so the pulse travels left to right as a wave along the bar; landed, ready and waiting cells stay still; nothing else moves.
