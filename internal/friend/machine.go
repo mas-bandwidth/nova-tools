@@ -46,6 +46,8 @@ type Push struct {
 // order. The daemon owns the transport around it.
 type Machine struct {
 	Window time.Duration // Window unless a test shortens it
+	Asleep bool          // the in-memory mirror of the durable operator choice
+	Slept  time.Time     // when this process entered sleep, to pause the challenge clock
 
 	Connection string    // Connected or Silent
 	LastPing   time.Time // when the last ping arrived; the start, before any
@@ -76,6 +78,9 @@ func Start(now time.Time) *Machine {
 // goes into the session as the message it arrived in; the daemon delivers
 // that, so the pushes here are only the daemon's own words.
 func (m *Machine) Ping(now time.Time, seat string, since time.Time, nonce string) []Push {
+	if m.Asleep {
+		return nil
+	}
 	var out []Push
 	if m.Connection == Silent {
 		out = append(out, Push{"coordinator back", fmt.Sprintf("coordinator back: %s has the seat (since %s); silent from %s to %s", seat, since.UTC().Format(time.RFC3339), m.SilentFrom.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))})
@@ -89,6 +94,40 @@ func (m *Machine) Ping(now time.Time, seat string, since time.Time, nonce string
 	}
 	m.Nonce, m.Asked = nonce, now
 	return out
+}
+
+// ReceivePing applies a ping only from the configured coordinator. If the
+// session is asleep, that coordinator message wakes the machine before the
+// ping is applied; callers must durably commit the wake before calling this.
+// Sender names are routing metadata, not cryptographic authentication.
+func (m *Machine) ReceivePing(now time.Time, from, coordinator, seat string, since time.Time, nonce string) []Push {
+	if coordinator == "" || from != coordinator {
+		return nil
+	}
+	if m.Asleep {
+		m.Wake(now)
+	}
+	return m.Ping(now, seat, since, nonce)
+}
+
+// Sleep mirrors a successfully persisted local sleep choice. It does not
+// interrupt a turn already in progress; the daemon controls turn scheduling.
+func (m *Machine) Sleep(now time.Time) {
+	if !m.Asleep {
+		m.Asleep, m.Slept = true, now
+	}
+}
+
+// Wake mirrors a successfully persisted local or coordinator wake. Time spent
+// asleep is removed from the outstanding session-challenge deadline.
+func (m *Machine) Wake(now time.Time) {
+	if !m.Asleep {
+		return
+	}
+	if !m.Asked.IsZero() && now.After(m.Slept) {
+		m.Asked = m.Asked.Add(now.Sub(m.Slept))
+	}
+	m.Asleep, m.Slept = false, time.Time{}
 }
 
 // Pong is the session answering nonce at now: the current nonce ends the
@@ -105,12 +144,26 @@ func (m *Machine) Pong(now time.Time, nonce string) (current bool) {
 // silent, said to the session exactly once per outage; a window challenged
 // with no pong makes the session deaf (tla/Friend.tla: Tick).
 func (m *Machine) Tick(now time.Time) []Push {
+	return m.TickWhen(now, m.Asleep)
+}
+
+// TickWhen mirrors the durable sleep choice, advances transport health while
+// asleep, suppresses synthetic session notices, and pauses the unanswered-
+// challenge clock. It returns synthetic pushes only while awake.
+func (m *Machine) TickWhen(now time.Time, asleep bool) []Push {
+	if asleep {
+		m.Sleep(now)
+	} else {
+		m.Wake(now)
+	}
 	var out []Push
 	if m.Connection == Connected && now.Sub(m.LastPing) >= m.Window {
 		m.Connection, m.SilentFrom = Silent, m.LastPing
-		out = append(out, Push{"coordinator silent", fmt.Sprintf("coordinator silent since %s: no ping for %s; keep working and keep your queue file; the next ping says who has the seat", m.LastPing.UTC().Format(time.RFC3339), m.Window)})
+		if !m.Asleep {
+			out = append(out, Push{"coordinator silent", fmt.Sprintf("coordinator silent since %s: no ping for %s; keep working and keep your queue file; the next ping says who has the seat", m.LastPing.UTC().Format(time.RFC3339), m.Window)})
+		}
 	}
-	if m.Challenge == Challenged && now.Sub(m.Asked) >= m.Window {
+	if !m.Asleep && m.Challenge == Challenged && now.Sub(m.Asked) >= m.Window {
 		m.Challenge = Deaf
 	}
 	return out

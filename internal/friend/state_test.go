@@ -3,9 +3,11 @@ package friend
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,4 +52,85 @@ func TestTheStateFilesRoundTripAndTheQueueFileCounts(t *testing.T) {
 	raw, err := os.ReadFile(LogPath(dir))
 	require.NoError(t, err)
 	assert.Equal(t, "one\ntwo\n", string(raw))
+}
+
+func TestSessionStateMissingAndDurableUpdates(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	got, err := ReadSessionState(dir)
+	require.NoError(t, err)
+	assert.Equal(t, SessionState{}, got, "a new state directory starts with no operator choice")
+	_, err = os.Stat(sessionPath(dir))
+	assert.ErrorIs(t, err, os.ErrNotExist, "a read must not invent a sleep request")
+
+	got, err = UpdateSessionState(dir, func(s *SessionState) error {
+		s.Coordinator, s.Asleep, s.WakeBarrier = "rowan", true, "123-4"
+		return nil
+	})
+	require.NoError(t, err)
+	want := SessionState{Coordinator: "rowan", Asleep: true, WakeBarrier: "123-4"}
+	assert.Equal(t, want, got)
+	got, err = ReadSessionState(dir)
+	require.NoError(t, err)
+	assert.Equal(t, want, got, "the state and ordering barrier survive a fresh read")
+
+	got, err = UpdateSessionState(dir, func(s *SessionState) error {
+		s.Asleep = false
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, SessionState{Coordinator: "rowan", WakeBarrier: "123-4"}, got, "wake retains coordinator and barrier")
+}
+
+func TestSessionStateRefusesMalformedAndFailedWrites(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(sessionPath(dir), []byte("{"), 0o600))
+	_, err := ReadSessionState(dir)
+	assert.Error(t, err, "malformed durable state must not silently become awake")
+
+	dir = t.TempDir()
+	require.NoError(t, os.Mkdir(sessionPath(dir), 0o700))
+	got, err := UpdateSessionState(dir, func(s *SessionState) error { s.Asleep = true; return nil })
+	assert.Error(t, err, "failed atomic write must be surfaced so callers do not start a job")
+	assert.Equal(t, SessionState{}, got, "failed writes do not return uncommitted state")
+}
+
+func TestSessionStateUpdatesAreSerializedAndDaemonIsSingleton(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	const writers, increments = 4, 5
+	var wg sync.WaitGroup
+	errs := make(chan error, writers*increments)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < increments; j++ {
+				_, err := UpdateSessionState(dir, func(s *SessionState) error {
+					if s.Coordinator == "" {
+						s.Coordinator = "rowan"
+					}
+					s.Asleep = !s.Asleep
+					return nil
+				})
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	got, err := ReadSessionState(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "rowan", got.Coordinator)
+	assert.False(t, got.Asleep, "twenty serialized toggles must not lose a write")
+
+	lock, err := TakeDaemonLock(dir, "friend")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, lock.Unlock()) }()
+	_, err = TakeDaemonLock(dir, "friend")
+	assert.ErrorIs(t, err, filelock.ErrHeld, "a second daemon sharing this state directory must refuse")
 }

@@ -66,6 +66,7 @@ type Status struct {
 type SessionState struct {
 	Coordinator string `json:"coordinator,omitempty"`
 	Asleep      bool   `json:"asleep,omitempty"`
+	WakeBarrier string `json:"wake_barrier,omitempty"`
 }
 
 // Pong is the session's last answer, as the pong verb records it beside
@@ -131,9 +132,9 @@ func WithSessionState(stateDir string, fn func(SessionState) error) error {
 	return sessionState(stateDir, func(s *SessionState) (bool, error) { return false, fn(*s) })
 }
 
-// UpdateSessionState serializes one durable read/modify/write. A stale command
-// cannot be replayed after restart: only the current state is stored, never an
-// outstanding sleep request.
+// UpdateSessionState serializes one durable read/modify/write. Only the
+// current state is stored; there is no queued sleep or wake request to replay
+// after restart.
 func UpdateSessionState(stateDir string, update func(*SessionState) error) (SessionState, error) {
 	var out SessionState
 	err := sessionState(stateDir, func(s *SessionState) (bool, error) {
@@ -143,6 +144,9 @@ func UpdateSessionState(stateDir string, update func(*SessionState) error) (Sess
 		out = *s
 		return true, nil
 	})
+	if err != nil {
+		return SessionState{}, err
+	}
 	return out, err
 }
 
