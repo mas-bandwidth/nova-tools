@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -198,18 +197,51 @@ func TestModelDigestAndPinIdentity(t *testing.T) {
 type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// testClient is an http.Client whose transport calls handler in this process:
+// the request is handed to the handler and what it writes comes back as the
+// response, so no listener is started and no socket is dialled (the unit
+// tier dials nothing). A redirect the handler writes is followed through the
+// same transport. The second value is kept for the callers' close.
 func testClient(handler func(http.ResponseWriter, *http.Request)) (*http.Client, func()) {
-	server := httptest.NewServer(http.HandlerFunc(handler))
 	c := defaultClient()
 	c.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
-		copy := r.Clone(r.Context())
-		u := *r.URL
-		u.Scheme = "http"
-		u.Host = strings.TrimPrefix(server.URL, "http://")
-		copy.URL = &u
-		return http.DefaultTransport.RoundTrip(copy)
+		w := &answer{header: http.Header{}, code: http.StatusOK}
+		handler(w, r)
+		return &http.Response{
+			Status:        fmt.Sprintf("%d %s", w.code, http.StatusText(w.code)),
+			StatusCode:    w.code,
+			Proto:         "HTTP/1.1",
+			ProtoMajor:    1,
+			ProtoMinor:    1,
+			Header:        w.header,
+			Body:          io.NopCloser(bytes.NewReader(w.body.Bytes())),
+			ContentLength: int64(w.body.Len()),
+			Request:       r,
+		}, nil
 	})
-	return c, server.Close
+	return c, func() {}
+}
+
+// answer is what a handler writes: the status, the header and the body.
+type answer struct {
+	header http.Header
+	body   bytes.Buffer
+	code   int
+	sent   bool
+}
+
+func (a *answer) Header() http.Header { return a.header }
+
+func (a *answer) WriteHeader(code int) {
+	if !a.sent {
+		a.code, a.sent = code, true
+	}
+}
+
+func (a *answer) Write(p []byte) (int, error) {
+	a.sent = true
+	return a.body.Write(p)
 }
 func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	t.Parallel()
