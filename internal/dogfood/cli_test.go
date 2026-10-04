@@ -11,15 +11,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// cliExample parses the reference fixture the shape tests share, so one file,
+// one parse and one require stand for all of them.
+func cliExample(t *testing.T) []Verb {
+	t.Helper()
+	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
+	require.NoError(t, err, "ParseCLI: %v", err)
+	return verbs
+}
+
+// verbKeys is the ledger keys of verbs, in the order the document declares them.
+func verbKeys(verbs []Verb) []string {
+	keys := make([]string, 0, len(verbs))
+	for _, v := range verbs {
+		keys = append(keys, v.Key())
+	}
+	return keys
+}
+
 func TestParseCLIReadsTheVerbsAReferenceDeclares(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	require.NoError(t, err, "ParseCLI: %v", err)
-	got := make([]string, 0, len(verbs))
-	for _, v := range verbs {
-		got = append(got, v.Key())
-	}
+	got := verbKeys(cliExample(t))
 	want := []string{
 		"nova-example quickstart",
 		"nova-example links",
@@ -53,8 +66,7 @@ func TestParseCLIReadsTheVerbsAReferenceDeclares(t *testing.T) {
 func TestParseCLIKeepsTheDocumentsOrderAndTheDeclaringLine(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	require.NoError(t, err, "ParseCLI: %v", err)
+	verbs := cliExample(t)
 	require.Equal(t, "quickstart", verbs[0].Verb, "first verb = %q, want quickstart", verbs[0].Verb)
 	for i := 1; i < len(verbs); i++ {
 		require.Greater(t, verbs[i].Line, 0, "%s carries no line number", verbs[i].Key())
@@ -70,8 +82,7 @@ func TestParseCLIKeepsTheDocumentsOrderAndTheDeclaringLine(t *testing.T) {
 func TestParseCLIRefusesTheShapesThatAreNotDeclarations(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	require.NoError(t, err, "ParseCLI: %v", err)
+	verbs := cliExample(t)
 	for _, v := range verbs {
 		switch v.Key() {
 		case "nova-example ghost":
@@ -144,12 +155,7 @@ func TestParseCLIReadsThisRepositorysOwnReference(t *testing.T) {
 func TestParseCLIReadsTheIndentedUsageBlockShape(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	require.NoError(t, err, "ParseCLI: %v", err)
-	got := map[string]bool{}
-	for _, v := range verbs {
-		got[v.Key()] = true
-	}
+	keys := verbKeys(cliExample(t))
 	for _, want := range []string{
 		"nova-indented session start",
 		"nova-indented session stop",
@@ -157,44 +163,34 @@ func TestParseCLIReadsTheIndentedUsageBlockShape(t *testing.T) {
 		"nova-indented version",
 		"nova-indented help",
 	} {
-		assert.True(t, got[want], "an indented usage block declared %q and the parser missed it", want)
+		assert.Contains(t, keys, want, "an indented usage block declared %q and the parser missed it", want)
 	}
 	// The prose under `wire:` and `flags:` is indented too, and declares nothing.
 	for _, never := range []string{"nova-indented one", "nova-indented the"} {
-		assert.False(t, got[never], "indented prose declared a verb: %q", never)
+		assert.NotContains(t, keys, never, "indented prose declared a verb: %q", never)
 	}
 }
 
 func TestParseCLIReadsTheTranscriptOnlyShape(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	require.NoError(t, err, "ParseCLI: %v", err)
-	got := map[string]bool{}
-	for _, v := range verbs {
-		got[v.Key()] = true
-	}
+	keys := verbKeys(cliExample(t))
 	for _, want := range []string{"nova-transcript check", "nova-transcript probe"} {
-		assert.True(t, got[want], "a tool documented only by a transcript declared %q and the parser missed it", want)
+		assert.Contains(t, keys, want, "a tool documented only by a transcript declared %q and the parser missed it", want)
 	}
 }
 
 func TestParseCLIReadsTheVerbPerHeadingShape(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	require.NoError(t, err, "ParseCLI: %v", err)
-	got := map[string]bool{}
-	for _, v := range verbs {
-		got[v.Key()] = true
-	}
+	keys := verbKeys(cliExample(t))
 	for _, want := range []string{"nova-prose cut", "nova-prose serve"} {
-		assert.True(t, got[want], "a heading declared %q and the parser missed it", want)
+		assert.Contains(t, keys, want, "a heading declared %q and the parser missed it", want)
 	}
 	// A heading is a verb only when the heading IS the verb: a sentence that
 	// happens to start in lower case is prose about the tool.
 	for _, never := range []string{"nova-prose native and", "nova-prose native", "nova-prose the"} {
-		assert.False(t, got[never], "a prose heading declared a verb: %q", never)
+		assert.NotContains(t, keys, never, "a prose heading declared a verb: %q", never)
 	}
 }
 

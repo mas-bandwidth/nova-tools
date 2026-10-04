@@ -58,7 +58,7 @@ func TestLongestKnownNameWins(t *testing.T) {
 	c, err := LoadConfig(writeBus(t, nil))
 	require.NoError(t, err)
 	got, unknown := c.ResolveList("Bo Quill on the Air")
-	require.False(t, len(unknown) > 0 || len(got) != 1 || got[0] != "Bo", "got %v unresolved %v, want [Bo]", got, unknown)
+	require.True(t, len(unknown) == 0 && len(got) == 1 && got[0] == "Bo", "got %v unresolved %v, want [Bo]", got, unknown)
 }
 
 // A From line names exactly one sender. Two names is not a sender.
@@ -68,7 +68,7 @@ func TestResolveOne(t *testing.T) {
 	require.NoError(t, err)
 	{
 		p, ok := c.ResolveOne("Ada (day shift, the west host, the shared account)")
-		require.False(t, !ok || p.Name != "Ada", "ResolveOne = %+v %v, want Ada", p, ok)
+		require.True(t, ok && p.Name == "Ada", "ResolveOne = %+v %v, want Ada", p, ok)
 	}
 	_, ok := c.ResolveOne("Ada; Bo")
 	require.False(t, ok, "a From line naming two people resolved to a sender")
@@ -108,7 +108,7 @@ func TestAndIsASeparatorNotAQualifier(t *testing.T) {
 	// And the qualifier still works: what follows a known name is a qualifier only when it
 	// is not itself a name this bus knows.
 	got, unknown := c.ResolveList("Ada reads in place")
-	require.False(t, len(unknown) > 0 || strings.Join(got, "; ") != "Ada", `ResolveList("Ada reads in place") = %v %v, want Ada: an instance qualifier is not a second reader`, got, unknown)
+	require.True(t, len(unknown) == 0 && strings.Join(got, "; ") == "Ada", `ResolveList("Ada reads in place") = %v %v, want Ada: an instance qualifier is not a second reader`, got, unknown)
 }
 
 // Two known names in ONE token, with no separator between them, is refused rather than

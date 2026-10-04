@@ -1,6 +1,10 @@
 config	module	expected	property	deadlock	group	gate	debt
 MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal	benchstage	required	-
 MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal	benchstage	required	-
+MCBusCursor.cfg	MCBusCursor.tla	pass	-	ignore-terminal	buscursor	required	-
+MCBusCursorBrokenAdvanceWithoutAck.cfg	MCBusCursor.tla	invariant	AdvanceOnlyPastAcknowledged	ignore-terminal	buscursor	required	-
+MCBusCursorBrokenNearerCursorWins.cfg	MCBusCursor.tla	invariant	FurtherReadWins	ignore-terminal	buscursor	required	-
+MCBusCursorBrokenWriteWithoutAdvance.cfg	MCBusCursor.tla	invariant	NoWriteWithoutAdvance	ignore-terminal	buscursor	required	-
 MCCardMachine.cfg	MCCardMachine.tla	pass	-	ignore-terminal	cardmachine	bench	layer-2-original-instance-over-budget
 MCEpochMemberBroken.cfg	MCEpochMemberTable.tla	invariant	NoEpochLeak	ignore-terminal	epochmembertable	required	-
 MCEpochMemberBrokenStale.cfg	MCEpochMemberTable.tla	action	StaleWritesRefuse	ignore-terminal	epochmembertable	required	-
@@ -320,3 +324,7 @@ MCFriendBrokenNeverDeaf.cfg	MCFriend.tla	invariant	DeafAfterWindow	ignore-termin
 MCFriendBrokenSilentTwice.cfg	MCFriend.tla	invariant	SilentOncePerOutage	ignore-terminal	friend	required	-
 MCFriendBrokenNeverSilent.cfg	MCFriend.tla	invariant	SilentOncePerOutage	ignore-terminal	friend	required	-
 MCFriendBrokenStalePong.cfg	MCFriend.tla	action	OnlyCurrentNonceAnswers	ignore-terminal	friend	required	-
+MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	-
+MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
+MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
+MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-

@@ -1,6 +1,6 @@
 package main
 
-// The session verb: the coordinator's own window, folded (G5 of pit stop 3, #828).
+// The session verb folds the caller's own window into one session record.
 //
 // It is a VERB OF ITS OWN and not a flag on fold, deliberately. fold's source flags are
 // declared once, in sourceFlags, and shared by fold, sources and report, so a flag added
@@ -54,6 +54,8 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	session := fs.String("claude-session", "", "one Claude Code session transcript jsonl")
 	out := fs.String("out", "", "directory for the resulting daily token file")
 	day := fs.String("day", "", "one UTC day to write as YYYY-MM-DD; defaults to every stamped day")
+	role := fs.String("role", "", "the role the rows are booked under: given, the row is <model>/<role>; the default books the bare model")
+	weights := fs.String("weights", tokens.DefaultWeights.Flag(), "the WEIGHTED ratios as in,cw,cr,out -- a comparison, not a price: the defaults are the ratios of one vendor's published list prices; set your own")
 	dryRun := fs.Bool("dry-run", false, "with --out, print the days that would be written, and write nothing (no directory, no day file, no lock)")
 	s, code, ok := start(fs, args, "TOKENS", stdout, stderr)
 	if !ok {
@@ -63,6 +65,10 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	r.required("claude-session", *session, "one Claude Code session jsonl, the window whose turns this folds")
 	if *day != "" && !tokens.ValidDay(*day) {
 		r.add("--day wants one UTC day as YYYY-MM-DD, got " + oneline.Field(*day))
+	}
+	w, werr := tokens.ParseWeights(*weights)
+	if werr != nil {
+		r.add(werr.Error())
 	}
 	if len(r.list) > 0 {
 		return r.print(stderr)
@@ -75,13 +81,13 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// Every field of the SESSION line is a %d over an integer, so the escape is a no-op --
 	// and it is here anyway, because the tripwire that keeps this binary's output one line
 	// per event does not take a promise about a value, only the call that enforces it.
-	fmt.Fprintln(s.out(), oneline.Escape(sum.Line()))
+	fmt.Fprintln(s.out(), oneline.Escape(sum.Line(w)))
 	s.fact("turns", sum.Turns)
 	s.fact("input", sum.Input)
 	s.fact("cache_write", sum.CacheWrite)
 	s.fact("cache_read", sum.CacheRead)
 	s.fact("output", sum.Output)
-	s.fact("weighted", sum.Weighted())
+	s.fact("weighted", sum.Weighted(w))
 	s.fact("avg_context", sum.AvgContext())
 	if sum.Unstamped > 0 {
 		note := fmt.Sprintf("unstamped=%d turns are in the totals and in no day; they are not dated by a guess", sum.Unstamped)
@@ -136,7 +142,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if part == nil {
 			part = &tokens.SessionSum{}
 		}
-		fresh := sum.Rows(d)
+		fresh := sum.Rows(d, *role)
 		var old []tokens.DayRow
 		prior, findings, err := tokens.ReadDayFile(tokens.Path(*out, d))
 		if err != nil {
@@ -183,7 +189,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		for _, r := range fresh {
 			booked = append(booked, r.Model)
 		}
-		kv := []any{"day", d, "written", written, "rows", len(rows), "retained", retained, "model", strings.Join(booked, ","), "weighted", part.Weighted()}
+		kv := []any{"day", d, "written", written, "rows", len(rows), "retained", retained, "model", strings.Join(booked, ","), "weighted", part.Weighted(w)}
 		if *dryRun {
 			kv = append(kv, "dry_run", true)
 		}

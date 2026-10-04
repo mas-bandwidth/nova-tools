@@ -17,8 +17,8 @@ import (
 // TestSpillAndRecallLogInAsTheUserItIsGiven: spill and recall open a store
 // through redisconn and log in as each of loginCases' logins. The store is a
 // miniredis that lets in only the login the case wants, so an exit 0 (spill)
-// or a RECALL MISSING (recall) is that login made; a refusal opens no
-// connection. The resolved options, and fn's, are the unit
+// or a RECALL MISSING on stderr (recall, the FAILED line of a verb that ran)
+// is that login made; a refusal opens no connection. The resolved options, and fn's, are the unit
 // TestEveryVerbLogsInAsTheUserItIsGiven.
 func TestSpillAndRecallLogInAsTheUserItIsGiven(t *testing.T) {
 	t.Parallel()
@@ -47,7 +47,7 @@ func TestSpillAndRecallLogInAsTheUserItIsGiven(t *testing.T) {
 			switch {
 			case c.refusal != "":
 				{
-					want := "nova-redis " + verb[0] + " REFUSED: " + c.refusal + "; run: nova-redis help " + verb[0] + "\n"
+					want := strings.ToUpper(verb[0]) + " REFUSED: " + c.refusal + "; run: nova-redis help\n"
 					if assert.Equal(t, 2, code, "%s, %q: exit %d stderr %q connections %d; want exit 2, %q and none", c.name, args, code, errb.String(), mr.TotalConnectionCount(), want) {
 						if assert.Equal(t, want, errb.String(), "%s, %q: exit %d stderr %q connections %d; want exit 2, %q and none", c.name, args, code, errb.String(), mr.TotalConnectionCount(), want) {
 							assert.Zero(t, mr.TotalConnectionCount(), "%s, %q: exit %d stderr %q connections %d; want exit 2, %q and none", c.name, args, code, errb.String(), mr.TotalConnectionCount(), want)
@@ -60,7 +60,7 @@ func TestSpillAndRecallLogInAsTheUserItIsGiven(t *testing.T) {
 				}
 			default:
 				if assert.Equal(t, 1, code, "%s, %q: exit %d stdout %q stderr %q; want RECALL MISSING as %s", c.name, args, code, out.String(), errb.String(), c.want) {
-					assert.True(t, strings.HasPrefix(out.String(), "RECALL MISSING "), "%s, %q: exit %d stdout %q stderr %q; want RECALL MISSING as %s", c.name, args, code, out.String(), errb.String(), c.want)
+					assert.Equal(t, "RECALL MISSING key=o:n\n", errb.String(), "%s, %q: exit %d stdout %q stderr %q; want RECALL MISSING as %s", c.name, args, code, out.String(), errb.String(), c.want)
 				}
 			}
 		}

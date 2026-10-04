@@ -18,9 +18,9 @@ import (
 // into a fixture. On macOS every fresh copy of a binary is a never-seen file
 // the system policy scanner assesses on first exec, so a package run that
 // copies one built helper into dozens of fixtures queues them behind the
-// scanner for longer than a test waits (internal/swarm's
-// TestBatchAbstainNamesReason/result-after-deadline, 2026-09-17, went from FAIL
-// at 74 s to ok at 30 s when the fixture hard-linked instead of copying). The
+// scanner for longer than a test waits; a hard link shares the inode the
+// scanner already assessed, so the fixture is not re-assessed and the run
+// stays inside its wait. The
 // allowed shape is internal/testbin.Place, which links first and copies only
 // where a link is impossible. A shell script written 0o755 is NOT the shape:
 // the interpreter is the executable and its bytes are never scanned. It writes
@@ -189,7 +189,7 @@ func checkTestbinsWith(root, allowlistPath string, seams SourceSeams) (TestbinsR
 // A row allows ONE offender of its kind in its file, the way matchWaitAllow
 // does. The line in the row is where the offender stood when the row was
 // written, for a reader; it is not matched on, because a merge that shifts the
-// lines of a listed file must not turn dev red (2026-09-17, #1073). An exact
+// lines of a listed file must not turn dev red. An exact
 // line match is preferred so the stale row reported is the one a reader
 // expects.
 func matchTestbinAllow(entries []waitAllow, used []bool, f TestbinFinding) int {
@@ -255,9 +255,9 @@ func scanTestbinFileWith(rel string, src []byte, seams SourceSeams) ([]TestbinFi
 
 // varKey is the identity of the variable an identifier names: the object the
 // parser resolved it to, so two variables that share a spelling in different
-// functions or scopes are two keys and taint on one never reaches the other
-// (Stella, #1262: a binary copied through raw in one test made a shell script
-// held in another test's raw a false refusal). An identifier the parser left
+// functions or scopes are two keys and taint on one never reaches the other;
+// without it, a binary copied through raw in one test would make a shell
+// script held in another test's raw a false refusal. An identifier the parser left
 // unresolved -- a package-level variable declared in another file of the
 // package -- has no object in this file, so it is keyed by its spelling; every
 // use of it in this file names the same variable.

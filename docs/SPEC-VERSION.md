@@ -42,7 +42,7 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    announces is read off the binary's own help.
 6. **`moved` is bounded and clockless.** It prints one line, caps every child through
    `internal/bounded`, takes its clock from the injected seam, and fetches nothing: a
-   missing revision is the refusal of rule 4.
+   missing revision is refused.
 
 ### Tests this section demands
 
@@ -89,7 +89,7 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    whose `version` exits non-zero, hangs past its deadline, or prints no parseable line
    names the tool and the build to repair there. A timeout names the other reading too —
    that the deadline was spent on the platform's assessment rather than on a broken
-   binary — and the `--timeout` that answers it (rule 11); a spent `--budget` is named as
+   binary — and the `--timeout` that answers it; a spent `--budget` is named as
    the budget and never as a slow binary.
 6. **`diff` reads two snapshots and prints one line per changed binary.** For every `name`
    whose row differs — stamp, revision or platform, or a name present on one side only — it

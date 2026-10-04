@@ -19,17 +19,31 @@ that is no longer on this history, another run holding this checkout; 2 could
 not run: missing flag, unreadable bus, bad invocation.
 
 usage:
-  nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>] [--out <path> [--overwrite] [--dry-run] | > <file>]
-  nova-bus draft --bus <dir> --as <name> --reply-to <id-or-path-or-subject> --body-file <path> --draft-dir <dir> --remote <name> --branch <name>
+  nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>]
+    [--subject <text>] [--re <id-or-path-or-subject>]
+    [--out <path> [--overwrite] [--dry-run] | > <file>]
+    (a new note, printed to stdout or --out)
+  nova-bus draft --bus <dir> --as <name> --reply-to <id-or-path-or-subject>
+    --body-file <path> --draft-dir <dir> --remote <name> --branch <name>
+    (a reply, written into --draft-dir from --body-file, the note's From/To/Re lines filled in)
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
-  nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--no-push] [--dry-run]
-  nova-bus send --bus <dir> (--prepared <path>|--prepared-stdin) --as <name> --remote <name> --branch <name>
-  nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run]
-  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--bodies] [--advance --remote <name> --branch <name> [--dry-run]]
-  nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name> [--until <instant>] [--idle-exit <n>] [--advance]
-  nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--no-push] [--dry-run]
-  nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name>]
-  nova-bus check --bus <dir> (--full | --as <name> | --since <commit-or-date>) [--max <n>] [--rebuild-index [--dry-run]]
+  nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name>
+    --branch <name> [--no-push] [--dry-run]
+  nova-bus send --bus <dir> (--prepared <path>|--prepared-stdin) --as <name>
+    --remote <name> --branch <name>
+  nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name>
+    --branch <name> [--advance] [--dry-run]
+  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full]
+    [--open] [--bodies] [--advance --remote <name> --branch <name> [--dry-run]]
+  nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration>
+    --remote <name> --branch <name> [--until <instant>] [--idle-exit <n>]
+    [--advance]
+  nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...]
+    --remote <name> --branch <name> [--no-push] [--dry-run]
+  nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run]
+    [--remote <name> --branch <name>]
+  nova-bus check --bus <dir> (--full | --as <name> | --since <commit-or-date>)
+    [--max <n>] [--rebuild-index [--dry-run]]
   nova-bus names --bus <dir>
   nova-bus version
   nova-bus help [<verb>]
@@ -43,9 +57,9 @@ arrive in (send). Every verb that runs git takes --git-timeout <seconds>
 Every path comes from a flag: no default bus, remote or branch, and a missing one
 is a refusal. The receipt word count comes from --receipt-max-words <n>, else a
 receipt-max-words=<n> line in <bus>/.nova-bus/defaults, else the
-NOVA_BUS_RECEIPT_MAX_WORDS environment variable; none of them is a refusal. One
-run at a time holds a checkout: a second holds off ten seconds, then refuses.
-inbox reports and exits 0; check is the gate.
+NOVA_BUS_RECEIPT_MAX_WORDS environment variable, and with none of the three set,
+inbox and wait refuse at exit 2. One run at a time holds a checkout: a second
+holds off ten seconds, then refuses. inbox reports and exits 0; check is the gate.
 
 first send, from nothing, in a scratch directory (writes only ./bus and ./d.md):
 
@@ -53,7 +67,7 @@ first send, from nothing, in a scratch directory (writes only ./bus and ./d.md):
   printf '%s\n' '{"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"},{"name":"Bo","lane":"from-bo","git_name":"Bo","git_email":"bo@example.com"}]}' > bus/participants.json
   git -C bus add participants.json
   git -C bus -c user.name=Ada -c user.email=ada@example.com commit -qm roster
-  nova-bus draft --bus bus --as Ada --to Bo --subject hello > d.md   (then replace <the note goes here> in d.md)
+  nova-bus draft --bus bus --as Ada --to Bo --subject hello > d.md   (then replace the placeholder)
   nova-bus send --bus bus --file d.md --as Ada --remote origin --branch main --no-push
   nova-bus inbox --bus bus --as Bo --receipt-max-words 20
 
@@ -185,7 +199,7 @@ it the cursor stops at the last WHOLE commit printed before the first gap, and
 never past it. Without --bodies, inbox and wait are exactly what they are today.
 
 --legacy-before draws the switch-day line on a bus that existed before this
-tool: check WARNS instead of failing on an older note's header, and inbox does
+tool: check prints a NOTE instead of failing on an older note's header, and inbox does
 not carry an older note on your open list, counting them on one INBOX LEGACY
 line instead -- notes= for the notes, unreadable= for the files that will not
 parse, which are not named one by one either once they are behind the line. A

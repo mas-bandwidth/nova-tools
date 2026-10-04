@@ -70,7 +70,7 @@ func TestAReOpenNamingAnotherPolicyOrSourceIsAConflict(t *testing.T) {
 				return
 			}
 			assert.Empty(t, r.Stdout)
-			printed(t, r.Stderr, "OPEN FAIL: session \"s\" is already open with publish=manual source=src",
+			printed(t, r.Stderr, "OPEN FAILED: session \"s\" is already open with publish=manual source=src",
 				"; run: nova-cairn open --store "+c.store+" --session s --source src --publish manual\n")
 		})
 	}
@@ -92,7 +92,7 @@ func TestAConflictOrAMissingEntryNamesTheCommandToRunNext(t *testing.T) {
 		want string
 	}{
 		{"conflict", []string{"append", "--session", "s", "--entry", "e", "--text", "other words"}, 1,
-			"APPEND FAIL session=s entry=e: entry \"e\" already holds different prose; append these words under a new --entry id, or read what it holds; run: nova-cairn receipt --store " + c.store + " --session s --entry e --text\n"},
+			"APPEND FAILED session=s entry=e: entry \"e\" already holds different prose; append these words under a new --entry id, or read what it holds; run: nova-cairn receipt --store " + c.store + " --session s --entry e --text\n"},
 		{"missing entry", []string{"receipt", "--session", "s", "--entry", "absent"}, 2,
 			"RECEIPT REFUSED: no such entry \"absent\" in session \"s\"; run: nova-cairn index --store " + c.store + " --session s\n"},
 		{"missing session", []string{"index", "--session", "nosuch"}, 2,

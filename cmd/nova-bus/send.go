@@ -56,7 +56,7 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 	prepared, err := bus.PrepareDraft(t, text, now, *slug, *as)
 	if err != nil {
 		for _, reason := range bus.Reasons(err) {
-			fmt.Fprintf(stderr, "PREPARE FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
+			fmt.Fprintf(stderr, "PREPARE FAILED %s: %s\n", oneline.Escape(source), oneline.Err(reason))
 		}
 		return 1
 	}
@@ -65,7 +65,7 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 	}
 	artifactJSON, err := bus.RenderPreparedArtifact(prepared)
 	if err != nil {
-		fmt.Fprintf(stderr, "PREPARE FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		fmt.Fprintf(stderr, "PREPARE FAILED %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
 	fmt.Fprint(stdout, artifactJSON)
@@ -163,7 +163,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		art, p, err := bus.ValidatePreparedArtifact(raw, *busDir, c, *as)
 		if err != nil {
 			for _, reason := range bus.Reasons(err) {
-				fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
+				fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(reason))
 			}
 			return 1
 		}
@@ -176,7 +176,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 
 		res, err := bus.SendPreparedArtifact(*busDir, *remote, *branch, p, art, *attempts)
 		if err != nil {
-			fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(art.Path), oneline.Err(err))
+			fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(art.Path), oneline.Err(err))
 			printTranscript(stderr, err)
 			return 1
 		}
@@ -239,7 +239,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		// a draft cost the writer three runs to find the other two, and the tool had read
 		// all three before it printed anything.
 		for _, reason := range bus.Reasons(err) {
-			fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
+			fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(reason))
 		}
 		return 1
 	}
@@ -258,7 +258,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	// Every other path in the tree is still the refusal it always was.
 	beat := bus.BeatPath(prepared.Sender.Lane)
 	if err := checkoutReady(*busDir, *branch, []string{beat}); err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
 	// Everything above is read-only and the dry run's; everything below writes.
@@ -271,7 +271,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		return 1
 	}
 	if err := prepared.Save(*busDir); err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
 	// The lane's catalogue is appended in the SAME commit as the note. A catalogue that
@@ -279,7 +279,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	// wrongly, and a note that landed without its line would be invisible to every later
 	// id lookup until somebody ran a rebuild.
 	if err := prepared.AppendIndex(*busDir); err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
 	// The union-merge rules, written once per bus and committed with the note that first
@@ -291,7 +291,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	paths := prepared.Paths()
 	wroteAttrs, err := bus.EnsureMergeAttributes(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
 		return 1
 	}
 	if wroteAttrs {
@@ -302,14 +302,14 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	// exit 128, and a sender who has never run `wait` has no BEAT at all.
 	paths, err = bus.StagePaths(*busDir, append(paths, beat))
 	if err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
 	res, err := commit(*busDir, prepared.Sender, paths,
 		bus.WithTrailer(prepared.Message, bus.TrailerSend+" "+prepared.Note.Header.ID),
 		*remote, *branch, *attempts, *noPush)
 	if err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
 		printTranscript(stderr, err)
 		return 1
 	}

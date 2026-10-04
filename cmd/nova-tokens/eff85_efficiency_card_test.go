@@ -21,7 +21,7 @@ func TestNovaTokensEfficiencyCardNamesItsRules(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-TOKENS.md"))
-	require.False(t, err != nil, "the efficiency card's contract is the spec's: %s", err)
+	require.NoError(t, err, "the efficiency card's contract is the spec's: %s", err)
 	spec := string(raw)
 	section := tokensEfficiencySection(t, spec)
 	// The contract is prose, so its line wrapping is the spec's; collapse runs
@@ -57,7 +57,7 @@ func TestNovaTokensEfficiencyCardNamesItsRules(t *testing.T) {
 		// the Red tests list.
 		"Red tests",
 	} {
-		assert.False(t, !strings.Contains(section, want), "SPEC-TOKENS.md nova-tokens efficiency card names %q; the section holds:\n%s", want, section)
+		assert.True(t, strings.Contains(section, want), "SPEC-TOKENS.md nova-tokens efficiency card names %q; the section holds:\n%s", want, section)
 	}
 }
 

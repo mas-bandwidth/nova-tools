@@ -31,20 +31,18 @@ CL_PKGS = $(shell $(GO) run ./tools/ci select-packages --all)
 # honest is TestNoTestReachesAHostThroughAnUnfakedSeam in internal/ci.
 export NOVA_TEST_NO_HOST := 1
 
-# WINDOWS_TIMEOUT LIVED HERE, and it is gone with the legs it bounded (Glenn
-# 2026-09-18: "drop the native windows CI runners. WSL only from now on."). It
-# was the per-package ceiling on the hosted Windows PR leg and the merge group's
-# windows leg, 300 s, measured rather than carried over — the number and the
-# measurements behind it (testdata/ci/package-sizes-windows.tsv, #1332,
-# integration-4, run 35354900090) are in git at dev 65e86175 if a Windows leg
+# WINDOWS_TIMEOUT is gone with the legs it bounded. It was the per-package
+# ceiling on the hosted Windows PR leg and the merge group's windows leg,
+# 300 s, measured rather than carried over — the number and the measurements
+# behind it (testdata/ci/package-sizes-windows.tsv, integration-4, run
+# 35354900090) are in git at dev 65e86175 if a Windows leg
 # ever comes back. What stays is `vet-windows` below: a cross-vet that needs no
 # Windows machine and no ceiling at all.
 #
 # DARWIN_TIMEOUT is the per-package ceiling on the merge group's darwin leg, and
-# it is a MEASUREMENT and not a convention carried over from
-# another platform. That leg used the linux 100 s until 2026-09-18, when
-# merge-group run 35369433950 (batch 7, PR #1360) had its darwin shards 0 and 1
-# CANCELLED at the five-minute leg cap on superman.
+# it is a MEASUREMENT and not a convention carried over from another platform.
+# That leg used the linux 100 s until merge-group run 35369433950 (batch 7) had
+# its darwin shards 0 and 1 CANCELLED at the five-minute leg cap on a macOS runner.
 #
 # READ THAT RUN BEFORE BELIEVING THE OBVIOUS STORY, because the ceiling is not
 # what killed it: no package came near 100 s, and what ran out was the SHARD'S SUM
@@ -53,7 +51,7 @@ export NOVA_TEST_NO_HOST := 1
 # companion to it — the bound on ONE `go test`, which is a shard's share of a
 # dealt package or the WHOLE of a package when the group opened a single slot. The
 # whole of the largest package on a loaded host is therefore the case it covers:
-# cmd/nova-wake measures 120.3 s on a quiet superman, and 300 s is that with the
+# cmd/nova-wake measures 120.3 s on a quiet macOS runner; 300 s is that with the
 # stated margin and a little over. The leg's ten-minute job cap still fires above
 # it, so a real hang is named by Go rather than by the runner killing the job.
 #
@@ -64,7 +62,7 @@ export NOVA_TEST_NO_HOST := 1
 # number rather than the machine's. The measurement is therefore a FLOOR, and this
 # ceiling is that floor times a STATED MARGIN of two. The margin is measured on
 # the same host both ways, not chosen: cmd/nova-merge is 68.8 s whole on a quiet
-# superman and about 147 s on the loaded superman of that run, which is 2.1x, and
+# macOS runner and about 147 s on the loaded one of that run, which is 2.1x, and
 # the same factor covers the unevenness of dealing tests by NAME instead of time. Neither number is a
 # guess and neither is hidden inside the other; internal/ci's darwin class tests
 # hold both.
@@ -155,9 +153,7 @@ fmt:
 vet:
 	$(GO) vet $(PKGS)
 
-# THE FUNCTIONAL TIER (nova-tools #4328, Glenn 2026-09-26 11:20 AM ET: "we
-# should run functional tests, not on every small PR being merged or worked on,
-# but only as we merge whole work streams"). Every test that starts a
+# THE FUNCTIONAL TIER is the redis-backed tests. Every test that starts a
 # redis-server is behind `//go:build functional`, so `vet` and `test` above do
 # not compile it. vet-functional compiles those files on every change, so a PR
 # that breaks one is red at once even though it does not run it;
@@ -165,7 +161,7 @@ vet:
 vet-functional:
 	$(GO) vet -tags functional $(PKGS)
 
-# THE SLOW TIER (#516), the mirror of vet-functional: a test behind `//go:build
+# THE SLOW TIER, the mirror of vet-functional: a test behind `//go:build
 # slow` is compiled by no plain `go vet` and runs only in the nightly job, so a
 # PR that breaks one stayed green until the morning. vet-slow compiles them on
 # every change; internal/ci's TestEveryTestBuildTagIsVettedByCIVetSteps keeps
@@ -199,9 +195,8 @@ vet-laws:
 	$(GO) build -o bin/vetlaw ./tools/analyzers/cmd/vetlaw
 	$(GO) vet -vettool=$(CURDIR)/bin/vetlaw ./cmd/...
 
-# THE ONE WINDOWS GUARD ON THE CL PATH, since the native windows runners were
-# dropped (Glenn 2026-09-18: "drop the native windows CI runners. WSL only from
-# now on."). `GOOS=windows go vet ./...` builds the Windows standard library
+# THE ONE WINDOWS GUARD ON THE CL PATH is a cross-vet, not a Windows leg.
+# `GOOS=windows go vet ./...` builds the Windows standard library
 # into the cache and then type-checks every package AND every _test.go for
 # Windows — which is what catches the class a cross-platform Go tree actually
 # breaks: a *_windows.go that stopped compiling, a syscall used without a build
@@ -221,14 +216,14 @@ vet-windows:
 
 lint: fmt vet vet-functional vet-slow vet-laws
 
-# preflight is the standard check for swarm cards and developers (#2498 S4):
+# preflight is the standard check for swarm cards and developers:
 # gofmt + go vet + go test -count=1, run by tools/preflight. The tool is built into
 # this checkout's bin/ and exec'd, so make's own signal and the tool's exit code are
 # the ones the caller sees.
 # No `preflight: PKGS ?= ...` line: under GNU make 3.81 (macOS /usr/bin/make) a
 # target-specific `?=` on PKGS made `test: PKGS :=` beat the command line, so
-# every studio shard of dev push run 35999520176 ran the whole tree instead of
-# its PKGS; with PKGS ?= ./... above, that line was a no-op everywhere else.
+# every macOS shard of dev push run 35999520176 ran the whole tree instead of its
+# PKGS; with PKGS ?= ./... above, that line was a no-op everywhere else.
 preflight:
 	$(GO) build -o bin/preflight ./tools/preflight && exec ./bin/preflight $(if $(RUN),-run "$(RUN)",) $(PKGS)
 
@@ -243,9 +238,7 @@ preflight:
 # though slowtests runs after it — a failing go test stops the verdict before
 # slowtests, exactly as the workflow did when this lived inline in ci.yml.
 #
-# THE UNIT TIER'S BUDGETS (Glenn 2026-09-26 11:20 AM ET, nova-tools#4328: "unit
-# tests be < 2s (ideally <1) but also they must not be so aggressive that they
-# fill a whole machine cores"): a package over 2 s or a top-level test over 1 s
+# THE UNIT TIER'S BUDGETS: a package over 2 s or a top-level test over 1 s
 # is a CI-SLOW line unless internal/ci/slow-tests_allowlist.txt names a higher
 # budget for exactly that row, and every row there names the time it was
 # measured at and where, `<seconds>s@run<id>` or `@<bench>` (internal/ci:

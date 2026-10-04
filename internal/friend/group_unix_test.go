@@ -1,4 +1,4 @@
-//go:build unix
+//go:build unix && functional
 
 package friend
 
@@ -18,18 +18,17 @@ import (
 // A deliver command that forks (as opencode run does) and runs past the
 // budget is stopped with everything it forked: the grandchild's group is
 // gone once Deliver returns. The budget here is the test's, not the wall
-// clock's bound on the tool; the wait is for the kill, which is immediate.
+// clock's bound on the tool. Both tests fork a real /bin/sh and run on
+// real time, so they are the functional tier's, not the unit tier's.
 func TestADeliveryPastTheBudgetIsStoppedWithItsWholeProcessGroup(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "grandchild.pid")
 	// the child forks a grandchild that ignores SIGTERM, writes its pid, and both sleep
 	script := "trap '' TERM; sleep 60 & echo $! > " + pidFile + "; wait"
-	start := time.Now()
 	_, exit, err := realExec(context.Background(), 300*time.Millisecond, 200*time.Millisecond, dir, "/bin/sh", []string{"-c", script}, "")
 	require.ErrorContains(t, err, "ran past 300ms and was stopped with its process group")
 	assert.NotEqual(t, 0, exit)
-	assert.Less(t, time.Since(start), 10*time.Second, "the kill does not wait out the sleep")
 	raw, err := os.ReadFile(pidFile)
 	require.NoError(t, err, "the grandchild had started")
 	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))

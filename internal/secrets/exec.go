@@ -14,7 +14,9 @@ import (
 
 // RunExec validates all preflight invariants, decrypts <store>/<as>.yaml,
 // applies --only and --require filters, prints the OK line to stderr,
-// sets RLIMIT_CORE to 0, and replaces the current process with cmdArgs.
+// sets RLIMIT_CORE to 0, and replaces the current process with cmdArgs. The OK
+// line goes out before the exec call, so a failure of that call returns 125 with
+// a FAIL line saying the command never started.
 func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
 	// No core file: a crash after the decrypt must not write the values to disk.
 	if err := setRlimitCoreZero(); err != nil {
@@ -101,7 +103,8 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		return 125, fmt.Errorf("--require %s is excluded by --only %q", strings.Join(excludedRequired, ", "), onlyArg)
 	}
 
-	// The OK line, on stderr, every field escaped: the command's own stdout stays its own.
+	// The OK line, on stderr, every field escaped: the command's own stdout stays its
+	// own. It cannot move below the exec call: a successful exec never returns.
 	fmt.Fprintf(os.Stderr, "SECRETS EXEC OK as=%s keys=%d only=%s required=%d file=%s head=%s cmd=%s\n",
 		oneline.Field(asName), len(selectedSecrets), oneline.Field(onlyWord), len(required),
 		oneline.Field(targetFile), oneline.Field(headSHA), oneline.Field(cmdArgs[0]))
@@ -145,7 +148,11 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 
 	// Become the command.
 	if err := replaceProcess(cmdArgs, env); err != nil {
-		return 125, fmt.Errorf("exec failed: %w", err)
+		// The OK line above is already out, and it cannot wait for the exec below:
+		// a successful exec never returns. So this return is a FAIL after an OK, and
+		// it must say exactly what that means: the command never started (security#64
+		// finding 4).
+		return 125, fmt.Errorf("exec failed: %w; the command never started", err)
 	}
 
 	return 0, nil

@@ -69,7 +69,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	plan, err := bus.PlanClose(t, me, before, now)
 	if err != nil {
-		fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
+		fmt.Fprintf(stderr, "CLOSE FAILED %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
 		return 1
 	}
 	// closed= COUNTS NOTES, not receipts. One receipt closes every note one
@@ -86,7 +86,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		ready = bus.EnsureClean(*busDir, nil)
 	}
 	if ready != nil {
-		fmt.Fprintf(stderr, "CLOSE FAIL: %s\n", oneline.Err(ready))
+		fmt.Fprintf(stderr, "CLOSE FAILED: %s\n", oneline.Err(ready))
 		return 1
 	}
 	// Everything above is read-only and the dry run's; everything below writes.
@@ -116,13 +116,13 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		p := &plan.Prepared[i]
 		if err := p.Save(*busDir); err != nil {
 			undo()
-			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
+			fmt.Fprintf(stderr, "CLOSE FAILED %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
 			return 1
 		}
 		written = append(written, p.Path)
 		if err := p.AppendIndex(*busDir); err != nil {
 			undo()
-			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
+			fmt.Fprintf(stderr, "CLOSE FAILED %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
 			return 1
 		}
 		paths = append(paths, p.Path)
@@ -130,7 +130,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	paths = append(paths, bus.IndexPath(me.Lane))
 	wroteAttrs, err := bus.EnsureMergeAttributes(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
+		fmt.Fprintf(stderr, "CLOSE FAILED %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
 		return 1
 	}
 	if wroteAttrs {
@@ -140,7 +140,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		bus.WithTrailer(plan.Message(me), bus.TrailerClose),
 		*remote, *branch, *attempts, *noPush)
 	if err != nil {
-		fmt.Fprintf(stderr, "CLOSE FAIL: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "CLOSE FAILED: %s\n", oneline.Err(err))
 		printTranscript(stderr, err)
 		return 1
 	}

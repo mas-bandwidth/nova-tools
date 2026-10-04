@@ -161,3 +161,15 @@ func TestAMemberOnAnOSWithNoSetpriorityRefusesToStart(t *testing.T) {
 	assert.True(t, strings.HasPrefix(why, "no setpriority on plan9:"), "the refusal names the OS: %q", why)
 	assert.Contains(t, why, "refuse every card")
 }
+
+// TestSetpriorityRefusalNamesNoTicket: the refusal a member returns keeps the reason
+// and the remedy and carries no ticket number, because a ticket belongs in a comment
+// and never in a line the tool prints.
+func TestSetpriorityRefusalNamesNoTicket(t *testing.T) {
+	t.Parallel()
+	why := yieldRefusal(false, "darwin")
+	assert.NotContains(t, why, "nova-tools#", "a ticket is a comment, never a line the tool prints: %q", why)
+	assert.NotContains(t, why, "#4293", "the ticket's number is gone from the line: %q", why)
+	assert.Contains(t, why, "refuse every card", "the reason stays: %q", why)
+	assert.Contains(t, why, "run members on darwin or Linux", "the remedy stays: %q", why)
+}

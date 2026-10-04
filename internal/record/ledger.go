@@ -1,6 +1,6 @@
 // Package record holds the token ledger: the index of nova-tokens' day TSVs in the fleet
-// Redis, one hash per day (docs/SPEC-STATE.md test 17, #2201). Draft 1 of SPEC-STATE put it
-// in a Postgres table (#3243); Postgres was retired under #2623, so the same rows and the
+// Redis, one hash per day: a month query reads the day hashes in one pipelined trip, so
+// the ledger keeps one store and no second copy. The rows and the
 // same monthly GROUP BY live here on Redis with no new dependency. The day files stay the
 // record; the ledger is what a month query reads instead of every file.
 //
@@ -197,8 +197,8 @@ func (s *RedisLedger) Client() *redis.Client { return s.rdb }
 
 // DialLedger opens a client on addr (host:port) as the ACL user with its password ("" for
 // the default user, "" for no password). The fleet Redis has its default user off, so a
-// seat's password without its user is WRONGPASS (#3461).
-// It silences go-redis's own logger first (#3463): a dial failure otherwise prints the
+// seat's password without its user is WRONGPASS.
+// It silences go-redis's own logger first: a dial failure otherwise prints the
 // library's untyped, local-time "connection pool: failed to dial after 5 attempts" lines
 // to the process's stderr ahead of the verb's one typed FAILED line. The
 // error they carry is not lost: it is the error the first command returns, which the verb prints.
@@ -214,7 +214,7 @@ func (quietRedis) Printf(context.Context, string, ...interface{}) {}
 
 // silenceRedisLoggerOnce makes the install once per process: redis.SetLogger writes a
 // package-level variable inside go-redis, and two dials in one process writing it again is
-// a data race (the same finding as nova-merge's #1609).
+// a data race, so the install is serialized once per process.
 var silenceRedisLoggerOnce sync.Once
 
 func silenceRedisLogger() { silenceRedisLoggerOnce.Do(func() { redis.SetLogger(quietRedis{}) }) }

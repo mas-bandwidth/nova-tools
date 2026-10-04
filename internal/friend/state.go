@@ -12,12 +12,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
-// The friend's files, under the working directory --dir names: one writer
-// each. The daemon writes Status; the pong verb writes Pong; the
-// coordinator and the session write the queue file (SPEC-FRIEND.md, the
-// files).
+// The friend's files, one writer each. The state files live in the state
+// directory (DefaultStateDir under the home directory, or --state-dir),
+// never on the friend's volume: a background process on this platform may
+// not touch a removable volume without the person's permission (measured
+// 2026-10-04, "operation not permitted" on the mkdir). The daemon writes
+// Status and the log; the pong verb writes Pong. The queue file is the
+// coordinator's and the session's, under the working directory
+// (SPEC-FRIEND.md, the files).
 const (
-	StateDir   = ".nova-friend"
 	StatusFile = "status.json"
 	PongFile   = "pong.json"
 	LogFile    = "deliver.log"
@@ -91,12 +94,16 @@ func (q Queue) Counts() (queue, working int) {
 	return queue, working
 }
 
-func statusPath(dir string) string { return filepath.Join(dir, StateDir, StatusFile) }
-func pongPath(dir string) string   { return filepath.Join(dir, StateDir, PongFile) }
+// DefaultStateDir is where a friend's state files live unless --state-dir
+// names another directory: ~/.nova-friend/<friend>.
+func DefaultStateDir(home, friend string) string { return filepath.Join(home, ".nova-friend", friend) }
 
-// LogPath is the daemon's own log: one line per delivery, on the friend's
-// volume (launchd's own log is elsewhere: Plist).
-func LogPath(dir string) string { return filepath.Join(dir, StateDir, LogFile) }
+func statusPath(stateDir string) string { return filepath.Join(stateDir, StatusFile) }
+func pongPath(stateDir string) string   { return filepath.Join(stateDir, PongFile) }
+
+// LogPath is the daemon's own log in the state directory: one line per
+// delivery (launchd's own log is elsewhere: Plist).
+func LogPath(stateDir string) string { return filepath.Join(stateDir, LogFile) }
 
 // write writes v as JSON to path atomically, making the directory.
 func write(path string, v any) error {
@@ -126,20 +133,20 @@ func read(path string, v any) (found bool, err error) {
 }
 
 // WriteStatus is the daemon's write of its state.
-func WriteStatus(dir string, s Status) error { return write(statusPath(dir), s) }
+func WriteStatus(stateDir string, s Status) error { return write(statusPath(stateDir), s) }
 
 // ReadStatus is what the daemon last wrote; found is false when it never has.
-func ReadStatus(dir string) (s Status, found bool, err error) {
-	found, err = read(statusPath(dir), &s)
+func ReadStatus(stateDir string) (s Status, found bool, err error) {
+	found, err = read(statusPath(stateDir), &s)
 	return s, found, err
 }
 
 // WritePong is the pong verb's record of the answer it sent.
-func WritePong(dir string, p Pong) error { return write(pongPath(dir), p) }
+func WritePong(stateDir string, p Pong) error { return write(pongPath(stateDir), p) }
 
 // ReadPong is the session's last recorded answer.
-func ReadPong(dir string) (p Pong, found bool, err error) {
-	found, err = read(pongPath(dir), &p)
+func ReadPong(stateDir string) (p Pong, found bool, err error) {
+	found, err = read(pongPath(stateDir), &p)
 	return p, found, err
 }
 
@@ -161,8 +168,8 @@ func ReadQueue(dir string) (queue, working int, err error) {
 // Record appends one line to the daemon's log; a log that cannot be
 // written is not a reason to stop delivering, so the error is answered
 // for the status file and nothing else.
-func Record(dir, line string) error {
-	path := LogPath(dir)
+func Record(stateDir, line string) error {
+	path := LogPath(stateDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

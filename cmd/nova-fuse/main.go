@@ -55,14 +55,18 @@ usage:
                                                            stop reading one surface (soft)
   nova-fuse lift quarantine --box <path> [--dry-run] <surface>
                                                            rescind your own quarantine (soft, both directions)
-  nova-fuse lift lockdown                                  REFUSED by design: a blown fuse is REPLACED, only
-                                                           in a live conversation with the person you work with
+  nova-fuse lift lockdown                                  REFUSED by design: the box is replaced: nova-fuse
+                                                           init --box <a new path>, and the harness pointed at
+                                                           it, by the person, never by this tool
   nova-fuse path --box <path>                              echo the box path this invocation would use
 
-exit codes: 0 clear, or done and verified by re-reading the box; 1 blown
-(check), or could not do it / could not verify it; 2 could not run -- missing
-flag, no box at the path or an unreadable one (both treated as BLOWN, never as
-clear), bad invocation, or a lift this tool refuses by design.
+exit codes: 0 clear, or done and verified by re-reading the box; by verb:
+check: 1 blown (a lockdown, or a quarantine on the surface); init, lockdown,
+quarantine, lift quarantine: 1 the write was attempted and re-reading the box
+did not show it; status, path: 0 only; every verb: 2 could not run -- missing
+flag, bad invocation, or a lift this tool refuses by design; check, status,
+quarantine and lift quarantine also answer 2 at a path with no box or an
+unreadable box, never read as clear.
 
 -h or --help after a verb is refused at exit 2, never answered with help:
 exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
@@ -99,9 +103,10 @@ example:
 
 Those six are one sitting, in order: create, look, ask, blow the soft fuse,
 watch the answer change, rescind it. init never replaces an existing box.
-Every verb except init, lockdown, and path
-refuses a path with no box, never read as CLEAR; init makes an empty box
-there and refuses if anything is already there.
+Every verb except init, lockdown, and path refuses a path with no box, never
+read as CLEAR; init makes an empty box there and refuses if anything is
+already there, lockdown makes a blown box there in one write, and path reads
+no box at all.
 `
 
 // boxHint turns this binary's most-hit refusal into a next step. The
@@ -383,7 +388,7 @@ func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer) int
 			}
 			listed = strings.Join(shown, ", ")
 		}
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: nothing to lift; not quarantined (quarantined now: %s)\n",
+		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: nothing to lift; not quarantined (quarantined now: %s)\n",
 			oneline.Field(fuse.Surface(surface)), listed)
 		return 1
 	}
@@ -391,7 +396,7 @@ func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer) int
 	// A dry run is this run's own plan: the same write, checked and not made, so it
 	// refuses exactly where the write would.
 	if err := writeOrPlan(dry, box, b); err != nil {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
+		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
 			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
 		return 1
 	}
@@ -405,12 +410,12 @@ func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer) int
 	// Re-read. The exit code of a remedy is not evidence the remedy worked.
 	after, err := fuse.ReadBox(box)
 	if err != nil {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: written but unverifiable: %s (do not trust it; treat the surface as still quarantined and tell the person you work with)\n",
+		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: written but unverifiable: %s (do not trust it; treat the surface as still quarantined and tell the person you work with)\n",
 			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
 		return 1
 	}
 	if name, _, still := after.Quarantined(surface); still {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: lift did not take; %s is still quarantined on re-read (do not trust this run; tell the person you work with)\n",
+		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: lift did not take; %s is still quarantined on re-read (do not trust this run; tell the person you work with)\n",
 			oneline.Field(fuse.Surface(surface)), oneline.Escape(name))
 		return 1
 	}
@@ -510,13 +515,13 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 	}
 
 	if b.Lockdown != nil {
-		fmt.Fprintf(stderr, "FUSE FAIL lockdown since=%s: %s (hard: all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with the person you work with)\n",
+		fmt.Fprintf(stderr, "FUSE FAILED lockdown since=%s: %s (hard: all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with the person you work with)\n",
 			since(*b.Lockdown), why(*b.Lockdown))
 		return 1
 	}
 
 	if name, f, ok := b.Quarantined(surface); ok {
-		fmt.Fprintf(stderr, "FUSE FAIL quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
+		fmt.Fprintf(stderr, "FUSE FAILED quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
 			oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
 		return 1
 	}
@@ -587,7 +592,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 
 	b.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := writeOrPlan(dry, box, b); err != nil {
-		fmt.Fprintf(stderr, "LOCKDOWN FAIL could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell the person you work with now)\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "LOCKDOWN FAILED could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell the person you work with now)\n", oneline.Err(err))
 		return 1
 	}
 	if dry {
@@ -599,7 +604,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	// is. Re-read, always.
 	after, err := fuse.ReadBox(box)
 	if err != nil || after.Lockdown == nil {
-		fmt.Fprintf(stderr, "LOCKDOWN FAIL written but unverifiable (%s): do not trust it; stop by hand and tell the person you work with now\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "LOCKDOWN FAILED written but unverifiable (%s): do not trust it; stop by hand and tell the person you work with now\n", oneline.Err(err))
 		return 1
 	}
 
@@ -646,7 +651,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	b.Quarantine[surface] = fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := writeOrPlan(dry, box, b); err != nil {
-		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell the person you work with)\n", oneline.Field(surface), oneline.Err(err))
+		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell the person you work with)\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
 	if dry {
@@ -663,7 +668,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	after, err := fuse.ReadBox(box)
 	landed, ok2 := after.Quarantine[surface]
 	if err != nil || !ok2 {
-		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell the person you work with\n", oneline.Field(surface), oneline.Err(err))
+		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell the person you work with\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
 
@@ -695,7 +700,7 @@ func cmdInit(rest []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	exists := func() int {
-		fmt.Fprintf(stderr, "INIT FAIL box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with the person you work with); read it with %s\n", oneline.Field(box), oneline.Escape(boxRemedy("status", box)))
+		fmt.Fprintf(stderr, "INIT FAILED box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with the person you work with); read it with %s\n", oneline.Field(box), oneline.Escape(boxRemedy("status", box)))
 		return 1
 	}
 	// A dry run is this run's own plan: the creation's every check, refusing where
@@ -708,7 +713,7 @@ func cmdInit(rest []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, fs.ErrExist) {
 			return exists()
 		}
-		fmt.Fprintf(stderr, "INIT FAIL box=%s: could not make the box: %s\n", oneline.Field(box), oneline.Err(err))
+		fmt.Fprintf(stderr, "INIT FAILED box=%s: could not make the box: %s\n", oneline.Field(box), oneline.Err(err))
 		return 1
 	}
 	if dry {
@@ -718,7 +723,7 @@ func cmdInit(rest []string, stdout, stderr io.Writer) int {
 	// Re-read. The exit code of a remedy is not evidence the remedy worked.
 	after, err := fuse.ReadBox(box)
 	if err != nil || after.Lockdown != nil || len(after.Quarantine) != 0 {
-		fmt.Fprintf(stderr, "INIT FAIL box=%s: made but unverifiable (%s): do not trust it; tell the person you work with\n", oneline.Field(box), oneline.Err(err))
+		fmt.Fprintf(stderr, "INIT FAILED box=%s: made but unverifiable (%s): do not trust it; tell the person you work with\n", oneline.Field(box), oneline.Err(err))
 		return 1
 	}
 	fmt.Fprintf(stdout, "INIT OK box=%s: an empty box, no fuse blown (verified by re-reading the box)\n", oneline.Field(box))
@@ -756,7 +761,7 @@ func stamp(now time.Time) string { return now.UTC().Format(time.RFC3339) }
 // world-readable and hand-editable on purpose, so on a shared machine these two strings
 // are authored by whoever can write the file. Echoed raw, a newline in a reason forges a
 // SECOND line in the grammar SPEC.md tells callers to scan -- a FUSE OK beneath a real
-// FUSE FAIL -- and an ESC sequence does the same thing to an operator's terminal. The
+// FUSE FAILED -- and an ESC sequence does the same thing to an operator's terminal. The
 // reason is the free-text tail of its line and renders through Escape; the stamp is the
 // value of a since= field and renders through Field, which also escapes whitespace and
 // "=", so that a hand-written stamp cannot pose as a second field on the line.

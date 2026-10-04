@@ -1,8 +1,8 @@
 // Package safepath is the one way a path this tool COMPUTED is removed. It exists
 // because a reaper glob, a lane flag, a slot directory and a job directory are all
 // paths the tool derived rather than paths a person is deleting by hand, and a wrong
-// derivation must not be able to remove an arbitrary directory. Glenn, 2026-09-17:
-// "It is just one mistake away from deleting the whole disk."
+// derivation must not be able to remove an arbitrary directory: this removal is one
+// mistake away from deleting the whole disk.
 //
 // RemoveUnder removes a path only when it is STRICTLY below a root the caller names.
 // It refuses an empty root or path, a root that is the whole disk or the user's home, a
@@ -124,20 +124,21 @@ func (p Policy) RemoveUnder(root, path string) error {
 
 // A PATH IS NOT A NAME FOR A DIRECTORY. IT IS ONE OF ITS NAMES.
 //
-// Johnny, 2026-09-19: "On APFS, `EvalSymlinks(\"/Users/Glenn\")` stays `/Users/Glenn` and
-// string-compare misses `/Users/glenn`. Identify HOME by `os.SameFile`, not by the string."
+// On a case-insensitive volume `EvalSymlinks` keeps the spelling of the path it is given, so a
+// string compare misses the same directory named with different case; identify the home
+// by `os.SameFile`, not by the string.
 //
 // EvalSymlinks is not a canonicaliser. It resolves symlinks and it cleans, and on a
-// case-sensitive volume that happens to be enough, so every check below used to be a string
-// compare and passed on linux. On a case-insensitive one it is not: two spellings that
+// case-sensitive volume that happens to be enough, because there a string compare
+// agrees with what the kernel says. On a case-insensitive one it is not: two spellings that
 // differ in case, or in Unicode normalisation form, are THE SAME DIRECTORY and compare
 // unequal. Case-folding the string is not the fix either, because the normalisation forms
 // differ too, and neither is a property of the path the process can read off.
 //
 // The kernel already answers the question. A directory's identity is its device and inode,
 // which is exactly what os.SameFile compares, and os.Stat follows the links and the
-// spellings to get there. So every place in this package that used to ask "is this string
-// the home / the root / below the root" now asks the file system instead. The sites, all of
+// spellings to get there. So every place in this package that asks "is this string
+// the home / the root / below the root" asks the file system, not the string. The sites, all of
 // them in this file and all of them changed together:
 //
 //  1. refuseUnsafeRoot  - is the root the whole disk, or the home?     (was ==)
@@ -400,8 +401,8 @@ func (p Policy) RemoveUnderRoots(path string, roots ...string) error {
 	return last
 }
 
-// addUserWrite makes the tree writable, best effort, the way the old script's
-// `chmod -R u+w` ran before its `rm -rf`.
+// addUserWrite makes the tree writable, best effort: a directory without the owner
+// write bit refuses to give up its entries, so the bit is added before the removal.
 func addUserWrite(root string) {
 	// ignored: best effort by design (see the comment above); the removal that follows reports what it could not remove
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {

@@ -3,7 +3,6 @@
 package filelock
 
 import (
-	"fmt"
 	"math/rand"
 	"strings"
 	"testing"
@@ -38,13 +37,9 @@ func TestProperty_StampRoundtrip(t *testing.T) {
 		offsetNano := rng.Int63n(1_000_000_000)
 		started := baseTime.Add(time.Duration(offsetSec)*time.Second + time.Duration(offsetNano)).UTC()
 		text, err := started.MarshalText()
-		if err != nil {
-			require.NoError(t, err, err)
-		}
+		require.NoError(t, err, err)
 		var cleanTime time.Time
-		if err := cleanTime.UnmarshalText(text); err != nil {
-			require.NoError(t, err, err)
-		}
+		require.NoError(t, cleanTime.UnmarshalText(text))
 
 		rawLabel := randomString(labelCharset, 40)
 		cleanLabel := strings.ReplaceAll(strings.ReplaceAll(rawLabel, "\r", " "), "\n", " ")
@@ -58,22 +53,11 @@ func TestProperty_StampRoundtrip(t *testing.T) {
 
 		formatted := original.Format()
 		parsed, err := ParseStamp(formatted)
-		if err != nil {
-			require.NoError(t, err, "iteration %d: ParseStamp failed on formatted text %q: %v", i, formatted, err)
-		}
-
-		if parsed.PID != original.PID {
-			require.Equal(t, original.PID, parsed.PID, "iteration %d: PID = %d, want %d", i, parsed.PID, original.PID)
-		}
-		if parsed.Host != original.Host {
-			require.Equal(t, original.Host, parsed.Host, "iteration %d: Host = %q, want %q", i, parsed.Host, original.Host)
-		}
-		if !parsed.Started.Equal(original.Started) {
-			require.Fail(t, fmt.Sprintf("iteration %d: Started = %v, want %v", i, parsed.Started, original.Started))
-		}
-		if parsed.Label != cleanLabel {
-			require.Equal(t, cleanLabel, parsed.Label, "iteration %d: Label = %q, want %q", i, parsed.Label, cleanLabel)
-		}
+		require.NoError(t, err, "iteration %d: ParseStamp failed on formatted text %q: %v", i, formatted, err)
+		require.Equal(t, original.PID, parsed.PID, "iteration %d: PID = %d, want %d", i, parsed.PID, original.PID)
+		require.Equal(t, original.Host, parsed.Host, "iteration %d: Host = %q, want %q", i, parsed.Host, original.Host)
+		require.True(t, parsed.Started.Equal(original.Started), "iteration %d: Started = %v, want %v", i, parsed.Started, original.Started)
+		require.Equal(t, cleanLabel, parsed.Label, "iteration %d: Label = %q, want %q", i, parsed.Label, cleanLabel)
 	}
 }
 
@@ -88,8 +72,6 @@ func TestProperty_JitterBounds(t *testing.T) {
 		jittered := defaultJitter(d)
 		min := d
 		max := d + d/2 + 1
-		if jittered < min || jittered > max {
-			require.Fail(t, fmt.Sprintf("iteration %d: defaultJitter(%v) = %v; want [%v, %v]", i, d, jittered, min, max))
-		}
+		require.True(t, jittered >= min && jittered <= max, "iteration %d: defaultJitter(%v) = %v; want [%v, %v]", i, d, jittered, min, max)
 	}
 }

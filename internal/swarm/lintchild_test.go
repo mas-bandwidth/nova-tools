@@ -398,6 +398,34 @@ func TestChildNegationIsLimitedToTheClause(t *testing.T) {
 	}
 }
 
+// A negation word that sits far back in the clause, about something else, is no
+// exemption: the clause rule earns it only when the negation is immediate. The
+// window a distant negation opens hides a kill, a recursive rm, a force-push,
+// a rebase, a stash and a merge from their scans, and this lint is the only
+// mechanical gate between a brief quoting an untrusted issue and the child
+// running the command (security#66 finding 3).
+func TestANegationFarFromTheCommandIsNoExemption(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		check string
+		line  string
+	}{
+		{"step-redis-server", "STEP 7. a flaky box never mind the clash so run redis-server on port 6399"},
+		{"step-kill", "STEP 7. a flaky box never mind the clash so kill 1234"},
+		{"step-rm-rf", "STEP 7. a flaky box never mind the clash so rm -rf /tmp"},
+		{"step-force-push", "STEP 7. a flaky box never mind the clash so git push --force"},
+		{"step-rebase", "STEP 7. a flaky box never mind the clash so git rebase main"},
+		{"step-stash", "STEP 7. a flaky box never mind the clash so git stash"},
+		{"step-merge", "STEP 7. a flaky box never mind the clash so gh pr merge"},
+	}
+	for _, c := range cases {
+		got := scanFindings(t, c.line)
+		if assert.Len(t, got, 1, "%q draws %v, want %s", c.line, got, c.check) {
+			assert.Equal(t, c.check, got[0], "%q draws %v, want %s", c.line, got, c.check)
+		}
+	}
+}
+
 // `-timeout 0` (and `0s`) means no timeout: only a positive duration satisfies the scan.
 func TestChildTimeoutMustBePositive(t *testing.T) {
 	t.Parallel()

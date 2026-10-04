@@ -32,20 +32,17 @@ type Receipt struct {
 
 	// Closes is the ID of the finding this run answers, when it answers one.
 	//
-	// Dogfood round 5, edge 2: an edge used to be closed by "somebody runs the
-	// verb again, later, and records neither" — ANYBODY, on any run. So on a
-	// bench where two people dogfood the same verb, one of them finding
-	// something and the other happening to run it afterwards and finding
-	// nothing put the first one's finding out of the gate's sight: nobody read
-	// the note, nobody filed the issue, and the ledger row showed ok=yes over
-	// it. A finding is a PERSON'S, and it is answered by a receipt that names
-	// it or by the person who found it running the verb again.
+	// A finding is closed only by a receipt that names it or by the person who
+	// found it running the verb again. Any other later run leaves it open: a
+	// run that happened to find nothing must not put the finding out of the
+	// gate's sight, where nobody reads the note, nobody files the issue, and
+	// the ledger row shows ok=yes over it.
 	Closes string `json:"closes,omitempty"`
 
 	// File is where this receipt was read from. It is not part of the record —
-	// a receipt does not know its own path — and it is here so a strand can be
-	// NAMED: the dogfood pass of 2026-09-18 was told nine receipts matched
-	// nothing and which nine was left to the reader to work out.
+	// a receipt does not know its own path — and it is here so a failure can
+	// name the receipt it came from: a reader told that receipts matched
+	// nothing learns which ones without working it out.
 	File string `json:"-"`
 }
 
@@ -55,10 +52,9 @@ type Receipt struct {
 func (r Receipt) Key() string { return NormalizeKey(r.Tool, r.Verb) }
 
 // edgeMarker is how the family writes an edge in a note: the word, then a
-// colon. The 2026-09-18 pass wrote "Edges: (1) … (2) …" in six receipts and
-// every one of them was recorded with --ok, because the verb DID work and the
-// edges were beside it. Counting only ok=false said open-edges=0 about a bench
-// that had found six things.
+// colon. A receipt records an edge beside a successful run, because the verb
+// did work and the edges are in the notes; counting only ok=false would say
+// open-edges=0 about a bench that found things.
 var edgeMarker = regexp.MustCompile(`(?i)(^|[^a-z])edges?:`)
 
 // receiptIDShape is what an ID looks like: the eight hex characters a content

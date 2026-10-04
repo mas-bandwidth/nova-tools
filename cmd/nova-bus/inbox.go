@@ -190,7 +190,7 @@ type inboxOpts struct {
 	remote, branch string
 	attempts       int
 	noPush         bool
-	// legacy is the --legacy-before line as the flag gave it, or the zero line for no flag.
+	// legacy is the --legacy-before line as the flag gives it, or the zero line for no flag.
 	// What a run actually reads under is effectiveLegacy of this and the cursor's own.
 	legacy       bus.LegacyLine
 	carryHistory bool
@@ -391,7 +391,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				fmt.Fprintf(stderr, "INBOX WALK bounded commits=%d %s\n", limit, boundedWalkRemedy)
 				// THE BOUND ENDS THE RUN, AND THAT INCLUDES THE ADVANCE. This is the one
 				// exit-0 way out of a listing that did not run, and the caller reads exit 0
-				// plus --advance as "the listing is done, move the cursor". It used to hand
+				// plus --advance as "the listing is done, move the cursor". It would hand
 				// back the ZERO reading -- Me is resolved onto it at the END of a listing
 				// that finished -- so the advance ran with an EMPTY LANE, wrote CURSOR at
 				// the checkout ROOT, and left it there for every later run on that bus to
@@ -503,10 +503,10 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 		_, oldNotes, oldUnreadable := bus.SplitLegacy(res.Open, bus.LegacyLine{Before: utcDay(now)})
 		old := oldNotes + oldUnreadable
 		if old > 0 {
-			// THE SUGGESTED LINE IS AN INSTANT, and it used to be tomorrow's DATE. A date
+			// THE SUGGESTED LINE IS AN INSTANT, NOT TOMORROW'S DATE. A date
 			// is midnight at its START, so tomorrow's date is a moment AFTER everything
 			// written today: the line this guard handed a stuck reader made the whole switch
-			// day legacy, and the notes they were being refused for carrying were joined by
+			// day legacy, and the notes they are refused for carrying are joined by
 			// every note anybody sent while they were reading the refusal. Drawn at an
 			// instant, everything on the bus at that moment is history and everything after
 			// it is news, which is the sentence this message actually makes.
@@ -629,7 +629,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				return 2, r
 			}
 			if err := printBodyPage(stdout, page, o.maxBytes); err != nil {
-				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+				fmt.Fprintf(stderr, "INBOX FAILED output: %s\n", oneline.Err(err))
 				return 1, r
 			}
 			r.BodyPrinted, r.BodyBytes, r.BodyGaps, r.Next = page.Frames, page.PrintedBytes, page.GapCount, page.Next
@@ -653,17 +653,17 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 					kind, retry = "over-ceiling", "-"
 				}
 				if _, err := fmt.Fprintf(stdout, "INBOX BODIES GAP id=%s kind=%s retry-max-bytes=%s path=%s\n", oneline.Field(dash(gap.ID)), oneline.Field(kind), oneline.Field(retry), oneline.Field(gap.Path)); err != nil {
-					fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+					fmt.Fprintf(stderr, "INBOX FAILED output: %s\n", oneline.Err(err))
 					return 1, inboxReading{}
 				}
 			}
 			if _, err := fmt.Fprintf(stdout, "INBOX BODIES printed=%d bytes=%d oversize=%d gaps=%d drained=%t complete=%t next=%s\n", r.BodyPrinted, r.BodyBytes, len(page.Gaps), r.BodyGaps, page.Drained, page.Complete, oneline.Field(dash(r.Next))); err != nil {
-				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+				fmt.Fprintf(stderr, "INBOX FAILED output: %s\n", oneline.Err(err))
 				return 1, inboxReading{}
 			}
 		} else {
 			if _, err := printOpenEntries(stdout, res.Fresh, len(res.Fresh)); err != nil {
-				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+				fmt.Fprintf(stderr, "INBOX FAILED output: %s\n", oneline.Err(err))
 				return 1, r
 			}
 		}
@@ -703,7 +703,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 		rows := bus.SortForListing(res.Open)
 		shown, err := printOpenEntries(stdout, rows, o.openMax)
 		if err != nil {
-			fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+			fmt.Fprintf(stderr, "INBOX FAILED output: %s\n", oneline.Err(err))
 			return 1, r
 		}
 		if more := countListable(rows) - shown; more > 0 {
@@ -865,7 +865,7 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 		paths = append(paths, bus.BeatPath(me.Lane))
 	}
 	if err := checkoutReady(busDir, branch, paths); err != nil {
-		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX FAILED %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
 	if dryRun { // every check above is the real run's; everything below writes
@@ -877,11 +877,11 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 		return 1
 	}
 	if err := bus.WriteOpen(busDir, me.Lane, open); err != nil {
-		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.OpenPath(me.Lane)), oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX FAILED %s: %s\n", oneline.Escape(bus.OpenPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
 	if err := bus.WriteCursor(busDir, me.Lane, head, len(open), legacy, now); err != nil {
-		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX FAILED %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
 	// The commit names both paths, so an OPEN file this run REMOVED -- a reader with
@@ -890,14 +890,14 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 	// git to stage a path that is neither on disk nor in the index is exit 128.
 	staged, err := bus.StagePaths(busDir, paths)
 	if err != nil {
-		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX FAILED %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
 	res, err := commit(busDir, me, staged,
 		bus.WithTrailer(me.Slug()+": read to "+head[:shortSHA], bus.TrailerCursor),
 		remote, branch, attempts, noPush)
 	if err != nil {
-		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX FAILED %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		printTranscript(stderr, err)
 		return 1
 	}

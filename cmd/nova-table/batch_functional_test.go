@@ -189,7 +189,7 @@ func TestBatchCLIRejectsUnsupportedFlags(t *testing.T) {
 		}
 		code, _, stderr := runTable(args...)
 		require.EqualValues(t, 2, code, "expected exit code 2 for unsupported flag %s, got %d", flag, code)
-		assert.False(t, !strings.Contains(stderr, "unknown flag") && !strings.Contains(stderr, "flag provided but not defined"), "expected unknown flag in stderr, got: %s", stderr)
+		assert.True(t, strings.Contains(stderr, "unknown flag") || strings.Contains(stderr, "flag provided but not defined"), "expected unknown flag in stderr, got: %s", stderr)
 	}
 }
 

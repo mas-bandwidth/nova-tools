@@ -1,16 +1,19 @@
 // Package tool is the one shape of a nova command. A Tool is its verbs; a Verb
 // declares its flags and returns one value, Out, which is rendered either as
 // typed lines or as the JSON of the same value (out.go). Everything a command
-// used to write for itself lives here once: the verb dispatch, the banner (what
-// the tool is, how it works, its usage lines, its exit codes, a runnable
-// example block), `help` and `<verb> -h`, the `version` verb, the standard
-// flags (--json on every verb; --max, --actor, --op, --redis and --dry-run
-// where a verb opts in), refusing to guess (every problem of one invocation
-// named at once), and the refusal line with its remedy: an unknown verb or
-// flag is answered with the nearest name and the ones there are, and a verb
-// group's -h lists its verbs. A tool may name a default verb (`<tool> <file>`)
-// and its own status words (STALE beside FAIL). A command holds only what its
-// verbs do.
+// writes for itself lives here once: the verb dispatch, the banner (what the
+// tool is, how it works, its usage lines, its exit codes, a runnable example
+// block), `help` and `<verb> -h`, the `version` verb, the standard flags
+// (--json on every verb; --max and --dry-run where a verb opts in), refusing to
+// guess (every problem of one invocation named at once), and the refusal line
+// with its remedy: an unknown verb or flag is answered with the nearest name
+// and the ones there are, and a verb group's -h lists its verbs. A row carries
+// a prose tail (Out.ItemText): a reason or a command renders plain after the
+// row's typed fields and as the `text` field of the row's JSON, so the line and
+// the object stay one value. A tool whose exit 0 already means CLEAR sets
+// HelpRefused, and `<verb> -h` is then a refusal at exit 2 naming `help`, never
+// an answer at exit 0. A tool may name a default verb (`<tool> <file>`) and its
+// own status words (STALE beside FAIL). A command holds only what its verbs do.
 package tool
 
 import (
@@ -52,16 +55,32 @@ type Tool struct {
 	// "" makes every first word a verb and leaves every verb flags-only.
 	Default string
 	// Words are the tool's own status words (STALE, MISSING, UNCHANGED), the
-	// only ones Out.As may put in place of OK or FAIL: at most MaxWords,
-	// upper case, none of OK, FAIL, REFUSED, MORE or NOTE (Problems).
+	// only ones Out.As may put in place of OK or FAILED: at most MaxWords,
+	// upper case, none of OK, FAILED, REFUSED, MORE or NOTE (Problems).
 	Words []string
+	// HelpRefused refuses `<verb> -h` (and --help) at exit 2 instead of
+	// answering it at exit 0: a tool sets it when its exit 0 already means
+	// CLEAR, so a `-h` answer could read as CLEAR (STANDARD §3 names the one
+	// exception). The refusal names `help` as the door. No tool sets it yet.
+	HelpRefused bool
+	// NoJSON, when set, replaces the banner's standard --json sentence's
+	// clause after the colon: a tool whose verbs print their own prose (the
+	// note body a bus carries) says there why they take no --json and pastes
+	// a line they print, so the help and the output cannot drift (ONBOARDING
+	// point 6). Empty keeps the standard sentence.
+	NoJSON string
+	// UsageNote, when set, is printed under the usage block, before the
+	// standard flags sentence: a tool states once, where a reader has just
+	// read the usage lines, the shape of a value several of them name (the
+	// manifest of --file), so no usage line carries it. Empty prints none.
+	UsageNote string
 }
 
 // MaxWords bounds a tool's own status words: a reader learns them all at once.
 const MaxWords = 6
 
 // reserved are the words every tool's lines already give a meaning.
-var reserved = []string{"OK", "FAIL", "FAILED", "REFUSED", "MORE", "NOTE"}
+var reserved = []string{"OK", "FAILED", "REFUSED", "MORE", "NOTE"}
 
 // wordRe is one status word: upper case, digits and dashes after the first letter.
 var wordRe = regexp.MustCompile(`^[A-Z][A-Z0-9-]*$`)
@@ -96,9 +115,11 @@ func (t *Tool) Main() int { return t.Run(os.Args[1:], os.Stdin, os.Stdout, os.St
 
 // Run dispatches one invocation: help, version, or a verb. `<verb> -h` and
 // `help <verb>` print that verb's help on stdout at exit 0 before anything is
-// read or written (the CLI style's rule (b)).
+// read or written (the CLI style's rule (b)); a tool that refuses help
+// (HelpRefused) still answers `help <verb>` by name, while `<verb> -h` is a
+// refusal at exit 2, since its exit 0 would read as CLEAR.
 func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
-	defer t.help(stdout, &code)
+	defer t.help(stdout, stderr, &code)
 	if len(args) == 0 {
 		given := "no verb given"
 		if t.Default != "" {
@@ -113,6 +134,20 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 	switch args[0] {
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			if t.HelpRefused {
+				// Naming help is still help: only the -h flag is refused.
+				var match *Verb
+				for _, v := range t.verbs() { // the longest name the words begin with: "fn load" over "fn"
+					if words := strings.Fields(v.Name); len(args)-1 >= len(words) && strings.Join(args[1:1+len(words)], " ") == v.Name &&
+						(match == nil || len(v.Name) > len(match.Name)) {
+						match = &v
+					}
+				}
+				if match != nil {
+					t.writeHelp(match.Name, match.flags().FlagSet, stdout)
+					return 0
+				}
+			}
 			return t.Run(append(args[1:], "--help"), stdin, stdout, stderr)
 		}
 		fmt.Fprint(stdout, t.Banner())
@@ -207,8 +242,10 @@ func didYouMean(got string, names []string) string {
 // help is deferred by Run: a verb's -h (verbflag's Help) prints that verb's
 // help, quoted from the banner with its flags and the exit codes (the verb's
 // own, Verb.ExitTable, where it states them), then the verb's effect, on
-// stdout at exit 0.
-func (t *Tool) help(stdout io.Writer, code *int) {
+// stdout at exit 0. A tool that refuses help (HelpRefused) answers -h with a
+// refusal on stderr at exit 2 instead: `-h` is not an answer the tool gives,
+// and its exit 0 means CLEAR, so answering it could read as CLEAR.
+func (t *Tool) help(stdout, stderr io.Writer, code *int) {
 	r := recover()
 	if r == nil {
 		return
@@ -217,9 +254,31 @@ func (t *Tool) help(stdout io.Writer, code *int) {
 	if !ok {
 		panic(r)
 	}
+	if t.HelpRefused {
+		name := h.FS.Name()
+		var v *Verb
+		for _, cand := range t.verbs() {
+			if cand.Name == name {
+				v = &cand
+				break
+			}
+		}
+		o := Refuse("-h is not an answer this tool gives, its exit 0 means CLEAR")
+		o.Remedy = t.Name + " help"
+		*code = t.emit(v, o, false, stdout, stderr)
+		return
+	}
+	t.writeHelp(h.FS.Name(), h.FS, stdout)
+	*code = 0
+}
+
+// writeHelp prints one verb's help: its lines quoted from the banner with its
+// flags and the exit codes (the verb's own, Verb.ExitTable, where it states
+// them), then the verb's effect, on stdout.
+func (t *Tool) writeHelp(name string, fs *flag.FlagSet, stdout io.Writer) {
 	effect, detail, exit := Effect("unstated"), "", []string{"exit codes: " + t.ExitTable}
 	for _, v := range t.verbs() {
-		if v.Name == h.FS.Name() {
+		if v.Name == name {
 			detail = strings.Trim(v.Detail, "\n")
 			if v.Effect != "" {
 				effect = v.Effect
@@ -230,7 +289,7 @@ func (t *Tool) help(stdout io.Writer, code *int) {
 		}
 	}
 	var b strings.Builder
-	verbflag.Print(&b, t.Name, t.Banner(), h.FS, exit...)
+	verbflag.Print(&b, t.Name, t.Banner(), fs, exit...)
 	if detail != "" {
 		detail += "\n"
 	}
@@ -240,7 +299,6 @@ func (t *Tool) help(stdout io.Writer, code *int) {
 		text = usage + "\n" + t.Stage + "\n" + rest
 	}
 	fmt.Fprintf(stdout, "%seffect: %s\n", verbflag.Insert(text, detail), effect)
-	*code = 0
 }
 
 // HowLines and HowWidth bound the banner's how-it-works text: a reader takes
@@ -286,7 +344,7 @@ func (t *Tool) Problems() []string {
 	}
 	for _, w := range t.Words {
 		if !wordRe.MatchString(w) || slices.Contains(reserved, w) {
-			p = append(p, fmt.Sprintf("%s: the status word %q is not an upper-case word of its own (OK, FAIL, REFUSED, MORE and NOTE are every tool's)", t.Name, w))
+			p = append(p, fmt.Sprintf("%s: the status word %q is not an upper-case word of its own (OK, FAILED, REFUSED, MORE and NOTE are every tool's)", t.Name, w))
 		}
 	}
 	for _, v := range t.verbs() {
@@ -340,6 +398,9 @@ func (t *Tool) Banner() string {
 		}
 	}
 	fmt.Fprintf(&b, "  %s help [<verb>]\n\n", t.Name)
+	if t.UsageNote != "" {
+		b.WriteString(t.UsageNote + "\n\n")
+	}
 	var own []string
 	for _, v := range t.verbs() {
 		if v.flags().prints {
@@ -350,7 +411,11 @@ func (t *Tool) Banner() string {
 	if len(own) > 0 {
 		json = "Every verb but " + strings.Join(own, ", ") + " takes --json"
 	}
-	b.WriteString(json + ": the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
+	why := "the same result as one JSON object on stdout"
+	if t.NoJSON != "" {
+		why = t.NoJSON
+	}
+	b.WriteString(json + ": " + why + ". A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
 	b.WriteString("example:\n")
 	for _, v := range t.verbs() {
@@ -490,7 +555,7 @@ func (f *Flags) Required(name, wants string) {
 	f.required = append(f.required, [2]string{name, wants})
 }
 
-// Check adds a rule over the parsed flags (c.Problem, c.Want, c.WantCount),
+// Check adds a rule over the parsed flags (c.Problem, c.Want),
 // run with the required flags, --max and the arguments before the verb runs.
 func (f *Flags) Check(rule func(c *Call)) { f.checks = append(f.checks, rule) }
 
@@ -498,21 +563,6 @@ func (f *Flags) Check(rule func(c *Call)) { f.checks = append(f.checks, rule) }
 func (f *Flags) Max() {
 	f.max = true
 	f.Int("max", bounded.Default, "items listed before one MORE line stands for the rest; 0 lists all")
-}
-
-// Actor adds --actor: who is acting, recorded with the change.
-func (f *Flags) Actor() { f.String("actor", "", "who is acting, recorded with the change") }
-
-// Op adds --op: the caller's operation id, for a write retried safely.
-func (f *Flags) Op() {
-	f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
-}
-
-// Redis adds --redis with the tool's seat-first default (the address of the
-// seat the process runs as, else the environment's), so a verb reads
-// c.Want("redis", ...) and an empty address is a refusal, never a guess.
-func (f *Flags) Redis(seatFirst string) {
-	f.String("redis", seatFirst, "the Redis address, host:port (default: the seat's)")
 }
 
 // Prints marks a verb that writes its own output (a payload a program reads,
@@ -558,15 +608,6 @@ func (c *Call) Want(name, wants string) string {
 	v := c.Str(name)
 	if strings.TrimSpace(v) == "" {
 		c.Problem(fmt.Sprintf("--%s is required; it wants %s; refusing to guess", name, wants))
-	}
-	return v
-}
-
-// WantCount is Want for a count whose floor is one.
-func (c *Call) WantCount(name, wants string) int {
-	v := c.Int(name)
-	if v < 1 {
-		c.Problem(fmt.Sprintf("--%s is required and is at least 1, got %d; it wants %s; refusing to guess", name, v, wants))
 	}
 	return v
 }

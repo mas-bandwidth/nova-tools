@@ -462,7 +462,7 @@ func TestTheTickAndAVerbRaceSafely(t *testing.T) {
 		h.clean(fmt.Sprintf("race %d", i))
 		s := h.snap()
 		for _, id := range []string{"s1-1", "s1-2"} {
-			require.False(t, s.Work.Placed(id) != nil && len(dropped.Refused) == 0, "race %d: %s is still on the table and the drop was not refused: %+v", i, id, dropped)
+			require.True(t, s.Work.Placed(id) == nil || len(dropped.Refused) != 0, "race %d: %s is still on the table and the drop was not refused: %+v", i, id, dropped)
 			c := s.Fleet.Card(id + ".w1")
 			require.False(t, c.Placed() && s.Work.Placed(id) == nil, "race %d: a live work card of a dropped primary", i)
 		}

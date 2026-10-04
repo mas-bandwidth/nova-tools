@@ -24,13 +24,12 @@ promise:
 
 Run the lines with the two streams kept apart. Merging them with `2>&1` drops a
 progress line into the middle of a protocol one and makes a correct run look
-like a defect: six of the twenty-one defect readings in the 2026-09-19
-two-bench dogfood run were only that, on three different tools
-(nova-tools#1549). A harness that grades this file grades standard output
+like a defect: some defect readings in a dogfood run were only that, across
+different tools. A harness that grades this file grades standard output
 against the unmarked lines and standard error against the `!` lines, and records
 which stream each expectation was on.
 
-The marker is being applied section by section under nova-tools#1549. Until a
+The marker is being applied section by section. Until a
 section carries it, read an unmarked line as *not yet checked* rather than as
 *checked and found to be standard output*. The one line known today to be
 mismarked by that gap is `DRAFT NOTE …` under [`## nova-bus`](#nova-bus), which
@@ -150,7 +149,7 @@ DRAFT OK path=./drafts/2026-09-12T2015Z-re-bo-ce10834fbfea.md re=bo-ce10834fbfea
 
 **`heard` and `closed` are different answers.** Bo's `receipt` says she read Ada's note without answering it: one line in her lane's `RECEIPTS`, pushed, and the note leaves her carried list. A note is *closed* instead by a `Re:` line naming it, which is what `draft --re` and `send` write for you.
 
-**The cursor is why a read costs the change and not the bus.** Bo's `--advance` records the commit she has read to, in her own lane, and pushes it like a receipt; her first one on a bus holding notes older than today is refused until she says what to do with the history, and `--legacy-now` is that sentence — everything already there is history, everything after it is news. The `INBOX LEGACY` line counts what the line hid.
+**The cursor is why a read costs the change and not the bus.** `--advance` records the commit read to, in the reader's own lane, and pushes it like a receipt; the first advance on a bus holding notes that predate it is refused until the reader says what to do with the history, and `--legacy-now` is that sentence — everything already there is history, everything after it is news. The `INBOX LEGACY` line counts what the line hid.
 
 Ada's first line above is the refusal worth meeting here rather than on a live bus: **the example bus ships a `CURSOR` naming a commit from the history it was written in**, and copying it out gives it a new one, so that commit is not an ancestor of `HEAD`. The tool says so instead of diffing from it, and names the way out. Her `--full --advance` replaces it, and the read after that is `mode=since` over `changed=2` — two changed lane paths. That is the property the whole design is for, and it is visible in one pair of lines.
 
@@ -200,9 +199,9 @@ rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types
 them. The sitting is the canary by hand, with no daemon running: a dry-run
 install prints the plan for bob's agent; a dry-run uninstall the plan to undo
 it; ada, as the coordinator, pings bob with a nonce; bob's session answers
-with `pong` (one note to ada, and the pong file under `./bob`); `wait-pong`
-finds it on the log from bob's own stream; `status` says no daemon has run
-in `./bob` (exit 1). `./` is a directory of the test's own, and so are the
+with `pong` (one note to ada, and the pong file under the home directory,
+`./home/.nova-friend/bob`); `wait-pong` finds it on the log from bob's own
+stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, and so are the
 home directory and the uid the plan names. The run-owned values are the
 message `id=` (a ULID from the store's time), `at=`, and `took=`.
 
@@ -225,19 +224,19 @@ $ nova-friend ping --as ada --to bob --nonce abc123
 PING OK nonce=abc123 id=01M42EJZ1D4JEFR6ESF1YJ3YJA to=bob at=2026-10-04T03:40:12Z
 PING NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123
 
-$ nova-friend pong --as bob --nonce abc123 --dir ./bob --to ada --queue 2 --working 1 --width 4
+$ nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 PONG OK nonce=abc123 to=ada id=01M42EJZ1F8FXB5T0F6EXJCRS1 at=2026-10-04T03:40:12Z
 
 $ nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 WAIT-PONG OK nonce=abc123 from=bob at=2026-10-04T03:40:12Z took=1ms queue=2 working=1 width=4 daemon=false
 
 $ nova-friend status --as bob --dir ./bob
-! STATUS NONE: no daemon has run in ./bob; run: nova-friend install --as bob --harness <h> --dir ./bob
+! STATUS NONE: no daemon has run as bob (no status file in ./home/.nova-friend/bob); run: nova-friend install --as bob --harness <h> --dir ./bob
 ```
 
 ## nova-sandbox
 
-Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/path/to/pool` standing in for yours, and the lines are what this Mac printed on 2026-09-12 with the paths shortened.
+Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/path/to/pool` standing in for yours, and the lines are what the platform prints with the paths shortened.
 
 Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` fields and the `/path/to/pool` fixture below are that Mac's; a Linux bench prints `backend=landlock`, an `abi=` value, and, where the wall is built below the ABI the kernel reports, a `used=` field this transcript has no slot for.
 
@@ -245,7 +244,7 @@ Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` 
 exercises is "the directory of the resolved command" and the probe's child is this
 binary; a transcript that named a shell there would be measuring `/bin`, which the
 profile grants verbatim. `TestTheTranscriptNamesTheToolsOwnBinary` holds that line here.
-The probe sets `HOME` for rule 9's reason: `HOME` must resolve inside a `--write`, and
+The probe sets `HOME` because `HOME` must resolve inside a `--write`, and
 the dispatcher's own `HOME` does not.
 
 ### First run
@@ -279,7 +278,7 @@ The last run is the whole tool: the wall named, the job's own write landed, the 
 
 `nova-sandbox run --go` is what a card that builds Go uses; a plain `go build` inside a disposable volume was measured working with no flags at all once the optional roots' ancestors were granted (`internal/sandbox`, `TestAnOptionalRootsAncestorsAreGranted`).
 
-Measured on macOS 26 arm64, 2026-09-18: a 64m volume made, `sh -c 'echo hi > out; sleep 1'` run inside the wall with the volume as its only writable directory, and the volume gone from `/Volumes` and from `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
+The disposable-volume check makes a volume, runs `sh -c 'echo hi > out; sleep 1'` inside the wall with the volume as its only writable directory, and removes the volume from `/Volumes` and `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
 
 ## nova-secrets
 
@@ -320,7 +319,7 @@ fake-gh
 
 `nova-secrets seat inject` is measured against the real sops and age
 (`cmd/nova-secrets/seat_inject_functional_test.go`, functional tier): a store with
-two seats, the coordinator's holding the new value and the bench's holding the old
+two seats, one holding the new value and the other holding the to-be-replaced
 one; the verb run with the coordinator's key and `--no-pr`; then the seal branch's
 file opens with the bench's key alone and holds the new value beside the names it
 had, the store is back on `main`, and `nova-secrets gate` approves the branch. The
@@ -371,7 +370,7 @@ HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
 The `MORE` line is the same run with the cap lifted, quoted so it can be pasted
-back (#1804) — it is the command that prints the rest, and it carries the
+back — it is the command that prints the rest, and it carries the
 `--identity`, `--paths` and `--kind` without which it would not run at all:
 
 ```
@@ -392,7 +391,7 @@ nova-check hygiene REFUSED: --identity "Ada <<ada@example.com>>": the email carr
 ```
 
 `--kind` is a card kind the toolchain declares, and there is no default one. One
-it does not hold is refused by name rather than left to unlock nothing (#1848):
+it does not hold is refused by name rather than left to unlock nothing:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
@@ -408,8 +407,8 @@ A line below opening `! ` is one this tool writes to standard ERROR: the
 findings go there and the protocol lines go to standard output, and the order a
 terminal interleaves the two in is not the same twice — the second block's last
 finding arrived after the `NOTE` line on one bench and before it on another.
-That is why the block cannot be read as one stream (#1549, and the marker is
-#1570's). `# Stderr: whole` on a command line says the marked lines are ALL it
+That is why the block cannot be read as one stream.
+`# Stderr: whole` on a command line says the marked lines are ALL it
 writes there: these are findings, not narration, and a transcript that quietly
 lost one would be hiding the thing the tool exists to say.
 
@@ -453,13 +452,13 @@ STATUS OK lockdown=clear quarantines=1
 STATUS OK quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token
 
 $ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
-FUSE FAIL quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
+FUSE FAILED quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
 
 $ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
 QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell the person you work with now)
 
 $ nova-fuse check --box ./fuse-box.json a-forum
-FUSE FAIL quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
+FUSE FAILED quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
 
 $ nova-fuse lift quarantine --box ./fuse-box.json a-forum
 LIFT OK quarantine=a-forum was since=2026-09-09T18:27:40Z: a post addressed me and asked for a token
@@ -532,7 +531,7 @@ the examples below. The [quickstart guide](nova-swarm-quickstart.md) shows a
 ### The budget word on the native route
 
 Every `nova-swarm native` launch carries `--tokens <n>` or `--tokens unmetered`
-(SPEC-SWARM rule 13d, issue #1545). Recorded against the fake harness, with the paths
+(SPEC-SWARM). Recorded against the fake harness, with the paths
 abridged:
 
 ```
@@ -552,7 +551,7 @@ do not exist afterwards. `budget=` follows `harness=` on every `NATIVE OK` line.
 
 ### A budget nothing can observe, refused before anything is made
 
-A budget wants a source this tool can read (rule 13d). The source is the worker
+A budget wants a source this tool can read. The source is the worker
 description's `usage`, and `opencode` — read with `sqlite3` — when there is no `--worker`:
 
 ```
@@ -577,7 +576,7 @@ After every refusal above, `<slot>` is empty: nothing was made.
 ### What the line reports against the number
 
 The fake harness writes a **real sqlite database** in the harness's own shape
-(`FAKE-USAGE-DB`, the five token counts in rule 12's order then `usd`, with `-` for a type
+(`FAKE-USAGE-DB`, the five token counts in order then `usd`, with `-` for a type
 the provider did not report). Under `--tokens 50000`, the `NATIVE OK` line's `budget=`:
 
 ```
@@ -948,19 +947,20 @@ redis-server, in `cmd/nova-redis/fn_functional_test.go`.
 
 ```text
 $ nova-redis spill --addr 127.0.0.1:6379 --name note --ttl 10m --value hi
-nova-redis spill REFUSED: --owner is required and may not be empty or hold ':' or whitespace; every key carries an owner prefix; run: nova-redis help spill
+SPILL REFUSED: --owner is required and may not be empty or hold ':' or whitespace; every key carries an owner prefix; run: nova-redis help
 
 $ nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 0s --value hi
-nova-redis spill REFUSED: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help spill
+SPILL REFUSED: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help
 
 $ nova-redis fn load
-nova-redis fn load REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help fn load
+FN-LOAD REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help
 ```
 
 Each refusal names every problem with the line, one line each, and the
-help to read next. `spill --dry-run` with a good line needs no store either: it
-prints `SPILL OK dry-run=true ... written=0` and dials nothing (the banner's
-`example:` block runs it, `cmd/nova-redis/examples_test.go`).
+help to read next. `spill --dry-run` with a good line needs no store either:
+it prints `SPILL OK key=<k> ttl=<d> expires=<t> bytes=<n> store=<a>
+written=0 dry_run=true` and dials nothing (the banner's `example:` block
+runs it, `cmd/nova-redis/examples_test.go`).
 
 ## nova-ci
 
@@ -1039,21 +1039,23 @@ build |     1 |       1 |    0
 
 ## nova-sprint
 
-The first run needs no Redis: `--redis mem:<file>` runs every verb against an
-in-memory twin of the store kept in a file (for learning and tests, not for a
-fleet), and the sitting below is the card flow `nova-sprint help` shows, one
-process a line, with `NOVA_SPRINT_REDIS=mem:sprint.twin` and
-`NOVA_SPRINT_ACTOR=boss` set; the help's last two lines, the tick after the
-merge and where, land the card and show the sprint, and are left out here
-because the time a finished sprint took and the instant where prints are the
-clock's. A verb's move of a card is queued for the work table and shown by the
-next tick's pump (`MOVED drain`), and a member that comes up in a tick is dealt
-to in the tick after it. It is run by
-`cmd/nova-sprint/firstrun_test.go`, in the unit tier, over a twin file in a
-temporary directory (a twin counts its operation ids, `t1`, `t2`, so they read
-the same on every run); the functional tests beside it
-(`cmd/nova-sprint/*_functional_test.go`) run the same verbs against a real
-store. Nothing is normalised: every value on every line reproduces.
+The first run needs no Redis. `--redis mem:<file>` loads an in-memory twin
+from a file and saves it after each command. The twin is for learning and
+tests; commands run one at a time. This transcript follows the card flow in
+`nova-sprint help`, with `NOVA_SPRINT_REDIS=mem:sprint.twin` and
+`NOVA_SPRINT_ACTOR=boss` set. It uses `finish` without `--head` and `merge`
+to record a landing without git. The help's final `tick` moves the card to
+landed, and `where` shows the sprint. Those two commands are omitted here
+because they print clock-dependent times; `cmd/nova-sprint/twin_test.go`
+runs them.
+
+A card's move is queued until the next tick prints `MOVED drain`. A member
+that comes up in one tick receives cards in the next.
+`cmd/nova-sprint/firstrun_test.go` runs this transcript in the unit tier over
+a twin file in a temporary directory. The twin counts its operation ids
+(`t1`, `t2`), so every value reproduces without normalization. The functional
+tests beside it (`cmd/nova-sprint/*_functional_test.go`) run against a real
+store.
 
 ### First run
 
@@ -1186,7 +1188,7 @@ TABLES rows changed: work=1 readers=0 merge=0 fleet=1
 TICK OK state=RUNNING idle=no moved=2 notes=1
 0/2 0.0% -> ETA -  machine: running
 
-$ nova-sprint take --as m1 --limit 2 --epoch 0
+$ nova-sprint take --as m1 --max 2 --epoch 0
 MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
 MOVED s1-2.w1 fleet ready -> working member=m1 gen=1
 PACKET s1-1.w1 attempt=1 gen=1 epoch=0

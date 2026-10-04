@@ -82,10 +82,11 @@ func aclRun(t *testing.T, f *fakeACL, args ...string) (int, string, string) {
 		}
 		return ""
 	}}
-	code := aclVerb(args, &out, &errb, d, func(context.Context, login) (aclServer, func() error, error) {
+	d.aclOpen = func(context.Context, login) (aclServer, func() error, error) {
 		f.opened++
 		return f, func() error { return nil }, nil
-	})
+	}
+	code := run(append([]string{"acl"}, args...), &out, &errb, d)
 	return code, out.String(), errb.String()
 }
 
@@ -175,6 +176,44 @@ func TestACLApplySetsOnlyTheUsersThatDiffer(t *testing.T) {
 	assert.Contains(t, out, "saved=no-acl-file")
 }
 
+// A live user that matches its rendering in every other way but carries the
+// nopass flag is drift: check names it and exits 1; apply refuses to mend it
+// unless a --password-env-for source names the user, and mends it with
+// resetpass and that password when one does.
+func TestANopassUserIsDrift(t *testing.T) {
+	t.Parallel()
+	f := &fakeACL{live: map[string]redisacl.Live{}, cat: redisacl.Catalog{"read": {"get"}, "write": {"set"}}}
+	code, _, errs := aclRun(t, f, append(append([]string{"apply"}, login4...), sourced...)...)
+	require.Equal(t, 0, code, errs)
+
+	l := f.live["bench"]
+	l.NoPass = true
+	f.live["bench"] = l
+
+	code, out, _ := aclRun(t, f, append([]string{"check"}, login4...)...)
+	assert.Equal(t, 1, code, out)
+	assert.Contains(t, out, "ACL DRIFT user=bench role=member nopass=true")
+	assert.Contains(t, out, "ACL CHECK DRIFT users=4 differ=1")
+	assert.Equal(t, 3, strings.Count(out, "ACL OK user="), out)
+
+	f.set = nil
+	code, out, _ = aclRun(t, f, append([]string{"apply"}, login4...)...)
+	assert.Equal(t, 1, code, out)
+	assert.Contains(t, out, "ACL APPLY REFUSED users=4 nopass=bench")
+	assert.Empty(t, f.set, "a refused apply wrote")
+
+	code, out, errs = aclRun(t, f, append(append([]string{"apply"}, login4...), sourced...)...)
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, []string{"bench"}, f.set)
+	assert.Equal(t, "resetpass", f.setRules["bench"][0], "the nopass flag goes before the new password")
+	assert.Equal(t, ">new-secret", f.setRules["bench"][1], "the user gets its password from the named variable")
+	assert.NotContains(t, out, "new-secret")
+
+	code, out, _ = aclRun(t, f, append([]string{"check"}, login4...)...)
+	assert.Equal(t, 0, code, out)
+	assert.Contains(t, out, "ACL OK user=bench")
+}
+
 // Refusals before the store: a missing --addr, an unknown subverb, a login
 // whose password variable is empty; a store failure is one FAILED line.
 func TestACLRefusals(t *testing.T) {
@@ -185,11 +224,11 @@ func TestACLRefusals(t *testing.T) {
 		code int
 		want string
 	}{
-		{"no subverb", []string{}, 2, "no subverb given"},
-		{"unknown", []string{"drop"}, 2, `unknown subverb "drop"`},
+		{"no subverb", []string{}, 2, "acl wants one of its verbs"},
+		{"unknown", []string{"drop"}, 2, `unknown verb "acl drop" in acl`},
 		{"no addr", []string{"check"}, 2, "--addr is required"},
 		{"empty password", []string{"check", "--addr", "127.0.0.1:6379", "--user", "admin", "--password-env", "NOT_SET"}, 2, "NOT_SET is empty"},
-		{"render takes no addr", []string{"render", "--addr", "x:1"}, 2, "unknown flag --addr; the flags of acl render are --json; run: nova-redis help acl render"},
+		{"render takes no addr", []string{"render", "--addr", "x:1"}, 2, "unknown flag --addr; acl render takes no flags"},
 		{"bad password source", []string{"apply", "--addr", "127.0.0.1:6379", "--password-env-for", "bench"}, 2, "--password-env-for wants <user>=<VARIABLE>"},
 	}
 	for _, tc := range cases {
