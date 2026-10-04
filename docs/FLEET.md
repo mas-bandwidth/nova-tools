@@ -34,6 +34,17 @@ nova-config route add pro-a --tier pro --provider openrouter --model x-ai/grok-4
 nova-config apply --as ada
 printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
 chmod +x nova-inventory
+```
+
+A store with ACLs needs its login in the wrapper's environment: `NOVA_SPRINT_REDIS_USER`
+names the user, and `NOVA_SPRINT_REDIS_PASSWORD_ENV` names the variable that holds the
+password, never the password, so the wrapper runs under `nova-secrets exec --only
+NOVA_REDIS_BENCH_PASSWORD --require=NOVA_REDIS_BENCH_PASSWORD -- env
+NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD
+nova-config inventory "$@"`. `nova-update release cycle` runs the wrapper with `--list`
+before any play and refuses with the wrapper's own line when it cannot list.
+
+```
 ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list
 ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_dogfood_receipts=<dir> --check --diff </dev/null 2>&1 | cat
 ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_dogfood_receipts=<dir> </dev/null 2>&1 | cat

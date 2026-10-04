@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
@@ -136,6 +137,28 @@ func cycle(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if receipts == "" {
 		return refusal(errs, "CYCLE", refuse("name the dogfood receipts with --receipts <dir>", "no receipts directory was named and ~/%s does not exist", DefaultReceiptsDir))
 	}
+	// THE INVENTORY LISTS BEFORE ANY PLAY (docs/FLEET.md, "An adopter's
+	// path"; the adopter's report, 2026-10-04). A wrapper that cannot reach
+	// the store exits 1 with its own line, and ansible turns that into the
+	// play's unparsed-inventory failure, pages of it, with the one line that
+	// says why buried in the middle. One --list first, stdin closed, bounded
+	// by the --timeout this verb runs under, through internal/subproc: the
+	// refusal is the wrapper's line and the fix, and no play runs on an
+	// inventory that cannot list.
+	stdout, stderr, listErr := listInventory(ctx, o.inventory)
+	if listErr != nil || !inventoryObject(stdout) {
+		why := firstLine(stderr)
+		if why == "" && listErr != nil {
+			why = listErr.Error()
+		}
+		if why == "" {
+			why = "it printed no inventory object"
+		}
+		fmt.Fprintf(errs, "CYCLE REFUSED: %s; run: nova-update release cycle -h\n", oneline.Err(refuse(
+			"the inventory needs the store's login: NOVA_SPRINT_REDIS_USER and NOVA_SPRINT_REDIS_PASSWORD_ENV, see docs/FLEET.md",
+			"the inventory %s cannot list: %s", o.inventory, why)))
+		return 1
+	}
 	buildArgs, err := json.Marshal(map[string][]string{"nova_release_build_args": {"--incremental", "--gate", "report", DogfoodReasonFlag, o.reason}})
 	if err != nil {
 		return refusal(errs, "CYCLE", err)
@@ -218,4 +241,43 @@ func cycle(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		field(o.version), len(benches), changed, checkTook.Round(time.Second), (total - checkTook).Round(time.Second),
 		total.Round(time.Second), field(logs))
 	return 0
+}
+
+// listInventory runs the --inventory file once with --list, stdin closed (no
+// prompt can wait for a person) and its stdout and stderr captured apart, so
+// the refusal can name the wrapper's own line. The bound is the --timeout the
+// verb runs under: the context cli.go gives cycle, through internal/subproc so
+// a child killed at the deadline cannot hang its caller on a pipe.
+func listInventory(ctx context.Context, path string) (string, string, error) {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stdout := bounded.NewCapture(playCap, cancel)
+	stderr := bounded.NewCapture(playCap, cancel)
+	cmd := subproc.Context(runCtx, path, "--list")
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	return string(stdout.Bytes()), string(stderr.Bytes()), err
+}
+
+// inventoryObject reports whether a listing is a JSON object, the shape an
+// executable inventory answers --list with; anything else (a refusal line, an
+// empty output, an array) cannot be handed to ansible as an inventory.
+func inventoryObject(stdout string) bool {
+	var object map[string]any
+	return json.Unmarshal([]byte(stdout), &object) == nil && object != nil
+}
+
+// firstLine is the first line of a child's stderr, bounded the way oneLine
+// bounds a compiler's output, so the refusal carries the line that says why
+// and never the whole log.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 300 {
+		s = s[:300] + "..."
+	}
+	return s
 }
