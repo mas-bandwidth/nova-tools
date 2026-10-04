@@ -2892,6 +2892,45 @@ in `.md`, `.json`, `.txt` or `.log`), reports and findings. The JSON is `view`
 `VIEW coordinator --needs total=<n>`, then a line a need (`<behind> behind <age> <kind> <id>:
 cards <ids>; evidence <paths>`), at most 20 lines with a `+<n> more` line.
 
+#### coordinator-wake-verb.w1
+
+`nova-sprint watch --wake [--every <d>] [--state <file>] [thresholds]` is the coordinator's wake as a
+verb. It blocks until the first of what the coordinator would otherwise look at by hand, prints
+one line, `WAKE <kind> <RFC3339 time> <evidence>`, and exits 0; the session runs it again. It
+looks every `--every` (20 s) at the store and at the coordinator's bus stream (`NOVA_BUS_REDIS`;
+unset, bus messages do not wake and stderr says so). A look that is due more than one wake gives
+the first of these, and the others wake the next runs:
+
+- `bus`: a message to the coordinator that is not the coordinator's own. By its `kind` when it has
+  one: `request`, `blocker` and `report` wake, `status` and `ack` do not. With no kind, by its
+  subject: no ping, pong, `card <id> dealt`, `card <id> finished`, land or landed, `width <n>`,
+  `RESULT:`, `HOLD`, `DONE`, `ACK` or acknowledged notice.
+- `judgment`: a judgment open now that no judgment wake has named, at most one wake in
+  `--judgment-every` (20 m); one held back by that limit wakes when it ends.
+- `stop`: the machine reads STOPPED (not DONE) and the coordinator's own stop verb did not record
+  it (the machine record's `who` is not the seat's holder, or the machine stopped itself), once per stop.
+- `friend`: a friend with status `down` at two looks in a row, once per time she goes down; a friend
+  held on purpose (`friend down`, status `held`) never counts.
+- `merge`: merging over `--merge-over` (30), or merging with no land pass for `--land-after` (15 m);
+  at most one wake in `--merge-every` (10 m).
+- `backlog`: the fleet's working cards under half the width of the members up, review over
+  `--review-over` (40), merging over `--merging-over` (60), or no card ready with cards waiting; at
+  most one wake in `--backlog-every` (30 m). `merge` and `backlog` are silent while the machine is
+  stopped by the coordinator's stop verb.
+- `check`: `--check` (10 m) since the last wake of any kind.
+
+`--state` names the file that keeps the cursors between runs (default: one a store, under the user
+cache directory): the bus entry id last consumed, the judgments seen, the stop woken, each friend's
+count of looks down and whether she was told, and the time of the last wake of each kind. It is
+written whole, by rename, before the line is printed. The first run, with no file, starts from now:
+the bus from the current instant, the judgments open now seen, the check counted from now. So an
+event that arrives between two runs is woken by the second, and none is woken twice. A look that
+fails is tried again; five in a row end the verb (exit 2). An interrupt before a wake ends it (exit
+1) and the state keeps its cursors. The model is `tla/CoordinatorWake.tla` (`AtMostOnce`, `NoLapse`,
+and two reversed witnesses: a run that does not keep its cursor wakes an event twice, one that
+keeps it past events not woken loses them); the code is `cmd/nova-sprint/watchwake.go`. It is a
+read of the store and a write of the state file, never run by the sprint's server.
+
 ## 12. The driver
 
 `nova-sprint play` plays the outside world on a tick (`--every`), seeded
