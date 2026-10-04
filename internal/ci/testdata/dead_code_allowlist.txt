@@ -17,7 +17,7 @@ internal/nsprint/store 3
 internal/ntable 11
 internal/pkgselect 22
 internal/redisfn 9
-internal/secrets 22
+internal/secrets 6
 internal/sprint 2
 internal/sprint/store 2
 internal/subproc 1
