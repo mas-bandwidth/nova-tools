@@ -1316,3 +1316,7 @@ internal/secrets/storepull_test.go dead: its only subject is the store pull path
 internal/secrets/storepull_cover_test.go dead: its only subject is mpintBytes and wirePublicKey, deleted with the dead storepull.go (dead-pkg-secrets-t2b); nothing it pins remains
 internal/dogfood/cli_cover_test.go dead: its only subject is Keys, deleted with the dead Keys in internal/dogfood/cli.go (dead-code pass 2026-10-04); nothing it pins remains
 cmd/nova-ci/timing_test.go moved to tools/citiming/main_test.go with the timing.go script it guards
+internal/bus/lock_collision_test.go the transient-collision retry of the hand-rolled lock went with the loop when the checkout lock moved onto internal/filelock (its kernel lock has no sentinel handover to wait out)
+internal/bus/lock_recovery_test.go the sentinel stale-lock recovery went with the sentinel when the checkout lock moved onto internal/filelock (the kernel drops the lock when its holder dies, tla/FileLock.tla; internal/filelock's own tests hold the recovery)
+internal/bus/lock_unix_cover_test.go platformTransientLockCollision went with the hand-rolled lock; internal/filelock has no sentinel removal on unix
+internal/bus/lock_windows_test.go the Windows collision classifier went with the sentinel lock; the checkout lock on Windows is internal/filelock's LockFileEx now

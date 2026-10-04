@@ -1,15 +1,15 @@
 package bus
 
 import (
-	"errors"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/stretchr/testify/require"
 )
 
 // One nova-bus per checkout, both ways: the second concurrent run waits and then refuses
@@ -26,24 +26,12 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 	release, err := LockCheckout(clone, 200*time.Millisecond)
 	require.NoError(t, err, "the first run could not take the lock: %v", err)
 
-	clk := newLockStepClock()
-	if _, err := lockCheckoutAt(clone, 200*time.Millisecond, clk); err == nil {
-		require.FailNow(t, "two runs took one checkout's lock at once; they would write one OPEN list between them")
-	} else {
-		for _, want := range []string{"another nova-bus is already running on this checkout", LockName, "run this again when that one has finished"} {
-			require.Contains(t, err.Error(), want, "the refusal does not say %q: %v", want, err)
-		}
-		if strings.Contains(err.Error(), "\n") {
-			require.NotContains(t, err.Error(), "\n", "the refusal is more than one line: %q", err.Error())
-		}
+	_, err = LockCheckout(clone, 200*time.Millisecond)
+	require.Error(t, err, "two runs took one checkout's lock at once; they would write one OPEN list between them")
+	for _, want := range []string{"another nova-bus is already running on this checkout", LockName, "run this again when that one has finished"} {
+		require.Contains(t, err.Error(), want, "the refusal does not say %q: %v", want, err)
 	}
-	// It WAITED before refusing, rather than refusing the instant it found the lock held:
-	// the run it is waiting for is usually a fetch away from finishing. The clock is the
-	// test's, so the 200ms budget is measured in virtual time and costs no wall time.
-	{
-		waited := clk.waited()
-		require.False(t, waited < 150*time.Millisecond, "the second run gave up after %s of virtual time of a 200ms budget", waited)
-	}
+	require.NotContains(t, err.Error(), "\n", "the refusal is more than one line: %q", err.Error())
 
 	// The other way: once the first lets go, the second takes it.
 	release()
@@ -88,18 +76,13 @@ func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 	most := 0
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
-	// Each run takes the lock through the package's clock seam with its own step
-	// clock, so the wait budget is spent in virtual time and costs no wall time: the
-	// fake's Sleep only advances its clock, so the polls burn the budget in instant
-	// steps. The budget is an hour so it outlasts the other run's hold, the critical
-	// section between acquire (internal/bus/lock.go:171) and release, while the
-	// deadline that bounds the wait is set at internal/bus/lock.go:156.
+	// Each run's wait budget is an hour, so it outlasts the other run's hold, the
+	// critical section between acquire and release.
 	for i := range 2 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			clk := newLockStepClock()
-			release, err := lockCheckoutAt(clone, time.Hour, clk)
+			release, err := LockCheckout(clone, time.Hour)
 			if err != nil {
 				errs[i] = err
 				return
@@ -111,7 +94,7 @@ func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 				most = inside
 			}
 			mu.Unlock()
-			clk.Sleep(50 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 			mu.Lock()
 			inside--
 			mu.Unlock()
@@ -125,9 +108,8 @@ func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 }
 
 // The checkout lock stamps its holder's pid into the lock file, a take with wait=0 fails
-// at once with ErrLockHeld and never consults the clock, and once the holder lets go the
-// lock is taken again.
-func TestTheCheckoutLockStampsItsHolderAndAWaitZeroTakeNeverWaits(t *testing.T) {
+// at once while the holder holds, and once the holder lets go the lock is taken again.
+func TestTheCheckoutLockStampsItsHolderAndAWaitZeroTakeRefusesAtOnce(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
@@ -137,24 +119,17 @@ func TestTheCheckoutLockStampsItsHolderAndAWaitZeroTakeNeverWaits(t *testing.T) 
 	require.NoError(t, err, "the first take failed: %v", err)
 	defer release()
 
-	// The holder is stamped with our PID, so a waiter and a refusal can name it.
+	// The holder is stamped with our PID (filelock's stamp), so a waiter and a refusal can name it.
 	gd, err := GitDir(clone)
 	require.NoError(t, err)
-	lockPath := filepath.Join(gd, LockName)
-	holder := ReadLockHolder(lockPath)
-	wantPID := strconv.Itoa(os.Getpid())
-	require.Equal(t, wantPID, holder, "holder = %q, want %q", holder, wantPID)
+	stamp, err := filelock.ReadStamp(filepath.Join(gd, LockName))
+	require.NoError(t, err, "the lock file's holder stamp: %v", err)
+	require.Equal(t, os.Getpid(), stamp.PID, "holder pid = %d, want this process %d", stamp.PID, os.Getpid())
 
-	// A second take with wait=0 must fail immediately with ErrLockHeld, and must not
-	// consult the clock at all: the fake records whether it slept.
-	clk := newLockStepClock()
-	_, err2 := lockFile(lockPath, 0, tryLockFile, clk)
-	require.False(t, err2 == nil, "a second take with wait=0 succeeded, want ErrLockHeld")
-	require.True(t, errors.Is(err2, ErrLockHeld), "err = %v, want errors.Is(err, ErrLockHeld)", err2)
-	{
-		waited := clk.waited()
-		require.Equal(t, time.Duration(0), waited, "a take with wait=0 waited %v, want near-immediate return", waited)
-	}
+	// A second take with wait=0 must fail immediately: no wait, the refusal at once.
+	_, err2 := LockCheckout(clone, 0)
+	require.Error(t, err2, "a second take with wait=0 succeeded, want a refusal")
+	require.Contains(t, err2.Error(), "another nova-bus is already running on this checkout", "err = %v, want the held refusal", err2)
 
 	// Release the lock; the next take succeeds.
 	release()
@@ -163,38 +138,49 @@ func TestTheCheckoutLockStampsItsHolderAndAWaitZeroTakeNeverWaits(t *testing.T) 
 	defer release2()
 }
 
-func TestReadLockHolderFormats(t *testing.T) {
+// The lock file is created through O_EXCL and taken on a descriptor that refuses a
+// symlink, so a symlink standing at the lock path is never locked through: whatever
+// left it there is not worked beside silently.
+func TestTheCheckoutLockRefusesASymlinkAtTheLockPath(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	clone := cloneBus(t, bareBus(t))
+	gd, err := GitDir(clone)
+	require.NoError(t, err, "the clone's git directory: %v", err)
+	target := filepath.Join(t.TempDir(), "elsewhere")
+	require.NoError(t, os.WriteFile(target, nil, 0o644), "staging the symlink's target")
+	lockPath := filepath.Join(gd, LockName)
+	require.NoError(t, os.Symlink(target, lockPath), "staging the symlink at the lock path")
+
+	_, err = LockCheckout(clone, 0)
+	require.Error(t, err, "the lock was taken through a symlink at the lock path")
+	require.Contains(t, err.Error(), "could not be opened", "the refusal names the lock it could not open: %v", err)
+}
+
+// The stamp an earlier binary of this tool wrote -- a bare pid or "pid=<n> at=<stamp>"
+// on one line -- is read by the same reader that reads filelock's own stamp, so a lock
+// left by an old binary still names its holder.
+func TestTheLockFileNamesTheHolderAnEarlierBinaryStamped(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-
-	// Missing file returns "-"
-	{
-		h := ReadLockHolder(filepath.Join(dir, "missing.lock"))
-		require.Equal(t, "-", h, "missing file holder = %q, want \"-\"", h)
+	tests := []struct {
+		name   string
+		record string
+		want   int
+	}{
+		{name: "the old single-line stamp", record: "pid=4242 at=2000-01-01T00:00:00Z\n", want: 4242},
+		{name: "a bare pid", record: "77\n", want: 77},
+		{name: "a record with no pid in it", record: "someone else\n", want: 0},
 	}
-
-	// Empty file returns "-"
-	emptyPath := filepath.Join(dir, "empty.lock")
-	require.NoError(t, os.WriteFile(emptyPath, []byte("  \n"), 0644))
-	{
-		h := ReadLockHolder(emptyPath)
-		require.Equal(t, "-", h, "empty file holder = %q, want \"-\"", h)
-	}
-
-	// Bare PID returns the PID
-	barePath := filepath.Join(dir, "bare.lock")
-	require.NoError(t, os.WriteFile(barePath, []byte("12345\n"), 0644))
-	{
-		h := ReadLockHolder(barePath)
-		require.Equal(t, "12345", h, "bare PID holder = %q, want \"12345\"", h)
-	}
-
-	// "pid=<n> at=<stamp>" format returns the PID
-	mergePath := filepath.Join(dir, "merge.lock")
-	require.NoError(t, os.WriteFile(mergePath, []byte("pid=67890 at=2026-09-11T12:00:00Z\n"), 0644))
-	{
-		h := ReadLockHolder(mergePath)
-		require.Equal(t, "67890", h, "merge format holder = %q, want \"67890\"", h)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(dir, strconv.Itoa(tc.want)+"-"+tc.name)
+			require.NoError(t, os.WriteFile(path, []byte(tc.record), 0o644))
+			st, err := filelock.ReadStamp(path)
+			require.NoError(t, err, "reading the lock file %s: %v", path, err)
+			require.Equal(t, tc.want, st.PID, "the pid read out of %q", tc.record)
+		})
 	}
 }
