@@ -61,3 +61,42 @@ func TestBuildRefusesAMarkdownSymlinkLeaf(t *testing.T) {
 		assert.Equal(t, []string{"a.md"}, c.Files, "the regular file beside the link is still indexed")
 	})
 }
+
+// TestBuildNeverOpensANamedPipe: a FIFO named pipe.md passes the .md suffix
+// test and, without the walk-time type check, fs.ReadFile opens it and blocks
+// forever with no writer — every verb that builds the index hangs
+// (security#76 finding 2, re-filed from security#58 finding 2). The walk
+// refuses it as not a regular file before any open; the wrapper's Open for
+// pipe.md fails the test, so a regression to opening it cannot slip through.
+func TestBuildNeverOpensANamedPipe(t *testing.T) {
+	t.Parallel()
+
+	mapped := fstest.MapFS{
+		"a.md":    &fstest.MapFile{Data: []byte("# a page\n\nbody one\n")},
+		"pipe.md": &fstest.MapFile{Data: []byte("never read\n"), Mode: fs.ModeNamedPipe},
+	}
+	opened := false
+	fsys := openingFS{FS: mapped, onOpen: func(name string) {
+		if name == "pipe.md" {
+			opened = true
+		}
+	}}
+	_, err := Build(fsys, nil)
+	require.Error(t, err, "Build over a corpus holding a named pipe: err %v", err)
+	require.False(t, opened, "pipe.md was opened; the walk should refuse it before any open")
+	assert.Contains(t, err.Error(), "pipe.md", "the refusal names the file: %v", err)
+	assert.Contains(t, err.Error(), "not a regular file", "the refusal names the defect: %v", err)
+}
+
+// openingFS wraps an fs.FS and tells its onOpen about every file opened.
+type openingFS struct {
+	fs.FS
+	onOpen func(name string)
+}
+
+func (o openingFS) Open(name string) (fs.File, error) {
+	if o.onOpen != nil {
+		o.onOpen(name)
+	}
+	return o.FS.Open(name)
+}
