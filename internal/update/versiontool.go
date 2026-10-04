@@ -154,9 +154,7 @@ func reportFlags(f *tool.Flags, report bool) {
 	f.String("file", "", "manifest (required): "+manifestShape)
 	f.String("host", "", "execution bench label")
 	f.String("state", "", "state file for delivery recovery across processes: retry the saved artifact, never prepare again while pending")
-	if report {
-		f.String("snapshot", "", "alias for --state, one release only: sets the same value and prints a NOTE")
-	}
+	f.String("snapshot", "", "alias for --state, one release only: sets the same value and prints a NOTE")
 	f.Bool("draft", false, "print the note only")
 	if report {
 		f.Bool("send", false, "explicit delivery")
@@ -174,7 +172,7 @@ func reportFlags(f *tool.Flags, report bool) {
 
 func reportVerb(c *tool.Call, send bool, env Environment) *tool.Out {
 	state := c.Str("state")
-	if !send && c.Given("snapshot") {
+	if c.Given("snapshot") {
 		state = c.Str("snapshot")
 		fmt.Fprintln(c.Stderr, "NOTE --snapshot is --state")
 	}

@@ -1556,6 +1556,7 @@ UNKNOWN. A row holding a whole argv (`go version`) is run as written.
 Use `nova-update help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. Updates require an explicit `nova-update apply --file ... name`;
 models are listed for the owner to evaluate and pull themselves. No timer is installed.
+For recovery across process death, name `--state`; retries retain the prepared note.
 Version statuses should go to your chosen integrator, with optional Cc;
 participation and updates remain voluntary.
 
