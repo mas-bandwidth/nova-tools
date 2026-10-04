@@ -32,7 +32,8 @@ func applyAs(t *testing.T, dsn string, from, to int) {
 	ctx := context.Background()
 	db, err := sql.Open("pgx", dsn)
 	require.NoError(t, err)
-	defer db.Close()
+	// ignored: a helper's deferred close after its statements; the test's assertions are the report
+	defer func() { _ = db.Close() }()
 	all, err := config.Migrations()
 	require.NoError(t, err)
 	for _, m := range all {
@@ -50,7 +51,8 @@ func execAll(t *testing.T, dsn string, stmts ...string) {
 	t.Helper()
 	db, err := sql.Open("pgx", dsn)
 	require.NoError(t, err)
-	defer db.Close()
+	// ignored: a helper's deferred close after its statements; the test's assertions are the report
+	defer func() { _ = db.Close() }()
 	for _, s := range stmts {
 		_, err := db.ExecContext(context.Background(), s)
 		require.NoError(t, err, "%s", s)
@@ -61,7 +63,8 @@ func ledger(t *testing.T, dsn string) int {
 	t.Helper()
 	db, err := sql.Open("pgx", dsn)
 	require.NoError(t, err)
-	defer db.Close()
+	// ignored: a helper's deferred close after its query; the returned ledger is the report
+	defer func() { _ = db.Close() }()
 	var v int
 	require.NoError(t, db.QueryRowContext(context.Background(), `SELECT max(version) FROM config.schema_migrations`).Scan(&v))
 	return v
