@@ -30,7 +30,7 @@ func inventoryHarness(t *testing.T, n int) *harness {
 		h.redis.views[config.KindMachine][fmt.Sprintf("bench-%02d", i)] = config.View{"user": "user-a", "seat": "seat-a", "slots": "8", "runners": "0"}
 	}
 	h.redis.revs[config.KindMachine] = 1
-	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}
+	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}}
 	return h
 }
 
@@ -56,7 +56,7 @@ func TestInventoryPrintsTheAppliedState(t *testing.T) {
 	t.Parallel()
 	h := inventoryHarness(t, 2)
 	h.env["NOVA_MACHINE"] = "bench-01"
-	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"store": "bench-02", "coordinator": "bench-01", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}
+	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"store": "bench-02", "coordinator": "bench-01", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}}
 	h.redis.views["loop"] = map[string]config.View{"member-02": {
 		"name": "member-02", "machine": "bench-02", "argv": `["nova-swarm","member"]`, "seat": "seat-a", "keys": "API_KEY",
 		"every": "0", "keepalive": "true", "enabled": "true", "log": "~/nova-bench/loops/member-02.log",

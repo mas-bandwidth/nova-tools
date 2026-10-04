@@ -37,7 +37,7 @@ var kindExamples = []struct{ kind, verb, line string }{
 	{"machine", "show", "nova-config machine show m1 --file try.json"},
 	{"machine", "history", "nova-config machine history m1 --file try.json"},
 	{"machine", "width", "nova-config machine width m1 --file try.json"},
-	{"fleet", "set", "nova-config fleet set --coordinator m1 --store m1 --loops_dir ~/nova-bench/loops --as a1 --file try.json"},
+	{"fleet", "set", "nova-config fleet set --coordinator m1 --store m1 --as a1 --file try.json"},
 	{"fleet", "show", "nova-config fleet show --file try.json"},
 	{"fleet", "history", "nova-config fleet history --file try.json"},
 	{"friend", "add", "nova-config friend add f1 --slots 4 --tiers flash,pro --roles builder --as a1 --file try.json"},

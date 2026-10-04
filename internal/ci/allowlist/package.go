@@ -15,8 +15,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // Packages is a counted ledger split by source directory or explicit package.
@@ -163,7 +161,7 @@ func CheckPackagesCounted(r Reporter, p *Packages, measured map[string]int) Resu
 // CheckPackagesCountedMode performs a whole-ledger preflight before any update
 // write. An unlisted key, raised count, invalid key, or raised ceiling in any
 // shard refuses all writes; a permitted update replaces only changed shards.
-// Each replacement is atomic through atomicfile. Multiple replacements are
+// Each replacement is atomic through WriteAtomic. Multiple replacements are
 // not a single crash-atomic transaction.
 func CheckPackagesCountedMode(r Reporter, p *Packages, measured map[string]int, update bool) Result {
 	r.Helper()
@@ -282,7 +280,7 @@ func CheckPackagesCountedMode(r Reporter, p *Packages, measured map[string]int, 
 		return result
 	}
 	for _, change := range plans {
-		if err := atomicfile.Write(filepath.Clean(change.list.Path), []byte(change.text), 0o644, atomicfile.ExactMode()); err != nil {
+		if err := WriteAtomic(change.list.Path, change.text); err != nil {
 			r.Errorf("%s: the update could not write the package shard: %v", change.list.Path, err)
 			return result
 		}

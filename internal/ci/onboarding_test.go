@@ -45,6 +45,14 @@ import (
 // stays because the next tool with open design work will want it.
 var notYetInTheFleetBuild = map[string]string{}
 
+func TestCommandReferenceStartsWithItsTitle(t *testing.T) {
+	t.Parallel()
+
+	text := readFile(t, filepath.Join(repoRoot(t), "docs", "CLI.md"))
+	first, _, _ := strings.Cut(text, "\n")
+	assert.Equal(t, "# Command reference", first, "restore the command reference title; command rows belong in their tool's table")
+}
+
 // shipsInNoFleetBuild is the note a not-yet-shipped tool's docs/TESTS.md
 // section must carry beside its transcript.
 const shipsInNoFleetBuild = "ships in no fleet build"

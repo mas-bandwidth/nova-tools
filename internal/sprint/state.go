@@ -286,9 +286,17 @@ type Snapshot struct {
 	// Coordinator is the sprint's coordinator: judgments are theirs to
 	// answer. Actor is who runs the step (a request's Who, when it names
 	// none).
-	Coordinator, Actor          string
+	Coordinator, Actor string
+	// SeatGeneration is the seat's generation as read with the coordinator
+	// (seat.go): FirstSeatGeneration until the seat first moves.
+	SeatGeneration              uint64
 	Work, Readers, Merge, Fleet *Table
 	Open                        []Open
+	// Answered is who answered each judgment the step names in --answers that
+	// is no longer open (the store's record, read for the ids the step asks
+	// about; absent for an id never a judgment or still open): one the machine
+	// answered is a note, not a refusal (answered).
+	Answered map[string]string
 	// Acked is the tick's conditions the coordinator acknowledged, held
 	// while they hold (Acknowledged).
 	Acked []Open
@@ -333,6 +341,10 @@ type Snapshot struct {
 	// with the routes; the deal writes them on every work card (gateFields), and both ""
 	// is no gate decision (docs/SPEC-SPRINT.md section 5, the gate verdict).
 	DecideGateFlaky, DecideGatePreexisting string
+	// RulesOff is the rules the machine does not answer judgments by (nova-config's sprint
+	// row, answer_rules_off), read with the routes (docs/SPEC-SPRINT.md section 8, answered by
+	// rule; rules.go).
+	RulesOff []string
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.

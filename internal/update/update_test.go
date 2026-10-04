@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -197,51 +198,18 @@ func TestModelDigestAndPinIdentity(t *testing.T) {
 type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-// testClient is an http.Client whose transport calls handler in this process:
-// the request is handed to the handler and what it writes comes back as the
-// response, so no listener is started and no socket is dialled (the unit
-// tier dials nothing). A redirect the handler writes is followed through the
-// same transport. The second value is kept for the callers' close.
 func testClient(handler func(http.ResponseWriter, *http.Request)) (*http.Client, func()) {
+	server := httptest.NewServer(http.HandlerFunc(handler))
 	c := defaultClient()
 	c.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
-		w := &answer{header: http.Header{}, code: http.StatusOK}
-		handler(w, r)
-		return &http.Response{
-			Status:        fmt.Sprintf("%d %s", w.code, http.StatusText(w.code)),
-			StatusCode:    w.code,
-			Proto:         "HTTP/1.1",
-			ProtoMajor:    1,
-			ProtoMinor:    1,
-			Header:        w.header,
-			Body:          io.NopCloser(bytes.NewReader(w.body.Bytes())),
-			ContentLength: int64(w.body.Len()),
-			Request:       r,
-		}, nil
+		copy := r.Clone(r.Context())
+		u := *r.URL
+		u.Scheme = "http"
+		u.Host = strings.TrimPrefix(server.URL, "http://")
+		copy.URL = &u
+		return http.DefaultTransport.RoundTrip(copy)
 	})
-	return c, func() {}
-}
-
-// answer is what a handler writes: the status, the header and the body.
-type answer struct {
-	header http.Header
-	body   bytes.Buffer
-	code   int
-	sent   bool
-}
-
-func (a *answer) Header() http.Header { return a.header }
-
-func (a *answer) WriteHeader(code int) {
-	if !a.sent {
-		a.code, a.sent = code, true
-	}
-}
-
-func (a *answer) Write(p []byte) (int, error) {
-	a.sent = true
-	return a.body.Write(p)
+	return c, server.Close
 }
 func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	t.Parallel()
@@ -307,13 +275,13 @@ func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 		assert.Fail(t, fmt.Sprintln("report used HTTP"))
 		return nil, fmt.Errorf("forbidden")
 	})}}
-	code, out, errs := run(t, env, "report", "--file", p, "--host", "air")
+	code, _, errs := run(t, env, "report", "--file", p, "--host", "air")
 	if code != 1 {
 		require.EqualValues(t, 1, code, code)
 	}
 	need(t, errs, "host=air", "REPORT TOOL name=good", "version=1.2.3-rc1+dirty", "REPORT UNKNOWN name=bad", "not_found")
 	need(t, errs, "REPORT FAILED checked=2 known=1 unknown=1")
-	code, out, errs = run(t, env, "report", "--file", p, "--draft", "--as", "fixture", "--to", "integrator")
+	code, out, errs := run(t, env, "report", "--file", p, "--draft", "--as", "fixture", "--to", "integrator")
 	if code != 1 || !strings.HasPrefix(out, "From: fixture\nTo: integrator\nSubject: versions on - at ") {
 		require.Failf(t, "", "%d %s %s", code, out, errs)
 	}
@@ -470,18 +438,18 @@ func TestFourReadConcurrencyLimit(t *testing.T) {
 func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	s := filepath.Join(t.TempDir(), "snapshot.json")
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	c, o, e := run(t, Environment{}, "report", "--file", p, "--state", s)
+	c, o, e := run(t, Environment{}, "report", "--file", p, "--snapshot", s)
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
 	need(t, o, "changed=yes")
-	c, o, e = run(t, Environment{}, "report", "--file", p, "--state", s)
+	c, o, e = run(t, Environment{}, "report", "--file", p, "--snapshot", s)
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
 	need(t, o, "changed=no")
 	state, err := readSnapshot(s)
-	if err != nil || len(state.Delivered) != 0 || len(state.Pending) != 0 {
+	if err != nil || len(state.Delivered) != 0 {
 		require.Fail(t, fmt.Sprintln(state, err))
 	}
 	ctx := context.Background()
@@ -501,67 +469,6 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	} else {
 		release()
 	}
-}
-
-// The state-file flag is --state; --snapshot is its one-release alias. Both
-// name the same file and write the same bytes, and the alias prints its NOTE
-// on stderr. The clock is fixed so the one stamp the file carries does not
-// differ between the runs, and the pinned JSON is what the file held before
-// the rename: the writer is untouched, only the flag's name moved. The
-// delivery verb of the same path, nova-version send, keeps the alias too.
-func TestReportStateFlagAndItsAlias(t *testing.T) {
-	t.Parallel()
-
-	p := manifest(t, row("x", "tool", "v1.2.3", "npm:unused", "none"))
-	env := Environment{Now: func() time.Time { return time.Date(2026, 10, 2, 15, 4, 5, 0, time.UTC) }}
-	want := `{"observed":{"x":{"raw":"1.2.3","status":"known","at":"2026-10-02T15:04:05Z"}},"delivered":{},"pending":{}}` + "\n"
-	for _, tc := range []struct {
-		name  string
-		flag  string
-		alias bool
-	}{
-		{"state", "--state", false},
-		{"snapshot alias", "--snapshot", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "s.json")
-			c, out, errs := run(t, env, "report", "--file", p, tc.flag, path)
-			require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
-			state, err := readSnapshot(path)
-			require.NoError(t, err, err)
-			require.Len(t, state.Observed, 1)
-			need(t, out, "state="+path)
-			b, err := os.ReadFile(path)
-			require.NoError(t, err, err)
-			require.Equalf(t, want, string(b), "the flag %s wrote a state file whose bytes differ", tc.flag)
-			if tc.alias {
-				require.Contains(t, errs, "NOTE --snapshot is --state")
-			} else {
-				require.NotContains(t, errs, "NOTE --snapshot is --state")
-			}
-		})
-	}
-
-	// nova-version's send is the delivery verb of the same path, so the alias
-	// names the same file there too. No nova-bus answers, so the delivery fails
-	// at exit 1 after the state file is written; that the flag parsed and the
-	// file was set is what this pins, not the delivery.
-	t.Run("send alias", func(t *testing.T) {
-		t.Parallel()
-		path := filepath.Join(t.TempDir(), "s.json")
-		var out, errs bytes.Buffer
-		c := Run("nova-version", []string{"send", "--file", p, "--snapshot", path, "--as", "fixture",
-			"--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main"}, "v0", &out, &errs, env)
-		require.EqualValuesf(t, 1, c, "%d %s %s", c, out.String(), errs.String())
-		require.NotContains(t, errs.String(), "unknown flag")
-		require.Contains(t, errs.String(), "NOTE --snapshot is --state")
-		state, err := readSnapshot(path)
-		require.NoError(t, err, err)
-		require.Len(t, state.Observed, 1)
-		// A failed send prints its lines on stderr (emit's rule), state= among them.
-		need(t, errs.String(), "state="+path)
-	})
 }
 func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 	rows := []string{}

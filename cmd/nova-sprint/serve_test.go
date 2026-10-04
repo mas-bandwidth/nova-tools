@@ -162,7 +162,7 @@ func TestTheServerRunsWorkersVerbsOnly(t *testing.T) {
 	log := func() string { return r.boss("nova-sprint log") }
 	before := log()
 	for name, argv := range map[string][]string{
-		"a coordinator's verb":                      {"add", "--stream", "s1", "--count", "1"},
+		"a coordinator's verb":                      {"add", "--stream", "s1", "--count", "1", "--one"},
 		"clear":                                     {"clear", "--confirm", "sprint"},
 		"another fleet verb":                        {"fleet", "up", "m1", "--width", "64"},
 		"no verb at all":                            {},
@@ -534,7 +534,7 @@ func TestTheServerDoesNotListenOnEveryNetwork(t *testing.T) {
 // coordinator got no answer at all while the server lived on.
 func TestBriefWithRulesThroughTheServer(t *testing.T) {
 	t.Parallel()
-	r := newServerRig(t, "init --readers reader-a,reader-b --members m1", "add --stream a --count 1 --brief-file "+writeBrief(t, "the old work"))
+	r := newServerRig(t, "init --readers reader-a,reader-b --members m1", "add --stream a --count 1 --one --brief-file "+writeBrief(t, "the old work"))
 	srv := httptest.NewServer(localHandler{r.a})
 	t.Cleanup(srv.Close)
 	dir := t.TempDir()

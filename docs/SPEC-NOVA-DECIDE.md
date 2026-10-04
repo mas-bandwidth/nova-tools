@@ -95,6 +95,12 @@ its decision's `acts`.
 - Loading refuses, by file and line, a line that does not parse, a decision id
   recorded twice, an outcome or an act for an id with no decision before it, and a
   second outcome line for one id (a hand-edited record never has its last line win).
+- Loading refuses, by file, line and question, an answer whose probability is
+  below 0, above 1, or not a number. A hand-edited record does not calibrate
+  until that line is fixed.
+- Replaying a recorded decision (`Make`, `MakeAll`, `Gate`) holds its answers to
+  the schema like a fresh ask (`Schema.Check`); answers that do not fit the schema
+  are refused naming the op id and the failing rule, and do not route.
 
 The record's states are few and plain (a decision recorded, then labelled once; its
 acts appended) and the one writer is the lock's holder. Its model is owed: `tla/DecideRecord.tla`,
@@ -102,6 +108,16 @@ with actions Ask, Replay, Attach and Act and the invariants above (one decision 
 id, at most one outcome per decision, an outcome only after its decision), checked
 by TLC on a bench and recorded in the TLC records; it lands with the export verb,
 the first reader of the record beside calibrate.
+
+### backfill-2026-10-04.w1: importing finished decisions as labelled records
+
+`nova-decide import --record <file>` loads decisions already made as labelled records, so they can be read, calibrated and trained on. It never asks a backend and duplicates none of the verbs: a record it writes is a decision (named `import-<kind>`, backend `import`, empty answers, the source text as the state) with its label attached as the outcome, the same lines `outcome` writes. The sources:
+
+- `--verdicts <glob>`: heavy-read `VERDICT.md` files; the first word of the first line (ACCEPT, REWORK, DROP-OR-RECUT) is the label, kind `verdict`.
+- `--judgments <dir>` with `--log <file>`: the judgment files (`<judgment id>.md`), each labelled by the verb of the last line of a `nova-sprint log --json` export whose `answers` names the judgment, kind `judgment`. A judgment nothing answers is counted as `unanswered` and not recorded.
+- `--reports <glob>`: `REPORT.md` files whose first line is `Verdict: HOLD`, label `HOLD`, kind `report`.
+
+An item's id is its kind and the hash of its absolute source path and content, so a second import adds nothing and an edited source is a new item. The import is one write under the record's lock. It prints `IMPORT OK` with `<kind>_new` and `<kind>_existing` per kind, and `unanswered`. The model is `internal/decide/import.go`; the pin is `TestImportIsIdempotentAndCountsPerKind`.
 
 ## 5. Calibration
 
@@ -572,6 +588,55 @@ blocked and cannot-ask judgments all stay under the bar. The measure is in-sampl
 was chosen on these same 100 judgments, against the coordinator's own verbs (the night's
 runaway reworks among them), so it is a starting point and not an independent
 calibration; the bar ships empty until independent labels calibrate it.
+
+### decision-record.w1: the coordinator's own answers
+
+Every judgment answered with a verb that takes `--answers` (accept, rework, return, drop,
+ask, and an accept over a reader's verdict), or with `ack` or `wait`, appends one record of
+decision kind `judgment-answer` to `<decide dir>/judgment-answer.jsonl`, the file the
+server's `run --decide` dir holds, by the verb that gave it, one record per judgment and
+card (a group answered at once is one record each). The record is the existing record
+format (section 4): `state` is the judgment's state as the judgment decision is asked it
+(`JudgmentState`), the answer `verb` is the verb given with probability 1, the backend is
+`coordinator:<actor>`, and the inputs are `card`, `note`, `kind` (the judgment's type),
+`verb`, `reason` (the `--reason` text, or a wait's time), `fix` (the `--fix` text), `actor`,
+`evidence` (the paths the judgment text names, one a line) and `broken_reads` and `failed`,
+the card's counters when it was answered. The id is `<card>@answer.<note>.<12 hex of the
+state, verb, reason and fix>`, so the same answer given again is the same record.
+
+The outcome is attached by the server's decide lane, once, as `nova-decide outcome` does:
+`landed` when the card lands, `dropped` when it leaves the table, `bounced` when more reads
+have found it broken or more finishes have failed than its counters at the answer (the next
+read broken, the next finish failed). A card still standing with nothing new has none yet,
+and the lane watches its card, placed or not, until it does. A record write that fails
+never fails the verb: it is a NOTE line. Nothing is recorded when the verb moved nothing,
+for a card the step refused, or when no decide lane keeps a record (a verb run with no
+server). The record is the label set `nova-decide` evaluates, shadows and trains the
+judgment decision on; it duplicates no verb of `nova-decide`.
+
+### jev-shadow-judgments.w1: Jev answers every judgment in shadow
+
+The server's decide lane (`run --decide <dir>`) asks the judgment decision (the one `answer
+--decide` uses, `JudgmentSchema`) of every open routine judgment as it is raised, through the
+lane's backend, and appends the answer to `<dir>/judgment-shadow.jsonl`. It is the existing
+record format (section 4) under decision name `judgment-shadow`: `state` is the judgment's state
+as the judgment decision is asked it, every answer carries `method: "shadow"` beside its
+probabilities, and the inputs are `card`, `note`, `kind` (the judgment's type), `verb` (the
+shadow verb) and `shadow` (`true`). The id is `<card>@shadow.<note>.<12 hex of the state>`, so a
+judgment is shadowed once. A shadow record has no act: nothing is applied, written on the work
+table or listed for the coordinator, and a judgment that names a provider's refusal for want of
+payment is not asked, as the real decision does not ask it. A failed ask is a DECIDE FAILED line
+and is asked again on the next round; with no backend nothing is asked. The state carries no log
+lines, since the lane holds the work table and not the card's log.
+
+When the real answer arrives (the `judgment-answer` record above) the pair is joined by `note`
+and `card`. `nova-decide findings --record <file> --shadow <judgment-shadow.jsonl> --real
+<judgment-answer.jsonl>` prints, besides its findings, one `shadow` item per judgment kind
+(count of joined pairs, agreement percent, how many of the pairs had the shadow verb at p 0.95
+and above and the agreement percent among those) and `shadow_pending`, the shadow records with
+no real answer yet. Verbs are compared as recorded: the shadow verb is one of the judgment
+decision's, the real one any of the answer verbs, so a `recut` or `hold` never agrees. It
+duplicates no verb of `nova-decide`.
 
 ## 14. The brief decision: card quality before add
 

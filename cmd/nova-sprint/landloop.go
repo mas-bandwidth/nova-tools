@@ -46,6 +46,8 @@ func (a *app) landLoop(ctx context.Context, addr string, stdout io.Writer) {
 // when it is due: a round with nothing queued to merge, or PruneEvery branches waiting,
 // and no failed cleanup waiting out PruneRetry. Its PRUNE lines are printed as land's.
 // A stop of the loop flushes nothing: what is still queued then stays on origin.
+// Then, still outside the landing, it runs the promote step when one is armed
+// (promote.go). Nil arms nothing, so run --land does not open a pull request.
 func (a *app) landRound(ctx context.Context, addr string, more []string, stdout io.Writer) int {
 	code, idle := a.landOnce(ctx, addr, more, stdout)
 	if a.prune.due(idle, a.now()) {
@@ -54,6 +56,7 @@ func (a *app) landRound(ctx context.Context, addr string, more []string, stdout 
 			fmt.Fprintf(stdout, "%s %s\n", at, oneline.Escape(r.line(false)))
 		}
 	}
+	a.promoteOnTick(ctx, stdout)
 	return code
 }
 

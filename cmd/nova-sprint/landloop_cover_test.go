@@ -44,7 +44,7 @@ func TestLandloopCoverRounds(t *testing.T) {
 			if tc.backend != nil {
 				ta.a.backend = tc.backend
 			}
-			ctx, cancel := context.WithCancel(t.Context())
+			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			slept := 0
 			ta.a.sleep = func(time.Duration) { slept++; cancel() }

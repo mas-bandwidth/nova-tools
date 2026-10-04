@@ -12,15 +12,15 @@ import (
 // stops being a diff somebody can revert and starts being binaries on every
 // bench in the fleet, so the ranges that touch the parts of this estate a
 // mistake cannot be taken back from -- the secret store, the sandbox that holds
-// a worker, the image every bench boots -- are not cut on the judgement of
-// whoever is at the keyboard.
+// a worker, the image every bench boots, the scripts the coordinator runs
+// unattended -- are not cut on the judgement of whoever is at the keyboard.
 // They are cut after he has read them, and the read is NAMED on the command
 // line so the receipt says who vouched for it.
 //
 // Each entry is a DIRECTORY PREFIX, trailing slash included, and the slash is
-// load-bearing: `internal/secrets` without it would also catch
-// `internal/secrets<sibling>/`, and a list that classifies by accident is a
-// list nobody can reason about. Matching is by prefix and by nothing else -- no
+// load-bearing: `internal/secrets` without it also catches
+// `internal/secretsanta/`, and a list that classifies by accident is a list
+// nobody can reason about. Matching is by prefix and by nothing else -- no
 // guessing from a file name, no substring anywhere in the path.
 //
 // docs/SPEC-RELEASE.md carries the same list in the same order, and
@@ -34,6 +34,7 @@ var SensitivePaths = []string{
 	"infra/image/",
 	"internal/sandbox/",
 	"internal/secrets/",
+	"scripts/coordination/",
 }
 
 // SensitiveShape is the list in one phrase, for the help and for a refusal that

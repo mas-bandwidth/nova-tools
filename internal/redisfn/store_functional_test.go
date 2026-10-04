@@ -82,13 +82,13 @@ func answering(name, text string) string {
 	return "redis.register_function('" + name + "', function(keys, args) return '" + text + "' end)\n"
 }
 
-func TestTheLoadPutsTheSourceOnTheStoreAndItsFunctionsAnswer(t *testing.T) {
+func TestLoadPutsTheSourceOnTheStoreAndItsFunctionsAnswer(t *testing.T) {
 	t.Parallel()
 	c := store(t)
 	ctx := context.Background()
-	receipt, err := two().Ensure(ctx, c)
-	if err != nil || receipt != (Receipt{Library: "lib_one", Outcome: Loaded, Digest: twoDigest}) {
-		require.Failf(t, "", "Ensure = %+v %v", receipt, err)
+	digest, err := two().Load(ctx, c)
+	if err != nil || digest != twoDigest {
+		require.Failf(t, "", "Load = %q %v, want %q", digest, err, twoDigest)
 	}
 	if fa, fb := call(t, c, "fa"), call(t, c, "fb"); fa != "fa" || fb != "fb" {
 		require.Failf(t, "", "fa answers %q and fb %q", fa, fb)
@@ -99,19 +99,19 @@ func TestTheLoadPutsTheSourceOnTheStoreAndItsFunctionsAnswer(t *testing.T) {
 	}
 }
 
-func TestTheLoadTwiceLeavesWhatOneLoadLeft(t *testing.T) {
+func TestLoadTwiceLeavesWhatLoadOnceLeft(t *testing.T) {
 	t.Parallel()
 	c := store(t)
 	ctx := context.Background()
 	lib := two()
-	first, err := lib.Ensure(ctx, c)
-	if err != nil || first.Outcome != Loaded {
-		require.Failf(t, "", "the first Ensure = %+v %v", first, err)
+	first, err := lib.Load(ctx, c)
+	if err != nil {
+		require.NoError(t, err, err)
 	}
 	after := held(t, c)
-	second, err := lib.Ensure(ctx, c)
-	if err != nil || second.Outcome != Unchanged || second.Digest != first.Digest {
-		require.Failf(t, "", "the second Ensure = %+v %v, the first gave %+v", second, err, first)
+	second, err := lib.Load(ctx, c)
+	if err != nil || second != first {
+		require.Failf(t, "", "the second Load = %q %v, the first gave %q", second, err, first)
 	}
 	if now := held(t, c); now != after || now != "lib_one(fa,fb)" {
 		require.Failf(t, "", "after two loads the store holds %s, after one %s", now, after)
@@ -124,19 +124,19 @@ func TestTheLoadTwiceLeavesWhatOneLoadLeft(t *testing.T) {
 	}
 }
 
-func TestALoadOfChangedSourceChangesWhatTheStoreDoesAndTheDigest(t *testing.T) {
+func TestLoadOfChangedSourceChangesWhatTheStoreDoesAndTheDigest(t *testing.T) {
 	t.Parallel()
 	c := store(t)
 	ctx := context.Background()
 	one := Library{Name: "lib_one", Files: tree(map[string]string{"a.lua": answering("fa", "one"), "b.lua": answering("fb", "b")}), Glob: "*.lua"}
 	two := Library{Name: "lib_one", Files: tree(map[string]string{"a.lua": answering("fa", "two"), "c.lua": answering("fc", "c")}), Glob: "*.lua"}
-	first, err := one.Ensure(ctx, c)
-	if err != nil || first.Outcome != Loaded || call(t, c, "fa") != "one" {
-		require.Failf(t, "", "the load of the first = %+v %v", first, err)
+	first, err := one.Load(ctx, c)
+	if err != nil || call(t, c, "fa") != "one" {
+		require.Failf(t, "", "Load of the first = %q %v", first, err)
 	}
-	second, err := two.Ensure(ctx, c)
-	if err != nil || second.Outcome != Replaced || second.Digest == first.Digest || second.Was != first.Digest {
-		require.Failf(t, "", "the load of the second = %+v %v, the first was %+v", second, err, first)
+	second, err := two.Load(ctx, c)
+	if err != nil || second == first {
+		require.Failf(t, "", "Load of the second = %q %v, the first was %q", second, err, first)
 	}
 	if fa, fc := call(t, c, "fa"), call(t, c, "fc"); fa != "two" || fc != "c" {
 		require.Failf(t, "", "after the second, fa answers %q and fc %q", fa, fc)
@@ -150,8 +150,8 @@ func TestALoadOfChangedSourceChangesWhatTheStoreDoesAndTheDigest(t *testing.T) {
 	}
 	state, err := one.Check(ctx, c)
 	var mismatch *MismatchError
-	if state != Different || !errors.As(err, &mismatch) || mismatch.Loaded != second.Digest || mismatch.Want != first.Digest {
-		require.Failf(t, "", "Check of the first = %v %v, want different with loaded=%s want=%s", state, err, second.Digest, first.Digest)
+	if state != Different || !errors.As(err, &mismatch) || mismatch.Loaded != second || mismatch.Want != first {
+		require.Failf(t, "", "Check of the first = %v %v, want different with loaded=%s want=%s", state, err, second, first)
 	}
 	if state, err := two.Check(ctx, c); state != Same || err != nil {
 		require.Failf(t, "", "Check of the second = %v %v", state, err)
@@ -169,18 +169,18 @@ func TestCheckSaysAbsentSameAndDifferentAndChangesNothing(t *testing.T) {
 	if state != Absent || !errors.As(err, &mismatch) || *mismatch != (MismatchError{Library: "lib_one", Want: twoDigest, Remedy: mismatch.Remedy}) {
 		require.Failf(t, "", "on an empty store Check = %v %v", state, err)
 	}
-	if line := err.Error(); line != "redisfn: library lib_one is absent from the store: loaded=none want="+twoDigest+"; remedy: load this binary's library (Ensure)" {
+	if line := err.Error(); line != "redisfn: library lib_one is absent from the store: loaded=none want="+twoDigest+"; remedy: load this binary's library (Load)" {
 		require.Failf(t, "", "the error reads %q", line)
 	}
 	if now := held(t, c); now != "" {
 		require.Empty(t, now, "after Check the store holds %s", now)
 	}
 
-	if _, err := lib.Ensure(ctx, c); err != nil {
+	if _, err := lib.Load(ctx, c); err != nil {
 		require.NoError(t, err, err)
 	}
 	if state, err := lib.Check(ctx, c); state != Same || err != nil {
-		require.Failf(t, "", "after the load, Check = %v %v", state, err)
+		require.Failf(t, "", "after Load, Check = %v %v", state, err)
 	}
 
 	other := strings.Replace(twoSource, "local b = 1", "local b = 2", 1)
@@ -190,7 +190,7 @@ func TestCheckSaysAbsentSameAndDifferentAndChangesNothing(t *testing.T) {
 		require.Failf(t, "", "over other code Check = %v %v", state, err)
 	}
 	if line := err.Error(); line != "redisfn: library lib_one on the store is not the one this binary was built with: loaded="+DigestOf(other)+" want="+twoDigest+
-		"; remedy: load this binary's library over it (Ensure), or run the binary the store's library came from" {
+		"; remedy: load this binary's library over it (Load), or run the binary the store's library came from" {
 		require.Failf(t, "", "the error reads %q", line)
 	}
 	if libs, err := c.FunctionList(ctx, lib.Query()).Result(); err != nil || len(libs) != 1 || libs[0].Code != other {
@@ -237,11 +237,11 @@ func TestCheckReadsTheLibraryAndNoKey(t *testing.T) {
 	c := store(t)
 	ctx := context.Background()
 	lib := two()
-	if _, err := lib.Ensure(ctx, c); err != nil {
+	if _, err := lib.Load(ctx, c); err != nil {
 		require.NoError(t, err, err)
 	}
 	if keys, err := c.Keys(ctx, "*").Result(); err != nil || len(keys) != 0 {
-		require.Failf(t, "", "after the load the store has the keys %q (%v), want none", keys, err)
+		require.Failf(t, "", "after Load the store has the keys %q (%v), want none", keys, err)
 	}
 	for _, key := range []string{"lib_one", "lib_one:sha", "redisfn:lib_one", twoDigest} {
 		if err := c.Set(ctx, key, "0000000000000000", 0).Err(); err != nil {
@@ -343,11 +343,11 @@ func TestLoadMissingNeverReplacesALibraryOnTheStore(t *testing.T) {
 	// The race, as the store answers it: a FUNCTION LOAD of a name the store
 	// holds (another loader's, put there after LoadMissing's read) is refused
 	// in the words LoadMissing takes for Unchanged, and writes nothing.
-	b, err := lib.build()
+	source, err := lib.Source()
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	err = c.FunctionLoad(ctx, b.source).Err()
+	err = c.FunctionLoad(ctx, source).Err()
 	if err == nil || !isReply(err) || !libraryExists.MatchString(err.Error()) {
 		require.Failf(t, "", "FUNCTION LOAD over a library of the name: %v, want the store's refusal that libraryExists reads", err)
 	}
@@ -374,7 +374,7 @@ func TestALoadTheStoreRefusesLeavesTheLibraryItHeld(t *testing.T) {
 	c := store(t)
 	ctx := context.Background()
 	good := Library{Name: "lib_one", Files: tree(map[string]string{"lua/a.lua": answering("fa", "good"), "lua/b.lua": answering("fb", "good")}), Glob: "lua/*.lua"}
-	if _, err := good.Ensure(ctx, c); err != nil {
+	if _, err := good.Load(ctx, c); err != nil {
 		require.NoError(t, err, err)
 	}
 	for _, bad := range []struct {
@@ -394,9 +394,9 @@ func TestALoadTheStoreRefusesLeavesTheLibraryItHeld(t *testing.T) {
 			[]string{"ERR Error registering functions: ERR Function already exists in the library", "; the store holds what it held before"}},
 	} {
 		lib := Library{Name: "lib_one", Files: tree(map[string]string{"lua/a.lua": answering("fa", "bad"), "lua/b.lua": bad.b}), Glob: "lua/*.lua"}
-		receipt, err := lib.Ensure(ctx, c)
-		if err == nil || receipt.Outcome != Failed {
-			require.Failf(t, "", "%s: Ensure = %+v %v, want the store's refusal", bad.name, receipt, err)
+		digest, err := lib.Load(ctx, c)
+		if err == nil || digest != "" {
+			require.Failf(t, "", "%s: Load = %q %v, want the store's refusal", bad.name, digest, err)
 		}
 		line := err.Error()
 		if strings.ContainsAny(line, "\n\r") {
@@ -432,7 +432,7 @@ func TestALoadTheStoreRefusesLeavesTheLibraryItHeld(t *testing.T) {
 	// stays empty.
 	empty := store(t)
 	none := Library{Name: "lib_none", Files: tree(map[string]string{"a.lua": "local x = 1\n"}), Glob: "*.lua"}
-	if _, err := none.Ensure(ctx, empty); err == nil || !strings.Contains(err.Error(), "the store refused: ERR No functions registered") {
+	if _, err := none.Load(ctx, empty); err == nil || !strings.Contains(err.Error(), "the store refused: ERR No functions registered") {
 		assert.Failf(t, "", "a library that registers nothing: %v", err)
 	}
 	if now := held(t, empty); now != "" {
@@ -441,8 +441,7 @@ func TestALoadTheStoreRefusesLeavesTheLibraryItHeld(t *testing.T) {
 }
 
 // The line the store names in an error of a running function is a line of
-// the source; the note a failed call adds and the line mapping say which
-// file's.
+// the source; Explain and Locate say which file's.
 func TestALineTheStoreNamesMapsToItsFile(t *testing.T) {
 	t.Parallel()
 	c := store(t)
@@ -458,28 +457,28 @@ func TestALineTheStoreNamesMapsToItsFile(t *testing.T) {
 		Glob:    "lua/*.lua",
 		Prelude: "local NS = {}\nfunction NS.fail(why)\n  error('failed ' .. why)\nend\n",
 	}
-	b, err := lib.build()
-	require.NoError(t, err, err)
-	if _, err := lib.Ensure(ctx, c); err != nil {
+	if _, err := lib.Load(ctx, c); err != nil {
 		require.NoError(t, err, err)
 	}
 
-	err = c.FCall(ctx, "fb", nil).Err()
+	err := c.FCall(ctx, "fb", nil).Err()
 	if err == nil || !strings.Contains(err.Error(), "attempt to index local 't'") {
 		require.Failf(t, "", "fb: %v", err)
 	}
-	if note := b.explain(err.Error()); !strings.HasSuffix(note, " = lua/b.lua:5]") {
-		require.Failf(t, "", "the note of fb's error: %s", note)
+	explained := lib.Explain(err)
+	if !strings.HasSuffix(explained.Error(), " = lua/b.lua:5]") || !errors.Is(explained, err) {
+		require.Failf(t, "", "Explain: %v", explained)
 	}
 	var n int
 	if _, serr := fmt.Sscanf(err.Error()[strings.Index(err.Error(), "user_function:"):], "user_function:%d", &n); serr != nil {
 		require.NoError(t, serr, serr)
 	}
-	if origin, ok := b.locate(n); !ok || origin != (Origin{File: "lua/b.lua", Line: 5}) {
-		require.Failf(t, "", "line %d = %+v (%v), want line 5 of lua/b.lua", n, origin, ok)
+	if origin, lerr := lib.Locate(n); lerr != nil || origin != (Origin{File: "lua/b.lua", Line: 5}) {
+		require.Failf(t, "", "Locate(%d) = %+v %v, want line 5 of lua/b.lua", n, origin, lerr)
 	}
 	// The line is the source's own: the text there is the file's line.
-	if line := strings.Split(b.source, "\n")[n-1]; line != "  return t.field" {
+	source, _ := lib.Source()
+	if line := strings.Split(source, "\n")[n-1]; line != "  return t.field" {
 		require.Equal(t, "  return t.field", line, "line %d of the source is %q", n, line)
 	}
 
@@ -488,8 +487,8 @@ func TestALineTheStoreNamesMapsToItsFile(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "failed from c") {
 		require.Failf(t, "", "fc: %v", err)
 	}
-	if note := b.explain(err.Error()); !strings.Contains(note, " = prelude:3") {
-		require.Contains(t, note, " = prelude:3", "the note of fc's error: %s", note)
+	if explained := lib.Explain(err).Error(); !strings.Contains(explained, " = prelude:3") {
+		require.Contains(t, explained, " = prelude:3", "Explain: %s", explained)
 	}
 
 	// An error of a command the function ran names the line of the call.
@@ -500,8 +499,8 @@ func TestALineTheStoreNamesMapsToItsFile(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not an integer") {
 		require.Failf(t, "", "fd: %v", err)
 	}
-	if note := b.explain(err.Error()); !strings.HasSuffix(note, " = lua/c.lua:5]") {
-		require.True(t, strings.HasSuffix(note, " = lua/c.lua:5]"), "the note of fd's error: %s", note)
+	if explained := lib.Explain(err).Error(); !strings.HasSuffix(explained, " = lua/c.lua:5]") {
+		require.True(t, strings.HasSuffix(explained, " = lua/c.lua:5]"), "Explain: %s", explained)
 	}
 }
 
@@ -536,7 +535,7 @@ func TestEachFilesLocalsLeaveScopeAtItsEnd(t *testing.T) {
 		require.Failf(t, "", "the files with no blocks: %v, want Lua's refusal of over 200 locals", err)
 	}
 
-	if _, err := lib.Ensure(ctx, c); err != nil {
+	if _, err := lib.Load(ctx, c); err != nil {
 		require.NoError(t, err, "the files each in its block: %v", err)
 	}
 	// The prelude's local is in scope in every file.
@@ -589,8 +588,8 @@ func TestTheLocalsCountIsLuas(t *testing.T) {
 
 // A for's locals held against Lua where a do inside a function of the for's
 // expressions once took them (Stella, #4486): the loader counts what Lua
-// counts, the store takes 199 and refuses 204, and the library refuses both
-// as over MaxLocals.
+// counts, the store takes 199 and refuses 204, and Source refuses both as
+// over MaxLocals.
 func TestAForsLocalsAreLuasWhenItsExpressionsHoldADo(t *testing.T) {
 	t.Parallel()
 	c := store(t)
@@ -604,8 +603,8 @@ func TestAForsLocalsAreLuasWhenItsExpressionsHoldADo(t *testing.T) {
 			require.Failf(t, "", "depth %d: the loader counts %d (%v), want %d", edge.depth, read.peak, bad, edge.count)
 		}
 		lib := Library{Name: "scope_probe", Files: tree(map[string]string{"scope.lua": text}), Glob: "*.lua"}
-		if _, err := lib.Digest(); !errors.Is(err, ErrRefused) {
-			require.ErrorIs(t, err, ErrRefused, "depth %d: the library = %v, want the refusal over MaxLocals", edge.depth, err)
+		if _, err := lib.Source(); !errors.Is(err, ErrRefused) {
+			require.ErrorIs(t, err, ErrRefused, "depth %d: Source = %v, want the refusal over MaxLocals", edge.depth, err)
 		}
 		err := c.FunctionLoadReplace(ctx, "#!lua name=scope_probe\ndo\n"+text+"\nend\n").Err()
 		switch {
@@ -681,18 +680,13 @@ func TestTheNamesTheLoaderReadsAreTheNamesTheStoreRegisters(t *testing.T) {
 			"local s = \"redis.register_function('in_a_string', f)\" .. [[ redis.register_function('in_a_long_string', f) ]]\n" +
 			"local name = 'comp' .. 'uted'\nredis.register_function(name, function() return s end)\n",
 	}), Glob: "*.lua"}
-	b, err := lib.build()
+	if _, err := lib.Load(ctx, c); err != nil {
+		require.NoError(t, err, err)
+	}
+	read, err := lib.Functions()
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	if _, err := lib.Ensure(ctx, c); err != nil {
-		require.NoError(t, err, err)
-	}
-	var read []string
-	for _, name := range b.names {
-		read = append(read, name)
-	}
-	slices.Sort(read)
 	// computed is the one name the loader cannot read; the store has it.
 	if got, want := strings.Join(read, ","), "double,escaped_1,long,plain,table_form,table_long"; got != want {
 		require.Equal(t, want, got, "the loader reads %s, want %s", got, want)
@@ -717,34 +711,39 @@ func TestAFunctionAnotherLibraryHoldsIsNamedWithItsHolder(t *testing.T) {
 	fresh := Library{Name: "lib_new", Files: tree(map[string]string{
 		"a.lua": answering("fresh", "new") + answering("moved_one", "new") + answering("moved_two", "new"),
 	}), Glob: "*.lua"}
-	if _, err := old.Ensure(ctx, c); err != nil {
+	if _, err := old.Load(ctx, c); err != nil {
 		require.NoError(t, err, err)
 	}
 
-	_, err := fresh.Ensure(ctx, c)
-	var collision *CollisionError
-	if !errors.As(err, &collision) {
-		require.ErrorAs(t, err, &collision, "the load of lib_new = %v, want a *CollisionError", err)
-	}
-	if want := []Held{{"moved_one", "lib_old"}, {"moved_two", "lib_old"}}; collision.Library != "lib_new" || !slices.Equal(collision.Held, want) || collision.Unread != nil {
-		require.Failf(t, "", "the collision is %+v, want lib_new and %+v", *collision, want)
-	}
-	if line := err.Error(); line != "redisfn: load lib_new: the store refused it and holds what it held before: "+
-		"function moved_one is registered by library lib_old, function moved_two is registered by library lib_old; "+
-		"remedy: a function name belongs to one library: load the version of the other library that no longer registers it, then load lib_new again" {
-		require.Failf(t, "", "the error reads %q", line)
-	}
-	if now := held(t, c); now != "lib_old(MOVED_TWO,kept,moved_one)" {
-		require.Equal(t, "lib_old(MOVED_TWO,kept,moved_one)", now, "after the refusal the store holds %s", now)
-	}
-	if one, two := call(t, c, "moved_one"), call(t, c, "moved_two"); one != "old" || two != "old" {
-		require.Failf(t, "", "after the refusal moved_one answers %q and moved_two %q", one, two)
-	}
-	if state, err := old.Check(ctx, c); state != Same || err != nil {
-		require.Failf(t, "", "after the refusal Check of lib_old = %v %v", state, err)
-	}
-	if state, err := fresh.Check(ctx, c); state != Absent || !isMismatch(err) {
-		require.Failf(t, "", "after the refusal Check of lib_new = %v %v", state, err)
+	for _, load := range []func() error{
+		func() error { _, err := fresh.Load(ctx, c); return err },
+		func() error { _, err := fresh.Ensure(ctx, c); return err },
+	} {
+		err := load()
+		var collision *CollisionError
+		if !errors.As(err, &collision) {
+			require.ErrorAs(t, err, &collision, "the load of lib_new = %v, want a *CollisionError", err)
+		}
+		if want := []Held{{"moved_one", "lib_old"}, {"moved_two", "lib_old"}}; collision.Library != "lib_new" || !slices.Equal(collision.Held, want) || collision.Unread != nil {
+			require.Failf(t, "", "the collision is %+v, want lib_new and %+v", *collision, want)
+		}
+		if line := err.Error(); line != "redisfn: load lib_new: the store refused it and holds what it held before: "+
+			"function moved_one is registered by library lib_old, function moved_two is registered by library lib_old; "+
+			"remedy: a function name belongs to one library: load the version of the other library that no longer registers it, then load lib_new again" {
+			require.Failf(t, "", "the error reads %q", line)
+		}
+		if now := held(t, c); now != "lib_old(MOVED_TWO,kept,moved_one)" {
+			require.Equal(t, "lib_old(MOVED_TWO,kept,moved_one)", now, "after the refusal the store holds %s", now)
+		}
+		if one, two := call(t, c, "moved_one"), call(t, c, "moved_two"); one != "old" || two != "old" {
+			require.Failf(t, "", "after the refusal moved_one answers %q and moved_two %q", one, two)
+		}
+		if state, err := old.Check(ctx, c); state != Same || err != nil {
+			require.Failf(t, "", "after the refusal Check of lib_old = %v %v", state, err)
+		}
+		if state, err := fresh.Check(ctx, c); state != Absent || !isMismatch(err) {
+			require.Failf(t, "", "after the refusal Check of lib_new = %v %v", state, err)
+		}
 	}
 
 	// LoadMissing is not the deployer: the store's refusal is its answer.
@@ -756,7 +755,7 @@ func TestAFunctionAnotherLibraryHoldsIsNamedWithItsHolder(t *testing.T) {
 	}
 
 	// The migration: the old library lets the functions go, the new one takes them.
-	if _, err := less.Ensure(ctx, c); err != nil {
+	if _, err := less.Load(ctx, c); err != nil {
 		require.NoError(t, err, err)
 	}
 	if receipt, err := fresh.LoadMissing(ctx, c); err != nil || receipt.Outcome != Loaded {
@@ -769,7 +768,8 @@ func TestAFunctionAnotherLibraryHoldsIsNamedWithItsHolder(t *testing.T) {
 		require.Failf(t, "", "moved_one answers %q and MOVED_TWO %q", one, two)
 	}
 	// And the other way round now: the old library, as it was, is the one refused.
-	_, err = old.Ensure(ctx, c)
+	_, err := old.Load(ctx, c)
+	var collision *CollisionError
 	if !errors.As(err, &collision) || !slices.Equal(collision.Held, []Held{{"MOVED_TWO", "lib_new"}, {"moved_one", "lib_new"}}) {
 		require.Failf(t, "", "the load of lib_old as it was = %v, want a collision with lib_new", err)
 	}
@@ -788,15 +788,15 @@ func TestAComputedNameAnotherLibraryHoldsIsNamedWithItsHolder(t *testing.T) {
 	lib := Library{Name: "lib_new", Files: tree(map[string]string{
 		"a.lua": "local name = 'mo' .. 'ved'\nredis.register_function(name, function() return 'new' end)\n",
 	}), Glob: "*.lua"}
-	_, err := lib.Ensure(ctx, c)
+	_, err := lib.Load(ctx, c)
 	var collision *CollisionError
 	if !errors.As(err, &collision) || !slices.Equal(collision.Held, []Held{{"moved", "lib_old"}}) {
 		require.Failf(t, "", "Load = %v, want a collision on moved with lib_old", err)
 	}
 }
 
-// A seat that may load and may not list: Check and Ensure say why they
-// cannot answer, and LoadMissing takes the store's refusal for an answer.
+// A seat that may load and may not list: Check says why it cannot answer,
+// and a collision names the function and says why it names no holder.
 func TestASeatThatMayNotListIsToldSo(t *testing.T) {
 	t.Parallel()
 	admin := store(t)
@@ -823,19 +823,21 @@ func TestASeatThatMayNotListIsToldSo(t *testing.T) {
 		require.Failf(t, "", "LoadMissing = %+v %v, want skipped with the store's NOPERM", receipt, err)
 	}
 
+	_, err = two().Load(ctx, seat)
+	var collision *CollisionError
+	if !errors.As(err, &collision) || !slices.Equal(collision.Held, []Held{{Function: "fa"}}) || !redis.HasErrorPrefix(collision.Unread, "NOPERM") {
+		require.Failf(t, "", "Load = %v, want a collision on fa whose holder could not be read", err)
+	}
 	if now := held(t, admin); now != "lib_old(fa)" {
 		require.Equal(t, "lib_old(fa)", now, "the store holds %s", now)
 	}
 
-	// With nothing in its way and the read granted back the seat's load is taken.
+	// With nothing in its way the seat's load is taken.
 	if err := admin.FunctionDelete(ctx, "lib_old").Err(); err != nil {
 		require.NoError(t, err, err)
 	}
-	if err := admin.Do(ctx, "ACL", "SETUSER", "seat", "+function|list").Err(); err != nil {
-		require.NoError(t, err, err)
-	}
-	if receipt, err := two().Ensure(ctx, seat); err != nil || receipt != (Receipt{Library: "lib_one", Outcome: Loaded, Digest: twoDigest}) {
-		require.Failf(t, "", "Ensure = %+v %v", receipt, err)
+	if digest, err := two().Load(ctx, seat); err != nil || digest != twoDigest {
+		require.Failf(t, "", "Load = %q %v", digest, err)
 	}
 }
 
@@ -883,10 +885,10 @@ func TestAStoreThatDoesNotAnswerIsLeftAtTheBound(t *testing.T) {
 	lib.Bound = 50 * time.Millisecond
 
 	never := client(t, &redis.Options{Addr: silent(t), ReadTimeout: -1, WriteTimeout: -1, MaxRetries: -1})
-	receipt, err := lib.Ensure(ctx, never)
-	if receipt != (Receipt{Library: "lib_one", Digest: twoDigest}) || !errors.Is(err, context.DeadlineExceeded) ||
+	digest, err := lib.Load(ctx, never)
+	if digest != "" || !errors.Is(err, context.DeadlineExceeded) ||
 		err.Error() != "redisfn: load lib_one: no answer from the store before the wait ended: context deadline exceeded; the store holds the whole library it held before or the whole of this one, and Check says which" {
-		require.Failf(t, "", "Ensure = %+v %v", receipt, err)
+		require.Failf(t, "", "Load = %q %v", digest, err)
 	}
 	state, err := lib.Check(ctx, never)
 	if state != Unknown || !errors.Is(err, context.DeadlineExceeded) || isMismatch(err) ||
@@ -905,14 +907,16 @@ func TestAStoreThatDoesNotAnswerIsLeftAtTheBound(t *testing.T) {
 	// test's server is ever there.
 	lib.Bound = 0
 	nobody := client(t, &redis.Options{Addr: "127.0.0.1:0", MaxRetries: -1, DialerRetries: 1})
-	// No store at the address: the read of Ensure fails first, so its error
-	// is the read's.
-	if receipt, err := lib.Ensure(ctx, nobody); receipt.Outcome != Failed || err == nil || !strings.HasPrefix(err.Error(), "redisfn: check lib_one: the store did not answer: dial tcp ") {
-		require.Failf(t, "", "Ensure with no store = %+v %v", receipt, err)
+	digest, err = lib.Load(ctx, nobody)
+	if digest != "" || err == nil || !strings.HasPrefix(err.Error(), "redisfn: load lib_one: the store did not answer: dial tcp ") {
+		require.Failf(t, "", "Load with no store = %q %v", digest, err)
 	}
 	state, err = lib.Check(ctx, nobody)
 	if state != Unknown || err == nil || isMismatch(err) || !strings.HasPrefix(err.Error(), "redisfn: check lib_one: the store did not answer: dial tcp ") {
 		require.Failf(t, "", "Check with no store = %v %v", state, err)
+	}
+	if receipt, err := lib.Ensure(ctx, nobody); receipt.Outcome != Failed || err == nil {
+		require.Failf(t, "", "Ensure with no store = %+v %v", receipt, err)
 	}
 	if receipt, err := lib.LoadMissing(ctx, nobody); receipt.Outcome != Failed || err == nil {
 		require.Failf(t, "", "LoadMissing with no store = %+v %v", receipt, err)

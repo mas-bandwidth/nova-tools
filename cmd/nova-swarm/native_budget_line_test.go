@@ -20,15 +20,21 @@ func TestTheBudgetLineNamesWhichBudgetAndTheCount(t *testing.T) {
 		tokens, spent int
 		partial       bool
 		cost          string
+		why           string
 		want          string
 	}{
-		"the token budget, with the cost":   {stoppedTokens, 400000, 509940, false, "0.0211", "tokens 509,940 of 400,000, $0.03"},
-		"a partial count says so":           {stoppedTokens, 400000, 419088, true, "0.0178", "tokens 419,088+ of 400,000, $0.02"},
-		"no cost reported":                  {stoppedTokens, 1000, 1200, false, "", "tokens 1,200 of 1,000, cost unreported"},
-		"a card budget names its own field": {stoppedMaxTurns, 0, 50000, false, "0.5", "max_turns, tokens 50,000, $0.50"},
-		"a source that stopped answering":   {stoppedUnverifiable, 400000, 12, false, "", "unverifiable: the usage source stopped answering, tokens 12 of 400,000, cost unreported"},
+		"the token budget, with the cost":   {stoppedTokens, 400000, 509940, false, "0.0211", "", "tokens 509,940 of 400,000, $0.03"},
+		"a partial count says so":           {stoppedTokens, 400000, 419088, true, "0.0178", "", "tokens 419,088+ of 400,000, $0.02"},
+		"no cost reported":                  {stoppedTokens, 1000, 1200, false, "", "", "tokens 1,200 of 1,000, cost unreported"},
+		"a card budget names its own field": {stoppedMaxTurns, 0, 50000, false, "0.5", "", "max_turns, tokens 50,000, $0.50"},
+		"a source that stopped answering":   {stoppedUnverifiable, 400000, 12, false, "", "", "unverifiable: the usage source stopped answering, tokens 12 of 400,000, cost unreported"},
+		// superman, 2026-10-03: 32 cards ended unverifiable in three machine-wide bursts
+		// and the record could not say whether sqlite3 timed out or exited; the last
+		// read's own reason now rides inside the sentence, before the figures.
+		"a source that stopped answering says what the last read said": {stoppedUnverifiable, 400000, 78605, true, "", "the usage source /j/opencode.db could not be read: sqlite3 did not answer within 5s", "unverifiable: the usage source stopped answering (last read: the usage source /j/opencode.db could not be read: sqlite3 did not answer within 5s), tokens 78,605+ of 400,000, cost unreported"},
+		"a stop that is not unverifiable ignores why":                  {stoppedTokens, 1000, 1200, false, "", "stale", "tokens 1,200 of 1,000, cost unreported"},
 	} {
-		assert.Equal(t, c.want, nativeBudgetWords(c.stopped, c.tokens, c.spent, c.partial, c.cost, ""), name)
+		assert.Equal(t, c.want, nativeBudgetWords(c.stopped, c.tokens, c.spent, c.partial, c.cost, "", c.why), name)
 	}
 }
 
