@@ -161,9 +161,13 @@ func TestAnswerDecideNeverAnswersAPaymentRefusal(t *testing.T) {
 func TestAnswerDecideAcksABlockedCard(t *testing.T) {
 	t.Parallel()
 	ta, _, record := answering(t, always(decide.VerbAck, 0.88, "own", "need-dropped"))
-	ta.ok("add --stream s1 --count 1")
-	ta.ok("add --stream s2 b --needs s1-1")
+	ta.ok("add --stream s1 --count 2")
 	ta.ok("drop s1-1 --reason obsolete")
+	ta.ok("add --stream s2 b --needs s1-2")
+	// b names the dropped record: the stored state the verbs now refuse to
+	// make; the resolve opens its blocked judgment (section 11).
+	ta.seedNeeds("b", "s1-1")
+	ta.resolve()
 	g := ta.group(sprint.NBlocked, "s2")
 	out := ta.ok("answer --bar 0.8 --record " + record)
 	assert.Contains(t, out, g.ID+"  b     blocked  ack   0.88  applied  nova-sprint ack "+g.Notes[0]+" --reason 'nova-decide (p=0.88): the card can run without the dropped need; a conflict is handled at merge'")

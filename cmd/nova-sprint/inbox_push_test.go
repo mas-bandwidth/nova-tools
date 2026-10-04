@@ -203,10 +203,16 @@ func TestAckTakesTheCommaListInboxPrints(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 2")
 	ta.ok("drop s1-1 --reason obsolete")
-	ta.ok("add --stream s2 b --needs s1-1")
-	ta.ok("add --stream s2 c --needs s1-1")
+	ta.ok("add --stream s2 b --needs s1-2")
+	ta.ok("add --stream s2 c --needs s1-2")
+	// b and c name the dropped record: the stored state the verbs now
+	// refuse to make; the resolve opens one blocked judgment per card
+	// (section 11).
+	ta.seedNeeds("b", "s1-1")
+	ta.seedNeeds("c", "s1-1")
+	ta.resolve()
 	g := ta.group(sprint.NBlocked, "s2")
 	require.Len(t, g.Notes, 2, "%+v", g)
 	var line string

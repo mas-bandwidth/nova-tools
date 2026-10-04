@@ -35,9 +35,13 @@ func TestCardShowsTheWaivedNeeds(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
-	ta.ok("add --stream s2 b --needs s1-1")
+	ta.ok("add --stream s1 --count 2")
 	ta.ok("drop s1-1 --reason obsolete")
+	ta.ok("add --stream s2 b --needs s1-2")
+	// b names the dropped record: the stored state the verbs now refuse to
+	// make; the resolve opens its blocked judgment (section 11).
+	ta.seedNeeds("b", "s1-1")
+	ta.resolve()
 	g := ta.group(sprint.NBlocked, "s2")
 	ta.ok("ack " + g.Notes[0] + " --reason fine")
 	out := ta.ok("card --fields b")
@@ -77,13 +81,18 @@ func TestInboxOpenListsEveryDroppedNeed(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 12")
+	ta.ok("add --stream s1 --count 13")
 	var ids []string
 	for i := 1; i <= 12; i++ {
 		ids = append(ids, "s1-"+strconv.Itoa(i))
 	}
-	ta.ok("add --stream s2 b --needs " + strings.Join(ids, ","))
+	// the twelve drop while nothing needs them; b then names them as its
+	// needs, the stored state the verbs now refuse to make, and the resolve
+	// opens the one blocked judgment that lists them (section 11).
 	ta.ok("drop " + strings.Join(ids, " ") + " --reason obsolete")
+	ta.ok("add --stream s2 b --needs s1-13")
+	ta.seedNeeds("b", strings.Join(ids, ","))
+	ta.resolve()
 	g := ta.group(sprint.NBlocked, "s2")
 	list := ta.ok("inbox --open " + g.ID)
 	for _, id := range ids {

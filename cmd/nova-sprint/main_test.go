@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -165,6 +167,39 @@ func (ta *testApp) deal(n int) {
 	res, err := st.Run(context.Background(), store.DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: n}}))
 	require.NoError(ta.t, err, "deal %d: %+v %v", n, res.Refused, err)
 	require.Empty(ta.t, res.Refused, "deal %d: %+v %v", n, res.Refused, err)
+}
+
+// seedNeeds writes a primary's needs field, as the store holds it: the
+// state of a waiting card whose needs name a dropped record, which the
+// verbs refuse to make (add refuses a need that names a dropped card, and
+// drop refuses a card a waiting primary still needs without --cascade) and
+// the waiver and recovery rules must still read (docs/SPEC-SPRINT.md
+// section 11, a primary blocked on something dropped).
+func (ta *testApp) seedNeeds(id, needs string) {
+	ta.t.Helper()
+	ctx := context.Background()
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(ta.t, err)
+	snap, err := st.Load(ctx, []string{sprint.Work}, nil)
+	require.NoError(ta.t, err)
+	c := snap.Work.Card(id)
+	require.NotNil(ta.t, c, id)
+	_, err = ta.m.Apply(ctx, ntable.BatchManifest{Schema: 1, Table: st.Names.Table(sprint.Work), Epoch: fmt.Sprint(st.PinnedEpoch()),
+		ExpectedTableRevision: fmt.Sprint(snap.Work.Revision), OperationID: "seed-needs-" + id,
+		Members: []ntable.BatchMemberEntry{{ID: c.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(c.Rev)}, Set: map[string]string{"needs": needs}}}})
+	require.NoError(ta.t, err, "seed needs "+id)
+}
+
+// resolve runs the store's resolve step, the tick's part that opens the
+// blocked judgment on a waiting primary whose need names a dropped record
+// (docs/SPEC-SPRINT.md section 11).
+func (ta *testApp) resolve() {
+	ta.t.Helper()
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(ta.t, err)
+	res, err := st.Run(context.Background(), store.ResolveStep(sprint.ResolveReq{}))
+	require.NoError(ta.t, err, "resolve")
+	require.Empty(ta.t, res.Refused, "resolve: %+v", res)
 }
 
 func (ta *testApp) clean() {

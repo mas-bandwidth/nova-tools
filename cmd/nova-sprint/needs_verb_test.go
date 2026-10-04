@@ -22,16 +22,23 @@ func TestNeedsPrintsRootsDepthAndWidthOfAWaitingChain(t *testing.T) {
 	// last, so only the chain order (a card after every card it needs) can
 	// print the chain from its root down.
 	ta.ok("add --stream s1 --count 1")
-	ta.ok("add --stream s2 a --needs s1-1 --score 9")
+	ta.ok("add --stream s1 z")
+	ta.ok("add --stream s2 a --needs z --score 9")
 	ta.ok("add --stream s2 b --needs a --score 8")
 	ta.ok("add --stream s2 c --needs b --score 7")
 	ta.ok("add --stream s2 d --needs c --score 6")
 	ta.ok("add --stream s1 x")
 	ta.ok("add --stream s1 y")
-	ta.ok("add --stream s1 m --needs x,y")
+	ta.ok("add --stream s1 m --needs z")
+	// the three roots drop while nothing names them, and a and m take their
+	// ids as needs: the stored state of chains behind a dropped root, which
+	// the verbs now refuse to make (section 11).
 	ta.ok("drop s1-1 --reason obsolete")
 	ta.ok("drop x --reason obsolete")
 	ta.ok("drop y --reason obsolete")
+	ta.seedNeeds("a", "s1-1")
+	ta.seedNeeds("m", "x,y")
+	ta.resolve()
 
 	out := ta.ok("needs --stream s2")
 	rootAt := strings.Index(out, "depth=0 ROOT a needs s1-1 dropped")

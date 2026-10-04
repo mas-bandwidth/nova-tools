@@ -189,8 +189,12 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s2 --count 1")
 	ta.ok("drop s2-1 --reason 'obsolete: the tool went away'")
-	ta.ok("add --stream s3 b --needs s2-1")
+	// b names the dropped s2-1: the stored state the verbs now refuse to
+	// make; the resolve opens its blocked judgment (section 11).
+	ta.ok("add --stream s3 b --needs s1-1")
+	ta.seedNeeds("b", "s2-1")
 	ta.ok("fleet down m2")
+	ta.resolve()
 	blocked := ta.group(sprint.NBlocked, "s3")
 
 	out := ta.ok("handover")
