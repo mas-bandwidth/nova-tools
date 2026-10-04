@@ -207,7 +207,7 @@ func TestAPingIsAnsweredAtOnceByTheDaemonAndPushedInAndThePongEndsTheChallenge(t
 	assert.Equal(t, "n1", afterPing.Nonce)
 	assert.Equal(t, Quiet, afterPong.Challenge)
 	assert.Equal(t, 1, afterPong.Pongs)
-	// a stale pong file (an older nonce, or one from before the ask) does not answer the next
+	// a stale pong file (an older nonce) does not answer the next
 	assert.Equal(t, Challenged, r.last().Challenge, "the file still says n1")
 	assert.Equal(t, "n2", r.last().Nonce)
 }
@@ -311,4 +311,25 @@ func TestAStatusFileThatCannotBeWrittenIsSaidOnceAMinuteAndTheBeatGoesOn(t *test
 		}
 	}
 	assert.Equal(t, 3, said, "at the start and once a minute: %v", r.records)
+}
+
+// The pong file's at is the store's time, to the second (bus2 Send truncates
+// it); the ask is the daemon's own clock. A pong recorded in the same second
+// as the ask, or on a store clock a little behind, carries an at before the
+// ask and is still the answer: the nonce says which challenge it answers,
+// never the clock (the finding of 2026-10-04: such a pong was dropped for
+// ever, and the friend stayed challenged).
+func TestAPongStampedBeforeTheAskByTheStoresClockStillAnswers(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+	r.at[3] = func() {
+		r.mu.Lock()
+		r.pong, r.pongSet = Pong{Nonce: "n1", At: r.d.m.Asked.Add(-1500 * time.Millisecond), To: "ada"}, true
+		r.mu.Unlock()
+	}
+	r.run(t, 6)
+	s := r.last()
+	assert.Equal(t, Quiet, s.Challenge, "the pong for the current nonce ends the challenge whatever its stamp")
+	assert.Equal(t, 1, s.Pongs)
 }

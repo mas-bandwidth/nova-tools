@@ -213,8 +213,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
 			}
 		}
-		if d.m.Challenge != Quiet {
-			if p, found, err := d.Pong(); err == nil && found && !p.At.Before(d.m.Asked) {
+		if d.m.Challenge != Quiet { // the nonce says which challenge a pong answers; its at is the store's clock, never compared with ours
+			if p, found, err := d.Pong(); err == nil && found {
 				d.m.Pong(p.At, p.Nonce)
 			}
 		}
