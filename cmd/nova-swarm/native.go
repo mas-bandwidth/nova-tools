@@ -1514,6 +1514,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if decided != "" {
 		settleDecided(cfg, jobDir, decided, errOut)
 	}
+	// Validate result metadata before a gate decision or work review can spend a read.
+	if cfg.frame != nil && cfg.frame.Kind == "work" && !res.lost && !res.idled && !res.terminated && res.rc == 0 && res.wallReport == "" {
+		if err := completeNativeResult(jobDir, tmpDir); err != nil {
+			refuseNative(errOut, "result completion: "+err.Error()+"; repair RESULT.md against the checkout and run the finish again")
+			res.resultsDir = publishNativeResults(cfg, jobDir, lastAttempt, errOut)
+			return res, 2
+		}
+	}
 	// THE GATE VERDICT (nativegate.go; docs/SPEC-SPRINT.md section 5): a work card's red gate
 	// is classified, its flaky failures rerun once, before the member reports the take; a
 	// script card's steps are their own gate
@@ -2371,6 +2379,76 @@ func publishNativeResults(cfg nativeRunConfig, jobDir string, attempt int, errOu
 		return ""
 	}
 	return dir
+}
+
+// completeNativeResult records Git-derived metadata at the existing finish boundary
+// (docs/SPEC-CARD-CONTRACT.md section 3), retaining the child's RESULT.md unchanged.
+func completeNativeResult(job, tmp string) error {
+	if canonical, err := filepath.EvalSymlinks(job); err == nil {
+		job = canonical
+	}
+	if tmp != "" {
+		if canonical, err := filepath.EvalSymlinks(tmp); err == nil {
+			tmp = canonical
+		}
+	}
+	if _, shimmed := cardcontract.ReadFinish(job); shimmed {
+		return nil // the profile's recorder already owns the finish
+	}
+	path, ok := swarm.FindCardResult(job)
+	if !ok {
+		return nil // absence remains absence, never a manufactured result
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	o := gitrun.Options{C: filepath.Join(job, swarm.JobRepo), OwnRepo: true}
+	ctx := context.Background()
+	head, err := gitrun.Output(ctx, o, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return err
+	}
+	branch, err := gitrun.Output(ctx, o, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return err
+	}
+	resolve := func(ref string) (string, error) {
+		if !typedrec.IsSha(strings.ToLower(ref)) {
+			return "", fmt.Errorf("not a commit abbreviation")
+		}
+		sha, err := gitrun.Output(ctx, o, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
+		if err != nil {
+			return "", err
+		}
+		if _, err := gitrun.Output(ctx, o, "merge-base", "--is-ancestor", sha, head); err != nil {
+			return "", fmt.Errorf("commit %s is outside HEAD's history", sha)
+		}
+		return sha, nil
+	}
+	artifact := func(ref string) error {
+		for _, p := range []string{ref, filepath.Join(job, ref), filepath.Join(o.C, ref)} {
+			p, err := filepath.EvalSymlinks(p)
+			if err != nil {
+				continue
+			}
+			if !filepath.IsAbs(p) || (!strictlyWithin(job, p) && (tmp == "" || !strictlyWithin(tmp, p))) {
+				continue
+			}
+			if info, err := os.Lstat(p); err == nil && info.Mode().IsRegular() {
+				return nil
+			}
+		}
+		return fmt.Errorf("no regular output file inside the job or its temporary directory")
+	}
+	completed, err := cardcontract.CompleteResult(raw, head, branch, resolve, artifact)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(job, ".sprint"), 0o755); err != nil {
+		return err
+	}
+	return atomicfile.Write(filepath.Join(job, cardcontract.FinishName), completed, 0o644)
 }
 
 // copyRegularFile copies one regular file by bytes and rename. A symlink or a

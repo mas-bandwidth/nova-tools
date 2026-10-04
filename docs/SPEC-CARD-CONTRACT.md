@@ -198,6 +198,15 @@ template asked) overwrites nothing: it rides at the end of the pull request body
 writes `<job>/RESULT.md` itself. The finish record wins over RESULT.md. A result without the six
 keys is no result.
 
+For a framed plain finish, native keeps RESULT.md unchanged and records completed
+metadata in `.sprint/finish.md` before publication. The result head and branch come
+from the checkout's Git HEAD; the stated result commit must resolve to that HEAD.
+Each stated step commit expands to its full commit only when Git resolves it uniquely
+inside HEAD's history. The verdict, report and evidence stay the child's, including
+any separate source revision a rating names. Missing metadata, unknown or ambiguous
+commits and missing referenced output files refuse the finish before a reader is paid;
+no missing commit is replaced with HEAD and no successful verdict is invented.
+
 **The verdict per step.** A tree card's result (docs/SPEC-SPRINT.md, a card is a tree of steps)
 also carries one line per work step in its body (under `## Body`, never among the header's
 keys), in walk order: `step <n>: <ok|broken|not-done|skipped> <commit sha|-> <one line>`, the
