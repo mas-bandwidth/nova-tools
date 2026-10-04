@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
@@ -130,18 +132,97 @@ func gateWhy(run []string, err error, out string) string {
 	return strings.Join(run, " ") + ": " + oneline.Err(err) + ": " + oneline.Cap(strings.Join(lines, " | "), 1500)
 }
 
-// treeGateBase gates the base's tip at baseSha, caching the result so the same base
-// commit is not re-gated across streams or ticks: "" when green, else the finding.
-func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string) string {
+// baseGateFail is a base commit's failures of its tree gate under the base-gate rule: how
+// many, the last finding, and when it is gated again.
+type baseGateFail struct {
+	n    int
+	why  string
+	next time.Time
+}
+
+// treeGateBase gates the base's tip at baseSha: "" when green, else the finding, and stop
+// when the stream stops on it. A green base is cached for its commit, so the same base
+// commit is not re-gated across streams or rounds. A red one is the base-gate rule's
+// (docs/SPEC-SPRINT.md section 8, answered by rule; the coordinator, 2026-10-04: five streams sat
+// stopped 16 minutes on a toolchain's transient "package ... is not in std"): it is gated
+// again after sprint.BaseGateRetries[0], then after [1], each landing in between refused
+// with the finding and when it is gated again; its third failure stops every stream that
+// lands on it (stop), each with the error, the coordinator's judgment. With the rule off
+// (nova-config's sprint row answer_rules_off), a red base is cached for its commit as a
+// green one is, as before the rule: every landing on it refused until the base moves.
+func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string) (why string, stop bool) {
 	if l.baseGateCache == nil {
 		l.baseGateCache = map[string]string{}
 	}
-	if why, cached := l.baseGateCache[baseSha]; cached {
-		return why
+	if l.baseGateFails == nil {
+		l.baseGateFails = map[string]*baseGateFail{}
 	}
-	why := l.treeGate(ctx, dir, true)
-	l.baseGateCache[baseSha] = why
-	return why
+	if why, cached := l.baseGateCache[baseSha]; cached {
+		return why, false
+	}
+	now := l.clock()
+	f := l.baseGateFails[baseSha]
+	switch {
+	case f != nil && f.n > len(sprint.BaseGateRetries):
+		return f.why, true
+	case f != nil && now.Before(f.next):
+		return f.said(), false
+	}
+	why = l.treeGate(ctx, dir, true)
+	if why == "" || slices.Contains(l.offRules(ctx), sprint.RuleBaseGate) {
+		l.baseGateCache[baseSha] = why
+		delete(l.baseGateFails, baseSha)
+		return why, false
+	}
+	if f == nil {
+		f = &baseGateFail{}
+		l.baseGateFails[baseSha] = f
+	}
+	f.n, f.why = f.n+1, why
+	if f.n > len(sprint.BaseGateRetries) {
+		f.why = fmt.Sprintf("the base %s failed its tree gate %d times, %s apart then %s: %s", shortSha(baseSha), f.n, sprint.BaseGateRetries[0], sprint.BaseGateRetries[1], why)
+		return f.why, true
+	}
+	f.next = now.Add(sprint.BaseGateRetries[f.n-1])
+	return f.said(), false
+}
+
+// said is a failure as a refused landing says it: the finding, and when the base is gated
+// again.
+func (f *baseGateFail) said() string {
+	return fmt.Sprintf("%s; gated again at %s (failure %d of %d)", f.why, f.next.UTC().Format("15:04:05 MST"), f.n, len(sprint.BaseGateRetries)+1)
+}
+
+// shortSha is a commit id as a line says it.
+func shortSha(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}
+
+// clock is the lander's clock: the app's, or the wall's.
+func (l *lander) clock() time.Time {
+	if l.now != nil {
+		return l.now()
+	}
+	if l.a != nil && l.a.now != nil {
+		return l.a.now()
+	}
+	return time.Now()
+}
+
+// offRules is the rules nova-config's sprint row turns off, read with the routes; given
+// (a test), or none when the store does not say.
+func (l *lander) offRules(ctx context.Context) []string {
+	if l.rulesOff != nil || l.st == nil {
+		return l.rulesOff
+	}
+	off, err := l.st.RulesOff(ctx)
+	if err != nil {
+		return nil
+	}
+	return off
 }
 
 // treeGate runs the gate on the clone's tree, the tree tests too when tests: "" when it

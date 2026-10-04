@@ -131,6 +131,58 @@ func TestGrokRefusesAmbiguousMonitorWakePathsWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestGrokDeliveryIsATurnInTheOpenWindow(t *testing.T) {
+	t.Parallel()
+	home, dir, wake, listing := grokHouse(t)
+	fe := &fakeExec{out: listing}
+	d, err := NewDeliverer("grok", dir, "", fe.run, nil)
+	require.NoError(t, err)
+	g := d.(*Grok)
+	g.Home = home
+
+	exit, err := g.Deliver(context.Background(), "turn")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit, "a line under a running tail is the turn")
+	got, err := os.ReadFile(wake)
+	require.NoError(t, err)
+	assert.Equal(t, "INBOX NOTE id=old\nnova-friend: turn\n", string(got))
+
+	route, line, err := g.Route(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "push", route, "a tail under the window's pid is route=push")
+	assert.Equal(t, GrokMonitorLine(wake), line)
+
+	// defer without a monitor: the window is open, nothing tails, nothing is written
+	fe.out = "94410  7509 grok\n    1     0 /sbin/launchd\n"
+	exit, err = g.Deliver(context.Background(), "must stay pending")
+	assert.Equal(t, 0, exit)
+	var deferred Deferred
+	require.ErrorAs(t, err, &deferred)
+	assert.Contains(t, deferred.Reason, "runs no monitor")
+	assert.Contains(t, deferred.Reason, GrokMonitorLine(""))
+	after, err := os.ReadFile(wake)
+	require.NoError(t, err)
+	assert.Equal(t, string(got), string(after), "a defer writes nothing; the message is not dropped")
+
+	route, line, err = g.Route(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "defer", route)
+	assert.Equal(t, GrokMonitorLine(""), line)
+	assert.Equal(t, line, GrokInstallLine("grok", ""))
+	assert.Equal(t, GrokMonitorLine(wake), GrokInstallLine("grok", wake))
+	assert.Empty(t, GrokInstallLine("opencode", wake))
+
+	g.Home = filepath.Join(home, "none")
+	exit, err = g.Deliver(context.Background(), "also pending")
+	assert.Equal(t, 0, exit)
+	require.ErrorAs(t, err, &deferred)
+	assert.Contains(t, deferred.Reason, "no grok session is open")
+	assert.Contains(t, deferred.Reason, GrokMonitorLine(""))
+	after, err = os.ReadFile(wake)
+	require.NoError(t, err)
+	assert.Equal(t, string(got), string(after))
+}
+
 func TestWakeLineIsOneLine(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "nova-friend: hello", WakeLine("hello\n"))

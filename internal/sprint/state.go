@@ -341,6 +341,10 @@ type Snapshot struct {
 	// with the routes; the deal writes them on every work card (gateFields), and both ""
 	// is no gate decision (docs/SPEC-SPRINT.md section 5, the gate verdict).
 	DecideGateFlaky, DecideGatePreexisting string
+	// RulesOff is the rules the machine does not answer judgments by (nova-config's sprint
+	// row, answer_rules_off), read with the routes (docs/SPEC-SPRINT.md section 8, answered by
+	// rule; rules.go).
+	RulesOff []string
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.

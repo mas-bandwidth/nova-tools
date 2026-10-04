@@ -61,6 +61,10 @@ type Status struct {
 	SessionID     string    `json:"session_id,omitempty"`
 	SessionReason string    `json:"session_reason,omitempty"`
 	BrokenAt      time.Time `json:"broken_at,omitempty"`
+	// Mode is how the daemon delivers now (batch or one-shot), and Lanes the
+	// one-shot lanes as n:session:card/turn, empty in batch.
+	Mode  string `json:"mode,omitempty"`
+	Lanes string `json:"lanes,omitempty"`
 }
 
 // Pong is the session's last answer, as the pong verb records it beside

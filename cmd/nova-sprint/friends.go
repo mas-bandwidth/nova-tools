@@ -182,7 +182,7 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r)})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r)})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -264,6 +264,15 @@ func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At}
+	// her row as friend sync last wrote it, so her daemon reads her mode and width from its beat
+	if spec, err := st.FriendSpecOf(context.Background(), friend); err == nil {
+		mode := spec.Mode
+		if mode == "" {
+			mode = config.DefaultFriendMode
+		}
+		line += fmt.Sprintf(" row_mode=%s row_width=%d", mode, spec.Width)
+		facts["row_mode"], facts["row_width"] = mode, spec.Width
+	}
 	for _, n := range []struct {
 		key string
 		v   *int
