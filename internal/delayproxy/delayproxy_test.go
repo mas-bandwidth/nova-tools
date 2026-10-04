@@ -95,11 +95,10 @@ func TestALargeWriteComesOutWholeAndInOrder(t *testing.T) {
 	require.Equal(t, len(asked), p.Writes(), "the proxy counts %d writes for %d reads", p.Writes(), len(asked))
 }
 
-// The delay is a line and not a queue: reads that arrive one after another are
-// each sent on at their own arrival plus the delay, so the second waits only
-// what is left of its delay once the first is sent, and a run of reads pays the
-// delay once. The proxy's two halves are driven by hand over pipes with a clock
-// the test moves, so the order of events is the test's and nothing races.
+// Reads that arrive together are each stamped at their own arrival plus the
+// delay, so the second waits only what's left once the first is sent, and a run
+// pays once. The proxy's halves are driven by hand over pipes, so events are
+// ordered and nothing races.
 func TestReadsThatArriveTogetherPayTheDelayOnce(t *testing.T) {
 	t.Parallel()
 
@@ -266,13 +265,9 @@ func TestAClientPastTheBoundWaitsForASlot(t *testing.T) {
 	require.Equal(t, int64(slots+1), n, "the target has taken %d connections; want %d", n, slots+1)
 }
 
-// A target that does not answer is the client's hang-up, and the proxy says
-// which target, and why, through Logf. The proxy is given a dial that refuses,
-// so the test dials no port and owns no socket: the client is one end of a pipe.
-// The hang-up is observed: the client's read ends in end of stream, and a proxy
-// that left the client open fails it by name when the read gives up at the
-// ceiling, where a read that only found nothing would pass a proxy that said
-// nothing to the client at all.
+// A target that refuses is the client's hang-up: the proxy closes the client
+// with end of stream, and logs what and why. The test gives the proxy a dial
+// that refuses, so no port is opened and the client is one end of a pipe.
 func TestATargetThatRefusesHangsUpTheClient(t *testing.T) {
 	t.Parallel()
 
@@ -306,31 +301,43 @@ func TestATargetThatRefusesHangsUpTheClient(t *testing.T) {
 	}
 }
 
-// Serve refuses what it cannot serve and starts nothing.
-func TestServeRefusesWhatItCannotServe(t *testing.T) {
+// Serve validates every argument it takes: it accepts the delay range it
+// documents (zero and MaxDelay) and refuses bad targets, out-of-range delays
+// and bounds, starting nothing on a refusal.
+func TestServeAcceptsEveryDelayItDocuments(t *testing.T) {
 	t.Parallel()
 
-	for name, c := range map[string]struct {
-		target string
-		delay  time.Duration
-		max    int
+	for _, c := range []struct {
+		name    string
+		target  string
+		delay   time.Duration
+		max     int
+		wantErr string
 	}{
-		"a target with no port":       {"127.0.0.1", delay, 0},
-		"a target with port zero":     {"127.0.0.1:0", delay, 0},
-		"a target with a huge port":   {"127.0.0.1:65536", delay, 0},
-		"a target with no host":       {":7000", delay, 0},
-		"a target that is no address": {"not an address", delay, 0},
-		"a negative delay":            {"127.0.0.1:7000", -time.Nanosecond, 0},
-		"a delay past MaxDelay":       {"127.0.0.1:7000", MaxDelay + time.Nanosecond, 0},
-		"a negative bound":            {"127.0.0.1:7000", delay, -1},
+		{"no delay is accepted", "127.0.0.1:7000", 0, 0, ""},
+		{"the longest delay, MaxDelay, is accepted", "127.0.0.1:7000", MaxDelay, 0, ""},
+		{"a target with no port is refused", "127.0.0.1", delay, 0, "target"},
+		{"a target with port zero is refused", "127.0.0.1:0", delay, 0, "target"},
+		{"a target with a huge port is refused", "127.0.0.1:65536", delay, 0, "target"},
+		{"a target with no host is refused", ":7000", delay, 0, "target"},
+		{"a target that is no address is refused", "not an address", delay, 0, "target"},
+		{"a negative delay is refused", "127.0.0.1:7000", -time.Nanosecond, 0, "delay"},
+		{"a delay past MaxDelay is refused", "127.0.0.1:7000", MaxDelay + time.Nanosecond, 0, "delay"},
+		{"a negative bound is refused", "127.0.0.1:7000", delay, -1, "MaxConns"},
 	} {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(t, err, err)
-		if p, err := Serve(ln, c.target, c.delay, Options{MaxConns: c.max}); err == nil {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			ln := newPipeListener()
+			p, err := Serve(ln, c.target, c.delay, Options{MaxConns: c.max})
+			_ = ln.Close()
+			if c.wantErr != "" {
+				assert.Error(t, err, "Serve accepted %q (delay %v, max %d); want refused", c.target, c.delay, c.max)
+				return
+			}
+			require.NoError(t, err, "Serve refused %q (delay %v, max %d): %v", c.target, c.delay, c.max, err)
 			p.Stop()
-			assert.Error(t, err, "%s: Serve accepted it", name)
-		}
-		_ = ln.Close()
+		})
 	}
 }
 
@@ -356,10 +363,8 @@ func TestLoopbackAcceptsOnlyTheMachinesOwn(t *testing.T) {
 	}
 }
 
-// The real clock is the one the proxy runs with everywhere but here, and its
-// wait is a timer: a write is held for at least the delay by the proxy's own
-// measure. The delay is the least a timer can be asked for, so the test's cost
-// is not the point, and it is the only test of this file that waits on time.
+// The real clock holds a write for at least the delay, by the proxy's own
+// measure. It is the only test of this file that waits on real time.
 func TestTheRealClockHoldsAWriteForAtLeastTheDelay(t *testing.T) {
 	t.Parallel()
 
@@ -373,19 +378,6 @@ func TestTheRealClockHoldsAWriteForAtLeastTheDelay(t *testing.T) {
 	require.Equal(t, "real clock", got, "came back as %q", got)
 	require.Equal(t, 1, p.Writes(), "after one write through the real clock: %d writes, shortest %v; want 1, at least %v", p.Writes(), p.Shortest(), realDelay)
 	require.GreaterOrEqual(t, p.Shortest(), realDelay, "after one write through the real clock: %d writes, shortest %v; want 1, at least %v", p.Writes(), p.Shortest(), realDelay)
-}
-
-// Serve takes every delay the help documents, both ends of the range.
-func TestServeAcceptsEveryDelayItDocuments(t *testing.T) {
-	t.Parallel()
-
-	for name, d := range map[string]time.Duration{"no delay": 0, "the longest delay, MaxDelay": MaxDelay} {
-		p, err := Serve(newPipeListener(), "127.0.0.1:7000", d, Options{})
-		if !assert.NoError(t, err, "%s: Serve refused %v: %v", name, d, err) {
-			continue
-		}
-		p.Stop()
-	}
 }
 
 // One client's hold does not delay another's: each connection waits for itself,
