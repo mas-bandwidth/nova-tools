@@ -2843,6 +2843,7 @@ func (a *app) cmdClear(args []string, stdout, stderr io.Writer) int {
 // reader with no row refuses the whole call, and nothing is written.
 func (a *app) cmdReaderRetire(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("reader retire")
+	dry := fs.Bool("dry-run", false, "say which readers would be retired and write nothing")
 	names, code := readerNames("reader retire", args, stderr, fs)
 	if code != 0 {
 		return code
@@ -2859,6 +2860,10 @@ func (a *app) cmdReaderRetire(args []string, stdout, stderr io.Writer) int {
 	if bad := unknownReaders(rows, names); len(bad) > 0 {
 		fmt.Fprintf(stderr, "%s reader retire: no reader %s on the readers table (readers: %s); nothing was changed; run: nova-sprint reader add <name>\n", prog, strings.Join(bad, ","), strings.Join(rows, ","))
 		return 1
+	}
+	if *dry {
+		fmt.Fprintf(stdout, "READER-RETIRE DRY-RUN readers=%s; nothing was changed\n", strings.Join(names, ","))
+		return 0
 	}
 	for _, n := range names {
 		if err := st.SetReaderRetired(ctx, n, c.actor); err != nil {
