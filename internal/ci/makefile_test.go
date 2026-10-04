@@ -157,12 +157,20 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 		"go build ./...",
 		"go run ./tools/ci gofmt",
 		"go vet ./...",
-		"go test -count=1 $(shell go run ./tools/ci select-packages --all)",
+		"go test -count=1 $PKGS",
 		"go test -count=1 -run TestFriendSequence ./cmd/...",
 		"go run ./tools/ci lisp-test",
 	} {
 		assert.Contains(t, recipes, gate, "`make check` does not reach %q; the recipes it runs are:\n%s", gate, recipes)
 	}
+
+	// The test recipe's package list is no longer in the script's text: the
+	// script expands $PKGS from the target's environment (security#70 finding 3:
+	// a package name pasted inside the single quotes would end the script and
+	// run the rest in the recipe shell). The living tree is carried by the
+	// target-specific export, which a command-line PKGS still beats, so the
+	// recipe would run an empty list without it.
+	assert.Contains(t, readFile(t, filepath.Join(root, "Makefile")), "test: export PKGS = $(CL_PKGS)", "the test target no longer exports PKGS; the recipe's $PKGS would expand to nothing")
 
 	help := strings.Join(mk.recipeFor("help"), "\n")
 	for _, target := range requiredTargets {

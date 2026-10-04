@@ -296,7 +296,12 @@ GOTEST_LDFLAGS ?=
 # local --functional` sets it to build and run the redis-backed tests behind
 # `//go:build functional` beside the unit tests, on a developer's machine.
 GOTEST_TAGS ?=
-test: PKGS = $(CL_PKGS)
+# The package list reaches the recipe's quoted script through the environment,
+# never pasted inside the single quotes: a package name holding a quote would
+# end the script and run the rest in the recipe shell (security#70 finding 3).
+# The export is target-specific, so a command-line `make test PKGS=...` still
+# wins over the living tree and nothing is exported to other targets.
+test: export PKGS = $(CL_PKGS)
 test:
 	@bash -o pipefail -c 'GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -p $(GOTEST_P) -parallel $(GOTEST_P) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests $(SLOWTESTS_FLAGS) $(if $(filter 1,$(SLOWTESTS_ENFORCE)),--enforce,) < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json" || { [ "$$status" -ne 0 ] || status=2; }; exit $$status'
 
