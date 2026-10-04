@@ -64,7 +64,7 @@ working 0: her cards stay on her row and count again when she beats; ready
 and done are as they were. where draws the
 friends between work and fleet in its default frame, which draws no merge
 table; the friends table is drawn after merge only under where --all, up
-first, then held, then down, each by name, with no load column.
+first, then asleep, then held, then down, each by name, with no load column.
 
 A friend's card: a card whose brief says WHO: friend (any friend) or
 WHO: friend <name> (a row of the friends table; add and brief refuse any other)

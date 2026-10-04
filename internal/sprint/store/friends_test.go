@@ -51,3 +51,26 @@ func TestFriendBeatPersistsSleepAndOrdinaryBeatClearsIt(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, sprint.Up, rows[0].Status)
 }
+
+func TestFriendRowsOrderUpAsleepHeldDownByName(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1}, {Name: "bob", Width: 1}, {Name: "cat", Width: 1}, {Name: "zed", Width: 1}, {Name: "eve", Width: 1}})
+	require.NoError(t, err)
+	_, err = h.st.FriendBeat(h.ctx, "zed", false)
+	require.NoError(t, err)
+	for _, name := range []string{"cat", "bob"} {
+		_, err = h.st.FriendBeat(h.ctx, name, true)
+		require.NoError(t, err)
+	}
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "eve", true, "c"))
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, []FriendRow{
+		{Name: "zed", Width: 1, Status: sprint.Up},
+		{Name: "bob", Width: 1, Status: sprint.Asleep},
+		{Name: "cat", Width: 1, Status: sprint.Asleep},
+		{Name: "eve", Width: 1, Status: sprint.Held},
+		{Name: "amy", Width: 1, Status: sprint.Down},
+	}, rows)
+}

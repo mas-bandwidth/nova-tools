@@ -106,7 +106,7 @@ after 15 sec. asleep. better."; the word was `asleep` until the owner,
 machine down has its cards taken back; a friend holds the cards dealt to
 her row (a friend's card, below) and keeps them when she goes down, the
 deadline judging them. The
-rows are in the fleet table's order (`FleetOrder`): up, then held, then down,
+rows are in the shared status order (`FleetOrder`): up, then asleep, then held, then down,
 each by name. The table is drawn by `where` from those records when it draws
 the frame, never stored as a table: no tick, step, epoch or clear touches it,
 `teardown` deletes its records (the roster, each friend's beat), and
