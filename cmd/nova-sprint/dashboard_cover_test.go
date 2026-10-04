@@ -116,9 +116,8 @@ func TestDashboardCoverLockedWriterWritesEachLineWholeAndReturnsTheWritersError(
 				for i := range 50 {
 					line := fmt.Sprintf("DASHBOARD NOTE g%d line %d\n", g, i)
 					expected.Add(int64(len(line)))
-					if _, err := l.Write([]byte(line)); err != nil {
-						t.Errorf("write: %v", err)
-					}
+					_, err := l.Write([]byte(line))
+					assert.NoError(t, err, "write")
 				}
 			}()
 		}
