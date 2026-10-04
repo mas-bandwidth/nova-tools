@@ -247,18 +247,21 @@ func TestSendPreparedArtifactRefusals(t *testing.T) {
 		data, err := os.ReadFile(filepath.Join(clone, "unrelated.txt"))
 		require.True(t, err == nil && string(data) == "dirty content\n", "SendPreparedArtifact failed to preserve unrelated dirty file")
 	}
-	os.Remove(filepath.Join(clone, "unrelated.txt"))
+	require.NoError(t, os.Remove(filepath.Join(clone, "unrelated.txt")))
 
 	// 2. Unrelated ahead commit on branch
 	write(t, clone, "manual.txt", "manual work\n")
-	git(clone, "add", "manual.txt")
-	git(clone, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-m", "manual commit")
+	_, err = git(clone, "add", "manual.txt")
+	require.NoError(t, err)
+	_, err = git(clone, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-m", "manual commit")
+	require.NoError(t, err)
 	{
 		_, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3)
 		require.Error(t, err, "SendPreparedArtifact accepted unrelated ahead commit")
 	}
 	// Reset that manual commit for next test
-	git(clone, "reset", "--hard", "origin/main")
+	_, err = git(clone, "reset", "--hard", "origin/main")
+	require.NoError(t, err)
 
 	// 3. Same ID with different bytes on remote
 	// Publish the note first
@@ -375,7 +378,7 @@ func TestPreparedRequiresCompleteRemoteIndex(t *testing.T) {
 	fields[len(fields)-1] = "SYNTHETIC_WRONG_INDEX_SUBJECT"
 	changed := strings.Replace(string(b), expected, strings.Join(fields, "\t"), 1)
 	require.False(t, changed == string(b), "did not mutate index")
-	os.WriteFile(path, []byte(changed), 0644)
+	require.NoError(t, os.WriteFile(path, []byte(changed), 0644))
 	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
 	{
 		_, e := stageAndCommit(clone, id, []string{IndexPath(p.Sender.Lane)}, "mutate synthetic index")
@@ -418,7 +421,7 @@ func TestPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
 	old, _ := os.ReadFile(path)
 	sentinel := "# synthetic_private_unrelated_attribute_edit\n"
 	want := append(old, []byte(sentinel)...)
-	os.WriteFile(path, want, 0644)
+	require.NoError(t, os.WriteFile(path, want, 0644))
 	r, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
 	if e == nil && r.Pushed {
 		remote, _ := git(bare, "show", "main:"+AttributesName)
@@ -505,7 +508,9 @@ func stagePreparedDeath(busDir string, p Prepared, art PreparedArtifact, mode st
 		}}
 	case "after-commit":
 		steps = []func() error{save, index, func() error {
-			EnsureMergeAttributes(busDir)
+			if _, err := EnsureMergeAttributes(busDir); err != nil {
+				return err
+			}
 			_, err := stageAndCommit(busDir, id, p.Paths(), WithTrailer(p.Message, TrailerSend+" "+art.ID))
 			return err
 		}}
@@ -701,7 +706,7 @@ func TestSendPreparedChildExecutionAndRecovery(t *testing.T) {
 	scratch := t.TempDir()
 	artFile := filepath.Join(scratch, "prepared.json")
 	artJSON, _ := RenderPreparedArtifact(p)
-	os.WriteFile(artFile, []byte(artJSON), 0644)
+	require.NoError(t, os.WriteFile(artFile, []byte(artJSON), 0644))
 
 	// 1. Initial child executes the actual sending call
 	cmdSend := exec.Command(os.Args[0], "-test.run=TestSendPreparedProcessDeathHelper")
@@ -773,7 +778,7 @@ func TestPreparedStaleIndexLockRefusesWithPreparedID(t *testing.T) {
 	_, clone, p, a := stellaIndependentPrepared(t)
 	lockFile := filepath.Join(clone, ".git", "index.lock")
 	require.NoError(t, os.WriteFile(lockFile, []byte("stale lock\n"), 0644))
-	defer os.Remove(lockFile)
+	defer func() { _ = os.Remove(lockFile) }() // ignored: the test's own lock file; a leftover is harmless
 	_, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
 	require.Error(t, err, "expected error with index.lock present")
 	if !strings.Contains(err.Error(), "index is locked") || !strings.Contains(err.Error(), a.ID) {

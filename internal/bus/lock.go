@@ -157,7 +157,7 @@ func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, re
 		ok, retryable, lockErr := try(f)
 		if lockErr != nil {
 			if !retryable || wait == 0 {
-				f.Close()
+				_ = f.Close() // ignored: the lock failure below is the error returned
 				return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lockErr)
 			}
 			lastErr = lockErr
@@ -174,7 +174,7 @@ func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, re
 				}
 				released = true
 				unlockFile(f)
-				f.Close()
+				_ = f.Close() // ignored: the release has no caller to report to; the lock releases when the descriptor closes
 			}, nil
 		}
 		if clearStaleSentinel(path) && recoveries < maxStaleRecoveries {
@@ -186,7 +186,7 @@ func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, re
 			continue
 		}
 		if wait == 0 || !clk.Now().Before(deadline) {
-			f.Close()
+			_ = f.Close() // ignored: the held-lock refusal below is the error returned
 			if lastErr != nil {
 				return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lastErr)
 			}

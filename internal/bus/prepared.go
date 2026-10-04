@@ -865,7 +865,7 @@ func appendIndexSuffix(root, path, have, want string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the append's bytes are written; the next recovery completes any suffix left short
 	if _, err := f.WriteString(want[len(have):]); err != nil {
 		return err
 	}

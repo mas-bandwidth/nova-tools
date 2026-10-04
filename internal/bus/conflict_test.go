@@ -81,7 +81,7 @@ func TestAnAbortThatFailsIsRefusedWithTheRecovery(t *testing.T) {
 
 	// Make the abort fail: git cannot remove the entries of a directory it cannot write.
 	require.NoError(t, os.Chmod(where, 0o500))
-	t.Cleanup(func() { os.Chmod(where, 0o700) })
+	t.Cleanup(func() { _ = os.Chmod(where, 0o700) }) // ignored: the test's own cleanup restores the fixture mode
 
 	err := abortRebase(dir)
 	require.Error(t, err, "an abort that failed reported success; the checkout is still in a rebase and every later verb will refuse for the wrong reason")

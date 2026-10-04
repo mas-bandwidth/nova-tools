@@ -72,7 +72,7 @@ func TestStellaIndependentPreparedRequiresCompleteRemoteIndex(t *testing.T) {
 	fields[len(fields)-1] = "SYNTHETIC_WRONG_INDEX_SUBJECT"
 	changed := strings.Replace(string(b), expected, strings.Join(fields, "\t"), 1)
 	require.False(t, changed == string(b), "did not mutate index")
-	os.WriteFile(path, []byte(changed), 0644)
+	require.NoError(t, os.WriteFile(path, []byte(changed), 0644))
 	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
 	{
 		_, e := stageAndCommit(clone, id, []string{IndexPath(p.Sender.Lane)}, "mutate synthetic index")
@@ -115,7 +115,7 @@ func TestStellaIndependentPreparedPreservesUnrelatedAttributeEdit(t *testing.T) 
 	old, _ := os.ReadFile(path)
 	sentinel := "# synthetic_private_unrelated_attribute_edit\n"
 	want := append(old, []byte(sentinel)...)
-	os.WriteFile(path, want, 0644)
+	require.NoError(t, os.WriteFile(path, want, 0644))
 	r, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
 	if e == nil && r.Pushed {
 		remote, _ := git(bare, "show", "main:"+AttributesName)
