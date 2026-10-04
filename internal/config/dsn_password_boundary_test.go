@@ -225,18 +225,19 @@ func TestTheDSNRefusalNamesNoUnclassifiedByte(t *testing.T) {
 	}
 
 	// leaks names the first 3-byte substring of secret found in text, in
-	// its raw spelling or in the quoted spelling an error built with %q uses.
-	leaks := func(text, secret string) (string, bool) {
+	// its raw spelling or in the quoted spelling an error built with %q uses,
+	// and is empty when none is.
+	leaks := func(text, secret string) string {
 		quoted := strconv.Quote(secret)
 		quoted = quoted[1 : len(quoted)-1]
 		for _, form := range []string{secret, quoted} {
 			for i := 0; i+3 <= len(form); i++ {
 				if strings.Contains(text, form[i:i+3]) {
-					return strconv.Quote(form[i : i+3]), true
+					return strconv.Quote(form[i : i+3])
 				}
 			}
 		}
-		return "", false
+		return ""
 	}
 
 	const injected = "Vb3Nm8!Xq9"
@@ -264,21 +265,17 @@ func TestTheDSNRefusalNamesNoUnclassifiedByte(t *testing.T) {
 					t.Parallel()
 					got, err := entry.run(dsn)
 					text := got
-					if err != nil {
+					switch {
+					case err != nil:
 						text = err.Error()
-					} else if entry.name != "redact" {
-						// A resolved DSN is the caller's own text, not a message.
+					case entry.name != "redact":
+						// A resolved DSN is the caller's own text, not a message;
+						// a flag that names a secret must not resolve at all.
 						text = ""
-						if entry.refuses && shape.secret {
-							t.Errorf("the %s entry resolved a DSN that names a password or sslpassword", entry.name)
-						}
+						assert.False(t, entry.refuses && shape.secret, "the %s entry resolved a DSN that names a password or sslpassword", entry.name)
 					}
-					if bad, found := leaks(text, secret); found {
-						t.Errorf("the %s entry echoed %s of the password in %q", entry.name, bad, text)
-					}
-					if bad, found := leaks(text, injected); found {
-						t.Errorf("the %s entry echoed %s of the injected password in %q", entry.name, bad, text)
-					}
+					assert.Empty(t, leaks(text, secret), "the %s entry echoed a piece of the password in %q", entry.name, text)
+					assert.Empty(t, leaks(text, injected), "the %s entry echoed a piece of the injected password in %q", entry.name, text)
 				})
 			}
 		}
@@ -291,9 +288,7 @@ func TestTheDSNRefusalNamesNoUnclassifiedByte(t *testing.T) {
 			t.Parallel()
 			_, err := ResolveDSN("postgres://store@db.invalid:5432/nova", envOf(map[string]string{EnvPGPassEnv: secret}))
 			require.Error(t, err)
-			if bad, found := leaks(err.Error(), secret); found {
-				t.Errorf("the refusal echoed %s of the variable name in %q", bad, err.Error())
-			}
+			assert.Empty(t, leaks(err.Error(), secret), "the refusal echoed a piece of the variable name in %q", err.Error())
 		})
 	}
 }
