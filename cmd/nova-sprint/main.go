@@ -186,7 +186,7 @@ func newApp(getenv func(string) string) *app {
 	a.home = os.UserHomeDir
 	a.decideBackend = func(key string) decide.Backend { return decide.JevHTTP(key, decide.JevTimeout) }
 	a.briefBar = a.readBriefBar
-	a.mergeQueue = &keptQueue{ask: ghMergeQueue{}, now: func() time.Time { return a.now() }, kept: map[string]keptAnswer{}}
+	a.mergeQueue = &keptQueue{ask: ghMergeQueue{host: githubHost}, now: func() time.Time { return a.now() }, kept: map[string]keptAnswer{}}
 	return a
 }
 

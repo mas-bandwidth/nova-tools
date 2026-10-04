@@ -19,7 +19,7 @@ import (
 // THE LANDER'S PAUSE (docs/SPEC-SPRINT.md section 7, the lander's pause): merge-window open
 // pauses every landing for its duration with its reason shown, and land pauses a batch while
 // the merge queue of the branch it lands onto holds a group (sprint.LandPause). The queue is
-// the forge's, asked through the app's mergeQueue: gh for a GitHub repository, nothing for any
+// the forge's, asked through the app's mergeQueue: gh for a repository on GitHub, nothing for any
 // other (a path, a bare clone, another forge has no such queue), each answer kept for
 // mergeQueueKeep so the land loop's rounds do not ask the forge every round; a test gives a
 // fake and asks no forge.
@@ -93,21 +93,25 @@ func (k *keptQueue) HoldsGroup(ctx context.Context, repo, branch string) (bool, 
 	return held, err
 }
 
-// ghMergeQueue asks GitHub's merge queue of a branch through gh, as the caller's gh is
-// authenticated: one GraphQL query, its entries counted (a queued or checking group is an
-// entry), in the caller's environment. A repository that is not GitHub's has no such queue and is never asked.
-type ghMergeQueue struct{}
+// ghMergeQueue asks the merge queue of a branch of a repository on host, a GitHub forge,
+// through gh as the caller's gh is authenticated there: one GraphQL query, its entries
+// counted (a queued or checking group is an entry), in the caller's environment. A
+// repository on any other host, or a path, has no such queue and is never asked.
+type ghMergeQueue struct{ host string }
+
+// githubHost is the forge the server's lander asks: GitHub's own.
+const githubHost = "github.com"
 
 // mergeQueueQuery counts the entries of a branch's merge queue; a branch with no merge
 // queue answers null, which is none.
 const mergeQueueQuery = `query($owner: String!, $name: String!, $branch: String!) { repository(owner: $owner, name: $name) { mergeQueue(branch: $branch) { entries(first: 1) { totalCount } } } }`
 
-func (ghMergeQueue) HoldsGroup(ctx context.Context, repo, branch string) (bool, error) {
-	owner, name, ok := githubRepo(repo)
+func (g ghMergeQueue) HoldsGroup(ctx context.Context, repo, branch string) (bool, error) {
+	owner, name, ok := forgeRepo(g.host, repo)
 	if !ok {
 		return false, nil
 	}
-	cmd, cancel := subproc.Command(ctx, subproc.GH, "gh", "api", "graphql", "-f", "query="+mergeQueueQuery,
+	cmd, cancel := subproc.Command(ctx, subproc.GH, "gh", "api", "graphql", "--hostname", g.host, "-f", "query="+mergeQueueQuery,
 		"-f", "owner="+owner, "-f", "name="+name, "-f", "branch="+branch, "--jq", ".data.repository.mergeQueue.entries.totalCount // 0")
 	defer cancel()
 	out, err := cmd.Output()
@@ -125,11 +129,11 @@ func (ghMergeQueue) HoldsGroup(ctx context.Context, repo, branch string) (bool, 
 	return n > 0, nil
 }
 
-// githubRepo is the owner and name of a GitHub repository's address (https, ssh, or the
-// scp-like git@ form, .git or not); ok false for any other address.
-func githubRepo(repo string) (owner, name string, ok bool) {
+// forgeRepo is the owner and name of the address of a repository on host (https, ssh, or
+// the scp-like git@ form, .git or not); ok false for any other address.
+func forgeRepo(host, repo string) (owner, name string, ok bool) {
 	u := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(repo), "/"), ".git")
-	for _, p := range []string{"https://github.com/", "http://github.com/", "ssh://git@github.com/", "git@github.com:"} {
+	for _, p := range []string{"https://" + host + "/", "http://" + host + "/", "ssh://git@" + host + "/", "git@" + host + ":"} {
 		if rest, found := strings.CutPrefix(u, p); found {
 			owner, name, ok = strings.Cut(rest, "/")
 			return owner, name, ok && owner != "" && name != "" && !strings.Contains(name, "/")

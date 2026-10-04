@@ -146,32 +146,32 @@ func TestKeptQueueAsksTheForgeOncePerKeep(t *testing.T) {
 	assert.Equal(t, 3, ask.asks)
 }
 
-// Only a GitHub repository's address names a merge queue gh can ask: any other (a path, a
-// bare clone, another host) asks nothing and has none.
-func TestGithubRepoReadsOnlyAGitHubAddress(t *testing.T) {
+// Only the address of a repository on the forge's host names a merge queue gh can ask: any
+// other (a path, a bare clone, another host) asks nothing and has none.
+func TestForgeRepoReadsOnlyAnAddressOnTheForge(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ repo, owner, name string }{
-		{"https://github.com/o/r.git", "o", "r"},
-		{"https://github.com/o/r", "o", "r"},
-		{"https://github.com/o/r/", "o", "r"},
-		{"git@github.com:o/r.git", "o", "r"},
-		{"ssh://git@github.com/o/r.git", "o", "r"},
+		{"https://forge.example/o/r.git", "o", "r"},
+		{"https://forge.example/o/r", "o", "r"},
+		{"https://forge.example/o/r/", "o", "r"},
+		{"git@forge.example:o/r.git", "o", "r"},
+		{"ssh://git@forge.example/o/r.git", "o", "r"},
 		{"/srv/git/r.git", "", ""},
 		{"", "", ""},
 		{"https://example.com/o/r.git", "", ""},
-		{"https://github.com/o", "", ""},
-		{"https://github.com/o/r/tree/main", "", ""},
+		{"https://forge.example/o", "", ""},
+		{"https://forge.example/o/r/tree/main", "", ""},
 	} {
 		t.Run(c.repo, func(t *testing.T) {
 			t.Parallel()
-			owner, name, ok := githubRepo(c.repo)
+			owner, name, ok := forgeRepo("forge.example", c.repo)
 			assert.Equal(t, c.owner != "", ok)
 			if ok {
 				assert.Equal(t, [2]string{c.owner, c.name}, [2]string{owner, name})
 			}
 		})
 	}
-	held, err := ghMergeQueue{}.HoldsGroup(context.Background(), "/srv/git/r.git", "main")
+	held, err := ghMergeQueue{host: "forge.example"}.HoldsGroup(context.Background(), "/srv/git/r.git", "main")
 	require.NoError(t, err, "a repository on no forge asks nothing")
 	assert.False(t, held)
 }
