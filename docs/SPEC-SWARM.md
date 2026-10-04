@@ -687,6 +687,22 @@ other checks).
 | `step-merge` | no line merges a pull request: the child opens it against the base the card names and stops; the coordinator lands it |
 | `step-go-test-timeout` | every `go test` carries `-timeout 600s` on the same command, so a hung test ends at ten minutes and not at the card's deadline (runs with a rule named `go-test-timeout`) |
 
+### lint-allows-quoted-patterns-in-tests: the PATTERNS TO REFUSE paragraph
+
+A class test that refuses a dangerous command must name it, and the step scans refuse a card
+for naming it. One narrow exemption: a card whose `TEST:` or `PATHS:` line names a class test
+under `internal/ci` (`internal/ci/<name>_class_test.go`) may carry one paragraph that begins
+`PATTERNS TO REFUSE.` and runs to the first blank line. A backtick-quoted literal in that
+paragraph is a pattern, not a command, and no `step-` scan fires on it. Everything else is
+scanned as before:
+
+- every other line of the card, and every unquoted command inside the paragraph;
+- the paragraph in a card that names no class test is itself the finding
+  `patterns-block-without-class-test`, at the paragraph's first line.
+
+`nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
+`TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).
+
 ## Test inventory
 
 List the current unit tests with `go test -list . ./cmd/nova-swarm/`.
