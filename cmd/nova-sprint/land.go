@@ -156,7 +156,7 @@ type landBatch struct {
 type landTimes struct {
 	Fetch  float64 `json:"fetch"`
 	Merge  float64 `json:"merge"`
-	Script float64 `json:"script"`
+	Checks float64 `json:"checks"`
 	Ledger float64 `json:"ledger"`
 	Gate   float64 `json:"gate"`
 	Gates  int     `json:"gates"`
@@ -184,8 +184,8 @@ func (b landBatch) line() string {
 		l += " dir=" + oneline.Field(b.Dir)
 	}
 	if t := b.Times; t != nil {
-		l += fmt.Sprintf(" fetch=%.1fs merge=%.1fs script=%.1fs ledger=%.1fs gate=%.1fs gates=%d check=%.1fs queue=%.1fs push=%.1fs report=%.1fs",
-			t.Fetch, t.Merge, t.Script, t.Ledger, t.Gate, t.Gates, t.Check, t.Queue, t.Push, t.Report)
+		l += fmt.Sprintf(" fetch=%.1fs merge=%.1fs checks=%.1fs ledger=%.1fs gate=%.1fs gates=%d check=%.1fs queue=%.1fs push=%.1fs report=%.1fs",
+			t.Fetch, t.Merge, t.Checks, t.Ledger, t.Gate, t.Gates, t.Check, t.Queue, t.Push, t.Report)
 	}
 	if p := b.Prune; p != nil {
 		switch {
@@ -1016,7 +1016,7 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		if card == "" && env == "" {
 			start = time.Now()
 			card, env = l.checkCard(ctx, dir, *c, before)
-			since(&t.Script, start)
+			since(&t.Checks, start)
 		}
 		switch {
 		case env != "":

@@ -54,7 +54,7 @@ func TestLandSaysHowLongEachStepOfALandedBatchTook(t *testing.T) {
 	r := newLandRig(t)
 	landTwo(r)
 	out := r.ok("land --repo-dir " + r.clone + " --base main --check true")
-	assert.Regexp(t, regexp.MustCompile(`LAND OK stream=s1 cards=2 base=main .* fetch=\d+\.\ds merge=\d+\.\ds script=\d+\.\ds ledger=\d+\.\ds gate=\d+\.\ds gates=\d+ check=\d+\.\ds queue=\d+\.\ds push=\d+\.\ds report=\d+\.\ds`), out)
+	assert.Regexp(t, regexp.MustCompile(`LAND OK stream=s1 cards=2 base=main .* fetch=\d+\.\ds merge=\d+\.\ds checks=\d+\.\ds ledger=\d+\.\ds gate=\d+\.\ds gates=\d+ check=\d+\.\ds queue=\d+\.\ds push=\d+\.\ds report=\d+\.\ds`), out)
 
 	r = newLandRig(t)
 	landTwo(r)
