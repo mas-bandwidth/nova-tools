@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -276,7 +277,7 @@ func friendReadReport(dir, job string) (report, why string, err error) {
 // inbox/<job> is a symlink or no directory, is refused, a line each: nothing is written
 // outside her working directory. It says what it did, a line each, and how many it
 // delivered and finished.
-func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
+func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, billing, dir string, say func(string)) (delivered, finished int, err error) {
 	// her working cards, then the ready ones dealt behind them (sprint.FriendDeal): both are
 	// delivered, and her queue file says which are which
 	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working, sprint.Ready)
@@ -335,6 +336,21 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		if err != nil {
 			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
 			continue
+		}
+		if billing == config.BillingAPI {
+			// a friend at API rates: her card's sessions' usage, priced by the finish as a
+			// member's take is (friendusage.go); none found is said, never estimated, and
+			// costs retier reads it again
+			dealt, _ := time.Parse(time.RFC3339, dealtOf(cards, p.Card))
+			u, err := friendSessionUsage(ctx, friendStores(dir, a.getenv("HOME")), dir, p.Primary, dealt, a.now())
+			switch {
+			case err != nil:
+				say(fmt.Sprintf("FRIEND-CARD USAGE friend=%s card=%s none: %s; costs retier reads it again", name, p.Card, oneline.Escape(err.Error())))
+			case u == "":
+				say(fmt.Sprintf("FRIEND-CARD USAGE friend=%s card=%s none: no OpenCode session of %s names %s", name, p.Card, oneline.Field(dir), p.Primary))
+			default:
+				r.Usage = u
+			}
 		}
 		step := store.FinishStep(r)
 		step.Actor, step.Epoch = r.Who, &p.Epoch
@@ -415,4 +431,14 @@ func writeQueueFile(dir string, states map[string]string) error {
 		return err
 	}
 	return atomicfile.WriteFile(path, after, 0o644)
+}
+
+// dealtOf is the stamp the card of id among cards was dealt at, "" when it is not there.
+func dealtOf(cards []*sprint.Card, id string) string {
+	for _, c := range cards {
+		if c.ID == id {
+			return c.F("dealt")
+		}
+	}
+	return ""
 }

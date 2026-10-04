@@ -240,3 +240,13 @@ func GradeStep(r sprint.GradeReq) Step {
 	return Step{Named: true, Args: ArgsOf(r), Verb: "grade", Actor: sprint.MachineActor, Load: tables(sprint.Work), Extras: sprint.NamedExtras(sprint.Work, ids),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Grade(s, r) }}
 }
+
+// RetierStep is costs retier (sprint.Retier): the backfill of the tiers of the cost records
+// written before records carried one, the tier totals, and an api friend's usage the cmd
+// recovered. It reads the work table, the merge table (a stream's control card, whose
+// landed cost a priced friend record moves) and the routes (their tiers and price sheets),
+// and brings the work table's cost cells up to date after.
+func RetierStep(r sprint.RetierReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "costs retier", Load: tables(sprint.Work, sprint.Merge), Prices: true, Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Retier(s, r).Plan }}
+}

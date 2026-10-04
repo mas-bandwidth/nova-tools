@@ -196,6 +196,28 @@ func FriendWidth(r Row) int {
 	return r.Int("width")
 }
 
+// How a friend's work is paid (the owner, 2026-10-04 4:41 PM): a subscription friend's work is
+// tokens only, the friends category, never in the dollar columns; an api friend's work is at
+// API rates ("They are always API rate"), priced in dollars under its model's tier as a
+// fleet route's is (nova-sprint friend sync, costs retier). Migration 0027 sets every row to
+// the default.
+const (
+	BillingAPI          = "api"
+	BillingSubscription = "subscription"
+)
+
+// FriendBillings are the words of a friend row's billing field.
+var FriendBillings = []string{BillingAPI, BillingSubscription}
+
+// FriendBilling is a friend row's billing: its billing field, BillingSubscription when
+// the row has none.
+func FriendBilling(r Row) string {
+	if b := r.Fields["billing"]; b != "" {
+		return b
+	}
+	return BillingSubscription
+}
+
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
 // instead). A width that failed its own validation is absent and skipped.
@@ -361,12 +383,13 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, her width, the jobs she works at once, and her billing",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
+			{Name: "billing", Type: TypeEnum, Enum: FriendBillings, Default: BillingSubscription, Help: "how her work is paid: subscription (the default: tokens only, never in the dollar columns) or api (at API rates: priced in dollars under its model's tier, as a fleet route's work)"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {

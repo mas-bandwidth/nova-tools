@@ -311,17 +311,23 @@ func (t Total) Add(u Usage) Total {
 			t.ActualBy = strings.Join(append(bys, by), "+")
 		}
 	}
-	// The one figure is the record's actual where it is a valid amount, otherwise
-	// its valid prediction; an amount the exact sum rejects is neither.
-	charged := u.Predicted
-	if valid(u.Actual) {
-		charged = u.Actual
-	}
-	if valid(charged) {
+	if charged := u.Charged(); charged != "" {
 		sum(&t.Charged, charged)
 		t.ChargedOf++
 	}
 	return t
+}
+
+// Charged is the record's one figure, as a total sums it (Total.Add): its actual where it
+// is a valid amount, otherwise its valid prediction; "" when neither is (an amount the
+// exact sum rejects is neither).
+func (u Usage) Charged() string {
+	for _, v := range []string{u.Actual, u.Predicted} {
+		if _, err := amount(v); err == nil {
+			return v
+		}
+	}
+	return ""
 }
 
 // Words splits an actual_by list ("" is none).

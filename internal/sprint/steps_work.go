@@ -1247,7 +1247,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			// a decided class is the class when the decision routed the finish
 			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, cardTierOf(pr), set)
 		}
-		addConsumer(pr, set, workConsumer(s, c, 0, result, rec))
+		addConsumer(s, pr, set, workConsumer(s, pr, c, 0, result, rec))
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
@@ -1396,7 +1396,7 @@ func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string, decided bool)
 		Finished: stamp(s.Now), Usage: usage, Error: line, Taken: taken}.String()
 	// and the producer's record of it (cost.go): it still cost tokens and time
 	prSet := map[string]string{}
-	addConsumer(pr, prSet, workConsumer(s, c, take, kind, rec))
+	addConsumer(s, pr, prSet, workConsumer(s, pr, c, take, kind, rec))
 	decidedSets(r, decided, pr, set, prSet)
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
@@ -1435,7 +1435,7 @@ func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 	prSet := map[string]string{}
 	if r.Usage != "" {
 		dealt, taken := takeStamps(c)
-		addConsumer(pr, prSet, workConsumer(s, c, 0, "staging refused", costRecord(s, r.Usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)))
+		addConsumer(s, pr, prSet, workConsumer(s, pr, c, 0, "staging refused", costRecord(s, r.Usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)))
 	}
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),

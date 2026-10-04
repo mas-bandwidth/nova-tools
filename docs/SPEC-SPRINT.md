@@ -2358,6 +2358,34 @@ epoch, and with no `--epoch` runs at the epoch that read finds (a clear between
 the read and the write is read again), so they need none; the coordinator
 given `--epoch` is held to it like any other actor.
 
+### costs retier
+
+`nova-sprint costs retier [--dry-run] [--cards <n>] [--root <dir>]`, the coordinator's (the owner,
+2026-10-04 4:22 PM: "Fix it so it stops happening, and also fix it up retrospectively"). Every
+cost record is written with one of the four tiers and every primary keeps its tier totals,
+`cost_tier:<tier>`, adding up to its charged figure (internal/sprint/cost.go, addConsumer, which
+refuses a record with no tier); costs retier is the one-time backfill of what was written
+before: it writes the tier into every record that has none (sprint.RecordTier: its own, its
+route's, its route name's first word, its model's route's, its model family's, else its card's)
+and the tier totals, and prices an api friend's work records that hold no token from her OpenCode
+sessions (`<root>/<friend>-working`, and HOME's `~/.local/share/opencode`, read-only, by the
+card's id in the session title within the take's window), moving her landed cards' costs and
+their streams'. It prints one line per stream and one per api friend:
+
+    RETIER stream=nongo cards=10 records=136 cost=$49.53 before=no_tier:$49.53 after=pro:$49.53
+    RETIER FRIEND friend=freddy billing=api cards=6 priced=5 unrecovered=1 total=$0.07 missing=fp-x.w1
+    RETIER OK streams=1 cards=10 records=136 left=0: dry run, nothing was written
+
+`before` is what the cards hold with no read-time rule (`no_tier` for the dollars no record's own
+tier holds), `after` what the where view shows once written; `cost=<was>-><now>` when priced
+friend records moved it. Nothing is estimated: a friend record with no session is named under
+`missing`. `--dry-run` writes nothing; a run writes at most `--cards` primaries (250 by
+default) and says how many are `left`; a running machine applies the writes with its next tick;
+a second run writes nothing. The where view's read-time rule (sprint.CardTierSpend) is then a
+guard: a landed card without complete tier totals is counted on its row as `cost_tier_guard`,
+`where --json --costs` prints `ALARM cost tiers` on stderr, and a landing raises the judgment
+"a landed cost has no tier".
+
 ### preflight
 
 `nova-sprint preflight --brief-dir <dir> [--json] [--repo-dir <dir>]` reads a

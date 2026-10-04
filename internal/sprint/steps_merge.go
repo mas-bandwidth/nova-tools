@@ -320,6 +320,21 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			l.Who = r.Who
 			last.Notes = append(last.Notes, l)
 		}
+		// the alarm of a landed cost whose tiers are not all on the card (cost_view.go,
+		// CardTierSpend's guard): a card from before the tier totals that costs retier has
+		// not reached, or a bug; the where view would place its tiers by the read-time rule
+		var noTier []string
+		for _, c := range landing {
+			if pr := s.Work.Placed(c.ID); pr != nil && costLacksTiers(pr) {
+				noTier = append(noTier, c.ID)
+			}
+		}
+		if len(noTier) > 0 {
+			n := judgment(NCostNoTier, r.Stream, s.Now, 0, noTier...)
+			n.Who = r.Who
+			n.What = Preview(noTier, ", ") + ": the cost holds no complete tier totals (cost_tier:<tier>); costs retier writes them from the records"
+			last.Notes = append(last.Notes, n)
+		}
 		lands := map[string]bool{}
 		for _, id := range landed {
 			lands[id] = true

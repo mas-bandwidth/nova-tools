@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width` |
+| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `billing` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -219,6 +219,7 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `tiers` | list: flash, frontier, pro | yes | the deal's tier filter (capacity.lua `filter_ok`): which she can do | `friend:<f>:desired` tiers (`ns_capacity_desired`) |
 | `roles` | list: builder, may-hold, reader | | the deal and the routing: what she may hold | `friend:<f>:roles` (`ns_friend_roles`) |
 | `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?") | `friend:<f>:desired` width |
+| `billing` | `api` or `subscription`, default `subscription` (migration 0027) | | nova-sprint friend sync and costs retier: how her work is paid (the owner, 2026-10-04 4:41 PM). `subscription` is tokens only, the friends category, never in the sprint's dollar columns; `api` is work at API rates, its usage read from her OpenCode sessions and priced in dollars under its model's tier as a fleet route's is | the friends roster (nova-sprint) |
 
 **`sprint`** (`config.sprint`, singleton): the one row of sprint-global
 facts.

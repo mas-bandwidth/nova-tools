@@ -247,7 +247,7 @@ func whyOf(l Line) string {
 }
 
 // SplitCost takes a change line's cost records out (FieldCostRecord, FieldCostTotal,
-// FieldCostCut): the line without them, and one short line for each record, which the
+// FieldCostCut, FieldCostTier): the line without them, and one short line for each record, which the
 // log's timeline prints in their place; `log --card <id>` and `log --json` keep the
 // records whole (docs/SPEC-SPRINT.md section 17). A line with none is returned as it is.
 func SplitCost(l Line) (Line, []string) {
@@ -263,7 +263,7 @@ func SplitCost(l Line) (Line, []string) {
 			c := parseConsumer(key, v)
 			cost := "cost " + MoneyText(cmp.Or(c.Usage.Actual, c.Usage.Predicted))
 			words = append(words, fmt.Sprintf("%s cost: %s %s by %s, %s, ran %s, %s", l.Card, c.Kind, c.Card, orDash(c.Who), orDash(c.End), seconds(c.Usage.Run), cost))
-		case k == FieldCostTotal || k == FieldCostCut:
+		case k == FieldCostTotal || k == FieldCostCut || strings.HasPrefix(k, FieldCostTier):
 		default:
 			rest[k] = v
 		}

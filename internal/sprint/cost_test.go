@@ -19,7 +19,7 @@ import (
 func book(pr *Card, cons ...Consumer) {
 	for _, c := range cons {
 		set := map[string]string{}
-		addConsumer(pr, set, c)
+		addConsumer(&Snapshot{}, pr, set, c)
 		for k, v := range set {
 			pr.Fields[k] = v
 		}
@@ -27,7 +27,7 @@ func book(pr *Card, cons ...Consumer) {
 }
 
 func consumerOf(key, at, usage string) Consumer {
-	return Consumer{Kind: "read", Card: "s1-1.r1.reader-a", Attempt: 1, Who: "reader-a", End: "ok", At: at, Key: key, Usage: cardcost.ParseUsage(usage)}
+	return Consumer{Kind: "read", Card: "s1-1.r1.reader-a", Attempt: 1, Who: "reader-a", Tier: "flash", End: "ok", At: at, Key: key, Usage: cardcost.ParseUsage(usage)}
 }
 
 func TestTheProducerKeepsOneRecordPerConsumerAndAnExactTotal(t *testing.T) {

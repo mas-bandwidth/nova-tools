@@ -562,7 +562,8 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 
 // withTierCosts puts the tier counts on the view and, on each work row with cards, the
 // stream's `tiers`, `cost_by_tier` (its landed cost by tier, adding up to the cost cell) and
-// `per_landed` (sprint.TierCosts).
+// `per_landed`, and the alarm `cost_tier_guard` and `cost_tier_guard_cards` when the read-time
+// rule placed some of its tiers (sprint.TierCosts).
 func withTierCosts(v *whereView, tiers map[string]int, streams map[string]sprint.TierCosts) {
 	v.Tiers = tiers
 	for s, row := range v.Tables[sprint.Work] {
@@ -576,6 +577,9 @@ func withTierCosts(v *whereView, tiers map[string]int, streams map[string]sprint
 		}
 		if len(tc.CostByTier) > 0 {
 			row["cost_by_tier"] = tc.CostByTier
+		}
+		if tc.Guard != "" { // an alarm, never a tier (sprint.TierCosts)
+			row["cost_tier_guard"], row["cost_tier_guard_cards"] = tc.Guard, tc.GuardCards
 		}
 	}
 }
@@ -676,6 +680,9 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			// the fields absent, never a failed view
 			if tiers, streams, err := st.TierCosts(ctx); err == nil {
 				withTierCosts(&v, tiers, streams)
+				if line := guardAlarm(streams); line != "" {
+					fmt.Fprintln(stderr, line)
+				}
 			} else if ctx.Err() == nil {
 				fmt.Fprintf(stderr, "%s where: the tier costs were not read: %s\n", prog, oneline.Escape(err.Error()))
 			}
@@ -1742,4 +1749,23 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "ROUTES OK routes=%d\n", len(stats))
 	return 0
+}
+
+// guardAlarm is the where view's alarm when the read-time rule placed some landed cost's
+// tiers (sprint.CardTierSpend's guard, which should never fire once every record is written
+// with its tier and costs retier has run): one line naming the streams and the cost, ""
+// when it did not fire.
+func guardAlarm(streams map[string]sprint.TierCosts) string {
+	var words []string
+	cards := 0
+	for _, s := range slices.Sorted(maps.Keys(streams)) {
+		if tc := streams[s]; tc.Guard != "" {
+			words = append(words, s+"="+tc.Guard)
+			cards += tc.GuardCards
+		}
+	}
+	if len(words) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s where: ALARM cost tiers: the read-time rule placed the tiers of %d landed cards with no tier totals (%s); run: nova-sprint costs retier --dry-run", prog, cards, sprint.Preview(words, " "))
 }

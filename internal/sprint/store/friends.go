@@ -37,13 +37,17 @@ type friendEntry struct {
 	At    time.Time `json:"at,omitempty"`
 	By    string    `json:"by,omitempty"`
 	Width int       `json:"width,omitempty"`
+	// Billing is how her work is paid (config.FriendBilling): "api" at API rates, priced in
+	// dollars; empty or "subscription", tokens only.
+	Billing string `json:"billing,omitempty"`
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
-// of nova-config) and her width.
+// of nova-config), her width and her billing (config.FriendBilling).
 type FriendSpec struct {
-	Name  string
-	Width int
+	Name    string
+	Width   int
+	Billing string
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -113,11 +117,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width:
+		case e.Width != s.Width || e.Billing != s.Billing:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width = s.Width
+		e.Width, e.Billing = s.Width, s.Billing
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -146,6 +150,20 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		}
 	}
 	return added, removed, updated, nil
+}
+
+// FriendBillings is each friend's billing as the roster holds it (friend sync writes it
+// from her nova-config row), by name; a friend synced before billing was kept has none.
+func (st *Store) FriendBillings(ctx context.Context) (map[string]string, error) {
+	r, _, err := st.roster(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for n, e := range r {
+		out[n] = e.Billing
+	}
+	return out, nil
 }
 
 // FriendBeat writes one beat of the friend at the store's clock, to the

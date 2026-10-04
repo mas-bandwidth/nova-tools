@@ -429,7 +429,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		if costs[pr.ID] == nil {
 			costs[pr.ID] = map[string]string{}
 		}
-		addConsumer(pr, costs[pr.ID], con)
+		addConsumer(s, pr, costs[pr.ID], con)
 		costUnit[pr.ID] = len(p.Units) // the read's unit, appended next
 	}
 	for _, c := range chosen {
@@ -463,7 +463,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			run := nextTake(c, FieldReadTake)
 			rec := costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
 			set := map[string]string{FieldReadTake + itoa(run): rec, FieldReasked: itoa(returns)}
-			record(pr, readConsumer(s, c, run, "returned", rec))
+			record(pr, readConsumer(s, pr, c, run, "returned", rec))
 			if returns > MaxReadReasks {
 				n.What += fmt.Sprintf("; asked again of %s %d times, the read is retired", c.Row, MaxReadReasks)
 				set["retired"], set["retired_by"] = stamp(s.Now), "returned"
@@ -492,7 +492,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			set[FieldUsage] = rec
 		}
 		if pr != nil {
-			record(pr, readConsumer(s, c, 0, r.Verdict, rec))
+			record(pr, readConsumer(s, pr, c, 0, r.Verdict, rec))
 		}
 		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, col, set, FieldReturned))},
 			Moved: fmt.Sprintf("%s %s -> %s", c.ID, c.Col, col)}

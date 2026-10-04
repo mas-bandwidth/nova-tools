@@ -86,6 +86,7 @@ func init() {
 		{"stream set", "<stream>... --read-tier <flash|pro|default>", "stream set skips --read-tier pro", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
+		{"costs retier", "[--dry-run] [--cards <n>] [--root <dir>]", "costs retier --dry-run", (*app).cmdCostsRetier},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
 		{"ack", "<note>[,<note>]... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
@@ -294,6 +295,7 @@ one answer to each judgment (every one prints its own, filled in):
   stranded in review          rework or drop (or ask, if never asked) --group <id> --expect <n> --answers <notes>
   stalled                     card <primary> (HELD says what holds it), then the decision it prints, or ack <note> --reason '<why>'
   landed work scored low      add --stream <s> '<fix id>' --brief '<the finding>', then ack <note>; or ack <note> --reason '<why it stands>'
+  a landed cost has no tier   costs retier --dry-run, then costs retier, then ack <note> --reason 'costs retiered'
 
 the routine judgments answered by nova-decide (broken, failed, blocked, stalled, conflict,
 deadline, cannot ask, ready to accept, a card at its bound), card by card:

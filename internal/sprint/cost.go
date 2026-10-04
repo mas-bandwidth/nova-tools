@@ -92,6 +92,10 @@ const (
 	FieldCostRecord = "cost_record:" // + the consumer's key (Consumer.Key)
 	FieldCostTotal  = "cost_total"   // cardcost.Total.String over every record
 	FieldCostCut    = "cost_cut"     // how many records past MaxCostRecords were left out of the list
+	// FieldCostTier + a tier is the exact sum of the figures (ChargedOf) of the primary's records
+	// on that tier, every record, those past the list's bound included: the tiers add up to
+	// the total's charged figure (CardTierTotals), so no dollar is without a tier.
+	FieldCostTier = "cost_tier:"
 	// MaxCostRecords bounds the history on one card. A card's takes and reads are few;
 	// past the bound a record is still added to the total, exactly, and counted in
 	// FieldCostCut, and `card <id>` says the list was cut.
@@ -168,15 +172,34 @@ func parseConsumer(key, line string) Consumer {
 }
 
 // addConsumer adds the consumer's record to the primary's changes (set, the fields the
-// step writes on it), and the record to the primary's total: once per key, whatever is
-// already on the card or in set, so a step planned again never counts it twice.
-func addConsumer(pr *Card, set map[string]string, c Consumer) {
+// step writes on it), the record to the primary's total and its figure to the total of
+// its tier (FieldCostTier): once per key, whatever is already on the card or in set, so a
+// step planned again never counts it twice. A record is written with its tier or not at
+// all: one whose tier is none of the four is refused, nothing written, and ok is false
+// (workConsumer and readConsumer always give one: RecordTier). A primary that holds
+// records from before the tier totals has them seeded first (CardTierTotals), so its
+// totals cover every record it holds.
+func addConsumer(s *Snapshot, pr *Card, set map[string]string, c Consumer) (ok bool) {
+	if !IsTier(c.Tier) {
+		return false
+	}
 	key := FieldCostRecord + c.Key
 	if pr.F(key) != "" || set[key] != "" {
-		return
+		return true
+	}
+	if !hasTierTotals(pr.Fields) && !hasTierTotals(set) {
+		for tier, v := range CardTierTotals(pr, RulesOf(s.Routes)) {
+			set[FieldCostTier+tier] = cardcost.Text(v)
+		}
 	}
 	total := cardcost.ParseTotal(cmp.Or(set[FieldCostTotal], pr.F(FieldCostTotal)))
 	set[FieldCostTotal] = total.Add(c.Usage).String()
+	if v := ChargedOf(c.Usage); v != nil {
+		k := FieldCostTier + c.Tier
+		if sum, ok := cardcost.Sum(cmp.Or(set[k], pr.F(k)), cardcost.Text(v)); ok {
+			set[k] = sum
+		}
+	}
 	n := 0
 	for k := range pr.Fields {
 		if strings.HasPrefix(k, FieldCostRecord) {
@@ -190,9 +213,20 @@ func addConsumer(pr *Card, set map[string]string, c Consumer) {
 	}
 	if n >= MaxCostRecords {
 		set[FieldCostCut] = itoa(max(pr.Int(FieldCostCut), atoiOr(set[FieldCostCut])) + 1)
-		return
+		return true
 	}
 	set[key] = c.line()
+	return true
+}
+
+// hasTierTotals says whether fields hold a tier total (FieldCostTier).
+func hasTierTotals(fields map[string]string) bool {
+	for k := range fields {
+		if strings.HasPrefix(k, FieldCostTier) {
+			return true
+		}
+	}
+	return false
 }
 
 // atoiOr is a count field's value, 0 when unset.
@@ -202,24 +236,29 @@ func atoiOr(v string) int {
 }
 
 // workConsumer is a work card's take as it ends: its route, model, member and
-// generation, the end, and the cost record (rec, costRecord's line).
-func workConsumer(s *Snapshot, c *Card, take int, end, rec string) Consumer {
+// generation, the end, the cost record (rec, costRecord's line), and its tier: the tier
+// its route was drawn from, else its route's, else its model's class (RecordTier).
+func workConsumer(s *Snapshot, pr, c *Card, take int, end, rec string) Consumer {
 	u := cardcost.ParseUsage(rec)
 	key := c.ID + "#g" + itoa(c.Int("gen"))
-	return Consumer{Kind: "work", Card: c.ID, Attempt: c.Int("attempt"), Take: take, Gen: c.Int("gen"), Who: c.Row,
+	con := Consumer{Kind: "work", Card: c.ID, Attempt: c.Int("attempt"), Take: take, Gen: c.Int("gen"), Who: c.Row,
 		Route: c.F(FieldRoute), Model: cmp.Or(u.Model, c.F(FieldModel)), Tier: c.F(FieldTier), End: end, At: stamp(s.Now), Key: key, Usage: u}
+	con.Tier, _ = RecordTier(con, pr, RulesOf(s.Routes))
+	return con
 }
 
 // readConsumer is a read card's run as it ends: run is the returned run's number, 0
-// for the run that gave the verdict.
-func readConsumer(s *Snapshot, c *Card, run int, end, rec string) Consumer {
+// for the run that gave the verdict; its tier as workConsumer's.
+func readConsumer(s *Snapshot, pr, c *Card, run int, end, rec string) Consumer {
 	u := cardcost.ParseUsage(rec)
 	key := c.ID + "#v"
 	if run > 0 {
 		key = c.ID + "#r" + itoa(run)
 	}
-	return Consumer{Kind: "read", Card: c.ID, Attempt: c.Int("attempt"), Take: run, Who: c.F("reader"), Route: u.Route, Model: u.Model,
+	con := Consumer{Kind: "read", Card: c.ID, Attempt: c.Int("attempt"), Take: run, Who: c.F("reader"), Route: u.Route, Model: u.Model,
 		Tier: c.F(FieldTier), End: end, At: stamp(s.Now), Key: key, Usage: u}
+	con.Tier, _ = RecordTier(con, pr, RulesOf(s.Routes))
+	return con
 }
 
 // CardCostView is a producer card's cost: each consumer that ended, the totals, and

@@ -36,6 +36,13 @@ type TierCosts struct {
 	// the tier each attempt and read ran on (RecordTier), in dollars and cents that add up
 	// to the landed cost as MoneyText shows it (SplitCents). Only the four tiers are keys.
 	CostByTier map[string]string `json:"cost_by_tier,omitempty"`
+	// Guard is an alarm, never a tier: the landed cost, dollars and cents rounded up, whose
+	// tiers the read-time rule placed because its cards hold no complete tier totals
+	// (CardTierSpend); GuardCards counts those cards. Every record is written with its tier
+	// (addConsumer) and costs retier backfills the rest, so either is a bug to trace; the
+	// where view raises it.
+	Guard      string `json:"cost_tier_guard,omitempty"`
+	GuardCards int    `json:"cost_tier_guard_cards,omitempty"`
 }
 
 // Tiers are the four tiers every dollar is spent on, cheapest first (the owner,
@@ -154,19 +161,56 @@ func RecordTier(con Consumer, pr *Card, r TierRules) (tier string, byCard bool) 
 // ChargedOf is a record's one figure, as the card's total sums it (cardcost.Total.Add): its
 // actual cost where that is an amount, else its predicted one; nil when neither is.
 func ChargedOf(u cardcost.Usage) *big.Rat {
-	for _, v := range []string{u.Actual, u.Predicted} {
-		if r, err := amountOf(v); err == nil && r != nil {
-			return r
-		}
+	r, err := amountOf(u.Charged())
+	if err != nil {
+		return nil
 	}
-	return nil
+	return r
 }
 
-// CardTierSpend is a landed primary's cost (FieldCost) by tier: each record's figure
-// (ChargedOf) on its tier (RecordTier), and what the cost holds that no listed record
-// does (the records past MaxCostRecords, in the total and not in the list; FieldCostCut)
-// on the card's tier (CardTier). The tiers add up to the cost exactly.
-func CardTierSpend(pr *Card, r TierRules) map[string]*big.Rat {
+// storedTierTotals are the primary's tier totals as it holds them (FieldCostTier), and
+// whether they add up to its total's charged figure: complete, the card's every dollar
+// on a tier, written as its records were.
+func storedTierTotals(pr *Card) (map[string]*big.Rat, bool) {
+	out := map[string]*big.Rat{}
+	sum := new(big.Rat)
+	for k, v := range pr.Fields {
+		tier, ok := strings.CutPrefix(k, FieldCostTier)
+		if !ok {
+			continue
+		}
+		r, err := amountOf(v)
+		if err != nil || r == nil || !IsTier(tier) {
+			return out, false
+		}
+		out[tier] = r
+		sum.Add(sum, r)
+	}
+	charged, err := amountOf(cardcost.ParseTotal(pr.F(FieldCostTotal)).Charged)
+	if err != nil {
+		return out, false
+	}
+	if charged == nil {
+		charged = new(big.Rat)
+	}
+	return out, len(out) > 0 && sum.Cmp(charged) == 0
+}
+
+// recordTierTotals are the primary's charged figure by tier, found from its records: each
+// record's figure (ChargedOf) on its tier (RecordTier), and what the total holds that no
+// listed record does (the records past MaxCostRecords; FieldCostCut) on the card's tier
+// (CardTier). They add up to the charged figure exactly.
+func recordTierTotals(pr *Card, r TierRules) map[string]*big.Rat {
+	charged, err := amountOf(cardcost.ParseTotal(pr.F(FieldCostTotal)).Charged)
+	if err != nil || charged == nil {
+		return map[string]*big.Rat{}
+	}
+	return tierTotalsTo(pr, r, charged)
+}
+
+// tierTotalsTo is target by tier: each record's figure on its tier (RecordTier) and the rest
+// on the card's (CardTier).
+func tierTotalsTo(pr *Card, r TierRules, target *big.Rat) map[string]*big.Rat {
 	out := map[string]*big.Rat{}
 	add := func(tier string, v *big.Rat) {
 		if out[tier] == nil {
@@ -174,24 +218,55 @@ func CardTierSpend(pr *Card, r TierRules) map[string]*big.Rat {
 		}
 		out[tier].Add(out[tier], v)
 	}
-	cost, err := amountOf(pr.F(FieldCost))
-	if err != nil || cost == nil {
-		return out
-	}
-	rest := new(big.Rat).Set(cost)
+	rest := new(big.Rat).Set(target)
 	for _, con := range CardCostOf(pr).Consumers {
-		v := ChargedOf(con.Usage)
-		if v == nil {
-			continue
+		if v := ChargedOf(con.Usage); v != nil {
+			tier, _ := RecordTier(con, pr, r)
+			add(tier, v)
+			rest.Sub(rest, v)
 		}
-		tier, _ := RecordTier(con, pr, r)
-		add(tier, v)
-		rest.Sub(rest, v)
 	}
 	if rest.Sign() != 0 {
 		add(CardTier(pr), rest)
 	}
 	return out
+}
+
+// CardTierTotals are the primary's charged figure by tier: its stored totals when they
+// are complete (FieldCostTier), else as its records give them (recordTierTotals). What
+// addConsumer seeds a card from before the totals with, and what costs retier writes.
+func CardTierTotals(pr *Card, r TierRules) map[string]*big.Rat {
+	if by, ok := storedTierTotals(pr); ok {
+		return by
+	}
+	return recordTierTotals(pr, r)
+}
+
+// CardTierSpend is a landed primary's cost (FieldCost) by tier: its stored tier totals
+// (FieldCostTier) when they add up to it. Else the read-time rule places it, a guard
+// that should never fire once every record is written with its tier and every card
+// retiered (costs retier): its records' tiers (RecordTier) and the rest on the card's
+// tier, and guarded is the whole cost, which the where view raises (TierCosts.Guard).
+// The tiers add up to the cost exactly.
+func CardTierSpend(pr *Card, r TierRules) (by map[string]*big.Rat, guarded *big.Rat) {
+	guarded = new(big.Rat)
+	cost, err := amountOf(pr.F(FieldCost))
+	if err != nil || cost == nil {
+		return map[string]*big.Rat{}, guarded
+	}
+	if stored, ok := storedTierTotals(pr); ok && sumOf(stored).Cmp(cost) == 0 {
+		return stored, guarded
+	}
+	return tierTotalsTo(pr, r, cost), guarded.Set(cost)
+}
+
+// sumOf is the sum of amounts.
+func sumOf(by map[string]*big.Rat) *big.Rat {
+	sum := new(big.Rat)
+	for _, v := range by {
+		sum.Add(sum, v)
+	}
+	return sum
 }
 
 // SplitCents is amounts in dollars and cents that add up to their sum as MoneyText shows
@@ -274,6 +349,7 @@ func StreamTierCosts(s *Snapshot, r TierRules) map[string]TierCosts {
 func streamTierCosts(s *Snapshot, stream string, r TierRules) TierCosts {
 	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}}
 	byTier := map[string]*big.Rat{}
+	guard := new(big.Rat)
 	var landedCost []string
 	landed := 0
 	for _, col := range States {
@@ -289,7 +365,12 @@ func streamTierCosts(s *Snapshot, stream string, r TierRules) TierCosts {
 			if v := c.F(FieldCost); v != "" {
 				landedCost = append(landedCost, v)
 			}
-			for tier, v := range CardTierSpend(c, r) {
+			by, guarded := CardTierSpend(c, r)
+			if guarded.Sign() > 0 {
+				guard.Add(guard, guarded)
+				t.GuardCards++
+			}
+			for tier, v := range by {
 				if byTier[tier] == nil {
 					byTier[tier] = new(big.Rat)
 				}
@@ -303,6 +384,9 @@ func streamTierCosts(s *Snapshot, stream string, r TierRules) TierCosts {
 		}
 	}
 	t.CostByTier = SplitCents(byTier)
+	if guard.Sign() > 0 {
+		t.Guard = cardcost.Cents(guard)
+	}
 	return t
 }
 
@@ -333,4 +417,22 @@ func PerLandedOf(costCell string, landed int) string {
 		return "-"
 	}
 	return cardcost.Cents(r.Quo(r, big.NewRat(int64(landed), 1)))
+}
+
+// NCostNoTier is the judgment of a landing whose cards' costs are not all on tiers: a
+// card that holds a charged cost and no complete tier totals (costLacksTiers), whose
+// tiers the where view places by the read-time rule (CardTierSpend's guard). Every record
+// is written with its tier, so it is a card from before the totals that costs retier has
+// not reached, or a bug.
+const NCostNoTier = "a landed cost has no tier"
+
+// costLacksTiers says the primary holds a charged cost above zero and no complete tier
+// totals (storedTierTotals).
+func costLacksTiers(pr *Card) bool {
+	charged, err := amountOf(cardcost.ParseTotal(pr.F(FieldCostTotal)).Charged)
+	if err != nil || charged == nil || charged.Sign() == 0 {
+		return false
+	}
+	_, ok := storedTierTotals(pr)
+	return !ok
 }

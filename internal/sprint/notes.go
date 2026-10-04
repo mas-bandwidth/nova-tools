@@ -114,6 +114,7 @@ var Decisions = map[string][]string{
 	NSentinelReached: {"release", "do more before going on", "drop"},
 	NScoredLow:       {"add a repair card", "ack"}, // landed: a rework is a new card; ack accepts the landing
 	NStalled:         {"look at the card", "wait"}, // each stall names its own
+	NCostNoTier:      {"retier the costs", "ack"},  // landed: costs retier writes the tiers; ack once it has
 }
 
 // RepeatDecision is added to a judgment for a primary that came back a second
