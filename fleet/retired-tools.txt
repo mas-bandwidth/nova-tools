@@ -5,7 +5,6 @@
 # leaves cmd/ and gains its line here in the same change; a name here is never
 # also a cmd/ directory (TestFleetPlaysReadOnlyTheInventory).
 nova-board
-nova-card
 nova-friend
 nova-merge
 nova-message-bus

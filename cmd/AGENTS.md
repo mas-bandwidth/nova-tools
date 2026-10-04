@@ -6,6 +6,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | --- | --- | --- | --- |
 | `nova-bus/` | coordination bus inbox, send, and wait CLI | `go test ./cmd/nova-bus` | `go test ./cmd/nova-bus` |
 | `nova-cairn/` | session checkpoints: a session's exact words kept as plain files, with an index and receipts | `go test ./cmd/nova-cairn` | `go test ./cmd/nova-cairn` |
+| `nova-card/` | writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help, for nova-sprint add --brief-dir | `go test ./cmd/nova-card` | `go test ./cmd/nova-card` |
 | `nova-check/` | checks over markdown records and repositories: links, kernel budget, no-code, floors, corpus, hygiene, dogfood, spelling | `go test ./cmd/nova-check` | `go test ./cmd/nova-check` |
 | `nova-ci/` | CI slowtests budget and check CLI, and ci-ok's run receipt | `go test ./cmd/nova-ci` | `go test ./cmd/nova-ci` |
 | `nova-config/` | permanent configuration store (Postgres), friends and machines, applied into Redis | `go test ./cmd/nova-config` | `go test ./cmd/nova-config` |

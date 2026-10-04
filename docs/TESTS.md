@@ -1194,3 +1194,22 @@ prints the same plan, one `IMPORT REPO` per repository, and the `sha256` of the
 file it wrote; verify names the same `sha256`, and when the two differ it says
 `VERIFY FAILED` with one `VERIFY MISSING`, `EXTRA` or `DRIFT` line per difference.
 `differences=0` is the proof the tree holds what GitHub holds.
+
+## nova-card
+
+Fixture: `cmd/nova-card/testdata/findings.tsv`, a reader's findings on two
+files, typed as `./cmd/nova-card/testdata/findings.tsv` from the root of a
+checkout; `./cards` is a directory the first line creates.
+
+### First run
+
+```
+$ nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./cards
+CARDS OK dir=./cards cards=2 waves=1 tier=pro
+
+$ nova-card lint --card ./cards/finding-internal-bus-send.md
+LINT OK file=./cards/finding-internal-bus-send.md
+
+$ nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
+LINT OK file=./cards/finding-cmd-nova-bus-main.md
+```
