@@ -134,7 +134,12 @@ func TestTheDryRunSaysWhatItReads(t *testing.T) {
 	for _, args := range [][]string{{"import", "-h"}, {"help"}} {
 		help := workMain(unreachable(t)).Run(args...)
 		require.Equal(t, 0, help.Code, "%v exit %d", args, help.Code)
-		assert.Regexp(t, `(?s)--dry-run.{0,20}reads?\s+GitHub\s+(exactly\s+)?as\s+the\s+import\s+does.*writes?\s+nothing`, help.Stdout, "%v does not say a dry run reads GitHub and writes nothing:\n%s", args, help.Stdout)
+		assert.Contains(t, help.Stdout, "reads GitHub exactly as the import does")
+		if args[0] == "import" {
+			assert.Regexp(t, `(?s)--dry-run.{0,80}report the dry-run result without making changes`, help.Stdout, "%v does not describe the dry-run flag:\n%s", args, help.Stdout)
+			assert.Contains(t, help.Stdout, "writes no tree file")
+			assert.Contains(t, help.Stdout, "not the tree's S-expression")
+		}
 	}
 }
 
@@ -284,6 +289,8 @@ func TestVerifyHelpShowsATreeTheReaderAccepts(t *testing.T) {
 	res := workMain(unreachable(t)).Run("verify", "-h")
 	require.Equal(t, 0, res.Code, res.Stderr)
 	require.Contains(t, res.Stdout, minimalTree, "verify -h does not print the minimal tree")
+	require.Contains(t, res.Stdout, "--max caps the difference items printed per kind (default 20); --max 0")
+	require.Contains(t, res.Stdout, "It does not limit the GitHub read or comparison.")
 	for _, key := range []string{"node-id", "state-reason", "author-association", "lock-reason", "linked-prs"} {
 		assert.Contains(t, res.Stdout, key, "verify -h does not name the issue key %s", key)
 	}

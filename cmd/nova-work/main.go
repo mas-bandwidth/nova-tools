@@ -56,9 +56,9 @@ func workTool(gh github) *tool.Tool {
 		Stamp: version,
 		How: `import reads every issue through your gh login, read-only, into one tree file.
 --dry-run reads GitHub exactly as the import does (every issue, the same calls) and writes nothing.
-verify reads GitHub again: one MISSING, EXTRA or DRIFT line per difference; none is the proof.
+verify compares the tree with GitHub; no differences means it matches.
 verify --against compares two tree files and reads no network (a minimal tree: verify -h).
-first run: gh logged in (gh auth status); export ORG and REPO, a repository you can read.`,
+first run: gh auth status; export ORG and REPO (repo slug); use --org $ORG --repo $ORG/$REPO.`,
 		ExitTable: "0 done, or verify found no difference; 1 verify found differences, or an import's " +
 			"encoded tree did not read back equal; 2 could not run (a flag, the budget, gh, GitHub, a file)",
 		Verbs: []tool.Verb{
@@ -125,7 +125,8 @@ cut at a bound: a connection longer than one page is read to its end. The tree
 is written to --out only after it has been encoded, read back and compared
 with what was fetched, with zero differences. --dry-run reads GitHub exactly
 as the import does (every issue, read-only, the calls IMPORT PLAN counts),
-checks the round trip, and writes nothing: it needs gh and the network.
+checks the round trip, and writes no tree file: it needs gh and the network.
+It prints the summary facts and plan, not the tree's S-expression.
 
 output: IMPORT OK with the counts, bytes=, the tree's sha256=, calls= (GraphQL
 calls), points= (what GitHub charged), rest=0 and gh= (the gh run); then
@@ -153,6 +154,9 @@ MISSING is in it and not in --tree. Nothing is read from the network. To try
 verify with no gh: save the minimal tree below as a.lisp, copy it to b.lisp
 with :archived true, and run nova-work verify --tree a.lisp --against b.lisp:
 one VERIFY DRIFT line for field=archived, under VERIFY FAIL, exit 1.
+
+--max caps the difference items printed per kind (default 20); --max 0
+prints every difference. It does not limit the GitHub read or comparison.
 
 the tree file (docs/SPEC-WORK-V1.md section 1.2) is one (work-tree "v1" ...)
 record. The smallest a reader accepts, one repository and no issue:

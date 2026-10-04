@@ -427,7 +427,7 @@ func (v Verb) flags() *Flags {
 		v.Flags(f)
 	}
 	if v.DryRun {
-		f.Bool("dry-run", false, "print what the verb would write and write nothing")
+		f.Bool("dry-run", false, "report the dry-run result without making changes")
 	}
 	if !f.prints {
 		f.Bool("json", false, "print the result as one JSON object instead of lines")
