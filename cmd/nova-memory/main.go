@@ -411,7 +411,17 @@ func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time
 			refuse(stderr, " "+name, fmt.Sprintf("--root %s is not a readable directory", oneline.Escape(root)))
 			return nil, 0, false
 		}
-		c, err := memindex.Build(os.DirFS(root), r.excluded)
+		// Belt to the walk-time type check in memindex.Build: every read the
+		// build makes goes through an os.Root, so a symlink swapped in
+		// between the walk and the read cannot leave the root (security#76
+		// finding 1, re-filed from security#58 finding 1).
+		rf, err := os.OpenRoot(root)
+		if err != nil {
+			refuse(stderr, " "+name, fmt.Sprintf("--root %s is not a readable directory: %s", oneline.Escape(root), oneline.Err(err)))
+			return nil, 0, false
+		}
+		c, err := memindex.Build(rf.FS(), r.excluded)
+		rf.Close() // ignored: a read-only root holds nothing to flush
 		if err != nil {
 			refuse(stderr, " "+name, fmt.Sprintf("building the index over %s: %s", oneline.Escape(root), oneline.Err(err)))
 			return nil, 0, false

@@ -99,6 +99,13 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		return nil, err
 	}
 	names := slices.Sorted(maps.Keys(snap.Machines))
+	// A hostile or stale Redis write cannot shape the hosts the plays act
+	// on: only a row name passes (docs/SPEC-CONFIG.md; security#69 finding 4).
+	for _, m := range names {
+		if !NamePattern.MatchString(m) {
+			return nil, fmt.Errorf("machine %q is not a row name (lower-case letters, digits and dashes)", m)
+		}
+	}
 
 	loops, err := hostLoops(snap)
 	if err != nil {
