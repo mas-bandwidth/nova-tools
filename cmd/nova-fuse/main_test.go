@@ -1451,7 +1451,7 @@ func TestASurfaceWithASpaceIsOneTokenInEveryField(t *testing.T) {
 	code, out, _ := capture(t, []string{"check", "--box", box, "other"}, nowish())
 	assert.Equal(t, 0, code, "check other: exit %d, %q", code, out)
 	assert.Contains(t, out, "surface=other\n", "check other: exit %d, %q", code, out)
-	_, out, errOut := capture(t, []string{"check", "--box", box, "my surface"}, nowish())
+	_, _, errOut := capture(t, []string{"check", "--box", box, "my surface"}, nowish())
 	assert.Contains(t, errOut, `FUSE FAILED quarantine=my\x20surface since=`, "FUSE FAILED must name the surface as one token, got %q", errOut)
 	_, out, _ = capture(t, []string{"status", "--box", box}, nowish())
 	assert.Contains(t, out, `STATUS OK quarantine=my\x20surface since=`, "STATUS must name the surface as one token, got %q", out)
