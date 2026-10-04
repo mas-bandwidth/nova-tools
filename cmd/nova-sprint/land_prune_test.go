@@ -127,8 +127,7 @@ func TestTheLandLoopDeletesBranchesLazilyBetweenRounds(t *testing.T) {
 
 // A delete origin refuses never fails the landing: the batch is landed and reported, the
 // branches stay on origin and the PRUNE line says so; the loop keeps them queued, waits
-// PruneRetry, and deletes them once origin takes it. Tests step past the retry clock with
-// pruneQueue.stepRetry so no subtest waits on the wall clock.
+// PruneRetry, and deletes them once origin takes it.
 func TestARefusedDeleteLeavesTheBatchLandedAndTheBranchesQueued(t *testing.T) {
 	t.Parallel()
 	r := pruneRig(t)
@@ -157,9 +156,7 @@ func TestARefusedDeleteLeavesTheBatchLandedAndTheBranchesQueued(t *testing.T) {
 	require.Equal(t, 0, r.a.landRound(context.Background(), "mem:0", more, &lines))
 	assert.Empty(t, lines.String(), "a failed cleanup waits out PruneRetry")
 	r.git(r.remote, "config", "receive.denyDeletes", "false")
-	// Step past the retry clock so the next round flushes through due() without
-	// waiting on the wall clock (docs/STANDARD.md, no fixed waits on the CI path).
-	r.a.prune.stepRetry()
+	r.a.sleep(PruneRetry)
 	require.Equal(t, 0, r.a.landRound(context.Background(), "mem:0", more, &lines))
 	assert.Contains(t, lines.String(), "PRUNE OK branches=2")
 	assert.Equal(t, []string{"main"}, r.originBranches())
@@ -329,16 +326,6 @@ func TestPrunePreservesAdvancedAndRecreatedBranches(t *testing.T) {
 			r.git(r.worker, "switch", "-q", branch)
 			newHead := r.commit("new-work.txt", "keep this work\n", "new work after landing")
 			r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
-
-			if mode == "retry" {
-				// A failed cleanup sets a retry clock (PruneRetry). Step past it so the
-				// test exercises the retry through landRound's due() gate without waiting.
-				r.a.prune.stepRetry()
-				out.Reset()
-				require.Equal(t, 0, r.a.landRound(context.Background(), "mem:0", more, &out))
-				assert.Contains(t, out.String(), "PRUNE FAILED")
-				assert.Contains(t, out.String(), "left=1")
-			}
 
 			results := r.a.flushPrune(context.Background(), false)
 

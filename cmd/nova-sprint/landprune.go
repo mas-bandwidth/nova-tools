@@ -212,14 +212,6 @@ func (q *pruneQueue) due(idle bool, now time.Time) bool {
 	return idle || q.waiting() >= PruneEvery
 }
 
-// stepRetry clears the retry wait so tests can make a retry due without advancing
-// the clock (docs/STANDARD.md, no fixed wall-clock waits on the CI path).
-func (q *pruneQueue) stepRetry() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.retryAt = time.Time{}
-}
-
 // pruneResult is one clone's cleanup, a PRUNE line and an item of land's --json.
 type pruneResult struct {
 	Status   string  `json:"status"` // ok, failed
