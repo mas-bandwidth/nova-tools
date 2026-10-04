@@ -116,7 +116,8 @@ func TestConvergenceRefusesAMissingFlag(t *testing.T) {
 		exit, stdout, stderr := runCheck(t, args...)
 		assert.EqualValues(t, 2, exit, "--%s omitted exited %d, want 2", missing, exit)
 		assert.EqualValues(t, "", stdout, "--%s omitted printed a reading: %q", missing, stdout)
-		assert.Contains(t, stderr, "--"+missing+" is required; refusing to guess", "--%s omitted said: %q", missing, stderr)
+		assert.Contains(t, stderr, "--"+missing+" is required", "--%s omitted said: %q", missing, stderr)
+		assert.Contains(t, stderr, "refusing to guess", "--%s omitted said: %q", missing, stderr)
 	}
 
 	exit, _, stderr := runCheck(t, "convergence")
@@ -285,7 +286,8 @@ func TestConvergenceRefusesAForgeThatWillNotAnswer(t *testing.T) {
 	exit, stdout, stderr := f.run(t, "--gh", bad)
 	require.EqualValues(t, 2, exit, "a forge that refused exited %d, want 2", exit)
 	assert.NotContains(t, stdout, "CONVERGENCE", "a partial reading was printed:\n%s", stdout)
-	assert.False(t, !strings.Contains(stderr, "nova-check convergence REFUSED:") || !strings.Contains(stderr, "gh pr list"), "the refusal does not name the child: %q", stderr)
+	assert.Contains(t, stderr, "CONVERGENCE REFUSED:", "the refusal does not name the status: %q", stderr)
+	assert.Contains(t, stderr, "gh pr list", "the refusal does not name the child: %q", stderr)
 }
 
 // A --timeout of zero or less is a wait with no end.
