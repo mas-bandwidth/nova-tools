@@ -2,12 +2,12 @@
 # ceiling: 12
 .github/workflows/certification.yml:space 2
 .github/workflows/ci.yml:batman 10
-.github/workflows/ci.yml:glenn 11
+.github/workflows/ci.yml:glenn 10
 .github/workflows/ci.yml:hulk 14
 .github/workflows/ci.yml:mini 1
 .github/workflows/ci.yml:rowan 1
 .github/workflows/ci.yml:space 29
-.github/workflows/ci.yml:studio 22
+.github/workflows/ci.yml:studio 21
 .github/workflows/ci.yml:superman 7
 .github/workflows/ci.yml:vision 6
 .github/workflows/nightly-slow.yml:glenn 1

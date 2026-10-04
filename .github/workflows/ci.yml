@@ -345,9 +345,10 @@ jobs:
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          # Clean in place keeps the tree. Measured on a macOS runner: four
-          # `find ... rm -rf` sweeps and the re-seeds behind them were the
-          # file-event storm fseventsd digested at 100% CPU. A checkout of
+          # Clean in place, keep the tree: fs_usage on a macOS bench showed four
+          # `find ... rm -rf` sweeps and the re-seeds behind them as the file-event
+          # storm fseventsd digested at 100% CPU: emptying a checkout's hundred
+          # thousand small files is slow. A checkout of
           # ours is reset to its HEAD and every untracked or ignored file is
           # removed: the same hygiene as emptying it, a few hundred operations
           # instead of a hundred thousand, and the next checkout fetches only
@@ -540,10 +541,10 @@ jobs:
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
-          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
-          # them were the file-event storm fseventsd digested at 100% CPU;
-          # "lots of tiny files is a really slow way to work"). A checkout of
+          # Clean in place, keep the tree. fs_usage on a macOS runner showed four
+          # `find ... rm -rf` sweeps and the re-seeds behind them as the file-event
+          # storm fseventsd digested at 100% CPU: emptying a checkout's hundred
+          # thousand small files is slow. A checkout of
           # ours is reset to its HEAD and every untracked or ignored file is
           # removed: the same hygiene as emptying it, a few hundred operations
           # instead of a hundred thousand, and the next checkout fetches only
