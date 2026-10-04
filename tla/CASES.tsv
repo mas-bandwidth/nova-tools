@@ -336,3 +336,12 @@ MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	
 MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-
+MCFriendKeepaliveBrokeninstance.cfg	MCFriendKeepalive.tla	invariant	FreshProofOnly	ignore-terminal	friendkeepalive	required	-
+MCFriendKeepaliveBrokenpeer.cfg	MCFriendKeepalive.tla	invariant	NoDuplicateRefresh	ignore-terminal	friendkeepalive	required	-
+MCFriendKeepaliveBrokenseat.cfg	MCFriendKeepalive.tla	invariant	FreshProofOnly	ignore-terminal	friendkeepalive	required	-
+MCFriendKeepaliveBrokenexpired.cfg	MCFriendKeepalive.tla	invariant	FreshProofOnly	ignore-terminal	friendkeepalive	required	-
+MCFriendKeepaliveBrokenduplicate.cfg	MCFriendKeepalive.tla	invariant	NoDuplicateRefresh	ignore-terminal	friendkeepalive	required	-
+MCFriendKeepaliveBrokenburst.cfg	MCFriendKeepalive.tla	invariant	OneEmissionPerTick	ignore-terminal	friendkeepalive	required	-
+MCFriendKeepaliveBrokenwake.cfg	MCFriendKeepalive.tla	invariant	NoSessionWake	ignore-terminal	friendkeepalive	required	-
+MCFriendKeepaliveBrokenturn.cfg	MCFriendKeepalive.tla	invariant	NoSessionTurn	ignore-terminal	friendkeepalive	required	-
+MCFriendKeepalive.cfg	MCFriendKeepalive.tla	pass	-	ignore-terminal	friendkeepalive	required	-
