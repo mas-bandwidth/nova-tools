@@ -163,8 +163,16 @@ level, `fleet sync`, the machines' deal and the shape a clear keeps never
 touch a friend's row, so a friend who goes quiet keeps her card (no
 take-back by presence; the coordinator takes back what she has not started,
 below), the no-stall rule holds it as hers whatever her status, and
-the deadline rule (not finished 2 hours from its deal) judges it as it judges
-any work card. The machines' `deal` verb refuses a friend's card, and
+the deadline rule judges it as it judges any work card, its working deadline
+by friend: the larger of 2 hours from its deal (`DeadlineUnfinished`) and
+`FriendDeadlineK` (three) times her median run wall over her last
+`FriendDeadlineSamples` (fifty) ok attempts, her run wall being her take to
+her report (`sprint.RunWall`), set on the card as `friend_deadline` (seconds)
+when it goes into working on her row (her deal, her next on a finish, a level
+or a redeal), and absent while she has no ok attempt: nova-tools#5300's member
+rule, written here for friends under its own names because #5300 was not on
+dev (`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
+`TestAFriendsNextCardsDeadlineFollowsHerRunWall`). The machines' `deal` verb refuses a friend's card, and
 `rework` of one sends its primary ready with the fix, for the tick to deal to
 a friend.
 

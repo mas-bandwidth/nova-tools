@@ -112,7 +112,8 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 		if c.Col == Working && len(next) > 0 {
 			n := next[0]
 			next = next[1:]
-			u.Changes = append(u.Changes, change(Fleet, moveEntry(n, row, Working, takenStamps(n, s.Now), "untaken_since")))
+			set, unset := friendTaken(s, n, r.Friend)
+			u.Changes = append(u.Changes, change(Fleet, moveEntry(n, row, Working, set, unset...)))
 			u.Moved += fmt.Sprintf("; %s ready -> working (her next, taken now)", n.ID)
 		}
 		p.Units = append(p.Units, u)

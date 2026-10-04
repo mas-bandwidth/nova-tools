@@ -1343,7 +1343,9 @@ func friendNext(s *Snapshot, c *Card, u *Unit) {
 	}
 	SortCards(ready)
 	next := ready[0]
-	u.Changes = append(u.Changes, change(Fleet, moveEntry(next, c.Row, Working, takenStamps(next, s.Now), "untaken_since")))
+	name, _ := FriendOfRow(c.Row)
+	set, unset := friendTaken(s, next, name)
+	u.Changes = append(u.Changes, change(Fleet, moveEntry(next, c.Row, Working, set, unset...)))
 	u.Moved += fmt.Sprintf("; %s ready -> working (her next, taken now)", next.ID)
 }
 

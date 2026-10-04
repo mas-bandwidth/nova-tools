@@ -1268,11 +1268,11 @@ func WorkDeadline(s *Snapshot, c *Card) (field string, limit time.Duration, word
 	}
 	switch {
 	case c.Col == Working:
-		return first("first_taken", "taken"), DeadlineUnfinished, "not finished", own
+		return first("first_taken", "taken"), unfinishedLimit(c), "not finished", own
 	case c.F("untaken_since") != "":
 		return "untaken_since", s.DealtMax(), WordNeverTaken, own
 	case c.F("first_taken") != "":
-		return "first_taken", DeadlineUnfinished, "not finished", own
+		return "first_taken", unfinishedLimit(c), "not finished", own
 	}
 	return first("first_dealt", "dealt"), s.DealtMax(), WordNeverTaken, own
 }

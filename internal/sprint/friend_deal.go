@@ -194,6 +194,11 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, col string) Unit {
 			fields[k] = v
 		}
 	}
+	if col == Working {
+		name, _ := FriendOfRow(row)
+		dl, _ := friendDeadline(s, name)
+		maps.Copy(fields, dl)
+	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, row, col, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, map[string]string{"attempt": itoa(attempt), "work": card}, "result")),
@@ -206,12 +211,15 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, col string) Unit {
 // ready -> working on it, its attempt as it was: a take-back is no attempt and spends no
 // bound.
 func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
-	set := nextGen(wc, row, s.Now)
-	unset := []string{"withdrawn", FieldTakenBack, FieldTakenFrom}
+	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom}
 	if col == Working {
-		maps.Copy(set, takenStamps(wc, s.Now))
+		name, _ := FriendOfRow(row)
+		tset, tunset := friendTaken(s, wc, name)
+		maps.Copy(set, tset)
 		delete(set, "untaken_since")
-		unset = append(unset, "untaken_since")
+		unset = append(unset, tunset...)
+	} else {
+		unset = append(unset, FieldFriendDeadline) // set when she takes it
 	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, moveEntry(wc, row, col, set, unset...)),

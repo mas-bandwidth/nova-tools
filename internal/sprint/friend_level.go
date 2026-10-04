@@ -80,13 +80,14 @@ func FriendLevel(s *Snapshot, r FriendLevelReq) Plan {
 			to[short]++
 			from[long]++
 			col := Ready
-			set, unset := nextGen(c, FriendRow(short), s.Now), []string(nil)
+			set, unset := nextGen(c, FriendRow(short), s.Now), []string{FieldFriendDeadline}
 			if working[short] < width[short] {
 				working[short]++
 				col = Working
-				maps.Copy(set, takenStamps(c, s.Now))
+				tset, tunset := friendTaken(s, c, short)
+				maps.Copy(set, tset)
 				delete(set, "untaken_since")
-				unset = append(unset, "untaken_since")
+				unset = tunset
 			}
 			if row := FriendRow(short); !s.Fleet.HasRow(row) && !declared[row] {
 				p.Rows = append(p.Rows, RowAdd{Fleet, row}) // her row, the first time a card is placed on it

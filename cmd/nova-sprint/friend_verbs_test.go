@@ -148,3 +148,32 @@ func TestStatsTimesAFriendsRunFromHerReport(t *testing.T) {
 	assert.Equal(t, sprint.Measure{Median: 120, Max: 120, N: 1}, ps.Work[0].ReportLag, "her report to the finish")
 	ta.clean()
 }
+
+// On the twin: once amy has an ok attempt whose run (her take to her report) was an hour,
+// a card she takes after it carries her deadline, three hours from its take, past the
+// fleet's two, as where --json --cards shows it; one taken before it keeps the fleet's.
+func TestAFriendsNextCardsDeadlineFollowsHerRunWall(t *testing.T) {
+	t.Parallel()
+	ta, root := takeApp(t, 3, map[string]string{"sprint/s1-1.w1.g1.e0": landHead}, "amy")
+	ta.ok("friend up amy --width 1")
+	ta.ok("tick") // s1-1 working, s1-2 ready behind it, s1-3 waits (friend sync sets her width back to 8)
+	ta.ok("friend sync --root " + root)
+	taken := ta.a.now()
+	ta.a.sleep(70 * time.Minute)
+	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n\nDone.\n")
+	report := filepath.Join(root, "amy-working", "outbox", "s1-1.w1", "REPORT.md")
+	require.NoError(t, os.Chtimes(report, taken.Add(time.Hour), taken.Add(time.Hour)))
+	ta.ok("friend sync --root " + root)
+	ta.ok("friend beat amy")
+	ta.ok("tick") // s1-3 dealt to her and taken, s1-1's hour behind her
+
+	var w whereView
+	ta.json("where --cards", &w)
+	limit := map[string]time.Duration{}
+	for _, c := range w.Cards {
+		assert.Equal(t, sprint.Working, c.State, c.ID)
+		limit[c.ID] = c.Deadline.Sub(c.Since)
+	}
+	assert.Equal(t, map[string]time.Duration{"s1-2.w1": 2 * time.Hour, "s1-3.w1": 3 * time.Hour}, limit, "s1-2 taken before her ok attempt: the fleet's two hours; s1-3 after it: three times her one hour")
+	ta.clean()
+}
