@@ -73,6 +73,35 @@ func ParseVerdicts(body string) map[string]Result {
 	return out
 }
 
+// CompleteVerdicts expands each stated step commit through the checkout's resolver
+// before the finish reads it (docs/SPEC-CARD-CONTRACT.md section 3). Verdicts and
+// evidence stay the child's; no missing commit or unknown ref is replaced by HEAD.
+func CompleteVerdicts(body string, resolve func(string) (string, error)) (string, error) {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		m := verdictRE.FindStringSubmatchIndex(line)
+		if m == nil {
+			continue
+		}
+		ref := line[m[6]:m[7]]
+		if ref == "-" || ref == "" {
+			continue
+		}
+		if len(ref) < 7 || len(ref) > 40 || strings.Trim(ref, "0123456789abcdefABCDEF") != "" {
+			return "", fmt.Errorf("step %s commit %q is not a Git commit abbreviation", line[m[2]:m[3]], ref)
+		}
+		sha, err := resolve(ref)
+		if err != nil {
+			return "", fmt.Errorf("step %s commit %q: %w", line[m[2]:m[3]], ref, err)
+		}
+		if len(sha) != 40 || !stepShaRE.MatchString(sha) {
+			return "", fmt.Errorf("step %s resolver returned no full commit", line[m[2]:m[3]])
+		}
+		lines[i] = line[:m[6]] + sha + line[m[7]:]
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
 // Land is where a tree card's result lands (docs/SPEC-SPRINT.md, a card is a tree of steps:
 // the coordinator's failed-step rule of 2026-10-02): the first work step whose verdict is not
 // ok (a step with no line is not-done), and the commit of the last ok step before it that made
