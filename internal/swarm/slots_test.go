@@ -104,3 +104,43 @@ func TestSlotCapacityReserveRefused(t *testing.T) {
 	require.Equal(t, 0, free, "free must be 0 at capacity-reserve, got %d", free)
 	require.Equal(t, "alice:2,bob:1", holders, "refusal must name holders, got %q", holders)
 }
+
+// Take refuses an owner carrying a path separator or ".." (security#66 finding 2):
+// returnCardForLease joins the raw owner into STORE/taken/<owner>-<label>, so an
+// owner like "../../evil" would move a file from OUTSIDE the store into its queue
+// at reap. The refusal names the owner's rule, and a plain owner still takes.
+func TestATakeRefusesAnOwnerWithSeparators(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		owner string
+	}{
+		{"dotdot-slash", "../../evil"},
+		{"dotdot-backslash", `..\evil`},
+		{"slash", "evil/dir"},
+		{"backslash", `evil\dir`},
+		{"embedded-dotdot", "a..b"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := writeSlotStore(t, "capacity\t2\nreserve\t0\nalice\t2\n")
+			_, _, _, _, _, _, err := TakeSlotLeases(store, tc.owner, 1, time.Hour, "card-1", time.Now().UTC(), os.Getpid())
+			require.ErrorContains(t, err, "owner has no path separators or ..",
+				"take must refuse owner %q with the owner's rule named", tc.owner)
+			leases, lerr := ListSlotLeases(store, time.Now().UTC())
+			require.NoError(t, lerr)
+			require.Empty(t, leases, "a refused take writes no lease")
+		})
+	}
+	t.Run("plain-owner", func(t *testing.T) {
+		t.Parallel()
+
+		store := writeSlotStore(t, "capacity\t2\nreserve\t0\nalice\t2\n")
+		ok, granted, _, _, _, _ := mustSlotTake(t, store, "alice", 1, time.Hour, "card-1", time.Now().UTC(), os.Getpid())
+		require.True(t, ok, "an owner without separators still takes")
+		require.Equal(t, 1, granted, "an owner without separators takes its one lease")
+	})
+}
