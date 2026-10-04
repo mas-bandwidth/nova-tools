@@ -574,6 +574,11 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 				return false, false
 			}
 			if failed.id != "" {
+				if strings.Contains(failed.why, "empty commit:") {
+					b.Cards, b.IDs, b.Reason = 1, []string{failed.id}, failed.why
+					l.out = append(l.out, b)
+					return false, true
+				}
 				l.conflict(stream, failed)
 				return false, true
 			}
@@ -591,6 +596,11 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		if why != "" {
 			return refuse(why)
 		}
+	}
+	if failed.id != "" && strings.Contains(failed.why, "empty commit:") {
+		b.Cards, b.IDs, b.Reason = 1, []string{failed.id}, failed.why
+		l.out = append(l.out, b)
+		return false, true
 	}
 	l.conflict(stream, failed)
 	return false, true
@@ -1055,13 +1065,58 @@ func (l *lander) ledgers() []landLedger {
 	return landLedgers
 }
 
+var (
+	verdictOkRE      = regexp.MustCompile(`(?i)\bverdict:\s*ok\b|\bverdict\s+ok\b`)
+	verdictNothingRE = regexp.MustCompile(`(?i)\bverdict:\s*nothing\b|\bverdict\s+nothing\b`)
+	stepShaRE        = regexp.MustCompile(`(?im)^\s*step[^\n]*\b[0-9a-f]{7,64}\b`)
+	diffStatRE       = regexp.MustCompile(`(?i)(\b[1-9]\d*\s+files?\s+changed\b|\b[1-9]\d*\s+insertions?\b|\b[1-9]\d*\s+deletions?\b|\b[1-9]\d*\s+lines?\s+added\b|\b[1-9]\d*\s+lines?\s+removed\b|^\s*[\w./-]+\s+\|\s+[1-9]\d*|\bdiff\s*stat:\s*\+?[1-9])`)
+	stepLineRE       = regexp.MustCompile(`(?im)^\s*step[^\n]+`)
+	stepDashRE       = regexp.MustCompile(`(?im)^\s*step[^\n]*?[-–—]\s*$`)
+)
+
+// checkEmptyCommit checks whether a landing whose head commit's diff from the attempt's
+// start commit is empty while the attempt's RESULT.md claims changes (docs/SPEC-SPRINT.md
+// section 7, the lander's checks). When emptyDiff is true and resultText claims changes
+// (a step line with a commit sha, a non-empty diff stat, or a verdict of ok) without
+// claiming nothing (nothing-to-do, every step -), it refuses the landing with the finding:
+// "empty commit: the result claims changes the diff does not show".
+// A result that claims nothing with an empty diff passes (returns "").
+func checkEmptyCommit(emptyDiff bool, resultText string) string {
+	if !emptyDiff || strings.TrimSpace(resultText) == "" {
+		return ""
+	}
+	lower := strings.ToLower(resultText)
+	if strings.Contains(lower, "nothing-to-do") || strings.Contains(lower, "nothing to do") || verdictNothingRE.MatchString(resultText) {
+		return ""
+	}
+	allSteps := stepLineRE.FindAllString(resultText, -1)
+	if len(allSteps) > 0 {
+		allDash := true
+		for _, s := range allSteps {
+			if !stepDashRE.MatchString(s) {
+				allDash = false
+				break
+			}
+		}
+		if allDash {
+			return ""
+		}
+	}
+	claims := verdictOkRE.MatchString(resultText) || stepShaRE.MatchString(resultText) || diffStatRE.MatchString(resultText)
+	if claims {
+		return "empty commit: the result claims changes the diff does not show"
+	}
+	return ""
+}
+
 // checkCard is the lander's mechanical checks of one card merged onto the batch branch
 // at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
-// merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
-// sentence fragment or unmatched backquote (E4). A card that fails is taken off the batch
-// branch (reset to before) and ends the batch as a head that does not merge does, with
-// what failed; card and env are mergeHead's. A merge that made no commit (the head is in
-// the base already) is not checked: it changes nothing the base does not hold.
+// merge's own diff touches no file outside the card's PATHS (E12), leaves no stranded
+// sentence fragment or unmatched backquote (E4), and makes no empty commit claiming changes.
+// A card that fails is taken off the batch branch (reset to before) and ends the batch as a
+// head that does not merge does, with what failed; card and env are mergeHead's. A merge that
+// made no commit (the head is in the base already) is not checked: it changes nothing the base
+// does not hold.
 func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before string) (card, env string) {
 	after, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || after == before {
@@ -1077,6 +1132,48 @@ func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before s
 	}
 	for _, f := range diffcheck.Fragments(diff) {
 		why = append(why, f.String()+" (E4)")
+	}
+	if _, err := l.git(ctx, dir, "cat-file", "-e", c.head+"^{commit}"); err == nil {
+		start, err := l.git(ctx, dir, "merge-base", before, c.head)
+		if err != nil || start == "" || start == c.head {
+			start = c.head + "^"
+		}
+		if _, serr := l.git(ctx, dir, "cat-file", "-e", start+"^{commit}"); serr == nil {
+			diffOut, derr := l.git(ctx, dir, "diff", "--name-only", start, c.head)
+			diffEmpty := derr == nil && strings.TrimSpace(diffOut) == ""
+			if diffEmpty {
+				resultText := ""
+				if b, rerr := os.ReadFile(filepath.Join(dir, "RESULT.md")); rerr == nil {
+					resultText = string(b)
+				}
+				if resultText == "" {
+					if res, rerr := l.git(ctx, dir, "show", c.head+":RESULT.md"); rerr == nil {
+						resultText = res
+					}
+				}
+				if resultText == "" {
+					if res, rerr := l.git(ctx, dir, "show", "HEAD:RESULT.md"); rerr == nil {
+						resultText = res
+					}
+				}
+				if resultText == "" && c.primary != nil {
+					resultText = c.primary.F("report")
+				}
+				if finding := checkEmptyCommit(diffEmpty, resultText); finding != "" {
+					if _, rerr := l.git(ctx, dir, "reset", "-q", "--hard", before); rerr != nil {
+						return "", "the batch branch could not be reset after " + c.id + " failed the lander's checks: " + firstLine("", rerr)
+					}
+					if l.st != nil {
+						step := store.ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{c.id}}, Reason: finding, Who: l.c.actor})
+						l.a.serial.Lock()
+						// ignored: return step error does not prevent check refusal
+						_, _ = l.st.Run(ctx, step)
+						l.a.serial.Unlock()
+					}
+					return finding, ""
+				}
+			}
+		}
 	}
 	if len(why) == 0 {
 		l.diffs[c.id] = diff
