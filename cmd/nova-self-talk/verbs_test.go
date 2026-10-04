@@ -293,7 +293,7 @@ func TestExampleWritesThePagesFromTheBinary(t *testing.T) {
 	exit, stdout, stderr = runSelfTalk(t, "example", dir)
 	require.Equal(t, 0, exit, stderr)
 	assert.Contains(t, stdout, "EXAMPLE OK dir=")
-	assert.Contains(t, stdout, "wrote=RULES.md,journal.md kept=-; run: nova-self-talk "+filepath.Join(dir, "journal.md"))
+	assert.Contains(t, stdout, "wrote=RULES.md,journal.md kept=-; run: nova-self-talk "+shellQuote(filepath.Join(dir, "journal.md")))
 	want, err := os.ReadFile(filepath.Join(examplePages, "journal.md"))
 	require.NoError(t, err)
 	got, err := os.ReadFile(filepath.Join(dir, "journal.md"))
