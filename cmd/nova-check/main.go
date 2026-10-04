@@ -40,12 +40,11 @@ func novaCheck() *tool.Tool {
 		What:      "checks over markdown records and repositories, each finding named by file and line",
 		Stamp:     version,
 		ExitTable: "0 pass, 1 check failed, 2 could not run (bad invocation)",
-		How: `most verbs inspect named paths and keep no state between runs.
-dogfood record appends a receipt; spelling --write edits files in place (--dry-run: neither writes).
-convergence reads forge data through gh, an optional checkout through git, and
-the files you name; --state stores its two-tick streak. Other repository checks
-read the manifests, ledgers and receipts you name.
-first run: create the small markdown tree below, then run the example commands.`,
+		How: `most verbs inspect named paths and keep no state between runs. dogfood record
+appends a receipt; spelling --write edits files in place (--dry-run: neither writes).
+convergence reads forge data through gh, an optional checkout through git, and the files
+you name; --state stores its two-tick streak. Other repository checks read the manifests,
+ledgers and receipts you name. first run: create the small markdown tree, then run the examples.`,
 		Verbs: []tool.Verb{
 			{
 				Name:    "quickstart",
@@ -61,10 +60,9 @@ first run: create the small markdown tree below, then run the example commands.`
 				Run: quickstart,
 			},
 			{
-				Name:    "attest",
-				Usage:   "attest --home <dir> --manifest <file> [--max <n>]",
-				Example: "attest --home ./self --manifest ./self/MANIFEST",
-				Effect:  tool.Effect("inspection: reads the manifest and the files it names, writes nothing"),
+				Name:   "attest",
+				Usage:  "attest --home <dir> --manifest <file> [--max <n>]",
+				Effect: tool.Effect("inspection: reads the manifest and the files it names, writes nothing"),
 				Flags: func(f *tool.Flags) {
 					f.Required("home", homeHint)
 					f.Required("manifest", manifestHint)
@@ -101,10 +99,9 @@ first run: create the small markdown tree below, then run the example commands.`
 				Run: kernel,
 			},
 			{
-				Name:    "nocode",
-				Usage:   "nocode --dir <dir> [--staged] [--allow <prefix>] [--deny-ext <l|@f>] [--deny-ext-add <l|@f>] [--print-deny-list] [--max <n>]",
-				Example: "nocode --dir ./self",
-				Effect:  tool.Effect("inspection: reads the tree, or with --staged the git index, writes nothing"),
+				Name:   "nocode",
+				Usage:  "nocode --dir <dir> [--staged] [--allow <prefix>] [--deny-ext <l|@f>] [--deny-ext-add <l|@f>] [--print-deny-list] [--max <n>]",
+				Effect: tool.Effect("inspection: reads the tree, or with --staged the git index, writes nothing"),
 				Flags: func(f *tool.Flags) {
 					f.Required("dir", dirHint)
 					f.Bool("staged", false, "advisory over the index: classify what is about to be committed, not the working tree (--dir is the repository root)")
@@ -117,10 +114,9 @@ first run: create the small markdown tree below, then run the example commands.`
 				Run: nocode,
 			},
 			{
-				Name:    "floors",
-				Usage:   "floors --core <docs/SEED-CORE.md> --source <docs/SEED.md>",
-				Example: "floors --core ./self/docs/SEED-CORE.md --source ./self/docs/SEED.md",
-				Effect:  tool.Effect("inspection: reads the two files, writes nothing"),
+				Name:   "floors",
+				Usage:  "floors --core <docs/SEED-CORE.md> --source <docs/SEED.md>",
+				Effect: tool.Effect("inspection: reads the two files, writes nothing"),
 				Flags: func(f *tool.Flags) {
 					f.Required("core", coreHint)
 					f.Required("source", sourceHint)
@@ -128,10 +124,9 @@ first run: create the small markdown tree below, then run the example commands.`
 				Run: floors,
 			},
 			{
-				Name:    "corpus",
-				Usage:   "corpus --ledger <file> --root <dir> --min-anchors <n> [--max <n>]",
-				Example: "corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 1",
-				Effect:  tool.Effect("inspection: reads the ledger and the files it names, writes nothing"),
+				Name:   "corpus",
+				Usage:  "corpus --ledger <file> --root <dir> --min-anchors <n> [--max <n>]",
+				Effect: tool.Effect("inspection: reads the ledger and the files it names, writes nothing"),
 				Flags: func(f *tool.Flags) {
 					f.Required("ledger", ledgerHint)
 					f.Required("root", rootHint)
@@ -148,10 +143,9 @@ first run: create the small markdown tree below, then run the example commands.`
 				Run: corpus,
 			},
 			{
-				Name:    "hygiene",
-				Usage:   "hygiene --repo <dir> --base <ref> --head <ref> --identity \"<Name> <email>\" [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]",
-				Example: "hygiene --repo . --base main --head card --identity \"you <you@example.com>\" --kind sweep",
-				Effect:  tool.Effect("inspection: reads the repository through git, writes nothing"),
+				Name:   "hygiene",
+				Usage:  "hygiene --repo <dir> --base <ref> --head <ref> --identity \"<Name> <email>\" [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]",
+				Effect: tool.Effect("inspection: reads the repository through git, writes nothing"),
 				Flags: func(f *tool.Flags) {
 					f.Required("repo", "the git checkout to inspect")
 					f.Required("base", "the base git ref of the comparison")
@@ -165,44 +159,39 @@ first run: create the small markdown tree below, then run the example commands.`
 				Run: hygieneRun,
 			},
 			{
-				Name:    "dogfood ledger",
-				Usage:   "dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]",
-				Example: "dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts",
-				Effect:  tool.Effect("inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing"),
-				Flags:   dogfoodReadFlags,
-				Run:     dogfoodLedger,
+				Name:   "dogfood ledger",
+				Usage:  "dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]",
+				Effect: tool.Effect("inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing"),
+				Flags:  dogfoodReadFlags,
+				Run:    dogfoodLedger,
 			},
 			{
-				Name:    "dogfood record",
-				Usage:   "dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]",
-				Example: "dogfood record --cli ./docs/CLI.md --tool nova-check --verb links --by you --ok --notes \"ran it on real work\" --receipts ./dogfood-receipts",
-				Effect:  tool.Effect("local write: appends one receipt file to --receipts (--dry-run writes none)"),
-				Flags:   dogfoodRecordFlags,
-				Run:     dogfoodRecord,
+				Name:   "dogfood record",
+				Usage:  "dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]",
+				Effect: tool.Effect("local write: appends one receipt file to --receipts (--dry-run writes none)"),
+				Flags:  dogfoodRecordFlags,
+				Run:    dogfoodRecord,
 			},
 			{
-				Name:    "dogfood gate",
-				Usage:   "dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]",
-				Example: "dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts",
-				Effect:  tool.Effect("inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing"),
-				Flags:   dogfoodGateFlags,
-				Run:     dogfoodGate,
+				Name:   "dogfood gate",
+				Usage:  "dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]",
+				Effect: tool.Effect("inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing"),
+				Flags:  dogfoodGateFlags,
+				Run:    dogfoodGate,
 			},
 			{
-				Name:    "convergence",
-				Usage:   "convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--dry-run]",
-				Example: "convergence --repo owner/name --ledger ./pitstop.md --receipts ./dogfood-receipts --retired ./retired.md --since 24h",
-				Effect:  tool.Effect("local write: --state stores the two-tick streak (--dry-run writes none); LANDING and PRS read the forge through gh, over the network, and CLASSES reads --repo-dir through git"),
-				Flags:   convergenceFlags,
-				Run:     convergence,
+				Name:   "convergence",
+				Usage:  "convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--dry-run]",
+				Effect: tool.Effect("local write: --state stores the two-tick streak (--dry-run writes none); LANDING and PRS read the forge through gh, over the network, and CLASSES reads --repo-dir through git"),
+				Flags:  convergenceFlags,
+				Run:    convergence,
 			},
 			{
-				Name:    "spelling",
-				Usage:   "spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--exclude <prefix>] [--max <n>] [--dry-run]",
-				Example: "spelling --dir ./self",
-				Effect:  tool.Effect("local write: --write edits the files in place (--dry-run, or no --write, writes nothing)"),
-				Flags:   spellingFlags,
-				Run:     spelling,
+				Name:   "spelling",
+				Usage:  "spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--exclude <prefix>] [--max <n>] [--dry-run]",
+				Effect: tool.Effect("local write: --write edits the files in place (--dry-run, or no --write, writes nothing)"),
+				Flags:  spellingFlags,
+				Run:    spelling,
 			},
 		},
 	}
