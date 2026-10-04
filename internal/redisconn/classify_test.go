@@ -271,7 +271,7 @@ func TestUnicodePreambleDoesNotExposePasswordPrefix(t *testing.T) {
 	})
 	conn, err := open(context.Background(), Options{Addr: storeAddr, User: "review", PasswordEnv: "PW"}, environment(map[string]string{"PW": secret}), store.dial)
 	if conn != nil {
-		conn.Close()
+		_ = conn.Close() // ignored: the test fails either way; a close error changes nothing
 		require.FailNow(t, "expected bad-handshake refusal")
 	}
 	require.Error(t, err, "expected refusal")
