@@ -76,7 +76,17 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	fsys := memindex.Excluding(os.DirFS(rf.root[0]), rf.excluded)
+	// docs/SPEC.md, "verify — the coverage ritual, mechanized": every relative
+	// .md link inside the B files resolves. os.DirFS follows a directory symlink
+	// that stays lexically inside the root and stats a file outside it, so that
+	// link is not a finding. An os.Root refuses the escape, and Coverage already
+	// reports a failed Stat as "which does not exist".
+	opened, err := os.OpenRoot(rf.root[0])
+	if err != nil {
+		return refuse(stderr, " verify", fmt.Sprintf("--root %s is not a readable directory: %s", oneline.Escape(rf.root[0]), oneline.Err(err)))
+	}
+	defer opened.Close() // ignored: a read-only root holds nothing to flush
+	fsys := memindex.Excluding(opened.FS(), rf.excluded)
 
 	var gating, info []memindex.Finding
 	coverageFindings, frontmatterFindings := 0, 0
