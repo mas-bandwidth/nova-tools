@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -120,14 +119,14 @@ func RunSeal(opts SealOptions) (line string, err error) {
 		opts.Sleep = time.Sleep
 	}
 
+	run := opts.exec()
 	if err := CheckInvariant6(opts.KeyPath); err != nil {
 		return "", err
 	}
-	if _, err := CheckSopsVersion(opts.SopsPath); err != nil {
+	if _, err := CheckSopsVersion(run, opts.SopsPath); err != nil {
 		return "", err
 	}
 
-	run := opts.exec()
 	seatFile := opts.AsName + ".yaml"
 	targetFile := filepath.Join(opts.StoreDir, seatFile)
 	branch := fmt.Sprintf("seal/%s-%s-%s", opts.AsName, opts.Name, opts.Now().UTC().Format("20060102-150405"))
@@ -565,11 +564,7 @@ func sealDecrypt(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 
 	out, err := run(nil, sealSopsEnv(keyPath, tmpDir), "", sopsPath, "-d", filePath)
 	if err != nil {
-		exitCode := 1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
-		return nil, fmt.Errorf("sops failed: exit %d (transcript withheld: run 'sops -d %s' to inspect)", exitCode, filePath)
+		return nil, fmt.Errorf("sops failed: exit %d (transcript withheld: run 'sops -d %s' to inspect)", exitCodeOf(err, 1), filePath)
 	}
 	return out, nil
 }
@@ -592,10 +587,7 @@ func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile string, 
 	out, err := run(bytes.NewReader(plaintext), sealSopsEnv(keyPath, tmpDir), storeDir, sopsPath,
 		"-e", "--filename-override", seatFile, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
 	if err != nil {
-		exitCode := 1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
+		exitCode := exitCodeOf(err, 1)
 		return nil, fmt.Errorf("sops encrypt failed: exit %d (transcript withheld; the value is on stdin only); the usual cause is a recipient in the .sops.yaml rule for %s that is not an age1… public key, such as keygen's <recovery key> placeholder left in; the same call with --dry-run lists the recipients", exitCode, seatFile)
 	}
 	return out, nil
