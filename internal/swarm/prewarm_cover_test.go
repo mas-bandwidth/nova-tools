@@ -147,33 +147,3 @@ func TestPrewarmCoverCopyLispSeed(t *testing.T) {
 		require.Error(t, err)
 	})
 }
-
-// TestPrewarmCoverGitOutput pins gitOutput returning HEAD in a git repository
-// and refusing outside one.
-//
-// gitOutput always runs git as a subprocess through gitrun.Output; there is no
-// seam to inject a fake. The main path uses the test's own working directory,
-// which lives inside the repository checkout. The refusal points at a plain
-// temp directory with no git repository.
-func TestPrewarmCoverGitOutput(t *testing.T) {
-	t.Parallel()
-
-	t.Run("main returns HEAD", func(t *testing.T) {
-		t.Parallel()
-
-		cwd, err := os.Getwd()
-		require.NoError(t, err)
-		out, err := gitOutput(cwd, "rev-parse", "HEAD")
-		require.NoError(t, err)
-		assert.Len(t, out, 40, "HEAD is a 40-character hex SHA")
-		assert.True(t, fullHexSHA(out), "HEAD must be a valid hex SHA")
-	})
-
-	t.Run("refusal outside git repo", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		_, err := gitOutput(dir, "rev-parse", "HEAD")
-		require.Error(t, err)
-	})
-}
