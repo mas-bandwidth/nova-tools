@@ -78,9 +78,9 @@ func friendBrief(name string, p sprint.Packet) string {
 // friendFinish (Head is origin's tip of her branch) is the only guard on her finish.
 func friendStart(p sprint.Packet) string {
 	base := swarm.ReadCardBase([]byte(p.Brief)).Ref
-	at, ref := "origin's "+base, "origin/"+base
+	ref := "origin/" + base
 	if base == "" || typedrec.IsFullSha(base) {
-		base, at, ref = "the repository's default branch", "origin's default branch", "origin/HEAD"
+		base, ref = "the repository's default branch", "origin/HEAD"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "This attempt starts from the current tip of %s on origin, never from an older base: fetch it and start your branch there.", base)
@@ -89,7 +89,7 @@ func friendStart(p sprint.Packet) string {
 	} else {
 		b.WriteString(" No attempt before this one pushed work to carry.")
 	}
-	fmt.Fprintf(&b, " The Head you report must be on that tip: a commit that descends from %s as you fetched it.\n", at)
+	b.WriteString(" The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\n")
 	return b.String()
 }
 
