@@ -528,7 +528,7 @@ func (h *hangingEngine) Start(args []string, _, _ io.Writer) (process, error) {
 func (h *hangingEngine) Output(ctx context.Context, args ...string) (string, error) {
 	out, err := h.fakeEngine.Output(ctx, args...)
 	if len(args) > 0 && args[0] == "rm" {
-		hangingProcess{killed: h.killed}.Kill()
+		_ = hangingProcess{killed: h.killed}.Kill() // ignored: the fake's Kill only closes the killed channel and never fails
 	}
 	return out, err
 }
@@ -738,7 +738,7 @@ func (d *deadlineEngine) Output(ctx context.Context, args ...string) (string, er
 	out, err := d.fakeEngine.Output(ctx, args...)
 	if len(args) > 0 && args[0] == "rm" && !d.started.IsZero() && d.removed.IsZero() {
 		d.removed = time.Now()
-		hangingProcess{killed: d.killed}.Kill()
+		_ = hangingProcess{killed: d.killed}.Kill() // ignored: the fake's Kill only closes the killed channel and never fails
 	}
 	return out, err
 }
