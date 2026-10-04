@@ -26,6 +26,5 @@
 # for a row is an injected clock seam or //go:build functional, then delete it.
 internal/bus	TestTwoConcurrentRunsSerialiseOnOneCheckout	#4221 calls time.Sleep
 internal/swarm	TestPausePointThreadDirected	#4221 calls time.Sleep
-cmd/nova-sandbox	TestTheAgentSocketIsUnreachable	seed #4413: time.After at main_test.go:332
 internal/swarm	TestFriendSequencePlantedResultIsRefused	seed #4413: time.After at planted_gather_test.go:81
 
