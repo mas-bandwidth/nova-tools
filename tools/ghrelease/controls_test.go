@@ -120,8 +120,7 @@ func TestControlsHoldOnAnHonestLinker(t *testing.T) {
 func TestControlsFailWhenTheAssertionPassesBinariesNothingStamped(t *testing.T) {
 	t.Parallel()
 	h := controlsWorld(t, linker{ignoresTheStampFlag: true})
-	h.wantRC(h.do("controls"), 1)
-	h.mustContain("the assertion PASSED a set of binaries nothing stamped; it would pass a broken release")
+	h.wantRun(1, "the assertion PASSED a set of binaries nothing stamped; it would pass a broken release", "controls")
 }
 
 func TestControlsFailWhenAMutationNeverReachesTheBuild(t *testing.T) {
@@ -129,24 +128,21 @@ func TestControlsFailWhenAMutationNeverReachesTheBuild(t *testing.T) {
 	// The mutated tool still reports the tag, so the assertion passes: the
 	// control says so instead of going green on a mutation that changed nothing.
 	h := controlsWorld(t, linker{overlayIsIgnored: true})
-	h.wantRC(h.do("controls"), 1)
-	h.mustContain("the assertion PASSED a release whose nova-tokens answers a pseudo-version (rename)")
+	h.wantRun(1, "the assertion PASSED a release whose nova-tokens answers a pseudo-version (rename)", "controls")
 }
 
 func TestControlsFailWhenTheFixtureDoesNotApply(t *testing.T) {
 	t.Parallel()
 	h := controlsWorld(t, linker{})
 	h.write("cmd/nova-tokens/version.go", "package main\n\nvar other string\n", 0o644)
-	h.wantRC(h.do("controls"), 1)
-	h.mustContain("the rename fixture did not apply; this control would prove nothing")
+	h.wantRun(1, "the rename fixture did not apply; this control would prove nothing", "controls")
 }
 
 func TestControlsFailWhenTheBuildFails(t *testing.T) {
 	t.Parallel()
 	h := controlsWorld(t, linker{})
 	h.runner.stream = func(command, io.Writer, io.Writer) int { return 1 }
-	h.wantRC(h.do("controls"), 1)
-	h.mustContain("the unstamped build failed (go build exit 1); the controls cannot run")
+	h.wantRun(1, "the unstamped build failed (go build exit 1); the controls cannot run", "controls")
 }
 
 func TestControlsTakeTheVictimWitnessAndStampAsFlags(t *testing.T) {
@@ -155,12 +151,10 @@ func TestControlsTakeTheVictimWitnessAndStampAsFlags(t *testing.T) {
 	h.wantRC(h.do("controls", "--victim", "nova-tokens", "--witness", "nova-bus", "--stamp", "v9.9.9-x"), 0)
 	for _, bad := range [][]string{{"controls", "--nope"}, {"controls", "--victim"}} {
 		h := controlsWorld(t, linker{})
-		h.wantRC(h.do(bad...), 2)
-		h.mustContain("usage:")
+		h.wantRun(2, "usage:", bad...)
 	}
 	h = controlsWorld(t, linker{})
-	h.wantRC(h.do("controls", "--stamp", "v1=2"), 2)
-	h.mustContain("refusing: the release stamp")
+	h.wantRun(2, "refusing: the release stamp", "controls", "--stamp", "v1=2")
 }
 
 func TestMutateVersionSourceRenamesAndRemovesTheSymbolAndSaysWhetherItLanded(t *testing.T) {

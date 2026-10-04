@@ -87,8 +87,7 @@ func TestUploadTag404WithNoDraftCreatesADraftWithTheCanonicalNotesFile(t *testin
 func TestUploadAPublishedReleaseOnTheTagLookupIsRefusedInOneLine(t *testing.T) {
 	t.Parallel()
 	h := uploadWorld(t, uploadCase{status: "200", body: fixture(t, "testdata/upload/published.json")})
-	h.wantRC(h.do("upload"), 1)
-	h.mustContain("refusing: v0.14.0 already has a published release 387734569; upload to its draft, never a published release")
+	h.wantRun(1, "refusing: v0.14.0 already has a published release 387734569; upload to its draft, never a published release", "upload")
 	wantNoRelease(t, h)
 }
 
@@ -105,8 +104,7 @@ func TestUploadADraftOnTheTagLookupIsUploadedTo(t *testing.T) {
 func TestUploadAPublishedReleaseInTheListingIsRefusedNamingItsId(t *testing.T) {
 	t.Parallel()
 	h := uploadWorld(t, upList(t, "published-list"))
-	h.wantRC(h.do("upload"), 1)
-	h.mustContain("v0.14.0 already has a published release 387734569; upload to its draft, never a published release")
+	h.wantRun(1, "v0.14.0 already has a published release 387734569; upload to its draft, never a published release", "upload")
 	wantNoRelease(t, h)
 }
 
@@ -127,8 +125,7 @@ func TestUploadAListingThatIsNotAListOfReleasesIsRefusedFailClosed(t *testing.T)
 func TestUploadMoreThanOneDraftIsAmbiguousAndRefused(t *testing.T) {
 	t.Parallel()
 	h := uploadWorld(t, upList(t, "two-drafts-list"))
-	h.wantRC(h.do("upload"), 1)
-	h.mustContain("refusing: v0.14.0 has 2 drafts, so there is no one draft to upload to; delete all but one draft for v0.14.0, then re-run this workflow")
+	h.wantRun(1, "refusing: v0.14.0 has 2 drafts, so there is no one draft to upload to; delete all but one draft for v0.14.0, then re-run this workflow", "upload")
 	wantNoRelease(t, h)
 }
 
@@ -136,8 +133,7 @@ func TestUploadAnAbsentNotesFileIsRefusedBeforeAnyAPICall(t *testing.T) {
 	t.Parallel()
 	h := uploadWorld(t, upList(t, "empty-list"))
 	h.write(uploadNotes, "", 0o644) // present but empty is absent: the check is -s
-	h.wantRC(h.do("upload"), 1)
-	h.mustContain("refusing: " + uploadNotes + " does not exist in the tagged tree; write it, land it, and tag the commit that carries it")
+	h.wantRun(1, "refusing: "+uploadNotes+" does not exist in the tagged tree; write it, land it, and tag the commit that carries it", "upload")
 	if len(h.gh.apis) != 0 {
 		t.Fatalf("an API call was made when the notes file was absent: %v", h.gh.apis)
 	}
@@ -145,15 +141,13 @@ func TestUploadAnAbsentNotesFileIsRefusedBeforeAnyAPICall(t *testing.T) {
 
 	h = uploadWorld(t, upList(t, "empty-list"))
 	h.vars["TAG"] = "v9.9.9"
-	h.wantRC(h.do("upload"), 1)
-	h.mustContain("docs/RELEASE-NOTES-9.9.9.md does not exist")
+	h.wantRun(1, "docs/RELEASE-NOTES-9.9.9.md does not exist", "upload")
 }
 
 func TestUploadANonAnswerIsRefusedNotReadAsAbsence(t *testing.T) {
 	t.Parallel()
 	h := uploadWorld(t, uploadCase{status: "403"})
-	h.wantRC(h.do("upload"), 1)
-	h.mustContain("asking GitHub about repos/example/repo/releases/tags/v0.14.0 answered neither 200 nor 404 (gh exit 1):")
+	h.wantRun(1, "asking GitHub about repos/example/repo/releases/tags/v0.14.0 answered neither 200 nor 404 (gh exit 1):", "upload")
 	h.mustContain("HTTP/2 403 Forbidden")
 	wantNoRelease(t, h)
 	if len(h.gh.apis) != 1 {
@@ -166,8 +160,7 @@ func TestUploadAFailedListingCallIsRefusedNotReadAsNoDrafts(t *testing.T) {
 	c := upList(t, "empty-list")
 	c.list, c.listRC = "gh: HTTP 502\n", 1
 	h := uploadWorld(t, c)
-	h.wantRC(h.do("upload"), 1)
-	h.mustContain("asking GitHub about repos/example/repo/releases failed (gh exit 1):")
+	h.wantRun(1, "asking GitHub about repos/example/repo/releases failed (gh exit 1):", "upload")
 	wantNoRelease(t, h)
 }
 
@@ -183,15 +176,13 @@ func TestUploadReadsEveryPageOfAPaginatedListing(t *testing.T) {
 	// A published release on the second page is found too.
 	page2 = `[{"id": 3, "tag_name": "v0.14.0", "draft": false}]`
 	h = uploadWorld(t, uploadCase{status: "404", list: page1 + page2})
-	h.wantRC(h.do("upload"), 1)
-	h.mustContain("already has a published release 3;")
+	h.wantRun(1, "already has a published release 3;", "upload")
 }
 
 func TestUploadNothingAtAllFromTheListingIsRefusedNotReadAsNoDrafts(t *testing.T) {
 	t.Parallel()
 	h := uploadWorld(t, uploadCase{status: "404", list: ""})
-	h.wantRC(h.do("upload"), 1)
-	h.mustContain("releases listing is empty")
+	h.wantRun(1, "releases listing is empty", "upload")
 	wantNoRelease(t, h)
 }
 
@@ -207,12 +198,8 @@ func TestUploadAttachesEveryFileOfDistInOrderAndNoDotfile(t *testing.T) {
 func TestUploadAnEmptyDistIsRefusedNotPassedToGhAsAGlob(t *testing.T) {
 	t.Parallel()
 	h := uploadWorld(t, upList(t, "single-draft-list"))
-	h.write("dist/nova-bus_v0.14.0_linux_amd64", "", 0o755)
-	if err := removeFile(filepath.Join(h.dir, "dist", "nova-bus_v0.14.0_linux_amd64")); err != nil {
-		t.Fatal(err)
-	}
-	h.wantRC(h.do("upload"), 1)
-	h.mustContain("dist/ holds no artifact to attach")
+	h.remove("dist/nova-bus_v0.14.0_linux_amd64")
+	h.wantRun(1, "dist/ holds no artifact to attach", "upload")
 	wantNoRelease(t, h)
 }
 
@@ -226,8 +213,7 @@ func TestUploadPassesGhReleaseFailureOn(t *testing.T) {
 func TestUploadAnUnreadableTagAnswerIsRefused(t *testing.T) {
 	t.Parallel()
 	h := uploadWorld(t, uploadCase{status: "200", body: "not json"})
-	h.wantRC(h.do("upload"), 1)
-	h.mustContain("is not a release object")
+	h.wantRun(1, "is not a release object", "upload")
 	wantNoRelease(t, h)
 }
 
@@ -236,12 +222,10 @@ func TestUploadNeedsTheWholeEnvironmentAndTakesNoArguments(t *testing.T) {
 	for _, missing := range []string{"GITHUB_REPOSITORY", "TAG", "GH_TOKEN"} {
 		h := uploadWorld(t, upList(t, "empty-list"))
 		delete(h.vars, missing)
-		h.wantRC(h.do("upload"), 2)
-		h.mustContain(fmt.Sprintf("%s is not set", missing))
+		h.wantRun(2, fmt.Sprintf("%s is not set", missing), "upload")
 	}
 	h := uploadWorld(t, upList(t, "empty-list"))
-	h.wantRC(h.do("upload", "x"), 2)
-	h.mustContain("usage:")
+	h.wantRun(2, "usage:", "upload", "x")
 }
 
 func TestSummarizeReleasesCountsOnlyTheTagAskedFor(t *testing.T) {

@@ -151,7 +151,9 @@ func TestReplyCoverResolveForCompare(t *testing.T) {
 		got := resolveForCompare(dir)
 		abs, err := filepath.Abs(dir)
 		require.NoError(t, err)
-		assert.Equal(t, filepath.Clean(abs), got)
+		want, err := filepath.EvalSymlinks(abs)
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
 	})
 	t.Run("nonexistent path falls back to cleaned absolute", func(t *testing.T) {
 		t.Parallel()

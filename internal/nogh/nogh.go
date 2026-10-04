@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
@@ -47,32 +46,4 @@ func Install(dir string) (string, error) {
 		return "", fmt.Errorf("the gh shim %s: %w", path, err)
 	}
 	return path, nil
-}
-
-// PathFirst is env with dir prepended to every PATH entry, so `gh` by name
-// resolves to the shim before any real one; an env with no PATH gains
-// PATH=<dir>. An empty dir returns env unchanged.
-func PathFirst(env []string, dir string) []string {
-	if dir == "" {
-		return env
-	}
-	out := make([]string, 0, len(env)+1)
-	found := false
-	for _, kv := range env {
-		name, val, _ := strings.Cut(kv, "=")
-		if name != "PATH" {
-			out = append(out, kv)
-			continue
-		}
-		found = true
-		if val == "" {
-			out = append(out, "PATH="+dir)
-			continue
-		}
-		out = append(out, "PATH="+dir+string(os.PathListSeparator)+val)
-	}
-	if !found {
-		out = append(out, "PATH="+dir)
-	}
-	return out
 }
