@@ -4,8 +4,9 @@ A card's author writes the task: what to change, the gate, what to report. Every
 the task is the sprint's: which repository, at which commit, on which branch, where the child
 works, how its commit leaves the machine, how its pull request is opened, and how its end is
 judged. The sprint writes that frame from the card's data, never from the brief's prose, and
-the child meets it through the commands it already knows: `git push` works, `gh pr create`
-finishes the card, `gh pr review` finishes a read. The child pushes nothing and opens nothing;
+the child meets it through its JOB.md profile: a plain child commits and writes RESULT.md;
+a command profile records `git push`, `gh pr create` finishes the card, and `gh pr review`
+finishes a read. The child pushes nothing and opens nothing;
 the member does both, outside the wall, with its own credential.
 
 The code is `internal/cardcontract` (the frame, the result shape, the profiles and their shims),
@@ -170,6 +171,10 @@ section 1, a friend's card; docs/FRIENDS.md, a sprint card). `cardhdr.ReadWho` i
 the key in any case, under line 1 and above the first blank line; `nova-sprint add` and `brief`
 refuse any other value, and a name the friends table lacks (`TestReadWhoReadsAFriendOrNone`,
 `TestAddHoldsTheWhoLineToTheFriendsTable`).
+
+## Bounded cards
+
+Give a lower-cost worker one bounded behavior, named files, exact base, acceptance evidence and a stopping condition; use a more capable worker for inseparable interacting decisions. Fix infrastructure or mechanical failures first; retry a capability failure once with a concrete finding and preserved useful work, then route to a more capable worker if it still fails. Read exact source and diff, bound the read by the affected contract and dependencies, and checkpoint head, evidence, unresolved finding and next action before a deadline. Stop at the named gate and review or a concrete blocker. Prefer shipped mechanical finish paths; measure format repair, implementation time, review and rework separately per accepted landing, with sample counts and unknowns. One trial does not establish a general saving.
 
 ## 3. The result shape
 

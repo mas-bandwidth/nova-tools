@@ -27,15 +27,16 @@ This is the standard every tool and module in this repository is built to, and t
 These hold for every worker, AI or person. A card is the whole brief one worker is handed (section 2), and the coordinator is the one that hands cards out. The rule set is a file the coordinator names (this repository's is `fleet/child-rules.txt`, which these bullets state); the card lint refuses a card missing any rule in it, and with no file it holds the built-in set of six general rules:
 
 - Work only in the staged checkout `JOB.md` names, and do not clone; commit on the checkout's own branch, as usual, and touch no other branch (docs/SPEC-CARD-CONTRACT.md).
-- Export a private `GOCACHE` (the path the card names) and `GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1` before any go command. Never `go clean`, and never clean a shared cache.
+- Use `JOB.md`'s cache and test environment; outside a staged job, use the card's private cache. Keep `GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1`. Never `go clean`, and never clean a shared cache.
 - Never start a redis-server on this machine, and never kill a process you did not start. Functional tests (any test that needs Redis) run only inside the container through `tools/functionalrun` (`--fresh-gocache --deadline 15m`), never against any other store.
-- Every `go test` gets `-timeout 600s`. Every new test opens with `t.Parallel()`. Run `go test -count=1 -timeout 600s ./internal/ci/` before you finish.
+- Every `go test` gets `-timeout 600s`. Every new test opens with `t.Parallel()`. A work card runs its named gate through the Makefile; a read runs only the explicit diff-selected commands in `JOB.md`. Outside a staged job, run the card's gate.
 - No `rm -rf` outside the job directory.
-- Never force-push, never rebase, do not use git stash (the stash list is shared by every worktree), never merge: finish as `JOB.md` says, with `gh pr create` against the base the card names.
+- Never force-push, never rebase, do not use git stash (the stash list is shared by every worktree), never merge: finish through the profile `JOB.md` names (docs/SPEC-CARD-CONTRACT.md section 3).
 - Touch only the files the card names, and keep the diff minimal: every added line traceable to one sentence of the card. A fix that needs another file goes into the report as a proposed diff, not a commit.
 - No names of people, machines or friends in code, comments or docs; docs and comments in the present tense. Cite the model or the design section from every function that implements a rule.
-- Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`; PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`, state the diff stat and what was deleted, and list the tests, each with what it pins, and every local helper added.
-- The report is the pull request: its title is the one-line report, its body every test package line and what you could not do and why. "Not done" is a welcome report; a green claim you did not run is not.
+- Attribution names only the model and harness actually used; never copy another provider's identity. Report diff stat, deletions, tests with their pins and local helpers.
+- Finish as `JOB.md` says: a plain profile writes `RESULT.md`; a command profile uses its finish shim. Report exact head, gate, output and limitations. "Not done" is a welcome report; a green claim you did not run is not.
+- Bound cards, retry capability failures once, then escalate; checkpoint evidence and measure cost per landing (docs/SPEC-CARD-CONTRACT.md, bounded cards).
 - A new verb or class rule starts from its scaffold: `nova-ci new-verb <tool> <verb>` or `nova-ci new-rule <name>` lays down the file, test, fixture and make target.
 
 ## 2. A tool is for an AI
