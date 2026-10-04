@@ -89,6 +89,20 @@ were written for, because a rule document is a list of absolutes, and acting on
 that output weakened five rules before a cold reader caught them. One was
 floor-level. If you find the next one of those, we want it.
 
+### secrets-never-in-errors.w1
+
+A secret handed to an opener must not come back out of it. `TestNoSecretReachesAnError`
+(`internal/ci/secrets_in_errors_class_test.go`) drives secret-shaped strings (a Postgres
+DSN in both spellings, a URL with userinfo, and OpenRouter, GitHub and Anthropic
+tokens, each with its own marker) through every exported `Open*`, `Parse*`, `Dial*` and
+`New*` function that takes a string, found by `go/ast` and held complete against a
+reviewed table. It fails when any 8-byte window of a marker appears in a returned
+error, a panic, or what the call logged or printed. A Postgres DSN parse error that
+quoted the string it could not read is fixed (`internal/config/pg.go`); the parsers that
+still quote a flag or field value are rows in
+`internal/ci/testdata/secrets_in_errors_allowlist.txt`, each with its reason, and that
+list only shrinks.
+
 ## Reporting
 
 Email <glenn@mas-bandwidth.com>. That is the route that works today, and it is
