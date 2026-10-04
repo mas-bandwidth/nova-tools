@@ -165,7 +165,7 @@ func TestReportOrdersChangedNames(t *testing.T) {
 		return ProcessResult{Reason: "unexpected child"}
 	}}
 	for i := 0; i < 32; i++ {
-		require.NoError(t, writeSnapshot(path, before))
+		require.NoError(t, writeSnapshot(path, before, nil))
 		out := report(context.Background(), "report", entries, entries, options{snapshot: path, timeout: time.Minute, budget: time.Minute}, "tool", "help", fixed, env)
 		require.Zero(t, out.Exit)
 		var names []string

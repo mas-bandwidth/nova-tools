@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -105,7 +106,36 @@ func identity(e Entry, raw string, report bool) Read {
 
 type ProcessResult struct{ Stdout, Stderr, Path, Reason string }
 
-func process(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
+// lookPath resolves file against env's PATH, or the parent's when env is nil.
+// A test hands a child its own PATH through Environment.Env, so the child's
+// binary is found there rather than on the parent's PATH.
+func lookPath(file string, env []string) (string, error) {
+	if env == nil {
+		return exec.LookPath(file)
+	}
+	if strings.ContainsRune(file, os.PathSeparator) {
+		return exec.LookPath(file)
+	}
+	path := ""
+	for _, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			path = strings.TrimPrefix(e, "PATH=")
+			break
+		}
+	}
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := filepath.Join(dir, file)
+		if p, err := exec.LookPath(candidate); err == nil {
+			return p, nil
+		}
+	}
+	return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
+}
+
+func process(ctx context.Context, args []string, input io.Reader, cap int, env []string) ProcessResult {
 	r := ProcessResult{}
 	if ctx.Err() != nil {
 		r.Reason = "budget"
@@ -115,7 +145,7 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 		r.Reason = "empty argv"
 		return r
 	}
-	path, err := exec.LookPath(args[0])
+	path, err := lookPath(args[0], env)
 	if err != nil {
 		r.Reason = "not_found"
 		return r
@@ -125,6 +155,9 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	defer cancel()
 	out, errs := bounded.NewCapture(cap, cancel), bounded.NewCapture(cap, cancel)
 	cmd := subproc.Context(child, path, args[1:]...)
+	if env != nil {
+		cmd.Env = env
+	}
 	cmd.Stdin = input
 	// The pipes are created here rather than handed to os/exec as plain writers,
 	// so this process can close the read ends itself when the deadline passes and
@@ -315,8 +348,10 @@ func ladder(e Entry) [][]string {
 
 type processFunc func(context.Context, []string, io.Reader, int) ProcessResult
 
-func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool) Read {
-	return installed(ctx, e, timeout, report, process)
+func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool, env []string) Read {
+	return installed(ctx, e, timeout, report, func(c context.Context, a []string, in io.Reader, cap int) ProcessResult {
+		return process(c, a, in, cap, env)
+	})
 }
 
 // installed keeps the version decisions independent of the child transport.
@@ -449,5 +484,5 @@ func (env Environment) runProcess(ctx context.Context, args []string, input io.R
 	if env.Process != nil {
 		return env.Process(ctx, args, input, cap)
 	}
-	return process(ctx, args, input, cap)
+	return process(ctx, args, input, cap, env.Env)
 }

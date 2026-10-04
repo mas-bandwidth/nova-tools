@@ -40,7 +40,7 @@ func TestStellaSnapshotWriterPreservesOtherSnapshotsTemp(t *testing.T) {
 	if _, err = f.WriteString("synthetic B bytes"); err != nil {
 		require.NoError(t, err, err)
 	}
-	if err = writeSnapshot(a, emptySnapshot()); err != nil {
+	if err = writeSnapshot(a, emptySnapshot(), nil); err != nil {
 		require.NoError(t, err, err)
 	}
 	got, err := os.ReadFile(f.Name())
@@ -58,7 +58,7 @@ func TestStellaSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
 			s.Observed[name] = observed{Raw: "1.2.3", Status: "tool", At: "synthetic"}
 		}
 		p := filepath.Join(t.TempDir(), "s.json")
-		if err := writeSnapshot(p, s); err != nil {
+		if err := writeSnapshot(p, s, nil); err != nil {
 			require.NoError(t, err, err)
 		}
 		got, err := readSnapshot(p)

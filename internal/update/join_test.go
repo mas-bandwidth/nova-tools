@@ -114,9 +114,10 @@ func removeJoinBinaries() {
 
 // ------------------------------------------------------------------ the fixture
 
-func git(t *testing.T, dir string, args ...string) string {
+func git(t *testing.T, env []string, dir string, args ...string) string {
 	t.Helper()
 	c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	c.Env = env
 	out, err := c.CombinedOutput()
 	if err != nil {
 		require.NoErrorf(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
@@ -126,34 +127,36 @@ func git(t *testing.T, dir string, args ...string) string {
 
 type busFixture struct {
 	checkout, bare, lane, as, to string
+	gitEnv                       []string
 }
 
 // hermeticGit keeps a person's real Git configuration, credentials and hooks out
 // of a test that runs Git for real.
-func hermeticGit(t *testing.T) {
+func hermeticGit(t *testing.T) []string {
 	t.Helper()
 	cfg := filepath.Join(t.TempDir(), "gitconfig")
 	if err := os.WriteFile(cfg, []byte("[user]\n\tname = Ada\n\temail = ada@example.com\n[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n"), 0600); err != nil {
 		require.NoError(t, err, err)
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_TERMINAL_PROMPT", "0")
-	t.Setenv("GIT_ASKPASS", "")
-	t.Setenv("GIT_ALLOW_PROTOCOL", "file")
+	env := envWith(os.Environ(), "GIT_CONFIG_GLOBAL", cfg)
+	env = envWith(env, "GIT_CONFIG_SYSTEM", os.DevNull)
+	env = envWith(env, "GIT_TERMINAL_PROMPT", "0")
+	env = envWith(env, "GIT_ASKPASS", "")
+	env = envWith(env, "GIT_ALLOW_PROTOCOL", "file")
+	return env
 }
 
 // realBus builds a bare remote and a checkout of it holding a roster and one
 // existing note from another participant, which is the shape a live bus has.
 func realBus(t *testing.T) busFixture {
 	t.Helper()
-	hermeticGit(t)
+	gitEnv := hermeticGit(t)
 	root := t.TempDir()
 	bare := filepath.Join(root, "bus.git")
-	git(t, root, "init", "--bare", "--quiet", "--initial-branch=main", bare)
+	git(t, gitEnv, root, "init", "--bare", "--quiet", "--initial-branch=main", bare)
 	checkout := filepath.Join(root, "checkout")
-	git(t, root, "clone", "--quiet", bare, checkout)
-	git(t, checkout, "checkout", "-q", "-B", "main")
+	git(t, gitEnv, root, "clone", "--quiet", bare, checkout)
+	git(t, gitEnv, checkout, "checkout", "-q", "-B", "main")
 	write := func(rel, content string) {
 		full := filepath.Join(checkout, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -170,10 +173,10 @@ func realBus(t *testing.T) busFixture {
 	write("from-bo/2026-09-07T0002Z-heard-111111111111.md",
 		"From: Bo\nTo: Ada\nDate: Mon Sep  7 00:02:00 UTC 2026\nId: bo-111111111111\nSubject: Heard\n\nHeard, thank you.\n")
 	write("from-bo/INDEX", "bo-111111111111\tfrom-bo/2026-09-07T0002Z-heard-111111111111.md\t2026-09-07T00:02:00Z\tAda\t-\n")
-	git(t, checkout, "add", "-A")
-	git(t, checkout, "commit", "-q", "-m", "the bus")
-	git(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
-	return busFixture{checkout: checkout, bare: bare, lane: "from-ada", as: "Ada", to: "Bo"}
+	git(t, gitEnv, checkout, "add", "-A")
+	git(t, gitEnv, checkout, "commit", "-q", "-m", "the bus")
+	git(t, gitEnv, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+	return busFixture{checkout: checkout, bare: bare, lane: "from-ada", as: "Ada", to: "Bo", gitEnv: gitEnv}
 }
 
 // published reads what actually reached the REMOTE: the notes in the reporter's
@@ -182,14 +185,14 @@ func realBus(t *testing.T) busFixture {
 // counted and the tests assert on the pair.
 func (b busFixture) published(t *testing.T) (notes []string, index []string) {
 	t.Helper()
-	out := git(t, b.bare, "ls-tree", "-r", "--name-only", "main")
+	out := git(t, b.gitEnv, b.bare, "ls-tree", "-r", "--name-only", "main")
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if strings.HasPrefix(line, b.lane+"/") && strings.HasSuffix(line, ".md") {
 			notes = append(notes, line)
 		}
 	}
 	if strings.Contains(out, b.lane+"/INDEX") {
-		for _, line := range strings.Split(strings.TrimSpace(git(t, b.bare, "show", "main:"+b.lane+"/INDEX")), "\n") {
+		for _, line := range strings.Split(strings.TrimSpace(git(t, b.gitEnv, b.bare, "show", "main:"+b.lane+"/INDEX")), "\n") {
 			if strings.TrimSpace(line) != "" {
 				index = append(index, line)
 			}
@@ -199,7 +202,7 @@ func (b busFixture) published(t *testing.T) (notes []string, index []string) {
 }
 func (b busFixture) noteBytes(t *testing.T, path string) string {
 	t.Helper()
-	return git(t, b.bare, "show", "main:"+path)
+	return git(t, b.gitEnv, b.bare, "show", "main:"+path)
 }
 
 // exactlyOneContribution is the invariant every recovery case shares: whatever
@@ -220,7 +223,7 @@ func (b busFixture) exactlyOneContribution(t *testing.T, id string) string {
 	if body := b.noteBytes(t, notes[0]); !strings.Contains(body, "Id: "+id) {
 		require.Containsf(t, body, "Id: "+id, "note does not carry the prepared id %q", id)
 	}
-	other := git(t, b.bare, "show", "main:from-bo/INDEX")
+	other := git(t, b.gitEnv, b.bare, "show", "main:from-bo/INDEX")
 	if !strings.Contains(other, "bo-111111111111") {
 		require.Fail(t, fmt.Sprintln("the other participant's lane did not survive"))
 	}
@@ -234,6 +237,7 @@ type reporter struct {
 	bin      string
 	manifest string
 	snapshot string
+	env      []string
 }
 
 func newReporter(t *testing.T, version string) reporter {
@@ -245,8 +249,7 @@ func newReporter(t *testing.T, version string) reporter {
 	if err := os.WriteFile(m, []byte(Header+"\n"+row("x", "tool", printer(t, version), "npm:unused", "none")+"\n"), 0600); err != nil {
 		require.NoError(t, err, err)
 	}
-	t.Setenv("NOVA_UPDATE_HELPER", "1")
-	return reporter{bus: b, bin: bin, manifest: m, snapshot: filepath.Join(dir, "s.json")}
+	return reporter{bus: b, bin: bin, manifest: m, snapshot: filepath.Join(dir, "s.json"), env: b.gitEnv}
 }
 func (r reporter) args() []string {
 	return []string{"report", "--file", r.manifest, "--send", "--snapshot", r.snapshot,
@@ -256,10 +259,10 @@ func (r reporter) args() []string {
 
 // send runs the caller in process with the named directory first on PATH, which
 // is how the real nova-bus -- or a wrapper standing in front of it -- is found.
-func (r reporter) send(t *testing.T, pathDir string) (int, string, string) {
+func (r *reporter) send(t *testing.T, pathDir string) (int, string, string) {
 	t.Helper()
-	t.Setenv("PATH", pathDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return run(t, Environment{}, r.args()...)
+	env := envWith(r.env, "PATH", pathDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return run(t, Environment{Env: env}, r.args()...)
 }
 func (r reporter) pendingID(t *testing.T) string {
 	t.Helper()
@@ -486,7 +489,7 @@ func headOf(checkout string) string {
 
 // wrapperOnPath copies this test binary to <dir>/nova-bus and points it at the
 // real one, so the caller's own exec.LookPath finds the wrapper.
-func (r reporter) wrapperOnPath(t *testing.T, boundary string) (dir, record string) {
+func (r *reporter) wrapperOnPath(t *testing.T, boundary string) (dir, record string) {
 	t.Helper()
 	dir = t.TempDir()
 	self, err := os.Executable()
@@ -497,20 +500,19 @@ func (r reporter) wrapperOnPath(t *testing.T, boundary string) (dir, record stri
 		require.NoError(t, err, err)
 	}
 	record = filepath.Join(dir, "record")
-	t.Setenv("NOVA_UPDATE_JOIN_REAL", filepath.Join(r.bin, exeName("nova-bus")))
-	t.Setenv("NOVA_UPDATE_JOIN_KILL", boundary)
-	t.Setenv("NOVA_UPDATE_JOIN_CHECKOUT", r.bus.checkout)
-	t.Setenv("NOVA_UPDATE_JOIN_LANE", r.bus.lane)
-	t.Setenv("NOVA_UPDATE_JOIN_RECORD", record)
+	r.env = envWith(r.env, "NOVA_UPDATE_JOIN_REAL", filepath.Join(r.bin, exeName("nova-bus")))
+	r.env = envWith(r.env, "NOVA_UPDATE_JOIN_KILL", boundary)
+	r.env = envWith(r.env, "NOVA_UPDATE_JOIN_CHECKOUT", r.bus.checkout)
+	r.env = envWith(r.env, "NOVA_UPDATE_JOIN_LANE", r.bus.lane)
+	r.env = envWith(r.env, "NOVA_UPDATE_JOIN_RECORD", record)
 	return dir, record
 }
 
 // clearWrapper takes the staged death back off, so the retry runs against the
 // real binary with nothing in front of it.
-func clearWrapper(t *testing.T) {
-	t.Helper()
-	t.Setenv("NOVA_UPDATE_JOIN_KILL", "")
-	t.Setenv("NOVA_UPDATE_JOIN_REAL", "")
+func (r *reporter) clearWrapper() {
+	r.env = envWith(r.env, "NOVA_UPDATE_JOIN_KILL", "")
+	r.env = envWith(r.env, "NOVA_UPDATE_JOIN_REAL", "")
 }
 
 // stagingAttempts bounds how many times a boundary is staged before the case
@@ -561,7 +563,7 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 	if r.removeStaleBusLock(t) {
 		t.Logf("%s (attempt %d): the killed bus left .git/nova-bus.lock.held; with the whole process group verified gone, the test performed the operator's named repair before retrying", boundary, attempt)
 	}
-	clearWrapper(t)
+	r.clearWrapper()
 	code, out, errs = r.send(t, r.bin)
 	if code != 0 {
 		require.EqualValuesf(t, 0, code, "recovery failed: %d\n%s\n%s\nstaged: %s\nwhat the kill left: %s\nlocks: %v\nthe bus, asked directly: %s\n%s",
@@ -571,11 +573,11 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 		require.EqualValuesf(t, id, got, "recovery delivered %q, not the retained %q", got, id)
 	}
 	r.bus.exactlyOneContribution(t, id)
-	before := git(t, r.bus.bare, "rev-parse", "main")
+	before := git(t, r.bus.gitEnv, r.bus.bare, "rev-parse", "main")
 	if code, out, errs = r.send(t, r.bin); code != 0 || !strings.Contains(out, "nothing sent") {
 		require.Failf(t, "", "the recovered report did not settle: %d\n%s\n%s", code, out, errs)
 	}
-	if after := git(t, r.bus.bare, "rev-parse", "main"); after != before {
+	if after := git(t, r.bus.gitEnv, r.bus.bare, "rev-parse", "main"); after != before {
 		require.EqualValues(t, before, after, "a settled report moved the remote again")
 	}
 	t.Logf("%s (attempt %d): live kill and recovery proven: %s", boundary, attempt, staged)
@@ -759,10 +761,10 @@ func (r reporter) indexShape(t *testing.T) string {
 // The two things that stay FATAL are the two that are the product's: a
 // condition never reached while the reporter is still alive, and a process
 // group that will not go empty after the kill.
-func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached func() bool) bool {
+func (r *reporter) killReporterWhen(t *testing.T, pathDir, what string, reached func() bool) bool {
 	t.Helper()
-	t.Setenv("PATH", pathDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	c := exec.Command(filepath.Join(r.bin, exeName("nova-update")), r.args()...)
+	c.Env = envWith(r.env, "PATH", pathDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	c.Stdout, c.Stderr = io.Discard, io.Discard
 	setGroup(c)
 	if err := c.Start(); err != nil {
@@ -891,7 +893,9 @@ func (r reporter) snapshotHasPending() bool {
 	return false
 }
 func (r reporter) remoteHasANote(t *testing.T) bool {
-	out, err := exec.Command("git", "-C", r.bus.bare, "ls-tree", "-r", "--name-only", "main").Output()
+	c := exec.Command("git", "-C", r.bus.bare, "ls-tree", "-r", "--name-only", "main")
+	c.Env = r.bus.gitEnv
+	out, err := c.Output()
 	if err != nil {
 		return false
 	}
@@ -954,7 +958,7 @@ func reporterDeathAfterRemoteConfirmation(t *testing.T, attempt int) bool {
 		return false
 	}
 	r.repairAfterStagedDeath(t, attempt)
-	head := git(t, r.bus.bare, "rev-parse", "main")
+	head := git(t, r.bus.gitEnv, r.bus.bare, "rev-parse", "main")
 	code, out, errs := r.send(t, r.bin)
 	if code != 0 {
 		require.EqualValuesf(t, 0, code, "recovery failed: %d\n%s\n%s", code, out, errs)
@@ -963,7 +967,7 @@ func reporterDeathAfterRemoteConfirmation(t *testing.T, attempt int) bool {
 		require.EqualValuesf(t, id, got, "recovery confirmed %q, not the pending %q", got, id)
 	}
 	r.bus.exactlyOneContribution(t, id)
-	if after := git(t, r.bus.bare, "rev-parse", "main"); after != head {
+	if after := git(t, r.bus.gitEnv, r.bus.bare, "rev-parse", "main"); after != head {
 		require.EqualValuesf(t, head, after, "recovery published a second time: %s became %s", head, after)
 	}
 	if !strings.Contains(out, "already-published") {
@@ -1105,7 +1109,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 	}
 
 	// 5. Phase 3: Final retry runs to completion with real binary
-	clearWrapper(t)
+	r.clearWrapper()
 	code, out, errs = r.send(t, r.bin)
 	if code != 0 {
 		require.EqualValuesf(t, 0, code, "phase 3 final recovery failed: %d\n%s\n%s", code, out, errs)
@@ -1143,7 +1147,9 @@ func (r reporter) checkoutState(t *testing.T) string {
 		{"log", "--oneline", "-3"},
 		{"rev-parse", "HEAD", "origin/main"},
 	} {
-		out, err := exec.Command("git", append([]string{"-C", r.bus.checkout}, probe...)...).CombinedOutput()
+		c := exec.Command("git", append([]string{"-C", r.bus.checkout}, probe...)...)
+		c.Env = r.bus.gitEnv
+		out, err := c.CombinedOutput()
 		if err != nil {
 			fmt.Fprintf(&b, "git %s: %v\n", strings.Join(probe, " "), err)
 			continue

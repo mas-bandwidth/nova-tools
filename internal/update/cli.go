@@ -34,6 +34,12 @@ type Environment struct {
 	WorkerStart func(id int)
 	JobAttempt  func(index int)
 	DrainTimer  func(time.Duration) (<-chan time.Time, func() bool)
+	// Env is the child process environment; nil inherits the parent's. A test
+	// hands a child its own PATH and markers here instead of t.Setenv.
+	Env []string
+	// Rename is the snapshot's atomic commit; nil uses os.Rename. A test that
+	// holds the writer before its commit injects its own here.
+	Rename func(old, new string) error
 }
 type options struct {
 	file, host, snapshot, as, to, bus, remote, branch, target, adopt, store string
@@ -552,9 +558,9 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 				e := entries[i]
 				r := entryRead{Entry: e, Installed: installed(ctx, e, o.timeout, report, env.runProcess), Latest: Read{Source: e.Latest}}
 				if !report {
-					r.Latest = Latest(ctx, e, o.timeout, env.Client)
+					r.Latest = Latest(ctx, e, o.timeout, env.Client, env.Env)
 				} else if strings.HasPrefix(e.Latest, "local:") {
-					r.Latest = Latest(ctx, e, o.timeout, env.Client)
+					r.Latest = Latest(ctx, e, o.timeout, env.Client, env.Env)
 				}
 				rs[i] = r
 			}
@@ -625,7 +631,7 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 	started := env.Now()
 	target := o.target
 	if target == "" {
-		r := Latest(context.Background(), *e, o.timeout, env.Client)
+		r := Latest(context.Background(), *e, o.timeout, env.Client, env.Env)
 		if !r.Known() {
 			return refused("apply", help, fmt.Sprintf("latest unknown for %s (pass --version <v>, or ask again when the source answers)", name))
 		}
@@ -637,7 +643,7 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 			return refused("apply", help, fmt.Sprintf("invalid target %q (pass a complete version with --version, such as 1.2.3)", o.target))
 		}
 	}
-	before := Installed(context.Background(), *e, o.timeout, false)
+	before := Installed(context.Background(), *e, o.timeout, false, env.Env)
 	args := append([]string(nil), e.Apply...)
 	for i := range args {
 		args[i] = strings.ReplaceAll(args[i], "{version}", target)
@@ -652,9 +658,9 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 	res.Item("before", "name", name, "kind", e.Kind, "installed", before.Version, "path", before.Path, "latest", target, "source", e.Latest)
 	res.Item("run", "name", name, "argv", len(args), "version", target, "command", strings.Join(args, " "))
 	ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
-	p := process(ctx, args, nil, ChildCap)
+	p := process(ctx, args, nil, ChildCap, env.Env)
 	cancel()
-	after := Installed(context.Background(), *e, o.timeout, false)
+	after := Installed(context.Background(), *e, o.timeout, false, env.Env)
 	res.Item("after", "name", name, "installed", after.Version, "was", before.Version)
 	reason := p.Reason
 	if reason == "" && !after.Known() {
@@ -1059,6 +1065,6 @@ func safeRevision(rev string) string {
 }
 
 // Kept as a narrow seam for command tests and bus delivery; no shell is involved.
-func captureRun(ctx context.Context, args []string, input []byte, cap int) ProcessResult {
-	return process(ctx, args, bytes.NewReader(input), cap)
+func captureRun(ctx context.Context, args []string, input []byte, cap int, env []string) ProcessResult {
+	return process(ctx, args, bytes.NewReader(input), cap, env)
 }

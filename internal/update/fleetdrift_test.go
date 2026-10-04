@@ -21,8 +21,8 @@ import (
 // registry is the benches set; the store is a throwaway miniredis. ssh and git
 // on PATH are traps that leave a mark if anything runs them.
 func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
-	t.Setenv("NOVA_TEST_NO_HOST", "1")
-	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
+	t.Parallel()
+
 	trap := t.TempDir()
 	mark := filepath.Join(trap, "ran")
 	for _, tool := range []string{"ssh", "git", "gh"} {
@@ -31,7 +31,7 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 			require.NoError(t, err, err)
 		}
 	}
-	t.Setenv("PATH", trap)
+	env := Environment{Env: envWith(os.Environ(), "PATH", trap)}
 
 	mr := miniredis.RunT(t)
 	mr.SAdd("benches", "fresh", "stale", "quiet")
@@ -44,7 +44,7 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 	// quiet is registered but not beating: it says nothing, so it is not drift.
 
 	var out, errs bytes.Buffer
-	code := Run("nova-update", []string{"report", "--store", mr.Addr()}, "test", &out, &errs, Environment{})
+	code := Run("nova-update", []string{"report", "--store", mr.Addr()}, "test", &out, &errs, env)
 	all := out.String() + errs.String()
 	if code != 1 {
 		require.EqualValuesf(t, 1, code, "exit %d, want 1 (drift found)\n%s", code, all)
@@ -76,7 +76,7 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 	beat("stale", "nova-sprint 20260925120000-aaaaaaaaaaaa linux/amd64 go1.26.1")
 	out.Reset()
 	errs.Reset()
-	if code := Run("nova-update", []string{"report", "--store", mr.Addr()}, "test", &out, &errs, Environment{}); code != 0 {
+	if code := Run("nova-update", []string{"report", "--store", mr.Addr()}, "test", &out, &errs, env); code != 0 {
 		require.EqualValuesf(t, 0, code, "exit %d after the stale bench caught up\n%s%s", code, out.String(), errs.String())
 	}
 	if strings.Contains(out.String()+errs.String(), "DRIFT") || !strings.Contains(out.String(), "REPORT OK benches=3 beating=2 current=2 drift=0 unknown=0") {

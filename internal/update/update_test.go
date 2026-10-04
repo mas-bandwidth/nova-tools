@@ -129,6 +129,19 @@ func run(t *testing.T, env Environment, a ...string) (int, string, string) {
 	c := Run("nova-update", a, "", &out, &err, env)
 	return c, out.String(), err.String()
 }
+
+// envWith returns env with k=v set, replacing any existing k. A test hands a
+// child its own PATH and markers through Environment.Env instead of t.Setenv,
+// which panics under t.Parallel.
+func envWith(env []string, k, v string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, e := range env {
+		if !strings.HasPrefix(e, k+"=") {
+			out = append(out, e)
+		}
+	}
+	return append(out, k+"="+v)
+}
 func need(t *testing.T, s string, want ...string) {
 	t.Helper()
 	for _, w := range want {
@@ -232,7 +245,7 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	})
 	defer close()
 	for _, tc := range [][3]string{{"github:o/r", "tool", "0.11.0"}, {"npm:package", "tool", "1.2.3"}, {"brew:formula", "tool", "2.3.4"}} {
-		r := Latest(context.Background(), Entry{Kind: tc[1], Latest: tc[0]}, time.Second, client)
+		r := Latest(context.Background(), Entry{Kind: tc[1], Latest: tc[0]}, time.Second, client, nil)
 		if !r.Known() || r.Version != tc[2] {
 			require.Fail(t, fmt.Sprintln(r))
 		}
@@ -240,7 +253,7 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	if len(calls) != 4 || calls[1] != "/repos/o/r/tags?per_page=1" {
 		require.Fail(t, fmt.Sprintln(calls))
 	}
-	r := Latest(context.Background(), Entry{Kind: "model", Latest: "ollama:model:tag"}, time.Second, client)
+	r := Latest(context.Background(), Entry{Kind: "model", Latest: "ollama:model:tag"}, time.Second, client, nil)
 	if r.Version != shaText(`{"schemaVersion":2,"layers":[]}`)[:12] {
 		require.Fail(t, fmt.Sprintln(r))
 	}
@@ -253,7 +266,7 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 			w.WriteHeader(tc.status)
 			fmt.Fprint(w, tc.body)
 		})
-		r := Latest(context.Background(), Entry{Kind: "model", Latest: "ollama:model:tag"}, time.Second, c)
+		r := Latest(context.Background(), Entry{Kind: "model", Latest: "ollama:model:tag"}, time.Second, c, nil)
 		done()
 		if r.Reason != tc.want {
 			require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
@@ -263,7 +276,7 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 		}
 	}
 	c, done := testClient(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, r.URL.Path+"x", 302) })
-	r = Latest(context.Background(), Entry{Kind: "tool", Latest: "npm:pkg"}, time.Second, c)
+	r = Latest(context.Background(), Entry{Kind: "tool", Latest: "npm:pkg"}, time.Second, c, nil)
 	done()
 	if r.Known() {
 		require.Fail(t, fmt.Sprintln("redirect loop accepted"))
@@ -289,6 +302,8 @@ func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 	}
 }
 func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state")
 	os.WriteFile(state, []byte("1.0.0\n"), 0600)
@@ -313,8 +328,8 @@ func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	}
 	need(t, err, "installed 1.1.1, asked 1.3.0")
 	calls := filepath.Join(dir, "calls")
-	t.Setenv("NOVA_UPDATE_CALLS", calls)
-	c, _, _ = run(t, Environment{}, "apply", "--file", p, "--version", "9.0.0", "x")
+	env := Environment{Env: envWith(os.Environ(), "NOVA_UPDATE_CALLS", calls)}
+	c, _, _ = run(t, env, "apply", "--file", p, "--version", "9.0.0", "x")
 	if c != 2 {
 		require.EqualValues(t, 2, c, c)
 	}
@@ -509,13 +524,13 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 func TestProcessFailuresAreDistinguishable(t *testing.T) {
 	t.Parallel()
 
-	if r := process(context.Background(), nil, nil, ChildCap); r.Reason != "empty argv" {
+	if r := process(context.Background(), nil, nil, ChildCap, nil); r.Reason != "empty argv" {
 		require.EqualValues(t, "empty argv", r.Reason, r.Reason)
 	}
-	if r := process(context.Background(), []string{"nova-no-such-tool-exists"}, nil, ChildCap); r.Reason != "not_found" {
+	if r := process(context.Background(), []string{"nova-no-such-tool-exists"}, nil, ChildCap, nil); r.Reason != "not_found" {
 		require.EqualValues(t, "not_found", r.Reason, r.Reason)
 	}
-	if r := process(context.Background(), mustArgv(t, command(t, "fail")), nil, ChildCap); r.Reason != "exit 3" {
+	if r := process(context.Background(), mustArgv(t, command(t, "fail")), nil, ChildCap, nil); r.Reason != "exit 3" {
 		require.EqualValues(t, "exit 3", r.Reason, r.Reason)
 	}
 }

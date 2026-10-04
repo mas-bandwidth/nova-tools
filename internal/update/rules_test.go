@@ -54,16 +54,18 @@ func treeOf(t *testing.T, root string) []string {
 // Rule 9: a verdict is not an action. check reads, prints and exits; it writes no
 // file, and the apply command of a STALE entry is never the thing it runs.
 func TestRule9CheckWritesNothingAndNeverRunsAnApply(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	installed := printer(t, "1.0.0")
 	latest := printer(t, "2.0.0")
 	witness := filepath.Join(dir, "the-apply-ran")
 	calls := filepath.Join(dir, "calls")
-	t.Setenv("NOVA_UPDATE_CALLS", calls)
+	env := Environment{Env: envWith(os.Environ(), "NOVA_UPDATE_CALLS", calls)}
 	// The apply column is a command that would leave a file behind if it ran.
 	p := manifest(t, row("x", "tool", installed, "local:"+latest, command(t, "write", witness, "installed")))
 	before := treeOf(t, filepath.Dir(p))
-	c, out, errs := run(t, Environment{}, "check", "--file", p)
+	c, out, errs := run(t, env, "check", "--file", p)
 	if c != 1 {
 		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
 	}
@@ -170,10 +172,12 @@ func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
 // from the clock it was handed, a report with recipients named but no --send
 // starts no bus, and a run whose children hang still ends inside its budget.
 func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
+	t.Parallel()
+
 	fixed := time.Date(2026, 9, 9, 12, 34, 56, 0, time.UTC)
-	env := Environment{Now: func() time.Time { return fixed }}
+	log, busEnv := fakeBusPath(t)
+	env := Environment{Now: func() time.Time { return fixed }, Env: busEnv}
 	snapshot := filepath.Join(t.TempDir(), "s.json")
-	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, out, errs := run(t, env, "report", "--file", p, "--as", "fixture", "--to", "integrator", "--snapshot", snapshot)
 	if c != 0 {
