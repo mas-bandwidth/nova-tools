@@ -202,6 +202,10 @@ type nativeRunResult struct {
 	// OWN (decision 17): `reason=terminated` stays what a TERM from outside prints, and the
 	// `reason=` inside the `usage=none` group stays the usage read's.
 	stopped string
+	// stoppedWhy is the last failed read's own reason when stopped is `unverifiable`
+	// (liveSampler.Why), and "" for every other stop: it is the only record of WHAT the
+	// three reads said, so the NATIVE BUDGET line carries it.
+	stoppedWhy string
 	// defect is the PROMPT-DEFECT line a card budget's stop owes. The budget rule prints it on
 	// native's own stdout AFTER the NATIVE OK line and writes it into NO file.
 	defect      string
@@ -1183,6 +1187,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// (a dash is one of the row's closed list of rc values).
 			res.rc = -1
 			res.stopped = word
+			if word == stoppedUnverifiable {
+				res.stoppedWhy = sampler.Why()
+			}
 		}
 		close(stopWatch)
 		elapsed := time.Since(attemptStart)

@@ -903,7 +903,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// of 400,000, $0.03" and not only "budget".
 	if res.stopped != "" {
 		fmt.Fprintf(stdout, "NATIVE BUDGET label=%s budget: %s\n", oneline.Field(cfg.label),
-			oneline.Escape(nativeBudgetWords(res.stopped, cfg.tokens, res.spent, res.partial, cardcost.ParseSpend(res.spend).Actual, ratText(cfg.usd))))
+			oneline.Escape(nativeBudgetWords(res.stopped, cfg.tokens, res.spent, res.partial, cardcost.ParseSpend(res.spend).Actual, ratText(cfg.usd), res.stoppedWhy)))
 	}
 	// THE WALL REPORT: a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.
