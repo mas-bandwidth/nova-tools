@@ -2,7 +2,8 @@
 
 // The fold-lock test, whose cost is a real clock: the second fold has to wait the
 // production `tokens.LockWait` out before it refuses, and the assertion is the
-// refusal's own record -- the holder's pid and the bound it waited out. Ten seconds of this package's 13 s.
+// refusal's own record -- the holder's pid and the bound it waited out. Ten seconds
+// of this package's 13 s.
 //
 // These tests are behind the `slow` build tag: the PR test jobs do not build them and
 // .github/workflows/nightly-slow.yml does (#516, Glenn's two-minute rule -- a package's
