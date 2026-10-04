@@ -288,6 +288,38 @@ func TestADuplicateKeyOnOneLineIsAFail(t *testing.T) {
 	}
 }
 
+// TestARawExitWithoutPrintsIsAFail pins the exit word's guard (skeleton
+// contract 2.5 and 1.3): a verb that returns Exit without declaring Prints is
+// a FAILED naming the bug, never an exit that escapes the one envelope.
+func TestARawExitWithoutPrintsIsAFail(t *testing.T) {
+	t.Parallel()
+	tool := &Tool{Name: "nova-leak", What: "leaks an exit", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{{Name: "leak", Usage: "leak", Effect: Inspection, Run: func(*Call) *Out { return Exit(2) }}}}
+	r := testkit.Main(tool.Run).Run("leak")
+	assert.Equal(t, 1, r.Code)
+	assert.Empty(t, r.Stdout)
+	assert.Equal(t, "LEAK FAILED: verb leak returned a raw exit without Prints\n", r.Stderr)
+}
+
+// TestARefusalCanExitItsVerbsCode pins Verb.RefuseExit (skeleton contract 2.5):
+// a wrapper's own refusal exits the code the verb declares, and the verb's help
+// lists that code in its exit table.
+func TestARefusalCanExitItsVerbsCode(t *testing.T) {
+	t.Parallel()
+	tool := &Tool{Name: "nova-wrap", What: "wraps a child",
+		ExitTable: "0 ran, 1 the child said no, 2 could not run.",
+		Verbs: []Verb{{Name: "serve", Usage: "serve", Effect: Inspection, RefuseExit: 125,
+			Run: func(*Call) *Out { return Refuse("the store is not configured") }}}}
+	r := testkit.Main(tool.Run).Run("serve")
+	assert.Equal(t, 125, r.Code)
+	assert.Empty(t, r.Stdout)
+	assert.Equal(t, "SERVE REFUSED: the store is not configured; run: nova-wrap help\n", r.Stderr)
+	h := testkit.Main(tool.Run).Run("serve", "-h")
+	assert.Equal(t, 0, h.Code)
+	assert.Contains(t, h.Stdout, "exit codes: 0 ran, 1 the child said no, 2 could not run.")
+	assert.Contains(t, h.Stdout, "  serve: refused, exit 125")
+}
+
 // TestTextIsTheProseTail pins free text in a line: after the typed fields,
 // quoted, its spaces kept, in an item as in the first line; JSON a string
 // under its key, in the order the verb gave.
