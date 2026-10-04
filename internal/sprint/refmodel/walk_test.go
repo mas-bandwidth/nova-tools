@@ -168,7 +168,9 @@ func (k *walk) step() (capture bool) {
 }
 
 // add admits a primary, or a sentinel, needing up to walkMaxNeeds of those
-// already admitted.
+// already admitted: a need names a card that can still land, so the walk
+// draws needs from the placed cards and the sentinels, never from a dropped
+// record the add refuses (docs/SPEC-SPRINT.md section 11).
 func (k *walk) add() bool {
 	if k.next >= walkMaxPrimaries {
 		return false
@@ -178,7 +180,9 @@ func (k *walk) add() bool {
 	var needs []string
 	var all []string
 	for _, c := range k.s.Work.Cards() {
-		all = append(all, c.ID)
+		if c.Placed() || sprint.IsSentinel(c) {
+			all = append(all, c.ID)
+		}
 	}
 	slices.Sort(all)
 	for range k.pick(walkMaxNeeds + 1) {
