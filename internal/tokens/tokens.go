@@ -661,7 +661,7 @@ func readSource(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file is opened only for reading
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
