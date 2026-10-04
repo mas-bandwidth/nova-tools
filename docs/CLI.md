@@ -486,7 +486,7 @@ next run). The third is by hand, after a plain `recv`.
 | --- | --- |
 | `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction |
 | `peek [--as <me>]` | What waits: pending and new, moving nothing |
-| `recv [--as <me>] [--forever --exec <cmd>] [--exec <cmd>]` | The oldest message a reader lost, else the oldest new one; with `--exec`, delivered and acked |
+| `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0 |
 | `ack [--as <me>] --id <id,...>` | Acks by message id; idempotent |
 | `log [--bodies] [--max <n>]` | The log, oldest first |
 | `names` | The known names: nova-config's friend and machine rows |

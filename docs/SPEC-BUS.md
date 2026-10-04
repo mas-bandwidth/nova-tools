@@ -69,13 +69,17 @@ takes `--json`; `log` takes `--max`.
   trailing newline is the body's and is kept by send, the store, log and recv. Refuses, naming every problem at once: an unknown name (with the
   nova-config line that adds one), a bad name, an empty body, a body over 1
   MiB, an empty subject, a body from both or neither source.
-- `recv [--as <me>] [--forever --exec <command>] [--exec <command>]` prints one
-  message (a `RECV OK` line with id, from, to, cc, re, at and subject, a blank
+- `recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec
+  <command>]` prints one message (a `RECV OK` line with id, from, to, cc, re, at and subject, a blank
   line, the body) and exits 0, or `RECV NONE` at exit 1 when nothing waits.
   `--exec` runs the command with that same text on its stdin (the body ending
   in a newline) and acks the message when it exits 0; a non-zero exit leaves it
-  pending and is `RECV FAILED` at exit 1. `--forever` loops, waiting for
-  messages, needs `--exec`, and stops on SIGINT or SIGTERM (a message being
+  pending and is `RECV FAILED` at exit 1. `--max <n>` takes up to n messages in
+  order and `--all` every one waiting (pending first, then new), each printed
+  as its own `RECV OK`, or each handed to `--exec` and acked on exit 0, the
+  batch stopping at the first command that fails; `--ack` acks each message a
+  plain recv printed; none waiting is the one `RECV NONE`. `--forever` loops,
+  waiting for messages, needs `--exec`, and stops on SIGINT or SIGTERM (a message being
   delivered stays pending) or at the first command that fails. The push into a
   harness is `nova-bus recv --as <me> --forever --exec '<deliver-into-session>'`
   beside the session.

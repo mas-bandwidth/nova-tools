@@ -173,7 +173,7 @@ at=<RFC3339> subject=<s> line per message: pending is delivered and not acked, n
 			},
 			{
 				Name:    "recv",
-				Usage:   "recv [--as <me>] [--forever --exec <command>] [--exec <command>] [--redis <addr>]",
+				Usage:   "recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>]",
 				Example: "recv --as bob --exec true",
 				Effect:  tool.Delivery + ": moves one message to pending; with --exec it runs the command and acks on exit 0",
 				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> at=<RFC3339>
@@ -182,16 +182,34 @@ NONE at exit 1 when nothing waits. You are the login user, as in send. The oldes
 reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
 reader keeps it for fifteen minutes. --exec '<command>' runs the command with that same text on its stdin and
 acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
-it pending and is RECV FAILED at exit 1. --forever loops, waiting for messages, and needs --exec; it
-stops on SIGINT or SIGTERM, or at the first command that fails.`,
+it pending and is RECV FAILED at exit 1. --max <n> takes up to n messages in order and --all every
+one waiting, each printed as its own RECV OK (or handed to --exec and acked on exit 0, stopping
+at the first command that fails); --ack acks each after a plain recv prints it. --forever loops,
+waiting for messages, and needs --exec; it stops on SIGINT or SIGTERM, or at the first command
+that fails.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.Int("max", 1, "how many messages to take, in order, each its own result; 1 is one message")
+					f.Bool("all", false, "take every message waiting, in order, each its own result")
+					f.Bool("ack", false, "ack each message after printing it (a plain recv leaves it pending)")
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
 					f.Check(func(c *tool.Call) {
 						if c.Bool("forever") && c.Str("exec") == "" {
 							c.Problem("--forever wants --exec <command>: a loop that acks nothing would hand out the same message for ever")
+						}
+						if c.Bool("all") && c.Given("max") {
+							c.Problem("--all takes every message and --max <n> a count; give one or the other")
+						}
+						if c.Bool("forever") && (c.Bool("all") || c.Given("max")) {
+							c.Problem("--forever takes every message as it arrives; --all and --max are for what waits now")
+						}
+						if c.Int("max") < 1 {
+							c.Problem("--max wants a count of at least 1 (--all takes every message)")
+						}
+						if c.Bool("ack") && c.Str("exec") != "" {
+							c.Problem("--exec acks on the command's exit 0; --ack is for a plain recv")
 						}
 					})
 				},
@@ -395,6 +413,13 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		o := message(m, login)
 		if command == "" {
 			o.Payload = "\n" + m.Body
+			if c.Bool("ack") {
+				acked, err := b.AckEntry(ctx, as, e.Entry)
+				if err != nil {
+					return answer(err), false
+				}
+				o.Fact("acked", acked)
+			}
 			return o, true
 		}
 		exit, err := w.run(ctx, command, text(m, login), c.Stderr, c.Stderr)
@@ -413,9 +438,30 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		}
 		return o.Fact("acked", acked).Fact("exec_exit", 0), true
 	}
-	if !c.Bool("forever") {
+	if !c.Bool("forever") && !c.Bool("all") && c.Int("max") == 1 {
 		o, _ := one(0)
 		return o
+	}
+	if !c.Bool("forever") {
+		// the batch: what waits now, in order, each its own result, until the
+		// count is met or nothing waits; none at all is the one NONE
+		limit := c.Int("max")
+		for taken := 0; c.Bool("all") || taken < limit; taken++ {
+			res, ok := one(0)
+			switch {
+			case ok:
+				res.Render(c.Stdout, c.Bool("json"))
+			case res.Word == "NONE" && taken > 0:
+				return tool.Exit(0)
+			case taken == 0:
+				return res
+			default:
+				res.Verb = "recv" // the token of the line, rendered here and not by the skeleton
+				res.Render(c.Stderr, c.Bool("json"))
+				return tool.Exit(res.Exit)
+			}
+		}
+		return tool.Exit(0)
 	}
 	// the loop: every message in turn, each a line of its own, until a signal
 	// or a command that fails; a NONE is a wait that ran out, not a line
@@ -428,6 +474,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		case res == stopped:
 			return tool.Exit(0)
 		default:
+			res.Verb = "recv"
 			res.Render(c.Stderr, c.Bool("json"))
 			return tool.Exit(res.Exit)
 		}
