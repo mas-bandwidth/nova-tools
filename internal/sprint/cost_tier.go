@@ -47,6 +47,37 @@ func (t TokenCounts) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
+// UnmarshalJSON reads the object MarshalJSON writes (docs/SPEC-SPRINT.md, "What
+// a card cost": a class not reported is left out, never written as 0). A class
+// the object omits stays unreported, and total, when the object omits it, is
+// the reported classes summed.
+func (t *TokenCounts) UnmarshalJSON(b []byte) error {
+	var m map[string]*int64
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	take := func(k string) int64 {
+		p, ok := m[k]
+		if !ok || p == nil {
+			return cardcost.Unreported
+		}
+		return *p
+	}
+	t.Input = take("input")
+	t.CacheRead = take("cache_read")
+	t.CacheWrite = take("cache_write")
+	t.Output = take("output")
+	t.Reasoning = take("reasoning")
+	if p, ok := m["total"]; ok && p != nil {
+		t.Total = *p
+		return nil
+	}
+	t.Total = cardcost.Tokens{
+		Input: t.Input, CacheRead: t.CacheRead, CacheWrite: t.CacheWrite, Output: t.Output, Reasoning: t.Reasoning,
+	}.Total()
+	return nil
+}
+
 // CostCategory is one row of tiers and of cost_by_tier. USD is the charged
 // dollars of a machine tier, the exact decimal, empty when none was priced.
 // The friends row has no dollar field (docs/SPEC-SPRINT.md, the friends category).
@@ -70,6 +101,33 @@ func (c CostCategory) MarshalJSON() ([]byte, error) {
 		Tokens TokenCounts `json:"tokens"`
 		USD    string      `json:"usd,omitempty"`
 	}{Tier: c.Name, Tokens: c.Tokens, USD: c.USD})
+}
+
+// UnmarshalJSON reads the row MarshalJSON writes (docs/SPEC-SPRINT.md, the
+// friends category): tier and tokens, and usd on a machine tier. The friends
+// row has no dollar field, so a usd key on it is dropped.
+func (c *CostCategory) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Tier   string          `json:"tier"`
+		Tokens json.RawMessage `json:"tokens"`
+		USD    *string         `json:"usd"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	c.Name = raw.Tier
+	c.USD = ""
+	if raw.USD != nil && c.Name != Friends {
+		c.USD = *raw.USD
+	}
+	if len(raw.Tokens) == 0 || string(raw.Tokens) == "null" {
+		c.Tokens = TokenCounts{
+			Input: cardcost.Unreported, CacheRead: cardcost.Unreported, CacheWrite: cardcost.Unreported,
+			Output: cardcost.Unreported, Reasoning: cardcost.Unreported,
+		}
+		return nil
+	}
+	return json.Unmarshal(raw.Tokens, &c.Tokens)
 }
 
 // TierCosts is tiers and cost_by_tier for the snapshot (docs/SPEC-SPRINT.md, the
