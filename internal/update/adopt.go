@@ -160,13 +160,17 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 		if _, err := out.Write([]byte{}); err != nil {
 			return 1
 		}
-		fmt.Fprint(errs, refuseBuf.String())
+		if _, err := fmt.Fprint(errs, refuseBuf.String()); err != nil {
+			return 1
+		}
 	}
 	w := out
 	if refused > 0 {
 		w = errs
 	}
-	fmt.Fprintln(w, done)
+	if _, err := fmt.Fprintln(w, done); err != nil {
+		return 1
+	}
 	code := 0
 	if refused > 0 {
 		code = 1
@@ -179,10 +183,14 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 		fmt.Fprintln(&body, done)
 		line, serr := postAdoptReceipt(ctx, o, body.Bytes(), env)
 		if serr != nil {
-			fmt.Fprintf(errs, "ADOPT NOTE %s\n", oneline.Err(serr))
+			if _, err := fmt.Fprintf(errs, "ADOPT NOTE %s\n", oneline.Err(serr)); err != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintf(out, "ADOPT SENT to=%s line=%s\n", field(o.to), field(line))
+		if _, err := fmt.Fprintf(out, "ADOPT SENT to=%s line=%s\n", field(o.to), field(line)); err != nil {
+			return 1
+		}
 	}
 	return code
 }
@@ -229,7 +237,7 @@ func loadAdoptFile(path string) ([]AdoptCheck, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: read-only file; read-only file opened for adoption checks
 	return LoadAdopt(f)
 }
 

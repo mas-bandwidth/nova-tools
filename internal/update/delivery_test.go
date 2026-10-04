@@ -46,11 +46,11 @@ func fakeBus() {
 	input, _ := io.ReadAll(os.Stdin)
 	verb := os.Args[1]
 	log, _ := os.OpenFile(os.Getenv("NOVA_UPDATE_BUS_CALLS"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-	fmt.Fprintln(log, verb)
+	_, _ = fmt.Fprintln(log, verb)
 	// The whole argv too, on its own line, so a test can assert what bounds the
 	// reporter handed the bus rather than trusting that it handed any.
-	fmt.Fprintln(log, "argv "+strings.Join(os.Args[1:], " "))
-	log.Close()
+	_, _ = fmt.Fprintln(log, "argv "+strings.Join(os.Args[1:], " "))
+	_ = log.Close() // ignored: test fixture log file
 	mode := os.Getenv("NOVA_UPDATE_BUS_MODE")
 	if verb == "prepare" {
 		if mode == "prepare-fail" {
@@ -74,11 +74,11 @@ func fakeBus() {
 			note += "\n"
 		}
 		id := "fixture-" + shaText(note)[:12]
-		json.NewEncoder(os.Stdout).Encode(map[string]string{"schema": "nova.bus.prepared/1", "id": id, "path": "from-fixture/fixture.md", "note": note, "sha256": shaText(note)})
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"schema": "nova.bus.prepared/1", "id": id, "path": "from-fixture/fixture.md", "note": note, "sha256": shaText(note)}) // ignored: test fake bus output
 		os.Exit(0)
 	}
 	var a map[string]string
-	json.Unmarshal(input, &a)
+	_ = json.Unmarshal(input, &a) // ignored: test fake bus input
 	if mode == "hang" {
 		if fakeBusHang == nil {
 			os.Exit(20)
@@ -133,7 +133,7 @@ func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
 	for _, v := range s.Pending {
 		old = v.ID
 	}
-	os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600)
+	_ = os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600) // ignored: test setup
 	if c, _, _ := run(t, Environment{}, args...); c != 1 {
 		require.EqualValues(t, 1, c, c)
 	}
