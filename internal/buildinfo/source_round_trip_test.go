@@ -177,10 +177,8 @@ func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 			{"repo=github.com/mas-bandwidth/nova-tools", "revision=0123456789abcdef0123456789abcdef01234567", "dirty=false", "build_host=studio", "build_host=ci-runner"},
 		} {
 			line := buildinfo.Line("nova-bus", stamp, dups...)
-			fields, ok := buildinfo.Parse(line)
-			require.True(t, ok, "Parse refused a well-formed line with duplicate keys: %v\n%s", dups, line)
-			_, ok = fields.FindSource()
-			assert.False(t, ok, "FindSource accepted duplicate source keys: %v\n%s", dups, line)
+			_, ok := buildinfo.Parse(line)
+			assert.False(t, ok, "Parse accepted a line with duplicate keys: %v\n%s", dups, line)
 		}
 	})
 }
