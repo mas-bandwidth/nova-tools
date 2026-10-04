@@ -23,9 +23,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -53,8 +55,8 @@ type Tool struct {
 	// "" makes every first word a verb and leaves every verb flags-only.
 	Default string
 	// Words are the tool's own status words (STALE, MISSING, UNCHANGED), the
-	// only ones Out.As may put in place of OK or FAILED: upper case, none of
-	// OK, FAILED, REFUSED, MORE or NOTE.
+	// only ones Out.As may put in place of OK or FAILED: at most MaxWords,
+	// upper case, none of OK, FAILED, REFUSED, MORE or NOTE (Problems).
 	Words []string
 	// HelpRefused refuses `<verb> -h` (and --help) at exit 2 instead of
 	// answering it at exit 0: a tool sets it when its exit 0 already means
@@ -62,6 +64,15 @@ type Tool struct {
 	// exception). The refusal names `help` as the door. No tool sets it yet.
 	HelpRefused bool
 }
+
+// MaxWords bounds a tool's own status words: a reader learns them all at once.
+const MaxWords = 6
+
+// reserved are the words every tool's lines already give a meaning.
+var reserved = []string{"OK", "FAILED", "REFUSED", "MORE", "NOTE"}
+
+// wordRe is one status word: upper case, digits and dashes after the first letter.
+var wordRe = regexp.MustCompile(`^[A-Z][A-Z0-9-]*$`)
 
 // Verb is one verb of a tool. A name of two words ("fn load") puts the verb in
 // a group ("fn"): `<tool> fn -h` lists the group's verbs at exit 0.
@@ -279,9 +290,65 @@ func (t *Tool) writeHelp(name string, fs *flag.FlagSet, stdout io.Writer) {
 	fmt.Fprintf(stdout, "%seffect: %s\n", verbflag.Insert(text, detail), effect)
 }
 
+// HowLines and HowWidth bound the banner's how-it-works text: a reader takes
+// in five lines at a glance, and a line past 100 characters wraps.
+const (
+	HowLines = 5
+	HowWidth = 100
+)
+
 // HowLabel opens the how-it-works text in the banner (docs/ONBOARDING.md point
-// 6), so a tool's How is the paragraph without it.
+// 6), so a tool's How is the paragraph without it; the width bound counts it on
+// the first line, where it is printed.
 const HowLabel = "how it works: "
+
+// Problems is where t falls short of the standard its banner and help carry
+// by construction only when the definition is complete: a what line, an exit
+// table, a how text of at most HowLines lines of at most HowWidth characters,
+// and every verb's effect one of inspection, local write or delivery. A tool
+// on this package runs it in its own tests (internal/ci holds every such
+// package to that).
+func (t *Tool) Problems() []string {
+	var p []string
+	if strings.TrimSpace(t.What) == "" || strings.TrimSpace(t.ExitTable) == "" {
+		p = append(p, t.Name+": What and ExitTable are required")
+	}
+	how := strings.Split(strings.TrimSpace(t.How), "\n")
+	if len(how) > HowLines {
+		p = append(p, fmt.Sprintf("%s: the how text is %d lines, at most %d", t.Name, len(how), HowLines))
+	}
+	for i, l := range how {
+		if i == 0 {
+			l = HowLabel + l
+		}
+		if n := utf8.RuneCountInString(l); n > HowWidth {
+			p = append(p, fmt.Sprintf("%s: how line %d is %d characters, at most %d", t.Name, i+1, n, HowWidth))
+		}
+	}
+	if t.Default != "" && !slices.Contains(t.names(), t.Default) {
+		p = append(p, fmt.Sprintf("%s: the default verb %q is none of its verbs", t.Name, t.Default))
+	}
+	if len(t.Words) > MaxWords {
+		p = append(p, fmt.Sprintf("%s: %d status words of its own, at most %d", t.Name, len(t.Words), MaxWords))
+	}
+	for _, w := range t.Words {
+		if !wordRe.MatchString(w) || slices.Contains(reserved, w) {
+			p = append(p, fmt.Sprintf("%s: the status word %q is not an upper-case word of its own (OK, FAILED, REFUSED, MORE and NOTE are every tool's)", t.Name, w))
+		}
+	}
+	for _, v := range t.verbs() {
+		e := string(v.Effect)
+		if !strings.HasPrefix(e, "inspection") && !strings.HasPrefix(e, "local write") && !strings.HasPrefix(e, "delivery") {
+			p = append(p, fmt.Sprintf("%s %s: the effect %q is not inspection, local write or delivery", t.Name, v.Name, e))
+		}
+		v.flags().VisitAll(func(f *flag.Flag) {
+			if strings.TrimSpace(f.Usage) == "" {
+				p = append(p, fmt.Sprintf("%s %s: --%s has no description; say what it wants", t.Name, v.Name, f.Name))
+			}
+		})
+	}
+	return p
+}
 
 // verbs is the tool's verbs and the version verb every tool has.
 func (t *Tool) verbs() []Verb {

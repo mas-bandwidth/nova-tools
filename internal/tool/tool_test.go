@@ -579,6 +579,62 @@ func TestADefaultVerb(t *testing.T) {
 			assert.Equal(t, tc.stderr, r.Stderr)
 		})
 	}
+	assert.Empty(t, selfTalk().Problems())
+	broken := selfTalk()
+	broken.Default = "sacn"
+	assert.Equal(t, []string{`nova-talk: the default verb "sacn" is none of its verbs`}, broken.Problems())
+}
+
+// TestProblems holds a definition to the standard the banner cannot enforce by
+// construction: every verb's effect, and the how text's size.
+func TestProblems(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("x", HowWidth+1)
+	for _, tc := range []struct {
+		name       string
+		allEffects Effect // set on every verb before edit; "" leaves them unstated
+		edit       func(*Tool)
+		want       []string
+	}{
+		{"the demo's unstated effects", "", func(*Tool) {}, []string{
+			`nova-demo who: the effect ""`, `nova-demo deny: the effect ""`, `nova-demo forget: the effect ""`, `nova-demo raw: the effect ""`}},
+		{"a complete tool has none", Inspection + "; a clause is fine", func(*Tool) {}, nil},
+		{"six how lines and a long one", Delivery, func(d *Tool) {
+			d.How = "1\n2\n3\n4\n5\n" + long
+		}, []string{"the how text is 6 lines, at most 5", "how line 6 is 101 characters, at most 100"}},
+		{"an effect that is none of the three", LocalWrite, func(d *Tool) {
+			d.Verbs[0].Effect = "writes a little"
+		}, []string{`nova-demo put: the effect "writes a little"`}},
+		{"a flag with no description", Inspection, func(d *Tool) {
+			d.Verbs[1].Flags = func(f *Flags) { f.Int("width", 0, " ") }
+		}, []string{"nova-demo who: --width has no description; say what it wants"}},
+		{"status words: too many, one lower case, one every tool's", Inspection, func(d *Tool) {
+			d.Words = []string{"A", "B", "C", "D", "E", "stale", "MORE"}
+		}, []string{"7 status words of its own, at most 6", `the status word "stale" is not`, `the status word "MORE" is not`}},
+		{"no what and no exit table", LocalWrite, func(d *Tool) {
+			d.What, d.ExitTable = "", ""
+		}, []string{"What and ExitTable are required"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := demo()
+			if tc.allEffects != "" {
+				for i := range d.Verbs {
+					d.Verbs[i].Effect = tc.allEffects
+				}
+			}
+			tc.edit(d)
+			got := strings.Join(d.Problems(), "\n")
+			if len(tc.want) == 0 {
+				assert.Empty(t, got, "problems: %s", got)
+			}
+			for _, w := range tc.want {
+				assert.Contains(t, got, w, "problems lack %q:\n%s", w, got)
+			}
+			n := len(d.Problems())
+			assert.Equal(t, len(tc.want), n, "%d problems, want %d:\n%s", n, len(tc.want), got)
+		})
+	}
 }
 
 // TestTheFailureWordIsFAILED pins the failure word across text and JSON:
