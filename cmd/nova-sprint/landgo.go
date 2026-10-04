@@ -38,7 +38,7 @@ const landGoBudget = 15 * time.Minute
 var treeTests = []string{"internal/docs", "internal/ci"}
 
 // goRun runs one go command (run) in the clone, in the lander's environment with
-// GOFLAGS=-mod=readonly and set (NAME=value each); its combined output.
+// GOFLAGS=-mod=readonly (caller flags preserved) and set (NAME=value each); its combined output.
 func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...string) (string, error) {
 	b := subproc.Prepare(ctx, landGoBudget, run[0], run[1:]...)
 	defer b.Cancel()
@@ -46,18 +46,49 @@ func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...str
 	if env == nil {
 		env = os.Environ()
 	}
-	b.Cmd.Dir, b.Cmd.Env = dir, withEnv(env, append([]string{"GOFLAGS=-mod=readonly"}, set...)...)
+	b.Cmd.Dir, b.Cmd.Env = dir, withEnv(env, append([]string{readonlyGoFlags(env)}, set...)...)
 	out, err := b.Cmd.CombinedOutput()
 	return string(out), b.Wrap(strings.Join(run, " "), err)
 }
 
-// withEnv is env with each of set (NAME=value) in place of the NAME it held, else added.
+// readonlyGoFlags returns GOFLAGS=... with -mod=readonly set, preserving any other
+// flags from env's GOFLAGS entries and dropping any existing -mod or -mod=... flag.
+func readonlyGoFlags(env []string) string {
+	var terms []string
+	for _, e := range env {
+		if val, ok := strings.CutPrefix(e, "GOFLAGS="); ok {
+			for _, term := range strings.Fields(val) {
+				if !strings.HasPrefix(term, "-mod=") && term != "-mod" {
+					terms = append(terms, term)
+				}
+			}
+		}
+	}
+	terms = append(terms, "-mod=readonly")
+	return "GOFLAGS=" + strings.Join(terms, " ")
+}
+
+// withEnv is env with each of set (NAME=value) in place of the NAME it held, else added;
+// duplicate entries of NAME in env are dropped.
 func withEnv(env []string, set ...string) []string {
 	out := slices.Clone(env)
 	for _, kv := range set {
 		name, _, _ := strings.Cut(kv, "=")
-		if i := slices.IndexFunc(out, func(e string) bool { return strings.HasPrefix(e, name+"=") }); i >= 0 {
-			out[i] = kv
+		prefix := name + "="
+		first := slices.IndexFunc(out, func(e string) bool { return strings.HasPrefix(e, prefix) })
+		if first >= 0 {
+			out[first] = kv
+			seen := false
+			out = slices.DeleteFunc(out, func(e string) bool {
+				if strings.HasPrefix(e, prefix) {
+					if !seen {
+						seen = true
+						return false
+					}
+					return true
+				}
+				return false
+			})
 		} else {
 			out = append(out, kv)
 		}
