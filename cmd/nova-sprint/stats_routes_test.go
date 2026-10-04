@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestStatsRoutesPrintsTheRouteTable(t *testing.T) {
 	at := since.Add(time.Hour)
 	stamp := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 	usage := func(route string, wall int, usd string) string {
-		return "price_route=" + route + " wall=" + itoa(wall) + "s run=" + itoa(wall) + "s actual_usd=" + usd + " input=10 output=1"
+		return "price_route=" + route + " wall=" + strconv.Itoa(wall) + "s run=" + strconv.Itoa(wall) + "s actual_usd=" + usd + " input=10 output=1"
 	}
 	noResult := sprint.ProviderTake{
 		Route: "flash-a", Model: "p/m", Member: "m1", Finished: stamp(at),
@@ -98,18 +99,4 @@ func TestStatsRoutesPrintsTheRouteTable(t *testing.T) {
 	assert.Contains(t, out, "finishes ran no model")
 	assert.NotContains(t, out, "99.00", "a finish before --since is outside the window")
 	assert.NotContains(t, out, "9.00", "a provider take on a finish before --since is outside the window")
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [8]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
 }
