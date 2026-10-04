@@ -828,11 +828,20 @@ The first line is run once on the friend's machine, as the friend's login;
 launchd runs `nova-friend run` from then on, at every login, and restarts it
 when it dies; it is never started by the model. The session's one duty: when a
 message beginning `PING <nonce>` arrives, run the `nova-friend pong` line it
-carries, first. A harness with no deliver command yet (codex, claude,
-dsh) has a passive daemon: it takes nothing off the stream (the
+carries, first. A harness with no deliver command has a passive daemon:
+it takes nothing off the stream (the
 session's own `nova-bus2 recv --as <me>` does), answers pings with the daemon
 pong, beats, and records what it could not push in; the beat and the daemon
 pong are real for it all the same.
+
+What a first run gets wrong: a `--harness` names one of opencode, codex,
+claude, antigravity, dsh, gemini, grok, copilot, cursor, amp, goose, kiro,
+cline, aider, roo, windsurf, zed, warp. A harness without a delivery route is
+known but passive, so its session reads the bus itself;
+a `pong --as` must name the friend whose session answered, with the challenge's
+exact nonce. Install refuses a binary whose resolved path is on a removable
+volume before writing a plist or calling launchctl; copy the binary to a local
+path and run install from that copy.
 
 ### Commands
 
