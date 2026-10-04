@@ -31,7 +31,7 @@
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Callers, KindOf, MaxTicks, Broken
+CONSTANTS Callers, KindOf, MaxTicks, MaxLands, Broken
 
 Kinds  == {"beat", "read", "write"}
 Faults == {"beatonline", "readonline", "rungone", "landgate"}
@@ -45,9 +45,10 @@ VARIABLES line,     \* the line's holder: "none", "tick", "land" or a caller
           gone,     \* each caller: its client has gone away
           goneWait, \* ghost: it went while it was still waiting to start
           ran,      \* each caller: its verb ran (changed the sprint)
-          ticks     \* ticks begun, bounded by MaxTicks
+          ticks,    \* ticks begun, bounded by MaxTicks
+          lands     \* land passes begun, bounded by MaxLands
 
-vars == <<line, lphase, rline, pc, gone, goneWait, ran, ticks>>
+vars == <<line, lphase, rline, pc, gone, goneWait, ran, ticks, lands>>
 
 OnLine(r) == KindOf[r] = "write"
              \/ (KindOf[r] = "beat" /\ "beatonline" \in Broken)
@@ -62,6 +63,7 @@ TypeOK ==
   /\ goneWait \in [Callers -> BOOLEAN]
   /\ ran \in [Callers -> BOOLEAN]
   /\ ticks \in 0..MaxTicks
+  /\ lands \in 0..MaxLands
 
 Init ==
   /\ line = "none" /\ lphase = "idle" /\ rline = "none"
@@ -70,54 +72,55 @@ Init ==
   /\ goneWait = [r \in Callers |-> FALSE]
   /\ ran = [r \in Callers |-> FALSE]
   /\ ticks = 0
+  /\ lands = 0
 
 \* a caller sends its batch
 Send(r) == /\ pc[r] = "idle"
            /\ pc' = [pc EXCEPT ![r] = "waiting"]
-           /\ UNCHANGED <<lphase, line, rline, gone, goneWait, ran, ticks>>
+           /\ UNCHANGED <<lphase, lands, line, rline, gone, goneWait, ran, ticks>>
 
 \* the run loop takes the line for a tick, and gives it back
 TickBegin == /\ line = "none" /\ ticks < MaxTicks
              /\ line' = "tick" /\ ticks' = ticks + 1
-             /\ UNCHANGED <<lphase, rline, pc, gone, goneWait, ran>>
+             /\ UNCHANGED <<lphase, lands, rline, pc, gone, goneWait, ran>>
 TickEnd == /\ line = "tick" /\ line' = "none"
-           /\ UNCHANGED <<lphase, rline, pc, gone, goneWait, ran, ticks>>
+           /\ UNCHANGED <<lphase, lands, rline, pc, gone, goneWait, ran, ticks>>
 
 \* a caller's client gives up (its deadline): it is gone, whatever its verb is doing
 GiveUp(r) == /\ pc[r] \in {"waiting", "running"} /\ ~gone[r]
              /\ gone' = [gone EXCEPT ![r] = TRUE]
              /\ goneWait' = [goneWait EXCEPT ![r] = (pc[r] = "waiting")]
-             /\ UNCHANGED <<lphase, line, rline, pc, ran, ticks>>
+             /\ UNCHANGED <<lphase, lands, line, rline, pc, ran, ticks>>
 
 \* a verb on the line takes it (serialLock.LockCtx); the design never for a caller gone
 TakeLine(r) == /\ pc[r] = "waiting" /\ OnLine(r) /\ line = "none"
                /\ (~gone[r] \/ "rungone" \in Broken)
                /\ line' = r /\ pc' = [pc EXCEPT ![r] = "running"]
-               /\ UNCHANGED <<lphase, rline, gone, goneWait, ran, ticks>>
+               /\ UNCHANGED <<lphase, lands, rline, gone, goneWait, ran, ticks>>
 
 \* a caller gone while it waited for the line is dropped: its verbs answered not run
 Drop(r) == /\ pc[r] = "waiting" /\ OnLine(r) /\ gone[r] /\ "rungone" \notin Broken
            /\ pc' = [pc EXCEPT ![r] = "dropped"]
-           /\ UNCHANGED <<lphase, line, rline, gone, goneWait, ran, ticks>>
+           /\ UNCHANGED <<lphase, lands, line, rline, gone, goneWait, ran, ticks>>
 
 \* a beat starts on the beat lane: no line, no other beat waited for
 BeatStart(r) == /\ pc[r] = "waiting" /\ KindOf[r] = "beat" /\ ~OnLine(r) /\ ~gone[r]
                 /\ pc' = [pc EXCEPT ![r] = "running"]
-                /\ UNCHANGED <<lphase, line, rline, gone, goneWait, ran, ticks>>
+                /\ UNCHANGED <<lphase, lands, line, rline, gone, goneWait, ran, ticks>>
 
 BeatDrop(r) == /\ pc[r] = "waiting" /\ KindOf[r] = "beat" /\ ~OnLine(r) /\ gone[r]
                 /\ pc' = [pc EXCEPT ![r] = "dropped"]
-                /\ UNCHANGED <<lphase, line, rline, gone, goneWait, ran, ticks>>
+                /\ UNCHANGED <<lphase, lands, line, rline, gone, goneWait, ran, ticks>>
 
 \* a read starts on the read lane: it waits for a read ahead of it alone, and is
 \* dropped as a write is when its caller has gone first
 ReadStart(r) == /\ pc[r] = "waiting" /\ KindOf[r] = "read" /\ ~OnLine(r) /\ rline = "none"
                 /\ ~gone[r]
                 /\ rline' = r /\ pc' = [pc EXCEPT ![r] = "running"]
-                /\ UNCHANGED <<lphase, line, gone, goneWait, ran, ticks>>
+                /\ UNCHANGED <<lphase, lands, line, gone, goneWait, ran, ticks>>
 ReadDrop(r) == /\ pc[r] = "waiting" /\ KindOf[r] = "read" /\ ~OnLine(r) /\ gone[r]
                /\ pc' = [pc EXCEPT ![r] = "dropped"]
-               /\ UNCHANGED <<lphase, line, rline, gone, goneWait, ran, ticks>>
+               /\ UNCHANGED <<lphase, lands, line, rline, gone, goneWait, ran, ticks>>
 
 \* the verb runs and is answered; what it held is given back
 Finish(r) == /\ pc[r] = "running"
@@ -125,23 +128,23 @@ Finish(r) == /\ pc[r] = "running"
              /\ pc' = [pc EXCEPT ![r] = "answered"]
              /\ line' = IF line = r THEN "none" ELSE line
              /\ rline' = IF rline = r THEN "none" ELSE rline
-             /\ UNCHANGED <<lphase, gone, goneWait, ticks>>
+             /\ UNCHANGED <<lphase, lands, gone, goneWait, ticks>>
 
 \* the land lane: the line for the read of the queue, none for git and the gate, the
 \* line again for the report; landgate keeps it throughout
-LandRead == /\ lphase = "idle" /\ line = "none"
-            /\ line' = "land" /\ lphase' = "read"
+LandRead == /\ lphase = "idle" /\ line = "none" /\ lands < MaxLands
+            /\ line' = "land" /\ lphase' = "read" /\ lands' = lands + 1
             /\ UNCHANGED <<rline, pc, gone, goneWait, ran, ticks>>
 LandGit == /\ lphase = "read" /\ line = "land"
            /\ lphase' = "git" /\ line' = IF "landgate" \in Broken THEN "land" ELSE "none"
-           /\ UNCHANGED <<rline, pc, gone, goneWait, ran, ticks>>
+           /\ UNCHANGED <<lands, rline, pc, gone, goneWait, ran, ticks>>
 LandGitDone == /\ lphase = "git"
                /\ IF "landgate" \in Broken THEN line' = line ELSE line = "none" /\ line' = "land"
                /\ lphase' = "report"
-               /\ UNCHANGED <<rline, pc, gone, goneWait, ran, ticks>>
+               /\ UNCHANGED <<lands, rline, pc, gone, goneWait, ran, ticks>>
 LandReport == /\ lphase = "report" /\ line = "land"
               /\ line' = "none" /\ lphase' = "idle"
-              /\ UNCHANGED <<rline, pc, gone, goneWait, ran, ticks>>
+              /\ UNCHANGED <<lands, rline, pc, gone, goneWait, ran, ticks>>
 Land == LandRead \/ LandGit \/ LandGitDone \/ LandReport
 
 Next ==
