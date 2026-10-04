@@ -1,3 +1,5 @@
+//go:build linux
+
 package sandbox
 
 import (
@@ -14,9 +16,9 @@ import (
 // with no nameserver inside the wall: every name lookup fails with "Could not resolve
 // host" while TCP by IP still works.
 //
-// The path unit is tested here, not the Landlock apply, so the same WSL2 fixture runs on
-// Darwin (winpath_test.go's shape: the path logic of a platform this build does not run
-// on is proved where the studio sits). linuxRoots applies this directory on linux.
+// The path unit is tested here, not the Landlock apply, under the linux tag its subject
+// carries: the function is built only where the linux wall is built, and linuxRoots
+// applies this directory there.
 func TestWSL2ResolverConfigSymlinkDirectoryIsGranted(t *testing.T) {
 	t.Parallel()
 

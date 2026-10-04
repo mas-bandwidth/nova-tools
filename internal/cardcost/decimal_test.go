@@ -2,6 +2,7 @@ package cardcost
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -67,4 +68,42 @@ func TestTextWritesATerminatingRationalExactly(t *testing.T) {
 			assert.Equal(t, tc.want, Text(tc.r))
 		})
 	}
+}
+
+// Sum is the caller's path for stored costs, which amount accepts of any length
+// (decimal.go): every row asserts the exact decimal string comes back through Sum,
+// so a stored cost is never cut or silently zeroed.
+func TestExactSumPreservesStoredDecimalPrecision(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		vals []string
+		want string
+	}{
+		{name: "a 101-place stored amount survives", vals: []string{"0." + strings.Repeat("0", 100) + "1"},
+			want: "0." + strings.Repeat("0", 100) + "1"},
+		{name: "a 150-place amount added to an ordinary one", vals: []string{"1.5", "0." + strings.Repeat("0", 149) + "7"},
+			want: "1.5" + strings.Repeat("0", 148) + "7"},
+		{name: "a carry across the decimal point", vals: []string{"0." + strings.Repeat("9", 101), "0." + strings.Repeat("0", 100) + "1"},
+			want: "1"},
+		{name: "leading and trailing zeros canonicalize", vals: []string{"007.500", "00.0", "0.500"}, want: "8"},
+		{name: "trailing zeros on a small sum", vals: []string{"0.30", "0.2000"}, want: "0.5"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := Sum(tc.vals...)
+			assert.True(t, ok, "Sum(%q) accepts a stored decimal of any length", tc.vals)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+	t.Run("typed Decimal still refuses more than MaxFraction digits", func(t *testing.T) {
+		t.Parallel()
+		_, err := Decimal("0." + strings.Repeat("0", 30) + "1")
+		assert.ErrorContains(t, err, "want at most 30 digits after the point")
+	})
+	t.Run("a nonterminating rational stays bounded", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "0."+strings.Repeat("3", 100), Text(new(big.Rat).SetFrac(big.NewInt(1), big.NewInt(3))))
+	})
 }

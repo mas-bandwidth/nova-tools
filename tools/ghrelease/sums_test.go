@@ -68,12 +68,9 @@ func TestSumsRefusesADirectoryThatIsNotTheShippedSetNamingTheDifference(t *testi
 	t.Parallel()
 	h := newHarness(t)
 	dist := fillDist(t, h, "v1.0.0")
-	if err := os.Remove(filepath.Join(dist, "nova-tokens_v1.0.0_linux_amd64")); err != nil {
-		t.Fatal(err)
-	}
+	h.remove("dist/nova-tokens_v1.0.0_linux_amd64")
 	h.write("dist/stray.log", "a runner left this", 0o644)
-	h.wantRC(h.do("sums", "v1.0.0", "dist"), 1)
-	h.mustContain("-nova-tokens_v1.0.0_linux_amd64\n")
+	h.wantRun(1, "-nova-tokens_v1.0.0_linux_amd64\n", "sums", "v1.0.0", "dist")
 	h.mustContain("+stray.log\n")
 	h.mustContain("is not the shipped set (- missing, + not shipped)")
 	if _, err := os.Stat(filepath.Join(dist, "SHA256SUMS")); err == nil {
@@ -85,8 +82,7 @@ func TestSumsRefusesAStampThatDoesNotNameTheArtifacts(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	fillDist(t, h, "v1.0.0")
-	h.wantRC(h.do("sums", "v2.0.0", "dist"), 1)
-	h.mustContain("-nova-bus_v2.0.0_linux_amd64")
+	h.wantRun(1, "-nova-bus_v2.0.0_linux_amd64", "sums", "v2.0.0", "dist")
 	h.mustContain("+nova-bus_v1.0.0_linux_amd64")
 }
 
@@ -94,14 +90,12 @@ func TestSumsRefusesWhatIsNotADirectoryOrAlreadyHoldsSums(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.tools("nova-bus")
-	h.wantRC(h.do("sums", "v1.0.0", "nowhere"), 1)
-	h.mustContain("refusing: nowhere is not a directory")
+	h.wantRun(1, "refusing: nowhere is not a directory", "sums", "v1.0.0", "nowhere")
 
 	h = newHarness(t)
 	dist := fillDist(t, h, "v1.0.0")
 	h.write("dist/SHA256SUMS", "an earlier one\n", 0o644)
-	h.wantRC(h.do("sums", "v1.0.0", "dist"), 1)
-	h.mustContain("already holds a SHA256SUMS")
+	h.wantRun(1, "already holds a SHA256SUMS", "sums", "v1.0.0", "dist")
 	if b, _ := os.ReadFile(filepath.Join(dist, "SHA256SUMS")); string(b) != "an earlier one\n" {
 		t.Fatal("an existing SHA256SUMS was overwritten")
 	}
@@ -111,16 +105,13 @@ func TestSumsRefusesAnEmptyShippedSet(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.write("dist/x", "", 0o644)
-	h.wantRC(h.do("sums", "v1.0.0", "dist"), 1)
-	h.mustContain("refusing: the shipped set is empty (cmd/*/ x release-targets)")
+	h.wantRun(1, "refusing: the shipped set is empty (cmd/*/ x release-targets)", "sums", "v1.0.0", "dist")
 }
 
 func TestSumsWrongArgumentCountIsAUsageError(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{{"sums"}, {"sums", "v1"}, {"sums", "v1", "dist", "x"}} {
-		h := newHarness(t)
-		h.wantRC(h.do(args...), 2)
-		h.mustContain("usage:")
+		newHarness(t).wantRun(2, "usage:", args...)
 	}
 }
 

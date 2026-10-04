@@ -25,8 +25,8 @@ var commands []command
 
 func init() {
 	commands = []command{
-		{"create", "<table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]", "nova-table create notes --columns 'todo,done,note:text,progress:pct(done)'", (*application).cmdCreate},
-		{"set", "<table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]", "nova-table set demo --hide ready", (*application).cmdSet},
+		{"create", "<table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>]\n      [--width <col=n,...>]", "nova-table create notes --columns 'todo,done,note:text,progress:pct(done)'", (*application).cmdCreate},
+		{"set", "<table> [--footer <label>] [--rename <name>] [--columns <spec>]\n      [--hide <cols>] [--show <cols>] [--hidden | --visible]", "nova-table set demo --hide ready", (*application).cmdSet},
 		{"drop", "<table> [--definition]", "nova-table drop demo", (*application).cmdDrop},
 		{"list", "", "nova-table list", (*application).cmdList},
 		{"row add", "<table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]", "nova-table row add demo review", (*application).cmdRowAdd},
@@ -53,8 +53,8 @@ func init() {
 		{"check", "<table>", "nova-table check demo", (*application).cmdCheck},
 		{"clear", "<table>", "nova-table clear demo", (*application).cmdClear},
 		{"show", "<table> [--at-epoch <n>]", "nova-table show demo", (*application).cmdShow},
-		{"render", "<table> | --view <name> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]", "nova-table render demo", (*application).cmdRender},
-		{"watch", "<table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]", "nova-table watch demo --once", (*application).cmdWatch},
+		{"render", "<table> | --view <name> [--at-epoch <n>]\n      [--width <col=n,...>] [--label-width <n>]", "nova-table render demo", (*application).cmdRender},
+		{"watch", "<table>[,<table>...] | --view <name> [--every <duration>] [--out <file>]\n      [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]", "nova-table watch demo --once", (*application).cmdWatch},
 		{"view set", "<name> --tables <a,b,...> [--title <text>] [--summary <count-column>]", "nova-table view set work --tables demo --title Work --summary done", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdView(append([]string{"set"}, a...), o, e)
 		}},
@@ -149,8 +149,9 @@ tables into one frame that watch redraws in place.
 first run: needs a Redis 7 or later you may write to; an empty one is enough (the first verb loads
 the functions nova-table calls). With no store at all, help and -h answer, and every verb that writes
 runs under --dry-run: it makes every check the real run makes before sending, then prints what it would send:
+example: (the lines need the store the first run describes; this one runs with none)
   nova-table create demo --columns ready,working,done --dry-run
-A throwaway store, with redis-server on PATH (stop it: redis-cli -s "$d/redis.sock" shutdown nosave):
+a throwaway store, by hand: (stop it: redis-cli -s "$d/redis.sock" shutdown nosave)
   d=$(mktemp -d)
   redis-server --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes
   for _ in $(seq 50); do redis-cli -s "$d/redis.sock" ping >/dev/null 2>&1 && break; sleep 0.1; done

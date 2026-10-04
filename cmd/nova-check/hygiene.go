@@ -172,7 +172,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 			oneline.Field(*base), oneline.Field(*head), oneline.Field(shown), len(findings))
 		return 0
 	}
-	fmt.Fprintf(stderr, "HYGIENE NO base=%s head=%s paths=%s findings=%d\n",
+	fmt.Fprintf(stderr, "HYGIENE FAILED base=%s head=%s paths=%s findings=%d\n",
 		oneline.Field(*base), oneline.Field(*head), oneline.Field(shown), len(findings))
 	return 1
 }
