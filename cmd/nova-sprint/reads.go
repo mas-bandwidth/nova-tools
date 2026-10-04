@@ -1542,15 +1542,18 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "routes", err.Error())
 	}
 	ctx := context.Background()
-	rs, _, err := st.Routes(ctx)
+	set, err := st.RouteSet(ctx)
 	if err != nil {
 		return a.readFailed("routes", err, stderr)
 	}
-	s, err := st.Load(ctx, []string{sprint.Fleet}, nil)
+	rs := set.Routes
+	s, err := st.Load(ctx, []string{sprint.Fleet, sprint.Readers}, nil)
 	if err != nil {
 		return a.readFailed("routes", err, stderr)
 	}
+	s.Lanes = set.Lanes // a local route's machine's lanes (docs/SPEC-LOCAL.md, Fleet)
 	stats := sprint.RouteStats(rs, s.Fleet)
+	busy := s.LanesBusy()
 	rests, balances := sprint.RouteRests(rs, s.Fleet), sprint.ProviderBalances(s.Fleet)
 	for i := range stats {
 		if r, ok := rests[stats[i].Route.Name]; ok && r.Resting(s.Now) {
@@ -1559,6 +1562,9 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 				stats[i].RestedUntil = "open" // until paid
 			}
 			stats[i].RestedFor = r.Cause + ": " + r.Said()
+		}
+		if m := stats[i].Route.Machine; m != "" {
+			stats[i].Lanes = fmt.Sprintf("%d/%d", busy[m], s.Lanes[m]) // a local route's machine (docs/SPEC-LOCAL.md, Fleet)
 		}
 		if b, ok := balances[stats[i].Route.Provider]; ok {
 			stats[i].Balance, stats[i].BalanceAt = "unknown", b.At.UTC().Format(time.RFC3339)
@@ -1592,8 +1598,12 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		} else if r.Tier == "" {
 			how = "gone" // a route the cards name that the store no longer holds
 		}
-		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s rested_until=%s balance=%s\n",
-			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall, orDashStr(x.RestedUntil, "-"), oneline.Field(orDashStr(x.Balance, "-")))
+		local := ""
+		if r.Machine != "" {
+			local = " serve=" + oneline.Field(r.Machine) + " lanes=" + x.Lanes
+		}
+		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s rested_until=%s balance=%s%s\n",
+			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall, orDashStr(x.RestedUntil, "-"), oneline.Field(orDashStr(x.Balance, "-")), local)
 	}
 	fmt.Fprintf(stdout, "ROUTES OK routes=%d\n", len(stats))
 	return 0

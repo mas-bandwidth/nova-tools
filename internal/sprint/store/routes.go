@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 
@@ -86,6 +87,9 @@ type RouteSet struct {
 	Routes []sprint.Route
 	Tiers  map[string][]string
 	Bars   Bars
+	// Lanes is each machine's local lanes (config.FieldLocalLanes), read with the routes:
+	// how many cards the local routes served on it take at once (sprint/route.go, the lanes).
+	Lanes map[string]int
 }
 
 // Bars is the sprint row's nova-decide bars, each by the name of its field, so no bar is
@@ -119,7 +123,7 @@ func (b *Bars) fields() map[string]*string {
 
 // into is the set as the snapshot carries it.
 func (rs RouteSet) into(s *sprint.Snapshot) {
-	s.Routes, s.Tiers = rs.Routes, rs.Tiers
+	s.Routes, s.Tiers, s.Lanes = rs.Routes, rs.Tiers, rs.Lanes
 	s.DecideBounce, s.DecideReview, s.DecideGrade = rs.Bars.Bounce, rs.Bars.Review, rs.Bars.Grade
 	s.DecideAttemptNoResult, s.DecideAttemptNothingToDo = rs.Bars.AttemptNoResult, rs.Bars.AttemptNothingToDo
 	s.DecideScoreBar = rs.Bars.Score
@@ -182,12 +186,23 @@ func (st *Store) cached(ctx context.Context, c *RouteCache) (RouteSet, error) {
 // sprint row's nova-decide bars (Bars) in one pipeline: two round trips, the second only when
 // the set names a route (the arrays and the bars ride in it, so the tick's trips
 // do not rise; with no route a read card has none to draw, and no decide read).
+// The machines' names ride the first trip and their local lanes the second (config.MachineKey,
+// which every role reads), so the lanes cost no trip of their own.
 func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
-	names, err := r.C.SMembers(ctx, config.RoutesKey).Result()
-	if err != nil || len(names) == 0 {
+	first := r.C.Pipeline()
+	routes, machines := first.SMembers(ctx, config.RoutesKey), first.SMembers(ctx, config.MachinesKey)
+	if err := redisconn.Exec(ctx, first); err != nil {
 		return RouteSet{}, 1, err
 	}
+	names := routes.Val()
+	if len(names) == 0 {
+		return RouteSet{}, 1, nil
+	}
 	pipe := r.C.Pipeline()
+	lanes := make(map[string]interface{ Val() string }, len(machines.Val()))
+	for _, m := range machines.Val() {
+		lanes[m] = pipe.HGet(ctx, config.MachineKey(m), config.FieldLocalLanes)
+	}
 	hs := make(map[string]interface{ Val() map[string]string }, len(names))
 	for _, n := range names {
 		hs[n] = pipe.HGetAll(ctx, config.RouteKey(n))
@@ -217,6 +232,12 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 	for f, v := range set.Bars.fields() {
 		*v = bars[f].Val()
 	}
+	set.Lanes = map[string]int{}
+	for m, v := range lanes {
+		if n, _ := strconv.Atoi(v.Val()); n > 0 {
+			set.Lanes[m] = n
+		}
+	}
 	set.Routes, set.Tiers = out, tiers
 	return set, 2, nil
 }
@@ -226,7 +247,7 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 func RouteOf(name string, h map[string]string) sprint.Route {
 	n := func(k string) int { v, _ := strconv.Atoi(h[k]); return v }
 	enabled, _ := strconv.ParseBool(h["enabled"])
-	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Tokens: n("tokens"), USD: h["usd"],
+	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Machine: h[config.FieldRouteMachine], Tokens: n("tokens"), USD: h["usd"],
 		Deadline: n("deadline"), Enabled: enabled, Prices: cardcost.PricesOf(h)}
 }
 
@@ -241,7 +262,7 @@ func (m *Mem) Routes(context.Context) (RouteSet, int64, error) {
 	for t, a := range m.tiers {
 		tiers[t] = append([]string(nil), a...)
 	}
-	return RouteSet{Routes: append([]sprint.Route(nil), m.routes...), Tiers: tiers, Bars: m.bars}, 0, nil
+	return RouteSet{Routes: append([]sprint.Route(nil), m.routes...), Tiers: tiers, Bars: m.bars, Lanes: maps.Clone(m.lanes)}, 0, nil
 }
 
 // SetGateBars gives the store the gate decision's flaky and pre-existing bars, as
@@ -329,3 +350,15 @@ func (st *Store) JudgmentBar(ctx context.Context) (string, error) {
 	set, err := st.routes(ctx)
 	return set.Bars.Judgment, err
 }
+
+// SetLanes gives the store each machine's local lanes, as nova-config's apply does a live
+// one (machine:<m> local_lanes).
+func (m *Mem) SetLanes(lanes map[string]int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lanes = maps.Clone(lanes)
+}
+
+// RouteSet is the routes, the tiers' arrays, the bars and the machines' local lanes, read
+// once: for the read verbs (routes).
+func (st *Store) RouteSet(ctx context.Context) (RouteSet, error) { return st.routes(ctx) }

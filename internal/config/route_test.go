@@ -24,10 +24,10 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "routes", k.Table)
 	assert.False(t, k.Singleton)
-	assert.Equal(t, "tier,provider,model,tokens,usd,deadline,enabled,"+
+	assert.Equal(t, "tier,provider,model,machine,tokens,usd,deadline,enabled,"+
 		"price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of,note",
 		strings.Join(k.FieldNames(), ","), "the deal reads exactly these names, the card's cost the price sheet after them, and the note last")
-	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool,
+	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "machine": TypeRef, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool,
 		"price_input": TypeDecimal, "price_cache_read": TypeDecimal, "price_cache_write": TypeDecimal, "price_output": TypeDecimal, "reasoning_as_output": TypeBool,
 		"long_context": TypeInt, "price_input_long": TypeDecimal, "price_output_long": TypeDecimal, "price_request": TypeDecimal, "billing": TypeEnum,
 		"gateway_percent": TypeDecimal, "price_source": TypeText, "price_as_of": TypeText, "note": TypeText}
@@ -336,4 +336,32 @@ func TestARouteATierNamesIsHeld(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.Delete(ctx, KindRoute, "flash-a", "a1")
 	assert.NoError(t, err)
+}
+
+// A local route names the machine it is served on, only a local route names one, and a
+// machine's lanes are zero or more (docs/SPEC-LOCAL.md, "Fleet").
+func TestALocalRouteNamesItsServingMachine(t *testing.T) {
+	t.Parallel()
+	k, _ := Lookup(KindRoute)
+	local := map[string]string{"tier": "flash", "provider": ProviderLocal, "model": "gemma4-32k", "deadline": "1800", "price_input": "0", "price_output": "0"}
+	_, err := k.NewRow("local-gemma4-32k-m1", local)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "route local-gemma4-32k-m1 is provider local and names no --machine")
+	local[FieldRouteMachine] = "m1"
+	row, err := k.NewRow("local-gemma4-32k-m1", local)
+	require.NoError(t, err)
+	assert.Equal(t, "m1", row.Fields[FieldRouteMachine])
+	api := proRoute("opencode")
+	api[FieldRouteMachine] = "m1"
+	_, err = k.NewRow("r1", api)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only a local route is served on a fleet machine")
+
+	m, _ := Lookup(KindMachine)
+	_, err = m.NewRow("m1", map[string]string{"user": "u", "seat": "s", "slots": "8", FieldLocalLanes: "-1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--local_lanes \"-1\": want a non-negative integer")
+	row, err = m.NewRow("m1", map[string]string{"user": "u", "seat": "s", "slots": "8", "width": "0", FieldLocalLanes: "2"})
+	require.NoError(t, err, "a machine that only serves local models: no member, two lanes")
+	assert.Equal(t, "2", row.Fields[FieldLocalLanes])
 }

@@ -88,6 +88,9 @@ type nativeRunConfig struct {
 	// usd is the dollar budget (--usd, a route's usd): the harness's reported cost
 	// at which the card is stopped beside the token budget; nil for none.
 	usd *big.Rat
+	// localBase is a local route's serving endpoint (--local-base): the job's config declares
+	// the provider local there (docs/SPEC-LOCAL.md, "Fleet"); "" for every other route.
+	localBase string
 	// netAllow is the provider's loopback host:port, passed to the wall as --net-allow.
 	netAllow string
 	// bodySilence is the gap, after response headers, with no body bytes, that
@@ -660,6 +663,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// local-model card runs and dies silently without the named grant.
 	if cfg.configFile != "" {
 		cfg.netAllow = providerLoopback(cfg.configFile, provider)
+	}
+	if u, err := url.Parse(cfg.localBase); cfg.localBase != "" && err == nil && loopbackHost(u.Hostname()) && u.Port() != "" {
+		cfg.netAllow = net.JoinHostPort(u.Hostname(), u.Port()) // a local route served on this machine
 	}
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
@@ -2722,6 +2728,13 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		raw = body
 	}
 	body, merged := swarm.MergeFencePermission(raw, jobDir, reads)
+	// a local route's provider is declared at its serving machine (docs/SPEC-LOCAL.md, "Fleet"),
+	// before its model is, so the model lands under it
+	if merged && cfg.localBase != "" {
+		if declared, ok := swarm.DeclareLocalProvider(body, cfg.localBase); ok {
+			body = declared
+		}
+	}
 	// the route's model is declared in the config, so the harness knows it whatever
 	// catalog it starts with (swarm.DeclareRouteModel: the fresh-home catalog race)
 	if merged && strings.HasPrefix(cfg.model, provider+"/") {

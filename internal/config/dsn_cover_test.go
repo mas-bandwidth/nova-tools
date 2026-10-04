@@ -63,13 +63,14 @@ func TestDsnCoverResolveDSNFlagWithoutPasswordStands(t *testing.T) {
 	assert.Equal(t, "postgres://bob@nova:5432/nova", dsn)
 }
 
-// TestDsnCoverResolveDSNKeywordFlagWithPasswordStands: a keyword DSN on the
-// flag line may carry its password (it is not spelled as a URL).
-func TestDsnCoverResolveDSNKeywordFlagWithPasswordStands(t *testing.T) {
+// TestDsnCoverResolveDSNKeywordFlagWithPasswordIsRefused: a keyword DSN on the
+// flag line carrying its password is refused as a URL one is (99070d44de: every
+// libpq spelling), because a ps reads the line.
+func TestDsnCoverResolveDSNKeywordFlagWithPasswordIsRefused(t *testing.T) {
 	t.Parallel()
-	dsn, err := ResolveDSN("host=nova password=sekrit", envSeam(nil))
-	require.NoError(t, err)
-	assert.Equal(t, "host=nova password=sekrit", dsn)
+	_, err := ResolveDSN("host=nova password=sekrit", envSeam(nil))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "sekrit")
 }
 
 // TestDsnCoverResolveDSNMissingFlagReadsEnvDSN: the DSN comes from

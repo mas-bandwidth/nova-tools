@@ -30,9 +30,9 @@ func TestMigrationsHoldEveryNamedTableToTheRowNamePattern(t *testing.T) {
 		assert.True(t, strings.HasPrefix(m.Name, prefix), "migration %s should have prefix %s", m.Name, prefix)
 	}
 
-	last := all[len(all)-1]
-	require.Equal(t, 27, last.Version, "last migration version")
-	require.Equal(t, "0027_row_name_checks.sql", last.Name, "last migration name")
+	require.GreaterOrEqual(t, len(all), 27, "migration 27 is applied")
+	last := all[26]
+	require.Equal(t, "0027_row_name_checks.sql", last.Name, "migration 27 is the name checks")
 
 	sql := last.SQL
 	// Asserts its SQL names each of the four tables and the pattern string.

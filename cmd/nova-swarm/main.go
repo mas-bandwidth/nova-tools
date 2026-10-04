@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net/url"
 	"os"
 
 	"path/filepath"
@@ -558,6 +559,7 @@ type nativeFlags struct {
 	sweepNow        *bool
 	tokensWord      *string
 	usd             *string
+	localBase       *string
 	usageInterval   *secondsFlag
 	benchFlag       *string
 	stageTimeout    *string
@@ -604,6 +606,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	_ = f.fs.String("owner", "", "accepted and read by nothing, with --slots-store")
 	nf.tokensWord = f.fs.String("tokens", "", "required: the token budget, a number of tokens, or the word unmetered when the provider has no live accounting and the deadline is the only stop (`n|unmetered`)")
 	nf.usd = f.fs.String("usd", "", "the dollar budget per card, a decimal such as 0.50: the harness's reported cost at which the card is stopped (stopped=usd), beside --tokens; empty for none")
+	nf.localBase = f.fs.String("local-base", "", "the endpoint of the fleet machine serving a local route, an http `url` such as http://<machine>:11434/v1: the job's config declares the provider local there (docs/SPEC-LOCAL.md, Fleet); with a --model local/<model> only")
 	nf.usageInterval = newSecondsFlag(f.fs, "usage-interval", swarm.DefaultUsageInterval, "how often the token budget's source is read, a `duration` or whole seconds, at least 1s and under --deadline (default 5s)")
 	nf.benchFlag = f.fs.String("bench", "", "this bench's `name`, in a staging timeout's report (default: this machine's host name up to its first dot)")
 	nf.stageTimeout = f.fs.String("stage-timeout", "", "the bound on staging the card's checkout from the bench mirror, a `duration` (default 120s)")
@@ -698,6 +701,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		default:
 			budgetUSD = r
 		}
+	}
+	// A LOCAL ROUTE names its serving machine's endpoint, and only a local route names one
+	// (docs/SPEC-LOCAL.md, "Fleet").
+	if p, _ := providerOf(*model); (p == swarm.LocalProvider) != (*nf.localBase != "") {
+		f.add(fmt.Sprintf("--local-base goes with a --model local/<model> and only with one (got --model %s, --local-base %s): a local route names the endpoint of the machine that serves it", oneline.Field(*model), oneline.Field(dash(*nf.localBase))))
+	} else if u, err := url.Parse(*nf.localBase); *nf.localBase != "" && (err != nil || u.Scheme != "http" || u.Host == "") {
+		f.add(fmt.Sprintf("--local-base wants an http URL of the serving machine's /v1, such as http://<machine>:11434/v1 (got %s)", oneline.Field(*nf.localBase)))
 	}
 	if f.refused(stderr) {
 		return 2
@@ -815,6 +825,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		resultsRoot:    resultsRootOf(*resultsRootFlag, *root),
 		tokens:         budgetTokens,
 		usd:            budgetUSD,
+		localBase:      *nf.localBase,
 		unmetered:      budgetUnmetered,
 		usageInterval:  usageInterval.d,
 		benchName:      *benchFlag,

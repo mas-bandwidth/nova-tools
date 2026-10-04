@@ -174,6 +174,15 @@ const (
 	KindTier    = "tier"
 )
 
+// The local tier in a fleet (docs/SPEC-LOCAL.md, "Fleet"): a machine row's local_lanes is how many
+// cards its local routes take at once, and a route of provider local names the machine it
+// is served on. The sprint reads both (internal/sprint/route.go, the lanes).
+const (
+	FieldLocalLanes   = "local_lanes"
+	FieldRouteMachine = "machine"
+	ProviderLocal     = "local"
+)
+
 // FriendRoles are the roles someone decides for a friend. The coordinator
 // role is not one: who coordinates is the sprint row's one field, and apply
 // derives the Redis role from it (Kind.Derive below), so ns_friend_roles
@@ -338,6 +347,7 @@ var Kinds = []*Kind{
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
+			{Name: FieldLocalLanes, Type: TypeInt, Help: "the local model lanes it serves over the tailnet (nova-local, docs/SPEC-LOCAL.md \"Fleet\"): how many cards its local routes take at once, all of them together; 0 (the default) serves none. A machine that only serves local models is --width 0 --local_lanes <n>"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
 	},
@@ -431,6 +441,7 @@ var Kinds = []*Kind{
 			{Name: "tier", Type: TypeEnum, Enum: RouteTiers, Required: true, Help: "the tier it serves: one of " + strings.Join(RouteTiers, ", ") + " (frontier cards are never drawn from routes, they escalate to the coordinator)"},
 			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
+			{Name: FieldRouteMachine, Type: TypeRef, Ref: KindMachine, Help: "the machine a local route is served on (provider local, docs/SPEC-LOCAL.md \"Fleet\"): a machine row whose --local_lanes is above 0; empty for every other provider"},
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
 			{Name: "usd", Type: TypeDecimal, Help: "the dollar budget per card, a decimal like 0.50: the harness's reported cost at which the card is stopped, beside the token budget; empty (the default) is none"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
@@ -544,6 +555,17 @@ func checkRoute(r Row) error {
 	}
 	if _, ok := r.Fields["deadline"]; ok && r.Int("deadline") <= 0 {
 		problems = append(problems, fmt.Sprintf("route %s has --deadline 0; want the seconds a card on it may run, above 0", r.Name))
+	}
+	// a local route names the machine it is served on, and only a local route names one
+	// (docs/SPEC-LOCAL.md, "Fleet")
+	if p, ok := r.Fields["provider"]; ok {
+		m := r.Fields[FieldRouteMachine]
+		switch {
+		case p == ProviderLocal && m == "":
+			problems = append(problems, fmt.Sprintf("route %s is provider local and names no --machine; want the machine row that serves it (its --local_lanes above 0)", r.Name))
+		case p != ProviderLocal && m != "":
+			problems = append(problems, fmt.Sprintf("route %s names --machine %s and is provider %s; only a local route is served on a fleet machine, so want --machine \"\" or --provider local", r.Name, m, p))
+		}
 	}
 	// a dollar budget is above 0: empty is no cap, and a 0 would be dealt onto every card
 	// and refused by native at every launch (nova-tools #5094)

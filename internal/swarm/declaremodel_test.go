@@ -60,3 +60,26 @@ func TestCauseFromTextNamesTheHarnessCatalog(t *testing.T) {
 	assert.Equal(t, "model not found in the harness catalog: openrouter/x-ai/grok-4.7", c.Message)
 	assert.Equal(t, "provider: class=unknown-model status=- msg=model not found in the harness catalog: openrouter/x-ai/grok-4.7", c.Reason())
 }
+
+// A local route's provider is declared at its serving machine's endpoint with no key, a
+// model declared under it before is kept, and a config that is no JSON object is unchanged
+// (docs/SPEC-LOCAL.md, "Fleet").
+func TestDeclareLocalProviderPointsTheHarnessAtTheServingMachine(t *testing.T) {
+	t.Parallel()
+	in := []byte(`{"provider":{"local":{"models":{"gemma4-32k":{}}},"openrouter":{"options":{"apiKey":"{env:K}"}}}}`)
+	out, ok := DeclareLocalProvider(in, "http://g1:11434/v1")
+	require.True(t, ok)
+	var cfg map[string]map[string]map[string]any
+	require.NoError(t, json.Unmarshal(out, &cfg))
+	entry := cfg["provider"]["local"]
+	assert.Equal(t, "@ai-sdk/openai-compatible", entry["npm"])
+	assert.Equal(t, map[string]any{"baseURL": "http://g1:11434/v1"}, entry["options"], "no apiKey: a local engine wants none")
+	assert.Equal(t, map[string]any{"gemma4-32k": map[string]any{}}, entry["models"])
+	assert.Contains(t, cfg["provider"], "openrouter", "the other providers stay")
+	declared, ok := DeclareRouteModel(out, LocalProvider, "gemma4-32k")
+	require.True(t, ok)
+	assert.Equal(t, ProviderBaseURL(declared, LocalProvider), "http://g1:11434/v1")
+	same, ok := DeclareLocalProvider([]byte(`[1]`), "http://g1:11434/v1")
+	assert.False(t, ok)
+	assert.Equal(t, `[1]`, string(same))
+}

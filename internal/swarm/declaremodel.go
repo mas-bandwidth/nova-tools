@@ -59,3 +59,37 @@ func DeclareRouteModel(body []byte, provider, model string) ([]byte, bool) {
 	}
 	return out, true
 }
+
+// LocalProvider is the provider word of a local route (docs/SPEC-LOCAL.md, "Fleet").
+const LocalProvider = "local"
+
+// DeclareLocalProvider declares the provider local in the job's harness config at base,
+// the OpenAI-compatible endpoint of the fleet machine that serves the route's model
+// (`provider.local: {npm, name, options.baseURL}`), keeping any models already declared
+// under it. It carries no key: a local engine wants none, and the harness reaches a
+// keyless provider through its baseURL alone. ok is false when the config is not a JSON
+// object; the body is then returned unchanged.
+func DeclareLocalProvider(body []byte, base string) ([]byte, bool) {
+	cfg := map[string]any{}
+	if err := json.Unmarshal(body, &cfg); err != nil {
+		return body, false
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	if providers == nil {
+		if _, other := cfg["provider"]; other {
+			return body, false
+		}
+		providers = map[string]any{}
+		cfg["provider"] = providers
+	}
+	entry := map[string]any{"npm": "@ai-sdk/openai-compatible", "name": LocalProvider, "options": map[string]any{"baseURL": base}}
+	if old, ok := providers[LocalProvider].(map[string]any); ok && old["models"] != nil {
+		entry["models"] = old["models"]
+	}
+	providers[LocalProvider] = entry
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return body, false
+	}
+	return out, true
+}

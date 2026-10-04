@@ -2322,6 +2322,54 @@ wrong:
   returns the recorded decision and asks nothing, so a long run resumes.
 
 
+## nova-local
+
+Run local models: what an engine has, one model served at a chosen context,
+and a worker description nova-swarm accepts. It runs no inference, fetches no
+weights and judges no model. In a fleet, local is a provider per machine: a
+machine serves its models over the tailnet, and each is one route row of
+provider local. See [SPEC-LOCAL.md](SPEC-LOCAL.md).
+
+### First run
+
+From a checkout root, with the ollama daemon running and `gemma4:12b` pulled
+(`ollama pull gemma4:12b`); the transcript, run against a fake engine whose
+weights are in the shared store, is in [TESTS.md](TESTS.md#nova-local):
+
+```sh
+nova-local status
+nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
+nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
+```
+
+`status` prints `STATUS OK engines= answering= loaded= models=` and the box
+(`mem_used= mem_free= mem_total=` in bytes, `wired_cap=`, `load1=`), then one
+`STATUS ENGINE name= state=up|down|timeout base=` line per engine with
+`loaded= advertised=`, `num_ctx=` of a loaded model, and `store=` (where its
+weights are read, symlinks resolved) and `shared=yes|no|unknown`: yes when the
+store is under the AI root's `shared/models` (`$NOVA_AI_ROOT`, else `~/ai`).
+`--list` adds one `STATUS MODEL engine= model= digest= weights= loaded=` line
+per model. `serve` makes `<name>-<ctx>k` (here `gemma4-32k`) with the context,
+temperature 0 and the seed baked in, sends one warm-up, and prints `serve_as=`,
+the name a harness calls, and `load=`, the warm-up it timed. `worker` writes the
+one JSON file `nova-swarm` reads as a worker description. What a first run gets
+wrong:
+
+- No daemon: `status` exits 1 with `run: ollama serve`, the one command that
+  starts it; `serve` names `ollama pull <ref>` for a model the engine lacks.
+- No `--num-ctx`: refused, because ollama's own default silently truncates a
+  long prompt; it is a multiple of 1024, since the tag's name carries it.
+- A tag that exists with another parent, context, temperature or seed: exit 1
+  naming both values and `ollama rm <tag>`.
+- `--base` naming any host but loopback or a tailnet address (100.64.0.0/10),
+  or a name that resolves elsewhere: refused, because a local tier pointed at a
+  remote endpoint is not a local tier.
+- `worker` with a relative `--worker-dir`, an empty `--key-file`, harness
+  arguments without `{model}`: every problem named at once. The local engine
+  wants no key; nova-swarm wants a non-empty file, so `printf 'local\n'` is the
+  whole of it.
+
+
 ## nova-table
 
 Work tables over Redis: ordered-set cells, text notes, percentage formulas,

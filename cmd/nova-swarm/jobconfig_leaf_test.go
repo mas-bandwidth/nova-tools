@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -83,4 +84,33 @@ func TestAJobConfigWriteFailureNamesTheFile(t *testing.T) {
 			assert.NotContains(t, reason, "\n", "the refusal is one line: %q", reason)
 		})
 	}
+}
+
+// A local route's job config declares the provider local at the serving machine's
+// endpoint, its model under it, and no key; the read-deadline proxy stands in front of it
+// as of any provider with an http baseURL (docs/SPEC-LOCAL.md, "Fleet").
+func TestAJobOnALocalRouteDeclaresTheProviderAtItsServingMachine(t *testing.T) {
+	t.Parallel()
+	dataHome := t.TempDir()
+	var notes bytes.Buffer
+	sha, reason, proxy := writeJobConfig(nativeRunConfig{model: "local/gemma4-32k", localBase: "http://g1:11434/v1"}, "local", dataHome, t.TempDir(), nil, &notes)
+	require.Empty(t, reason)
+	require.NotEmpty(t, sha)
+	require.NotNil(t, proxy, "the read-deadline proxy stands in front of the serving machine")
+	t.Cleanup(func() { _ = proxy.Close() }) // ignored: the test's own proxy, closed at its end
+	raw, err := os.ReadFile(filepath.Join(dataHome, ".config", "opencode", "opencode.json"))
+	require.NoError(t, err)
+	var cfg struct {
+		Provider map[string]struct {
+			NPM     string         `json:"npm"`
+			Options map[string]any `json:"options"`
+			Models  map[string]any `json:"models"`
+		} `json:"provider"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &cfg))
+	local := cfg.Provider["local"]
+	assert.Equal(t, "@ai-sdk/openai-compatible", local.NPM)
+	assert.Contains(t, local.Models, "gemma4-32k")
+	assert.NotContains(t, local.Options, "apiKey")
+	assert.Equal(t, proxy.HarnessURL(), local.Options["baseURL"])
 }

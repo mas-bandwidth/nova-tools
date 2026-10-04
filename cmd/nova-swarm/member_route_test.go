@@ -92,6 +92,21 @@ func TestAMemberLaunchesACardWithItsRoutesDollarBudget(t *testing.T) {
 	assert.Equal(t, "2000000", args["--tokens"], "and the token budget stays beside it")
 }
 
+// A local route's card reaches native with the serving machine's endpoint, and no other card
+// carries one (docs/SPEC-LOCAL.md, "Fleet").
+func TestAMemberLaunchesALocalRoutesCardAtItsServingMachine(t *testing.T) {
+	t.Parallel()
+	r := argsRunner(t, "override/model", "999", 9*time.Second)
+	args, _ := launched(t, r, member.Packet{Card: "l1", Kind: "work", Attempt: 1, Gen: 1, Branch: "work/l1",
+		Route: "local-gemma4-32k-g1", Model: "local/gemma4-32k", Tokens: "unmetered", Serve: "g1", Deadline: 600})
+	assert.Equal(t, "local/gemma4-32k", args["--model"])
+	assert.Equal(t, "http://g1:11434/v1", args["--local-base"])
+	args, _ = launched(t, r, member.Packet{Card: "u2", Kind: "work", Attempt: 1, Gen: 1, Branch: "work/u2",
+		Route: "flash-m", Model: "inception/mercury-2.5", Tokens: "2000000", Deadline: 600})
+	_, has := args["--local-base"]
+	assert.False(t, has, "a metered route names no serving machine")
+}
+
 // A card with no route (a store with no route: a twin, one machine) runs on the
 // member's override; a part the packet names wins over the override's.
 func TestACardWithNoRouteRunsOnTheMembersOverride(t *testing.T) {
@@ -229,5 +244,24 @@ func TestTheMemberLineSaysTheOverride(t *testing.T) {
 		var out, errb bytes.Buffer
 		cmdMember(append([]string{"--as", "m1", "--harness", "/bin/true", "--root", t.TempDir(), "--once", "--server", "sprint.test:6390"}, strings.Fields(args)...), &out, &errb, noServer)
 		assert.Contains(t, out.String(), "MEMBER member as=m1 "+want, args)
+	}
+}
+
+// native takes --local-base with a local/<model> --model and only with one, an http URL,
+// refused with the other flags before anything is made (docs/SPEC-LOCAL.md, "Fleet").
+func TestNativeTakesALocalBaseOnlyWithALocalModel(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ model, base, want string }{
+		{"local/gemma4-32k", "", "--local-base goes with a --model local/<model> and only with one"},
+		{"openrouter/x", "http://g1:11434/v1", "--local-base goes with a --model local/<model> and only with one"},
+		{"local/gemma4-32k", "g1:11434", "--local-base wants an http URL"},
+	} {
+		var stdout, stderr bytes.Buffer
+		args := []string{"native", "--tokens", "unmetered", "--harness", "h", "--model", c.model, "--card", "c", "--slot", "s", "--root", "r", "--deadline", "30s"}
+		if c.base != "" {
+			args = append(args, "--local-base", c.base)
+		}
+		assert.Equal(t, 2, run(args, strings.NewReader(""), &stdout, &stderr, time.Time{}), "%+v", c)
+		assert.Contains(t, stderr.String(), c.want, "%+v", c)
 	}
 }
