@@ -19,12 +19,12 @@
 // production path that is about to spawn ssh anyway.
 //
 // A TEST THAT WANTS A CHILD. A fake `ssh` written into t.TempDir() and put on
-// PATH is not a host, and this package can see that for itself: a program that
-// resolves INSIDE a temp directory (GOTMPDIR included) is a fake, a program that resolves to
-// /usr/bin/ssh is the fleet. So the tests that already fake the seam that way
-// -- and the tools they run as child processes, which inherit the variable --
-// keep working untouched. A test whose fake lives anywhere else says so out
-// loud with `defer testguard.AllowHosts()()`.
+// PATH is not a host, and this package sees that for itself: a program that
+// resolves INSIDE a temp directory (GOTMPDIR included) is a fake, and a
+// program that resolves anywhere else is the fleet. The tests that fake the
+// seam that way -- and the tools they run as child processes, which inherit
+// the variable -- keep working untouched. A test whose fake lives anywhere
+// else panics under the guard: the fake belongs in a temp directory.
 //
 // Every seam this package guards is held by
 // TestNoTestReachesAHostThroughAnUnfakedSeam in internal/ci, which reads the
@@ -38,7 +38,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 )
 
@@ -50,8 +49,6 @@ const EnvNoHost = "NOVA_TEST_NO_HOST"
 // Guard holds the state and seams for refusing host calls in tests.
 type Guard struct {
 	refusing  atomic.Bool
-	forced    atomic.Int64
-	allowed   atomic.Int64
 	lookPath  func(string) (string, error)
 	tempRoots func() []string
 }
@@ -83,40 +80,12 @@ func Refusing() bool { return defaultGuard.Refusing() }
 
 // Refusing reports whether the guard is armed. It exists so a test can say
 // what it is testing without reading the environment itself.
-func (g *Guard) Refusing() bool { return g.refusing.Load() || g.forced.Load() > 0 }
-
-// Arm forces the guard to refuse host access until the returned function is called.
-func (g *Guard) Arm() func() {
-	g.forced.Add(1)
-	var once sync.Once
-	return func() { once.Do(func() { g.forced.Add(-1) }) }
-}
-
-// AllowHosts opens a scope in which a seam may run a child, and returns the
-// function that closes it. The one honest use is a test that has installed its
-// own fake on PATH:
-//
-//	defer testguard.AllowHosts()()
-//
-// The scope is process-wide for its duration, so a test that opens one must
-// not run in parallel with a test relying on the guard. That is a narrowing,
-// written down rather than left to be discovered: the guard catches the
-// UNFAKED seam, and a test that fakes a seam declares it.
-func AllowHosts() func() {
-	return defaultGuard.AllowHosts()
-}
-
-// AllowHosts opens a scope in which a seam may run a child, and returns the
-// function that closes it.
-func (g *Guard) AllowHosts() func() {
-	g.allowed.Add(1)
-	var once sync.Once
-	return func() { once.Do(func() { g.allowed.Add(-1) }) }
-}
+func (g *Guard) Refusing() bool { return g.refusing.Load() }
 
 // RefuseHosts is what every ssh/scp/rsync seam in this tree calls with the
-// command line it is about to run. Under the guard, and outside an AllowHosts
-// scope, it panics naming that command line; otherwise it returns immediately.
+// command line it is about to run. Under the guard it panics naming that
+// command line, unless the program resolves inside a temp directory;
+// otherwise it returns immediately.
 //
 // It panics rather than returning an error on purpose. An error would travel
 // up a path that already handles "the bench was unreachable" and would be
@@ -128,8 +97,9 @@ func RefuseHosts(program string, args ...string) {
 }
 
 // RefuseHosts is what every ssh/scp/rsync seam in this tree calls with the
-// command line it is about to run. Under the guard, and outside an AllowHosts
-// scope, it panics naming that command line; otherwise it returns immediately.
+// command line it is about to run. Under the guard it panics naming that
+// command line, unless the program resolves inside a temp directory;
+// otherwise it returns immediately.
 //
 // It panics rather than returning an error on purpose. An error would travel
 // up a path that already handles "the bench was unreachable" and would be
@@ -137,7 +107,7 @@ func RefuseHosts(program string, args ...string) {
 // panic names the test, the seam and the command in one stack, which is the
 // cheapest possible read of the hurt above.
 func (g *Guard) RefuseHosts(program string, args ...string) {
-	if (!g.refusing.Load() && g.forced.Load() <= 0) || g.allowed.Load() > 0 {
+	if !g.refusing.Load() {
 		return
 	}
 	if g.isFakeProgram(program) {
@@ -157,11 +127,11 @@ func (g *Guard) RefuseHosts(program string, args ...string) {
 // rather than by asking every honest test to declare itself.
 //
 // This is the narrowing to know about: a test that installs its fake somewhere
-// other than a temp directory is refused and must say `defer
-// testguard.AllowHosts()()`, and a test that constructs the real seam while
-// some other test's fake is on PATH is not caught. Both are cheap beside the
-// alternative, which is a rule every fake-installing test has to be edited for
-// -- and a rule that costs the honest test is one people learn to edit around.
+// other than a temp directory is refused, and a test that constructs the real
+// seam while some other test's fake is on PATH is not caught. Both are cheap
+// beside the alternative, which is a rule every fake-installing test has to be
+// edited for -- and a rule that costs the honest test is one people learn to
+// edit around.
 //
 // A program that cannot be resolved at all is NOT treated as a fake: the seam
 // was about to run something this machine does not have, and the panic says so
