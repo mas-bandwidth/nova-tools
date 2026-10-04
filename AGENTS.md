@@ -2,7 +2,7 @@
 
 Do not edit. `make map` regenerates this file. AGENTS.md alone: no `CLAUDE.md`, no pointer, no symlink.
 
-Nova Tools is machinery: command-line tools that AI friends and people run against their own records, on their own machines, with their own identities. Adoption is a choice — one tool is a fine number. The standard is below; how review goes: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+Nova Tools is machinery: command-line tools that AI friends and people run against their own records, on their own machines, with their own identities. Adoption is a choice — one tool is a fine number. The standard below is [docs/STANDARD.md](docs/STANDARD.md), embedded whole; every PR meets it. How review goes: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 ```
 make build          # go build ./...
@@ -10,11 +10,9 @@ make test           # the fast tier, plus the per-package time budget
 make map            # regenerate AGENTS.md and per-directory maps
 ```
 
-The standard below is [docs/STANDARD.md](docs/STANDARD.md), embedded whole; every PR meets it.
-
 ## The standard: how a nova tool is built
 
-This is the standard every tool and module in this repository is built to, and the one a new tool is built to first. It states where the tree goes. Each rule names the check that holds it where one exists; where the tree does not yet meet a check, the gap is its ledger, a shrink-only allowlist under `internal/ci/testdata` with one row per place still short, and a new row is a refusal, not a parking place. A check is written `TestName` (`rule`); the rule's entry is in docs/SPEC-CI.md. The goal all of it serves: the minimal code that is performant and correct. Less code is the best code; the tests are what let the code get less.
+Every tool and module is built to this standard. Each rule names its check where one exists in docs/SPEC-CI.md. Existing gaps have shrink-only allowlists under `internal/ci/testdata`: new rows are refused. The goal is minimal, performant, correct code, with tests that permit safe reduction.
 
 ### Doing it right the first time
 
@@ -36,28 +34,31 @@ This is the standard every tool and module in this repository is built to, and t
 
 **After every expansion, contract (section 11).**
 
+### Coordinator rules
+
+Cards are admitted and released in waves of at least the fleet's width: add takes a directory of briefs, release names a wave or a sentinel, rework and drop answer a group. A single-card verb outside a judgment is the sign of doing it wrong.
+
 ### 1. Working in the tree
 
 These hold for every worker, AI or person. A card is the whole brief one worker is handed (section 2), and the coordinator is the one that hands cards out. The rule set is a file the coordinator names (this repository's is `fleet/child-rules.txt`, which these bullets state); the card lint refuses a card missing any rule in it, and with no file it holds the built-in set of six general rules:
 
 - Work only in the staged checkout `JOB.md` names, and do not clone; commit on the checkout's own branch, as usual, and touch no other branch (docs/SPEC-CARD-CONTRACT.md).
-- Export a private `GOCACHE` (the path the card names) and `GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1` before any go command. Never `go clean`, and never clean a shared cache.
+- Use `JOB.md`'s cache and test environment; outside a staged job, use the card's private cache. Keep `GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1`. Never `go clean`, and never clean a shared cache.
 - Never start a redis-server on this machine, and never kill a process you did not start. Functional tests (any test that needs Redis) run only inside the container through `tools/functionalrun` (`--fresh-gocache --deadline 15m`), never against any other store.
-- Every `go test` gets `-timeout 600s`. Every new test opens with `t.Parallel()`. Run `go test -count=1 -timeout 600s ./internal/ci/` before you finish.
+- Every `go test` gets `-timeout 600s`. Every new test opens with `t.Parallel()`. A work card runs its named gate through the Makefile; a read runs only the explicit diff-selected commands in `JOB.md`. Outside a staged job, run the card's gate.
 - No `rm -rf` outside the job directory.
-- Never force-push, never rebase, do not use git stash (the stash list is shared by every worktree), never merge: finish as `JOB.md` says, with `gh pr create` against the base the card names.
+- Never force-push, never rebase, do not use git stash (the stash list is shared by every worktree), never merge: finish through the profile `JOB.md` names (docs/SPEC-CARD-CONTRACT.md section 3).
 - Touch only the files the card names, and keep the diff minimal: every added line traceable to one sentence of the card. A fix that needs another file goes into the report as a proposed diff, not a commit.
 - No names of people, machines or friends in code, comments or docs; docs and comments in the present tense. Cite the model or the design section from every function that implements a rule.
-- Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`; PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`, state the diff stat and what was deleted, and list the tests, each with what it pins, and every local helper added.
-- The report is the pull request: its title is the one-line report, its body every test package line and what you could not do and why. "Not done" is a welcome report; a green claim you did not run is not.
+- Attribution names only the model and harness actually used; never copy another provider's identity. Report diff stat, deletions, tests with their pins and local helpers.
+- Finish as `JOB.md` says: a plain profile writes `RESULT.md`; a command profile uses its finish shim. Report exact head, gate, output and limitations. "Not done" is a welcome report; a green claim you did not run is not.
 - A new verb or class rule starts from its scaffold: `nova-ci new-verb <tool> <verb>` or `nova-ci new-rule <name>` lays down the file, test, fixture and make target.
 
 ### 2. A tool is for an AI
 
 The reader of every banner, refusal and result is an AI meeting the tool cold and deciding whether to depend on it. The question a tool answers is "is this a good tool for an AI to use?" Tools are rated by other AIs, never by their makers, and the ratings drive the fixes. A tool is rated by one note on the bus (nova-bus, messages over git) asking three raters of different sizes to use it cold on a real task and score it; the ratings are kept as tables in the bus repository's design directory, one row per rater and tool.
 
-A rating is read beside the rater's size: a tool a small model finds dense and a frontier model finds clear is a frontier tool and its help says so; a tool every size finds hard is the one to fix. New verbs, flags and success lines are welcome
- where they help an AI; only the sprint views a person reads (`nova-sprint where`, the stored `sprint` view) do not change.
+A rating is read beside the rater's size: a tool a small model finds dense and a frontier model finds clear is a frontier tool and its help says so; a tool every size finds hard is the one to fix. New verbs, flags and success lines are welcome where they help an AI; only the sprint views a person reads (`nova-sprint where`, the stored `sprint` view) do not change.
 
 The properties that make the difference in those ratings, in order:
 

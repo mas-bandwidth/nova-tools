@@ -281,7 +281,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 			h.Members = append(h.Members, memberView{Member: m, Status: status})
 		}
 	}
-	h.First = []string{"nova-sprint where", "nova-sprint inbox --wait --push " + pushSeat, `read docs/SPEC-SPRINT.md, "Handing over the seat"`}
+	h.First = []string{`Cards are admitted and released in waves of at least the fleet's width: add takes a directory of briefs, release names a wave or a sentinel, rework and drop answer a group. A single-card verb outside a judgment is the sign of doing it wrong.`, "nova-sprint where", "nova-sprint inbox --wait --push " + pushSeat, `read docs/SPEC-SPRINT.md, "Handing over the seat"`}
 	return h, a.handoverText(h), nil
 }
 

@@ -174,7 +174,7 @@ func renderPage(root, dir string, idx CatalogIndex, standard string) string {
 	if dir == "" {
 		b.WriteString("# AGENTS.md — generated map\n\n")
 		b.WriteString("Do not edit. `make map` regenerates this file. AGENTS.md alone: no `CLAUDE.md`, no pointer, no symlink.\n\n")
-		b.WriteString("Nova Tools is machinery: command-line tools that AI friends and people run against their own records, on their own machines, with their own identities. Adoption is a choice — one tool is a fine number. The standard is below; how review goes: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).\n\n")
+		b.WriteString("Nova Tools is machinery: command-line tools that AI friends and people run against their own records, on their own machines, with their own identities. Adoption is a choice — one tool is a fine number. The standard below is [docs/STANDARD.md](docs/STANDARD.md), embedded whole; every PR meets it. How review goes: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).\n\n")
 		b.WriteString("```\nmake build          # go build ./...\nmake test           # the fast tier, plus the per-package time budget\nmake map            # regenerate AGENTS.md and per-directory maps\n```\n\n")
 		b.WriteString(embedStandard(standard))
 	} else {
@@ -223,7 +223,6 @@ func embedStandard(standard string) string {
 		return "The standard: [" + StandardDoc + "](" + StandardDoc + ").\n\n"
 	}
 	var b strings.Builder
-	b.WriteString("The standard below is [" + StandardDoc + "](" + StandardDoc + "), embedded whole; every PR meets it.\n\n")
 	inFence := false
 	for _, line := range strings.Split(strings.TrimRight(standard, "\n"), "\n") {
 		if strings.HasPrefix(line, "```") {
