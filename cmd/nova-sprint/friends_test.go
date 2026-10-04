@@ -25,6 +25,25 @@ import (
 // finish verdicts), its status the friends' rule (down after 15 s without a
 // beat) over her beats and the coordinator's hold, its order the fleet's.
 
+// The help distinguishes report failures from origin-verification refusals and
+// names the epoch-qualified transport and the two where frames (J08).
+func TestFriendHelpNamesTheTransportAndFinishOutcomes(t *testing.T) {
+	t.Parallel()
+	words := strings.Join(strings.Fields(friendWords()), " ")
+	for _, want := range []string{
+		"<job> is <card> at epoch 0, otherwise <card>~<epoch>",
+		"where shows friends after work and before fleet",
+		"where --all shows them after merge and before fleet",
+		"A different tip refuses naming both shas",
+		"a missing branch, unreadable tip or missing REPO also refuses",
+		"These refusals leave the card working for the next sync",
+		"HOLD, FAIL, FAILED and BROKEN go to review as failed",
+		"LAND without a full sha, an empty report or an unknown verdict also goes to review as failed",
+	} {
+		assert.Contains(t, words, want)
+	}
+}
+
 // emptyFriends is the friends table with no friend: its header, one rule and
 // the footer, as every empty table is.
 const emptyFriends = "friends | ready | working | width | done | ok%  | status\n" +
