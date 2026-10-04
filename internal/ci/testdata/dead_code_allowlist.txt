@@ -29,13 +29,9 @@ internal/release 1
 internal/sandbox 1
 internal/seatcred 1
 internal/secrets 22
-internal/sprint 5
-internal/sprint/store 4
 internal/subproc 1
 internal/swarm 42
 internal/testguard 5
 internal/tokens 2
 internal/tool 1
 internal/typedrec 11
-internal/workfile 2
-internal/workgh 1

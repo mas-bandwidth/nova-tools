@@ -36,13 +36,11 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-sandbox", "OS-level process sandbox CLI", "go test ./cmd/nova-sandbox", "go test ./cmd/nova-sandbox"),
 	E("cmd/nova-secrets", "zero-leak secrets store CLI", "go test ./cmd/nova-secrets", "go test ./cmd/nova-secrets"),
 	E("cmd/nova-self-talk", "flags sentences where a writer passes a standing verdict on themselves", "go test ./cmd/nova-self-talk", "go test ./cmd/nova-self-talk"),
-	E("cmd/nova-sprint", "the sprint table: four tables on nova-table, the moves between them, the coordinator's inbox, and the driver that plays the world", "go test ./cmd/nova-sprint", "go test ./cmd/nova-sprint"),
 	E("cmd/nova-swarm", "native card runner, bench slot leases and card lint CLI", "go test ./cmd/nova-swarm", "go test ./cmd/nova-swarm"),
 	E("cmd/nova-table", "tables of ordered sets, text and percentages over Redis", "go test ./cmd/nova-table", "go test ./cmd/nova-table"),
 	E("cmd/nova-tokens", "token consumption metering and budgeting CLI", "go test ./cmd/nova-tokens", "go test ./cmd/nova-tokens"),
 	E("cmd/nova-update", "binary release update CLI", "go test ./cmd/nova-update", "go test ./cmd/nova-update"),
 	E("cmd/nova-version", "build identity and version CLI", "go test ./cmd/nova-version", "go test ./cmd/nova-version"),
-	E("cmd/nova-work", "every issue of every repository of an organization in one tree file, imported read-only and verified field for field", "go test ./cmd/nova-work", "go test ./cmd/nova-work"),
 
 	// internal/
 	E("internal/atomicfile", "atomic file write: standard-library rename beside the target", "go test ./internal/atomicfile", "go test ./internal/atomicfile"),
@@ -85,7 +83,6 @@ var DefaultCatalog = []Entry{
 	E("internal/onboarding", "onboarding banner and doc verifier", "go test ./internal/onboarding", "go test ./internal/onboarding"),
 	E("internal/oneline", "single-line log and output grammar", "go test ./internal/oneline", "go test ./internal/oneline"),
 	E("internal/pkgselect", "package selection, the shard deal and the test fan-out that CI and nova-ci local share", "go test ./internal/pkgselect", "go test ./internal/pkgselect"),
-	E("internal/provbalance", "a model provider's balance read through the seat's key", "go test ./internal/provbalance", "go test ./internal/provbalance"),
 	E("internal/record", "decision and execution records", "go test ./internal/record", "go test ./internal/record"),
 	E("internal/redisconn", "the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown", "go test ./internal/redisconn", "go test ./internal/redisconn"),
 	E("internal/redisacl", "the fleet store's ACL users rendered from the function library and the key families, and compared with a store's live ACL", "go test ./internal/redisacl", "go test ./internal/redisacl"),
@@ -98,9 +95,7 @@ var DefaultCatalog = []Entry{
 	E("internal/seatcred", "a seat's Redis login read through the secrets library (--seat, NOVA_SEAT)", "go test ./internal/seatcred/...", "go test ./internal/seatcred/..."),
 	E("internal/selftalk", "agent self-talk journal stream", "go test ./internal/selftalk", "go test ./internal/selftalk"),
 	E("internal/shippedsmoke", "the smoke test of a shipped nova-check binary, behind the shippedsmoke build tag, run by the certification workflow", "go test -tags shippedsmoke ./internal/shippedsmoke", "NOVA_SHIPPED_BIN=<binary> go test -tags shippedsmoke -v ./internal/shippedsmoke"),
-	E("internal/sprint", "the sprint table's pure core (lifecycle, steps, check, inbox) and its binding to the table layer (store) and its driver (play)", "go test ./internal/sprint/...", "go test ./internal/sprint/..."),
 	E("internal/member", "a sprint fleet member's loop: beat, queue, push and judge the finish, take to width, each card a child", "go test ./internal/member", "go test ./internal/member"),
-	E("internal/sprintdash", "the sprint dashboard (nova-sprint dashboard): the page embedded in the binary, a cached copy of where --json, and the check that holds the page equal to docs/SPEC-SPRINT-DASHBOARD.md", "go test ./internal/sprintdash", "go test ./internal/sprintdash"),
 	E("internal/sprintwire", "how a worker talks to the sprint's server (nova-sprint run --listen): the request and reply of a batch of verbs, the client, and the member's sprint over it", "go test ./internal/sprintwire", "go test ./internal/sprintwire"),
 	E("internal/subproc", "the one door a child process goes through: a named deadline per kind, WaitDelay, and a cancellable context for long-lived children", "go test ./internal/subproc", "go test ./internal/subproc"),
 	E("internal/swarm", "the native card runner: staging, the wall, budgets, slot leases and card lint", "go test ./internal/swarm", "go test ./internal/swarm"),
@@ -117,9 +112,6 @@ var DefaultCatalog = []Entry{
 	E("internal/tty", "whether a file is a terminal and how large its screen is", "go test ./internal/tty", "go test ./internal/tty"),
 	E("internal/typedrec", "typed RESULT record contract, its format and the disposition line", "go test ./internal/typedrec", "go test ./internal/typedrec"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
-	E("internal/workfile", "nova-work tree file: the model, its canonical writer, strict reader and field-for-field diff", "go test ./internal/workfile", "go test ./internal/workfile"),
-	E("internal/workgh", "nova-work read-only GitHub issue capture over GraphQL, every call counted", "go test ./internal/workgh", "go test ./internal/workgh"),
-	E("internal/worklang", "bounded reader for nova-work's restricted s-expression tree file", "go test ./internal/worklang", "go test ./internal/worklang"),
 	E("internal/yield", "CI over work: a copy, a local test run or a sprint card's native launch steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/
@@ -141,7 +133,6 @@ var DefaultCatalog = []Entry{
 	E("tools/preflight", "the standard check before a card or a pull request: gofmt, go vet and the unit tests through make test-full", "go test ./tools/preflight", "make preflight"),
 	E("tools/sandboxcheck", "the darwin profile check of nova-sandbox: fills the profile template for a scratch write set and runs the first second of a job inside the wall, each denial beside a control outside it", "go test ./tools/sandboxcheck", "go run ./tools/sandboxcheck"),
 	E("tools/sessiontrace", "bounded shell trace replay against TableSession", "go test ./tools/sessiontrace", "go test ./tools/sessiontrace"),
-	E("tools/sprintsize", "nova-sprint's size run: the sprint at 10x its largest real size on a local store, each operation timed against its limit", "go vet ./tools/sprintsize", "go run ./tools/sprintsize --bin <nova-sprint>"),
 	E("tools/tlacheck", "TLA+ model check CLI: run the declared cases, the table and member suites, the receipt replay and the finding witnesses", "go test ./tools/tlacheck", "go test ./tools/tlacheck"),
 	E("tools/testmanifest", "exact named Go test manifest checker", "go test ./tools/testmanifest", "go test ./tools/testmanifest"),
 }

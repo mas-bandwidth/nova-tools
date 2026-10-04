@@ -43,10 +43,8 @@ var certRaceMinShards = map[string]int{
 // certification.yml's deal step spells the same list.
 var certRaceHeavy = []string{
 	"internal/ci", "cmd/nova-tokens", "cmd/nova-sandbox", "cmd/nova-self-talk",
-	"internal/update", "cmd/nova-secrets", "internal/bus", "cmd/nova-sprint",
-	"internal/sprint/store", "cmd/nova-swarm", "internal/sprint/refmodel",
-	"internal/docs", "internal/sprint", "internal/redisconn", "internal/config",
-	"internal/secrets",
+	"internal/update", "cmd/nova-secrets", "internal/bus", "cmd/nova-swarm",
+	"internal/docs", "internal/redisconn", "internal/config", "internal/secrets",
 }
 
 const certRaceDealStep = "deal this shard's packages"

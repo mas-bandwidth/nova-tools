@@ -2,7 +2,6 @@
 # ceiling: 13
 tla/CardMachine.tla:glenn 1
 tla/MEMBER-TABLE-MODEL.md:space 1
-tla/README-SprintEvents.md:space 2
 tla/README.md:glenn 1
 tla/README.md:rowan 2
 tla/README.md:space 5
