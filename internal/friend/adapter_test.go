@@ -56,7 +56,7 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 
 func TestTheOtherHarnessesRefuseHonestlyAndAnUnknownOneIsNamed(t *testing.T) {
 	t.Parallel()
-	for _, h := range []string{"codex", "claude", "antigravity", "dsh"} {
+	for _, h := range []string{"claude", "antigravity", "dsh"} {
 		t.Run(h, func(t *testing.T) {
 			t.Parallel()
 			d, err := NewDeliverer(h, "/w/bob", "", nil, nil)

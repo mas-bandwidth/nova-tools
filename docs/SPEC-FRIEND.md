@@ -173,13 +173,39 @@ open; the status file.
 The deliver adapter runs the harness directly, never through a shell, as its
 own session leader; past the ten minute budget the whole process group is
 signalled, SIGTERM then SIGKILL, so a harness that forks leaves no orphan.
-Tonight one adapter is real: OpenCode, `opencode run --session <id> --dir
+Two adapters are real. OpenCode: `opencode run --session <id> --dir
 <dir> <text>`, the newest session of the directory when none is named. A ping
 pushed in carries, at its head, the exact `pong` line for this friend (the
 binary by path, the name, the directory, the store, the nonce), so a small
-model has one line to run and nothing to fill in. Codex, Claude, Antigravity
-and DSH have no deliver command yet: their daemon is passive, taking nothing
-off the stream (the session's own blocking read does), peeking so a ping is
+model has one line to run and nothing to fill in.
+
+Codex delivers by resume, not into the open chat: `codex exec resume
+--skip-git-repo-check <thread> <text>` resumes the saved thread in a new codex
+process, so the thread's model answers with the friend's whole context, and
+the record labels every such turn "answered by resume, not by the open
+chat". The open chat itself is out of reach: the Codex desktop app
+(ChatGPT.app) runs its app-server on a stdio pair it owns and listens on no
+socket, and while a thread is open there the app holds its writer lock
+(`~/.codex/thread-writer-locks/<thread>.lock`), which refuses a resume
+("thread <id> already has an active writer", measured 2026-10-04 on an open
+thread, exit 1). Without --session, the adapter resolves the newest saved thread with the
+same working directory from session_meta headers and session_index updated_at
+under CODEX_HOME (otherwise ~/.codex); without a matching thread it refuses
+with a remedy rather than spawning codex. It probes that exact thread's writer
+lock first (the same flock codex takes). While held, it returns Deferred without
+running codex: no failure is counted and nothing is acked or given up, even
+after 1,000 deferrals. The daemon retries every ten seconds. The probe releases
+its brief exclusive lock before resume, so a writer can still acquire it in
+that window; this observation is not a reservation. Reaching the open chat needs the app on the shared local daemon:
+the app connects to `~/.codex/app-server-control/app-server-control.sock`
+instead of its own stdio server only when launched with
+`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1` and a daemon is already up (`codex
+app-server daemon start`; read from the app bundle, unverified); then `codex
+queue --thread <id> --message <text>` reaches the open chat, and the adapter
+should move to it.
+
+Claude, Antigravity and DSH have no deliver command yet: their daemon is
+passive, taking nothing off the stream (the session's own blocking read does), peeking so a ping is
 still answered by the daemon at once, beating, and recording a push it
 cannot deliver; so the tool is honest, and the beat and the daemon pong are
 real for them.
