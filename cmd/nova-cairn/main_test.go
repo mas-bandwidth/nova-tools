@@ -11,13 +11,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// cli is the tool's entry point in process.
-var cli = testkit.Main(cairnTool().Run)
+// cli is the tool's entry point in process, an app naming no working
+// directory: every store these tests pass is absolute (t.TempDir), and a
+// relative path would resolve against the process's directory as typed.
+var cli = testkit.Main(cairnTool(app{}).Run)
 
 // rig is one store under test: a fresh directory and the tool pointed at it.
 type rig struct {
@@ -226,7 +229,10 @@ func TestSourcePointerIsRecordedNeverOpened(t *testing.T) {
 
 	c := newRig(t)
 	ptr := c.path("no such transcript", "session.jsonl")
-	field := strings.ReplaceAll(ptr, " ", `\x20`)
+	// One way to print a value (skeleton contract 1.14, STANDARD section 2):
+	// a pointer that is not one safe token prints as oneline.Quote gives it,
+	// one field with its spaces kept.
+	field := oneline.Quote(ptr)
 	out := c.ok("open", "--session", "s1", "--source", ptr, "--publish", "manual")
 	require.Contains(t, out, " source="+field+" ", "open printed %q, want source=%s", out, field)
 	out = c.ok("append", "--session", "s1", "--entry", "inherits", "--text", "words with no pointer of their own", "--publish", "manual")
@@ -371,5 +377,45 @@ func TestEveryProblemIsNamedAtOnce(t *testing.T) {
 // by construction: every verb's effect, and a how text of five short lines.
 func TestCairnToolMeetsTheStandard(t *testing.T) {
 	t.Parallel()
-	assert.Empty(t, cairnTool().Problems())
+	assert.Empty(t, cairnTool(app{}).Problems())
+}
+
+// The seam the parallel first run stands on: the working directory is a field
+// of the instance the caller builds, never the process's (docs/STANDARD.md
+// section 8: the working directory is injected through the code's config,
+// never set with a Chdir). A relative store resolves under the directory the
+// instance names; an absolute store passes through; an instance naming no
+// directory leaves every path as typed, for the OS to resolve against the
+// process's directory as before the seam.
+func TestAStoreResolvesUnderTheInstancesWorkingDir(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		store string
+		want  string // where sessions/s.md lands, relative to the working directory
+	}{
+		{"relative joins under the instance's dir", "./cairns", filepath.Join("cairns", "sessions", "s.md")},
+		{"a bare name joins too", "cairns", filepath.Join("cairns", "sessions", "s.md")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			wd := t.TempDir()
+			sit := testkit.Main(cairnTool(app{workingDir: wd}).Run)
+			sit.OK(t, "open", "--store", tc.store, "--session", "s", "--publish", "manual")
+			require.FileExists(t, filepath.Join(wd, tc.want), "the store did not land under the instance's working directory")
+		})
+	}
+	t.Run("absolute passes through", func(t *testing.T) {
+		t.Parallel()
+		wd, store := t.TempDir(), t.TempDir()
+		sit := testkit.Main(cairnTool(app{workingDir: wd}).Run)
+		sit.OK(t, "open", "--store", store, "--session", "s", "--publish", "manual")
+		require.FileExists(t, filepath.Join(store, "sessions", "s.md"), "an absolute store moved under the working directory")
+	})
+	t.Run("a path passes through as typed when no directory is named", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "./cairns", app{}.resolve("./cairns"), "the zero value must leave the path to the OS, as before the seam")
+		assert.Equal(t, "/wd/cairns", app{workingDir: "/wd"}.resolve("/wd/cairns"), "an absolute path must pass through")
+		assert.Equal(t, "", app{workingDir: "/wd"}.resolve(""), "an empty path must stay empty: cairn's own refusal names the missing store")
+	})
 }
