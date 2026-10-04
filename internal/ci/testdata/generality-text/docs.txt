@@ -1,5 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 56
+# ceiling: 50
 docs/CLI.md:johnny 1
 docs/CLI.md:mas-bandwidth 4
 docs/CLI.md:mini 2
@@ -44,12 +44,6 @@ docs/SPEC-TOKENS.md:glenn 2
 docs/SPEC-TOKENS.md:johnny 1
 docs/SPEC-TOKENS.md:space 2
 docs/SPEC-TOKENS.md:stella 1
-docs/SPEC-UPDATE.md:freddy 1
-docs/SPEC-UPDATE.md:glenn 1
-docs/SPEC-UPDATE.md:johnny 1
-docs/SPEC-UPDATE.md:rowan 2
-docs/SPEC-UPDATE.md:space 1
-docs/SPEC-UPDATE.md:stella 1
 docs/SPEC.md:rowan 4
 docs/SPEC.md:space 16
 docs/SPEC.md:studio 1
