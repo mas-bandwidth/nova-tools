@@ -63,6 +63,12 @@ type Tool struct {
 	// CLEAR, so a `-h` answer could read as CLEAR (STANDARD §3 names the one
 	// exception). The refusal names `help` as the door. No tool sets it yet.
 	HelpRefused bool
+	// NoJSON, when set, replaces the banner's standard --json sentence's
+	// clause after the colon: a tool whose verbs print their own prose (the
+	// note body a bus carries) says there why they take no --json and pastes
+	// a line they print, so the help and the output cannot drift (ONBOARDING
+	// point 6). Empty keeps the standard sentence.
+	NoJSON string
 }
 
 // MaxWords bounds a tool's own status words: a reader learns them all at once.
@@ -397,7 +403,11 @@ func (t *Tool) Banner() string {
 	if len(own) > 0 {
 		json = "Every verb but " + strings.Join(own, ", ") + " takes --json"
 	}
-	b.WriteString(json + ": the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
+	why := "the same result as one JSON object on stdout"
+	if t.NoJSON != "" {
+		why = t.NoJSON
+	}
+	b.WriteString(json + ": " + why + ". A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
 	b.WriteString("example:\n")
 	for _, v := range t.verbs() {
