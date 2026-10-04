@@ -23,6 +23,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -282,7 +283,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	case "kernel":
 		return cmdKernel(args[1:], stdout, stderr)
 	case "nocode":
-		return cmdNoCode(args[1:], stdout, stderr)
+		return cmdNoCode(args[1:], stdout, stderr, gitrun.Options{})
 	case "floors":
 		return cmdFloors(args[1:], stdout, stderr)
 	case "corpus":
@@ -290,7 +291,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	case "hygiene":
 		return cmdHygiene(args[1:], stdout, stderr)
 	case "dogfood":
-		return cmdDogfood(args[1:], stdout, stderr)
+		return cmdDogfood(dogfoodEnv{}, args[1:], stdout, stderr)
 	case "convergence":
 		return cmdConvergence(args[1:], stdout, stderr)
 	case "spelling":
@@ -403,7 +404,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	ceiling := fmt.Sprintf("%d", *failMax)
 	fmt.Fprintf(stdout, "QUICKSTART RUN dir=%s checks=2: links, then nocode\n", oneline.Field(*dir))
 	linksCode := cmdLinks(append([]string{"--dir", *dir, "--fail-max", ceiling}, excludeFlags(exclude)...), stdout, stderr)
-	nocodeCode := cmdNoCode([]string{"--dir", *dir, "--fail-max", ceiling}, stdout, stderr)
+	nocodeCode := cmdNoCode([]string{"--dir", *dir, "--fail-max", ceiling}, stdout, stderr, gitrun.Options{})
 	worst := max(linksCode, nocodeCode)
 	var failed []string
 	for _, c := range []struct {
@@ -639,7 +640,7 @@ func excludeFlags(exclude repeatable) []string {
 	return out
 }
 
-func cmdNoCode(args []string, stdout, stderr io.Writer) int {
+func cmdNoCode(args []string, stdout, stderr io.Writer, gitOpts gitrun.Options) int {
 	var asJSON bool
 	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
 	defer stderr.(*jsonOutput).finish()
@@ -715,7 +716,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	// refusal the audit already makes, and it never sees a --dir it was
 	// willing to guess. The verb's own wiring is staged.go.
 	if *staged {
-		return stagedRun(*dir, allow, deny, source, *failMax, stdout, stderr)
+		return stagedRun(*dir, allow, deny, source, *failMax, stdout, stderr, gitOpts)
 	}
 
 	opts := check.NoCodeOptions{Dir: *dir, Allow: allow, DenyExt: deny, DenySource: source}

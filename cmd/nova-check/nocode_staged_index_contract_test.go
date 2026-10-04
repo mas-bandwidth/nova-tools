@@ -31,6 +31,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -149,6 +151,7 @@ func stLine(t *testing.T, stream, prefix string) string {
 // every behaviour the issue names. The six bodies also stand as the six
 // top-level tests below, under the issue's own names.
 func TestIssue2296(t *testing.T) {
+	t.Parallel()
 	t.Run("TestNoCodeStagedClassifiesTheIndex", noCodeStagedClassifiesTheIndex)
 	t.Run("TestNoCodeStagedRequiresDir", noCodeStagedRequiresDir)
 	t.Run("TestNoCodeStagedNothingToSay", noCodeStagedNothingToSay)
@@ -293,7 +296,10 @@ func noCodeStagedSaysNo(t *testing.T) {
 	}
 }
 
-func TestNoCodeStagedRefusals(t *testing.T) { noCodeStagedRefusals(t) }
+func TestNoCodeStagedRefusals(t *testing.T) {
+	t.Parallel()
+	noCodeStagedRefusals(t)
+}
 
 // The refusals are exit 2 (SPEC.md:1015-1021): a --dir that is not the root
 // of a git repository, a diff-index that itself fails, unmerged entries, an
@@ -391,9 +397,11 @@ func noCodeStagedRefusals(t *testing.T) {
 			// NUL separators are interpreted at run time, not embedded in
 			// the script. Everything else the tool asks git -- the root
 			// test, the base detector -- is exec'd through to the real
-			// binary behind the fake.
+			// binary behind the fake. The fake is handed to the verb as its
+			// git binary, never put on the whole process's PATH, so this
+			// test runs in parallel like every other.
 			bin := t.TempDir()
-			fakeBin(t, bin, "git", fmt.Sprintf(`case "$3" in
+			fake := fakeBin(t, bin, "git", fmt.Sprintf(`case "$3" in
   diff-index)
     printf '%s'
     exit 0
@@ -403,12 +411,10 @@ func noCodeStagedRefusals(t *testing.T) {
     ;;
 esac
 `, tc.record, real))
-			orig := os.Getenv("PATH")
-			os.Setenv("PATH", bin+string(os.PathListSeparator)+orig)
-			exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
-			os.Setenv("PATH", orig)
-			refused(t, tc.name, exit, stderr, tc.want)
-			assert.EqualValues(t, "", stdout, "%s printed to stdout: %q", tc.name, stdout)
+			var out, errOut bytes.Buffer
+			exit := cmdNoCode([]string{"--staged", "--dir", dir}, &out, &errOut, gitrun.Options{Bin: fake})
+			refused(t, tc.name, exit, errOut.String(), tc.want)
+			assert.EqualValues(t, "", out.String(), "%s printed to stdout: %q", tc.name, out.String())
 		})
 	}
 }

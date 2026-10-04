@@ -211,16 +211,18 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 // that had stopped finding the fixture's files would read as green -- and a
 // dropped line removes a lookup rather than an assertion.
 //
-// NOTHING IS NORMALISED. The fixture is on disk and every count on every line
-// is of it, so all of them reproduce; onboarding.Execute is handed no Norm and
-// says so under any line that disagrees.
-//
 // The fixture is typed as written. The documented `./self` is what a reader
 // types and what the tool PRINTS BACK on `dir=`, so the fixture is copied to
 // that name in a directory of the test's own rather than the path being
 // rewritten, which is what the old `localize` did and why it could not have
-// compared the line the document promised.
+// compared the line the document promised. The only normalisation is the
+// directory this run lives in (`onboarding.Path`): the tool prints the absolute
+// path of the temp directory, and the document writes `./self`, so the norm
+// maps the run's path back to the documented one -- the values still reproduce
+// on the fixture, and no line is elided.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	fixture, err := filepath.Abs(exampleSelf)
@@ -232,9 +234,19 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	require.NotEmpty(t, steps, "the `### First run` block holds no nova-check command; this test would pass by running nothing")
 
 	dir := t.TempDir()
-	copyTree(t, fixture, filepath.Join(dir, "self"))
-	t.Chdir(dir)
-	for _, p := range onboarding.Execute(steps, runDocumented) {
+	self := filepath.Join(dir, "self")
+	copyTree(t, fixture, self)
+	// The documented `./self` is rewritten to the fixture's absolute path, so
+	// the test runs in parallel without moving the process's working directory;
+	// the norm maps the printed path back to the documented `./self`.
+	for i := range steps {
+		for j, a := range steps[i].Args {
+			if rest, ok := strings.CutPrefix(a, "./self"); ok {
+				steps[i].Args[j] = self + rest
+			}
+		}
+	}
+	for _, p := range onboarding.Execute(steps, runDocumented, onboarding.Path("./self", self)) {
 		assert.Fail(t, "check failed", p)
 	}
 }
