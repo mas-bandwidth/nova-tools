@@ -3,7 +3,6 @@ package redisconn
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,10 +40,11 @@ func TestOpenCoverRefusesWhatResolveRefuses(t *testing.T) {
 }
 
 // TestOpenCoverFailsACallerWhoCancelled: through the public Open, a caller
-// whose context is already done is failed at the package's own netDial — the
-// dial answers before it connects, so the test owns no socket and touches no
-// network — and Open hands back the caller's cancellation, bounded, as one
-// line that opens with who was tried, with no connection.
+// whose context is already done is failed before anything is dialed — the
+// test owns no socket and touches no network — as its own failure, never an
+// unreachable store: the class Other, the one line that opens with who was
+// tried and says to run it again, the caller's cancellation beneath it, and
+// no connection.
 func TestOpenCoverFailsACallerWhoCancelled(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -52,8 +52,14 @@ func TestOpenCoverFailsACallerWhoCancelled(t *testing.T) {
 	conn, err := Open(ctx, Options{Addr: "127.0.0.1:1"}, nothing)
 	assert.Nil(t, conn, "Open = %v; want no connection", conn)
 	require.Error(t, err)
+	const want = "redis at 127.0.0.1:1 as the default user, no password: failed: context canceled; next: run it again: it was cancelled before the store answered"
+	if got := err.Error(); got != want {
+		assert.EqualValues(t, want, got, "\n got %s\nwant %s", got, want)
+	}
+	if got := Classify(err); got != Other {
+		assert.EqualValues(t, Other, got, "class %v of %v; want %v", got, err, Other)
+	}
 	assert.ErrorIs(t, err, context.Canceled, "%v does not unwrap to the caller's cancellation", err)
-	assert.Truef(t, strings.HasPrefix(err.Error(), "redis at 127.0.0.1:1 as the default user, no password: "), "%v does not open with the tried line", err)
 }
 
 // TestOpenCoverNetDialRefusesBeforeItConnects: netDial, the dialer Open
