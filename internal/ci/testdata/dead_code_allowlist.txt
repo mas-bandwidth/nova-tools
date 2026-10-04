@@ -21,7 +21,6 @@ internal/sprint 2
 internal/sprint/store 2
 internal/subproc 1
 internal/swarm 42
-internal/testguard 5
 internal/tokens 2
 internal/tool 1
 internal/workgh 1

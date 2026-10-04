@@ -15,7 +15,7 @@ import (
 func TestUnsetGuardLetsTheSeamRun(t *testing.T) {
 	t.Parallel()
 	g := NewGuard(false)
-	require.False(t, g.Refusing(), "the guard must be off when the variable is unset; production pays nothing for it")
+	require.False(t, g.refusing.Load(), "the guard must be off when the variable is unset; production pays nothing for it")
 	g.RefuseHosts("ssh", "hulk", "uptime") // must not panic
 }
 
@@ -26,7 +26,7 @@ func TestArmedGuardNamesTheCommandAndTheRemedy(t *testing.T) {
 		r := recover()
 		require.True(t, r != nil, "an armed guard must refuse the seam")
 		msg, _ := r.(string)
-		for _, want := range []string{EnvNoHost, `"ssh"`, `"hulk"`, `"bash -s"`, "testguard.AllowHosts"} {
+		for _, want := range []string{EnvNoHost, `"ssh"`, `"hulk"`, `"bash -s"`, "a fake on PATH must live under a temp directory"} {
 			assert.Contains(t, msg, want, "the refusal must carry %s; got %q", want, msg)
 		}
 	}()
@@ -55,32 +55,4 @@ func TestAFakeOnPATHIsNotAHost(t *testing.T) {
 	}
 	g.RefuseHosts("ssh", "hulk", "uptime") // must not panic
 	g.RefuseHosts(fake, "hulk", "uptime")  // named by absolute path, the same answer
-}
-
-func TestAllowHostsIsScopedAndNests(t *testing.T) {
-	t.Parallel()
-	g := NewGuard(true)
-	outer := g.AllowHosts()
-	inner := g.AllowHosts()
-	inner()
-	g.RefuseHosts("ssh", "hulk") // the outer scope still stands
-	inner()                      // closing twice is not a second decrement
-	g.RefuseHosts("ssh", "hulk")
-	outer()
-	defer func() {
-		require.True(t, recover() != nil, "the guard must be armed again once every scope has closed")
-	}()
-	g.RefuseHosts("ssh", "hulk")
-}
-
-func TestArmIsScopedAndIdempotent(t *testing.T) {
-	t.Parallel()
-	g := NewGuard(false)
-	require.False(t, g.Refusing(), "initially unarmed guard must not be refusing")
-	disarm := g.Arm()
-	require.True(t, g.Refusing(), "armed guard must be refusing")
-	disarm()
-	require.False(t, g.Refusing(), "disarmed guard must not be refusing")
-	disarm() // closing twice is safe and idempotent
-	require.False(t, g.Refusing(), "calling disarm twice must be a no-op")
 }
