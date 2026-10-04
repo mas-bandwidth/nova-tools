@@ -1136,6 +1136,16 @@ finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --o
 ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
 ```
 
+### tests-reexec-guard-everywhere.w1
+
+A test that runs "this binary" (`os.Executable()`, `os.Args[0]`) runs the TEST binary, and a Go test binary given CLI words it takes for no flags runs the whole suite again: a chain 289 processes deep on one machine in one afternoon. The guard is `internal/testbin.Guard(tool, handled)`, called from a package-level `var _ = testbin.Guard(...)` in each `cmd/<tool>/reexec_test.go` (a package-level var runs before `TestMain`, so it stands before the package's own dispatch and setup). A start of a test binary is one of three things:
+
+- the suite: no words or `-test.*` words, a `go test` run or a child a test started on purpose with `-test.run`;
+- a start the package answers itself: `handled(args)` is true for the words or helper verbs the package's own `TestMain` dispatches;
+- a refusal, exit 3 and one line on stderr: CLI words that nothing answers from a test binary (`NOVA_TESTBIN_DEPTH` above 0), or a chain of test binaries `testbin.MaxDepth` (2) deep. Every start sets `NOVA_TESTBIN_DEPTH` one higher for its children.
+
+`internal/testbin` pins the rules (`TestModeRunsTheSuiteHandlesItsOwnOrRefuses`, `TestAChildStartedWithCLIWordsIsRefusedAndNeverRunsTheSuite`); the class test `TestEveryReexecOfTheTestBinaryHasTheGuard` (`internal/ci/reexec_guard_class_test.go`) refuses any `_test.go` file under `cmd/` that execs `os.Executable()` or `os.Args[0]` in a package with no `testbin.Guard`, naming the file and line.
+
 ## nova-work
 
 Run by `cmd/nova-work/firstrun_test.go` against a recorded conversation with
