@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -151,7 +152,7 @@ func writeFakeSSH(t *testing.T, root, logPath string) string {
 	p := filepath.Join(root, "bin", "ssh")
 	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
 	script := "#!/bin/sh\n" +
-		"log=" + shellQuote(logPath) + "\n" +
+		"log=" + oneline.ShellWord(logPath) + "\n" +
 		"printf '%s\\n' \"$@\" > \"$log\"\n" +
 		"if [ -n \"$SSH_AUTH_SOCK\" ]; then echo agent=set >> \"$log\"; else echo agent=unset >> \"$log\"; fi\n" +
 		"for a; do last=$a; done\n" +
