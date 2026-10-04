@@ -41,6 +41,65 @@ var listFilePatterns = []string{"*allowlist*.txt", "*.allow", "*_examples.txt"}
 // future package shards and the @root shard.
 var countedShardDirectories = []string{
 	"discarded", "scripthide", "okonfailure", "remedy", "generality", "generality-text", "testify", "staticcheck", "errcheck",
+	"flagusage", "toolanswers",
+}
+
+// TestCountedShardDirectoriesNameEveryLedger: countedShardDirectories is the one
+// list the allowlist guard reads to know which ledgers are package-sharded, so a
+// ledger directory missing from it is discovered by no class test: its shards are
+// read with no recipe guard and no `NOVA_CI_UPDATE=1` path. This test walks
+// internal/ci/testdata and names every directory that holds a shard below a
+// package subdirectory (a recursive shard); the flags and tool answers ledgers
+// are the miss found on landing (nova-tools#5096).
+func TestCountedShardDirectoriesNameEveryLedger(t *testing.T) {
+	t.Parallel()
+
+	named := map[string]bool{}
+	for _, name := range countedShardDirectories {
+		named[name] = true
+	}
+	root := filepath.Join(repoRoot(t), "internal", "ci", "testdata")
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	var missing []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		recursive, err := holdsRecursiveShard(dir)
+		require.NoError(t, err)
+		if recursive && !named[e.Name()] {
+			missing = append(missing, e.Name())
+		}
+	}
+	sort.Strings(missing)
+	for _, name := range missing {
+		t.Errorf("internal/ci/testdata/%s holds package shards but is not named in countedShardDirectories; name it so the allowlist guard discovers every shard below it", name)
+	}
+}
+
+// holdsRecursiveShard reports whether dir holds a .txt shard below a package
+// subdirectory: the shape countedShardDirectories names and LoadPackages consumes.
+func holdsRecursiveShard(dir string) (bool, error) {
+	found := false
+	err := filepath.WalkDir(dir, func(file string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".txt" {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, file)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(filepath.ToSlash(rel), "/") {
+			found = true
+		}
+		return nil
+	})
+	return found, err
 }
 
 // TestEveryAllowlistIsReadThroughTheOneHelper is the class test of #4339: every
