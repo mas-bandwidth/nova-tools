@@ -27,10 +27,10 @@ func (ta *testApp) primary(id string) *sprint.Card {
 
 // brief end to end on the twin (the owner, 2026-10-01: "What other things
 // should you be able to do to mutate a stopped sprint" / "I don't want you
-// manually hopping in and working around it and doing manual stuff."): refused
-// on a RUNNING machine, a brief that fails the card lint refused with nothing
-// changed, replaced on a STOPPED machine with the card's id, stream, score and
-// needs kept, and refused once the card is dealt.
+// manually hopping in and working around it and doing manual stuff."): a brief
+// that fails the card lint refused with nothing changed, replaced on a STOPPED
+// machine with the card's id, stream, score and needs kept, and refused once
+// the card is dealt.
 func TestBriefReplacesAnUnstartedPrimarysBriefOnAStoppedSprint(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -39,13 +39,6 @@ func TestBriefReplacesAnUnstartedPrimarysBriefOnAStoppedSprint(t *testing.T) {
 	ta.ok("add --stream a a-2 --one --needs a-1 --brief-file " + writeBrief(t, "the old second"))
 	good := writeBrief(t, "the new work")
 	before := *ta.primary("a-2")
-
-	ta.ok("start")
-	code, _, errs := ta.do("brief a-2 --brief-file " + good)
-	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "the machine is RUNNING")
-	assert.Contains(t, errs, "run: nova-sprint stop")
-	ta.ok("stop")
 
 	applies := ta.applies()
 	code, out, errs := ta.do("brief a-2 --brief 'handle the empty case'")
@@ -101,4 +94,62 @@ func TestBriefWithRulesOpensTheStoreAndReplacesTheBrief(t *testing.T) {
 	require.NoError(t, os.WriteFile(brief, []byte("the new work\n\nBe careful.\n"), 0o600))
 	assert.Contains(t, ta.ok("brief a-1 --rules "+rules+" --brief-file "+brief), "a-1 brief replaced")
 	assert.Equal(t, "the new work\n\nBe careful.", ta.primary("a-1").F("brief"))
+}
+
+// brief while the machine runs (docs/SPEC-SPRINT.md, the brief verb): a
+// waiting card's brief is replaced, queued for the tick's pump like every
+// coordinator verb on a RUNNING machine, and in place after the tick; brief
+// --dir replaces one brief per file in one call, its moved= the count; a dealt
+// card is still refused, and so is the whole --dir call that names one,
+// nothing written.
+func TestBriefReplacesWaitingBriefsWhileRunningAndByDir(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream a --count 1 --one --brief-file " + writeBrief(t, "the old work"))
+	ta.ok("add --stream a a-2 --one --needs a-1 --brief-file " + writeBrief(t, "the old second"))
+	ta.ok("add --stream a a-3 --one --needs a-1 --brief-file " + writeBrief(t, "the old third"))
+	ta.deal(1)
+	ta.ok("start")
+	text := func(lead string) string { return strings.TrimSuffix(passingBrief(lead), "\n") }
+
+	assert.Contains(t, ta.ok("brief a-2 --brief-file "+writeBrief(t, "the new second")), "a-2 brief replaced")
+	ta.ok("tick")
+	assert.Equal(t, text("the new second"), ta.primary("a-2").F("brief"))
+	assert.Equal(t, sprint.Waiting, ta.primary("a-2").Col)
+
+	dir := t.TempDir()
+	writeNeedsBrief(t, dir, "a-2", "the newer second", "")
+	writeNeedsBrief(t, dir, "a-3", "the new third", "")
+	out := ta.ok("brief --dir " + dir)
+	assert.Contains(t, out, "BRIEF OK moved=2 refused=0")
+	assert.Contains(t, out, "a-3 brief replaced")
+	ta.ok("tick")
+	assert.Equal(t, text("the newer second"), ta.primary("a-2").F("brief"))
+	assert.Equal(t, text("the new third"), ta.primary("a-3").F("brief"))
+
+	// a dealt card keeps its brief: the call that names one writes nothing
+	writeNeedsBrief(t, dir, "a-1", "the new work", "")
+	writeNeedsBrief(t, dir, "a-2", "the newest second", "")
+	applies := ta.applies()
+	code, _, errs := ta.do("brief --dir " + dir)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "a-1 is working: a card dealt, working, in review, merging or landed keeps its brief")
+	assert.Equal(t, applies, ta.applies(), "a refused --dir wrote")
+	assert.Equal(t, text("the newer second"), ta.primary("a-2").F("brief"))
+
+	// one brief failing the card lint refuses the call, naming its file
+	bad := t.TempDir()
+	writeNeedsBrief(t, bad, "a-2", "fine", "")
+	require.NoError(t, os.WriteFile(filepath.Join(bad, "a-3.md"), []byte("handle the empty case\n"), 0o600))
+	code, out, errs = ta.do("brief --dir " + bad)
+	assert.Equal(t, 2, code)
+	assert.NotContains(t, out, "MOVED")
+	assert.Contains(t, errs, filepath.Join(bad, "a-3.md"))
+	assert.Contains(t, errs, "nova-sprint brief REFUSED: the brief of")
+	assert.Equal(t, applies, ta.applies(), "a brief failing the lint wrote")
+
+	code, _, errs = ta.do("brief a-2 --dir " + dir)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "--dir names each card by its file")
 }
