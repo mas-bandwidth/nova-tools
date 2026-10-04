@@ -1,4 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
-internal/fleet/workloads/services-reach.card:space 2
+# ceiling: 1
 internal/fleet/workloads/wall-toolchain.card:vision 1
