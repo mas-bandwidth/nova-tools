@@ -51,7 +51,7 @@ const cardRefusedBytes = cardlimits.MaxBriefBytes
 // `placeholder` is advice too, on purpose: the card template is pinned to lint clean as
 // printed (it is the shape every rule is checked against), so a line of it left unfilled
 // is named on a NOTE line under the OK, one per line, rather than changing the verdict.
-var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: true}
+var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: true, swarm.StartNamedCheck: true, swarm.StopNamedCheck: true}
 
 // cardLintChecks is how many independent shapes lintCard looks for. It is printed on the
 // LINT OK line so a reader knows how much of the card was actually checked, and it is the
