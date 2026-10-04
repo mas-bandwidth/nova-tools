@@ -442,3 +442,47 @@ func TestWaitPongReadsTheLogFromTheWaitsOwnWindow(t *testing.T) {
 	r.store.Advance(time.Minute)
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(1).Err("WAIT-PONG NONE")
 }
+
+func TestInstallRefusesVolumeBinaryBeforeWritingOrLoading(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, binary, resolved string
+	}{
+		{"direct volume", "/Volumes/external/bin/nova-friend", "/Volumes/external/bin/nova-friend"},
+		{"local symlink to volume", "/opt/nova/bin/nova-friend", "/Volumes/external/bin/nova-friend"},
+		{"volume root", "/Volumes", "/Volumes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, dry := range []bool{false, true} {
+				r := newRig(t)
+				w := r.world()
+				w.binary = func() (string, error) { return tc.binary, nil }
+				w.resolveBinary = func(path string) (string, error) {
+					assert.Equal(t, tc.binary, path)
+					return tc.resolved, nil
+				}
+				cli := testkit.Main(func(args []string, stdin io.Reader, out, errs io.Writer) int { return run(args, stdin, out, errs, w) })
+				args := []string{"install", "--as", "bob", "--harness", "opencode", "--dir", "d"}
+				if dry { args = append(args, "--dry-run") }
+				cli.Do(t, args...).Exit(2).Err("REFUSED", "local disk", "/Volumes")
+				assert.Empty(t, r.launchctl)
+				assert.NoDirExists(t, filepath.Join(r.home, "Library"), "no log directory or plist before refusal")
+			}
+		})
+	}
+}
+
+func TestInstallAllowsLocalBinaryAndDoesNotConfuseVolumePrefix(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{"/opt/nova/bin/nova-friend", "/VolumesElsewhere/bin/nova-friend"} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			w := r.world()
+			w.binary = func() (string, error) { return path, nil }
+			cli := testkit.Main(func(args []string, stdin io.Reader, out, errs io.Writer) int { return run(args, stdin, out, errs, w) })
+			cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "d", "--dry-run").Exit(0).Out("INSTALL OK")
+		})
+	}
+}
