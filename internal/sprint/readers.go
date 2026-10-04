@@ -233,54 +233,6 @@ func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id
 	return plain, false
 }
 
-// FreeReaders returns the readers up that are free to be asked primary c at attempt,
-// treating an away-retired card as no card (eligible for re-ask under second identity .g1).
-func FreeReaders(s *Snapshot, c *Card, attempt int, have map[string]bool) []string {
-	var free []string
-	for _, rd := range s.Readers.Rows() {
-		if have[rd] || !s.ReaderIsUp(rd) {
-			continue
-		}
-		if _, ok := ReadCardForAsk(s, c.ID, attempt, rd); ok {
-			free = append(free, rd)
-		}
-	}
-	return free
-}
-
-// AskUnit builds an ask unit for placing primary c on reader rd at attempt,
-// assigning the correct card identity (plain or second identity .g1) via ReadCardForAsk.
-func AskUnit(s *Snapshot, c *Card, rd string) (Unit, bool) {
-	attempt := c.Int("attempt")
-	cardID, ok := ReadCardForAsk(s, c.ID, attempt, rd)
-	if !ok {
-		return Unit{}, false
-	}
-	fields := map[string]string{
-		"kind":    "read",
-		"primary": c.ID,
-		"stream":  c.Row,
-		"reader":  rd,
-		"attempt": itoa(attempt),
-		"head":    c.F("head"),
-		"asked":   stamp(s.Now),
-	}
-	var ri routeIndexes
-	if s.Fleet != nil && len(s.Routes) > 0 {
-		ri = routeIndexesOf(s)
-	}
-	maps.Copy(fields, s.readRouteOf(ri, c, nil))
-	u := Unit{
-		Key:    c.ID,
-		Stream: c.Row,
-		Changes: []Change{
-			change(Readers, createEntry(cardID, rd, Asked, c.Score, fields)),
-		},
-		Moved: fmt.Sprintf("%s asked of %s (%s)", c.ID, rd, cardID),
-	}
-	return u, true
-}
-
 // sweepReads is the readers' rebalance safety: every read asked or reading of a
 // reader that is not up is taken back, retired as the ask takes back a read
 // asked of a reader away

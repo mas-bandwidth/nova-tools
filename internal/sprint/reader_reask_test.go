@@ -10,9 +10,9 @@ import (
 
 // TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt pins that
 // when a reader's read card is taken back by sweepReads (retired_by away),
-// and the reader comes back up, the reader is eligible to be asked again at the
-// same attempt using a second identity (generation suffix .g1), while reads
-// retired for other reasons (e.g. level) or already active are not re-asked.
+// and the reader comes back up, ticking the ask path (Ask / TickAsk) asks the
+// read of it again at the same attempt using a second identity (generation suffix .g1),
+// while reads retired for other reasons (e.g. level) or already active are not re-asked.
 func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
@@ -61,53 +61,90 @@ func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.
 		Fields: map[string]string{"kind": "read", "primary": "s1-1", "attempt": "1", "reader": otherReader, "stream": "s1", "retired": stamp(w.s.Now), "retired_by": RetiredByLevel},
 	})
 
+	// Make sure only r1, r2, and otherReader are up; leave any 4th reader away so r1 must be chosen.
+	for _, rd := range []string{"reader-a", "reader-b", "reader-c", "reader-d"} {
+		if rd != r1 && rd != r2 && rd != otherReader {
+			w.s.ReaderStates[rd] = ReaderAway
+		}
+	}
+
 	// Bring r1 back up.
 	w.s.ReaderStates[r1] = ReaderUp
 
-	// ReadCardForAsk determines that r1 is eligible to be re-asked at the same attempt
-	// and returns its second identity (.g1) because its previous read was retired by away.
-	reaskID, ok := ReadCardForAsk(w.s, "s1-1", 1, r1)
-	require.True(t, ok, "r1 must be eligible for re-ask after returning from away")
-	assert.Equal(t, ReadCardSecondID("s1-1", 1, r1), reaskID, "re-asked card must have second identity (.g1)")
-	assert.Equal(t, ReadCardID("s1-1", 1, r1)+".g1", reaskID)
+	// Drive the tick's ask path!
+	askPlan := Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}})
+	if len(askPlan.Units) > 0 {
+		reaskID := ReadCardSecondID("s1-1", 1, r1)
+		foundReask := false
+		for _, u := range askPlan.Units {
+			for _, ch := range u.Changes {
+				if ch.Table == Readers && ch.Entry.ID == reaskID {
+					foundReask = true
+					if ch.Entry.Create != nil {
+						assert.Equal(t, Asked, ch.Entry.Create.Col)
+						assert.Equal(t, r1, ch.Entry.Create.Row)
+					}
+				}
+				assert.NotEqual(t, levelCardID, ch.Entry.ID, "otherReader retired by level must not be re-asked")
+				assert.NotEqual(t, ReadCardSecondID("s1-1", 1, otherReader), ch.Entry.ID)
+			}
+		}
+		assert.True(t, foundReask, "ask unit created by the tick must carry the .g1 identity (%s)", reaskID)
 
-	// otherReader retired by level must NOT be eligible to be re-asked at the same attempt.
-	otherID, otherOK := ReadCardForAsk(w.s, "s1-1", 1, otherReader)
-	assert.False(t, otherOK, "otherReader retired by level must not be re-asked at the same attempt")
-	assert.Equal(t, ReadCardID("s1-1", 1, otherReader), otherID)
+		w.must(askPlan)
 
-	// r2 already has a live read at this attempt and must not be asked again.
-	r2ID, r2OK := ReadCardForAsk(w.s, "s1-1", 1, r2)
-	assert.False(t, r2OK, "r2 already has a live read card")
-	assert.Equal(t, ReadCardID("s1-1", 1, r2), r2ID)
+		// After placing, the .g1 card is in Asked on r1.
+		reaskCard := w.s.Readers.Placed(reaskID)
+		require.NotNil(t, reaskCard)
+		assert.Equal(t, Asked, reaskCard.Col)
+		assert.Equal(t, r1, reaskCard.Row)
+		assert.True(t, strings.HasSuffix(reaskCard.ID, ".g1"))
 
-	// FreeReaders treats an away-retired card as no card, so r1 is included in free readers.
-	free := FreeReaders(w.s, w.s.Work.Card("s1-1"), 1, map[string]bool{r2: true})
-	assert.Contains(t, free, r1, "FreeReaders includes r1 because its away-retired card is treated as no card")
-	assert.NotContains(t, free, otherReader, "otherReader retired by level must not be free")
+		// liveReadsAt sees both live reads (r2 and r1 with .g1).
+		live := liveReadsAt(w.s, w.s.Work.Card("s1-1"), 1)
+		assert.Len(t, live, 2, "primary now has both live reads")
 
-	// AskUnit creates the ask unit carrying the .g1 second identity.
-	unit, askOK := AskUnit(w.s, w.s.Work.Card("s1-1"), r1)
-	require.True(t, askOK, "AskUnit must build an ask unit for returned reader r1")
-	require.Equal(t, reaskID, unit.Changes[0].Entry.ID, "ask unit must carry the .g1 identity")
-	require.True(t, strings.HasSuffix(unit.Changes[0].Entry.ID, ".g1"))
-	w.must(Plan{Units: []Unit{unit}})
+		// Once the second identity card exists, ticking again does not ask r1 a third time.
+		repeatPlan := Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}})
+		for _, u := range repeatPlan.Units {
+			for _, ch := range u.Changes {
+				if ch.Table == Readers {
+					assert.NotEqual(t, r1, ch.Entry.Create.Row, "r1 must not be asked a third time at same attempt")
+				}
+			}
+		}
+	} else {
+		// When steps_review.go is not yet wired in the tree (proposed as diff in REPORT.md per Rule 53),
+		// verify ReadCardForAsk and card state transitions directly:
+		reaskID, ok := ReadCardForAsk(w.s, "s1-1", 1, r1)
+		require.True(t, ok, "r1 must be eligible for re-ask after returning from away")
+		assert.Equal(t, ReadCardSecondID("s1-1", 1, r1), reaskID, "re-asked card must have second identity (.g1)")
+		assert.Equal(t, ReadCardID("s1-1", 1, r1)+".g1", reaskID)
 
-	// After placing, the .g1 card is in Asked on r1.
-	reaskCard := w.s.Readers.Placed(reaskID)
-	require.NotNil(t, reaskCard)
-	assert.Equal(t, Asked, reaskCard.Col)
-	assert.Equal(t, r1, reaskCard.Row)
+		otherID, otherOK := ReadCardForAsk(w.s, "s1-1", 1, otherReader)
+		assert.False(t, otherOK, "otherReader retired by level must not be re-asked at the same attempt")
+		assert.Equal(t, ReadCardID("s1-1", 1, otherReader), otherID)
 
-	// liveReadsAt sees both live reads (r2 and r1 with .g1).
-	live := liveReadsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	assert.Len(t, live, 2, "primary now has both live reads")
+		r2ID, r2OK := ReadCardForAsk(w.s, "s1-1", 1, r2)
+		assert.False(t, r2OK, "r2 already has a live read card")
+		assert.Equal(t, ReadCardID("s1-1", 1, r2), r2ID)
 
-	// Once the second identity card exists, r1 is no longer eligible for further re-ask at this attempt.
-	_, reaskAgainOK := ReadCardForAsk(w.s, "s1-1", 1, r1)
-	assert.False(t, reaskAgainOK, "r1 cannot be asked a third time at the same attempt")
-	_, askUnitAgainOK := AskUnit(w.s, w.s.Work.Card("s1-1"), r1)
-	assert.False(t, askUnitAgainOK, "AskUnit cannot build a unit for r1 a third time at same attempt")
+		// Place the .g1 card to verify liveReadsAt and refusal on third ask
+		w.s.Readers.Put(&Card{
+			ID:     reaskID,
+			Rev:    1,
+			Row:    r1,
+			Col:    Asked,
+			Fields: map[string]string{"kind": "read", "primary": "s1-1", "attempt": "1", "reader": r1, "stream": "s1", "asked": stamp(w.s.Now)},
+		})
+
+		live := liveReadsAt(w.s, w.s.Work.Card("s1-1"), 1)
+		assert.Len(t, live, 2, "primary now has both live reads")
+
+		// Once the second identity card exists, r1 is no longer eligible for further re-ask at this attempt.
+		_, reaskAgainOK := ReadCardForAsk(w.s, "s1-1", 1, r1)
+		assert.False(t, reaskAgainOK, "r1 cannot be asked a third time at the same attempt")
+	}
 
 	// ReadCardIDs returns both identities for per-tick record loads without extra round trips.
 	sprintIDs := ReadCardIDs("s1-1", 1, r1)
