@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
@@ -22,10 +21,14 @@ import (
 // (the CLI style's rule (b)). The banner behind them is held to what a cold
 // reader pastes (ONBOARDING points 1 and 6, SPEC-TOOLWORK.md rule 6): the
 // setup lines write the files the example block reads, so every example line
-// runs as printed from an empty directory; the how text shows the lines a
-// recorded ask prints, byte for byte through the one comparator; the exit
-// codes say exit 0 means the decision was recorded; and no usage line runs
-// past 100 columns.
+// runs as printed from an empty directory; the exit-codes sentence carries
+// the recorded ask's own lines, byte for byte through the one comparator,
+// and says exit 0 means the decision was recorded, never that the answer was
+// yes (SPEC-NOVA-DECIDE section 7); and every usage line is one synopsis
+// with no required flag bracketed as optional, because a second line at the
+// same column is a second synopsis and a stranger pasting it alone omits the
+// other line's required flags (a wrap at 100 columns with a continuation
+// indent is internal/tool's to print, as this card's report proposes).
 func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
 	record := []string{"--record", "{dir}/decisions.jsonl"}
@@ -70,19 +73,31 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 			}
 		}
 		require.NotEmpty(t, ask, "the example block holds no ask line")
-		// The how text shows the lines the recorded ask printed, byte for
-		// byte, compared by the one comparator (SPEC-TOOLWORK.md documents
-		// rule 2; rule 6 holds the example lines to it).
+		// The exit-codes sentence shows the lines the recorded ask printed,
+		// byte for byte, compared by the one comparator (SPEC-TOOLWORK.md
+		// documents rule 2; rule 6 holds the example lines to it).
 		shown := shownResultLines(help)
-		require.Len(t, shown, 2, "the how text shows the two lines a recorded ask prints")
+		require.Len(t, shown, 2, "the banner shows the two lines a recorded ask prints")
 		doc := []onboarding.Step{{Line: ask, Want: shown}}
 		assert.Empty(t, onboarding.CompareTranscript(doc, []onboarding.Result{{Code: 0, Stdout: askOut}}, nil),
-			"the lines the how text shows are not the lines a recorded ask prints")
+			"the lines the banner shows are not the lines a recorded ask prints")
 	})
 
-	t.Run("exit codes say 0 means the decision was recorded", func(t *testing.T) {
+	t.Run("exit codes show the recorded ask and say 0 means recorded", func(t *testing.T) {
 		t.Parallel()
-		assert.Contains(t, help, "exit codes: 0 done, the decision was recorded, never that the answer was yes;")
+		codes := section(help, "exit codes: ")
+		assert.Contains(t, codes, "0 done, exit 0 means the decision was recorded, never that the answer was yes; a recorded ask prints",
+			"the exit-codes sentence does not say what exit 0 means")
+		for _, line := range shownResultLines(help) {
+			assert.Contains(t, codes, line, "the exit-codes sentence does not carry the recorded ask's own line %q", line)
+		}
+		assert.NotContains(t, codes, "setup:", "the exit codes are the exit sentence only; the setup block is the banner's")
+		assert.NotContains(t, codes, "printf", "the exit codes are the exit sentence only; the setup block is the banner's")
+		// Every verb's -h quotes the exit table (STANDARD.md, section 3), so
+		// it quotes the sentence and never the setup block.
+		h := cli.OK(t, "findings", "-h").Stdout
+		assert.Contains(t, h, "exit 0 means the decision was recorded", "findings -h does not quote the exit sentence")
+		assert.NotContains(t, h, "printf", "findings -h quotes the setup block, which is not exit codes")
 		// The behaviour the sentence describes: an ask whose answer is no is
 		// still exit 0, because the decision was recorded.
 		schema, state, answers := writeSetupFiles(t, t.TempDir())
@@ -91,22 +106,27 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 			Exit(0).Out("ASK ANSWER question=ok type=noul value=no p=yes:0.1", "recorded=new")
 	})
 
-	t.Run("every usage line wraps at 100 columns", func(t *testing.T) {
+	t.Run("every usage line is one synopsis, its required flags unbracketed", func(t *testing.T) {
 		t.Parallel()
-		var wrapped int
-		inUsage := false
-		for _, line := range strings.Split(help, "\n") {
-			switch {
-			case line == "usage:":
-				inUsage = true
-			case inUsage && line == "":
-				inUsage = false
-			case inUsage:
-				wrapped++
-				assert.LessOrEqual(t, utf8.RuneCountInString(line), 100, "the usage line is over 100 columns: %s", line)
+		usage := usageLines(help)
+		require.NotEmpty(t, usage, "the banner holds no usage block; this subtest would pass by checking nothing")
+		for _, verb := range []string{"ask", "read", "score", "attempt", "grade", "gate", "brief", "outcome", "calibrate", "findings", "version", "help"} {
+			var lines []string
+			for _, l := range usage {
+				if words := strings.Fields(l); len(words) > 1 && words[0] == "nova-decide" && words[1] == verb {
+					lines = append(lines, l)
+				}
+			}
+			if !assert.Len(t, lines, 1,
+				"%d usage lines name %s; a second line is a second synopsis at the same column, and a stranger pasting it alone omits the other line's required flags",
+				len(lines), verb) {
+				continue
+			}
+			for _, name := range requiredFlags(cli.OK(t, verb, "-h").Stdout) {
+				assert.Contains(t, lines[0], "--"+name, "%s's usage line omits --%s, which its -h marks required", verb, name)
+				assert.NotContains(t, lines[0], "[--"+name, "%s's usage line brackets --%s as optional, which its -h marks required", verb, name)
 			}
 		}
-		require.Positive(t, wrapped, "the banner holds no usage block; this subtest would pass by checking nothing")
 	})
 
 	t.Run("the other verbs' examples answer from -h and run", func(t *testing.T) {
@@ -172,8 +192,47 @@ func setupLines(banner string) []string {
 	return out
 }
 
-// shownResultLines returns the how-it-works lines that begin as the lines an
-// ask prints: the ASK OK line and the ASK ANSWER lines, in banner order.
+// section returns a banner's text after one opening marker (its `exit codes: `)
+// up to the first blank line.
+func section(banner, open string) string {
+	_, tail, _ := strings.Cut(banner, open)
+	head, _, _ := strings.Cut(tail, "\n\n")
+	return head
+}
+
+// usageLines returns the banner's usage block: the lines between `usage:` and
+// the first blank line under it, each trimmed.
+func usageLines(banner string) []string {
+	_, tail, found := strings.Cut(banner, "\nusage:\n")
+	if !found {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(tail, "\n") {
+		if line == "" {
+			break
+		}
+		out = append(out, strings.TrimSpace(line))
+	}
+	return out
+}
+
+// requiredFlags returns the names of the flags a verb's -h marks (required):
+// the one mark of a flag the verb cannot run without, read back from the help
+// a stranger pastes beside.
+func requiredFlags(verbHelp string) []string {
+	var out []string
+	for _, line := range strings.Split(verbHelp, "\n") {
+		if !strings.HasPrefix(line, "  --") || !strings.HasSuffix(line, "(required)") {
+			continue
+		}
+		out = append(out, strings.TrimPrefix(strings.Fields(line)[0], "--"))
+	}
+	return out
+}
+
+// shownResultLines returns the banner lines that begin as the lines an ask
+// prints: the ASK OK line and the ASK ANSWER lines, in banner order.
 func shownResultLines(banner string) []string {
 	var out []string
 	for _, line := range strings.Split(banner, "\n") {
@@ -186,11 +245,12 @@ func shownResultLines(banner string) []string {
 
 // writeSetupFiles writes the three files the banner's setup block writes, into
 // dir, and returns their paths: the same bytes a stranger pastes from the
-// banner lands there.
+// banner land there, with the fixed backend's answer at 0.1, so the ask's
+// answer is no where the behaviour check wants a recorded no.
 func writeSetupFiles(t *testing.T, dir string) (schema, state, answers string) {
 	t.Helper()
 	schema, state, answers = filepath.Join(dir, "schema.json"), filepath.Join(dir, "state.txt"), filepath.Join(dir, "answers.json")
-	require.NoError(t, os.WriteFile(schema, []byte(`{"name":"q","questions":{"ok":{"type":"noul","instructions":"It asks."}}}`), 0o644))
+	require.NoError(t, os.WriteFile(schema, []byte(`{"name":"q","questions":{"ok":{"type":"noul","instructions":"Yes?"}}}`), 0o644))
 	require.NoError(t, os.WriteFile(state, []byte("R?"), 0o644))
 	require.NoError(t, os.WriteFile(answers, []byte(`{"ok":{"noul":0.1}}`), 0o644))
 	return schema, state, answers

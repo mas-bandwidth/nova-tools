@@ -52,22 +52,24 @@ func decideTool(w world) *tool.Tool {
 		Name:  "nova-decide",
 		What:  "typed decisions with probabilities, recorded so each one can be calibrated against its outcome",
 		Stamp: version,
+		// The how text carries the setup block that writes the files the
+		// example block reads (ONBOARDING point 6: a setup line may stand in
+		// the banner); the exit table is the exit sentence only, with the
+		// recorded ask's own lines, because every -h quotes it
+		// (SPEC-NOVA-DECIDE section 7).
 		How: `noul: a yes-or-no question answered with a probability of yes; choice: one option.
-a decision is a named schema of choice or noul questions over a state; jev or fixed answers:
-the setup writes ./schema.json, ./state.txt and ./answers.json, and a recorded ask prints
-ASK OK id=card-1 decision=q backend=fixed tokens_in=0 tokens_out=0 recorded=new
-ASK ANSWER question=ok type=noul value=yes p=yes:0.9`,
-		ExitTable: `0 done, the decision was recorded, never that the answer was yes; 1 an outcome
-    conflicts with the one recorded; 2 could not run (a flag, an input, the backend, the record).
+a decision is a named schema of choice or noul questions over a state; jev or fixed answers.
 setup:
-  printf '%s\n' '{"name":"q","questions":{"ok":{"type":"noul","instructions":"It asks."}}}' > ./schema.json
-  printf '%s\n' 'R?' > ./state.txt
-  printf '%s\n' '{"ok":{"noul":0.9}}' > ./answers.json`,
+  printf %s '{"name":"q","questions":{"ok":{"type":"noul","instructions":"Yes?"}}}' > ./schema.json
+  printf %s 'R?' > ./state.txt; printf %s '{"ok":{"noul":0.9}}' > ./answers.json`,
+		ExitTable: `0 done, exit 0 means the decision was recorded, never that the answer was yes; a recorded ask prints
+ASK OK id=card-1 decision=q backend=fixed tokens_in=0 tokens_out=0 recorded=new
+ASK ANSWER question=ok type=noul value=yes p=yes:0.9
+1 an outcome conflicts with the one recorded; 2 could not run (a flag, an input, the backend, the record).`,
 		Verbs: []tool.Verb{
 			{
-				Name: "ask",
-				Usage: "ask --schema <file> --state <file|-> --backend <jev|fixed> [--answers <file>]\n" +
-					"ask [--record <file>] [--op <id>] [--timeout <d>] [--dry-run]",
+				Name:    "ask",
+				Usage:   "ask --schema <file> --state <file|-> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Example: "ask --schema ./schema.json --state ./state.txt --backend fixed --answers ./answers.json --record ./decisions.jsonl --op card-1",
 				Effect:  tool.Delivery + "; with --backend jev it sends the state to the backend, and it appends to --record",
 				Detail: `A schema is {"name": <decision>, "questions": {<name>: {"type": "choice"|"noul",
@@ -83,9 +85,8 @@ Each answer prints as one ANSWER line: a choice's value and every option's p, a 
 				Run: w.ask,
 			},
 			{
-				Name: "read",
-				Usage: "read --card <file> --diff <file> [--rule <file>] --backend <jev|fixed>\n" +
-					"read [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Name:   "read",
+				Usage:  "read --card <file> --diff <file> [--rule <file>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Effect: tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
 				Detail: `The read decision: a worker's diff against the card that asked for it, five questions:
 does_task, lines_changed, inside_paths and defect (nouls, p of yes) and verdict (LAND, BOUNCE
@@ -102,9 +103,8 @@ Example, from a checkout root: nova-decide read --card ` + fixture + `card.md --
 				Run: w.read,
 			},
 			{
-				Name: "score",
-				Usage: "score --card <file> --diff <file> --backend <jev|fixed>\n" +
-					"score [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Name:   "score",
+				Usage:  "score --card <file> --diff <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Effect: tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
 				Detail: `The score decision: a landed diff against its card, the read's five questions and one noul
 per escalation class the reviews found (stranded_fragment, cut_citation, renamed_file_assumed,
@@ -122,9 +122,8 @@ Example, from a checkout root: nova-decide score --card ` + fixture + `card.md -
 				Run: w.score,
 			},
 			{
-				Name: "attempt",
-				Usage: "attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed>\n" +
-					"attempt [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Name:   "attempt",
+				Usage:  "attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Effect: tool.Delivery + "; with --backend jev it sends the brief, result and reason to the backend, and it appends to --record",
 				Detail: `The attempt decision: how a work take ended, one choice, class: done, nothing-to-do,
 wrong-scope, no-result, needs-pro or provider-failure, each with its p. The state is the brief,
@@ -141,9 +140,8 @@ Example, from a checkout root: nova-decide attempt --brief ` + fixture + `card.m
 				Run: w.attempt,
 			},
 			{
-				Name: "grade",
-				Usage: "grade --brief <file> --backend <jev|fixed> [--answers <file>] --record <file>\n" +
-					"grade [--op <id>] [--timeout <d>] [--dry-run]",
+				Name:   "grade",
+				Usage:  "grade --brief <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Effect: tool.Delivery + "; with --backend jev it sends the brief to the backend, and it appends to --record",
 				Detail: `The grade decision: a card's convergence before its first deal, one choice, grade: script
 (no model), flash or pro, each with its p. The state is the brief alone.
@@ -157,10 +155,8 @@ Example, from a checkout root: nova-decide grade --brief ` + fixture + `card.md 
 				Run: w.grade,
 			},
 			{
-				Name: "gate",
-				Usage: "gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>]\n" +
-					"gate [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>]\n" +
-					"gate --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Name:   "gate",
+				Usage:  "gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>] [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Effect: tool.Delivery + "; with --backend jev it sends each failure, the card's PATHS and the diff's summary to the backend, and it appends to --record",
 				Detail: `The gate decision: a red gate's go test output, read failure by failure; each failing test
 is classed flaky, caused or pre-existing (one choice, class, with a p per class) over its first
@@ -189,9 +185,8 @@ Example, from a checkout root: nova-decide gate --output ` + fixture + `gate-out
 				Run: w.gate,
 			},
 			{
-				Name: "brief",
-				Usage: "brief --card <file|dir> --backend <jev|fixed> [--answers <file>]\n" +
-					"brief --record <file> [--width <n>] [--timeout <d>] [--max <n>] [--dry-run]",
+				Name:   "brief",
+				Usage:  "brief --card <file|dir> --backend <jev|fixed> [--answers <file>] --record <file> [--width <n>] [--timeout <d>] [--max <n>] [--dry-run]",
 				Effect: tool.Delivery + "; with --backend jev it sends each card to the backend, and it appends to --record",
 				Detail: `The brief decision: a card's text alone, as a flash child with no memory reads it, before
 the card is added. Six nouls (repo_branch, files_named, gate_stated, commit_stated,
@@ -232,9 +227,8 @@ Example, from a checkout root: nova-decide brief --card ` + fixture + `greet.md 
 				Run: w.outcome,
 			},
 			{
-				Name: "calibrate",
-				Usage: "calibrate --record <file> --decision <name> --question <name[=option]>\n" +
-					"calibrate --positive <label,...> --negative <label,...> [--bars <p,...>]",
+				Name:   "calibrate",
+				Usage:  "calibrate --record <file> --decision <name> --question <name[=option]> --positive <label,...> --negative <label,...> [--bars <p,...>]",
 				Effect: tool.Inspection,
 				Detail: `Scores each labelled decision by the p its answer gave (a noul's yes, or a choice's
 named option: verdict=BOUNCE), and prints the AUC, one BAR line per --bars value (positives
