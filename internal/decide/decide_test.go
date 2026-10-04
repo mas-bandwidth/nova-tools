@@ -395,3 +395,42 @@ func TestConcurrentWritersRecordEachIDOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, ds, ids)
 }
+
+// A hand-edited probability outside [0, 1] must not load. Calibration would
+// otherwise score it (SPEC-NOVA-DECIDE section 4).
+func TestLoadRefusesARecordedProbabilityOutsideZeroAndOne(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, tc := range []struct{ name, p string }{
+		{"above", "1.5"},
+		{"below", "-0.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, tc.name+".jsonl")
+			body := `{"decision":{"id":"d1","decision":"read","answers":{"defect":{"type":"noul","value":"yes","p":{"yes":` + tc.p + `}}}}}` + "\n"
+			require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+			_, err := Load(path)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, path)
+			assert.ErrorContains(t, err, ":1:")
+			assert.ErrorContains(t, err, "question defect")
+			assert.ErrorContains(t, err, "outside [0, 1]")
+		})
+	}
+	inRange := filepath.Join(dir, "in-range.jsonl")
+	require.NoError(t, os.WriteFile(inRange, []byte(
+		`{"decision":{"id":"d0","decision":"read","answers":{"defect":{"type":"noul","value":"no","p":{"yes":0}}}}}`+"\n"+
+			`{"decision":{"id":"d1","decision":"read","answers":{"defect":{"type":"noul","value":"yes","p":{"yes":1}}}}}`+"\n"), 0o644))
+	got, err := Load(inRange)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	for _, rel := range []string{
+		filepath.Join("..", "..", "cmd", "nova-decide", "testdata", "record.jsonl"),
+		filepath.Join("testdata", "judgment-record.jsonl"),
+		filepath.Join("testdata", "gate-calibration-base-not-run.jsonl"),
+		filepath.Join("testdata", "gate-calibration-base-run.jsonl"),
+	} {
+		_, err := Load(rel)
+		require.NoError(t, err, rel)
+	}
+}
