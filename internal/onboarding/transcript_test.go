@@ -87,81 +87,89 @@ func TestSplitShellKeepsAQuotedSentenceWhole(t *testing.T) {
 	}
 }
 
-// AN ABRIDGED TRANSCRIPT IS RED. This is the first of the two failures the set
-// comparison cannot see: every line the document keeps still matches something
-// the tool printed, and a set lookup for a line that was deleted is never made.
-func TestAnAbridgedTranscriptIsRed(t *testing.T) {
+// Set comparisons cannot see: (1) abridged transcripts (dropped line), (2)
+// reordered transcripts (wrong order), and (3) wrong values. Each one must be
+// red in the comparison.
+func TestTranscriptComparisonDetectsCommonErrors(t *testing.T) {
 	t.Parallel()
-
-	step := Step{Line: "$ nova-alpha list", Want: []string{"LIST ENTRY name=gate"}}
-	res := Result{Stdout: "LIST ENTRY name=gate\nLIST OK n=1\n"}
-	problems := Compare(step, res, nil)
-	require.Len(t, problems, 1, "Compare found %d problems, want 1: %v", len(problems), problems)
-	assert.Contains(t, problems[0].Message, "prints 2 line(s) and the document shows 1", "the failure does not name the count:\n%s", problems[0].Message)
+	for _, tc := range []struct {
+		name  string
+		step  Step
+		res   Result
+		check func(*testing.T, []Problem)
+	}{
+		{
+			"abridged transcript",
+			Step{Line: "$ nova-alpha list", Want: []string{"LIST ENTRY name=gate"}},
+			Result{Stdout: "LIST ENTRY name=gate\nLIST OK n=1\n"},
+			func(t *testing.T, problems []Problem) {
+				require.Len(t, problems, 1)
+				assert.Contains(t, problems[0].Message, "prints 2 line(s) and the document shows 1")
+			},
+		},
+		{
+			"reordered transcript",
+			Step{Line: "$ nova-alpha list", Want: []string{"LIST OK n=1", "LIST ENTRY name=gate"}},
+			Result{Stdout: "LIST ENTRY name=gate\nLIST OK n=1\n"},
+			func(t *testing.T, problems []Problem) {
+				assert.Len(t, problems, 2)
+			},
+		},
+		{
+			"wrong value",
+			Step{Line: "$ nova-alpha list", Want: []string{"LIST OK n=1"}},
+			Result{Stdout: "LIST OK n=2\n"},
+			func(t *testing.T, problems []Problem) {
+				require.Len(t, problems, 1)
+				assert.Contains(t, problems[0].Message, "no normalisation")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			problems := Compare(tc.step, tc.res, nil)
+			tc.check(t, problems)
+		})
+	}
 }
 
-// A REORDERED TRANSCRIPT IS RED. The second failure the set comparison cannot
-// see: the same lines, the same count, a different order, and every lookup
-// succeeds.
-func TestAReorderedTranscriptIsRed(t *testing.T) {
-	t.Parallel()
-
-	step := Step{Line: "$ nova-alpha list", Want: []string{"LIST OK n=1", "LIST ENTRY name=gate"}}
-	res := Result{Stdout: "LIST ENTRY name=gate\nLIST OK n=1\n"}
-	assert.Len(t, Compare(step, res, nil), 2, "Compare accepted the documented lines in the wrong order")
-}
-
-// A WRONG VALUE IS RED. The third: the shape of the line is what the document
-// promised and the number on it is not, which is the whole reason a reader
-// checks their screen against a transcript at all.
-func TestAWrongValueIsRed(t *testing.T) {
-	t.Parallel()
-
-	step := Step{Line: "$ nova-alpha list", Want: []string{"LIST OK n=1"}}
-	problems := Compare(step, Result{Stdout: "LIST OK n=2\n"}, nil)
-	require.Len(t, problems, 1, "Compare found %d problems, want 1: %v", len(problems), problems)
-	assert.Contains(t, problems[0].Message, "no normalisation", "a comparison with no declared norm does not say so:\n%s", problems[0].Message)
-}
-
-// A declared norm covers the value it names and NOTHING ELSE. The failure mode
-// worth a test here is not a norm that fails to match -- that is red and read --
-// but one that matches too much and turns a comparison into a formality.
+// A declared norm covers only its field; an undeclared one on the same line is
+// compared as written.
 func TestADeclaredNormCoversOnlyItsOwnField(t *testing.T) {
 	t.Parallel()
-
 	step := Step{
 		Line: "$ nova-alpha put --name gate",
 		Want: []string{"PUT OK name=gate id=0f1e2d3c created=2026-09-19T06:29:53Z seen=2026-09-19T06:29:53Z"},
 	}
-	res := Result{Stdout: "PUT OK name=gate id=0f1e2d3c created=2026-09-19T11:02:41Z seen=2026-09-19T06:29:53Z\n"}
-	problems := Compare(step, res, []Norm{Instant("created")})
-	assert.Empty(t, problems, "a declared created= instant was not normalised: %v", problems)
-	// `seen=` is another instant on the same line and was not declared, so it
-	// is compared as written.
-	res.Stdout = "PUT OK name=gate id=0f1e2d3c created=2026-09-19T11:02:41Z seen=2026-09-19T11:02:41Z\n"
-	problems = Compare(step, res, []Norm{Instant("created")})
-	require.Len(t, problems, 1, "an undeclared instant on the same line was normalised too: %v", problems)
-	assert.Contains(t, problems[0].Message, "created= (the instant of this run)", "the failure does not list what was not compared:\n%s", problems[0].Message)
-	problems = Compare(step, res, []Norm{Instant("created"), Instant("seen")})
-	assert.Empty(t, problems, "declaring every run-owned value still disagreed: %v", problems)
+	res1 := Result{Stdout: "PUT OK name=gate id=0f1e2d3c created=2026-09-19T11:02:41Z seen=2026-09-19T06:29:53Z\n"}
+	problems := Compare(step, res1, []Norm{Instant("created")})
+	assert.Empty(t, problems)
+	res2 := Result{Stdout: "PUT OK name=gate id=0f1e2d3c created=2026-09-19T11:02:41Z seen=2026-09-19T11:02:41Z\n"}
+	problems = Compare(step, res2, []Norm{Instant("created")})
+	require.Len(t, problems, 1)
+	assert.Contains(t, problems[0].Message, "created= (the instant of this run)")
+	problems = Compare(step, res2, []Norm{Instant("created"), Instant("seen")})
+	assert.Empty(t, problems)
 }
 
-func TestPathNormReducesBothSidesToTheDocumentedSpelling(t *testing.T) {
+func TestPathNormBehavior(t *testing.T) {
 	t.Parallel()
-
-	step := Step{Line: "$ nova-alpha where", Want: []string{"WHERE OK store=./cairns"}}
-	res := Result{Stdout: "WHERE OK store=/var/folders/T/x9/cairns\n"}
-	problems := Compare(step, res, []Norm{Path("./cairns", "/var/folders/T/x9/cairns")})
-	assert.Empty(t, problems, "a declared path was not reduced to what the document writes: %v", problems)
-}
-
-func TestPathNormRecognizesACommaAfterThePath(t *testing.T) {
-	t.Parallel()
-
-	step := Step{Line: "$ nova-alpha where", Want: []string{"WHERE NOTE store=./cairns, using the documented location"}}
-	res := Result{Stdout: "WHERE NOTE store=/var/folders/T/x9/cairns, using the documented location\n"}
-	problems := Compare(step, res, []Norm{Path("./cairns", "/var/folders/T/x9/cairns")})
-	assert.Empty(t, problems, "a comma immediately after the declared path prevented normalization: %v", problems)
+	for _, tc := range []struct {
+		name string
+		want []string
+		res  string
+	}{
+		{"basic path", []string{"WHERE OK store=./cairns"}, "WHERE OK store=/var/folders/T/x9/cairns\n"},
+		{"path with comma", []string{"WHERE NOTE store=./cairns, using the documented location"}, "WHERE NOTE store=/var/folders/T/x9/cairns, using the documented location\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			step := Step{Line: "$ nova-alpha where", Want: tc.want}
+			res := Result{Stdout: tc.res}
+			problems := Compare(step, res, []Norm{Path("./cairns", "/var/folders/T/x9/cairns")})
+			assert.Empty(t, problems)
+		})
+	}
 }
 
 // Which stream a line is on is part of what a transcript promises, and a
@@ -320,17 +328,15 @@ func TestSplitShellRefusesQuotingItCannotRead(t *testing.T) {
 	assert.Equal(t, "$PWD/rehearsal.git", last, "the documented remote = %q, want %q; SplitShell expands nothing", last, "$PWD/rehearsal.git")
 }
 
-// The build triple belongs to the machine; the version word before it does not,
-// and a tool that started answering something else about itself is the kind of
-// drift a `version` line is in the transcript to catch.
-func TestGoBuildCoversTheMachineAndNotTheVersionWord(t *testing.T) {
+// Build triple is normalised but not the version word; version word alone
+// is not a valid build triple.
+func TestGoBuildAndVersionNorms(t *testing.T) {
 	t.Parallel()
-
 	step := Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha devel linux/amd64 go1.26.5"}}
 	problems := Compare(step, Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()})
-	assert.Empty(t, problems, "a declared build triple was not normalised: %v", problems)
+	assert.Empty(t, problems)
 	problems = Compare(step, Result{Stdout: "nova-alpha v0.16.0 darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()})
-	assert.Len(t, problems, 1, "GoBuild swallowed the version word too: %v", problems)
+	assert.Len(t, problems, 1)
 }
 
 // A PRECONDITION IS A PROPERTY OF A COMMAND, NOT OF A SECTION. The 2026-09-19
@@ -539,50 +545,64 @@ func TestANormReplacesLiterally(t *testing.T) {
 // --- Fable's cold read of #1632 (medium): the repaired `version` line is not
 // --- what the shipped verb prints, and GoBuild was an unanchored ReplaceAll.
 
-// A `version` line has TWO declared parts and they have different owners: the
-// build triple is the machine, the word before it is the build. GoBuild must
-// not reach past its own two tokens, and must not match from the middle of a
-// longer one -- it was a plain ReplaceAll over every line of every step.
-func TestGoBuildCoversTwoWholeTokensAndNothingElse(t *testing.T) {
+// GoBuild must not reach past its two tokens or match within a longer one; it
+// was a plain ReplaceAll over every line. Version covers the stamp word and
+// devel, but not the tool name or values inside longer tokens.
+func TestGoBuildAndVersionTokenAnchoring(t *testing.T) {
 	t.Parallel()
-
-	step := Step{Line: "$ nova-alpha where", Want: []string{"WHERE OK dir=/srv/linux/amd64 go1.26.5-cache"}}
-	res := Result{Stdout: "WHERE OK dir=/srv/darwin/arm64 go1.27.1-cache\n"}
-	problems := Compare(step, res, []Norm{GoBuild()})
-	assert.Len(t, problems, 1, "Compare found %d problems, want 1: GoBuild matched inside a path token", len(problems))
-	// Its own two tokens, standing alone, are still normalised.
-	step = Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha devel linux/amd64 go1.26.5"}}
-	problems = Compare(step, Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()})
-	assert.Empty(t, problems, "a declared build triple was not normalised: %v", problems)
-}
-
-// Version covers the word a build stamps itself with, so that the document can
-// show what a READER sees -- `go build ./cmd/nova-review && ./nova-review
-// version` prints `v0.16.0-dev.<base>.0.<date>-<sha>` -- while the test, whose
-// binary is not stamped, prints `devel` and still agrees.
-
-// Version covers the word a build stamps itself with, so that the document can
-// show what a READER sees -- `go build ./cmd/nova-review && ./nova-review
-// version` prints `v0.16.0-dev.<base>.0.<date>-<sha>` -- while the test, whose
-// binary is not stamped, prints `devel` and still agrees. RED FIRST at
-// `705dd1c9` in the only way it can be: `Version` did not exist there, so the
-// package did not build.
-func TestVersionNormCoversTheStampAndDevelAndNothingElse(t *testing.T) {
-	t.Parallel()
-
-	step := Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha v0.16.0-dev.c839379e.0.20260919144920-705dd1c92534 darwin/arm64 go1.27.1"}}
-	res := Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}
-	problems := Compare(step, res, []Norm{Version(), GoBuild()})
-	assert.Empty(t, problems, "the document's stamp and the test binary's `devel` disagreed: %v", problems)
-	// The tool's NAME is not the version word, and a tool that answered
-	// something that is neither a stamp nor `devel` is still a finding.
-	res.Stdout = "nova-alpha unknown darwin/arm64 go1.27.1\n"
-	problems = Compare(step, res, []Norm{Version(), GoBuild()})
-	assert.Len(t, problems, 1, "Compare found %d problems, want 1: a version word that is neither a stamp nor `devel` was normalised", len(problems))
-	// And it does not reach inside a longer token.
-	step = Step{Line: "$ nova-alpha list", Want: []string{"LIST OK tag=v1.2.3-rc1 name=alpha"}}
-	problems = Compare(step, Result{Stdout: "LIST OK tag=v9.9.9-rc1 name=alpha\n"}, []Norm{Version()})
-	assert.Len(t, problems, 1, "Compare found %d problems, want 1: Version matched inside `tag=`", len(problems))
+	for _, tc := range []struct {
+		name   string
+		step   Step
+		res    string
+		norms  []Norm
+		wantOK bool
+	}{
+		{
+			"GoBuild inside path",
+			Step{Line: "$ nova-alpha where", Want: []string{"WHERE OK dir=/srv/linux/amd64 go1.26.5-cache"}},
+			"WHERE OK dir=/srv/darwin/arm64 go1.27.1-cache\n",
+			[]Norm{GoBuild()},
+			false,
+		},
+		{
+			"GoBuild standalone",
+			Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha devel linux/amd64 go1.26.5"}},
+			"nova-alpha devel darwin/arm64 go1.27.1\n",
+			[]Norm{GoBuild()},
+			true,
+		},
+		{
+			"Version stamp and devel",
+			Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha v0.16.0-dev.c839379e.0.20260919144920-705dd1c92534 darwin/arm64 go1.27.1"}},
+			"nova-alpha devel darwin/arm64 go1.27.1\n",
+			[]Norm{Version(), GoBuild()},
+			true,
+		},
+		{
+			"Version non-stamp",
+			Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha v0.16.0-dev.c839379e.0.20260919144920-705dd1c92534 darwin/arm64 go1.27.1"}},
+			"nova-alpha unknown darwin/arm64 go1.27.1\n",
+			[]Norm{Version(), GoBuild()},
+			false,
+		},
+		{
+			"Version inside token",
+			Step{Line: "$ nova-alpha list", Want: []string{"LIST OK tag=v1.2.3-rc1 name=alpha"}},
+			"LIST OK tag=v9.9.9-rc1 name=alpha\n",
+			[]Norm{Version()},
+			false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			problems := Compare(tc.step, Result{Stdout: tc.res}, tc.norms)
+			if tc.wantOK {
+				assert.Empty(t, problems)
+			} else {
+				assert.NotEmpty(t, problems)
+			}
+		})
+	}
 }
 
 // --- Fable's cold read of #1674 (HIGH): Execute skipped every step that stated
