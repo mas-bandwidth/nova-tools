@@ -58,7 +58,7 @@ var Contract = ContractDef{
 		{Field: "CHECK", Type: "`pass` | `fail` | `not-run`", Fix: "R", Recut: "R", Port: "R", DocsGuard: "R", Report: "R", Read: "R"},
 		{Field: "REPO", Type: "`owner/name`, `^[a-z0-9-]+/[a-z0-9._-]+$`; must equal the card's repo", Fix: "R", Recut: "R", Port: "R", DocsGuard: "R", Report: "R", Read: "R"},
 		{Field: "BRANCH", Type: "git ref (check-ref-format), ≤200 B; must equal the card's branch when it has one", Fix: "D", Recut: "D", Port: "D", DocsGuard: "D", Report: "O", Read: "-"},
-		{Field: "PATHS", Type: "1-256 space-separated repo-relative paths; no `..`, no leading `/`, no duplicates", Fix: "D", Recut: "D", Port: "D", DocsGuard: "D", Report: "O", Read: "-"},
+		{Field: "PATHS", Type: "1-256 whitespace-separated repo-relative paths; no `..`, no leading `/`, no duplicates", Fix: "D", Recut: "D", Port: "D", DocsGuard: "D", Report: "O", Read: "-"},
 		{Field: "RED", Type: "text 1-4096 B", Fix: "D", Recut: "D", Port: "D", DocsGuard: "-", Report: "-", Read: "-"},
 		{Field: "GREEN", Type: "text 1-4096 B", Fix: "P", Recut: "P", Port: "P", DocsGuard: "-", Report: "-", Read: "-"},
 		{Field: "PRIOR", Type: "`#<int> @<hex12>`", Fix: "-", Recut: "D", Port: "-", DocsGuard: "-", Report: "-", Read: "-"},
@@ -150,9 +150,9 @@ func (c *ContractDef) Markdown() string {
 	b.WriteString("- **Lines.** The evidence region is split on `\\n`.\n")
 	b.WriteString("- **Fences.** A fence is a line that starts with three backticks, and each one toggles the fenced state. Fence lines and every line inside a fence are neither rows nor headings.\n")
 	b.WriteString("- **Headings.** A heading is any line starting `## ` outside a fence.\n")
-	b.WriteString("- **Sections.** A section is the lines after its heading, up to the next heading or the end of the file. A heading is a contract section only when the whole line is exactly `## <Name>`, byte for byte. So `## Findings` counts, while `## findings`, `##Findings`, `## Findings:` and `## Findings ` (trailing space) do not.\n")
+	b.WriteString("- **Sections.** A section is the lines after its heading, up to the next heading or the end of the file. A heading is a contract section only when the whole line is exactly `## <Name>`, byte for byte. So `## Findings` counts, while `## findings`, `##Findings`, `## Findings:` and `## Findings ` (trailing whitespace) do not.\n")
 	b.WriteString("- **Other headings.** Any other heading, such as `## Notes`, is evidence. It ends the section above it and is otherwise ignored. A `### ` line does not start with `## `, so it neither ends a section nor counts as a row.\n")
-	b.WriteString("- **Rows.** A row is a section line that starts at column 0 with `- ` (hyphen, space) and then has at least one byte that is not a space or tab. Nothing else is a row: blank lines, prose, indented lines (nested bullets, continuations), `* ` and `+ ` bullets, numbered items, table lines, `### ` subheadings, `-x` and a bare `- `. They all stay in the file as evidence and are never counted.\n")
+	b.WriteString("- **Rows.** A row is a section line that starts at column 0 with `- ` (hyphen, blank) and then has at least one byte that is not a blank or tab. Nothing else is a row: blank lines, prose, indented lines (nested bullets, continuations), `* ` and `+ ` bullets, numbered items, table lines, `### ` subheadings, `-x` and a bare `- `. They all stay in the file as evidence and are never counted.\n")
 	b.WriteString("- **General rule.** Every section named in the kind's `sections` cell must be present exactly once and must have at least one row. There is exactly one exception. On kind=read, `## Findings` must have exactly FINDINGS rows, so FINDINGS=0 means the heading is present with zero rows. Prose such as \"none\" is allowed there, and any row is `contradictory`. FINDINGS and PROBES each equal the row count of their section.\n")
 	b.WriteString("- **Section defects,** each named by field:\n")
 	b.WriteString("  - A heading that is absent gives `field=## <Name> defect=missing line=0`.\n")
