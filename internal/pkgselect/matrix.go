@@ -1,6 +1,7 @@
 package pkgselect
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -25,8 +26,10 @@ const (
 	// would need, so the legs are few and each takes a wave.
 	PullRequestShards   = 4
 	MergeGroupMacShards = 4
-	// FunctionalShards is the leg count of the functional tier.
-	FunctionalShards = 4
+	// FunctionalShards is the leg count of the functional tier. Six: the sprint stream moved
+	// slow real-time tests into the tier and four legs ran past the two-minute cap
+	// (functional 1/4 and 3/4 were cancelled at it); the cap is permanent, the split is not.
+	FunctionalShards = 6
 )
 
 // Groups are the labels of the two runner groups the fan-out deals onto. They
@@ -139,12 +142,28 @@ func NothingLeg(g Groups) Leg {
 	return Leg{Name: "nothing", Packages: "", OS: "linux", Arch: "x64", Group: g.Linux}
 }
 
+// FunctionalHeavy are the packages whose functional tests run longest on a shared
+// runner (measured 28 to 68 s each in the merge-group runs of 2026-10-04, two of
+// them landing on one leg ran past the two-minute cap): Functional deals them
+// first, in this order, so no leg gets two while another is empty.
+var FunctionalHeavy = []string{"./cmd/nova-swarm", "./cmd/nova-bus", "./internal/pkgselect", "./internal/atomicfile", "./internal/ntable", "./internal/swarm"}
+
 // Functional deals the packages into FunctionalShards Linux legs like a pull
 // request's unit legs (the darwin-only packages have no Linux leg). The
 // functional job reads it on merge_group, schedule and workflow_dispatch only;
 // each leg's `make test-functional` runs just the tests behind the functional
 // tag. With no package it is one empty leg.
 func Functional(pkgs []string, g Groups) []FunctionalLeg {
+	pkgs = slices.Clone(pkgs)
+	slices.SortStableFunc(pkgs, func(a, b string) int {
+		rank := func(p string) int {
+			if i := slices.Index(FunctionalHeavy, p); i >= 0 {
+				return i
+			}
+			return len(FunctionalHeavy)
+		}
+		return cmp.Compare(rank(a), rank(b))
+	})
 	groups := make([][]string, FunctionalShards)
 	f := 0
 	for _, p := range pkgs {

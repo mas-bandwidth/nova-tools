@@ -21,10 +21,11 @@ import (
 //
 // #2291 is the wider `nova-update apply --sha` job — atomic publish, manifest
 // record, verify at every stamp — and the slice of it this package owns is
-// this one. apply --sha calls LineWithSource on every binary it builds, and
-// apply --sha's postflight, the snapshot, and `moved`'s readback call
-// FindSource on every line they read; that pair is what TestSourceMetadataRoundTripsThroughTheVersionLine
-// exercises, so the rest of the issue has a writer and a parser to lean on.
+// this one. The four source tokens are written by Source.Extras into a
+// version line, and apply --sha's postflight, the snapshot, and `moved`'s
+// readback call FindSource on every line they read; that pair is what
+// TestSourceMetadataRoundTripsThroughTheVersionLine exercises, so the rest of
+// the issue has a writer and a parser to lean on.
 func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 	t.Parallel()
 
@@ -56,7 +57,7 @@ func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			line := buildinfo.LineWithSource("nova-bus", stamp, tc.src)
+			line := buildinfo.Line("nova-bus", stamp, tc.src.Extras()...)
 			// A version line is one line: a newline in the line would
 			// break every reader in the tree that builds its answer on
 			// strings.Cut(line, "\n"), and the source fields are not
@@ -119,7 +120,7 @@ func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 		other := want
 		other.Repository = "github.com/other/repo"
 		require.NotEqual(t, want, other, "the disagreeing Source was not disagreeing; this case is broken")
-		line := buildinfo.LineWithSource("nova-bus", stamp, other)
+		line := buildinfo.Line("nova-bus", stamp, other.Extras()...)
 		fields, ok := buildinfo.Parse(line)
 		require.True(t, ok, "Parse refused: %s", line)
 		got, ok := fields.FindSource()

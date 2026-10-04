@@ -1,8 +1,8 @@
 //go:build ignore
 
 // timing.go is the committed script: it prints, for the
-// last 200 pull requests of mas-bandwidth/schema and
-// mas-bandwidth/nova-tools, the time from PR-open to all-green split into
+// last 200 pull requests of the organisation/schema and
+// the organisation/nova-tools, the time from PR-open to all-green split into
 // queue, setup and test per job -- one TSV row per job, its three spans in
 // whole seconds, and the envelope its PR opened under, "-" for a PR that
 // never went all-green. The script's purpose is the
@@ -49,7 +49,7 @@ usage:
   --log <path>   the harvested events log, one JSON object per line, one line
                  per CI job of one pull request; there is no default
   --repos <a,b>  the repositories to measure, comma-separated
-                 (default: mas-bandwidth/nova-tools,mas-bandwidth/schema)
+                 (default: the organisation/nova-tools,the organisation/schema)
   --last <n>     per repository, the last n pull requests the log holds
                  (default: 200)
 

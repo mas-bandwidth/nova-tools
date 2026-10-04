@@ -99,15 +99,6 @@ func SyncProblems(want []SyncMember) []Refusal {
 	return out
 }
 
-// ValidSync is why a sync of these members cannot be written: the first of
-// SyncProblems. "" is valid.
-func ValidSync(want []SyncMember) string {
-	if ps := SyncProblems(want); len(ps) > 0 {
-		return ps[0].Why
-	}
-	return ""
-}
-
 // FleetDrift is what a sync of want would write on the snapshot: the members
 // to add, the widths to set, the members to hold and the members to remove, by
 // name; machines is every machine row of the inventory, a member or not. It is

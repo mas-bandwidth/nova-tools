@@ -18,8 +18,7 @@ func TestNoVerbPrintsTheBannerAndRefuses(t *testing.T) {
 func TestUnknownVerbIsRefusedByName(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.wantRC(h.do("no-such-verb"), 2)
-	h.mustContain(`unknown verb "no-such-verb"`)
+	h.wantRun(2, `unknown verb "no-such-verb"`, "no-such-verb")
 }
 
 func TestEveryVerbHasASummaryAndHelp(t *testing.T) {
@@ -73,8 +72,7 @@ func TestARequiredVariableThatIsUnsetIsNamed(t *testing.T) {
 	t.Parallel()
 	for _, v := range []string{"certified", "upload", "attach"} {
 		h := newHarness(t)
-		h.wantRC(h.do(v), 2)
-		h.mustContain("is not set")
+		h.wantRun(2, "is not set", v)
 	}
 }
 

@@ -1,3 +1,5 @@
+//go:build functional
+
 package swarm
 
 import (
@@ -18,20 +20,20 @@ import (
 // victim's WriteFile fails on a parent that is gone and the card never runs.
 // Each worker takes and releases in a loop so the store stays small, scans
 // stay fast, and takes overlap constantly: the losing interleaving arrives
-// within a few hundred takes.
+// within a few hundred takes (workers x perWorker = 320, about 15 s: the
+// functional leg has two minutes). The interleaving is real scheduling against
+// real disk, so the hunt is a functional-tier one: unit tests use no real
+// time (rule 2026-10-02), and no injected clock reaches a race between two
+// goroutines' file operations.
 func TestConcurrentTakesKeepEveryTake(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	store := writeSlotStore(t, "capacity\t64\nreserve\t0\nalice\t64\nbob\t64\n")
 	now := time.Now().UTC()
 	pid := os.Getpid()
 
 	const workers = 8
-	const perWorker = 150
+	const perWorker = 40
 
 	var wg sync.WaitGroup
 	problems := make(chan string, workers*perWorker)

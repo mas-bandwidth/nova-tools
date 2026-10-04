@@ -74,7 +74,10 @@ usage, in any Go module (no state, no store):
                       go test served from its test cache reports a package
                       elapsed near zero, so a cached run never trips a package
                       budget; its tests replay the cached times, which
-                      --test-budget still reads (measure with -count=1).
+                      --test-budget still reads (measure with -count=1). A run
+                      with more finding lines than --max prints the first --max
+                      and one CI-SLOW MORE shown=<n> total=<n> line naming the
+                      flag that prints the rest; --max 0 prints every finding.
                       --json prints the same verdict as one JSON object.
                       --max prints at most that many finding lines, then one
                       CI-SLOW MORE shown=<n> total=<n> line naming the flag

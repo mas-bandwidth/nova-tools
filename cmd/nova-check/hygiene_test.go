@@ -156,7 +156,7 @@ func TestHygieneVerbExitsOneAndNamesTheFinding(t *testing.T) {
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
 	require.EqualValues(t, 1, code, "exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	require.Contains(t, out.String(), "HYGIENE FINDING reason=stray-file at=sign/RESULT.md", "stdout = %q, want the finding named", out.String())
-	require.True(t, strings.Contains(errb.String(), "HYGIENE NO ") && strings.Contains(errb.String(), "findings=1"), "stderr = %q, want the NO verdict line", errb.String())
+	require.True(t, strings.Contains(errb.String(), "HYGIENE FAILED ") && strings.Contains(errb.String(), "findings=1"), "stderr = %q, want the FAILED verdict line", errb.String())
 }
 
 // A branch with no declared paths says paths=- and skips out-of-path. The field is

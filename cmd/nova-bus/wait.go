@@ -52,33 +52,9 @@ import (
 func rearmCommand(args []string) string {
 	quoted := make([]string, len(args))
 	for i, a := range args {
-		quoted[i] = shellQuote(a)
+		quoted[i] = oneline.ShellWord(a)
 	}
 	return "nova-bus wait " + strings.Join(quoted, " ")
-}
-
-// shellQuote quotes one argument for a POSIX shell: unchanged when it holds nothing the
-// shell would act on, otherwise single quotes with the one character that cannot live
-// inside them written the shell's own way. A value carrying a blank, a dollar sign or a
-// semicolon unquoted would split the pasted command or run something the caller did not
-// write.
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	safe := true
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-			c == '/' || c == '.' || c == '_' || c == '-' || c == ':') {
-			safe = false
-			break
-		}
-	}
-	if safe {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
