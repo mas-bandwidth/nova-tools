@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -473,21 +474,30 @@ func TestPerfTestsVerbWritesTheRunsAndThePackages(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := newSelFake(map[string]selReply{
-		"go list -tags perf -f {{.ImportPath}} {{.Dir}} ./...":     {out: selMod + "/internal/perfy " + dir + "\n"},
+		"go list -tags perf -f {{.ImportPath}} {{.Dir}} ./...":     {out: selMod + "/internal/perfy " + dir + "\n" + selMod + "/internal/other " + dir + "\n"},
 		"go test -list . " + selMod + "/internal/perfy":            {out: "TestA\n"},
 		"go test -tags perf -list . " + selMod + "/internal/perfy": {out: "TestA\nTestSlow\n"},
+		"go test -list . " + selMod + "/internal/other":            {out: "TestBase\n"},
+		"go test -tags perf -list . " + selMod + "/internal/other": {out: "TestBase\nTestFirst\nTestLast\n"},
 	})
 	gh := filepath.Join(t.TempDir(), "env")
-	code, out, errb := selRun(func(e env, a []string) int { return perfTestsVerb(e, a, f.host()) }, repo, map[string]string{"RUNNER_TEMP": tmp, "GITHUB_ENV": gh})
-	if code != 0 || errb != "" || out != selMod+"/internal/perfy: TestSlow\n" {
+	output := filepath.Join(t.TempDir(), "output")
+	code, out, errb := selRun(func(e env, a []string) int { return perfTestsVerb(e, a, f.host()) }, repo, map[string]string{"RUNNER_TEMP": tmp, "GITHUB_ENV": gh, "GITHUB_OUTPUT": output})
+	if code != 0 || errb != "" || out != selMod+"/internal/perfy: TestSlow\n"+selMod+"/internal/other: TestFirst TestLast\n" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errb)
 	}
-	if got := selRead(t, filepath.Join(tmp, "perf-runs")); got != selMod+"/internal/perfy ^(TestSlow)$\n" {
+	if got := selRead(t, filepath.Join(tmp, "perf-runs")); got != selMod+"/internal/perfy ^(TestSlow)$\n"+selMod+"/internal/other ^(TestFirst|TestLast)$\n" {
 		t.Errorf("perf-runs = %q", got)
 	}
-	if got := selRead(t, gh); got != "PERF_PKGS="+selMod+"/internal/perfy \n" {
+	if got := selRead(t, gh); got != "PERF_PKGS="+selMod+"/internal/perfy "+selMod+"/internal/other \n" {
 		t.Errorf("GITHUB_ENV = %q", got)
 	}
+	var matrix []map[string]string
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(strings.TrimSpace(selRead(t, output)), "matrix=")), &matrix))
+	assert.Equal(t, []map[string]string{
+		{"Package": selMod + "/internal/perfy", "Run": "^(TestSlow)$"},
+		{"Package": selMod + "/internal/other", "Run": "^(TestFirst|TestLast)$"},
+	}, matrix, "the matrix must preserve every discovered package and its whole test regexp")
 }
 
 // With no perf-tagged test in the live tree the job would assert nothing, so
