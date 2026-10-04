@@ -92,7 +92,7 @@ help:
 	@echo "make vet-novadisk GOOS=darwin go vet -tags novadisk ./cmd/nova-sandbox (the one real-disk e2e test compiled on every change)"
 	@echo "make vet-laws    build tools/analyzers/cmd/vetlaw and vet ./cmd/... with it"
 	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
-	@echo "make lint        fmt and vet"
+	@echo "make lint        fmt, vet, and the staticcheck and errcheck class tests"
 	@echo "make preflight   gofmt, go vet, and go test -count=1 (PKGS)"
 	@echo "make test        the unit tier: go test -p GOTEST_P PKGS plus the 2 s package / 1 s test slowtests budgets"
 	@echo "make test-functional the functional tier: only the tests behind //go:build functional in PKGS, -p GOTEST_P"
@@ -214,7 +214,14 @@ vet-laws:
 vet-windows:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) vet ./...
 
+# THE GO BEST-PRACTICE LINTERS: staticcheck (its default checks, `unused`
+# among them) and errcheck are module tools pinned in go.mod; their class tests
+# build them with the tree's own toolchain and hold each package's findings to
+# a shrink-only ledger (docs/SPEC-CI.md, `staticcheck` and `errcheck`). They
+# are functional-tier tests that start no redis-server.
 lint: fmt vet vet-functional vet-slow vet-laws
+	$(GO) test -tags functional -count=1 -timeout 110s -run '^TestStaticcheckFindings$$' ./internal/ci/
+	$(GO) test -tags functional -count=1 -timeout 110s -run '^TestUncheckedErrors$$' ./internal/ci/
 
 # preflight is the standard check for swarm cards and developers:
 # gofmt + go vet + go test -count=1, run by tools/preflight. The tool is built into
