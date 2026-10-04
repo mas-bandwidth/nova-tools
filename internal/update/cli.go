@@ -20,7 +20,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -68,7 +67,7 @@ func refusal(w io.Writer, token, run string, err error) int {
 }
 
 // updateVerbNames are nova-update's verbs, as a refusal lists them.
-const updateVerbNames = "example, check, status, apply, report, watch, adoption, release, version"
+const updateVerbNames = "example, check, status, apply, report, watch, adoption, version"
 
 // flagProblem says what a flag parse error means in the words a reader acts on
 // (STANDARD §3.2): an unknown flag is named with every flag the verb takes, a
@@ -106,8 +105,8 @@ func flagProblem(f *flag.FlagSet, err error) error {
 // report line's alternation showing that --send is the one that needs a bus. A
 // change here belongs in the spec first, and TestHelpIsTheSpecsVerbsBlock reads
 // the spec file and compares the two. nova-version's usage lines are its
-// verbs' own (versiontool.go). The release verbs are one line here; their own
-// lines are release.Verbs, printed by `nova-update help release`.
+// verbs' own (versiontool.go). The release pipeline is its own binary,
+// cmd/nova-release, with its own usage block (release.Verbs).
 const updateVerbs = `usage:
 nova-update example [--out <path>]
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
@@ -117,7 +116,6 @@ nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft -
 nova-update report --store <host:port> [--timeout <d>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release <cut|build|install|adopt|pull> ...   nova-tools' own release pipeline: nova-update help release prints its usage lines
 nova-update help`
 
 // manifestShape is the one sentence that says what the file --file names holds:
@@ -136,8 +134,7 @@ const (
 how it works: the manifest is a tab-separated file you write, one tool per line:
 how to read its installed version, where its latest release is published, and
 the command that installs it. check and report compare the two; apply runs one
-named entry's command and reads the version again, nothing else. The release
-verbs build, publish and install nova-tools' own releases.
+named entry's command and reads the version again, nothing else.
 first run: the binary alone; the lines under example: write a one-tool manifest
 (Go) to ./versions.tsv and read it; they install nothing.`
 )
@@ -156,7 +153,7 @@ func help(name string, w io.Writer) {
 	// and the help cannot drift apart. This is that string.
 	fmt.Fprintf(w, "%s\n\n", updateOpening)
 	fmt.Fprintln(w, updateVerbs)
-	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds. Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n", name)
+	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds. Every verb but watch takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n", name)
 	note := "Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
 	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
 	fmt.Fprintln(w, note)
@@ -177,7 +174,7 @@ func twoBinaries() string {
 	// The line opens with "Both", not the tool's name: a banner line that opens
 	// with the name is read as a usage line naming a verb ("and").
 	return "\nBoth nova-update and nova-version read this manifest: they are two binaries that share the manifest reader and report (report prints the same lines under either). " +
-		"Use nova-update to ASK whether what you depend on is current and to CHANGE it: check and status (installed against latest, one line per finding; status shows the current ones too), apply (install the one entry you name, or print the plan with --dry-run), watch (run a file of adoption checks and post the receipt), adoption (list who adopted which tool) and release (cut, build, install, adopt and pull a nova-tools release). " +
+		"Use nova-update to ASK whether what you depend on is current and to CHANGE it: check and status (installed against latest, one line per finding; status shows the current ones too), apply (install the one entry you name, or print the plan with --dry-run), watch (run a file of adoption checks and post the receipt) and adoption (list who adopted which tool). " +
 		"Use nova-version to RECORD what is installed: snapshot, diff, moved and send are nova-version's.\n"
 }
 
@@ -311,15 +308,13 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if verb == "version" || verb == "--version" {
 		return versionVerb(name, stamp, args, out, errs)
 	}
-	// `release` is the last mile -- cut, build, install, adopt -- and it is a
-	// verb of nova-update rather than a tool of its own because it is the same
-	// question this binary already answers (what is installed here, and is it
-	// what it should be) asked from the other end. internal/release holds it.
+	// `release` is its own binary now (cmd/nova-release): cut, build, install,
+	// adopt, pull and cycle are top-level verbs there, because a release
+	// pipeline is not a question about what is installed here. A verb is
+	// announced moved only when a built binary's own help printed it, so the
+	// refusal names the tool whose help carries it.
 	if verb == "release" {
-		// The stamp goes down with it: `release adopt` compares what THIS
-		// binary is against the release it is fanning out, because the
-		// install every machine runs is the one this host is holding.
-		return release.Main(name, args, stamp, out, errs)
+		return emit(refused("update", "nova-release help", "release moved to nova-release"), asked, 0, out, errs)
 	}
 	if verb == "adoption" {
 		return adoptionVerb(name, args, out, errs)

@@ -12,19 +12,36 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// Verbs is the usage block `nova-update help` prints for this verb, and the same
-// five lines docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
+// Verbs is the usage block `nova-release help` prints, and the same five lines
+// docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
 // default path: a path guessed from the cwd or from `$HOME` makes a release cut
 // from a laptop and a release cut from a bench mean different things, so the
 // same command is the same release on either host. The one exception is
 // --receipts, and internal/release/dogfoodgate.go says at length why the gate
 // in front of the definition of done is worth it.
-const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
-nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
-nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
-nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
-nova-update release cycle --version <v> --source <dir> --out <dir> --inventory <file> --benches <a,b,...> --reason <why> --ansible <path> [--receipts <dir>] [--dry-run] [--timeout <d>]`
+const Verbs = `nova-release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
+nova-release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
+nova-release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
+nova-release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
+nova-release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-release cycle --version <v> --source <dir> --out <dir> --inventory <file> --benches <a,b,...> --reason <why> --ansible <path> [--receipts <dir>] [--dry-run] [--timeout <d>]`
+
+// Banner is nova-release's opening, in the three answers a stranger brings
+// (ONBOARDING point 6): line 1 says what the tool does, and the README row for
+// the tool is that same sentence; how it works names the nouns and where the
+// state lives; first run is the block a reader pastes.
+const Banner = `nova-release: cut, build, install, adopt, pull and cycle a nova-tools release
+
+how it works: a release is a git tag, one SHA256SUMS per platform, and the same
+stamped binaries installed on every machine. cut writes the tag and changelog;
+build compiles the stamped set; install puts it here; adopt fans it out over
+ssh; pull withdraws it; cycle builds and installs in one pass. State lives in
+the artifact root (--out and --from) and the annotated tag.
+first run: name a version, an artifact root and a source; no fleet is needed.
+example:
+  nova-release help
+  nova-release cut -h
+  nova-release build -h`
 
 // CutNote is the gate in front of a tag, said where a person will meet it.
 // It is a var rather than a const because it names the list, and the list has
@@ -45,7 +62,7 @@ const AdoptNote = "adopt runs FROM the host that has ssh to every machine and fa
 	"When the release was built elsewhere, --from may name that machine as host:dir and --stage <dir> says where to fetch it first. " +
 	"Such a fetch is verified against a digest that did NOT travel with the bits: --repo <owner/name> reads it off the annotated tag the cut wrote, --expect-sums <sha256> names it outright, or --expect-sums-from <file> reads it out of the " + DigestFile + " this host's own `release build` wrote. " +
 	"A dev build has no tag, which is why the third exists; the file must be a LOCAL one, because a digest computed on the machine holding the bits is that machine vouching for itself. " +
-	"Install the release on this host before adopting it: the nova-update running the fan-out is the one here, and a coordinator older than the release it is adopting refuses and says so. " +
+	"Install the release on this host before adopting it: the nova-release running the fan-out is the one here, and a coordinator older than the release it is adopting refuses and says so. " +
 	"--machines is " + MachinesShape + ". " + RemotePathsNote + ". " +
 	"--retire <dir> removes this release's own nova-* files from a second directory nobody should still be running from (~/go/bin); it refuses to be --bin or the live stamp. " +
 	"--bin, --dest and --retire must be absolute or ~/-rooted and free of shell metacharacters; they are validated before any remote command is composed."
@@ -65,7 +82,7 @@ type Deps struct {
 	// receipts off disk and reaches nothing else.
 	Dogfood Dogfood
 	Now     func() time.Time
-	// Self answers what the nova-update RUNNING THIS is stamped with. It is a
+	// Self answers what the nova-release RUNNING THIS is stamped with. It is a
 	// seam rather than a constant because this package is a library and the
 	// stamp lives in main; a nil Self means `adopt` cannot compare its own
 	// version with the release's and does not pretend to.
@@ -147,7 +164,7 @@ func (p *platformList) Set(v string) error {
 // re-read `cut`.
 func VerbUsage(verb string) string {
 	for _, line := range strings.Split(Verbs, "\n") {
-		if strings.HasPrefix(line, "nova-update release "+verb+" ") {
+		if strings.HasPrefix(line, "nova-release "+verb+" ") {
 			return line
 		}
 	}
@@ -158,9 +175,9 @@ func VerbUsage(verb string) string {
 // input wants, then the command a reader runs next, the help of the verb that
 // refused (token is that verb, upper-case) or of the release verbs as a whole.
 func refusal(w io.Writer, token string, err error) int {
-	run := "nova-update release " + strings.ToLower(token) + " -h"
+	run := "nova-release " + strings.ToLower(token) + " -h"
 	if token == "RELEASE" {
-		run = "nova-update help release"
+		run = "nova-release help"
 	}
 	fmt.Fprintf(w, "%s REFUSED: %s; run: %s\n", token, oneline.Err(err), run)
 	return 2
@@ -190,7 +207,7 @@ func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 	return Run(name, args, out, errs, Deps{Self: func() string { return stamp }})
 }
 
-// Run is `nova-update release <verb>`. The verb is dispatched here and each of
+// Run is `nova-release <verb>`. The verb is dispatched here and each of
 // the four validates its own flags, so a missing flag is named by the verb that
 // wanted it rather than by a shared check that knows about all of them.
 func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
@@ -205,8 +222,10 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	switch verb {
 	case "cut", "build", "install", "adopt", "pull", "cycle":
 	case "help", "--help", "-h":
+		fmt.Fprintln(out, Banner)
+		fmt.Fprintln(out)
 		fmt.Fprintln(out, Verbs)
-		fmt.Fprintln(out, ExitCodes+" `nova-update release <verb> -h` lists a verb's flags.")
+		fmt.Fprintln(out, ExitCodes+" `nova-release <verb> -h` lists a verb's flags.")
 		fmt.Fprintln(out, CutNote)
 		fmt.Fprintln(out, DogfoodNote)
 		fmt.Fprintln(out, IncrementalNote)

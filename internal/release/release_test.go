@@ -2102,11 +2102,11 @@ func TestVerbHelpPrintsThatVerbsUsage(t *testing.T) {
 				if strings.Contains(o.String()+e.String(), "help requested") {
 					require.NotContains(t, o.String()+e.String(), "help requested", "the flag package's sentinel leaked: %s%s", o.String(), e.String())
 				}
-				if !strings.Contains(o.String(), "nova-update release "+verb+" ") {
-					require.Contains(t, o.String(), "nova-update release "+verb+" ", "%s's usage is not what was printed:\n%s", verb, o.String())
+				if !strings.Contains(o.String(), "nova-release "+verb+" ") {
+					require.Contains(t, o.String(), "nova-release "+verb+" ", "%s's usage is not what was printed:\n%s", verb, o.String())
 				}
 				// ONE verb's usage, not all five: the person asked about one.
-				if strings.Count(o.String(), "nova-update release ") != 1 {
+				if strings.Count(o.String(), "nova-release ") != 1 {
 					require.FailNowf(t, "assertion failed", "%s --help printed more than its own line:\n%s", verb, o.String())
 				}
 			})
