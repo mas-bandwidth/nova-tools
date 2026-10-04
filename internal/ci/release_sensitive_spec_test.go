@@ -40,7 +40,7 @@ func TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec(t *testing.T) {
 	}
 	// Every entry is a directory prefix. A list entry that is not one is a
 	// list entry that classifies by accident: `internal/secrets` without the
-	// slash would also catch `internal/secrets<sibling>/`.
+	// slash would also catch `internal/secretsanta/`.
 	for _, p := range inCode {
 		assert.Truef(t, strings.HasSuffix(p, "/") && !strings.HasPrefix(p, "/") && !strings.Contains(p, ".."), "%q is not a directory prefix", p)
 	}

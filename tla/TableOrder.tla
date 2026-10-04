@@ -1,5 +1,5 @@
 ---------------------------- MODULE TableOrder ----------------------------
-\* The order of a nova-table's rows and columns as state (2026-09-27:
+\* The order of a nova-table's rows and columns as state (Glenn 2026-09-27:
 \* "take column y and put it after column z", "friends on top, machines on
 \* bottom"). table.lua at nova-tools#4457 47bbca675: T.reorder, T.sorted,
 \* T.rank, the standing-sort step of T.finish, ns_table_bind, and the
@@ -10,8 +10,8 @@
 \* "sorted by name" is ascending. holds is the cells that hold a member or a
 \* text value. sorted is the standing sort (row sort --keep). req is what
 \* the call asked for, kept so the invariants can say the result is the one
-\* requested and not merely some permutation (an existential over the
-\* result is vacuous).
+\* requested and not merely some permutation (Stella's read,
+\* stella-67bb4e7103bb: an existential over the result is vacuous).
 \*
 \* Broken = "none" is the code. Every other value is a reversed witness, a
 \* misimplementation one invariant must catch:

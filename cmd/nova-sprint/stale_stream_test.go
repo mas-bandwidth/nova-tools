@@ -39,7 +39,7 @@ func TestAStreamWhoseCardsAllWaitIsNotStale(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1 --coordinator lead")
 	ta.ok("clear --confirm sprint --actor lead")
-	ta.ok("add --stream s1 --count 1 --actor lead")
+	ta.ok("add --stream s1 --count 1 --one --actor lead")
 	ta.ok("add --stream docs --sentinel docs-round2 --actor lead")
 	ta.ok("add --stream docs --count 2 --actor lead")
 	ta.ok("start --actor lead")
@@ -56,7 +56,7 @@ func TestAStaleStreamCarriesTheEpochAndWaitQuietsIt(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1 --coordinator lead")
 	ta.ok("clear --confirm sprint --actor lead")
-	ta.ok("add --stream s1 --count 1 --actor lead")
+	ta.ok("add --stream s1 --count 1 --one --actor lead")
 	ta.ok("start --actor lead")
 	ta.mu.Lock()
 	ta.live = nil // no member beats: the ready card does not move

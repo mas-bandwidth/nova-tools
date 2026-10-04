@@ -25,19 +25,15 @@ const exampleSelf = "testdata/example-self"
 
 func runCheck(t *testing.T, args ...string) (exit int, stdout, stderr string) {
 	t.Helper()
-	return runCheckIn(t, newEnv(), args...)
-}
-
-// runCheckIn is runCheck in an environment of the test's own: the invocation
-// reads the directory and the program lookup the test hands it instead of the
-// process's, which is what lets every test here open with t.Parallel()
-// (docs/STANDARD.md section 8).
-func runCheckIn(t *testing.T, e env, args ...string) (exit int, stdout, stderr string) {
-	t.Helper()
 	var out, errb bytes.Buffer
-	exit = runWith(e, args, &out, &errb)
+	exit = run(args, &out, &errb)
 	return exit, out.String(), errb.String()
 }
+
+// exampleDogfood is the fixture the dogfood verb's banner example runs
+// against: a command reference the size of a first run, and the receipts two
+// friends left against it.
+const exampleDogfood = "testdata/example-dogfood"
 
 // localize points an example or transcript command at the fixture, so what is
 // under test is the command's SHAPE and not the reader's directory layout. The
@@ -47,9 +43,13 @@ func runCheckIn(t *testing.T, e env, args ...string) (exit int, stdout, stderr s
 func localize(args []string) []string {
 	out := append([]string(nil), args...)
 	for i, a := range out {
-		switch a {
-		case "./self":
+		switch {
+		case a == "./self":
 			out[i] = exampleSelf
+		case a == "./docs/CLI.md":
+			out[i] = filepath.Join(exampleDogfood, "CLI.md")
+		case a == "./dogfood-receipts":
+			out[i] = filepath.Join(exampleDogfood, "receipts")
 		default:
 			if rest, ok := strings.CutPrefix(a, "./self/"); ok {
 				out[i] = filepath.Join(exampleSelf, rest)
@@ -221,8 +221,6 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 // rewritten, which is what the old `localize` did and why it could not have
 // compared the line the document promised.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
-	t.Parallel()
-
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	fixture, err := filepath.Abs(exampleSelf)
@@ -235,28 +233,21 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 	dir := t.TempDir()
 	copyTree(t, fixture, filepath.Join(dir, "self"))
-	// The transcript's `./self` resolves against the directory the document was
-	// written for, so that directory is the invocation's own and the process
-	// never moves (docs/STANDARD.md section 8: no Chdir).
-	e := newEnv()
-	e.wd = dir
-	for _, p := range onboarding.Execute(steps, runDocumentedIn(e)) {
+	t.Chdir(dir)
+	for _, p := range onboarding.Execute(steps, runDocumented) {
 		assert.Fail(t, "check failed", p)
 	}
 }
 
-// runDocumentedIn calls this binary's own entry point with the documented
-// arguments, in the environment e: every relative path a documented command
-// carries resolves against e.wd. nova-check reads nothing on stdin.
-func runDocumentedIn(e env) func(onboarding.Step) (onboarding.Result, error) {
-	return func(s onboarding.Step) (onboarding.Result, error) {
-		if s.Stdin != "" {
-			return onboarding.Result{}, errReadsNothing
-		}
-		var out, errb bytes.Buffer
-		code := runWith(e, s.Args, &out, &errb)
-		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+// runDocumented calls this binary's own entry point with the documented
+// arguments. nova-check reads nothing on stdin.
+func runDocumented(s onboarding.Step) (onboarding.Result, error) {
+	if s.Stdin != "" {
+		return onboarding.Result{}, errReadsNothing
 	}
+	var out, errb bytes.Buffer
+	code := run(s.Args, &out, &errb)
+	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 }
 
 type readsNothing struct{}

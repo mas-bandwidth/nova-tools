@@ -21,6 +21,7 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"math"
 	"os"
 	"slices"
 	"sort"
@@ -70,9 +71,14 @@ type Counts struct {
 }
 
 // Set records a measurement. A second Set on one type ADDS, which is how a row fed by two
-// sources sums per type over the sources that reported that type.
+// sources sums per type over the sources that reported that type. Saturates at math.MaxInt64
+// instead of wrapping (security#75 finding 1).
 func (c *Counts) Set(t Type, v int64) {
-	c.n[t] += v
+	if v > 0 && c.n[t] > math.MaxInt64-v {
+		c.n[t] = math.MaxInt64
+	} else {
+		c.n[t] += v
+	}
 	c.has[t] = true
 }
 
@@ -610,6 +616,10 @@ func ParseMicro(s string) (int64, bool) {
 	}
 	w, err := strconv.ParseInt(whole, 10, 64)
 	if err != nil {
+		return 0, false
+	}
+	// security#75 finding 2: refuse whole parts that would overflow int64 when scaled.
+	if w > (math.MaxInt64-999999)/1_000_000 {
 		return 0, false
 	}
 	var f int64

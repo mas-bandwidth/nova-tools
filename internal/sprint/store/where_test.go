@@ -365,4 +365,6 @@ func TestTheWhereCountsTripsArePinned(t *testing.T) {
 // whereMovedTrips is the where part's round trips on a tick that moved the
 // work table, as measured: the shape and the record read, the twin's catch-up
 // (no table read whole), and the record written.
-const whereMovedTrips = 8
+// whereMovedTrips counts the seat record read with the coordinator (store/seat.go,
+// the seat's generation every step reads): one trip more since 2026-10-04.
+const whereMovedTrips = 9

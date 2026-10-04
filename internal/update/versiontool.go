@@ -1,7 +1,6 @@
 package update
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -115,13 +114,13 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 			},
 			{
 				Name:  "report",
-				Usage: "report " + manifest + " [--host <label>] [--state <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]",
+				Usage: "report " + manifest + " [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]",
 				// The second example line is the version verb's: the banner's
 				// examples are its verbs' in order, and version is last.
 				Example: "report --file versions.tsv\nversion",
 				// The strongest effect a flag gives it: --send delivers the note and
-				// writes the --state state file; without --send it only reads.
-				Effect: tool.Delivery + "; only with --send, which also writes the --state state file; " +
+				// writes the --snapshot state file; without --send it only reads.
+				Effect: tool.Delivery + "; only with --send, which also writes the --snapshot state file; " +
 					"without --send, report reads and writes nothing (--draft prints the note)",
 				Detail: manifestHelp("nova-version"),
 				Flags:  func(f *tool.Flags) { reportFlags(f, true) },
@@ -129,8 +128,8 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 			},
 			{
 				Name:   "send",
-				Usage:  "send " + manifest + " --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--state <path>] [--host <label>]",
-				Effect: tool.Delivery + "; --state writes its state file",
+				Usage:  "send " + manifest + " --as <friend> --to <who,who> [--snapshot <path>] [--host <label>]",
+				Effect: tool.Delivery + "; --snapshot writes its state file",
 				Detail: manifestHelp("nova-version"),
 				Flags:  func(f *tool.Flags) { reportFlags(f, false) },
 				Run:    func(c *tool.Call) *tool.Out { return reportVerb(c, true, env) },
@@ -153,17 +152,13 @@ func reportFlags(f *tool.Flags, report bool) {
 	f.Prints()
 	f.String("file", "", "manifest (required): "+manifestShape)
 	f.String("host", "", "execution bench label")
-	f.String("state", "", "state file for delivery recovery across processes: retry the saved artifact, never prepare again while pending")
-	f.String("snapshot", "", "alias for --state, one release only: sets the same value and prints a NOTE")
+	f.String("snapshot", "", "state file of what was observed and confirmed sent: an unchanged report is not sent again")
 	f.Bool("draft", false, "print the note only")
 	if report {
 		f.Bool("send", false, "explicit delivery")
 	}
 	f.String("as", "", "the sender the note is from")
 	f.String("to", "", "the recipients, comma-separated")
-	f.String("bus", "", "the bus checkout that delivers the note")
-	f.String("remote", "", "the bus remote")
-	f.String("branch", "", "the bus branch")
 	f.Int("max", 20, "per-kind output cap; 0 is all")
 	f.Duration("timeout", 5*time.Second, "one read deadline")
 	f.Duration("budget", 60*time.Second, "whole run deadline")
@@ -171,14 +166,9 @@ func reportFlags(f *tool.Flags, report bool) {
 }
 
 func reportVerb(c *tool.Call, send bool, env Environment) *tool.Out {
-	state := c.Str("state")
-	if c.Given("snapshot") {
-		state = c.Str("snapshot")
-		fmt.Fprintln(c.Stderr, "NOTE --snapshot is --state")
-	}
 	o := options{
-		file: c.Str("file"), host: c.Str("host"), state: state,
-		as: c.Str("as"), to: c.Str("to"), bus: c.Str("bus"), remote: c.Str("remote"), branch: c.Str("branch"),
+		file: c.Str("file"), host: c.Str("host"), snapshot: c.Str("snapshot"),
+		as: c.Str("as"), to: c.Str("to"),
 		max: c.Int("max"), timeout: c.Dur("timeout"), budget: c.Dur("budget"),
 		kinds: *c.Get("kind").(*kindFlags), draft: c.Bool("draft"), send: send || (c.Given("send") && c.Bool("send")),
 	}

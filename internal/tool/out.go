@@ -29,14 +29,14 @@ var word = map[Status]string{OK: "OK", Failed: "FAILED", Refused: "REFUSED"}
 
 // Out is the one value every verb returns. Render writes it as typed lines:
 //
-//	<TOKEN> OK|FAILED|REFUSED [reason=<r>] k=v ...[: <why>][; run: <remedy>]   one line per why
+//	<TOKEN> OK|FAILED|REFUSED k=v ...[: <why>][; run: <remedy>]   one line per why
 //	<TOKEN> <KIND> k=v ...[: <text>]                            one line per item, the text its prose tail
 //	<TOKEN> MORE kind=<kind> shown=<n> total=<n> <remedy>       one per capped kind
 //	<TOKEN> NOTE <text>                                         one per note
 //
 // or as the JSON of the same value:
 //
-//	{"result":{"verb","status","exit","remedy","why","reasons"},"facts":{},"items":[{"kind","fields","text"}],
+//	{"result":{"verb","status","exit","remedy","why"},"facts":{},"items":[{"kind","fields","text"}],
 //	 "more":[{"kind","shown","total","remedy"}],"notes":[],"payload":""}
 //
 // A payload (the version line, a document a program reads) is printed as it is,
@@ -51,7 +51,6 @@ type Out struct {
 	Word    string   // the tool's own status word in place of OK or FAILED (Out.As); "" is the plain one
 	Remedy  string   // what to run next: the tool's help on a refusal unless the verb names better
 	Why     []string // every reason it failed or was refused
-	Reasons []string // a stable code per Why, parallel to it; a program reads the code (skeleton contract 2.10)
 	Facts   Fields
 	Items   []Item
 	More    []More
@@ -178,19 +177,6 @@ func (o *Out) Cap(max int) *Out {
 	return o
 }
 
-// lookedAtNothing reports whether o carries the fact that counts what the
-// verb read (Verb.Looks) at 0: a check that looked at nothing is not green
-// (STANDARD §2, exit codes tell the truth). A fact that is absent is no
-// count of 0; it is left to the verb's own tests.
-func (o *Out) lookedAtNothing(fact string) bool {
-	for _, f := range o.Facts {
-		if f.K == fact {
-			return fmt.Sprint(f.V) == "0"
-		}
-	}
-	return false
-}
-
 // Render writes o as typed lines, or as one JSON object when json is set, and
 // returns the exit that stands: o.Exit, or 1 when o is no JSON (a NaN or an
 // infinite float, a value of the verb's own that JSON cannot carry), which is
@@ -201,11 +187,6 @@ func (o *Out) Render(w io.Writer, asJSON bool) int { return o.render(w, w, w, as
 // render is Render with the lines of the finding kinds (Findings) on found,
 // and the FAILED line of a result that is no JSON on failed.
 func (o *Out) render(w, found, failed io.Writer, asJSON bool) int {
-	if k := o.duplicateKey(); k != "" {
-		f := Fail("the key " + k + " is printed twice on one line")
-		f.Verb, f.token = o.Verb, o.token
-		return f.render(failed, failed, failed, false)
-	}
 	if asJSON {
 		raw, err := marshal(o)
 		if err != nil {
@@ -235,12 +216,8 @@ func (o *Out) render(w, found, failed io.Writer, asJSON bool) int {
 		if len(o.Why) == 0 {
 			fmt.Fprintln(w, head+tail)
 		}
-		for i, why := range o.Why {
-			reason := ""
-			if i < len(o.Reasons) && o.Reasons[i] != "" {
-				reason = " reason=" + oneline.Field(o.Reasons[i])
-			}
-			fmt.Fprintln(w, head+reason+": "+oneline.Escape(why)+tail)
+		for _, why := range o.Why {
+			fmt.Fprintln(w, head+": "+oneline.Escape(why)+tail)
 		}
 	}
 	for _, it := range o.Items {
@@ -269,59 +246,44 @@ func (o *Out) render(w, found, failed io.Writer, asJSON bool) int {
 // text is the fields of one line: the typed ones in order, each one token
 // (oneline.Field), then the Text ones, the line's prose tail, each quoted
 // (oneline.Quote) so it keeps its spaces and a reader sees where it ends.
-// One way to print a value: a value that is one safe token prints bare, and
-// anything else -- whitespace, a control character, an "=" -- prints as
-// strconv.Quote gives it, so no line holds `\x20` (skeleton contract 1.14,
-// STANDARD §2).
 func (fs Fields) text() string {
 	var typed, prose strings.Builder
 	for _, f := range fs {
 		v := fmt.Sprint(f.V)
 		b := &typed
-		if _, text := f.V.(Text); text {
-			b = &prose
-		}
-		switch {
+		switch _, text := f.V.(Text); {
 		case v == "":
 			v = "-"
-		case oneline.Field(v) != v:
-			v = oneline.Quote(v)
+		case text:
+			v, b = oneline.Quote(v), &prose
+		default:
+			v = oneline.Field(v)
 		}
 		b.WriteString(" " + oneline.Field(f.K) + "=" + v)
 	}
 	return typed.String() + prose.String()
 }
 
-// duplicateKey is the first key fs prints twice, or "" when each key is
-// printed once: a line names one key once, and a repeat is a tool bug
-// (skeleton contract 1.14, STANDARD §2, one output structure).
-func (fs Fields) duplicateKey() string {
-	seen := make(map[string]bool, len(fs))
-	for _, f := range fs {
-		if seen[f.K] {
-			return f.K
-		}
-		seen[f.K] = true
-	}
-	return ""
-}
-
-// duplicateKey is the first key one line of o prints twice, the first line's
-// facts or one item's fields, or "" when every key is printed once on its line.
-func (o *Out) duplicateKey() string {
-	if k := o.Facts.duplicateKey(); k != "" {
-		return k
-	}
-	for _, it := range o.Items {
-		if k := it.Fields.duplicateKey(); k != "" {
-			return k
-		}
-	}
-	return ""
-}
+// bidiEscapes replaces the bidi controls of encoded JSON with their six-character
+// \uNNNN escapes: the embeddings and overrides U+202A..U+202E and the isolates
+// U+2066..U+2069, the set internal/oneline escapes for the typed rendering
+// (oneline's reordersALine), so one rendering cannot reorder a line for its reader
+// while the other hands him the raw runes. encoding/json escapes the C0 controls and
+// U+2028/U+2029 but passes these through, and they are format characters, not
+// controls: a terminal that honors them displays the rest of the line with its
+// visible order rearranged. The code points can stand only inside a JSON string
+// (the grammar's own characters are ASCII), and the escape decodes to the
+// identical string, so the replacement is lossless for every parser and covers
+// every tool's --json at once.
+var bidiEscapes = strings.NewReplacer(
+	"\u202a", `\u202a`, "\u202b", `\u202b`, "\u202c", `\u202c`, "\u202d", `\u202d`, "\u202e", `\u202e`,
+	"\u2066", `\u2066`, "\u2067", `\u2067`, "\u2068", `\u2068`, "\u2069", `\u2069`,
+)
 
 // marshal is json.Marshal without the HTML escape (`<` stays `<`): the
-// output is read by a program or an AI, never pasted into a page.
+// output is read by a program or an AI, never pasted into a page. The bidi
+// controls are escaped as well (bidiEscapes), so nothing in the JSON can
+// reorder the line a reader reads.
 func marshal(v any) ([]byte, error) {
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
@@ -329,7 +291,7 @@ func marshal(v any) ([]byte, error) {
 	if err := enc.Encode(v); err != nil {
 		return nil, err
 	}
-	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+	return []byte(bidiEscapes.Replace(strings.TrimSuffix(b.String(), "\n"))), nil
 }
 
 // MarshalJSON writes the fields as one object in the order they were added.
@@ -359,13 +321,12 @@ func (fs Fields) MarshalJSON() ([]byte, error) {
 // MarshalJSON is the JSON rendering: the result, then the value's parts.
 func (o *Out) MarshalJSON() ([]byte, error) {
 	type result struct {
-		Verb    string   `json:"verb"`
-		Status  Status   `json:"status"`
-		Exit    int      `json:"exit"`
-		Word    string   `json:"word,omitempty"`
-		Remedy  string   `json:"remedy,omitempty"`
-		Why     []string `json:"why,omitempty"`
-		Reasons []string `json:"reasons,omitempty"`
+		Verb   string   `json:"verb"`
+		Status Status   `json:"status"`
+		Exit   int      `json:"exit"`
+		Word   string   `json:"word,omitempty"`
+		Remedy string   `json:"remedy,omitempty"`
+		Why    []string `json:"why,omitempty"`
 	}
 	return marshal(struct {
 		Result  result   `json:"result"`
@@ -374,5 +335,5 @@ func (o *Out) MarshalJSON() ([]byte, error) {
 		More    []More   `json:"more,omitempty"`
 		Notes   []string `json:"notes,omitempty"`
 		Payload string   `json:"payload,omitempty"`
-	}{result{o.Verb, o.Status, o.Exit, o.Word, o.Remedy, o.Why, o.Reasons}, o.Facts, o.Items, o.More, o.Notes, o.Payload})
+	}{result{o.Verb, o.Status, o.Exit, o.Word, o.Remedy, o.Why}, o.Facts, o.Items, o.More, o.Notes, o.Payload})
 }

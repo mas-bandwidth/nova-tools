@@ -12,7 +12,7 @@ import (
 
 // THE OPENCODE READER'S UNIT COVER (opencode.go).
 //
-// ReadJobUsageLive, queryOpenCodeWaiting, queryOpenCode and oneLine had no unit test at
+// ReadJobUsageLiveWithin, queryOpenCodeWaiting, queryOpenCode and oneLine had no unit test at
 // all: a read's happy path is the one subprocess this package runs (`sqlite3`,
 // opencode.go), so it belonged to the functional tier, and the absences and refusals went
 // uncovered with it. These tests hold what is reachable without any process: the live
@@ -99,7 +99,7 @@ func TestOpencodeCoverReadJobUsageLiveWithoutAStore(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			usage, err := ReadJobUsageLive(tc.plant(t))
+			usage, err := ReadJobUsageLiveWithin(tc.plant(t), LiveSampleLimit)
 			if tc.wantErr != "" {
 				require.Error(t, err, "a store that cannot be read is a refusal, not an absence")
 				assert.ErrorContains(t, err, tc.wantErr, "the refusal names the unreadable store: %v", err)

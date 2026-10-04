@@ -18,6 +18,7 @@
 # Containerfile must still carry them.
 
 age-keygen	source	age
+gemini	absent	the survey functional test skips its half when this vendor harness is unavailable; unit tests use a fake executor
 ansible-inventory	absent	the one test that runs it reads only a wrapper script and skips when it is not installed; ansible is a control-node tool, not carried by the runner image
 ansible-playbook	absent	the fleet plays' check test skips when it is not installed; ansible is a control-node tool, run on a bench with ansible against the check fixture
 bash	base	bash
@@ -30,6 +31,7 @@ go	source	fetch
 icacls	absent	Windows only; a Linux container has no Windows file ACLs
 iostat	absent	macOS only; hostload's darwin sampler runs it, the Linux sampler reads /proc/stat
 java	absent	runs the TLC model checker on a bench, not in the functional tier
+launchctl	absent	macOS launchd only; nova-friend install and uninstall run it, and the functional tier runs them with --dry-run
 log	absent	macOS unified logging; only the darwin sandbox tests read it
 lsof	apt	lsof
 make	apt	make

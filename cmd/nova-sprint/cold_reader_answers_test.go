@@ -46,9 +46,9 @@ func TestARefusalCarriesTheRefusedWordAndWhatItFound(t *testing.T) {
 func TestAMisspelledFlagNamesTheNearestAndTheVerbsFlags(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
-	code, _, errs := ta.do("add --strem s1 --count 1")
+	code, _, errs := ta.do("add --strem s1 --count 1 --one")
 	assert.Equal(t, 2, code)
-	assert.Equal(t, "nova-sprint add REFUSED: unknown flag --strem; the flags of add are --actor, --after, --allow-shared-paths, --before, --brief, --brief-dir, --brief-file, --brief-op, --count, --decide-record, --epoch, --held, --json, --max, --needs, --op and 7 more; did you mean --stream?; run: nova-sprint help add\n", errs)
+	assert.Equal(t, "nova-sprint add REFUSED: unknown flag --strem; the flags of add are --actor, --after, --allow-shared-paths, --before, --brief, --brief-dir, --brief-file, --brief-op, --count, --decide-record, --epoch, --held, --json, --max, --needs, --one and 9 more; did you mean --stream?; run: nova-sprint help add\n", errs)
 	assert.Contains(t, errs, "; run: nova-sprint help add\n")
 	assert.NotContains(t, errs, "provided but not defined")
 	code, _, errs = ta.do("fleet up m1 --wdth 3")
@@ -152,7 +152,7 @@ func TestAnEmptyBriefFileIsRefusedNamingIt(t *testing.T) {
 	empty := filepath.Join(t.TempDir(), "empty.md")
 	require.NoError(t, os.WriteFile(empty, []byte("\n"), 0o600))
 	before := ta.applies()
-	for _, line := range []string{"add --stream s1 s1-x --brief-file " + empty, "add --stream s1 --count 1 --brief-file " + empty} {
+	for _, line := range []string{"add --stream s1 s1-x --one --brief-file " + empty, "add --stream s1 --count 1 --brief-file " + empty} {
 		code, _, errs := ta.do(line)
 		assert.Equal(t, 2, code, line)
 		assert.Contains(t, errs, "nova-sprint add REFUSED: --brief-file: "+empty+" holds no brief (it is empty)", line)
@@ -168,7 +168,7 @@ func TestOneLintFindingIsSaidInTheSingular(t *testing.T) {
 	require.NoError(t, err)
 	brief := filepath.Join(t.TempDir(), "brief.md")
 	require.NoError(t, os.WriteFile(brief, []byte(strings.Replace(card, "Report what was not done.\n", "", 1)), 0o600))
-	code, _, errs := ta.do("add --stream s1 s1-1 --brief-file " + brief)
+	code, _, errs := ta.do("add --stream s1 s1-1 --one --brief-file " + brief)
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "fails the card lint (1 finding);")
 	assert.Equal(t, "1 finding", findingsCount(1))
@@ -225,11 +225,11 @@ func TestTheColdRunsMistakesAreAnsweredInOneTurn(t *testing.T) {
 	require.NoError(t, err)
 	raw := filepath.Join(t.TempDir(), "raw.md")
 	require.NoError(t, os.WriteFile(raw, []byte(card), 0o600))
-	out := ta.ok("add --stream s1 r1 --brief-file " + raw)
+	out := ta.ok("add --stream s1 r1 --one --brief-file " + raw)
 	assert.Contains(t, out, "\nNOTE the brief holds 10 of the card template's lines unfilled (line 1: RESULT: <label> sha=<sha12>; line 2: REPO: <owner>/<name>; line 3: BASE: <branch>; and 7 more);")
 	filled := strings.NewReplacer("RESULT: <label> sha=<sha12>", "RESULT: r2 sha=000000000000", "REPO: <owner>/<name>", "REPO: acme/widgets", "BASE: <branch>", "BASE: main").Replace(card)
 	require.NoError(t, os.WriteFile(raw, []byte(filled), 0o600))
-	assert.Contains(t, ta.ok("add --stream s1 r2 --brief-file "+raw), "NOTE the brief holds 7 of the card template's lines unfilled (line 6: Deadline: finish within <n> minutes.;")
+	assert.Contains(t, ta.ok("add --stream s1 r2 --one --brief-file "+raw), "NOTE the brief holds 7 of the card template's lines unfilled (line 6: Deadline: finish within <n> minutes.;")
 }
 
 // The help's first screen says where the rest is, and the finish it shows is

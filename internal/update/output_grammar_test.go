@@ -104,7 +104,7 @@ func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 		{"bad bound", []string{"check", "--file", dash, "--max", "-1"}, []string{"--max", "; run: nova-update check -h"}},
 		{"apply with no name", []string{"apply", "--file", dash}, []string{"; run: nova-update apply -h"}},
 		{"watch with no checks file", []string{"watch"}, []string{"ADOPT REFUSED: missing --adopt", "; run: nova-update watch -h"}},
-		{"watch names every missing bus flag", []string{"watch", "--adopt", adopt, "--bus", "b"}, []string{"missing --remote, --branch, --as, --to"}},
+		{"watch names the missing delivery flag", []string{"watch", "--adopt", adopt, "--as", "me"}, []string{"missing --to"}},
 		{"watch with an argument", []string{"watch", "--adopt", adopt, "x"}, []string{"; run: nova-update watch -h"}},
 		{"adoption with no file", []string{"adoption"}, []string{"missing --file", "; run: nova-update adoption -h"}},
 		{"release with no verb", []string{"release"}, []string{"RELEASE REFUSED: a release verb is required; the release verbs are cut, build, install, adopt, pull, cycle; run: nova-update help release"}},
@@ -234,7 +234,10 @@ func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 	t.Parallel()
 	linesOf := func(s, prefix string) (lines []string) {
 		for _, l := range strings.Split(s, "\n") {
-			if strings.HasPrefix(l, prefix) {
+			// The usage lines are indented two spaces and wrapped, so a line is
+			// read after its indent: the pointer sentence stands on a wrapped
+			// continuation of its own line.
+			if strings.HasPrefix(strings.TrimSpace(l), prefix) {
 				lines = append(lines, l)
 			}
 		}
@@ -244,7 +247,7 @@ func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 	require.Equal(t, 0, code)
 	release := linesOf(banner, "nova-update release")
 	require.Len(t, release, 1, banner)
-	assert.Contains(t, release[0], "nova-update help release")
+	assert.Contains(t, banner, "nova-update help release")
 	assert.Contains(t, banner, "Every verb but watch and release takes --json")
 	_, watch, _ := runTool(t, "nova-update", "watch", "-h")
 	assert.Contains(t, watch, "its sha= the first twelve hex")
@@ -320,9 +323,9 @@ func TestExampleWritesAManifestTheFirstRunReads(t *testing.T) {
 func TestSnapshotOfAManifestTakesItsTimeout(t *testing.T) {
 	t.Parallel()
 	m := writeFile(t, "m.tsv", Header+"\nslow\ttool\tsleep 9\tgithub:example/slow\tnone\tme\n")
-	code, _, errs := runTool(t, "nova-version", "snapshot", "--file", m, "--timeout", "200ms")
+	code, _, errs := runTool(t, "nova-version", "snapshot", "--file", m, "--timeout", "50ms")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, `SNAPSHOT UNKNOWN name=slow reason=timeout remedy="increase --timeout`)
+	assert.Contains(t, errs, "SNAPSHOT UNKNOWN name=slow reason=timeout remedy=increase\\x20--timeout")
 }
 
 // moved reads the usage lines of every tool's help, indented or not: a tool on

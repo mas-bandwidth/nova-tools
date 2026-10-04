@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The judgment decision (SPEC-NOVA-DECIDE section 13): a routine judgment of a sprint's
@@ -258,4 +259,95 @@ func HistoryOf(log string) []string {
 		out = append(out, t)
 	}
 	return out
+}
+
+// The coordinator's own answers (SPEC-NOVA-DECIDE section 13, the judgment-answer record):
+// every judgment answered with a verb that takes --answers, ack or wait is one record of
+// kind judgment-answer, the label set the judgment decision is evaluated and trained on.
+const (
+	// JudgmentAnswerName is the record's decision name, and the file nova-sprint run
+	// --decide keeps it in is <dir>/judgment-answer.jsonl.
+	JudgmentAnswerName = "judgment-answer"
+	// AnswerSchema names the record's shape: no schema is asked, the coordinator chose.
+	AnswerSchema = "judgment-answer.v1"
+	// LabelBounced is the outcome of an answer whose card had a read broken or a finish
+	// failed again since.
+	LabelBounced = "bounced"
+)
+
+// AnswerVerbs is every verb that answers a judgment, in the order the spec lists them.
+var AnswerVerbs = []string{"accept", "rework", "recut", "return", "drop", "wait", "hold", "ack", "ask-another", "release"}
+
+// CardMark is what an outcome reads of a card: whether it stands on the table, has landed or
+// was dropped, and how many reads found it broken and how many finishes failed.
+type CardMark struct {
+	Placed, Landed, Dropped bool
+	Broken, Failed          int
+}
+
+// AnswerInput is one judgment answered for one card.
+type AnswerInput struct {
+	Note   string   // the judgment's notification id
+	Kind   string   // the judgment's type, as the inbox names it
+	Text   string   // the judgment note's text
+	Card   string   // the card answered
+	Verb   string   // the verb given
+	Reason string   // --reason (or the wait's duration), "" when none
+	Fix    string   // --fix, "" when none
+	Actor  string   // who answered
+	Mark   CardMark // the card as it stood after the verb ran
+}
+
+var evidencePath = regexp.MustCompile(`[A-Za-z0-9_.~-]+(?:/[A-Za-z0-9_.~@-]+)+`)
+
+// EvidencePaths is the paths a judgment's text names (a report, a finding's file), each once,
+// in the order named, a trailing full stop and a :line cut.
+func EvidencePaths(text string) []string {
+	var out []string
+	for _, p := range evidencePath.FindAllString(text, -1) {
+		if p = strings.TrimRight(p, "."); !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// AnswerDecision is the record of a judgment answered (the judgment-answer record): the
+// judgment's state as the judgment decision is asked it, the verb as the answer, and as
+// inputs the kind, the evidence paths, the --reason and --fix text, the actor and the card's
+// counters, which AnswerOutcome reads the later ones against. Its id is per judgment, card
+// and answer, so the same answer given again is the same record.
+func AnswerDecision(in AnswerInput, at time.Time) Decision {
+	state := JudgmentState(JudgmentInput{Kind: in.Kind, Text: in.Text, Card: in.Card, Cards: 1, Allowed: AnswerVerbs})
+	return Decision{
+		ID:       Op(in.Card+"@answer."+in.Note, state+"\nverb: "+in.Verb+"\nreason: "+in.Reason+"\nfix: "+in.Fix),
+		Decision: JudgmentAnswerName,
+		Schema:   AnswerSchema,
+		Backend:  "coordinator:" + in.Actor,
+		At:       at.UTC().Format(time.RFC3339),
+		Inputs: map[string]string{"card": in.Card, "note": in.Note, "kind": in.Kind, "verb": in.Verb, "reason": in.Reason, "fix": in.Fix,
+			"actor": in.Actor, "evidence": strings.Join(EvidencePaths(in.Text), "\n"),
+			"broken_reads": strconv.Itoa(in.Mark.Broken), "failed": strconv.Itoa(in.Mark.Failed)},
+		State:   state,
+		Answers: map[string]Answer{"verb": {Type: Choice, Value: in.Verb, P: map[string]float64{in.Verb: 1}, Method: "coordinator"}},
+	}
+}
+
+// AnswerOutcome is the outcome the card's mark now says of the answer d, "" while the card
+// stands with nothing new: landed, dropped (off the table), or bounced (more reads found it
+// broken, or more finishes failed, than when it was answered).
+func AnswerOutcome(d Decision, now CardMark) (label, note string) {
+	broken, _ := strconv.Atoi(d.Inputs["broken_reads"])
+	failed, _ := strconv.Atoi(d.Inputs["failed"])
+	switch {
+	case now.Landed:
+		return LabelLanded, "the card landed"
+	case !now.Placed && now.Dropped:
+		return LabelDropped, "the card was dropped"
+	case now.Placed && now.Broken > broken:
+		return LabelBounced, fmt.Sprintf("a read found it broken again (%d reads broken, %d when answered)", now.Broken, broken)
+	case now.Placed && now.Failed > failed:
+		return LabelBounced, fmt.Sprintf("a finish failed again (%d failed, %d when answered)", now.Failed, failed)
+	}
+	return "", ""
 }

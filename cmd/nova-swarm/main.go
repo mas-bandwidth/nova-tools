@@ -26,6 +26,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -47,7 +48,7 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> (or the bare <file>) [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (a bare --card holds the card to nova-swarm's own card contract, the shape native
                         runs; --rules lists every check; --fleet lints a launcher script against the
                         coordinator's /bin/bash 3.2. --base-check adds the four checks of a coding card;
@@ -64,7 +65,7 @@ usage:
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
                         (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
                          Each tick beats, reads the queue, reports ended children and takes cards to the
                          fleet row's width; --width overrides it, and --pass names environment secrets to
@@ -137,7 +138,7 @@ var verbExamples = map[string]string{
 	"native":     "nova-swarm native --harness ./harness --model provider/model --card card.md --slot slots/1 --root jobs --deadline 30m --tokens unmetered",
 	"step":       "nova-swarm step --card card.md --dir repo",
 	"member":     "nova-swarm member --as m1 --server sprint.example:6390 --harness ./harness --root jobs --once",
-	"disk-guard": "nova-swarm disk-guard --root ~/nova-bench/run/member --scan ~/nova-bench/run --cache-max-gb 10",
+	"disk-guard": "nova-swarm disk-guard --root ~/nova-bench/run/member --scan ~/nova-bench/run --cache-max-gb 20",
 }
 
 // cardLines is what `template -h` lists: the lines a card needs, in the order
@@ -279,6 +280,9 @@ type flags struct {
 	verb     string
 	fs       *flag.FlagSet
 	problems []string
+	// positional names the one flag a bare argument fills (`lint <file>` is `lint
+	// --card <file>`); "" takes none, and every input is a flag.
+	positional string
 }
 
 func newFlags(verb string) *flags {
@@ -336,9 +340,32 @@ func (f *flags) parse(args []string, stderr io.Writer) bool {
 		refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
 		return false
 	}
-	if n := f.fs.NArg(); n > 0 {
-		refuse(stderr, " "+f.verb, fmt.Sprintf("takes no positional arguments, got %d: %q (every input is a flag)", n, f.fs.Args()))
+	if f.fs.NArg() > 0 && f.positional == "" {
+		refuse(stderr, " "+f.verb, fmt.Sprintf("takes no positional arguments, got %d: %q (every input is a flag)", f.fs.NArg(), f.fs.Args()))
 		return false
+	}
+	// the one bare argument fills its flag, and the flags after it are parsed
+	// as the flags before it were (package flag stops at the first bare word)
+	taken := ""
+	for f.fs.NArg() > 0 {
+		arg := f.fs.Arg(0)
+		if given := f.fs.Lookup(f.positional).Value.String(); given != "" {
+			if taken == "" {
+				refuse(stderr, " "+f.verb, fmt.Sprintf("--%s %q and the positional %q name two files; give one", f.positional, given, arg))
+			} else {
+				refuse(stderr, " "+f.verb, fmt.Sprintf("takes one positional argument, the --%s file, got %q and %q", f.positional, taken, arg))
+			}
+			return false
+		}
+		if err := f.fs.Set(f.positional, arg); err != nil {
+			refuse(stderr, " "+f.verb, fmt.Sprintf("--%s %q: %s", f.positional, arg, oneline.Err(err)))
+			return false
+		}
+		taken = arg
+		if err := verbflag.Parse(f.fs, f.fs.Args()[1:]); err != nil {
+			refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
+			return false
+		}
 	}
 	return true
 }
@@ -630,7 +657,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	harness := nf.harness
+	harnessBin := nf.harness
 	model := nf.model
 	cardPath := nf.cardPath
 	slot := nf.slot
@@ -683,7 +710,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	f.want(*harness, "harness", "the harness binary path, checked for existence and execution")
+	f.want(*harnessBin, "harness", "the harness binary path, checked for existence and execution")
 	if !workerGiven {
 		f.want(*model, "model", "the model to run: provider/model, one slash, both sides nonempty; --worker <file> names a description that pins the model instead")
 	}
@@ -741,7 +768,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if workerGiven {
 		workerForBudget = &w
 	}
-	if reason := swarm.NativeBudgetSourceRefusal(swarm.NativeUsageSource(workerForBudget), budgetTokens, budgetUnmetered, budgetUSD != nil, workerForBudget); reason != "" {
+	budgetSource := swarm.NativeUsageSource(workerForBudget)
+	if k := harness.KindOf(*harnessBin); harness.IsHeadless(k) {
+		budgetSource = k // a headless harness prints its own usage (docs/SPEC-SWARM.md, the headless harnesses)
+	}
+	if reason := swarm.NativeBudgetSourceRefusal(budgetSource, budgetTokens, budgetUnmetered, budgetUSD != nil, workerForBudget); reason != "" {
 		refuseNative(stderr, reason)
 		return 2
 	}
@@ -808,7 +839,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	cfg := nativeRunConfig{
 		frame:          frame,
-		binary:         *harness,
+		binary:         *harnessBin,
 		model:          effectiveModel,
 		label:          lbl,
 		card:           cardRaw,
@@ -914,7 +945,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// of 400,000, $0.03" and not only "budget".
 	if res.stopped != "" {
 		fmt.Fprintf(stdout, "NATIVE BUDGET label=%s budget: %s\n", oneline.Field(cfg.label),
-			oneline.Escape(nativeBudgetWords(res.stopped, cfg.tokens, res.spent, res.partial, cardcost.ParseSpend(res.spend).Actual, ratText(cfg.usd))))
+			oneline.Escape(nativeBudgetWords(res.stopped, cfg.tokens, res.spent, res.partial, cardcost.ParseSpend(res.spend).Actual, ratText(cfg.usd), res.stoppedWhy)))
 	}
 	// THE WALL REPORT: a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.

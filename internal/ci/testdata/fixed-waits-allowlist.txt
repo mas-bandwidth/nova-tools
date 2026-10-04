@@ -9,10 +9,8 @@
 # audit was a verb: a sleep in a helper process, a short bound beside a fake
 # clock, or a wall-clock measurement asserted on. The allowed shape is a poll up
 # to NOVA_TEST_WAIT (default 30s) or a fake clock.
-cmd/nova-bus/timing_test.go:122 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 cmd/nova-tokens/slow_test.go:38 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/update/helper_timing_functional_test.go:12 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
-internal/update/slow_test.go:135 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/update/escaped_pipe_returns_within_budget_unix_functional_test.go:21 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/update/helper_timing_functional_test.go:16 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 internal/update/helper_timing_functional_test.go:37 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
