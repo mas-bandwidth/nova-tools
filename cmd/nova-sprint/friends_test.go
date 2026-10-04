@@ -285,6 +285,24 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 // whatever she beats, and friend up releases the hold without counting as a
 // beat. The rows go up, then held, then down, each by name
 // (store.FleetOrder).
+func TestFriendAsleepBeatAppearsOnTheTableAndOrdinaryBeatWakes(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendApp(t, "amy")
+	ta.ok("friend sync")
+	ta.ok("friend beat --asleep amy")
+	assert.Equal(t, "asleep", ta.friendStatus()["amy"])
+	assert.Contains(t, ta.frame(), "asleep", "text and JSON share the friend status")
+	ta.ok("friend beat amy")
+	assert.Equal(t, "up", ta.friendStatus()["amy"])
+	ta.ok("friend down amy")
+	ta.ok("friend beat --asleep amy")
+	assert.Equal(t, "held", ta.friendStatus()["amy"])
+	ta.ok("friend up amy")
+	assert.Equal(t, "asleep", ta.friendStatus()["amy"])
+	ta.a.sleep(sprint.FriendDownAfter)
+	assert.Equal(t, "down", ta.friendStatus()["amy"])
+}
+
 func TestAFriendsStatusIsTheFriendsRuleOverItsBeatsAndItsHold(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendApp(t, "zed", "amy", "bob", "cat")

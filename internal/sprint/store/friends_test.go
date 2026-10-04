@@ -29,3 +29,25 @@ func TestFriendRowsReturnsNameWidthStatusOnly(t *testing.T) {
 		{Name: "bob", Width: 1, Status: sprint.Held},
 	}, rows)
 }
+
+func TestFriendBeatPersistsSleepAndOrdinaryBeatClearsIt(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 3}})
+	require.NoError(t, err)
+	b, err := h.st.FriendBeat(h.ctx, "amy", true)
+	require.NoError(t, err)
+	assert.True(t, b.Asleep)
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "asleep", rows[0].Status)
+	assert.Equal(t, 3, rows[0].Width)
+	b, err = h.st.FriendBeat(h.ctx, "amy", false)
+	require.NoError(t, err)
+	assert.False(t, b.Asleep)
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, sprint.Up, rows[0].Status)
+}
