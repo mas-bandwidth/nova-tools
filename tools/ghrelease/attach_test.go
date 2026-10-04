@@ -40,7 +40,7 @@ func attachWorld(t *testing.T, tagStatus, taggedSHA string) *harness {
 	}
 	h.runner.stream = func(c command, stdout, stderr io.Writer) int {
 		if c.name == "git" && len(c.args) > 0 && c.args[0] == "rev-parse" {
-			io.WriteString(stdout, taggedSHA+"\n")
+			_, _ = io.WriteString(stdout, taggedSHA+"\n") // ignored: a write to the rig's buffer cannot fail
 		}
 		return 0
 	}
@@ -128,7 +128,7 @@ func TestAttachPassesAFailedResolveOn(t *testing.T) {
 	t.Parallel()
 	h := attachWorld(t, "200", attachSHA)
 	h.runner.stream = func(c command, stdout, stderr io.Writer) int {
-		io.WriteString(stderr, "fatal: ambiguous argument\n")
+		_, _ = io.WriteString(stderr, "fatal: ambiguous argument\n") // ignored: a write to the rig's buffer cannot fail
 		return 128
 	}
 	h.wantRun(128, "fatal: ambiguous argument", "attach")
@@ -142,8 +142,8 @@ func TestAttachResolvesTheTagFromStdoutAlone(t *testing.T) {
 	t.Parallel()
 	h := attachWorld(t, "200", attachSHA)
 	h.runner.stream = func(c command, stdout, stderr io.Writer) int {
-		io.WriteString(stderr, "warning: refname 'v0.14.0' is ambiguous.\n")
-		io.WriteString(stdout, attachSHA+"\n")
+		_, _ = io.WriteString(stderr, "warning: refname 'v0.14.0' is ambiguous.\n") // ignored: a write to the rig's buffer cannot fail
+		_, _ = io.WriteString(stdout, attachSHA+"\n")                               // ignored: a write to the rig's buffer cannot fail
 		return 0
 	}
 	h.wantRun(0, "SHA256SUMS over 1 artifacts:", "attach")
