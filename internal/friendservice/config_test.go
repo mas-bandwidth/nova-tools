@@ -2,10 +2,12 @@ package friendservice
 
 import (
 	"encoding/xml"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -52,4 +54,16 @@ func TestConfigRefusesUnknownAndTrailingFields(t *testing.T) {
 		_, err := Parse([]byte(raw))
 		require.Error(t, err)
 	}
+}
+
+func TestQuotedDeliveryPathExecutesAsOnePath(t *testing.T) {
+	t.Parallel()
+	c := fixture(t)
+	require.NoError(t, os.WriteFile(c.Deliver, []byte("#!/bin/sh\nprintf delivered\n"), 0700))
+	args := c.ReceiveArgs()
+	cmd, cancel := subproc.CommandFor(t.Context(), time.Second, "/bin/sh", "-c", args[len(args)-1])
+	defer cancel()
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.Equal(t, "delivered", string(output))
 }
