@@ -10,3 +10,12 @@ nova-example quickstart --dir <dir>
 nova-example links --dir <dir>
 nova-example nocode --dir <dir>
 ```
+
+## nova-dev
+
+```
+nova-dev dogfood ledger --cli <file> --receipts <dir>
+nova-dev dogfood record --cli <file> --receipts <dir>
+nova-dev dogfood gate --cli <file> --receipts <dir>
+nova-dev hygiene --repo <dir>
+```

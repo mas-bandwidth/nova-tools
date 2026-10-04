@@ -119,6 +119,8 @@ func LinksFiles(dir string, files []string, exclude []string) (res LinksResult, 
 		mdPath := f
 		if !filepath.IsAbs(mdPath) {
 			mdPath = filepath.Join(dir, filepath.FromSlash(f))
+		} else if resolved, err := filepath.EvalSymlinks(mdPath); err == nil {
+			mdPath = resolved
 		}
 		if !strings.EqualFold(filepath.Ext(mdPath), ".md") {
 			return res, fmt.Errorf("file %q is not a markdown file", f)

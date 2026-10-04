@@ -116,21 +116,6 @@ func TestStatusGrammar(t *testing.T) {
 			return []string{"spelling", "--dir", dir}
 		}},
 		{"spelling refuses to guess where to read", "nova-check spelling", "REFUSED", 2, nil},
-		{"hygiene passes a clean branch", "HYGIENE", "OK", 0, func(t *testing.T) []string {
-			return []string{"hygiene", "--repo", hygLab(t), "--base", "main", "--head", "HEAD",
-				"--identity", "Rowan <rowan@example.com>"}
-		}},
-		{"hygiene fails on a change outside the declared paths", "HYGIENE", "FAILED", 1, func(t *testing.T) []string {
-			lab := hygLab(t)
-			hygWrite(t, lab, "elsewhere/x.go", "package elsewhere\n")
-			hygGit(t, lab, "add", "-A")
-			hygGit(t, lab, "commit", "-q", "-m", "out of path")
-			return []string{"hygiene", "--repo", lab, "--base", "main", "--head", "HEAD",
-				"--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}
-		}},
-		{"hygiene refuses a range checked against nobody", "nova-check hygiene", "REFUSED", 2, func(t *testing.T) []string {
-			return []string{"hygiene", "--repo", hygLab(t), "--base", "main", "--head", "HEAD"}
-		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

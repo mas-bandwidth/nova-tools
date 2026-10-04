@@ -347,7 +347,7 @@ func TestDogfoodRefusesAnUnknownSubVerb(t *testing.T) {
 
 	code, _, stderr := dogfoodRun(t, "dogfood", "ledgre")
 	require.EqualValues(t, 2, code, "exit %d, want 2", code)
-	require.Contains(t, stderr, "run: nova-check help", "a typo was answered without the door:\n%s", stderr)
+	require.Contains(t, stderr, "run: nova-dev help", "a typo was answered without the door:\n%s", stderr)
 	code, _, stderr = dogfoodRun(t, "dogfood")
 	require.EqualValues(t, 2, code, "exit %d, want 2", code)
 	require.Contains(t, stderr, "ledger", "the refusal does not name the sub-verbs:\n%s", stderr)
@@ -370,7 +370,7 @@ func TestDogfoodRecordUsageNamesTheVerbList(t *testing.T) {
 	require.EqualValues(t, 0, code, "exit %d", code)
 	line := ""
 	for _, l := range strings.Split(stdout, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(l), "nova-check dogfood record ") {
+		if strings.HasPrefix(strings.TrimSpace(l), "nova-dev dogfood record ") {
 			line = l
 			break
 		}
