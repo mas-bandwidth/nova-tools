@@ -447,3 +447,72 @@ func TestParseReadCardWithGenerationSuffix(t *testing.T) {
 	_, _, _, ok = ParseReadCard("s1-1.r0.reader-a")
 	assert.False(t, ok)
 }
+
+// TestAskInsteadCanTakeBackLiveG1Read pins that insteadHeld checks ReadCardIDs
+// and recognizes a live .g1 read as live (""), allowing ask --instead to take
+// back the .g1 read and ask another reader instead.
+func TestAskInsteadCanTakeBackLiveG1Read(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 1)
+	w.s.Readers.SetRows([]string{"reader-a", "reader-b", "reader-c"})
+	w.s.ReaderStates = map[string]string{
+		"reader-a": ReaderUp,
+		"reader-b": ReaderUp,
+		"reader-c": ReaderUp,
+	}
+	toReview(w, "s1-1") // pro card needing 2 readers
+
+	// reader-a has plain read retired by away, and live .g1 read in Asked
+	w.s.Readers.Put(&Card{
+		ID:     ReadCardID("s1-1", 1, "reader-a"),
+		Rev:    1,
+		Row:    "reader-a",
+		Col:    "",
+		Fields: map[string]string{"kind": "read", "primary": "s1-1", "attempt": "1", "reader": "reader-a", "stream": "s1", "retired": stamp(w.s.Now), "retired_by": "away"},
+	})
+	w.s.Readers.Put(&Card{
+		ID:     ReadCardSecondID("s1-1", 1, "reader-a"),
+		Rev:    1,
+		Row:    "reader-a",
+		Col:    Asked,
+		Fields: map[string]string{"kind": "read", "primary": "s1-1", "attempt": "1", "reader": "reader-a", "stream": "s1", "head": "h1", "asked": stamp(w.s.Now)},
+	})
+
+	// reader-b has plain read in Asked
+	w.s.Readers.Put(&Card{
+		ID:     ReadCardID("s1-1", 1, "reader-b"),
+		Rev:    1,
+		Row:    "reader-b",
+		Col:    Asked,
+		Fields: map[string]string{"kind": "read", "primary": "s1-1", "attempt": "1", "reader": "reader-b", "stream": "s1", "head": "h1", "asked": stamp(w.s.Now)},
+	})
+
+	// ask --instead reader-a takes back the live .g1 read from reader-a and asks reader-c instead
+	plan := Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Instead: "reader-a"})
+	assert.Empty(t, plan.Refused, "ask --instead must not be refused when reader-a holds a live .g1 read")
+	require.Len(t, plan.Units, 1)
+	u := plan.Units[0]
+
+	// Verify reader-a's .g1 read was retired by coordinator
+	var retiredReaderA bool
+	var askedReaderC bool
+	for _, ch := range u.Changes {
+		if ch.Table == Readers {
+			if ch.Entry.ID == ReadCardSecondID("s1-1", 1, "reader-a") && ch.Entry.Remove {
+				retiredReaderA = true
+				assert.Equal(t, RetiredByCoordinator, ch.Entry.Set["retired_by"])
+			}
+			if ch.Entry.Create != nil && ch.Entry.Create.Row == "reader-c" {
+				askedReaderC = true
+				assert.Equal(t, Asked, ch.Entry.Create.Col)
+			}
+		}
+	}
+	assert.True(t, retiredReaderA, "reader-a's .g1 read must be retired")
+	assert.True(t, askedReaderC, "reader-c must be asked instead")
+	w.must(plan)
+
+	// Verify placed state
+	assert.Nil(t, w.s.Readers.Placed(ReadCardSecondID("s1-1", 1, "reader-a")))
+	assert.NotNil(t, w.s.Readers.Placed(ReadCardID("s1-1", 1, "reader-c")))
+}
