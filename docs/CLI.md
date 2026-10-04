@@ -464,7 +464,8 @@ answers `acked=false` for an id that is not pending, at exit 0. What a first run
 gets wrong: a name that is not a nova-config friend or machine row (`send` and
 `recv` refuse it with the `nova-config friend add` line that adds one);
 `--forever` without `--exec` (a loop that acks nothing would hand out the same
-message for ever); no store named (`--redis` is required, or `NOVA_BUS_REDIS`).
+message for ever); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a store
+off loopback and the tailnet (100.64.0.0/10), refused before any dial in one line naming the rule.
 
 ### The harness loop
 

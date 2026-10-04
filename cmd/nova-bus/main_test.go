@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,13 @@ func (r *rig) world() world {
 			ctx, cancel := context.WithCancel(ctx)
 			r.cancel = cancel
 			return ctx, cancel
+		},
+		lookup: func(_ context.Context, host string) ([]netip.Addr, error) {
+			return map[string][]netip.Addr{ // built from octets: nothing is dialled, and the ci net rule reads a spelled host
+				"store.test": {netip.AddrFrom4([4]byte{100, 76, 0, 9})},  // the tailnet
+				"far.test":   {netip.AddrFrom4([4]byte{203, 0, 113, 9})}, // the internet
+				"lan.test":   {netip.AddrFrom4([4]byte{10, 0, 0, 5})},    // a private network that is not the tailnet
+			}[host], nil
 		},
 	}
 }
@@ -225,7 +233,7 @@ func TestTheRedisDefaultIsTheBusVariableAlone(t *testing.T) {
 	r := newRig("ada", "bob")
 	r.env = map[string]string{"NOVA_SPRINT_REDIS": "b:1", "NOVA_REDIS_ADDR": "c:1"}
 	r.cli().Do(t, "names").Exit(2).Err("--redis is required", RedisEnv)
-	r.env = map[string]string{RedisEnv: "a:1"}
+	r.env = map[string]string{RedisEnv: "127.0.0.1:1"}
 	r.cli().Do(t, "names").Exit(0).Out("NAMES OK count=2")
 }
 
@@ -312,4 +320,21 @@ func TestAnEmptyRecvIsNoneAtExitOne(t *testing.T) {
 	cli := newRig("ada", "bob").cli()
 	cli.Do(t, "recv", "--as", "bob").Exit(1).Err("RECV NONE: nothing for bob").NotErr("REFUSED", "FAILED")
 	cli.Do(t, "recv", "--as", "bob", "--json").Exit(1).Out(`"exit":1`, `"word":"NONE"`).NotOut(`"refused"`)
+}
+
+// The decision of 2026-10-04: the tailnet is the boundary, no ACLs. A store off
+// loopback and 100.64.0.0/10 is refused before any dial, by --redis or by
+// NOVA_BUS_REDIS alike, in one line that names the rule.
+func TestAStoreOffLoopbackAndTheTailnetIsRefusedBeforeTheDial(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+	const rule = "nova-bus reaches a store over loopback or the tailnet (100.64.0.0/10) only: "
+	cli.Do(t, "names", "--redis", "far.test:6381").Exit(2).Err("NAMES REFUSED: " + rule + "far.test:6381 is 203.0.113.9")
+	cli.Do(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x", "--redis", "elsewhere.test:6381").Exit(2).Err("SEND REFUSED: " + rule + "elsewhere.test:6381 does not resolve")
+	r.env[RedisEnv] = "lan.test:6381"
+	cli.Do(t, "peek", "--as", "bob").Exit(2).Err("PEEK REFUSED: " + rule + "lan.test:6381 is 10.0.0.5")
+	assert.Equal(t, 0, r.opened, "nothing was dialled")
+	cli.Do(t, "names", "--redis", "127.0.0.1:6381").Exit(0).Out("NAMES OK count=2")
+	cli.Do(t, "names", "--redis", "store.test:6381").Exit(0).Out("NAMES OK count=2")
 }

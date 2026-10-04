@@ -8,6 +8,8 @@ tending/
 # The smoke job builds the binary into the workspace root, so anyone
 # reproducing those steps locally leaves an untracked executable behind — and
 # it would become a nocode finding the day this repo gates itself.
+/nova-bus
+/nova-bus.exe
 /nova-check
 /nova-check.exe
 /nova-play

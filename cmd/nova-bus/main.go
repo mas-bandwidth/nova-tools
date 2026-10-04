@@ -15,6 +15,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -54,10 +56,14 @@ type world struct {
 	open    func(ctx context.Context, addr string) (st bus.Store, login string, closeStore func(), err error)
 	run     func(ctx context.Context, command, stdin string, stdout, stderr io.Writer) (exit int, err error)
 	signals func(ctx context.Context) (context.Context, context.CancelFunc)
+	lookup  bus.Lookup // a store named by a host name is judged by every address it resolves to
 }
 
 func realWorld() world {
 	w := world{getenv: os.Getenv, run: runShell,
+		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
+			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+		},
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) {
 			return signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		}}
@@ -120,7 +126,7 @@ func busTool(w world) *tool.Tool {
 recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
 ack --as <me> --id <id> acks by hand after a plain recv; names: nova-config friend and machine rows.
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
-first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); user NOVA_SPRINT_REDIS_USER.`,
+first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
 		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"NONE"},
 		Verbs: []tool.Verb{
@@ -237,8 +243,9 @@ at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<t
 }
 
 // bus opens the store named by --redis for a verb, or says why not: an
-// empty address is a usage refusal, a store that did not answer is one too
-// (exit 2, the banner's table), in redisconn's one line.
+// empty address is a usage refusal, an address off loopback and the tailnet
+// is one (bus.CheckAddr, before any dial), and a store that did not answer
+// is one too (exit 2, the banner's table), in redisconn's one line.
 func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
 	addr := c.Want("redis", "the Redis address, host:port (or "+RedisEnv+")")
 	if o := c.Refused(); o != nil {
@@ -246,6 +253,9 @@ func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
 	defer cancel()
+	if why := bus.CheckAddr(ctx, addr, w.lookup); why != "" {
+		return nil, "", nil, tool.Refuse(why)
+	}
 	st, login, closeStore, err := w.open(ctx, addr)
 	if err != nil {
 		return nil, "", nil, tool.Refuse(err.Error())

@@ -147,7 +147,12 @@ what the bus needs today.
 
 ## The config
 
-The store is `--redis <host:port>`, else `NOVA_BUS_REDIS`. The login follows
+The store is `--redis <host:port>`, else `NOVA_BUS_REDIS`. It is on loopback or
+the tailnet (100.64.0.0/10) and nowhere else: the tailnet is the boundary and
+there is no ACL behind it (decided 2026-10-04), so an address outside both, by
+literal or by any address its name resolves to, is refused before a dial in one
+line naming the rule (`internal/bus`, `CheckAddr`); a name that does not
+resolve is refused the same way. A Unix socket path is this machine's. The login follows
 the fleet convention exactly (internal/redisconn): `NOVA_SPRINT_REDIS_USER`
 names the user and `NOVA_SPRINT_REDIS_PASSWORD_ENV` the variable that holds its
 password (`NOVA_REDIS_BENCH_PASSWORD` when it names none); never a password on
