@@ -44,3 +44,4 @@ internal/pulse/manager.go internal/pulse deleted 2026-09-25 (#3969); cited as hi
 internal/pulse/statushtmlrows.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 cmd/nova-swarm/testdata/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 internal/secrets/storepull.go deleted with the dead storepull.go (dead-pkg-secrets-t2b); the 1.1.0 ratings doc cites it as history
+cmd/nova-ci/timing.go moved to tools/citiming/main.go; the 1.1.0 ratings cite it as history
