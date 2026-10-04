@@ -681,6 +681,7 @@ func (a *app) runStep(verbName string, c common, st *store.Store, step store.Ste
 		step.Epoch = &e
 	}
 	res, err := st.Run(ctx, step)
+	c.says = append(c.says, res.Said...) // what the step said beside its moves (sprint.Plan.Said)
 	if c.packets != nil && err == nil {
 		c.handed = c.packets(ctx, st, res)
 	}

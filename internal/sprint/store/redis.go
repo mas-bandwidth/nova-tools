@@ -409,6 +409,7 @@ const (
 	keyLog      = "log"      // STREAM of the log's lines, field "line"
 	keyNotes    = "notes"    // HASH note id -> judgment note
 	keyAliases  = "aliases"  // HASH alias (j<n>) -> note id, and its field "n", the count (sprint.Alias)
+	keyAnswered = "answered" // HASH judgment id -> who answered it (the step's actor), written as it closes
 	keyOpen     = "open"     // HASH <note id>|<subject> -> note id, one per open subject
 	keyCursor   = "cursor"   // STRING, the coordinator's last read stream id
 	keyProgress = "progress" // HASH stream -> RFC3339 time of its last progress
@@ -665,6 +666,9 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 	}
 	if len(op.Closes) > 0 {
 		p.HDel(ctx, r.key(keyOpen), op.Closes...)
+		for id, who := range answeredBy(op) {
+			p.HSet(ctx, r.key(keyAnswered), id, who)
+		}
 	}
 	if op.Stuck != "" {
 		p.Del(ctx, r.Names.Key(keyStuck))
@@ -763,18 +767,28 @@ func (r *Redis) Progress(ctx context.Context) (map[string]time.Time, error) {
 	return out, nil
 }
 
+func (r *Redis) Answered(ctx context.Context, ids []string) (map[string]string, error) {
+	return r.hmget(ctx, keyAnswered, ids)
+}
+
 func (r *Redis) Aliases(ctx context.Context, aliases []string) (map[string]string, error) {
-	out := make(map[string]string, len(aliases))
-	if len(aliases) == 0 {
+	return r.hmget(ctx, keyAliases, aliases)
+}
+
+// hmget is the fields of one of the log's hashes that are set, by name: one read,
+// none for no names.
+func (r *Redis) hmget(ctx context.Context, key string, fields []string) (map[string]string, error) {
+	out := make(map[string]string, len(fields))
+	if len(fields) == 0 {
 		return out, nil
 	}
-	vals, err := r.C.HMGet(ctx, r.key(keyAliases), aliases...).Result()
+	vals, err := r.C.HMGet(ctx, r.key(key), fields...).Result()
 	if err != nil {
 		return nil, err
 	}
 	for i, v := range vals {
 		if s, ok := v.(string); ok {
-			out[aliases[i]] = s
+			out[fields[i]] = s
 		}
 	}
 	return out, nil

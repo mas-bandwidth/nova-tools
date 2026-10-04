@@ -75,6 +75,7 @@ type memLog struct {
 	lines    []memLine // the log
 	notes    map[string]sprint.Note
 	aliases  map[string]string // alias (j<n>) -> note id (sprint.Alias)
+	answered map[string]string // judgment id -> who answered it, as it closed
 	open     map[string]string
 	cursor   string
 	queue    []sprint.QueuedChange // the work table's queue, oldest first
@@ -1003,6 +1004,10 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 		for _, k := range op.Closes {
 			delete(l.open, k)
 		}
+		if l.answered == nil {
+			l.answered = map[string]string{}
+		}
+		maps.Copy(l.answered, answeredBy(op))
 		m.wakeLog()
 		if op.Stuck != "" {
 			delete(m.kv, keyStuck)
@@ -1090,6 +1095,19 @@ func (m *Mem) Pending() *OpRecord {
 	defer m.mu.Unlock()
 	l := m.log()
 	return l.fence
+}
+
+func (m *Mem) Answered(_ context.Context, ids []string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.count("answered")
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if who, ok := m.log().answered[id]; ok {
+			out[id] = who
+		}
+	}
+	return out, nil
 }
 
 func (m *Mem) Aliases(_ context.Context, aliases []string) (map[string]string, error) {

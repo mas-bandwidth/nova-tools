@@ -10,6 +10,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -114,6 +115,10 @@ type Backend interface {
 	// names none): the epoch's judgments and acknowledgements, open or answered,
 	// as the commit numbered them.
 	Aliases(ctx context.Context, aliases []string) (map[string]string, error)
+	// Answered is who answered each of the judgment ids that is answered (its
+	// step's actor: the machine, or the coordinator; absent for one never a
+	// judgment or still open), as the commit that closed it recorded.
+	Answered(ctx context.Context, ids []string) (map[string]string, error)
 	// NotesSince is the notifications after the stream id (all when empty),
 	// at most max, oldest first, with each one's stream id.
 	NotesSince(ctx context.Context, after string, max int) ([]sprint.Note, []string, error)
@@ -211,6 +216,24 @@ func (o OpRecord) Tables() []string {
 	out := make([]string, len(o.Manifests))
 	for i, m := range o.Manifests {
 		out[i] = m.Table
+	}
+	return out
+}
+
+// answeredBy is who answered each judgment the operation closes, by judgment
+// id: the actor of its decided note (the machine's for a tick's close), kept
+// so a later --answers of the id is a note, not a refusal (sprint.Snapshot.Answered).
+func answeredBy(op OpRecord) map[string]string {
+	closing := map[string]bool{}
+	for _, k := range op.Closes {
+		id, _, _ := strings.Cut(k, "|")
+		closing[id] = true
+	}
+	out := map[string]string{}
+	for _, d := range op.Decided {
+		if d.Kind == sprint.Decided && closing[d.Answers] {
+			out[d.Answers] = d.Who
+		}
 	}
 	return out
 }

@@ -16,7 +16,7 @@ import (
 // item 10). The store is read once, and only when a word is an alias.
 
 // answersWords is the --answers flag's help, every judgment verb's.
-const answersWords = "the judgment notifications this answers, comma separated, each an id as inbox prints it or its alias (j<n>); coordinator-only; one invalid answer refuses the whole step, writing nothing"
+const answersWords = "the judgment notifications this answers, comma separated, each an id as inbox prints it or its alias (j<n>); coordinator-only; one invalid answer refuses the whole step, writing nothing, except an id the machine answered already since the inbox was read, which is a NOTE"
 
 // unalias is ids with each alias read back to the judgment id it names; an
 // alias naming no judgment of the epoch is an error naming it.

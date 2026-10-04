@@ -76,7 +76,7 @@ func FinishStep(r sprint.FinishReq) Step {
 
 // AskStep deals primaries in review to readers.
 func AskStep(r sprint.AskReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet), Readers: true, Routes: true,
+	return Step{Answers: r.Answers, Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet), Readers: true, Routes: true,
 		// Every read card id each reader could get at the primaries' attempts,
 		// placed or retired: a reader who already has one is not free.
 		Extras: func(s *sprint.Snapshot) map[string][]string {
@@ -101,25 +101,25 @@ func ReadStep(r sprint.ReadReq) Step {
 
 // AcceptStep is the coordinator accepting.
 func AcceptStep(r sprint.AcceptReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "accept", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
+	return Step{Answers: r.Answers, Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "accept", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Accept(s, r) }}
 }
 
 // ReworkStep is the coordinator sending work back with a fix.
 func ReworkStep(r sprint.ReworkReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "rework", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true,
+	return Step{Answers: r.Answers, Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "rework", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Rework(s, r) }}
 }
 
 // ReturnStep is the coordinator sending merging primaries back to review.
 func ReturnStep(r sprint.ReturnReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "return", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
+	return Step{Answers: r.Answers, Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "return", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Return(s, r) }}
 }
 
 // DropStep is the coordinator taking primaries off the table.
 func DropStep(r sprint.DropReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "drop", Load: All, Mirrors: true,
+	return Step{Answers: r.Answers, Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "drop", Load: All, Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Drop(s, r) }}
 }
 
@@ -147,7 +147,7 @@ func MoveStep(r sprint.MoveReq) Step {
 
 // RankStep is the coordinator changing scores.
 func RankStep(r sprint.RankReq) Step {
-	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "rank", Load: All,
+	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "rank", Load: All,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Rank(s, r) }}
 }
 
@@ -181,7 +181,7 @@ func FundedStep(r sprint.FundedReq) Step {
 
 // ResumeStep moves a stopped stream again.
 func ResumeStep(r sprint.ResumeReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "resume", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,
+	return Step{Answers: r.Answers, Args: ArgsOf(r), Verb: "resume", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Resume(s, r) }}
 }
 
@@ -208,7 +208,7 @@ func ScoreStep(r sprint.ScoreReq) Step {
 
 // ReleaseStep is the coordinator releasing reached sentinels.
 func ReleaseStep(r sprint.ReleaseReq) Step {
-	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "release", Load: tables(sprint.Work, sprint.Merge), Mirrors: true,
+	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "release", Load: tables(sprint.Work, sprint.Merge), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Release(s, r) }}
 }
 
