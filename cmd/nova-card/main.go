@@ -60,9 +60,11 @@ Cards of one ordinary ledger alternate waves (odd rows wave 1, even rows wave 2 
 their neighbours) because adjacent deletions conflict at land; a generated ledger
 (docs/SPEC-SPRINT.md section 7) gets one wave and no dependency. Wave 1 cards of one ledger
 share its path, so the add wants --allow-shared-paths; the CARDS line says so.
-lint holds a brief to what the add holds it to (the model lines, the child rules, the typed
-header, a tree card's steps) and to the template's unfilled <...> lines, one LINT DRIFT line
-each. template prints nova-swarm's card template, the shape every generated brief has.
+lint holds a brief to the lint nova-sprint add runs (the model lines, the child rules under the
+default rule set, a tree card's steps), and past the add to the typed header and the template's
+unfilled <...> lines, which the add does not read, one LINT DRIFT line each; generate holds every
+brief the same before it writes. A sprint initialised with --rules holds a brief to that file at
+the add. template prints nova-swarm's card template, the shape every generated brief has.
 
 what it prints:
   CARDS OK dir=<dir> cards=<n> waves=<k> tier=<t> [shared-paths=yes]   then manifest.tsv in <dir> (--dry-run: the manifest on stdout, dry-run=yes)

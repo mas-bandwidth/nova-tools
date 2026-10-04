@@ -2737,8 +2737,10 @@ path and neither needs the other, so the add wants `--allow-shared-paths`; the
 ### What it refuses
 
 Every brief is held to the lint `nova-sprint add` runs (the model lines, the
-child rules, the typed header, a tree card's steps) and to the template's
-unfilled `<...>` lines before anything is written; one red brief prints its
+child rules under the default rule set, a tree card's steps), and past the add
+to the typed header and the template's unfilled `<...>` lines, which the add
+does not read, before anything is written (a sprint initialised with `--rules`
+holds a brief to that file at the add); one red brief prints its
 `LINT DRIFT card=<id> check=<check> line=<n>: <excerpt>` line and nothing is
 written, exit 1. A PATHS entry that names nothing in `--repo-dir` is the same
 refusal. An `--out` that already holds a brief is refused, exit 2. `--dry-run`

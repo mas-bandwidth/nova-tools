@@ -434,10 +434,13 @@ with no clock and no store). What it holds:
   depending on their wave 1 neighbours), because adjacent deletions of one file
   conflict at land; a generated ledger (SPEC-SPRINT.md section 7) gets one wave
   and no dependency.
-- Every brief is held to the lint `nova-sprint add` runs and to the template's
-  placeholders before the directory is written; one red brief and nothing is
-  written. The output is the directory, its `manifest.tsv` (id, file, test,
-  wave, deps) and one `CARDS OK dir= cards= waves= tier=` line.
+- Every brief is held to the lint `nova-sprint add` runs (the model lines, the
+  child rules under the default rule set, a tree card's steps), and past the add
+  to the typed header and the template's placeholders, which the add does not
+  read, before the directory is written; one red brief and nothing is written.
+  A sprint initialised with `--rules` holds a brief to that file at the add.
+  The output is the directory, its `manifest.tsv` (id, file, test, wave, deps)
+  and one `CARDS OK dir= cards= waves= tier=` line.
 
 `nova-swarm lint --card` is the fuller contract lint and is run over a
 generated directory by the coordinator before the add; its `no-sandbox` check
