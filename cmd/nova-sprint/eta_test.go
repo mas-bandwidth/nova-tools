@@ -37,7 +37,7 @@ func TestTheSprintLineEstimatesItsETAFromTheCardsLeftAndTheLandingRate(t *testin
 		if in > 0 {
 			rate = float64(landed) / in.Hours()
 		}
-		return summary(w, 0, etaMinutes(w, rate))
+		return summary(w, 0, 0, etaMinutes(w, rate))
 	}
 	// 250 of 1000 landed in 5 minutes is 3,000 an hour: the 750 left take 15 minutes
 	assert.Equal(t, "250/1000 25.0% -> ETA 15m", line(750, 250, 5*time.Minute))
@@ -54,7 +54,7 @@ func TestTheETAReadsDashUntilFiveCardsHaveLanded(t *testing.T) {
 	t.Parallel()
 	line := func(ready, landed int64) string {
 		w := etaWork(ready, landed)
-		return summary(w, 0, etaMinutes(w, float64(landed)*60))
+		return summary(w, 0, 0, etaMinutes(w, float64(landed)*60))
 	}
 	assert.Equal(t, "4/10 40.0% -> ETA -", line(6, 4))
 	assert.Equal(t, "5/10 50.0% -> ETA 1m", line(5, 5))
@@ -119,12 +119,12 @@ func TestTheETAIsToEveryCardLandedHeldCardsIncluded(t *testing.T) {
 			}
 			rate := sprint.LandingRate(c.landed, 347, c.spans, start, now)
 			assert.InDelta(t, c.rate, rate, 1e-9)
-			assert.Equal(t, c.summary, summary(w, held, etaMinutes(w, rate)))
+			assert.Equal(t, c.summary, summary(w, held, 0, etaMinutes(w, rate)))
 		})
 	}
 	// at the 2 an hour the dashboard's tile showed, every card is 1,249.5 hours away
 	assert.Equal(t, int64(74970), etaMinutes(w, 2))
-	assert.Equal(t, "347/2846 12.2% held=2443 -> ETA 52d2h", summary(w, held, etaMinutes(w, 2)))
+	assert.Equal(t, "347/2846 12.2% held=2443 -> ETA 52d2h", summary(w, held, 0, etaMinutes(w, 2)))
 }
 
 // where shows the held cards of the table on its header line and in --json, and the

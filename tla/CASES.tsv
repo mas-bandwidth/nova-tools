@@ -304,6 +304,12 @@ MCLandReachStalePush.cfg	MCLand.tla	invariant	ReachStalePush	ignore-terminal	lan
 MCLandBrokenNoEpoch.cfg	MCLand.tla	invariant	ReportHoldsTheEpoch	ignore-terminal	land	required	-
 MCSprintEventsC30.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-controls-b	required	-
 MCSprintEventsW30.cfg	MCSprintEvents.tla	action	NextNotReached	ignore-terminal	sprintevents-witnesses-b	required	-
+MCSprintEventsAuto.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-auto	required	-
+MCSprintEventsAutoDropped.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-auto	required	-
+MCSprintEventsC32.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-auto	required	-
+MCSprintEventsW32.cfg	MCSprintEvents.tla	invariant	PositionHolds	ignore-terminal	sprintevents-auto	required	-
+MCSprintEventsAutoReach.cfg	MCSprintEvents.tla	invariant	ProbeAutoLands	ignore-terminal	sprintevents-auto	required	-
+MCSprintEventsAutoDroppedReach.cfg	MCSprintEvents.tla	invariant	ProbeAutoLandsPastADrop	ignore-terminal	sprintevents-auto	required	-
 MCLevel.cfg	MCLevel.tla	pass	-	ignore-terminal	level	required	-
 MCLevelFour.cfg	MCLevel.tla	pass	-	ignore-terminal	level	required	-
 MCLevelOldRuleNoRequeue.cfg	MCLevel.tla	pass	-	ignore-terminal	level	required	-

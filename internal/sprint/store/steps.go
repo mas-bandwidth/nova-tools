@@ -42,9 +42,10 @@ func AddEachStep(rs []sprint.AddReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.AddEach(s, rs) }}
 }
 
-// ResolveStep moves waiting primaries whose needs landed.
+// ResolveStep moves waiting primaries whose needs landed, and lands the auto
+// sentinels whose needs landed: it reads the merge table for their streams.
 func ResolveStep(r sprint.ResolveReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "resolve", Load: tables(sprint.Work),
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "resolve", Load: tables(sprint.Work, sprint.Merge),
 		Extras: func(s *sprint.Snapshot) map[string][]string {
 			return map[string][]string{sprint.Work: sprint.ResolveExtras(s)}
 		},
@@ -215,6 +216,17 @@ func ReleaseStep(r sprint.ReleaseReq) Step {
 			return map[string][]string{sprint.Work: sprint.ResolveExtras(s)}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Release(s, r) }}
+}
+
+// SentinelSetStep is the coordinator making sentinels auto (sentinel set
+// --auto); one whose needs have landed lands in the step, so it reads what
+// release reads.
+func SentinelSetStep(r sprint.SentinelSetReq) Step {
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "sentinel set", Load: tables(sprint.Work, sprint.Merge), Mirrors: true,
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Work: sprint.ResolveExtras(s)}
+		},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.SentinelSet(s, r) }}
 }
 
 // SentinelsDueStep marks reached every sentinel whose needs have all landed.

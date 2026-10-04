@@ -131,7 +131,7 @@ func TestOnlyTheCoordinatorReleases(t *testing.T) {
 			p.Units = []Unit{{Key: "stop", Stream: "s1", Changes: []Change{change(Work, moveEntry(stop, "s1", Landed, nil))}}}
 			p = Lawful(p)
 			require.Len(t, p.Refused, 1, "a raw landing: %+v", p)
-			require.Equal(t, "the lifecycle lands from waiting only a sentinel, and only by release", p.Refused[0].Why, "a raw landing: %+v", p)
+			require.Equal(t, "the lifecycle lands from waiting only a sentinel, and only by release or, an auto sentinel, when its needs land", p.Refused[0].Why, "a raw landing: %+v", p)
 		}
 		require.False(t, landsSentinel(w.s, p), "%s lands a sentinel: %+v", name, p)
 	}

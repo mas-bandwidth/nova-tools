@@ -70,6 +70,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"add":           "add --stream s1 --count 1",
 		"quack":         "quack --streams q --count 1 --repo https://example.com/quack.git",
 		"release":       "release s1-stop --reason r",
+		"sentinel set":  "sentinel set s1-stop --auto",
 		"resolve":       "resolve",
 		"start":         "start",
 		"stop":          "stop",

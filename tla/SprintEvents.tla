@@ -98,7 +98,8 @@
 \*
 \* Broken names a reversed witness (section 5's table, W1 to W27, W28 of
 \* errata 3's amendment 4, the deal's order, and W29 of amendment 5, the deal's
-\* member choice by the rolling index; W5Reach
+\* member choice by the rolling index, W30 the next sentinel, W31 the dealt bound,
+\* and W32 the auto sentinel's apply guard; W5Reach
 \* is W5's reach half, breaking reach and unreach and not the verb; W7 is
 \* split into W7a and W7b) that changes exactly one rule; "none" is the
 \* design.
@@ -202,7 +203,8 @@ VARIABLES
   probe,        \* ghost: armed by an apply that removed its key or changed nothing, for RunTwice
   seenKeys,     \* ghost: every key of a line at or before the cursor (kept only with TrackSeen)
   ahead,        \* ghost: prim -> the unlanded sentinels ahead of it at its first deal
-  early,        \* ghost: a sentinel landed while an open card of its stream sorted before it
+  early,        \* ghost: a sentinel landed while an open card of its stream sorted before it,
+                \* or an auto sentinel landed (autorel) with a named need open
   waivedRec,    \* ghost: a missing need was waived while it had a record
   applied,      \* ghost: part identity -> times applied
   raises        \* ghost: STOPPED judgments raised in this STOPPED span (since the last
@@ -345,6 +347,16 @@ HasBefore(g) == NeedsOf[g] # {} \/ \E c \in Cards : c # g /\ S(c) = S(g) /\ col[
 \* before it, or when nothing else moves; with nothing before it while work is in
 \* flight it is simply next (W30: the old rule, reached whenever its waits are met).
 Reachable(g) == HasBefore(g) \/ ~WorkInFlight \/ Broken = "W30"
+\* The auto sentinels (docs/SPEC-SPRINT.md section 16; sprint.IsAuto; the owner,
+\* 2026-10-04): held only until their needs land. Never reached and never a
+\* judgment, R3 lands one (the unit autorel, as the release verb lands one) when it
+\* is sigma with every card before it landed and its named needs met (open = 0),
+\* whatever else is in flight; a dropped need keeps open above 0 and raises
+\* "dropped", never a landing, until ack waives it. The scenario names them
+\* (Scn.auto, {} in every scenario but the auto ones). W32: autorel's apply guards
+\* the sentinel's own record only, not the waits (a card inserted before it between
+\* the plan and the apply), and PositionHolds fails.
+Autos == Scn.auto
 \* What deal may place: fresh below sigma and again, over the streams not dropping.
 Dealable == UNION {FreshBelow(s) \cup Again(s) : s \in {s2 \in Streams : dropping[s2] = None}}
 \* H12's judgment condition: work dealable, members up, and either none is
@@ -490,10 +502,10 @@ Commit(T0, verb) ==
 
 \* The units that change a table member (the others are notes and sprint
 \* keys, which apply while STOPPED too), and the units whose subject is a card.
-CardOps == {"release", "deal", "redealw", "refuse", "seen", "setdown", "redeal2", "withdraw2",
+CardOps == {"release", "autorel", "deal", "redealw", "refuse", "seen", "setdown", "redeal2", "withdraw2",
             "replace", "replaceF", "needmet", "ask", "accept", "rework", "boundj", "reread", "pullback"}
 MemberOps == {"seen", "setdown"}
-OnCard == {"release", "reach", "unreach", "deal", "redealw", "refuse", "redeal2", "withdraw2", "replace",
+OnCard == {"release", "reach", "unreach", "autorel", "deal", "redealw", "refuse", "redeal2", "withdraw2", "replace",
            "replaceF", "latej", "ask", "cannotask", "accept", "rework", "boundj", "reread", "lateread", "pullback"}
 U(op, c, m, x) == [op |-> op, c |-> c, m |-> m, x |-> x,
                    rec |-> IF op \in OnCard THEN Rec(c) ELSE IF op \in MemberOps THEN status[c] ELSE None,
@@ -512,6 +524,7 @@ UGuard(u) ==
   CASE u.op = "release"   -> col[u.c] = "waiting"                           \* place only
     [] u.op = "reach"     -> Rec(u.c) = u.rec /\ (ReachBroken \/ NBefore(S(u.c), u.rec[2]) = 0)
     [] u.op = "unreach"   -> ReachBroken \/ NBefore(S(u.c), u.rec[2]) >= 1
+    [] u.op = "autorel"   -> Rec(u.c) = u.rec /\ (Broken = "W32" \/ (NBefore(S(u.c), score[u.c]) = 0 /\ fld[u.c].open = 0))
     [] u.op = "deal"      -> Rec(u.c) = u.rec /\ wk[u.c].pl = {} /\ Recv(u)
     [] u.op = "redealw"   -> Rec(u.c) = u.rec /\ Recv(u)
     [] u.op = "refuse"    -> Rec(u.c) = u.rec
@@ -562,6 +575,8 @@ Eff1(T, u) ==
   CASE u.op = "release" -> [T EXCEPT !.col[c] = "ready"]
     [] u.op = "reach"   -> [T EXCEPT !.J = JOpen(@, "reached", CS(c), "-")]
     [] u.op = "unreach" -> [T EXCEPT !.J = JClose(@, "reached", CS(c), "-")]
+    [] u.op = "autorel" -> [T EXCEPT !.col[c] = "landed", !.J = JClose(@, "reached", CS(c), "-"),
+                                     !.early = @ \/ NBefore(S(c), score[c]) > 0 \/ fld[c].open > 0]
     [] u.op = "deal" ->
          Restart([T EXCEPT !.col[c] = "working", !.dcur = Past(MemSeq, u.m),
                            !.fld[c].attempt = IF @ = 0 THEN 1 ELSE @,
@@ -704,12 +719,15 @@ RoundAssign(q0, c0, ms0, at0) ==
 RoundTwo(X, at) ==
   LET a == FirstFrom(ReaderSeq, at, X) IN <<a, FirstFrom(ReaderSeq, Past(ReaderSeq, a), X \ {a})>>
 
-\* R3 resolve:s: release, reach, unreach (W26: release reads waiting, not elig).
+\* R3 resolve:s: release, reach, unreach (W26: release reads waiting, not elig);
+\* an auto sentinel is landed (autorel) where another would be reached.
 ResolvePlan(k, g, below, rel, ch) ==
   LET nb == IF g = None THEN 0 ELSE NBefore(S(g), score[g])
-      reach == g # None /\ nb = 0 /\ fld[g].open = 0 /\ Reachable(g) /\ ~Present("reached", CS(g), "-")
+      auto == g # None /\ g \in Autos /\ nb = 0 /\ fld[g].open = 0
+      reach == g # None /\ g \notin Autos /\ nb = 0 /\ fld[g].open = 0 /\ Reachable(g) /\ ~Present("reached", CS(g), "-")
       unreach == g # None /\ IsOpenJ("reached", CS(g), "-") /\ nb > 0
   IN PlanU(k, [i \in 1..Len(rel) |-> U("release", rel[i], None, None)]
+              \o (IF auto THEN <<U("autorel", g, None, None)>> ELSE <<>>)
               \o (IF reach THEN <<U("reach", g, None, None)>> ELSE <<>>)
               \o (IF unreach THEN <<U("unreach", g, None, None)>> ELSE <<>>),
            Cardinality(below) > ch)
@@ -1798,7 +1816,8 @@ RuleHolds(c) ==                                                        \* (b)
   \/ col[c] = "waiting" /\ \E n \in Cards : c \in waitn[n] /\ col[n] \in {"landed", "removed"}              \* R4
   \/ c \in Prims /\ col[c] = "waiting" /\ fld[c].open = 0 /\ ~fld[c].refused /\ BelowSigma(S(c), score[c])
      /\ dropping[S(c)] = None                                                                               \* R3 release
-  \/ c \in Sents /\ c = Sigma(S(c)) /\ NBefore(S(c), score[c]) = 0 /\ fld[c].open = 0 /\ Reachable(c)       \* R3 reach
+  \/ c \in Sents /\ c = Sigma(S(c)) /\ NBefore(S(c), score[c]) = 0 /\ fld[c].open = 0
+     /\ (Reachable(c) \/ c \in Autos)                                                                       \* R3 reach, autorel
   \/ c \in Prims /\ col[c] = "ready" /\ (c \in FreshBelow(S(c)) \/ c \in Again(S(c)))
      /\ (DealRoom > 0 \/ (StableOn /\ Up # {} /\ DealUp = {}))              \* R6 (stablesince: arms or fires its 30 s entry)
   \/ c \in Prims /\ col[c] = "ready" /\ c \in Fresh(S(c)) /\ ~BelowSigma(S(c), score[c])                     \* R19
@@ -1968,6 +1987,16 @@ NextNotReached ==
 NextDue(g) == col[g] = "waiting" /\ g = Sigma(S(g)) /\ fld[g].open = 0 /\ NBefore(S(g), score[g]) = 0
               /\ ~WorkInFlight /\ running /\ dropping[S(g)] = None
 NextReached == \A g \in Sents : NextDue(g) ~> (Present("reached", CS(g), "-") \/ ~NextDue(g))
+\* An auto sentinel (Autos) is never reached: no "reached" judgment opens for it.
+\* Its liveness, AutoReleased: due (sigma, every card before it landed, its needs
+\* met, RUNNING, its stream not dropping), it lands, unless it stops being due (a
+\* card inserted before it, the machine stopped). That it lands only when due is
+\* PositionHolds (~early: autorel marks a landing past an open wait), W32's
+\* property.
+AutoNeverReached == \A g \in Autos : ~Present("reached", CS(g), "-")
+AutoDue(g) == col[g] = "waiting" /\ g = Sigma(S(g)) /\ fld[g].open = 0 /\ NBefore(S(g), score[g]) = 0
+              /\ running /\ dropping[S(g)] = None
+AutoReleased == \A g \in Autos : AutoDue(g) ~> (col[g] = "landed" \/ ~AutoDue(g))
 \* V6: while dropping[s] is set, no step other than the op's parts moves a
 \* card of s; when a drop records its last part, no card of s is open.
 \* The freeze is keyed on an op in flight (a part receipt for s, with no

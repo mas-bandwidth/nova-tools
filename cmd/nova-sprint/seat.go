@@ -157,6 +157,7 @@ type sentinelView struct {
 	ID      string   `json:"id"`
 	Stream  string   `json:"stream"`
 	Reached bool     `json:"reached"`
+	Kind    string   `json:"kind"` // sprint.SentinelKind: auto, held or manual
 	Behind  []string `json:"behind"`
 }
 
@@ -226,7 +227,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 			if !sprint.IsSentinel(c) {
 				continue
 			}
-			sv := sentinelView{ID: c.ID, Stream: s, Reached: c.F("reached") != "", Behind: []string{}}
+			sv := sentinelView{ID: c.ID, Stream: s, Reached: c.F("reached") != "", Kind: sprint.SentinelKind(c), Behind: []string{}}
 			for _, b := range sprint.Behind(snap, c) {
 				sv.Behind = append(sv.Behind, b.ID)
 			}
@@ -338,8 +339,11 @@ func (a *app) handoverText(h handoverView) string {
 		line("STREAM %s %s", s.Stream, strings.Join(cs, " "))
 	}
 	for _, s := range h.Sentinels {
-		state := "held"
-		if s.Reached {
+		state := s.Kind + ", release is the coordinator's"
+		switch {
+		case s.Kind == "auto":
+			state = "auto, the tick releases it when its needs land"
+		case s.Reached:
 			state = "reached, release is the coordinator's"
 		}
 		line("SENTINEL %s stream=%s %s: %d wait behind it (%s)", s.ID, s.Stream, state, len(s.Behind), sprint.Preview(s.Behind, ","))

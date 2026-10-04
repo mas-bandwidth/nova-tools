@@ -122,11 +122,19 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 // alone (workColumn). A table with nothing waiting is read no further than its
 // shape.
 func (st *Store) HeldBack(ctx context.Context) (int, error) {
+	held, _, err := st.waitingCounts(ctx)
+	return held, err
+}
+
+// waitingCounts is HeldBack and sprint.AutoWaiting over the one read of the
+// waiting column.
+func (st *Store) waitingCounts(ctx context.Context) (held, auto int, err error) {
 	t, err := st.workColumn(ctx, sprint.Waiting)
 	if err != nil || t == nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return sprint.HeldBack(&sprint.Snapshot{Work: t}), nil
+	s := &sprint.Snapshot{Work: t}
+	return sprint.HeldBack(s), sprint.AutoWaiting(s), nil
 }
 
 // LandedAt is the landed stamps of the work table's landed column, read alone

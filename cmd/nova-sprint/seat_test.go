@@ -197,7 +197,7 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	for _, want := range []string{
 		"HANDOVER seat=coordinator since=init\n",
 		"STREAM s1 waiting=3 ready=1 working=0 review=0 merging=0 landed=0\n",
-		"SENTINEL s1-stop stream=s1 held: 2 wait behind it (s1-",
+		"SENTINEL s1-stop stream=s1 manual, release is the coordinator's: 2 wait behind it (s1-",
 		"JUDGMENT " + blocked.ID,
 		"    nova-sprint ack " + blocked.Notes[0],
 		"MEMBER m2 held by coordinator\n",

@@ -59,7 +59,7 @@ var Moves = []Move{
 	{Review, Ready, "rework", Coordinator, "rework with a fix when no fleet member is up: start delegates it later"},
 	{Merging, Review, "return", Coordinator, "the stream's CI went red and the coordinator sent it back, or return"},
 	{Merging, Landed, "merge", Mechanical, "its batch, green on the stream branch, merged to the development branch"},
-	{Waiting, Landed, "release", Coordinator, "a sentinel reached, or with nothing before it, released by the coordinator (kind sentinel only)"},
+	{Waiting, Landed, "release", Coordinator, "a sentinel reached, or with nothing before it, released by the coordinator; an auto sentinel, by the tick's resolve once its needs have landed (kind sentinel only)"},
 	{Ready, Waiting, "add", Mechanical, "a sentinel inserted in front of it (only as the effect of inserting a sentinel)"},
 }
 
@@ -142,8 +142,9 @@ func fromCol(e ntable.BatchMemberEntry, pre *Snapshot) (string, bool) {
 	return c.Col, true
 }
 
-// unmet is why a unit admits a primary ready, or moves one waiting -> ready,
-// with a need that has not landed and was not waived; "" when it does not.
+// unmet is why a unit admits a primary ready, moves one waiting -> ready, or
+// lands an auto sentinel, with a need that has not landed and was not waived;
+// "" when it does not.
 func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 	for _, c := range u.Changes {
 		e := c.Entry
@@ -159,7 +160,7 @@ func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 					needs = append(needs, st.ID) // behind a stop: it waits
 				}
 			}
-		case e.Move != nil && e.Move.Col == Ready && waitingFrom(e, pre):
+		case e.Move != nil && waitingFrom(e, pre) && (e.Move.Col == Ready || e.Move.Col == Landed && pre != nil && IsAuto(pre.Work.Card(e.ID))):
 			if pre == nil {
 				return "a move waiting -> ready is judged against the step's pre-state, and this plan carries none"
 			}
@@ -211,17 +212,18 @@ func unlawful(u Unit, p *Plan) string {
 			continue
 		}
 		sentinel := p.pre != nil && IsSentinel(p.pre.Work.Card(e.ID))
+		auto := p.pre != nil && IsAuto(p.pre.Work.Card(e.ID)) // landed by the tick when its needs land (unmet)
 		to := ""
 		if e.Move != nil && e.Move.Col != from {
 			to = e.Move.Col
 		}
 		switch {
-		case from == Waiting && to == Landed && !(p.releasing && sentinel):
-			return "the lifecycle lands from waiting only a sentinel, and only by release"
+		case from == Waiting && to == Landed && !(p.releasing && sentinel || auto):
+			return "the lifecycle lands from waiting only a sentinel, and only by release or, an auto sentinel, when its needs land"
 		case from == Ready && to == Waiting && !p.inserting:
 			return "the lifecycle moves ready -> waiting only as the effect of inserting a sentinel"
 		case sentinel && to != "" && to != Landed:
-			return "a sentinel moves only waiting -> landed, by release"
+			return "a sentinel moves only waiting -> landed, by release or, an auto sentinel, by the tick"
 		}
 		switch {
 		case e.Remove && !IsOpen(from) && !p.removing:
@@ -237,10 +239,10 @@ func unlawful(u Unit, p *Plan) string {
 // lifecycle, together, against a fresh read (pre): each entry is its own
 // unit, and an entry left out (one that will be skipped) counts as not
 // happening, so a landing that is skipped satisfies no need. verb is the
-// operation's verb: release may land a sentinel, add may move a primary
+// operation's verb: release and sentinel set may land a sentinel, add may move a primary
 // ready -> waiting. It returns the entries refused, by card id, with why.
 func Rejudge(pre *Snapshot, verb string, changes []Change) []Refusal {
-	p := Plan{pre: pre, releasing: verb == "release", inserting: verb == "add", drained: verb == DrainVerb}
+	p := Plan{pre: pre, releasing: verb == "release" || verb == "sentinel set", inserting: verb == "add", drained: verb == DrainVerb}
 	for _, c := range changes {
 		p.Units = append(p.Units, Unit{Key: c.Entry.ID, Changes: []Change{c}})
 	}

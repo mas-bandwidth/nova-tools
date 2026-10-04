@@ -85,6 +85,12 @@
 # are as they were. No column changed, so the lines below are unchanged. Held by
 # TestAFriendsStatusIsTheFriendsRuleOverItsBeatsAndItsHold and
 # TestADownFriendShowsNoneWorking.
+#
+# Note, 2026-10-04 (12:15 PM ET): the progress line above the tables shows auto=N after
+# held=N, the auto sentinels waiting for their needs (add --sentinel --auto, sentinel set
+# --auto), which the tick releases when their needs land and held=N no longer counts.
+# Glenn, in words: "I love the auto release on dep land sentinel. That's perfect." No
+# table's shape changes; this lock does not cover that line.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown

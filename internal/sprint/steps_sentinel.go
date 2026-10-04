@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 )
 
@@ -25,8 +26,41 @@ func IsHeld(c *Card) bool { return c.F(FieldHeld) != "" }
 // FieldHeld is the stamp of a primary admitted held.
 const FieldHeld = "held"
 
+// FieldAuto is the stamp of an auto sentinel (add --sentinel --auto, or
+// sentinel set <id> --auto): held only until its needs land.
+const FieldAuto = "auto"
+
+// AutoReason is the reason an auto sentinel's landing records, and the words
+// of its log line ("released: its needs landed").
+const AutoReason = "its needs landed"
+
+// IsAuto says the primary is an auto sentinel: held only until its needs
+// land, never reached and never a judgment; the tick's resolve lands it, as
+// release does, the moment every need has landed or was waived (Resolve). A
+// dropped or missing need is the blocked or missing-need judgment, never a
+// landing. A sentinel that is not auto, held or not, stays the coordinator's
+// to release (the owner, 2026-10-04).
+func IsAuto(c *Card) bool { return IsSentinel(c) && c.F(FieldAuto) != "" }
+
+// SentinelKind is the kind of a sentinel in words: auto (the tick releases it
+// when its needs land), held (add --held: the coordinator releases it, never
+// reached), or manual (reached when its needs land, then the coordinator's
+// release); "" for a primary that is not a sentinel.
+func SentinelKind(c *Card) string {
+	switch {
+	case !IsSentinel(c):
+		return ""
+	case IsAuto(c):
+		return "auto"
+	case IsHeld(c):
+		return "held"
+	}
+	return "manual"
+}
+
 // HeldBack is how many primaries no tick moves on its own: every sentinel not
-// released, every card admitted held, and every waiting card that waits,
+// released but an auto one (the tick releases it when its needs land), every
+// card admitted held, and every waiting card that waits,
 // through a need or its place in line, on one of those. where shows them as
 // held=N (nova-tools#5096 item 16), and its ETA counts every card not landed,
 // held ones included (docs/SPEC-SPRINT.md section 1, 2026-10-02). Everything
@@ -40,7 +74,8 @@ func HeldBack(s *Snapshot) int {
 			return v
 		}
 		memo[c.ID] = false // a cycle holds nothing back by itself
-		v := IsSentinel(c) || IsHeld(c)
+		// an auto sentinel is moved by the tick: held back only by what it waits on
+		v := IsSentinel(c) && !IsAuto(c) || IsHeld(c)
 		for _, n := range WaitsFor(s, c, nil) {
 			if w := s.Work.Placed(n); !v && w != nil && w.Col == Waiting {
 				v = back(w)
@@ -52,6 +87,19 @@ func HeldBack(s *Snapshot) int {
 	n := 0
 	for _, c := range s.Work.Column(Waiting) {
 		if back(c) {
+			n++
+		}
+	}
+	return n
+}
+
+// AutoWaiting is how many auto sentinels wait for their needs (IsAuto): the
+// tick releases each when its needs land. where shows them as auto=N beside
+// held=N, which counts none of them.
+func AutoWaiting(s *Snapshot) int {
+	n := 0
+	for _, c := range s.Work.Column(Waiting) {
+		if IsAuto(c) {
 			n++
 		}
 	}
@@ -280,7 +328,7 @@ func SentinelsDue(s *Snapshot, who string) Plan {
 	var p Plan
 	p.on(s)
 	for _, c := range s.Work.Column(Waiting) {
-		if IsSentinel(c) && !IsHeld(c) && c.F("reached") == "" && len(WaitsFor(s, c, nil)) == 0 && Reachable(s, c, nil) {
+		if IsSentinel(c) && !IsAuto(c) && !IsHeld(c) && c.F("reached") == "" && len(WaitsFor(s, c, nil)) == 0 && Reachable(s, c, nil) {
 			p.Units = append(p.Units, reachUnit(s, c, nil, who))
 		}
 	}
@@ -369,17 +417,6 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 		moving[u.Key] = true
 	}
 	for _, c := range chosen {
-		ready := 0
-		for _, b := range Behind(s, c) {
-			if moving[b.ID] {
-				ready++
-			}
-		}
-		for _, u := range after {
-			if pc := s.Work.Card(u.Key); !IsSentinel(pc) && pc.Row != c.Row && contains(Split(pc.F("needs")), c.ID) {
-				ready++ // named it from another stream
-			}
-		}
 		set := map[string]string{"landed": stamp(s.Now), "released": stamp(s.Now), "released_by": r.Who, "release_reason": r.Reason}
 		by := "released by " + r.Who
 		if w := past[c.ID]; len(w) > 0 {
@@ -394,13 +431,7 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 			set["waived_by"], set["waived_at"] = r.Who, stamp(s.Now)
 			by += " before it was reached, past " + strings.Join(st, ", ")
 		}
-		n := happened(NSentinelLanded, c.Row, s.Now, c.ID)
-		n.Who = r.Who
-		n.What = fmt.Sprintf("sentinel %s landed, %s: %d cards are now ready; %s", c.ID, by, ready, r.Reason)
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row,
-			Changes: []Change{change(Work, moveEntry(c, c.Row, Landed, set, FieldHeld))},
-			Notes:   []Note{n}, Closes: closesFor(s.Open, nil, c.ID),
-			Moved: fmt.Sprintf("sentinel %s waiting -> landed (%s); %d cards are now ready", c.ID, by, ready)})
+		p.Units = append(p.Units, sentinelLands(s, c, moving, set, by, "; "+r.Reason, r.Who))
 	}
 	if len(chosen) == 0 && len(unheld) == 0 {
 		return p
@@ -415,6 +446,33 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 	// (TickDone), which says so and stops the machine.
 	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
+}
+
+// sentinelLands is the unit that lands a sentinel, waiting -> landed, with set
+// recorded on it and its happened note: by says who released it and how, and
+// tail ends the note. moving is the cards the same step moves to ready, of
+// which it counts those it let go: the cards behind it and those that name it
+// from another stream. Release and the tick's auto release (AutoRelease) both
+// land a sentinel with it.
+func sentinelLands(s *Snapshot, c *Card, moving map[string]bool, set map[string]string, by, tail, who string) Unit {
+	ready := 0
+	for _, b := range Behind(s, c) {
+		if moving[b.ID] {
+			ready++
+		}
+	}
+	for id := range moving {
+		if pc := s.Work.Card(id); !IsSentinel(pc) && pc.Row != c.Row && contains(Split(pc.F("needs")), c.ID) {
+			ready++ // named it from another stream
+		}
+	}
+	n := happened(NSentinelLanded, c.Row, s.Now, c.ID)
+	n.Who = who
+	n.What = fmt.Sprintf("sentinel %s landed, %s: %d cards are now ready%s", c.ID, by, ready, tail)
+	return Unit{Key: c.ID, Stream: c.Row,
+		Changes: []Change{change(Work, moveEntry(c, c.Row, Landed, set, FieldHeld))},
+		Notes:   []Note{n}, Closes: closesFor(s.Open, nil, c.ID),
+		Moved: fmt.Sprintf("sentinel %s waiting -> landed (%s); %d cards are now ready", c.ID, by, ready)}
 }
 
 // notUnderWay is the first of a sentinel's waits that is not under way, with its
@@ -466,4 +524,92 @@ func releaseHeld(s *Snapshot, c *Card, r ReleaseReq) Unit {
 	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, set, FieldHeld))},
 		Moved: fmt.Sprintf("%s waiting -> ready (released by %s)", c.ID, r.Who)}
+}
+
+// SentinelSetReq makes sentinels auto (sentinel set <id>... --auto): held only
+// until their needs land. Coordinator is the sprint's coordinator: like
+// release, it is refused for any other actor.
+type SentinelSetReq struct {
+	IDs         []string
+	Auto        bool
+	Coordinator string
+	Who         string
+}
+
+// SentinelSet makes waiting sentinels auto (IsAuto), held or not, reached or
+// not: the hold and the mark reached are cleared, and the judgment that it was
+// reached is closed. One whose waits have all landed (or were waived) lands in
+// the same step, as release lands it ("released: its needs landed"), and what
+// waited only for it moves to ready; the others the tick lands when their
+// needs land (Resolve).
+func SentinelSet(s *Snapshot, r SentinelSetReq) Plan {
+	var p Plan
+	p.on(s)
+	p.releasing = true // a sentinel whose needs have landed lands in this step
+	refuseAll := func(why string) Plan {
+		var q Plan
+		for _, id := range r.IDs {
+			q.refuse(id, why)
+		}
+		return q
+	}
+	switch {
+	case len(r.IDs) == 0:
+		p.refuse("sentinel set", "names the sentinels it sets")
+		return p
+	case !r.Auto:
+		return refuseAll("sentinel set wants --auto: the tick releases the sentinel when its needs land")
+	case r.Coordinator == "":
+		return refuseAll("the sprint has no coordinator, and sentinel set is the coordinator's alone")
+	case r.Who != r.Coordinator:
+		return refuseAll("sentinel set is the coordinator's alone: " + r.Coordinator + ", not " + orDash(r.Who))
+	}
+	seen := map[string]bool{}
+	var chosen []*Card
+	for _, id := range r.IDs {
+		c := s.Work.Card(id)
+		switch {
+		case seen[id]:
+			p.refuse(id, "named twice")
+			continue
+		case !c.Placed():
+			p.refuse(id, "not on the table")
+			continue
+		case !IsSentinel(c):
+			p.refuse(id, "not a sentinel: --auto makes a sentinel auto")
+			continue
+		case c.Col != Waiting:
+			p.refuse(id, "is "+c.Col+", not a sentinel waiting")
+			continue
+		case IsAuto(c):
+			p.refuse(id, "is auto already: the tick releases it when its needs land")
+			continue
+		}
+		seen[id] = true
+		chosen = append(chosen, c)
+	}
+	landing := autoLanding(s, chosen)
+	after := resolveAfter(s, landing, r.Who)
+	moving := map[string]bool{}
+	for _, u := range after {
+		moving[u.Key] = true
+	}
+	auto := map[string]string{FieldAuto: stamp(s.Now), "auto_by": r.Who}
+	for _, c := range chosen {
+		if landing[c.ID] {
+			set := map[string]string{"landed": stamp(s.Now), "released": stamp(s.Now), "released_by": r.Who, "release_reason": AutoReason}
+			maps.Copy(set, auto)
+			p.Units = append(p.Units, sentinelLands(s, c, moving, set, "released: "+AutoReason, "; made auto by "+r.Who, r.Who))
+			continue
+		}
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row,
+			Changes: []Change{change(Work, setEntry(c, auto, FieldHeld, "reached"))},
+			Closes:  closesFor(s.Open, []string{NSentinelReached}, c.ID),
+			Moved:   fmt.Sprintf("sentinel %s made auto by %s: the tick releases it when its needs land (it waits for %s)", c.ID, r.Who, strings.Join(WaitsFor(s, c, nil), ","))})
+	}
+	if len(landing) > 0 {
+		p.Units = append(p.Units, after...)
+		settle(&p, s, r.Who, nil, nil, landing)
+	}
+	return Lawful(p)
 }

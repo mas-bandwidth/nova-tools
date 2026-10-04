@@ -401,7 +401,10 @@ func bound(p Plan) (Plan, int) {
 // has landed moves to ready; a dropped or missing need is a blocked judgment,
 // once. A sentinel is never moved: when everything it needs has landed,
 // resolve marks it reached and opens its judgment, and what waits
-// behind it stays waiting until the coordinator releases it. No flag says a
+// behind it stays waiting until the coordinator releases it. An auto
+// sentinel (IsAuto) is the exception: resolve lands it then, as release
+// does ("released: its needs landed"), and what waited only for it moves to
+// ready in the same plan. No flag says a
 // scan is due: what is due is read from the state, so a tick that did not
 // finish leaves it due for the next.
 //
@@ -1231,7 +1234,7 @@ func MovesDue(s *Snapshot) int {
 		}
 	}
 	for _, c := range s.Work.Column(Waiting) {
-		if !IsSentinel(c) && !IsHeld(c) && len(WaitsFor(s, c, nil)) == 0 {
+		if (!IsSentinel(c) || IsAuto(c)) && !IsHeld(c) && len(WaitsFor(s, c, nil)) == 0 {
 			n++
 		}
 	}

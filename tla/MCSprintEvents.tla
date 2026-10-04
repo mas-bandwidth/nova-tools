@@ -30,6 +30,7 @@ MCNoNeeds == [c \in MCAll |-> {}]
 MCP2NeedsP1 == [c \in MCAll |-> IF c = "p2" THEN {"p1"} ELSE {}]
 MCP2NeedsP1P3 == [c \in MCAll |-> IF c = "p2" THEN {"p1", "p3"} ELSE {}]
 MCP3NeedsP2 == [c \in MCAll |-> IF c = "p3" THEN {"p2"} ELSE {}]
+MCG1NeedsP2 == [c \in MCAll |-> IF c = "g1" THEN {"p2"} ELSE {}]
 MCNone == {}
 MCRank3 == {3}
 MCRank5 == {5}
@@ -44,7 +45,7 @@ AtM(m, cl) == {<<m, cl>>}
 Base == [col |-> Cols4("none", "none", "none", "none"), score |-> Cols4(0, 0, 0, 0),
          result |-> Cols4("ok", "ok", "ok", "ok"), wpl |-> NoCard,
          status |-> [m \in MCMembers |-> "up"], running |-> TRUE,
-         next |-> 10, dcur |-> 1, goal |-> FALSE, log |-> <<>>, owe |-> {}, oweall |-> TRUE]
+         next |-> 10, dcur |-> 1, goal |-> FALSE, log |-> <<>>, owe |-> {}, oweall |-> TRUE, auto |-> {}]
 UpDown == [m \in MCMembers |-> IF m = "m1" THEN "up" ELSE "down"]
 
 \* The instance of the task: p1 ready (s1, 2), g1 waiting (s1, 4), p2
@@ -137,6 +138,21 @@ ScnStoppedReady == [ScnReady1 EXCEPT !.running = FALSE]
 \* g1 waiting alone at the head of s1 (4), nothing before it; s2: p2 merging (2). The
 \* sentinel is next, not reached, until p2 lands (W30, C30: NextNotReached, NextReached).
 ScnNext == [Base EXCEPT !.col = Cols4("none", "merging", "none", "waiting"), !.score = Cols4(0, 2, 0, 4), !.next = 6]
+\* The auto sentinel (Autos; docs/SPEC-SPRINT.md section 16): g1 auto, waiting in s1
+\* (4) behind p1, which is merging (2), with p3 waiting behind g1 (6) and p2 waiting
+\* on p1 (s2, 2). The landing of p1 lands g1 (autorel), never reached, and p3 goes
+\* to ready after it (AutoReleased, AutoNeverReached).
+ScnAuto == [Base EXCEPT !.col = Cols4("merging", "waiting", "waiting", "waiting"), !.score = Cols4(2, 2, 6, 4),
+                        !.next = 8, !.auto = {"g1"}]
+\* g1 auto, waiting alone at the head of s1 (4), its need p2 merging in s2 (2): a
+\* drop of p2 raises "dropped" on g1 and no landing; ack waives it, and g1 lands.
+ScnAutoDropped == [Base EXCEPT !.col = Cols4("none", "merging", "none", "waiting"), !.score = Cols4(0, 2, 0, 4),
+                               !.next = 6, !.auto = {"g1"}]
+\* g1 auto, waiting alone at the head of s1 (4), due at once; p1 not yet added (an
+\* insertion at 3, before g1). W32 (and its control C32): an add of p1 between the
+\* plan that lands g1 and its apply.
+ScnAutoInsert == [Base EXCEPT !.col = Cols4("none", "none", "none", "waiting"), !.score = Cols4(0, 0, 0, 4),
+                              !.next = 6, !.auto = {"g1"}]
 
 \* Reachability probes (expected to fail: each names a state a configuration
 \* must reach for its case to mean anything).
@@ -148,5 +164,10 @@ ProbeTwoMoves == [][~\E p, q \in Prims : p # q /\ col'[p] # col[p] /\ col'[q] # 
 \* A part of drop --stream applied after the verb read again on a
 \* freezefirst refusal (MCSprintEventsFreezeReach).
 ProbeReread == [][~\E v \in VerbProcs : vk[v].rr > 0 /\ \E r \in receipts' \ receipts : r.op = vk[v].op /\ r.k > 0]_vars
+\* The auto sentinel g1 lands (MCSprintEventsAutoReach): the landing of p1 lands it.
+ProbeAutoLands == col["g1"] # "landed"
+\* g1 lands after its need p2 was dropped, by the ack's waiver, with "dropped" raised on
+\* it before (MCSprintEventsAutoDroppedReach).
+ProbeAutoLandsPastADrop == ~(col["g1"] = "landed" /\ col["p2"] = "removed")
 
 =============================================================================
