@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,6 +84,7 @@ type SetReq struct {
 	Streams  []string `json:",omitempty"`
 	ReadTier string   `json:",omitempty"`
 	DealtMax string   `json:",omitempty"`
+	GoLanes  string   `json:",omitempty"` // the Go lanes of every machine (PropGoLanes, section 18)
 	Who      string
 }
 
@@ -103,8 +105,16 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--dealt-max wants a duration above zero (6h, 90m), or "+ReadTierDefault+" for 3 times the take deadline; found "+r.DealtMax)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" {
-		why = append(why, "nothing to set: --read-tier or --dealt-max")
+	if r.GoLanes != "" && r.GoLanes != ReadTierDefault {
+		if n, err := strconv.Atoi(r.GoLanes); err != nil || n < 1 {
+			why = append(why, "--go-lanes wants a whole number from 1, the Go lanes of every machine, or "+ReadTierDefault+" for "+strconv.Itoa(LaneWidthDefault)+"; found "+r.GoLanes)
+		}
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.GoLanes == "" {
+		why = append(why, "nothing to set: --read-tier, --dealt-max or --go-lanes")
+	}
+	if len(r.Streams) > 0 && r.GoLanes != "" {
+		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
 	}
 	if len(r.Streams) > 0 && r.DealtMax != "" {
 		why = append(why, "--dealt-max is the sprint's, not a stream's: nova-sprint set --dealt-max "+r.DealtMax)
@@ -134,7 +144,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 	// a property is written with its word, default included: the readers take
 	// default for none (DealtMax, readTierSetting)
 	var moved []string
-	for _, kv := range [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}} {
+	for _, kv := range [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}, {PropGoLanes, r.GoLanes}} {
 		if kv[1] == "" {
 			continue
 		}
@@ -153,6 +163,8 @@ func orDefault(v, name string) string {
 		return v
 	case name == PropDealtMax:
 		return fmt.Sprintf("default (%s, 3 times the take deadline)", DealtMaxDefault)
+	case name == PropGoLanes:
+		return fmt.Sprintf("default (%d a machine)", LaneWidthDefault)
 	}
 	return "default (each card's own tier)"
 }

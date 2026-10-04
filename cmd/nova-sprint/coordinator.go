@@ -40,14 +40,14 @@ var verbClasses = map[string]string{
 	"ack": classCoordinator, "answer": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
 
-	"take": classWorker, "finish": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker,
+	"take": classWorker, "finish": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker, "lane take": classWorker, "lane give": classWorker,
 
 	"merge": classReport, "ci": classReport,
 
 	"tick": classMachine, "run": classMachine, "friend clean": classMachine,
 
 	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "dashboard": classRead, "routes": classRead, "stats": classRead,
-	"goal show": classRead, "handover": classRead,
+	"goal show": classRead, "handover": classRead, "lane list": classRead,
 
 	"coordinator": classSeat,
 }

@@ -78,13 +78,16 @@ func init() {
 		{"friend down", "<friend>", "friend down friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(true, args, o, e) }},
 		{"friend up", "<friend>", "friend up friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(false, args, o, e) }},
 		{"friend clean", "[--pg <dsn> | --file <path>] [--root <dir>] [--days <n>] [--dry-run]", "friend clean --dry-run", (*app).cmdFriendClean},
+		{"lane take", "go --machine <m> --as <worker> [--wait <duration>]", "lane take go --machine m1 --as m1", (*app).cmdLaneTake},
+		{"lane give", "go --machine <m> --as <worker>", "lane give go --machine m1 --as m1", (*app).cmdLaneGive},
+		{"lane list", "", "lane list", (*app).cmdLaneList},
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
 		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
 		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
 		{"stream set", "<stream>... --read-tier <flash|pro|default>", "stream set skips --read-tier pro", (*app).cmdStreamSet},
-		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
+		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
@@ -152,7 +155,7 @@ block shows the coordinator's day on that store.
 For one verb's usage, examples, flags and exit codes:
   nova-sprint help <verb> (or <verb> -h)
 For one group's help: nova-sprint help <group> (fleet, friend, reader, goal,
-stream).`
+stream, lane).`
 
 func banner() string {
 	var b strings.Builder
@@ -168,8 +171,8 @@ the recorded result), --json and --max <n> (listed items, and the count of a
 set when the verb takes one; 0 is all listed; --limit is --max for one
 release). The
 coordinator's verbs are the coordinator's alone (the first init names it:
---coordinator, else the actor); take, finish, read, fleet beat and friend
-beat are the workers', whose actor is the member, reader or friend named; merge and ci are
+--coordinator, else the actor); take, finish, read, fleet beat, friend
+beat, lane take and lane give are the workers', whose actor is the member, reader or friend named; merge and ci are
 reports; tick, run and friend clean are the machine's; the reads need no actor (inbox
 --read, which moves the coordinator's cursor, is the coordinator's). The seat
 moves by coordinator <name> --reason <text>: given by its holder or the owner
@@ -211,6 +214,7 @@ and prints each one's generation.
 ` + friendWords() + `
 ` + readerWords() + `
 ` + streamWords() + `
+` + laneWords() + `
 ` + goalWords() + `
 ` + twinWords() + `
 ` + landWords() + `
@@ -366,6 +370,9 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		}
 		if name == "stream" {
 			fmt.Fprint(stdout, "\n"+streamWords())
+		}
+		if name == "lane" {
+			fmt.Fprint(stdout, "\n"+laneWords())
 		}
 		fmt.Fprintf(stdout, "\nnova-sprint help %s <verb> (or nova-sprint %s <verb> -h) prints a verb's flags, examples and exit codes.\n", name, name)
 		return 0
@@ -2459,6 +2466,7 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("set")
 	tier := fs.String("read-tier", "", "the tier every card's reads draw their route from when it is stronger than the card's own (flash or pro; default takes it off: each card's own tier)")
 	dealt := fs.String("dealt-max", "", fmt.Sprintf("how long a work card may wait dealt and never taken (in its member's ready queue, or withdrawn) before it is a judgment: a duration, or default (%s, 3 times the take deadline); a taken card's own deadline starts at its take", sprint.DealtMaxDefault))
+	lanes := fs.String("go-lanes", "", fmt.Sprintf("the Go lanes of every machine, the Go build and test runs one machine grants at once (nova-sprint lane take go): a whole number from 1, or default (%d, one test stream per machine)", sprint.LaneWidthDefault))
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
@@ -2470,7 +2478,7 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
 	}
-	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, Who: c.actor}), stdout, stderr)
+	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, GoLanes: *lanes, Who: c.actor}), stdout, stderr)
 }
 
 // cmdFunded is the coordinator's word that a provider was paid: its rest of its funds ends
