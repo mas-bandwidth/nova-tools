@@ -203,7 +203,7 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 		"MEMBER m2 held by coordinator\n",
 		"DECISION ",
 		" drop s2-1 by coordinator: obsolete: the tool went away\n",
-		" fleet down m2 by coordinator\n",
+		" hold member m2 by coordinator: --return: its work begun is handed back now\n",
 		"FIRST nova-sprint where\n",
 		"FIRST nova-sprint inbox --wait --push seat\n",
 		"FIRST read docs/SPEC-SPRINT.md, \"Handing over the seat\"\n",

@@ -258,7 +258,7 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 			costs[row.Key] = ctl.Fields[sprint.FieldCost]
 			want := map[string]string{
 				sprint.CI:       dash(ctl.Fields["ci"]),
-				sprint.StateCol: dash(ctl.Fields["state"]),
+				sprint.StateCol: dash(sprint.StreamStateText(ctl.Fields)),
 				sprint.Since:    clock(ctl.Fields["since"]),
 			}
 			if d := rowDiff(row, want); len(d) > 0 {
@@ -526,8 +526,8 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 		if since.After(p) {
 			p = since
 		}
-		out = append(out, sprint.StreamClock{Stream: r.Key, State: ctl.Fields["state"], Since: since, Progress: p, Empty: onTable[r.Key] == 0,
-			Held: waiting[r.Key] > 0 && moving[r.Key] == 0, Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview])})
+		out = append(out, sprint.StreamClock{Stream: r.Key, State: sprint.StreamStateText(ctl.Fields), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
+			Held: waiting[r.Key] > 0 && moving[r.Key] == 0 || ctl.Fields[sprint.FieldHeld] != "", Reason: ctl.Fields[sprint.FieldHeldReason], Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview])})
 	}
 	return out, nil
 }
