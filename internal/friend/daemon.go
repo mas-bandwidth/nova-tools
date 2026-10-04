@@ -167,10 +167,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 					if nonce, seat, since, isPing := ParsePing(msg.Body); isPing && !answered[e.Entry] {
 						d.daemonPong(ctx, bus, msg, nonce)
 						answered[e.Entry] = true
-						if passive { // the session reads it itself; the machine still sees the ping
-							for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
-								queue = append(queue, job{subject: p.Subject, text: p.Text})
-							}
+						// the machine sees the ping when the daemon does: a turn longer than a window is no silence
+						for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
+							queue = append(queue, job{subject: p.Subject, text: p.Text})
 						}
 					}
 				}
