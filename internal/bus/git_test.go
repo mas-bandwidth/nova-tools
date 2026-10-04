@@ -183,6 +183,29 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 	}
 }
 
+// CommitAndPush and CommitOnly carry only the sender's identity even when
+// the calling environment sets the four GIT_AUTHOR_* and GIT_COMMITTER_*
+// variables to another. The four are dropped from the environment passed to
+// git so that the roster identity (via -c) is the only source, per the rule
+// that the identity a note is committed under must come from the roster and
+// from nowhere else.
+func TestCommitUsesRosterIdentityEvenUnderOtherGitIdentityEnv(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
+	res, err := CommitOnly(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one")
+	require.NoError(t, err)
+	require.False(t, res.Pushed, "res = %+v, want pushed=false", res)
+	who, err := git(clone, "log", "-1", "--format=%an <%ae>|%cn <%ce>")
+	require.NoError(t, err)
+	want := "Ada <ada@example.com>|Ada <ada@example.com>"
+	if strings.TrimSpace(who) != want {
+		require.Equal(t, want, strings.TrimSpace(who), "the commit is author|committer %q, want %q: the identity comes from the roster on every invocation that records one", strings.TrimSpace(who), want)
+	}
+}
+
 // THE TEST THIS TOOL EXISTS FOR. Two senders push in the same moment. On the night the
 // issue records, one of them was rejected and lost. Here, both must land, and neither may
 // lose its note.
