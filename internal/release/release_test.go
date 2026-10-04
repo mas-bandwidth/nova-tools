@@ -2199,3 +2199,41 @@ func TestReadSumsRefusesAnArtifactNameTheRemoteShellWouldReadAsSyntax(t *testing
 	}
 	assert.Equal(t, []string{"nova-bus", "nova-update.exe", "nova_tool+1.2"}, names)
 }
+
+// TestPlatformRefusesAValueThatIsNotLowercaseGoosDashGoarch pins security#72
+// finding 3: a platform that is not exactly one lowercase goos-goarch pair
+// could be joined into a path that escapes --from.
+func TestPlatformRefusesAValueThatIsNotLowercaseGoosDashGoarch(t *testing.T) {
+	t.Parallel()
+	bad := []string{"q-a/../b", "linux-amd64/../x", "../a-b", "linux-amd64-extra", "linux-AMD64"}
+	for _, v := range bad {
+		v := v
+		t.Run("refuses "+v, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := Platform(v)
+			require.Error(t, err)
+		})
+	}
+	for _, v := range []string{"linux-amd64", "windows-arm64"} {
+		v := v
+		t.Run("accepts "+v, func(t *testing.T) {
+			t.Parallel()
+			goos, goarch, err := Platform(v)
+			require.NoError(t, err)
+			parts := strings.Split(v, "-")
+			require.Equal(t, parts[0], goos)
+			require.Equal(t, parts[1], goarch)
+		})
+	}
+	t.Run("install refuses the dotdot platform and writes nothing", func(t *testing.T) {
+		t.Parallel()
+		from := built(t, "v0.16.0", "linux-amd64", "nova-bus")
+		bin := t.TempDir()
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin, "--platform", "q-a/../b"}, &o, &e, Deps{})
+		require.NotEqual(t, 0, code, "install with a dotdot platform must refuse")
+		entries, err := os.ReadDir(bin)
+		require.NoError(t, err)
+		require.Empty(t, entries, "no file may be installed for a refused platform")
+	})
+}

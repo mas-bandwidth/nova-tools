@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -43,6 +44,14 @@ func Platform(flagValue string) (string, string, error) {
 	}
 	goos, goarch, ok := strings.Cut(flagValue, "-")
 	if !ok || goos == "" || goarch == "" {
+		return "", "", refuse("pass --platform <goos>-<goarch>, for example linux-amd64",
+			"%q is not a goos-goarch", flagValue)
+	}
+	// The halves name the artifact directory and are joined into a path below:
+	// allow only lowercase letters and digits, so a slash, a dot or another
+	// dash can never retarget --from (security#72 finding 3).
+	half := regexp.MustCompile(`^[a-z0-9]+$`)
+	if !half.MatchString(goos) || !half.MatchString(goarch) {
 		return "", "", refuse("pass --platform <goos>-<goarch>, for example linux-amd64",
 			"%q is not a goos-goarch", flagValue)
 	}
