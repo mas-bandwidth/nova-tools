@@ -934,6 +934,12 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "init", "the sprint's owner is "+was+", and init does not change the owner; nothing was changed")
 		}
 	}
+	if *coordinator == "" {
+		*coordinator = c.actor
+	}
+	if !sprint.ValidID(*coordinator) {
+		return refuse(stderr, "init", "--coordinator wants letters, digits, _ and -: "+*coordinator)
+	}
 	if err := st.Init(ctx); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
@@ -943,9 +949,6 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 			return 1
 		}
-	}
-	if *coordinator == "" {
-		*coordinator = c.actor
 	}
 	if err := st.B.SetCoordinator(ctx, *coordinator); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
