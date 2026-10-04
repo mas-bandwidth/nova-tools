@@ -495,7 +495,7 @@ func stagedBlobHeads(root string, recs []stagedRecord) (map[string]stagedBlobHea
 		}
 		return nil
 	}()
-	stdin.Close()
+	_ = stdin.Close() // ignored: closing the request pipe signals EOF; cmd.Wait reports the child's outcome
 	// Wait always runs, so the batch is never left writing into a closed
 	// reader. An early read error leaves it with unread requests; its
 	// complaint is reported only when nothing louder already happened.
