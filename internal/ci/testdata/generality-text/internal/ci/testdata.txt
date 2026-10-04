@@ -1,5 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 17
+# ceiling: 16
 internal/ci/testdata/cardtemplate_allowlist.txt:hulk 1
 internal/ci/testdata/cardtemplate_allowlist.txt:mini 1
 internal/ci/testdata/cardtemplate_allowlist.txt:space 1
