@@ -19,7 +19,7 @@
     }
   },
   "cards": [
-    {"id": "ci-03.w2", "primary": "ci-03", "stream": "ci", "member": "friend.amy", "state": "working", "since": "2026-10-03T15:04:00Z", "deadline": "2026-10-03T16:30:00Z", "branch": "sprint/ci-03.w2.g1.e15"},
+    {"id": "ci-03.w2", "primary": "ci-03", "stream": "ci", "member": "friend.amy", "state": "working", "since": "2026-10-03T15:04:00Z", "deadline": "2026-10-03T16:30:00Z", "branch": "sprint/ci-03.w2.g1.e15", "tier": "pro"},
     {"id": "ci-07.w1", "primary": "ci-07", "stream": "ci", "member": "friend.amy", "state": "ready", "since": "2026-10-03T15:18:00Z", "deadline": "2026-10-03T21:18:00Z", "branch": "sprint/ci-07.w1.g1.e15"},
     {"id": "ci-04.w1", "primary": "ci-04", "stream": "ci", "member": "bench-a", "state": "working", "since": "2026-10-03T12:50:00Z", "deadline": "2026-10-03T14:50:00Z", "branch": "sprint/ci-04.w1.g1.e15"},
     {"id": "ci-05.w1", "primary": "ci-05", "stream": "ci", "member": "bench-a", "state": "ready", "since": "2026-10-03T15:19:30Z", "branch": "sprint/ci-05.w1.g1.e15"}

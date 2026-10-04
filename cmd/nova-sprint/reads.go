@@ -423,21 +423,29 @@ func noSprintYet(err error) error {
 
 // whereView is the view, for a program.
 type whereView struct {
-	At          time.Time                               `json:"at"`
-	Landed      int64                                   `json:"landed"`
-	All         int64                                   `json:"all"`
-	Held        int64                                   `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
-	Summary     string                                  `json:"summary"`
-	Tables      map[string]map[string]map[string]string `json:"tables"` // table -> row -> column -> cell as printed
-	Streams     []sprint.StreamClock                    `json:"streams"`
-	Stalled     []string                                `json:"stalled,omitempty"`
-	Critical    []sprint.CriticalCard                   `json:"critical,omitempty"` // the five heaviest (weight.go)
-	Coordinator string                                  `json:"coordinator,omitempty"`
-	Pending     string                                  `json:"pending,omitempty"`
-	Epoch       uint64                                  `json:"epoch"`
-	Cleared     time.Time                               `json:"cleared,omitempty"` // when the epoch began
-	Machine     string                                  `json:"machine,omitempty"`
-	Goals       []goalView                              `json:"goals,omitempty"`
+	At      time.Time `json:"at"`
+	Landed  int64     `json:"landed"`
+	All     int64     `json:"all"`
+	Held    int64     `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
+	Summary string    `json:"summary"`
+	// Tables is table -> row -> column -> cell as printed (a string); a work row carries
+	// besides its cells `per_landed` (dollars per landed card, as the cost column shows
+	// money), `tiers` (its cards by their briefs' tier, counts) and `cost_by_tier` (its spend
+	// by the tier each attempt and read ran on, money strings), the last two from the
+	// tick's where record (sprint.TierCosts): absent before the first tick of an epoch.
+	Tables map[string]map[string]map[string]any `json:"tables"`
+	// Tiers counts every card by its brief's tier (flash, pro, heavy, or whatever word the
+	// brief carries), from the tick's where record; absent before the first tick.
+	Tiers       map[string]int        `json:"tiers,omitempty"`
+	Streams     []sprint.StreamClock  `json:"streams"`
+	Stalled     []string              `json:"stalled,omitempty"`
+	Critical    []sprint.CriticalCard `json:"critical,omitempty"` // the five heaviest (weight.go)
+	Coordinator string                `json:"coordinator,omitempty"`
+	Pending     string                `json:"pending,omitempty"`
+	Epoch       uint64                `json:"epoch"`
+	Cleared     time.Time             `json:"cleared,omitempty"` // when the epoch began
+	Machine     string                `json:"machine,omitempty"`
+	Goals       []goalView            `json:"goals,omitempty"`
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
@@ -465,6 +473,7 @@ type dealtCard struct {
 	Since    time.Time `json:"since,omitzero"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Branch   string    `json:"branch"`
+	Tier     string    `json:"tier,omitempty"` // the tier its route was drawn from (sprint.FieldTier)
 }
 
 // judgmentRef is an open judgment naming a dealt card's primary: its note and its kind.
@@ -485,7 +494,7 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 	cards := make([]dealtCard, 0, len(d.Cards))
 	for _, c := range d.Cards {
 		v := dealtCard{ID: c.ID, Primary: c.F(sprint.PrimaryField), Stream: c.F("stream"), Member: c.Row, State: c.Col,
-			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen")))}
+			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier)}
 		own := "dealt"
 		if c.Col == string(sprint.Working) {
 			own = "taken"
@@ -682,7 +691,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		return whereView{}, "", err
 	}
 	now := a.now()
-	v := whereView{At: now, Tables: map[string]map[string]map[string]string{}, Streams: clocks, Epoch: st.PinnedEpoch(), Coordinator: coordinator}
+	v := whereView{At: now, Tables: map[string]map[string]map[string]any{}, Streams: clocks, Epoch: st.PinnedEpoch(), Coordinator: coordinator}
 	if moved {
 		v.Seat = &seat
 	}
@@ -697,6 +706,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		return whereView{}, "", err
 	}
 	v.Held = int64(facts.Held)
+	v.Tiers = facts.Tiers
 	rate := sprint.LandingRate(facts.Landed, v.Landed, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
 	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], rate)))
 
@@ -723,15 +733,26 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 			// machine of the fleet table (sprint.FriendRow)
 			t, friendCards = splitFriendRows(t)
 		}
-		rows := map[string]map[string]string{}
+		rows := map[string]map[string]any{}
 		for _, r := range t.Rows {
-			cells := map[string]string{}
+			cells := map[string]any{}
 			for j, col := range t.Columns {
 				cells[col.Name] = ntable.CellText(t.Columns, r, j)
 			}
 			rows[r.Key] = cells
 		}
 		v.Tables[logical] = rows
+		if logical == sprint.Work {
+			// dollars per landed card, a column of the text table and a field of each row;
+			// the tiers and the spend by tier from the tick's record (cost_view.go)
+			t = perLandedColumn(t, facts.Streams)
+			for _, r := range t.Rows {
+				rows[r.Key][perLandedField] = r.Texts[perLandedColumnName]
+				if tc, ok := facts.Streams[r.Key]; ok {
+					rows[r.Key]["tiers"], rows[r.Key]["cost_by_tier"] = tc.Tiers, tc.CostByTier
+				}
+			}
+		}
 		if logical == sprint.Merge && !slices.Contains(t.Hidden, sprint.Since) {
 			// the machine keeps a stream's since; the view does not show it
 			t.Hidden = append(append([]string(nil), t.Hidden...), sprint.Since)
@@ -767,9 +788,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		}
 	}
 	ft := friendsTable(friends)
-	v.Tables[sprint.Friends] = map[string]map[string]string{}
+	v.Tables[sprint.Friends] = map[string]map[string]any{}
 	for _, r := range ft.Rows {
-		cells := map[string]string{}
+		cells := map[string]any{}
 		for j, col := range ft.Columns {
 			cells[col.Name] = ntable.CellText(ft.Columns, r, j)
 		}
@@ -797,6 +818,40 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		}
 	}
 	return v, b.String(), nil
+}
+
+// perLandedColumnName is the work table's column of dollars per landed card, drawn
+// after cost (the owner, 2026-10-04: cost visibility), and perLandedField its name in
+// where --json's work rows.
+const (
+	perLandedColumnName = "per landed"
+	perLandedField      = "per_landed"
+)
+
+// perLandedColumn is the work table with the per-landed column added: each stream's
+// dollars per landed card from the tick's record (sprint.TierCosts) when it has one, else
+// from the row's own cost cell over its landed count (sprint.PerLandedOf). The column
+// folds nothing: the sprint's figure is the hero's.
+func perLandedColumn(t ntable.Table, streams map[string]sprint.TierCosts) ntable.Table {
+	t.Columns = append(slices.Clone(t.Columns), ntable.Column{Name: perLandedColumnName, Projection: ntable.Text, Fold: ntable.None})
+	rows := make([]ntable.Row, len(t.Rows))
+	for i, r := range t.Rows {
+		texts := map[string]string{}
+		maps.Copy(texts, r.Texts)
+		if tc, ok := streams[r.Key]; ok {
+			texts[perLandedColumnName] = tc.PerLanded
+		} else {
+			landed := 0
+			if j := t.Column(sprint.Landed); j >= 0 && j < len(r.Cells) && !r.Cells[j].Unread {
+				landed = int(r.Cells[j].Count)
+			}
+			texts[perLandedColumnName] = sprint.PerLandedOf(r.Texts[sprint.Cost], landed)
+		}
+		r.Texts = texts
+		rows[i] = r
+	}
+	t.Rows = rows
+	return t
 }
 
 // splitFriendRows is the fleet table without the friends' rows (sprint.FriendRow), and

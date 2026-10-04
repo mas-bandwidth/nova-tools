@@ -151,5 +151,5 @@ func TestWhereCardsIsWhatThePullRoutesRead(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
 	require.Len(t, lines, 3, w.Body.String())
 	assert.True(t, strings.HasPrefix(lines[1], "friend amy up "), lines[1])
-	assert.Equal(t, "s1-1.w1 s1 working 0s due 2h0m sprint/s1-1.w1.g1.e0", lines[2])
+	assert.Equal(t, "s1-1.w1 s1 working 0s due 2h0m sprint/s1-1.w1.g1.e0 -", lines[2], "the card line ends with its tier, - with none (a twin with no route)")
 }

@@ -201,7 +201,7 @@ footer a:hover { color: var(--text); }
    Two forms per table: the full form, and the compact form (the panel gets class
    "compact" from app.js when the full form's header row would overflow). Never squeezed,
    never scrolled. Children: Work 1 stream 2 status 3 waiting 4 ready 5 working
-   6 review 7 merging 8 landed / total 9 cost; Fleet 1 name 2 status 3 ready 4 cells
+   6 review 7 merging 8 landed / total 9 cost 10 per landed; Fleet 1 name 2 status 3 ready 4 cells
    5 working / width 6 done 7 ok% 8 load; Friends the same without load. Minimum widths
    are the measured widest content of each column at the 28 px type. */
 .row > * { min-width: 0; }
@@ -226,7 +226,7 @@ footer a:hover { color: var(--text); }
    between the counts. 40 px gutters. Rows grouped by status: no rule between rows, a 1 px
    rule (the panel's border colour) between groups. */
 .streams .row { --pad: 2rem; --gap: 2.5rem; --S: 9.75rem; column-gap: var(--gap); padding: 0 var(--pad);
-  grid-template-columns: var(--name-w) var(--status-w) repeat(5, minmax(5.625rem, 1fr)) 4rem minmax(5.625rem, 1fr) minmax(7.5rem, 1.25fr); }
+  grid-template-columns: var(--name-w) var(--status-w) repeat(5, minmax(5.625rem, 1fr)) 4rem minmax(5.625rem, 1fr) minmax(7.5rem, 1.25fr) minmax(7.5rem, 1.25fr); }
 .streams .row > :nth-child(8) { grid-column: span 2; justify-self: end; }
 .streams .row.head > :nth-child(8) { text-align: center; }  /* width set by app.js to the n / total cell's */
 .streams .row > :nth-child(2) { justify-self: end; }
@@ -250,7 +250,7 @@ footer a:hover { color: var(--text); }
 .panel.compact .panel-head, .panel.compact .empty { padding-left: 1.5rem; padding-right: 1.5rem; }
 .streams.compact .row { grid-template-columns: var(--name-w) var(--status-w) minmax(10.25rem, 1fr); }
 .streams.compact .row > :nth-child(8) { grid-column: auto; }
-.streams.compact .row > :nth-child(n+3):nth-child(-n+7), .streams.compact .row > :nth-child(9) { display: none; }
+.streams.compact .row > :nth-child(n+3):nth-child(-n+7), .streams.compact .row > :nth-child(9), .streams.compact .row > :nth-child(10) { display: none; }
 .streams.compact .pill > span:last-child { display: none; }
 .fleet.compact .row, .friends.compact .row { grid-template-columns: var(--name-w) var(--status-w) minmax(7rem, 1fr) minmax(5.375rem, 1fr); }
 .fleet.compact .row > :nth-child(5), .friends.compact .row > :nth-child(5) { padding-left: 0; }
@@ -341,7 +341,7 @@ footer a:hover { color: var(--text); }
 
 <section class="panel streams">
   <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span></div>
-  <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
+  <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div><div class="num">per landed</div></div></div></div>
 </section>
 
 <section class="panel fleet">

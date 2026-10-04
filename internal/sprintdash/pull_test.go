@@ -76,15 +76,15 @@ func TestPullTextIsOneLineAnItem(t *testing.T) {
 	v, _ := pullView(c, KindFriend, "amy")
 	assert.Equal(t, `sprint 352/1205 landed held 770 eta 2d7h machine running at 11:20:00 AM
 friend amy up ready 1 working 1/8 done 9 ok 33.3%
-ci-03.w2 ci working 16m due 1h10m sprint/ci-03.w2.g1.e15
-ci-07.w1 ci ready 2m due 5h58m sprint/ci-07.w1.g1.e15
+ci-03.w2 ci working 16m due 1h10m sprint/ci-03.w2.g1.e15 pro
+ci-07.w1 ci ready 2m due 5h58m sprint/ci-07.w1.g1.e15 -
 judgment ci-03-failed.2 work came back failed on ci-03
 `, v.Text())
 	v, _ = pullView(c, KindMachine, "bench-a")
 	assert.Equal(t, `sprint 352/1205 landed held 770 eta 2d7h machine running at 11:20:00 AM
 machine bench-a up ready 1 working 1/16 done 307 ok 70.4% load 18.6%
-ci-04.w1 ci working 2h30m late 30m sprint/ci-04.w1.g1.e15
-ci-05.w1 ci ready 30s due - sprint/ci-05.w1.g1.e15
+ci-04.w1 ci working 2h30m late 30m sprint/ci-04.w1.g1.e15 -
+ci-05.w1 ci ready 30s due - sprint/ci-05.w1.g1.e15 -
 judgment tick-late-ci-04.1 a work card is past its deadline on ci-04
 `, v.Text())
 	v, _ = pullView(c, KindMachine, "bench-b")
@@ -222,8 +222,8 @@ func TestTeamIsEveryFriendAndHerCards(t *testing.T) {
 	tv := teamView(copyOf(t, fixture(t)))
 	assert.Equal(t, `sprint 352/1205 landed held 770 eta 2d7h machine running at 11:20:00 AM
 friend amy up working 1/8 ready 1 done 9 ok 33.3%
-  ci-03.w2 ci working 16m
-  ci-07.w1 ci ready 2m
+  ci-03.w2 ci working 16m pro
+  ci-07.w1 ci ready 2m -
 friend bob down working 0/8 ready 0 done 0 ok 0.0%
 `, tv.Text())
 	b, err := json.Marshal(tv)
@@ -232,7 +232,7 @@ friend bob down working 0/8 ready 0 done 0 ok 0.0%
 	  "sprint":{"landed":352,"all":1205,"held":770,"eta":"2d7h","machine":"running"},
 	  "friends":[
 	    {"name":"amy","row":{"status":"up","ready":"1","working":"1","width":"8","done":"9","okpct":"33.3%"},
-	     "cards":[{"id":"ci-03.w2","stream":"ci","state":"working","since":"2026-10-03T15:04:00Z"},
+	     "cards":[{"id":"ci-03.w2","stream":"ci","state":"working","since":"2026-10-03T15:04:00Z","tier":"pro"},
 	              {"id":"ci-07.w1","stream":"ci","state":"ready","since":"2026-10-03T15:18:00Z"}]},
 	    {"name":"bob","row":{"status":"down","ready":"0","working":"0","width":"8","done":"0","okpct":"0.0%"},"cards":[]}]}`, string(b))
 }
@@ -242,11 +242,11 @@ friend bob down working 0/8 ready 0 done 0 ok 0.0%
 func TestTeamTextOfSixFullFriendsIsAboutTwoKilobytes(t *testing.T) {
 	t.Parallel()
 	c := copyOf(t, fixture(t))
-	c.Cards, c.Tables["friends"] = nil, map[string]map[string]string{}
+	c.Cards, c.Tables["friends"] = nil, map[string]map[string]any{}
 	streams := []string{"ci", "classes", "contract", "negatives"}
 	for f := range 6 {
 		name := fmt.Sprintf("friend-%d", f+1)
-		c.Tables["friends"][name] = map[string]string{"status": "up", "ready": "4", "working": "4", "width": "8", "done": "12", "okpct": "75.0%"}
+		c.Tables["friends"][name] = map[string]any{"status": "up", "ready": "4", "working": "4", "width": "8", "done": "12", "okpct": "75.0%"}
 		for i := range 8 {
 			s := streams[(f+i)%len(streams)]
 			id := fmt.Sprintf("%s-%02d.w1", s, f*8+i+1)

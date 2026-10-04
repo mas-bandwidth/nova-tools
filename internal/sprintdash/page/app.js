@@ -202,12 +202,13 @@ function streamStatus(state, c, total) {
 function renderStreams(d) {
   var box = $("streams"), work = d.tables.work || {}, merge = d.tables.merge || {};
   var states = {}; (d.streams || []).forEach(function (s) { states[s.Stream] = s; });
-  // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 merging, 8 landed, 9 cost
+  // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 merging, 8 landed, 9 cost, 10 per landed
   if (!box._head) {
     box._head = pageHead("streams");
     box._total = el("div", "row total");
     box._total._c = [el("div", "", "Total"), el("div")];
     FLOW.forEach(function (st) { box._total._c.push(numCell(st === "landed" ? "frac" : "")); });
+    box._total._c.push(quiet(numCell()));
     box._total._c.push(quiet(numCell()));
     box._total._c.forEach(function (c) { box._total.appendChild(c); });
   }
@@ -233,6 +234,7 @@ function renderStreams(d) {
     r.node.appendChild(r.name); r.node.appendChild(r.pill);
     FLOW.forEach(function (st) { r.n[st] = numCell(st === "landed" ? "frac" : ""); r.node.appendChild(r.n[st]); });
     r.cost = quiet(numCell()); r.node.appendChild(r.cost);
+    r.per = quiet(numCell()); r.node.appendChild(r.per);
     return r;
   }, function (r, k) {
     var w = work[k], m = merge[k] || {}, s = states[k] || {}, c = {}, total = 0;
@@ -248,15 +250,23 @@ function renderStreams(d) {
     var tone = { landed: "done", working: "active", held: "warning", stopped: "critical" }[status] || "neutral";
     setPill(r.pill, status, tone, status + (s.State ? " · stream " + s.State + (s.Since ? " since " + clockShort(new Date(s.Since)) : "") : ""));
     var tags = []; if (int(m.stuck) > 0) tags.push(m.stuck + " stuck"); if (m.ci === "red") tags.push("ci red");
+    // the stream's cards by their briefs' tier (where --json's work row carries tiers)
+    Object.keys(w.tiers || {}).sort().forEach(function (tier) { tags.push(tier + " " + w.tiers[tier]); });
     setText(r.tag, tags.join(" · "));
     FLOW.forEach(function (st) { if (st !== "landed") setNum(r.n[st], c[st]); });
     setHTML(r.n.landed, frac(c.landed, total, digits));
     setText(r.cost, ct === null ? "-" : money(ct)); setClass(r.cost, "num" + (ct === null ? " zero" : ""));
+    // the spend by the tier each attempt ran on, on the cost cell (cost_by_tier)
+    setTitle(r.cost, Object.keys(w.cost_by_tier || {}).sort().map(function (tier) { return tier + " " + w.cost_by_tier[tier]; }).join(" · "));
+    // dollars per landed card: the row's per_landed, as where prints it
+    var per = w.per_landed && w.per_landed !== "-" ? w.per_landed : null;
+    setText(r.per, per === null ? "-" : per); setClass(r.per, "num" + (per === null ? " zero" : ""));
   }, box._total);
   var tc = box._total._c, all = 0;
   FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
   setHTML(tc[7], frac(sum.landed, all, digits));
   setText(tc[8], money(sum.cost));
+  setText(tc[9], sum.landed ? money(Math.ceil(sum.cost / sum.landed)) : "-");
   setText($("streams-sub"), keys.length + " streams · " + landedStreams + " landed · " + held + " held");
   // the "landed" header is centred over its n / total cell: same width as the cell, text centred
   var lw = tc[7].offsetWidth ? tc[7].offsetWidth + "px" : "";

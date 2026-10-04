@@ -17,15 +17,15 @@ import (
 
 // sprintCopy is the part of where --json --cards the pull routes read.
 type sprintCopy struct {
-	At        time.Time                               `json:"at"`
-	Landed    int64                                   `json:"landed"`
-	All       int64                                   `json:"all"`
-	Held      int64                                   `json:"held"`
-	Summary   string                                  `json:"summary"`
-	Machine   string                                  `json:"machine"`
-	Tables    map[string]map[string]map[string]string `json:"tables"`
-	Cards     []PullCard                              `json:"cards"`
-	Judgments []PullJudgment                          `json:"judgments"`
+	At        time.Time                            `json:"at"`
+	Landed    int64                                `json:"landed"`
+	All       int64                                `json:"all"`
+	Held      int64                                `json:"held"`
+	Summary   string                               `json:"summary"`
+	Machine   string                               `json:"machine"`
+	Tables    map[string]map[string]map[string]any `json:"tables"` // a cell is a string; a work row carries tiers, cost_by_tier (objects) and per_landed too
+	Cards     []PullCard                           `json:"cards"`
+	Judgments []PullJudgment                       `json:"judgments"`
 }
 
 // PullCard is a work card dealt to a row and not finished, as where --json --cards prints it.
@@ -38,6 +38,7 @@ type PullCard struct {
 	Since    time.Time `json:"since,omitzero"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Branch   string    `json:"branch"`
+	Tier     string    `json:"tier,omitempty"` // the tier its route was drawn from
 }
 
 // PullJudgment is an open judgment naming a card's primary: its note id and its kind.
@@ -79,6 +80,13 @@ type PullView struct {
 	Judgments []PullJudgment `json:"judgments"`
 }
 
+// cellText is a where view's cell as the text it was printed as; "" for a row field
+// that is no cell (a work row's tiers, cost_by_tier).
+func cellText(cell any) string {
+	s, _ := cell.(string)
+	return s
+}
+
 // The kinds of view, and the table and the member each reads.
 const (
 	KindFriend  = "friend"
@@ -102,8 +110,8 @@ func pullView(c *sprintCopy, kind, name string) (PullView, bool) {
 	}
 	v := PullView{At: c.At, Kind: kind, Name: name, Cards: []PullCard{}, Judgments: []PullJudgment{},
 		Sprint: SprintLine{Landed: c.Landed, All: c.All, Held: c.Held, ETA: etaOf(c.Summary), Machine: strings.TrimPrefix(c.Machine, "machine: ")},
-		Row: PullRow{Status: cells["status"], Ready: cells["ready"], Working: cells["working"], Width: cells["width"],
-			Done: cells["done"], OKPct: cells["okpct"], Load: cells["load"]}}
+		Row: PullRow{Status: cellText(cells["status"]), Ready: cellText(cells["ready"]), Working: cellText(cells["working"]), Width: cellText(cells["width"]),
+			Done: cellText(cells["done"]), OKPct: cellText(cells["okpct"]), Load: cellText(cells["load"])}}
 	mine := map[string]bool{}
 	for _, card := range c.Cards {
 		if card.Member == member {
@@ -142,6 +150,7 @@ type TeamCard struct {
 	Stream string    `json:"stream"`
 	State  string    `json:"state"`
 	Since  time.Time `json:"since,omitzero"`
+	Tier   string    `json:"tier,omitempty"`
 }
 
 // teamView is every friend of the friends table, by name, each her own view's row and cards.
@@ -157,7 +166,7 @@ func teamView(c *sprintCopy) TeamView {
 		t.Sprint = v.Sprint
 		f := TeamFriend{Name: name, Row: v.Row, Cards: []TeamCard{}}
 		for _, card := range v.Cards {
-			f.Cards = append(f.Cards, TeamCard{ID: card.ID, Stream: card.Stream, State: card.State, Since: card.Since})
+			f.Cards = append(f.Cards, TeamCard{ID: card.ID, Stream: card.Stream, State: card.State, Since: card.Since, Tier: card.Tier})
 		}
 		t.Friends = append(t.Friends, f)
 	}
@@ -168,7 +177,7 @@ func teamView(c *sprintCopy) TeamView {
 }
 
 // Text is the team as plain text: the sprint line, then for each friend a line of her
-// row and an indented line per card she holds (id, stream, state, how long in it).
+// row and an indented line per card she holds (id, stream, state, how long in it, its tier).
 func (t TeamView) Text() string {
 	var b strings.Builder
 	b.WriteString(sprintText(t.Sprint, t.At))
@@ -176,7 +185,7 @@ func (t TeamView) Text() string {
 		r := f.Row
 		fmt.Fprintf(&b, "friend %s %s working %s/%s ready %s done %s ok %s\n", f.Name, dash(r.Status), dash(r.Working), dash(r.Width), dash(r.Ready), dash(r.Done), dash(r.OKPct))
 		for _, c := range f.Cards {
-			fmt.Fprintf(&b, "  %s %s %s %s\n", c.ID, dash(c.Stream), c.State, since(t.At, c.Since))
+			fmt.Fprintf(&b, "  %s %s %s %s %s\n", c.ID, dash(c.Stream), c.State, since(t.At, c.Since), dash(c.Tier))
 		}
 	}
 	return b.String()
@@ -196,7 +205,7 @@ func etaOf(summary string) string {
 
 // Text is the view as plain text, one line an item and no markup: the sprint line, the
 // row, a line per card (id, stream, state, how long in it, the time to its deadline or
-// past it, the branch), then a line per judgment. Times are from the copy's at.
+// past it, the branch, its tier), then a line per judgment. Times are from the copy's at.
 func (v PullView) Text() string {
 	var b strings.Builder
 	b.WriteString(sprintText(v.Sprint, v.At))
@@ -207,7 +216,7 @@ func (v PullView) Text() string {
 	}
 	b.WriteString("\n")
 	for _, c := range v.Cards {
-		fmt.Fprintf(&b, "%s %s %s %s %s %s\n", c.ID, dash(c.Stream), c.State, since(v.At, c.Since), due(v.At, c.Deadline), dash(c.Branch))
+		fmt.Fprintf(&b, "%s %s %s %s %s %s %s\n", c.ID, dash(c.Stream), c.State, since(v.At, c.Since), due(v.At, c.Deadline), dash(c.Branch), dash(c.Tier))
 	}
 	for _, j := range v.Judgments {
 		fmt.Fprintf(&b, "judgment %s %s on %s\n", j.ID, j.Kind, j.Card)

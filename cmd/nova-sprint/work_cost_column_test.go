@@ -67,17 +67,20 @@ func (ta *testApp) costCells() map[string]string {
 	ta.t.Helper()
 	out := map[string]string{}
 	lines := strings.Split(ta.ok("where"), "\n")
-	in := false
+	in, at := false, -1
 	for _, l := range lines {
 		f := strings.Split(l, "|")
 		switch {
 		case strings.HasPrefix(l, "work "):
 			in = true
-			require.Equal(ta.t, "cost", strings.TrimSpace(f[len(f)-1]), "cost is the work table's last column")
+			// cost, then per landed, are the work table's last columns
+			require.Equal(ta.t, "per landed", strings.TrimSpace(f[len(f)-1]), "per landed is the work table's last column")
+			at = len(f) - 2
+			require.Equal(ta.t, "cost", strings.TrimSpace(f[at]), "cost is the column before it")
 		case in && strings.TrimSpace(l) == "":
 			return out
-		case in && len(f) > 1 && !strings.HasPrefix(l, "-"):
-			out[strings.TrimSpace(f[0])] = strings.TrimSpace(f[len(f)-1])
+		case in && len(f) > at && !strings.HasPrefix(l, "-"):
+			out[strings.TrimSpace(f[0])] = strings.TrimSpace(f[at])
 		}
 	}
 	return out

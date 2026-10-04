@@ -14,7 +14,7 @@ SPRINT TABLE
 
 3011/33011 9.1% -> ETA
 
-work  | waiting | ready | working | review | merging | landed | cost
+work  | waiting | ready | working | review | merging | landed | cost | per landed
 readers | asked | reading | ok | broken
 merge | queued | merged | stuck | ci | state
 friends | ready | working | width | done | ok% | status
@@ -45,6 +45,28 @@ card cost), and sets the stream's sum over all its landed primaries on the
 stream's control card; `SyncMirrors` shows it in the cell. The sum is set
 from the cards, never added to: a replayed merge writes the same, and `clear`
 empties it with the tables.
+
+After `cost` the text table draws `per landed` (the owner, 2026-10-04: cost
+visibility, after a night of $437 for 844 landings whose pro streams landed at
+$4.50 to $8.88 a card and flash streams at $0.10 to $0.27): the stream's
+dollars per landed card, rounded up to the cent, `-` with nothing landed or
+nothing priced, the tick's count when its where record holds one
+(`sprint.TierCosts`, cost_view.go) and else the row's cost cell over its landed
+count (`sprint.PerLandedOf`); its footer is blank (the sprint's figure is the
+dashboard's). `where --json` carries, additively: `tiers` at the top, every
+card counted by the tier its brief names (flash when it names none; any word
+the briefs carry), and on each `tables.work[<stream>]` row `per_landed`, the
+row's `tiers` (its cards by tier) and `cost_by_tier`, the stream's spend by the
+tier each attempt and read ran on (the cost records' tier, not the card's
+ceiling: a flash card escalated to pro shows both; a record with no tier is
+`untiered`), money strings as the cost column shows them. All of it is counted
+by the tick from the sprint it reads anyway and kept in the where record
+(store.WhereRecord), never read card by card at `where`; before the first tick
+of an epoch `tiers` and `cost_by_tier` are absent and `per_landed` is from the
+cells (`TestTheWhereRecordCountsTiersAndCostsByTier`,
+`TestWhereCarriesTiersAndPerLandedCost`). The dashboard's Work table draws the
+column too, with the row's tiers as its tag and the spend by tier on the cost
+cell (docs/SPEC-SPRINT-DASHBOARD.md).
 
 The friends table (the owner, 2026-10-02: "add a friends table, above fleet and
 below merge. friends | status for now. up/down/held"; "friends should be
