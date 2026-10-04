@@ -27,9 +27,8 @@ import (
 // So the rule is on the PRODUCTION side, where the default lives. Every seam in
 // this tree that reaches a host calls internal/testguard's RefuseHosts with the
 // command line it is about to run; under NOVA_TEST_NO_HOST, which `make test`
-// sets, that call panics. A test that wants a child installs its own fake
-// under a temp directory and puts it on PATH; a fake that lives anywhere else
-// is refused.
+// sets, that call panics. A test that wants a child installs its own fake on
+// PATH and declares it with testguard.AllowHosts().
 //
 // This file is the half that reads the tree: it finds the seams and refuses one
 // that does not call the guard. It runs no ssh and writes nothing.
