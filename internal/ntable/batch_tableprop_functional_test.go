@@ -78,7 +78,7 @@ func TestPropLimitAndValidation(t *testing.T) {
 	c, ctx := probeTable(t)
 	m := propBatch(probeRev(ctx, c), "many", nil)
 	m.Props = map[string]string{}
-	for i := 0; i < ntable.LimitManifestProps; i++ {
+	for i := range ntable.LimitManifestProps {
 		m.Props["p"+string(rune('a'+i%26))+string(rune('a'+i/26))] = "v"
 	}
 	_, err := ntable.ApplyBatch(ctx, c, m)

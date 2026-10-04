@@ -58,7 +58,7 @@ func TestFunctional_AskerDoesNotDisturbTaker(t *testing.T) {
 	const takes = 300
 	held, busy := 0, 0
 	var firstHeld error
-	for i := 0; i < takes; i++ {
+	for range takes {
 		lock, err := TryLock(path, "taker")
 		switch {
 		case err == nil:

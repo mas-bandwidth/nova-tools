@@ -116,7 +116,7 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 	verifyFn := opts.getVerifyInode()
 	syncFn := opts.getSync()
 
-	for inodeAttempt := 0; inodeAttempt < maxInodeRetries; inodeAttempt++ {
+	for range maxInodeRetries {
 		f, err := openFileSafe(path, os.O_RDWR|os.O_CREATE, 0666)
 		if err != nil {
 			return nil, err

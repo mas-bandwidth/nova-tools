@@ -363,7 +363,7 @@ func TestLeaseProviderBeatRenewsOnlyOnAdvance(t *testing.T) {
 	renew, last = providerBeatRenews(beat, last)
 	require.True(t, renew, "first beat: renew=%v last=%v, want renew at %v", renew, last, t0)
 	require.True(t, last.Equal(t0), "first beat: renew=%v last=%v, want renew at %v", renew, last, t0)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		renew, last = providerBeatRenews(beat, last)
 		require.False(t, renew, "tick %d with an unmoved beat file renewed the lease", i)
 	}

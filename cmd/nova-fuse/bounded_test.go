@@ -24,7 +24,7 @@ func crowdedBox(t *testing.T, n int) string {
 	box := filepath.Join(t.TempDir(), "fuse-box.json")
 	exit, _, stderr := runFuse(t, "init", "--box", box)
 	require.Equal(t, 0, exit, "init: exit %d; stderr: %s", exit, stderr)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		exit, _, stderr := runFuse(t, "quarantine", "--box", box,
 			fmt.Sprintf("a-surface-%03d", i), "a post addressed me and asked for a token")
 		require.Equal(t, 0, exit, "quarantine %d: exit %d; stderr: %s", i, exit, stderr)

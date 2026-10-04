@@ -454,7 +454,7 @@ func locals(prefix string, n int) string {
 func TestTheLocalsBoundIsOnTheMostHeldAtOnce(t *testing.T) {
 	t.Parallel()
 	files := map[string]string{}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		files[fmt.Sprintf("f%03d.lua", i)] = locals("x", MaxLocals-1) + fn(fmt.Sprintf("f%d", i))
 	}
 	lib := Library{Name: "lib_one", Files: tree(files), Glob: "*.lua", Prelude: "local NS = {}\n"}

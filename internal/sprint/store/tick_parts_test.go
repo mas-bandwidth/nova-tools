@@ -444,7 +444,7 @@ func TestASprintStoppedMidFlightLandsTheSame(t *testing.T) {
 // wins per card; the other is refused by name or plans again; nothing is lost.
 func TestTheTickAndAVerbRaceSafely(t *testing.T) {
 	t.Parallel()
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		h := newHarness(t)
 		h.setup(4)
 		h.startMachine()

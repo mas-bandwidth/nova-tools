@@ -746,7 +746,7 @@ func TestTableVerbsAgainstModel(t *testing.T) {
 		// store throughout: a round averages thirty actions, the chain
 		// create, row add, cell add, cell add takes eleven each on average,
 		// and the states behind a rebind, a clear and a drop lie beyond it
-		for round := 0; round < repeatRounds; round++ {
+		for range repeatRounds {
 			rt.Repeat(actions)
 		}
 	})

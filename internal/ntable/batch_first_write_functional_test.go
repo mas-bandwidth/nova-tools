@@ -131,7 +131,7 @@ func TestBatchUnsetOfAThousandFieldsIsOneCommit(t *testing.T) {
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
 	fields := map[string]any{}
-	for i := 0; i < ntable.LimitUnsetFields; i++ {
+	for i := range ntable.LimitUnsetFields {
 		fields[fmt.Sprintf("u%d", i)] = "v"
 	}
 	require.NoError(t, c.HSet(ctx, ntable.MemberKey("a"), fields).Err())

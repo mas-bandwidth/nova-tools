@@ -130,7 +130,7 @@ func TestQuackRereadOverlappingExactRetriesShareOneOperation(t *testing.T) {
 		out, errs string
 	}
 	start, replies := make(chan struct{}), make(chan reply, 2)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		go func() {
 			<-start
 			code, out, errs := ta.do(line)
@@ -138,7 +138,7 @@ func TestQuackRereadOverlappingExactRetriesShareOneOperation(t *testing.T) {
 		}()
 	}
 	close(start)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		r := <-replies
 		assert.Equal(t, 0, r.code, r.out+r.errs)
 		assert.NotEmpty(t, quackID.FindAllString(r.out, -1), r.out+r.errs)

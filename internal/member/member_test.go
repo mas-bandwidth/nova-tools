@@ -1107,7 +1107,7 @@ func TestASpentReadStaysSpentAcrossTicks(t *testing.T) {
 	require.NoError(t, err)
 	g.r.child("r1").end(Result{Ran: true, Verdict: ""})
 	starts := len(g.r.started())
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		g.s.reset()
 		_, err = g.tick(t)
 		require.NoError(t, err)

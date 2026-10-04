@@ -103,7 +103,7 @@ func TestTheLevelMovesAReadAtMostOnce(t *testing.T) {
 	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d"}
 	made := map[string]bool{} // read cards a level move asked
 	moves := 0
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		if i%3 == 0 {
 			h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
 		}

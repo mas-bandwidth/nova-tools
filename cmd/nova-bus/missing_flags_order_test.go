@@ -19,7 +19,7 @@ func TestABareVerbNamesEveryMissingRequiredFlagInAFixedOrder(t *testing.T) {
 		"SEND REFUSED: --bus is required; it wants the bus's repository root; refusing to guess; run: nova-bus send -h\n" +
 		"SEND REFUSED: --remote is required; it wants the git remote to push to; refusing to guess; run: nova-bus send -h\n"
 	first := ""
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		r := invoke(t, "", "send")
 		require.Equalf(t, 2, r.code, "run %d: exit = %d, want 2\nstderr: %s", i, r.code, r.stderr)
 		if first == "" {

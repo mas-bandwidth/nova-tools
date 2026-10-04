@@ -201,7 +201,7 @@ func TestQuackOpReusedInAnotherIncarnationDrawsANewStamp(t *testing.T) {
 	t.Run("two stores", func(t *testing.T) {
 		t.Parallel()
 		var passes [][]string
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			ta := newTestApp(t)
 			ta.ok("init --readers reader-a,reader-b --members m1")
 			ids, _ := ta.quackCards(line + "shared-operation-name")

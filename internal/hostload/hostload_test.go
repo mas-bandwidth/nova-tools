@@ -170,11 +170,11 @@ func TestRingReportsTheHighestOfTheLastTen(t *testing.T) {
 		r.Add(p)
 	}
 	require.Equal(t, 70.0, max())
-	for i := 0; i < RingSize-3; i++ {
+	for range RingSize - 3 {
 		r.Add(5) // ten held: 10, 70, 20 and seven 5s
 	}
 	require.Equal(t, 70.0, max(), "ten samples held, the 70 among them")
-	for i := 0; i < RingSize; i++ {
+	for range RingSize {
 		r.Add(5)
 	}
 	require.Equal(t, 5.0, max(), "after ten more samples of 5 the 70 is gone")
@@ -196,7 +196,7 @@ func TestRingSinceAnEarlierCount(t *testing.T) {
 	require.True(t, ok && m == 90, "since 0 = %v %v, want 90", m, ok)
 	_, ok = r.MaxSince(4)
 	require.False(t, ok, "no sample since the last count")
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		r.Add(1)
 	}
 	m, ok = r.MaxSince(0)

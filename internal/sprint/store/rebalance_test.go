@@ -57,7 +57,7 @@ func TestTheTickFeedsEveryMemberDealAheadTimesItsWidth(t *testing.T) {
 	for _, m := range ms {
 		require.Equal(t, sprint.DealAhead*4, heldBy(s, m), "%s after one tick", m)
 	}
-	for round := 0; round < 3; round++ {
+	for round := range 3 {
 		for _, m := range ms {
 			h.takeWidth(m)
 		}

@@ -20,7 +20,7 @@ func TestInboxOpenIsOneLine(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		id := fmt.Sprintf("bo-c%011d", i)
 		writeFile(t, checkout, fmt.Sprintf("from-bo/2026-09-09T12%02dZ-many-%s.md", i, id),
 			fmt.Sprintf("From: Bo\nTo: Ada\nDate: Wed Sep  9 12:%02d:00 UTC 2026\nId: %s\nSubject: One of many %d\n\nOpen.\n", i, id, i))
@@ -45,7 +45,7 @@ func TestInboxLargeRemedyNamesReplyOrReceiptNotAdvance(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		id := fmt.Sprintf("bo-r%011d", i)
 		writeFile(t, checkout, fmt.Sprintf("from-bo/2026-09-09T12%02dZ-many-%s.md", i, id),
 			fmt.Sprintf("From: Bo\nTo: Ada\nDate: Wed Sep  9 12:%02d:00 UTC 2026\nId: %s\nSubject: One of many %d\n\nOpen.\n", i, id, i))

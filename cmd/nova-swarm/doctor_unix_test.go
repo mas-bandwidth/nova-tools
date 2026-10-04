@@ -117,7 +117,7 @@ func TestPreflightComparesTheStampOfABinaryThatPrintsThenHangs(t *testing.T) {
 	}
 	go func() {
 		lines := bufio.NewReader(pipe)
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			if _, err := lines.ReadString('\n'); err != nil {
 				break
 			}

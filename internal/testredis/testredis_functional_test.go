@@ -202,7 +202,7 @@ func TestTwoHundredStartsInParallelEachGetTheirOwnServer(t *testing.T) {
 	dirs := map[string]bool{}
 	pids := map[int]bool{}
 	t.Run("all", func(t *testing.T) {
-		for i := 0; i < tests; i++ {
+		for i := range tests {
 			t.Run(strconv.Itoa(i), func(t *testing.T) {
 				t.Parallel()
 				s := StartServer(t)
@@ -845,7 +845,7 @@ func TestTheSentryKillsItsServersWhenItsInputCloses(t *testing.T) {
 	l := real
 	l.sentry = &sentry{enlist: func() (*post, error) { return at, nil }}
 	var servers []*Server
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		s := l.start(t, nil)
 		if err := dial(t, s.Addr()).Ping(bounded(t)).Err(); err != nil {
 			require.NoError(t, err, err)

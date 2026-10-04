@@ -626,7 +626,7 @@ func TestReconnectSocketCleanup(t *testing.T) {
 		require.NoError(t, err, err)
 	}
 	_ = connRepeated.Client().Get(ctx, "drop").Err()
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		_ = connRepeated.Client().Get(ctx, "fail").Err()
 	}
 	if n := storeRepeated.dialed(); n != 5 {
@@ -655,7 +655,7 @@ func TestReconnectSocketCleanup(t *testing.T) {
 	}
 	_ = connConcurrent.Client().Get(ctx, "drop").Err()
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

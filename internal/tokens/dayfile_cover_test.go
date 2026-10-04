@@ -59,7 +59,7 @@ func TestDayfileCoverTotalsSumsReportedTypesKeepsDashes(t *testing.T) {
 			}
 			d := DayFile{Day: "2026-09-11", Rows: tc.rows}
 			got := d.Totals()
-			for ty := Type(0); ty < NTypes; ty++ {
+			for ty := range NTypes {
 				v, ok := got.Get(ty)
 				if want, reported := tc.want[ty]; reported {
 					assert.Truef(t, ok, "%s is reported by a row", TypeNames[ty])
@@ -84,7 +84,7 @@ func TestDayfileCoverTotalsOfADayWithNoRowsRefusesToInvent(t *testing.T) {
 	got := d.Totals()
 	require.Equal(t, int(NTypes), got.Dashes(), "a day with no rows reports none of the five types")
 	assert.Zero(t, got.Total(), "nothing reported totals nothing, not a measured zero")
-	for ty := Type(0); ty < NTypes; ty++ {
+	for ty := range NTypes {
 		assert.Equalf(t, Dash, got.Cell(ty), "the %s cell of an empty day is a dash", TypeNames[ty])
 	}
 }

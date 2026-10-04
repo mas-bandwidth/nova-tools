@@ -625,7 +625,7 @@ func TestWatchWritesAFrameOverFourKiBInOneWrite(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --members m1")
 	var streams []string
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		streams = append(streams, fmt.Sprintf("stream-%03d-of-the-sprint", i))
 	}
 	ta.ok("add --stream " + strings.Join(streams, ",") + " --count 2")

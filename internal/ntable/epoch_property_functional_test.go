@@ -692,7 +692,7 @@ func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 					}
 					h.step(epochAction{verb: "cell_move", table: table, row: "r1", col: "a", to: "b", member: epochMember(epoch, 1)})
 				}
-				for step := 0; step < 24; step++ {
+				for range 24 {
 					actor := rng.Intn(2)
 					if rng.Intn(8) == 0 {
 						h.step(epochAction{verb: "read_epoch", actor: actor})

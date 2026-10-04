@@ -287,7 +287,7 @@ func TestAWaitedTickJudgmentComesBackAfterItsTime(t *testing.T) {
 	_, held, err := h.st.Wait(h.ctx, o[0].Note.ID, h.now.Add(10*time.Minute))
 	require.NoError(t, err, "wait: held %v %v", held, err)
 	require.True(t, held, "wait: held %v %v", held, err)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		h.tick(time.Minute + time.Second)
 		h.machine()
 	}

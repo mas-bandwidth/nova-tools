@@ -23,16 +23,16 @@ func TestBatchReceiptOverTheBoundIsRefusedBeforeAnyWrite(t *testing.T) {
 	c, ctx := probeTable(t)
 	const members, fields, size = 128, 1000, 256
 	var creates []string
-	for i := 0; i < members; i++ {
+	for i := range members {
 		creates = append(creates, fmt.Sprintf(`{"id":"m%d","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`, i))
 	}
 	seed, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), "seed", strings.Join(creates, ",")))
 	require.True(t, replyOpens(seed, err, "OK"), "seed: %.200v: %v", seed, err)
 	value := strings.Repeat("v", size)
 	pipe := c.Pipeline()
-	for i := 0; i < members; i++ {
+	for i := range members {
 		f := map[string]any{}
-		for j := 0; j < fields; j++ {
+		for j := range fields {
 			f[fmt.Sprintf("f%d", j)] = value
 		}
 		pipe.HSet(ctx, ntable.MemberKey(fmt.Sprintf("m%d", i)), f)

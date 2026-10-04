@@ -206,7 +206,7 @@ func TestFirstConnOverEveryOrderOfEvents(t *testing.T) {
 		if len(order) == depth {
 			return
 		}
-		for event := 0; event < events; event++ {
+		for event := range events {
 			order = append(order, event)
 			walk()
 			order = order[:len(order)-1]
@@ -269,7 +269,7 @@ func TestFirstConnOverLongOrdersOfEvents(t *testing.T) {
 	t.Parallel()
 	for seed := uint64(1); seed <= 4; seed++ {
 		r := rand.New(rand.NewPCG(seed, 0x6e6f7661))
-		for i := 0; i < 5000; i++ {
+		for i := range 5000 {
 			// Half of the orders begin as Open does, so that the probe is
 			// taken in them and the rest of the order follows the answer.
 			var order []int

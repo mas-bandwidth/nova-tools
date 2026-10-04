@@ -37,7 +37,7 @@ func TestSubsecondTickReplayNeverAdvancesStreak(t *testing.T) {
 	st = back
 
 	// Replaying that exact tick is the same reading: never the streak.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var again State
 		_, again, streak = widening(5, 3).Apply(st, first)
 		require.False(t, streak, "re-reading the subsecond tick %d times went red", i+1)

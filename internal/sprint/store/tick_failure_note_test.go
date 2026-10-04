@@ -26,7 +26,7 @@ func (h *harness) failFleetRead(text string) {
 // failedTicks runs n failed ticks, a second apart.
 func (h *harness) failedTicks(n int) {
 	h.t.Helper()
-	for i := 0; i < n; i++ {
+	for range n {
 		h.tick(time.Second)
 		_, err := h.st.Tick(h.ctx)
 		require.Error(h.t, err)

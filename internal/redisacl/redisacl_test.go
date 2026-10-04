@@ -217,7 +217,7 @@ func TestDriftFieldsAreBounded(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "~a:*", normKey("%RW~a:*"))
 	var many []string
-	for i := 0; i < MaxShown+3; i++ {
+	for i := range MaxShown + 3 {
 		many = append(many, string(rune('a'+i)))
 	}
 	f := Drift{Off: true, CommandsAdd: many}.Fields()

@@ -114,7 +114,7 @@ func TestAckOfAReachedSentinelIsRefused(t *testing.T) {
 	require.Empty(t, res.Moved, "ack of sentinel reached: %+v", res)
 	require.Len(t, res.Refused, 1, "ack of sentinel reached: %+v", res)
 	require.Contains(t, res.Refused[0].Why, "nova-sprint release stop", "ack of sentinel reached: %+v", res)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		h.tick(time.Hour)
 		h.machine()
 	}

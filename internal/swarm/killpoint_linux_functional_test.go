@@ -55,7 +55,7 @@ func TestPausePointThreadDirected(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "build probe: %v\n%s", err, out)
 
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		err := os.Remove(markPath)
 		if !os.IsNotExist(err) {
 			require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestPausePointThreadDirected(t *testing.T) {
 		)
 		require.NoError(t, child.Start())
 
-		for waited := 0; waited < 3000; waited++ {
+		for range 3000 {
 			if _, err := os.Stat(markPath); err == nil {
 				break
 			}

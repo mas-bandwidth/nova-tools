@@ -97,7 +97,7 @@ func TestTheWhereRecordIsTheCardsAfterEveryTick(t *testing.T) {
 		return got
 	}
 	members := []string{"m1", "m2"}
-	for round := 0; round < 12; round++ {
+	for round := range 12 {
 		h.machine()
 		rec := holds(fmt.Sprintf("round %d", round))
 		require.Equal(t, 5, rec.Held, "round %d: the gate, the three behind it, and the card that needs one of them", round)
@@ -122,7 +122,7 @@ func TestTheWhereRecordIsTheCardsAfterEveryTick(t *testing.T) {
 	h.startMachine()
 	h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"gate"}, Reason: "the wave is loaded", Coordinator: h.st.Actor, Who: h.st.Actor}))
 	h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"late-1", "late-2"}, Reason: "the wave is loaded", Coordinator: h.st.Actor, Who: h.st.Actor}))
-	for round := 0; round < 12; round++ {
+	for round := range 12 {
 		h.machine()
 		rec := holds(fmt.Sprintf("released, round %d", round))
 		require.Zero(t, rec.Held, "released, round %d", round)

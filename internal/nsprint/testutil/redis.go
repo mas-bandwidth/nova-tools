@@ -56,7 +56,7 @@ func Start(t *testing.T, extra ...string) string {
 	// So the server is ready only when its OWN log says it is, and a server that
 	// lost its port is started again on a fresh one.
 	var lastErr string
-	for attempt := 0; attempt < 5; attempt++ {
+	for range 5 {
 		addr, ok, why := startOnce(t, bin, extra)
 		if ok {
 			return addr

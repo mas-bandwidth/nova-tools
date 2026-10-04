@@ -23,7 +23,7 @@ const (
 // scenarios is the snapshots of every scenario on each of its seeds.
 func scenarios() []sample {
 	var out []sample
-	for seed := uint64(0); seed < scenarioSeeds; seed++ {
+	for seed := range uint64(scenarioSeeds) {
 		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, aLateCardRedealt} {
 			out = append(out, run(newWalk(scenarioBase+seed))...)
 		}

@@ -719,7 +719,7 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 	drafts := t.TempDir()
 	body := bodyFile(t, "Yes.\n")
 	bin := buildNovaBus(t)
-	for round := 0; round < 5; round++ {
+	for round := range 5 {
 		round := round
 		dir := filepath.Join(drafts, fmt.Sprintf("round%d", round))
 		require.NoError(t, os.MkdirAll(dir, 0o755))
@@ -869,7 +869,7 @@ func TestReplyReceiptStaysOneLineAtSixHundredOpenNotes(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
-	for i := 0; i < 600; i++ {
+	for i := range 600 {
 		writeFile(t, checkout, fmt.Sprintf("from-bo/2026-09-08T%02d%02dZ-bulk-%012d.md", i/60, i%60, i),
 			fmt.Sprintf("From: Bo\nTo: Ada\nDate: Tue Sep  8 00:00:00 UTC 2026\nId: bo-%012d\nSubject: Bulk %d\n\nBulk.\n", i, i))
 	}
@@ -901,7 +901,7 @@ func TestReplyRecipientFieldCapsAtEightNamesAndCounts(t *testing.T) {
 	checkout, _ := busDir(t)
 	// A roster of twenty, and a group that names them all.
 	var people, members []string
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		name := fmt.Sprintf("Friend%02d", i)
 		people = append(people, fmt.Sprintf(`{"name": %q}`, name))
 		members = append(members, fmt.Sprintf("%q", name))
@@ -921,7 +921,7 @@ func TestReplyRecipientFieldCapsAtEightNamesAndCounts(t *testing.T) {
 	// Named one by one rather than through the group, so the FILE carries all twenty and
 	// the receipt is the only thing that truncates: `+<k>` is a cap with a remedy on it.
 	var all []string
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		all = append(all, fmt.Sprintf("Friend%02d", i))
 	}
 	r := invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body, "--to", strings.Join(all, ";"))...).mustCode(t, 0)

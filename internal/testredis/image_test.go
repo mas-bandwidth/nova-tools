@@ -418,7 +418,7 @@ var fakeKinds = []string{"string", "hash", "list", "set", "zset", "stream"}
 // expiry and every other hash with an expiry on one of its fields.
 func fakeKeysUnder(prefix string, n int) map[string]fakeKey {
 	keys := make(map[string]fakeKey, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		key := prefix + strconv.Itoa(i)
 		var k fakeKey
 		switch fakeKinds[i%len(fakeKinds)] {
@@ -594,7 +594,7 @@ func TestImageIsEveryKeyUnderThePrefixReadBySCANInPipelines(t *testing.T) {
 	order := slices.Sorted(maps.Keys(mine))
 	batches := (fakeImageKeys + imageBatchKeys - 1) / imageBatchKeys
 	next := 0 // the pipeline the batch starts at
-	for b := 0; b < batches; b++ {
+	for b := range batches {
 		batch := order[b*imageBatchKeys : min(len(order), (b+1)*imageBatchKeys)]
 		hashes := 0
 		for _, key := range batch {
@@ -993,7 +993,7 @@ func TestImageSumOfAHashSetOrSortedSetDoesNotDependOnItsOrder(t *testing.T) {
 	// Thirty fields, so that the order of a Go map, which the fake's HGETALL
 	// answers in, shows in a sum that does not sort.
 	var pairs []string
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		pairs = append(pairs, fmt.Sprintf("field-%02d", i), fmt.Sprintf("value-%02d", i))
 	}
 	members := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
@@ -1008,7 +1008,7 @@ func TestImageSumOfAHashSetOrSortedSetDoesNotDependOnItsOrder(t *testing.T) {
 		prefix + "zset": fakeZSet(scored...),
 	})
 	first := imageOf(t, s, prefix)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if d := Diff(first, imageOf(t, s, prefix)); len(d) != 0 {
 			require.Len(t, d, 0, "the image of the same store differs from one call to the next: %q", d)
 		}
@@ -1210,7 +1210,7 @@ func TestDiffIsInKeyOrderWithTheMarksInterleavedAndTheSameEveryTime(t *testing.T
 	entry := func(n int) Entry { return Entry{Type: "string", Sum: sha256.Sum256([]byte(strconv.Itoa(n)))} }
 	before, after := map[string]Entry{}, map[string]Entry{}
 	var want []string // in key order, because the keys are made in it
-	for i := 0; i < keys; i++ {
+	for i := range keys {
 		key := fmt.Sprintf("k:%03d", i)
 		switch i % 4 {
 		case 0: // added
@@ -1246,7 +1246,7 @@ func TestDiffIsInKeyOrderWithTheMarksInterleavedAndTheSameEveryTime(t *testing.T
 		}
 		require.Failf(t, "", "Diff is not the lines of the %d keys that differ in key order: %d lines, want %d, and they first differ at line %d: got %s, want %s", len(want), len(first), len(want), at, got, wantAt)
 	}
-	for i := 0; i < keys; i++ {
+	for range keys {
 		if again := Diff(before, after); !slices.Equal(again, first) {
 			require.Equal(t, first, again, "Diff of the same two images differs from one call to the next")
 		}

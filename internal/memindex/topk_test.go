@@ -45,7 +45,7 @@ func TestTopKMatchesFullSort(t *testing.T) {
 		}
 		for _, k := range []int{0, 1, 7, 50, n, n + 1} {
 			want := sortedScores(scores, k)
-			for repeat := 0; repeat < 3; repeat++ {
+			for range 3 {
 				require.Equal(t, want, topK(scores, k), "n=%d k=%d", n, k)
 			}
 		}
@@ -79,7 +79,7 @@ func BenchmarkTopK(b *testing.B) {
 		for _, k := range []int{50, n} {
 			b.Run(fmt.Sprintf("candidates=%d/k=%d", n, k), func(b *testing.B) {
 				scores := make(map[int32]float64, n)
-				for i := 0; i < n; i++ {
+				for i := range n {
 					scores[int32(i)] = float64((i*7919)%1009) / 7
 				}
 				b.ReportAllocs()

@@ -149,11 +149,11 @@ func TestOutputSizeAtTheLargestPlausibleState(t *testing.T) {
 
 	// 12 files x 16 keys
 	var rules []string
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		fname := fmt.Sprintf("seat_%02d.yaml", i)
 		rules = append(rules, fmt.Sprintf("  - path_regex: ^%s$\n    age: %s,%s", fname, keyA.pubKey, recKey.pubKey))
 		var keysText strings.Builder
-		for k := 0; k < 16; k++ {
+		for k := range 16 {
 			keysText.WriteString(fmt.Sprintf("KEY_%02d: val_%d\n", k, k))
 		}
 		sealFileWithSops(t, sopsPath, filepath.Join(storeDir, fname), []string{keyA.pubKey, recKey.pubKey}, keysText.String())

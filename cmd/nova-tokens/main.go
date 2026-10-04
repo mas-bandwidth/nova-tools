@@ -1255,7 +1255,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// below is exactly "no line for that key" and every other key's lines.
 	var rendered []string
 	for _, row := range rows {
-		for t := tokens.Type(0); t < tokens.NTypes; t++ {
+		for t := range tokens.NTypes {
 			v, ok := row.Counts.Get(t)
 			if !ok {
 				continue

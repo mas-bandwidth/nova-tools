@@ -158,7 +158,7 @@ func TestACardWithNoRouteIsNotDealtAndJudgedOncePerTier(t *testing.T) {
 	assert.NotContains(t, cards, "s3-1.w1")
 
 	h.startMachine()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h.machine()
 	}
 	open := h.a2Open(sprint.NNoRoute)

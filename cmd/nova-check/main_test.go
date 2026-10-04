@@ -66,7 +66,7 @@ func TestRunRefusesToGuess(t *testing.T) {
 func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 	t.Parallel()
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		var stdout, stderr bytes.Buffer
 		{
 			got := run([]string{"attest"}, &stdout, &stderr)

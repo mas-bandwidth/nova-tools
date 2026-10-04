@@ -275,7 +275,7 @@ func TestSlowTestsManySmallTestsNameThePackageAndItsTopThree(t *testing.T) {
 	t.Parallel()
 
 	var b strings.Builder
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		fmt.Fprintf(&b, "{\"Action\":\"pass\",\"Package\":\"example.com/m/cmd/many\",\"Test\":\"TestN%02d\",\"Elapsed\":0.%02d}\n", i, 10+i)
 	}
 	b.WriteString(`{"Action":"pass","Package":"example.com/m/cmd/many","Elapsed":3.1}` + "\n")

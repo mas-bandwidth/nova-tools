@@ -23,14 +23,14 @@ func TestProperty_StampRoundtrip(t *testing.T) {
 	randomString := func(chars []rune, maxLen int) string {
 		n := rng.Intn(maxLen) + 1
 		var b strings.Builder
-		for i := 0; i < n; i++ {
+		for range n {
 			b.WriteRune(chars[rng.Intn(len(chars))])
 		}
 		return b.String()
 	}
 
 	const iterations = 5000
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		pid := rng.Intn(10_000_000) + 1
 		host := randomString(hostCharset, 20)
 		offsetSec := rng.Int63n(365 * 24 * 3600 * 5)
@@ -67,7 +67,7 @@ func TestProperty_JitterBounds(t *testing.T) {
 	rng := rand.New(rand.NewSource(43))
 	const iterations = 10000
 
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		d := time.Duration(rng.Int63n(int64(time.Hour))) + time.Millisecond
 		jittered := defaultJitter(d)
 		min := d

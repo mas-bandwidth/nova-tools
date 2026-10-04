@@ -240,7 +240,7 @@ func TestRetrieveEmptyForOutOfVocabularyQuery(t *testing.T) {
 func crowdingFS() fstest.MapFS {
 	var long strings.Builder
 	long.WriteString("---\nname: a-long\n---\n")
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		long.WriteString("\nquasar nebula comet\n")
 	}
 	return fstest.MapFS{

@@ -53,7 +53,7 @@ func TestOneZeroWaitWinsWhenSeveralAskTogether(t *testing.T) {
 	var wg sync.WaitGroup
 	wins := make(chan func(), n)
 	start := make(chan struct{})
-	for i := 0; i < n; i++ {
+	for range n {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

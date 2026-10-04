@@ -217,7 +217,7 @@ func TestFarAppliesTheDelayOncePerWrite(t *testing.T) {
 	if got := fake.asked(); !farOnly(got, 2) {
 		require.Failf(t, "", "%d PINGs in one write brought the waits to %v; want the delay once more, not %d times", farPipelined, got, farPipelined)
 	}
-	for i := 0; i < farSeparate; i++ {
+	for range farSeparate {
 		farRoundTrip(t, c, farPing)
 	}
 	total := 2 + farSeparate

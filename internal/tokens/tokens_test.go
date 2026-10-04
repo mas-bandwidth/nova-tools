@@ -329,11 +329,11 @@ func TestTheUnattributedTallyIsBoundedAndKeepsItsTotal(t *testing.T) {
 	require.NoError(t, err)
 	rules.WatchUnattributed()
 	const n = stemLimit + 1000
-	for i := 0; i < n; i++ {
+	for i := range n {
 		rules.AttributeInputs([]string{fmt.Sprintf("/home/nova/t%06d/a.go", i)}, "")
 	}
 	// The one stem admitted first keeps counting after the ceiling is reached.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		rules.AttributeInputs([]string{"/home/nova/t000000/b.go"}, "")
 	}
 	{

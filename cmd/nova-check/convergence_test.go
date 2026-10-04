@@ -240,7 +240,7 @@ func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
 	// And the same tick read twice is one tick: a second invocation over the
 	// same window must not turn a WARN into a red on a reading nobody took.
 	same := filepath.Join(f.dir, "same.json")
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		exit, stdout, _ := f.run(t, "--state", same, "--now", "2026-09-18T17:00:00Z")
 		require.EqualValues(t, 0, exit, "reading one tick %d times went red:\n%s", i+1, stdout)
 	}
@@ -255,7 +255,7 @@ func TestConvergenceReadsClassesThroughAFakeGit(t *testing.T) {
 	spec := func(n int) string {
 		var b strings.Builder
 		b.WriteString("## The class tests\n\n")
-		for i := 0; i < n; i++ {
+		for i := range n {
 			b.WriteString("### `class-" + strings.Repeat("x", i%3+1) + strings.Repeat("y", i) + "` — a rule\n\n")
 		}
 		return b.String()

@@ -97,7 +97,7 @@ func (f *fakeDiskutil) run(args ...string) (string, error) {
 		// A real addVolume takes seconds. Yielding is this fake's whole duration: with
 		// no lock the goroutines below interleave here every time, and with the lock
 		// none of them can. No clock, no sleep -- the test asserts the event.
-		for i := 0; i < 200; i++ {
+		for range 200 {
 			runtime.Gosched()
 		}
 		f.mu.Lock()
@@ -372,7 +372,7 @@ func TestConcurrentCreatesAreSerialized(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, callers)
 	start := make(chan struct{})
-	for i := 0; i < callers; i++ {
+	for i := range callers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

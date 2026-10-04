@@ -663,7 +663,7 @@ func TestW13ATickWithNothingToDoEndsAfterTheFourFirstUpdates(t *testing.T) {
 		require.Equal(t, want, first.TickEnd, "hold=%v: the first tick's note count %d, want %d", hold, first.TickEnd, want)
 		x.rec.take()
 		ends, revs := h.notesOf(sprint.NTickEnd), h.tableRevs()
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			h.tick(time.Duration(i+1) * time.Second)
 			res := x.tick()
 			want := []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}

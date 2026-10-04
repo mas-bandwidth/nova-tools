@@ -195,7 +195,7 @@ func TestHiderProperty(t *testing.T) {
 			}
 			return b.String()
 		}
-		for i := 0; i < 5000; i++ {
+		for i := range 5000 {
 			secret := draw(3)
 			text := draw(4)
 			if r.IntN(2) == 0 {

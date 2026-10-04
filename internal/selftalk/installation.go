@@ -316,7 +316,7 @@ func sentences(buf []byte, lines []int) []segment {
 	// An unbalanced quote therefore poisons at most one paragraph, and it poisons it toward
 	// SILENCE — which is the direction this tool prefers to be wrong in.
 	wasOpen := false
-	for i := 0; i < len(buf); i++ {
+	for i := range buf {
 		switch buf[i] {
 		case '"':
 			open = !open

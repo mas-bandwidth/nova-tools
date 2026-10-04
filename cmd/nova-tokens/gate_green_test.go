@@ -189,7 +189,7 @@ func TestSourcesUnattributedIsCappedWithARemedy(t *testing.T) {
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	repos := reposFile(t, dir)
 	var lines []string
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		lines = append(lines, msg(fmt.Sprintf("m%d", i), "2026-09-11T10:00:00Z", "fable",
 			map[string]int{"input_tokens": 10}, fmt.Sprintf("/home/nova/tree-%02d/a.go", i)))
 	}

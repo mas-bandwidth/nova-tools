@@ -148,7 +148,7 @@ func TestTheLevelNeverMovesACardBackOntoItsRefuser(t *testing.T) {
 	h.addReady("s1", 4, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
-	for round := 0; round < 12; round++ {
+	for range 12 {
 		for _, c := range h.snap().Fleet.Cell("m1", sprint.Ready) {
 			h.failTake(c.ID, stagingLine)
 		}

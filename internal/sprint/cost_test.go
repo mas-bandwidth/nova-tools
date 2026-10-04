@@ -66,7 +66,7 @@ func TestPastTheBoundTheTotalStaysExactAndTheListIsCut(t *testing.T) {
 	t.Parallel()
 	pr := &Card{ID: "s1-1", Fields: map[string]string{}}
 	t0 := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	for i := 0; i < MaxCostRecords+3; i++ {
+	for i := range MaxCostRecords + 3 {
 		book(pr, consumerOf(fmt.Sprintf("c%03d#v", i), t0.Add(time.Duration(i)*time.Second).Format(time.RFC3339), "input=1 actual_usd=0.001"))
 	}
 	v := CardCostOf(pr)

@@ -86,7 +86,7 @@ const (
 func specWith(n int) string {
 	var b strings.Builder
 	b.WriteString("# spec\n\n### not in the index\n\n## The class tests\n\n")
-	for i := 0; i < n; i++ {
+	for i := range n {
 		fmt.Fprintf(&b, "### `class-%d` — a rule\n\nprose\n\n", i)
 	}
 	b.WriteString("## Something else\n\n### also not in the index\n")
@@ -587,7 +587,7 @@ func TestTheSameTickReadTwiceIsNotTwoTicks(t *testing.T) {
 	_, st, streak := widening(5, 3).Apply(st, tick)
 	require.False(t, streak, "the first tick: streak=%v state=%+v", streak, st.Streams["EDGES"])
 	require.Equal(t, 1, st.Streams["EDGES"].Widening, "the first tick: streak=%v state=%+v", streak, st.Streams["EDGES"])
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var again State
 		_, again, streak = widening(5, 3).Apply(st, tick)
 		require.False(t, streak, "re-reading the same tick %d times went red", i+1)
@@ -605,7 +605,7 @@ func TestWithNoStateNothingIsRemembered(t *testing.T) {
 	tick := at(t, windowNow)
 	_, err := LoadState("")
 	require.NoError(t, err)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, _, streak := widening(5, 3).Apply(State{Streams: map[string]StreamState{}}, tick)
 		require.False(t, streak, "tick %d exited 1 with nothing remembered", i)
 	}

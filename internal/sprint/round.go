@@ -131,7 +131,7 @@ func (r *round) value() string { return strconv.FormatUint(r.count, 10) }
 // none does.
 func (r *round) scan(ok func(string) bool) string {
 	n := len(r.order)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if x := r.order[(r.start()+i)%n]; ok(x) {
 			return x
 		}
@@ -149,7 +149,7 @@ func (r *round) picks(k int, taken []string, ok func(string) bool) []string {
 	n := len(r.order)
 	for len(out) < k {
 		pick := -1
-		for i := 0; i < n; i++ {
+		for i := range n {
 			j := (at + i) % n
 			if x := r.order[j]; ok(x) && !contains(taken, x) && !contains(out, x) {
 				pick = j
@@ -316,7 +316,7 @@ func streamTurns(cards []*Card, r *round) []*Card {
 	known := map[string]bool{}
 	var order []string
 	n := len(r.order)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		st := r.order[(r.start()+i)%n]
 		order = append(order, st)
 		known[st] = true

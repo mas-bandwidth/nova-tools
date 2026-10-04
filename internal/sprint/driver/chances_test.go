@@ -136,7 +136,7 @@ func draws(s *Seeded, n int) map[string]float64 {
 	hits := map[string]int{}
 	others := func() []string { return []string{"o1", "o2"} }
 	batch := []string{"a", "b", "c"}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if ok, _ := s.Work("c"); !ok {
 			hits["fail"]++
 		}
@@ -231,7 +231,7 @@ func TestAPlainRunDrawsTheSequenceItDrewBeforeDownAndUpExisted(t *testing.T) {
 	up := map[string]bool{"a": true, "b": false, "c": true}
 	others := func() []string { return []string{"o1", "o2"} }
 	batch := []string{"x", "y", "z"}
-	for i := 0; i < 2000; i++ {
+	for i := range 2000 {
 		wp, rp := played.Work("c")
 		wb, rb := before.Work("c")
 		fp, np := played.Read("c")

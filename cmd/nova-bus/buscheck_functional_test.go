@@ -18,7 +18,7 @@ import (
 // --full walk over the checkout finds at least n findings.
 func strangers(t *testing.T, checkout string, n int) {
 	t.Helper()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		writeFile(t, checkout, fmt.Sprintf("from-ada/stranger-%02d.md", i), "From: Ada\nTo: Boe\nSubject: s\n\nbody\n")
 	}
 }

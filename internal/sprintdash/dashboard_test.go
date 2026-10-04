@@ -163,7 +163,7 @@ func TestDashboardThroughput(t *testing.T) {
 	v = r.api()
 	assert.InDelta(t, 60, v["throughput"], 0, "10 cards in 10 minutes: 60 an hour")
 
-	for i := 0; i < 6; i++ { // an hour and ten minutes in: the first sample has left the window
+	for range 6 { // an hour and ten minutes in: the first sample has left the window
 		r.advance(10 * time.Minute)
 		landed += 20
 		r.api()
@@ -183,7 +183,7 @@ func TestDashboardThroughput(t *testing.T) {
 func TestDashboardLogsAReadSummaryAMinute(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	for i := 0; i < 60; i++ {
+	for range 60 {
 		r.api()
 		r.advance(time.Second)
 	}

@@ -1063,7 +1063,7 @@ func (r *propRun) drain(i0 int) *propFail {
 	if f := do(pAct{K: "start"}); f != nil {
 		return f
 	}
-	for round := 0; round < 400; round++ {
+	for round := range 400 {
 		fault := func(n int) bool { return round < 60 && r.rng.IntN(n+round) == 0 }
 		if f := do(pAct{K: "tick"}); f != nil {
 			return f
@@ -1072,14 +1072,14 @@ func (r *propRun) drain(i0 int) *propFail {
 			if f := do(pAct{K: "take", A: k, B: 2}); f != nil {
 				return f
 			}
-			for n := 0; n < 3; n++ {
+			for range 3 {
 				if f := do(pAct{K: "finish", A: k, F: fault(8)}); f != nil {
 					return f
 				}
 			}
 		}
 		for k := range r.cfg.readers {
-			for n := 0; n < 4; n++ {
+			for range 4 {
 				if f := do(pAct{K: "report", A: k, F: fault(10)}); f != nil {
 					return f
 				}

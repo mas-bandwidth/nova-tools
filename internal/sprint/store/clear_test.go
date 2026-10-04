@@ -169,7 +169,7 @@ func TestTeardownAfterClearsLeavesNoKey(t *testing.T) {
 	h.beat()
 	h.setup(2)
 	h.through("s1-1")
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, err := h.st.Clear(h.ctx)
 		require.NoError(t, err)
 		h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))

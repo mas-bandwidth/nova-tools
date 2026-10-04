@@ -137,7 +137,7 @@ func TestTheStreamIndexIsReadBackAfterAStop(t *testing.T) {
 	}
 	h.startMachine()
 	var served, counts []string
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		res := h.machine()
 		idx, _ := h.snap().Work.Prop(sprint.PropStreamIndex)
 		served = append(served, indexPast(h.snap().Work.Rows(), idx))

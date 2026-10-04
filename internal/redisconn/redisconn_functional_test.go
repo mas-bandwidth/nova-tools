@@ -446,7 +446,7 @@ func TestTripsAgainstTheStore(t *testing.T) {
 	})
 	span("a pipeline of a hundred", 1, func() error {
 		pipe := client.Pipeline()
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			pipe.Incr(ctx, "n")
 		}
 		_, err := pipe.Exec(ctx)
@@ -525,7 +525,7 @@ func TestADeadConnectionIsFoundBeforeItIsUsed(t *testing.T) {
 	ctx := context.Background()
 	const rounds = 20
 	failed := 0
-	for i := 0; i < rounds; i++ {
+	for i := range rounds {
 		conn, err := redisconn.Open(ctx, redisconn.Options{Addr: addr}, nothing)
 		if err != nil {
 			require.NoError(t, err, err)

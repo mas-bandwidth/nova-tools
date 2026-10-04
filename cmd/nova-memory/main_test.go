@@ -98,7 +98,7 @@ func TestRefusesToGuess(t *testing.T) {
 func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 	t.Parallel()
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		exit, _, stderr := runCLI(t, "", "eval")
 		require.Equalf(t, 2, exit, "exit = %d, want 2", exit)
 		want := []string{"--channels is required", "--floor is required", "--k is required", "--root is required"}

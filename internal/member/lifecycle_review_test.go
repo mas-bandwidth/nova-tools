@@ -270,7 +270,7 @@ func TestReviewABackgroundMemberRunsEveryCardOnceWithinItsWidth(t *testing.T) {
 	pu := &fakePusher{def: Push{Sha: fullSha}, yield: 50}
 	m := New(Config{As: "m", Width: 4, Background: true}, s, r, pu, &bytes.Buffer{})
 	most := 0
-	for i := 0; i < 200_000; i++ {
+	for range 200_000 {
 		_, err := m.Tick(time.Unix(0, 0))
 		require.NoError(t, err)
 		most = max(most, m.Running())

@@ -68,7 +68,7 @@ func TestTheDealAlternatesTheStreamsWithCardsAndAnEmptyOneJoinsAtItsTurn(t *test
 	w.must(Add(w.s, AddReq{Stream: "s2", Count: 3, Needs: []string{"s1-5"}}))
 	w.must(Add(w.s, AddReq{Stream: "s3", Count: 5}))
 	var got []string
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		st, idx := dealOne(t, w)
 		require.Equal(t, st, idx, "the index is %q after a card of %s", idx, st)
 		got = append(got, st)
@@ -80,7 +80,7 @@ func TestTheDealAlternatesTheStreamsWithCardsAndAnEmptyOneJoinsAtItsTurn(t *test
 		w.place(w.s.Work, id, "s2", Ready)
 	}
 	got = nil
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		st, _ := dealOne(t, w)
 		got = append(got, st)
 	}

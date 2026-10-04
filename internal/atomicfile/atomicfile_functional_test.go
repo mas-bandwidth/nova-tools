@@ -128,7 +128,7 @@ func TestConcurrentWriters(t *testing.T) {
 	payloadA := bytes.Repeat([]byte("A"), payloadSize)
 	payloadB := bytes.Repeat([]byte("B"), payloadSize)
 
-	for round := 0; round < 10; round++ {
+	for round := range 10 {
 		var wg sync.WaitGroup
 		errs := make(chan error, 2)
 

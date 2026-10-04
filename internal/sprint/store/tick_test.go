@@ -316,7 +316,7 @@ func TestAWaitedConditionIsClosedWhenItClears(t *testing.T) {
 	if _, held, err := h.st.Wait(h.ctx, open[0].Note.ID, h.now.Add(time.Hour)); err != nil || !held {
 		require.Fail(t, fmt.Sprintf("wait: %v %v", held, err))
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h.tick(time.Minute)
 		h.machine()
 	}
@@ -402,7 +402,7 @@ func TestTheTickStopsAtASentinelUntilItIsReleased(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"after"}}))
 	h.startMachine()
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		h.machine()
 		h.work("m1")
 		h.machine()
@@ -517,7 +517,7 @@ func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
 	h.machine()
 	lap := func() {
 		h.live = nil // silent past the beat deadline: withdrawn
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			h.tick(pastDown / 3)
 			h.machine()
 		}
@@ -527,7 +527,7 @@ func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
 		h.tick(5 * time.Minute) // under the 15 minutes from any one deal
 		h.machine()
 	}
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		lap()
 	}
 	notTaken := func() int {
@@ -550,9 +550,9 @@ func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
 	h2.startMachine()
 	h2.machine()
 	h2.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h2.live = nil
-		for j := 0; j < 3; j++ {
+		for range 3 {
 			h2.tick(pastDown / 3)
 			h2.machine()
 		}
@@ -598,12 +598,12 @@ func TestARedealtCardAfterATakeIsLateNotTaken(t *testing.T) {
 		other = "m1"
 	}
 	h.must(TakeStep(sprint.TakeReq{As: first, Sel: sprint.Sel{Limit: 1}, Who: first}))
-	for i := 0; i < 30; i++ { // half an hour of work, the machine ticking
+	for range 30 { // half an hour of work, the machine ticking
 		h.tick(time.Minute)
 		h.machine()
 	}
 	h.live = []string{other} // the taker goes silent
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h.tick(pastDown / 3)
 		h.machine()
 	}
@@ -625,7 +625,7 @@ func TestARedealtCardAfterATakeIsLateNotTaken(t *testing.T) {
 	h.machine()
 	n := judged(sprint.NWorkLate, "")
 	require.Equal(t, 0, n, "late at once after the redeal, though its first deal was over 15 minutes ago: %d", n)
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		h.tick(time.Minute)
 		h.machine() // a full tick
 		h.machine() // an idle tick
@@ -689,7 +689,7 @@ func TestACardLateAtItsRedealDoesNotBlameTheNewMember(t *testing.T) {
 	h.startMachine()
 	h.machine() // dealt to m1
 	h.live = nil
-	for i := 0; i < 25; i++ { // m1 silent 25 minutes: withdrawn, nobody to deal it to
+	for range 25 { // m1 silent 25 minutes: withdrawn, nobody to deal it to
 		h.tick(time.Minute)
 		h.machine()
 	}

@@ -88,7 +88,7 @@ func TestAMissingGrantIsSaidOnce(t *testing.T) {
 	// the world is another process: its writes are the tick's to catch up
 	world := &Store{B: h.m, Names: h.st.Names, Actor: "m1", Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep}
 	said := 0
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		_, err := world.Run(h.ctx, TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 100}, Who: "m1"}))
 		require.NoError(t, err)
 		res := h.machine()

@@ -165,7 +165,7 @@ func TestBatchManifestBytesBound(t *testing.T) {
 		k := (need + 59999) / 60000
 		total := need - 3*k // each option is , " n bytes "
 		pad := ""
-		for i := 0; i < k; i++ {
+		for i := range k {
 			n := total / k
 			if i < total%k {
 				n++

@@ -432,7 +432,7 @@ func TestFirstLineWriterRetainsOnlyTheFirstLineUpToTheLimit(t *testing.T) {
 	chunk := bytes.Repeat([]byte("y\n"), 32*1024)
 
 	w := &firstLineWriter{limit: 4096}
-	for i := 0; i < 1600; i++ {
+	for i := range 1600 {
 		n, err := w.Write(chunk)
 		require.Equal(t, len(chunk), n, "write %d: (%d, %v), want the whole chunk accepted", i, n, err)
 		require.NoError(t, err, "write %d: (%d, %v), want the whole chunk accepted", i, n, err)
@@ -445,7 +445,7 @@ func TestFirstLineWriterRetainsOnlyTheFirstLineUpToTheLimit(t *testing.T) {
 	fired := 0
 	w = &firstLineWriter{limit: 4096, onOverflow: func() { fired++ }}
 	long := bytes.Repeat([]byte("a"), 64*1024)
-	for i := 0; i < 1600; i++ {
+	for range 1600 {
 		_, _ = w.Write(long)
 	}
 	line, over = w.result()

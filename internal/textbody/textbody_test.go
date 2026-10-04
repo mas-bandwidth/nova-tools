@@ -65,7 +65,7 @@ func TestLineFilterEdges(t *testing.T) {
 func TestGeneratedBodiesKeepExactlyTheirVisibleLines(t *testing.T) {
 	t.Parallel()
 	r := rand.New(rand.NewPCG(4467, 27))
-	for n := 0; n < 3000; n++ {
+	for n := range 3000 {
 		var input, want []string
 		for j, limit := 0, r.IntN(24); j < limit; j++ {
 			line := fmt.Sprintf("visible %d %d 日本語 %c", n, j, rune(0x100+r.IntN(500)))

@@ -204,7 +204,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		at, _ = strconv.ParseUint(v, 10, 64)
 	}
 	n := uint64(len(arr))
-	for i := uint64(0); i < n; i++ {
+	for i := range n {
 		r, ok := served[arr[(at+i)%n]]
 		if !ok || fresh && contains(drawn, r.Name) {
 			continue
@@ -359,7 +359,7 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 	}
 	n := uint64(len(arr))
 	at := ri[tier].r.count
-	for i := uint64(0); i < n; i++ {
+	for i := range n {
 		r, ok := served[arr[(at+i)%n]]
 		if !ok || other && contains(avoid, r.Name) {
 			continue

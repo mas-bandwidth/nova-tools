@@ -96,7 +96,7 @@ func TestRule16OutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 
 	const many = 500
 	rows := make([]string, 0, many)
-	for i := 0; i < many; i++ {
+	for i := range many {
 		// Neither side resolves, so this reads 500 entries with no process and
 		// no network: the size of the state, not the cost of it, is the point.
 		rows = append(rows, row(fmt.Sprint(i), "tool", "nova-no-such-tool-exists", "local:nova-no-such-tool-exists", "none"))

@@ -25,7 +25,7 @@ func TestTheTickUpdatesTheTablesInTheOwnersOrder(t *testing.T) {
 	h := newHarness(t)
 	h.setup(3)
 	h.startMachine()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		res := h.machine()
 		got, want := res.Order, []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
 		require.Equal(t, want, got, "tick %d updated %v, want %v", i+1, got, want)

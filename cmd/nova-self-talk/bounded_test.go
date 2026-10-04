@@ -26,10 +26,10 @@ func countLines(s string) int {
 func largePage(t *testing.T, standing, dated int) string {
 	t.Helper()
 	var b strings.Builder
-	for i := 0; i < standing; i++ {
+	for i := range standing {
 		fmt.Fprintf(&b, "I cannot check my own work on the %dth pass, so the second read went to someone else.\n\n", i)
 	}
-	for i := 0; i < dated; i++ {
+	for i := range dated {
 		fmt.Fprintf(&b, "On 2026-08-%02d I cannot check the Windows runner from here, and the fix went in with that measurement written beside it.\n\n", i%28+1)
 	}
 	path := filepath.Join(t.TempDir(), "journal.md")
@@ -62,7 +62,7 @@ func TestScanCapsEachClassSeparately(t *testing.T) {
 	t.Parallel()
 
 	var b strings.Builder
-	for i := 0; i < 600; i++ {
+	for i := range 600 {
 		fmt.Fprintf(&b, "I cannot check my own work on the %dth pass, so the second read went to someone else.\n\n", i)
 	}
 	b.WriteString("It is the worst habit I have, and the reason the checklist exists at all.\n")

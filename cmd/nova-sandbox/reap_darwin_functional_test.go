@@ -58,7 +58,7 @@ func TestAForkedChildIsReapedWithTheCallersGroup(t *testing.T) {
 	require.NoError(t, err, "control: the background child was already gone before the reap: %v", err)
 	// The reap: the caller kills the group IT made, which is the only group it knows.
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		if err := syscall.Kill(bg, 0); err != nil {
 			return // reaped
 		}

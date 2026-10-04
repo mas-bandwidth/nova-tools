@@ -331,7 +331,7 @@ func (pc *parserChecker) scanFile(p, rel string) ([]hit, error) {
 	}
 
 	tokFuncs := map[string]bool{}
-	for round := 0; round < 2; round++ {
+	for round := range 2 {
 		for _, d := range f.Decls {
 			fd, ok := d.(*ast.FuncDecl)
 			if !ok || fd.Body == nil {
@@ -370,7 +370,7 @@ func (pc *parserChecker) scanFile(p, rel string) ([]hit, error) {
 				return t || isShapeCall(e)
 			}
 
-			for pass := 0; pass < 3; pass++ {
+			for range 3 {
 				ast.Inspect(fd.Body, func(n ast.Node) bool {
 					switch y := n.(type) {
 					case *ast.AssignStmt:

@@ -67,7 +67,7 @@ func TestStoredMissingNeedsHaveOneActionableJudgment(t *testing.T) {
 				}
 				seedMissingNeeds(h, "waiter", needs)
 				h.startMachine()
-				for i := 0; i < 3; i++ {
+				for i := range 3 {
 					if i == 2 {
 						h.tick(time.Minute + time.Second)
 					}

@@ -604,7 +604,7 @@ func reportedTypes(stream []Message) []Type {
 	var out []Type
 	seen := map[Type]bool{}
 	for _, m := range stream {
-		for t := Type(0); t < NTypes; t++ {
+		for t := range NTypes {
 			if _, has := m.Counts.Get(t); has && !seen[t] {
 				seen[t] = true
 				out = append(out, t)

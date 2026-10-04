@@ -526,7 +526,7 @@ func TestSiteLedgerShrinksBySiteNotByRow(t *testing.T) {
 	run := func(sites map[string]int) []string {
 		l := &siteLedger{path: dir, allow: allow, sites: map[string][]string{}}
 		for k, n := range sites {
-			for i := 0; i < n; i++ {
+			for i := range n {
 				l.add(k, fmt.Sprintf("%s#%d", k, i+1))
 			}
 		}

@@ -30,7 +30,7 @@ func wedgeWorld(t *testing.T) *world {
 	}
 	score := 1.0
 	put := func(member, col string, n int) {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			putWorkCard(w, fmt.Sprintf("%s-%s-%d", member, col, i), member, col, score, nil)
 			score++
 		}

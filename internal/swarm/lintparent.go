@@ -72,7 +72,7 @@ func blank(s string) string { return strings.Repeat(" ", len(s)) }
 func blankCodeSpans(l string) string {
 	b := []byte(l)
 	open := -1
-	for i := 0; i < len(b); i++ {
+	for i := range b {
 		if b[i] != '`' {
 			continue
 		}

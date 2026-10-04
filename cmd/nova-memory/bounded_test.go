@@ -20,7 +20,7 @@ import (
 func largeCorpus(t *testing.T, n int) string {
 	t.Helper()
 	dir := t.TempDir()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		body := fmt.Sprintf("# entry %d\n\nA sentence about lanterns, and a link to [[no-such-entry-%d]].\n", i, i)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("entry-%04d.md", i)), []byte(body), 0o644))
 	}
@@ -142,7 +142,7 @@ func TestEvalListsMissesOnlyAndCapsThem(t *testing.T) {
 
 	dir := largeCorpus(t, 20)
 	var gold strings.Builder
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		fmt.Fprintf(&gold, "zzzqqq unrelated query %d\tno-such-file-%d.md\n", i, i)
 	}
 	path := filepath.Join(t.TempDir(), "gold.tsv")

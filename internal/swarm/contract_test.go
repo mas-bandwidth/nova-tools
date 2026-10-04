@@ -65,7 +65,7 @@ func TestResultBoundsEvidenceLines(t *testing.T) {
 
 	many := func(n int) []string {
 		out := []string{contractLine, "disposition"}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			out = append(out, "evidence line "+string(rune('a'+i%26)))
 		}
 		return out

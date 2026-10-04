@@ -126,7 +126,7 @@ func propertyCase(r *rand.Rand) propertyLibrary {
 func propertyCases(t *testing.T, seed uint64, check func(t *testing.T, r *rand.Rand, p propertyLibrary)) {
 	t.Helper()
 	r := rand.New(rand.NewPCG(seed, 0x6e6f7661))
-	for i := 0; i < 3000; i++ {
+	for i := range 3000 {
 		p := propertyCase(r)
 		check(t, r, p)
 		if t.Failed() {

@@ -22,7 +22,7 @@ const Supported = true
 // take that on trust.
 func setNice(n int) error {
 	done := map[int]bool{}
-	for pass := 0; pass < 16; pass++ {
+	for range 16 {
 		tids, err := threads()
 		if err != nil {
 			return err

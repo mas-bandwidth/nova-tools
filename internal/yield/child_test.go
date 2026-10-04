@@ -32,7 +32,7 @@ func TestChildrenFromEveryGoroutineInheritNice(t *testing.T) {
 	got := make([]string, goroutines)
 	errs := make([]error, goroutines)
 	var wg sync.WaitGroup
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

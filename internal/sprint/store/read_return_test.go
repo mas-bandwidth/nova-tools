@@ -167,7 +167,7 @@ func TestAReturnedReadWhoseNextReaderGoesAwayIsAskedOrJudgedNeverSilent(t *testi
 	h.machine()
 	require.ElementsMatch(t, []string{"reader-b", "reader-c"}, readersOf())
 	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-c", true, "coordinator"))
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		res, err := h.st.Tick(h.ctx)
 		require.NoError(t, err, "tick %d", i+1)
 		for _, p := range res.Parts {

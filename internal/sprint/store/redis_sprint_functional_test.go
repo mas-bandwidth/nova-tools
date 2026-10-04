@@ -163,7 +163,7 @@ func TestRedisASprintToLandedByTicks(t *testing.T) {
 		}
 	}
 	reached := func() bool { return len(liveOpen(h, sprint.NSentinelReached)) == 1 }
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		round()
 		h.clean(fmt.Sprintf("round %d", i))
 		if h.state("y") == sprint.Landed && h.state("z") == sprint.Landed && reached() {
@@ -647,7 +647,7 @@ func TestRedisTeardownLeavesNoKeyAndNothingElse(t *testing.T) {
 	a.setup(3)
 	a.through("s1-1", "s1-2")
 	a.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, err := a.st.Clear(ctx)
 		require.NoError(t, err)
 		a.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
@@ -688,7 +688,7 @@ func TestRedisWritersRaceForTheSamePrimaries(t *testing.T) {
 	h, c := liveHarness(t)
 	h.setup(15)
 	const writers = 4
-	for round := 0; round < 5; round++ {
+	for round := range 5 {
 		ids := []string{fmt.Sprintf("s1-%d", round*3+1), fmt.Sprintf("s1-%d", round*3+2), fmt.Sprintf("s1-%d", round*3+3)}
 		type out struct {
 			res Result
@@ -697,7 +697,7 @@ func TestRedisWritersRaceForTheSamePrimaries(t *testing.T) {
 		outs := make(chan out, writers)
 		start := make(chan struct{})
 		var wg sync.WaitGroup
-		for i := 0; i < writers; i++ {
+		for i := range writers {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -752,7 +752,7 @@ func TestRedisTicksRaceEachOther(t *testing.T) {
 	errs := make(chan error, loops)
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -762,7 +762,7 @@ func TestRedisTicksRaceEachOther(t *testing.T) {
 			l.B = &Redis{C: wc, Names: h.st.Names, Now: h.st.Now}
 			l.Actor = sprint.MachineActor
 			<-start
-			for k := 0; k < 3; k++ {
+			for range 3 {
 				if _, err := l.Tick(context.Background()); err != nil {
 					errs <- err
 					return
@@ -867,7 +867,7 @@ func TestRedisTheReminders(t *testing.T) {
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
 	h.setGoal("friend-b", "goal", "file:"+filepath.Join(blocker, "sub", "b.txt"))
 	h.machine()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h.tick(sprint.RemindEvery)
 		h.machine()
 	}

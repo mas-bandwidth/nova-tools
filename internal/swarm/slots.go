@@ -418,7 +418,7 @@ func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Du
 		return nil, 0, 0, 0, "", false, err
 	}
 	until := now.Add(dur).UTC().Format(time.RFC3339)
-	for i := 0; i < k; i++ {
+	for range k {
 		for tries := 0; ; tries++ {
 			id := slotLeaseID(owner, now)
 			body := fmt.Sprintf("owner=%s\npid=%d\nlabel=%s\nuntil=%s\n", owner, pid, label, until)

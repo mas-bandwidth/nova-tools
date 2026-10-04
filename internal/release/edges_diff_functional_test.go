@@ -61,7 +61,7 @@ func TestExecGitReadsLargeRangeWithoutRenameWarningsAsPaths(t *testing.T) {
 			require.NoError(t, err, err)
 		}
 	}
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		name := fmt.Sprintf("new-%04d-%s.txt", i, strings.Repeat("x", 140))
 		want = append(want, name)
 		write(name, fmt.Sprintf("new fixture content %d\n", i))

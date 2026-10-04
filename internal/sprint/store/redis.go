@@ -308,7 +308,7 @@ func (r *Redis) delIf(ctx context.Context, table string, guards []RowGuard, rowP
 		watch = append(watch, g.Key)
 		ids[i] = g.ID
 	}
-	for try := 0; try < condTries; try++ {
+	for range condTries {
 		var pass []RowGuard
 		var cmds []redis.Cmder
 		err := r.C.Watch(ctx, func(tx *redis.Tx) error {
@@ -512,7 +512,7 @@ func (r *Redis) Release(ctx context.Context, op OpRecord, commit bool) error {
 		return err
 	}
 	prefix := `{"id":` + string(id) + `,`
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		err = r.C.Watch(ctx, func(tx *redis.Tx) error {
 			cur, err := tx.GetRange(ctx, fence, 0, int64(len(prefix)-1)).Result()
 			if err != nil {
@@ -692,7 +692,7 @@ func (r *Redis) DoneBefore(ctx context.Context, callerOp string, before uint64) 
 	}
 	pipe := r.C.Pipeline()
 	cmds := make([]*redis.BoolCmd, before)
-	for e := uint64(0); e < before; e++ {
+	for e := range before {
 		cmds[e] = pipe.HExists(ctx, r.Names.KeyAt(keyDone, e), callerOp)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -907,7 +907,7 @@ func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64)
 	need := to
 	var ids []string
 	end := "+"
-	for page := 0; page < 64; page++ {
+	for range 64 {
 		evs, err := r.C.XRevRangeN(ctx, key, end, "-", changePage).Result()
 		if err != nil && strings.Contains(err.Error(), "NOPERM") {
 			// a user not granted the stream's read: said, and the twin reads

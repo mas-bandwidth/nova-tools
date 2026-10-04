@@ -47,7 +47,7 @@ func TestVerifyExcludesEveryCheck(t *testing.T) {
 func TestVerifyCountsFindingsBeforeCapping(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		verifyFile(t, root, fmt.Sprintf("notes/n%d.md", i), "words\n")
 	}
 	verifyFile(t, root, "index.md", "no entries\n")

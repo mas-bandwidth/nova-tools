@@ -53,7 +53,7 @@ func TestProviderRetryDelayBands(t *testing.T) {
 		failed int
 		lo, hi time.Duration
 	}{{1, 5 * time.Second, 20 * time.Second}, {2, 30 * time.Second, 60 * time.Second}} {
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			got := ProviderRetryDelay(c.failed)
 			require.GreaterOrEqual(t, got, c.lo, "the delay after failure %d is %s, want within [%s,%s]", c.failed, got, c.lo, c.hi)
 			require.LessOrEqual(t, got, c.hi, "the delay after failure %d is %s, want within [%s,%s]", c.failed, got, c.lo, c.hi)

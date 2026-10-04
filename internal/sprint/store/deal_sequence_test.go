@@ -59,7 +59,7 @@ func seqFleet(h *harness, width int) {
 	}
 	h.startMachine()
 	// every member up before the first card, the presence changes applied
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h.machine()
 		h.tick(time.Second)
 	}
@@ -69,7 +69,7 @@ func seqFleet(h *harness, width int) {
 func seqBatch(h *harness, tick, n int) {
 	h.t.Helper()
 	by := map[string][]string{}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		st := seqStreams[i%len(seqStreams)]
 		by[st] = append(by[st], fmt.Sprintf("%s-t%d-%03d", st, tick, i))
 	}
@@ -137,7 +137,7 @@ func seqTurns(names []string, counts map[string]int, counter uint64, k int) ([]s
 	var out []string
 	for len(out) < k {
 		took := false
-		for i := uint64(0); i < n; i++ {
+		for i := range n {
 			x := names[(counter+i)%n]
 			if left[x] > 0 {
 				left[x]--

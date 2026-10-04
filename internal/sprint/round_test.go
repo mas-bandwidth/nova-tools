@@ -311,7 +311,7 @@ func TestTheDealGoesRoundTheFleetAcrossStreams(t *testing.T) {
 	}
 	members := w.s.Fleet.Rows()
 	dealt := map[string]int{}
-	for i := 0; i < 24; i++ {
+	for i := range 24 {
 		id := fmt.Sprintf("%s-%d", streams[i%3], i/3+1)
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
 		wc := w.s.Fleet.Card(WorkCardID(id, 1))
@@ -363,7 +363,7 @@ func TestTheAskGoesRoundTheReadersAcrossStreams(t *testing.T) {
 	}
 	streams := []string{"s1", "s2", "s3"}
 	var ids []string
-	for i := 0; i < 18; i++ {
+	for i := range 18 {
 		ids = append(ids, fmt.Sprintf("%s-%d", streams[i%3], i/3+1))
 	}
 	for _, st := range streams {

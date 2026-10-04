@@ -145,7 +145,7 @@ func TestDraftAtomicCreationRace(t *testing.T) {
 	var start sync.WaitGroup
 	start.Add(1)
 
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			start.Wait()
 			var stdout, stderr bytes.Buffer
@@ -157,7 +157,7 @@ func TestDraftAtomicCreationRace(t *testing.T) {
 	start.Done()
 
 	var successCount, refusedCount int
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		res := <-ch
 		switch res.code {
 		case 0:

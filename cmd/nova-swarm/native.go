@@ -2292,7 +2292,7 @@ func claimNativeResultsRun(cfg nativeRunConfig) (string, error) {
 		return "", err
 	}
 	var last error
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		id := newNativeRunID()
 		if !safepath.NameOK(id) {
 			last = fmt.Errorf("run id %s is not a name", id)

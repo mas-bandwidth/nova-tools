@@ -71,7 +71,7 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 			h.tick(time.Second)
 		}
 		wg.Wait()
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			h.machine()
 		}
 		h.clean(fmt.Sprintf("trial %d", trial))

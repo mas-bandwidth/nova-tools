@@ -51,7 +51,7 @@ func TestAWorkerWithNoRowWidthSaysSoOnce(t *testing.T) {
 	g := newRig(Config{As: "reader-m", Reader: true})
 	p := Packet{Card: "r1", Kind: "read", As: "reader-m", Attempt: 1, Epoch: 7, Head: "h1"}
 	g.s.set("queue", 0, queueJSONWidth(t, 0, asked("r1", &p)))
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := g.tick(t)
 		require.NoError(t, err)
 	}

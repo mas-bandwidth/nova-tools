@@ -226,7 +226,7 @@ func TestTheDistanceAtWallTimeThroughARealStore(t *testing.T) {
 				var err error
 				took := farTook(func() {
 					pipe := c.Pipeline()
-					for i := 0; i < farBulk; i++ {
+					for i := range farBulk {
 						pipe.Set(ctx, fmt.Sprintf("far:bulk:%d", i), value, 0)
 					}
 					_, err = pipe.Exec(ctx)

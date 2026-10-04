@@ -30,7 +30,7 @@ func largeSelf(t *testing.T, n int) string {
 			if err != nil {
 				panic(err)
 			}
-			for i := 0; i < 500; i++ {
+			for i := range 500 {
 				md := fmt.Sprintf("# page %d\n\nA [link](./no-such-page-%d.md) that does not resolve.\n", i, i)
 				if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("page-%04d.md", i)), []byte(md), 0o644); err != nil {
 					panic(err)
@@ -44,7 +44,7 @@ func largeSelf(t *testing.T, n int) string {
 		return largeSelf500Dir
 	}
 	dir := t.TempDir()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		md := fmt.Sprintf("# page %d\n\nA [link](./no-such-page-%d.md) that does not resolve.\n", i, i)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("page-%04d.md", i)), []byte(md), 0o644))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("tool-%04d.py", i)), []byte("print(1)\n"), 0o644))

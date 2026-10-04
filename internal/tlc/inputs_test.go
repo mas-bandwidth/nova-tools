@@ -319,7 +319,7 @@ func TestAModulesReferencesAreParsedOncePerText(t *testing.T) {
 	}
 	src := testSource(t, root)
 	var first []string
-	for round := 0; round < 3; round++ {
+	for round := range 3 {
 		for _, config := range []string{"MCTop.cfg", "MCTopBroken.cfg", "MCLone.cfg"} {
 			in, err := src.Inputs(config)
 			require.NoError(t, err)
@@ -336,7 +336,7 @@ func TestAModulesReferencesAreParsedOncePerText(t *testing.T) {
 	// parsed once, as is the module it newly names.
 	edited := []byte(mark + "EXTENDS Shared, Unread\n====\n")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", "Leaf.tla"), edited, 0o644))
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		in, err := src.Inputs("MCTop.cfg")
 		require.NoError(t, err)
 		require.True(t, slicesContains(paths(in), "tla/Unread.tla"), "the edited module's new reference: before %v, after %v", first, paths(in))

@@ -72,19 +72,19 @@ func TestRefusalsEndInACommandThatRunsAndWritesNothing(t *testing.T) {
 
 	// a receipt over its bound, through the command
 	var creates, ents, names []string
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		creates = append(creates, fmt.Sprintf(`{"id":"m%d","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`, i))
 	}
 	{
 		code, _, stderr := runTable("batch", "--redis", addr, man("seed", strings.Join(creates, ",")))
 		require.EqualValues(t, 0, code, "%v", stderr)
 	}
-	for j := 0; j < 1000; j++ {
+	for j := range 1000 {
 		names = append(names, fmt.Sprintf(`"f%d"`, j))
 	}
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		f := map[string]any{}
-		for j := 0; j < 1000; j++ {
+		for j := range 1000 {
 			f[fmt.Sprintf("f%d", j)] = strings.Repeat("v", 64)
 		}
 		c.HSet(ctx, ntable.MemberKey(fmt.Sprintf("m%d", i)), f)
@@ -139,7 +139,7 @@ func TestRefusalsEndInACommandThatRunsAndWritesNothing(t *testing.T) {
 
 	// row add past the bound
 	pipe := c.Pipeline()
-	for i := 0; i < ntable.LimitRows-2; i++ {
+	for i := range ntable.LimitRows - 2 {
 		pipe.ZAdd(ctx, ntable.DefKey("demo")+":rows", redis.Z{Score: float64(i + 10), Member: fmt.Sprintf("h%d", i)})
 	}
 	{

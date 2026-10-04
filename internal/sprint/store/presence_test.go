@@ -200,7 +200,7 @@ func TestTheHoldKeepsABeatingMemberDown(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m1", Why: "held by tester"}))
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h.tick(5 * time.Second)
 		h.machine()
 	}
@@ -320,7 +320,7 @@ func TestAnUnknownMachineBeatingIsToldOnce(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	zero := 0.0
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := h.st.Beat(h.ctx, "m9", &zero, hostload.Source{})
 		require.NoError(t, err)
 		h.tick(time.Second)

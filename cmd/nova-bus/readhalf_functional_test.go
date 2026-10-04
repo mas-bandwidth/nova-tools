@@ -442,7 +442,7 @@ func TestInboxAndWaitWithoutBodiesAreByteIdenticalToTodays(t *testing.T) {
 	// The state where an unbounded listing shows: 600 carried items, in one commit.
 	big, _ := busDir(t)
 	files := make([]busFile, 0, 600)
-	for i := 0; i < 600; i++ {
+	for i := range 600 {
 		files = append(files, busFile{
 			fmt.Sprintf("from-bo/big-%03d.md", i),
 			noteFrom(fmt.Sprintf("bo-b%011d", i), fmt.Sprintf("big %03d", i), "a carried note, one of six hundred\n"),

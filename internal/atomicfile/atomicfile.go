@@ -180,7 +180,7 @@ func defaultCreateTemp(dir, base string, perm os.FileMode) (*os.File, error) {
 }
 
 func createTempFile(dir, base string, perm os.FileMode, randFn func() (uint32, error)) (*os.File, error) {
-	for i := 0; i < maxCreateTempAttempts; i++ {
+	for range maxCreateTempAttempts {
 		r, err := randFn()
 		if err != nil {
 			return nil, err

@@ -74,7 +74,7 @@ func TestLoadCountsProblemsPastTheCap(t *testing.T) {
 	t.Parallel()
 	var b strings.Builder
 	b.WriteString(Header + "\n")
-	for i := 0; i < manifestProblemCap+7; i++ {
+	for range manifestProblemCap + 7 {
 		b.WriteString("x\tgadget\tgo version\tlocal:go version\tnone\tme\n")
 	}
 	_, err := Load(strings.NewReader(b.String()))

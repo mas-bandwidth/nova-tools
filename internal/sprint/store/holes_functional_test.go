@@ -113,7 +113,7 @@ func TestW12AndW13OnAStore(t *testing.T) {
 	x := newHoleTick(h)
 	x.tick() // deals both
 	x.rec.take()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		h.tick(time.Second)
 		res := x.tick()
 		want := []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}

@@ -101,7 +101,7 @@ func (c Counts) Billed() int64 {
 
 func (c Counts) Total() int64 {
 	var n int64
-	for t := Type(0); t < NTypes; t++ {
+	for t := range NTypes {
 		if c.has[t] {
 			n += c.n[t]
 		}
@@ -112,7 +112,7 @@ func (c Counts) Total() int64 {
 // Dashes is how many of the five cells are a dash.
 func (c Counts) Dashes() int {
 	n := 0
-	for t := Type(0); t < NTypes; t++ {
+	for t := range NTypes {
 		if !c.has[t] {
 			n++
 		}
@@ -122,7 +122,7 @@ func (c Counts) Dashes() int {
 
 // Add folds one Counts into another, per type, over the types the other reported.
 func (c *Counts) Add(o Counts) {
-	for t := Type(0); t < NTypes; t++ {
+	for t := range NTypes {
 		if o.has[t] {
 			c.Set(t, o.n[t])
 		}

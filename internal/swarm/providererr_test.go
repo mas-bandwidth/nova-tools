@@ -97,7 +97,7 @@ func TestProviderHandbackLeavesTheCardsOwnEndsAlone(t *testing.T) {
 	require.False(t, ok, "a clean exit was handed back")
 	var early strings.Builder
 	early.WriteString("$ git grep UnknownError\ninternal/pulse/replay.go: UnknownError err_fb35c63e\n")
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		early.WriteString("STEP working on the card\n")
 	}
 	early.WriteString("the model gave up without a report\n")

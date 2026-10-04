@@ -54,7 +54,7 @@ func TestTableMemberBatchesAgainstModel(t *testing.T) {
 			"batchRemove": func(*rapid.T) { h.memberBatch(1, &batchCounts) },
 			"batchMove":   func(*rapid.T) { h.memberBatch(2, &batchCounts) },
 		}
-		for round := 0; round < repeatRounds; round++ {
+		for range repeatRounds {
 			rt.Repeat(actions)
 		}
 	})
@@ -846,7 +846,7 @@ func TestBatchApplyPropertyAndReceiptReplay(t *testing.T) {
 
 		oracle := newBatchOracle(tableName, rows, cols, initRev)
 
-		for step := 0; step < 128; step++ {
+		for step := range 128 {
 			opID := fmt.Sprintf("op-s%d-step-%d-%d", seed, step, 1000+rnd.Intn(999000))
 
 			expectedRev := strconv.FormatUint(oracle.table.revision, 10)
@@ -865,7 +865,7 @@ func TestBatchApplyPropertyAndReceiptReplay(t *testing.T) {
 			hasDup := numMembers > 1 && rnd.Intn(8) == 0
 			var firstID string
 
-			for i := 0; i < numMembers; i++ {
+			for i := range numMembers {
 				var mID string
 				if i > 0 && hasDup && firstID != "" {
 					mID = firstID
@@ -1113,7 +1113,7 @@ func TestBatchPropertyNMaxAndLimits(t *testing.T) {
 
 	// 1. 129 syntactic mutations -> MUST BE REFUSED with LIMIT and changed=no, 0 store changes
 	mut129 := make([]ntable.BatchMemberEntry, 129)
-	for i := 0; i < 129; i++ {
+	for i := range 129 {
 		mut129[i] = ntable.BatchMemberEntry{
 			ID:     fmt.Sprintf("mem_mut_129_%d", i),
 			Create: &ntable.MemberCreateOp{Row: "r1", Col: "a", Score: float64(i)},
@@ -1143,7 +1143,7 @@ func TestBatchPropertyNMaxAndLimits(t *testing.T) {
 
 	// 2. 128 syntactic mutations -> MUST BE ACCEPTED (Nmax mutations)
 	mut128 := make([]ntable.BatchMemberEntry, 128)
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		mut128[i] = ntable.BatchMemberEntry{
 			ID:     fmt.Sprintf("mem_mut_128_%d", i),
 			Create: &ntable.MemberCreateOp{Row: "r1", Col: "a", Score: float64(i)},
@@ -1166,7 +1166,7 @@ func TestBatchPropertyNMaxAndLimits(t *testing.T) {
 
 	// 3. 1,025 guard-only entries -> MUST BE REFUSED with LIMIT and changed=no, 0 store changes
 	guard1025 := make([]ntable.BatchMemberEntry, 1025)
-	for i := 0; i < 1025; i++ {
+	for i := range 1025 {
 		guard1025[i] = ntable.BatchMemberEntry{
 			ID:     fmt.Sprintf("mem_guard_1025_%d", i),
 			Expect: &ntable.MemberExpect{Absent: true},
@@ -1194,7 +1194,7 @@ func TestBatchPropertyNMaxAndLimits(t *testing.T) {
 
 	// 4. 1,024 guard-only entries -> MUST BE ACCEPTED (Nmax guards, outcome="noop")
 	guard1024 := make([]ntable.BatchMemberEntry, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		guard1024[i] = ntable.BatchMemberEntry{
 			ID:     fmt.Sprintf("mem_guard_1024_%d", i),
 			Expect: &ntable.MemberExpect{Absent: true},

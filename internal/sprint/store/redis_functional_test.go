@@ -118,10 +118,10 @@ func TestRedisTwoWritersReleaseOneOperation(t *testing.T) {
 	require.NoError(t, err, "acquire: %v %v", ok, err)
 	require.True(t, ok, "acquire: %v %v", ok, err)
 	errs := make(chan error, 2)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		go func() { errs <- st.B.Release(ctx, op, true) }()
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		err := <-errs
 		require.NoError(t, err, "release: %v", err)
 	}

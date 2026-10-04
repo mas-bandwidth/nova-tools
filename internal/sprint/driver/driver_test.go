@@ -93,7 +93,7 @@ func TestTheSeedPlaysTheSameFacts(t *testing.T) {
 	for _, s := range []*Seeded{a, b} {
 		s.Fail, s.Broken, s.Stuck, s.Cross, s.Red, s.Down, s.Back = 0.3, 0.3, 0.2, 0.1, 0.1, 0.5, 0.5
 	}
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		id := fmt.Sprint("c", i)
 		ao, ar := a.Work(id)
 		bo, br := b.Work(id)
@@ -241,7 +241,7 @@ func TestFlapIsTheSameChanceBothWays(t *testing.T) {
 	require.NoError(t, err)
 	s.Use(c, time.Second)
 	downs, ups := 0, 0
-	for i := 0; i < 20000; i++ {
+	for i := range 20000 {
 		n := s.Up(i, []string{"a", "b"}, map[string]bool{"a": true})
 		if !n["a"] {
 			downs++

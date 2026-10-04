@@ -1185,7 +1185,7 @@ func TestParentGuardRefusesACopiedParentUnderLoad(t *testing.T) {
 		burning.Wait()
 	})
 
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		t.Run("child-"+strconv.Itoa(i), func(t *testing.T) {
 			t.Parallel()
 			// Each child gets its own file OUTSIDE any wall, so an acceptance is not just a

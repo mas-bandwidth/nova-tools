@@ -89,7 +89,7 @@ func TestFirstContactLoadsOnlyWhenMissingAndOnce(t *testing.T) {
 
 	present := &fakeStore{holds: true}
 	hook := libraryHook{state: &firstContact{}, load: present.load}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		require.NoError(t, hook.ProcessHook(present.next)(ctx, fcall("ns_table_create")))
 	}
 	require.EqualValues(t, 0, present.loads, "a store holding the library: %d loads, %d sends; want 0 loads and one send a verb", present.loads, present.sends)
@@ -120,7 +120,7 @@ func TestFirstContactLoadsOnlyWhenMissingAndOnce(t *testing.T) {
 	}
 	require.EqualValues(t, 1, fresh.loads, "first contact: %d loads, %d sends; want one load and the FCALL sent twice", fresh.loads, fresh.sends)
 	require.EqualValues(t, 2, fresh.sends, "first contact: %d loads, %d sends; want one load and the FCALL sent twice", fresh.loads, fresh.sends)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		require.NoError(t, hook.ProcessHook(fresh.next)(ctx, fcall("ns_table_row_add")))
 	}
 	require.EqualValues(t, 1, fresh.loads, "after the load: %d loads (%d attempts), %d sends; want 1 load and one send a verb", fresh.loads, state.loads, fresh.sends)

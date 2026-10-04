@@ -407,7 +407,7 @@ func TestTheRefusalIsBounded(t *testing.T) {
 	t.Parallel()
 
 	var many []string
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		many = append(many, "DOGFOOD GATE FAIL tool=nova-example verb=v: an edge")
 	}
 	deps := cutDeps(t, cutForge())

@@ -74,7 +74,7 @@ func TestTripsCountWhatTheCallerSends(t *testing.T) {
 			return err
 		}, 0, nil},
 		{"three commands", func() error {
-			for i := 0; i < 3; i++ {
+			for range 3 {
 				if err := client.Set(ctx, "k", "v", 0).Err(); err != nil {
 					return err
 				}
@@ -189,7 +189,7 @@ func TestTwoCountersEachCount(t *testing.T) {
 		require.NoError(t, err, err)
 	}
 	second := CountTrips(client)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if err := client.Get(ctx, "k").Err(); err != nil {
 			require.NoError(t, err, err)
 		}
@@ -209,12 +209,12 @@ func TestTripsFromManyGoroutines(t *testing.T) {
 	const workers, each = 8, 25
 	var wg sync.WaitGroup
 	errs := make(chan error, workers)
-	for w := 0; w < workers; w++ {
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			ctx := context.Background()
-			for i := 0; i < each; i++ {
+			for range each {
 				if err := client.Set(ctx, "k", "v", 0).Err(); err != nil {
 					errs <- err
 					return

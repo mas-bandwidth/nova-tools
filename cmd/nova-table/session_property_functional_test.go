@@ -126,7 +126,7 @@ func sessionActions(seed int64, table string) []sessionTraceAction {
 		{Kind: "ok", Command: "create " + table + " --columns ready,note:text", Write: true},
 		{Kind: "ok", Command: "row add " + table + " base", Write: true},
 	}
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		var a sessionTraceAction
 		switch rng.Intn(8) {
 		case 0:

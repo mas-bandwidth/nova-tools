@@ -367,7 +367,7 @@ func TestSyncAfterSyncIsSync(t *testing.T) {
 	names := []string{"m1", "m2", "m3", "m4", "m5"}
 	present := map[string]bool{}
 	ta.ok("start")
-	for round := 0; round < 40; round++ {
+	for round := range 40 {
 		for k := 0; k < 1+rng.IntN(3); k++ {
 			n := names[rng.IntN(len(names))]
 			switch {

@@ -38,7 +38,7 @@ func TestSumCoverNewAggStartsEmpty(t *testing.T) {
 	assert.Equal(t, 0, a.Days(), "a fresh grouping has seen no days")
 	assert.Equal(t, 0, a.Keys(), "a fresh grouping has seen no keys")
 	assert.Equal(t, 0, a.Rows, "a fresh grouping has no rows")
-	for tt := Type(0); tt < NTypes; tt++ {
+	for tt := range NTypes {
 		assert.Equalf(t, Dash, a.Cell(tt), "%s cell of a fresh grouping is a dash", TypeNames[tt])
 	}
 }

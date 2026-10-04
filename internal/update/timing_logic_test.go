@@ -130,7 +130,7 @@ func TestDiffVerbOrdersChangedToolsByName(t *testing.T) {
 	require.NoError(t, os.WriteFile(before, []byte(snapshotHeader+"\nzeta\told\tr\tp\nalpha\told\tr\tp\nmiddle\told\tr\tp\n"), 0600))
 	require.NoError(t, os.WriteFile(after, []byte(snapshotHeader+"\nmiddle\tnew\tr\tp\nalpha\tnew\tr\tp\nzeta\tnew\tr\tp\n"), 0600))
 	// Map traversal changes between invocations; each must keep the same order.
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		var out, errs bytes.Buffer
 		require.Zero(t, Run("nova-version", []string{"diff", "--from", before, "--to", after}, "test", &out, &errs, Environment{}), errs.String())
 		var names []string
@@ -147,7 +147,7 @@ func TestDiffMovedOrdersFlagChanges(t *testing.T) {
 	t.Parallel()
 	before := movedInv{"tool": {"verb": {"--zeta": true, "--middle": true}}}
 	after := movedInv{"tool": {"verb": {"--alpha": true, "--middle": true}}}
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		entries, _ := diffMoved(before, after, nil)
 		assert.Equal(t, []string{"added=--alpha tool=tool verb=verb", "deleted=--zeta tool=tool verb=verb"}, entries)
 	}
@@ -164,7 +164,7 @@ func TestReportOrdersChangedNames(t *testing.T) {
 		assert.Fail(t, "recorded versions must not start a child")
 		return ProcessResult{Reason: "unexpected child"}
 	}}
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		require.NoError(t, writeSnapshot(path, before))
 		out := report(context.Background(), "report", entries, entries, options{snapshot: path, timeout: time.Minute, budget: time.Minute}, "tool", "help", fixed, env)
 		require.Zero(t, out.Exit)

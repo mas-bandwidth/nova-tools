@@ -261,7 +261,7 @@ func dealRingWithFailures(t *testing.T, h *harness) {
 		k, err := strconv.Atoi(n)
 		return err == nil && k%2 == 1
 	}
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		h.machine()
 		for _, m := range ringMembers {
 			workFailing(h, m, failFirst)
@@ -365,7 +365,7 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	}
 
 	// 1. Add 12 cards to s1 and tick to deal them
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{fmt.Sprintf("c%02d", i)}}))
 	}
 	r := ringMachineTick(h)
@@ -419,7 +419,7 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	// From deal_index counter 14 (past m6), the first round is 7 cards (m7, m8, m2, m3, m4, m5, m6),
 	// leaving all 7 up members with 1 card each. Next 2 cards go to m7 and m8!
 	// Now m7 and m8 have 2 cards each, m2..m6 have 1 card each. deal_index is 23 (past m8).
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{fmt.Sprintf("d%02d", i)}}))
 	}
 	r = ringMachineTick(h)

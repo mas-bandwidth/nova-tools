@@ -24,7 +24,7 @@ func TestHarnessTailCarriesTheLastWordsIntoTheRunDoneLog(t *testing.T) {
 	require.NoError(t, os.MkdirAll(job, 0o755))
 
 	var header strings.Builder
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		header.WriteString("SANDBOX OK id=slot-7 status=ready receipt=accepted checksum=0f9e8d7c6b5a49382716\n")
 	}
 	logBody := header.String() + "401 unauthorized: token missing on this key\n"

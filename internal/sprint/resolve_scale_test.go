@@ -17,7 +17,7 @@ func resolveWorld(t testing.TB, n, open int) *Snapshot {
 	last := fmt.Sprintf("s1-%d", n)
 	w.must(Add(w.s, AddReq{Stream: "s2", Count: n, Needs: []string{last}}))
 	w.must(Add(w.s, AddReq{Stream: "s3", Count: n, Needs: []string{last}}))
-	for i := 0; i < open; i++ {
+	for i := range open {
 		id := fmt.Sprintf("s1-%d", i%n+1)
 		o := judgment(NBlocked, "s1", t0, 0, id)
 		o.ID = fmt.Sprintf("j%d", i)

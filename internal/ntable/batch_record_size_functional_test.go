@@ -63,9 +63,9 @@ func TestBatchRecordStaysWithinItsBoundAtTheLargestEscapedDelta(t *testing.T) {
 	value := strings.Repeat("/", ntable.ReceiptValueBytes)
 	entries := func(per int) string {
 		var ents []string
-		for i := 0; i < 128; i++ {
+		for i := range 128 {
 			var f []string
-			for j := 0; j < per; j++ {
+			for j := range per {
 				f = append(f, fmt.Sprintf(`"g%d":"%s"`, j, value))
 			}
 			ents = append(ents, fmt.Sprintf(`{"id":"m%d","expect":{},"set":{%s}}`, i, strings.Join(f, ",")))

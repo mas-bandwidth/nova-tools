@@ -143,7 +143,7 @@ func TestScanCountsTheLocalsAsLuaDoes(t *testing.T) {
 // hidden, k and v.
 func forInFunction(plain, depth int) string {
 	text := locals("p", plain)
-	for n := 0; n < depth; n++ {
+	for n := range depth {
 		text += fmt.Sprintf("for k%d, v%d in (function() do end return function() return nil end end)() do\n", n, n)
 	}
 	return text + strings.Repeat("end\n", depth) + fn("scope_probe")

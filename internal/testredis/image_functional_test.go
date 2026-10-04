@@ -991,7 +991,7 @@ func TestImageOnARealStore(t *testing.T) {
 		fields := make(map[string]string, tableKeys)
 		members := make([]string, 0, tableKeys)
 		scores := make(map[string]float64, tableKeys)
-		for i := 0; i < tableKeys; i++ {
+		for i := range tableKeys {
 			num := strconv.Itoa(i)
 			fields["field "+num] = "value " + num
 			members = append(members, "member "+num)
@@ -1010,7 +1010,7 @@ func TestImageOnARealStore(t *testing.T) {
 
 		// Every member read, one command each, and every table read whole.
 		pipe := c.Pipeline()
-		for i := 0; i < tableKeys; i++ {
+		for i := range tableKeys {
 			num := strconv.Itoa(i)
 			pipe.HGet(ctx, prefix+"hash", "field "+num)
 			pipe.SIsMember(ctx, prefix+"set", "member "+num)

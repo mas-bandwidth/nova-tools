@@ -183,7 +183,7 @@ func TestQuarantinedIsDeterministicAcrossFoldEquivalentKeys(t *testing.T) {
 	}}
 	first, _, ok := b.Quarantined("dis cord")
 	require.True(t, ok, "want a match")
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		name, _, _ := b.Quarantined("dis cord")
 		require.Equal(t, first, name, "Quarantined answered %q then %q for the same box", first, name)
 	}

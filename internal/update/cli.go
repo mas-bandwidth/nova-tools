@@ -539,7 +539,7 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 	jobs := make(chan int)
 	var wg sync.WaitGroup
 	var started sync.WaitGroup
-	for w := 0; w < 4; w++ {
+	for w := range 4 {
 		wg.Add(1)
 		started.Add(1)
 		go func(workerID int) {

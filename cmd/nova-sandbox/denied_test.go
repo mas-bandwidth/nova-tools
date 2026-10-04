@@ -133,7 +133,7 @@ func TestTheDeniedLinesAreCapped(t *testing.T) {
 	t.Parallel()
 
 	var many []deniedPath
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		many = append(many, deniedPath{Path: "/x/" + string(rune('a'+i)), Op: "read", PID: 1})
 	}
 	var errb bytes.Buffer

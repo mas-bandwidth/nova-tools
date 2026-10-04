@@ -98,7 +98,7 @@ func TestReleaseByOwnerAndLabelStillTakesThemAll(t *testing.T) {
 
 	store := writeSlotStore(t, "capacity\t4\nreserve\t0\nbench\t4\n")
 	now := time.Now().UTC()
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, _, _, _, _, ok, err := TakeSlotLeases(store, "bench", 1, time.Hour, "card-7", now, os.Getpid())
 		require.NoError(t, err, "take %d: ok=%v err=%v", i, ok, err)
 		require.True(t, ok, "take %d: ok=%v err=%v", i, ok, err)

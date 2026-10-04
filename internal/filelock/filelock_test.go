@@ -550,7 +550,7 @@ func TestMutant_Jitter(t *testing.T) {
 	d := 100 * time.Millisecond
 	seen := make(map[time.Duration]bool)
 	hasGreater := false
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		j := defaultJitter(d)
 		seen[j] = true
 		if j > d {

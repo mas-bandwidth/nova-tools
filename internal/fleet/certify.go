@@ -708,7 +708,7 @@ func IsValidBuildVersion(tok string) bool {
 	withoutDirty := strings.TrimSuffix(clean, "-dirty")
 	if len(withoutDirty) == 27 && withoutDirty[14] == '-' {
 		allDigits := true
-		for i := 0; i < 14; i++ {
+		for i := range 14 {
 			if withoutDirty[i] < '0' || withoutDirty[i] > '9' {
 				allDigits = false
 				break

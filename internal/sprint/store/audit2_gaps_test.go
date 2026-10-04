@@ -240,7 +240,7 @@ func TestAudit2ClosedAckedTickJudgmentHoldsForEver(t *testing.T) {
 	require.True(t, held, "wait on the deadline: %v %v", held, err)
 	h.readInbox()
 	// the rest of the stream moves, so the stale line is masked
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		h.a2Run(20*time.Minute, 5*time.Minute)
 		h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Run: fmt.Sprint("r", i), Red: i%2 == 1}))
 		h.readInbox()
@@ -379,7 +379,7 @@ func TestAudit2ClosedDeadRunLoopIsNoJudgment(t *testing.T) {
 		}
 		return nil
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h.tick(time.Second)
 		_, _ = h.st.Tick(h.ctx)
 	}
@@ -628,7 +628,7 @@ func TestTheTickAsksNoReaderWhoAlreadyReadTheAttempt(t *testing.T) {
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
 	h.startMachine()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		res := h.machine()
 		for _, p := range res.Parts {
 			require.False(t, p.Lost, "the %s part lost every attempt: %+v", p.Name, p.Result)

@@ -169,7 +169,7 @@ func TestCutRefusesARangeTooBigToClassify(t *testing.T) {
 
 	f := cutForge()
 	var many []string
-	for i := 0; i < CompareFileCap; i++ {
+	for i := range CompareFileCap {
 		many = append(many, fmt.Sprintf("docs/ordinary-%d.md", i))
 	}
 	f.files = map[string][]string{"v0.15.10...abc123abc123def": many}

@@ -16,7 +16,7 @@ import (
 func writeBriefDir(t *testing.T, n int) string {
 	t.Helper()
 	dir := t.TempDir()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		writeNeedsBrief(t, dir, fmt.Sprintf("a%02d", i), fmt.Sprintf("Fix a%02d.", i), "")
 	}
 	return dir

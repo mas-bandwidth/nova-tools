@@ -335,7 +335,7 @@ func (mk *parsedMakefile) assign(into map[string]string, name, op, value string)
 // nothing, exactly as make does.
 func (mk *parsedMakefile) expand(vars map[string]string, s string) string {
 	s = strings.ReplaceAll(s, "$$", dollarDollar)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		next := makeExpandRe.ReplaceAllStringFunc(s, func(ref string) string {
 			name := makeExpandRe.FindStringSubmatch(ref)[1]
 			return vars[name]

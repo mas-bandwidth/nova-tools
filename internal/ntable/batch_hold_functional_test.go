@@ -39,9 +39,9 @@ func holdMembers(t *testing.T, ctx context.Context, c *redis.Client, prefix stri
 func holdFill(t *testing.T, ctx context.Context, c *redis.Client, prefix string, n, fields, size int) {
 	t.Helper()
 	value := strings.Repeat("v", size)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		f := make(map[string]any, fields)
-		for j := 0; j < fields; j++ {
+		for j := range fields {
 			f[fmt.Sprintf("f%d", j)] = value
 		}
 		require.NoError(t, c.HSet(ctx, ntable.MemberKey(fmt.Sprintf("%s%d", prefix, i)), f).Err())
@@ -55,7 +55,7 @@ func holdUnset(prefix string, members, fields int) string {
 		names[j] = fmt.Sprintf(`"f%d"`, j)
 	}
 	var ents []string
-	for i := 0; i < members; i++ {
+	for i := range members {
 		ents = append(ents, fmt.Sprintf(`{"id":"%s%d","expect":{},"unset":[%s]}`, prefix, i, strings.Join(names, ",")))
 	}
 	return strings.Join(ents, ",")
@@ -135,7 +135,7 @@ func TestBatchGuardOnlyEntriesDoNotReadWholeRecords(t *testing.T) {
 	holdMembers(t, ctx, c, "g", members)
 	holdFill(t, ctx, c, "g", members, 8, 64<<10) // 512 KiB a record, 128 MiB in all
 	var ents []string
-	for i := 0; i < members; i++ {
+	for i := range members {
 		ents = append(ents, fmt.Sprintf(`{"id":"g%d","expect":{"fields":{"nope":{"absent":true}}}}`, i))
 	}
 	ans, _ := holdApply(t, ctx, c, "256 guards over 128 MiB of records", manifestWith(probeRev(ctx, c), "guards", strings.Join(ents, ",")))
@@ -152,9 +152,9 @@ func TestBatchLargestManifestsHoldTheStoreUnderASecond(t *testing.T) {
 
 	// a manifest of about 1 MiB of guards, every one satisfied
 	var ents []string
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		var g []string
-		for j := 0; j < 300; j++ {
+		for j := range 300 {
 			g = append(g, fmt.Sprintf(`"n%d":{"absent":true}`, j))
 		}
 		ents = append(ents, fmt.Sprintf(`{"id":"h%d","expect":{"fields":{%s}}}`, i, strings.Join(g, ",")))

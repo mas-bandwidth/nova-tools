@@ -521,7 +521,7 @@ func TestStatusIsDeterministic(t *testing.T) {
 		"discord": {"at":"t","reason":"r"}, "bsky": {"at":"t","reason":"r"}}}`)
 
 	_, first, _ := capture(t, []string{"status", "--box", box}, nowish())
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		_, again, _ := capture(t, []string{"status", "--box", box}, nowish())
 		require.Equal(t, first, again, "status must print the same bytes for the same box:\n%q\n%q", first, again)
 	}
@@ -1398,7 +1398,7 @@ func TestCheckIsDeterministicWhenTwoStoredKeysFoldTogether(t *testing.T) {
 	}})
 
 	seen := map[string]bool{}
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		_, _, errOut := capture(t, []string{"check", "--box", box, "dis cord"}, nowish())
 		seen[errOut] = true
 	}

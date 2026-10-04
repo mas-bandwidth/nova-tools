@@ -53,7 +53,7 @@ func TestDiffNamesKeepsTheCompleteLargeListAndExcludesWarnings(t *testing.T) {
 	t.Parallel()
 	stdout, stderr := diffTestCaptures()
 	var want []string
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		want = append(want, fmt.Sprintf("docs/ordinary-%04d.md", i))
 	}
 	want = append(want, "internal/secrets/seal.go")

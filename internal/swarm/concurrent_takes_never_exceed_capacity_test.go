@@ -26,7 +26,7 @@ import (
 func TestConcurrentTakesNeverExceedCapacity(t *testing.T) {
 	t.Parallel()
 
-	for trial := 0; trial < 8; trial++ {
+	for trial := range 8 {
 		store := t.TempDir()
 		writeShares(t, store, "capacity\t1\nreserve\t0\nalice\t1\n")
 
@@ -36,7 +36,7 @@ func TestConcurrentTakesNeverExceedCapacity(t *testing.T) {
 		granted := 0
 		start := make(chan struct{})
 		now := time.Now().UTC()
-		for i := 0; i < takers; i++ {
+		for i := range takers {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()

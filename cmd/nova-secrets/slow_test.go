@@ -366,7 +366,7 @@ func TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount(t *testing.T) {
 	var rules []string
 	rules = append(rules, fmt.Sprintf("  - path_regex: ^main\\.yaml$\n    age: %s,%s", keyA.pubKey, recKey.pubKey))
 	// 30 unsealed files
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		name := fmt.Sprintf("unsealed_%02d.yaml", i)
 		rules = append(rules, fmt.Sprintf("  - path_regex: ^%s$\n    age: %s,%s", name, keyA.pubKey, recKey.pubKey))
 		// File has unsealed key

@@ -726,7 +726,7 @@ func payForWindows(t *testing.T, windows int) {
 	written := make(chan error, 1) // how the client's writes ended
 	go func() {
 		buf := make([]byte, ChunkBytes)
-		for i := 0; i < chunks; i++ {
+		for range chunks {
 			if _, err := client.Write(buf); err != nil {
 				written <- err
 				return

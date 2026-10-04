@@ -48,7 +48,7 @@ func propertyInput(r *rand.Rand) string {
 func propertyCases(t *testing.T, seed uint64, check func(t *testing.T, s string)) {
 	t.Helper()
 	r := rand.New(rand.NewPCG(seed, 0x6e6f7661))
-	for i := 0; i < 20000; i++ {
+	for i := range 20000 {
 		s := propertyInput(r)
 		check(t, s)
 		require.False(t, t.Failed(), "seed %d case %d input %q", seed, i, s)

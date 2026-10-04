@@ -27,7 +27,7 @@ func TestCapPrintsMaxLinesThenOneMoreLine(t *testing.T) {
 
 	var out bytes.Buffer
 	l := Capped(&out, Default, "VERIFY", "wikilink", "--fail-max <n> (0 = all)")
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		l.Line(fmt.Sprintf("VERIFY FAIL wikilink entry-%d", i))
 	}
 	l.More()
@@ -47,7 +47,7 @@ func TestMaxZeroPrintsEverythingAndNoMoreLine(t *testing.T) {
 
 	var out bytes.Buffer
 	l := Capped(&out, 0, "LINKS", "broken", "--fail-max <n>")
-	for i := 0; i < 300; i++ {
+	for i := range 300 {
 		l.Line(fmt.Sprintf("LINKS FAIL %d", i))
 	}
 	l.More()
@@ -62,7 +62,7 @@ func TestNoMoreLineWhenNothingWasElided(t *testing.T) {
 
 	var out bytes.Buffer
 	l := Capped(&out, 20, "SCAN", "dated", "--max <n>")
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		l.Line("SCAN DATED x")
 	}
 	l.More()
@@ -132,7 +132,7 @@ func TestGroupCapsEachKindSoOneCannotBuryAnother(t *testing.T) {
 
 	var out bytes.Buffer
 	g := Grouped(&out, 20, "VERIFY", "--fail-max <n> (0 = all)")
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		g.Line("wikilink", fmt.Sprintf("VERIFY FAIL wikilink %d", i))
 	}
 	g.Line("frontmatter", "VERIFY FAIL frontmatter the one that matters")
@@ -156,7 +156,7 @@ func TestGroupOutputIsDeterministic(t *testing.T) {
 		var out bytes.Buffer
 		g := Grouped(&out, 2, "VERIFY", "--fail-max <n>")
 		for _, kind := range []string{"coverage", "wikilink", "frontmatter"} {
-			for i := 0; i < 5; i++ {
+			for i := range 5 {
 				g.Line(kind, fmt.Sprintf("VERIFY FAIL %s %d", kind, i))
 			}
 		}
@@ -164,7 +164,7 @@ func TestGroupOutputIsDeterministic(t *testing.T) {
 		return out.String()
 	}
 	first := render()
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		got := render()
 		require.Equal(t, first, got, "run %d differs:\n%s\nvs\n%s", i, got, first)
 	}

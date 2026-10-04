@@ -41,7 +41,7 @@ func propertyRoundTrip(t *testing.T, dir, prefix string, cases, seed int) {
 	t.Helper()
 	r := rand.New(rand.NewPCG(uint64(seed), 0x6e6f7661))
 
-	for i := 0; i < cases; i++ {
+	for i := range cases {
 		name := fmt.Sprintf("%s_%d", prefix, i)
 		target := filepath.Join(dir, name+".dat")
 		data := propertyBytes(r)
@@ -69,7 +69,7 @@ func propertyOverwrite(t *testing.T, dir, name string, cases, seed int) {
 	r := rand.New(rand.NewPCG(uint64(seed), 0x6e6f7661))
 	target := filepath.Join(dir, name)
 
-	for i := 0; i < cases; i++ {
+	for i := range cases {
 		next := propertyBytes(r)
 		perm := propertyPerms[r.IntN(len(propertyPerms))]
 
@@ -91,7 +91,7 @@ func propertyFailureIsolation(t *testing.T, dir, prefix string, cases, seed int)
 
 	failureSteps := []string{"create", "write", "sync", "close", "rename"}
 
-	for i := 0; i < cases; i++ {
+	for i := range cases {
 		target := filepath.Join(dir, fmt.Sprintf("%s_%d.dat", prefix, i))
 		initialData := propertyBytes(r)
 		err := Write(target, initialData, 0o644)

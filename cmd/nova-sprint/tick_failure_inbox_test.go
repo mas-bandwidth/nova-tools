@@ -33,7 +33,7 @@ func TestAFailedTickReachesTheInbox(t *testing.T) {
 	ta.ok("start")
 	ta.ok("tick")
 	ta.failFleetRead()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		code, _, errs := ta.do("tick")
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errs, "no such column")

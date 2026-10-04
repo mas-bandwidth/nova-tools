@@ -124,7 +124,7 @@ func TestFarThroughARealStore(t *testing.T) {
 	t.Run("three separate commands pay it three times", func(t *testing.T) {
 		before := link.Writes()
 		start := time.Now()
-		for i := 0; i < farSeparate; i++ {
+		for i := range farSeparate {
 			if got, err := c.Ping(ctx).Result(); err != nil || got != "PONG" {
 				require.Failf(t, "", "PING %d = %q, %v", i, got, err)
 			}

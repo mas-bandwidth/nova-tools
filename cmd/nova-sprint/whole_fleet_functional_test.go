@@ -154,7 +154,7 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 	// 1 ms of world time, and the rounds are bounded, never timed.
 	const rounds = 16
 	dealing := 0
-	for i := 0; i < rounds; i++ {
+	for i := range rounds {
 		loop.runLoop(ctx, st, 0, 1, &out, &errb)
 		dealt := len(loopDeals(out.String())) > dealing
 		dealing = len(loopDeals(out.String()))

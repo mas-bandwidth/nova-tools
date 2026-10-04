@@ -346,7 +346,7 @@ func TestNoServerIsStartedWithoutItsSentry(t *testing.T) {
 	// A sentry that cannot be enlisted: asked once, and the answer stands.
 	asked := 0
 	none := &sentry{enlist: func() (*post, error) { asked++; return nil, errors.New("the test binary was not found") }}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if _, err := none.group(); err == nil || !strings.Contains(err.Error(), "the test binary was not found") {
 			require.Failf(t, "", "group() with no sentry = %v; want the cause", err)
 		}

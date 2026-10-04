@@ -36,7 +36,7 @@ func TestConcurrentTakesKeepEveryTake(t *testing.T) {
 
 	var wg sync.WaitGroup
 	problems := make(chan string, workers*perWorker)
-	for w := 0; w < workers; w++ {
+	for w := range workers {
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
@@ -44,7 +44,7 @@ func TestConcurrentTakesKeepEveryTake(t *testing.T) {
 			if w%2 == 1 {
 				owner = "bob"
 			}
-			for i := 0; i < perWorker; i++ {
+			for i := range perWorker {
 				ids, _, _, _, _, ok, err := TakeSlotLeases(store, owner, 2, time.Hour, "race", now, pid)
 				if err != nil {
 					problems <- fmt.Sprintf("worker %d iter %d: TakeSlotLeases: %v", w, i, err)

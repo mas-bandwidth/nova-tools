@@ -1389,7 +1389,7 @@ func TestALongOpenListIsCountedListedOnAskAndCappedWhenListed(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		id := fmt.Sprintf("bo-d%011d", i)
 		writeFile(t, checkout, fmt.Sprintf("from-bo/2026-09-09T10%02dZ-many-%s.md", i, id),
 			fmt.Sprintf("From: Bo\nTo: Ada\nDate: Wed Sep  9 10:%02d:00 UTC 2026\nId: %s\nSubject: One of many %d\n\nA note that will sit open.\n", i, id, i))
@@ -1442,7 +1442,7 @@ func TestTheLargeListLineFiresPastTheWarnThresholdAndNotAtIt(t *testing.T) {
 	checkout, _ := busDir(t)
 	// The fixture leaves Ada carrying 2, so 39 more makes 41 and 38 more makes 40.
 	write := func(n int) {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			id := fmt.Sprintf("bo-e%011d", i)
 			writeFile(t, checkout, fmt.Sprintf("from-bo/2026-09-09T11%02dZ-edge-%s.md", i, id),
 				fmt.Sprintf("From: Bo\nTo: Ada\nDate: Wed Sep  9 11:%02d:00 UTC 2026\nId: %s\nSubject: Edge %d\n\nA note that will sit open.\n", i, id, i))

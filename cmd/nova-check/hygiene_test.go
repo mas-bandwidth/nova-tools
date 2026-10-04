@@ -248,7 +248,7 @@ func TestHygieneVerbNeverPrintsTheKey(t *testing.T) {
 func hygManyFindings(t *testing.T) string {
 	t.Helper()
 	dir := hygLab(t)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		hygWrite(t, dir, fmt.Sprintf("sign/f%d.go", i), fmt.Sprintf("package sign\n\nfunc F%d() {}\n", i))
 		if i == 4 {
 			hygWrite(t, dir, "elsewhere/x.go", "package elsewhere\n")

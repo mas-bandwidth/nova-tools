@@ -115,7 +115,7 @@ func TestRawAndGoRowKeysAgreeOnBytes(t *testing.T) {
 	require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols}, now))
 	cases := []string{"", "日本語", "é", "\u0080", "\u07ff", "\u0800", "\ud7ff", "\ue000", "\uffff", "\U00010000", "\U0010ffff", "�", "\x00", "\x7f", "\xc2", "\xe0\xa0", "\xf0\x90\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80"}
 	r := rand.New(rand.NewPCG(42, 19))
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		b := make([]byte, r.IntN(8)+1)
 		for j := range b {
 			b[j] = byte(r.IntN(256))

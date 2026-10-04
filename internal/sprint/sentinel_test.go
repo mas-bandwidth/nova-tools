@@ -274,7 +274,7 @@ func TestASentinelInsertedInLine(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 6)
 	accepted(w, "s1-1", "s1-2", "s1-3")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		mergeOne(w, "s1")
 	}
 	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-4"}}}))

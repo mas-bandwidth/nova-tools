@@ -44,7 +44,7 @@ func TestTheLogHoldsEveryMoveAndReplaysToTheTables(t *testing.T) {
 	h.machine() // p1 dealt to m1
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
 	h.live = []string{"m2"} // m1 silent: its card is taken back and redealt
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h.tick(pastDown / 3)
 		h.machine()
 	}
@@ -145,7 +145,7 @@ func TestALatenessStaysRaisedUntilItsAttemptEnds(t *testing.T) {
 	}
 	take()
 	h.live = nil // m1 silent two hours: withdrawn, late not finished
-	for i := 0; i < 125; i++ {
+	for range 125 {
 		h.tick(time.Minute)
 		h.machine()
 	}
@@ -160,7 +160,7 @@ func TestALatenessStaysRaisedUntilItsAttemptEnds(t *testing.T) {
 	}
 	first := late()
 	require.Len(t, first, 1, "withdrawn two hours after its take: %d not-finished judgments", len(first))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		h.live = []string{"m1"}
 		h.tick(time.Second)
 		h.machine() // back: its presence is the fleet's update, after the pump
@@ -176,7 +176,7 @@ func TestALatenessStaysRaisedUntilItsAttemptEnds(t *testing.T) {
 		require.Len(t, l, 1, "lap %d, taken again: the lateness %+v, want %s still open", i, l, first[0].Note.ID)
 		require.Equal(t, first[0].Note.ID, l[0].Note.ID, "lap %d, taken again: the lateness %+v, want %s still open", i, l, first[0].Note.ID)
 		h.live = nil
-		for j := 0; j < 3; j++ {
+		for range 3 {
 			h.tick(pastDown / 3)
 			h.machine()
 		}
@@ -213,7 +213,7 @@ func TestTheRedealBoundEndsTheTakeAndAbandonLoop(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
 	h.startMachine()
 	h.machine()
-	for lap := 0; lap < 10; lap++ {
+	for range 10 {
 		c := h.snap().Fleet.Card("s1-1.w1")
 		if c.Col != sprint.Ready {
 			break
@@ -222,7 +222,7 @@ func TestTheRedealBoundEndsTheTakeAndAbandonLoop(t *testing.T) {
 		h.run(TakeStep(sprint.TakeReq{As: holder, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Who: holder}))
 		other := map[string]string{"m1": "m2", "m2": "m1"}[holder]
 		h.live = []string{other} // the taker abandons it
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			h.tick(pastDown / 3)
 			h.machine()
 		}

@@ -92,7 +92,7 @@ func TestRedisTheTickDealsAFreshCardOnARouteOfItsTier(t *testing.T) {
 	h.machine()
 	h.must(AddStep(sprint.AddReq{Stream: "testify", IDs: []string{"testify-docs"},
 		Brief: "testify-docs: internal/docs tests to testify by the PR 4926 recipe (testify) tier: flash\nBASE: sprint/foundation\n\nThe task.\n"}))
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h.tick(time.Second)
 		h.machine()
 	}

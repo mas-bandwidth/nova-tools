@@ -19,7 +19,7 @@ import (
 // crTicks runs n ticks, a second apart, each followed by the check.
 func (h *harness) crTicks(n int, when string) {
 	h.t.Helper()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		h.machine()
 		h.clean(fmt.Sprintf("%s tick %d", when, i))
 		h.tick(time.Second)
@@ -191,7 +191,7 @@ func TestCRAckedTickJudgmentComesBack(t *testing.T) {
 	require.Len(t, o, 1, "no member: %d", len(o))
 	res := h.run(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"}))
 	require.Len(t, res.Refused, 1, "ack of no member up: %+v", res)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		h.tick(time.Minute + time.Second)
 		h.machine()
 	}
@@ -222,7 +222,7 @@ func TestCRAllMembersDownThenOneUp(t *testing.T) {
 		require.Fail(t, fmt.Sprintf("m2 ready %d; the up: %+v; m2 %v; ready %d", n, up.Moved, s.MemberCtl("m2").Fields, len(s.Work.Column(sprint.Ready))))
 	}
 	require.Empty(t, h.openOf(sprint.NNoMember), "no-member still open")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		h.work("m2")
 		h.crTicks(1, "draining")
 	}

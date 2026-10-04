@@ -64,7 +64,7 @@ func fastImport(t *testing.T, dir, from string, n int) {
 	t.Helper()
 	var b strings.Builder
 	prev := from
-	for i := 0; i < n; i++ {
+	for i := range n {
 		msg := fmt.Sprintf("empty commit %d", i)
 		fmt.Fprintf(&b, "commit refs/heads/main\n")
 		fmt.Fprintf(&b, "mark :%d\n", i+1)

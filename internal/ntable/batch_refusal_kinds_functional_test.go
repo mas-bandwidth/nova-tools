@@ -100,7 +100,7 @@ func manyNames(n int) []string {
 
 func manySet(n int) map[string]string {
 	m := map[string]string{}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		m[strings.Repeat("f", 1)+string(rune('a'+i%26))+strings.Repeat("g", i/26)] = "v"
 	}
 	return m

@@ -102,7 +102,7 @@ func (d *DayFile) Render() string {
 		oneline.Field(d.Turns), oneline.Field(strings.Join(d.Sources, ","))), HeaderLine)
 	for _, r := range d.Rows {
 		cells := []string{oneline.Field(r.Date), oneline.Field(r.Model), oneline.Field(r.Repo)}
-		for t := Type(0); t < NTypes; t++ {
+		for t := range NTypes {
 			cells = append(cells, r.Counts.Cell(t))
 		}
 		cells = append(cells, strconv.Itoa(r.Rough), oneline.Field(r.Basis),
@@ -176,7 +176,7 @@ type Shrink struct {
 // A dash in the file that is a number now is NOT a shrink: that is coverage arriving.
 func Shrinks(old, now Counts, day string) []Shrink {
 	var out []Shrink
-	for t := Type(0); t < NTypes; t++ {
+	for t := range NTypes {
 		was, hadIt := old.Get(t)
 		is, hasIt := now.Get(t)
 		switch {
@@ -388,7 +388,7 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 		}
 		row := DayRow{Date: cells[0], Model: cells[1], Repo: cells[2]}
 		bad := false
-		for t := Type(0); t < NTypes; t++ {
+		for t := range NTypes {
 			cell := cells[3+int(t)]
 			switch {
 			case cell == "":

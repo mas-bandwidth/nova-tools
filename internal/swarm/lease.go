@@ -355,7 +355,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 // could not establish ownership and the caller must refuse (rule 3).
 func publishJobLease(path, body string, hooks jobLeaseHooks) error {
 	dir := filepath.Dir(path)
-	for attempt := 0; attempt < jobLeaseAttempts; attempt++ {
+	for range jobLeaseAttempts {
 		tmp, err := writeJobLeaseTemp(dir, body)
 		if err != nil {
 			return err

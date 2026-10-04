@@ -1111,7 +1111,7 @@ func dGenerate(t testing.TB, seed uint64, steps int) ([]dAction, []dFinding) {
 	for _, a := range dSetup() {
 		h.do(a)
 	}
-	for i := 0; i < steps; i++ {
+	for range steps {
 		h.do(h.pick(rng, &n))
 	}
 	return h.seq, h.findings

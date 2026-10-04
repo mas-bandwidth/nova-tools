@@ -126,7 +126,7 @@ func TestSelectWithResolvesThroughTheGivenFunc(t *testing.T) {
 		calls++
 		return seatcred.Cred{Seat: s, User: "u"}, nil
 	})
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		c, ok, err := sel.Active()
 		require.True(t, ok, "Active = %v %v %v", c, ok, err)
 		require.NoError(t, err, "Active = %v %v %v", c, ok, err)

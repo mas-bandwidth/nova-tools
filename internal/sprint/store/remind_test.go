@@ -94,7 +94,7 @@ func TestReminderTickIsIdempotent(t *testing.T) {
 	h.machine()
 	before, _ := os.Stat(path)
 	g := h.goal("friend-a")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		res := h.machine()
 		require.Empty(t, reminded(res), "a second tick right after: %+v", res)
 		require.Empty(t, res.Parts, "a second tick right after: %+v", res)
@@ -114,7 +114,7 @@ func TestReminderNothingWhileStoppedAndStoppedTimeDoesNotCount(t *testing.T) {
 	h.machine() // push 1 at the start
 	h.tick(2 * time.Minute)
 	h.stopMachine()
-	for i := 0; i < 3; i++ { // three hours STOPPED, a tick each hour
+	for range 3 { // three hours STOPPED, a tick each hour
 		h.tick(time.Hour)
 		res := h.machine()
 		require.Equal(t, Stopped, res.State, "a tick while stopped: %+v", res)
@@ -189,7 +189,7 @@ func TestReminderFailingRouteWritesOneJudgmentAndSuccessCloses(t *testing.T) {
 	require.Contains(t, n.What, "blocker", "the judgment: %+v", n)
 	require.Equal(t, "goal set friend-a --to <route>|goal drop friend-a|ack", strings.Join(n.Decisions, "|"), "the judgment: %+v", n)
 	// It keeps failing, tick after tick and attempt after attempt: still one.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h.tick(sprint.RemindEvery)
 		h.machine()
 		if n := h.written(sprint.NRemindFailed); n != 1 {

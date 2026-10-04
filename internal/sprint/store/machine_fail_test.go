@@ -39,7 +39,7 @@ func TestCRTickFailsAtEveryCallAndRecovers(t *testing.T) {
 		if strings.Contains(line, "failed") || strings.Contains(line, "(") {
 			assert.Fail(t, fmt.Sprintf("%s: tick error %v and the line carries a suffix: %q", where, terr, line))
 		}
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			h.tick(2 * time.Minute) // past the grace
 			_, err := h.st.Tick(h.ctx)
 			assert.NoError(t, err, "%s: recovery tick %d: %v", where, i, err)
@@ -83,7 +83,7 @@ func TestCRFailuresInARow(t *testing.T) {
 		}
 		return nil
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, _ = h.st.Tick(h.ctx)
 		h.tick(time.Second)
 	}

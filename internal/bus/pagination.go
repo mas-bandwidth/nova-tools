@@ -336,7 +336,7 @@ func validateTokenAccounting(items []BodyItem, token bodyToken, start int) error
 	}
 	var gap *bodyItemKey
 	count := 0
-	for i := 0; i < start; i++ {
+	for i := range start {
 		// We cannot infer gaps from a body alone, but a token may never claim a frontier
 		// after its earliest stated gap, and its key must be inside the accounted prefix.
 		if token.Gap != nil && items[i].key().equal(*token.Gap) {

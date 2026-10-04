@@ -172,7 +172,7 @@ func abortRebase(dir string) error {
 // rebase to its end. It returns an error naming the path it will not settle, which is the
 // caller's cue to abort and hand the conflict to a person.
 func settleRebase(dir string, id Identity) error {
-	for step := 0; step < maxRebaseSteps; step++ {
+	for range maxRebaseSteps {
 		if _, still := inRebase(dir); !still {
 			// The rebase is over. It may have ended because git settled everything itself
 			// (the union attribute is on the bus) or because we settled the last stop.

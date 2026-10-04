@@ -226,7 +226,7 @@ func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 	go func() {
 		defer writersWg.Done()
 		batch := ledgerBatchFor(testDays, "card-a", 100)
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			if !assert.NoError(t, s.ReplaceLedgerDays(ctx, batch), "writer A error") {
 				return
 			}
@@ -237,7 +237,7 @@ func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 	go func() {
 		defer writersWg.Done()
 		batch := ledgerBatchFor(testDays, "card-b", 200)
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			if !assert.NoError(t, s.ReplaceLedgerDays(ctx, batch), "writer B error") {
 				return
 			}

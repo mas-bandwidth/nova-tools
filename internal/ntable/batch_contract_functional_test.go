@@ -1622,7 +1622,7 @@ func testBatchLateInvalidAtNMaxRefusal(t *testing.T) {
 
 	// Create 128 members in the table in a single batch (max mutation entries = 128)
 	createEntries := make([]ntable.BatchMemberEntry, 128)
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		createEntries[i] = ntable.BatchMemberEntry{
 			ID:     fmt.Sprintf("m_%03d", i),
 			Expect: &ntable.MemberExpect{Absent: true},
@@ -1655,7 +1655,7 @@ func testBatchLateInvalidAtNMaxRefusal(t *testing.T) {
 	// Subtest A: Stale revision on the 128th entry
 	t.Run("stale revision on 128th entry", func(t *testing.T) {
 		entries := make([]ntable.BatchMemberEntry, 128)
-		for i := 0; i < 127; i++ {
+		for i := range 127 {
 			entries[i] = ntable.BatchMemberEntry{
 				ID:     fmt.Sprintf("m_%03d", i),
 				Expect: &ntable.MemberExpect{Revision: "1"},
@@ -1695,7 +1695,7 @@ func testBatchLateInvalidAtNMaxRefusal(t *testing.T) {
 	// Subtest B: Invalid remove on unplaced member as 128th entry
 	t.Run("invalid remove on 128th entry", func(t *testing.T) {
 		entries := make([]ntable.BatchMemberEntry, 128)
-		for i := 0; i < 127; i++ {
+		for i := range 127 {
 			entries[i] = ntable.BatchMemberEntry{
 				ID:     fmt.Sprintf("m_%03d", i),
 				Expect: &ntable.MemberExpect{Revision: "1"},

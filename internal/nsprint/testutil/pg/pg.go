@@ -137,7 +137,7 @@ func StartServer(dir string) (*Server, error) {
 	// Listening is on loopback only; the socket directory is emptied so no
 	// socket is made at all.
 	var last string
-	for attempt := 0; attempt < 5; attempt++ {
+	for range 5 {
 		port, err := freePort()
 		if err != nil {
 			return nil, err

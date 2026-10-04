@@ -56,7 +56,7 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(3)
 	case "huge":
 		fmt.Println("v1.2.3")
-		for i := 0; i < 2048; i++ {
+		for range 2048 {
 			fmt.Print(strings.Repeat("x", 1024))
 		}
 	case "read":
@@ -93,7 +93,7 @@ func TestHelperProcess(t *testing.T) {
 		}
 		fmt.Println("x 1.2.3")
 		chunk := strings.Repeat("y", 1024)
-		for i := 0; i < n; i++ {
+		for range n {
 			fmt.Print(chunk)
 		}
 	default:
@@ -472,7 +472,7 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 }
 func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 	rows := []string{}
-	for i := 0; i < 26; i++ {
+	for i := range 26 {
 		rows = append(rows, row(fmt.Sprint(i), "tool", "1.0.0", "npm:pkg", "none"))
 	}
 	rows = append(rows, row("excluded", "model", "should-not-run", "ollama:model:tag", "none"))

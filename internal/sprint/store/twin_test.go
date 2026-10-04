@@ -28,7 +28,7 @@ func TestATickReadsTheSprintOnce(t *testing.T) {
 	h.setup(200)
 	h.startMachine()
 	caught := int64(0)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		res := h.machine()
 		if res.State != Running || res.Done != "" {
 			require.GreaterOrEqual(t, i, 3, "the sprint stopped at tick %d: too small to show the reads", i+1)

@@ -421,7 +421,7 @@ func (c *checker) listen(dir, name string) {
 
 // waitForSocket polls for the socket, bounded.
 func (c *checker) waitForSocket(path string) bool {
-	for i := 0; i < socketPolls; i++ {
+	for range socketPolls {
 		if c.sys.IsSocket(path) {
 			return true
 		}

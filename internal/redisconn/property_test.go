@@ -259,7 +259,7 @@ func TestPropertyNoSecretIsEverShown(t *testing.T) {
 	looked, held := 0, 0
 	for seed := uint64(1); seed <= 3; seed++ {
 		r := rand.New(rand.NewPCG(seed, 0x6e6f7661))
-		for i := 0; i < 120; i++ {
+		for i := range 120 {
 			password := arbitraryPassword(r)
 			shown := everythingShown(t, password)
 			if !envName(password) && len(shown) != len(reference) {
@@ -354,7 +354,7 @@ func TestAPasswordThatIsAWordOfTheMessages(t *testing.T) {
 func TestPropertyThePasswordReachesTheStoreAndNothingElse(t *testing.T) {
 	t.Parallel()
 	r := rand.New(rand.NewPCG(7, 0x6e6f7661))
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		password := arbitraryPassword(r)
 		store := newFakeStore(t, accepting)
 		conn, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": password}), store.dial)

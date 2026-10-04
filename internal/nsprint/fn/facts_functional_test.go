@@ -702,7 +702,7 @@ end)`
 	if len(scores) != numMembers {
 		require.Equal(t, numMembers, len(scores), "expected %d scores, got %d", numMembers, len(scores))
 	}
-	for i := 0; i < numMembers; i++ {
+	for i := range numMembers {
 		wantScore := fmt.Sprintf("%d", i+1)
 		gotScore, ok := scores[i].(string)
 		if !ok || gotScore != wantScore {
@@ -719,7 +719,7 @@ end)`
 
 	sampleXInfo := func(samples int) time.Duration {
 		var durations []time.Duration
-		for i := 0; i < samples; i++ {
+		for range samples {
 			if err := c.SlowLogReset(ctx).Err(); err != nil {
 				require.NoError(t, err, "slowlog reset: %v", err)
 			}

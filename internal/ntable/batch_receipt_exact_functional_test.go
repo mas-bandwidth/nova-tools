@@ -30,7 +30,7 @@ func TestBatchReceiptSizeIsExactAtItsBound(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	var creates []string
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		creates = append(creates, fmt.Sprintf(`{"id":"m%03d","expect":{"absent":true},"create":{"row":"build","col":"ready","score":-1.7976931348623157e+308}}`, i))
 	}
 	body := strings.Join(creates, ",")
@@ -42,7 +42,7 @@ func TestBatchReceiptSizeIsExactAtItsBound(t *testing.T) {
 	ans, err := rawApply(ctx, c, probe)
 	require.True(t, replyOpens(ans, err, "OK"), "probe: %.200v %v", ans, err)
 	pad := 1000 + ntable.LimitReceiptBytes - deltaLen(ans)
-	for i := 0; i < 128; i++ { // put the members back so the creates are fresh
+	for i := range 128 { // put the members back so the creates are fresh
 		c.Del(ctx, ntable.MemberKey(fmt.Sprintf("m%03d", i)), ntable.CellKey("demo", "build", "ready"))
 	}
 	require.NoError(t, c.Del(ctx, ntable.DefKey("demo")+":ops").Err())

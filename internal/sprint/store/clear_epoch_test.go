@@ -182,7 +182,7 @@ func TestEmptyClearsThenTeardown(t *testing.T) {
 	h.m, h.st.B = m, m
 	before := m.Keys(h.st.Names)
 	require.NoError(t, h.st.Init(h.ctx))
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := h.st.Clear(h.ctx)
 		require.NoError(t, err)
 		h.clean("empty clear")
@@ -193,7 +193,7 @@ func TestEmptyClearsThenTeardown(t *testing.T) {
 	require.NoError(t, err, "a read of epoch 0, which init wrote: %v", err)
 	_, err = m.AtEpoch(4, true).Shapes(h.ctx, []string{h.st.Names.Table(sprint.Work)})
 	require.Equal(t, "EPOCHAHEAD", refusalCode(err), "a read of epoch 4, ahead of the sprint: %v", err)
-	for e := uint64(0); e < 3; e++ {
+	for e := range uint64(3) {
 		s, err := h.st.At(e).Load(h.ctx, All, nil)
 		require.NoError(t, err, "epoch %d unreadable: %v", e, err)
 		require.Equal(t, 0, len(s.Work.Rows())+len(s.Fleet.Rows())+len(s.Work.Cards()), "epoch %d is not empty", e)

@@ -35,7 +35,7 @@ func (a *Agg) Days() int { return len(a.days) }
 func (a *Agg) Keys() int { return len(a.keys) }
 
 func (a *Agg) add(r DayRow, key string) {
-	for t := Type(0); t < NTypes; t++ {
+	for t := range NTypes {
 		if v, ok := r.Counts.Get(t); ok {
 			a.Totals[t] += v
 		} else {
@@ -188,7 +188,7 @@ func (e *BadDayFile) Error() string { return e.Path + ": " + e.Reason }
 
 func total(a *Agg) int64 {
 	var n int64
-	for t := Type(0); t < NTypes; t++ {
+	for t := range NTypes {
 		n += a.Totals[t]
 	}
 	return n
