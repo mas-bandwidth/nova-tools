@@ -13,7 +13,7 @@ import (
 )
 
 // livingTools are the tools the release ships for production use.
-var livingTools = strings.Fields("nova-bus nova-table nova-sprint nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-decide nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update")
+var livingTools = strings.Fields("nova-bus nova-bus2 nova-friend nova-table nova-sprint nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-decide nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update")
 
 // preAlphaTools are the tools the README may list before they are ready for
 // production use. Each says so in one sentence (stageSentence), the same words
@@ -41,7 +41,7 @@ func TestReadmeCatalogueContainsOnlyLivingTools(t *testing.T) {
 		expected[name] = true
 	}
 	rows := regexp.MustCompile(`(?s)<tr><td>.*?</tr>`).FindAllString(page, -1)
-	names := regexp.MustCompile(`<td nowrap><a href="[^"]+">(nova-[a-z-]+)</a></td>`)
+	names := regexp.MustCompile(`<td nowrap><a href="[^"]+">(nova-[a-z0-9-]+)</a></td>`)
 	seen := map[string]bool{}
 	for _, row := range rows {
 		m := names.FindStringSubmatch(row)

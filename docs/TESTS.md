@@ -153,6 +153,87 @@ DRAFT OK path=./drafts/2026-09-12T2015Z-re-bo-ce10834fbfea.md re=bo-ce10834fbfea
 
 Ada's first line above is the refusal worth meeting here rather than on a live bus: **the example bus ships a `CURSOR` naming a commit from the history it was written in**, and copying it out gives it a new one, so that commit is not an ancestor of `HEAD`. The tool says so instead of diffing from it, and names the way out. Her `--full --advance` replaces it, and the read after that is `mode=since` over `changed=2` — two changed lane paths. That is the property the whole design is for, and it is visible in one pair of lines.
 
+## nova-bus2
+
+Run by `cmd/nova-bus2/firstrun_test.go` on a throwaway redis-server whose
+`friends` set names ada and bob (what `nova-config apply` writes for two friend
+rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types them.
+The sitting is the loop: ada sends bob one message; bob peeks (new, not yet
+delivered), receives it through `--exec` (the header line and the body go to the
+command, acked when it exits 0), acks an id that is not pending (false, exit 0: ack is idempotent), reads the
+log, and lists the names. The run-owned values are the message's `id=` (a ULID
+from the store's time) and its `at=`.
+
+### First run
+
+```text
+$ nova-bus2 send --as ada --to bob --subject hello --body "are you there?"
+SEND OK id=01M42BA18Y1K3SE57HE26SY8T0 to=bob cc=- at=2026-10-04T02:18:54Z
+
+$ nova-bus2 peek --as bob
+PEEK OK pending=0 new=1
+PEEK MESSAGE state=new id=01M42BA18Y1K3SE57HE26SY8T0 from=ada at=2026-10-04T02:18:54Z subject="hello"
+
+$ nova-bus2 recv --as bob --exec true
+RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z acked=true exec_exit=0 subject="hello"
+
+$ nova-bus2 ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+ACK OK acked=0 asked=1
+ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
+
+$ nova-bus2 log --max 5
+LOG OK total=1
+LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
+
+$ nova-bus2 names
+NAMES OK count=2
+NAMES NAME name=ada
+NAMES NAME name=bob
+```
+
+## nova-friend
+
+Run by `cmd/nova-friend/firstrun_test.go` on a throwaway redis-server whose
+`friends` set names ada and bob (what `nova-config apply` writes for two friend
+rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types
+them. The sitting is the canary by hand, with no daemon running: a dry-run
+install prints the plan for bob's agent; a dry-run uninstall the plan to undo
+it; ada, as the coordinator, pings bob with a nonce; bob's session answers
+with `pong` (one note to ada, and the pong file under the home directory,
+`./home/.nova-friend/bob`); `wait-pong` finds it on the log from bob's own
+stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, and so are the
+home directory and the uid the plan names. The run-owned values are the
+message `id=` (a ULID from the store's time), `at=`, and `took=`.
+
+### First run
+
+```text
+$ nova-friend install --as bob --harness opencode --dir ./bob --dry-run
+INSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist launchd_log=./home/Library/Logs/nova-friend-bob.log dry_run=true
+INSTALL PLAN command="write ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
+INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"
+INSTALL PLAN command="launchctl bootstrap gui/501 ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
+INSTALL NOTE the agent runs: nova-friend run --as bob --harness opencode --dir ./bob --width 0, with --redis and --server as given here
+
+$ nova-friend uninstall --as bob --dry-run
+UNINSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist dry_run=true
+UNINSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"
+UNINSTALL PLAN command="rm ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
+
+$ nova-friend ping --as ada --to bob --nonce abc123
+PING OK nonce=abc123 id=01M42EJZ1D4JEFR6ESF1YJ3YJA to=bob at=2026-10-04T03:40:12Z
+PING NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123
+
+$ nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
+PONG OK nonce=abc123 to=ada id=01M42EJZ1F8FXB5T0F6EXJCRS1 at=2026-10-04T03:40:12Z
+
+$ nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
+WAIT-PONG OK nonce=abc123 from=bob at=2026-10-04T03:40:12Z took=1ms queue=2 working=1 width=4 daemon=false
+
+$ nova-friend status --as bob --dir ./bob
+! STATUS NONE: no daemon has run as bob (no status file in ./home/.nova-friend/bob); run: nova-friend install --as bob --harness <h> --dir ./bob
+```
+
 ## nova-sandbox
 
 Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/path/to/pool` standing in for yours, and the lines are what the platform prints with the paths shortened.
