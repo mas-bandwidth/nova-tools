@@ -1530,7 +1530,7 @@ func TestSSHOptionsForbidAgentForwardingAndKeysOnArgv(t *testing.T) {
 		}
 	}
 	// And the whole composed argv for a real machine carries none of them.
-	argv := ExecSSH{Path: "/usr/bin/ssh"}.sshArgs("hulk")
+	argv := remoteArgv("hulk")
 	if argv[len(argv)-1] != "hulk" {
 		require.FailNowf(t, "assertion failed", "the machine is not the last argument: %v", argv)
 	}
