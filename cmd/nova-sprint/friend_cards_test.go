@@ -230,6 +230,44 @@ func TestTheInboxRefusesABadCardIDAndASymlinkedJob(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "inbox", "s1-2.w1~3"), in)
 }
 
+// A friend's outbox/<job>/REPORT.md that is a symlink, a non-regular file, or larger
+// than the read cap is not read: os.ReadFile follows the link, so the file could
+// be outside her working directory, and a large report is held in memory whole.
+// The card is left working and one FRIEND-CARD line names the path and the
+// reason, and the next sync reads it again. friend clean already treats a
+// non-regular report as not done (friendclean.go, the Lstat and Mode().IsRegular()
+// check near line 217); sync does the same before its read (docs/FRIENDS.md, the
+// inbox/outbox standard; docs/SPEC-SPRINT.md section 1, friend sync).
+func TestASymlinkedReportIsNotRead(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root) // delivers the brief, the card is working
+
+	// the LAND report the friend would write lives outside her working directory
+	outside := t.TempDir()
+	target := filepath.Join(outside, "REPORT.md")
+	require.NoError(t, os.WriteFile(target, []byte("Verdict: LAND\nHead: "+landHead+"\n\nThe gate is green.\n"), 0o644))
+
+	// outbox/<job>/REPORT.md is a symlink to that outside report: a bare
+	// os.ReadFile would follow it and finish the card from a file outside the
+	// working directory
+	dir := filepath.Join(root, "amy-working", "outbox", "s1-1.w1")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.Symlink(target, filepath.Join(dir, "REPORT.md")))
+
+	out := ta.ok("friend sync --root " + root)
+	assert.Contains(t, out, "FRIEND-CARD", "a line names the path and the reason")
+	assert.Contains(t, out, "symlink", "the reason names the symlink")
+	assert.NotContains(t, out, "FRIEND-CARD FINISHED", "the symlinked report is not read, the card is not finished")
+
+	var c cardView
+	ta.json("card s1-1", &c)
+	assert.Equal(t, sprint.Working, c.Primary.Col, "the card stays working")
+	assert.Empty(t, c.Primary.F("result"), "the card is not finished")
+	ta.clean()
+}
+
 // A twin's verbs beat its machines, never a friend's row: a twin holding a friend's card
 // opens as before.
 func TestATwinBeatsNoFriendRow(t *testing.T) {
