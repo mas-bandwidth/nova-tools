@@ -138,7 +138,8 @@ func readGold(name string) ([]goldRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	// ignored: a file opened only for reading
+	defer func() { _ = f.Close() }()
 	var rows []goldRow
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)

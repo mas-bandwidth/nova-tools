@@ -217,9 +217,6 @@ func aclApplyVerb(d deps) tool.Verb {
 	}
 }
 
-// aclOpener opens the store for a login check accepted.
-type aclOpener func(ctx context.Context, store login) (aclServer, func() error, error)
-
 // aclVerbRun is acl render, check and apply over the store d.aclOpen (or connect)
 // opens.
 func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
