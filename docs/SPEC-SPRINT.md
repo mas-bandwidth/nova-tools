@@ -331,7 +331,10 @@ row it writes `inbox/<job>/BRIEF.md` when that is not there and tells her so
 with one nova-bus message from the coordinator to her, subject `card <card>
 dealt: <the FRIEND-CARD DELIVERED line>`, the inbox path in the body (her
 daemon pushes it into her session, which the inbox file alone never does; the
-store is NOVA_BUS_REDIS); the inbox file is the record and the message a
+store is `NOVA_BUS_REDIS`; `NOVA_BUS_REDIS_USER` names its ACL user and
+`NOVA_BUS_REDIS_PASSWORD_ENV` names the variable holding its password, both
+independent of the sprint store's login; an unset bus user uses the default
+user); the inbox file is the record and the message a
 courtesy: a send that fails never fails the delivery, is said on sync's line
 (`FRIEND-CARD NOTE friend= card=: the bus message to her was not sent (...)`)
 and written on the card's story as one happened note, `a friend was not told
@@ -3302,4 +3305,3 @@ no line of its own; `log --card <id>` and `log --json` keep each record whole. A
 removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page
 through it.
-
