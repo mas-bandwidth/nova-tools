@@ -44,7 +44,7 @@ one at a time, with its raw output kept in `scratch/attempts.log` and
    -> HTTP 200, 81787 bytes; the fleet snapshot below is read from it. This is the
    dashboard's cached `where`, not the required `where --json` and not a window.
 
-Every raw sample was filtered with `grep -v SECRETS` before it was kept.
+Every raw sample was filtered for credential-like lines before it was kept.
 
 ## Per criterion: measured value against its bar
 
