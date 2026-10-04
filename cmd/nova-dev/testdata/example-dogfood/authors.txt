@@ -1,0 +1,4 @@
+# who wrote what, for the fixture reference
+nova-example quickstart = a worker
+nova-example links = a worker
+nova-example nocode = a worker

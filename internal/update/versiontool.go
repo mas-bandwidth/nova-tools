@@ -1,6 +1,7 @@
 package update
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -15,7 +16,7 @@ func VersionTool(stamp string, env Environment) *tool.Tool {
 	if env.Now == nil {
 		env.Now = time.Now
 	}
-	manifest := "--file <manifest: " + manifestShape + ">"
+	manifest := "--file <manifest>"
 	return &tool.Tool{
 		Name:  "nova-version",
 		What:  "which version of each tool is installed, recorded and compared",
@@ -25,7 +26,17 @@ diff compares two snapshots; moved writes the note of what two commits' binaries
 It is one of two binaries sharing the manifest and report; latest and installing are nova-update's.
 THE MANIFEST is the file --file names, written by hand; report -h states its six rules.
 first run: the binary alone; the example lines write a one-tool manifest and read it.`,
-		ExitTable: "0 the verb ran and passed: a report whose every entry answered (under send, whose note nova-bus took), a snapshot whose tools all answer, a diff, a moved note written; 1 the tool said NO (a report or a snapshot with an UNKNOWN tool, a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).",
+		NoJSON:    "report and send write the note body the bus carries, so they take no --json; report's first line is `REPORT OK checked=1 known=1 unknown=0 changed=- sent=-`",
+		UsageNote: "THE MANIFEST is the file --file names: " + manifestShape + "; report -h states its six rules.",
+		ExitTable: "0 done, 2 usage or could not run, for every verb; by verb:\n" +
+			"  report: 0 every entry answered; 1 an entry is UNKNOWN; 2 usage, or a\n" +
+			"    manifest that did not read\n" +
+			"  send: 0 nova-bus took the note; 1 an entry is UNKNOWN, or the send was\n" +
+			"    refused or unconfirmed; 2 usage, or a manifest that did not read\n" +
+			"  snapshot: 0 every tool answers; 1 a tool is UNKNOWN; 2 usage, or a\n" +
+			"    manifest or directory that did not read\n" +
+			"  diff: 0 the snapshots compared; 2 usage, or a snapshot that did not read\n" +
+			"  moved: 0 the note written; 2 usage, or a revision or build that did not run",
 		Verbs: []tool.Verb{
 			{
 				Name:    "example",
@@ -104,13 +115,13 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 			},
 			{
 				Name:  "report",
-				Usage: "report " + manifest + " [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]",
+				Usage: "report " + manifest + " [--host <label>] [--state <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]",
 				// The second example line is the version verb's: the banner's
 				// examples are its verbs' in order, and version is last.
 				Example: "report --file versions.tsv\nversion",
 				// The strongest effect a flag gives it: --send delivers the note and
-				// writes the --snapshot state file; without --send it only reads.
-				Effect: tool.Delivery + "; only with --send, which also writes the --snapshot state file; " +
+				// writes the --state state file; without --send it only reads.
+				Effect: tool.Delivery + "; only with --send, which also writes the --state state file; " +
 					"without --send, report reads and writes nothing (--draft prints the note)",
 				Detail: manifestHelp("nova-version"),
 				Flags:  func(f *tool.Flags) { reportFlags(f, true) },
@@ -118,8 +129,8 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 			},
 			{
 				Name:   "send",
-				Usage:  "send " + manifest + " --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]",
-				Effect: tool.Delivery + "; --snapshot writes its state file",
+				Usage:  "send " + manifest + " --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--state <path>] [--host <label>]",
+				Effect: tool.Delivery + "; --state writes its state file",
 				Detail: manifestHelp("nova-version"),
 				Flags:  func(f *tool.Flags) { reportFlags(f, false) },
 				Run:    func(c *tool.Call) *tool.Out { return reportVerb(c, true, env) },
@@ -142,7 +153,8 @@ func reportFlags(f *tool.Flags, report bool) {
 	f.Prints()
 	f.String("file", "", "manifest (required): "+manifestShape)
 	f.String("host", "", "execution bench label")
-	f.String("snapshot", "", "state file for delivery recovery across processes: retry the saved artifact, never prepare again while pending")
+	f.String("state", "", "state file for delivery recovery across processes: retry the saved artifact, never prepare again while pending")
+	f.String("snapshot", "", "alias for --state, one release only: sets the same value and prints a NOTE")
 	f.Bool("draft", false, "print the note only")
 	if report {
 		f.Bool("send", false, "explicit delivery")
@@ -159,8 +171,13 @@ func reportFlags(f *tool.Flags, report bool) {
 }
 
 func reportVerb(c *tool.Call, send bool, env Environment) *tool.Out {
+	state := c.Str("state")
+	if c.Given("snapshot") {
+		state = c.Str("snapshot")
+		fmt.Fprintln(c.Stderr, "NOTE --snapshot is --state")
+	}
 	o := options{
-		file: c.Str("file"), host: c.Str("host"), snapshot: c.Str("snapshot"),
+		file: c.Str("file"), host: c.Str("host"), state: state,
 		as: c.Str("as"), to: c.Str("to"), bus: c.Str("bus"), remote: c.Str("remote"), branch: c.Str("branch"),
 		max: c.Int("max"), timeout: c.Dur("timeout"), budget: c.Dur("budget"),
 		kinds: *c.Get("kind").(*kindFlags), draft: c.Bool("draft"), send: send || (c.Given("send") && c.Bool("send")),

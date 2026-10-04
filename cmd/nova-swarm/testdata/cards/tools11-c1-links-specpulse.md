@@ -115,7 +115,7 @@ not-reproduced`, paste the output. Do not widen the card.
 STEP 4. THE FIX, only in the four documents.
 
 Re-base each broken target onto the directory its file stands in. Nothing else on those lines
-changes -- not the link TEXT, not the prose, not one space:
+changes -- not the link TEXT, not the prose, not one character:
 
 * in `00-preamble.md`, `02-the-rules-numbered.md`, `08-rate-and-convergence.md`: a target
   `SPEC-SWARM.md`, `WORKER-CARDS.md`, `SPEC-MERGE.md` or `PIT-STOP.md` gains a `../` prefix.

@@ -75,13 +75,14 @@ func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 		out := stderr.String()
 		homeIdx := strings.Index(out, "--home is required")
 		manifestIdx := strings.Index(out, "--manifest is required")
-		require.False(t, homeIdx < 0 || manifestIdx < 0, "stderr must name both missing flags, got %q", out)
+		require.False(t, homeIdx < 0, "stderr must name both missing flags, got %q", out)
+		require.False(t, manifestIdx < 0, "stderr must name both missing flags, got %q", out)
 		require.LessOrEqual(t, homeIdx, manifestIdx, "flag errors out of sorted order (run %d): %q", i, out)
 	}
 }
 
 // End to end through run(): each subcommand passing on good input and
-// failing (exit 1, FAIL on stderr) on bad input.
+// failing (exit 1, FAILED on stderr) on bad input.
 func TestRunEndToEnd(t *testing.T) {
 	t.Parallel()
 
@@ -124,10 +125,10 @@ func TestRunEndToEnd(t *testing.T) {
 		args       []string
 		wantStderr string
 	}{
-		{"attest fails on missing file", []string{"attest", "--home", home, "--manifest", manifest}, "ATTEST FAIL KERNEL.md: does not exist"},
-		{"links fails on broken link", []string{"links", "--dir", home}, "LINKS FAIL pattern/broken.md:1: nowhere.md"},
-		{"kernel fails on missing kernel", []string{"kernel", "--file", filepath.Join(home, "KERNEL.md"), "--max-bytes", "100"}, "KERNEL FAIL"},
-		{"nocode fails on shell script", []string{"nocode", "--dir", home}, "NOCODE FAIL sneaky.sh: code extension .sh"},
+		{"attest fails on missing file", []string{"attest", "--home", home, "--manifest", manifest}, "ATTEST FAILED KERNEL.md: does not exist"},
+		{"links fails on broken link", []string{"links", "--dir", home}, "LINKS FAILED pattern/broken.md:1: nowhere.md"},
+		{"kernel fails on missing kernel", []string{"kernel", "--file", filepath.Join(home, "KERNEL.md"), "--max-bytes", "100"}, "KERNEL FAILED"},
+		{"nocode fails on shell script", []string{"nocode", "--dir", home}, "NOCODE FAILED sneaky.sh: code extension .sh"},
 	}
 	for _, tt := range failing {
 		t.Run(tt.name, func(t *testing.T) {
@@ -142,7 +143,7 @@ func TestRunEndToEnd(t *testing.T) {
 	}
 }
 
-// The unreadable-.md seam a caller actually sees: `LINKS FAIL <file>:
+// The unreadable-.md seam a caller actually sees: `LINKS FAILED <file>:
 // unreadable (<why>)` on stderr — a whole-file line, no line number, no
 // target — beside the ordinary broken-link line, and exit 1. The code this
 // was first run against exited 2 and printed NO findings at all: one
@@ -169,8 +170,8 @@ func TestLinksUnreadableFileIsNamedFailureAtTheCLI(t *testing.T) {
 		got := run([]string{"links", "--dir", dir}, &stdout, &stderr)
 		require.EqualValues(t, 1, got, "exit = %d, want 1 -- named failures, not a refusal; stderr: %s", got, stderr.String())
 	}
-	assert.Contains(t, stderr.String(), "LINKS FAIL locked.md: unreadable", "stderr = %q, want the whole-file grammar LINKS FAIL <file>: unreadable (<why>)", stderr.String())
-	assert.Contains(t, stderr.String(), "LINKS FAIL broken.md:1: missing.md (does not exist)", "stderr = %q, want the accumulated broken link kept, not discarded", stderr.String())
+	assert.Contains(t, stderr.String(), "LINKS FAILED locked.md: unreadable", "stderr = %q, want the whole-file grammar LINKS FAILED <file>: unreadable (<why>)", stderr.String())
+	assert.Contains(t, stderr.String(), "LINKS FAILED broken.md:1: missing.md (does not exist)", "stderr = %q, want the accumulated broken link kept, not discarded", stderr.String())
 	assert.EqualValues(t, "", stdout.String(), "a failing check must not print an OK line, got %q", stdout.String())
 }
 
@@ -205,7 +206,7 @@ func brief(s string) string { return oneline.Escape(oneline.Cap(s, 200)) }
 // (nocode) say a directory in the walk that cannot be listed is a REFUSAL and
 // that a walk error stops the run without reporting partial findings. This
 // pins the specified behaviour at the seam a caller actually sees: exit 2, the
-// directory named on stderr, and NO FAIL line -- the broken link beside it is
+// directory named on stderr, and NO FAILED line -- the broken link beside it is
 // deliberately not reported. Whether that is the right trade is open on #30.
 func TestLinksUnlistableDirRefusesAtTheCLI(t *testing.T) {
 	t.Parallel()
@@ -229,7 +230,7 @@ func TestLinksUnlistableDirRefusesAtTheCLI(t *testing.T) {
 		require.EqualValues(t, 2, got, "exit = %d, want 2 -- an unlistable directory is a refusal; stderr: %s", got, brief(stderr.String()))
 	}
 	assert.Contains(t, stderr.String(), "locked", "stderr does not name the directory: %s", brief(stderr.String()))
-	assert.NotContains(t, stderr.String(), "LINKS FAIL", "a refusal must not report partial findings: %s", brief(stderr.String()))
+	assert.NotContains(t, stderr.String(), "LINKS FAILED", "a refusal must not report partial findings: %s", brief(stderr.String()))
 	{
 		lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1
 		assert.EqualValues(t, 1, lines, "refusal stderr = %d lines, want 1: %s", lines, brief(stderr.String()))
@@ -259,7 +260,7 @@ func TestNoCodeUnlistableDirRefusesAtTheCLI(t *testing.T) {
 		require.EqualValues(t, 2, got, "exit = %d, want 2 -- an unlistable directory is a refusal; stderr: %s", got, brief(stderr.String()))
 	}
 	assert.Contains(t, stderr.String(), "locked", "stderr does not name the directory: %s", brief(stderr.String()))
-	assert.NotContains(t, stderr.String(), "NOCODE FAIL", "a refusal must not report partial findings: %s", brief(stderr.String()))
+	assert.NotContains(t, stderr.String(), "NOCODE FAILED", "a refusal must not report partial findings: %s", brief(stderr.String()))
 	// Reviewer (#66, finding 3): the links twin pins the one-line guarantee and
 	// this seam did not. SPEC.md:230-232: a refusal is "this tool's own one-line
 	// refusal ... and nothing else -- at exit 2".
@@ -309,7 +310,7 @@ func TestRunKernelTokenMode(t *testing.T) {
 		require.EqualValues(t, 1, got, "exit = %d, want 1; stdout: %s stderr: %s", got, stdout.String(), stderr.String())
 	}
 	for _, want := range []string{
-		"KERNEL FAIL " + kernel + ": over budget: 100 tokens, budget 40, over by 60",
+		"KERNEL FAILED " + kernel + ": over budget: 100 tokens, budget 40, over by 60",
 		"measured 240 bytes at 2.4 bytes/token",
 	} {
 		assert.Contains(t, stderr.String(), want, "stderr = %q, want it to contain %q", stderr.String(), want)
@@ -389,7 +390,7 @@ Elided.
 `
 
 // The floors check at the CLI seam: parity passes with the OK grammar, a
-// planted drop in either record is a FLOORS FAIL and exit 1, and a failing
+// planted drop in either record is a FLOORS FAILED and exit 1, and a failing
 // run prints no OK line.
 func TestRunFloorsEndToEnd(t *testing.T) {
 	t.Parallel()
@@ -415,7 +416,7 @@ func TestRunFloorsEndToEnd(t *testing.T) {
 		got := run([]string{"floors", "--core", core, "--source", source}, &stdout, &stderr)
 		require.EqualValues(t, 1, got, "exit = %d, want 1; stdout: %s stderr: %s", got, stdout.String(), stderr.String())
 	}
-	assert.Contains(t, stderr.String(), `FLOORS FAIL `+core+`: the door's numbered list: the floor "secrets nowhere" is missing`, "stderr = %q, want the missing-floor grammar", stderr.String())
+	assert.Contains(t, stderr.String(), `FLOORS FAILED `+core+`: the door's numbered list: the floor "secrets nowhere" is missing`, "stderr = %q, want the missing-floor grammar", stderr.String())
 	assert.EqualValues(t, "", stdout.String(), "a failing check must not print an OK line, got %q", stdout.String())
 
 	// Restore the door, drop a charter floor from the source: same NO.
@@ -427,7 +428,7 @@ func TestRunFloorsEndToEnd(t *testing.T) {
 		got := run([]string{"floors", "--core", core, "--source", source}, &stdout, &stderr)
 		require.EqualValues(t, 1, got, "exit = %d, want 1; stdout: %s stderr: %s", got, stdout.String(), stderr.String())
 	}
-	assert.Contains(t, stderr.String(), `FLOORS FAIL `+source+`: §6's charter enumeration: the floor "secrets nowhere" is missing`, "stderr = %q, want the missing-charter-floor grammar", stderr.String())
+	assert.Contains(t, stderr.String(), `FLOORS FAILED `+source+`: §6's charter enumeration: the floor "secrets nowhere" is missing`, "stderr = %q, want the missing-charter-floor grammar", stderr.String())
 }
 
 // The corpus gate's own CLI seam. The interesting outcome is the middle one:
@@ -464,7 +465,7 @@ func TestRunCorpusEndToEnd(t *testing.T) {
 		got := run([]string{"corpus", "--ledger", ledgerPath, "--root", root, "--min-anchors", "1"}, &stdout, &stderr)
 		require.EqualValues(t, 1, got, "exit = %d, want 1; stdout: %s stderr: %s", got, stdout.String(), stderr.String())
 	}
-	assert.Contains(t, stderr.String(), `CORPUS FAIL README.md: ABSENT: "the light is on"`, "stderr = %q, want the absent-anchor grammar", stderr.String())
+	assert.Contains(t, stderr.String(), `CORPUS FAILED README.md: ABSENT: "the light is on"`, "stderr = %q, want the absent-anchor grammar", stderr.String())
 	assert.EqualValues(t, "", stdout.String(), "a failing check must not print an OK line, got %q", stdout.String())
 
 	// An unreadable ledger is a REFUSAL, and says so in those words.
@@ -499,7 +500,7 @@ func TestRunCorpusEndToEnd(t *testing.T) {
 		got := run([]string{"corpus", "--ledger", filepath.Join(dir, "bad.md"), "--root", root, "--min-anchors", "1"}, &stdout, &stderr)
 		require.EqualValues(t, 1, got, "exit = %d, want 1; stderr: %s", got, stderr.String())
 	}
-	assert.Contains(t, stderr.String(), "CORPUS FAIL ledger:3: malformed row", "stderr = %q, want the malformed-row grammar to survive an all-bad ledger", stderr.String())
+	assert.Contains(t, stderr.String(), "CORPUS FAILED ledger:3: malformed row", "stderr = %q, want the malformed-row grammar to survive an all-bad ledger", stderr.String())
 	assert.EqualValues(t, "", stdout.String(), "a failing check must not print an OK line, got %q", stdout.String())
 
 	// A typo'd --root is an INVOCATION error, not the loss of every anchor.
@@ -587,7 +588,7 @@ func TestNoCodeCLI(t *testing.T) {
 			got := run([]string{"nocode", "--dir", dir}, &stdout, &stderr)
 			require.EqualValues(t, 1, got, "exit = %d, want 1", got)
 		}
-		assert.Contains(t, stderr.String(), "NOCODE FAIL tool.py", "finding not reported: %s", stderr.String())
+		assert.Contains(t, stderr.String(), "NOCODE FAILED tool.py", "finding not reported: %s", stderr.String())
 	})
 
 	t.Run("--allow is repeatable", func(t *testing.T) {
@@ -744,7 +745,7 @@ func TestNoCallerPathCanForgeALine(t *testing.T) {
 			require.EqualValues(t, 1, got, "exit = %d, want 1; stderr: %s", got, stderr.String())
 		}
 		oneEvent(t, forged, stdout.String(), stderr.String())
-		assert.Contains(t, stderr.String(), `LINKS FAIL bad\x0a`+forged+`.md:1: missing.md (does not exist)`, "stderr = %q, want the file name escaped inside its one FAIL line", stderr.String())
+		assert.Contains(t, stderr.String(), `LINKS FAILED bad\x0a`+forged+`.md:1: missing.md (does not exist)`, "stderr = %q, want the file name escaped inside its one FAIL line", stderr.String())
 	})
 
 	t.Run("attest refusal quotes a manifest path that holds a newline", func(t *testing.T) {
@@ -908,9 +909,9 @@ func TestTheDenyListFieldIsOneToken(t *testing.T) {
 			rc := run([]string{"nocode", "--dir", dir}, &stdout, &stderr)
 			require.EqualValues(t, 1, rc, "exit = %d, want 1; stderr: %s", rc, stderr.String())
 		}
-		want := "NOCODE FAIL files=1 findings=1 shown=1 deny-list=" + floor
-		got := lineWith(t, stderr.String(), "NOCODE FAIL files=")
-		assert.EqualValues(t, want, got, "FAIL summary = %q, want %q", got, want)
+		want := "NOCODE FAILED files=1 findings=1 shown=1 deny-list=" + floor
+		got := lineWith(t, stderr.String(), "NOCODE FAILED files=")
+		assert.EqualValues(t, want, got, "FAILED summary = %q, want %q", got, want)
 		{
 			n := fieldCount(got)
 			assert.EqualValues(t, 4, n, "a scanner reads %d fields on %q, want 4", n, got)
@@ -954,9 +955,6 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	if largeSelf500Dir != "" {
 		_ = os.RemoveAll(largeSelf500Dir)
-	}
-	if hygLabGoldenDir != "" {
-		_ = os.RemoveAll(hygLabGoldenDir)
 	}
 	if stLabGoldenDir != "" {
 		_ = os.RemoveAll(stLabGoldenDir)

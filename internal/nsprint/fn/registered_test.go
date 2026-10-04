@@ -37,13 +37,10 @@ func luaFunctionRegistrations(source string) map[string]bool {
 func TestEveryGoFunctionNameIsRegistered(t *testing.T) {
 	t.Parallel()
 	src, err := Source()
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	registered := luaFunctionRegistrations(src)
-	if !registered["ns_table_apply"] || !registered["ns_table_read"] {
-		require.Failf(t, "assertion failed", "the library registers %d functions, not ns_table_apply and ns_table_read", len(registered))
-	}
+	require.True(t, registered["ns_table_apply"] && registered["ns_table_read"],
+		"the library registers %d functions, not ns_table_apply and ns_table_read", len(registered))
 	root := filepath.Join("..", "..", "..")
 	named := 0
 	for _, dir := range []string{"cmd", "internal"} {
@@ -57,19 +54,13 @@ func TestEveryGoFunctionNameIsRegistered(t *testing.T) {
 			}
 			for _, m := range goFunctionNameRx.FindAllStringSubmatch(string(b), -1) {
 				named++
-				if !registered[m[1]] {
-					assert.True(t, registered[m[1]], "%s names %s; no Lua file registers it", path, m[1])
-				}
+				assert.True(t, registered[m[1]], "%s names %s; no Lua file registers it", path, m[1])
 			}
 			return nil
 		})
-		if err != nil {
-			require.NoError(t, err, err)
-		}
+		require.NoError(t, err)
 	}
-	if named == 0 {
-		require.NotEqual(t, 0, named, "no Go source names an ns_* function: the walk read nothing")
-	}
+	require.NotZero(t, named, "no Go source names an ns_* function: the walk read nothing")
 }
 
 // TestRegistrationInventoryDetectsAMissingRegistration is the inventory's
@@ -79,9 +70,7 @@ func TestRegistrationInventoryDetectsAMissingRegistration(t *testing.T) {
 	t.Parallel()
 
 	source, err := Source()
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	var readDeclaration string
 	for _, match := range luaTableRegisterRx.FindAllStringSubmatch(source, -1) {
 		if match[1] == "ns_table_read" {
@@ -89,16 +78,10 @@ func TestRegistrationInventoryDetectsAMissingRegistration(t *testing.T) {
 			break
 		}
 	}
-	if readDeclaration == "" {
-		require.NotEqual(t, "", readDeclaration, "the library has no table-form ns_table_read registration to guard")
-	}
+	require.NotEqual(t, "", readDeclaration, "the library has no table-form ns_table_read registration to guard")
 	withoutRead := strings.Replace(source, readDeclaration,
 		strings.Replace(readDeclaration, "redis.register_function", "redis.not_register_function", 1), 1)
 	registered := luaFunctionRegistrations(withoutRead)
-	if registered["ns_table_read"] {
-		require.False(t, registered["ns_table_read"], "registration inventory accepted a library with ns_table_read removed")
-	}
-	if !registered["ns_table_apply"] {
-		require.True(t, registered["ns_table_apply"], "removing ns_table_read also hid the string-form ns_table_apply registration")
-	}
+	require.False(t, registered["ns_table_read"], "registration inventory accepted a library with ns_table_read removed")
+	require.True(t, registered["ns_table_apply"], "removing ns_table_read also hid the string-form ns_table_apply registration")
 }

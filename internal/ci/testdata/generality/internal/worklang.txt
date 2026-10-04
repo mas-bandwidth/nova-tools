@@ -1,3 +1,2 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 1
-internal/worklang/worklang.go:space 5
+# ceiling: 0

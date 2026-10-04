@@ -41,14 +41,14 @@ var memoryAudit = audit.Config{
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
 		"main.go|parse|name":                      "a required flag's name, a literal at every call site in this file",
-		"main.go|stepFailed|verb":                 "the name of the quickstart step, a literal at all three call sites in this file",
+		"quickstart.go|stepFailed|verb":           "the name of the quickstart step, a literal at all three call sites in this file",
 		"main.go|scoreFields|chn":                 "the name of the channel that scored the hit, one of the two channel names package memindex defines",
 		"main.go|hitLine|token":                   "the event token, a literal at both call sites in this file",
 		"main.go|hitLine|prefix":                  "empty, or cand=<n> built by Sprintf from an integer, at the two call sites in this file",
 		"main.go|cmdStats|memindex.SchemaVersion": "a constant in package memindex",
 		"main.go|cmdStats|buildTime":              "a time.Duration",
-		"main.go|cmdVerify|f.Kind":                "one of the four kind literals package memindex assigns (coverage, backlink, wikilink, frontmatter); two sites",
-		"main.go|cmdVerify|*links":                "validated above the site to be exactly gate or info",
+		"verify.go|cmdVerify|f.Kind":              "one of the four kind literals package memindex assigns (coverage, backlink, wikilink, frontmatter); two sites",
+		"verify.go|cmdVerify|*links":              "validated above the site to be exactly gate or info",
 	},
 	Imports: []string{
 		`"github.com/mas-bandwidth/nova-tools/internal/tool"`, // shared JSON renderer marshals the result as one escaped JSON record

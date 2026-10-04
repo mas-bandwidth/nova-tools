@@ -184,9 +184,9 @@ type decisionView struct {
 const handoverDecisions = 10
 
 // decisionVerbs are the coordinator's decisions handover shows from the log,
-// beside the seat's own changes, by the verb of the step that wrote the line
-// (fleet down's is fleet hold): rework only with a fix.
-var decisionVerbs = []string{"release", "drop", "fleet hold", "rework"}
+// beside the seat's own changes and the holds (their notes), by the verb of the
+// step that wrote the line: rework only with a fix.
+var decisionVerbs = []string{"release", "drop", "rework"}
 
 // handover reads what the next seat needs and renders it: the holder and since
 // when, the machine and the progress, each stream's counts, the sentinels held
@@ -267,8 +267,8 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 		}
 		seen[l.Op] = true
 		h.Decisions = append(h.Decisions, d)
-		if d.Verb == "fleet down" {
-			heldBy[d.What] = d.By
+		if m, ok := strings.CutPrefix(d.What, sprint.HoldMember+" "); ok && d.Verb == "hold" {
+			heldBy[m] = d.By
 		}
 	}
 	h.Decisions = h.Decisions[max(0, len(h.Decisions)-handoverDecisions):]
@@ -286,10 +286,20 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 }
 
 // decisionOf is the log line as one of the coordinator's decisions: a seat
-// change, a release, a drop, a fleet down, or a rework with a fix.
+// change, a hold or unhold (its note), a release, a drop, or a rework with a fix.
 func decisionOf(l sprint.Line) (decisionView, bool) {
 	if n := l.Note; n != nil {
-		if n.Type != sprint.NSeat && n.Type != sprint.NSeatTaken {
+		switch n.Type {
+		case sprint.NHeld, sprint.NUnheld:
+			// a hold or its release (hold.go): "<kind> <name> held[: reason][; ...]", the
+			// kind and name what it acted on and the rest its words
+			kind, rest, _ := strings.Cut(n.What, " ")
+			name, rest, _ := strings.Cut(rest, " ")
+			rest = strings.TrimPrefix(strings.TrimPrefix(rest, "released from its hold"), "held")
+			return decisionView{At: l.At, Verb: map[string]string{sprint.NHeld: "hold", sprint.NUnheld: "unhold"}[n.Type], What: kind + " " + name, By: n.Who,
+				Reason: strings.TrimLeft(rest, ":; ")}, true
+		case sprint.NSeat, sprint.NSeatTaken:
+		default:
 			return decisionView{}, false
 		}
 		return decisionView{At: l.At, Verb: n.Type, What: n.What, By: n.Who}, true
@@ -297,16 +307,12 @@ func decisionOf(l sprint.Line) (decisionView, bool) {
 	if l.Kind != sprint.LineMove || !slices.Contains(decisionVerbs, l.Verb) || (l.Verb == "rework" && l.Text["fix"] == "") {
 		return decisionView{}, false
 	}
-	hold := l.Verb == "fleet hold"
-	if hold != (l.Table == sprint.Fleet) || (!hold && l.Table != sprint.Work) {
-		return decisionView{}, false // one line a decision: the member's, or the primaries'
+	if l.Table != sprint.Work {
+		return decisionView{}, false // one line a decision: the primaries'
 	}
 	what := l.Card
 	if len(l.Cards) > 0 {
 		what = sprint.Preview(l.Cards, ",")
-	}
-	if hold {
-		return decisionView{At: l.At, Verb: "fleet down", What: strings.TrimPrefix(l.Card, sprint.CtlID("")), By: l.Actor}, true
 	}
 	reason := l.Text["reason"]
 	if l.Verb == "rework" {

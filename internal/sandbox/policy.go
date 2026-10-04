@@ -398,7 +398,7 @@ func insideAny(path string, dirs []string) bool {
 // sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
 // literals of the darwin profile put a path INTO the profile text (the -D parameters do
 // not), so a path holding a quote, a backslash or a paren could rewrite the policy — and a
-// measured run with a path holding a space and a paren aborted at exit 134 (spec, "to
+// measured run with a path holding a blank and a paren aborted at exit 134 (spec, "to
 // verify at build" item 2). The decision taken here is the first of the two the spec
 // offered: the tool REFUSES such a path, naming the flag, rather than trying to quote it.
 const sbplMetacharacters = "\"\\()"

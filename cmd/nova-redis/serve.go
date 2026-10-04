@@ -190,7 +190,7 @@ func serveRun(c *tool.Call, d deps) *tool.Out {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := d.launch(ctx, spec, c.Stdout, c.Stderr); err != nil {
-		fmt.Fprintf(c.Stderr, "SERVE FAILED err=%s remedy=%q\n", oneline.Err(err), "run: ls -ld -- "+shellWord(dir)+"; compare directory access and the explicit --bind/--port with the launch error and any redis-server output")
+		fmt.Fprintf(c.Stderr, "SERVE FAILED err=%s remedy=%q\n", oneline.Err(err), "run: ls -ld -- "+oneline.ShellWord(dir)+"; compare directory access and the explicit --bind/--port with the launch error and any redis-server output")
 		return tool.Exit(1)
 	}
 	fmt.Fprintf(c.Stdout, "SERVE STOP bind=%s port=%d\n", oneline.Field(strings.Join(opts.binds, ",")), opts.port)
