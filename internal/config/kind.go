@@ -351,7 +351,7 @@ var Kinds = []*Kind{
 			{Name: "coordinator", Type: TypeRef, Ref: KindMachine, Help: "the machine the coordinator's loops run on (a machine row), or empty"},
 			{Name: "redis_port", Type: TypeInt, Nullable: true, Help: "the explicit TCP port Redis listens on, from 1 through 65535; unset until declared"},
 			{Name: "pg_dsn", Type: TypeText, Help: "the explicit password-free postgres:// URI the configuration store uses; empty until set"},
-			{Name: "loops_dir", Type: TypeText, Default: "~/nova-bench/loops", Help: "the directory where loop logs are written; non-empty, seeded to ~/nova-bench/loops"},
+			{Name: "loops_dir", Type: TypeText, Help: "the directory where loop logs are written; non-empty, seeded to ~/nova-bench/loops"},
 		},
 		Check: checkFleet,
 	},
@@ -487,7 +487,10 @@ func noteField(what string) Field {
 // checkFleet keeps both store endpoints explicit and safe to print. The
 // endpoints may be unset so an older fleet can migrate before an operator
 // declares them; apply and inventory refuse incomplete endpoints. loops_dir
-// must be non-empty.
+// must be non-empty: it is the directory every loop's log path is derived
+// from, so a row that carries it blank is refused. A row that does not carry
+// it is a partial one, the fields a set names alone; the store checks the row
+// its write would leave, which carries the stored value.
 func checkFleet(r Row) error {
 	if raw := r.Fields["redis_port"]; raw != "" {
 		port, err := strconv.Atoi(raw)
@@ -495,8 +498,7 @@ func checkFleet(r Row) error {
 			return fmt.Errorf("--redis_port wants an integer from 1 through 65535")
 		}
 	}
-	loopsDir, ok := r.Fields["loops_dir"]
-	if !ok || strings.TrimSpace(loopsDir) == "" {
+	if loopsDir, ok := r.Fields["loops_dir"]; ok && strings.TrimSpace(loopsDir) == "" {
 		return fmt.Errorf("--loops_dir wants a non-empty directory path; run: nova-config fleet set --loops_dir <path>")
 	}
 	dsn, ok := r.Fields["pg_dsn"]

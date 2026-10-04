@@ -418,11 +418,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 	if f.Fleet.RedisPort != nil {
 		redisPort = strconv.Itoa(*f.Fleet.RedisPort)
 	}
-	loopsDir := f.Fleet.LoopsDir
-	if loopsDir == "" {
-		loopsDir = "~/nova-bench/loops"
-	}
-	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN, "loops_dir": loopsDir}
+	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN, "loops_dir": f.Fleet.LoopsDir}
 	snap.Revs[KindMachine], snap.Revs[KindFleet] = 1, 1
 	if f.Loops != nil {
 		snap.Loops = map[string]View{}
@@ -439,7 +435,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 				"name": n, "machine": l.Machine, "argv": string(argv), "seat": l.Seat,
 				"keys": strings.Join(keys, ","), "every": strconv.Itoa(l.Every),
 				"keepalive": strconv.FormatBool(l.Keepalive),
-				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(loopsDir, n),
+				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(f.Fleet.LoopsDir, n),
 			}
 		}
 	}
