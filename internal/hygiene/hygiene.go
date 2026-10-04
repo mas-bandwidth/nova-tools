@@ -354,7 +354,7 @@ func blobSize(ctx context.Context, repo, blob string) (int64, error) {
 var hunkHeader = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
 // conflictMarker is git's own spelling of one: exactly seven of the character, then a
-// space or the end of the line. Eight is not a marker and neither is `"<<<<<<<"` inside
+// whitespace or the end of the line. Eight is not a marker and neither is `"<<<<<<<"` inside
 // a string, which is why this is anchored rather than a substring search.
 var conflictMarker = regexp.MustCompile(`^(<{7}|={7}|>{7})( |$)`)
 

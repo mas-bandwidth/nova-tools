@@ -117,9 +117,9 @@ opened (exit 2), and every store runs it on the row a `set` would leave and
 refuses the set (exit 1, `ErrInvalid`), writing nothing. `add` refuses a row missing
 a required field, a value outside its type, or a flag the kind has not, and
 names every problem in one line. `set` changes the fields named and no
-other. A `ref` field naming no row is refused (`--store space names no
+other. A `ref` field naming no row is refused (`--store <machine> names no
 machine row`), and a row a `ref` field of another kind names cannot be
-removed (`machine studio is the --coordinator of the fleet`, `friend rowan
+removed (`machine <name> is the --coordinator of the fleet`, `friend <name>
 is the --coordinator of the sprint`): the structure enforces it (a foreign
 key), the tool names it.
 
@@ -134,7 +134,7 @@ nothing invented.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `user` | text | yes | the plays and the seals: `ssh <user>@<name>` | `machine:<m>` |
-| `seat` | text | yes | nova-secrets: the seat on that machine (studio, swarm-hulk, ...) | `machine:<m>` |
+| `seat` | text | yes | nova-secrets: the seat on that machine (a seat, another seat, ...) | `machine:<m>` |
 | `slots` | int | yes | apply: the machine ceiling the friends' desired slots must fit under (`ns_capacity_machine`, `ns_capacity_desired`); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
@@ -455,7 +455,7 @@ config.tiers             (name PK flash|pro, routes, created_at, updated_at;
 ```
 
 No database has applied `0002_machine.sql` or `0003_friend.sql` in their
-first shape (the fleet Postgres on space is not migrated yet), so this cut
+first shape (the fleet Postgres on the store machine is not migrated yet), so this cut
 rewrote both in place rather than adding an alter.
 
 ## History
@@ -554,8 +554,8 @@ and wake path stay, they are hers.
 
 **sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator <friend>`), `DEL` when empty.
 Never removed. The handover is `nova-config sprint set --coordinator
-stella --as rowan` then `apply`: the sprint kind's own revision moves and
-the friend kind's plan is two `SET ... changed=roles`, stella's first.
+<friend> --as <friend>` then `apply`: the sprint kind's own revision moves and
+the friend kind's plan is two `SET ... changed=roles`, the new coordinator's first.
 
 **loop:** the hash `loop:<l>` with every field of the row, `name`, `log`
 (the derived path), `rev` and `at`, written whole in one transaction with

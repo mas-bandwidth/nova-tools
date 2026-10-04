@@ -78,7 +78,8 @@ const (
 	FieldTier = "tier"
 	// FieldTierNow is the tier the primary is on, written by every deal on a route:
 	// flash first on every card, then the tier the machine escalated it to (NextTier);
-	// the tier its brief's line 1 names is its ceiling.
+	// the tier its brief's line 1 names is its ceiling. Add writes pro on a card whose
+	// gate's measured wall is over the flash bound (gate_wall.go).
 	FieldTierNow = "tier_now"
 )
 

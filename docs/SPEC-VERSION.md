@@ -68,6 +68,9 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    `backend=` and `platform=`) are metadata rather than a broken binary;
    `name` is the executable's name, and its `stamp`, `revision` and `platform` are read off
    that line, so a renamed stub cannot forge a row and a non-`nova-` file is never one.
+   Every `nova-*` non-directory entry skipped for not being a regular file (such as a symlink,
+   or an entry whose Info failed) is noted on the success output naming each and saying why,
+   so an omitted binary is never silent.
 3. **`snapshot` writes one row per binary and prints one line.** The `--out` file is the
    header `name<TAB>stamp<TAB>revision<TAB>platform` and then one row per binary, sorted by
    name; `stamp` is the build identity, `revision` the twelve-hex commit when the identity

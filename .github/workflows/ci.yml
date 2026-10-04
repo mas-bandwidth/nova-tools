@@ -301,6 +301,16 @@ jobs:
         # runs `make vet` unsharded and un-PKGS-scoped.
         run: make vet-laws
 
+      - name: lint
+        # The Go best-practice linters as class tests: staticcheck and errcheck,
+        # each held per package to its shrink-only ledger (docs/SPEC-CI.md,
+        # `staticcheck` and `errcheck`). They are functional-tier and the
+        # functional job never runs on a pull request, so this step is where
+        # they gate one. `make lint` also re-runs the gofmt and vet targets
+        # above, which this job's build cache answers at once.
+        # internal/ci: TestTheLintJobRunsTheLinterClassTests.
+        run: make lint
+
       - name: vet-windows
         # `GOOS=windows go vet ./...`, the one Windows guard on the CL path.
         # It is last in this job on purpose: it is the only step that has to

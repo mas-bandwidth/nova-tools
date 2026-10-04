@@ -250,7 +250,8 @@ func TestAuthorsFromGitBareKey(t *testing.T) {
 	got = authors.Author("nova-fix")
 	require.Equal(t, "Ada", got, "Author(nova-fix) = %q, want Ada", got)
 	words := strings.Join(calls[1], " ")
-	require.True(t, strings.Contains(words, "-S") && strings.HasSuffix(words, "-- cmd/nova-fix"), "nova-fix links read %q, want the -S read under cmd/nova-fix", words)
+	require.True(t, strings.Contains(words, "-S"), "nova-fix links read %q, want the -S read under cmd/nova-fix", words)
+	require.True(t, strings.HasSuffix(words, "-- cmd/nova-fix"), "nova-fix links read %q, want the -S read under cmd/nova-fix", words)
 	got = authors.Author("nova-fix links")
 	require.Equal(t, "Ada", got, "Author(nova-fix links) = %q, want Ada", got)
 }

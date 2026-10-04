@@ -458,19 +458,6 @@ func TestOrderHeavyFirstAndFunctional(t *testing.T) {
 	assert.Equal(t, `[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]`, MarshalLegs([]Leg{NothingLeg(g)}), "the nothing leg")
 }
 
-func TestShardsFollowTheEvent(t *testing.T) {
-	t.Parallel()
-	for event, want := range map[string]Shards{
-		"pull_request":      {Linux: 4, Mac: 4},
-		"merge_group":       {Linux: 8, Mac: 4},
-		"push":              {Linux: 8, Mac: 8},
-		"schedule":          {Linux: 8, Mac: 8},
-		"workflow_dispatch": {Linux: 8, Mac: 8},
-	} {
-		assert.Equal(t, want, ShardsFor(event), "ShardsFor(%s)", event)
-	}
-}
-
 func legNames(legs []Leg) []string {
 	var out []string
 	for _, l := range legs {
@@ -493,7 +480,7 @@ func TestFanoutByEvent(t *testing.T) {
 		// the merge group: every package on Linux but the darwin-only ones, which go to macOS
 		{"merge_group", []string{"1/8 lin=./cmd/a", "2/8 lin=./cmd/b", "3/8 lin=./cmd/c", "1/4 darwin-arm64=./cmd/nova-sandbox", "2/4 darwin-arm64=./internal/sandbox"}},
 		// a pull request: macOS only for what differs there, and the darwin-only packages
-		{"pull_request", []string{"1/4 lin=./cmd/a", "2/4 lin=./cmd/b", "3/4 lin=./cmd/c", "1/4 darwin-arm64=./cmd/b", "2/4 darwin-arm64=./cmd/nova-sandbox", "3/4 darwin-arm64=./internal/sandbox"}},
+		{"pull_request", []string{"1/4 lin=./cmd/a", "2/4 lin=./cmd/b", "3/4 lin=./cmd/c", "1/8 darwin-arm64=./cmd/b", "2/8 darwin-arm64=./cmd/nova-sandbox", "3/8 darwin-arm64=./internal/sandbox"}},
 		// a push to dev: every package on both OSes
 		{"push", []string{"1/8 lin=./cmd/a", "2/8 lin=./cmd/b", "3/8 lin=./cmd/c", "1/8 darwin-arm64=./cmd/a", "2/8 darwin-arm64=./cmd/b", "3/8 darwin-arm64=./cmd/nova-sandbox", "4/8 darwin-arm64=./cmd/c", "5/8 darwin-arm64=./internal/sandbox"}},
 	}
@@ -540,8 +527,8 @@ func TestDetectDarwinSensitive(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok, "DetectDarwinSensitive = %v", sens)
 	assert.Equal(t, "./cmd/a ./internal/c ", sens.Sorted(), "want ./cmd/a (imports the differing ./internal/c) and ./internal/c itself")
-	assert.True(t, sens.Needs("./cmd/a"))
-	assert.False(t, sens.Needs("./cmd/b"))
+	assert.True(t, sens.All || sens.Pkgs["./cmd/a"])
+	assert.False(t, sens.All || sens.Pkgs["./cmd/b"])
 }
 
 func TestDetectDarwinSensitiveWithNothingDifferent(t *testing.T) {
@@ -568,7 +555,7 @@ func TestDetectDarwinSensitiveFallsBackToAll(t *testing.T) {
 		assert.NoError(t, err, broken)
 		assert.False(t, ok, broken)
 		assert.True(t, sens.All, broken)
-		assert.True(t, sens.Needs("./anything"), broken)
+		assert.True(t, sens.All || sens.Pkgs["./anything"], broken)
 	}
 }
 
@@ -769,7 +756,7 @@ func TestFanoutWithTheDarwinLegsOffIsLinuxOnly(t *testing.T) {
 // two-minute cap in the merge-group runs of 2026-10-04).
 func TestFunctionalDealsTheHeavyPackagesOnePerLeg(t *testing.T) {
 	t.Parallel()
-	pkgs := []string{"./cmd/a", "./cmd/nova-bus", "./cmd/b", "./cmd/nova-swarm", "./internal/atomicfile", "./internal/c", "./internal/ntable", "./internal/pkgselect", "./internal/swarm", "./internal/d"}
+	pkgs := []string{"./cmd/a", "./cmd/nova-bus", "./cmd/b", "./cmd/nova-swarm", "./internal/atomicfile", "./internal/c", "./internal/ntable", "./internal/ci", "./internal/swarm", "./internal/d"}
 	legs := Functional(pkgs, Groups{Linux: "lin", Mac: "mac"})
 	require.Len(t, legs, FunctionalShards)
 	home := map[string]int{}

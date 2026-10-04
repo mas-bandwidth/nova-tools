@@ -542,7 +542,7 @@ line to run and not an investigation.
 the deadline ended the run, not which signal did it.
 
 **No sudo.** `diskutil apfs addVolume` and `diskutil apfs deleteVolume` on the
-boot container are the ordinary user's to run, measured on the Studio (macOS 26,
+boot container are the ordinary user's to run, measured on the bench (macOS 26,
 arm64): rule 2 holds here as it does everywhere else, and a verb
 that needed root would be a different thing than the one measured.
 
@@ -632,7 +632,7 @@ The disposable-volume implementation serializes creation and verifies cleanup.
 
    exit 125. The cause is **outside this tool**, and was isolated without it: an
    `addVolume` that runs while another one is running leaves the new volume's
-   root `root:wheel drwxr-xr-x` instead of the caller's `glenn:staff
+   root `root:wheel drwxr-xr-x` instead of the caller's `the caller:staff
    drwxrwxr-x`, and it **does not settle** — still denied two seconds later.
    Uncontended, the root is the caller's and writable the instant `diskutil
    info` reports a mount point. The same four runs staggered twelve seconds
@@ -694,7 +694,7 @@ The disposable-volume implementation serializes creation and verifies cleanup.
 
 3. **A reaper is tested against the real listing, never an assumed one.**
    `diskutil apfs list` draws a tree. A trim set containing only `|`, `+`, `-`,
-   `<` and a space misses the `>` that opens each volume record and can report
+   `<` and a blank misses the `>` that opens each volume record and can report
    `SANDBOX REAP OK volumes=0` while a volume remains. The record begins:
 
    ```
@@ -704,7 +704,7 @@ The disposable-volume implementation serializes creation and verifies cleanup.
    Without trimming `>`, this becomes `> Volume disk3s7 …` and does not match
    a reader expecting `Volume`. **A
    reaper that reports a dirty machine clean is worse than no reaper**, so the
-   listing is parsed against a fixture copied off the Studio verbatim — the tree
+   listing is parsed against a fixture copied off the bench verbatim — the tree
    characters are the whole point — and that fixture holds `Macintosh HD` one
    record above the leaked volume, so the test that proves the parser reads is the
    same test that proves it never returns a volume this tool did not make.
@@ -928,7 +928,7 @@ remedy line, and nothing is applied and nothing is dropped.
 card runner's shell has no tty and a password prompt there is a hang nobody sees.
 It is the one command these verbs execute, behind one interface, which is why the
 whole contract above is unit-tested with **no packet, no `nft` and no `sudo`**:
-the resolver is a fake table and the privileged command is a recorder. Johnny's
+the resolver is a fake table and the privileged command is a recorder. The reviewer's
 page asks for exactly that ("unit test feeds a fake resolver + a fake connect"),
 and the one real probe — `github.com:443` connects, `example.com:443` is denied —
 is nightly, on a bench, never in this suite.
@@ -1163,7 +1163,7 @@ and opens nothing. `SANDBOX OK` names `cmd=<name>` — the base name of
 the executable — and never the arguments, because arguments carry task text and
 task text carries quoted rules. The `cwd=<dir>` slot is a one-line field
 rendered through `internal/oneline` like every other path, so a directory whose
-path holds a space reaches a reader escaped; a consumer that compares it with a
+path holds a blank reaches a reader escaped; a consumer that compares it with a
 path it holds decodes that field first.
 
 **`SANDBOX OK` names the cwd twice.** `cwd=<dir>` is the readable rendering of
@@ -1487,7 +1487,7 @@ directory is its own tree and not a subdirectory of one.
 `-D` parameter escaping is still a live risk and not a formality: one measured
 run of a multi-line profile with seven parameters printed `invalid data type of
 path filter; expected pattern, got boolean` (exit 65) because a referenced
-`(param ...)` had no `-D`, and a path containing a space and a paren aborted a
+`(param ...)` had no `-D`, and a path containing a blank and a paren aborted a
 run (exit 134). Every param the filled profile names must be passed; that, and
 what the tool does with metacharacters in a path, is item 2 of **to verify at
 build**.
@@ -1914,7 +1914,7 @@ that cannot confirm one changes this document rather than asserting it.
 2. `-D` parameter escaping, which is a live risk and not a formality: one
    measured run of a multi-line profile with seven parameters printed
    `invalid data type of path filter; expected pattern, got boolean`, and a
-   path containing a space and a paren aborted the run (134). Decide from the
+   path containing a blank and a paren aborted the run (134). Decide from the
    measurement whether the tool refuses paths carrying SBPL metacharacters,
    changes how parameters are grouped, or both.
 3. Landlock syscall numbers as used from Go's `syscall` package on both
@@ -2070,7 +2070,7 @@ One per rule:
     environment variable and no file can turn the wall off either — the test
     sets every plausible name and the tool still sandboxes.
 12. A wrapped command exiting 3 gives exit 3; one killed by `SIGKILL` gives
-    137; an argument containing a space, a quote, a `$` and a `;` arrives in
+    137; an argument containing a blank, a quote, a `$` and a `;` arrives in
     the child's argv byte-for-byte; stdout and stderr are not interleaved by
     the tool. Per platform: on linux the command is a **child with a pid of its
     own** (the test reads `/proc/self/stat` from the wrapped command and

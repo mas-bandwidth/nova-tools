@@ -351,6 +351,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 	}
 	weighed := weighUnits(s, admitted, nil)
 	weights := weightsOver(append(openPrimaries(s), admitted...))
+	// the gate's measured wall, read once for the add (gate_wall.go)
+	var walls map[string][]float64
 	for _, a := range in {
 		col := Ready
 		for _, n := range a.needs {
@@ -372,6 +374,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		if r.Held {
 			fields[FieldHeld] = stamp(s.Now)
 		}
+		gateSaid := ""
 		if a.brief != "" && !a.gate {
 			fields["brief"] = a.brief
 			if a.rules != "" {
@@ -382,6 +385,14 @@ func Add(s *Snapshot, r AddReq) Plan {
 			}
 			if op := r.BriefOps[a.id]; op != "" {
 				fields[FieldBriefOp], fields[FieldBriefRecord] = op, r.BriefRecord
+			}
+			if !a.sent {
+				if walls == nil {
+					walls = gateWalls(s)
+				}
+				set, said := gateTier(walls, a.brief)
+				maps.Copy(fields, set)
+				gateSaid = said
 			}
 		}
 		if len(a.needs) > 0 {
@@ -396,6 +407,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		if r.Held {
 			u.Moved += "; held until release"
+		}
+		if gateSaid != "" {
+			u.Moved += "; " + gateSaid
 		}
 		if r.Sentinel {
 			u.Moved = "sentinel " + u.Moved

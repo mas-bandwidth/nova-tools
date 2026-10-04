@@ -206,7 +206,7 @@ func LoadConfigProfile(path, seat string) (ConfigProfile, error) {
 	if err != nil {
 		return ConfigProfile{}, fmt.Errorf("seat %s: cannot read %s: %v", seat, path, err)
 	}
-	defer f.Close()
+	defer f.Close() // ignored: a read-only file, nothing was written through it
 	var found *ConfigProfile
 	var known []string
 	sc := bufio.NewScanner(f)

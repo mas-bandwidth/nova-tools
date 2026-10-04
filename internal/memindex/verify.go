@@ -78,7 +78,7 @@ var quotedWikilinkRe = regexp.MustCompile("`[ \t]*\\[\\[[^\\[\\]]+?\\]\\][ \t]*`
 // is not a wikilink.
 //
 // Everything else over-reports on purpose, which is this file's declared
-// posture: indented (four-space) code blocks, and a wikilink merely NEAR
+// posture: indented (four-column) code blocks, and a wikilink merely NEAR
 // backticks rather than wrapped by them, are both still reported.
 func maskCode(s string) string {
 	lines := strings.Split(s, "\n")

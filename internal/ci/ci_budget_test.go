@@ -689,7 +689,8 @@ func TestShardsUseTheGoTestCache(t *testing.T) {
 		assert.Equal(t, "-ldflags=-w", v, "%s links test binaries with GOTEST_LDFLAGS=%q (DWARF, and a dsymutil per binary on darwin): %v", name, v, args)
 	}
 	mk := readFile(t, filepath.Join(repoRoot(t), "Makefile"))
-	require.True(t, strings.Contains(mk, "GOTEST_COUNT_FLAG ?= -count=1") && strings.Contains(mk, "$(GOTEST_COUNT_FLAG)"), "the Makefile's test target does not take GOTEST_COUNT_FLAG (-count=1 by hand, empty in CI)")
+	require.True(t, strings.Contains(mk, "GOTEST_COUNT_FLAG ?= -count=1"), "the Makefile's test target does not take GOTEST_COUNT_FLAG (-count=1 by hand, empty in CI)")
+	require.True(t, strings.Contains(mk, "$(GOTEST_COUNT_FLAG)"), "the Makefile's test target does not take GOTEST_COUNT_FLAG (-count=1 by hand, empty in CI)")
 }
 
 // TestPushOfAProvedShaSkipsTheShards (Glenn 2026-09-26 9:42 AM ET): a push
