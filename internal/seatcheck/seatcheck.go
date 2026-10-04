@@ -270,7 +270,7 @@ func Judge(m Measures, now time.Time) Report {
 		case t.Failures > 0:
 			add(Line{Thing: Loop, Facts: []string{"tick_age=" + age(t.Age), "ticks=" + fmt.Sprint(t.Ticks), "failures=" + fmt.Sprint(t.Failures), "why=" + q(t.Error)}, Remedy: "nova-sprint log --max 20"})
 		default:
-			add(Line{Thing: Loop, Up: true, Facts: []string{"tick_age=" + age(t.Age), "ticks=" + fmt.Sprint(t.Ticks), "rebalance_age=" + age(t.Age)}})
+			add(Line{Thing: Loop, Up: true, Facts: []string{"tick_age=" + age(t.Age), "ticks=" + fmt.Sprint(t.Ticks)}})
 		}
 	}
 

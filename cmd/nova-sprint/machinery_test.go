@@ -50,7 +50,7 @@ func TestMachineryEverythingUp(t *testing.T) {
 	assert.Equal(t, []string{"server", "store", "loop", "fleet", "friends", "readers", "dashboard", "bus", "inbox", "OK"}, things, out)
 	assert.Contains(t, out, "MACHINERY server OK addr=127.0.0.1:6390 ms=12 pid=4242\n", out)
 	assert.Contains(t, out, "MACHINERY store OK redis=mem:0 dbsize=- machine=running epoch=", out)
-	assert.Contains(t, out, "MACHINERY loop OK tick_age=0s ticks=1 rebalance_age=0s\n", out)
+	assert.Contains(t, out, "MACHINERY loop OK tick_age=0s ticks=1\n", out)
 	assert.Contains(t, out, "MACHINERY fleet OK up=2 held=0 down=0\n", out)
 	assert.Contains(t, out, "MACHINERY readers OK total=1 up=1 reading=0\n", out)
 	assert.Contains(t, out, "MACHINERY dashboard OK addr=127.0.0.1:7390 status=200 build=b1\n", out)

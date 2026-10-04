@@ -33,7 +33,7 @@ func TestEverythingUp(t *testing.T) {
 	assert.Equal(t, strings.Join([]string{
 		"MACHINERY server OK addr=127.0.0.1:6390 ms=12 pid=4242",
 		"MACHINERY store OK redis=127.0.0.1:6380 dbsize=1234 machine=running epoch=7",
-		"MACHINERY loop OK tick_age=3s ticks=1200 rebalance_age=3s",
+		"MACHINERY loop OK tick_age=3s ticks=1200",
 		"MACHINERY fleet OK up=1 held=1 down=0",
 		"MACHINERY friends OK up=1 held=0 down=0",
 		"MACHINERY readers OK total=2 up=2 reading=1",
