@@ -14,7 +14,7 @@ The standard below is [docs/STANDARD.md](docs/STANDARD.md), embedded whole; ever
 
 ## The standard: how a nova tool is built
 
-This is the standard every tool and module in this repository is built to, and the one a new tool is built to first. It states where the tree goes. Each rule names the check that holds it where one exists; where the tree does not yet meet a check, the gap is its ledger, a shrink-only allowlist under `internal/ci/testdata` with one row per place still short, and a new row is a refusal, not a parking place. A check is written `TestName` (`rule`); the rule's entry is in docs/SPEC-CI.md. The goal all of it serves: the minimal code that is performant and correct. Less code is the best code; the tests are what let the code get less.
+Every tool and module meets this standard. Each rule names its check in docs/SPEC-CI.md. Existing gaps have shrink-only allowlists under `internal/ci/testdata`: new rows are refused. The goal is minimal, performant, correct code, with tests that permit safe reduction.
 
 ### Doing it right the first time
 
@@ -35,6 +35,10 @@ This is the standard every tool and module in this repository is built to, and t
 **When working in the tree.** One owner per package at a time; a package in an open PR is off the table until that PR lands. A PR is one small piece that merges with the base at landing, never later; landings go one at a time in order, each merging the tip first. Every PR gets a cold read with probes before it lands; a friend's or an author's yes alone never lands one. Builds and tests run niced on the machine that hosts runners, or on a bench, one test stream per machine. When the merge queue backs up, stop starting new work: backpressure is the coordinator's job, and a PR that cannot merge is closed with its reason and re-cut later.
 
 **After every expansion, contract (section 11).**
+
+### Coordinator rules
+
+Cards are admitted and released in waves of at least the fleet's width: add takes a directory of briefs, release names a wave or a sentinel, rework and drop answer a group. A single-card verb outside a judgment is the sign of doing it wrong.
 
 ### 1. Working in the tree
 
