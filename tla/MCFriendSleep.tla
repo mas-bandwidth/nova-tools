@@ -69,11 +69,11 @@ ReceiveBatch(k) ==
      /\ pending' = pending \cup incoming
      /\ available' = available \cup incoming
      /\ received' = received \cup incoming
-     /\ asleep' = IF wakes THEN FALSE ELSE asleep
-     /\ priority' = IF wakes /\ authorized THEN FirstID(coordinators) ELSE priority
+     /\ asleep' = (IF wakes THEN FALSE ELSE asleep)
+     /\ priority' = (IF wakes /\ authorized THEN FirstID(coordinators) ELSE priority)
      /\ wakeAuthorityOK' = (wakeAuthorityOK /\ (~wakes \/ authorized))
-     /\ failures' = IF asleep /\ ~authorized /\ Broken = "holdcounts"
-                     THEN [failures EXCEPT ![next] = @ + 1] ELSE failures
+     /\ failures' = (IF asleep /\ ~authorized /\ Broken = "holdcounts"
+                     THEN [failures EXCEPT ![next] = @ + 1] ELSE failures)
      /\ UNCHANGED <<running, deferred, coordIDs, starts, failedEnds, done,
                     restartCount, sleepConn, eventCount, syntheticPushes,
                     asleepStarts, asleepPushes, selectionOK>>
@@ -87,7 +87,7 @@ StartTurn(i) ==
   /\ i \in available
   /\ (i = ExpectedJob \/ Broken = "heldfirst")
   /\ running' = i
-  /\ deferred' = IF deferred = i THEN NoJob ELSE deferred
+  /\ deferred' = (IF deferred = i THEN NoJob ELSE deferred)
   /\ starts' = Append(starts, i)
   /\ asleepStarts' = asleepStarts + (IF asleep THEN 1 ELSE 0)
   /\ selectionOK' = (selectionOK /\ (i = ExpectedJob))
@@ -112,12 +112,12 @@ DeferTurn ==
 CompleteTurn(ok) ==
   LET retire == ok \/ failures[running] + 1 >= SleepMaxFailures
   IN /\ running # NoJob /\ ok \in BOOLEAN
-     /\ failures' = IF ok THEN failures ELSE [failures EXCEPT ![running] = @ + 1]
-     /\ failedEnds' = IF ok THEN failedEnds ELSE Append(failedEnds, running)
-     /\ pending' = IF retire THEN pending \ {running} ELSE pending
+     /\ failures' = (IF ok THEN failures ELSE [failures EXCEPT ![running] = @ + 1])
+     /\ failedEnds' = (IF ok THEN failedEnds ELSE Append(failedEnds, running))
+     /\ pending' = (IF retire THEN pending \ {running} ELSE pending)
      /\ available' = available \ {running}
-     /\ done' = IF retire THEN done \cup {running} ELSE done
-     /\ priority' = IF priority = running THEN NoJob ELSE priority
+     /\ done' = (IF retire THEN done \cup {running} ELSE done)
+     /\ priority' = (IF priority = running THEN NoJob ELSE priority)
      /\ running' = NoJob
      /\ UNCHANGED <<asleep, received, deferred, coordIDs, starts,
                     restartCount, sleepConn, eventCount, syntheticPushes,
@@ -131,7 +131,7 @@ Restart ==
   /\ restartCount < 1
   /\ restartCount' = restartCount + 1
   /\ running' = NoJob /\ deferred' = NoJob
-  /\ priority' = IF Broken = "lostbarrier" THEN NoJob ELSE priority
+  /\ priority' = (IF Broken = "lostbarrier" THEN NoJob ELSE priority)
   /\ available' = pending
   /\ UNCHANGED <<asleep, pending, received, coordIDs, starts, failures,
                  failedEnds, done, sleepConn, eventCount, syntheticPushes,
@@ -154,7 +154,7 @@ RecoverCoordinator ==
 ConnectionEvent ==
   /\ eventCount < SleepMaxEvents
   /\ eventCount' = eventCount + 1
-  /\ sleepConn' = IF sleepConn = "connected" THEN "silent" ELSE "connected"
+  /\ sleepConn' = (IF sleepConn = "connected" THEN "silent" ELSE "connected")
   /\ syntheticPushes' = syntheticPushes + (IF ~asleep \/ Broken = "sleeppush" THEN 1 ELSE 0)
   /\ asleepPushes' = asleepPushes + (IF asleep /\ Broken = "sleeppush" THEN 1 ELSE 0)
   /\ UNCHANGED <<asleep, pending, available, received, running, deferred, priority,

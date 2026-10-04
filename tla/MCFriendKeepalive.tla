@@ -37,14 +37,14 @@ Ack(n, p, r) == /\ n \in issued /\ Admitted(n)
           /\ (n.q > transitionCut \/ Broken = "transition")
           /\ (p # peerInstance \/ r > peerSequence \/ Broken = "peer")
           /\ consumed' = n.q /\ peerInstance' = p /\ peerSequence' = r
-          /\ transitionCut' = IF p # peerInstance THEN sequence ELSE transitionCut
+          /\ transitionCut' = (IF p # peerInstance THEN sequence ELSE transitionCut)
           /\ staleTransition' = (staleTransition \/ n.q <= transitionCut)
           /\ proved' = TRUE /\ lastPong' = now
           /\ invalidProof' = (invalidProof \/ ~Valid(n))
           /\ duplicateRefresh' = (duplicateRefresh \/ n.q <= consumed
                  \/ (p = peerInstance /\ r <= peerSequence))
-          /\ asleep' = IF Broken = "wake" THEN FALSE ELSE asleep
-          /\ nativeTurns' = IF Broken = "turn" THEN nativeTurns + 1 ELSE nativeTurns
+          /\ asleep' = (IF Broken = "wake" THEN FALSE ELSE asleep)
+          /\ nativeTurns' = (IF Broken = "turn" THEN nativeTurns + 1 ELSE nativeTurns)
           /\ UNCHANGED <<now, instance, seat, issued, sequence,
                          lastEmit, burst>>
 Tick == /\ now < 14 /\ now' = now + 1
