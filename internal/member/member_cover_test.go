@@ -174,11 +174,9 @@ func TestMemberCoverWaitLong(t *testing.T) {
 			m := &Member{}
 			if tc.longWork {
 				var finished atomic.Bool
-				m.longs.Add(1)
-				go func() {
+				m.longs.Go(func() {
 					finished.Store(true)
-					m.longs.Done()
-				}()
+				})
 				// WaitLong blocks until the goroutine calls Done; finished is
 				// then necessarily true (Store happens-before Done).
 				m.WaitLong()

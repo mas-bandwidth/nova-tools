@@ -110,9 +110,7 @@ func startEcho(t *testing.T) *echo {
 		e.mu.Unlock()
 		e.wg.Wait()
 	})
-	e.wg.Add(1)
-	go func() {
-		defer e.wg.Done()
+	e.wg.Go(func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
@@ -122,9 +120,7 @@ func startEcho(t *testing.T) *echo {
 			e.mu.Lock()
 			e.conns = append(e.conns, c)
 			e.mu.Unlock()
-			e.wg.Add(1)
-			go func() {
-				defer e.wg.Done()
+			e.wg.Go(func() {
 				defer c.Close()
 				buf := make([]byte, echoBuffer)
 				for {
@@ -139,9 +135,9 @@ func startEcho(t *testing.T) *echo {
 						return
 					}
 				}
-			}()
+			})
 		}
-	}()
+	})
 	return e
 }
 

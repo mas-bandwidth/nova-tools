@@ -417,13 +417,11 @@ func TestTheServerListensOnLoopbackAndNowhereElse(t *testing.T) {
 	reached := make([]net.Conn, len(others))
 	var dials sync.WaitGroup
 	for i, other := range others {
-		dials.Add(1)
-		go func() {
-			defer dials.Done()
+		dials.Go(func() {
 			if conn, err := net.DialTimeout("tcp", net.JoinHostPort(other, port), 2*time.Second); err == nil {
 				reached[i] = conn
 			}
-		}()
+		})
 	}
 	dials.Wait()
 	for i, conn := range reached {

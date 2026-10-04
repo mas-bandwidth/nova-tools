@@ -250,9 +250,7 @@ func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 	// 2. Torn / merged rows from both writers in the same day (rows must be exactly 1).
 	stopReaders := make(chan struct{})
 	var readerWg sync.WaitGroup
-	readerWg.Add(1)
-	go func() {
-		defer readerWg.Done()
+	readerWg.Go(func() {
 		for {
 			select {
 			case <-stopReaders:
@@ -275,7 +273,7 @@ func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 				}
 			}
 		}
-	}()
+	})
 
 	writersWg.Wait()
 	close(stopReaders)

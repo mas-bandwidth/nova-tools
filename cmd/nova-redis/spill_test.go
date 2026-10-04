@@ -305,9 +305,7 @@ func tripProxy(t *testing.T, target string) (addr string, trips func() int64) {
 			}
 		}
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
@@ -330,7 +328,7 @@ func tripProxy(t *testing.T, target string) (addr string, trips func() int64) {
 			})
 			go pipe(up, c, func() { sending.Store(false) })
 		}
-	}()
+	})
 	return ln.Addr().String(), n.Load
 }
 

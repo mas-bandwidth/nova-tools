@@ -54,17 +54,13 @@ func TestReceiptCommittedWriteWithLostReplyIsReportedUnconfirmed(t *testing.T) {
 		}
 		mu.Unlock()
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				defer c.Close()
 				_ = c.SetDeadline(time.Now().Add(30 * time.Second))
 				rd := bufio.NewReader(c)
@@ -102,9 +98,9 @@ func TestReceiptCommittedWriteWithLostReplyIsReportedUnconfirmed(t *testing.T) {
 						return
 					}
 				}
-			}()
+			})
 		}
-	}()
+	})
 	args := receiptArgs()
 	args[3] = ln.Addr().String()
 	var out, errOut bytes.Buffer

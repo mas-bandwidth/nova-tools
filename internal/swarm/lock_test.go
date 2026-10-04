@@ -54,15 +54,13 @@ func TestOneZeroWaitWinsWhenSeveralAskTogether(t *testing.T) {
 	wins := make(chan func(), n)
 	start := make(chan struct{})
 	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			release, err := takeFileLock(path, 0)
 			if err == nil {
 				wins <- release
 			}
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

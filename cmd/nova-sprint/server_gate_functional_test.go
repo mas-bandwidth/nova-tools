@@ -97,9 +97,7 @@ func TestServerGateAtOneHundredMillisecondsWithMixedWorkers(t *testing.T) {
 	errors := make(chan error, 5)
 	start := make(chan struct{})
 	for i := 2; i <= 6; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			who := "m" + strconv.Itoa(i)
 			local := newApp(env)
 			defer local.close()
@@ -137,7 +135,7 @@ func TestServerGateAtOneHundredMillisecondsWithMixedWorkers(t *testing.T) {
 				return
 			}
 			errors <- nil
-		}()
+		})
 	}
 	t.Cleanup(wg.Wait)
 	close(start)

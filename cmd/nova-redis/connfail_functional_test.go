@@ -206,9 +206,7 @@ func execReplyDropper(t *testing.T, target string) string {
 		wg.Wait()
 	})
 	const execWire = "*1\r\n$4\r\nEXEC\r\n"
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
@@ -222,9 +220,7 @@ func execReplyDropper(t *testing.T, target string) string {
 			mu.Lock()
 			open = append(open, c, up)
 			mu.Unlock()
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				defer func() { _ = c.Close(); _ = up.Close() }()
 				buf := make([]byte, 64<<10)
 				for {
@@ -260,8 +256,8 @@ func execReplyDropper(t *testing.T, target string) string {
 						return
 					}
 				}
-			}()
+			})
 		}
-	}()
+	})
 	return ln.Addr().String()
 }

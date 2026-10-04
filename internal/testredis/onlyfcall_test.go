@@ -468,12 +468,10 @@ func TestOnlyFCALLOnARealClient(t *testing.T) {
 		DisableIdentity: true,
 		Dialer: func(context.Context, string, string) (net.Conn, error) {
 			near, far := net.Pipe()
-			serving.Add(once)
-			go func() {
-				defer serving.Done()
+			serving.Go(func() {
 				defer far.Close()
 				serveCounted(far, &wire)
-			}()
+			})
 			return near, nil
 		},
 	})

@@ -110,16 +110,14 @@ func TestDashboardCoverLockedWriterWritesEachLineWholeAndReturnsTheWritersError(
 		var expected atomic.Int64
 		var wg sync.WaitGroup
 		for g := range 8 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for i := range 50 {
 					line := fmt.Sprintf("DASHBOARD NOTE g%d line %d\n", g, i)
 					expected.Add(int64(len(line)))
 					_, err := l.Write([]byte(line))
 					assert.NoError(t, err, "write")
 				}
-			}()
+			})
 		}
 		wg.Wait()
 		assert.Equal(t, expected.Load(), c.bytes.Load(), "every byte through, whole")

@@ -278,19 +278,15 @@ func TestBatchesAndTicksRunOneAtATime(t *testing.T) {
 	var wg sync.WaitGroup
 	results := make([]sprintwire.Result, 8)
 	for i := range results {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			results[i] = r.a.serveFrom(sprintwire.Request{Verbs: [][]string{{"take", "--as", "m1", "--limit", "1", "--epoch", "0", "--json"}}}, false).Results[0]
-		}()
+		})
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range 4 {
 			r.boss("nova-sprint tick")
 		}
-	}()
+	})
 	wg.Wait()
 	seen := map[string]bool{}
 	for _, res := range results {

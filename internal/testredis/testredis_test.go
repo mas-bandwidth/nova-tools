@@ -361,11 +361,9 @@ func TestNoServerIsStartedWithoutItsSentry(t *testing.T) {
 	var wg sync.WaitGroup
 	groups := make([]int, 50)
 	for i := range groups {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			groups[i], _ = stands.group()
-		}()
+		})
 	}
 	wg.Wait()
 	if asked != 1 || slices.ContainsFunc(groups, func(g int) bool { return g != 4242 }) {

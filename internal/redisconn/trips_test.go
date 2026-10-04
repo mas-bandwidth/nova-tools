@@ -210,9 +210,7 @@ func TestTripsFromManyGoroutines(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, workers)
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			ctx := context.Background()
 			for range each {
 				if err := client.Set(ctx, "k", "v", 0).Err(); err != nil {
@@ -221,7 +219,7 @@ func TestTripsFromManyGoroutines(t *testing.T) {
 				}
 				_ = trips.N() + int64(len(trips.ByLabel()))
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)

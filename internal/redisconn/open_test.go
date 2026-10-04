@@ -656,11 +656,9 @@ func TestReconnectSocketCleanup(t *testing.T) {
 	_ = connConcurrent.Client().Get(ctx, "drop").Err()
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_ = connConcurrent.Client().Get(ctx, "concurrent").Err()
-		}()
+		})
 	}
 	wg.Wait()
 	if err := connConcurrent.Close(); err != nil {

@@ -269,13 +269,11 @@ func loadRepoTree(root string) (*repoTreeIndex, error) {
 	next := make(chan int)
 	var wg sync.WaitGroup
 	for w := 0; w < treeLoadWorkers(); w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range next {
 				errs[i] = loadTreeFile(idx.FSet, idx.Files[i])
 			}
-		}()
+		})
 	}
 	for i := range idx.Files {
 		next <- i

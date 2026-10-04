@@ -91,11 +91,9 @@ func TestDashboardAnswersFromTheCacheWhileAReadRuns(t *testing.T) {
 		return where(5), nil
 	}
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		r.s.Refresh()
-	}()
+	})
 	<-entered
 	r.advance(2 * time.Second) // the read is still running past Every (the channels order the clock)
 	v := r.api()

@@ -1168,9 +1168,7 @@ func TestParentGuardRefusesACopiedParentUnderLoad(t *testing.T) {
 	stop := make(chan struct{})
 	var burning sync.WaitGroup
 	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
-		burning.Add(1)
-		go func() {
-			defer burning.Done()
+		burning.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -1178,7 +1176,7 @@ func TestParentGuardRefusesACopiedParentUnderLoad(t *testing.T) {
 				default:
 				}
 			}
-		}()
+		})
 	}
 	t.Cleanup(func() {
 		close(stop)

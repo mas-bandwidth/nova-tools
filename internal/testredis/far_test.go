@@ -74,9 +74,7 @@ func farEcho(t *testing.T) string {
 		mu.Unlock()
 		serving.Wait()
 	})
-	serving.Add(1)
-	go func() {
-		defer serving.Done()
+	serving.Go(func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
@@ -85,14 +83,12 @@ func farEcho(t *testing.T) string {
 			mu.Lock()
 			conns = append(conns, c)
 			mu.Unlock()
-			serving.Add(1)
-			go func() {
-				defer serving.Done()
+			serving.Go(func() {
 				defer c.Close()
 				_, _ = io.Copy(c, c)
-			}()
+			})
 		}
-	}()
+	})
 	return ln.Addr().String()
 }
 

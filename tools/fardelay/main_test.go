@@ -199,22 +199,18 @@ func TestTheToolListensForwardsAndStopsWhenAsked(t *testing.T) {
 		t.Fatal(err)
 	}
 	var serving sync.WaitGroup
-	serving.Add(1)
-	go func() {
-		defer serving.Done()
+	serving.Go(func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			serving.Add(1)
-			go func() {
-				defer serving.Done()
+			serving.Go(func() {
 				defer c.Close()
 				_, _ = io.Copy(c, c)
-			}()
+			})
 		}
-	}()
+	})
 	t.Cleanup(func() {
 		_ = ln.Close()
 		serving.Wait()

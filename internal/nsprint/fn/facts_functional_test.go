@@ -121,11 +121,9 @@ end)`
 		var wg sync.WaitGroup
 		var runnerErr error
 		var runnerRes string
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			runnerRes, runnerErr = cRunner.FCall(ctx, "fct_f2_writeloop", []string{"dev-facts-f2"}, "1").Text()
-		}()
+		})
 
 		start := time.Now()
 		var killErr error
@@ -167,11 +165,9 @@ end)`
 		var wg sync.WaitGroup
 		var runnerErr error
 		var runnerRes string
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			runnerRes, runnerErr = cRunner.FCall(ctx, "fct_f2_readloop", nil).Text()
-		}()
+		})
 
 		start := time.Now()
 		var killErr error

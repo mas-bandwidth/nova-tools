@@ -1393,9 +1393,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 		m.running[id] = l
 		child, p, branch := l.child, l.packet, l.branch
 		ends.Add(1)
-		m.longs.Add(1)
-		go func() {
-			defer m.longs.Done()
+		m.longs.Go(func() {
 			defer ends.Done()
 			r := child.Result()
 			if m.cfg.Reader {
@@ -1420,7 +1418,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 				}
 			}
 			m.post(id, post{res: &r, push: &pu, decided: m.attempt(p, r, pu, branch)})
-		}()
+		})
 	}
 	m.longWork()
 	if !m.cfg.Background {

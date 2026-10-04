@@ -40,9 +40,7 @@ func CommandCounter(t *testing.T) (addr string, count func() int64) {
 		mu.Unlock()
 		wg.Wait()
 	})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			c, err := ln.Accept()
 			// ignored: a test fixture's accept loop ends when the cleanup closes the listener
@@ -52,14 +50,12 @@ func CommandCounter(t *testing.T) (addr string, count func() int64) {
 			mu.Lock()
 			conns = append(conns, c)
 			mu.Unlock()
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				defer c.Close()
 				serveCounted(c, &n)
-			}()
+			})
 		}
-	}()
+	})
 	return ln.Addr().String(), n.Load
 }
 
