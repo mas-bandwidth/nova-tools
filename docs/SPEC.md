@@ -1,6 +1,6 @@
 # nova-tools — specification
 
-Sixteen binaries. `nova-check`: ten checks, all at the **record layer** — they verify
+Seventeen binaries. `nova-check`: ten checks, all at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
@@ -27,7 +27,9 @@ from declared sources into one file per day, keyed by (day, model, repo), and
 sums those day files into a month; it reads sources, and never estimates.
 `nova-secrets`: one binary at the **credential layer** — credentials for seats,
 pools and services, sealed in a git store. `nova-update` and `nova-version`:
-the shared tool inventory, optional updates and the build report. The other
+the shared tool inventory, optional updates and the build report.
+`nova-release`: the release pipeline — one green commit becomes stamped
+binaries on every machine that runs them, by named verbs. The other
 seven — `nova-table` (tables of ordered sets over Redis), `nova-redis` (the
 local Redis instance and its scratch verbs), `nova-config` (the permanent
 configuration, in Postgres, applied into Redis), `nova-ci` (the checks CI runs

@@ -48,7 +48,7 @@ func windowsMachines(t *testing.T, lines ...string) string {
 func TestAdoptTakesWindowsDrivePathsForBinAndDest(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-release")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--no-certify",
@@ -68,12 +68,12 @@ func TestAdoptTakesWindowsDrivePathsForBinAndDest(t *testing.T) {
 
 // AND WHAT REACHES THE FAR SIDE CARRIES NO BACKSLASH. The remote command is
 // parsed by a POSIX shell there, so every path in it is slash-form -- which
-// Windows itself accepts everywhere -- and the tool it runs is nova-update.exe
+// Windows itself accepts everywhere -- and the tool it runs is nova-release.exe
 // at an absolute path composed from --dest.
 func TestAdoptComposesSlashPathsForAWindowsBench(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-release")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"adopt", "--no-certify",
@@ -87,7 +87,7 @@ func TestAdoptComposesSlashPathsForAWindowsBench(t *testing.T) {
 		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	install := installRun(t, s, "threadripper")
-	want := "threadripper: C:/Users/nova/nova-release/v0.16.0/windows-amd64/nova-update.exe release install " +
+	want := "threadripper: C:/Users/nova/nova-release/v0.16.0/windows-amd64/nova-release.exe install " +
 		"--from C:/Users/nova/nova-release --version v0.16.0 --bin C:/Users/nova/.local/bin " +
 		"--platform windows-amd64 --retire C:/Users/nova/go/bin"
 	if install != want {
@@ -106,13 +106,13 @@ func TestAdoptComposesSlashPathsForAWindowsBench(t *testing.T) {
 }
 
 // --dry-run asks the machine what it is running, and it has to ask after the
-// file that exists there: `C:/Users/nova/.local/bin/nova-update.exe version`.
-// A bare `nova-update` resolves against a $PATH nobody here chose, and a
+// file that exists there: `C:/Users/nova/.local/bin/nova-release.exe version`.
+// A bare `nova-release` resolves against a $PATH nobody here chose, and a
 // suffix-less name resolves against nothing at all.
 func TestAdoptDryRunProbesTheExeOnAWindowsBench(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-release")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "nova-update v0.15.0 windows/amd64 go1.26.5\n"}}
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"adopt", "--no-certify",
@@ -124,7 +124,7 @@ func TestAdoptDryRunProbesTheExeOnAWindowsBench(t *testing.T) {
 		"--platform", "windows-amd64", "--dry-run"}, &o, &e, Deps{SSH: s}); code != 0 {
 		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
-	want := "threadripper: C:/Users/nova/.local/bin/nova-update.exe version"
+	want := "threadripper: C:/Users/nova/.local/bin/nova-release.exe version"
 	var found bool
 	for _, run := range s.runs {
 		if run == want {
@@ -146,7 +146,7 @@ func TestAdoptDryRunProbesTheExeOnAWindowsBench(t *testing.T) {
 func TestAdoptRefusesAWindowsPathForALinuxTarget(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-release")
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--no-certify",
 		"--version", "v0.16.0",
@@ -224,7 +224,7 @@ func TestRemotePathFoldsBackslashesForTheFarSidesShell(t *testing.T) {
 func TestTheMachineColumnsTakeAWindowsPath(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-release")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"adopt", "--no-certify",
@@ -239,7 +239,7 @@ func TestTheMachineColumnsTakeAWindowsPath(t *testing.T) {
 	if !strings.Contains(install, "--bin C:/nova/bin") || !strings.Contains(install, "--from C:/nova/release") {
 		require.FailNowf(t, "", "the columns did not reach the remote install: %s", install)
 	}
-	if !strings.HasPrefix(install, "threadripper: C:/nova/release/v0.16.0/windows-amd64/nova-update.exe ") {
+	if !strings.HasPrefix(install, "threadripper: C:/nova/release/v0.16.0/windows-amd64/nova-release.exe ") {
 		require.FailNowf(t, "", "the remote tool is not under the column's dest: %s", install)
 	}
 }
@@ -251,7 +251,7 @@ func TestTheMachineColumnsTakeAWindowsPath(t *testing.T) {
 func TestAdoptFetchesFromAWindowsBuildHost(t *testing.T) {
 	t.Parallel()
 
-	served := ArtifactDir(built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update"), "v0.16.0", "windows", "amd64")
+	served := ArtifactDir(built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-release"), "v0.16.0", "windows", "amd64")
 	digest, err := fileSum(filepath.Join(served, SumsFile))
 	if err != nil {
 		require.NoError(t, err, err)

@@ -516,7 +516,7 @@ func TestPullDeletesTheDigestFileToo(t *testing.T) {
 func buildSource(t *testing.T) string {
 	t.Helper()
 	source := t.TempDir()
-	for _, tool := range []string{"nova-bus", "nova-update", "nova-work"} {
+	for _, tool := range []string{"nova-bus", "nova-release", "nova-update", "nova-work"} {
 		if err := os.MkdirAll(filepath.Join(source, "cmd", tool), 0o755); err != nil {
 			require.NoError(t, err, err)
 		}

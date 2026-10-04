@@ -313,7 +313,7 @@ func TestAdoptReadsTheDigestFromTheTagObject(t *testing.T) {
 	t.Parallel()
 
 	goos, goarch := platformOf(t, "linux-amd64")
-	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-release")
 	served := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
 	digest, err := fileSum(filepath.Join(served, SumsFile))
 	if err != nil {
@@ -344,7 +344,7 @@ func TestAdoptRefusesWhenTheTagDigestAndTheBitsDisagree(t *testing.T) {
 	t.Parallel()
 
 	goos, goarch := platformOf(t, "linux-amd64")
-	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-release")
 	served := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
 	cut := strings.Repeat("cd", 32)
 	f := &fakeForge{messages: map[string]string{"v0.16.0": Annotation("v0.16.0", "abc123", cut)}}

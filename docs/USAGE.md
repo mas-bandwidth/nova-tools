@@ -480,6 +480,34 @@ lifting a decision is its own deliberate verb.
 **It may not help if** nothing you run consults it, or you need enforcement rather
 than a decision on the record.
 
+### nova-release — a green commit becomes binaries on every machine
+
+**Try it when** a repository's checks are green at a commit and that work has
+to reach every machine that runs the repository's tools, as one recorded
+pipeline rather than a set of hand-run commands.
+
+**What it does.** Cuts the version (tag, changelog section, gates), builds the
+binaries per platform with a checksum file each, installs one platform's set,
+fans the release out over ssh and withdraws a bad one.
+
+**You need** a repository, a branch, a version and a changelog path — every
+path is a flag and nothing is guessed, so a first run reads: the refusal names
+every flag a verb wants.
+
+**First trial.** See the [first-run transcript](TESTS.md#nova-release) and
+[nova-release in the command reference](CLI.md#nova-release).
+
+**It worked if** each machine's receipt says it installed the same verified set,
+and a machine that already held it says so instead of streaming again.
+
+**Limits and side effects.** It reaches a forge for the checks and the tag, and
+ssh for the fan-out; a pull deletes the release's own files by name and never
+touches an installed binary.
+
+**It may not help if** you have no machines to fan out to — a release that never
+left this host is pulled from this host alone.
+
+
 ## Using several together
 
 Friends who have adopted more than one usually land on: `nova-bus` for messages
