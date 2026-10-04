@@ -3,6 +3,8 @@ package friend
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +15,198 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func budgetRig(t *testing.T, store *bus2.Fake, dir string) *rig {
+	t.Helper()
+	r := newRig(t)
+	r.store = store
+	r.bus = &bus2.Bus{Store: store}
+	r.d.Store = store
+	r.d.StateDir = dir
+	r.exit = 3
+	r.passive = true
+	r.d.Pause = func(context.Context, time.Duration) {
+		synctest.Wait()
+		select {
+		case <-r.gate:
+		default:
+		}
+	}
+	now := r.d.Now
+	r.d.Now = func() time.Time { synctest.Wait(); return now() }
+	return r
+}
+
+func TestFailedDeliveryBudgetSurvivesDaemonRestart(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		store := bus2.NewFake(t0, "ada", "bob")
+		dir := t.TempDir()
+		first := budgetRig(t, store, dir)
+		first.send(t, "ada", "poison", "x")
+		turns := 0
+		for attempt := 1; attempt <= MaxDeliveries+1; attempt++ {
+			r := budgetRig(t, store, dir)
+			r.run(t, 4)
+			turns += len(r.delivered)
+			if attempt < MaxDeliveries {
+				failed, err := readDeliveryBudget(dir, "bob")
+				require.NoError(t, err)
+				require.Len(t, failed, 1)
+				for _, count := range failed {
+					assert.Equal(t, attempt, count)
+				}
+			}
+		}
+		assert.Equal(t, MaxDeliveries, turns, "restart never grants three more failed turns")
+		pending, fresh, err := first.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Empty(t, pending)
+		assert.Empty(t, fresh)
+		failed, err := readDeliveryBudget(dir, "bob")
+		require.NoError(t, err)
+		assert.Empty(t, failed)
+	})
+}
+
+func TestRestartRecoversPendingDeliveryImmediatelyWithPersistedBudget(t *testing.T) {
+	t.Parallel()
+	store := bus2.NewFake(t0, "ada", "bob")
+	setup := newRig(t)
+	setup.store, setup.d.Store = store, store
+	setup.bus = &bus2.Bus{Store: store}
+	message := setup.send(t, "ada", "poison", "x")
+	entries, err := setup.bus.RecvBatch(context.Background(), "bob", DaemonConsumer, 0, 1)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	dir := t.TempDir()
+	require.NoError(t, writeDeliveryBudget(dir, "bob", map[string]int{message.ID: 1}))
+
+	restarted := newRig(t)
+	restarted.store, restarted.d.Store = store, store
+	restarted.bus = &bus2.Bus{Store: store}
+	restarted.d.StateDir = dir
+	restarted.exit = 3
+	restarted.run(t, 4)
+
+	require.Len(t, restarted.delivered, 1, "startup PEL recovery redelivers without waiting for the stale-claim interval")
+	assert.Equal(t, Text(message), restarted.delivered[0])
+	failed, err := readDeliveryBudget(dir, "bob")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{message.ID: 2}, failed, "restart continues the saved budget instead of granting a fresh one")
+}
+
+func TestExhaustedDeliveryBudgetRetriesOnlyAcknowledgementAfterRestart(t *testing.T) {
+	t.Parallel()
+	store := bus2.NewFake(t0, "ada", "bob")
+	dir := t.TempDir()
+	r := newRig(t)
+	r.store, r.d.Store = store, store
+	r.bus = &bus2.Bus{Store: store}
+	r.d.StateDir = dir
+	r.send(t, "ada", "poison", "x")
+	entries, err := r.bus.RecvBatch(context.Background(), "bob", DaemonConsumer, 0, 1)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.NoError(t, writeDeliveryBudget(dir, "bob", map[string]int{entries[0].Message().ID: MaxDeliveries}))
+	failing := &edgeAckStore{Fake: store}
+	r.d.Store = failing
+	require.ErrorContains(t, r.d.Run(context.Background()), "ack store unavailable")
+	assert.Empty(t, r.delivered)
+	again := newRig(t)
+	again.store, again.d.Store = store, failing
+	again.bus = &bus2.Bus{Store: store}
+	again.d.StateDir = dir
+	again.run(t, 4)
+	assert.Empty(t, again.delivered, "exhaustion survives failed ACK and restart")
+	assert.Equal(t, 2, failing.attempts)
+	failed, err := readDeliveryBudget(dir, "bob")
+	require.NoError(t, err)
+	assert.Empty(t, failed)
+}
+
+func TestMalformedDeliveryBudgetStopsBeforeDispatch(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.StateDir = t.TempDir()
+	r.send(t, "ada", "poison", "x")
+	require.NoError(t, os.WriteFile(filepath.Join(r.d.StateDir, "delivery-budget.json"), []byte("{"), 0o600))
+	require.ErrorContains(t, r.d.Run(context.Background()), "delivery budget")
+	assert.Empty(t, r.delivered)
+}
+
+// budgetPageStore forces pagination and faults after a successful page so a
+// partial scan cannot look like proof that a saved message was acknowledged.
+type budgetPageStore struct {
+	*bus2.Fake
+	failNextPage bool
+	failBody     bool
+}
+
+func (s budgetPageStore) PendingPage(ctx context.Context, stream, group, consumer, after string, _ int) ([]string, error) {
+	if s.failNextPage && after != "" {
+		return nil, errors.New("pending page unavailable")
+	}
+	return s.Fake.PendingPage(ctx, stream, group, consumer, after, 1)
+}
+
+func (s budgetPageStore) Get(ctx context.Context, stream string, ids []string) ([]bus2.Entry, error) {
+	if s.failBody {
+		return nil, errors.New("message body unavailable")
+	}
+	return s.Fake.Get(ctx, stream, ids)
+}
+
+func TestDeliveryBudgetPrunesAcknowledgedButKeepsEveryPendingConsumer(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	ctx := context.Background()
+	retired := r.send(t, "ada", "retired", "x")
+	owned := r.send(t, "ada", "owned", "x")
+	foreign := r.send(t, "ada", "foreign", "x")
+	entries, err := r.bus.RecvBatch(ctx, "bob", DaemonConsumer, 0, 2)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	_, err = r.bus.AckEntry(ctx, "bob", entries[0].Entry)
+	require.NoError(t, err)
+	entries, err = r.bus.RecvBatch(ctx, "bob", "interactive", 0, 1)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	dir := t.TempDir()
+	failed := map[string]int{retired.ID: 1, owned.ID: 2, foreign.ID: 3}
+	require.NoError(t, writeDeliveryBudget(dir, "bob", failed))
+	require.NoError(t, reconcileDeliveryBudget(ctx, budgetPageStore{Fake: r.store}, dir, "bob", failed))
+	want := map[string]int{owned.ID: 2, foreign.ID: 3}
+	assert.Equal(t, want, failed)
+	saved, err := readDeliveryBudget(dir, "bob")
+	require.NoError(t, err)
+	assert.Equal(t, want, saved)
+}
+
+func TestDeliveryBudgetReadFailureNeverPrunesSavedCounts(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"later page", "body"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			ctx := context.Background()
+			pending := r.send(t, "ada", "pending", "x")
+			_, err := r.bus.RecvBatch(ctx, "bob", DaemonConsumer, 0, 1)
+			require.NoError(t, err)
+			dir := t.TempDir()
+			failed := map[string]int{pending.ID: 2, "saved-but-not-pending": 1}
+			require.NoError(t, writeDeliveryBudget(dir, "bob", failed))
+			before, err := os.ReadFile(filepath.Join(dir, "delivery-budget.json"))
+			require.NoError(t, err)
+			store := budgetPageStore{Fake: r.store, failNextPage: failure == "later page", failBody: failure == "body"}
+			require.Error(t, reconcileDeliveryBudget(ctx, store, dir, "bob", failed))
+			assert.Equal(t, map[string]int{pending.ID: 2, "saved-but-not-pending": 1}, failed)
+			after, err := os.ReadFile(filepath.Join(dir, "delivery-budget.json"))
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
+	}
+}
 
 // rig is one daemon over bus2's Fake, a fake harness and a clock that moves
 // one second per read: no socket, no real time. The loop runs until

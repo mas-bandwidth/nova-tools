@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,8 +11,103 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/bus2"
 	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 )
+
+// deliveryBudget is the completed-failure ledger for one daemon state directory
+// (SPEC-FRIEND, delivery). A failed write stops dispatch rather than refunding it.
+type deliveryBudget struct {
+	Version int            `json:"version"`
+	Friend  string         `json:"friend"`
+	Failed  map[string]int `json:"failed"`
+}
+
+func readDeliveryBudget(dir, name string) (map[string]int, error) {
+	if dir == "" {
+		return map[string]int{}, nil
+	}
+	var b deliveryBudget
+	found, err := read(filepath.Join(dir, "delivery-budget.json"), &b)
+	if err != nil {
+		return nil, fmt.Errorf("delivery budget: %w", err)
+	}
+	if !found {
+		return map[string]int{}, nil
+	}
+	if b.Version != 2 || b.Friend != name || b.Failed == nil {
+		return nil, fmt.Errorf("delivery budget does not belong to this daemon; reconcile its saved state before delivery")
+	}
+	for id, n := range b.Failed {
+		if id == "" || n < 1 || n > MaxDeliveries {
+			return nil, fmt.Errorf("delivery budget has an invalid failure count; reconcile its saved state before delivery")
+		}
+	}
+	return b.Failed, nil
+}
+
+func writeDeliveryBudget(dir, name string, failed map[string]int) error {
+	if dir == "" {
+		return nil
+	}
+	if err := write(filepath.Join(dir, "delivery-budget.json"), deliveryBudget{Version: 2, Friend: name, Failed: failed}); err != nil {
+		return fmt.Errorf("delivery budget: %w", err)
+	}
+	return nil
+}
+
+// reconcileDeliveryBudget prunes only after a complete global pending scan.
+// Consumer ownership changes never refund a still-pending message's failures.
+func reconcileDeliveryBudget(ctx context.Context, store bus2.Store, dir, name string, failed map[string]int) error {
+	if len(failed) == 0 {
+		return nil
+	}
+	pending := map[string]bool{}
+	for cursor := ""; ; {
+		ids, err := store.PendingPage(ctx, bus2.StreamOf(name), name, "", cursor, DaemonReadBatch)
+		if err != nil {
+			return fmt.Errorf("delivery budget pending reconciliation: %w", err)
+		}
+		if len(ids) == 0 {
+			break
+		}
+		entries, err := store.Get(ctx, bus2.StreamOf(name), ids)
+		if err != nil {
+			return fmt.Errorf("delivery budget body reconciliation: %w", err)
+		}
+		if len(entries) != len(ids) {
+			return fmt.Errorf("delivery budget pending body is missing; reconcile stream before delivery")
+		}
+		for _, e := range entries {
+			id := e.Message().ID
+			if id == "" {
+				return fmt.Errorf("delivery budget pending message has no identity; reconcile stream before delivery")
+			}
+			if failed[id] > 0 {
+				pending[id] = true
+			}
+		}
+		cursor = ids[len(ids)-1]
+	}
+	kept := map[string]int{}
+	for id, n := range failed {
+		if pending[id] {
+			kept[id] = n
+		}
+	}
+	if len(kept) == len(failed) {
+		return nil
+	}
+	if err := writeDeliveryBudget(dir, name, kept); err != nil {
+		return err
+	}
+	for id := range failed {
+		if !pending[id] {
+			delete(failed, id)
+		}
+	}
+	return nil
+}
 
 // The friend's files, one writer each. The state files live in the state
 // directory (DefaultStateDir under the home directory, or --state-dir),

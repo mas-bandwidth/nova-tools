@@ -277,7 +277,7 @@ func (f *Fake) PendingPage(_ context.Context, stream, group, consumer, cursor st
 	}
 	var ids []string
 	for id := range g.pending {
-		if g.owner[id] == consumer && (cursor == "" || after(id, cursor)) {
+		if (consumer == "" || g.owner[id] == consumer) && (cursor == "" || after(id, cursor)) {
 			ids = append(ids, id)
 		}
 	}

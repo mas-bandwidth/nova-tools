@@ -155,8 +155,17 @@ Each second: the clock is stepped; when the session is free, one read of the
 stream (a ping is answered by the daemon at once and the message is handed to
 the adapter, which blocks for the whole turn, and acked when the turn ends at
 exit 0; any other exit leaves it pending, handed in again when its claim opens,
-and the third failure acks it with `given_up=true` on the record, so a message
-the session cannot take never comes back for ever; a delivery the adapter
+and the third failure acks it with `given_up=true` on the record. Completed
+failures are saved atomically in `delivery-budget.json` under the daemon state
+directory before acknowledgement, keyed by message ID rather than reusable
+stream-entry coordinates, so restart retains the count. Before dispatch after
+restart, a complete global pending scan prunes acknowledged messages while
+retaining counts held by any consumer; a failed scan preserves the ledger. A saved
+exhausted entry retries acknowledgement without another model turn; a malformed
+ledger or failed ledger write stops the current run. A failure not successfully
+saved can be retried without its count after a later restart. This assumes the saved ledger
+remains intact; deletion is not distinguished from first use. A crash before
+the failure is recorded remains an uncertain turn and is not counted; a delivery the adapter
 defers, `Deferred`, the session unable to take a turn now with nothing wrong,
 such as a Codex thread open in the app holding its writer lock, is neither a
 failure nor an ack: the message stays in the daemon's hand, tried again every

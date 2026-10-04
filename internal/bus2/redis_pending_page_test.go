@@ -30,21 +30,25 @@ func (h *pendingPageHook) ProcessPipelineHook(next redis.ProcessPipelineHook) re
 
 func TestRedisPendingPageUsesExclusiveCursorAndConsumerFilter(t *testing.T) {
 	t.Parallel()
-	for _, cursor := range []string{"", "8-0"} {
-		t.Run(cursor, func(t *testing.T) {
+	for _, row := range []struct{ cursor, consumer string }{{"", "daemon"}, {"8-0", "daemon"}, {"", ""}, {"8-0", ""}} {
+		t.Run(row.cursor+"/"+row.consumer, func(t *testing.T) {
 			t.Parallel()
 			c := redis.NewClient(&redis.Options{})
 			t.Cleanup(func() { require.NoError(t, c.Close()) })
 			hook := &pendingPageHook{}
 			c.AddHook(hook)
-			got, err := (Redis{C: c}).PendingPage(context.Background(), "stream", "group", "daemon", cursor, 137)
+			got, err := (Redis{C: c}).PendingPage(context.Background(), "stream", "group", row.consumer, row.cursor, 137)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"9-0", "10-0"}, got)
 			start := "-"
-			if cursor != "" {
-				start = "(" + cursor
+			if row.cursor != "" {
+				start = "(" + row.cursor
 			}
-			assert.Equal(t, []interface{}{"xpending", "stream", "group", start, "+", int64(137), "daemon"}, hook.args)
+			want := []interface{}{"xpending", "stream", "group", start, "+", int64(137)}
+			if row.consumer != "" {
+				want = append(want, row.consumer)
+			}
+			assert.Equal(t, want, hook.args)
 		})
 	}
 }

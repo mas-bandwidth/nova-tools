@@ -169,7 +169,10 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 	d.m = Start(d.Now())
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	answered := map[string]bool{} // entries whose ping the daemon has ponged
-	failed := map[string]int{}    // entries whose turn failed, and how often
+	failed, err := readDeliveryBudget(d.StateDir, d.Friend)
+	if err != nil {
+		return err
+	}
 	var queue []job
 	queueDirty := true
 	lastBarrier := state.WakeBarrier
@@ -190,6 +193,18 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 			}
 			msg := entries[0].Message()
 			j.id, j.subject, j.text = msg.ID, msg.Subject, Text(msg)
+			if failed[j.id] >= MaxDeliveries {
+				if _, err := bus.AckEntry(ctx, d.Friend, j.entry); err != nil {
+					return false, err
+				}
+				delete(failed, j.id)
+				if err := writeDeliveryBudget(d.StateDir, d.Friend, failed); err != nil {
+					return false, err
+				}
+				delete(known, j.entry)
+				d.Record(fmt.Sprintf("entry=%s given_up=true acked=true after restart", j.entry))
+				return true, nil
+			}
 			if nonce, _, _, isPing := ParsePing(msg.Body); isPing && d.PongCommand != nil {
 				j.text = "Run this now, first, exactly as written: " + d.PongCommand(nonce) + "\nThen read on.\n\n" + j.text
 			}
@@ -288,6 +303,11 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 			break
 		}
 		cursor = next
+	}
+	if !passive {
+		if err := reconcileDeliveryBudget(ctx, d.Store, d.StateDir, d.Friend, failed); err != nil {
+			return err
+		}
 	}
 	if !passive && state.WakeBarrier != "" && !known[state.WakeBarrier] {
 		return fmt.Errorf("wake barrier %s is missing from daemon-owned pending deliveries; reconcile missing or foreign-owned entry before restarting", state.WakeBarrier)
@@ -445,13 +465,16 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 			}
 			ok := r.err == nil && r.exit == 0
 			if r.job.entry != "" && !ok {
-				failed[r.job.entry]++
-				line += fmt.Sprintf(" deliveries=%d/%d", failed[r.job.entry], MaxDeliveries)
-				if failed[r.job.entry] >= MaxDeliveries {
+				failed[r.job.id]++
+				if err := writeDeliveryBudget(d.StateDir, d.Friend, failed); err != nil {
+					return err
+				}
+				line += fmt.Sprintf(" deliveries=%d/%d", failed[r.job.id], MaxDeliveries)
+				if failed[r.job.id] >= MaxDeliveries {
 					line += " given_up=true"
 				}
 			}
-			if r.job.entry != "" && (ok || failed[r.job.entry] >= MaxDeliveries) {
+			if r.job.entry != "" && (ok || failed[r.job.id] >= MaxDeliveries) {
 				if _, err := bus.AckEntry(ctx, d.Friend, r.job.entry); err != nil {
 					d.status.StoreError = err.Error()
 					line += " ack=failed"
@@ -460,7 +483,10 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 						d.status.Delivered++
 					}
 					line += " acked=true"
-					delete(failed, r.job.entry)
+					delete(failed, r.job.id)
+					if err := writeDeliveryBudget(d.StateDir, d.Friend, failed); err != nil {
+						return err
+					}
 					delete(known, r.job.entry)
 				}
 			}
