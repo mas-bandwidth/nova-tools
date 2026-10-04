@@ -144,9 +144,10 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 	if user == "" && os.Getenv(DefaultPasswordEnv) != "" {
 		client.AddHook(noUserHook{addr: addr})
 	}
-	return &Store{client: client}, nil
+	return New(client), nil
 }
 
+// New wraps a client the caller already owns.
 func New(client *redis.Client) *Store { return &Store{client: client} }
 
 func (s *Store) Client() *redis.Client { return s.client }
