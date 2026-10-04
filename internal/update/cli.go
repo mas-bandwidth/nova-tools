@@ -109,16 +109,21 @@ func flagProblem(f *flag.FlagSet, err error) error {
 // verbs' own (versiontool.go). The release verbs are one line here; their own
 // lines are release.Verbs, printed by `nova-update help release`.
 const updateVerbs = `usage:
-nova-update example [--out <path>]
-nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
-nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update report --store <host:port> [--timeout <d>]
-nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
-nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release <cut|build|install|adopt|pull> ...   nova-tools' own release pipeline: nova-update help release prints its usage lines
-nova-update help`
+  nova-update example [--out <path>]
+  nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
+  nova-update report --file <path> [--host <label>] [--snapshot <path>]
+                    [--draft --as <friend> --to <who,who> |
+                     --send --as <friend> --to <who,who>
+                     --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>]
+                     [--budget <d>] [--kind <k>]
+  nova-update report --store <host:port> [--timeout <d>]
+  nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend>
+                    --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
+  nova-update adoption --file <path> [--as <friend>] [--max <n>]
+  nova-update release <cut|build|install|adopt|pull> ...  nova-update help release prints verbs
+  nova-update help`
 
 // manifestShape is the one sentence that says what the file --file names holds:
 // the rule-2 manifest, one tab-separated line per tool, written by hand in git.
@@ -156,11 +161,17 @@ func help(name string, w io.Writer) {
 	// and the help cannot drift apart. This is that string.
 	fmt.Fprintf(w, "%s\n\n", updateOpening)
 	fmt.Fprintln(w, updateVerbs)
-	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds. Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n", name)
-	note := "Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
-	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
-	fmt.Fprintln(w, note)
-	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
+	fmt.Fprintf(w, "\n%s version (or --version)\n\n", name)
+	// The post-usage note is split into one short paragraph per subject
+	// (defaults; --json; report and send recovery) so a cold reader can scan it
+	// (CLI-STYLE usage formatting).
+	fmt.Fprintln(w, "Defaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "report needs no bus or network; it reads installed identities and exits 1 on UNKNOWN. status shows every entry, current ones too. apply --dry-run prints the plan and writes nothing. --send uses nova-bus; see `nova-update report -h` for --snapshot, pending and artifact.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Locals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.")
 	fmt.Fprint(w, twoBinaries())
 	fmt.Fprint(w, manifestHelp(name))
 	fmt.Fprintf(w, "\n%s\n\nexample:\n", exitCodes(name))
@@ -191,7 +202,7 @@ func manifestHelp(name string) string {
 		"      2. kind is harness, engine, model, tool or pin; name is unique in the file; owner is who answers for it\n" +
 		"      3. installed is a version (v1.2.3), a command name on PATH, or an argv whose first line of output carries the version (single spaces, no quotes)\n" +
 		"      4. latest is github:<owner>/<repo>, npm:<package>, brew:<formula>, ollama:<model>:<tag> (kind model), local:<argv> (a pin takes this only), or - for not known yet\n" +
-		"      5. apply is the argv that updates it, or none; a run prints EVERY problem of the file at once, each with its line, never the first alone\n" +
+		"      5. apply is the argv that updates it, or none; it is split on single spaces, no quotes, no shell: a pipe, a glob or a $VAR is a literal argument\n" +
 		"      6. example: go<TAB>tool<TAB>go version<TAB>local:go version<TAB>none<TAB>me\n"
 }
 
@@ -217,6 +228,11 @@ func verbDetail(name, verb string) string {
 	if verb == "watch" {
 		detail = "lines: ADOPT OK or ADOPT REFUSED per check; ADOPT ESCALATE names a refused check's owner, for whoever answers refusals (this tool files nothing); " +
 			"ADOPT DONE ends the pass, its sha= the first twelve hex of the sha256 of the pass's sorted results, so two passes with one outcome share it. It takes no --json.\n"
+	}
+	if verb == "report" {
+		detail += "A prepared note that has not yet been confirmed is pending; --snapshot names the artifact that carries it. " +
+			"Cross-process recovery needs --snapshot; without it, each send is a new intention. " +
+			"Do not prepare again while a note is pending; retry the saved artifact.\n"
 	}
 	if e, ok := effects[verb]; ok {
 		detail += "effect: " + e + "\n"
@@ -900,39 +916,55 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 // printed.
 type movedInv map[string]map[string]map[string]bool
 
-// parseMovedHelp reads one built tool's `help` into verbs and flags. Only lines
-// that begin with the tool's own name count, after any indent (a tool on
-// internal/tool indents its usage lines): a help that prints another tool's
-// usage line (SPEC-VERSION's block names nova-update's in nova-version's help)
-// cannot add that tool to THIS revision's inventory, and a line that is not a
-// usage line -- the defaults, the notes, the examples -- contributes nothing.
-// This function is the whole of "never a hand-written list": whatever
-// these lines do not print, the note cannot announce.
+// parseMovedHelp reads one built tool's `help` into verbs and flags. A usage
+// line begins with the tool's own name; indented continuation lines belong to
+// the preceding usage line, so a wrapped line does not hide its flags
+// (SPEC-VERSION rules 2 and 10). A help that prints another tool's usage line
+// (SPEC-VERSION's block names nova-update's in nova-version's help) cannot add
+// that tool to THIS revision's inventory, and a line that is not a usage line
+// -- the defaults, the notes, the examples -- contributes nothing. This function
+// is the whole of "never a hand-written list": whatever these lines do not
+// print, the note cannot announce.
 func parseMovedHelp(tool, help string) map[string]map[string]bool {
 	verbs := map[string]map[string]bool{}
+	var prev string
+	flush := func() {
+		if prev == "" {
+			return
+		}
+		f := strings.Fields(prev)
+		if len(f) >= 2 && !strings.HasPrefix(f[1], "-") {
+			if verbs[f[1]] == nil {
+				verbs[f[1]] = map[string]bool{}
+			}
+			for _, tok := range f[2:] {
+				tok = strings.TrimLeft(tok, "[(")
+				if !strings.HasPrefix(tok, "--") {
+					continue
+				}
+				tok = strings.TrimRight(tok, "),.;:]")
+				if pre, _, ok := strings.Cut(tok, "="); ok {
+					tok = pre
+				}
+				verbs[f[1]][tok] = true
+			}
+		}
+		prev = ""
+	}
 	for _, line := range strings.Split(help, "\n") {
-		if line = strings.TrimSpace(line); !strings.HasPrefix(line, tool+" ") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			flush()
 			continue
 		}
-		f := strings.Fields(line)
-		if len(f) < 2 || strings.HasPrefix(f[1], "-") {
-			continue
-		}
-		if verbs[f[1]] == nil {
-			verbs[f[1]] = map[string]bool{}
-		}
-		for _, tok := range f[2:] {
-			tok = strings.TrimLeft(tok, "[(")
-			if !strings.HasPrefix(tok, "--") {
-				continue
-			}
-			tok = strings.TrimRight(tok, "),.;:]")
-			if pre, _, ok := strings.Cut(tok, "="); ok {
-				tok = pre
-			}
-			verbs[f[1]][tok] = true
+		if strings.HasPrefix(line, tool+" ") {
+			flush()
+			prev = line
+		} else if prev != "" {
+			prev += " " + line
 		}
 	}
+	flush()
 	return verbs
 }
 
