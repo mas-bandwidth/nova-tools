@@ -42,7 +42,7 @@ func TestBriefReplacesTheBriefOfAnUnstartedPrimary(t *testing.T) {
 	for _, id := range []string{"a-1", "a-2"} {
 		w := editWorld(t)
 		before := *w.s.Work.Placed(id)
-		w.must(Brief(w.s, BriefReq{ID: id, Brief: "new brief", Who: "coordinator"}))
+		w.must(Brief(w.s, briefOne(id, "new brief")))
 		c := w.s.Work.Placed(id)
 		assert.Equal(t, "new brief", c.F("brief"), id)
 		assert.Equal(t, before.Row, c.Row, id)
@@ -52,15 +52,55 @@ func TestBriefReplacesTheBriefOfAnUnstartedPrimary(t *testing.T) {
 	}
 }
 
-func TestBriefIsRefusedOnARunningMachine(t *testing.T) {
+// briefOne is the request replacing one primary's brief.
+func briefOne(id, brief string) BriefReq {
+	return BriefReq{Cards: []BriefCard{{ID: id, Brief: brief}}, Who: "coordinator"}
+}
+
+// A waiting or ready primary with no work card dealt takes a new brief while
+// the machine runs: only a card dealt or in flight keeps its brief, so the
+// briefs of cards in line are replaced without a stop window
+// (docs/SPEC-SPRINT.md, the brief verb). A dealt card is still refused.
+func TestBriefReplacesAWaitingCardWhileRunning(t *testing.T) {
+	t.Parallel()
+	for _, id := range []string{"a-1", "a-2"} {
+		w := editWorld(t)
+		w.s.Running = true
+		before := *w.s.Work.Placed(id)
+		w.must(Brief(w.s, briefOne(id, "new brief")))
+		c := w.s.Work.Placed(id)
+		assert.Equal(t, "new brief", c.F("brief"), id)
+		assert.Equal(t, before.Col, c.Col, id)
+		assert.Equal(t, before.Score, c.Score, id)
+		assert.Equal(t, before.Fields["needs"], c.F("needs"), id)
+	}
+	for _, tc := range startedCases {
+		w := editWorld(t)
+		w.s.Running = true
+		w.place(w.s.Work, "a-1", "a", tc.col)
+		w.s.Work.Placed("a-1").Fields["attempt"] = tc.attempt
+		p := Brief(w.s, briefOne("a-1", "new"))
+		require.Len(t, p.Refused, 1, tc.name)
+		assert.Empty(t, p.Units, tc.name)
+		assert.Contains(t, p.Refused[0].Why, "keeps its brief", tc.name)
+	}
+}
+
+// Several briefs in one request (brief --dir) are one unit each, all on one
+// snapshot; a card refused is named, and a card named twice is refused.
+func TestBriefReplacesSeveralBriefsInOneRequest(t *testing.T) {
 	t.Parallel()
 	w := editWorld(t)
 	w.s.Running = true
-	p := Brief(w.s, BriefReq{ID: "a-1", Brief: "new", Who: "coordinator"})
-	require.Len(t, p.Refused, 1)
-	assert.Empty(t, p.Units)
-	assert.Contains(t, p.Refused[0].Why, "the machine is RUNNING")
-	assert.Contains(t, p.Refused[0].Why, "run: nova-sprint stop")
+	w.must(Brief(w.s, BriefReq{Cards: []BriefCard{{ID: "a-1", Brief: "one"}, {ID: "a-2", Brief: "two"}}, Who: "coordinator"}))
+	assert.Equal(t, "one", w.s.Work.Placed("a-1").F("brief"))
+	assert.Equal(t, "two", w.s.Work.Placed("a-2").F("brief"))
+	p := Brief(w.s, BriefReq{Cards: []BriefCard{{ID: "a-1", Brief: "x"}, {ID: "zz", Brief: "y"}, {ID: "a-1", Brief: "z"}}, Who: "coordinator"})
+	require.Len(t, p.Refused, 2)
+	assert.Contains(t, p.Refused[0].Why, "no primary zz")
+	assert.Equal(t, "a-1", p.Refused[1].Key)
+	assert.Contains(t, p.Refused[1].Why, "named twice")
+	w.clean("after the briefs")
 }
 
 func TestBriefIsRefusedForAStartedCard(t *testing.T) {
@@ -69,7 +109,7 @@ func TestBriefIsRefusedForAStartedCard(t *testing.T) {
 		w := editWorld(t)
 		w.place(w.s.Work, "a-1", "a", tc.col)
 		w.s.Work.Placed("a-1").Fields["attempt"] = tc.attempt
-		p := Brief(w.s, BriefReq{ID: "a-1", Brief: "new", Who: "coordinator"})
+		p := Brief(w.s, briefOne("a-1", "new"))
 		require.Len(t, p.Refused, 1, tc.name)
 		assert.Empty(t, p.Units, tc.name)
 		assert.Contains(t, p.Refused[0].Why, "a-1 is "+tc.col, tc.name)
@@ -99,7 +139,7 @@ func TestABriefRefusedForAStartedCardNamesItsRemedy(t *testing.T) {
 			w.s.Running = running
 			w.place(w.s.Work, "a-1", "a", tc.col)
 			w.s.Work.Placed("a-1").Fields["attempt"] = tc.attempt
-			p := Brief(w.s, BriefReq{ID: "a-1", Brief: "new", Who: "coordinator"})
+			p := Brief(w.s, briefOne("a-1", "new"))
 			require.Len(t, p.Refused, 1, tc.name)
 			assert.NotContains(t, p.Refused[0].Why, "the machine is RUNNING", tc.name)
 			for _, s := range want[tc.name] {
@@ -113,10 +153,10 @@ func TestBriefIsRefusedForASentinelAndAnUnknownCard(t *testing.T) {
 	t.Parallel()
 	w := editWorld(t)
 	w.must(Add(w.s, AddReq{Stream: "a", IDs: []string{"a-stop"}, Sentinel: true, Who: "coordinator"}))
-	p := Brief(w.s, BriefReq{ID: "a-stop", Brief: "new", Who: "coordinator"})
+	p := Brief(w.s, briefOne("a-stop", "new"))
 	require.Len(t, p.Refused, 1)
 	assert.Contains(t, p.Refused[0].Why, "a-stop is a sentinel, not a primary")
-	p = Brief(w.s, BriefReq{ID: "zz", Brief: "new", Who: "coordinator"})
+	p = Brief(w.s, briefOne("zz", "new"))
 	require.Len(t, p.Refused, 1)
 	assert.Contains(t, p.Refused[0].Why, "no primary zz on the work table")
 }
