@@ -18,6 +18,12 @@ import (
 // OverloadWindow a member has had OverloadTimeouts or more cards end on a timeout of any
 // kind, counted from the finishes the member reported. No load number is in it: the beat's
 // load stays a fact for the table.
+//
+// It covers friends (the owner: "trust but VERIFY", "Are they actually doing the
+// work that is shown in the friend table? Really?"): a friend up whose cards end on a
+// timeout raises the same judgment with the same numbers, counted from her finishes on her
+// own row FriendRow(<name>), her width the roster's (FriendSeat), and the remedy her width
+// in nova-config, which friend sync applies.
 
 // OverloadWindow is how far back the timeouts are counted.
 const OverloadWindow = 15 * time.Minute
@@ -81,7 +87,7 @@ func MemberTimeouts(s *Snapshot, member string) []Timeout {
 			}
 		}
 		if c.Col == DoneFailed && c.Row == member {
-			if kind := TimeoutKind(c.F("report")); kind != "" {
+			if kind := TimeoutKind(friendReportBody(member, c.F("report"))); kind != "" {
 				if at, ok := within(c.F("finished")); ok {
 					out = append(out, Timeout{Card: c.ID, Kind: kind, At: at})
 				}
@@ -107,11 +113,40 @@ type Overload struct {
 // Overloaded is whether the member is overloaded (OverloadTimeouts or more timeouts within
 // OverloadWindow), and the facts.
 func Overloaded(s *Snapshot, member string) (Overload, bool) {
+	return overloadOf(s, member, s.Width(member))
+}
+
+// FriendOverloaded is Overloaded for a friend: the same rule over her row FriendRow(<name>),
+// her width the roster's.
+func FriendOverloaded(s *Snapshot, f FriendSeat) (Overload, bool) {
+	return overloadOf(s, FriendRow(f.Name), f.Width)
+}
+
+// overloadOf is the one rule of Overloaded, a machine's or a friend's: the row's timeouts
+// within the window, OverloadTimeouts or more, and the width the judgment halves.
+func overloadOf(s *Snapshot, member string, width int) (Overload, bool) {
 	ts := MemberTimeouts(s, member)
 	if len(ts) < OverloadTimeouts {
 		return Overload{}, false
 	}
-	return Overload{Member: member, Timeouts: ts, Width: s.Width(member)}, true
+	return Overload{Member: member, Timeouts: ts, Width: width}, true
+}
+
+// friendReportPrefix begins a friend's finish report, `friend <name> <VERDICT>: <paragraph>`
+// (friend sync, the inbox/outbox standard).
+const friendReportPrefix = "friend "
+
+// friendReportBody is what a finish on the row reports as a member would: on a friend's row,
+// the paragraph after `friend <name> <VERDICT>: `, else the report itself.
+func friendReportBody(row, report string) string {
+	if !IsFriendRow(row) {
+		return report
+	}
+	rest, ok := strings.CutPrefix(strings.TrimSpace(report), friendReportPrefix)
+	if f := strings.SplitN(rest, " ", 3); ok && len(f) == 3 && strings.HasSuffix(f[1], ":") {
+		return f[2]
+	}
+	return report
 }
 
 // HalfWidth is the width the judgment offers: half the member's, at least 1.
@@ -123,24 +158,44 @@ func (o Overload) What() string {
 	for _, t := range o.Timeouts {
 		cards = append(cards, t.Card+" ("+t.Kind+")")
 	}
-	return fmt.Sprintf("%s is overloaded: %d cards ended on a timeout in the last %s: %s; halve its width: nova-sprint fleet up %s --width %d, or wait 15m",
-		o.Member, len(o.Timeouts), OverloadWindow, strings.Join(cards, ", "), o.Member, o.HalfWidth())
+	remedy := fmt.Sprintf("nova-sprint fleet up %s --width %d", o.Member, o.HalfWidth())
+	if name, ok := FriendOfRow(o.Member); ok {
+		remedy = fmt.Sprintf("nova-config friend set %s --width %d, then nova-sprint friend sync", name, o.HalfWidth())
+	}
+	return fmt.Sprintf("%s is overloaded: %d cards ended on a timeout in the last %s: %s; halve its width: %s, or wait 15m",
+		o.Member, len(o.Timeouts), OverloadWindow, strings.Join(cards, ", "), remedy)
 }
 
-// Decisions are the judgment's: halve the member's width, or wait the window.
+// Decisions are the judgment's: halve the member's width (a friend's in the roster), or
+// wait the window.
 func (o Overload) Decisions() []string {
+	if name, ok := FriendOfRow(o.Member); ok {
+		return []string{fmt.Sprintf("friend set %s --width %d", name, o.HalfWidth()), "wait 15m"}
+	}
 	return []string{fmt.Sprintf("fleet up %s --width %d", o.Member, o.HalfWidth()), "wait 15m"}
 }
 
 // MemberSubject is the stream word a member's judgment is filed under.
 func MemberSubject(member string) string { return "member:" + member }
 
-// overloadConds is the tick's overload condition of every member up (NOverloaded).
-func overloadConds(s *Snapshot) []cond {
+// overloadConds is the tick's overload condition of every member up and every friend up
+// the binding read (NOverloaded).
+func overloadConds(s *Snapshot, friends []FriendSeat) []cond {
 	var out []cond
+	add := func(o Overload) {
+		out = append(out, cond{typ: NOverloaded, stream: MemberSubject(o.Member), streamLevel: true, what: o.What(), decisions: o.Decisions()})
+	}
 	for _, m := range s.UpMembers() {
 		if o, ok := Overloaded(s, m); ok {
-			out = append(out, cond{typ: NOverloaded, stream: MemberSubject(m), streamLevel: true, what: o.What(), decisions: o.Decisions()})
+			add(o)
+		}
+	}
+	for _, f := range friends {
+		if f.Status != Up {
+			continue // a friend held or down raises none, as a member not up
+		}
+		if o, ok := FriendOverloaded(s, f); ok {
+			add(o)
 		}
 	}
 	return out

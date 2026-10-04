@@ -537,6 +537,9 @@ func commands(g Group, first Note, prefix string) []Command {
 			// a reader whose width lags its machine: its loop unit is nova-config's record of
 			// the reader's name; restarted, it reads its machine's width (readers_behind.go)
 			add(d, "nova-config loop show "+strings.TrimPrefix(d, "restart ")+"  # restart this loop's unit on its machine: it reads its machine row's width at start")
+		case strings.HasPrefix(d, "friend set "):
+			// a friend's width is the roster's: nova-config's, applied by friend sync (overload.go)
+			add(d, "nova-config "+d, cmd+"friend sync")
 		case strings.HasPrefix(d, "funded "):
 			add(d, cmd+d+" --reason '<the payment made>'")
 		case d == "ack":
