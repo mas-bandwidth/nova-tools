@@ -51,15 +51,17 @@ import (
 //	GO*=...-json any other GO-prefixed variable carrying a -json or --json
 //	             flag, which is the shape of this bug wherever it turns up next.
 //	*KEY* *TOKEN* an environment NAME carrying a credential -- a forge token
-//	*SECRET*     (GH_TOKEN, GITHUB_TOKEN), a provider key (DEEPSEEK_API_KEY) or
-//	             any other secret a caller holds. The matcher reads the name and
-//	             never the value, so nothing has to see a secret to drop it, and
-//	             a child running a pull request's code cannot read one.
+//	*SECRET*     (GH_TOKEN, GITHUB_TOKEN), a provider key (DEEPSEEK_API_KEY), a
+//	*PASSWORD*   database password (PGPASSWORD, NOVA_PG_PASSWORD,
+//	*PASSWD*     NOVA_REDIS_PASSWORD) or any other secret a caller holds. The
+//	             matcher reads the name and never the value, so nothing has to
+//	             see a secret to drop it, and a child running a pull request's
+//	             code cannot read one.
 //
 // GOTMPDIR is deliberately NOT dropped: it names a location, not an output
 // shape, and a bench that sets it usually has a reason (a small /tmp). A tool
 // that wants its own scratch appends GOTMPDIR= after Clean.
-const Removed = "GOFLAGS, GOTEST*, any GO* variable whose value carries -json, and any variable whose name carries KEY, TOKEN or SECRET"
+const Removed = "GOFLAGS, GOTEST*, any GO* variable whose value carries -json, and any variable whose name carries KEY, TOKEN, SECRET, PASSWORD or PASSWD"
 
 // Clean returns a copy of env with the variables named in Removed taken out.
 // The order of what remains is preserved, and env itself is not modified: the
@@ -77,16 +79,17 @@ func Clean(env []string) []string {
 }
 
 // WithoutSecrets returns a copy of env with every variable whose NAME carries
-// KEY, TOKEN or SECRET taken out. It is not the output-shape rule Clean is:
-// Clean keeps the child `go` command's answers comparable, and this one keeps a
-// program the gate did not write from reading the seat's credentials. The
-// predicate is keyshape.SecretName, the same one the job shell's shim and the
-// harvest's argv log redact by, so there is one definition of a secret name.
+// KEY, TOKEN, SECRET, PASSWORD or PASSWD taken out. It is not the output-shape
+// rule Clean is: Clean keeps the child `go` command's answers comparable, and
+// this one keeps a program the gate did not write from reading the seat's
+// credentials. The predicate is keyshape.SecretName, the same one Clean's
+// credential case and the job shell's shim and the harvest's argv log redact
+// by, so there is one definition of a secret name.
 //
 // A gate runs a card's tree -- its git filters and its tests -- and the process
-// it was started in already holds the provider key, GH_TOKEN and the rest. The value
-// is never read, printed or copied: the name is what decides, and a variable
-// that does not carry one is left alone.
+// it was started in already holds the provider key, GH_TOKEN, the database
+// passwords and the rest. The value is never read, printed or copied: the name
+// is what decides, and a variable that does not carry one is left alone.
 func WithoutSecrets(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, entry := range env {
@@ -101,7 +104,9 @@ func WithoutSecrets(env []string) []string {
 
 // removes is the matcher behind Removed. Names are folded to upper case
 // because Windows environment names are case-insensitive and os.Environ there
-// returns them however they were written.
+// returns them however they were written. The credential case is
+// keyshape.SecretName, the same predicate WithoutSecrets uses, so Clean and
+// WithoutSecrets cannot disagree about what a secret name is.
 func removes(name, value string) bool {
 	up := strings.ToUpper(strings.TrimSpace(name))
 	switch {
@@ -111,21 +116,10 @@ func removes(name, value string) bool {
 		return true
 	case strings.HasPrefix(up, "GO") && carriesJSONFlag(value):
 		return true
-	case isSecretName(up):
+	case keyshape.SecretName(up):
 		return true
 	}
 	return false
-}
-
-// isSecretName reports whether an environment NAME carries a credential. It is
-// by NAME and never by value: GH_TOKEN, a provider API key and a *_SECRET are
-// dropped without anything reading what they hold. The same predicate
-// internal/keyshape.SecretName is, and cmd/nova-swarm's shell shim unsets by:
-// a name that is a credential is a credential in every one of these places, so
-// Clean can be the one place a child's environment is built.
-func isSecretName(name string) bool {
-	up := strings.ToUpper(strings.TrimSpace(name))
-	return strings.Contains(up, "KEY") || strings.Contains(up, "TOKEN") || strings.Contains(up, "SECRET")
 }
 
 // carriesJSONFlag reports whether a value holds a -json or --json flag, in any
