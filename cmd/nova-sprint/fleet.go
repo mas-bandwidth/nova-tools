@@ -65,7 +65,10 @@ of the card's tier. The ask deals a read to a reader up only: a read asked of a
 reader that is not up is asked of another at the next tick, and a card that
 needs more readers than are up is not asked: the tick raises one judgment
 (fewer than two readers up). reader remove takes a row off the readers table, refused while the
-reader holds a read (asked, reading, ok or broken).`) + "\n"
+reader holds a read (asked, reading, ok or broken); reader retire keeps the
+row and its read cards (the history) and takes the reader off the table for
+good: never asked, its queue no beat and reader false, until reader up brings
+it back.`) + "\n"
 }
 
 // fleetStep is the coordinator's fleet verb as a step: up releases a hold,

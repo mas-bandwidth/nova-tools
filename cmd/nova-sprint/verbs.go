@@ -81,6 +81,7 @@ func init() {
 		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
 		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
+		{"reader retire", "<reader>...", "reader retire reader-d", (*app).cmdReaderRetire},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
 		{"stream set", "<stream>... --read-tier <flash|pro|default>", "stream set skips --read-tier pro", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
@@ -2799,5 +2800,44 @@ func (a *app) cmdClear(args []string, stdout, stderr io.Writer) int {
 	if res.Machine == store.Running {
 		fmt.Fprintf(stdout, "the machine is STOPPED; when the new sprint is ready: nova-sprint start\n")
 	}
+	return 0
+}
+
+// cmdReaderRetire is reader retire: the coordinator retires the named readers,
+// each a row of the readers table (the comfort list of 2026-10-03, item 6:
+// reader remove refuses a reader that holds read history, so retiring the
+// second readers was impossible without losing the record). A retired reader
+// is held away for good: no read is asked of it and a read asked and not begun
+// is asked of another, its own queue writes no beat and answers reader false,
+// and its row and its read cards, the history, stay on the table (where reads
+// no reader state: the row is listed, its reads counted); reader up brings it
+// back. A named
+// reader with no row refuses the whole call, and nothing is written.
+func (a *app) cmdReaderRetire(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("reader retire")
+	names, code := readerNames("reader retire", args, stderr, fs)
+	if code != 0 {
+		return code
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "reader retire", err.Error())
+	}
+	ctx := context.Background()
+	rows, err := st.ReaderRows(ctx)
+	if err != nil {
+		return a.readFailed("reader retire", err, stderr)
+	}
+	if bad := unknownReaders(rows, names); len(bad) > 0 {
+		fmt.Fprintf(stderr, "%s reader retire: no reader %s on the readers table (readers: %s); nothing was changed; run: nova-sprint reader add <name>\n", prog, strings.Join(bad, ","), strings.Join(rows, ","))
+		return 1
+	}
+	for _, n := range names {
+		if err := st.SetReaderRetired(ctx, n, c.actor); err != nil {
+			fmt.Fprintf(stderr, "%s reader retire: %s\n", prog, oneline.Escape(err.Error()))
+			return 1
+		}
+	}
+	sayOK(stdout, c.json, "reader retire", "READER-RETIRE OK readers="+strings.Join(names, ","), map[string]any{"readers": names})
 	return 0
 }
