@@ -863,11 +863,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
-          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
-          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # the bench's own Go wins over a distro Go on the system path (a Linux bench:
+          # /usr/bin/go 1.22 shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain)
+          # newest Go under ~/sdk first (the Mac benches keep 1.27 there, and one of them also
+          # carries a stale root-owned /usr/local/go 1.22 that won this loop)
+          # the toolchain go.mod names wins when ~/sdk holds it (a Linux runner took the newest sdk Go
           # while the release build beside it switched toolchains in the same caches): the toolchain line,
           # else the go line, which is the toolchain a go.mod without that line implies; else as before
           want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
@@ -968,8 +968,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 2
     steps:
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # RESILIENT CHECKOUT: a transient first-fetch failure must not redden a
+      # job. Attempt one tolerates its own failure ONLY so the
       # retry below runs; the retry itself is not tolerated, so a checkout
       # that fails twice still fails the job: fail-closed, not fail-open.
       - name: checkout
@@ -1188,8 +1188,8 @@ jobs:
     # (cmd/nova-bus measured 439 s there). The legs run -short (#682).
     timeout-minutes: 2
     steps:
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # RESILIENT CHECKOUT: a transient first-fetch failure must not redden a
+      # job. Attempt one tolerates its own failure ONLY so the
       # retry below runs; the retry itself is not tolerated, so a checkout
       # that fails twice still fails the job: fail-closed, not fail-open.
       - name: checkout
@@ -1319,8 +1319,8 @@ jobs:
           }
           seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
 
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # RESILIENT CHECKOUT: a transient first-fetch failure must not redden a
+      # job. Attempt one tolerates its own failure ONLY so the
       # retry below runs; the retry itself is not tolerated, so a checkout
       # that fails twice still fails the job: fail-closed, not fail-open.
       - name: checkout
@@ -1341,11 +1341,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
-          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
-          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # the bench's own Go wins over a distro Go on the system path (a Linux bench:
+          # /usr/bin/go 1.22 shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain)
+          # newest Go under ~/sdk first (the Mac benches keep 1.27 there, and one of them also
+          # carries a stale root-owned /usr/local/go 1.22 that won this loop)
+          # the toolchain go.mod names wins when ~/sdk holds it (a Linux runner took the newest sdk Go
           # while the release build beside it switched toolchains in the same caches): the toolchain line,
           # else the go line, which is the toolchain a go.mod without that line implies; else as before
           want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
@@ -1436,8 +1436,8 @@ jobs:
           }
           seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
 
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # RESILIENT CHECKOUT: a transient first-fetch failure must not redden a
+      # job. Attempt one tolerates its own failure ONLY so the
       # retry below runs; the retry itself is not tolerated, so a checkout
       # that fails twice still fails the job: fail-closed, not fail-open.
       - name: checkout
@@ -1563,8 +1563,8 @@ jobs:
           }
           seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
 
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # RESILIENT CHECKOUT: a transient first-fetch failure must not redden a
+      # job. Attempt one tolerates its own failure ONLY so the
       # retry below runs; the retry itself is not tolerated, so a checkout
       # that fails twice still fails the job: fail-closed, not fail-open.
       - name: checkout
@@ -1647,8 +1647,8 @@ jobs:
         id: want
         run: |
           [ "${{ matrix.slot }}" -le "${{ inputs.slots }}" ] && echo "run=yes" >> "$GITHUB_OUTPUT" || echo "run=no" >> "$GITHUB_OUTPUT"
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # RESILIENT CHECKOUT: a transient first-fetch failure must not redden a
+      # job. Attempt one tolerates its own failure ONLY so the
       # retry below runs; the retry itself is not tolerated, so a checkout
       # that fails twice still fails the job: fail-closed, not fail-open.
       - name: checkout
@@ -1666,11 +1666,11 @@ jobs:
       - name: toolchains the way ci.yml finds them
         if: steps.want.outputs.run == 'yes'
         run: |
-          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
-          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
-          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # the bench's own Go wins over a distro Go on the system path (a Linux bench:
+          # /usr/bin/go 1.22 shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain)
+          # newest Go under ~/sdk first (the Mac benches keep 1.27 there, and one of them also
+          # carries a stale root-owned /usr/local/go 1.22 that won this loop)
+          # the toolchain go.mod names wins when ~/sdk holds it (a Linux runner took the newest sdk Go
           # while the release build beside it switched toolchains in the same caches): the toolchain line,
           # else the go line, which is the toolchain a go.mod without that line implies; else as before
           want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
@@ -1809,8 +1809,8 @@ jobs:
           }
           seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
 
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # RESILIENT CHECKOUT: a transient first-fetch failure must not redden a
+      # job. Attempt one tolerates its own failure ONLY so the
       # retry below runs; the retry itself is not tolerated, so a checkout
       # that fails twice still fails the job: fail-closed, not fail-open.
       - name: checkout
@@ -1829,11 +1829,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
-          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
-          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # the bench's own Go wins over a distro Go on the system path (a Linux bench:
+          # /usr/bin/go 1.22 shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain)
+          # newest Go under ~/sdk first (the Mac benches keep 1.27 there, and one of them also
+          # carries a stale root-owned /usr/local/go 1.22 that won this loop)
+          # the toolchain go.mod names wins when ~/sdk holds it (a Linux runner took the newest sdk Go
           # while the release build beside it switched toolchains in the same caches): the toolchain line,
           # else the go line, which is the toolchain a go.mod without that line implies; else as before
           want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
@@ -1869,7 +1869,7 @@ jobs:
       - name: every CL-tier job succeeded (pull request, merge group or manual)
         # merge_group is the queue's group commit: ci-ok on it is THE merge gate,
         # so this step must run there too; a guard that names no event lets ci-ok
-        # report success over red needs (read of #766).
+        # report success over red needs.
         # The verdict is this tree's Go, so a fork's pull request never runs it on this
         # runner: the step below states a fork's ci-ok red without running anything of
         # the fork's (its self-hosted jobs are all skipped, so it is red either way).
@@ -1909,9 +1909,6 @@ jobs:
       # checkout above, so the writer is versioned with the commit under test
       # and no runner's installed build matters. A tree that does not compile
       # writes no receipt and exits 1: the red ci-ok is itself the signal.
-      # nova-sprint wrote this before
-      # (Rowan 2026-09-27: it is deprecated; the ci:*:gh fold and pr:* claim it
-      # also wrote had only nova-sprint readers and are not written).
       # THE HEAD-REPO GUARD IS ON THIS STEP, NOT ON THE JOB. This step runs the
       # checked-out tree's code with NOVA_REDIS_BENCH_PASSWORD in its
       # environment, so a pull_request from a fork must never reach it. It
