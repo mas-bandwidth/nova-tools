@@ -95,13 +95,14 @@ func friendStart(p sprint.Packet) string {
 
 // friendReportOf reads a friend's REPORT.md on a sprint card: its verdict (the first word
 // of its first Verdict: line, in upper case; "" for none), its head (the first word of its
-// first Head: line), and its first paragraph (the first block of lines that are neither a
+// first Head: line, in lower case, for a sha is case-insensitive hex and IsFullSha reads
+// only lower case), and its first paragraph (the first block of lines that are neither a
 // key line of those two nor a markdown heading), on one line.
 func friendReportOf(report string) (verdict, head, para string) {
 	verdict, _ = reportValue(report, "verdict")
 	verdict = strings.ToUpper(strings.Trim(firstWord(verdict), "*_.,;:!"))
 	head, _ = reportValue(report, "head")
-	head = strings.Trim(firstWord(head), "*_`.,;:")
+	head = strings.ToLower(strings.Trim(firstWord(head), "*_`.,;:"))
 	var lines []string
 	for _, l := range strings.Split(report, "\n") {
 		key, _, _ := strings.Cut(strings.TrimLeft(l, "#*-_ \t"), ":")
