@@ -42,17 +42,18 @@ func TestCodexRefusesWhileTheAppHoldsTheThreadWithoutRunningCodex(t *testing.T) 
 	var probed string
 	c := &Codex{Dir: "/w/stella", Session: "t1", Home: "/h/.codex", Run: fe.run, Held: func(lock string) bool { probed = lock; return true }}
 	exit, err := c.Deliver(context.Background(), "hello")
-	assert.Equal(t, 1, exit)
-	assert.EqualError(t, err, "thread t1 is open in the Codex app, which holds its writer lock; a resume cannot reach an open chat, so the message stays pending until the chat is closed")
+	assert.Equal(t, 0, exit)
+	var deferred Deferred
+	require.ErrorAs(t, err, &deferred)
+	assert.Contains(t, deferred.Reason, "thread t1")
 	assert.Equal(t, filepath.Join("/h/.codex", "thread-writer-locks", "t1.lock"), probed)
 	assert.Empty(t, fe.calls)
 }
 
 func TestCodexHomeIsCodexHomeThenTheUsersDotCodex(t *testing.T) {
-	t.Setenv("CODEX_HOME", "/elsewhere")
-	assert.Equal(t, "/elsewhere", (&Codex{}).home())
-	t.Setenv("CODEX_HOME", "")
+	t.Parallel()
+	assert.Equal(t, "/elsewhere", (&Codex{Env: func(string) string { return "/elsewhere" }}).home())
 	h, _ := os.UserHomeDir()
-	assert.Equal(t, filepath.Join(h, ".codex"), (&Codex{}).home())
+	assert.Equal(t, filepath.Join(h, ".codex"), (&Codex{Env: func(string) string { return "" }}).home())
 	assert.Equal(t, "/given", (&Codex{Home: "/given"}).home())
 }

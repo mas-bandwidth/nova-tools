@@ -35,6 +35,7 @@ type Codex struct {
 	Program      string                 // "codex" when empty
 	Home         string                 // CODEX_HOME; $CODEX_HOME or ~/.codex when empty
 	Held         func(lock string) bool // whether the thread's writer lock is held; FlockHeld when nil
+	Env          func(string) string    // getenv; os.Getenv when nil
 	Out          io.Writer              // where the turn's output goes, when set: the daemon's record
 }
 
@@ -49,7 +50,11 @@ func (c *Codex) home() string {
 	if c.Home != "" {
 		return c.Home
 	}
-	if h := os.Getenv("CODEX_HOME"); h != "" {
+	getenv := c.Env
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if h := getenv("CODEX_HOME"); h != "" {
 		return h
 	}
 	h, _ := os.UserHomeDir()
@@ -91,7 +96,7 @@ func (c *Codex) Deliver(ctx context.Context, text string) (int, error) {
 		}
 	}
 	if c.held()(LockPath(c.home(), session)) {
-		return 1, fmt.Errorf("thread %s is open in the Codex app, which holds its writer lock; a resume cannot reach an open chat, so the message stays pending until the chat is closed", session)
+		return 0, Deferred{Reason: fmt.Sprintf("thread %s is open in the Codex app, which holds its writer lock; a resume cannot reach an open chat, so the message stays pending until the chat is closed", session)}
 	}
 	out, exit, err := c.Run(ctx, c.Dir, c.program(), ResumeArgs(session, text), "")
 	if c.Out != nil {
