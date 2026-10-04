@@ -25,11 +25,15 @@ const SeatLabel = "nova-sprint.seat-push"
 // SeatService is the push loop's systemd user unit.
 const SeatService = "nova-sprint-seat-push.service"
 
+// BusEnv names the friends' bus store, nova-bus's own variable (docs/SPEC-BUS.md):
+// the push loop sends each pushed group over it to the seat, so the unit carries it.
+const BusEnv = "NOVA_BUS_REDIS"
+
 // SeatUnit is the push loop as a service: the binary, the store it reads (Redis, an
-// address; else Server, the sprint's server), and the file its lines go to (launchd;
-// systemd keeps them in its journal).
+// address; else Server, the sprint's server), the bus store it pushes over (Bus, an
+// address), and the file its lines go to (launchd; systemd keeps them in its journal).
 type SeatUnit struct {
-	OS, Exe, Redis, Server, Log string
+	OS, Exe, Redis, Server, Bus, Log string
 }
 
 // SeatResult is what install or uninstall did: the unit's path, and whether the file
@@ -69,12 +73,17 @@ func (u SeatUnit) Args() []string {
 }
 
 // env is the unit's environment: the sprint's server when the store is reached
-// through it. Never a secret: the unit is a file anyone on the machine may read.
+// through it, and the bus store the push goes over (BusEnv). Never a secret: the
+// unit is a file anyone on the machine may read, and both are addresses.
 func (u SeatUnit) env() [][2]string {
+	var env [][2]string
 	if u.Redis == "" && u.Server != "" {
-		return [][2]string{{"NOVA_SPRINT_SERVER", u.Server}}
+		env = append(env, [2]string{"NOVA_SPRINT_SERVER", u.Server})
 	}
-	return nil
+	if u.Bus != "" {
+		env = append(env, [2]string{BusEnv, u.Bus})
+	}
+	return env
 }
 
 // refusal is why the unit is not installed, "" is it may be.
@@ -88,8 +97,36 @@ func (u SeatUnit) refusal() string {
 		return "the push loop reads the sprint's store: --redis <addr> (or NOVA_SPRINT_REDIS), or the sprint's server, NOVA_SPRINT_SERVER"
 	case strings.HasPrefix(u.Redis, "mem:"):
 		return "the push loop waits on the sprint's machine, and the in-memory twin " + u.Redis + " has none: install it for a Redis store or the sprint's server"
+	case u.Bus == "":
+		return "the push loop sends each judgment and note over nova-bus to the seat: --bus <addr> (or " + BusEnv + "), the bus store nova-bus sends on"
 	}
 	return ""
+}
+
+// SeatPushMaxBody is the most of a pushed group's text one bus message carries; the
+// file holds it whole (a judgment group of hundreds of cards is longer).
+const SeatPushMaxBody = 64 << 10
+
+// SeatPush is a pushed group as one message of nova-bus (docs/SPEC-SPRINT.md,
+// "Handing over the seat"): from the holder, whose loop it is, to whom its file went
+// (the holder, or the someone a note is addressed to with an inbox there); the
+// subject one line naming the group, the body the new note ids, the file and the
+// file's text, cut at SeatPushMaxBody with where the whole is.
+type SeatPush struct{ From, To, Subject, Body string }
+
+// SeatPushOf is the message of group g pushed to file with text, keys being the notes
+// newly written for it: one message a group, however many of its notes were new.
+func SeatPushOf(holder, to string, g Group, keys []string, file, text string) SeatPush {
+	where := ""
+	if g.Stream != "" {
+		where = " in " + g.Stream
+	}
+	subject := fmt.Sprintf("sprint %s %s%s: %s (%d new)", g.Kind, g.ID, where, g.Type, len(keys))
+	if len(text) > SeatPushMaxBody {
+		text = strings.ToValidUTF8(text[:SeatPushMaxBody], "") + "\n... cut at " + fmt.Sprint(SeatPushMaxBody) + " bytes; the whole is " + file + "\n"
+	}
+	return SeatPush{From: holder, To: to, Subject: strings.ReplaceAll(subject, "\n", " "),
+		Body: "notes: " + strings.Join(keys, ",") + "\nfile: " + file + "\n\n" + text}
 }
 
 // Text is the unit's file: a launchd plist, or a systemd user unit.

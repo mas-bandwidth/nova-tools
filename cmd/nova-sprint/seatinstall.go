@@ -65,13 +65,14 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	dir := fs.String("dir", "", "the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)")
 	logf := fs.String("log", "", "the file the loop's lines go to, macOS (default: ~/Library/Logs/nova-sprint-seat-push.log); on Linux they are in the journal")
+	busAddr := fs.String("bus", a.getenv(sprint.BusEnv), "the bus store the loop pushes each judgment and note over to the seat, host:port (else "+sprint.BusEnv+")")
 	dry := fs.Bool("dry-run", false, "print the unit and where it would go, and write and load nothing")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, name, argErr("takes no words ", err, pos...))
 	}
 	goos := a.seatOS()
-	u := sprint.SeatUnit{OS: goos, Log: *logf}
+	u := sprint.SeatUnit{OS: goos, Log: *logf, Bus: strings.TrimSpace(*busAddr)}
 	if srv := a.server(fs); srv != "" {
 		u.Server = srv
 	} else {

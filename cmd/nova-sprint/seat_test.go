@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -286,4 +289,89 @@ func TestThePushFollowsTheSeat(t *testing.T) {
 	code, _, errs := ta.do("inbox --wait --push seat --timeout 200ms")
 	assert.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, filepath.Join(home, "nobody-working", "inbox"), errs)
+}
+
+// The push reaches the seat over nova-bus (docs/SPEC-SPRINT.md, "Handing over the
+// seat"; the owner, 2026-10-04: what is manual needs a verb): inbox --wait --push
+// seat, on the twin store, sends each group it writes as one message to whose inbox
+// the file went, on a bus store in memory (internal/bus's Fake: no socket); a group
+// already pushed is not sent again; a bus that fails is said, and the file stands.
+func TestThePushReachesTheSeatOverTheBus(t *testing.T) {
+	t.Parallel()
+	ta, held := heldAndWaiting(t)
+	home := t.TempDir()
+	ta.a.home = func() (string, error) { return home, nil }
+	require.NoError(t, os.MkdirAll(filepath.Join(home, "coordinator-working", "inbox"), 0o755))
+	b := &bus.Bus{Store: bus.NewFake(t0, "coordinator", "rowan")}
+	ta.a.bus = func(ctx context.Context, m bus.Message) error { _, err := b.Send(ctx, m); return err }
+	in := ta.interruptible()
+	ta.atSleep(func(n int) {
+		switch n {
+		case 4:
+			ta.failOnce("m1", "s2-1.w1@1", "tests red")
+			ta.ok("tick")
+		case 8:
+			in.now(t)
+		}
+	})
+	out := ta.ok("inbox --wait --push seat --timeout 200ms")
+	fresh := ta.group(sprint.NWorkFailed, "s2")
+	dir := filepath.Join(home, "coordinator-working", "inbox", "sprint-judgments")
+	assert.Contains(t, out, "INBOX OK bus=coordinator group="+held.ID+"\n", out)
+	assert.Contains(t, out, "INBOX OK bus=coordinator group="+fresh.ID+"\n", out)
+
+	got := map[string]bus.Message{}
+	for {
+		e, ok, err := b.Recv(context.Background(), "coordinator", 0)
+		require.NoError(t, err)
+		if !ok {
+			break
+		}
+		m := e.Message()
+		_, err = b.AckEntry(context.Background(), "coordinator", e.Entry)
+		require.NoError(t, err)
+		for _, g := range []sprint.Group{held, fresh} {
+			if strings.Contains(m.Subject, " "+g.ID+" ") {
+				got[g.ID] = m
+			}
+		}
+	}
+	require.Len(t, got, 2, "one message a pushed group, on the holder's stream")
+	m := got[fresh.ID]
+	assert.Equal(t, "coordinator", m.From)
+	assert.Equal(t, "sprint judgment "+fresh.ID+" in s2: "+sprint.NWorkFailed+" (1 new)", m.Subject)
+	assert.Contains(t, m.Body, "notes: "+fresh.Notes[0]+"\nfile: "+filepath.Join(dir, fresh.Notes[0]+".md")+"\n\n", m.Body)
+	text, err := os.ReadFile(filepath.Join(dir, fresh.Notes[0]+".md"))
+	require.NoError(t, err)
+	assert.True(t, strings.HasSuffix(m.Body, "\n\n"+string(text)), "the body carries the file's text:\n%s", m.Body)
+
+	// again over the same inbox: every group has its file, so nothing is sent
+	in = ta.interruptible()
+	ta.atSleep(func(n int) {
+		if n == 2 {
+			in.now(t)
+		}
+	})
+	out = ta.ok("inbox --wait --push seat --timeout 200ms")
+	assert.NotContains(t, out, "bus=", out)
+	_, ok, err := b.Recv(context.Background(), "coordinator", 0)
+	require.NoError(t, err)
+	assert.False(t, ok, "a group pushed before is not sent again")
+
+	// a bus that does not answer: the file is written, the failure said, the loop goes on
+	ta.a.bus = func(context.Context, bus.Message) error { return errors.New("dial tcp: connection refused") }
+	heldFile := filepath.Join(dir, held.Notes[0]+".md")
+	require.NoError(t, os.Remove(heldFile)) // its file gone: the next look pushes it again
+	in = ta.interruptible()
+	ta.atSleep(func(n int) {
+		if n == 2 {
+			in.now(t)
+		}
+	})
+	code, out, errs := ta.do("inbox --wait --push seat --timeout 200ms")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, errs, "NOTE the bus message of ", errs)
+	assert.Contains(t, errs, "(dial tcp: connection refused); its file stands", errs)
+	assert.Contains(t, out, "INBOX OK pushed="+held.Notes[0]+" file="+heldFile+"\n", out)
+	assert.FileExists(t, heldFile)
 }
