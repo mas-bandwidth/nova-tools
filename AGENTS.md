@@ -50,7 +50,6 @@ These hold for every worker, AI or person. A card is the whole brief one worker 
 - No names of people, machines or friends in code, comments or docs; docs and comments in the present tense. Cite the model or the design section from every function that implements a rule.
 - Attribution names only the model and harness actually used; never copy another provider's identity. Report diff stat, deletions, tests with their pins and local helpers.
 - Finish as `JOB.md` says: a plain profile writes `RESULT.md`; a command profile uses its finish shim. Report exact head, gate, output and limitations. "Not done" is a welcome report; a green claim you did not run is not.
-- Split independent changes for flash; use pro for coupled decisions. After two matching capability failures, escalate; check routing (docs/SPEC-CARD-CONTRACT.md, bounded cards).
 - A new verb or class rule starts from its scaffold: `nova-ci new-verb <tool> <verb>` or `nova-ci new-rule <name>` lays down the file, test, fixture and make target.
 
 ### 2. A tool is for an AI
