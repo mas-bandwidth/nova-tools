@@ -185,10 +185,11 @@ func quackBrief(id, stream, tier, repo, base string, rules []swarm.ChildRule) st
 		"Libraries considered: none; this card writes no code.",
 		"Why: a quack card proves the whole chain (deal, run, finish, two reads, merge) on every route with a known answer, in about a minute.",
 		fmt.Sprintf("What: Quack like a duck. Create the file %s in the staged checkout containing exactly one line, `quack`, commit it with the message `quack: %s`, and finish as JOB.md says. Your report (the PR title, or the output and report fields of RESULT.md) must contain the word quack. Do nothing else: read no other file, run no test, change no other file. A quack card runs in under a minute.", file, id),
+		"Write the draft within the first third of the budget and commit before extra probes. Record unfinished work and checks not yet run; the draft commit does not claim completion or passing gates.",
 		"Tests: none. The known answer is the word quack in the report and the one-line file in the diff.",
 		fmt.Sprintf("Files: %s only.", file),
 		fmt.Sprintf("Gate: none; `cat %s` prints quack.", file),
-		fmt.Sprintf("Finish: the report is the PR. `gh pr create` with the title `quack: %s` and the body `quack` plus the diff stat, last line 🤖 Generated with [Claude Code](https://claude.com/claude-code); or, as JOB.md says for your profile, RESULT.md with output and report both containing quack.", id),
+		fmt.Sprintf("Finish: follow JOB.md for your profile. A command profile reports `quack: %s` with body `quack` plus the diff stat; a plain profile writes RESULT.md with output and report both containing quack. Attribute only the model and harness actually used.", id),
 		fmt.Sprintf("As a read (only when JOB.md's first line is `%s <card>, attempt <n>`; under any other JOB.md you are the work, which does the What above and never reviews): change nothing, commit nothing. Approve (`gh pr review --approve`) when, and only when, the report contains the word quack and the work's diff, from the start commit JOB.md names, is exactly the one file %s holding the one line quack; a diff against BASE's tip shows every card landed since as deleted, and that is never the work's. Otherwise `gh pr review --request-changes --body <what is missing>`. A read of a quack takes under a minute: do not run tests or read the repo.", cardcontract.ReadTitle, file),
 	}
 	if len(rules) == 0 {
