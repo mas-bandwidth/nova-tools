@@ -235,9 +235,16 @@ argument boundaries, ambiguous or multiple operands refuse with
 path. The delivery is accepted at exit 0 once the line is in the
 file under a running tail; the turn runs after the adapter returns, since
 nothing hands its end back, so a second message can land during a turn and
-is the next event. Refused, with the line to run in the session, when no
-window is open in the directory or the window runs no monitor over a wake
-file; a stale pid in `active_sessions.json` is no window.
+is the next event. Deferred, never failed and never dropped, while no
+monitor runs: no window is open in the directory, or the window runs no
+monitor over a wake file (a stale pid in `active_sessions.json` is no
+window). Nothing is written. The reason carries the one line the session
+runs, `monitor `tail -n 0 -F <file>.wake`` (`--session` names the file).
+The message stays pending and is tried again. `install --harness grok`
+prints that line. `status` prints `route=push` when a tail runs under the
+window's pid and `route=defer` with that line when none does. A wake path
+that is not absolute, or that the process listing cannot show whole, is
+still a refusal and nothing is written.
 
 ## Identity
 

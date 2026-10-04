@@ -233,7 +233,10 @@ the person's permission); --state-dir moves them. --secrets NAME[,NAME] wraps th
 exec as the machine's --seat (its store under ~/nova-bench/secrets, its key under ~/.config/nova-secrets),
 opening exactly those names to the harness and refusing to start without every one; nova-secrets
 and sops are found on PATH at install and written by absolute path. --dry-run prints the plan and
-writes nothing.`,
+writes nothing. For harness grok, a NOTE prints the one line the open session runs, ` + friend.GrokMonitorLine("") + `
+(--session names the wake file in place of <file>.wake): one command in the session, not a flag, an
+environment variable or a wrapper at app start. While no such monitor runs, a delivery is deferred
+(the message stays pending and is tried again), never failed and never dropped.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
@@ -328,8 +331,11 @@ or WAIT-PONG NONE at exit 1.`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> (broken: session_id= broken_at= reason=), from the daemon's status file (up while it is
-under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file (<dir>/inbox/QUEUE.json); STATUS NONE at
+last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> (broken: session_id= broken_at= reason=), and for harness grok route=<push|defer>,
+from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file
+(<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
+` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
+harnesses omit route. STATUS NONE at
 exit 1 when no daemon ever ran as --as (no status file in the state directory).`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name")
@@ -476,11 +482,12 @@ func (w world) install(c *tool.Call) *tool.Out {
 		return tool.Refuse(err.Error())
 	}
 	if dry {
-		return tool.Done().Fact("label", a.Label()).Fact("plist", a.PlistPath()).Fact("launchd_log", a.LaunchdLog).
+		o := tool.Done().Fact("label", a.Label()).Fact("plist", a.PlistPath()).Fact("launchd_log", a.LaunchdLog).
 			Item("plan", "command", tool.Text("write "+a.PlistPath())).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootout gui/%d/%s", w.uid, a.Label()))).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, a.PlistPath()))).
 			Note("the agent runs: " + a.Said())
+		return noteGrokMonitor(o, a.Harness, a.Session)
 	}
 	path, ran, err := friend.Install(context.Background(), a, w.uid, w.launchctl, func(p string, data []byte) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -493,9 +500,17 @@ func (w world) install(c *tool.Call) *tool.Out {
 		o.Item("ran", "command", tool.Text(r))
 	}
 	if err != nil {
-		return tool.Fail(err.Error()).Fact("plist", path)
+		return noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session)
 	}
-	return o.Note("check it: nova-friend status --as " + a.Friend + " --dir " + a.Dir)
+	return noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session)
+}
+
+// noteGrokMonitor appends the one line a grok session runs, when harness is grok.
+func noteGrokMonitor(o *tool.Out, harness, session string) *tool.Out {
+	if line := friend.GrokInstallLine(harness, session); line != "" {
+		o.Note(line)
+	}
+	return o
 }
 
 func (w world) uninstall(c *tool.Call) *tool.Out {
@@ -570,6 +585,22 @@ func (w world) status(c *tool.Call) *tool.Out {
 	}
 	if qerr != nil {
 		o.Note("the queue file: " + qerr.Error())
+	}
+	if s.Harness == "grok" {
+		route, line, rerr := (&friend.Grok{Dir: dir, Run: w.exec, Home: filepath.Join(w.home, ".grok")}).Route(context.Background())
+		if route == "" {
+			route = "defer"
+		}
+		o.Fact("route", route)
+		if route != "push" {
+			if line == "" {
+				line = friend.GrokMonitorLine("")
+			}
+			o.Note(line)
+			if rerr != nil {
+				o.Note("grok route: " + rerr.Error())
+			}
+		}
 	}
 	return o
 }
