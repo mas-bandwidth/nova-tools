@@ -39,9 +39,9 @@ func TestCodexNewestThreadIsResolvedBeforeItsLockIsProbed(t *testing.T) {
 	var probed string
 	c := &Codex{Home: home, Dir: filepath.Join(home, "project"), Run: fe.run, Held: func(path string) bool { probed = path; return true }}
 	_, err := c.Deliver(context.Background(), "hello")
-	require.ErrorContains(t, err, "thread old")
+	require.NoError(t, err)
 	assert.Equal(t, LockPath(home, "old"), probed)
-	assert.Empty(t, fe.calls)
+	assert.Equal(t, [][]string{{filepath.Join(home, "project"), "codex", "queue", "--thread", "old", "--message", "hello"}}, fe.calls)
 }
 
 func TestCodexNoSavedThreadRefusesWithoutSpawning(t *testing.T) {

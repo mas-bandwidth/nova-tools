@@ -82,7 +82,10 @@ footer; `ok` and `failed` count her cards done; `done` is `sum(ok+failed)` and
 `ok%` is `pct(ok/ok+failed)`, pooled over the friends in the footer, the fleet
 table's own formulas.
 
-A friend says she is there with `friend beat <friend>`, which her own machinery
+A friend says she is there with `friend beat <friend>` (answered `FRIEND-BEAT OK
+<friend> at=<t> ... row_mode=<batch|one-shot> row_width=<n>`, her nova-config row
+as friend sync last copied it, which is how her daemon reads her delivery mode;
+docs/SPEC-FRIEND.md, one-shot lanes), which her own machinery
 runs every second (`FriendBeatEvery`) beside her harness (it writes
 `friend-beat:<friend>`, the time to the second, with what she reports of her
 work: `--running <id>,...`, the cards she is running now, which `friend take`

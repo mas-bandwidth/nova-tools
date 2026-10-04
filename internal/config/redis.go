@@ -19,7 +19,7 @@ import (
 // nova-sprint verbs wrote by hand until now, through the same Redis
 // Functions (internal/nsprint/fn/lua: capacity.lua's ns_capacity_desired
 // for slots and tiers, friend_roles.lua's ns_friend_roles for roles), and her
-// width, a plain field of friend:<f>:desired no function touches. Her
+// width and delivery mode, plain fields of friend:<f>:desired no function touches. Her
 // logins and wake path are what she would just know: her own presence
 // writes them, apply never touches friends:login or friend:<f>:wakepath. A
 // machine's ceiling goes through ns_capacity_machine; its registry row has
@@ -231,7 +231,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -254,6 +254,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			"tiers": sortedList(str(d, 1)),
 			"roles": sortedList(roles[i].Val()),
 			"width": intText(str(d, 2)),
+			"mode":  str(d, 3),
 		}
 	}
 	return views, revValue(rev), nil
@@ -419,14 +420,18 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	// the role here, derived by Kind.Derive): each only when it differs,
 	// both in one round trip, after slots registered her.
 	writeWidth := prev == nil || prev["width"] != row.Fields["width"]
+	writeMode := prev == nil || prev["mode"] != row.Fields["mode"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeRoles {
+	if !writeWidth && !writeMode && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
 	var roles *redis.Cmd
 	if writeWidth {
 		pipe.HSet(ctx, "friend:"+f+":desired", "width", row.Fields["width"])
+	}
+	if writeMode { // her delivery mode, a plain field beside width (nova-friend run reads it through friend beat)
+		pipe.HSet(ctx, "friend:"+f+":desired", "mode", row.Fields["mode"])
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)
