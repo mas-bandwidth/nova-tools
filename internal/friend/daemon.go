@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -22,9 +23,19 @@ const BeatEvery = time.Second
 // session cannot take never comes back for ever.
 const MaxDeliveries = 3
 
+// RecheckEvery is how long the daemon waits before trying a deferred
+// delivery again (Deferred: the session cannot take a turn now and nothing
+// is wrong). The message stays in the daemon's hand meanwhile: it is never
+// put back on the bus, never counted toward MaxDeliveries, never acked.
+const RecheckEvery = 10 * time.Second
+
 // StatusErrorEvery bounds how often a status file that cannot be written
 // is said in the record: the loop goes on beating and delivering without it.
-const StatusErrorEvery = time.Minute
+// DeferredSaidEvery bounds how often a deferral still in hand is said.
+const (
+	StatusErrorEvery  = time.Minute
+	DeferredSaidEvery = time.Minute
+)
 
 // The subjects of the daemon's own messages on the bus.
 const (
@@ -117,7 +128,18 @@ func (d *Daemon) Run(ctx context.Context) error {
 	failed := map[string]int{}    // entries whose turn failed, and how often
 	var queue []job
 	var busy *job
+	var retry time.Time // when the deferred turn in hand is tried again; zero while none is
+	var deferrals int
+	var deferSaid time.Time
 	results := make(chan result, 1)
+	start := func(j job, now time.Time) {
+		j.started = now
+		busy = &j
+		go func() {
+			exit, err := d.Deliver.Deliver(ctx, j.text)
+			results <- result{j, exit, err}
+		}()
+	}
 	for ctx.Err() == nil {
 		now := d.Now()
 		for _, p := range d.m.Tick(now) {
@@ -186,6 +208,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		select {
 		case r := <-results:
+			var deferred Deferred
+			if errors.As(r.err, &deferred) { // not a failure: the message stays in hand, tried again, counted toward nothing
+				deferrals++
+				retry = now.Add(RecheckEvery)
+				if deferrals == 1 || now.Sub(deferSaid) >= DeferredSaidEvery {
+					deferSaid = now
+					d.Record(fmt.Sprintf("%s subject=%q deferred=%d: %s; tried again every %s, counted toward nothing (said once per %s)",
+						now.UTC().Format(time.RFC3339), r.job.subject, deferrals, deferred.Reason, RecheckEvery, DeferredSaidEvery))
+				}
+				break
+			}
 			line := fmt.Sprintf("%s subject=%q took=%s exit=%d", now.UTC().Format(time.RFC3339), r.job.subject, now.Sub(r.job.started).Round(time.Millisecond), r.exit)
 			if r.err != nil {
 				line += " error=" + fmt.Sprintf("%q", r.err.Error())
@@ -211,18 +244,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 				}
 			}
 			d.Record(line)
-			busy = nil
+			busy, retry, deferrals, deferSaid = nil, time.Time{}, 0, time.Time{}
 		default:
 		}
-		if busy == nil && len(queue) > 0 {
+		switch {
+		case busy == nil && len(queue) > 0:
 			j := queue[0]
-			j.started = now
 			queue = queue[1:]
-			busy = &j
-			go func(j job) {
-				exit, err := d.Deliver.Deliver(ctx, j.text)
-				results <- result{j, exit, err}
-			}(j)
+			start(j, now)
+		case busy != nil && !retry.IsZero() && !now.Before(retry):
+			retry = time.Time{}
+			start(*busy, now)
 		}
 		if storeOK {
 			if err := d.Beat(ctx); err != nil {

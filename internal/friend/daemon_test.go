@@ -382,3 +382,58 @@ func TestTheClaimOpensOnlyAfterTheLongestTurnIsOver(t *testing.T) {
 	t.Parallel()
 	assert.Less(t, DeliverBudget+KillDelay, bus2.ClaimAfter)
 }
+
+// deferrer is a harness whose session cannot take a turn now and nothing is
+// wrong (the Codex chat open in the app): every delivery is Deferred. It
+// ends the run at the thousandth.
+type deferrer struct {
+	mu   sync.Mutex
+	n    int
+	stop func()
+}
+
+func (d *deferrer) Deliver(context.Context, string) (int, error) {
+	d.mu.Lock()
+	d.n++
+	n := d.n
+	d.mu.Unlock()
+	if n == 1000 {
+		d.stop()
+	}
+	return 0, Deferred{Reason: "the chat is open in the app"}
+}
+
+// A delivery the adapter defers is neither a failure nor an ack: the
+// message stays in the daemon's hand, tried again every RecheckEvery and
+// counted toward nothing, however long the session stays unable (the
+// finding of 2026-10-04: a thread open in the Codex app refused three
+// deliveries in a row, and the give-up rule acked the message given_up=true
+// while the chat was open, which is its normal state).
+func TestADeferredDeliveryIsTriedAgainAndNeverGivenUpOrAcked(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	def := &deferrer{stop: func() { r.cancel() }}
+	r.d.Deliver, r.passive = def, true
+	r.send(t, "ada", "hello", "x")
+	r.run(t, 1000*int(RecheckEvery/BeatEvery)*4) // the ceiling, never reached: the thousandth deferral ends the run
+	assert.Equal(t, 1000, def.n, "handed in a thousand times")
+	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Len(t, pending, 1, "still in hand: never acked, never given up")
+	assert.Empty(t, fresh)
+	assert.Equal(t, 0, r.last().Delivered)
+	said := 0
+	for _, line := range r.records {
+		assert.NotContains(t, line, "given_up")
+		assert.NotContains(t, line, "acked")
+		assert.NotContains(t, line, "deliveries=")
+		if strings.Contains(line, "deferred=") {
+			said++
+		}
+	}
+	require.NotEmpty(t, r.records)
+	assert.Contains(t, r.records[0], `subject="hello" deferred=1: the chat is open in the app; tried again every 10s, counted toward nothing (said once per 1m0s)`)
+	elapsed := r.now.Sub(t0)
+	assert.LessOrEqual(t, said, int(elapsed/DeferredSaidEvery)+2, "said once a minute, not once a deferral: %d lines over %s", said, elapsed)
+	assert.GreaterOrEqual(t, said, int(elapsed/(DeferredSaidEvery+2*RecheckEvery))-1, "and not less often than once a minute plus a recheck")
+}

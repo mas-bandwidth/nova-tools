@@ -77,7 +77,13 @@ stream (a ping is answered by the daemon at once and the message is handed to
 the adapter, which blocks for the whole turn, and acked when the turn ends at
 exit 0; any other exit leaves it pending, handed in again when its claim opens,
 and the third failure acks it with `given_up=true` on the record, so a message
-the session cannot take never comes back for ever), else one peek, so a ping that
+the session cannot take never comes back for ever; a delivery the adapter
+defers, `Deferred`, the session unable to take a turn now with nothing wrong,
+such as a Codex thread open in the app holding its writer lock, is neither a
+failure nor an ack: the message stays in the daemon's hand, tried again every
+ten seconds, `RecheckEvery`, and counted toward nothing, so a chat open all
+day loses no message, and the record says so at the first deferral and once a
+minute after), else one peek, so a ping that
 lands during a long turn is still answered at once by the daemon and pushed
 in once the session is free; the worker's result; one beat to the sprint
 server (`friend beat <friend>`, a plain beat: the queue, working and width
