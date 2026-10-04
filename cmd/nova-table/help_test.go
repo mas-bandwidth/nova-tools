@@ -63,7 +63,7 @@ func TestEveryCommandHasEquivalentDiscoverableHelp(t *testing.T) {
 		"the example: line does not run as printed: %q", out)
 	require.Contains(t, out, "dialled=0 written=0\n", "the example: line does not run as printed: %q", out)
 	require.Contains(t, banner,
-		"  CELL-ADD REFUSED: requested epoch is stale, not the active epoch: requested 0, active 1; run: nova-table help cell add\n",
+		"  CELL-ADD REFUSED: table \"stale-help\" row \"build\" column \"ready\" member \"b1\": requested epoch is stale, not the active epoch: requested 0, active 1; run: nova-table show 'stale-help'\n",
 		"the stale refusal's shape is not pasted:\n%s", banner)
 	require.Contains(t, banner,
 		"read the epoch off show <table> (it prints epoch=<n>) or off the receipt of every write",
