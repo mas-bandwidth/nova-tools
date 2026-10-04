@@ -17,6 +17,8 @@ func FlockHeld(path string) bool {
 		return false
 	}
 	defer f.Close()
+	// A successful probe briefly owns LOCK_EX until the unlock below. It is
+	// only an observation, not a reservation: another writer can win afterward.
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return err == syscall.EWOULDBLOCK
 	}
