@@ -189,12 +189,19 @@ footer a:hover { color: var(--text); }
 .fv { display: inline-block; padding: 0 0.375rem; margin: 0 -6px; border-radius: 0.25rem; }
 .flash { animation: flash 1.5s ease-out; }
 .cell.flash { animation-name: flash-cell; border-radius: 1px; }
-/* working pulses: one animated property on the root, so every working cell is in phase */
-@property --pulse { syntax: "<number>"; inherits: true; initial-value: 1; }
+/* The top bar's pulse (SPEC-SPRINT-DASHBOARD.md, the owner 2026-10-03 11:03 and 11:06 PM): merging, review and working
+   cells pulse between opacity 1 and .55 over 2 s, one state after another, review 0.05 s behind merging and
+   working 0.05 s behind review. The animation runs on every cell of the bar from the moment the cell is made
+   and drives a registered property; only the three states read it, and the delay is per state, so a cell
+   changing state never restarts its clock and every cell of a state moves with the others. Landed, ready and
+   waiting cells are still; table cells flash once on change. */
+@property --pulse { syntax: "<number>"; inherits: false; initial-value: 1; }
 @keyframes pulse { 0%, 100% { --pulse: 1; } 50% { --pulse: .55; } }
-:root { animation: pulse 2s ease-in-out infinite; }
-#overall .cell.working { opacity: var(--pulse); }  /* the steady pulse is for the top bar only; table cells flash once on change */
-@media (prefers-reduced-motion: reduce) { .flash, :root { animation: none; } }
+#overall .cell { animation: pulse 2s ease-in-out infinite; }
+#overall .cell.merging { opacity: var(--pulse); }
+#overall .cell.review { opacity: var(--pulse); animation-delay: -1.95s; }
+#overall .cell.working { opacity: var(--pulse); animation-delay: -1.9s; }
+@media (prefers-reduced-motion: reduce) { .flash, #overall .cell { animation: none; } }
 
 
 /* ---------- tables (docs/SPEC-SPRINT-DASHBOARD.md: Work, Fleet, Friends, Responsive) ----------
