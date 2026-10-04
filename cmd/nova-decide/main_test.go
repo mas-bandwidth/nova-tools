@@ -289,6 +289,23 @@ func TestScoreThroughJevNamesTheTopClassAndFindingsClustersIt(t *testing.T) {
 	})
 }
 
+// TestFindingsDoesNotMergeACardIDWithACommaIntoTwoCards pins security#79
+// finding 2: a score decision id may contain a comma in the card part, and
+// findings must render it as one card, never as two comma-separated cards.
+func TestFindingsDoesNotMergeACardIDWithACommaIntoTwoCards(t *testing.T) {
+	t.Parallel()
+	calls := new(atomic.Int32)
+	jev := testkit.Main(decideTool(testWorld("k-test", calls, jevScoreReply(0.83))).Run)
+	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
+	id := "card,a@landed@0123456789ab"
+	jev.Do(t, "score", "--card", td+"card.md", "--diff", td+"card.diff", "--backend", "jev", "--record", rec, "--op", id).Exit(0).Out(
+		"SCORE OK id="+id+" decision=score backend=jev:jev-latest top=stranded_fragment p=0.83 tokens_in=1200 tokens_out=40 recorded=new",
+		"SCORE ANSWER question=stranded_fragment type=noul value=yes p=yes:0.83")
+	jev.Do(t, "findings", "--record", rec).Exit(0).Out(
+		"FINDINGS OK scored=1 classes=1 bar=0.5 since=2026-09-25T21:00:00Z",
+		`FINDINGS FINDING class=stranded_fragment count=1 cards=card\x2ca`)
+}
+
 // jevChoice answers a one-choice decision (attempt, grade) with the option at p, the rest of
 // the mass on the other options.
 func jevChoice(question, option string, p float64) func([]byte) ([]byte, error) {
