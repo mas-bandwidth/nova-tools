@@ -96,6 +96,10 @@ func TestReworkRefusesACardWhoseLastTwoFindingsMatch(t *testing.T) {
 		assert.False(t, at)
 		assert.True(t, sprint.SameFinding("files outside PATHS: a.go", "two files outside its PATHS"), "one class however worded")
 		assert.False(t, sprint.SameFinding("", ""), "an empty finding is never the same as another")
+		// near misses: one first clause, different findings; and one finding, differently spaced and cased
+		assert.False(t, sprint.SameFinding("the test fails. TestA at a.go:1 wants 2", "the test fails. TestB at b.go:9 wants 3"), "two findings that share a first sentence are two findings")
+		assert.False(t, sprint.SameFinding("the test fails\nTestA at a.go:1", "the test fails\nTestB at b.go:9"), "and that share a first line")
+		assert.True(t, sprint.SameFinding("The test  fails.\n  TestA at a.go:1", "the test fails. testa at a.go:1"), "one finding, whitespace collapsed and case folded")
 	})
 }
 

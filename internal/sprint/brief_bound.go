@@ -57,20 +57,17 @@ func (b BriefBound) Remedy() string {
 // Why is the rework's refusal of a card at the bound: the line, and the remedy.
 func (b BriefBound) Why() string { return b.String() + "; " + b.Remedy() }
 
-// FindingClass is what two findings are compared by: the finding's first sentence (its first
-// line, up to the first ". "), its whitespace collapsed and its case folded; and a finding of
-// files outside the card's PATHS, however it is worded ("files outside PATHS", "outside its
-// PATHS"), is the one class `files outside paths`. "" for an empty finding.
+// FindingClass is what two findings are compared by: the whole finding, its whitespace
+// collapsed and its case folded (two findings that share a first sentence, or a first line,
+// and differ after it are two findings); and a finding of files outside the card's PATHS,
+// however it is worded ("files outside PATHS", "outside its PATHS"), is the one class `files
+// outside paths`. "" for an empty finding.
 func FindingClass(finding string) string {
-	line, _, _ := strings.Cut(strings.TrimSpace(finding), "\n")
-	if i := strings.Index(line, ". "); i >= 0 {
-		line = line[:i]
-	}
-	line = strings.ToLower(strings.Join(strings.Fields(line), " "))
-	if strings.Contains(line, "outside") && strings.Contains(line, "paths") {
+	text := strings.ToLower(strings.Join(strings.Fields(finding), " "))
+	if strings.Contains(text, "outside") && strings.Contains(text, "paths") {
 		return "files outside paths"
 	}
-	return line
+	return text
 }
 
 // SameFinding says two findings are the same finding: each has a class and it is the same one.

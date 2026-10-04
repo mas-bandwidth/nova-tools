@@ -569,7 +569,7 @@ The decision is one pure function over the primary, `sprint.AtBriefBound`
 (brief_bound.go): the primary carries the finding its last rework sent back and that
 attempt (`finding`, `finding_attempt`), and a card is at its brief's bound when its
 readers' finding at its current attempt is the same finding (`sprint.SameFinding` over
-`sprint.FindingClass`: the first sentence, whitespace collapsed and case folded, and a
+`sprint.FindingClass`: the whole finding, whitespace collapsed and case folded, and a
 finding of files outside the card's PATHS one class however worded) as that one, both
 since the brief last changed, or when it has made more than `MaxAttemptsPerBrief` (5)
 attempts since the brief last changed (`brief_attempt`, written by `brief`; absent is
