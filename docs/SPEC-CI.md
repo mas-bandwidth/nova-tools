@@ -1863,6 +1863,26 @@ reversed witness; `internal/pkgselect`'s
 boundaries (a longer name ending the same way, a source file's mention, a
 deprecated package's test, a testdata file's owner).
 
+**A third edge: a changed file that a package embeds selects the embedding
+package.** `//go:embed` reads a non-Go file into a package as its own data, so
+a change to that file can move the embedding package without naming it:
+`keyedPackages` also matches every changed non-Go file against the `//go:embed`
+directives of the package sources whose directory holds it, the pattern read
+relative to that directory (exact for a plain name, `path.Match` for the glob
+characters the Go tool allows, and a plain name or directory pattern also
+matches what lives under it, since an `all:` pattern embeds a directory
+recursively). An embed pattern cannot reach outside its package directory, so
+only a file under the package can match its directives. `internal/config`'s
+migrations (`migrations/*.sql`) are the shape of the miss: no test names a
+migration's file name, so before the rule a changed migration selects nothing
+beyond the two class-test packages. Like a reference, an embed over-selects (a
+`*` pattern names many files) and never under-selects; a line that only looks
+like a directive, inside a comment, is not one.
+**Its test.** `TestSelectChangeMapsAnEmbeddedFileToTheEmbeddingPackage`
+(`internal/pkgselect/embed_test.go`): an exact path, a glob and an `all:`
+directory each select the embedding package; a file no directive names and a
+commented-out directive select nothing beyond the two class-test packages.
+
 ### `toolchainroots` — the bench standard and the wall name one list per OS, with one kind each
 
 **The rule.** `internal/swarm/toolchain.go` is the ONE list of the bench
