@@ -21,7 +21,7 @@ var livingTools = strings.Fields("nova-bus nova-table nova-sprint nova-redis nov
 // section, so a visitor meets the mark wherever they meet the tool. A tool
 // leaves this list when it is ready, and the sentence leaves all three places
 // with it.
-var preAlphaTools = []string{"nova-work"}
+var preAlphaTools = []string{"nova-work", "nova-friend"}
 
 // stageSentence is the pre-alpha mark of one tool.
 func stageSentence(tool string) string { return tool + " is pre-alpha: not ready for production use." }

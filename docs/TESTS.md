@@ -1191,3 +1191,13 @@ prints the same plan, one `IMPORT REPO` per repository, and the `sha256` of the
 file it wrote; verify names the same `sha256`, and when the two differ it says
 `VERIFY FAIL` with one `VERIFY MISSING`, `EXTRA` or `DRIFT` line per difference.
 `differences=0` is the proof the tree holds what GitHub holds.
+
+## nova-friend
+
+### First run
+
+```sh
+$ nova-friend watch --server unused:1 --friend reader --argv '["true"]' --dry-run
+WATCH OK friend=reader dry_run=true
+WATCH NOTE plan only: no child or presence beat
+```
