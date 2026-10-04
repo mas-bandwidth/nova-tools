@@ -289,6 +289,38 @@ func TestScoreThroughJevNamesTheTopClassAndFindingsClustersIt(t *testing.T) {
 	})
 }
 
+// FindingsDoesNotMergeACardIDWithACommaIntoTwoCards ensures that card ids containing
+// commas are not split into multiple cards by the findings output.
+func TestFindingsDoesNotMergeACardIDWithACommaIntoTwoCards(t *testing.T) {
+	t.Parallel()
+	calls := new(atomic.Int32)
+	jev := testkit.Main(decideTool(testWorld("k-test", calls, jevScoreReply(0.83))).Run)
+	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
+	// Use a card id with a comma (as would come from brief-dir filenames with commas)
+	score := []string{"score", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "jev", "--record", rec, "--op", "card,a@landed@0123456789ab"}
+	jev.Do(t, score...).Exit(0).Out(
+		"SCORE OK id=card,a@landed@0123456789ab decision=score backend=jev:jev-latest top=stranded_fragment p=0.83 tokens_in=1200 tokens_out=40 recorded=new",
+		"SCORE ANSWER question=stranded_fragment type=noul value=yes p=yes:0.83")
+	jev.Do(t, "findings", "--record", rec, "--since", "2026-10-02").Exit(0).Out(
+		"FINDINGS OK scored=1 classes=1 bar=0.5 since=2026-10-02T00:00:00Z",
+		"FINDINGS FINDING class=stranded_fragment count=1 cards=card\\x2c")
+}
+
+// TestFindingsCommaEscaped verifies that commas within card ids are escaped.
+func TestFindingsCommaEscaped(t *testing.T) {
+	t.Parallel()
+	calls := new(atomic.Int32)
+	jev := testkit.Main(decideTool(testWorld("k-test", calls, jevScoreReply(0.83))).Run)
+	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
+	score := []string{"score", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "jev", "--record", rec, "--op", "card,a@landed@0123456789ab"}
+	jev.Do(t, score...).Exit(0).Out(
+		"SCORE OK id=card,a@landed@0123456789ab decision=score backend=jev:jev-latest top=stranded_fragment p=0.83 tokens_in=1200 tokens_out=40 recorded=new",
+		"SCORE ANSWER question=stranded_fragment type=noul value=yes p=yes:0.83")
+	jev.Do(t, "findings", "--record", rec, "--since", "2026-10-02").Exit(0).Out(
+		"FINDINGS OK scored=1 classes=1 bar=0.5 since=2026-10-02T00:00:00Z",
+		"FINDINGS FINDING class=stranded_fragment count=1 cards=card\\x2c")
+}
+
 // jevChoice answers a one-choice decision (attempt, grade) with the option at p, the rest of
 // the mass on the other options.
 func jevChoice(question, option string, p float64) func([]byte) ([]byte, error) {
