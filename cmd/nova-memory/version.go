@@ -29,11 +29,13 @@ var version string
 // cmdVersion prints the one line. It takes no flags and no arguments: there is no
 // --short, no --json and no --long, because a second output shape is a second thing to
 // agree about and this verb exists to end an argument rather than to start one.
-func cmdVersion(args []string, stdout, stderr io.Writer) int {
+// The stamp is the invocation's, not a package variable a test swaps
+// (docs/STANDARD.md section 8).
+func cmdVersion(e env, args []string, stdout, stderr io.Writer) int {
 	verbflag.HelpIfAsked(args, "version")
 	if len(args) > 0 {
 		return refuseWith(stderr, " version", fmt.Sprintf("takes no flags and no arguments, got %d", len(args)), "nova-memory version -h")
 	}
-	fmt.Fprintln(stdout, buildinfo.Line("nova-memory", version))
+	fmt.Fprintln(stdout, buildinfo.Line("nova-memory", e.stamp))
 	return 0
 }

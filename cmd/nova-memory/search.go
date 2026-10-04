@@ -10,13 +10,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
 )
 
-func cmdSearch(args []string, stdout, stderr io.Writer) int {
+func cmdSearch(e env, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "render the retrieval result as JSON")
 	rf := addRootFlags(fs)
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per query, positive (required)")
-	given, pos, ok := parse(fs, args, stderr, "root", "channels", "k")
+	given, pos, ok := parse(e, fs, args, stderr, "root", "channels", "k")
 	if given == nil {
 		return 2
 	}
@@ -40,7 +40,7 @@ func cmdSearch(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	query := strings.Join(pos, " ")
-	c, _, ok := rf.build("search", stderr)
+	c, _, ok := rf.build(e, "search", stderr)
 	if !ok {
 		return 2
 	}
