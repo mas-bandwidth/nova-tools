@@ -362,7 +362,7 @@ func writeCreateOnly(root, rel string, data []byte) error {
 		}
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the write error is returned, and the explicit close on success is the one reported
 	if _, err := f.Write(data); err != nil {
 		return err
 	}
@@ -383,7 +383,7 @@ func appendLines(root, rel string, lines []string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: a write error is returned, and the explicit close on success is the one reported
 	for _, line := range lines {
 		if _, err := io.WriteString(f, line+"\n"); err != nil {
 			return err
@@ -448,9 +448,14 @@ func (g gitFS) Stat(name string) (fs.FileInfo, error) {
 	if strings.TrimSpace(kind) == "tree" {
 		return gitInfo{name: path.Base(name), dir: true, size: 0}, nil
 	}
-	size, _ := git(g.dir, "cat-file", "-s", g.commit+":"+name)
+	size, err := git(g.dir, "cat-file", "-s", g.commit+":"+name)
+	if err != nil {
+		return nil, fmt.Errorf("%s: size: %w", name, err)
+	}
 	var n int64
-	fmt.Sscanf(strings.TrimSpace(size), "%d", &n)
+	if _, err := fmt.Sscanf(strings.TrimSpace(size), "%d", &n); err != nil {
+		return nil, fmt.Errorf("%s: size: git cat-file -s did not answer with a number: %w", name, err)
+	}
 	return gitInfo{name: path.Base(name), size: n}, nil
 }
 
