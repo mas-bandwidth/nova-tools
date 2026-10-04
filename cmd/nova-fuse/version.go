@@ -18,12 +18,19 @@ import (
 var version string
 
 // cmdVersion prints the one line. It takes no flags and no arguments: one output shape
-// is one thing to agree about.
+// is one thing to agree about. The stamp is the package var a release writes with
+// -ldflags, which main passes through run (docs/STANDARD.md section 8).
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
+	return cmdVersionWith(args, stdout, stderr, version)
+}
+
+// cmdVersionWith prints the one line for stamp. A test passes its own stamp
+// instead of writing the package var (docs/STANDARD.md section 8).
+func cmdVersionWith(args []string, stdout, stderr io.Writer, stamp string) int {
 	if len(args) > 0 {
 		fmt.Fprintf(stderr, "nova-fuse version REFUSED: takes no flags and no arguments, got %d; run: nova-fuse help version\n", len(args))
 		return 2
 	}
-	fmt.Fprintln(stdout, buildinfo.Line("nova-fuse", version))
+	fmt.Fprintln(stdout, buildinfo.Line("nova-fuse", stamp))
 	return 0
 }
