@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -304,6 +305,22 @@ func ReadReceipts(dir string) ([]Receipt, []Failure, error) {
 			dec.DisallowUnknownFields()
 			if err := dec.Decode(&r); err != nil {
 				failures = append(failures, Failure{Subject: subject, Reason: fmt.Sprintf("not a receipt: %v", err)})
+				continue
+			}
+			// One JSON object per line, then nothing but whitespace: a second
+			// object or garbage after the object is evidence the parser has
+			// not read, and accepting it would let that evidence vanish from
+			// the gate instead of failing by name (ReadReceipts's contract;
+			// docs/STANDARD.md sections 2 and 3, no silent failure). The
+			// second Decode runs to io.EOF over the whitespace tail, so only a
+			// line holding exactly one object reads as a receipt.
+			var extra json.RawMessage
+			if err := dec.Decode(&extra); err != io.EOF {
+				reason := "not a receipt: garbage follows the object"
+				if err == nil {
+					reason = "not a receipt: a second JSON object follows the first"
+				}
+				failures = append(failures, Failure{Subject: subject, Reason: reason})
 				continue
 			}
 			if errs := r.Validate(); len(errs) > 0 {
