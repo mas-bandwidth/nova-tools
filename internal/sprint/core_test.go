@@ -280,17 +280,21 @@ func TestDropTakesItsCardsAndBlocksWhatNeedsIt(t *testing.T) {
 	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"later"}, Needs: []string{"s1-1"}}))
 	require.Equal(t, Waiting, w.state("later"), "a primary with needs is %s", w.state("later"))
 	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"}))
+	// a waiting primary that needs it refuses the drop for that card, naming
+	// the dependant, and nothing moves
+	p := Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"})
+	require.Len(t, p.Refused, 1, "drop of a needed card: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "later", "drop of a needed card: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "--cascade", "drop of a needed card: %+v", p)
+	require.Equal(t, "working", w.state("s1-1"), "a refused drop moved the card")
+	// with Cascade the card and its dependant go together
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete", Cascade: true}))
 	require.Equal(t, "", w.state("s1-1"), "drop left cards behind")
 	require.Equal(t, "dropped", w.s.Work.Card("s1-1").F("outcome"), "drop left cards behind")
+	require.Equal(t, "dropped", w.s.Work.Card("later").F("outcome"), "cascade left the dependant")
 	require.Nil(t, w.s.Fleet.Placed("s1-1.w1"), "drop left cards behind")
-	require.Len(t, w.notesOf(NBlocked), 1, "the waiting primary is not reported blocked")
-	require.Len(t, w.openOn("later"), 1, "the waiting primary is not reported blocked")
 	w.clean("dropped")
-	// resolve does not report it twice
-	w.must(Resolve(w.s, ResolveReq{}))
-	require.Len(t, w.notesOf(NBlocked), 1, "blocked reported again")
-	p := Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "x"})
+	p = Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "x"})
 	require.Len(t, p.Refused, 1, "dropped twice: %+v", p)
 }
 

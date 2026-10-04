@@ -144,7 +144,15 @@ func TestResolveRaisesABlockedJudgmentOnceForADroppedNeed(t *testing.T) {
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
 	w.addOne(t, "s1", "s1-2", "s1-1")
-	w.must(t, sprint.Drop(w.s, sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "not wanted", Who: coordinator}))
+	// a stored dropped need: the verbs now refuse to make it (add refuses a
+	// dropped need, drop refuses a needed card without Cascade), so the
+	// recovery path is reached from a record the sprint already holds
+	c := w.s.Work.Card("s1-1")
+	c.Col, c.Row = "", ""
+	c.Fields["outcome"] = "dropped"
+	c.Rev++
+	w.s.Work.Put(c)
+	w.must(t, sprint.Resolve(w.s, sprint.ResolveReq{}))
 	// dropping told the coordinator already; the judgment is open, so the tick writes none again
 	expect(t, refmodel.ResolveMoves(w.snapshot(w.fresh()), later(0)))
 	// with the judgment closed, the tick raises it

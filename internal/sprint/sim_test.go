@@ -168,6 +168,25 @@ func (w *world) clean(when string) {
 	require.Empty(w.t, v, "%s: %v", when, v)
 }
 
+// seedDroppedNeed marks a primary's record dropped off the table without a
+// drop step: the state the verbs now refuse to make (add refuses a dropped
+// need, and drop refuses a needed card without Cascade), kept for the
+// recovery and waiver rules that must still read a stored dropped record. A
+// resolve after it opens the blocked judgment.
+func seedDroppedNeed(w *world, id string) {
+	c := w.s.Work.Card(id)
+	if c == nil {
+		return
+	}
+	c.Col, c.Row = "", ""
+	if c.Fields == nil {
+		c.Fields = map[string]string{}
+	}
+	c.Fields["outcome"] = "dropped"
+	c.Rev++
+	w.s.Work.Put(c)
+}
+
 func (w *world) state(id string) State { return w.s.StateOf(id) }
 
 // gens is the live generation of each work card, as its worker holds it.
