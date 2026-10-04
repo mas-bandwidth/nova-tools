@@ -11,7 +11,10 @@ import (
 // dropped card, naming the id and its outcome, and one that names no record
 // at all, naming the id; drop refuses to take a card off the table while a
 // waiting card still needs it, naming the dependants, unless --cascade takes
-// the dependants and their dependants in the same plan.
+// the dependants and their dependants in the same plan. The refusal holds of
+// the plan's end state: a selection that is not by id — a stream, a column
+// or a group — is refused whole when a card that stays needs one it would
+// take, agreeing with the all-or-none of the ids.
 func TestAddRefusesAnUnknownNeedAndDropListsDependants(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -51,4 +54,36 @@ func TestAddRefusesAnUnknownNeedAndDropListsDependants(t *testing.T) {
 		assert.Contains(t, out, id, "cascade did not drop %s: %s", id, out)
 	}
 	require.Contains(t, ta.ok("card --fields c"), "outcome=dropped", "c after the cascade")
+
+	// The same refusal holds of a selection that is not by id: dropping
+	// stream s1 names x and w, and u, outside the stream, needs w, so w is
+	// refused, and x after it — w, kept a moment, is refused later in the
+	// same plan and still needs x — and nothing is written; the same cards
+	// by id are refused the same way.
+	ta.ok("add --stream s2 v")
+	ta.ok("add --stream s1 x --needs v")
+	ta.ok("add --stream s1 w --needs x")
+	ta.ok("add --stream s2 u --needs w")
+	before = ta.applies()
+	code, out, errs = ta.do("drop --stream s1 --reason obsolete")
+	require.NotEqual(t, 0, code, "a stream drop of a needed chain: %s%s", out, errs)
+	require.NotContains(t, out, "MOVED", "a refused stream drop wrote: %s", out)
+	assert.Contains(t, errs, "REFUSED x", "a refused stream drop: %s", errs)
+	assert.Contains(t, errs, "REFUSED w", "a refused stream drop: %s", errs)
+	require.Equal(t, before, ta.applies(), "a refused stream drop wrote")
+	require.Contains(t, ta.ok("card --fields x"), "place=s1:waiting", "x after the refused stream drop")
+	require.Contains(t, ta.ok("card --fields w"), "place=s1:waiting", "w after the refused stream drop")
+	code, out, errs = ta.do("drop x w --reason obsolete")
+	require.NotEqual(t, 0, code, "an id drop of the same chain: %s%s", out, errs)
+	require.NotContains(t, out, "MOVED", "a refused id drop wrote: %s", out)
+	require.Equal(t, before, ta.applies(), "a refused id drop wrote")
+
+	// --cascade takes the whole chain in one plan: the selection (x and w)
+	// and u, w's dependant outside it; v, needed by none of them, stays.
+	out = ta.ok("drop --stream s1 --reason obsolete --cascade")
+	for _, id := range []string{"x", "w", "u"} {
+		assert.Contains(t, out, id, "cascade did not drop %s: %s", id, out)
+	}
+	require.Contains(t, ta.ok("card --fields u"), "outcome=dropped", "u after the cascade")
+	require.Contains(t, ta.ok("card --fields v"), "place=s2:ready", "the cascade dropped v, needed by none of them")
 }

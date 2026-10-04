@@ -690,12 +690,6 @@ func Drop(s State, p string) (State, error) {
 	x := n.Streams[st]
 	x.State = n.streamAfter(st, x.State, nil, []string{p})
 	n.Streams[st] = x
-	for _, q := range Keys(n.Primaries) {
-		qp := n.Primaries[q]
-		if qp.State == Waiting && slices.Contains(qp.Needs, p) && !slices.Contains(qp.Waived, p) {
-			n.open(JBlocked, q)
-		}
-	}
 	n.closeOn(p)
 	n.setPrimary(p, func(x *Primary) { x.State = Off })
 	return n, nil
