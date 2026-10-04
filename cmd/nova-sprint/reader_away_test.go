@@ -187,7 +187,7 @@ func TestAReadAskedOfAReaderThatGoesAwayIsAskedAgain(t *testing.T) {
 	out := ta.ok("card s1-1")
 	assert.NotContains(t, out, "attempt 2")
 	for _, g := range ta.inboxGroups() {
-		assert.False(t, g.Kind == sprint.Judgment, "no judgment is owed: %+v", g)
+		assert.NotEqual(t, sprint.Judgment, g.Kind, "no judgment is owed: %+v", g)
 	}
 }
 
