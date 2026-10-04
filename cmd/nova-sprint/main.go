@@ -174,6 +174,11 @@ type app struct {
 	// home is the directory a seat's inbox is under (inbox --wait --push seat:
 	// ~/<holder>-working/inbox): os.UserHomeDir unless a test sets it.
 	home func() (string, error)
+	// goos is the OS seat install writes its unit for (seatinstall.go): runtime.GOOS unless a
+	// test sets it; seatLoad, when set (a test), loads and unloads the unit in place of
+	// launchctl or systemctl --user, so a test loads nothing on its machine.
+	goos     string
+	seatLoad func(goos, op, path string) error
 	// transport carries the balance poll's requests to the providers (balance.go):
 	// nil is http.DefaultTransport, a test gives a fake.
 	transport http.RoundTripper
