@@ -189,17 +189,18 @@ footer a:hover { color: var(--text); }
 .fv { display: inline-block; padding: 0 0.375rem; margin: 0 -6px; border-radius: 0.25rem; }
 .flash { animation: flash 1.5s ease-out; }
 .cell.flash { animation-name: flash-cell; border-radius: 1px; }
-/* The top bar's pulse (SPEC-SPRINT-DASHBOARD.md, the owner 2026-10-03 10:50 PM): working, review and
-   merging cells breathe between 1 and .55 over 2 s, each cell 80 ms behind the one to its left, so the
-   pulse travels left to right as a wave along the bar (it repeats every 25 cells, one period). The
-   animation runs on every cell of the bar from the moment the cell is made and drives a registered
-   property; only the three states read it, so a cell changing state never restarts its clock and stays
-   in step with its neighbours. Landed, ready and waiting cells are still; table cells flash once on change. */
+/* The top bar's pulse (SPEC-SPRINT-DASHBOARD.md, the owner 2026-10-03 10:50 and 11:01 PM): working, review
+   and merging cells rest at opacity .55 and once a second snap to 1 (30 ms) and fall back (200 ms), each cell
+   12 ms behind the one to its left, so one beat rolls left to right across a group of 25 cells in about 300 ms
+   and nothing moves for the rest of the second. The animation runs on every cell of the bar
+   from the moment the cell is made and drives a registered property; only the three states read it, so a cell
+   changing state never restarts its clock and stays in step with its neighbours. Landed, ready and waiting
+   cells are still; table cells flash once on change. */
 @property --pulse { syntax: "<number>"; inherits: false; initial-value: 1; }
-@keyframes pulse { 0%, 100% { --pulse: 1; } 50% { --pulse: .55; } }
-#overall .cell { animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0% { --pulse: .55; } 3% { --pulse: 1; } 23% { --pulse: .55; } 100% { --pulse: .55; } }
+#overall .cell { animation: pulse 1s ease-out infinite; }
 #overall .cell.working, #overall .cell.review, #overall .cell.merging { opacity: var(--pulse); }
-#overall .cell:nth-child(25n+2) { animation-delay: -1.92s; } #overall .cell:nth-child(25n+3) { animation-delay: -1.84s; } #overall .cell:nth-child(25n+4) { animation-delay: -1.76s; } #overall .cell:nth-child(25n+5) { animation-delay: -1.68s; } #overall .cell:nth-child(25n+6) { animation-delay: -1.60s; } #overall .cell:nth-child(25n+7) { animation-delay: -1.52s; } #overall .cell:nth-child(25n+8) { animation-delay: -1.44s; } #overall .cell:nth-child(25n+9) { animation-delay: -1.36s; } #overall .cell:nth-child(25n+10) { animation-delay: -1.28s; } #overall .cell:nth-child(25n+11) { animation-delay: -1.20s; } #overall .cell:nth-child(25n+12) { animation-delay: -1.12s; } #overall .cell:nth-child(25n+13) { animation-delay: -1.04s; } #overall .cell:nth-child(25n+14) { animation-delay: -0.96s; } #overall .cell:nth-child(25n+15) { animation-delay: -0.88s; } #overall .cell:nth-child(25n+16) { animation-delay: -0.80s; } #overall .cell:nth-child(25n+17) { animation-delay: -0.72s; } #overall .cell:nth-child(25n+18) { animation-delay: -0.64s; } #overall .cell:nth-child(25n+19) { animation-delay: -0.56s; } #overall .cell:nth-child(25n+20) { animation-delay: -0.48s; } #overall .cell:nth-child(25n+21) { animation-delay: -0.40s; } #overall .cell:nth-child(25n+22) { animation-delay: -0.32s; } #overall .cell:nth-child(25n+23) { animation-delay: -0.24s; } #overall .cell:nth-child(25n+24) { animation-delay: -0.16s; } #overall .cell:nth-child(25n+25) { animation-delay: -0.08s; }
+#overall .cell:nth-child(25n+2) { animation-delay: -0.988s; } #overall .cell:nth-child(25n+3) { animation-delay: -0.976s; } #overall .cell:nth-child(25n+4) { animation-delay: -0.964s; } #overall .cell:nth-child(25n+5) { animation-delay: -0.952s; } #overall .cell:nth-child(25n+6) { animation-delay: -0.940s; } #overall .cell:nth-child(25n+7) { animation-delay: -0.928s; } #overall .cell:nth-child(25n+8) { animation-delay: -0.916s; } #overall .cell:nth-child(25n+9) { animation-delay: -0.904s; } #overall .cell:nth-child(25n+10) { animation-delay: -0.892s; } #overall .cell:nth-child(25n+11) { animation-delay: -0.880s; } #overall .cell:nth-child(25n+12) { animation-delay: -0.868s; } #overall .cell:nth-child(25n+13) { animation-delay: -0.856s; } #overall .cell:nth-child(25n+14) { animation-delay: -0.844s; } #overall .cell:nth-child(25n+15) { animation-delay: -0.832s; } #overall .cell:nth-child(25n+16) { animation-delay: -0.820s; } #overall .cell:nth-child(25n+17) { animation-delay: -0.808s; } #overall .cell:nth-child(25n+18) { animation-delay: -0.796s; } #overall .cell:nth-child(25n+19) { animation-delay: -0.784s; } #overall .cell:nth-child(25n+20) { animation-delay: -0.772s; } #overall .cell:nth-child(25n+21) { animation-delay: -0.760s; } #overall .cell:nth-child(25n+22) { animation-delay: -0.748s; } #overall .cell:nth-child(25n+23) { animation-delay: -0.736s; } #overall .cell:nth-child(25n+24) { animation-delay: -0.724s; } #overall .cell:nth-child(25n+25) { animation-delay: -0.712s; }
 @media (prefers-reduced-motion: reduce) { .flash, #overall .cell { animation: none; } }
 
 
