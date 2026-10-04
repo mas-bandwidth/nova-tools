@@ -368,13 +368,28 @@ func TestAFriendsReworkStartsFromTheTipOfItsBase(t *testing.T) {
 	text := friendBrief("amy", p)
 	assert.Contains(t, text, "This attempt starts from the current tip of sprint/s1 on origin, never from an older base: fetch it and start your branch there. "+
 		"Carry the work of attempt 2 onto it yourself: its head, "+landHead+", is the last pushed by any attempt before this one (`git diff origin/sprint/s1..."+landHead+"` shows that work); where it does not apply cleanly, redo it. "+
-		"The Head you report must be on that tip: a commit that descends from origin's sprint/s1 as you fetched it.\nThe coordinator asks: assert the bound\n")
+		"The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\nThe coordinator asks: assert the bound\n")
 	assert.NotContains(t, text, "start from it.", "never the old head")
 
 	p.BaseHead, p.BaseAttempt = "", 0
 	p.Brief = "s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n\nThe task."
-	assert.Contains(t, friendBrief("amy", p), "the current tip of the repository's default branch on origin, never from an older base: fetch it and start your branch there. No attempt before this one pushed work to carry. The Head you report must be on that tip: a commit that descends from origin's default branch as you fetched it.\n")
+	assert.Contains(t, friendBrief("amy", p), "the current tip of the repository's default branch on origin, never from an older base: fetch it and start your branch there. No attempt before this one pushed work to carry. The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\n")
 
 	p.Attempt = 1
 	assert.NotContains(t, friendBrief("amy", p), "This attempt starts")
+}
+
+// The brief a friend receives for a later attempt says what friendFinish actually checks,
+// in the present tense: a LAND's Head must be origin's tip of her branch when sync reads it
+// (one git ls-remote), and the attempt is expected to start from the tip named above. A
+// friend has no staged commit, so the brief claims no descent check and never says descends
+// (docs/SPEC-CARD-CONTRACT.md, where a rework starts; nova-tools#5215).
+func TestTheFriendBriefSaysWhatSyncChecks(t *testing.T) {
+	t.Parallel()
+	p := sprint.Packet{Card: "s1-1.w3", Epoch: 0, Attempt: 3, Branch: "sprint/s1-1.w3.g1.e0", BaseHead: landHead, BaseAttempt: 2,
+		Brief: "s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s1\nWHO: friend amy\n\nThe task."}
+	text := friendBrief("amy", p)
+	assert.Contains(t, text, "The Head you report must be origin's tip of your branch when sync reads it", "the brief names the tip-equality rule friendFinish checks")
+	assert.Contains(t, text, "the attempt is expected to start from the tip named above", "the brief says where the attempt starts")
+	assert.NotContains(t, text, "descend", "the brief claims no descent check, for friendFinish makes none")
 }

@@ -23,6 +23,7 @@ package swarm
 // re-queue it (nova-tools#2033).
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -316,6 +317,36 @@ func slotHolders(counts map[string]int) string {
 // TakeSlotLeases grants k unweighted (weight 1) leases. See takeSlotLeases.
 func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string, now time.Time, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
 	return takeSlotLeases(store, owner, k, 1, "", dur, label, now, pid)
+}
+
+// TakeSlotLeasesWaiting requests k weighted leases for owner, waiting up to wait
+// duration when capacity is occupied. When wait is 0, it makes a single attempt.
+// It checks ctx for cancellation during the wait (docs/SPEC-SWARM.md, "Bench slot leases").
+func TakeSlotLeasesWaiting(ctx context.Context, store, owner string, k int, kind string, dur, wait time.Duration, label string, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	deadline := time.Now().Add(wait)
+	const pollInterval = 25 * time.Millisecond
+	for {
+		now := time.Now().UTC()
+		ids, held, share, free, holders, ok, err = TakeSlotLeasesKind(store, owner, k, kind, dur, label, now, pid)
+		if err != nil || ok {
+			return ids, held, share, free, holders, ok, err
+		}
+		if wait <= 0 || !time.Now().Before(deadline) {
+			return nil, held, share, free, holders, false, nil
+		}
+		sleepDur := min(pollInterval, time.Until(deadline))
+		if sleepDur <= 0 {
+			return TakeSlotLeasesKind(store, owner, k, kind, dur, label, time.Now().UTC(), pid)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, held, share, free, holders, false, ctx.Err()
+		case <-time.After(sleepDur):
+		}
+	}
 }
 
 // takeSlotLeases grants k leases to owner when both caps hold after reaping:

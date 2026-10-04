@@ -134,7 +134,7 @@ func TestEveryVerbHelpQuotesOnlyItsOwnExitCodes(t *testing.T) {
 	for verb, own := range rows {
 		code, stdout, _ := runCI(t, append(strings.Fields(verb), "-h"), "")
 		require.Equal(t, 0, code, verb)
-		assert.Contains(t, stdout, "exit codes: 0 done and 2 usage or could not run", verb)
+		assert.Contains(t, stdout, "exit codes: 0 done, 1 the verb said no (slowtests, local, github receipt), 2 usage or could not run", verb)
 		assert.Contains(t, stdout, own, verb)
 		for other, row := range rows {
 			if other != verb {

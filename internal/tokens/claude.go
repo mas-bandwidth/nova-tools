@@ -90,20 +90,21 @@ var usageKeys = map[string]Type{
 // itself rather than a model being paid for.
 const syntheticModel = "<synthetic>"
 
-// ReadClaude walks a transcript directory and returns its stream and its accounting.
+// ReadClaude walks a transcript tree and returns its stream and its accounting.
 //
 // Every message carries no unit, which the fold writes as `-`: a transcript names a repo,
-// never a piece of work.
-func ReadClaude(label, dir string, rules *Rules) *Source {
+// never a piece of work. The tree is read through the caller's fs.FS, rooted at dir
+// (os.DirFS(dir) in main, fstest.MapFS in a test), and dir is the path the report names.
+func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 	s := &Source{Label: Label(KindClaude, label), Kind: KindClaude, Path: dir, Reports: ClaudeTypes, Basis: UTC}
 
 	var files []string
-	walkErr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	walkErr := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			if p == dir {
+			if p == "." {
 				return err
 			}
-			s.unreadable(p, err.Error())
+			s.unreadable(filepath.Join(dir, p), err.Error())
 			return nil
 		}
 		if d.IsDir() {
@@ -123,9 +124,10 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 	}
 	sort.Strings(files)
 
-	for _, path := range files {
+	for _, name := range files {
+		path := filepath.Join(dir, name)
 		s.Stat.Files++
-		f, err := openSource(path)
+		f, err := openSourceFS(fsys, name)
 		if err != nil {
 			s.unreadable(path, err.Error())
 			continue

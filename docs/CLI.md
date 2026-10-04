@@ -7,7 +7,7 @@ Command reference and worked examples. Run shell examples from the repository ro
 ## nova-check
 
 ```
-nova-check quickstart --dir <dir> [--fail-max <n>] # the first run: links, then nocode, both run even if the first says NO
+nova-check quickstart --dir <dir> [--max <n>] # the first run: links, then nocode, both run even if the first says NO
 nova-check attest --home <dir> --manifest <file>   # did the full self load: count + bytes + sha256, pasteable at session start
 nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]   # every relative inline link resolves; --file (repeatable) checks just those files, not the whole tree; --exclude (repeatable) keeps a path prefix out of the scan and out of the check
 nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
@@ -19,10 +19,10 @@ nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor 
 nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
 nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>] [--dry-run]   # append one receipt, refusing a verb the list does not declare
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]   # append one receipt, refusing a verb the list does not declare
 nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
 nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>] [--dry-run]   # are we converging: one line per stream, now against --since, with the ratio and the trend
-nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--dry-run] [--exclude <prefix>] [--fail-max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
+nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--dry-run] [--exclude <prefix>] [--max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
 ```
 
 Most verbs only read. Three write, each only when asked and each with `--dry-run`, which makes every check and writes nothing: `dogfood record` appends a receipt, `spelling --write` edits files in place, `convergence --state` stores its two-tick streak. `convergence` also reads the forge through `gh`, over the network. A refusal is one line, `nova-check[ <verb>] REFUSED: <why>; run: nova-check help`; `<verb> -h` ends in the verb's `effect:` line.
@@ -42,7 +42,7 @@ $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
 ```
 
-**Reading it.** Every line is `<CHECK> OK` or `<CHECK> FAIL`; FAIL lines go to stderr with the subject named. `worst-exit=` is the run's exit code. A failing run is bounded: `attest`, `links`, `nocode`, `corpus` and `quickstart` print at most `--fail-max` FAIL lines (default 20, `0` for all), then one `MORE` line naming the flag that shows the rest, then a count line that prints on success too. The four verbs `quickstart` names at the end each want something only you have: a size budget, a boot manifest, a seed to compare against, a ledger of what you have chosen never to lose.
+**Reading it.** Every line is `<CHECK> OK` or `<CHECK> FAILED`; FAILED lines go to stderr with the subject named. `worst-exit=` is the run's exit code. A failing run is bounded: `attest`, `links`, `nocode`, `corpus` and `quickstart` print at most `--max` FAILED lines (default 20, `0` for all), then one `MORE` line naming the flag that shows the rest, then a count line that prints on success too. The four verbs `quickstart` names at the end each want something only you have: a size budget, a boot manifest, a seed to compare against, a ledger of what you have chosen never to lose.
 
 **What the flags want.** `--dir`, `--home` and `--root` are directories you write out, never the working directory. `--file` is one file to measure, with exactly one of `--max-bytes <n>` or `--max-tokens <n> --bytes-per-token <r>`; the divisor is one you measured on your own writing, because one the tool supplied would make the answer a guess that looked like an instrument. `--manifest` is a text file of paths relative to `--home`; `--ledger` is your markdown ledger of protected material and `--min-anchors <n>` its row floor. A run missing several flags names all of them at once. A typo or an unknown verb is one line that names the door (`run: nova-check help`), never the whole banner.
 
@@ -103,7 +103,7 @@ DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from St
 
 A `--closes` naming an id nothing carries closes nothing and leaves the edge
 open: a typo must never read as a close. A receipt the tool cannot parse is exit 1 and a named
-`DOGFOOD FAIL` line, never a quietly shorter ledger. A receipt naming a verb
+`DOGFOOD FAILED` line, never a quietly shorter ledger. A receipt naming a verb
 the list does not declare is named one by one — its file, what it claimed and
 the nearest declared verb — by `ledger` AND by `gate`, because a release lane
 must not be able to pass or fail without learning that the evidence it read was
@@ -194,7 +194,7 @@ $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@m
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
-HYGIENE NO base=main head=card paths=sign/** findings=4
+HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 ### Are we converging
@@ -791,6 +791,7 @@ usage:
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
   nova-swarm slots list --store <dir>
+  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
@@ -1546,7 +1547,7 @@ same file again is left unchanged, and a file holding anything else is never
 overwritten. The executable transcript is in [TESTS.md](TESTS.md#nova-update).
 The report reads only installed identities. UNKNOWN means a partial inventory; it
 never means zero or current. Replace the example with your own six-column manifest
-for your bench; it and any snapshot path belong to the caller.
+for your bench; it and any state path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported
@@ -1555,8 +1556,8 @@ UNKNOWN. A row holding a whole argv (`go version`) is run as written.
 Use `nova-update help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. Updates require an explicit `nova-update apply --file ... name`;
 models are listed for the owner to evaluate and pull themselves. No timer is installed.
-For recovery across process death, name `--snapshot`; retries retain the prepared
-note. Version statuses should go to your chosen integrator, with optional Cc;
+For recovery across process death, name `--state`; retries retain the prepared note.
+Version statuses should go to your chosen integrator, with optional Cc;
 participation and updates remain voluntary.
 
 `status` is `check` with every entry's line shown, the current ones too, exit 0 when
@@ -1575,7 +1576,7 @@ nova-update apply --file versions.tsv go --dry-run
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
 `--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
-`--remote` and `--branch`. A busy snapshot wants the current writer to finish
+`--remote` and `--branch`. A busy state file wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
 
 ### The release verb
@@ -1722,7 +1723,7 @@ and a file holding anything else is never overwritten. The executable transcript
 in [TESTS.md](TESTS.md#nova-version).
 The report reads only installed identities. UNKNOWN means a partial inventory; it
 never means zero or current. Replace the example with your own six-column manifest
-for your bench; it and any snapshot path belong to the caller.
+for your bench; it and any state path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported
@@ -1764,10 +1765,6 @@ refused healthy binaries and named a build repair that would have found nothing
 `diff` reads two such files and reports changed, added or removed entries without
 executing the binaries.
 
-This four-column inventory is **not** the six-column manifest accepted by
-`report --file`; the `--bin/--out` shape has no `--owner` flag. The report's
-`--snapshot` option below is a separate delivery-recovery file.
-
 `snapshot`'s `--file` shape instead reads the six-column manifest the caller has
 already adopted and counts how many of its tools answer, printing one
 `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line and one
@@ -1782,13 +1779,13 @@ Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
 `platform=`, are accepted as metadata. A binary that prints no version line is
 refused by name; a partial inventory is not reported as complete. For recovery
-across process death, name `--snapshot`; retries retain the prepared note.
+across process death, name `--state`; retries retain the prepared note.
 Version reports can be sent to the recipient you select, with optional Cc.
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
 `--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
-`--remote` and `--branch`. A busy snapshot wants the current writer to finish
+`--remote` and `--branch`. A busy state file wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
 
 

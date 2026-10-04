@@ -19,19 +19,16 @@ tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 
 .github/scripts/foo.sh SPEC-CI.md's invented script in `x=$(bash ...)`, shown as something that is not a producer
-.github/seat-rule-gate.sh SPEC-SECRETS.md names the workflow script that is deliberately NOT here: the rule lives in the tool instead
 docs/bus internal/bus/git.go's failure narrative: a bus directory pointed inside a larger repository
 docs/bus/from-bo/x.md the path that same narrative says git reports from the repository root
 docs/history SPEC.md's `--allow docs/history` example for subdirectory enumeration
 internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS entry card-nx-f19 named that did not exist at its base
-internal/secretsanta/ SPEC-RELEASE.md's example of what prefix matching on `internal/secrets` would also catch
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
 docs/nova-lessons.md the lessons file lives in the self repository; internal/pulse/watch.go cites it as the source of its rules
-scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
 
-# internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, Glenn: "Yes it's dead. remove."); the specs cite its files at named commits as history.
+# internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, the owner: "Yes it's dead. remove."); the specs cite its files at named commits as history.
 internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cardheader.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
@@ -43,3 +40,5 @@ internal/pulse/kinds.go internal/pulse deleted 2026-09-25 (#3969); cited as hist
 internal/pulse/manager.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/statushtmlrows.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 cmd/nova-swarm/testdata/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
+internal/secrets/storepull.go deleted with the dead storepull.go (dead-pkg-secrets-t2b); the 1.1.0 ratings doc cites it as history
+cmd/nova-ci/timing.go moved to tools/citiming/main.go; the 1.1.0 ratings cite it as history

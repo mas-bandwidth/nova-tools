@@ -250,22 +250,6 @@ func (s Source) Extras() []string {
 	}
 }
 
-// LineWithSource is the version line the build stamps into a binary, with Source
-// metadata attached. It is the writer `apply --sha` uses on every binary it builds, so
-// the postflight can read source back with FindSource and verify it against the manifest
-// the build recorded.
-//
-// The four mandatory tokens come first, the four source tokens follow in Extras() order,
-// and any extras the caller wants to add (a file digest, a backend label) come after.
-// Writer and reader are the one pair this package has always been, so a Source round-
-// trips through Line and Parse into itself: a tool that adds a fact cannot break a
-// consumer that has never heard of it, and a reader that has never seen the source
-// metadata reads the four tokens it knows and ignores the rest.
-func LineWithSource(tool, stamped string, src Source, extras ...string) string {
-	all := append(src.Extras(), extras...)
-	return Line(tool, stamped, all...)
-}
-
 // sourceKeys is the set of keys FindSource reads from Extras.
 var sourceKeys = map[string]bool{"repo": true, "revision": true, "dirty": true, "build_host": true}
 

@@ -313,7 +313,7 @@ func scan(file, src string) (scanned, *fault) {
 			forLocals = forNames(toks[i+1:])
 		case tok.text == "return" && functions == 0:
 			return scanned{}, &fault{tok.line, "this return is outside every function, so the library's load would end here and every later file would register nothing; return only inside a function"}
-		case tok.text == "redis" && !(i > 0 && toks[i-1].kind == tokenSymbol && (toks[i-1].text == "." || toks[i-1].text == ":")):
+		case tok.text == "redis" && (i <= 0 || toks[i-1].kind != tokenSymbol || !(toks[i-1].text == "." || toks[i-1].text == ":")):
 			if name, at, noWrites, ok := registered(toks[i:]); ok {
 				out.regs = append(out.regs, registration{name: name, file: file, line: at, noWrites: noWrites})
 			}

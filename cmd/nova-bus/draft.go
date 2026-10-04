@@ -26,8 +26,8 @@ import (
 // Its standard output is a FILE: the skeleton, alone, with no OK line under it, so
 // `nova-bus draft ... > draft.md` is a draft. Refusals go to stderr like every other
 // verb's, and every one of them is printed rather than the first.
-func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("draft")
+func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time, e runEnv) int {
+	f := newFlagsWith("draft", e.getenv)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required: the roster lives in it)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	to := f.fs.String("to", "", "who the note is to, as a To line: names, aliases or a group, separated by ; (required)")
@@ -90,10 +90,18 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			remote: *remote, branch: *branch, maxBodyBytes: *maxBodyBytes,
 			gitTimeout: *gitTimeout,
 			reGiven:    len(re) > 0, toGiven: given["to"], ccGiven: given["cc"],
-			subjectGiven: given["subject"],
+			subjectGiven:     given["subject"],
+			publishDraft:     e.publishDraft,
+			refreshCheckout:  e.refreshCheckout,
+			checkoutLockWait: e.checkoutLockWait,
+			workingDir:       e.workingDir,
 		}, f, stdout, stderr, now)
 	}
-	c, err := bus.LoadConfig(*busDir)
+	busRoot := *busDir
+	if !filepath.IsAbs(busRoot) && e.workingDir != "" {
+		busRoot = filepath.Join(e.workingDir, busRoot)
+	}
+	c, err := bus.LoadConfig(busRoot)
 	if err != nil {
 		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
@@ -113,8 +121,8 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			}
 			cur = parent
 		}
-		curResolved := resolveForCompare(cur)
-		root := resolveForCompare(*busDir)
+		curResolved := resolveForCompareIn(e.workingDir, cur)
+		root := resolveForCompareIn(e.workingDir, *busDir)
 		if curResolved == root || strings.HasPrefix(curResolved, root+string(filepath.Separator)) {
 			problems = append(problems, fmt.Errorf("--out %s is inside the bus checkout at %s; drafts go outside the bus, because send needs its tree clean", *out, root))
 		}
@@ -225,7 +233,7 @@ func draftOpenReadFailure(busDir string, me bus.Participant, maxWords int, haveM
 		wordLimit = fmt.Sprintf("%d", maxWords)
 		wordLimitNote = fmt.Sprintf("--receipt-max-words %d is the resolved positive word-count threshold for classifying short receipts", maxWords)
 	}
-	recovery := fmt.Sprintf("nova-bus inbox --bus %s --as %s --receipt-max-words %s --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'", oneline.Escape(shellQuote(busDir)), oneline.Escape(shellQuote(me.Name)), oneline.Escape(wordLimit))
+	recovery := fmt.Sprintf("nova-bus inbox --bus %s --as %s --receipt-max-words %s --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'", oneline.Escape(oneline.ShellWord(busDir)), oneline.Escape(oneline.ShellWord(me.Name)), oneline.Escape(wordLimit))
 	recoveryNote := "--carry-history preserves existing history, avoids first-advance refusal or discarding prior notes, and --advance moves and pushes the cursor"
 	placeholders := "replace the remote and branch placeholders; " + wordLimitNote
 	var pathErr *os.PathError
@@ -294,7 +302,7 @@ func writeSkeleton(path string, overwrite bool, skeleton string, stdout, stderr 
 			return 2
 		}
 		if _, err := fmt.Fprint(f, skeleton); err != nil {
-			f.Close()
+			_ = f.Close() // ignored: the write's error is the one this refusal reports
 			fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 			return 2
 		}
@@ -324,7 +332,7 @@ func writeSkeleton(path string, overwrite bool, skeleton string, stdout, stderr 
 		return 2
 	}
 	if _, err := fmt.Fprint(f, skeleton); err != nil {
-		f.Close()
+		_ = f.Close() // ignored: the write's error is the one this refusal reports
 		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
 	}

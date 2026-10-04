@@ -42,8 +42,10 @@ func TestDarwinVanishedGitIsNotAnUnreadableCwd(t *testing.T) {
 	_, err = gitProcsFromPS("501 77 git status\n", "501", map[string]string{}, nil, func(string) (bool, error) {
 		return true, nil
 	})
-	require.False(t, err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown), "still-present git with no cwd: err=%v", err)
-	require.False(t, strings.Contains(err.Error(), "\n") || len(err.Error()) > ownershipDiagCap, "diagnostic is not bounded: %q", err)
+	require.False(t, err == nil, "still-present git with no cwd: err=%v", err)
+	require.False(t, !strings.HasPrefix(err.Error(), ownershipUnknown), "still-present git with no cwd: err=%v", err)
+	require.False(t, strings.Contains(err.Error(), "\n"), "diagnostic is not bounded: %q", err)
+	require.False(t, len(err.Error()) > ownershipDiagCap, "diagnostic is not bounded: %q", err)
 }
 
 // #3029 on the Studio: lsof -c git exits 1 with no output when no git is running at the

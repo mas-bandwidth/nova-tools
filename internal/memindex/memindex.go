@@ -52,9 +52,9 @@ import (
 	"unicode/utf8"
 )
 
-// SchemaVersion names the token space: tokenizer + normalizer + chunking
+// SchemaVersion names the token scheme: tokenizer + normalizer + chunking
 // rules together. It is printed by stats and would key any future persisted
-// index, so a schema change can never silently mix token spaces —
+// index, so a schema change can never silently mix token schemes —
 // preprocessing drift is a failure that corrupts quietly.
 const SchemaVersion = "nova-memory/2"
 
@@ -103,19 +103,19 @@ type Corpus struct {
 func Normalize(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
-	prevSpace := false
+	prevWhitespace := false
 	for _, r := range s {
 		switch {
 		case strings.ContainsRune("*_`>#|[]()", r):
 			continue
 		case unicode.IsSpace(r):
-			if !prevSpace {
+			if !prevWhitespace {
 				b.WriteRune(' ')
-				prevSpace = true
+				prevWhitespace = true
 			}
 		default:
 			b.WriteRune(unicode.ToLower(r))
-			prevSpace = false
+			prevWhitespace = false
 		}
 	}
 	return strings.TrimSpace(b.String())

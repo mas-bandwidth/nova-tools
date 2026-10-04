@@ -65,9 +65,9 @@ var checkAudit = audit.Config{
 		// fed to `git cat-file --batch`'s STDIN pipe, a lookup key that must
 		// reach git verbatim. Nothing the pipe carries is printed; what this
 		// package prints is the reply's classification, through the escaped
-		// FAIL lines. TestNoCodeStagedSaysNo and TestNoCodeStagedClassifiesTheIndex
+		// FAILED lines. TestNoCodeStagedSaysNo and TestNoCodeStagedClassifiesTheIndex
 		// are the behavioural tests for the reader it feeds.
-		"staged.go|stagedBlobHeads|oid": "a hex object id from git's own diff-index output, written to the batch reader's stdin pipe rather than to any output stream; it is a lookup key that must reach git verbatim, and the reply's classification -- not this -- is what gets printed, escaped, in the FAIL lines",
+		"staged.go|stagedBlobHeads|oid": "a hex object id from git's own diff-index output, written to the batch reader's stdin pipe rather than to any output stream; it is a lookup key that must reach git verbatim, and the reply's classification -- not this -- is what gets printed, escaped, in the FAILED lines",
 	},
 	Imports: []string{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
@@ -83,7 +83,7 @@ var checkAudit = audit.Config{
 		// maps and slices sort map keys (slices.Sorted(maps.Keys), slices.AppendSeq):
 		// they return values and hold no writer.
 		`"maps"`, `"slices"`,
-		// bounded prints the capped FAIL listings and the one MORE line that stands for
+		// bounded prints the capped FAILED listings and the one MORE line that stands for
 		// what they did not print. Every line reaching it is rendered by a fmt.Sprintf in
 		// THIS package, which the classifier walks like any other print site, and bounded
 		// puts its own two fields -- the kind and the remedy -- through oneline before
@@ -118,7 +118,7 @@ var checkAudit = audit.Config{
 		// bufio READS the batch reader's framed stream (NewReader, ReadString,
 		// ReadByte) from a pipe this package opened; bytes holds the stdout
 		// and stderr buffers the git subprocesses write into, which are read
-		// here and reach a stream only through refuse or the FAIL lines, both
+		// here and reach a stream only through refuse or the FAILED lines, both
 		// escaped; errors builds one-line git failure text; os/exec runs the
 		// git plumbing (rev-parse, diff-index, cat-file --batch) whose output
 		// is parsed, never printed raw; path/filepath resolves and splits

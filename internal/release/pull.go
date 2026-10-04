@@ -59,8 +59,8 @@ func MarkPulled(text, version, note string) (string, error) {
 	lines := strings.Split(text, "\n")
 	heading := -1
 	for i, line := range lines {
-		// A changelog heading is `## <version>` followed by whitespace, and that space is what
-		// keeps v0.16.0 off v0.16.0-rc1's section.
+		// A changelog heading is `## <version>` followed by whitespace, and that whitespace
+		// character is what keeps v0.16.0 off v0.16.0-rc1's section.
 		if strings.HasPrefix(line, "## "+version+" ") || strings.TrimRight(line, " \t") == "## "+version {
 			heading = i
 			break
