@@ -274,11 +274,16 @@ func ValidID(s string) bool { return len(s) <= MaxIDLen && idRE.MatchString(s) }
 const MaxIDLen = 128
 
 // ValidCardID says a card's id is its parts joined by dots, each a ValidID word: a
-// primary (p), a work card (p.w1), a read card (p.r1.reader).
+// primary (p), a work card (p.w1), a read card (p.r1.reader, or p.r1.reader.g1 with generation suffix).
 func ValidCardID(s string) bool {
 	parts := strings.Split(s, ".")
-	if len(parts) > 3 {
+	if len(parts) > 4 || len(parts) == 0 {
 		return false
+	}
+	if len(parts) == 4 {
+		if !strings.HasPrefix(parts[1], "r") || !isGenSuffix(parts[3]) {
+			return false
+		}
 	}
 	for _, p := range parts {
 		if !ValidID(p) {
@@ -286,6 +291,14 @@ func ValidCardID(s string) bool {
 		}
 	}
 	return true
+}
+
+func isGenSuffix(s string) bool {
+	if len(s) < 2 || s[0] != 'g' {
+		return false
+	}
+	n, err := strconv.Atoi(s[1:])
+	return err == nil && n >= 1
 }
 
 // WorkCardID is the identity of a primary's work card for one attempt.
@@ -296,6 +309,18 @@ func WorkCardID(primary string, attempt int) string {
 // ReadCardID is the identity of one reader's read of a primary at one attempt.
 func ReadCardID(primary string, attempt int, reader string) string {
 	return primary + ".r" + strconv.Itoa(attempt) + "." + reader
+}
+
+// ReadCardSecondID is the second identity of one reader's read of a primary at one attempt,
+// given to a re-asked read when a retired card with the plain identity exists (e.g. taken back by the away sweep).
+func ReadCardSecondID(primary string, attempt int, reader string) string {
+	return ReadCardID(primary, attempt, reader) + ".g1"
+}
+
+// ReadCardIDs returns both the plain identity and the second identity for a reader's read of a primary at an attempt.
+func ReadCardIDs(primary string, attempt int, reader string) []string {
+	plain := ReadCardID(primary, attempt, reader)
+	return []string{plain, plain + ".g1"}
 }
 
 // CtlID is the identity of a stream's or a member's control card.
@@ -317,7 +342,14 @@ func ParseWorkCard(id string) (primary string, attempt int, ok bool) {
 // ParseReadCard splits a read card identity into its primary, attempt and reader.
 func ParseReadCard(id string) (primary string, attempt int, reader string, ok bool) {
 	parts := strings.Split(id, ".")
-	if len(parts) != 3 || !strings.HasPrefix(parts[1], "r") {
+	if len(parts) == 4 {
+		if !isGenSuffix(parts[3]) {
+			return "", 0, "", false
+		}
+	} else if len(parts) != 3 {
+		return "", 0, "", false
+	}
+	if !strings.HasPrefix(parts[1], "r") {
 		return "", 0, "", false
 	}
 	n, err := strconv.Atoi(parts[1][1:])

@@ -180,11 +180,26 @@ func enoughReadersUp(s *Snapshot, pr *Card) bool {
 // at its current attempt and head (okReaders).
 func acceptable(s *Snapshot, pr *Card) bool { return len(okReaders(s, pr)) >= ReadsNeeded(pr) }
 
+// placedReadsAt is the primary's placed read cards at an attempt,
+// checking both the plain identity and the second identity (.g1).
+func placedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
+	var out []*Card
+	for _, r := range s.Readers.Rows() {
+		for _, id := range ReadCardIDs(pr.ID, attempt, r) {
+			if c := s.Readers.Placed(id); c != nil {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
 // the ask takes back or places again: the reads that stand.
 func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	var out []*Card
-	for _, rc := range readsAt(s, pr, attempt) {
+	for _, rc := range placedReadsAt(s, pr, attempt) {
 		if !awayRead(s, rc) && !returnedRead(rc) {
 			out = append(out, rc)
 		}
@@ -206,14 +221,37 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
+// ReadCardForAsk returns the read card ID to use when asking a reader of a primary
+// at an attempt: plain identity if no card exists yet, or second identity if an
+// away-retired card exists with the plain identity and no second card exists yet.
+// ok is true if the reader is eligible to be asked.
+func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id string, ok bool) {
+	plain := ReadCardID(primary, attempt, reader)
+	existing := s.Readers.Card(plain)
+	if existing == nil {
+		return plain, true
+	}
+	if existing.F("retired_by") == "away" {
+		second := ReadCardSecondID(primary, attempt, reader)
+		if s.Readers.Card(second) == nil {
+			return second, true
+		}
+	}
+	return plain, false
+}
+
 // freeReaders is the readers the ask may ask the primary's attempt of: up,
 // with no read card of it at the attempt, placed or retired (a reader with
-// one, even retired, has read it).
+// one, even retired, has read it). When an away-retired card exists with the
+// plain identity and no second card exists yet, the reader is eligible to be
+// re-asked under second identity .g1.
 func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 	var out []string
 	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
-			out = append(out, rd)
+		if s.ReaderIsUp(rd) {
+			if _, ok := ReadCardForAsk(s, pr.ID, attempt, rd); ok {
+				out = append(out, rd)
+			}
 		}
 	}
 	return out
@@ -239,7 +277,7 @@ func sweepReads(s *Snapshot, p *Plan) {
 			return false
 		}
 		for _, rd := range up {
-			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
+			if _, ok := ReadCardForAsk(s, c.F("primary"), c.Int("attempt"), rd); ok {
 				return true
 			}
 		}
@@ -393,7 +431,8 @@ func levelReads(s *Snapshot, p *Plan) {
 		for ; i >= 0 && to == ""; i-- {
 			avoid := []string{long}
 			for _, rd := range up {
-				if id := ReadCardID(q[i].F("primary"), q[i].Int("attempt"), rd); s.Readers.Card(id) != nil || planned[id] {
+				targetID, ok := ReadCardForAsk(s, q[i].F("primary"), q[i].Int("attempt"), rd)
+				if !ok || planned[targetID] {
 					avoid = append(avoid, rd)
 				}
 			}
@@ -409,12 +448,12 @@ func levelReads(s *Snapshot, p *Plan) {
 		queues[long] = append(q[:i:i], q[i+1:]...)
 		moves[c.ID] = to
 		fields := movedReadFields(c, to, s.Now)
-		id := ReadCardID(c.F("primary"), c.Int("attempt"), to)
-		planned[id] = true
+		targetID, _ := ReadCardForAsk(s, c.F("primary"), c.Int("attempt"), to)
+		planned[targetID] = true
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{
 			change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByLevel})),
-			change(Readers, createEntry(id, to, Asked, c.Score, fields)),
-		}, Moved: fmt.Sprintf("%s %s:asked -> %s:asked (%s)", c.ID, long, to, id)})
+			change(Readers, createEntry(targetID, to, Asked, c.Score, fields)),
+		}, Moved: fmt.Sprintf("%s %s:asked -> %s:asked (%s)", c.ID, long, to, targetID)})
 	}
 	roundWrites(p, rr, moves)
 }
