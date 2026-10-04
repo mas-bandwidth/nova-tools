@@ -254,7 +254,7 @@ children's; OpenCode is above.
 The two installed harnesses have adapters (`adapter_dsh.go`, `adapter_gemini.go`);
 the rest are `Stub` with a surveyed reason (`adapter_refused.go`): known to
 `install --harness`, passive, refusing every delivery with the one-line reason above.
-Not measured: whether `dsh headless` adopts a session the desktop app holds
+Measured 2026-10-04 on Zhi's open desktop session (session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b, preset "minimal"): `dsh headless --session-id` refuses with the preset error, and the adapter defers that delivery (route=defer) rather than losing it. The open session's persisted directory holds an empty `session.lock` and one `session.v4.jsonl.zstd` transcript; no append-to-file, local-socket, or IPC route into the live desktop turn is exposed by the app. Until DSH exposes one, the fallback is the session's own blocking bus read, and the daemon reports route=defer, never a silent loss. Not measured before: whether `dsh headless` adopts a session the desktop app holds
 open (a `session.lock` sits in every session directory), and whether the
 desktop app shows the pushed turn live or on its next load.
 A session that has selected an agent preset is refused by the one-shot runner
