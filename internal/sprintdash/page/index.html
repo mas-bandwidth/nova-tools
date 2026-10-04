@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>nova-sprint</title>
 <!--FAVICON-->
-<script>try{var t=localStorage.getItem("sprint-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+<script>try{localStorage.removeItem("sprint-theme")}catch(e){}</script>
 <style>
 /* the wordmark's face, served from the binary beside its licence (OFL): the page loads nothing from elsewhere */
 @font-face { font-family: "Nunito"; font-style: normal; font-weight: 800; font-display: swap; src: url("nunito-800.woff2") format("woff2"); }
-/* Dark is the designed-for theme and the default; light is a toggle only.
+/* Dark is the designed-for theme and the default.
    Type is set large (28 px base) to read from across the room; the spacing
    grid is 16 px. Tables never scroll sideways: a table too wide takes its compact form. */
 :root, :root[data-theme="dark"] {
@@ -41,33 +41,6 @@
   --cell-h: 1rem;
   --flash: #7cb4ff;
   --flash-tint: rgba(57,135,229,.24);
-}
-:root[data-theme="light"] {
-  color-scheme: light;
-  --bg: #f4f5f7;
-  --surface: #ffffff;
-  --border: #e3e5e9;
-  --border-strong: #d2d6dc;
-  --text: #121417;
-  --text-2: #525963;
-  --text-3: #868d97;
-  --track: #e6e8ec;
-  --s-waiting: #c3c7cd;
-  --s-ready: #9aa0a9;
-  --s-working: #2a78d6;
-  --s-review: #e87ba4;
-  --s-merging: #eda100;
-  --s-landed: #1baf7a;
-  --good: #0f8a3c;
-  --warning: #b77900;
-  --serious: #c4552b;
-  --critical: #c93434;
-  --good-tint: rgba(15,138,60,.10);
-  --warning-tint: rgba(232,160,0,.14);
-  --critical-tint: rgba(201,52,52,.10);
-  --neutral-tint: rgba(82,89,99,.08);
-  --flash: #1f62b8;
-  --flash-tint: rgba(42,120,214,.16);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -102,8 +75,6 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .live { display: inline-flex; align-items: center; gap: 1rem; font-size: 1.625rem; color: var(--text-2); }
 .dot { width: 1rem; height: 1rem; border-radius: 50%; background: var(--text-3); flex: none; }
 .live.ok .dot { background: var(--good); }
-button.toggle { font: inherit; font-size: 1.5rem; height: 3rem; padding: 0 1rem; border-radius: 0.75rem; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; }
-button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 
 /* hero */
 /* five tiles at full size: one row of five from 2000 px; three and two below that; two per row (the last full width, centred) below 1100 px */
@@ -299,7 +270,6 @@ footer a:hover { color: var(--text); }
   </div>
   <div class="right">
     <span class="live" id="live"><span class="dot"></span><span id="live-text">Connecting</span></span>
-    <button class="toggle" id="theme" type="button" aria-label="Switch theme">Light</button>
   </div>
 </header>
 

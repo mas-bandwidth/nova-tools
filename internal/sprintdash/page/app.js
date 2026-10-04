@@ -481,15 +481,6 @@ function apply(j) {
   if (j.build) { if (build == null) build = j.build; else if (build !== j.build) location.reload(); }
 }
 
-// theme: dark by default, light by the toggle only
-function syncThemeButton() { setText($("theme"), document.documentElement.dataset.theme === "light" ? "Dark" : "Light"); }
-$("theme").addEventListener("click", function () {
-  var next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-  document.documentElement.dataset.theme = next;
-  try { localStorage.setItem("sprint-theme", next); } catch (e) {}
-  syncThemeButton();
-});
-syncThemeButton();
 // the stream reconnects on its own; while it is not open, the timer's poll runs
 if (window.EventSource) {
   stream = new EventSource("/events");
