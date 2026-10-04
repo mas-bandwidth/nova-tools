@@ -67,16 +67,20 @@ func (b *Bus) RecvBatch(ctx context.Context, as, consumer string, block time.Dur
 // PendingPage reads only this consumer's existing pending entries, in stream
 // order strictly after the cursor, without claiming or acknowledging them
 // (SPEC-BUS2.md, receive helpers). Ownership is observed at query time.
-func (b *Bus) PendingPage(ctx context.Context, as, consumer, after string, count int) ([]Entry, error) {
+func (b *Bus) PendingPage(ctx context.Context, as, consumer, after string, count int) ([]Entry, string, error) {
 	if err := receiveBounds(consumer, after, count); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := b.receiveGroup(ctx, as); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	ids, err := b.Store.PendingPage(ctx, StreamOf(as), as, consumer, after, count)
 	if err != nil || len(ids) == 0 {
-		return nil, err
+		return nil, "", err
 	}
-	return b.Store.Get(ctx, StreamOf(as), ids)
+	entries, err := b.Store.Get(ctx, StreamOf(as), ids)
+	if err != nil {
+		return nil, "", err
+	}
+	return entries, ids[len(ids)-1], nil
 }

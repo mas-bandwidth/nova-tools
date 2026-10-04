@@ -2,6 +2,7 @@ package bus2
 
 import (
 	"context"
+	"errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -17,7 +18,7 @@ func TestConsumerPendingPagesDoNotStealInteractiveWork(t *testing.T) {
 	interactive, ok, err := b.Recv(ctx, "bob", 0)
 	require.NoError(t, err)
 	require.True(t, ok)
-	page, err := b.PendingPage(ctx, "bob", "daemon", "", 10)
+	page, _, err := b.PendingPage(ctx, "bob", "daemon", "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, page)
 	batch, err := b.RecvBatch(ctx, "bob", "daemon", 0, 10)
@@ -28,7 +29,7 @@ func TestConsumerPendingPagesDoNotStealInteractiveWork(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, batch, 1)
 	assert.Equal(t, interactive.Entry, batch[0].Entry, "stale claim transfers by design")
-	page, err = b.PendingPage(ctx, "bob", Consumer, "", 10)
+	page, _, err = b.PendingPage(ctx, "bob", Consumer, "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, page)
 }
@@ -49,9 +50,9 @@ func TestConsumerPendingPagesCoverMoreThanOneThousandInOrder(t *testing.T) {
 	var cursor string
 	seen := map[string]bool{}
 	for {
-		page, err := b.PendingPage(ctx, "bob", "daemon", cursor, 137)
+		page, next, err := b.PendingPage(ctx, "bob", "daemon", cursor, 137)
 		require.NoError(t, err)
-		if len(page) == 0 {
+		if next == "" {
 			break
 		}
 		for _, e := range page {
@@ -62,6 +63,7 @@ func TestConsumerPendingPagesCoverMoreThanOneThousandInOrder(t *testing.T) {
 			seen[e.Entry] = true
 			cursor = e.Entry
 		}
+		cursor = next
 	}
 	assert.Len(t, seen, 1205)
 }
@@ -73,7 +75,7 @@ func TestBatchReceiveRejectsInvalidBoundsBeforeStoreCommands(t *testing.T) {
 		_, err := b.RecvBatch(context.Background(), "bob", "daemon", 0, n)
 		require.Error(t, err)
 	}
-	_, err := b.PendingPage(context.Background(), "bob", "daemon", "bad", 10)
+	_, _, err := b.PendingPage(context.Background(), "bob", "daemon", "bad", 10)
 	require.Error(t, err)
 	assert.Zero(t, f.Trips)
 }
@@ -85,4 +87,33 @@ func TestFakePendingPageUsesNumericStreamIDOrder(t *testing.T) {
 	ids, err := f.PendingPage(context.Background(), "s", "g", "daemon", "9-0", 10)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"10-0", "10-2", "10-10"}, ids)
+}
+
+func TestPendingPageAdvancesPastMissingBodies(t *testing.T) {
+	t.Parallel()
+	b, f := rig(t, "ada", "bob")
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		_, err := b.Send(ctx, msg("ada", "bob"))
+		require.NoError(t, err)
+	}
+	got, err := b.RecvBatch(ctx, "bob", "daemon", 0, 3)
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	f.streams[StreamOf("bob")] = f.streams[StreamOf("bob")][2:]
+	empty, next, err := b.PendingPage(ctx, "bob", "daemon", "", 2)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+	assert.Equal(t, got[1].Entry, next)
+	page, last, err := b.PendingPage(ctx, "bob", "daemon", next, 2)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	assert.Equal(t, got[2].Entry, last)
+	_, end, err := b.PendingPage(ctx, "bob", "daemon", last, 2)
+	require.NoError(t, err)
+	assert.Empty(t, end)
+	f.Fail = errors.New("store unavailable")
+	_, failed, err := b.PendingPage(ctx, "bob", "daemon", last, 2)
+	require.Error(t, err)
+	assert.Empty(t, failed, "errors never publish a successful cursor")
 }
