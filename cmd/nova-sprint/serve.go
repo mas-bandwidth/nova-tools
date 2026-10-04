@@ -316,6 +316,21 @@ func (a *app) listen(addr, store string, stdout io.Writer) error {
 // its value: what her machinery reports of her work (friend beat).
 var friendBeatFlags = map[string]func(string) bool{
 	"--running": runningIDs,
+	"--working": wholeAtLeast(0),
+	"--queue":   wholeAtLeast(0),
+	"--width":   wholeAtLeast(1),
+	"--load": func(v string) bool {
+		f, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64)
+		return err == nil && f >= 0
+	},
+}
+
+// wholeAtLeast is the shape of a count of at least min.
+func wholeAtLeast(min int) func(string) bool {
+	return func(v string) bool {
+		n, err := strconv.Atoi(v)
+		return err == nil && n >= min
+	}
 }
 
 // friendBeatServed names friendBeatFlags for a refusal.

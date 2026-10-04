@@ -1037,7 +1037,7 @@ nova-sprint fleet down <member>
 nova-sprint fleet sync [--check] [--pg <dsn>]
 nova-sprint fleet level
 nova-sprint friend sync [--pg <dsn>]
-nova-sprint friend beat <friend> [--running <id>,...]
+nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
 nova-sprint friend down <friend>
 nova-sprint friend up <friend> [--width <n>]
 nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"strconv"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,7 +95,7 @@ func friendVerbWords(name string) string {
 	sync := "The name is one friend row of the friends table. friend sync copies those rows from nova-config; a name the table lacks is refused and the line names friend sync. friend sync exits 3 when the config cannot be read or holds no friend row. nova-sprint help friend says how the friends table is kept."
 	switch name {
 	case "friend beat":
-		return "friend beat records that this friend is present, and --running the cards she is running now, which friend take and friend down leave with her. The friend's own machinery runs it every " + every + ". The friend is up while the last beat is under " + down + " old, and down once that long has passed with no beat, or when the friend has never beaten. A beat wakes the friend at once. " + sync + "\n"
+		return "friend beat records that this friend is present, and --running the cards she is running now, which friend take and friend down leave with her. --working, --queue and --width are her own counts as her daemon keeps them, and --load her load as a percent, as fleet beat --load gives a machine's: her word, carried on where --json's friends beside the table's counts, which stay the sprint's. The friend's own machinery runs it every " + every + ". The friend is up while the last beat is under " + down + " old, and down once that long has passed with no beat, or when the friend has never beaten. A beat wakes the friend at once. " + sync + "\n"
 	case "friend down":
 		return "friend down holds the named friend, as fleet down holds a machine. The friend stays held whatever beat arrives, the tick deals her nothing, and where counts working as 0 while the friend is held. Every card dealt to her that she has not started goes back to ready, as friend take --all-unstarted takes it, and the next tick deals it to a friend up with room (a card whose WHO line names her waits for her); a card she has started (a push on its branch, her beat naming it running) stays with her and finishes, each named on a NOTE line. friend up releases the hold. " + sync + "\n"
 	case "friend up":
@@ -220,21 +220,66 @@ func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
 	const name = "friend beat"
 	fs, c := a.verbSetup(name)
 	running := fs.String("running", "", "the cards she is running now, comma separated (work card ids, her job names or primaries): friend take and friend down leave them with her")
+	working := fs.String("working", "", "how many jobs she is working now, as her daemon counts them")
+	queue := fs.String("queue", "", "how many jobs she holds queued, as her daemon counts them")
+	width := fs.String("width", "", "her width as her daemon has it (the deal's is the roster's: friend up --width)")
+	load := fs.String("load", "", "her load as a percent, as fleet beat --load gives a machine's")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
+	}
+	rep := sprint.FriendReport{Running: sprint.Split(*running)}
+	for _, n := range []struct {
+		flag, text string
+		min        int
+		to         **int
+	}{{"--working", *working, 0, &rep.Working}, {"--queue", *queue, 0, &rep.Queue}, {"--width", *width, 1, &rep.Width}} {
+		if n.text == "" {
+			continue
+		}
+		v, err := strconv.Atoi(n.text)
+		if err != nil || v < n.min {
+			return refuse(stderr, name, fmt.Sprintf("%s wants a whole number of at least %d, found %s", n.flag, n.min, oneline.Escape(n.text)))
+		}
+		*n.to = &v
+	}
+	var given *float64
+	if *load != "" {
+		v, err := strconv.ParseFloat(strings.TrimSuffix(*load, "%"), 64)
+		if err != nil || v < 0 {
+			return refuse(stderr, name, "--load wants a percent, found "+oneline.Escape(*load))
+		}
+		given = &v
 	}
 	c.orActor(friend)
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	b, err := st.FriendBeatReport(context.Background(), friend, sprint.FriendReport{Running: sprint.Split(*running)})
+	b, err := st.FriendBeatReport(context.Background(), friend, rep, given)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
-	sayOK(stdout, c.json, name, "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At})
+	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At}
+	for _, n := range []struct {
+		key string
+		v   *int
+	}{{"working", rep.Working}, {"queue", rep.Queue}, {"width", rep.Width}} {
+		if n.v != nil {
+			line += fmt.Sprintf(" %s=%d", n.key, *n.v)
+			facts[n.key] = *n.v
+		}
+	}
+	if given != nil {
+		line += fmt.Sprintf(" load=%.1f%%", *given)
+		facts["load"] = *given
+	}
+	if len(rep.Running) > 0 {
+		line += " running=" + strings.Join(rep.Running, ",")
+		facts["running"] = rep.Running
+	}
+	sayOK(stdout, c.json, name, line, facts)
 	return 0
 }
 

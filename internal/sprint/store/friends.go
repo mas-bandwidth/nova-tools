@@ -57,6 +57,10 @@ type FriendRow struct {
 	OK      int    `json:"ok"`
 	Failed  int    `json:"failed"`
 	Status  string `json:"status"`
+	// Load and Report are what her last beat reported (friend beat --load, and
+	// sprint.FriendReport), absent when it reported none.
+	Load   float64              `json:"load,omitempty"`
+	Report *sprint.FriendReport `json:"report,omitempty"`
 }
 
 // roster is the friends record, by name; empty when there is none.
@@ -152,13 +156,14 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 // second, reporting nothing more; a friend the roster lacks is refused and
 // nothing is written.
 func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, error) {
-	return st.FriendBeatReport(ctx, friend, sprint.FriendReport{})
+	return st.FriendBeatReport(ctx, friend, sprint.FriendReport{}, nil)
 }
 
 // FriendBeatReport is FriendBeat with what her machinery reports of her work
 // (sprint.FriendReport: the cards she is running, which friend take and friend
-// down keep with her), kept on the beat until the next replaces it.
-func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint.FriendReport) (sprint.Beat, error) {
+// down keep with her, and her own counts) and her load (nil: none), kept on the
+// beat until the next replaces it.
+func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint.FriendReport, load *float64) (sprint.Beat, error) {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
 		return sprint.Beat{}, err
@@ -166,7 +171,13 @@ func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint
 	if _, ok := r[friend]; !ok {
 		return sprint.Beat{}, noFriend(r, friend)
 	}
-	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second), Friend: &rep}
+	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second)}
+	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil {
+		b.Friend = &rep // a beat that reports nothing carries no report
+	}
+	if load != nil {
+		b.Load, b.How = *load, sprint.HowGiven
+	}
 	out, err := json.Marshal(b)
 	if err != nil {
 		return b, err
@@ -230,7 +241,7 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 			// ignored: an unreadable record is no beat, which the next beat replaces
 			_ = json.Unmarshal([]byte(vals[i]), &b)
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(r[n].Held, b, now)}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(r[n].Held, b, now), Load: b.Load, Report: b.Friend}
 		rows[n] = row
 		status[n] = row.Status
 	}

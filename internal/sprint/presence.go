@@ -81,11 +81,17 @@ type Beat struct {
 	Friend *FriendReport `json:"friend,omitempty"`
 }
 
-// FriendReport is what a friend's machinery reports with her beat: the cards she is
-// running (work card ids or her job names), which friend take and friend down leave
-// with her (FriendTake).
+// FriendReport is what a friend's machinery reports with her beat, as a machine's beat
+// reports its load (the beat's Load, given): the cards she is running (work card ids or her
+// job names), which friend take and friend down leave with her (FriendTake), and her own
+// counts as her daemon keeps them (working, queued, her width), each absent when not
+// reported. They are her word, shown beside the table's counts, which stay the sprint's
+// own (her row's cards) and her width the roster's.
 type FriendReport struct {
 	Running []string `json:"running,omitempty"`
+	Working *int     `json:"working,omitempty"`
+	Queue   *int     `json:"queue,omitempty"`
+	Width   *int     `json:"width,omitempty"`
 }
 
 // Beaten says the member has beaten at least once.
