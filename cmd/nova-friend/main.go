@@ -175,6 +175,9 @@ func friendTool(w world) *tool.Tool {
 		f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir)")
 		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
+		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
+		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
+		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
 		stateDir(f)
 		redis(f)
 		f.Check(func(c *tool.Call) {
@@ -188,31 +191,37 @@ func friendTool(w world) *tool.Tool {
 		What:  "what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon",
 		Stamp: version,
 		How: `one launchd agent per friend (install) runs the daemon (run): it parks on the friend's
-nova-bus stream and pushes each message into the running session as a turn (the harness's
-deliver command), beats to the sprint server while the loop runs, answers the coordinator's
-PING at once (daemon-pong) and pushes it in; the session's own pong --nonce alone makes it up.
+nova-bus stream and, when the session is free, pushes every waiting message in as one turn (the
+harness's deliver command), beats to the sprint server while the loop runs, answers the coordinator
+PING at once (daemon-pong), never as a turn; the session's own pong --nonce alone makes it up.
 state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.`,
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE"},
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>] [--redis <addr>]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
-				Detail: `The loop launchd runs (install writes it). Each second: one read of the stream (a message is
-pushed into the session as a turn and acked when the turn ends at exit 0; a turn that fails leaves it
-pending, handed in again when its claim opens, and the third failure acks it, given_up=true on the
-record; a PING is answered at once with a daemon-pong and pushed in), one beat to the sprint server, the session's pong file
-read while a challenge is open, the status file written. No ping for ` + friend.Window.String() + `: the session
-is told "coordinator silent" once, and "coordinator back" when pings resume. Prints one RUN
-line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.`,
+				Detail: `The loop launchd runs (install writes it). Each second, when the session is free: every waiting
+message read off the stream and pushed in as ONE turn, oldest first (at most ` + fmt.Sprint(friend.MaxBatch) + `; the rest is the next
+turn), acked together when the turn ends at exit 0; a turn that fails leaves them pending, handed in
+again when their claims open, and the third failure acks a message, given_up=true on the record. A
+PING is answered at once with a daemon-pong and acked, never a turn; while a challenge is open the
+pong line rides at the head of the next turn. No ping for ` + friend.Window.String() + `: "coordinator silent", and
+"coordinator back" when pings resume, collapsed to the latest and said only inside a turn that
+carries messages. A turn runs as long as it prints; one silent past --silent-stop is stopped with
+its process group, the reason on the record. The same provider refusal (an invalid_request_error)
+on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
+stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
+bus; a restart clears it. Prints one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a
+delivery under way left pending.`,
 				Flags: func(f *tool.Flags) { daemonFlags(f); f.Prints() },
 				Run:   w.run,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the launchd agent com.nova.friend-<me> and loads it",
 				Detail: `Writes ~/Library/LaunchAgents/com.nova.friend-<me>.plist (RunAtLoad, KeepAlive: started at login,
@@ -262,7 +271,7 @@ writes nothing.`,
 				Effect:  tool.Delivery + ": one PING on the friend's stream, as the coordinator",
 				Detail: `Sends "PING <nonce>" with the seat line (seat=<me> since=<RFC3339>) and the pong command the
 session runs; the nonce is six random characters unless --nonce names one. Prints PING OK
-nonce= id= to=. The daemon answers daemon-pong at once; the session answers pong as a turn.`,
+nonce= id= to=. The daemon answers daemon-pong at once and acks it; the session answers pong at the head of its next turn.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the coordinator")
 					f.Required("to", "the friend to ping")
@@ -319,7 +328,7 @@ or WAIT-PONG NONE at exit 1.`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= pongs= queue= working= width= beats= delivered=, from the daemon's status file (up while it is
+last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> (broken: session_id= broken_at= reason=), from the daemon's status file (up while it is
 under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file (<dir>/inbox/QUEUE.json); STATUS NONE at
 exit 1 when no daemon ever ran as --as (no status file in the state directory).`,
 				Flags: func(f *tool.Flags) {
@@ -405,6 +414,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: st, Deliver: deliver, Now: w.now, Pause: w.sleep,
+		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
 		Beat:   func(ctx context.Context) error { return w.beat(ctx, server, name) },
 		Record: record,
 		Pong:   func() (friend.Pong, bool, error) { return friend.ReadPong(state) },
@@ -438,6 +448,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
 		Binary: bin, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
+		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
 	}
 	if len(a.Secrets) > 0 {
 		for _, p := range []struct {
@@ -543,7 +554,11 @@ func (w world) status(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).
 		Fact("connection", s.Connection).Fact("seat", dash(s.Seat)).Fact("last_ping", stamp(s.LastPing)).Fact("ping_age", age(now, s.LastPing)).
 		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("pong_age", age(now, p.At)).Fact("pongs", s.Pongs).
-		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered)
+		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session))
+	if s.Session == friend.SessionBroken {
+		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
+		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
+	}
 	if s.BeatError != "" {
 		o.Note("the last beat failed: " + s.BeatError)
 	}

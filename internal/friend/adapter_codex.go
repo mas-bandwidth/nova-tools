@@ -109,5 +109,5 @@ func (c *Codex) Deliver(ctx context.Context, text string) (int, error) {
 			fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 		}
 	}
-	return exit, err
+	return refused(session, out, exit, err)
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -43,32 +44,55 @@ type Exec func(ctx context.Context, dir, name string, args []string, stdin strin
 // record: the head, enough to see what the session did with the message.
 const OutputKept = 2048
 
-// DeliverBudget bounds one delivery into a harness: a turn that runs longer
-// is stuck, the message stays pending, and the next run of the loop hands
-// it in again.
-const DeliverBudget = 10 * time.Minute
+// outputKey carries, in a delivery's context, what to call when the command
+// prints: the daemon's watch on a running turn (WithOutputSeen).
+type outputKey struct{}
 
-// RealExec runs the command through os/exec, under DeliverBudget: the
-// program directly, never a shell, so a message's text is never
-// interpolated. The command is its own session leader (Setsid), and on the
-// budget or a cancel the whole group is signalled, SIGTERM then SIGKILL after
-// KillDelay: a harness that forks (opencode run does) leaves no orphan
-// behind a timeout (the finding of 2026-10-04: subproc.Long sets no group).
-// On a nonzero exit the output carries the head of stderr after stdout: a
-// harness says why it refused there (dsh does).
-func RealExec(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
-	return realExec(ctx, DeliverBudget, KillDelay, dir, name, args, stdin)
+// WithOutputSeen is ctx carrying seen, called each time the command a
+// delivery runs prints to stdout or stderr: a turn that prints is working,
+// and only a turn silent past the daemon's SilentStop is stopped.
+func WithOutputSeen(ctx context.Context, seen func()) context.Context {
+	return context.WithValue(ctx, outputKey{}, seen)
 }
 
-func realExec(ctx context.Context, budget, killDelay time.Duration, dir, name string, args []string, stdin string) (string, int, error) {
-	ctx, cancel := context.WithTimeout(ctx, budget)
-	defer cancel()
+// seenWriter is a Builder that says each write to the context's watch.
+type seenWriter struct {
+	b    strings.Builder
+	seen func()
+}
+
+func (w *seenWriter) Write(p []byte) (int, error) {
+	if len(p) > 0 && w.seen != nil {
+		w.seen()
+	}
+	return w.b.Write(p)
+}
+
+// RealExec runs the command through os/exec: the program directly, never a
+// shell, so a message's text is never interpolated. No clock bounds it: a
+// turn that prints keeps running however long it takes, and the daemon
+// stops one silent past its SilentStop by cancelling ctx (the finding of
+// 2026-10-04: a fixed ten-minute cap killed real work mid-turn). Every write
+// to stdout or stderr is said to the watch in ctx (WithOutputSeen). The
+// command is its own session leader (Setsid), and on a cancel the whole
+// group is signalled, SIGTERM then SIGKILL after KillDelay: a harness that
+// forks (opencode run does) leaves no orphan behind a stop. On a nonzero
+// exit the output carries the head of stderr after stdout: a harness says
+// why it refused there (dsh does).
+func RealExec(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+	return realExec(ctx, KillDelay, dir, name, args, stdin)
+}
+
+func realExec(ctx context.Context, killDelay time.Duration, dir, name string, args []string, stdin string) (string, int, error) {
+	seen, _ := ctx.Value(outputKey{}).(func())
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Stdin = strings.NewReader(stdin)
-	var out, stderr strings.Builder
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	} // else /dev/null: a headless opencode run with stdin left open hangs at init (measured 2026-10-04)
+	out, stderr := &seenWriter{seen: seen}, &seenWriter{seen: seen}
+	cmd.Stdout = out
+	cmd.Stderr = stderr
 	ownGroup(cmd)
 	cmd.WaitDelay = killDelay // the pipes close this long after the group is signalled
 	err := cmd.Run()
@@ -78,11 +102,62 @@ func realExec(ctx context.Context, budget, killDelay time.Duration, dir, name st
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		if ctx.Err() != nil {
-			return out.String(), exitErr.ExitCode(), fmt.Errorf("the delivery ran past %s and was stopped with its process group", budget)
+			return out.b.String(), exitErr.ExitCode(), errors.New("the delivery was stopped with its process group")
 		}
-		return out.String() + Head(stderr.String(), OutputKept), exitErr.ExitCode(), nil
+		return out.b.String() + Head(stderr.b.String(), OutputKept), exitErr.ExitCode(), nil
 	}
-	return out.String(), 0, err
+	return out.b.String(), 0, err
+}
+
+// ProviderRefused is a Deliverer's answer when the turn reached the
+// session's model provider and the provider refused the request itself
+// (an invalid_request_error, an authentication_error): the session is at
+// fault, not the message. The daemon counts it toward nothing a message
+// owns; the same refusal on BrokenAfter turns in a row marks the session
+// broken (the finding of 2026-10-04: a friend's session refused every turn
+// for two hours and nothing said so).
+type ProviderRefused struct{ Session, Reason string }
+
+func (p ProviderRefused) Error() string {
+	return "the provider refused the turn in session " + p.Session + ": " + p.Reason
+}
+
+// providerErrorType is a provider's JSON error, the shape OpenAI- and
+// Anthropic-style APIs print and harnesses pass on: "type":"<x>_error".
+var (
+	providerErrorType    = regexp.MustCompile(`"type"\s*:\s*"([a-z_]+_error)"`)
+	providerErrorMessage = regexp.MustCompile(`"message"\s*:\s*"([^"]{0,200})`)
+)
+
+// transientProviderErrors are provider errors that pass by themselves: a
+// rate limit, an overload, the provider's own fault. They are failures of
+// a turn, never a refusal of the session.
+var transientProviderErrors = map[string]bool{"rate_limit_error": true, "overloaded_error": true, "api_error": true}
+
+// ProviderRefusal reads a failed turn's output for a provider's refusal:
+// the error type and the head of its message, one line; ok is false when
+// the output carries none, or only a transient one.
+func ProviderRefusal(out string) (reason string, ok bool) {
+	m := providerErrorType.FindStringSubmatch(out)
+	if m == nil || transientProviderErrors[m[1]] {
+		return "", false
+	}
+	reason = m[1]
+	if msg := providerErrorMessage.FindStringSubmatch(out); msg != nil {
+		reason += ": " + strings.Join(strings.Fields(msg[1]), " ")
+	}
+	return reason, true
+}
+
+// refused is the answer of an adapter whose turn exited nonzero: the
+// provider's refusal when the output carries one, else the exit as it was.
+func refused(session string, out string, exit int, err error) (int, error) {
+	if exit != 0 && err == nil {
+		if reason, ok := ProviderRefusal(out); ok {
+			return exit, ProviderRefused{Session: session, Reason: reason}
+		}
+	}
+	return exit, err
 }
 
 // KillDelay is how long a signalled group gets to end before SIGKILL.
@@ -176,7 +251,7 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	return exit, err
+	return refused(id, out, exit, err)
 }
 
 // Head is the first n bytes of s, with a note when it was cut.

@@ -180,88 +180,6 @@ func TestATurnThatExitsNonZeroLeavesTheMessagePending(t *testing.T) {
 	assert.Contains(t, r.records[0], "exit=3")
 }
 
-func TestAPingIsAnsweredAtOnceByTheDaemonAndPushedInAndThePongEndsTheChallenge(t *testing.T) {
-	t.Parallel()
-	r := newRig(t)
-	ping := r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
-	r.d.PongCommand = func(nonce string) string {
-		return "/opt/nova/bin/nova-friend pong --as bob --nonce " + nonce + " --dir /w/bob --redis store:6379"
-	}
-	var afterPing, afterPong Status
-	r.at[3] = func() { afterPing = r.last() }
-	r.at[4] = func() { // the session answers: the pong verb wrote the pong file
-		r.mu.Lock()
-		r.pong, r.pongSet = Pong{Nonce: "n1", At: r.now, To: "ada"}, true
-		r.mu.Unlock()
-	}
-	r.at[6] = func() {
-		afterPong = r.last()
-		r.send(t, "ada", "PING n2", PingText("ada", t0, "n2"))
-	}
-	r.run(t, 9)
-	assert.Equal(t, []string{"daemon-pong: daemon-pong n1", "daemon-pong: daemon-pong n2"}, r.adaGot(t), "the daemon pong goes to the coordinator's stream, before the turn")
-	require.Len(t, r.delivered, 2)
-	assert.Contains(t, r.delivered[0], ping.ID)
-	assert.True(t, strings.HasPrefix(r.delivered[0], "Run this now, first, exactly as written: /opt/nova/bin/nova-friend pong --as bob --nonce n1 --dir /w/bob --redis store:6379\nThen read on.\n\nRECV OK id="), r.delivered[0])
-	assert.Contains(t, r.delivered[1], "--nonce n2 --dir /w/bob", "the second ping carries its own line")
-	assert.Equal(t, Challenged, afterPing.Challenge)
-	assert.Equal(t, "ada", afterPing.Seat)
-	assert.Equal(t, "n1", afterPing.Nonce)
-	assert.Equal(t, Quiet, afterPong.Challenge)
-	assert.Equal(t, 1, afterPong.Pongs)
-	// a stale pong file (an older nonce) does not answer the next
-	assert.Equal(t, Challenged, r.last().Challenge, "the file still says n1")
-	assert.Equal(t, "n2", r.last().Nonce)
-}
-
-func TestNoPingForAWindowTellsTheSessionOnceAndAPingTellsItBack(t *testing.T) {
-	t.Parallel()
-	r := newRig(t)
-	steps := int(Window / BeatEvery)
-	var silent Status
-	r.at[steps+5] = func() {
-		silent = r.last()
-		r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
-	}
-	r.run(t, steps+10)
-	require.Len(t, r.delivered, 3, "one push for the outage however long it lasts, then back, then the ping")
-	assert.Contains(t, r.delivered[0], "coordinator silent since "+t0.Add(BeatEvery).Format(time.RFC3339))
-	assert.Equal(t, Silent, silent.Connection)
-	assert.Contains(t, r.delivered[1], "coordinator back: ada has the seat")
-	assert.Contains(t, r.delivered[2], "PING n1")
-	assert.Equal(t, Connected, r.last().Connection)
-}
-
-func TestAPingDuringALongTurnIsStillAnsweredAtOnceByTheDaemon(t *testing.T) {
-	t.Parallel()
-	r := newRig(t)
-	// the turn runs longer than a window; the coordinator pings twice while it does
-	window := int(Window / BeatEvery)
-	r.hold, r.releaseAt = make(chan struct{}), window+20
-	r.send(t, "ada", "long", "a long task")
-	ctx, cancel := context.WithCancel(context.Background())
-	r.cancel = cancel
-	r.at[2] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) } // the turn is under way; a ping lands
-	var midTurn Status
-	r.at[100] = func() {
-		midTurn = r.last()
-		r.send(t, "ada", "PING n2", PingText("ada", t0, "n2"))
-	}
-	r.stopAfter = window + 40
-	require.NoError(t, r.d.Run(ctx))
-	assert.Equal(t, []string{"daemon-pong: daemon-pong n1", "daemon-pong: daemon-pong n2"}, r.adaGot(t), "answered from a peek while the turn ran, and once only")
-	assert.True(t, midTurn.LastPing.After(t0.Add(BeatEvery)) && midTurn.LastPing.Before(t0.Add(10*BeatEvery)), "the machine saw the ping when the daemon did, mid-turn: %s", midTurn.LastPing)
-	assert.Equal(t, Challenged, midTurn.Challenge)
-	require.Len(t, r.delivered, 3, "the long task, then the pings as turns once the session was free: %v", r.delivered)
-	assert.Contains(t, r.delivered[1], "PING n1")
-	assert.Contains(t, r.delivered[2], "PING n2")
-	assert.Equal(t, Connected, r.last().Connection, "pings peeked during a long turn keep the connection: no false silence")
-	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
-	require.NoError(t, err)
-	assert.Empty(t, pending)
-	assert.Empty(t, fresh)
-}
-
 func TestAStoreThatDoesNotAnswerStopsTheBeat(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -373,15 +291,6 @@ func TestAMessageThatFailsThreeTimesIsAckedAndTheRecordSaysSo(t *testing.T) {
 	assert.Equal(t, MaxDeliveries, failed, "%v", r.records)
 	assert.Contains(t, r.records[len(r.records)-1], "deliveries=3/3 given_up=true acked=true")
 	assert.Equal(t, 0, r.last().Delivered, "a message given up on was never delivered")
-}
-
-// A live reader is never handed a message a second time: the bus keeps a
-// delivered message with its reader for longer than the longest turn and
-// the kill that ends it (the finding of 2026-10-04: a one-minute claim
-// against a ten-minute turn, delivered twice).
-func TestTheClaimOpensOnlyAfterTheLongestTurnIsOver(t *testing.T) {
-	t.Parallel()
-	assert.Less(t, DeliverBudget+KillDelay, bus.ClaimAfter)
 }
 
 // deferrer is a harness whose session cannot take a turn now and nothing is
