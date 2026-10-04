@@ -1516,8 +1516,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 	// Validate result metadata before a gate decision or work review can spend a read.
 	if cfg.frame != nil && cfg.frame.Kind == "work" && !res.lost && !res.idled && !res.terminated && res.rc == 0 && res.wallReport == "" {
-		if err := completeNativeResult(jobDir, tmpDir, stageRes.BaseSha, nativeFinishCommands(filepath.Join(jobDir, swarm.JobRepo), goBin)); err != nil {
-			refuseNative(errOut, "result completion: "+err.Error()+"; repair RESULT.md against the checkout and run the finish again")
+		if err := completeNativeResult(jobDir, tmpDir, stageRes.BaseSha, cfg.frame.BaseRef, nativeFinishCommands(filepath.Join(jobDir, swarm.JobRepo), goBin)); err != nil {
+			if errors.Is(err, errFinishFault) {
+				// the member's machine, never the card's: the member ends the launch as a
+				// staging refusal and the sprint deals the card to another member
+				refuseNative(errOut, err.Error()+"; the member's machine failed the finish, not the card: deal the card to another member")
+			} else {
+				refuseNative(errOut, "result completion: "+err.Error()+"; repair RESULT.md against the checkout and run the finish again")
+			}
 			res.resultsDir = publishNativeResults(cfg, jobDir, lastAttempt, errOut)
 			return res, 2
 		}
@@ -2383,46 +2389,79 @@ func publishNativeResults(cfg nativeRunConfig, jobDir string, attempt int, errOu
 
 // finishCommands are the two commands the finish asks of the staged checkout, injected so
 // the decisions over their answers are unit-tested with no subprocess: git, run in the
-// checkout with its arguments; and `gofmt -l` over the named Go files, run in the checkout,
-// answering the paths it would reformat. nativeFinishCommands is the real pair.
+// checkout with its arguments; and gofmt over the named Go files, run in the checkout,
+// `-l` (write false: the paths it would reformat, one per line) or `-w` (write true: the
+// files rewritten in place). nativeFinishCommands is the real pair.
 type finishCommands struct {
 	git   func(args ...string) (string, error)
-	gofmt func(files ...string) (string, error)
+	gofmt func(write bool, files ...string) (string, error)
 }
 
+// errFinishFault marks a finish that the member's machine failed, never the card: git
+// could not answer for the checkout, or the bench has no gofmt. The run reports it as
+// `finish fault`, the member ends the launch as a staging refusal does, and the sprint
+// deals the card to another member; a card refusal (`result completion`) is the card's own
+// and costs it an attempt.
+var errFinishFault = errors.New("finish fault")
+
 // nativeFinishCommands is the finish's real git and gofmt in the checkout at repo: the
-// gofmt is the bench Go's (goBin, the one the child's PATH named), else the member's own.
+// gofmt is the bench Go's (goBin, the one the child's PATH named), else the member's own
+// on PATH. A gofmt that is not there is a fault; one that ran and refused a file (a Go
+// file that does not parse) is the card's, its words returned as the error.
 func nativeFinishCommands(repo, goBin string) finishCommands {
 	o := gitrun.Options{C: repo, OwnRepo: true}
 	return finishCommands{
 		git: func(args ...string) (string, error) { return gitrun.Output(context.Background(), o, args...) },
-		gofmt: func(files ...string) (string, error) {
-			bin := "gofmt"
+		gofmt: func(write bool, files ...string) (string, error) {
+			bin, err := exec.LookPath("gofmt")
 			if goBin != "" {
-				bin = filepath.Join(goBin, "gofmt")
+				bin, err = filepath.Join(goBin, "gofmt"), nil
+				if _, serr := os.Stat(bin); serr != nil {
+					err = serr
+				}
 			}
-			cmd, cancel := subproc.Command(context.Background(), subproc.Tool, bin, append([]string{"-l", "--"}, files...)...)
+			if err != nil {
+				return "", fmt.Errorf("%w: no gofmt on the bench: %v", errFinishFault, err)
+			}
+			flag := "-l"
+			if write {
+				flag = "-w"
+			}
+			cmd, cancel := subproc.Command(context.Background(), subproc.Tool, bin, append([]string{flag, "--"}, files...)...)
 			defer cancel()
 			cmd.Dir = repo
 			var out, errb bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &out, &errb
-			if err := cmd.Run(); err != nil {
-				return "", fmt.Errorf("gofmt -l over the changed Go files: %w: %s", err, strings.TrimSpace(errb.String()))
+			err = cmd.Run()
+			var exit *exec.ExitError
+			switch {
+			case err == nil:
+				return out.String(), nil
+			case errors.As(err, &exit):
+				return "", fmt.Errorf("gofmt %s over the changed Go files: %s", flag, strings.TrimSpace(errb.String()))
 			}
-			return out.String(), nil
+			return "", fmt.Errorf("%w: gofmt %s could not run: %v", errFinishFault, flag, err)
 		},
 	}
 }
 
+// gofmtFinishMessage is the commit the finish makes when the work's Go files were not
+// gofmt-clean: the member's own, by script, never a turn of the model (the owner, 2026-10-02:
+// mechanical replacements by script, not LLM).
+const gofmtFinishMessage = "gofmt at finish"
+
 // completeNativeResult records Git-derived metadata at the existing finish boundary
-// (docs/SPEC-CARD-CONTRACT.md section 3), retaining the child's RESULT.md unchanged. The
-// head and branch are the checkout's, read from git after the child's last commit, never
-// the child's text: a stated head that is not the tip is refused naming both. Before any
-// of it, the Go files the work changed since the staged commit (every Go file the checkout
-// holds when none was recorded) go through `gofmt -l`, and a file it names refuses the
-// finish by name: the child gets its next attempt to format and commit, and no one-byte
-// difference reaches a reader or the landing.
-func completeNativeResult(job, tmp, staged string, run finishCommands) error {
+// (docs/SPEC-CARD-CONTRACT.md section 3), retaining the child's RESULT.md unchanged. First
+// the Go files the work's commits changed since staged (the base ref resolved by git when
+// no staged sha was recorded) go through `gofmt -l`, and a file it names is formatted with
+// `gofmt -w` and committed as gofmtFinishMessage: a one-byte formatting difference costs
+// no attempt and never reaches a reader or the landing. Then the head and branch are the
+// checkout's, read from git after that commit, never the child's text; a stated head that
+// is not the tip is recorded as the tip with a note naming both. A git that cannot answer,
+// or a bench with no gofmt, is an errFinishFault (the member's); a Go file gofmt will not
+// parse, a step commit git cannot resolve inside HEAD's history and a missing output file
+// are the card's refusals.
+func completeNativeResult(job, tmp, staged, baseRef string, run finishCommands) error {
 	if canonical, err := filepath.EvalSymlinks(job); err == nil {
 		job = canonical
 	}
@@ -2443,26 +2482,17 @@ func completeNativeResult(job, tmp, staged string, run finishCommands) error {
 		return err
 	}
 	repo := filepath.Join(job, swarm.JobRepo)
+	fault := func(what string, err error) error { return fmt.Errorf("%w: %s: %v", errFinishFault, what, err) }
+	if err := gofmtAtFinish(run, staged, baseRef); err != nil {
+		return err
+	}
 	head, err := run.git("rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
-		return err
+		return fault("the checkout's HEAD", err)
 	}
 	branch, err := run.git("symbolic-ref", "--short", "HEAD")
 	if err != nil {
-		return err
-	}
-	changed, err := changedGoFiles(run, staged)
-	if err != nil {
-		return err
-	}
-	if len(changed) > 0 {
-		list, err := run.gofmt(changed...)
-		if err != nil {
-			return err
-		}
-		if err := cardcontract.Unformatted(list); err != nil {
-			return err
-		}
+		return fault("the checkout's branch", err)
 	}
 	resolve := func(ref string) (string, error) {
 		if !typedrec.IsSha(strings.ToLower(ref)) {
@@ -2502,27 +2532,64 @@ func completeNativeResult(job, tmp, staged string, run finishCommands) error {
 	return atomicfile.Write(filepath.Join(job, cardcontract.FinishName), completed, 0o644)
 }
 
-// changedGoFiles is the Go files the work's commits since staged touch and HEAD still
-// holds (a deleted file is nothing to format); every Go file HEAD holds when no staged
-// commit is known, since then all of the checkout is the work's.
-func changedGoFiles(run finishCommands, staged string) ([]string, error) {
-	var out string
-	var err error
-	if staged == "" {
-		out, err = run.git("ls-files", "--", "*.go")
-	} else {
-		out, err = run.git("diff", "--name-only", "--diff-filter=d", staged, "HEAD", "--", "*.go")
-	}
+// gofmtAtFinish formats and commits the work's unformatted Go files (completeNativeResult):
+// nothing when `gofmt -l` names none. The commit is the checkout's own identity, the pool's
+// written into the clone at staging (swarm.StageCloneIdentity).
+func gofmtAtFinish(run finishCommands, staged, baseRef string) error {
+	fault := func(what string, err error) error { return fmt.Errorf("%w: %s: %v", errFinishFault, what, err) }
+	changed, err := changedGoFiles(run, staged, baseRef)
 	if err != nil {
-		return nil, fmt.Errorf("the Go files the work changed: %w", err)
+		return err
 	}
-	var files []string
-	for _, line := range strings.Split(out, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			files = append(files, line)
+	if len(changed) == 0 {
+		return nil
+	}
+	list, err := run.gofmt(false, changed...)
+	if err != nil {
+		return err
+	}
+	files := cardcontract.GofmtListed(list)
+	if len(files) == 0 {
+		return nil
+	}
+	if _, err := run.gofmt(true, files...); err != nil {
+		return err
+	}
+	if _, err := run.git(append([]string{"add", "--"}, files...)...); err != nil {
+		return fault("adding the formatted files", err)
+	}
+	if _, err := run.git("-c", "commit.gpgsign=false", "commit", "-q", "-m", gofmtFinishMessage+": "+strings.Join(files, " ")); err != nil {
+		return fault("committing the formatted files", err)
+	}
+	return nil
+}
+
+// changedGoFiles is the Go files the work's commits since the staged commit touch and HEAD
+// still holds (a deleted file is nothing to format). With no staged sha recorded (a card
+// whose BASE names a ref and no sha), the start is the merge base of HEAD and the ref as
+// the checkout's origin holds it, resolved by git; never the whole tree. Neither known, or
+// git unable to answer, is a fault.
+func changedGoFiles(run finishCommands, staged, baseRef string) ([]string, error) {
+	fault := func(what string, err error) ([]string, error) {
+		return nil, fmt.Errorf("%w: %s: %v", errFinishFault, what, err)
+	}
+	if staged == "" {
+		if baseRef == "" {
+			return fault("the work's start", errors.New("no staged commit and no BASE ref to count the work's commits from"))
 		}
+		var err error
+		if staged, err = run.git("merge-base", "HEAD", "refs/remotes/origin/"+baseRef); err != nil {
+			if staged, err = run.git("merge-base", "HEAD", "--end-of-options", baseRef); err != nil {
+				return fault("the work's start from BASE "+baseRef, err)
+			}
+		}
+		staged = strings.TrimSpace(staged)
 	}
-	return files, nil
+	out, err := run.git("diff", "--name-only", "--diff-filter=d", staged, "HEAD", "--", "*.go")
+	if err != nil {
+		return fault("the Go files the work changed since "+staged, err)
+	}
+	return cardcontract.GofmtListed(out), nil
 }
 
 // copyRegularFile copies one regular file by bytes and rename. A symlink or a

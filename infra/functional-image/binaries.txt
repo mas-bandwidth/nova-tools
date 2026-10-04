@@ -27,6 +27,7 @@ diskutil	absent	macOS only; the volume tests that call it are darwin tests
 gh	absent	reaches the forge over the network, which the container has none of; the tier fakes it
 git	apt	git
 go	source	fetch
+gofmt	source	fetch
 icacls	absent	Windows only; a Linux container has no Windows file ACLs
 iostat	absent	macOS only; hostload's darwin sampler runs it, the Linux sampler reads /proc/stat
 java	absent	runs the TLC model checker on a bench, not in the functional tier

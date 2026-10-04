@@ -46,8 +46,6 @@ func TestCompleteResultRefusesUnknownMetadata(t *testing.T) {
 	}{
 		{"missing verdict", strings.Replace(base, "verdict: ok\n", "", 1), nil, nil},
 		{"unknown verdict", strings.Replace(base, "verdict: ok", "verdict: maybe", 1), nil, nil},
-		{"no commit", strings.Replace(base, "head: "+head, "head: -", 1), nil, nil},
-		{"wrong result commit", base, func(string) (string, error) { return strings.Repeat("c", 40), nil }, nil},
 		{"unknown or ambiguous step", base, func(ref string) (string, error) {
 			if ref == head {
 				return head, nil
@@ -74,25 +72,44 @@ func TestCompleteResultRefusesUnknownMetadata(t *testing.T) {
 	}
 }
 
-func TestCompleteResultNamesBothHeadsWhenTheStatedOneIsNotTheTip(t *testing.T) {
+func TestCompleteResultRecordsTheTipAndNotesWhatTheChildStated(t *testing.T) {
 	t.Parallel()
 	head, stated := strings.Repeat("a", 40), strings.Repeat("c", 40)
-	raw := "head: " + stated + "\nbranch: b\nverdict: ok\ngate: -\noutput: -\nreport: done\n"
-	got, err := CompleteResult([]byte(raw), head, "owned", func(string) (string, error) { return stated, nil }, func(string) error { return nil })
-	require.Error(t, err)
-	assert.Nil(t, got)
-	assert.Contains(t, err.Error(), stated)
-	assert.Contains(t, err.Error(), head)
+	resolve := func(ref string) (string, error) {
+		if ref == stated {
+			return stated, nil
+		}
+		return "", errors.New("unknown")
+	}
+	none := func(string) error { return nil }
+	for name, tc := range map[string]struct{ raw, note string }{
+		"a head that is not the tip": {"head: " + stated + "\nbranch: b\nverdict: ok\ngate: -\noutput: -\nreport: done\n\n## Body\nstep 3: ok - words\n",
+			"finish: the result named head " + stated + ", not the checkout's tip " + head + ", which is recorded"},
+		"a head that is no commit": {"head: zzz\nbranch: b\nverdict: ok\ngate: -\noutput: -\nreport: done\n",
+			"finish: the result named head zzz, not the checkout's tip " + head + ", which is recorded"},
+		"no commit named": {"head: -\nbranch: b\nverdict: ok\ngate: -\noutput: -\nreport: done\n",
+			"finish: the result named no commit; the checkout's tip " + head + " is recorded"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := CompleteResult([]byte(tc.raw), head, "owned", resolve, none)
+			require.NoError(t, err)
+			text := string(got)
+			assert.True(t, strings.HasPrefix(text, "head: "+head+"\nbranch: owned\n"), text)
+			assert.Contains(t, text, "## Body")
+			assert.True(t, strings.HasSuffix(text, tc.note+"\n"), text)
+			assert.Equal(t, 1, strings.Count(text, "## Body"))
+		})
+	}
+	got, err := CompleteResult([]byte("head: "+head+"\nbranch: b\nverdict: ok\ngate: -\noutput: -\nreport: done\n"), head, "owned", func(string) (string, error) { return head, nil }, none)
+	require.NoError(t, err)
+	assert.NotContains(t, string(got), "finish:", "the tip stated is the tip: no note")
 }
 
-func TestUnformattedNamesEveryFileGofmtListed(t *testing.T) {
+func TestGofmtListedIsEveryFileNamedOnePerLine(t *testing.T) {
 	t.Parallel()
 	for _, list := range []string{"", "\n", " \n\n"} {
-		assert.NoError(t, Unformatted(list), "%q: nothing listed is nothing to refuse", list)
+		assert.Empty(t, GofmtListed(list), "%q: nothing listed", list)
 	}
-	err := Unformatted("cmd/a.go\n\ninternal/b_test.go\n")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "2 unformatted")
-	assert.Contains(t, err.Error(), "cmd/a.go internal/b_test.go")
-	assert.Contains(t, err.Error(), "gofmt -w", "the remedy")
+	assert.Equal(t, []string{"cmd/a.go", "internal/b_test.go"}, GofmtListed("cmd/a.go\n\n internal/b_test.go \n"))
 }

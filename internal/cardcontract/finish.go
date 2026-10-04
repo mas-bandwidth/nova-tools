@@ -17,12 +17,14 @@ func CompleteResult(raw []byte, head, branch string, resolve func(string) (strin
 	if !typedrec.IsFullSha(head) || branch == "" {
 		return nil, fmt.Errorf("the checkout has no full HEAD and branch")
 	}
+	// The head is the checkout's, whatever the child wrote: a stated head that is not the
+	// tip (an invented tail, a sha from before the finish's own gofmt commit, no commit at
+	// all) is recorded as the tip, and the body says what was stated, so a reader sees it.
+	note := ""
 	if r.Head == "" {
-		return nil, fmt.Errorf("the result names no commit; commit the work and name it")
-	}
-	stated, err := resolve(r.Head)
-	if err != nil || stated != head {
-		return nil, fmt.Errorf("result head %q is not the checkout's HEAD %s", r.Head, head)
+		note = "finish: the result named no commit; the checkout's tip " + head + " is recorded"
+	} else if stated, err := resolve(r.Head); err != nil || stated != head {
+		note = "finish: the result named head " + r.Head + ", not the checkout's tip " + head + ", which is recorded"
 	}
 	// Only these Git-derived fields are repaired. Parsing again proves all six
 	// required keys and the child's verdict still exist; none is filled by a guess.
@@ -57,25 +59,31 @@ func CompleteResult(raw []byte, head, branch string, resolve func(string) (strin
 			if err != nil {
 				return nil, err
 			}
-			return []byte(strings.Join(lines[:i+1], "\n") + "\n" + body), nil
+			return []byte(strings.Join(lines[:i+1], "\n") + "\n" + withNote(body, note)), nil
 		}
+	}
+	if note != "" {
+		return []byte(strings.TrimRight(text, "\n") + "\n\n## Body\n\n" + note + "\n"), nil
 	}
 	return []byte(text), nil
 }
 
-// Unformatted is the finish's verdict on `gofmt -l` over the Go files the work changed
-// (one path per line, nothing when every file is formatted): the refusal naming each file,
-// or nil. A one-byte formatting difference in a committed file went red at the landing's
-// own gofmt twice on 2026-10-03, after the readers were paid; it is refused here, before.
-func Unformatted(gofmtList string) error {
+// withNote is body with the finish's note as its last line, or body as it is for none.
+func withNote(body, note string) string {
+	if note == "" {
+		return body
+	}
+	return strings.TrimRight(body, "\n") + "\n" + note + "\n"
+}
+
+// GofmtListed is the files `gofmt -l` (or `git diff --name-only`) printed, one per line:
+// nothing when every file is formatted.
+func GofmtListed(out string) []string {
 	var files []string
-	for _, line := range strings.Split(gofmtList, "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			files = append(files, line)
 		}
 	}
-	if len(files) == 0 {
-		return nil
-	}
-	return fmt.Errorf("gofmt -l names %d unformatted Go file(s): %s; run gofmt -w on each and commit", len(files), strings.Join(files, " "))
+	return files
 }

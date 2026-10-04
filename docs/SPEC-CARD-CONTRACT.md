@@ -199,16 +199,22 @@ writes `<job>/RESULT.md` itself. The finish record wins over RESULT.md. A result
 keys is no result.
 
 For a framed plain finish, native keeps RESULT.md unchanged and records completed
-metadata in `.sprint/finish.md` before publication. The result head and branch come
-from the checkout's Git HEAD; the stated result commit must resolve to that HEAD.
-Each stated step commit expands to its full commit only when Git resolves it uniquely
-inside HEAD's history. The verdict, report and evidence stay the child's, including
-any separate source revision a rating names. Missing metadata, unknown or ambiguous
-commits and missing referenced output files refuse the finish before a reader is paid;
-no missing commit is replaced with HEAD and no successful verdict is invented. Before any
-of that, `gofmt -l` runs over the Go files the work's commits changed since the staged
-commit, and a file it names refuses the finish by name: the child's next attempt formats
-and commits it, and a one-byte formatting difference never reaches a reader or the landing.
+metadata in `.sprint/finish.md` before publication. First, `gofmt -l` runs over the Go
+files the work's commits changed since the staged commit (the merge base with the BASE
+ref, resolved by git, when no sha was staged), and a file it names is formatted and
+committed by the member as `gofmt at finish`: a one-byte formatting difference costs no
+attempt and never reaches a reader or the landing. Then the result head and branch are
+the checkout's Git HEAD after that commit, never the child's text; a stated head that is
+not the tip is recorded as the tip with a body line naming both. Each stated step commit
+expands to its full commit only when Git resolves it uniquely inside HEAD's history. The
+verdict, report and evidence stay the child's, including any separate source revision a
+rating names. Missing metadata, unknown or ambiguous step commits, a Go file gofmt will not
+parse and missing referenced output files refuse the finish (`NATIVE REFUSED: result
+completion: ...`) before a reader is paid, and the member fails the finish on that reason
+whatever the published RESULT.md says; no step commit is replaced with HEAD and no
+successful verdict is invented. A git that cannot answer for the checkout, or a bench
+with no gofmt, is a `finish fault`: the member's machine, never the card's, ended as a
+staging refusal so the sprint deals the card to another member.
 
 **The verdict per step.** A tree card's result (docs/SPEC-SPRINT.md, a card is a tree of steps)
 also carries one line per work step in its body (under `## Body`, never among the header's
