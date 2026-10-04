@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -12,10 +11,11 @@ import (
 // a FUNCTION LIST reply and nothing else.
 func TestFromListFindsOnlyOurLibrary(t *testing.T) {
 	t.Parallel()
+	r := newRig(t)
 	if code, found := FromList(nil); found || code != "" {
 		require.Failf(t, "assertion failed", "FromList(nil) = %q %v; want none", code, found)
 	}
-	libs := []redis.Library{{Name: "other", Code: "x"}, {Name: Library, Code: "ours"}}
+	libs := r.list(r.other("x"), r.our("ours"))
 	if code, found := FromList(libs); !found || code != "ours" {
 		require.Failf(t, "assertion failed", "FromList = %q %v; want ours", code, found)
 	}
