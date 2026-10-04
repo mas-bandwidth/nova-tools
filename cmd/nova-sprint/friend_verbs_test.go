@@ -92,3 +92,29 @@ func TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad(t *testing.T) {
 	_, _, why = workerVerb([]string{"friend", "beat", "amy", "--width", "0"})
 	assert.NotEmpty(t, why)
 }
+
+// friend level on the twin: a card queued on one friend moves to another of her class with
+// room, which friend sync delivers as a new job, and the queue file of the friend it left
+// marks it taken.
+func TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow(t *testing.T) {
+	t.Parallel()
+	ta, root := takeApp(t, 4, nil, "amy", "bob")
+	ta.ok("friend up amy --width 1")
+	ta.ok("friend up bob --width 1")
+	ta.ok("friend down bob")
+	ta.ok("tick") // amy alone: s1-1 working, s1-2 ready
+	ta.ok("friend sync --root " + root)
+	require.Equal(t, "queued", queueStates(t, root, "amy")["s1-2.w1"])
+	ta.ok("friend up bob")
+	ta.ok("friend beat bob")
+
+	out := ta.ok("friend level")
+	assert.Contains(t, out, "s1-2.w1 friend.amy:ready -> friend.bob:working gen=2; moved=1 to bob(1) from amy(1)")
+	assert.Contains(t, out, "FRIEND-LEVEL OK moved=1")
+	out = ta.ok("friend sync --root " + root)
+	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=bob card=s1-2.w1 job=s1-2.w1.g2")
+	assert.Equal(t, "taken", queueStates(t, root, "amy")["s1-2.w1"], "not hers to start any more")
+	assert.Equal(t, "working", queueStates(t, root, "bob")["s1-2.w1"])
+	assert.Contains(t, ta.ok("friend level"), "FRIEND-LEVEL OK moved=0")
+	ta.clean()
+}

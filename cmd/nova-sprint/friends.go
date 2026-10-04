@@ -180,7 +180,7 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r)})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -352,4 +352,12 @@ func orEmpty(xs []string) []string {
 		return []string{}
 	}
 	return xs
+}
+
+// friendClass is a friend row's class: the tiers it says she can do, sorted and comma
+// joined; "" when it names none.
+func friendClass(r config.Row) string {
+	tiers := sprint.Split(r.Fields["tiers"])
+	slices.Sort(tiers)
+	return strings.Join(slices.Compact(tiers), ",")
 }

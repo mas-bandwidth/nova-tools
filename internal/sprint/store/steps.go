@@ -257,3 +257,9 @@ func FriendTakeStep(r sprint.FriendTakeReq) Step {
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: verb, Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendTake(s, r) }}
 }
+
+// FriendLevelStep evens the friends' ready queues within each class (friend level).
+func FriendLevelStep(r sprint.FriendLevelReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "friend level", Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendLevel(s, r) }}
+}

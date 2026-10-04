@@ -117,3 +117,40 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 	}
 	return a.runStep(name, *c, st, store.FriendTakeStep(sprint.FriendTakeReq{Friend: friend, IDs: ids, All: *all, Reason: *reason, Started: started, Who: c.actor}), stdout, stderr)
 }
+
+// friendLevelWords is what friend level says on -h.
+const friendLevelWords = "friend level evens the friends' ready queues as fleet level evens the members': among the friends up of one class (the tiers her nova-config row says she can do), while one has two more cards over her width than another below her room (twice her width), the newest card of the first moves to the second at its next generation, into working when she has a lane free. Only a card for any friend (WHO: friend) that is ready on her row and that she has not started (a push on its branch, her beat naming it running) moves; a card naming her and a working card stay. The MOVED line says moved=N to <friend>(n) from <friend>(n). friend sync delivers a moved card as a new job and marks it taken in the queue file of the friend it left.\n"
+
+func (a *app) cmdFriendLevel(args []string, stdout, stderr io.Writer) int {
+	const name = "friend level"
+	fs, c := a.verbSetup(name)
+	pos, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	if len(pos) > 0 {
+		return refuse(stderr, name, "takes no words, found "+oneline.Escape(pos[0]))
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	ctx := context.Background()
+	rows, err := st.FriendRows(ctx, a.now())
+	if err != nil {
+		return a.readFailed(name, err, stderr)
+	}
+	r := sprint.FriendLevelReq{Started: map[string]string{}, Who: c.actor}
+	for _, f := range rows {
+		r.Seats = append(r.Seats, sprint.FriendSeat{Name: f.Name, Width: f.Width, Status: f.Status, Class: f.Class})
+		if f.Status != sprint.Up {
+			continue
+		}
+		started, err := a.friendStarted(ctx, st, f.Name)
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		maps.Copy(r.Started, started)
+	}
+	return a.runStep(name, *c, st, store.FriendLevelStep(r), stdout, stderr)
+}

@@ -289,11 +289,31 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	// delivered, and her queue file says which are which
 	// and the ones taken back from her (sprint.FriendTake), withdrawn on her row until the deal
 	// places them again: taken in her queue file, so her daemon starts none of them
+	// a queued card no longer on her row that is dealt to another (friend level, or a take
+	// dealt again) left her: taken in her queue file too
+	left := func(ids []string) (map[string]bool, error) {
+		cards, err := st.Records(ctx, sprint.Fleet, ids)
+		out := map[string]bool{}
+		for _, c := range cards {
+			if c != nil && c.Row != sprint.FriendRow(name) && (c.Col == sprint.Ready || c.Col == sprint.Working || c.Col == sprint.Withdrawn) {
+				out[c.ID] = true
+			}
+		}
+		return out, err
+	}
 	all, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working, sprint.Ready, sprint.Withdrawn)
-	if err != nil || len(all) == 0 {
+	if err != nil {
 		return 0, 0, err
 	}
 	states := map[string]string{}
+	if len(all) == 0 {
+		// none on her row: a queue file there still has its queued cards that left her
+		// marked taken (writeQueueFile), and none is made
+		if _, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(queueFile))); err != nil {
+			return 0, 0, nil
+		}
+		return 0, 0, writeQueueFile(dir, states, left)
+	}
 	var cards []*sprint.Card
 	for _, c := range all {
 		states[c.ID] = map[string]string{string(sprint.Working): "working", string(sprint.Ready): "queued", string(sprint.Withdrawn): queueTaken}[string(c.Col)]
@@ -307,7 +327,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	}
 	defer func() {
 		if err == nil {
-			err = writeQueueFile(dir, states)
+			err = writeQueueFile(dir, states, left)
 		}
 	}()
 	for _, p := range packets {
@@ -392,10 +412,11 @@ type friendTask struct {
 
 // writeQueueFile keeps the friend's queue file as the sprint sees her cards: each card
 // on her row is a record, queued while it is ready behind her working cards, working
-// while it is working, and taken once the coordinator has taken it back; a record the sprint does not name, or one her session marked
+// while it is working, and taken once the coordinator has taken it back or a queued one
+// has been dealt to another (friend level, leftOf); a record the sprint does not name, or one her session marked
 // done, is kept as it is. The file is written whole (atomicfile), and not at all when
 // nothing changes.
-func writeQueueFile(dir string, states map[string]string) error {
+func writeQueueFile(dir string, states map[string]string, leftOf func(ids []string) (map[string]bool, error)) error {
 	path := filepath.Join(dir, filepath.FromSlash(queueFile))
 	var q friendQueue
 	before, err := os.ReadFile(path)
@@ -407,6 +428,18 @@ func writeQueueFile(dir string, states map[string]string) error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
+	var gone []string
+	for _, t := range q.Tasks {
+		if _, ok := states[t.ID]; !ok && t.State == "queued" && sprint.ValidCardID(t.ID) {
+			gone = append(gone, t.ID)
+		}
+	}
+	left := map[string]bool{}
+	if len(gone) > 0 {
+		if left, err = leftOf(gone); err != nil {
+			return err
+		}
+	}
 	seen := map[string]bool{}
 	for i, t := range q.Tasks {
 		if state, ok := states[t.ID]; ok {
@@ -414,6 +447,10 @@ func writeQueueFile(dir string, states map[string]string) error {
 			if t.State != "done" {
 				q.Tasks[i].State = state
 			}
+		} else if left[t.ID] {
+			// queued, and dealt to another now: it left without her starting it (friend
+			// level, or a take dealt again elsewhere), so it is not hers to start
+			q.Tasks[i].State = queueTaken
 		}
 	}
 	for _, id := range slices.Sorted(maps.Keys(states)) {

@@ -133,6 +133,8 @@ func verbProse(name string) string {
 		return friendVerbWords(name)
 	case "friend take":
 		return friendTakeWords
+	case "friend level":
+		return friendLevelWords
 	default:
 		return ""
 	}

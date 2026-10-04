@@ -37,13 +37,17 @@ type friendEntry struct {
 	At    time.Time `json:"at,omitempty"`
 	By    string    `json:"by,omitempty"`
 	Width int       `json:"width,omitempty"`
+	// Class is her class: the tiers her nova-config row says she can do, sorted and
+	// comma joined (friend level evens the friends of one class).
+	Class string `json:"class,omitempty"`
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
-// of nova-config) and her width.
+// of nova-config), her width and her class.
 type FriendSpec struct {
 	Name  string
 	Width int
+	Class string
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -57,6 +61,7 @@ type FriendRow struct {
 	OK      int    `json:"ok"`
 	Failed  int    `json:"failed"`
 	Status  string `json:"status"`
+	Class   string `json:"class,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -117,11 +122,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width:
+		case e.Width != s.Width || e.Class != s.Class:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width = s.Width
+		e.Width, e.Class = s.Width, s.Class
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -241,7 +246,7 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 			// ignored: an unreadable record is no beat, which the next beat replaces
 			_ = json.Unmarshal([]byte(vals[i]), &b)
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(r[n].Held, b, now), Load: b.Load, Report: b.Friend}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(r[n].Held, b, now), Class: r[n].Class, Load: b.Load, Report: b.Friend}
 		rows[n] = row
 		status[n] = row.Status
 	}
@@ -282,7 +287,7 @@ func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.T
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class}
 	}
 	return seats, nil
 }

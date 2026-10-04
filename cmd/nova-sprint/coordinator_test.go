@@ -91,6 +91,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"friend down":   "friend down friend-a",
 		"friend up":     "friend up friend-a",
 		"friend take":   "friend take friend-a s1-1",
+		"friend level":  "friend level",
 		"reader add":    "reader add reader-d",
 		"reader away":   "reader away reader-a",
 		"reader up":     "reader up reader-a",

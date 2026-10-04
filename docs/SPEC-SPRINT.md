@@ -207,6 +207,29 @@ cards come back to her when she is released and beats; what she has started
 stays on her row and finishes (`TestTheHoldOfAFriendWithdrawsWhatSheHasNotStartedAndKeepsTheRest`,
 `TestFriendDownGivesBackWhatSheHasNotStartedAndKeepsTheRest`).
 
+**Friend level** (the owner, 2026-10-04: "What else is like this? Missing
+verbs we need for friends, that machines already have"; `sprint.FriendLevel`).
+`friend level` (the coordinator's) evens the friends' ready queues as `fleet
+level` evens the members' (section 5), within each class: a friend's class is
+the tiers her nova-config row says she can do (`friend sync` copies them to
+the roster, sorted and comma joined), and a card moves only between friends of
+one class. Among the friends up of a class, while the largest backlog (the
+cards on her row, ready and working, less her width) of a friend with a card
+that may move and the smallest of the friends below their room (DealAhead
+times their width) differ by more than one, the newest card that may move of
+the first goes to the second at its next generation (its own branch, and its
+own job, `<card>.g<gen>`), into `working` when she has a lane free and `ready`
+behind her working cards otherwise. A card may move when its WHO line is
+`friend` (any friend), it is ready on her row, and she has not started it (a
+push on its branch, her beat naming it running); a card naming her and a
+working card stay. Each move lowers the sum of squared backlogs and a card
+moves once, so it ends. The first MOVED line ends `moved=N to
+<friend>(n),... from <friend>(n),...`. `friend sync` delivers a moved card as a
+new job to the friend it went to, and the queue file of the friend it left
+marks it `taken` (a queued record of a card now dealt to another row). The tick
+does not level the friends (`TestFriendLevelEvensTheReadyQueuesOfAClass`,
+`TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow`).
+
 `friend sync`, run by the coordinator's own loop where the directories are
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
 a friend's card across the inbox/outbox standard
@@ -2219,7 +2242,7 @@ default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, fleet
-up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, friend take, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
+up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, friend take, friend level, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it (the seat
@@ -2284,6 +2307,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
 | friend down, friend up | hold a friend (status `held`, whatever it beats; every card dealt to her she has not started goes back to ready) and release the hold (not a beat: `down` until she beats; `--width <n>` sets her width) |
 | friend take | take back cards dealt to a friend that she has not started (`<id>...` or `--all-unstarted`), each back to ready for the friends' deal |
+| friend level | even the ready queues of the friends up within each class, as fleet level evens the members' |
 | reader add | declares readers |
 | reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
 | reader up | releases the hold; the reader's state is then its beat's |
