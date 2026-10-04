@@ -105,9 +105,13 @@ unset __nova_secret_name
 // it started goes too, not only the pid the timeout hit, then polls the child for one
 // second, sends KILL to the group, and exits. On a normal child exit the status is passed
 // through and no group signal is sent: a background job the command left behind is not a
-// timeout. The wrapper never calls setsid and never looks up its parent's group (that
-// group is the harness; reap-grp is the failure mode where a non-leader either fails the
-// signal or, aimed at the real pgid, hits the harness). One second, not TerminateGrace,
+// timeout. The real shell is started in the background, and a non-interactive /bin/sh
+// sends a background command's stdin to /dev/null, so the wrapper first holds stdin open on
+// fd 3 (exec 3<&0) and hands that fd to the command (<&3 3<&-) before closing it in itself:
+// what is piped into the shim reaches the command. The wrapper never calls setsid and
+// never looks up its parent's group (that group is the harness; reap-grp is the failure
+// mode where a non-leader either fails the signal or, aimed at the real pgid, hits the
+// harness). One second, not TerminateGrace,
 // because the harness's own force stop follows at three seconds and must not arrive first
 // and kill only the leader. If the wrapper is not the leader, -$ fails and no other group
 // is reached: fail closed, never fall back to exec.
@@ -117,7 +121,10 @@ func shellShimScript(real string) string {
 		"shell and everything it started -- and not only the pid the timeout hit.\n" +
 		"# On a normal child exit, pass the child's status through and do not signal the group: " +
 		"a background job the command left behind is not a timeout.\n" +
-		"'" + real + "' \"$@\" &\n" +
+		"# A non-interactive /bin/sh sends a background command's stdin to /dev/null, so stdin is " +
+		"held on fd 3 and handed to the command: what is piped into the shim reaches the command.\n" +
+		"exec 3<&0\n" +
+		"'" + real + "' \"$@\" <&3 3<&- &\n" +
 		"child=$!\n" +
 		"trap 'trap \"\" TERM INT HUP; kill -TERM -$$ 2>/dev/null; i=0; while [ \"$i\" -lt 10 ] && kill -0 \"$child\" 2>/dev/null; do i=$((i + 1)); sleep 0.1; done; kill -KILL -$$ 2>/dev/null; exit 128' TERM INT HUP\n" +
 		"wait \"$child\"\n" +

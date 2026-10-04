@@ -285,6 +285,27 @@ func TestAToolTimeoutReapsOnlyTheWrapperGroup(t *testing.T) {
 	require.True(t, alive(bystander.Process.Pid), "a group this launch did not start was signaled")
 }
 
+// TestAPipeIntoTheShimReachesTheCommand pins the wrapper's stdin carry: the real shell is
+// started in the background, and a non-interactive /bin/sh sends a background command's
+// stdin to /dev/null, so the wrapper holds stdin open on fd 3 and hands it to the command;
+// what is piped into the shim reaches the command and comes back on stdout
+// (nova-tools #1814, the shell wrapper).
+func TestAPipeIntoTheShimReachesTheCommand(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the shim is a /bin/sh script; windows writes none")
+	}
+	dir, _, err := writeNativeShellShims(t.TempDir())
+	require.NoError(t, err)
+	shim := filepath.Join(dir, "sh")
+	cmd := exec.Command(shim, "-c", "cat")
+	cmd.Stdin = strings.NewReader("into the shim, through the wrapper, to the command\n")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "the shim did not run the command: %q", out)
+	require.Equal(t, "into the shim, through the wrapper, to the command\n", string(out),
+		"what was piped into the shim did not reach the command: the backgrounded shell lost its stdin")
+}
+
 // shQuote single-quotes s for safe inclusion in a /bin/sh script.
 func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
