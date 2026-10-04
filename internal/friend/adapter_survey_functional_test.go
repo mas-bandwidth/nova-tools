@@ -16,6 +16,7 @@ import (
 // a model turn: no token is spent. Each half skips where its harness is not
 // installed.
 func TestDSHAndGeminiFramesReachTheRealBinaries(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := os.Stat(DSHProgram); err == nil {
 		d := &DSH{Dir: dir, Session: "session-nope", Run: RealExec}

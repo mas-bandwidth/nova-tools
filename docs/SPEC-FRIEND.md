@@ -133,15 +133,15 @@ numbers until `friend beat` takes them. A session that reads the bus itself
 
 ## The harness survey (2026-10-04)
 
-Glenn: "We should try to do this for all major harnesses." The rule of the
+The survey covers all major harnesses. The rule of the
 survey: a push is a turn landing in the friend's EXISTING session, which the
 model answers; a resume with a new prompt counts when the same session
 continues (the same id, the same record); an app-server, IPC or MCP that takes
 a user turn counts; a URL scheme that opens a new chat does not. Installed
-means on the Studio, that day. Claude, Codex, Grok and Antigravity are other
+means on the survey machine, that day. Claude, Codex, Grok and Antigravity are other
 children's; OpenCode is above.
 
-| harness | installed here | push route | command or frame | proven | needs from Glenn |
+| harness | installed here | push route | command or frame | proven | needs from the owner |
 |---|---|---|---|---|---|
 | dsh (DeepSeek Harness) | yes: `/Applications/DeepSeek Harness.app`, v0.2.0-rc.2, CLI at `Contents/Resources/runtime/cli/bin/dsh`, nothing on PATH | the headless profile adopts a persisted session (`~/.dsh/sessions/<key>/<id>`), shared with the desktop app | `dsh headless --session-id <id> -` in the friend's dir, text on stdin; newest `session-*` of `<key>` when none is named | yes, 2026-10-04 on a throwaway session: adopted (turn 2 in the same record, 9 KB to 16 KB); unknown id exit 1; another directory exit 1 ("recorded in"); the turn itself stopped at the provider: `MISSING_CREDENTIAL`, 0 tokens spent | store DEEPSEEK_API_KEY for the headless profile (the web Models page, or the daemon's environment); the desktop app's key is not seen by it |
 | gemini (Gemini CLI) | yes: `/opt/homebrew/bin/gemini` 0.46.0 (brew gemini-cli) | `--resume <uuid>` keeps the session id and chat file (`ChatRecordingService.initialize`, read in the bundle); `latest` is the project's newest | `gemini --skip-trust --resume <id\|latest> --prompt=<text>` in the friend's dir | mechanics only, 2026-10-04: a session file was written under `~/.gemini/tmp/<project>/chats/`, `--resume <bad uuid>` exits 42; the turn itself never ran: the account answered 429 `rateLimitExceeded`, then `IneligibleTierError: this client is no longer supported for Gemini Code Assist for individuals`; no token spent | a GEMINI_API_KEY in the daemon's environment, or a Code Assist tier that still serves the CLI (the individual tier no longer does, 8:58 AM ET) |
