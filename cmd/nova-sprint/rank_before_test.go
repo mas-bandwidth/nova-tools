@@ -15,7 +15,7 @@ func TestRankBeforePlacesCardsInFrontOfAPrimary(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream a --count 4")
-	ta.ok("add --stream b --count 1")
+	ta.ok("add --one --stream b --count 1")
 
 	out := ta.ok("rank a-4 a-3 --before a-2")
 	assert.Contains(t, out, "MOVED a-4 score 4 -> ")
