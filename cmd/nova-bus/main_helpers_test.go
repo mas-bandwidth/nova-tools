@@ -102,17 +102,15 @@ const noMaintenanceConfig = "[gc]\n\tauto = 0\n\tautoDetach = false\n" +
 // reason at all -- bodies, continuation and the read half, each of which builds its own bus
 // under its own t.TempDir and shares nothing. Those now say t.Parallel.
 //
-// What stays serial, and must: a test that writes PROCESS-WIDE state. That is the whole
-// list, and every one of them is serial for a named reason --
+// What stays serial, and must: a test that writes PROCESS-WIDE state. No test does now:
+// every test opens with t.Parallel, and the state a test used to take out at the package
+// seam and put back (the environment, the working directory, the refresh, publish and
+// lock seams) comes in through the runEnv instance the test builds instead. t.Setenv and
+// t.Chdir stay unavailable in a parallel test by construction: testing panics if a test
+// that has called t.Parallel calls either.
 //
-//	refreshCheckout,        package variables taken out at the seam and put back
-//	publishDraft,           (withoutFetch, and the two tests that stand in for a
-//	checkoutLockWait,       filesystem, a held lock and a stamp)
-//	version
-//	t.Setenv, t.Chdir       process-wide by construction, and testing panics if a test
-//	                        that has called t.Parallel calls either
-//
-// The rule for a new test here: it may be parallel unless it writes one of those.
+// The rule for a new test here: it may be parallel unless it writes one of those, and
+// then it names the reason here.
 //
 // hermetic is the call each git-running test keeps, and it asserts what TestMain set rather
 // than setting it. Kept as a call rather than deleted so that the dependency stays written

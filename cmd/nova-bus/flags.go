@@ -224,10 +224,6 @@ func (f *flags) resolveReceiptMaxWords(flagValue int, flagWasSet bool, busDir st
 	return flagValue, flagValue >= 1
 }
 
-func resolveReceiptMaxWords(flagValue int, flagWasSet bool, busDir string) (int, bool) {
-	return (&flags{}).resolveReceiptMaxWords(flagValue, flagWasSet, busDir)
-}
-
 // receiptMaxWordsRefusal is the one line for a missing receipt word count, which names
 // the three places it can be given.
 func receiptMaxWordsRefusal(verb string, got int) string {
@@ -317,10 +313,6 @@ func (f *flags) receiptMaxWordsFromEnv() (int, bool) {
 		return 0, false
 	}
 	return n, true
-}
-
-func receiptMaxWordsFromEnv() (int, bool) {
-	return (*flags)(nil).receiptMaxWordsFromEnv()
 }
 
 // defaultAttempts is the retry budget when the caller names none.
