@@ -185,7 +185,7 @@ func quackBrief(id, stream, tier, repo, base string, rules []swarm.ChildRule) st
 		"Libraries considered: none; this card writes no code.",
 		"Why: a quack card proves the whole chain (deal, run, finish, two reads, merge) on every route with a known answer, in about a minute.",
 		fmt.Sprintf("What: Quack like a duck. Create the file %s in the staged checkout containing exactly one line, `quack`, commit it with the message `quack: %s`, and finish as JOB.md says. Your report (the PR title, or the output and report fields of RESULT.md) must contain the word quack. Do nothing else: read no other file, run no test, change no other file. A quack card runs in under a minute.", file, id),
-		"Write the draft within the first third of the budget and commit before extra probes. Record unfinished work and checks not yet run; the draft commit does not claim completion or passing gates.",
+		"As the work, write the draft within the first third of the budget and commit before extra probes. Record unfinished work and checks not yet run; the draft commit does not claim completion or passing gates.",
 		"Tests: none. The known answer is the word quack in the report and the one-line file in the diff.",
 		fmt.Sprintf("Files: %s only.", file),
 		fmt.Sprintf("Gate: none; `cat %s` prints quack.", file),
