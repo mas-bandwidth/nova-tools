@@ -283,4 +283,17 @@ func TestTheDSNRefusalNamesNoUnclassifiedByte(t *testing.T) {
 			}
 		}
 	}
+
+	// The variable name NOVA_PG_PASSWORD_ENV carries is operator text as well: a
+	// password pasted there is refused without being quoted.
+	for si, secret := range secrets {
+		t.Run(fmt.Sprintf("password variable name/secret %d", si), func(t *testing.T) {
+			t.Parallel()
+			_, err := ResolveDSN("postgres://store@db.invalid:5432/nova", envOf(map[string]string{EnvPGPassEnv: secret}))
+			require.Error(t, err)
+			if bad, found := leaks(err.Error(), secret); found {
+				t.Errorf("the refusal echoed %s of the variable name in %q", bad, err.Error())
+			}
+		})
+	}
 }

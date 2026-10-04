@@ -77,6 +77,12 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 	if !named {
 		name = DefaultPassEnv
 	}
+	// The name is operator input too, and a password pasted where a variable
+	// name belongs must not come back in a message: only a name of letters,
+	// digits and underscores is quoted (docs/nova-config/README.md, "Connecting").
+	if named && !isEnvName(name) {
+		return "", fmt.Errorf("%s does not name a variable: want letters, digits and underscores only", EnvPGPassEnv)
+	}
 	pw := getenv(name)
 	if pw == "" {
 		if named {
@@ -257,4 +263,19 @@ func withPassword(dsn, user, pw string) (string, error) {
 	}
 	escaped := strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(pw)
 	return dsn + " password='" + escaped + "'", nil
+}
+
+// isEnvName reports whether s is spelled as an environment variable name: the
+// one class of the operator's text a refusal here may quote.
+func isEnvName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != '_' && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
 }
