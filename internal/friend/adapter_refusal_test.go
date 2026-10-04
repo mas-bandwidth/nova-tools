@@ -43,7 +43,9 @@ func TestTheAdaptersSayAProvidersRefusalWithTheSession(t *testing.T) {
 		{"opencode", &OpenCode{Dir: "/w/bob", Session: "ses_x", Run: refusing}, "ses_x"},
 		{"dsh", &DSH{Dir: "/w/bob", Session: "session-x", Run: refusing, Program: "dsh"}, "session-x"},
 		{"gemini", &Gemini{Dir: "/w/bob", Session: "", Run: refusing}, "latest"},
-		{"codex", &Codex{Dir: "/w/bob", Session: "thread-x", Run: refusing, Home: "/nonexistent", Held: func(string) bool { return false }}, "thread-x"},
+		{"codex", &Codex{Dir: "/w/bob", Session: "thread-x", Run: refusing, Home: "/nonexistent", Held: func(string) bool { return false },
+			Resolve: func(string, string, string) (string, string, error) { return "thread-x", "/rollout", nil },
+			Receipt: func(string, string, string, int64) (bool, int64, error) { return false, 10, nil }}, "thread-x"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()

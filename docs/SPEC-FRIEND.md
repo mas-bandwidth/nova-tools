@@ -146,30 +146,35 @@ answered by the daemon at once, beating, and recording a push it cannot
 deliver; so the tool is honest, and the beat and the daemon pong are real
 for it.
 
-Codex delivers by resume, not into the open chat: `codex exec resume
---skip-git-repo-check <thread> <text>` resumes the saved thread in a new codex
-process, so the thread's model answers with the friend's whole context, and
-the record labels every such turn "answered by resume, not by the open
-chat". The open chat itself is out of reach: the Codex desktop app
-(ChatGPT.app) runs its app-server on a stdio pair it owns and listens on no
-socket, and while a thread is open there the app holds its writer lock
-(`~/.codex/thread-writer-locks/<thread>.lock`), which refuses a resume
-("thread <id> already has an active writer", measured 2026-10-04 on an open
-thread, exit 1). Without --session, the adapter resolves the newest saved thread with the
-same working directory from session_meta headers and session_index updated_at
-under CODEX_HOME (otherwise ~/.codex); without a matching thread it refuses
-with a remedy rather than spawning codex. It probes that exact thread's writer
-lock first (the same flock codex takes). While held, it returns Deferred without
-running codex: no failure is counted and nothing is acked or given up, even
-after 1,000 deferrals. The daemon retries every ten seconds. The probe releases
-its brief exclusive lock before resume, so a writer can still acquire it in
-that window; this observation is not a reservation. Reaching the open chat needs the app on the shared local daemon:
-the app connects to `~/.codex/app-server-control/app-server-control.sock`
-instead of its own stdio server only when launched with
-`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1` and a daemon is already up (`codex
-app-server daemon start`; read from the app bundle, unverified); then `codex
-queue --thread <id> --message <text>` reaches the open chat, and the adapter
-should move to it.
+Codex resolves the exact named saved thread, or the newest saved thread for
+the working directory, and its rollout JSONL under CODEX_HOME (otherwise
+`~/.codex`) before delivery. A named thread is found by its `session_meta` ID
+without imposing its old working directory on the current command. When the
+desktop app holds that thread's writer lock, the adapter runs `codex queue
+--thread <id> --message <text>` with literal arguments. Exit 0 is only queue
+admission. The adapter returns accepted only after that same rollout appends a
+complete `response_item` user message whose sole input text exactly equals the
+delivery. It ignores assistant/event records, partial final lines and bounded
+oversized records, and refuses to queue when the target rollout identity cannot
+be read. Cancellation or a receipt read error after admission returns Deferred
+and never tries resume, because the queue may still deliver and a second route
+could duplicate the turn.
+
+A definite queue refusal may try `codex exec resume --skip-git-repo-check
+<id> <text>` once, as direct route ordering requires; its record says
+"answered by resume, not by the open chat". With a free writer lock, resume is
+first and a failure may try queue. Provider refusals from resume remain typed
+session failures. There is no exactly-once claim: a process crash after queue
+admission but before the receipt, or a retry whose batched text changed, can
+still duplicate input because the CLI offers no idempotency key or durable
+queue-status operation. Normal-launch behavior and ten live ping/pong trials
+remain acceptance work; no special app launch is claimed here.
+
+Measured 2026-10-04 with codex-cli 0.153.4: a desktop app process that retained
+`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1` appended an exact queued tracer as a user
+message in the already-open target rollout immediately after its preceding turn
+ended. This proves the receipt shape and that conditional route only. It does
+not prove delivery under an ordinary desktop launch, which remains unmeasured.
 
 ### Antigravity
 

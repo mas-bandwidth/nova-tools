@@ -2,54 +2,154 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCodexResumesTheNamedThreadAndLabelsTheAnswerAsResume(t *testing.T) {
-	t.Parallel()
-	fe := &fakeExec{exit: 0, out: "got it, sent on the bus.\n"}
-	var rec strings.Builder
-	c := &Codex{Dir: "/w/stella", Session: "01a104a7-04b1-7003-ad3d-781200c5ff5d", Run: fe.run, Held: func(string) bool { return false }, Out: &rec}
-	exit, err := c.Deliver(context.Background(), "ping: run the pong line")
-	require.NoError(t, err)
-	assert.Equal(t, 0, exit)
-	require.Len(t, fe.calls, 1)
-	assert.Equal(t, []string{"/w/stella", "codex", "exec", "resume", "--skip-git-repo-check", "01a104a7-04b1-7003-ad3d-781200c5ff5d", "ping: run the pong line"}, fe.calls[0])
-	assert.Equal(t, "answered by resume, not by the open chat: codex exec resume --skip-git-repo-check 01a104a7-04b1-7003-ad3d-781200c5ff5d <text>\ngot it, sent on the bus.\n", rec.String())
+type receiptAnswer struct {
+	found bool
+	next  int64
+	err   error
 }
 
-func TestCodexWithoutAThreadResumesTheNewestOfTheDirectory(t *testing.T) {
-	t.Parallel()
-	fe := &fakeExec{exit: 7}
-	var rec strings.Builder
-	home := codexSessions(t)
-	dir := filepath.Join(home, "project")
-	c := &Codex{Dir: dir, Home: home, Run: fe.run, Program: "/opt/codex", Held: func(string) bool { return false }, Out: &rec}
-	exit, err := c.Deliver(context.Background(), "hello")
-	require.NoError(t, err)
-	assert.Equal(t, 7, exit)
-	assert.Equal(t, [][]string{{dir, "/opt/codex", "exec", "resume", "--skip-git-repo-check", "old", "hello"}}, fe.calls)
-	assert.Equal(t, "not answered: codex exec resume exited 7 (a thread open in the Codex app refuses a resume; or no such thread)\n", rec.String())
+func receiptCodex(c *Codex, answers ...receiptAnswer) *int {
+	c.Resolve = func(_, _, session string) (string, string, error) { return session, "/rollout", nil }
+	calls := 0
+	c.Receipt = func(string, string, string, int64) (bool, int64, error) {
+		r := answers[calls]
+		calls++
+		return r.found, r.next, r.err
+	}
+	return &calls
 }
 
-func TestCodexRefusesWhileTheAppHoldsTheThreadWithoutRunningCodex(t *testing.T) {
+func TestCodexDeliversIntoTheOpenChatOrDefers(t *testing.T) {
+	t.Parallel()
+	fe := &fakeExec{out: "queued\n"}
+	var record strings.Builder
+	c := &Codex{Dir: "/project", Session: "thread-1", Run: fe.run, Held: func(string) bool { return true }, Out: &record}
+	calls := receiptCodex(c, receiptAnswer{next: 40}, receiptAnswer{next: 40}, receiptAnswer{found: true, next: 90})
+	pauses := 0
+	c.Pause = func(context.Context, time.Duration) { pauses++ }
+	text := "literal `text` [and] $shell"
+	exit, err := c.Deliver(context.Background(), text)
+	require.NoError(t, err)
+	assert.Zero(t, exit)
+	assert.Equal(t, 3, *calls)
+	assert.Equal(t, 1, pauses)
+	assert.Equal(t, [][]string{{"/project", "codex", "queue", "--thread", "thread-1", "--message", text}}, fe.calls)
+	assert.Contains(t, record.String(), "received by open chat")
+}
+
+func TestCodexAcceptedOrAmbiguousQueueNeverFallsBackToResume(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		runErr  error
+		readErr error
+	}{
+		{name: "canceled waiting"},
+		{name: "command result unknown", runErr: errors.New("connection lost")},
+		{name: "receipt read fails", readErr: errors.New("rollout unreadable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			fe := &fakeExec{}
+			c := &Codex{Dir: "/project", Session: "thread-1", Held: func(string) bool { return true }}
+			c.Run = func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+				out, _, _ := fe.run(ctx, dir, name, args, stdin)
+				return out, 0, tc.runErr
+			}
+			if tc.readErr != nil {
+				receiptCodex(c, receiptAnswer{next: 10}, receiptAnswer{next: 10, err: tc.readErr})
+			} else {
+				receiptCodex(c, receiptAnswer{next: 10}, receiptAnswer{next: 10})
+			}
+			c.Pause = func(context.Context, time.Duration) { cancel() }
+			exit, err := c.Deliver(ctx, "message")
+			assert.Zero(t, exit)
+			var deferred Deferred
+			require.ErrorAs(t, err, &deferred)
+			assert.Contains(t, deferred.Reason, "no alternate route")
+			require.Len(t, fe.calls, 1)
+			assert.Equal(t, "queue", fe.calls[0][2])
+		})
+	}
+}
+
+func TestCodexQueueRefusalTriesResumeAndPreservesProviderRefusal(t *testing.T) {
+	t.Parallel()
+	for _, provider := range []bool{false, true} {
+		fe := &fakeExec{}
+		calls := 0
+		c := &Codex{Dir: "/project", Session: "thread-1", Held: func(string) bool { return true }}
+		c.Run = func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+			_, _, _ = fe.run(ctx, dir, name, args, stdin)
+			calls++
+			if calls == 1 {
+				return "queue refused", 1, nil
+			}
+			if provider {
+				return `{"type":"error","error":{"type":"invalid_request_error","message":"bad input"}}`, 1, nil
+			}
+			return "answered", 0, nil
+		}
+		receiptCodex(c, receiptAnswer{next: 10})
+		exit, err := c.Deliver(context.Background(), "message")
+		if provider {
+			var refused ProviderRefused
+			require.ErrorAs(t, err, &refused)
+			assert.Equal(t, 1, exit)
+		} else {
+			require.NoError(t, err)
+			assert.Zero(t, exit)
+		}
+		require.Len(t, fe.calls, 2)
+		assert.Equal(t, "queue", fe.calls[0][2])
+		assert.Equal(t, "exec", fe.calls[1][2])
+	}
+}
+
+func TestCodexClosedProviderRefusalIsReturnedOnlyAfterQueueAlsoRefuses(t *testing.T) {
 	t.Parallel()
 	fe := &fakeExec{}
-	var probed string
-	c := &Codex{Dir: "/w/stella", Session: "t1", Home: "/h/.codex", Run: fe.run, Held: func(lock string) bool { probed = lock; return true }}
-	exit, err := c.Deliver(context.Background(), "hello")
-	assert.Equal(t, 0, exit)
-	var deferred Deferred
-	require.ErrorAs(t, err, &deferred)
-	assert.Contains(t, deferred.Reason, "thread t1")
-	assert.Equal(t, filepath.Join("/h/.codex", "thread-writer-locks", "t1.lock"), probed)
-	assert.Empty(t, fe.calls)
+	calls := 0
+	c := &Codex{Dir: "/project", Session: "thread-1", Held: func(string) bool { return false }}
+	c.Run = func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+		_, _, _ = fe.run(ctx, dir, name, args, stdin)
+		calls++
+		if calls == 1 {
+			return `{"type":"error","error":{"type":"invalid_request_error","message":"bad input"}}`, 1, nil
+		}
+		return "queue refused", 1, nil
+	}
+	receiptCodex(c, receiptAnswer{next: 10})
+	exit, err := c.Deliver(context.Background(), "message")
+	var refused ProviderRefused
+	require.ErrorAs(t, err, &refused)
+	assert.Equal(t, 1, exit)
+	require.Len(t, fe.calls, 2)
+	assert.Equal(t, "exec", fe.calls[0][2])
+	assert.Equal(t, "queue", fe.calls[1][2])
+}
+
+func TestCodexOldIdenticalProseNeverConfirmsANewQueue(t *testing.T) {
+	t.Parallel()
+	fe := &fakeExec{}
+	c := &Codex{Dir: "/project", Session: "thread-1", Run: fe.run, Held: func(string) bool { return true }}
+	receiptCodex(c, receiptAnswer{found: true, next: 10}, receiptAnswer{found: true, next: 20})
+	exit, err := c.Deliver(context.Background(), "ordinary repeated prose")
+	require.NoError(t, err)
+	assert.Zero(t, exit)
+	assert.Len(t, fe.calls, 1, "a pre-boundary match never acknowledges this submission")
 }
 
 func TestCodexHomeIsCodexHomeThenTheUsersDotCodex(t *testing.T) {
