@@ -28,11 +28,13 @@ func TestCodexWithoutAThreadResumesTheNewestOfTheDirectory(t *testing.T) {
 	t.Parallel()
 	fe := &fakeExec{exit: 7}
 	var rec strings.Builder
-	c := &Codex{Dir: "/w/project", Home: codexSessions(t), Run: fe.run, Program: "/opt/codex", Held: func(string) bool { return false }, Out: &rec}
+	home := codexSessions(t)
+	dir := filepath.Join(home, "project")
+	c := &Codex{Dir: dir, Home: home, Run: fe.run, Program: "/opt/codex", Held: func(string) bool { return false }, Out: &rec}
 	exit, err := c.Deliver(context.Background(), "hello")
 	require.NoError(t, err)
 	assert.Equal(t, 7, exit)
-	assert.Equal(t, [][]string{{"/w/project", "/opt/codex", "exec", "resume", "--skip-git-repo-check", "old", "hello"}}, fe.calls)
+	assert.Equal(t, [][]string{{dir, "/opt/codex", "exec", "resume", "--skip-git-repo-check", "old", "hello"}}, fe.calls)
 	assert.Equal(t, "not answered: codex exec resume exited 7 (a thread open in the Codex app refuses a resume; or no such thread)\n", rec.String())
 }
 

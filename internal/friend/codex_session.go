@@ -13,6 +13,13 @@ import (
 // NewestCodexSession resolves the saved thread before probing its writer lock
 // (SPEC-FRIEND.md, Codex). Only the index and first session_meta line are read.
 func NewestCodexSession(home, dir string) (string, error) {
+	wanted, err := filepath.Abs(dir)
+	if err == nil {
+		wanted, err = filepath.EvalSymlinks(wanted)
+	}
+	if err != nil {
+		return "", fmt.Errorf("codex working directory: %w", err)
+	}
 	updated := map[string]time.Time{}
 	index, err := os.Open(filepath.Join(home, "session_index.jsonl"))
 	if err == nil {
@@ -77,7 +84,20 @@ func NewestCodexSession(home, dir string) (string, error) {
 		if closeErr != nil {
 			return closeErr
 		}
-		if row.Type != "session_meta" || row.Payload.ID == "" || filepath.Clean(row.Payload.Cwd) != filepath.Clean(dir) {
+		if row.Type != "session_meta" || row.Payload.ID == "" {
+			return nil
+		}
+		cwd, err := filepath.Abs(row.Payload.Cwd)
+		if err == nil {
+			cwd, err = filepath.EvalSymlinks(cwd)
+		}
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("codex saved working directory: %w", err)
+		}
+		if cwd != wanted {
 			return nil
 		}
 		at := row.Payload.Timestamp
