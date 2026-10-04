@@ -362,6 +362,6 @@ func TestALocalRouteNamesItsServingMachine(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--local_lanes \"-1\": want a non-negative integer")
 	row, err = m.NewRow("m1", map[string]string{"user": "u", "seat": "s", "slots": "8", "width": "0", FieldLocalLanes: "2"})
-	require.NoError(t, err, "a machine that only serves local models: no member, two lanes")
+	require.NoError(t, err, "width 0 and local_lanes 2: no member, two lanes")
 	assert.Equal(t, "2", row.Fields[FieldLocalLanes])
 }

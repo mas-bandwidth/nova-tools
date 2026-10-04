@@ -347,7 +347,7 @@ var Kinds = []*Kind{
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
-			{Name: FieldLocalLanes, Type: TypeInt, Help: "the local model lanes it serves over the tailnet (nova-local, docs/SPEC-LOCAL.md \"Fleet\"): how many cards its local routes take at once, all of them together; 0 (the default) serves none. A machine that only serves local models is --width 0 --local_lanes <n>"},
+			{Name: FieldLocalLanes, Type: TypeInt, Help: "the local model lanes it serves over the tailnet (nova-local, docs/SPEC-LOCAL.md \"Fleet\"): how many cards its local routes take at once, all of them together; 0 (the default) serves none. independent of --width (the cards its member works); either may be 0"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
 	},

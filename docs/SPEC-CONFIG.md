@@ -139,7 +139,7 @@ nothing invented.
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
-| `local_lanes` | int | (0) | the deal: how many cards the local routes served on it take at once, all of them together; 0 serves none; a machine that only serves local models is `--width 0 --local_lanes <n>` (docs/SPEC-LOCAL.md, "Fleet"; migration 0028) | `machine:<m>` |
+| `local_lanes` | int | (0) | the deal: how many cards the local routes served on it take at once, all of them together; 0 serves none; independent of `width` (the cards its member works): `--width 0 --local_lanes <n>` is no member and n lanes, `--width <w> --local_lanes 0` the reverse (docs/SPEC-LOCAL.md, "Fleet"; migration 0028) | `machine:<m>` |
 | `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are

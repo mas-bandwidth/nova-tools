@@ -248,9 +248,11 @@ fleet machine that serves models, and the sprint deals to it as it deals to any 
   row's `nova-config route add` line.
 - **The lanes.** A machine's load is the limit, set as a lane count: nova-config's
   machine field `local_lanes` (migration 0028), the cards its local routes take at once,
-  all of them together; 0, the default, serves none. A machine that only serves local
-  models is `--width 0 --local_lanes <n>`: no sprint member runs on it, and the members'
-  cards call it. A lane change reaches the deal at the next `nova-config apply` of the
+  all of them together; 0, the default, serves none. A machine has two independent
+  numbers: its member `width` (the cards its sprint member works, by routes) and its
+  `local_lanes` (the cards its own model serves for the members' cards); either may be 0,
+  so `--width 0 --local_lanes <n>` is a machine with no member and n lanes, and any other
+  pair is as valid. A lane change reaches the deal at the next `nova-config apply` of the
   machines (the routes read the lanes from `machine:<m>`).
 - **The deal** (`internal/sprint/route.go`, the lanes). A local route is in its tier's
   route set and is drawn like any route. A work card ready or working, or a read card
