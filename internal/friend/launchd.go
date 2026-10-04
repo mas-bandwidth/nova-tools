@@ -14,6 +14,7 @@ import (
 type Agent struct {
 	Friend, Harness, Dir, Session string
 	StateDir                      string // the daemon's state files, when not the default under Home
+	Coordinator                   string // the bus sender that may automatically wake this session
 	Width                         int
 	Binary                        string // this tool, by absolute path
 	Redis, Server                 string // the bus store and the sprint server
@@ -37,6 +38,9 @@ func (a Agent) Args() []string {
 	}
 	if a.StateDir != "" {
 		args = append(args, "--state-dir", a.StateDir)
+	}
+	if a.Coordinator != "" {
+		args = append(args, "--coordinator", a.Coordinator)
 	}
 	return args
 }
