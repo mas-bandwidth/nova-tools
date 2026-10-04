@@ -115,7 +115,8 @@ func verbExits(name string) string {
 
 // recoverHelp is verbflag.RecoverWith with the verb's own exit codes in place of the
 // banner's paragraph: a verb's -h (or help <verb>) prints its usage quoted from the
-// banner, its example, its flags and its exit codes on stdout, exit 0. It is deferred
+// banner, its example, its flags and its exit codes on stdout, exit 0. The verb's exit
+// lines are handed to Print whole, so the by-verb indentation survives. It is deferred
 // directly, as RecoverWith is.
 func recoverHelp(out io.Writer, code *int) {
 	r := recover()
@@ -128,7 +129,7 @@ func recoverHelp(out io.Writer, code *int) {
 	}
 	name := verbflag.Verb("nova-swarm", h.FS)
 	var b strings.Builder
-	verbflag.Print(&b, "nova-swarm", strings.Replace(usage, exitParagraph, verbExits(name), 1), h.FS)
+	verbflag.Print(&b, "nova-swarm", usage, h.FS, strings.Split(verbExits(name), "\n")...)
 	*code = 0
 	help := verbflag.Insert(b.String(), verbHelpLines(name))
 	if e, ok := verbEffect[name]; ok {
