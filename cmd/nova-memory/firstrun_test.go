@@ -605,7 +605,7 @@ func TestTheEchoedStepPastesBackIntoThatPlatformsShell(t *testing.T) {
 		{
 			name: "a posix argument the shell would act on is quoted rather than handed over",
 			argv: []string{"search", "$HOME", "a'b", `back\slash`},
-			want: `search '$HOME' 'a'\''b' 'back\slash'`,
+			want: `search '$HOME' 'a'"'"'b' 'back\slash'`,
 		},
 		{
 			name:    "an empty argument is still a word on both shells",
