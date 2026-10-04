@@ -10,7 +10,6 @@ cmd/nova-swarm 3
 internal/buildinfo 1
 internal/bus 17
 internal/cardhdr 10
-internal/check 2
 internal/ci/slowtests 2
 internal/converge 1
 internal/dogfood 1
