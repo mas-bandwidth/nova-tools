@@ -1465,6 +1465,4 @@ internal/update/fleetdrift_functional_test.go the one-base merge of 2026-10-04 t
 tools/citiming/main_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built features in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 internal/nsprint/fn/rig_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 tools/tlacheck/rig_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built in it); the sprint card is listed in tmp/onebase-dropped for re-landing
-internal/secrets/storepull_cover_test.go dead: its only subject is mpintBytes and wirePublicKey, deleted with the dead storepull.go (dead-pkg-secrets-t2b); nothing it pins remains
-internal/dogfood/cli_cover_test.go dead: its only subject is Keys, deleted with the dead Keys in internal/dogfood/cli.go (dead-code pass 2026-10-04); nothing it pins remains
 cmd/nova-ci/timing_test.go moved to tools/citiming/main_test.go with the timing.go script it guards
