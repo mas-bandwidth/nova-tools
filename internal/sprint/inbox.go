@@ -435,7 +435,8 @@ func commands(g Group, first Note, prefix string) []Command {
 				// answered by rework or drop
 				add(d, resume("'<what you did; the lander merges again, regenerating the ledgers; a conflict outside the ledgers is answered by rework or drop>'"))
 			case "rework":
-				add(d, cmd+"return "+card+" --reason conflict", cmd+"rework "+card+" --fix "+fixText, resume("'returned "+card+" for rework'"))
+				// redo: return, rework with sprint.RedoFix and resume in one step (sprint.Redo)
+				add(d, cmd+"redo "+card)
 			case "drop":
 				add(d, cmd+"drop "+card+" --reason "+whyText+ans, resume("'dropped "+card+"'"))
 			}

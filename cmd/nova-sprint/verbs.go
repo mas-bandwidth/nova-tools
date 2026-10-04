@@ -61,6 +61,7 @@ func init() {
 		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--tier <tier>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
+		{"redo", "(<id>... | --stream <s>) [--fix <text>] [--answers <note>]", "redo s1-4", (*app).cmdRedo},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
 		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>]", "brief s1-4 --brief-file s1-4.md", (*app).cmdBrief},
@@ -2081,6 +2082,30 @@ func (a *app) cmdReturn(args []string, stdout, stderr io.Writer) int {
 	}, func(ids []string, s *sel, c *common) store.Step {
 		return store.ReturnStep(sprint.ReturnReq{Sel: s.sel(ids), Reason: *reason, Answers: answers(*ans), Who: c.actor})
 	})
+}
+
+// cmdRedo answers a stream stopped on a conflict on a card in one step: return,
+// rework with a fix (by default sprint.RedoFix) and resume, the three verbs a
+// conflict took (docs/SPEC-SPRINT.md section 7, redo; sprint.Redo). The cards
+// named, or with --stream alone the card that stream stopped on; refused,
+// writing nothing, when a card is not in a conflict.
+func (a *app) cmdRedo(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("redo")
+	stream := fs.String("stream", "", "the stream stopped on a conflict: with no ids, redo the card it stopped on; with ids, each must be of it")
+	fix := fs.String("fix", "", "the next attempt's fix; default '"+sprint.RedoFix+"'")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+	ids, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "redo", err.Error())
+	}
+	if len(ids) == 0 && *stream == "" {
+		return refuse(stderr, "redo", "wants <id>... or --stream <s>: the card a stream stopped on for a conflict")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "redo", err.Error())
+	}
+	return a.runStep("redo", *c, st, store.RedoStep(sprint.RedoReq{IDs: ids, Stream: *stream, Fix: *fix, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
 }
 
 func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {

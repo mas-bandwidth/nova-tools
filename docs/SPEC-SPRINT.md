@@ -764,6 +764,8 @@ outcome and reason are kept.
 | review -> working | rework with a fix: the next attempt is delegated at once | the coordinator's verb |
 | review -> ready | rework with a fix when no fleet member is up or none is below its width; the tick deals it when one has room | the coordinator's verb |
 | merging -> review | the stream's CI went red and the coordinator sent it back, or return | the coordinator's verb |
+| merging -> working | redo: a card its stream stopped on for a conflict, returned and reworked in one step, the next attempt delegated at once (section 7) | the coordinator's verb |
+| merging -> ready | redo when no fleet member is up or none is below its width; the tick deals it when one has room | the coordinator's verb |
 | merging -> landed | its batch, green on the stream branch, merged to the development branch | mechanical |
 | any open state -> off the table | drop, with the reason | the coordinator's verb |
 | waiting -> landed | release of a reached sentinel (or a held one that waits for nothing), and only that | the coordinator's verb |
@@ -1722,6 +1724,25 @@ never by a resolution on the card's branch, so no change a reader has not read
 lands. The conflict judgment's "resolve and resume" decision says so in its
 `--did` text.
 
+**Redo.** A conflict outside the ledgers was answered by three verbs typed one
+after another: `return` the card, `rework` it "redo the same change on the current
+tip", `resume` the stream. `redo <card>... [--stream <s>] [--fix <text>]` is the
+three as one step (`sprint.Redo`, `store.RedoStep`): for each card, one unit and
+so one line in the card's history, its merge card stuck -> returned as return
+moves it (an accept moves it back), the primary marked returned at its attempt
+and its read cards retired, the next attempt dealt as rework deals it with the
+fix given or "redo the same change on the current tip" and told why (the
+conflict judgment's words), the primary merging -> working (merging -> ready
+when no member has room, or for a friend's card), and the stream resumed as
+resume resumes a conflict stop (its other stuck cards queued, merging when
+anything is queued, else waiting, every judgment open on it answered). A card
+is in a conflict when it is merging, its merge card is stuck and its stream is
+stopped with cause conflict on it; any card named that is not is refused, naming
+where it is, and the step writes nothing. `--stream` alone names the card that
+stream stopped on. The tables after a redo are the tables after the three verbs,
+the words of `why` and `did` aside (`TestRedoReturnsReworksAndResumesInOneVerb`;
+`tla/Redo.tla`); the conflict judgment's rework decision prints the one line.
+
 ## 8. Notifications
 
 One stream of notifications, written by the same step as the move that caused
@@ -1748,7 +1769,7 @@ the tick would make, no other open judgment on it).
 |---|---|---|
 | work came back failed | rework (with a fix), drop | no |
 | a reader found it broken | rework (with the finding), ask --another, drop | no |
-| stream stopped: conflict on a card | resume (resolved), rework, drop | no |
+| stream stopped: conflict on a card | resume (resolved), redo (its rework: return, rework and resume in one step), drop | no |
 | stream stopped: stream branch red | return the suspect and resume, rework the suspect | no |
 | stream stopped: needs a card of another stream first | rank that card first (the tick resumes when it lands), wait, card (look at both), return, drop | no |
 | stream stopped: the merge queue rejected | resume, return, drop | no |
@@ -2201,6 +2222,7 @@ command that loads it.
 | accept | review -> merging and into merge queued; refused without the ok reads it needs (one reader for a flash card, two different readers for a pro card); named ids all or nothing, a selection moves the eligible |
 | rework | delegates the next attempt at once with a fix (the member stages it at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, docs/SPEC-CARD-CONTRACT.md, where a rework starts), and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off and its bound's class written as the primary's record of its failed work; `--tier`: at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, frontier) or the provider its takes failed on is back, which lifts it once per tier per card; the refusal is one line naming that attempt, the class and the tiers above (section 5, the bound holds across attempts); without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; `--tier <flash|pro|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; it pins the card: the tier is its ceiling too and the machine never escalates it (section 5, flash first); a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier |
 | return | merging -> review, off the merge queue |
+| redo | `redo <card>... [--stream <s>] [--fix <text>]`: a card its stream stopped on for a conflict, answered in one step and one history line: return, rework with the fix (default "redo the same change on the current tip") and resume (section 7, redo); merging -> working, or merging -> ready when no member has room; `--stream` alone names the card that stream stopped on; refused, writing nothing, when a card named is not in a conflict |
 | drop | off the table with the reason |
 | rank | changes a score and every copy |
 | brief | replaces the brief of a primary that has not started (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."): `brief <id> (--brief <text> \| --brief-file <path>) [--rules <file>]`; the new brief is held to the card lint and the size bound as `add --brief` holds one (the same function, refused exit 2, nothing written, with the lint's own lines); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first) and for a card that is no primary or has started: only a primary waiting or ready with no work card ever dealt (attempt 0) takes one, a card dealt, working, in review, merging or landed keeps its brief, its state named, and is refused so whatever the machine's state, with what changes it instead: from review `rework <id> --fix`, the next attempt's change (from merging after a `return`); from any open state a `drop` and the new brief added as a new card; once landed, a new card. The card keeps its id, stream, score and needs; before this verb the coordinator dropped the card and added it again, which changed its id and place (`sprint.Brief`) |

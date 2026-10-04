@@ -117,6 +117,14 @@ func ReturnStep(r sprint.ReturnReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Return(s, r) }}
 }
 
+// RedoStep is the coordinator answering a conflict stop by redoing the card it
+// stopped on: return, rework and resume as one step (sprint.Redo); named, so
+// one card not in a conflict refuses it whole.
+func RedoStep(r sprint.RedoReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "redo", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Redo(s, r) }}
+}
+
 // DropStep is the coordinator taking primaries off the table.
 func DropStep(r sprint.DropReq) Step {
 	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "drop", Load: All, Mirrors: true,

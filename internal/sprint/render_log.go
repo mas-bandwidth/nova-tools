@@ -104,10 +104,17 @@ func renderPrimary(l Line, fromCol, toCol string, moved bool, by string) string 
 		if fromCol == string(Waiting) {
 			return fmt.Sprintf("%s is ready: what it needs has landed", id)
 		}
+		if fromCol == string(Merging) {
+			return fmt.Sprintf("%s redone %s: its next attempt waits ready for a member, the same change on the current tip", id, by)
+		}
 		return fmt.Sprintf("%s is ready again %s", id, by)
 	case string(Working):
 		if fromCol == string(Review) {
 			return fmt.Sprintf("%s reworked %s: attempt %s", id, by, l.Set["attempt"])
+		}
+		if fromCol == string(Merging) {
+			// redo: a conflict returned and reworked in one step (Redo)
+			return fmt.Sprintf("%s redone %s: attempt %s, the same change on the current tip", id, by, l.Set["attempt"])
 		}
 		return fmt.Sprintf("%s is being worked: attempt %s dealt", id, l.Set["attempt"])
 	case string(Review):

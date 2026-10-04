@@ -77,6 +77,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"accept":        "accept s1-1",
 		"rework":        "rework s1-1 --fix f",
 		"return":        "return s1-1",
+		"redo":          "redo s1-1",
 		"drop":          "drop s1-1 --reason r",
 		"rank":          "rank s1-1 --first",
 		"brief":         "brief s1-1 --brief b",

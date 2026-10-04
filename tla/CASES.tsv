@@ -320,3 +320,6 @@ MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	
 MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-
+MCRedo.cfg	MCRedo.tla	pass	-	ignore-terminal	redo	required	-
+MCRedoBrokenNoResume.cfg	MCRedo.tla	invariant	RedoIsTheThree	ignore-terminal	redo	required	-
+MCRedoBrokenOffConflict.cfg	MCRedo.tla	invariant	RedoOnConflict	ignore-terminal	redo	required	-
