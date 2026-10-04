@@ -221,6 +221,28 @@ func TestHelpWithMoreThanOneWordRefusesAsHelp(t *testing.T) {
 	require.Contains(t, r.Stderr, "HELP REFUSED: help takes one verb name", "stderr: %q", r.Stderr)
 	require.NotContains(t, r.Stderr, "OPEN REFUSED", "help ran open's flag checks: %q", r.Stderr)
 	require.NotContains(t, r.Stderr, "positional", "help carried the stray word into a verb: %q", r.Stderr)
+
+	// A flag between help, the verb and the stray word is no verb dispatch
+	// either: `help open --json append` and `help open -- append` refuse as
+	// help before open runs its flag checks.
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"flag before the stray word", []string{"help", "open", "--json", "append"}},
+		{"-- before the stray word", []string{"help", "open", "--", "append"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := cli.Run(tc.args...)
+			require.Equal(t, 2, r.Code, "want exit 2: %+v", r)
+			got := r.Stdout + r.Stderr
+			require.Contains(t, got, "help takes one verb name", "help refused as the wrong verb: %q", got)
+			require.NotContains(t, got, "OPEN REFUSED", "help ran open's flag checks: %q", got)
+			require.NotContains(t, got, "positional", "help carried the stray word into a verb: %q", got)
+			require.NotContains(t, got, "store is required", "help ran open's flag checks: %q", got)
+		})
+	}
 }
 
 func TestLifecycleVerbsStayRefused(t *testing.T) {

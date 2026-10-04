@@ -36,8 +36,8 @@ func main() { os.Exit(runCairn(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 // it, so the refusal is exercised by the tests rather than owned by main alone.
 func runCairn(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	t := cairnTool()
-	if len(args) >= 3 && args[0] == "help" && args[1] != "help" &&
-		!verbflag.IsHelp(args[1]) && !strings.HasPrefix(args[2], "-") {
+	if len(args) > 1 && args[0] == "help" && args[1] != "help" &&
+		!verbflag.IsHelp(args[1]) && helpNameWords(args[1:]) > 1 {
 		o := tool.Refuse("help takes one verb name; the verbs are " + verbflag.List(verbNames(t)))
 		o.Verb = "help"
 		o.Remedy = t.Name + " help"
@@ -49,6 +49,21 @@ func runCairn(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return o.Render(w, asJSON)
 	}
 	return t.Run(args, stdin, stdout, stderr)
+}
+
+// helpNameWords counts the verb-name words after help: every argument that is
+// a word, not a flag (one beginning with -). `help open --json append` and
+// `help open -- append` each count two and refuse as help, while `help open
+// --json` counts one and forwards to open's own help, so a flag sitting between
+// help, the verb and a stray word cannot smuggle the call into the verb.
+func helpNameWords(args []string) int {
+	words := 0
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			words++
+		}
+	}
+	return words
 }
 
 // verbNames returns the tool's verb names, including the implicit version verb
