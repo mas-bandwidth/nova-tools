@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -676,18 +677,21 @@ func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
 //   - The second block is a genuine two-command sitting (a `search`, then a
 //     `check` of a draft on disk) and is handed to onboarding.Steps whole.
 //
-// ONE NORM IS DECLARED, and it is the only value in the section the document
-// cannot pin: the `build=<duration>` field on the STATS line is the index build
+// THREE NORMS ARE DECLARED, and they are the only values in the section the
+// document cannot pin: the `build=<duration>` field on the STATS line is the index build
 // time of the run, not a fact about the transcript. The document was recorded
 // at build=384.875µs and a fresh run prints a different duration, so
-// buildTimeNorm elides exactly that field. Every other value -- the six files,
+// buildTimeNorm elides exactly that field. And the two paths the sitting
+// resolves -- the corpus copy and the draft beside it -- are printed by the
+// tool as the paths it was handed, so each is reduced to the spelling the
+// document writes. Every other value -- the six files,
 // the scores, the snippets, the ids -- reproduces and is compared as written.
-// The second block declares no norm at all.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
-	// Resolve the document and the checkout root from the package directory,
-	// before the sitting moves this test somewhere else: the document is a
-	// fixed file, while the commands run where `./corpus` and `draft.md`
-	// resolve as written.
+	t.Parallel()
+
+	// Resolve the document and the checkout root from the package directory:
+	// the document is a fixed file, while the commands run against the sitting
+	// copy whose documented paths resolve as written.
 	blocks := readmeFirstRun(t)
 	root := repoRoot(t)
 
@@ -732,13 +736,13 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	require.Truef(t, strings.HasPrefix(blocks[0][0], "$ nova-memory quickstart "), "the first `### First run` block does not open on the quickstart command: %q", blocks[0][0])
 
 	// The transcript WRITES a draft beside the corpus, so it runs against a
-	// copy of the fixture in t.TempDir(), never against what ships. Standing in
-	// the copy is also what makes the documented paths (`--root ./corpus`,
-	// `draft.md`) resolve as written, so no path norm is declared.
+	// copy of the fixture in t.TempDir(), never against what ships. The runner
+	// resolves the documented paths (`--root ./corpus`, `draft.md`) against the
+	// copy -- the work a reader's current directory does -- and the two are
+	// declared norms, because the tool prints the paths it was handed.
 	sit := firstRunSitting(t)
-	t.Chdir(sit)
-	run := runDocumented(t)
-	norms := []onboarding.Norm{buildTimeNorm(t)}
+	run := runDocumented(t, sit)
+	norms := append([]onboarding.Norm{buildTimeNorm(t)}, sittingNorms(t, sit)...)
 
 	var problems []onboarding.Problem
 
@@ -804,7 +808,54 @@ func firstRunSitting(t *testing.T) string {
 	return sit
 }
 
-func runDocumented(t *testing.T) onboarding.Runner {
+// sittingNorms declares the two documented paths that resolve inside the
+// sitting: the corpus copy and the draft beside it. The runner hands the tool
+// the sitting's absolute paths, so every line holding one is reduced back to
+// the spelling the document writes, on both sides of the comparison.
+func sittingNorms(t *testing.T, sit string) []onboarding.Norm {
+	t.Helper()
+	corpus, err := onboarding.Elide(
+		"./corpus (the sitting's copy of the fixture corpus)",
+		regexp.QuoteMeta(filepath.Join(sit, "corpus")),
+		"./corpus",
+	)
+	require.NoError(t, err)
+	draft, err := onboarding.Elide(
+		"draft.md (the sitting's candidate file)",
+		regexp.QuoteMeta(filepath.Join(sit, "draft.md")),
+		"draft.md",
+	)
+	require.NoError(t, err)
+	return []onboarding.Norm{corpus, draft}
+}
+
+// inSitting resolves the paths of a documented command against the sitting
+// directory, which is what a reader's current directory does for the paths
+// they type: the value of every --root is the sitting's copy of the corpus,
+// and a positional naming a file the sitting holds is that file. A word that
+// names nothing there -- a query word -- is not a path and stays as written.
+func inSitting(sit string, args []string) []string {
+	out := make([]string, len(args))
+	root := false
+	for i, a := range args {
+		out[i] = a
+		switch {
+		case a == "--root":
+			root = true
+		case root:
+			out[i] = filepath.Join(sit, a)
+			root = false
+		case strings.HasPrefix(a, "-"):
+		default:
+			if _, err := os.Stat(filepath.Join(sit, a)); err == nil {
+				out[i] = filepath.Join(sit, a)
+			}
+		}
+	}
+	return out
+}
+
+func runDocumented(t *testing.T, sit string) onboarding.Runner {
 	t.Helper()
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		stdin := io.Reader(strings.NewReader(""))
@@ -817,7 +868,7 @@ func runDocumented(t *testing.T) onboarding.Runner {
 			stdin = f
 		}
 		var out, errb bytes.Buffer
-		code := run(s.Args, stdin, &out, &errb)
+		code := run(inSitting(sit, s.Args), stdin, &out, &errb)
 		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
 }
