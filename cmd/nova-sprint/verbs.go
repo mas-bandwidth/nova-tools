@@ -91,6 +91,7 @@ func init() {
 		{"answer", "[--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]", "answer --dry-run", (*app).cmdAnswer},
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
 		{"card", "<id>", "card s1-4", (*app).cmdCard},
+		{"needs", "[--stream <s>] [--roots]", "needs --stream s1", (*app).cmdNeeds},
 		{"log", "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", "log --card s1-4", (*app).cmdLog},
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
