@@ -345,10 +345,15 @@ func (b *Bus) Peek(ctx context.Context, as string) (pending, fresh []Entry, err 
 // logLimit bounds one read of the log; the caller caps what it shows.
 const logLimit = 10000
 
-// Log is the log's messages, oldest first.
-func (b *Bus) Log(ctx context.Context) ([]Entry, error) {
-	return b.Store.Range(ctx, LogKey, "-", "+", logLimit)
+// Log is the log's messages from the entry id from ("-" for its start),
+// oldest first, up to logLimit of them.
+func (b *Bus) Log(ctx context.Context, from string) ([]Entry, error) {
+	return b.Store.Range(ctx, LogKey, from, "+", logLimit)
 }
+
+// IDAt is the first entry id a stream could hold at t (<ms>-0): the floor of
+// a Range from that instant.
+func IDAt(t time.Time) string { return fmt.Sprintf("%d-0", t.UnixMilli()) }
 
 // Names is the roster, sorted.
 func (b *Bus) Names(ctx context.Context) ([]string, error) {

@@ -425,7 +425,7 @@ func (w world) log(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	got, err := b.Log(context.Background())
+	got, err := b.Log(context.Background(), "-")
 	if err != nil {
 		return answer(err)
 	}

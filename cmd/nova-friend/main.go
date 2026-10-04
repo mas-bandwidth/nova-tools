@@ -259,7 +259,9 @@ that is not the friend the daemon in --dir runs as is refused.`,
 				Example: "wait-pong --from bob --nonce abc123 --timeout 2s",
 				Effect:  tool.Inspection,
 				Detail: `Reads the bus log every second until a pong for the nonce from that friend's own stream (the
-message's from, never its body) is there, or --timeout (default ` + friend.Window.String() + `) runs out. Prints WAIT-PONG OK
+message's from, never its body) is there, or --timeout (default ` + friend.Window.String() + `) runs out. The log is read
+from --timeout before the wait began (the store's clock), so a pong older than the wait is not
+looked for and a long log is never read from its start. Prints WAIT-PONG OK
 nonce= from= at= queue= working= width= daemon=<true|false> (whether the daemon-pong came too),
 or WAIT-PONG NONE at exit 1.`,
 				Flags: func(f *tool.Flags) {
@@ -550,8 +552,13 @@ func (w world) waitPong(c *tool.Call) *tool.Out {
 	from, nonce, timeout := c.Str("from"), c.Str("nonce"), c.Dur("timeout")
 	ctx := context.Background()
 	start := w.now()
+	_, storeNow, err := b.Store.Roster(ctx)
+	if err != nil {
+		return answer(err)
+	}
+	floor := bus2.IDAt(storeNow.Add(-timeout)) // the log from the wait's own window back, never from its start
 	for {
-		got, err := b.Log(ctx)
+		got, err := b.Log(ctx, floor)
 		if err != nil {
 			return answer(err)
 		}

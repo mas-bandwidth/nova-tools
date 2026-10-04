@@ -230,3 +230,23 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errb.String(), "RUN REFUSED")
 }
+
+// wait-pong reads the log from --timeout before the wait began, never from
+// its start: a log longer than one read's limit still answers (the finding
+// of 2026-10-04: the whole log from "-" with a 10,000 cap), and a pong older
+// than the wait is not looked for.
+func TestWaitPongReadsTheLogFromTheWaitsOwnWindow(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	b := &bus2.Bus{Store: r.store}
+	for i := 0; i < 10000; i++ { // one second of the store's clock each
+		_, err := b.Send(context.Background(), bus2.Message{From: "ada", To: []string{"bob"}, Subject: "old", Body: "x"})
+		require.NoError(t, err)
+	}
+	_, err := b.Send(context.Background(), bus2.Message{From: "bob", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("abc123", 1, 0, 4)})
+	require.NoError(t, err)
+	cli := r.cli()
+	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(0).Out("WAIT-PONG OK nonce=abc123 from=bob", "queue=1 working=0 width=4")
+	r.store.Advance(time.Minute)
+	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(1).Err("WAIT-PONG NONE")
+}
