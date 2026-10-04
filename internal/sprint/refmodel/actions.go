@@ -650,16 +650,23 @@ func Rework(s State, p, m string) (State, error) {
 // Drop is SprintTables.tla Drop(p) (line 478): off the table. Its
 // unfinished work card is withdrawn, its outstanding read cards retire, its
 // merge place goes (the returned place too, spec section 7); work last. A
-// waiting primary that needs it is blocked. Every judgment on it closes. A
-// sprint it finishes, by dropping the last open card, is found done by the
-// tick's judgment tickDone: with nothing open and a card dropped, the sprint
-// is done.
+// waiting primary that needs it makes the drop refused, naming the
+// dependants: the real Drop without Cascade refuses for that card, and this
+// model matches it. Every judgment on it closes. A sprint it finishes, by
+// dropping the last open card, is found done by the tick's judgment tickDone:
+// with nothing open and a card dropped, the sprint is done.
 func Drop(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
 	if !s.Placedp(p) || s.InWork(p, Landed) {
 		return s, refuse("%s is not an open primary on the table", p)
+	}
+	for _, q := range Keys(s.Primaries) {
+		qp := s.Primaries[q]
+		if qp.State == Waiting && slices.Contains(qp.Needs, p) {
+			return s, refuse("%s is needed by %s; drop them too with --cascade", p, q)
+		}
 	}
 	n := s.Clone()
 	st := n.Primaries[p].Stream

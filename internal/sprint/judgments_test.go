@@ -37,32 +37,38 @@ func TestReadyToAcceptIsClosedByReworkAndDrop(t *testing.T) {
 	w.clean("closed")
 }
 
-// H3: add with a need that names a dropped primary writes the blocked
-// judgment itself, in the same step; its decisions are drop and ack.
+// H3: add refuses a need that names a dropped card, naming the id and its
+// outcome; a stored dropped need still raises the blocked judgment at
+// resolve, once, and its decisions are drop and ack.
 func TestAddOnADroppedNeedIsBlockedAtOnce(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"}))
-	p := w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"later"}, Needs: []string{"s1-1"}}))
-	var notes []Note
-	for _, u := range p.Units {
-		notes = append(notes, u.Notes...)
-	}
+	p := Add(w.s, AddReq{Stream: "s2", IDs: []string{"later"}, Needs: []string{"s1-1"}})
+	require.Empty(t, p.Units, "add on a dropped need: %+v", p)
+	require.Len(t, p.Refused, 1, "add on a dropped need: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "dropped", "add on a dropped need: %+v", p)
+	w.clean("refused")
+	// a stored dropped need, reached at resolve, is one blocked judgment
+	w2 := setup(t, 1)
+	w2.must(Add(w2.s, AddReq{Stream: "s2", IDs: []string{"later"}, Needs: []string{"s1-1"}}))
+	seedDroppedNeed(w2, "s1-1")
+	w2.must(Resolve(w2.s, ResolveReq{}))
+	notes := w2.openOn("later")
 	require.Len(t, notes, 1, "add did not write the blocked judgment: %+v", notes)
-	require.Equal(t, NBlocked, notes[0].Type, "add did not write the blocked judgment: %+v", notes)
-	require.Len(t, w.openOn("later"), 1, "add did not write the blocked judgment: %+v", notes)
-	got := notes[0].Decisions
+	require.Equal(t, NBlocked, notes[0].Note.Type, "add did not write the blocked judgment: %+v", notes)
+	got := notes[0].Note.Decisions
 	require.Equal(t, []string{"drop", "ack"}, got, "decisions: %v", got)
-	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open})
+	g := Inbox(InboxReq{Now: w2.s.Now, Open: w2.s.Open})
 	var ds []string
 	for _, c := range g[0].Commands {
 		ds = append(ds, c.Decision+": "+c.Lines[0])
 	}
 	require.Len(t, ds, 2, "commands: %v", ds)
 	require.Equal(t, "ack: nova-sprint ack "+g[0].ID+" --reason "+noneText, ds[1], "commands: %v", ds)
-	w.must(Resolve(w.s, ResolveReq{}))
-	require.Len(t, w.notesOf(NBlocked), 1, "blocked written again")
-	w.clean("blocked")
+	w2.must(Resolve(w2.s, ResolveReq{}))
+	require.Len(t, w2.notesOf(NBlocked), 1, "blocked written again")
+	w2.clean("blocked")
 }
 
 // H4: the card a merge fact names is a card of the batch, the first n queued
