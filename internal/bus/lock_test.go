@@ -77,12 +77,13 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 
 // Two runs that genuinely race: whichever gets there second waits for the first rather than
 // working beside it, and both eventually run.
+//
+// The second run reaches the lock while the first holds it and parks in the injected
+// clock's Sleep instead of polling the wall clock. The first run holds the lock until
+// that parked signal arrives, so the whole test waits on events and spends no wall time
+// (Glenn's rule; nova-tools #4221).
 func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -90,35 +91,90 @@ func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 	var mu sync.Mutex
 	inside := 0
 	most := 0
+
+	// The first run takes the lock for real and holds it.
+	release, err := LockCheckout(clone, 5*time.Second)
+	require.NoError(t, err, "the first run could not take the lock: %v", err)
+	mu.Lock()
+	inside++
+	if inside > most {
+		most = inside
+	}
+	mu.Unlock()
+
+	// The second run reaches for the lock; it finds it held and parks in the
+	// clock's Sleep, which signals the test that the wait is real.
+	clk := newSignalClock()
+	entered := make(chan struct{})
 	var wg sync.WaitGroup
-	errs := make([]error, 2)
-	for i := range 2 {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			release, err := LockCheckout(clone, 5*time.Second)
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			defer release()
-			mu.Lock()
-			inside++
-			if inside > most {
-				most = inside
-			}
-			mu.Unlock()
-			time.Sleep(50 * time.Millisecond)
-			mu.Lock()
-			inside--
-			mu.Unlock()
-		}(i)
+	var secondErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		rel, err := lockCheckoutAt(clone, time.Second, clk)
+		if err != nil {
+			secondErr = err
+			return
+		}
+		defer rel()
+		close(entered)
+		mu.Lock()
+		inside++
+		if inside > most {
+			most = inside
+		}
+		mu.Unlock()
+		mu.Lock()
+		inside--
+		mu.Unlock()
+	}()
+
+	// The second run is parked on the held lock, never inside it.
+	select {
+	case <-clk.slept:
+	case <-entered:
+		require.FailNow(t, "the second run took the lock while the first held it")
 	}
+	mu.Lock()
+	in := inside
+	mu.Unlock()
+	require.Equal(t, 1, in, "the second run was inside while the first held the lock")
+
+	// Let the first run go; the second then takes the lock.
+	mu.Lock()
+	inside--
+	mu.Unlock()
+	release()
+	close(clk.gate)
 	wg.Wait()
-	for i, err := range errs {
-		require.NoError(t, err, "run %d: %v", i, err)
-	}
+	require.NoError(t, secondErr, "the second run could not take the lock after the first let go: %v", secondErr)
 	require.Equal(t, 1, most, "%d runs were inside the lock at once, want 1", most)
+}
+
+// signalClock is the lock's clock for a test that must know the wait has parked:
+// the first Sleep announces itself and blocks until the test opens gate, so the
+// second run reaches the lock without spending wall time.
+type signalClock struct {
+	now   time.Time
+	slept chan struct{}
+	gate  chan struct{}
+	once  sync.Once
+}
+
+func newSignalClock() *signalClock {
+	return &signalClock{
+		now:   time.Unix(1_700_000_000, 0),
+		slept: make(chan struct{}),
+		gate:  make(chan struct{}),
+	}
+}
+
+func (c *signalClock) Now() time.Time { return c.now }
+
+func (c *signalClock) Sleep(d time.Duration) {
+	c.now = c.now.Add(d)
+	c.once.Do(func() { close(c.slept) })
+	<-c.gate
 }
 
 // The checkout lock stamps its holder's pid into the lock file, a take with wait=0 fails
