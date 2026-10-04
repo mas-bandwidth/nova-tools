@@ -653,13 +653,21 @@ func Rework(s State, p, m string) (State, error) {
 // waiting primary that needs it is blocked. Every judgment on it closes. A
 // sprint it finishes, by dropping the last open card, is found done by the
 // tick's judgment tickDone: with nothing open and a card dropped, the sprint
-// is done.
+// is done. If a waiting primary needs the dropped card, the drop is refused
+// (matching the store's behavior without --cascade).
 func Drop(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
 	if !s.Placedp(p) || s.InWork(p, Landed) {
 		return s, refuse("%s is not an open primary on the table", p)
+	}
+	// Check if any waiting primary needs this card.
+	for _, q := range Keys(s.Primaries) {
+		qp := s.Primaries[q]
+		if qp.State == Waiting && slices.Contains(qp.Needs, p) && !slices.Contains(qp.Waived, p) {
+			return s, refuse("%s is needed by %s; drop them too with --cascade", p, q)
+		}
 	}
 	n := s.Clone()
 	st := n.Primaries[p].Stream

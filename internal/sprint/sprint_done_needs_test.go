@@ -1,7 +1,6 @@
 package sprint
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -56,34 +55,23 @@ func TestAnEmptySprintIsNotDone(t *testing.T) {
 	require.True(t, p.Empty(), "an empty sprint is done: %+v", p)
 }
 
-// Acknowledging a blocked judgment waives only the needs it names; a need
-// dropped after it was written is its own judgment.
-func TestAckWaivesOnlyTheNeedsItsJudgmentNames(t *testing.T) {
+// Dropping needed cards is refused unless Cascade is true.
+func TestDropRefusesNeededCardsForAck(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
 	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1", "s1-2"}}))
-	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "gone"}))
-	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "gone too"}))
-	open := w.openOn("b")
-	require.Len(t, open, 2, "blocked judgments on b: %+v", open)
-	require.Equal(t, "s1-1|s1-2", strings.Join(open[0].Note.Needs, ",")+"|"+strings.Join(open[1].Note.Needs, ","), "blocked judgments on b: %+v", open)
-	// A resolve writes none again.
-	w.do(Resolve(w.s, ResolveReq{}))
-	require.Len(t, w.notesOf(NBlocked), 2, "blocked notes after resolve: %d", len(w.notesOf(NBlocked)))
-	w.must(Ack(w.s, AckReq{Notes: []string{open[0].Note.ID}, Reason: "fine"}))
-	b := w.s.Work.Card("b")
-	require.Equal(t, Waiting, b.Col, "the first ack: %s waived=%q", b.Col, b.F("waived"))
-	require.Equal(t, "s1-1", b.F("waived"), "the first ack: %s waived=%q", b.Col, b.F("waived"))
-	w.must(Ack(w.s, AckReq{Notes: []string{open[1].Note.ID}, Reason: "fine too"}))
-	b = w.s.Work.Card("b")
-	require.Equal(t, Ready, b.Col, "the second ack: %s waived=%q", b.Col, b.F("waived"))
-	require.Equal(t, "s1-1,s1-2", b.F("waived"), "the second ack: %s waived=%q", b.Col, b.F("waived"))
-	needs, _ := NeedsOf(w.s, "b")
-	require.Len(t, needs, 2, "needs of b: %+v", needs)
-	require.True(t, needs[0].Waived, "needs of b: %+v", needs)
-	require.True(t, needs[1].Waived, "needs of b: %+v", needs)
-	require.NotEmpty(t, needs[1].WaivedAt, "needs of b: %+v", needs)
-	w.clean("waived")
+	// dropping s1-1 without cascade should be refused
+	p := Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "gone"})
+	require.Len(t, p.Refused, 1, "drop should be refused: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "s1-1 is needed by b", "refusal should name dependant")
+	require.Contains(t, p.Refused[0].Why, "--cascade", "refusal should suggest cascade")
+	// dropping with cascade drops b too
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "gone", Cascade: true}))
+	require.Equal(t, "", w.s.StateOf("s1-1"), "s1-1 should be off the table")
+	require.Equal(t, "", w.s.StateOf("b"), "b should be off the table")
+	// s1-2 should still be ready
+	require.Equal(t, Ready, w.s.StateOf("s1-2"), "s1-2 should be ready")
+	w.clean("dropped with cascade")
 }
 
 // tickDone is the done part's plan alone.

@@ -221,9 +221,14 @@ func Add(s *Snapshot, r AddReq) Plan {
 		// missing is the needs that name no primary they may name: one on the
 		// table or one of this add (a cycle is refused below).
 		var missing []string
+		var dropped []string
 		for _, n := range needs {
-			if s.Work.Card(n) == nil && !adding[n] {
-				missing = append(missing, n)
+			if nc := s.Work.Card(n); nc == nil {
+				if !adding[n] {
+					missing = append(missing, n)
+				}
+			} else if !nc.Placed() && !IsSentinel(nc) && !adding[n] {
+				dropped = append(dropped, n)
 			}
 		}
 		switch {
@@ -241,6 +246,13 @@ func Add(s *Snapshot, r AddReq) Plan {
 				p.refuse(id, fmt.Sprintf("%s: needs %s, which is no primary on the table or in this add", r.Cards[i].File, strings.Join(missing, ",")))
 			} else {
 				p.refuse(id, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
+			}
+			continue
+		case len(dropped) > 0:
+			if len(r.Cards) > 0 {
+				p.refuse(id, fmt.Sprintf("%s: needs %s, which was dropped", r.Cards[i].File, strings.Join(dropped, ",")))
+			} else {
+				p.refuse(id, "needs "+strings.Join(dropped, ",")+", which was dropped")
 			}
 			continue
 		}

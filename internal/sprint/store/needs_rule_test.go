@@ -251,28 +251,18 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 
 // ---- H3 + waived ----------------------------------------------------------
 
-func TestAddOnDroppedNeedAndWaive(t *testing.T) {
+// Add now refuses a need that names a dropped card.
+func TestAddRefusesDroppedNeed(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
 	h.nDo(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "gone"}))
 	// a need dropped and one not landed
-	h.nDo(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1", "s1-2"}}))
-	require.Equal(t, sprint.Waiting, h.state("b"), "b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
-	require.Len(t, h.nOpenOf(sprint.NBlocked, "b"), 1, "b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
-	id := h.nOpenOf(sprint.NBlocked, "b")[0].Note.ID
-	h.nDo(AckStep(sprint.AckReq{Notes: []string{id}, Reason: "fine", Who: "tester"}))
-	b := h.snap().Work.Card("b")
-	require.Equal(t, sprint.Waiting, b.Col, "ack with another need open: %s waived=%q", b.Col, b.F("waived"))
-	require.Equal(t, "s1-1", b.F("waived"), "ack with another need open: %s waived=%q", b.Col, b.F("waived"))
-	h.nToMerging("s1-2")
-	h.nLandStream("s1")
-	require.Equal(t, sprint.Ready, h.state("b"), "b after s1-2 landed (s1-1 waived): %s", h.state("b"))
-	// resolve on an add naming a dropped need: blocked only once
-	h.nDo(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"c"}, Needs: []string{"s1-1"}}))
-	h.nDoR(ResolveStep(sprint.ResolveReq{}))
-	n := len(h.nOpenOf(sprint.NBlocked, "c"))
-	require.Equal(t, 1, n, "c blocked %d times after resolve", n)
+	res := h.nDoR(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1", "s1-2"}}))
+	require.Len(t, res.Refused, 1, "add should be refused: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "s1-1", "refusal should name s1-1")
+	require.Contains(t, res.Refused[0].Why, "dropped", "refusal should mention dropped")
+	require.Nil(t, h.snap().Work.Card("b"), "b should not be admitted")
 }
 
 // A plan whose landing unit the lifecycle refuses still lends its landing to
