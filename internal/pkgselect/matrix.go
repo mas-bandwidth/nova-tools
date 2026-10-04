@@ -1,6 +1,7 @@
 package pkgselect
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -153,7 +154,16 @@ var FunctionalHeavy = []string{"./cmd/nova-swarm", "./cmd/nova-bus", "./internal
 // each leg's `make test-functional` runs just the tests behind the functional
 // tag. With no package it is one empty leg.
 func Functional(pkgs []string, g Groups) []FunctionalLeg {
-	pkgs = firstOf(pkgs, FunctionalHeavy)
+	pkgs = slices.Clone(pkgs)
+	slices.SortStableFunc(pkgs, func(a, b string) int {
+		rank := func(p string) int {
+			if i := slices.Index(FunctionalHeavy, p); i >= 0 {
+				return i
+			}
+			return len(FunctionalHeavy)
+		}
+		return cmp.Compare(rank(a), rank(b))
+	})
 	groups := make([][]string, FunctionalShards)
 	f := 0
 	for _, p := range pkgs {
@@ -174,23 +184,6 @@ func Functional(pkgs []string, g Groups) []FunctionalLeg {
 		legs = []FunctionalLeg{{Name: "nothing"}}
 	}
 	return legs
-}
-
-// firstOf is pkgs with the packages named in first moved to the front, in first's order,
-// the rest in their own.
-func firstOf(pkgs, first []string) []string {
-	var out []string
-	for _, f := range first {
-		if slices.Contains(pkgs, f) {
-			out = append(out, f)
-		}
-	}
-	for _, p := range pkgs {
-		if !slices.Contains(first, p) {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 // MarshalLegs is the matrix as compact JSON, in field order.
