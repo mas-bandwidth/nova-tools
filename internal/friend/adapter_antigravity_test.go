@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"strings"
 	"testing"
@@ -224,4 +225,36 @@ func TestAntigravityIgnoresAnUnrelatedNewMailboxMessage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, exit)
 	assert.Equal(t, 1, waits, "an unrelated read entry cannot acknowledge our unread message")
+}
+
+func TestAntigravityMatchesDecodedLocalWorkspaceURIs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, uri, dir string
+		match          bool
+	}{
+		{"encoded space and hash", "file:///w/my%20repo%23draft", "/w/my repo#draft", true},
+		{"encoded percent", "file:///w/100%25", "/w/100%", true},
+		{"local normalized path", "file://localhost/w/repo/", "/w/repo", true},
+		{"other path", "file:///w/repo-extra", "/w/repo", false},
+		{"remote file", "file://other/w/repo", "/w/repo", false},
+		{"non-file", "https:///w/repo", "/w/repo", false},
+		{"malformed escape", "file:///w/%zz", "/w/repo", false},
+		{"fragment", "file:///w/repo#other", "/w/repo", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			workspaces, err := json.Marshal([]string{tc.uri})
+			require.NoError(t, err)
+			rows, err := json.Marshal([]map[string]string{{"conversation_id": "match", "workspace_uris": string(workspaces)}})
+			require.NoError(t, err)
+			id, err := NewestConversation(string(rows), tc.dir)
+			if tc.match {
+				require.NoError(t, err)
+				assert.Equal(t, "match", id)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
 }

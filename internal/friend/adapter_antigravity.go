@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/user"
 	"path"
@@ -277,9 +278,19 @@ func NewestConversation(rows string, dirs ...string) (string, error) {
 		}
 	}
 	for _, s := range summaries {
-		for _, dir := range dirs {
-			if strings.Contains(s.Workspaces, `"file://`+dir+`"`) {
-				return s.ID, nil
+		var workspaces []string
+		if err := json.Unmarshal([]byte(s.Workspaces), &workspaces); err != nil {
+			return "", fmt.Errorf("conversation_summaries.db: workspace_uris is not a JSON list: %w", err)
+		}
+		for _, workspace := range workspaces {
+			u, err := url.Parse(workspace)
+			if err != nil || u.Scheme != "file" || (u.Host != "" && u.Host != "localhost") || u.RawQuery != "" || u.Fragment != "" || !filepath.IsAbs(u.Path) {
+				continue
+			}
+			for _, dir := range dirs {
+				if filepath.Clean(u.Path) == filepath.Clean(dir) {
+					return s.ID, nil
+				}
 			}
 		}
 	}
