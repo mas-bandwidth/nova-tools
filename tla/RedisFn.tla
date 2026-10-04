@@ -30,7 +30,7 @@
 (* the text of a library (a build here is a name for it, and the functional *)
 (* tests of internal/redisfn hold the text).                                *)
 (*                                                                          *)
-(* Written 2026-09-27 under Glenn's rule: TLA+ for every state machine.     *)
+(* Written 2026-09-27 under the owner's rule: TLA+ for every state machine. *)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
