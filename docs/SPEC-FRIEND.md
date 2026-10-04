@@ -151,12 +151,20 @@ actual input in that same open conversation, and answered on the bus at
 16:57:49. The app used its own stdio app-server throughout. Its process still
 carried CODEX_APP_SERVER_USE_LOCAL_DAEMON=1 from an earlier experiment: the
 route bypassed that daemon, but a repeat after a launch without the flag is
-still required to establish the ordinary-launch measurement. The earlier
-claim that the flag makes `codex queue` reach the open chat is withdrawn:
-that experiment accepted a queued message on another server without
-delivering it to the open chat. Until desktop delivery is confirmed for a
-particular installation, the session's own bounded blocking bus read at the
-end of work is the fallback; the daemon keeps beating independently.
+still required to establish the ordinary-launch measurement.
+
+The earlier `codex queue` test initially produced no input while the chat's
+turn was active. Its matching test text later appeared at 17:03:00.797 UTC,
+after the active turn completed at 17:03:00.757; the next turn started at
+17:03:00.774. The app and its stdio server were the same processes throughout.
+This is consistent with delivery waiting for the active turn to finish; it
+does not support the earlier conclusion that the queue cannot reach the app.
+The observed input has not been correlated to the original queue ID, and an
+idle-chat queue test without the launch flag remains unmeasured. Neither
+necessity of the flag nor failure of the queue is established. Until desktop
+delivery is confirmed for a particular installation, the session's own
+bounded blocking bus read at the end of work is the fallback; the daemon
+keeps beating independently.
 
 ### Antigravity
 
