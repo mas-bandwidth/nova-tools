@@ -173,7 +173,8 @@ reports; tick, run and friend clean are the machine's; the reads need no actor (
 --read, which moves the coordinator's cursor, is the coordinator's). The seat
 moves by coordinator <name> --reason <text>: given by its holder or the owner
 (init --owner), or taken by <name> itself with --take --approved-by <owner>,
-each in the log; handover prints what the next seat needs. A set is
+each in the log; handover runs the seat check, then prints what the next seat needs
+(machinery runs the check alone). A set is
 ids, a stream, a column, --max n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),

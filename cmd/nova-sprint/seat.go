@@ -20,8 +20,9 @@ import (
 // The coordinator's seat (docs/SPEC-SPRINT.md, "Handing over the seat"; the owner,
 // 2026-10-02: "We need to make handover MORE SMOOTH."; nova-tools#5096 item 28).
 // coordinator <name> gives the seat (its holder, or the owner) or takes it (the
-// one taking it, --take --approved-by <owner>); handover prints what the next
-// seat needs, from the store, in one screen; inbox --wait --push seat writes to
+// one taking it, --take --approved-by <owner>); handover runs the seat check
+// (machinery.go), then prints what the next seat needs, from the store, in one
+// screen; inbox --wait --push seat writes to
 // the holder's inbox, and follows the seat.
 
 // OwnerEnv names the sprint's owner when init named none: the name a take

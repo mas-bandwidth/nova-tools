@@ -215,3 +215,14 @@ func TestServedCheckRunsNoOutsideProbe(t *testing.T) {
 	assert.Contains(t, out, "MACHINERY bus OK redis=127.0.0.1:6381 note="+note+"\n", out)
 	assert.Contains(t, out, "MACHINERY DOWN n=2 of=10\n", out)
 }
+
+// The help says what handover does now: the seat check first, then the brief;
+// the words section, the verbs' prose and handover's effect line agree.
+func TestHelpSaysHandoverStartsWithTheCheck(t *testing.T) {
+	t.Parallel()
+	const says = "handover runs the seat check, then prints what the next seat needs"
+	unwrap := func(s string) string { return strings.Join(strings.Fields(s), " ") } // the help wraps its lines
+	assert.Contains(t, unwrap(wordsSection()), says)
+	assert.Equal(t, 2, strings.Count(unwrap(banner()), says), "the words section and the verbs' prose:\n%s", banner())
+	assert.Contains(t, verbEffect["handover"], "the seat check")
+}

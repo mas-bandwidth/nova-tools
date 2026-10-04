@@ -182,7 +182,8 @@ func TestATakeWithoutTheOwnersNameIsRefused(t *testing.T) {
 	assert.Equal(t, "rowan", ta2.holder())
 }
 
-// handover prints what the next seat needs, from the store, in one screen.
+// handover prints what the next seat needs, from the store, in one screen (the
+// seat check at its head: machinery_test.go).
 func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)

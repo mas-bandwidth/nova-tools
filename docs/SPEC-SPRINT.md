@@ -2236,7 +2236,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch` (redrawn in place, section 1): work, friends and fleet; `--all` draws the readers and merge tables too (hidden from the default frame; the owner, 2026-10-02: "please hide the reader and merge tables"); its title line names the seat's holder (`SPRINT TABLE  coordinator friend-b`, with `(taken 5:21 PM)` after a take until the next handover is given); `--json` carries every table and the pending operation, the stalled streams, the people, the coordinator and `seat`, its last change |
 | coordinator | moves the seat: `coordinator <name> --reason <text>`, given by its holder or the owner; `--take --approved-by <owner>`, taken by `<name>` itself; prints the handover after (below) |
-| handover | what the next seat needs, from the store, in one screen (below); `--json` |
+| handover | the seat check first, then what the next seat needs, from the store, in one screen (below); `--json` |
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
 | goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm sprint` |

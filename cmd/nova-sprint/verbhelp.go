@@ -37,7 +37,7 @@ var verbExit = map[string]string{
 // verbEffect is a verb's effect line, the last line of its -h, where the verb
 // states one (docs/STANDARD.md: `effect: inspection|local write|delivery`).
 var verbEffect = map[string]string{
-	"handover":    "inspection: reads the store, writes nothing",
+	"handover":    "inspection: runs the seat check (machinery), then reads the store; writes nothing",
 	"machinery":   "inspection: measures the server, the store, the run loop, the fleet, the friends, the readers, the dashboard, the bus and the inbox; writes nothing",
 	"dashboard":   "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
 	"coordinator": "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
