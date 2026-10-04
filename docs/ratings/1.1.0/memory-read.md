@@ -24,8 +24,8 @@ what the output means, and the limits named plainly.
   unchanged a third time on the reading path, after cmd/nova-memory/main.go:3-9
   and docs/SPEC.md:2357-2363. By the third copy the rationale slows the reader
   it already convinced.
-- Doubted first at cmd/nova-memory/main.go:58: the pasted `SEARCH CAL
-  score=1.46` reads like a constant until the next sentence resolves it. That
+- Doubted first at cmd/nova-memory/main.go:58: the pasted SEARCH CAL
+  `score=1.46` reads like a constant until the next sentence resolves it. That
   sentence is now exact (a hit's score= compares with the band only when its
   score-channel= names the same channel) and a test runs the verb to hold the
   paste to the run (cmd/nova-memory/verbhelp_test.go:72-80); what nothing says
