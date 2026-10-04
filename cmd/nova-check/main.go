@@ -106,16 +106,18 @@ usage:
                                                      through git. SCRIPTS, EDGES, FLEET and
                                                      LEDGER read the named paths. --state
                                                      stores the two-tick streak. Each stream
-                                                      shows now, --since, ratio and trend;
-                                                      an unnamed optional source is ABSENT,
-                                                      not zero. Exit 1 after two consecutive
-                                                      widening ticks. A widening tick is a tick whose
-                                                      <stream> ratio rose against --state's last;
-                                                      the exit-1 line prints trend=widening on the CONVERGENCE line,
-                                                      and the next run is nova-check convergence --state
-                                                      <file> again once the source moves, or
-                                                      nova-check dogfood record the finding
-                                                      the stream names.
+                                                     shows now, --since, ratio and trend;
+                                                     an unnamed optional source is ABSENT,
+                                                     not zero. Exit 1 after two consecutive
+                                                     widening ticks. A widening tick is a tick whose
+                                                     <stream> ratio rose against --state's last;
+                                                     the exit-1 line prints
+                                                     trend=widening on the CONVERGENCE line,
+                                                     and the next run is
+                                                     nova-check convergence --state <file>
+                                                     again once the source moves, or
+                                                     nova-check dogfood record the finding
+                                                     the stream names.
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
                       [--ignore <word|@file>] [--write] [--exclude <prefix>]
                       [--fail-max <n>] [--dry-run]
