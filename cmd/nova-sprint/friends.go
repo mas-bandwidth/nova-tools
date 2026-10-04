@@ -178,7 +178,21 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width})
+		var tiers []string
+		if r.Fields["tiers"] != "" {
+			for _, t := range strings.Split(r.Fields["tiers"], ",") {
+				if tr := strings.TrimSpace(t); tr != "" {
+					tiers = append(tiers, tr)
+				}
+			}
+		}
+		specs = append(specs, store.FriendSpec{
+			Name:  n,
+			Width: width,
+			Tier:  r.Fields["tier"],
+			Tiers: tiers,
+			Mode:  r.Fields["mode"],
+		})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {

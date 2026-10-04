@@ -76,11 +76,67 @@ func FriendCard(c *Card) (name string, ok bool) {
 const friendCardWhy = "a friend's card (its brief says WHO: friend): the tick deals it to a friend up with room, never to a machine"
 
 // FriendSeat is one friend as the tick deals to her: her name, her width (the jobs she
-// works at once, her friends row's) and her status (FriendStatus: up, held or down).
+// works at once, her friends row's), her status (FriendStatus: up, held or down), her
+// tier (her nova-config friend row's tier or highest tier among tiers, the tier she can
+// do) and her mode (her delivery mode: batch or one-shot).
 type FriendSeat struct {
 	Name   string
 	Width  int
 	Status string
+	Tier   string
+	Tiers  []string
+	Mode   string
+}
+
+// FriendTier returns the friend's model tier (docs/SPEC-SPRINT.md section 1): Tier if set,
+// else the highest tier among Tiers, or "" when none is specified.
+func (f FriendSeat) FriendTier() string {
+	if f.Tier != "" {
+		return f.Tier
+	}
+	best := ""
+	for _, t := range f.Tiers {
+		if tierRank(t) > tierRank(best) {
+			best = t
+		}
+	}
+	return best
+}
+
+// FriendCardTier returns the tier required by a friend's card (docs/SPEC-SPRINT.md section 1):
+// the tier the coordinator pinned (rework --tier), else the tier its brief's line 1 names,
+// flash when it names none (ceilingTier), never the flash-first ladder's.
+func FriendCardTier(c *Card) string {
+	m, _ := cardhdr.ReadModel(c.F("brief"))
+	return ceilingTier(c, m)
+}
+
+func tierRank(tier string) int {
+	switch strings.ToLower(tier) {
+	case cardhdr.RouteFlash:
+		return 1
+	case cardhdr.RoutePro:
+		return 2
+	case cardhdr.RouteFrontier:
+		return 3
+	default:
+		return 0
+	}
+}
+
+// FriendCanDo reports whether a friend with friendTier can take a card of cardTier
+// (docs/SPEC-SPRINT.md section 1): a friend with a tier gets only cards at or below it.
+// A friend with no tier (empty) has no tier restriction.
+func FriendCanDo(friendTier, cardTier string) bool {
+	if friendTier == "" {
+		return true
+	}
+	fRank := tierRank(friendTier)
+	cRank := tierRank(cardTier)
+	if fRank == 0 {
+		return true
+	}
+	return cRank <= fRank
 }
 
 // Members is the fleet's machines: its rows but the friends' (FriendRow), in row order.
@@ -101,21 +157,29 @@ func friendLoad(s *Snapshot, name string) int {
 }
 
 // FriendDeal deals the friends' cards (in the order given, the deal's stream turns) to
-// the friends up, each within her width: a card naming a friend goes to her while she is
-// up and below her width, and waits ready otherwise; a card for any friend goes to the
-// friend up with the most free width, the first by name among equals, as the machines'
-// rule fills the member with room. Each is its next attempt's work card, created on the
-// friend's row in working at generation 1 (dealt and taken now: its deadline is the
-// working one), carrying the primary's fix, finding and why as a machine's deal does; its
-// primary moves ready -> working. The friend's row is declared by the plan the first
-// time she is dealt to.
+// the friends up, each within her room and tier (docs/SPEC-SPRINT.md section 1):
+// a friend with a tier gets only cards at or below it; a one-shot friend gets one card
+// at a time (capacity of 1, whatever her width); a batch friend gets up to her width.
+// A card naming a friend goes to her while she is up, within her room and able, and waits
+// ready otherwise; a card for any friend goes to the friend up who can do the card with
+// the most free width, the first by name among equals, as the machines' rule fills the
+// member with room. Each is its next attempt's work card, created on the friend's row in
+// working at generation 1 (dealt and taken now: its deadline is the working one), carrying
+// the primary's fix, finding and why as a machine's deal does; its primary moves ready -> working.
+// The friend's row is declared by the plan the first time she is dealt to.
 func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 	var p Plan
 	free := map[string]int{}
 	var up []string
+	seatByName := make(map[string]FriendSeat, len(seats))
 	for _, f := range seats {
+		seatByName[f.Name] = f
 		if f.Status == Up {
-			free[f.Name] = f.Width - friendLoad(s, f.Name)
+			cap := f.Width
+			if f.Mode == "one-shot" {
+				cap = 1
+			}
+			free[f.Name] = cap - friendLoad(s, f.Name)
 			up = append(up, f.Name)
 		}
 	}
@@ -126,11 +190,18 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 		if !ok || c.Col != Ready || IsSentinel(c) {
 			continue
 		}
+		cardTier := FriendCardTier(c)
 		if name == "" {
 			for _, f := range up {
-				if free[f] > 0 && (name == "" || free[f] > free[name]) {
+				st := seatByName[f]
+				if FriendCanDo(st.FriendTier(), cardTier) && free[f] > 0 && (name == "" || free[f] > free[name]) {
 					name = f
 				}
+			}
+		} else {
+			st, hasSeat := seatByName[name]
+			if !hasSeat || !FriendCanDo(st.FriendTier(), cardTier) || free[name] <= 0 {
+				continue // named friend cannot take this tier, is not up, or has no room: it waits ready
 			}
 		}
 		if name == "" || free[name] <= 0 {

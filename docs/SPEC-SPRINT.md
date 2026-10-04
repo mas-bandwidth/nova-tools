@@ -126,12 +126,18 @@ no row of the friends table, and `WHO: friend` while the table has no row
 `friend.<name>`, written with its brief, and `card` prints `who=` on its
 `CARD OK` line (`--json` `who`). A card with no WHO line is a machine's, dealt
 as before. The tick's deal deals a friend's card ready, in the deal's stream
-turns, to a friend up (the friends' rule: not held, a beat within 15 s) below
-her width (her friends row's `width`; the cards on her row, ready and working,
-count against it): the friend it names, or for `WHO: friend` the friend up
-with the most free width, the first by name among equals, as the machines'
-rule fills the member with room; with none it waits ready, held by the
-no-stall rule as waiting for a friend (`sprint.FriendDeal`). The tick reads the
+turns, to a friend up (the friends' rule: not held, a beat within 15 s) within
+her room and tier (`sprint.FriendDeal`): dealing respects the friend tier and
+mode (`one-shot`, `batch`) from `nova-config`. A friend with a tier (`flash` <
+`pro` < `frontier`) gets only cards at or below it (a card's tier is its ceiling
+tier, `FriendCardTier`); a one-shot friend (`mode: "one-shot"`) gets one card
+at a time (dealing room cap = 1, whatever her width); a batch friend gets up
+to her width (her friends row's `width`; the cards on her row, ready and working,
+count against it). A card naming a friend goes to her while she is up, within
+her room and able, and waits ready otherwise; a card for `WHO: friend` goes to
+the friend up who can do the card with the most free width, the first by name
+among equals, as the machines' rule fills the member with room; with none it
+waits ready, held by the no-stall rule as waiting for a friend. The tick reads the
 friends' records (the roster, then the beats: two round trips) only when a
 friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name

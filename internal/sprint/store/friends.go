@@ -31,32 +31,43 @@ const keyFriends = "friends"
 func friendBeatKey(friend string) string { return "friend-beat:" + friend }
 
 // friendEntry is a friend's entry in the roster: the coordinator's hold,
-// empty while released, and her width, how many jobs she works at once.
+// empty while released, her width, how many jobs she works at once, her tier (the
+// model tier she can do), her tiers, and her mode (batch or one-shot).
 type friendEntry struct {
 	Held  bool      `json:"held,omitempty"`
 	At    time.Time `json:"at,omitempty"`
 	By    string    `json:"by,omitempty"`
 	Width int       `json:"width,omitempty"`
+	Tier  string    `json:"tier,omitempty"`
+	Tiers []string  `json:"tiers,omitempty"`
+	Mode  string    `json:"mode,omitempty"`
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
-// of nova-config) and her width.
+// of nova-config), her width, her tier, her tiers, and her delivery mode.
 type FriendSpec struct {
 	Name  string
 	Width int
+	Tier  string
+	Tiers []string
+	Mode  string
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
 // her sprint cards (filled by where from her fleet row), her width and her
-// status (filled by FriendRows from the roster and her beat).
+// status (filled by FriendRows from the roster and her beat), her tier, tiers,
+// and mode.
 type FriendRow struct {
-	Name    string `json:"name"`
-	Ready   int    `json:"ready"`
-	Working int    `json:"working"`
-	Width   int    `json:"width"`
-	OK      int    `json:"ok"`
-	Failed  int    `json:"failed"`
-	Status  string `json:"status"`
+	Name    string   `json:"name"`
+	Ready   int      `json:"ready"`
+	Working int      `json:"working"`
+	Width   int      `json:"width"`
+	OK      int      `json:"ok"`
+	Failed  int      `json:"failed"`
+	Status  string   `json:"status"`
+	Tier    string   `json:"tier,omitempty"`
+	Tiers   []string `json:"tiers,omitempty"`
+	Mode    string   `json:"mode,omitempty"`
 }
 
 // roster is the friends record, by name; empty when there is none.
@@ -109,15 +120,17 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 	for _, s := range specs {
 		want[s.Name] = s
 		e, had := r[s.Name]
+		tiers := slices.Clone(s.Tiers)
+		slices.Sort(tiers)
 		switch {
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width:
+		case e.Width != s.Width || e.Tier != s.Tier || !slices.Equal(e.Tiers, tiers) || e.Mode != s.Mode:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width = s.Width
+		e.Width, e.Tier, e.Tiers, e.Mode = s.Width, s.Tier, tiers, s.Mode
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -217,7 +230,14 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 			// ignored: an unreadable record is no beat, which the next beat replaces
 			_ = json.Unmarshal([]byte(vals[i]), &b)
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(r[n].Held, b, now)}
+		row := FriendRow{
+			Name:   n,
+			Width:  r[n].Width,
+			Status: sprint.FriendStatus(r[n].Held, b, now),
+			Tier:   r[n].Tier,
+			Tiers:  r[n].Tiers,
+			Mode:   r[n].Mode,
+		}
 		rows[n] = row
 		status[n] = row.Status
 	}
@@ -258,7 +278,14 @@ func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.T
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status}
+		seats[i] = sprint.FriendSeat{
+			Name:   r.Name,
+			Width:  r.Width,
+			Status: r.Status,
+			Tier:   r.Tier,
+			Tiers:  r.Tiers,
+			Mode:   r.Mode,
+		}
 	}
 	return seats, nil
 }
