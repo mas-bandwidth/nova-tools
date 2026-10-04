@@ -706,6 +706,14 @@ a restart never guesses whether the backend ran. Existing decisions are
 counted against the same total budget; --max bounds new calls in this invocation.
 Failures, partial progress and the total remaining allowance are printed.
 
+Budget and replay guarantees assume an intact record and journal, with cooperating
+callers using the same lock. Consumed allowance includes uncertain reservations;
+it is not an independently verified count of provider charges. Reconciliation
+preserves possibly spent reservations unless provider evidence resolves their
+status; deleting an uncertain row alone does not establish that no call occurred.
+Adversarial writers to these local files are outside this contract and require a
+separate integrity design.
+
 `--truth` is a separate JSON array of `task`, `head`, `prompt_version`, `label`
 and optional `note`. It is read only after asking finishes, and only a recorded
 decision can receive its outcome. It never enters a request or input manifest.
@@ -714,4 +722,6 @@ verdict, gate, ranking or routing effect: it records observations only. Repeated
 invocations read an updated ready manifest, adopting completed work and asking
 only unseen tuples. A dry run reads inputs and counts work, creates no journal,
 asks nothing and reads no truth. Raw probabilities and provider confidence
-are evidence, not calibrated correctness or authority.
+are evidence, not calibrated correctness or authority. The output fact
+`authority=none` declares this command's lack of authority action; it does not
+attest to the authenticity of saved evidence or constrain downstream consumers.
