@@ -324,7 +324,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	// The token is one word: bounded escapes what it is given, and a token with
-	// a space in it came back as `DOGFOOD\x20GATE MORE` the first time this verb
+	// a blank in it came back as `DOGFOOD\x20GATE MORE` the first time this verb
 	// was run against this repository's own reference.
 	list := bounded.Capped(stderr, *maxFlag, "DOGFOOD", "verb", maxRemedy)
 	for _, f := range findings {
