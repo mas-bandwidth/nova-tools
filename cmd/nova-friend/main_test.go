@@ -87,7 +87,7 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		{"ping bad since", []string{"ping", "--as", "ada", "--to", "bob", "--since", "yesterday"}, []string{"--since wants an RFC3339 instant"}},
 		{"ping unknown friend", []string{"ping", "--as", "ada", "--to", "zed"}, []string{"zed is no known name", "nova-config friend add zed"}},
 		{"pong nothing given", []string{"pong"}, []string{"--as is required", "--nonce is required"}},
-		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--dir", t.TempDir()}, []string{"--to is required", "no ping has named a seat yet"}},
+		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--state-dir", t.TempDir()}, []string{"--to is required", "no ping has named a seat yet"}},
 		{"wait-pong nothing given", []string{"wait-pong"}, []string{"--from is required", "--nonce is required"}},
 		{"status nothing given", []string{"status"}, []string{"--as is required", "--dir is required"}},
 	}
@@ -110,7 +110,7 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
-	dir := t.TempDir()
+	state := friend.DefaultStateDir(r.home, "bob")
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(1).Err("WAIT-PONG NONE daemon=false: no pong abc123 from bob within 3s")
 
 	sent := cli.Do(t, "ping", "--as", "ada", "--to", "bob", "--nonce", "abc123").Exit(0).Out("PING OK nonce=abc123 id=", " to=bob at=2026-10-04T03:00:", "NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123")
@@ -124,9 +124,9 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	assert.Contains(t, m.Body, "nova-friend pong --as <you> --nonce abc123")
 	cli.Do(t, "ping", "--as", "ada", "--to", "bob").Exit(0).Out("PING OK nonce=r4nd0m")
 
-	// the session answers, naming the coordinator since no daemon has recorded a seat in dir
-	cli.Do(t, "pong", "--as", "bob", "--nonce", "abc123", "--dir", dir, "--to", "ada", "--queue", "2", "--working", "1", "--width", "4").Exit(0).Out("PONG OK nonce=abc123 to=ada id=")
-	p, found, err := friend.ReadPong(dir)
+	// the session answers, naming the coordinator since no daemon has recorded a seat; the pong file goes under the home directory
+	cli.Do(t, "pong", "--as", "bob", "--nonce", "abc123", "--to", "ada", "--queue", "2", "--working", "1", "--width", "4").Exit(0).Out("PONG OK nonce=abc123 to=ada id=")
+	p, found, err := friend.ReadPong(state)
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "abc123", p.Nonce)
@@ -144,11 +144,14 @@ func TestPongCarriesTheDaemonsNameAndTheSeatItRecorded(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
-	dir := t.TempDir()
-	require.NoError(t, friend.WriteStatus(dir, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1"}))
-	cli.Do(t, "pong", "--as", "ada", "--nonce", "n1", "--dir", dir).Exit(2).Err("PONG REFUSED: the daemon in " + dir + " runs as bob, not ada")
-	cli.Do(t, "pong", "--as", "bob", "--nonce", "n1", "--dir", dir).Exit(0).Out("PONG OK nonce=n1 to=ada")
-	cli.Do(t, "status", "--as", "ada", "--dir", dir).Exit(2).Err("runs as bob, not ada")
+	state := t.TempDir()
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1"}))
+	cli.Do(t, "pong", "--as", "ada", "--nonce", "n1", "--state-dir", state).Exit(2).Err("PONG REFUSED: the daemon whose state is in " + state + " runs as bob, not ada")
+	cli.Do(t, "pong", "--as", "bob", "--nonce", "n1", "--state-dir", state).Exit(0).Out("PONG OK nonce=n1 to=ada")
+	cli.Do(t, "status", "--as", "ada", "--dir", "/w/ada", "--state-dir", state).Exit(2).Err("runs as bob, not ada")
+	// the default state directory is under the home directory, by name
+	require.NoError(t, friend.WriteStatus(friend.DefaultStateDir(r.home, "bob"), friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada"}))
+	cli.Do(t, "pong", "--as", "bob", "--nonce", "n2").Exit(0).Out("PONG OK nonce=n2 to=ada")
 }
 
 func TestStatusReadsTheThreeFiles(t *testing.T) {
@@ -156,9 +159,10 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	dir := t.TempDir()
-	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).Err("STATUS NONE: no daemon has run in "+dir, "nova-friend install --as bob")
-	require.NoError(t, friend.WriteStatus(dir, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
-	require.NoError(t, friend.WritePong(dir, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
+	state := friend.DefaultStateDir(r.home, "bob")
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).Err("STATUS NONE: no daemon has run as bob (no status file in "+state+")", "nova-friend install --as bob --harness <h> --dir "+dir)
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
+	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
@@ -218,15 +222,88 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	var out, errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--width", "4"}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
-	s, found, err := friend.ReadStatus(dir)
+	assert.NoDirExists(t, filepath.Join(dir, ".nova-friend"), "nothing of the daemon's on the friend's volume")
+	s, found, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "bob", s.Friend)
 	assert.Equal(t, 3, beats)
 	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
 
-	r.store.Fail = io.ErrUnexpectedEOF
-	code = run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errb.String(), "RUN REFUSED")
+}
+
+// A store that is down when the daemon starts is no reason to exit: under launchd's
+// KeepAlive an exit 2 was a crash loop every five seconds (the finding of
+// 2026-10-04). The store is opened until it answers, waiting longer each time up
+// to OpenRetryMax, each wait said on stdout (launchd's log); a signal while it
+// is down ends the daemon cleanly.
+func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	opens, beats := 0, 0
+	w.open = func(context.Context, string) (bus2.Store, func(), error) {
+		opens++
+		if opens < 4 {
+			return nil, nil, io.ErrUnexpectedEOF
+		}
+		return r.store, func() {}, nil
+	}
+	var slept []time.Duration
+	w.sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
+	w.beat = func(context.Context, string, string) error {
+		beats++
+		if beats == 2 {
+			cancel()
+		}
+		return nil
+	}
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	assert.Equal(t, 0, code, errb.String())
+	require.GreaterOrEqual(t, len(slept), 3)
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, slept[:3], "longer each time; the rest are the loop's own pauses")
+	assert.Equal(t, 4, opens)
+	assert.Equal(t, 2, beats, "the loop ran once the store answered")
+	assert.Contains(t, out.String(), "RUN 2026-10-04T03:00:01Z store: unexpected EOF; opening again in 1s")
+	assert.Contains(t, out.String(), "opening again in 4s")
+
+	// down for good: the signal ends it, exit 0, no crash loop
+	w.open = func(context.Context, string) (bus2.Store, func(), error) { return nil, nil, io.ErrUnexpectedEOF }
+	w.sleep = func(_ context.Context, d time.Duration) {
+		slept = append(slept, d)
+		if d == OpenRetryMax {
+			cancel()
+		}
+	}
+	out.Reset()
+	code = run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	assert.Equal(t, 0, code)
+	assert.Equal(t, OpenRetryMax, slept[len(slept)-1], "the wait is capped")
+	assert.Contains(t, out.String(), "opening again in "+OpenRetryMax.String())
+}
+
+// wait-pong reads the log from --timeout before the wait began, never from
+// its start: a log longer than one read's limit still answers (the finding
+// of 2026-10-04: the whole log from "-" with a 10,000 cap), and a pong older
+// than the wait is not looked for.
+func TestWaitPongReadsTheLogFromTheWaitsOwnWindow(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	b := &bus2.Bus{Store: r.store}
+	for i := 0; i < 10000; i++ { // one second of the store's clock each
+		_, err := b.Send(context.Background(), bus2.Message{From: "ada", To: []string{"bob"}, Subject: "old", Body: "x"})
+		require.NoError(t, err)
+	}
+	_, err := b.Send(context.Background(), bus2.Message{From: "bob", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("abc123", 1, 0, 4)})
+	require.NoError(t, err)
+	cli := r.cli()
+	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(0).Out("WAIT-PONG OK nonce=abc123 from=bob", "queue=1 working=0 width=4")
+	r.store.Advance(time.Minute)
+	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(1).Err("WAIT-PONG NONE")
 }
