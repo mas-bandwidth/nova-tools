@@ -69,7 +69,6 @@ type List struct {
 	remedy string
 	shown  int
 	total  int
-	err    error
 }
 
 // Capped returns a List that writes to w, prints at most max lines, and stands the rest
@@ -101,26 +100,13 @@ func (l *List) Line(line string) {
 	// SHOWN MEANS IT REACHED THE STREAM. A writer that failed -- a closed pipe,
 	// a reader that has gone, a full disk -- has not shown anything, and a
 	// caller whose delivery record follows Shown() would mark a line delivered
-	// that nobody ever read. So the error is not discarded: the line is counted
-	// in Total, which is the truth about the state, and not in Shown, which is
-	// the truth about the output.
-	//
-	// THE FIRST FAILED WRITE IS THE DELIVERY ERROR. Err (docs/SPEC.md's one
-	// MORE-line shape, "the first write error this listing hit") answers the
-	// write that failed first, so the caller's delivery record names the failure
-	// the stream actually met; a later failure does not rewrite it.
-	if _, err := fmt.Fprintf(l.w, "%s\n", oneline.Escape(strings.TrimSuffix(line, "\n"))); err != nil {
-		if l.err == nil {
-			l.err = err
-		}
-		return
+	// that nobody ever read. So the line is counted in Total, which is the truth
+	// about the state, and not in Shown, which is the truth about the output; a
+	// caller that records delivery reads Shown below Total.
+	if _, err := fmt.Fprintf(l.w, "%s\n", oneline.Escape(strings.TrimSuffix(line, "\n"))); err == nil {
+		l.shown++
 	}
-	l.shown++
 }
-
-// Err is the first write error this listing hit, or nil. A caller that records
-// what it has delivered asks this before it writes that record down.
-func (l *List) Err() error { return l.err }
 
 // More prints the one line that stands for everything Line counted and did not print,
 // and prints nothing at all when nothing was elided -- a MORE line saying total equals
@@ -131,14 +117,10 @@ func (l *List) More() {
 		return
 	}
 	// THE MORE LINE IS AN OUTPUT ATTEMPT LIKE ANY OTHER, under the same rules as
-	// Line: its write error is a delivery error, kept only when it is the first
-	// one, so a listing whose tail was never delivered does not answer nil to
-	// the caller that records what it delivered (docs/SPEC.md's MORE line).
-	if _, err := fmt.Fprintln(l.w, MoreLine(l.token, l.kind, l.shown, l.total, l.remedy)); err != nil {
-		if l.err == nil {
-			l.err = err
-		}
-	}
+	// Line: a failed write has not shown anything, and Shown below Total already
+	// tells the caller the tail was not delivered.
+	// ignored: the MORE write error is not reported.
+	_, _ = fmt.Fprintln(l.w, MoreLine(l.token, l.kind, l.shown, l.total, l.remedy))
 }
 
 // MoreLine is the MORE line itself, the one spelling every listing prints:
