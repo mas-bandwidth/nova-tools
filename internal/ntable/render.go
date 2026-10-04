@@ -193,10 +193,7 @@ func cellWidth(s string) int {
 // pad writes s in a field of width w, right- or left-aligned; a
 // left-aligned last field is written as it is.
 func pad(b *strings.Builder, s string, w int, right, last bool) {
-	fill := w - cellWidth(s)
-	if fill < 0 {
-		fill = 0
-	}
+	fill := max(w-cellWidth(s), 0)
 	switch {
 	case right:
 		b.WriteString(strings.Repeat(" ", fill))

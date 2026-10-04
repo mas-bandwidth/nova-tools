@@ -230,10 +230,7 @@ func TestShellDenialReaderAnswersAsShellDenied(t *testing.T) {
 		for _, chunk := range []int{1, 3, 7, len(c) + 1} {
 			r := NewShellDenialReader()
 			for i := 0; i < len(c); i += chunk {
-				end := i + chunk
-				if end > len(c) {
-					end = len(c)
-				}
+				end := min(i+chunk, len(c))
 				n, err := r.Write([]byte(c[i:end]))
 				require.NoError(t, err, "Write(%q) = %d, %v", c[i:end], n, err)
 				require.Equal(t, end-i, n, "Write(%q) = %d, %v", c[i:end], n, err)

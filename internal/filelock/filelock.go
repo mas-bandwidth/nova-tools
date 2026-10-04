@@ -408,10 +408,7 @@ func lockLoop(path string, label string, timeout time.Duration, opts options, tr
 			return nil, ranOut(path, timeout, lastErr)
 		}
 
-		sleepDur := opts.getJitter(poll)
-		if sleepDur > remaining {
-			sleepDur = remaining
-		}
+		sleepDur := min(opts.getJitter(poll), remaining)
 		clk.Sleep(sleepDur)
 	}
 }
