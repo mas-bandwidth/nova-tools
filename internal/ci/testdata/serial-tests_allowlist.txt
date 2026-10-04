@@ -32,9 +32,10 @@ cmd/nova-bus/reply_functional_test.go:TestReplyRefreshesBeforeItResolves serial:
 cmd/nova-bus/robustness_functional_test.go:TestASecondInvocationOnOneCheckoutRefuses serial: swaps package var main.checkoutLockWait
 cmd/nova-cairn/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-check/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
+cmd/nova-dev/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-check/nocode_staged_index_contract_test.go:TestIssue2296 serial: os.Setenv
 cmd/nova-check/nocode_staged_index_contract_test.go:TestNoCodeStagedRefusals serial: os.Setenv
-cmd/nova-check/record_and_optional_checks_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
+cmd/nova-dev/record_and_optional_checks_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
 cmd/nova-fuse/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-fuse/main_test.go:TestEnvironmentCannotRedirectOrLiftAnything serial: t.Setenv
 cmd/nova-fuse/main_test.go:TestNoDefaultBoxRefusesToGuess serial: t.Setenv

@@ -1,9 +1,9 @@
 // nova-check runs the record-layer checks described in SPEC.md: boot
 // attestation, link integrity, the kernel size budget, the self/machinery
-// separation, the SEED-CORE ↔ SEED.md floor-set parity, the protected
-// corpus a line has chosen never to lose silently, and the dogfood ledger --
-// whether anybody but a verb's own author has run it. Exit 0 pass,
-// 1 check failed, 2 could not run.
+// separation, the SEED-CORE ↔ SEED.md floor-set parity, and the protected
+// corpus a line has chosen never to lose silently. The repository's own
+// process checks (dogfood, convergence, hygiene) are nova-dev's. Exit 0
+// pass, 1 check failed, 2 could not run.
 //
 // Every path and every budget comes from a flag. There are no defaults:
 // a missing flag is a refusal, never a guess.
@@ -25,11 +25,11 @@ import (
 
 const usage = `nova-check: checks over markdown records and repositories, each finding named by file and line
 
-how it works: most verbs inspect named paths and keep no state between runs.
-dogfood record appends a receipt; spelling --write edits files in place.
-convergence reads forge data through gh, an optional checkout through git, and
-the files you name; --state stores its two-tick streak. Other repository checks
-read the manifests, ledgers and receipts you name.
+how it works: links, quickstart, nocode and spelling run on any markdown
+tree; attest, kernel, floors and corpus need a seed's files (a manifest, a
+budget, a door and its source, a ledger of yours). No verb needs this
+repository: its own process checks (dogfood, convergence, hygiene) moved to
+nova-dev. spelling --write edits files in place.
 first run: create the small markdown tree below, then run the example commands.
 
 usage:
@@ -66,41 +66,6 @@ usage:
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
                                                      protected material is still where the
                                                      ledger says it is
-  nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"
-        [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
-                                                     the four mechanical checks the accept
-                                                     gate runs, on a branch, before you ask
-                                                     a friend for a read: identity,
-                                                     out-of-path, stray-file, secret.
-                                                     --paths is the card's bound; with none
-                                                     the line says paths=- and out-of-path
-                                                     is skipped, never silently passed.
-  nova-check dogfood ledger --cli <file> --receipts <dir> [--authors <file>] [--repo <dir>]
-                                                     one row per verb the command reference
-                                                     declares: who has run it, when, and
-                                                     whether it did what they needed
-  nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok)
-                            --notes <text> [--issue <n>] [--closes <id>] --receipts <dir>
-                            [--tools-timeout <s>] [--fail-max <n>]
-                                                     append one receipt: I ran this verb,
-                                                     on real work, and here is how it went
-  nova-check dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]
-                                                     exit 1 with the verbs no non-author has
-                                                     run and the edges nobody has cleared;
-                                                     the line the release lane calls
-  nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir>
-                         --retired <file> --since <RFC3339|24h>
-        [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
-        [--certs <tsv>] [--state <file>] [--by <name>] [--json]
-                                                     LANDING and PRS read the forge through
-                                                     gh; CLASSES reads the optional checkout
-                                                     through git. SCRIPTS, EDGES, FLEET and
-                                                     LEDGER read the named paths. --state
-                                                     stores the two-tick streak. Each stream
-                                                     shows now, --since, ratio and trend;
-                                                     an unnamed optional source is ABSENT,
-                                                     not zero. Exit 1 after two consecutive
-                                                     widening ticks.
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
                       [--ignore <word|@file>] [--write] [--exclude <prefix>]
                       [--fail-max <n>]
@@ -109,9 +74,9 @@ usage:
                                                      are blanked so code is not prose;
                                                      --write fixes misspellings in place
 
-  --json           on attest, links, kernel, nocode, floors, corpus, hygiene, spelling
-                   and version: structured findings and totals; convergence uses
-                   its reading object. quickstart and dogfood use typed lines.
+  --json           on attest, links, kernel, nocode, floors, corpus, spelling
+                   and version: structured findings and totals. quickstart
+                   uses typed lines.
 
   --fail-max <n>   on quickstart, attest, links, nocode, corpus and spelling: how many
                    FAIL lines to print before one MORE line stands for the
@@ -177,20 +142,6 @@ func hintFor(name string) string {
 		return "  " + ledgerHint + "\n"
 	case "root":
 		return "  " + rootHint + "\n"
-	case "cli":
-		return "  " + cliHint + "\n"
-	case "tools":
-		return "  " + toolsHint + "\n"
-	case "receipts":
-		return "  " + receiptsHint + "\n"
-	case "tool":
-		return "  " + toolHint + "\n"
-	case "verb":
-		return "  " + verbHint + "\n"
-	case "by":
-		return "  " + byHint + "\n"
-	case "notes":
-		return "  " + notesHint + "\n"
 	}
 	return ""
 }
@@ -247,12 +198,6 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		return cmdFloors(args[1:], stdout, stderr)
 	case "corpus":
 		return cmdCorpus(args[1:], stdout, stderr)
-	case "hygiene":
-		return cmdHygiene(args[1:], stdout, stderr)
-	case "dogfood":
-		return cmdDogfood(args[1:], stdout, stderr)
-	case "convergence":
-		return cmdConvergence(args[1:], stdout, stderr)
 	case "spelling":
 		return cmdSpelling(args[1:], stdout, stderr)
 	case "version", "--version":
@@ -264,7 +209,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
-		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q; verbs: quickstart, attest, links, kernel, nocode, floors, corpus, hygiene, dogfood, convergence, spelling, version", args[0]))
+		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q; verbs: quickstart, attest, links, kernel, nocode, floors, corpus, spelling, version", args[0]))
 	}
 }
 

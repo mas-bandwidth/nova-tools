@@ -30,7 +30,7 @@ import (
 const (
 	convRepoHint     = `--repo <owner/name> is the forge repository the queue and the batches are read from (mas-bandwidth/nova-tools); it is a name on a forge, never a directory`
 	convLedgerHint   = `--ledger <file> is the pit-stop ledger: the markdown whose table rows carry PASS, FAIL, PARTIAL or TODO in their last cell, and whose open rows are the LEDGER stream`
-	convReceiptsHint = `--receipts <dir> is the dogfood receipts directory, the same one nova-check dogfood reads; its open edges are the EDGES stream`
+	convReceiptsHint = `--receipts <dir> is the dogfood receipts directory, the same one nova-dev dogfood reads; its open edges are the EDGES stream`
 	convRetiredHint  = `--retired <file> is the retired-scripts README, whose dated rows say what the window retired; with --bin it is the SCRIPTS stream`
 	convSinceHint    = `--since <RFC3339|24h> is the far edge of the window: an instant (2026-09-18T00:00:00Z) or how long ago it starts (24h); there is no default, because the window is the whole question`
 )
@@ -72,103 +72,120 @@ func requireConvergenceFlags(stderr io.Writer, required map[string]*string) bool
 	ok := true
 	for _, name := range names {
 		if *required[name] == "" {
-			fmt.Fprintf(stderr, "nova-check convergence: --%s is required; refusing to guess; run: nova-check help\n%s", oneline.Field(name), convergenceHint(name))
+			fmt.Fprintf(stderr, "nova-dev convergence: --%s is required; refusing to guess; run: nova-dev help\n%s", oneline.Field(name), convergenceHint(name))
 			ok = false
 		}
 	}
 	return ok
 }
 
+// convFlags holds the convergence verb's declared flags, so the skeleton's
+// flag set and the verb's own declare the same flags from one place: the
+// skeleton answers -h and refuses a typo before the verb runs.
+type convFlags struct {
+	repo, ledger, receipts, retired, since                        *string
+	bin, repoDir, batchLogs, versions, certs, state, now, gh, git *string
+	timeout                                                       *int
+	asJSON                                                        *bool
+	by                                                            repeatable
+}
+
+// convergenceFlagValues declares convergence's flags on fs.
+func convergenceFlagValues(fs *flag.FlagSet) *convFlags {
+	var f convFlags
+	f.repo = fs.String("repo", "", "forge repository the queue and the batches are read from, owner/name (required)")
+	f.ledger = fs.String("ledger", "", "pit-stop ledger markdown; its open rows are the LEDGER stream (required)")
+	f.receipts = fs.String("receipts", "", "dogfood receipts directory; its open edges are the EDGES stream (required)")
+	f.retired = fs.String("retired", "", "retired-scripts README; its dated rows are what the window retired (required)")
+	f.since = fs.String("since", "", "far edge of the window: an RFC3339 instant, or a duration such as 24h (required)")
+
+	f.bin = fs.String("bin", "", "directory of scripts not yet replaced by a verb; without it the SCRIPTS stream is absent")
+	f.repoDir = fs.String("repo-dir", "", "a checkout of --repo, read only; without it the CLASSES stream is absent")
+	f.batchLogs = fs.String("batch-logs", "", "directory of <pr>-round-<n>.log gate logs; the second source for a batch's rounds")
+	f.versions = fs.String("versions", "", "a nova-version snapshot, or a fleet roll-up of them; without it the FLEET stream is absent")
+	f.certs = fs.String("certs", "", "a name<TAB>status certificate roll-up, for FLEET's certified fraction")
+	f.state = fs.String("state", "", "where the last tick is remembered; without it no streak can be two and the verb never exits 1")
+	f.now = fs.String("now", "", "take the reading as of this RFC3339 instant instead of the clock, so a tick can be re-read exactly")
+	f.gh = fs.String("gh", "gh", "the gh executable the forge is read through")
+	f.git = fs.String("git", "git", "the git executable --repo-dir is read through")
+	f.timeout = fs.Int("timeout", convDefaultTimeout, "seconds one child read may take before it is killed and named")
+	f.asJSON = fs.Bool("json", false, "print the reading as one JSON object instead of the lines")
+	fs.Var(&f.by, "by", "narrow the EDGES rounds to this friend's receipts (repeatable; empty reads them all)")
+	return &f
+}
+
 func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("convergence", flag.ContinueOnError)
-	repo := fs.String("repo", "", "forge repository the queue and the batches are read from, owner/name (required)")
-	ledger := fs.String("ledger", "", "pit-stop ledger markdown; its open rows are the LEDGER stream (required)")
-	receipts := fs.String("receipts", "", "dogfood receipts directory; its open edges are the EDGES stream (required)")
-	retired := fs.String("retired", "", "retired-scripts README; its dated rows are what the window retired (required)")
-	since := fs.String("since", "", "far edge of the window: an RFC3339 instant, or a duration such as 24h (required)")
-
-	bin := fs.String("bin", "", "directory of scripts not yet replaced by a verb; without it the SCRIPTS stream is absent")
-	repoDir := fs.String("repo-dir", "", "a checkout of --repo, read only; without it the CLASSES stream is absent")
-	batchLogs := fs.String("batch-logs", "", "directory of <pr>-round-<n>.log gate logs; the second source for a batch's rounds")
-	versions := fs.String("versions", "", "a nova-version snapshot, or a fleet roll-up of them; without it the FLEET stream is absent")
-	certs := fs.String("certs", "", "a name<TAB>status certificate roll-up, for FLEET's certified fraction")
-	state := fs.String("state", "", "where the last tick is remembered; without it no streak can be two and the verb never exits 1")
-	nowFlag := fs.String("now", "", "take the reading as of this RFC3339 instant instead of the clock, so a tick can be re-read exactly")
-	ghBin := fs.String("gh", "gh", "the gh executable the forge is read through")
-	gitBin := fs.String("git", "git", "the git executable --repo-dir is read through")
-	timeout := fs.Int("timeout", convDefaultTimeout, "seconds one child read may take before it is killed and named")
-	asJSON := fs.Bool("json", false, "print the reading as one JSON object instead of the lines")
-	var by repeatable
-	fs.Var(&by, "by", "narrow the EDGES rounds to this friend's receipts (repeatable; empty reads them all)")
+	f := convergenceFlagValues(fs)
 
 	if !parseFlags(fs, args, stderr) {
 		return 2
 	}
 	if !requireConvergenceFlags(stderr, map[string]*string{
-		"repo": repo, "ledger": ledger, "receipts": receipts, "retired": retired, "since": since,
+		"repo": f.repo, "ledger": f.ledger, "receipts": f.receipts, "retired": f.retired, "since": f.since,
 	}) {
 		return 2
 	}
-	if *timeout <= 0 {
-		fmt.Fprintf(stderr, "nova-check convergence: --timeout must be a positive number of seconds (got %d); a child with no deadline is a wait with no end; run: nova-check help\n", *timeout)
+	if *f.timeout <= 0 {
+		fmt.Fprintf(stderr, "nova-dev convergence: --timeout must be a positive number of seconds (got %d); a child with no deadline is a wait with no end; run: nova-dev help\n", *f.timeout)
 		return 2
 	}
 
 	now := time.Now().UTC()
-	if *nowFlag != "" {
-		at, err := time.Parse(time.RFC3339, *nowFlag)
+	if *f.now != "" {
+		at, err := time.Parse(time.RFC3339, *f.now)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-check convergence: --now %s is not an RFC3339 instant; %s; run: nova-check help\n", oneline.Field(*nowFlag), oneline.Err(err))
+			fmt.Fprintf(stderr, "nova-dev convergence: --now %s is not an RFC3339 instant; %s; run: nova-dev help\n", oneline.Field(*f.now), oneline.Err(err))
 			return 2
 		}
 		now = at.UTC()
 	}
-	sinceAt, err := converge.ParseSince(*since, now)
+	sinceAt, err := converge.ParseSince(*f.since, now)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check convergence: %s; run: nova-check help\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-dev convergence: %s; run: nova-dev help\n", oneline.Err(err))
 		return 2
 	}
 
-	budget := time.Duration(*timeout) * time.Second
+	budget := time.Duration(*f.timeout) * time.Second
 	opts := converge.Options{
-		Repo:         *repo,
-		LedgerPath:   *ledger,
-		ReceiptsDir:  *receipts,
-		RetiredPath:  *retired,
-		BinDir:       *bin,
-		RepoDir:      *repoDir,
-		BatchLogs:    *batchLogs,
-		VersionsPath: *versions,
-		CertsPath:    *certs,
-		By:           by,
+		Repo:         *f.repo,
+		LedgerPath:   *f.ledger,
+		ReceiptsDir:  *f.receipts,
+		RetiredPath:  *f.retired,
+		BinDir:       *f.bin,
+		RepoDir:      *f.repoDir,
+		BatchLogs:    *f.batchLogs,
+		VersionsPath: *f.versions,
+		CertsPath:    *f.certs,
+		By:           f.by,
 		Since:        sinceAt,
 		Now:          now,
-		Forge:        converge.GH{Repo: *repo, Timeout: budget, Bin: *ghBin},
+		Forge:        converge.GH{Repo: *f.repo, Timeout: budget, Bin: *f.gh},
 	}
-	if *repoDir != "" {
-		opts.Git = converge.RealGit{Dir: *repoDir, Timeout: budget, Bin: *gitBin}
+	if *f.repoDir != "" {
+		opts.Git = converge.RealGit{Dir: *f.repoDir, Timeout: budget, Bin: *f.git}
 	}
 
-	st, err := converge.LoadState(*state)
+	st, err := converge.LoadState(*f.state)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check convergence: %s; run: nova-check help\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-dev convergence: %s; run: nova-dev help\n", oneline.Err(err))
 		return 2
 	}
 	report, err := converge.Read(context.Background(), opts)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check convergence: %s; run: nova-check help\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-dev convergence: %s; run: nova-dev help\n", oneline.Err(err))
 		return 2
 	}
 	report, next, streak := report.Apply(st, now)
-	if err := next.Save(*state); err != nil {
-		fmt.Fprintf(stderr, "nova-check convergence: --state %s could not be written: %s; run: nova-check help\n", oneline.Field(*state), oneline.Err(err))
+	if err := next.Save(*f.state); err != nil {
+		fmt.Fprintf(stderr, "nova-dev convergence: --state %s could not be written: %s; run: nova-dev help\n", oneline.Field(*f.state), oneline.Err(err))
 		return 2
 	}
 
-	if *asJSON {
+	if *f.asJSON {
 		raw, err := json.Marshal(report.AsJSON(now, sinceAt))
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-check convergence: %s; run: nova-check help\n", oneline.Err(err))
+			fmt.Fprintf(stderr, "nova-dev convergence: %s; run: nova-dev help\n", oneline.Err(err))
 			return 2
 		}
 		printJSON(stdout, raw)
