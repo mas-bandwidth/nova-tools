@@ -315,6 +315,10 @@ type Snapshot struct {
 	// Routes are the model tiers' routes nova-config applied to the store,
 	// read by a step that deals (route.go); nil is none.
 	Routes []Route
+	// Local says the sprint is a single-machine local sprint (nova-up --local):
+	// every machine it runs on is the class local, not fleet (route.go,
+	// executorClass; docs/SPEC-CONFIG.md, route).
+	Local bool
 	// Tiers are the tiers' route arrays nova-config applied (the tier kind), by
 	// tier, read with the routes; a tier with none deals from its enabled routes
 	// in name order (tierArray).
