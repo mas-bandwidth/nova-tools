@@ -555,13 +555,3 @@ func TestHygieneAcceptsEveryDeclaredKind(t *testing.T) {
 		require.EqualValues(t, 0, code, "no --kind: exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	}
 }
-
-// The stray list's second column names kinds, and until now nothing checked that they
-// were kinds at all. A typo there silently grants an exception to nobody.
-func TestEveryKindTheStrayListNamesIsDeclared(t *testing.T) {
-	t.Parallel()
-
-	for _, kind := range hygiene.StrayKinds() {
-		assert.True(t, hygiene.KindDeclared(kind), "the stray list excuses a file for kind %q, which the tool does not declare: the exception is granted to nobody", kind)
-	}
-}

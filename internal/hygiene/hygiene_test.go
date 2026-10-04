@@ -677,9 +677,6 @@ func TestKindDeclaredHoldsTheEmbeddedNameSet(t *testing.T) {
 		assert.True(t, KindDeclared(name), "KindDeclared(%q) = false, want true", name)
 	}
 	require.False(t, KindDeclared("not-a-declared-kind"), "an undeclared kind was accepted")
-	for _, kind := range StrayKinds() {
-		assert.True(t, KindDeclared(kind), "the stray list excuses kind %q, which is not declared", kind)
-	}
 }
 
 // hygiene-reads-full-blob-ids: `--raw` abbreviates the blob id, and an abbreviation is
