@@ -46,10 +46,10 @@ func TestCheckCoverReadNoSpendFileParsesDaysNotesAndSkips(t *testing.T) {
 func TestCheckCoverReadNoSpendFileRefusesNonDayLine(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name      string
-		lines     string
-		wantLine  string
-		wantText  string
+		name     string
+		lines    string
+		wantLine string
+		wantText string
 	}{
 		{"not a day at all", "hello\n", "line 1", `"hello"`},
 		{"day off the calendar", "2026-02-30\n", "line 1", `"2026-02-30"`},
@@ -79,4 +79,14 @@ func TestCheckCoverReadNoSpendFileRefusesMissingFile(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, days, "a file that cannot be opened answers no set")
 	assert.Contains(t, err.Error(), "nowhere", "the refusal names the path")
+}
+
+// TestCheckCoverReadNoSpendFileRefusesDirectory pins the read refusal: a
+// directory opens and then does not read, so the scanner's error is surfaced
+// and no empty set stands in for the list the caller meant.
+func TestCheckCoverReadNoSpendFileRefusesDirectory(t *testing.T) {
+	t.Parallel()
+	days, err := ReadNoSpendFile(t.TempDir())
+	require.Error(t, err)
+	assert.Nil(t, days, "a path that does not read answers no set")
 }
