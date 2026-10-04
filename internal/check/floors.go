@@ -321,19 +321,19 @@ func sliceSection(md string, match func(heading string) bool) (string, bool) {
 	return "", false
 }
 
-// normWords lowercases, maps every non-alphanumeric rune to a space, and
+// normWords lowercases, maps every non-alphanumeric rune to a blank, and
 // collapses runs — so case, punctuation, emphasis markers, and hard wraps
 // cannot hide or fake a match. Compared floors differ by words or not at all.
 func normWords(s string) string {
 	var b strings.Builder
-	space := true
+	blank := true
 	for _, r := range strings.ToLower(s) {
 		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
 			b.WriteRune(r)
-			space = false
-		} else if !space {
+			blank = false
+		} else if !blank {
 			b.WriteByte(' ')
-			space = true
+			blank = true
 		}
 	}
 	return strings.TrimSpace(b.String())
