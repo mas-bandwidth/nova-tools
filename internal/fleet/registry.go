@@ -8,8 +8,8 @@
 // children and nothing landed for twenty minutes at a time.
 //
 // The registry exists because a bench name reached a machine as a bare string: `--bench
-// a-machine` was a hostname the fill loop would happily ssh to, and nothing in the tools knew
-// that a-machine is six CI runners and not a card bench. Now a machine name is RESOLVED: a verb
+// example-host` was a hostname the fill loop would happily ssh to, and nothing in the tools knew
+// that example-host is six CI runners and not a card bench. Now a machine name is RESOLVED: a verb
 // asks the registry for the row, and a name the registry does not carry is refused by name,
 // with the reason and the remedy on the line.
 //
