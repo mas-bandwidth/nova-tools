@@ -345,3 +345,4 @@ MCFriendKeepaliveBrokenburst.cfg	MCFriendKeepalive.tla	invariant	OneEmissionPerT
 MCFriendKeepaliveBrokenwake.cfg	MCFriendKeepalive.tla	invariant	NoSessionWake	ignore-terminal	friendkeepalive	required	-
 MCFriendKeepaliveBrokenturn.cfg	MCFriendKeepalive.tla	invariant	NoSessionTurn	ignore-terminal	friendkeepalive	required	-
 MCFriendKeepalive.cfg	MCFriendKeepalive.tla	pass	-	ignore-terminal	friendkeepalive	required	-
+MCFriendKeepaliveBrokentransition.cfg	MCFriendKeepalive.tla	invariant	NoPreTransitionProof	ignore-terminal	friendkeepalive	required	-
