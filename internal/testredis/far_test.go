@@ -88,7 +88,8 @@ func farEcho(t *testing.T) string {
 			serving.Add(1)
 			go func() {
 				defer serving.Done()
-				defer c.Close()
+				// ignored: the echo ends when the test's client hangs up; the test's own assertions are the report
+				defer func() { _ = c.Close() }()
 				_, _ = io.Copy(c, c)
 			}()
 		}
