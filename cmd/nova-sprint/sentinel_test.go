@@ -19,7 +19,7 @@ func TestReleaseIsTheCoordinators(t *testing.T) {
 	ta.json("where", &w)
 	require.Equal(t, "lead", w.Coordinator, "where --json: %+v", w)
 	require.NotContains(t, ta.ok("where"), "coordinator:", "where shows the coordinator line")
-	ta.ok("add --stream s1 --count 1 --actor lead --brief-file " + proBriefFile(t))
+	ta.ok("add --stream s1 --count 1 --one --actor lead --brief-file " + proBriefFile(t))
 	out := ta.ok("add --stream s1 --sentinel stop --actor lead")
 	require.Contains(t, out, "MOVED sentinel stop -> waiting stream=s1", "add --sentinel")
 	ta.ok("add --stream s2 b --one --needs stop --actor lead --brief-file " + proBriefFile(t))

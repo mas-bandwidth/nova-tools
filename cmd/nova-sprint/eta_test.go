@@ -276,7 +276,7 @@ func TestWhereKeepsTheWholeSprintAverageWhenTheLandedStampsFailToRead(t *testing
 	ta.now = ta.now.Add(2 * time.Hour) // every landing is over an hour old: the average either way
 	ta.mu.Unlock()
 	ta.ok("stop")
-	ta.ok("add --stream s2 --count 1") // the table moves; no tick counts it
+	ta.ok("add --stream s2 --count 1 --one") // the table moves; no tick counts it
 	ta.json("where", &w)
 	require.Zero(t, w.Held, "nothing waits: %s", w.Summary)
 	healthy := w.Summary

@@ -223,7 +223,7 @@ func TestAddBriefDirReadsTheBriefsModelLines(t *testing.T) {
 	bad := filepath.Join(dir, "a.md")
 	require.NoError(t, os.WriteFile(bad, []byte(needsBrief(lead, "")), 0o600))
 	before := ta.applies()
-	_, _, single := ta.do("add --stream s1 --count 1 --brief-file " + writeBrief(t, lead))
+	_, _, single := ta.do("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, lead))
 	code, out, errs := ta.do("add --stream s1 --brief-dir " + dir)
 	require.Equal(t, 2, code)
 	require.NotContains(t, out, "MOVED")

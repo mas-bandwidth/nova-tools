@@ -1027,7 +1027,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	every := fs.Int("sentinel-every", 0, "with --count: a sentinel <stream>-gate-<n> after every k cards (a stop by its place in line)")
 	last := fs.Bool("sentinel-last", false, "with --sentinel-every: a sentinel after the last card too")
 	allowShared := fs.Bool("allow-shared-paths", false, "with a card per brief file (--brief-dir, or --brief-file with no ids): admit cards that name one file in their PATHS: lines though neither needs the other (by default refused, naming the file and the cards)")
-	one := fs.Bool("one", false, "admit a single card (one positional id, or one --brief-file alone): refused without it, since cards are admitted in waves (--brief-dir, --count, several --brief-file)")
+	one := fs.Bool("one", false, "admit a single card (one positional id, --count 1 on one stream, or one --brief-file alone): refused without it, since cards are admitted in waves (--brief-dir, --count 2 or more, several --brief-file)")
 	held := fs.Bool("held", false, "admit the cards held: waiting, a sentinel never reached and no card dealt, nothing raised, until nova-sprint release <id> --reason <text>; a wave loads behind a held sentinel with nothing before it")
 	decideRecord := fs.String("decide-record", "", "the record `file` of the cards' brief decisions under JEV_API_KEY (default ~/nova-sprint/decide/brief.jsonl, the coordinator's root); each card stores it and its op, and land and drop attach the card's end there")
 	var briefOps stringList
@@ -1087,13 +1087,14 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if *stream == "" || (len(ids) == 0) == (*count == 0) {
 		return refuse(stderr, "add", "wants --stream and either ids, --count <n> or --sentinel <id> (or --brief-dir <dir>, or --brief-file: a card per file)")
 	}
-	if len(ids) == 1 && *sentinel == "" && !*one {
+	streams := sprint.Split(*stream)
+	// a single card: one id, or --count 1 on one stream (on several it is one card each)
+	if (len(ids) == 1 && *sentinel == "" || *count == 1 && len(streams) == 1) && !*one {
 		return refuse(stderr, "add", oneCardWhy(*stream))
 	}
 	if *last && *every == 0 {
 		return refuse(stderr, "add", "--sentinel-last goes with --sentinel-every <k>")
 	}
-	streams := sprint.Split(*stream)
 	if len(streams) > 1 && *count == 0 {
 		return refuse(stderr, "add", "several streams take --count <n>: each gets n cards")
 	}

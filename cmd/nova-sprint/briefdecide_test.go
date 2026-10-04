@@ -357,7 +357,7 @@ func TestACardsEndAttachesToItsBrief(t *testing.T) {
 	dir := t.TempDir()
 	writeNeedsBrief(t, dir, "a1", "Fix a1. converges=0.8", "")
 	ta.ok("add --stream s1 --brief-dir " + dir)
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	out := ta.ok("drop a1 s1-1 --reason obsolete")
 	assert.NotContains(t, out, "brief decision")
 	assert.Equal(t, map[string]string{"a1": "dropped: obsolete"}, endsOf(t, record))

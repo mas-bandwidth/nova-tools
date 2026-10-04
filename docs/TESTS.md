@@ -986,7 +986,7 @@ FLEET-UP OK moved=1 refused=0 notes=0 op=fleet-release-t1-1
 STOPPED
 NOTE a twin beats every member at every verb: each member added is up after the next nova-sprint tick
 
-$ nova-sprint add --stream s1 --count 1
+$ nova-sprint add --stream s1 --count 1 --one
 MOVED s1-1 -> ready stream=s1 score=1
 ADD OK stream=s1 cards=1 before=- moved=1 refused=0 notes=0 op=add-t2-1
 NOTE the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>

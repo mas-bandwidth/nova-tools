@@ -37,12 +37,12 @@ func TestTheActorHasNoDefault(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --members m1,m2 --readers reader-a,reader-b")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.a.getenv = func(k string) string {
 		return map[string]string{"NOVA_SPRINT_REDIS": "mem:0"}[k]
 	}
 	before := ta.applies()
-	for _, line := range []string{"add --stream s1 --count 1", "rank s1-1 --first", "start", "merge --stream s1", "ci s1-1 --green"} {
+	for _, line := range []string{"add --stream s1 --count 1 --one", "rank s1-1 --first", "start", "merge --stream s1", "ci s1-1 --green"} {
 		code, _, errs := ta.do(line)
 		assert.Equal(t, 2, code, "%s with no actor: exit %d %q", line, code, errs)
 		assert.Contains(t, errs, "--actor <name> is required (or NOVA_SPRINT_ACTOR)", "%s with no actor: exit %d %q", line, code, errs)
@@ -67,7 +67,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s1 --sentinel s1-stop")
 	lines := map[string]string{
-		"add":           "add --stream s1 --count 1",
+		"add":           "add --stream s1 --count 1 --one",
 		"quack":         "quack --streams q --count 1 --repo https://example.com/quack.git",
 		"release":       "release s1-stop --reason r",
 		"resolve":       "resolve",
@@ -159,7 +159,7 @@ func TestInboxReadIsTheCoordinators(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --members m1 --readers reader-a,reader-b")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	before := ta.applies()
 	code, _, errs := ta.do("inbox --read --actor intruder")
 	require.Equal(t, 2, code, "inbox --read by another: %d %q", code, errs)

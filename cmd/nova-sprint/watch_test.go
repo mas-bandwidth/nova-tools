@@ -76,7 +76,7 @@ func whereFixture(t *testing.T) *testApp {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1,m2")
 	ta.ok("add --stream s1 --count 3")
-	ta.ok("add --stream s2 --count 1")
+	ta.ok("add --stream s2 --count 1 --one")
 	ta.ok("drop s2-1 --reason obsolete")
 	ta.ok("start")
 	ta.ok("tick")
@@ -218,7 +218,7 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 		assert.Equal(t, "", strings.TrimSpace(strings.Split(lines[2], " | ")[0]), "table %s: the summary row is unlabelled: %q", name, lines[2])
 	}
 	ta.ok("add --stream s1 --count 2")
-	ta.ok("add --stream s2 --count 1")
+	ta.ok("add --stream s2 --count 1 --one")
 	ta.ok("drop s2-1 --reason obsolete")
 	frame := ta.ok("where --all")
 	for _, name := range []string{"work", "readers", "merge", "fleet"} {

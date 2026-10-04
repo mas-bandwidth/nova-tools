@@ -408,7 +408,7 @@ func TestLandTwoStreamsAsTheirOwnBatches(t *testing.T) {
 func TestLandRefusesWhatItCannotPlace(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 	for _, tc := range []struct{ line, want string }{
 		{"land --base main", "the card names no REPO: line and no --repo-dir was given; run: nova-sprint land --repo-dir <clone>"},
@@ -477,7 +477,7 @@ func TestLandReviewClonesOfTwoRepositoriesNeverShareADirectory(t *testing.T) {
 func TestLandReviewAWrongEpochPushesNothing(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 	before, applies := r.git(r.remote, "rev-parse", "main"), r.applies()
 	code, _, errs := r.do("land --repo-dir " + r.clone + " --base main --epoch 999")
@@ -519,7 +519,7 @@ func TestLandReviewAGitEnvironmentFailureBlamesNoCard(t *testing.T) {
 func TestLandRefusesAReworkedHeadAndLandsItOnTheNextRun(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	old := r.head("s1-1", "main", "a.txt", "attempt 1\n")
 	r.queued(map[string]string{"s1-1": old}, "s1-1")
 	var replacement string

@@ -145,7 +145,7 @@ func TestAnswerDecideListsDropsAndWhatIsUnderTheBar(t *testing.T) {
 func TestAnswerDecideNeverAnswersAPaymentRefusal(t *testing.T) {
 	t.Parallel()
 	ta, j, record := answering(t, always(decide.VerbRework, 0.99, "retry", "cannot-be-done"))
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", `provider: 402 "Insufficient account funds"`)
 	out := ta.ok("answer --bar 0.8 --record " + record)
@@ -161,7 +161,7 @@ func TestAnswerDecideNeverAnswersAPaymentRefusal(t *testing.T) {
 func TestAnswerDecideAcksABlockedCard(t *testing.T) {
 	t.Parallel()
 	ta, _, record := answering(t, always(decide.VerbAck, 0.88, "own", "need-dropped"))
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.ok("add --stream s2 b --one --needs s1-1")
 	ta.ok("drop s1-1 --reason obsolete")
 	g := ta.group(sprint.NBlocked, "s2")
@@ -177,7 +177,7 @@ func TestAnswerDecideAcksABlockedCard(t *testing.T) {
 func TestAnswerDecideDryRunWritesNothing(t *testing.T) {
 	t.Parallel()
 	ta, j, record := answering(t, always(decide.VerbRework, 0.95, "own", "cannot-be-done"))
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "the tests went red")
 	before := ta.applies()
@@ -278,7 +278,7 @@ func TestAnswerDecideRefusals(t *testing.T) {
 func TestAJudgmentLeftAloneIsOfKindOther(t *testing.T) {
 	t.Parallel()
 	ta, j, record := answering(t, always(decide.VerbRework, 0.9, "own", "cannot-be-done"))
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.ok("add --stream docs --sentinel docs-round2")
 	ta.ok("start")
 	ta.ok("tick")
@@ -297,7 +297,7 @@ func TestAnswerDecideReadsTheSprintRowsBar(t *testing.T) {
 	ta, _, record := answering(t, always(decide.VerbRework, 0.85, "own", "cannot-be-done"))
 	ta.m.SetJudgmentBar("0.9")
 	ta.m.SetRoutes([]sprint.Route{{Name: "r1", Tier: "flash", Model: "m", Enabled: true}})
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "red")
 	out := ta.ok("answer --record " + record)
@@ -309,7 +309,7 @@ func TestAnswerDecideReadsTheSprintRowsBar(t *testing.T) {
 // verb sent to the server, as the coordinator's shell sends them.
 func TestAnswerDecideRunsThroughTheServer(t *testing.T) {
 	t.Parallel()
-	r := newServerRig(t, "init --readers reader-a,reader-b --members m1:2", "add --stream s1 --count 1", "start", "tick", "tick")
+	r := newServerRig(t, "init --readers reader-a,reader-b --members m1:2", "add --stream s1 --count 1 --one", "start", "tick", "tick")
 	r.one("take", "--as", "m1", "--limit", "1", "--epoch", "0")
 	r.one("finish", "--as", "m1", "s1-1.w1@1", "--failed", "--report", "red", "--epoch", "0")
 	r.boss("tick")
@@ -358,7 +358,7 @@ func TestAGroupedJudgmentsCardHasItsOwnLines(t *testing.T) {
 func TestAnswerDecideReworksACardAtMostOnceAnHour(t *testing.T) {
 	t.Parallel()
 	ta, _, record := answering(t, always(decide.VerbRework, 0.95, "retry", "cannot-be-done"))
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "red")
 	assert.Contains(t, ta.ok("answer --bar 0.8 --record "+record), "s1-1  failed  rework  0.95  applied")
@@ -377,7 +377,7 @@ func TestAnswerDecideReworksACardAtMostOnceAnHour(t *testing.T) {
 func TestAnswerDecideAppliesNothingWithNoBar(t *testing.T) {
 	t.Parallel()
 	ta, j, record := answering(t, always(decide.VerbRework, 0.91, "own", "cannot-be-done"))
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "red")
 	before := ta.applies()
@@ -401,7 +401,7 @@ func TestAnswerDecideAppliesNothingWithNoBar(t *testing.T) {
 func TestAReworkAppliedFromTheRecordCountsForTheHourGuard(t *testing.T) {
 	t.Parallel()
 	ta, _, record := answering(t, always(decide.VerbRework, 0.95, "retry", "cannot-be-done"))
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "red")
 	assert.Contains(t, ta.ok("answer --record "+record), "s1-1  failed  rework  0.95  listed  no decide_judgment_bar is set")
@@ -420,7 +420,7 @@ func TestAReworkAppliedFromTheRecordCountsForTheHourGuard(t *testing.T) {
 func TestADecisionAppliedFromTheRecordPassesTheHourGuard(t *testing.T) {
 	t.Parallel()
 	ta, _, record := answering(t, always(decide.VerbRework, 0.95, "retry", "cannot-be-done"))
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "red")
 	ta.ok("answer --record " + record)
@@ -439,7 +439,7 @@ func TestADecisionAppliedFromTheRecordPassesTheHourGuard(t *testing.T) {
 func TestARecordAppliedDecisionIsNeverAppliedTwice(t *testing.T) {
 	t.Parallel()
 	ta, _, record := answering(t, always(decide.VerbRework, 0.95, "retry", "cannot-be-done"))
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "red")
 	note := ta.group(sprint.NWorkFailed, "s1").Notes[0]
@@ -462,7 +462,7 @@ func TestAPassStoppedWhileApplyingIsFinishedThroughTheSameOp(t *testing.T) {
 	t.Parallel()
 	stopped := func(t *testing.T) (*testApp, string, string) {
 		ta, _, record := answering(t, always(decide.VerbRework, 0.95, "retry", "cannot-be-done"))
-		ta.ok("add --stream s1 --count 1")
+		ta.ok("add --stream s1 --count 1 --one")
 		ta.deal(1)
 		ta.failOnce("m1", "s1-1.w1@1", "red")
 		note := ta.group(sprint.NWorkFailed, "s1").Notes[0]
@@ -502,7 +502,7 @@ func TestAPassStoppedWhileApplyingIsFinishedThroughTheSameOp(t *testing.T) {
 func TestAResumeNeverAppliesADrop(t *testing.T) {
 	t.Parallel()
 	ta, _, record := answering(t, always(decide.VerbDrop, 0.99, "own", "cannot-be-done"))
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "red")
 	note := ta.group(sprint.NWorkFailed, "s1").Notes[0]
@@ -539,7 +539,7 @@ func TestTheRecordsDirectoryIsTightened(t *testing.T) {
 func TestEveryAppliedVerbCarriesTheDecisionsOp(t *testing.T) {
 	t.Parallel()
 	ta, _, record := answering(t, always(decide.VerbRework, 0.95, "own", "cannot-be-done"))
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "red")
 	g := ta.group(sprint.NWorkFailed, "s1")
@@ -589,7 +589,7 @@ func failedAsk(t *testing.T, b decide.Backend, extra string) (int, string, bool)
 	ta, _, record := answering(t, always(decide.VerbRework, 0.9, "own", "cannot-be-done"))
 	ta.a.decider = b
 	ta.a.notify = func(ctx context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(ctx) }
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "red")
 	before := ta.applies()

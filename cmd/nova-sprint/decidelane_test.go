@@ -114,7 +114,7 @@ func TestARefusedFinishRecordsNoDecision(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1")
-	ta.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + proBriefFile(t))
 	dir := t.TempDir()
 	ta.a.decide = newDecideLane(dir, fixedGrade(), ta.a.now, GradeWait)
 	ctx := context.Background()
@@ -160,7 +160,7 @@ func TestTheDecideLaneSaysAFailureOnceAndGradesNothingWithNoKey(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + proBriefFile(t))
 	ta.a.decide = newDecideLane(t.TempDir(), nil, ta.a.now, GradeWait)
 	var out bytes.Buffer
 	ta.a.decideRound(context.Background(), "mem:0", &out)

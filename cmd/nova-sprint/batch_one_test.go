@@ -13,14 +13,16 @@ import (
 
 // The verbs push back on singles (the owner, 2026-10-03: "It feels very much like we are
 // dealing cards one at a time. Stop this. BATCH EVERYTHING."): add refuses one card unless
-// --one says it is meant; --brief-dir, --count and several --brief-file are waves and pass.
+// --one says it is meant (one id, one --brief-file alone, or --count 1 on one stream);
+// --brief-dir, --count of two or more, --count on several streams and several --brief-file
+// are waves and pass.
 func TestAddRefusesASingleCardWithoutOne(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	const line = "nova-sprint add REFUSED: one card at a time is the mistake; put the briefs in a directory and run: nova-sprint add --stream s1 --brief-dir <dir>; or say --one for a single card"
 	one := writeBrief(t, "the one work")
-	for _, single := range []string{"add --stream s1 lone", "add --stream s1 --brief-file " + one} {
+	for _, single := range []string{"add --stream s1 lone", "add --stream s1 --brief-file " + one, "add --stream s1 --count 1"} {
 		code, out, errs := ta.do(single)
 		assert.Equal(t, 2, code, single) // could not run: the standard's refusal exit
 		assert.Contains(t, errs, line, single)
@@ -31,11 +33,13 @@ func TestAddRefusesASingleCardWithoutOne(t *testing.T) {
 	assert.Zero(t, w.All, "nothing was admitted")
 	ta.ok("add --stream s1 lone --one")
 	ta.ok("add --stream s1 --one --brief-file " + one)
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.ok("add --stream s1 --count 2")
+	ta.ok("add --stream s2,s3 --count 1") // one card each: two cards
 	ta.ok("add --stream s1 --brief-dir " + writeBriefDir(t, 3))
 	ta.ok("add --stream s1 --sentinel gate")
 	ta.json("where", &w)
-	assert.EqualValues(t, 8, w.All, "--one, --count, --brief-dir and a sentinel admit")
+	assert.EqualValues(t, 11, w.All, "--one, --count, --brief-dir and a sentinel admit")
 	ta.clean()
 }
 
