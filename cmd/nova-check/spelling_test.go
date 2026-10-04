@@ -28,9 +28,9 @@ func TestSpellingCLIRefusesNoFlags(t *testing.T) {
 func TestSpellingCLIRefusesNegativeFailMax(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	code, _, stderr := runSpelling(t, "--dir", dir, "--fail-max", "-1")
+	code, _, stderr := runSpelling(t, "--dir", dir, "--max", "-1")
 	require.EqualValues(t, 2, code, "exit code = %d, want 2", code)
-	assert.Contains(t, stderr, "--fail-max must be a line ceiling of zero or more", "stderr = %q", stderr)
+	assert.Contains(t, stderr, "--max must be a line ceiling of zero or more", "stderr = %q", stderr)
 }
 
 func TestSpellingCLICleanPass(t *testing.T) {
@@ -53,7 +53,7 @@ func TestSpellingCLIFindingsReadOnly(t *testing.T) {
 
 	code, stdout, stderr := runSpelling(t, "--file", f)
 	require.EqualValues(t, 1, code, "exit = %d, want 1; stdout = %q, stderr = %q", code, stdout, stderr)
-	assert.True(t, strings.Contains(stderr, "SPELLING FAIL") && strings.Contains(stderr, "recieve -> receive"), "stderr = %q", stderr)
+	assert.True(t, strings.Contains(stderr, "SPELLING FAILED") && strings.Contains(stderr, "recieve -> receive"), "stderr = %q", stderr)
 	// Verify file was NOT modified.
 	cur, _ := os.ReadFile(f)
 	assert.EqualValues(t, content, string(cur), "file modified in read-only mode: %q", string(cur))
@@ -135,7 +135,7 @@ func TestSpellingCLIFailMax(t *testing.T) {
 	content := "recieve\nseperate\noccured\ncolour\noptimise\n"
 	require.NoError(t, os.WriteFile(f, []byte(content), 0o644))
 
-	code, _, stderr := runSpelling(t, "--file", f, "--fail-max", "2")
+	code, _, stderr := runSpelling(t, "--file", f, "--max", "2")
 	require.EqualValues(t, 1, code, "exit = %d, want 1", code)
 	assert.Contains(t, stderr, "SPELLING MORE kind=misspelling", "expected MORE line in stderr, got: %q", stderr)
 	assert.Contains(t, stderr, "shown=2", "expected shown=2 in summary line, got: %q", stderr)

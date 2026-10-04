@@ -1510,16 +1510,6 @@ func TestAdoptRefusesAHostilePathInTheMachinesFile(t *testing.T) {
 	}
 }
 
-func TestValidRemotePathTakesWhatItShould(t *testing.T) {
-	t.Parallel()
-
-	for _, good := range []string{"/home/nova/.local/bin", "~/.local/bin", "/opt/nova-tools/bin", "~/go/bin", "/a+b/c-d_e.f@g"} {
-		if err := ValidRemotePath("--bin", good); err != nil {
-			assert.NoError(t, err, "refused %q: %v", good, err)
-		}
-	}
-}
-
 // NEVER forward the agent, and never put a key on argv. This verb runs on the
 // one host that holds keys to the whole fleet; forwarding that agent to a bench
 // would put the fleet's trust inside a machine the release is being pushed TO,

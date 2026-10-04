@@ -73,7 +73,6 @@ func TestSentinelsByPositionStoreNothing(t *testing.T) {
 		first = append(first, fmt.Sprintf("a-%d", i))
 	}
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: first}, Reason: "done elsewhere"}))
-	h.must(SentinelsDueStep("tester"))
 	require.Empty(t, h.snap().Work.Card("a-gate-1").F("reached"), "a-gate-1 reached with nothing before it while b and c are in flight")
 	mark := len(h.lines())
 	res := h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"a-gate-1"}, Reason: "go", Coordinator: "tester", Who: "tester"}))

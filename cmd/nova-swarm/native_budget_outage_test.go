@@ -295,5 +295,3 @@ func TestTheRetryIsCappedSoOneSampleNeverExceedsTheReadLimit(t *testing.T) {
 	require.Len(t, limits, 1, "a read that exhausted the limit is not retried")
 	assert.Equal(t, 12*time.Second, limits[0])
 }
-
-

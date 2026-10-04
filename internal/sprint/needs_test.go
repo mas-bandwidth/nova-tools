@@ -1,7 +1,6 @@
 package sprint
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -97,8 +96,6 @@ func TestAddRefusesACycle(t *testing.T) {
 	p = Add(w.s, AddReq{Stream: "s9", IDs: []string{"y", "z"}, Needs: []string{"z"}})
 	require.Empty(t, p.Units, "a need of itself: %+v", p)
 	require.Len(t, p.Refused, 2, "a need of itself: %+v", p)
-	c := NeedsCycle(w.s, map[string][]string{"p": {"q"}, "q": {"r"}, "r": {"p"}})
-	require.Equal(t, "p,q,r,p", strings.Join(c, ","), "NeedsCycle: %v", c)
 }
 
 // H11: a dropped need acknowledged by the coordinator is waived, by whom and

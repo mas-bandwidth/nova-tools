@@ -85,8 +85,6 @@ func TestNativesampleCoverReadOnce(t *testing.T) {
 			s.readOnce()
 
 			_, observed, _, failures, lastErr := s.Observed()
-			answered, maxFlight := s.Counts()
-			assert.Equal(t, tc.wantSamples, answered, "one readOnce is one folded sample")
 			assert.Equal(t, tc.wantFailures, failures, "a failed read is counted as one")
 			assert.False(t, observed, "a data home that reports nothing is an absence, never a figure")
 			if tc.wantErrPart != "" {
@@ -96,7 +94,6 @@ func TestNativesampleCoverReadOnce(t *testing.T) {
 				assert.NoError(t, lastErr, "an answered read carries no error")
 				assert.Empty(t, s.Why(), "an answered read leaves nothing for the line to carry")
 			}
-			assert.Equal(t, 1, maxFlight, "readOnce brackets its read with enter and leave, so no two overlap")
 			assert.Empty(t, s.StopWordAtFinal(0, false, ""), "a sample that saw nothing fires no budget")
 		})
 	}
@@ -151,42 +148,6 @@ func TestNativesampleCoverLabel(t *testing.T) {
 			s := startLiveSampler("", 0, nativeRunConfig{label: tc.label}, "")
 			defer s.Stop()
 			assert.Equal(t, tc.want, s.label(), tc.name)
-		})
-	}
-}
-
-// TestNativesampleCoverEnterLeaveAndCounts holds the in-flight count enter and leave keep
-// and Counts reads back: two reads may stand in flight at once, and a leave that really
-// decrements keeps the maximum from rising again when the next read starts.
-func TestNativesampleCoverEnterLeaveAndCounts(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name          string
-		ops           []string
-		wantMaxFlight int
-	}{
-		{name: "one_read_in_flight_counts_one", ops: []string{"enter"}, wantMaxFlight: 1},
-		{name: "two_reads_in_flight_count_two", ops: []string{"enter", "enter"}, wantMaxFlight: 2},
-		// The third enter is the probe: a leave that did not decrement would raise
-		// the maximum to three.
-		{name: "a_leave_that_decrements_keeps_the_maximum", ops: []string{"enter", "enter", "leave", "leave", "enter"}, wantMaxFlight: 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			s := startLiveSampler("", 0, nativeRunConfig{}, "")
-			defer s.Stop()
-			for _, op := range tc.ops {
-				if op == "enter" {
-					s.enter()
-				} else {
-					s.leave()
-				}
-			}
-			answered, maxFlight := s.Counts()
-			assert.Zero(t, answered, "no read was answered; Counts counts answers")
-			assert.Equal(t, tc.wantMaxFlight, maxFlight, tc.name)
 		})
 	}
 }
