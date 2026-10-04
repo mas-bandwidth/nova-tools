@@ -9,15 +9,11 @@ applies here unchanged and is not restated. Related: the budget law
 
 ## The CI class test against fixed waits on the CI path
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `waits`:
-
-```
-waits   read every _test.go on the CI path; refuse a fixed wall-clock wait or bound
-```
-
-It runs as `go test ./internal/ci -run TestNoFixedWaitsOnTheCIPath`, and it is
-the bench's fixed-wait audit made an official verb: the check a PR runs.
+**The test.** The class test is `TestNoFixedWaitsOnTheCIPath`
+(`internal/ci/ci_waits_test.go`); it runs in the `internal/ci` package as
+`go test ./internal/ci -run TestNoFixedWaitsOnTheCIPath` — the bench's
+fixed-wait audit, the check a PR runs. The rule is named `waits`, and its line
+reads `waits   read every _test.go on the CI path; refuse a fixed wall-clock wait or bound`.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CL path runs, and refuses three
@@ -73,16 +69,12 @@ queue.
 
 ## The CI class test against copied built binaries
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `testbins`:
-
-```
-testbins   read every _test.go on the CI path; refuse copying a built executable into a fixture
-```
-
-It runs as `go test ./internal/ci -run TestNoCopiedTestBinariesOnTheCIPath`, and
-it is the fixture-copy audit made an official verb: the shared helper a
-fixture places a built program with is the check a PR runs.
+**The test.** The class test is `TestNoCopiedTestBinariesOnTheCIPath`
+(`internal/ci/ci_testbins_test.go`); it runs in the `internal/ci` package as
+`go test ./internal/ci -run TestNoCopiedTestBinariesOnTheCIPath` — the
+fixture-copy audit, the shared helper a fixture places a built program with is
+the check a PR runs. The rule is named `testbins`, and its line reads
+`testbins   read every _test.go on the CI path; refuse copying a built executable into a fixture`.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CI path runs, and refuses one shape
@@ -141,15 +133,11 @@ through `internal/testbin.Place`, and the class test refuses a new copy.
 
 ## The CI class test against unquoted paths in JSON and template literals
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `templates`:
-
-```
-templates   read every _test.go; refuse a filesystem path unquoted in a JSON or template literal
-```
-
-It runs as `go test ./internal/ci -run TestNoUnquotedPathsInTemplateLiterals`,
-and it is the Windows-path audit made an official verb: the check a PR runs.
+**The test.** The class test is `TestNoUnquotedPathsInTemplateLiterals`
+(`internal/ci/ci_templates_test.go`); it runs in the `internal/ci` package as
+`go test ./internal/ci -run TestNoUnquotedPathsInTemplateLiterals` — the
+Windows-path audit, the check a PR runs. The rule is named `templates`, and its
+line reads `templates   read every _test.go; refuse a filesystem path unquoted in a JSON or template literal`.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/`, and refuses two shapes with the file and the line: a
@@ -316,17 +304,13 @@ verb end to end:
    that does not depend on map iteration.
 ## The CI class test against a real network host on the CI path
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `net`:
-
-```
-net     read every _test.go on the CI path; refuse a real network host or host:port
-```
-
-It runs as `go test ./internal/ci -run TestNoRealNetworkHostsOnTheCIPath`, and
-it is the hard rule — *unit tests test LOGIC, not the network* — made an
-official verb: every endpoint is mocked locally, and only the soak,
-fuzz and nightly suites may reach the real network.
+**The test.** The class test is `TestNoRealNetworkHostsOnTheCIPath`
+(`internal/ci/ci_net_test.go`); it runs in the `internal/ci` package as
+`go test ./internal/ci -run TestNoRealNetworkHostsOnTheCIPath` — the hard
+rule, *unit tests test LOGIC, not the network*: every endpoint is mocked
+locally, and only the soak, fuzz and nightly suites may reach the real network.
+The rule is named `net`, and its line reads
+`net     read every _test.go on the CI path; refuse a real network host or host:port`.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CL path runs, parses each as Go, and
@@ -381,14 +365,11 @@ secret leak look the same in the log.
 
 ## The CI class test against a child `go` that inherits the environment
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `goenv`:
-
-```
-goenv   read every .go under cmd/ and internal/; refuse a child `go` that inherits the caller's environment
-```
-
-It runs as `go test ./internal/ci -run TestGoEnvClassRuleHoldsOverTheRepository`.
+**The test.** The class test is `TestGoEnvClassRuleHoldsOverTheRepository`
+(`internal/ci/ci_goenv_test.go`); it runs in the `internal/ci` package as
+`go test ./internal/ci -run TestGoEnvClassRuleHoldsOverTheRepository`. The rule
+is named `goenv`, and its line reads
+``goenv   read every .go under cmd/ and internal/; refuse a child `go` that inherits the caller's environment``.
 
 **What it reads and what it writes.** It reads, as text, every `.go` file under
 `internal/` and `cmd/` — tests included, because a test helper that builds a
