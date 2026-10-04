@@ -366,19 +366,19 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 // The daemon's new flags reach the agent's command line when they are set
 // and not the default, so a reinstall with the same flags writes the same
 // plist.
-func TestInstallCarriesTheCoordinatorAndANonDefaultSilentStop(t *testing.T) {
+func TestInstallCarriesTheCoordinatorAndANonDefaultNoProgress(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--coordinator", "ada", "--silent-stop", "30m").Exit(0)
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--coordinator", "ada", "--no-progress", "30m").Exit(0)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), "<string>--coordinator</string>\n    <string>ada</string>\n    <string>--silent-stop</string>\n    <string>30m0s</string>")
+	assert.Contains(t, string(raw), "<string>--coordinator</string>\n    <string>ada</string>\n    <string>--no-progress</string>\n    <string>30m0s</string>")
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(0)
 	raw, err = os.ReadFile(plist)
 	require.NoError(t, err)
-	assert.NotContains(t, string(raw), "--silent-stop", "the defaults are not written")
+	assert.NotContains(t, string(raw), "--no-progress", "the defaults are not written")
 	assert.NotContains(t, string(raw), "--broken-after")
 	assert.NotContains(t, string(raw), "--coordinator")
 }

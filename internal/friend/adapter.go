@@ -27,6 +27,15 @@ type Deliverer interface {
 	Deliver(ctx context.Context, text string) (exit int, err error)
 }
 
+// BusyChecker is implemented by adapters that can report whether the
+// harness session is busy (a turn is still running after Deliver returned,
+// or after a stop the harness kept). The daemon starts no delivery while
+// Busy returns true. SPEC-FRIEND.md, the loop: one turn at a time per
+// session; after stop only when free.
+type BusyChecker interface {
+	Busy(ctx context.Context) (bool, error)
+}
+
 // Deferred is a Deliverer's answer when the session cannot take a turn now
 // and nothing has failed (for example, neither Codex queue nor resume can
 // accept it). The daemon keeps the message in hand, tries again

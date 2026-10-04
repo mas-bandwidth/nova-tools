@@ -100,18 +100,20 @@ an ack: the turn stays in the daemon's hand, tried again every ten seconds,
 `RecheckEvery`, and counted toward nothing, so a chat open all day loses no
 message, and the record says so at the first deferral and once a minute after.
 While a turn runs: one peek, so a ping that lands during a long turn is still
-answered at once by the daemon; never a second turn. Then the worker's result;
-one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
-working and width flags are owed on the server's side); the pong file, while a
-challenge is open; the status file.
+answered at once by the daemon; never a second turn (one turn at a time per
+session). Then the worker's result; one beat to the sprint server (`friend beat
+<friend>`, a plain beat: the queue, working and width flags are owed on the
+server's side); the pong file, while a challenge is open; the status file.
 
-No clock bounds a turn: a turn that prints keeps running however long it
-takes. A turn that has printed nothing, on stdout or stderr, for `--silent-stop`
-(twenty minutes by default) is stopped, its process group signalled, and the
-record says so with the reason (`stopping: no output for 20m0s`, then
-`stopped=` on the turn's line); its messages count one failed delivery each.
-The finding of 2026-10-04: a fixed ten-minute cap killed a friend's real work
-mid-turn.
+No clock bounds a turn: a turn that prints keeps running however long it takes.
+A turn that has printed nothing on stdout or stderr for `--no-progress`
+(twenty minutes by default; 0 never stops) is stopped, its process group
+signalled, and the record says so with the reason (`stopping: no output for
+20m0s`, then `stopped=`); each byte resets the clock. An adapter may implement
+Busy to report the session still busy after its Deliver returns (or after a
+stop); the daemon defers while Busy, or if the adapter cannot tell waits the
+window after a stop before the next delivery. The finding of 2026-10-04: a
+fixed ten-minute cap killed a friend's real work mid-turn.
 
 A session the provider refuses is broken, not its messages. An adapter that
 sees the turn's output (OpenCode, Codex, DSH, Gemini) reads a provider's JSON

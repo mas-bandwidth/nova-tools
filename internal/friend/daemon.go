@@ -246,9 +246,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64)}, mode: ModeBatch}
 	_, l.passive = d.Deliver.(interface{ Passive() })
-	if l.silentStop <= 0 {
-		l.silentStop = DefaultSilentStop
-	}
+	// 0 means never stop (NoProgressAfter=0); rig sets explicit default (SPEC-FRIEND.md, the loop)
 	if l.brokenAfter <= 0 {
 		l.brokenAfter = DefaultBrokenAfter
 	}
@@ -293,8 +291,18 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case l.mode == ModeOneShot:
 			l.laneStep(now, width)
 			d.status.Lanes = l.lanes.said(width)
-		case l.busy == nil && len(l.hand) > 0:
-			l.startBatch(now)
+		case l.busy == nil && len(l.hand) > 0 && (l.retry.IsZero() || !now.Before(l.retry)):
+			if bc, ok := l.d.Deliver.(BusyChecker); ok {
+				if busy, err := bc.Busy(l.ctx); err == nil && busy {
+					l.retry = now.Add(RecheckEvery)
+				} else {
+					l.retry = time.Time{}
+					l.startBatch(now)
+				}
+			} else {
+				l.retry = time.Time{}
+				l.startBatch(now)
+			}
 		case l.busy != nil && !l.busy.running && !l.retry.IsZero() && !now.Before(l.retry):
 			l.retry = time.Time{}
 			l.startTurn(l.busy, now, l.deliverBatch(l.busy))
@@ -539,11 +547,12 @@ func (l *loop) startBatch(now time.Time) {
 
 // watch is the silence watch on a running turn: a turn that prints is
 // working; one silent past SilentStop is stopped, said on the record.
+// SPEC-FRIEND.md, the loop (no fixed cap; stopped only for no progress; 0 never).
 func (l *loop) watch(t *turn, now time.Time) {
 	if n := t.seen.Load(); n != t.seenN {
 		t.seenN, t.lastOut = n, now
 	}
-	if !t.stopped && now.Sub(t.lastOut) >= l.silentStop {
+	if l.silentStop > 0 && !t.stopped && now.Sub(t.lastOut) >= l.silentStop {
 		t.stopped = true
 		t.cancel()
 		l.d.Record(fmt.Sprintf("%s subject=%s stopping: no output for %s (silent since %s); its process group is signalled",
@@ -661,7 +670,14 @@ func (l *loop) batchDone(r result, now time.Time) {
 	for _, part := range strings.Split(line, "\n") {
 		d.Record(part)
 	}
-	l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
+	l.busy, l.deferrals, l.deferSaid = nil, 0, time.Time{}
+	if r.t.stopped {
+		if _, ok := l.d.Deliver.(BusyChecker); !ok {
+			l.retry = now.Add(l.silentStop) // SPEC-FRIEND.md the loop: adapter without Busy waits NoProgressAfter after stop
+		}
+	} else {
+		l.retry = time.Time{}
+	}
 }
 
 // tellBroken sends the coordinator one message that the session is broken:

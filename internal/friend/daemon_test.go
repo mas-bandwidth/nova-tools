@@ -42,6 +42,7 @@ type rig struct {
 	stopAfter int
 	at        map[int]func() // what happens at a step, from the beat
 	d         *Daemon
+	seen      func() // from ctx of current Deliver, for tests that simulate output
 }
 
 func newRig(t *testing.T) *rig {
@@ -92,6 +93,7 @@ func newRig(t *testing.T) *rig {
 		},
 		Status: func(s Status) error { r.mu.Lock(); r.status = append(r.status, s); r.mu.Unlock(); return nil },
 	}
+	r.d.SilentStop = DefaultSilentStop
 	return r
 }
 
@@ -99,6 +101,7 @@ func (r *rig) Deliver(ctx context.Context, text string) (int, error) {
 	r.mu.Lock()
 	r.delivered = append(r.delivered, text)
 	hold := r.hold
+	r.seen, _ = ctx.Value(outputKey{}).(func())
 	r.mu.Unlock()
 	if hold != nil {
 		select {
@@ -108,6 +111,15 @@ func (r *rig) Deliver(ctx context.Context, text string) (int, error) {
 	}
 	r.gate <- struct{}{}
 	return r.exit, nil
+}
+
+func (r *rig) print() {
+	r.mu.Lock()
+	s := r.seen
+	r.mu.Unlock()
+	if s != nil {
+		s()
+	}
 }
 
 func (r *rig) run(t *testing.T, steps int) {
@@ -391,5 +403,186 @@ func TestADSHSessionUnderAPresetKeepsTheMessagePending(t *testing.T) {
 		}
 		require.NotEmpty(t, r.records)
 		assert.Contains(t, r.records[0], `subject="hello" deferred=1: session session-zhi runs under agent preset "minimal"`)
+	})
+}
+
+// busyHarness implements Deliver (returns at once) and Busy, for testing the
+// one-turn and busy defer rules.
+type busyHarness struct {
+	mu      sync.Mutex
+	calls   int
+	busy    bool
+	busyErr error
+}
+
+func (b *busyHarness) Deliver(context.Context, string) (int, error) {
+	b.mu.Lock()
+	b.calls++
+	b.mu.Unlock()
+	return 0, nil
+}
+
+func (b *busyHarness) Busy(context.Context) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.busy, b.busyErr
+}
+
+// blockUntilCancel is a harness whose Deliver blocks until ctx done (for
+// testing the stop watch); it returns 0 if not stopped by daemon.
+type blockUntilCancel struct {
+	mu        sync.Mutex
+	calls     int
+	seen      func()
+	stoppedAt time.Time
+	now       func() time.Time
+}
+
+func (b *blockUntilCancel) Deliver(ctx context.Context, _ string) (int, error) {
+	b.mu.Lock()
+	b.calls++
+	b.seen, _ = ctx.Value(outputKey{}).(func())
+	b.mu.Unlock()
+	<-ctx.Done()
+	b.mu.Lock()
+	b.stoppedAt = time.Now()
+	if b.now != nil {
+		b.stoppedAt = b.now()
+	}
+	b.mu.Unlock()
+	return 0, nil
+}
+
+func (b *blockUntilCancel) print() {
+	b.mu.Lock()
+	s := b.seen
+	b.mu.Unlock()
+	if s != nil {
+		s()
+	}
+}
+
+func TestATurnThatKeepsWorkingIsNeverStopped(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		r.hold = make(chan struct{})
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "long work", "x")
+		minute := int(time.Minute / BeatEvery)
+		for m := 1; m <= 45; m++ {
+			r.at[m*minute] = func() { r.print() }
+		}
+		r.at[46*minute] = func() {
+			if r.hold != nil {
+				close(r.hold)
+				r.hold = nil
+			}
+		}
+		r.run(t, 55*minute)
+		assert.Len(t, r.delivered, 1, "one delivery")
+		pending, _, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Empty(t, pending, "the message was acked at exit 0")
+		for _, line := range r.records {
+			assert.NotContains(t, line, "stopping: no output")
+			assert.NotContains(t, line, "stopped=")
+		}
+		last := ""
+		if len(r.records) > 0 {
+			last = r.records[len(r.records)-1]
+		}
+		assert.Contains(t, last, "acked=true")
+	})
+}
+
+func TestATurnSilentForTheWindowIsStopped(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		w := &blockUntilCancel{now: func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.now }}
+		r.d.Deliver, r.passive = w, true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "silent", "x")
+		r.run(t, int(DefaultSilentStop/BeatEvery)+10)
+		require.False(t, w.stoppedAt.IsZero(), "was stopped")
+		found := false
+		for _, line := range r.records {
+			if strings.Contains(line, "stopping: no output for") {
+				found = true
+			}
+		}
+		assert.True(t, found, "record says no output")
+	})
+}
+
+func TestNoSecondTurnWhileOneRuns(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		w := &worker{now: func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.now }}
+		r.d.Deliver, r.passive = w, true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "first", "x")
+		minute := int(time.Minute / BeatEvery)
+		for m := 1; m <= 10; m++ {
+			r.at[m*minute] = func() { w.print() }
+		}
+		var callsDuring int
+		r.at[5*minute] = func() { r.send(t, "ada", "second", "y") }
+		r.at[6*minute] = func() { r.mu.Lock(); callsDuring = w.calls; r.mu.Unlock() }
+		r.at[12*minute] = func() { r.cancel() }
+		r.run(t, 20*minute)
+		assert.Equal(t, 1, callsDuring, "no second delivery while first runs")
+	})
+}
+
+func TestNoRedeliveryWhileTheSessionIsBusy(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		b := &busyHarness{}
+		r.d.Deliver, r.passive = b, true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "m1", "x")
+		r.at[3] = func() {
+			b.mu.Lock()
+			b.busy = true
+			b.mu.Unlock()
+			r.send(t, "ada", "m2", "y")
+		}
+		r.at[10] = func() {
+			b.mu.Lock()
+			b.busy = false
+			b.mu.Unlock()
+		}
+		r.at[25] = func() { r.cancel() }
+		r.run(t, 30)
+		b.mu.Lock()
+		c := b.calls
+		b.mu.Unlock()
+		assert.Equal(t, 2, c, "second waited for busy=false")
+	})
+}
+
+func TestNoProgressZeroNeverStops(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		w := &blockUntilCancel{now: func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.now }}
+		r.d.Deliver, r.passive, r.d.SilentStop = w, true, 0
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "forever", "x")
+		minute := int(time.Minute / BeatEvery)
+		for m := 1; m <= 30; m++ {
+			r.at[m*minute] = func() { /* no print */ }
+		}
+		r.at[35*minute] = func() { r.cancel() }
+		r.run(t, 40*minute)
+		last := ""
+		if len(r.records) > 0 {
+			last = r.records[len(r.records)-1]
+		}
+		assert.NotContains(t, last, "stopped=")
 	})
 }

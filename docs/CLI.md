@@ -509,7 +509,7 @@ coordinator's `PING` at once (`daemon-pong`) and never makes a turn of it; the
 session's own `pong --nonce`, its line at the head of the next turn, alone
 makes the friend up. No ping for a window and the session is told the
 coordinator is silent, once, inside a turn that carries messages. A turn runs as
-long as it prints (`--silent-stop`, twenty minutes of silence, stops it); the
+long as it prints (`--no-progress`, twenty minutes of silence, stops it; 0 never stops); the
 same provider refusal three turns in a row (`--broken-after`) marks the session
 broken, delivers nothing more, and tells the coordinator. The
 spec is [SPEC-FRIEND.md](SPEC-FRIEND.md); the rules are `internal/friend`; the
