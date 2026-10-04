@@ -27,7 +27,7 @@ func ParseAuthors(path string) (Authors, error) {
 	if err != nil {
 		return nil, fmt.Errorf("authors: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: a file opened only for reading; the scan's error is the one returned
 
 	authors := Authors{}
 	sc := bufio.NewScanner(f)
