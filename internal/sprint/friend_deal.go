@@ -77,13 +77,18 @@ func FriendCard(c *Card) (name string, ok bool) {
 const friendCardWhy = "a friend's card (its brief says WHO: friend): the tick deals it to a friend up with room, never to a machine"
 
 // FriendSeat is one friend as the tick deals to her: her name, her width (the jobs she
-// works at once, her friends row's), her status (FriendStatus: up, held or down) and her
-// class (the tiers her nova-config row says she can do: friend level evens a class).
+// works at once, her friends row's), her status (FriendStatus: up, held or down), her
+// class (the tiers her nova-config row says she can do, sorted and comma joined: friend
+// level evens a class), her tiers (config.friends tiers: flash, frontier, pro; FriendDeal
+// does not read them; a frontier read does, friend_read.go), and Dir, her working
+// directory when the ask writes the read brief itself (empty: friend sync writes it).
 type FriendSeat struct {
 	Name   string
 	Width  int
 	Status string
 	Class  string
+	Tiers  []string
+	Dir    string
 }
 
 // Members is the fleet's machines: its rows but the friends' (FriendRow), in row order.

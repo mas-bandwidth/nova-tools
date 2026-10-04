@@ -323,6 +323,28 @@ marks it `taken` (a queued record of a card now dealt to another row). The tick
 does not level the friends (`TestFriendLevelEvensTheReadyQueuesOfAClass`,
 `TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow`).
 
+A card whose read tier, before a frontier card is collapsed onto the tier a
+route serves (`readTierOf`), is frontier — a frontier card, or a heavy card
+whose read tier is the one above — is asked of a friend of frontier class,
+not drawn on a reader machine (`FriendReadAsk`, `FriendReadClose`). The friend
+is up, below her room (the same free width a friend's card is dealt within,
+`FriendDeal`), and her tiers include frontier: the one with the most free
+width, the first by name among equals. Each ask takes one of that free width.
+The ask writes `inbox/<read-card>/BRIEF.md` in her working directory when it
+knows it: the primary's AS A READ section through the next heading, the
+attempt's branch (the work card's), its start commit and its head named
+separately, `WHO: friend <name>`, and a deadline of two hours on the sprint's
+clock. `friend sync` writes that brief when the ask has not, and a
+`Verdict: LAND` or a `Verdict: HOLD` with a finding that names a file, a line
+or a rule in `outbox/<read>/REPORT.md` retires that read on her fleet row
+(the same finding rule as a reader's broken read; a HOLD raises
+`a reader found it broken`). The read card is `<primary>.r<attempt>.<friend>`,
+placed on her fleet row `friend.<name>` in working while she has a lane,
+ready behind her working cards otherwise. The readers table gains no friend
+row. With no such friend up with room the read is not asked and the ask
+raises the one judgment a read with no reader up already raises
+(`fewer than two readers up`), not one note per primary.
+
 `friend sync`, run by the coordinator's own loop where the directories are
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
 a friend's card across the inbox/outbox standard
@@ -1673,7 +1695,7 @@ id (`--op`) returns the original result, with no second counter or notification.
 - A card's reads are counted by its tier (the owner, 2026-10-02, cost rule 4,
   nova-tools#5174: "Reads: one cold read per flash card on a flash route; two
   per pro card; readers still equal workers per machine"): a flash card needs
-  ONE read, a pro card (or a heavy card, or a frontier card, read on heavy) TWO, from two
+  ONE read, a pro card (or a heavy card) TWO (a frontier card is asked of one frontier friend, not drawn on a route; a friend's card, above), from two
   different readers (`sprint.ReadsNeeded`). The tier is the card's own, the tier
   it is on (section 5, flash first: flash at its first deal on a route, then the
   tier it escalated to, or the tier a rework recorded; its ceiling, line 1's
@@ -1749,7 +1771,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   from: the tier of the card it reads, the tier the deal draws that card's
   work from (flash first, the tier it escalated to after; a card that pins a
   model is read on line 1's tier, flash when it names none; a heavy card, heavy; a frontier card, a
-  tier no route serves, is read on heavy, the strongest tier a route serves (a read on pro
+  tier no route serves, is asked of a frontier friend, not drawn on a route (section 1, a friend's
+  card), and a route named for it is heavy, the strongest tier a route serves (a read on pro
   would be weaker than the writer); the owner, 2026-10-01: "i think readers being
   conservatively the same tier as the work being done seems fine?"), raised
   to the read tier set for its stream (`stream set <s> --read-tier <tier>`, the

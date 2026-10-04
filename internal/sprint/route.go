@@ -326,9 +326,10 @@ func (s *Snapshot) NextTier(c *Card) string {
 // stronger (settings.go; nova-tools#5096 item 27), never lowered. A card that pins
 // a model and names no tier is read on flash. A heavy card is read on heavy. A frontier
 // card, a tier no route serves, is read on heavy, the strongest tier a route serves: a
-// read on pro would be weaker than the writer, which item 27 refuses. (No friend takes the
-// read: a friend's card is a primary dealt to her inbox, and the readers of the reader
-// table are machines; docs/SPEC-SPRINT.md, reads.)
+// read on pro would be weaker than the writer, which item 27 refuses. The value returned
+// is that collapse: a route drawn for the card is named from it. The tick's ask does not
+// draw that route for a card whose read tier before the collapse is frontier
+// (friend_read.go): that ask is a friend's, one of frontier class (docs/SPEC-SPRINT.md, reads).
 func (s *Snapshot) readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	t := cardTier(pr, m)
