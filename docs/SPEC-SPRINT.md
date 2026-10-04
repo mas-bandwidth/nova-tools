@@ -1657,6 +1657,33 @@ way. Any unmerged path outside the family is refused as any conflict is. The
 landing writes the resolution on the card's merge card (`note`), and the
 card's timeline tells it on the line of its merge.
 
+**The shrink-only ledgers.** A merge that stops in a shrink-only ledger lands
+without a stop. The shrink-only ledgers are the lists whose class test in
+internal/ci says they only shrink, named in one place, `allowlist.ShrinkOnly`
+(`internal/ci/allowlist/shrinkonly.go`): every top-level list file under
+`internal/ci/testdata/` but the deleted-tests log, which grows, and the unit
+tier's two lists under `internal/ci/` (`sleeps-skips_allowlist.txt`,
+`slow-tests_allowlist.txt`); the counted-ledger shards below the testdata
+directories are not, their rows carry counts lowered in place. Two cards that
+each remove a row of the same ledger conflict when the rows are adjacent, and
+the one right answer is the base with both removals gone: for each such
+unmerged path `land` reads the merge's three stages (the merge base, the tip's
+side, the card's) and resolves the file as the base less every line either side
+removed (`unionRemovals`, a function of the three sides' bytes), the `# ceiling:
+N` line, when the base has one and a side lowered it, at the lower of the two
+sides' values (each is at least its side's rows, so the lower is at least the
+union's); a side that adds a line the base does not hold (a new row, a changed
+row, a reordering) or raises the ceiling is refused, and the result is held to be
+a subset of the base's lines before it is written. The resolved files are
+staged; when nothing else is unmerged the merge is committed as `land <id>
+(sprint stream <s>)` with a body naming the ledgers and the removals, and when
+the rest is a generated-ledger family's, that family's regeneration (above)
+follows on the staged tree. A refusal stops the stream as any conflict does, its
+reason naming the ledger and the line, the merge aborted. The land log carries
+one line per resolved ledger, `ledger <path>: resolved as the union of removals
+(-n left, -m right)` (the batch's `NOTE`), and the card's merge card and timeline
+say the ledgers were resolved as the union of both sides' removals.
+
 **The landed score.** Once every stream of the run has landed what it could,
 `land` scores each landed card's merge diff (the diff its checks read) against
 the card's brief with nova-decide's score decision (docs/SPEC-NOVA-DECIDE.md
