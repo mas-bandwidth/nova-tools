@@ -157,20 +157,27 @@ func TestAnswerDecideNeverAnswersAPaymentRefusal(t *testing.T) {
 }
 
 // A blocked card the decision acks is acked by the line the inbox prints, with the
-// decision's reason: its dropped need is waived and the card runs.
+// decision's reason. Drop refuses a card a waiting card still needs
+// (docs/SPEC-SPRINT.md section 11), so no blocked judgment opens for the
+// decision to ack: the drop names the dependants and writes nothing, the
+// answer pass leaves the stopped machine alone, and the backend is asked
+// nothing. The ack of a blocked card itself is pinned at the store, where a
+// stored dropped record still opens the judgment.
 func TestAnswerDecideAcksABlockedCard(t *testing.T) {
 	t.Parallel()
-	ta, _, record := answering(t, always(decide.VerbAck, 0.88, "own", "need-dropped"))
+	ta, j, record := answering(t, always(decide.VerbAck, 0.88, "own", "need-dropped"))
 	ta.ok("add --stream s1 --count 1 --one")
 	ta.ok("add --stream s2 b --one --needs s1-1")
-	ta.ok("drop s1-1 --reason obsolete")
-	g := ta.group(sprint.NBlocked, "s2")
-	out := ta.ok("answer --bar 0.8 --record " + record)
-	assert.Contains(t, out, g.ID+"  b     blocked  ack   0.88  applied  nova-sprint ack "+g.Notes[0]+" --reason 'nova-decide (p=0.88): the card can run without the dropped need; a conflict is handled at merge'")
-	assert.Contains(t, ta.ok("card b"), "needs s1-1 (off the table (dropped)), waived")
-	for _, g := range ta.inboxGroups() {
-		assert.False(t, g.Kind == sprint.Judgment && g.Type == sprint.NBlocked, "the judgment is answered: %+v", g)
-	}
+	before := ta.applies()
+	code, out, errs := ta.do("drop s1-1 --reason obsolete")
+	require.Equal(t, 1, code, "drop of a needed card: %s%s", out, errs)
+	require.Contains(t, errs, "s1-1 is needed by b; drop them too with --cascade", "drop of a needed card: %s", errs)
+	require.Equal(t, before, ta.applies(), "a refused drop wrote")
+	out = ta.ok("answer --bar 0.8 --record " + record)
+	assert.Contains(t, out, "ANSWER OK rows=1 ", "the answer with no open judgment: %s", out)
+	assert.Contains(t, out, "left=1", "the stopped machine is left alone: %s", out)
+	assert.Zero(t, j.asks(), "a pass with nothing to answer asks nothing")
+	ta.clean()
 }
 
 // --dry-run asks and says what it would apply, and applies nothing and writes no record.
