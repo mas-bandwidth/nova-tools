@@ -35,6 +35,14 @@ type FriendLevelReq struct {
 // of squared backlogs and a card moves at most once, so it ends. The first unit's line
 // says where the cards went: "moved=N to <friend>(n),... from <friend>(n),...".
 func FriendLevel(s *Snapshot, r FriendLevelReq) Plan {
+	return friendLevel(s, r, nil, nil)
+}
+
+// friendLevel is FriendLevel after a deal not yet applied (docs/SPEC-SPRINT.md section 1,
+// friend-deal-most-room.w1): dealt is the cards the deal places on each friend's row, and
+// dealtWorking those of them that go into working; they count against her room and her
+// lanes, and none of them moves.
+func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]int) Plan {
 	var p Plan
 	classes := map[string][]FriendSeat{}
 	for _, f := range r.Seats {
@@ -51,7 +59,7 @@ func FriendLevel(s *Snapshot, r FriendLevelReq) Plan {
 		for _, f := range seats {
 			width[f.Name] = f.Width
 			row := FriendRow(f.Name)
-			held[f.Name], working[f.Name] = friendLoad(s, f.Name), s.Fleet.Count(row, Working)
+			held[f.Name], working[f.Name] = friendLoad(s, f.Name)+dealt[f.Name], s.Fleet.Count(row, Working)+dealtWorking[f.Name]
 			for _, c := range s.Fleet.Cell(row, Ready) {
 				if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.F(FieldWho) == WhoFriend && r.Started[c.ID] == "" {
 					queues[f.Name] = append(queues[f.Name], c)

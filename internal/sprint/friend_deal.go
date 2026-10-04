@@ -115,14 +115,29 @@ func friendLoad(s *Snapshot, name string) int {
 // (her finish takes the next: Finish), carrying the primary's fix, finding and why as a
 // machine's deal does; its primary moves ready -> working. The friend's row is declared
 // by the plan the first time she is dealt to.
+//
+// A card for any friend goes only to a friend of its class (docs/SPEC-SPRINT.md section
+// 1, friend-deal-most-room.w1): the friends up whose class (the tiers her nova-config row
+// says she can do) holds the card's tier, or every friend up when none of them does. Its
+// room is DealAhead times her width less her working and ready cards, so a friend at or
+// over her room is dealt nothing while one of her class has room, and a card taken back
+// from a friend never goes back to her.
 func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
-	var p Plan
-	free, lanes := map[string]int{}, map[string]int{}
+	p, _, _ := friendDeal(s, cards, seats)
+	return p
+}
+
+// friendDeal is FriendDeal, with the cards it places on each friend's row and how many of
+// them go into working: the tick levels the friends after it (TickDeal).
+func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, dealtWorking map[string]int) {
+	free, lanes, class := map[string]int{}, map[string]int{}, map[string][]string{}
+	dealt, dealtWorking = map[string]int{}, map[string]int{}
 	var up []string
 	for _, f := range seats {
 		if f.Status == Up {
 			free[f.Name] = DealAhead*f.Width - friendLoad(s, f.Name)
 			lanes[f.Name] = f.Width - s.Fleet.Count(FriendRow(f.Name), Working)
+			class[f.Name] = Split(f.Class)
 			up = append(up, f.Name)
 		}
 	}
@@ -143,8 +158,11 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 			not, _ = FriendOfRow(wc.F(FieldTakenFrom))
 		}
 		if name == "" {
+			tier := cardTierOf(c)
+			ofClass := func(f string) bool { return slices.Contains(class[f], tier) }
+			anyClass := !slices.ContainsFunc(up, ofClass)
 			for _, f := range up {
-				if f != not && free[f] > 0 && (name == "" || free[f] > free[name]) {
+				if f != not && free[f] > 0 && (anyClass || ofClass(f)) && (name == "" || free[f] > free[name]) {
 					name = f
 				}
 			}
@@ -158,9 +176,11 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 			continue
 		}
 		free[name]--
+		dealt[name]++
 		col := Ready
 		if lanes[name] > 0 {
 			lanes[name]--
+			dealtWorking[name]++
 			col = Working
 		}
 		row := FriendRow(name)
@@ -174,7 +194,7 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 		}
 		p.Units = append(p.Units, friendDealUnit(s, c, card, row, col))
 	}
-	return Lawful(p)
+	return Lawful(p), dealt, dealtWorking
 }
 
 // friendDealUnit is one friend's card dealt: its work card on her row, in working (taken

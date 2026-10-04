@@ -620,6 +620,26 @@ written with the moves. A step whose write committed and whose display copies
 then failed to sync reports OK, for every verb, with the sync's error on its own
 line, never FAILED: the table holds what the step wrote.
 
+### friend-deal-most-room.w1
+
+**The friends' deal by room within a class, and the tick's friend level**
+(the owner, 2026-10-04: "Keep looking for verbs you are missing";
+`sprint.FriendDeal`, `sprint.TickDeal`). A card for any friend (`WHO:
+friend`) goes to the friend up of its class with the most room free, her room
+being DealAhead (two) times her width less her working and ready cards, the
+first by name among equals: her class is of the card when it holds the card's
+tier, and when no friend up has a class holding it, every friend up is of its
+class. A friend at or over her room is dealt nothing while one of her class
+has room, a friend of another class is dealt nothing, and a card taken back
+from a friend is never dealt back to her. After its deal, every tick levels
+the friends as `friend level` does (`sprint.FriendLevel`), counting against
+each friend's room and lanes the cards the deal placed on her row in the same
+tick, so a backlog evens itself without the coordinator; the tick levels only
+with the cards the friends have started read beside the seats
+(`TickReq.FriendStarted`; not read, it levels no friend), and where an earlier
+paragraph says the tick does not level the friends, this one holds
+(`TestFriendDealPrefersTheFriendWithTheMostRoom`).
+
 ## 2. The cards
 
 **Primary.** One unit of work, between an issue and a pull request. One stream
