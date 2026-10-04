@@ -141,7 +141,7 @@ func checkCoreFloors(path, text string, failures *[]Failure) {
 	var titles []string
 	for _, m := range floorItemRE.FindAllStringSubmatch(sec, -1) {
 		var n int
-		fmt.Sscanf(m[1], "%d", &n)
+		_, _ = fmt.Sscanf(m[1], "%d", &n) // ignored: a parse that fails leaves n zero, which the contiguous-numbering check below reports
 		nums = append(nums, n)
 		titles = append(titles, normWords(m[2]))
 	}
