@@ -127,7 +127,7 @@ var (
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if builtDir != "" {
-		os.RemoveAll(builtDir)
+		_ = os.RemoveAll(builtDir) // ignored: a temporary build directory the test run is done with
 	}
 	os.Exit(code)
 }
