@@ -251,6 +251,10 @@ file's name, or the launcher reads an empty store.
 
 ## nova-check
 
+## nova-dev
+(dogfood, convergence and hygiene transcripts; moved from nova-check; the first run examples run against ./docs/CLI.md and the fixture receipts)
+
+
 Fixture: `cmd/nova-check/testdata/example-self`.
 
 ### First run

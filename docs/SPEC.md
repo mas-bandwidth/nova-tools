@@ -1,6 +1,6 @@
 # nova-tools — specification
 
-Sixteen binaries. `nova-check`: ten checks, all at the **record layer** — they verify
+Sixteen binaries. `nova-check`: checks at the record layer; `nova-dev` carries the three development verbs. `nova-check` verifies
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory

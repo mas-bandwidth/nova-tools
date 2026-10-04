@@ -132,7 +132,7 @@ tests execute line by line are the ones in [docs/TESTS.md](TESTS.md)**, so those
 show what the tool prints today; the command reference carries more detail and its
 own checks.
 
-Two tools have a `quickstart` verb — `nova-memory` and `nova-check` — and
+Two tools have a `quickstart` verb — `nova-memory` and `nova-check` — and nova-dev carries the development verbs.
 **both still require paths or choices you supply**. `nova-bus`, `nova-tokens`,
 `nova-sandbox`, `nova-self-talk`, `nova-fuse` and `nova-cairn` have none. Each entry below
 names what its own first trial needs.

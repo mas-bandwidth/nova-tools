@@ -37,14 +37,10 @@ const (
 	cliHint      = `--cli <file> is the command reference the verbs are read from, usually docs/CLI.md; it is the list this ledger is about, so it is never guessed from the working directory`
 	toolsHint    = `--tools <dir> is a directory of built nova-* binaries, each asked for its own help: the authoritative verb list, with --cli as the fallback for the tools it does not hold`
 	receiptsHint = `--receipts <dir> is the directory the receipts live in, one file per receipt: the same directory record appends to and ledger reads, kept in a repository so the record outlives the bench`
-	toolHint     = `--tool <t> is the binary you ran, spelled as the verb list spells it (nova-check)`
+	toolHint     = `--tool <t> is the binary you ran, spelled as the verb list spells it (nova-dev)`
 	verbHint     = `--verb <v> is the verb you ran, spelled as the verb list spells it (links, or "lift quarantine", or - for a tool that takes no verb)`
 	byHint       = `--by <name> is who ran it; the ledger's whole question is whether that is somebody other than the author, so a receipt with no name is not a receipt`
 	notesHint    = `--notes <text> is the real work you ran it on, in one line: what you were doing, what the verb did about it, and "Edges:" before anything you found`
-	// cliShapeHint is the shape a command reference declares a verb in, for a
-	// reader with an empty or a new one.
-	cliShapeHint = "a --cli reference declares a verb as a command line in a fenced block (`nova-check links --dir <dir>` declares nova-check links), " +
-		"or as a `### <verb>` heading under a `## nova-<tool>` heading; a minimal one is a ```sh block holding `nova-x run`"
 )
 
 // gitTimeoutDefault is the budget one `--repo` authorship read gets before it
@@ -105,6 +101,20 @@ func addDogfoodSourceFlags(fs *flag.FlagSet) *dogfoodSources {
 	return &s
 }
 
+// dogfoodFlagValues declares the flags of all three sub-verbs on fs, from the
+// same functions that declare them on each sub-verb's own set, so one flag is
+// described one way everywhere: the skeleton's set is what `nova-dev dogfood -h`
+// lists and what refuses a typo with the names there are, and each sub-verb
+// parses the invocation again into the values it reads (STANDARD section 2, one
+// shape across the set).
+func dogfoodFlagValues(fs *flag.FlagSet) {
+	addDogfoodSourceFlags(fs)
+	addDogfoodReadFlags(fs)
+	addDogfoodRecordFlags(fs)
+	addDogfoodGateFlags(fs)
+	addFailMax(fs)
+}
+
 // verbList reads the verb list from whichever sources were named. The binaries
 // win and the reference fills in the tools they do not cover; a binary that
 // cannot answer is one NOTE and its tool falls back to the reference, because a
@@ -144,17 +154,13 @@ func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([
 	if s.cli != "" {
 		verbs, err := dogfood.ParseCLI(s.cli)
 		if err != nil {
-			refuse(stderr, " dogfood "+verb, oneline.Err(err))
-			fmt.Fprintf(stderr, "  %s\n", cliShapeHint)
-			return nil, 2
+			return nil, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
 		fromCLI = verbs
 	}
 	merged := dogfood.MergeVerbs(fromTools, fromCLI)
 	if len(merged) == 0 {
-		refuse(stderr, " dogfood "+verb, "the sources named declare no verbs at all; a ledger over no verbs would say OK about nothing")
-		fmt.Fprintf(stderr, "  %s\n", cliShapeHint)
-		return nil, 2
+		return nil, refuse(stderr, " dogfood "+verb, "the sources named declare no verbs at all; a ledger over no verbs would say OK about nothing")
 	}
 	return merged, 0
 }
@@ -245,23 +251,56 @@ func reportStranded(read dogfoodRead, failMax int, stderr io.Writer) {
 		list.Total(), list.Shown())
 }
 
+// addDogfoodReceiptsFlag declares --receipts, the one flag all three sub-verbs
+// take, and declares it once: ledger and gate read the directory, record
+// appends one receipt to it, and a flag described two ways is two flags.
+func addDogfoodReceiptsFlag(fs *flag.FlagSet) *string {
+	return fs.String("receipts", "", "directory of receipts, one file per receipt: ledger and gate read it, record appends to it (required)")
+}
+
 func addDogfoodReadFlags(fs *flag.FlagSet) (receipts, authors, repo *string, gitTimeout *int) {
-	receipts = fs.String("receipts", "", "directory of receipts, one file per receipt (required)")
+	receipts = addDogfoodReceiptsFlag(fs)
 	authors = fs.String("authors", "", "file mapping `<tool> <verb> = <who wrote it>`, one per line")
 	repo = fs.String("repo", "", "repository to read authorship from when there is no --authors file")
 	gitTimeout = fs.Int("git-timeout", gitTimeoutDefault, "seconds one --repo authorship read may take before it is killed and named")
 	return
 }
 
+// addDogfoodRecordFlags declares the flags only record takes; --receipts is
+// addDogfoodReceiptsFlag's, and the verb list's are addDogfoodSourceFlags'.
+func addDogfoodRecordFlags(fs *flag.FlagSet) (tool, verb, by, notes *string, ok, notOK *bool, issue *int, closes *string) {
+	tool = fs.String("tool", "", "the binary you ran (required)")
+	verb = fs.String("verb", "", "the verb you ran, or - for a tool that takes none (required)")
+	by = fs.String("by", "", "who ran it (required)")
+	notes = fs.String("notes", "", "the real work you ran it on, in one line (required)")
+	ok = fs.Bool("ok", false, "the verb did what the run needed")
+	notOK = fs.Bool("not-ok", false, "it did not; file the edge and name it with --issue")
+	issue = fs.Int("issue", 0, "the issue number of the edge filed, when there is one")
+	closes = fs.String("closes", "", "the id of the finding this run answers, as the gate prints it")
+	return
+}
+
+// addDogfoodGateFlags declares the flags only gate takes.
+func addDogfoodGateFlags(fs *flag.FlagSet) (requireAll, allowEmpty *bool, shippedDir *string) {
+	requireAll = fs.Bool("require-all", false, "every verb in the list must have been run by a non-author, not only the ones with receipts")
+	allowEmpty = fs.Bool("allow-empty", false, "pass on an empty receipt set; without it, no receipts is a refusal and not a green line")
+	shippedDir = fs.String("shipped", "", "a checkout's cmd/ directory: the gate judges only the tools under it, the set a release ships")
+	return
+}
+
+// The three sub-verbs name their flag set "dogfood", the verb the skeleton
+// declares, so `<sub-verb> -h` prints that verb's effect and not `unstated`
+// (internal/tool's writeHelp looks the flag set's name up in the tool's verbs).
+// The sub-verb a refusal is about is named by the where each one passes.
 func cmdDogfoodLedger(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("dogfood ledger", flag.ContinueOnError)
+	fs := flag.NewFlagSet("dogfood", flag.ContinueOnError)
 	src := addDogfoodSourceFlags(fs)
 	receipts, authors, repo, gitTimeout := addDogfoodReadFlags(fs)
 	failMax := addFailMax(fs)
-	if !parse(fs, args, stderr, map[string]*string{"receipts": receipts}) {
+	if !parse(" dogfood ledger", fs, args, stderr, map[string]*string{"receipts": receipts}) {
 		return 2
 	}
-	if !checkFailMax(fs, *failMax, stderr) {
+	if !checkFailMax(" dogfood ledger", fs, *failMax, stderr) {
 		return 2
 	}
 	read, code := dogfoodGather("ledger", src, *receipts, *authors, *repo, *gitTimeout, *failMax, stderr)
@@ -281,24 +320,22 @@ func cmdDogfoodLedger(args []string, stdout, stderr io.Writer) int {
 }
 
 func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("dogfood gate", flag.ContinueOnError)
+	fs := flag.NewFlagSet("dogfood", flag.ContinueOnError)
 	src := addDogfoodSourceFlags(fs)
 	receipts, authors, repo, gitTimeout := addDogfoodReadFlags(fs)
-	requireAll := fs.Bool("require-all", false, "every verb in the list must have been run by a non-author, not only the ones with receipts")
-	allowEmpty := fs.Bool("allow-empty", false, "pass on an empty receipt set; without it, no receipts is a refusal and not a green line")
-	shippedDir := fs.String("shipped", "", "a checkout's cmd/ directory: the gate judges only the tools under it, the set a release ships")
+	requireAll, allowEmpty, shippedDir := addDogfoodGateFlags(fs)
 	failMax := addFailMax(fs)
-	if !parse(fs, args, stderr, map[string]*string{"receipts": receipts}) {
+	if !parse(" dogfood gate", fs, args, stderr, map[string]*string{"receipts": receipts}) {
 		return 2
 	}
-	if !checkFailMax(fs, *failMax, stderr) {
+	if !checkFailMax(" dogfood gate", fs, *failMax, stderr) {
 		return 2
 	}
 	read, code := dogfoodGather("gate", src, *receipts, *authors, *repo, *gitTimeout, *failMax, stderr)
 	if code != 0 {
 		return code
 	}
-	// The gate judges what ships. With --shipped, a receipt about a tool that
+	// THE GATE JUDGES WHAT SHIPS. With --shipped, a receipt about a tool that
 	// is not under that cmd/ is set aside and COUNTED on its own line: it is
 	// true about a tool the release does not contain, and says nothing about
 	// the ones it does. This is the read `nova-update release cut` does.
@@ -327,7 +364,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	// The token is one word: bounded escapes what it is given, and a token with
-	// a space in it came back as `DOGFOOD\x20GATE MORE` the first time this verb
+	// a blank in it came back as `DOGFOOD\x20GATE MORE` the first time this verb
 	// was run against this repository's own reference.
 	list := bounded.Capped(stderr, *failMax, "DOGFOOD", "verb", failMaxRemedy)
 	for _, f := range findings {
@@ -339,38 +376,23 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 }
 
 func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("dogfood record", flag.ContinueOnError)
+	fs := flag.NewFlagSet("dogfood", flag.ContinueOnError)
 	src := addDogfoodSourceFlags(fs)
-	tool := fs.String("tool", "", "the binary you ran (required)")
-	verb := fs.String("verb", "", "the verb you ran, or - for a tool that takes none (required)")
-	by := fs.String("by", "", "who ran it (required)")
-	notes := fs.String("notes", "", "the real work you ran it on, in one line (required)")
-	receipts := fs.String("receipts", "", "directory the receipt is appended to (required)")
-	ok := fs.Bool("ok", false, "the verb did what the run needed")
-	notOK := fs.Bool("not-ok", false, "it did not; file the edge and name it with --issue")
-	issue := fs.Int("issue", 0, "the issue number of the edge filed, when there is one")
-	closes := fs.String("closes", "", "the id of the finding this run answers, as the gate prints it")
-	dryRun := fs.Bool("dry-run", false, "make every check and print the receipt; write nothing")
+	tool, verb, by, notes, ok, notOK, issue, closes := addDogfoodRecordFlags(fs)
+	receipts := addDogfoodReceiptsFlag(fs)
 	failMax := addFailMax(fs)
-	if !parseFlags(fs, args, stderr) {
+	if !parse(" dogfood record", fs, args, stderr, map[string]*string{
+		"tool": tool, "verb": verb, "by": by, "notes": notes, "receipts": receipts,
+	}) {
 		return 2
 	}
-	// Every problem of the run at once: the missing flags, the verdict, the issue.
-	good := requireFlags(fs, stderr, map[string]*string{
-		"tool": tool, "verb": verb, "by": by, "notes": notes, "receipts": receipts,
-	})
 	// The verdict is stated, never defaulted: a receipt whose ok= came from the
 	// absence of a flag would be a record of what somebody forgot to type.
 	if *ok == *notOK {
-		refuse(stderr, " dogfood record", "state the verdict exactly once: --ok when the verb did what the run needed, --not-ok when it did not; refusing to guess")
-		good = false
+		return refuse(stderr, " dogfood record", "state the verdict exactly once: --ok when the verb did what the run needed, --not-ok when it did not; refusing to guess")
 	}
 	if *issue < 0 {
-		refuse(stderr, " dogfood record", fmt.Sprintf("--issue must be an issue number, got %d; leave it out when no edge was filed", *issue))
-		good = false
-	}
-	if !good {
-		return 2
+		return refuse(stderr, " dogfood record", fmt.Sprintf("--issue must be an issue number, got %d; leave it out when no edge was filed", *issue))
 	}
 	// The spelling is checked against the same list the ledger will read it
 	// against. A receipt for a verb spelled differently is refused here, where
@@ -395,7 +417,7 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 	// here and matched against the real findings by the ledger: an id that names
 	// nothing closes nothing, and says so by leaving the edge open.
 	if id := strings.TrimSpace(*closes); id != "" && !dogfood.IsReceiptID(id) {
-		fmt.Fprintf(stderr, "nova-check dogfood record REFUSED: --closes is a receipt id, the eight hex characters the gate prints as receipt=<id>, got %s; run: nova-check dogfood record -h\n", oneline.Field(id))
+		fmt.Fprintf(stderr, "nova-dev dogfood record: --closes is a receipt id, the eight hex characters the gate prints as receipt=<id>, got %s; run: nova-dev dogfood record -h\n", oneline.Field(id))
 		return 2
 	}
 	receipt := dogfood.Receipt{
@@ -408,19 +430,9 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 		Issue:  *issue,
 		Closes: strings.TrimSpace(*closes),
 	}
-	// A dry run is this record's own plan: every check the write makes, the
-	// same refusal, the path it would take, and nothing written.
-	write := dogfood.Record
-	if *dryRun {
-		write = dogfood.PlanRecord
-	}
-	path, err := write(*receipts, receipt)
+	path, err := dogfood.Record(*receipts, receipt)
 	if err != nil {
 		return refuse(stderr, " dogfood record", oneline.Err(err))
-	}
-	if *dryRun {
-		fmt.Fprintln(stdout, oneline.Escape(receipt.RecordLine(path)+" dry_run=true"))
-		return 0
 	}
 	fmt.Fprintln(stdout, oneline.Escape(receipt.RecordLine(path)))
 	return 0

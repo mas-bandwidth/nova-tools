@@ -203,7 +203,7 @@ func TestHygieneUsageNamesTheVerb(t *testing.T) {
 		code := run([]string{"help"}, &out, &errb)
 		require.EqualValues(t, 0, code, "exit %d", code)
 	}
-	require.Contains(t, out.String(), "nova-check hygiene --repo <dir> --base <ref> --head <ref>", "the help does not carry the hygiene line:\n%s", out.String())
+	require.Contains(t, out.String(), "nova-dev hygiene --repo <dir> --base <ref> --head <ref>", "the help does not carry the hygiene line:\n%s", out.String())
 }
 
 // ---------------------------------------------------------------------------
@@ -239,7 +239,7 @@ func TestHygieneVerbNeverPrintsTheKey(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Emma's bench dogfood of `nova-check hygiene`, 2026-09-19 (issues #1804, #1805).
+// Emma's bench dogfood of `nova-dev hygiene`, 2026-09-19 (issues #1804, #1805).
 
 // hygManyFindings is a branch with more findings than any sane --max: five commits
 // by somebody who is not in the pool, so the listing caps and the MORE line prints.
@@ -296,7 +296,7 @@ func TestHygieneMoreCommandRunsAsPrinted(t *testing.T) {
 	total, remedy := hygMore(t, out.String())
 	args, err := hygFields(remedy)
 	require.NoError(t, err, "the remedy %q cannot be split into arguments: %v", remedy, err)
-	require.True(t, len(args) != 0 && args[0] == "nova-check" && args[1] == "hygiene", "the remedy does not start with `nova-check hygiene`: %q", remedy)
+	require.True(t, len(args) != 0 && args[0] == "nova-dev" && args[1] == "hygiene", "the remedy does not start with `nova-dev hygiene`: %q", remedy)
 	var out2, errb2 bytes.Buffer
 	code2 := run(args[1:], &out2, &errb2)
 	require.NotEqualValues(t, 2, code2, "the printed remedy does not run:\n  %s\nexit 2: %s", remedy, errb2.String())
@@ -362,7 +362,7 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 	var helpOut, helpErr bytes.Buffer
 	{
 		code := run([]string{"help"}, &helpOut, &helpErr)
-		require.EqualValues(t, 0, code, "`nova-check help` exits %d, want 0; stderr: %s", code, helpErr.String())
+		require.EqualValues(t, 0, code, "`nova-dev help` exits %d, want 0; stderr: %s", code, helpErr.String())
 	}
 	const (
 		malformed = `--identity "<Name> <<email>>"`
@@ -392,18 +392,19 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 	// rerun cannot reproduce `at=0a19082d2973`, and the clean `HYGIENE OK`
 	// stanza and the four-finding stanzas are two states of that lab, not one
 	// sitting, so running them here would invent steps the document does not
-	// show. The refusal promises (`nova-check hygiene REFUSED: ...`) fire before the
+	// show. The refusal promises (`nova-dev hygiene: ...`) fire before the
 	// repository is opened, so they run anywhere, and they are exactly the
 	// lines #1805 is about: what the flag wants, spelled where a reader reads.
 	//
 	// The steps are cut here rather than with onboarding.Steps: every hygiene
 	// command carries `<email>` quoted in `--identity`, and the shared parser
 	// does not run a line holding `>` even quoted. Splitting, running and
-	// comparing stay the shared ones -- SplitShell, runDocumented, Compare --
-	// so this pins the same promise the harness keeps.
+	// comparing stay the shared ones -- SplitShell, runDocumented, and the one
+	// comparator CompareTranscript -- so this pins the same promise the harness
+	// keeps.
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
-	lines, err := onboarding.Transcript(string(raw), "nova-check", "hygiene, on a branch")
+	lines, err := onboarding.Transcript(string(raw), "nova-dev", "hygiene, on a branch")
 	require.NoError(t, err)
 	var steps []onboarding.Step
 	for _, line := range lines {
@@ -420,7 +421,7 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 		}
 		args, err := onboarding.SplitShell(cmd)
 		require.NoError(t, err, "cannot split the transcript line %q: %v", line, err)
-		require.True(t, len(args) != 0 && args[0] == "nova-check", "the transcript line %q is not a nova-check command", line)
+		require.True(t, len(args) != 0 && args[0] == "nova-dev", "the transcript line %q is not a nova-dev command", line)
 		steps = append(steps, onboarding.Step{Line: line, Args: args[1:]})
 	}
 	for i := range steps {
@@ -435,7 +436,7 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 		}
 		refused := true
 		for _, line := range s.Want {
-			if !strings.HasPrefix(line, "nova-check hygiene REFUSED: ") {
+			if !strings.HasPrefix(line, "nova-dev hygiene: ") {
 				refused = false
 				break
 			}
@@ -445,14 +446,16 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, refusals, "the `### hygiene, on a branch` block holds no refusal step; this test would pass by running nothing")
+	var got []onboarding.Result
 	for _, s := range refusals {
 		res, err := runDocumented(s)
-		if !assert.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err) {
-			continue
-		}
-		for _, p := range onboarding.Compare(s, res, nil) {
-			assert.Fail(t, "check failed", p)
-		}
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
+		got = append(got, res)
+	}
+	// CompareTranscript is the one comparison a transcript test may make: same
+	// number of lines, same lines, same order, every value as written.
+	for _, p := range onboarding.CompareTranscript(refusals, got, nil) {
+		assert.Fail(t, "check failed", p)
 	}
 }
 
@@ -563,5 +566,17 @@ func TestEveryKindTheStrayListNamesIsDeclared(t *testing.T) {
 
 	for _, kind := range hygiene.StrayKinds() {
 		assert.True(t, hygiene.KindDeclared(kind), "the stray list excuses a file for kind %q, which the tool does not declare: the exception is granted to nobody", kind)
+	}
+}
+
+// The help lists every flag with the description that says what it wants, so a
+// reader who opens `nova-dev hygiene -h` learns the whole invocation.
+func TestPolishHygieneHelpDescribesEveryFlag(t *testing.T) {
+	t.Parallel()
+	exit, stdout, stderr := runCheck(t, "hygiene", "-h")
+	assert.Equal(t, 0, exit)
+	assert.Empty(t, stderr)
+	for _, want := range []string{"git checkout to inspect", "base git ref", "head git ref", "allowed path globs", "allowed authors", "card kind", "finding lines", "positive seconds"} {
+		assert.Contains(t, stdout, want)
 	}
 }

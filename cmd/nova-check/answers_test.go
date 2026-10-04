@@ -43,8 +43,7 @@ func TestEveryVerbHelpStatesItsEffect(t *testing.T) {
 	t.Parallel()
 	for verb, writes := range map[string]bool{
 		"quickstart": false, "attest": false, "links": false, "kernel": false, "nocode": false,
-		"floors": false, "corpus": false, "hygiene": false, "dogfood ledger": false, "dogfood gate": false,
-		"dogfood record": true, "convergence": true, "spelling": true, "version": false,
+		"floors": false, "corpus": false, "spelling": true, "version": false,
 	} {
 		exit, stdout, stderr := runCheck(t, append(strings.Fields(verb), "-h")...)
 		require.Equal(t, 0, exit, "%s -h: %s", verb, stderr)
@@ -55,8 +54,6 @@ func TestEveryVerbHelpStatesItsEffect(t *testing.T) {
 		assert.Contains(t, stdout, want, verb)
 		assert.Equal(t, writes, strings.Contains(stdout, "--dry-run"), "%s: --dry-run listed", verb)
 	}
-	_, stdout, _ := runCheck(t, "convergence", "-h")
-	assert.Contains(t, stdout, "through gh, over the network")
 }
 
 // A failed quickstart names next the failed check run alone, not the verbs a
@@ -84,72 +81,19 @@ func TestAFailedQuickstartsNextQuotesADirWithABlank(t *testing.T) {
 	assert.Contains(t, stdout, "next=nova-check links --dir '"+dir+"' (fix what it names")
 }
 
-// dogfood record names every problem of one run: the missing flags and the
-// missing verdict together.
-func TestDogfoodRecordNamesEveryProblemAtOnce(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	_, _, stderr := dogfoodRun(t, "dogfood", "record", "--cli", writeCLI(t, dir), "--tool", "nova-example", "--verb", "links", "--receipts", dir)
-	for _, want := range []string{"--by is required", "--notes is required", "state the verdict exactly once"} {
-		assert.Contains(t, stderr, want)
-	}
-}
-
-// A reference that declares no verb is refused with the shape a verb is
-// declared in.
-func TestAnEmptyReferenceIsAnsweredWithTheShape(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	cli := filepath.Join(dir, "CLI.md")
-	require.NoError(t, os.WriteFile(cli, []byte("# nothing here\n"), 0o644))
-	exit, _, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", dir)
-	assert.Equal(t, 2, exit)
-	assert.Contains(t, stderr, "a --cli reference declares a verb as a command line in a fenced block")
-}
-
-// --dry-run on the three verbs that write makes every check and writes nothing.
+// --dry-run on spelling --write makes the check and writes nothing.
 func TestDryRunWritesNothing(t *testing.T) {
 	t.Parallel()
-
-	t.Run("dogfood record", func(t *testing.T) {
-		t.Parallel()
-		dir := t.TempDir()
-		receipts := filepath.Join(dir, "receipts")
-		exit, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", writeCLI(t, dir), "--tool", "nova-example", "--verb", "links",
-			"--by", "Ada", "--ok", "--notes", "ran it on real work", "--receipts", receipts, "--dry-run")
-		require.Equal(t, 0, exit, stderr)
-		assert.Contains(t, stdout, "DOGFOOD RECORD OK tool=nova-example verb=links by=Ada")
-		assert.Contains(t, stdout, "file="+receipts+string(filepath.Separator))
-		assert.True(t, strings.HasSuffix(stdout, ".json dry_run=true\n"), stdout)
-		_, err := os.Stat(receipts)
-		assert.True(t, os.IsNotExist(err), "a dry run made the receipts directory: %v", err)
-	})
-
-	t.Run("spelling --write", func(t *testing.T) {
-		t.Parallel()
-		dir := t.TempDir()
-		file := filepath.Join(dir, "a.md")
-		require.NoError(t, os.WriteFile(file, []byte("the recieve step\n"), 0o644))
-		exit, stdout, stderr := runCheck(t, "spelling", "--dir", dir, "--write", "--dry-run")
-		require.Equal(t, 0, exit, stderr)
-		assert.Contains(t, stdout, "SPELLING FIX ")
-		assert.Contains(t, stdout, "written=0 dry_run=true")
-		got, err := os.ReadFile(file)
-		require.NoError(t, err)
-		assert.Equal(t, "the recieve step\n", string(got), "a dry run edited the file")
-	})
-
-	t.Run("convergence --state", func(t *testing.T) {
-		t.Parallel()
-		f := newConvFixture(t)
-		state := filepath.Join(t.TempDir(), "state.json")
-		exit, stdout, stderr := f.run(t, "--state", state, "--dry-run")
-		require.Equal(t, 0, exit, stderr)
-		assert.Contains(t, stdout, "CONVERGENCE")
-		assert.Contains(t, stderr, "CONVERGENCE NOTE dry_run=true: --state")
-		_, err := os.Stat(state)
-		assert.True(t, os.IsNotExist(err), "a dry run wrote the state: %v", err)
-	})
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a.md")
+	require.NoError(t, os.WriteFile(file, []byte("the recieve step\n"), 0o644))
+	exit, stdout, stderr := runCheck(t, "spelling", "--dir", dir, "--write", "--dry-run")
+	require.Equal(t, 0, exit, stderr)
+	assert.Contains(t, stdout, "SPELLING FIX ")
+	assert.Contains(t, stdout, "written=0 dry_run=true")
+	got, err := os.ReadFile(file)
+	require.NoError(t, err)
+	assert.Equal(t, "the recieve step\n", string(got), "a dry run edited the file")
 }
 
 // The banner's quickstart and kernel examples run as printed, on the tree the

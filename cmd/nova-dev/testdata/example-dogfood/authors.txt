@@ -1,0 +1,4 @@
+# who wrote what, for the fixture reference
+nova-example quickstart = Ada
+nova-example links = Ada
+nova-example nocode = Ada
