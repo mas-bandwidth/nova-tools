@@ -1,4 +1,4 @@
-//go:build functional
+//go:build slow
 
 package pkgselect
 

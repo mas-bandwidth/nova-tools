@@ -142,7 +142,7 @@ func NothingLeg(g Groups) Leg {
 // runner (measured 28 to 68 s each in the merge-group runs of 2026-10-04, two of
 // them landing on one leg ran past the two-minute cap): Functional deals them
 // first, in this order, so no leg gets two while another is empty.
-var FunctionalHeavy = []string{"./cmd/nova-swarm", "./cmd/nova-bus", "./internal/pkgselect", "./internal/atomicfile", "./internal/ntable", "./internal/swarm"}
+var FunctionalHeavy = []string{"./cmd/nova-swarm", "./cmd/nova-bus", "./internal/ci", "./internal/atomicfile", "./internal/ntable", "./internal/swarm"}
 
 // Functional deals the packages into FunctionalShards Linux legs like a pull
 // request's unit legs (the darwin-only packages have no Linux leg). The

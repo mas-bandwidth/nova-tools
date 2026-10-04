@@ -64,3 +64,38 @@ func TestSnapshotRefusesABinEntryWhoseNameIsNotOneTSVField(t *testing.T) {
 	assert.Equal(t, 0, code, stderr)
 	assert.FileExists(t, outOrdinary)
 }
+
+// TestSnapshotNotesASymlinkedNovaEntryItSkips pins security#81 finding 2:
+// a symlinked nova-* entry in --bin is skipped with a note naming it and
+// explaining why, while the snapshot still records the regular file.
+// A bin without symlinks carries no such note.
+func TestSnapshotNotesASymlinkedNovaEntryItSkips(t *testing.T) {
+	t.Parallel()
+	bin := t.TempDir()
+	good := filepath.Join(bin, "nova-good")
+	require.NoError(t, os.WriteFile(good, []byte("#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
+
+	linked := filepath.Join(bin, "nova-linked")
+	require.NoError(t, os.Symlink(good, linked))
+
+	out := filepath.Join(t.TempDir(), "s.tsv")
+	code, stdout, stderr := runTool(t, "nova-version", "snapshot", "--bin", bin, "--out", out)
+	assert.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "tools=1")
+	assert.Contains(t, stdout, "SNAPSHOT ROW name=nova-good")
+	assert.NotContains(t, stdout, "SNAPSHOT ROW name=nova-linked")
+	assert.Contains(t, stdout, "SNAPSHOT NOTE "+oneline.Quote("nova-linked")+": symlink, not a regular file; not snapshotted")
+	assert.FileExists(t, out)
+
+	// A bin without symlinks has no such note.
+	binClean := t.TempDir()
+	cleanGood := filepath.Join(binClean, "nova-good")
+	require.NoError(t, os.WriteFile(cleanGood, []byte("#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
+	cleanOut := filepath.Join(t.TempDir(), "clean.tsv")
+	code, stdout, stderr = runTool(t, "nova-version", "snapshot", "--bin", binClean, "--out", cleanOut)
+	assert.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "tools=1")
+	assert.NotContains(t, stdout, "symlink, not a regular file; not snapshotted")
+	assert.NotContains(t, stdout, "NOTE")
+	assert.FileExists(t, cleanOut)
+}

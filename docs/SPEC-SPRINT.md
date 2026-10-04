@@ -456,7 +456,9 @@ the grade), decided:<op> (each attempt decision of its takes: the attempt decisi
 below), asked (its readers), readers (the two whose ok it was accepted on),
 tier (the tier the coordinator pinned it to, `rework --tier`: its tier and its
 ceiling both) and tier_now (the tier it is on: flash at its first deal on a route,
-then the tier the machine escalated it to: section 5, flash first),
+then the tier the machine escalated it to: section 5, flash first; pro from add when
+its gate's measured wall is over the flash bound, with gate_wall, the measurement:
+section 5, the gate's wall),
 counters (failed, reworks, broken_reads, stuck, returns), failure, failure_at and
 identical_at (its last failed work's class and attempt, and the attempt that failed the
 way the one before did: section 2, the second identical failure), returned_attempt (its
@@ -930,6 +932,21 @@ and it is the coordinator's decision, receipted.
   deal draws its first route from pro and writes `tier_now` pro, and flash
   first is overridden for that card alone. A grade never raises a card above
   its ceiling, and a card dealt before its grade came starts on flash.
+  **The gate's wall** (the coordinator, 2026-10-04: a card whose gate cannot run in
+  15 minutes on a flash member is not dealt flash; a 40-minute deadline was missed on
+  flash before pro did the card twice). `add` measures each card's gate: the package
+  its TEST line names, its wall the median wall of the ok work takes the sprint
+  record holds for cards naming that package (each primary's cost records, kind work,
+  end ok, with a usage wall; a take's wall holds the work and the gate both, so it
+  bounds the gate's from above). A card whose measured wall is over the flash bound,
+  15 minutes (`FlashGateBound`), is admitted on pro: `add` writes `tier_now` pro and
+  `gate_wall` (`<median> n=<takes> over <bound>`), its line says `admitted pro: gate
+  <package> measured <median> (median of <n> ok takes) over the flash bound <bound>`,
+  and its first deal draws pro, whatever its ceiling; pro is the top of the ladder, so
+  the machine escalates it no further. A card never measured, measured at or under the
+  bound, with `TEST: none`, a frontier card and a pinned model are admitted as before
+  (`sprint.gateTier`, `internal/sprint/gate_wall.go`;
+  `TestTierFollowsTheGatesMeasuredWall`).
 - The gate verdict (docs/SPEC-NOVA-DECIDE.md section 12; the owner, 2026-10-02,
   layer 3 of the nova-decide plan: "gate verdict: flaky vs caused vs
   pre-existing"). Every deal of a work card (a first deal, a redeal, a rework's)

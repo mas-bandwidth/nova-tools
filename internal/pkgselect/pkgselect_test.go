@@ -756,7 +756,7 @@ func TestFanoutWithTheDarwinLegsOffIsLinuxOnly(t *testing.T) {
 // two-minute cap in the merge-group runs of 2026-10-04).
 func TestFunctionalDealsTheHeavyPackagesOnePerLeg(t *testing.T) {
 	t.Parallel()
-	pkgs := []string{"./cmd/a", "./cmd/nova-bus", "./cmd/b", "./cmd/nova-swarm", "./internal/atomicfile", "./internal/c", "./internal/ntable", "./internal/pkgselect", "./internal/swarm", "./internal/d"}
+	pkgs := []string{"./cmd/a", "./cmd/nova-bus", "./cmd/b", "./cmd/nova-swarm", "./internal/atomicfile", "./internal/c", "./internal/ntable", "./internal/ci", "./internal/swarm", "./internal/d"}
 	legs := Functional(pkgs, Groups{Linux: "lin", Mac: "mac"})
 	require.Len(t, legs, FunctionalShards)
 	home := map[string]int{}

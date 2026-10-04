@@ -168,12 +168,14 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 	run, cancelRun := context.WithTimeout(context.Background(), budget)
 	defer cancelRun()
 	var rows []snapRow
+	var skipped []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "nova-") {
 			continue
 		}
 		info, err := e.Info()
 		if err != nil || !info.Mode().IsRegular() {
+			skipped = append(skipped, e.Name())
 			continue
 		}
 		// SECURITY #81 finding 1: snapshot writes a nova-* file name raw into
@@ -268,6 +270,13 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", r.name, r.stamp, r.revision, r.platform)
 		o.Item("row", "name", r.name, "stamp", r.stamp, "revision", r.revision, "platform", r.platform)
+	}
+	// SECURITY #81 finding 2: every nova-* non-directory entry skipped for
+	// not being a regular file (e.g. a symlink or failed Info) is noted on the
+	// success output so omitted binaries are never silent (SPEC-VERSION item 2).
+	sort.Strings(skipped)
+	for _, name := range skipped {
+		o.Note(fmt.Sprintf("%s: symlink, not a regular file; not snapshotted", oneline.Quote(name)))
 	}
 	if dryRun { // the skeleton adds dry_run=true
 		return o.Note("dry run: " + outPath + " not written")
