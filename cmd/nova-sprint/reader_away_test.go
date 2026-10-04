@@ -35,7 +35,7 @@ func (ta *testApp) readerState(reader string) string {
 func (ta *testApp) readerRows() []string {
 	ta.t.Helper()
 	var v struct {
-		Tables map[string]map[string]map[string]string
+		Tables map[string]map[string]map[string]any
 	}
 	ta.json("where", &v)
 	var out []string

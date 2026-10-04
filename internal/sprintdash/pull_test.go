@@ -242,11 +242,11 @@ friend bob down working 0/8 ready 0 done 0 ok 0.0%
 func TestTeamTextOfSixFullFriendsIsAboutTwoKilobytes(t *testing.T) {
 	t.Parallel()
 	c := copyOf(t, fixture(t))
-	c.Cards, c.Tables["friends"] = nil, map[string]map[string]string{}
+	c.Cards, c.Tables["friends"] = nil, map[string]map[string]any{}
 	streams := []string{"ci", "classes", "contract", "negatives"}
 	for f := range 6 {
 		name := fmt.Sprintf("friend-%d", f+1)
-		c.Tables["friends"][name] = map[string]string{"status": "up", "ready": "4", "working": "4", "width": "8", "done": "12", "okpct": "75.0%"}
+		c.Tables["friends"][name] = map[string]any{"status": "up", "ready": "4", "working": "4", "width": "8", "done": "12", "okpct": "75.0%"}
 		for i := range 8 {
 			s := streams[(f+i)%len(streams)]
 			id := fmt.Sprintf("%s-%02d.w1", s, f*8+i+1)

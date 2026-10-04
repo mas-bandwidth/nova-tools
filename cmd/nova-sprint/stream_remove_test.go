@@ -14,7 +14,7 @@ import (
 func (ta *testApp) streamRows() map[string][]string {
 	ta.t.Helper()
 	var v struct {
-		Tables map[string]map[string]map[string]string
+		Tables map[string]map[string]map[string]any
 	}
 	ta.json("where", &v)
 	out := map[string][]string{}

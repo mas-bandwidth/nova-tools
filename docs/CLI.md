@@ -1054,7 +1054,7 @@ nova-sprint card <id>
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
 nova-sprint repair
-nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
+nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--costs]]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint routes
 nova-sprint funded <provider> --reason <text>

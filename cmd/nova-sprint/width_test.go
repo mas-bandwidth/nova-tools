@@ -21,7 +21,7 @@ func TestTheWidthIsSetByInitAndFleetUpAndShown(t *testing.T) {
 	out := ta.ok("where")
 	require.Contains(t, out, "fleet | ready | working | width |", "the fleet table has no width beside working")
 	var v struct {
-		Tables map[string]map[string]map[string]string `json:"tables"`
+		Tables map[string]map[string]map[string]any `json:"tables"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(ta.ok("where --json")), &v))
 	fleet := v.Tables["fleet"]

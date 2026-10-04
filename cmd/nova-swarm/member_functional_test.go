@@ -61,10 +61,10 @@ func (l *lockedBuf) String() string {
 
 // sprintWhere is the part of `nova-sprint where --json` this test reads.
 type sprintWhere struct {
-	Landed int64                                   `json:"landed"`
-	All    int64                                   `json:"all"`
-	Epoch  uint64                                  `json:"epoch"`
-	Tables map[string]map[string]map[string]string `json:"tables"`
+	Landed int64                                `json:"landed"`
+	All    int64                                `json:"all"`
+	Epoch  uint64                               `json:"epoch"`
+	Tables map[string]map[string]map[string]any `json:"tables"`
 }
 
 // memberDrive is a sprint on a twin store, driven through the nova-sprint binary
@@ -147,7 +147,7 @@ func (d *memberDrive) working(member string) int {
 }
 
 func cellInt(w sprintWhere, table, row, col string) int {
-	n, _ := strconv.Atoi(strings.TrimSpace(w.Tables[table][row][col]))
+	n, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(w.Tables[table][row][col])))
 	return n
 }
 

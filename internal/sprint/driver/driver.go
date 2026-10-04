@@ -207,11 +207,11 @@ func short(verb, text string, code int) string {
 
 // where is what the driver reads of the view.
 type where struct {
-	Epoch   uint64                                  `json:"epoch"`
-	Landed  int64                                   `json:"landed"`
-	All     int64                                   `json:"all"`
-	Summary string                                  `json:"summary"`
-	Tables  map[string]map[string]map[string]string `json:"tables"`
+	Epoch   uint64                               `json:"epoch"`
+	Landed  int64                                `json:"landed"`
+	All     int64                                `json:"all"`
+	Summary string                               `json:"summary"`
+	Tables  map[string]map[string]map[string]any `json:"tables"` // a cell is a string; a work row carries tiers, cost_by_tier (objects) and per_landed too
 	Streams []struct {
 		Stream string `json:"Stream"`
 		State  string `json:"State"`
@@ -248,6 +248,10 @@ func (d *Driver) read(v any, args ...string) bool {
 }
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
+
+// cell is a where view's cell as the text it was printed as; "" for a row field that is
+// no cell (a work row's tiers, cost_by_tier).
+func cell(v any) string { s, _ := v.(string); return s }
 
 func orDash(s string) string {
 	if s == "" {
@@ -530,7 +534,7 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			continue
 		}
 		var batch []string
-		if atoi(merge[s]["queued"]) > 0 {
+		if atoi(cell(merge[s]["queued"])) > 0 {
 			batch = queued(s)
 		}
 		if len(batch) == 0 {
@@ -568,11 +572,11 @@ func (d *Driver) tick(tick int, c Config, w where) {
 // takeLimit is the cards a member takes in its one take: the configured
 // limit, else the member's width as the view's fleet table shows it, else
 // DefaultWidth.
-func takeLimit(c Config, row map[string]string) int {
+func takeLimit(c Config, row map[string]any) int {
 	if c.TakeLimit > 0 {
 		return c.TakeLimit
 	}
-	if n := atoi(row["width"]); n > 0 {
+	if n := atoi(cell(row["width"])); n > 0 {
 		return n
 	}
 	return DefaultWidth
