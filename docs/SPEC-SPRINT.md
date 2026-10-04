@@ -2165,7 +2165,7 @@ read, fleet beat, friend beat) are anyone's who names the member, reader or frie
 actor is that name, whatever `--actor` or NOVA_SPRINT_ACTOR say: the record
 names the worker the verb was run as, as the server's does. The reports (merge, ci) want an
 actor; the machine's verbs (tick, run, friend clean) are recorded as the machine; the reads
-(queue, inbox, card, check, where, dashboard, goal show) need no actor, except `inbox
+(queue, inbox, card, check, where, dashboard, goal show, backup) need no actor, except `inbox
 --read`, which moves the coordinator's cursor and is the coordinator's alone:
 anyone reads the inbox, and nothing another actor does hides anything from
 the coordinator. A card's and a
@@ -2238,12 +2238,13 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | where | the view, once or `--watch` (redrawn in place, section 1): work, friends and fleet; `--all` draws the readers and merge tables too (hidden from the default frame; the owner, 2026-10-02: "please hide the reader and merge tables"); its title line names the seat's holder (`SPRINT TABLE  coordinator friend-b`, with `(taken 5:21 PM)` after a take until the next handover is given); `--json` carries every table and the pending operation, the stalled streams, the people, the coordinator and `seat`, its last change |
 | coordinator | moves the seat: `coordinator <name> --reason <text>`, given by its holder or the owner; `--take --approved-by <owner>`, taken by `<name>` itself; prints the handover after (below) |
 | handover | what the next seat needs, from the store, in one screen (below); `--json` |
+| backup | the sprint's backup, one read that writes one local file: the sprint's whole state as its verbs read it — the four tables with every record the store holds a record of (placed and kept, each one's fields whole, a brief whole), the epoch's log and notifications whole, the open judgments, the machine's state, the epoch, the fence's generation the tables were read at, the coordinator, the owner, the rules file's recorded path, the seat and the friends' roster — written to `<file>` as one JSON document naming its shape (`version`; a document of another version is refused, never guessed at), whole or not at all (an atomic rename), and proven before the verb says OK: the file read back is the bytes the verb wrote, parses strictly as this build's format and re-encodes to the same bytes (the restore test), and its text is scanned for secret-shaped values — an age private key, a PEM private key, or a value of at least eight characters under a secret-shaped name that carries an underscore (KEY, TOKEN, SECRET, PASSWORD or PASSWD; the underscore keeps a word that merely contains one from naming a secret) — each site named by its line and what it is, never by its value, bounded by `--max`, exit 1, nothing written, so the backup can leave the machine (the secrets scan); `--dry-run` runs the same reads and the scan, says the counts, and writes nothing (no file, so no restore test); a read (no actor), never the server's: run where typed, on the store named there, for the file lands where it runs |
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
 | goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm sprint` |
 | teardown | drops the tables, the view and every key of the sprint, of every epoch; `--confirm sprint` |
 
-The read verbs (queue, where, inbox, card, check) have `--json`, one object for a
+The read verbs (queue, where, inbox, card, check, backup) have `--json`, one object for a
 program; `queue --stream <s> --col waiting` lists a stream's waiting cards;
 `card` shows each need with its state and what needs the card; where, inbox and card take `--at-epoch <n>` to read an earlier epoch as
 it was. Every store verb takes `--epoch <n>`, the epoch the caller holds. Every
