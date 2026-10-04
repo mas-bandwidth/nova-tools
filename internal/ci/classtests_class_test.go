@@ -715,7 +715,7 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	git("add", "-A")
 	git("commit", "-q", "-m", "base")
 	_, err := readMergeDeletions(root)
-	require.True(t, err != nil, "a root commit: err = %v; want no parent", err)
+	require.Error(t, err, "a root commit: err = %v; want no parent", err)
 	require.True(t, strings.Contains(err.Error(), "no parent"), "a root commit: err = %v; want no parent", err)
 
 	// The stale-base squash shape: files the parent had are gone, nothing
@@ -727,7 +727,7 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	git("add", "-A")
 	git("commit", "-q", "-m", "squash from a stale base")
 	got := findings()
-	require.True(t, len(got) == 2, "stale-base squash findings = %q; want the test file and the list, naming the commit and the restore", got)
+	require.Len(t, got, 2, "stale-base squash findings = %q; want the test file and the list, naming the commit and the restore", got)
 	require.True(t, strings.Contains(got[0], "deletes a/x_test.go"), "stale-base squash findings = %q; want the test file and the list, naming the commit and the restore", got)
 	require.True(t, strings.Contains(got[1], "deletes internal/ci/testdata/foo_allowlist.txt"), "stale-base squash findings = %q; want the test file and the list, naming the commit and the restore", got)
 	require.True(t, strings.Contains(got[0], "squash from a stale base"), "stale-base squash findings = %q; want the test file and the list, naming the commit and the restore", got)
@@ -746,7 +746,7 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	git("add", "-A")
 	git("commit", "-q", "-m", "declared")
 	got = findings()
-	require.True(t, len(got) == 1, "declared deletion: findings = %q; want only the row that names no deletion", got)
+	require.Len(t, got, 1, "declared deletion: findings = %q; want only the row that names no deletion", got)
 	require.True(t, strings.Contains(got[0], `"d/none_test.go"`), "declared deletion: findings = %q; want only the row that names no deletion", got)
 	require.True(t, strings.Contains(got[0], "deletes no such file"), "declared deletion: findings = %q; want only the row that names no deletion", got)
 
@@ -759,7 +759,7 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	git("add", "-A")
 	git("commit", "-q", "-m", "gone again")
 	gotOld := findings()
-	require.True(t, len(gotOld) == 1, "an old row: findings = %q; want the deletion red", gotOld)
+	require.Len(t, gotOld, 1, "an old row: findings = %q; want the deletion red", gotOld)
 	require.True(t, strings.Contains(gotOld[0], "deletes b/keep_functional_test.go"), "an old row: findings = %q; want the deletion red", gotOld)
 }
 
@@ -1532,7 +1532,7 @@ func TestDeclaredRowsAddedReadsOnlyTheAddedRows(t *testing.T) {
 	t.Parallel()
 	diff := "--- a/internal/ci/testdata/deleted-tests.txt\n+++ b/internal/ci/testdata/deleted-tests.txt\n@@ -1,2 +1,4 @@\n # the log\n old/one_test.go kept from before\n+# a comment\n+new/two_test.go moved to the functional tier\n+new/three_test.go\n-gone/row_test.go a removed row\n"
 	got := declaredRowsAdded(diff)
-	require.True(t, len(got) == 2, "declaredRowsAdded = %v; want the two added rows, the context, the comment and the removed row unread", got)
-	require.True(t, got["new/two_test.go"] == "moved to the functional tier", "declaredRowsAdded = %v; want the two added rows, the context, the comment and the removed row unread", got)
-	require.True(t, got["new/three_test.go"] == "", "declaredRowsAdded = %v; want the two added rows, the context, the comment and the removed row unread", got)
+	require.Len(t, got, 2, "declaredRowsAdded = %v; want the two added rows, the context, the comment and the removed row unread", got)
+	require.Equal(t, "moved to the functional tier", got["new/two_test.go"], "declaredRowsAdded = %v; want the two added rows, the context, the comment and the removed row unread", got)
+	require.Empty(t, got["new/three_test.go"], "declaredRowsAdded = %v; want the two added rows, the context, the comment and the removed row unread", got)
 }
