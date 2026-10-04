@@ -21,7 +21,7 @@ func TestStatusGrammar(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		token string // the token the verb's lines lead with; a refusal leads with "nova-check <verb>"
+		token string // the token the verb's lines lead with
 		word  string // the first word after the token: OK, REFUSED or FAILED
 		exit  int
 		args  func(t *testing.T) []string
@@ -36,7 +36,7 @@ func TestStatusGrammar(t *testing.T) {
 			mustWrite(t, dir, "a.md", "[gone](nowhere.md)\n")
 			return []string{"quickstart", "--dir", dir}
 		}},
-		{"quickstart refuses a missing --dir", "nova-check quickstart", "REFUSED", 2, nil},
+		{"quickstart refuses a missing --dir", "QUICKSTART", "REFUSED", 2, nil},
 		{"attest passes a good manifest", "ATTEST", "OK", 0, func(t *testing.T) []string {
 			home := t.TempDir()
 			mustWrite(t, home, "KERNEL.md", "the kernel\n")
@@ -50,7 +50,7 @@ func TestStatusGrammar(t *testing.T) {
 			require.NoError(t, os.WriteFile(manifest, []byte("missing.md\n"), 0o644))
 			return []string{"attest", "--home", home, "--manifest", manifest}
 		}},
-		{"attest refuses a missing --manifest", "nova-check attest", "REFUSED", 2, nil},
+		{"attest refuses a missing --manifest", "ATTEST", "REFUSED", 2, nil},
 		{"links passes a resolving tree", "LINKS", "OK", 0, func(t *testing.T) []string {
 			dir := t.TempDir()
 			mustWrite(t, dir, "a.md", "[b](b.md)\n")
@@ -62,7 +62,7 @@ func TestStatusGrammar(t *testing.T) {
 			mustWrite(t, dir, "a.md", "[x](missing.md)\n")
 			return []string{"links", "--dir", dir}
 		}},
-		{"links refuses a missing --dir", "nova-check links", "REFUSED", 2, nil},
+		{"links refuses a missing --dir", "LINKS", "REFUSED", 2, nil},
 		{"kernel passes under its byte budget", "KERNEL", "OK", 0, func(t *testing.T) []string {
 			file := filepath.Join(t.TempDir(), "kernel.md")
 			require.NoError(t, os.WriteFile(file, []byte("# Kernel\n"), 0o644))
@@ -73,7 +73,7 @@ func TestStatusGrammar(t *testing.T) {
 			require.NoError(t, os.WriteFile(file, []byte("# Kernel\n"), 0o644))
 			return []string{"kernel", "--file", file, "--max-bytes", "1"}
 		}},
-		{"kernel refuses a missing --file", "nova-check kernel", "REFUSED", 2, nil},
+		{"kernel refuses a missing --file", "KERNEL", "REFUSED", 2, nil},
 		{"nocode passes a prose tree", "NOCODE", "OK", 0, func(t *testing.T) []string {
 			dir := t.TempDir()
 			mustWrite(t, dir, "a.md", "prose\n")
@@ -84,7 +84,7 @@ func TestStatusGrammar(t *testing.T) {
 			mustWrite(t, dir, "run.sh", "#!/bin/sh\n")
 			return []string{"nocode", "--dir", dir}
 		}},
-		{"nocode refuses a missing --dir", "nova-check nocode", "REFUSED", 2, nil},
+		{"nocode refuses a missing --dir", "NOCODE", "REFUSED", 2, nil},
 		{"floors passes the seed pair", "FLOORS", "OK", 0, func(t *testing.T) []string {
 			return []string{"floors",
 				"--core", "../../internal/check/testdata/seed-core-floors.md",
@@ -95,7 +95,7 @@ func TestStatusGrammar(t *testing.T) {
 				"--core", "../../internal/check/testdata/seed-floors.md",
 				"--source", "../../internal/check/testdata/seed-core-floors.md"}
 		}},
-		{"floors refuses a missing --core", "nova-check floors", "REFUSED", 2, nil},
+		{"floors refuses a missing --core", "FLOORS", "REFUSED", 2, nil},
 		{"corpus passes the example ledger at its floor", "CORPUS", "OK", 0, func(t *testing.T) []string {
 			return []string{"corpus", "--ledger", exampleSelf + "/corpus/anchors.md",
 				"--root", exampleSelf, "--min-anchors", "2"}
@@ -104,7 +104,7 @@ func TestStatusGrammar(t *testing.T) {
 			return []string{"corpus", "--ledger", exampleSelf + "/corpus/anchors.md",
 				"--root", exampleSelf, "--min-anchors", "99"}
 		}},
-		{"corpus refuses an unnamed ledger", "nova-check corpus", "REFUSED", 2, nil},
+		{"corpus refuses an unnamed ledger", "CORPUS", "REFUSED", 2, nil},
 		{"spelling passes clean prose", "SPELLING", "OK", 0, func(t *testing.T) []string {
 			dir := t.TempDir()
 			mustWrite(t, dir, "a.md", "the receive step\n")
@@ -115,7 +115,7 @@ func TestStatusGrammar(t *testing.T) {
 			mustWrite(t, dir, "a.md", "the recieve step\n")
 			return []string{"spelling", "--dir", dir}
 		}},
-		{"spelling refuses to guess where to read", "nova-check spelling", "REFUSED", 2, nil},
+		{"spelling refuses to guess where to read", "SPELLING", "REFUSED", 2, nil},
 		{"hygiene passes a clean branch", "HYGIENE", "OK", 0, func(t *testing.T) []string {
 			return []string{"hygiene", "--repo", hygLab(t), "--base", "main", "--head", "HEAD",
 				"--identity", "Rowan <rowan@example.com>"}
@@ -128,7 +128,7 @@ func TestStatusGrammar(t *testing.T) {
 			return []string{"hygiene", "--repo", lab, "--base", "main", "--head", "HEAD",
 				"--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}
 		}},
-		{"hygiene refuses a range checked against nobody", "nova-check hygiene", "REFUSED", 2, func(t *testing.T) []string {
+		{"hygiene refuses a range checked against nobody", "HYGIENE", "REFUSED", 2, func(t *testing.T) []string {
 			return []string{"hygiene", "--repo", hygLab(t), "--base", "main", "--head", "HEAD"}
 		}},
 	}
@@ -139,11 +139,11 @@ func TestStatusGrammar(t *testing.T) {
 			if tc.args != nil {
 				args = tc.args(t)
 			} else {
-				args = strings.Fields(tc.token[len("nova-check "):])
+				args = []string{strings.ToLower(tc.token)}
 			}
 			exit, stdout, stderr := runCheck(t, args...)
 			assert.Equal(t, tc.exit, exit, "%s: exit = %d, want %d; stdout: %s stderr: %s", tc.name, exit, tc.exit, stdout, stderr)
-			line := lastLineLeadingWith(t, stdout+"\n"+stderr, tc.token)
+			line := statusLine(t, stdout+"\n"+stderr, tc.token)
 			rest, ok := strings.CutPrefix(line, tc.token+" ")
 			require.True(t, ok, "%s: line %q does not lead with the token", tc.name, line)
 			// A refusal spells its word with the colon the grammar puts after it.
@@ -166,17 +166,21 @@ func TestStatusGrammar(t *testing.T) {
 	})
 }
 
-// lastLineLeadingWith returns the last line of the stream that begins with the
-// token and a space, so a verb's closing line is read and not its opening RUN
-// line or a finding under it.
-func lastLineLeadingWith(t *testing.T, stream, token string) string {
+// statusLine returns the line of the stream that begins with the token and a
+// status word (OK, FAILED, or REFUSED).
+func statusLine(t *testing.T, stream, token string) string {
 	t.Helper()
-	line := ""
 	for _, candidate := range strings.Split(stream, "\n") {
 		if strings.HasPrefix(candidate, token+" ") {
-			line = candidate
+			fields := strings.Fields(candidate)
+			if len(fields) >= 2 {
+				word := strings.TrimSuffix(fields[1], ":")
+				if word == "OK" || word == "FAILED" || word == "REFUSED" {
+					return candidate
+				}
+			}
 		}
 	}
-	require.NotEmpty(t, line, "no line leads with %q in:\n%s", token, stream)
-	return line
+	require.Fail(t, "no status line leads with %q in:\n%s", token, stream)
+	return ""
 }

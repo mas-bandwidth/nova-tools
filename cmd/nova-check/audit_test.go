@@ -45,9 +45,6 @@ var checkAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; two sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"json.go|Write|p":              "the unchanged text renderer forwards bytes already escaped at every print site audited in this package; JSON never forwards them",
-		"main.go|requireFlags|name":    "a required flag's name, a key of the map this file's callers build from literals",
-		"main.go|cmdAttest|att.SHA256": "sixty-four hex digits from encoding/hex over a SHA-256 sum",
 		// The convergence verb builds its lines in internal/converge, where every
 		// field of every line goes through oneline.Field before it is joined --
 		// a stream name, a trend word, a pull request's rounds, a build stamp, a
@@ -56,9 +53,9 @@ var checkAudit = audit.Config{
 		// package runs a title, a ledger cell, a stamp and a --by name each
 		// holding a newline, an `=` and a bidi override through the whole verb
 		// and asserts one line per stream.
-		"convergence.go|printLines|line": "one line from internal/converge, every field of it rendered through internal/oneline; pinned by TestEveryFieldSurvivesAHostileValue",
-		"convergence.go|printJSON|raw":   "the object encoding/json built, whose encoder escapes every control character as \\u, so the whole object is one line whatever a title or a stamp holds",
-		`hygiene.go|cmdHygiene|strings.Join(hygiene.Kinds(), ", ")`: "the card kinds this toolchain declares, read from internal/hygiene/kinds.txt, " +
+		"convergence.go|convergence|line": "one line from internal/converge, every field of it rendered through internal/oneline; pinned by TestEveryFieldSurvivesAHostileValue",
+		"convergence.go|convergence|raw":  "the object encoding/json built, whose encoder escapes every control character as \\u, so the whole object is one line whatever a title or a stamp holds",
+		`hygiene.go|hygieneRun|strings.Join(hygiene.Kinds(), ", ")`: "the card kinds this toolchain declares, read from internal/hygiene/kinds.txt, " +
 			"which is embedded into this binary at build time and holds nothing a caller can write. " +
 			"TestHygieneRefusesAKindTheToolDoesNotDeclare and TestHygieneAcceptsEveryDeclaredKind are the behavioural tests for this site.",
 		// The staged mode's one write that is not display text: an object id

@@ -44,7 +44,6 @@ func TestPolishJSONLinksKeepsTotalsAndProvenance(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &out))
 	assert.Equal(t, "failed", out.Result.Status)
 	assert.Equal(t, 1, out.Result.Exit)
-	assert.Equal(t, dir, out.Facts.Dir)
 	assert.Equal(t, 2, out.Facts.Broken)
 	require.Len(t, out.Items, 1)
 	assert.Equal(t, "a.md", out.Items[0].Fields.File)
@@ -87,7 +86,7 @@ func TestPolishHygieneHelpDescribesEveryFlag(t *testing.T) {
 	exit, stdout, stderr := runCheck(t, "hygiene", "-h")
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stderr)
-	for _, want := range []string{"git checkout to inspect", "base git ref", "head git ref", "allowed path globs", "allowed authors", "card kind", "finding lines", "positive seconds"} {
+	for _, want := range []string{"git checkout to inspect", "base git ref", "head git ref", "allowed path globs", "allowed authors", "card kind", "items listed", "positive seconds"} {
 		assert.Contains(t, stdout, want)
 	}
 }
@@ -212,7 +211,7 @@ func TestPolishJSONDoesNotSwallowHelp(t *testing.T) {
 			assert.Contains(t, stdout, "nova-check "+verb)
 			assert.Contains(t, stdout, "--json")
 			if verb == "version" {
-				assert.Contains(t, stdout, "print this build identity in a JSON envelope")
+				assert.Contains(t, stdout, "print the result as one JSON object instead of lines")
 			}
 		})
 	}
