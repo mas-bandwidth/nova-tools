@@ -132,7 +132,7 @@ type Card struct {
 var abbreviations = map[string]bool{"e.g": true, "i.e": true, "vs": true, "etc": true}
 
 // abbreviationAt reports whether the period at s[i] closes an abbreviation:
-// the word before it (back to a space or an opening bracket or quote) is one.
+// the word before it (back to a blank or an opening bracket or quote) is one.
 func abbreviationAt(s string, i int) bool {
 	j := i
 	for j > 0 && !strings.ContainsRune(" \t\n([{\"'", rune(s[j-1])) {
@@ -142,7 +142,7 @@ func abbreviationAt(s string, i int) bool {
 }
 
 // Sentences counts the sentences in s: a sentence ends in . ! or ? followed,
-// after any closing quotes or brackets ("done." or (see x.)), by a space or
+// after any closing quotes or brackets ("done." or (see x.)), by a blank or
 // the end. A `code span` is opaque (a period inside one ends nothing), and a
 // backtick with no closing backtick on its line is a plain character. The
 // period of e.g., i.e., vs. or etc. ends nothing. Text after the last end is
@@ -187,7 +187,7 @@ func Sentences(s string) int {
 }
 
 // closers are the characters that may follow a sentence's end before the
-// space: closing quotes and brackets.
+// blank: closing quotes and brackets.
 const closers = "\"')]}"
 
 // ParseInvariant reads an INVARIANT line's value: one sentence.
