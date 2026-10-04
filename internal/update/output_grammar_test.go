@@ -322,7 +322,7 @@ func TestSnapshotOfAManifestTakesItsTimeout(t *testing.T) {
 	m := writeFile(t, "m.tsv", Header+"\nslow\ttool\tsleep 9\tgithub:example/slow\tnone\tme\n")
 	code, _, errs := runTool(t, "nova-version", "snapshot", "--file", m, "--timeout", "200ms")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "SNAPSHOT UNKNOWN name=slow reason=timeout remedy=increase\\x20--timeout")
+	assert.Contains(t, errs, `SNAPSHOT UNKNOWN name=slow reason=timeout remedy="increase --timeout`)
 }
 
 // moved reads the usage lines of every tool's help, indented or not: a tool on
