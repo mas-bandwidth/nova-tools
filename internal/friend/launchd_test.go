@@ -53,7 +53,7 @@ func TestInstallBootsOutThenBootstrapsAndIsTheSameTwice(t *testing.T) {
 	a := agent()
 	a.LaunchdLog = t.TempDir() + "/launchd.log"
 	for i := 0; i < 2; i++ {
-		path, commands, err := Install(context.Background(), a, 501, ctl, write)
+		path, commands, err := Install(context.Background(), a, 501, ctl, write, func() {})
 		require.NoError(t, err, "run %d", i)
 		assert.Equal(t, a.PlistPath(), path)
 		assert.Equal(t, []string{"launchctl bootout gui/501/com.nova.friend-bob", "launchctl bootstrap gui/501 " + path}, commands)
@@ -67,11 +67,39 @@ func TestInstallBootsOutThenBootstrapsAndIsTheSameTwice(t *testing.T) {
 		}
 		return "", nil
 	}
-	_, _, err := Install(context.Background(), a, 501, ctl, write)
+	_, commands, err := Install(context.Background(), a, 501, ctl, write, func() {})
 	assert.ErrorContains(t, err, "launchctl bootstrap: exit 5: Bootstrap failed: 5: Input/output error")
+	assert.Len(t, commands, 1+BootstrapTries, "EIO is launchd still tearing the old agent down: tried again after each wait")
+
+	// the old agent gone after two tries: the third bootstrap loads
+	tries := 0
+	ctl = func(_ context.Context, args ...string) (string, error) {
+		if args[0] == "bootstrap" {
+			tries++
+			if tries < 3 {
+				return "Bootstrap failed: 5: Input/output error", errors.New("exit 5")
+			}
+		}
+		return "", nil
+	}
+	waited := 0
+	_, commands, err = Install(context.Background(), a, 501, ctl, write, func() { waited++ })
+	require.NoError(t, err)
+	assert.Equal(t, 2, waited)
+	assert.Len(t, commands, 4)
+
+	ctl = func(_ context.Context, args ...string) (string, error) {
+		if args[0] == "bootstrap" {
+			return "Bootstrap failed: 2: No such file or directory", errors.New("exit 2")
+		}
+		return "", nil
+	}
+	_, commands, err = Install(context.Background(), a, 501, ctl, write, func() {})
+	assert.ErrorContains(t, err, "No such file")
+	assert.Len(t, commands, 2, "any other failure is final")
 
 	removed := []string{}
-	commands, err := Uninstall(context.Background(), a, 501, ctl, func(p string) error { removed = append(removed, p); return nil })
+	commands, err = Uninstall(context.Background(), a, 501, ctl, func(p string) error { removed = append(removed, p); return nil })
 	require.NoError(t, err)
 	assert.Equal(t, []string{"launchctl bootout gui/501/com.nova.friend-bob"}, commands)
 	assert.Equal(t, []string{a.PlistPath()}, removed)

@@ -29,6 +29,10 @@ type Deliverer interface {
 // its exit code. The daemon passes the real one (RealExec); a test its own.
 type Exec func(ctx context.Context, dir, name string, args []string, stdin string) (stdout string, exit int, err error)
 
+// OutputKept bounds how much of a turn's output the daemon keeps in its
+// record: the head, enough to see what the session did with the message.
+const OutputKept = 2048
+
 // DeliverBudget bounds one delivery into a harness: a turn that runs longer
 // is stuck, the message stays pending, and the next run of the loop hands
 // it in again.
@@ -74,10 +78,10 @@ const KillDelay = 5 * time.Second
 // NewDeliverer is the adapter for harness, in the friend's directory, into
 // session (empty: the newest session of that directory where the harness
 // can name one). An unknown harness is refused with the names there are.
-func NewDeliverer(harness, dir, session string, run Exec) (Deliverer, error) {
+func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Deliverer, error) {
 	switch harness {
 	case "opencode":
-		return &OpenCode{Dir: dir, Session: session, Run: run}, nil
+		return &OpenCode{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "codex", "claude", "antigravity", "dsh":
 		return Stub{Harness: harness}, nil
 	}
@@ -91,7 +95,8 @@ func NewDeliverer(harness, dir, session string, run Exec) (Deliverer, error) {
 type OpenCode struct {
 	Dir, Session string
 	Run          Exec
-	Program      string // "opencode" when empty
+	Program      string    // "opencode" when empty
+	Out          io.Writer // where the turn's output goes, when set: the daemon's record
 }
 
 func (o *OpenCode) program() string {
@@ -141,18 +146,35 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 			return 0, err
 		}
 	}
-	_, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, "--dir", o.Dir, text}, "")
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, "--dir", o.Dir, text}, "")
+	if o.Out != nil && out != "" {
+		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+	}
 	return exit, err
+}
+
+// Head is the first n bytes of s, with a note when it was cut.
+func Head(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + fmt.Sprintf("\n[... %d more bytes]", len(s)-n)
 }
 
 // Stub is a harness with no deliver command yet: it refuses every delivery
 // with the way a session of that harness still reads the bus, so the tool
-// is honest and the message stays pending for that read.
+// is honest. It is Passive: the daemon takes nothing off the stream for it
+// (the session's own blocking read does), only peeks, so a ping is still
+// answered by the daemon at once and the beat is real.
 type Stub struct{ Harness string }
 
 func (s Stub) Deliver(context.Context, string) (int, error) {
 	return 0, fmt.Errorf("no deliver command for %s yet; run the session's blocking read: nova-bus2 recv --as <friend>", s.Harness)
 }
+
+// Passive marks a Deliverer that cannot deliver: the daemon reads nothing
+// for it.
+func (Stub) Passive() {}
 
 // Known says whether harness is one of Harnesses.
 func Known(harness string) bool { return slices.Contains(Harnesses, harness) }

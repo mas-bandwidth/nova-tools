@@ -44,6 +44,10 @@ type Daemon struct {
 	// Status receives the daemon's state whenever it changes, and every
 	// StatusEvery (WriteStatus over the state files).
 	Status func(Status) error
+	// PongCommand is the exact pong line for this friend and nonce (the
+	// binary by path, --as, --dir, --redis), put at the head of every ping
+	// pushed in, so a small model has one line to run and nothing to fill in.
+	PongCommand func(nonce string) string
 
 	m        *Machine
 	status   Status
@@ -94,6 +98,7 @@ func dash(s string) string {
 // session's own pong as a turn, which alone makes the friend up.
 func (d *Daemon) Run(ctx context.Context) error {
 	bus := &bus2.Bus{Store: d.Store}
+	_, passive := d.Deliver.(interface{ Passive() })
 	d.m = Start(d.Now())
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	answered := map[string]bool{} // entries whose ping the daemon has ponged
@@ -105,8 +110,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 		for _, p := range d.m.Tick(now) {
 			queue = append(queue, job{subject: p.Subject, text: p.Text})
 		}
+		if passive {
+			// nothing can be pushed in: the session hears of it from its own read
+			for _, j := range queue {
+				d.Record(now.UTC().Format(time.RFC3339) + " not delivered: " + d.Harness + " has no deliver command: " + j.subject)
+			}
+			queue = nil
+		}
 		storeOK := true
-		if busy == nil {
+		if busy == nil && !passive {
 			e, ok, err := bus.Recv(ctx, d.Friend, BeatEvery)
 			switch {
 			case ctx.Err() != nil:
@@ -119,22 +131,23 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.status.StoreError = ""
 				msg := e.Message()
 				if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
-					if seat == "" {
-						seat = msg.From
-					}
 					if !answered[e.Entry] {
 						d.daemonPong(ctx, bus, msg, nonce)
 						answered[e.Entry] = true
 					}
-					for _, p := range d.m.Ping(now, seat, since, nonce) {
+					for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
 						queue = append(queue, job{subject: p.Subject, text: p.Text})
 					}
 				}
-				queue = append(queue, job{entry: e.Entry, id: msg.ID, subject: msg.Subject, text: Text(msg)})
+				text := Text(msg)
+				if nonce, _, _, isPing := ParsePing(msg.Body); isPing && d.PongCommand != nil {
+					text = "Run this now, first, exactly as written: " + d.PongCommand(nonce) + "\nThen read on.\n\n" + text
+				}
+				queue = append(queue, job{entry: e.Entry, id: msg.ID, subject: msg.Subject, text: text})
 			default:
 				d.status.StoreError = ""
 			}
-		} else {
+		} else { // a turn is running, or the harness is passive: peek, take nothing
 			_, fresh, err := bus.Peek(ctx, d.Friend)
 			if ctx.Err() != nil {
 				return nil
@@ -146,9 +159,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.status.StoreError = ""
 				for _, e := range fresh {
 					msg := e.Message()
-					if nonce, _, _, isPing := ParsePing(msg.Body); isPing && !answered[e.Entry] {
+					if nonce, seat, since, isPing := ParsePing(msg.Body); isPing && !answered[e.Entry] {
 						d.daemonPong(ctx, bus, msg, nonce)
 						answered[e.Entry] = true
+						if passive { // the session reads it itself; the machine still sees the ping
+							for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
+								queue = append(queue, job{subject: p.Subject, text: p.Text})
+							}
+						}
 					}
 				}
 			}
@@ -198,6 +216,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.flush(now)
 	}
 	return nil
+}
+
+// seatOf is the seat a ping names, else its sender.
+func seatOf(seat string, m bus2.Message) string {
+	if seat == "" {
+		return m.From
+	}
+	return seat
 }
 
 // daemonPong answers a ping at once, from the daemon: transport is up.

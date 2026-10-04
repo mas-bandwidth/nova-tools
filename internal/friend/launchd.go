@@ -84,11 +84,17 @@ func esc(s string) string {
 // installer passes the real one, a test its own.
 type Launchctl func(ctx context.Context, args ...string) (output string, err error)
 
+// BootstrapTries is how many times a bootstrap is sent while launchd is
+// still tearing the old agent down (it answers EIO, "Input/output error",
+// for a second or so after the bootout, measured 2026-10-04).
+const BootstrapTries = 5
+
 // Install writes the plist and loads it: a bootout of whatever that label
 // runs now (nothing loaded is fine), then a bootstrap into the user's
-// domain, so running it again replaces the agent with the same result.
-// It answers the plist's path and the commands it ran.
-func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(path string, data []byte) error) (path string, ran []string, err error) {
+// domain, sent again after wait() while launchd answers EIO, so running it
+// again replaces the agent with the same result. It answers the plist's
+// path and the commands it ran.
+func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(path string, data []byte) error, wait func()) (path string, ran []string, err error) {
 	path = a.PlistPath()
 	if err := os.MkdirAll(filepath.Dir(a.LaunchdLog), 0o755); err != nil {
 		return path, nil, err
@@ -101,11 +107,17 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 	ran = append(ran, "launchctl "+strings.Join(bootout, " "))
 	_, _ = run(ctx, bootout...) // ignored: a label that is not loaded answers an error, and that is the state wanted
 	bootstrap := []string{"bootstrap", domain, path}
-	ran = append(ran, "launchctl "+strings.Join(bootstrap, " "))
-	if out, err := run(ctx, bootstrap...); err != nil {
-		return path, ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
+	for try := 1; ; try++ {
+		ran = append(ran, "launchctl "+strings.Join(bootstrap, " "))
+		out, err := run(ctx, bootstrap...)
+		if err == nil {
+			return path, ran, nil
+		}
+		if try == BootstrapTries || !strings.Contains(out, "Input/output error") {
+			return path, ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
+		}
+		wait()
 	}
-	return path, ran, nil
 }
 
 // Uninstall boots the agent out and removes its plist; an agent that is

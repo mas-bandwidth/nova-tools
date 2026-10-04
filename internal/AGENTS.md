@@ -28,6 +28,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `dogfood/` | dogfood self-test gates | `go test ./internal/dogfood` | `go test ./internal/dogfood` |
 | `filelock/` | process-exclusive file locks whose holder is named in the file | `go test ./internal/filelock` | `go test ./internal/filelock` |
 | `fleet/` | runner fleet discovery and status | `go test ./internal/fleet` | `go test ./internal/fleet` |
+| `friend/` | nova-friend's rules apart from the transport: the connection and challenge machine with an injected clock, the daemon loop over bus2, the deliver adapters per harness, the state files and the launchd agent | `go test ./internal/friend` | `go test ./internal/friend` |
 | `fuse/` | the fuse box: read and write the lockdown and quarantine state | `go test ./internal/fuse` | `go test ./internal/fuse` |
 | [ghevent/](ghevent/AGENTS.md) | the GitHub event Redis stream: append and read | `go test ./internal/ghevent` | `go test ./internal/ghevent` |
 | `gitrun/` | the one runner for a one-shot git child: a deadline, WaitDelay and the caller's environment choice | `go test ./internal/gitrun` | `go test ./internal/gitrun` |

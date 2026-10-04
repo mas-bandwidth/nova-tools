@@ -29,6 +29,7 @@ type rig struct {
 	releaseAt int
 	pauses    int
 	gate      chan struct{}
+	passive   bool // no worker: a pause returns at once
 	exit      int
 	beats     int
 	beatErr   error
@@ -58,14 +59,14 @@ func newRig(t *testing.T) *rig {
 		Pause: func(context.Context, time.Duration) {
 			r.mu.Lock()
 			r.pauses++
-			hold, release := r.hold, r.pauses == r.releaseAt
+			hold, release, passive := r.hold, r.pauses == r.releaseAt, r.passive
 			if release {
 				close(hold)
 				r.hold = nil
 			}
 			r.mu.Unlock()
-			if hold != nil && !release {
-				return // the turn is still running, on purpose
+			if passive || (hold != nil && !release) {
+				return // no turn to wait for, or one still running on purpose
 			}
 			<-r.gate
 		},
@@ -147,7 +148,7 @@ func TestAMessageIsPushedIntoTheSessionAndAckedWhenTheTurnEndsAtZero(t *testing.
 	m := r.send(t, "ada", "hello", "are you there?")
 	r.run(t, 4)
 	require.Len(t, r.delivered, 1)
-	assert.Equal(t, Text(m), r.delivered[0], "the session reads what nova-bus2 recv prints")
+	assert.Equal(t, Text(m), r.delivered[0], "the session reads what nova-bus2 recv prints; a plain message carries no pong line")
 	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
 	require.NoError(t, err)
 	assert.Empty(t, pending)
@@ -181,6 +182,9 @@ func TestAPingIsAnsweredAtOnceByTheDaemonAndPushedInAndThePongEndsTheChallenge(t
 	t.Parallel()
 	r := newRig(t)
 	ping := r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+	r.d.PongCommand = func(nonce string) string {
+		return "/opt/nova/bin/nova-friend pong --as bob --nonce " + nonce + " --dir /w/bob --redis store:6379"
+	}
 	var afterPing, afterPong Status
 	r.at[3] = func() { afterPing = r.last() }
 	r.at[4] = func() { // the session answers: the pong verb wrote the pong file
@@ -196,7 +200,8 @@ func TestAPingIsAnsweredAtOnceByTheDaemonAndPushedInAndThePongEndsTheChallenge(t
 	assert.Equal(t, []string{"daemon-pong: daemon-pong n1", "daemon-pong: daemon-pong n2"}, r.adaGot(t), "the daemon pong goes to the coordinator's stream, before the turn")
 	require.Len(t, r.delivered, 2)
 	assert.Contains(t, r.delivered[0], ping.ID)
-	assert.Contains(t, r.delivered[0], "nova-friend pong --as <you> --nonce n1")
+	assert.True(t, strings.HasPrefix(r.delivered[0], "Run this now, first, exactly as written: /opt/nova/bin/nova-friend pong --as bob --nonce n1 --dir /w/bob --redis store:6379\nThen read on.\n\nRECV OK id="), r.delivered[0])
+	assert.Contains(t, r.delivered[1], "--nonce n2 --dir /w/bob", "the second ping carries its own line")
 	assert.Equal(t, Challenged, afterPing.Challenge)
 	assert.Equal(t, "ada", afterPing.Seat)
 	assert.Equal(t, "n1", afterPing.Nonce)
@@ -260,4 +265,34 @@ func TestAStoreThatDoesNotAnswerStopsTheBeat(t *testing.T) {
 	require.NoError(t, r.d.Run(ctx))
 	assert.Equal(t, 0, r.beats, "no beat while the store is down: presence is the loop")
 	assert.Contains(t, r.last().StoreError, "connection refused")
+}
+
+func TestAPassiveHarnessTakesNothingOffTheStreamAndStillAnswersTheDaemonPong(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Deliver, r.d.Harness, r.passive = Stub{Harness: "claude"}, "claude", true
+	r.send(t, "ada", "hello", "for the session's own read")
+	r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+	r.run(t, 4)
+	assert.Equal(t, []string{"daemon-pong: daemon-pong n1"}, r.adaGot(t))
+	assert.Empty(t, r.delivered)
+	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending, "nothing was taken")
+	assert.Len(t, fresh, 2, "both messages wait for the session's own nova-bus2 recv")
+	s := r.last()
+	assert.Equal(t, Challenged, s.Challenge, "the machine saw the ping all the same")
+	assert.Equal(t, "ada", s.Seat)
+	assert.Equal(t, 4, s.Beats, "the beat is real")
+}
+
+func TestAPassiveHarnessRecordsAPushItCannotDeliver(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Deliver, r.d.Harness, r.passive = Stub{Harness: "codex"}, "codex", true
+	r.run(t, int(Window/BeatEvery)+3)
+	assert.Empty(t, r.delivered)
+	require.NotEmpty(t, r.records)
+	assert.Contains(t, r.records[0], "not delivered: codex has no deliver command: coordinator silent")
+	assert.Equal(t, Silent, r.last().Connection)
 }

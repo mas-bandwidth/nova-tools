@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,6 +14,7 @@ type fakeExec struct {
 	calls   [][]string
 	listing string
 	exit    int
+	out     string
 }
 
 func (f *fakeExec) run(_ context.Context, dir, name string, args []string, _ string) (string, int, error) {
@@ -20,13 +22,14 @@ func (f *fakeExec) run(_ context.Context, dir, name string, args []string, _ str
 	if len(args) > 0 && args[0] == "session" {
 		return f.listing, 0, nil
 	}
-	return "", f.exit, nil
+	return f.out, f.exit, nil
 }
 
 func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 	t.Parallel()
-	fe := &fakeExec{listing: `[{"id":"old","directory":"/w/bob","updated":10},{"id":"new","directory":"/w/bob","updated":20},{"id":"other","directory":"/w/ada","updated":30}]`, exit: 0}
-	d, err := NewDeliverer("opencode", "/w/bob", "", fe.run)
+	var turn strings.Builder
+	fe := &fakeExec{listing: `[{"id":"old","directory":"/w/bob","updated":10},{"id":"new","directory":"/w/bob","updated":20},{"id":"other","directory":"/w/ada","updated":30}]`, exit: 0, out: "I ran the pong line.\n"}
+	d, err := NewDeliverer("opencode", "/w/bob", "", fe.run, &turn)
 	require.NoError(t, err)
 	exit, err := d.Deliver(context.Background(), "hello")
 	require.NoError(t, err)
@@ -34,9 +37,11 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 	require.Len(t, fe.calls, 2)
 	assert.Equal(t, []string{"/w/bob", "opencode", "session", "list", "--format", "json"}, fe.calls[0])
 	assert.Equal(t, []string{"/w/bob", "opencode", "run", "--session", "new", "--dir", "/w/bob", "hello"}, fe.calls[1], "the text is an argument, never a shell line")
+	assert.Equal(t, "I ran the pong line.\n", turn.String(), "the turn's output goes to the daemon's record")
+	assert.Equal(t, "ab\n[... 3 more bytes]", Head("abcde", 2))
 
 	fe = &fakeExec{exit: 7}
-	d, err = NewDeliverer("opencode", "/w/bob", "named", fe.run)
+	d, err = NewDeliverer("opencode", "/w/bob", "named", fe.run, &turn)
 	require.NoError(t, err)
 	exit, err = d.Deliver(context.Background(), "x")
 	require.NoError(t, err)
@@ -54,12 +59,12 @@ func TestTheOtherHarnessesRefuseHonestlyAndAnUnknownOneIsNamed(t *testing.T) {
 	for _, h := range []string{"codex", "claude", "antigravity", "dsh"} {
 		t.Run(h, func(t *testing.T) {
 			t.Parallel()
-			d, err := NewDeliverer(h, "/w/bob", "", nil)
+			d, err := NewDeliverer(h, "/w/bob", "", nil, nil)
 			require.NoError(t, err)
 			_, err = d.Deliver(context.Background(), "x")
 			assert.EqualError(t, err, "no deliver command for "+h+" yet; run the session's blocking read: nova-bus2 recv --as <friend>")
 		})
 	}
-	_, err := NewDeliverer("vim", "/w/bob", "", nil)
+	_, err := NewDeliverer("vim", "/w/bob", "", nil, nil)
 	assert.EqualError(t, err, `"vim" is no harness; the harnesses are opencode, codex, claude, antigravity, dsh`)
 }

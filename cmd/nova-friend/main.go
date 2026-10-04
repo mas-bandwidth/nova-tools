@@ -189,7 +189,7 @@ line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way le
 			{
 				Name:    "install",
 				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--redis <addr>] [--launchd-log <file>] [--dry-run]",
-				Example: "install --as bob --harness opencode --dir bob --dry-run",
+				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the launchd agent com.nova.friend-<me> and loads it",
 				Detail: `Writes ~/Library/LaunchAgents/com.nova.friend-<me>.plist (RunAtLoad, KeepAlive: started at login,
 restarted when it dies, pending messages redelivered first), boots out whatever that label runs,
@@ -234,7 +234,7 @@ nonce= id= to=. The daemon answers daemon-pong at once; the session answers pong
 			{
 				Name:    "pong",
 				Usage:   "pong --as <me> --nonce <n> [--dir <d>] [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--redis <addr>]",
-				Example: "pong --as bob --nonce abc123 --dir bob --to ada --queue 2 --working 1 --width 4",
+				Example: "pong --as bob --nonce abc123 --dir ./bob --to ada --queue 2 --working 1 --width 4",
 				Effect:  tool.Delivery + ": the session's answer to a PING, one note on the bus to the coordinator, and the pong file",
 				Detail: `What the session runs when a PING <nonce> arrives, first and before anything else: sends
 "pong <nonce> queue=<n> working=<n> width=<n>" to the coordinator (--to, else the seat the last
@@ -273,7 +273,7 @@ or WAIT-PONG NONE at exit 1.`,
 			{
 				Name:    "status",
 				Usage:   "status --as <me> --dir <d>",
-				Example: "status --as bob --dir bob",
+				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
 last_pong= pongs= queue= working= width= beats= delivered=, from the daemon's status file (up while it is
@@ -319,7 +319,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	defer closeStore()
 	name, dir, server := c.Str("as"), c.Str("dir"), c.Str("server")
-	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), w.exec)
+	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), w.exec, c.Stdout)
 	if err != nil {
 		o := tool.Refuse(err.Error())
 		o.Render(c.Stderr, c.Bool("json"))
@@ -337,6 +337,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		Pong:   func() (friend.Pong, bool, error) { return friend.ReadPong(dir) },
 		Status: func(s friend.Status) error { return friend.WriteStatus(dir, s) },
+		PongCommand: func(nonce string) string {
+			bin, err := w.binary()
+			if err != nil {
+				bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
+			}
+			return fmt.Sprintf("%s pong --as %s --nonce %s --dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, dir, c.Str("redis"), c.Int("width"))
+		},
 	}
 	if err := d.Run(ctx); err != nil {
 		fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
@@ -376,14 +383,14 @@ func (w world) install(c *tool.Call) *tool.Out {
 			Item("plan", "command", tool.Text("write "+a.PlistPath())).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootout gui/%d/%s", w.uid, a.Label()))).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, a.PlistPath()))).
-			Note("the daemon's command line: " + strings.Join(a.Args(), " "))
+			Note("the agent runs: nova-friend run --as " + a.Friend + " --harness " + a.Harness + " --dir " + a.Dir + " --width " + fmt.Sprint(a.Width) + ", with --redis and --server as given here")
 	}
 	path, ran, err := friend.Install(context.Background(), a, w.uid, w.launchctl, func(p string, data []byte) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return err
 		}
 		return os.WriteFile(p, data, 0o644)
-	})
+	}, func() { w.sleep(context.Background(), time.Second) })
 	o := tool.Done().Fact("label", a.Label()).Fact("plist", path).Fact("launchd_log", a.LaunchdLog)
 	for _, r := range ran {
 		o.Item("ran", "command", tool.Text(r))
