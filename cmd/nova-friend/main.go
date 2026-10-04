@@ -217,7 +217,8 @@ carries messages. A turn runs as long as it prints; one silent past --silent-sto
 its process group, the reason on the record; 0 never stops. One turn at a time per session: while a
 delivery runs, the daemon starts no other into the session (the next message waits; a PING is still
 answered by the daemon at once), and after a stopped or failed delivery it delivers into the session
-again only once the adapter says the session is free (Busy), deferring while it says busy. The same
+again only once it is free: an adapter that can tell answers Busy, and the daemon defers while it
+says busy. The same
 provider refusal (an invalid_request_error)
 on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
