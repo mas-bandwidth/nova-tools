@@ -15,16 +15,52 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cairn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 var version string
 
-func main() { os.Exit(cairnTool().Main()) }
+func main() { os.Exit(runCairn(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+
+// runCairn runs one invocation. `help` with more than one word refuses as help
+// before any verb runs its flag checks, so `nova-cairn help open append` is
+// one HELP REFUSED naming the single verb name it wants, not a verb dispatch
+// carrying a stray positional. main and the in-process tests both go through
+// it, so the refusal is exercised by the tests rather than owned by main alone.
+func runCairn(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	t := cairnTool()
+	if len(args) >= 3 && args[0] == "help" && args[1] != "help" &&
+		!verbflag.IsHelp(args[1]) && !strings.HasPrefix(args[2], "-") {
+		o := tool.Refuse("help takes one verb name; the verbs are " + verbflag.List(verbNames(t)))
+		o.Verb = "help"
+		o.Remedy = t.Name + " help"
+		asJSON := verbflag.BoolAsked(args, "json")
+		w := stderr
+		if asJSON {
+			w = stdout
+		}
+		return o.Render(w, asJSON)
+	}
+	return t.Run(args, stdin, stdout, stderr)
+}
+
+// verbNames returns the tool's verb names, including the implicit version verb
+// the framework adds.
+func verbNames(t *tool.Tool) []string {
+	names := make([]string, 0, len(t.Verbs)+1)
+	for _, v := range t.Verbs {
+		names = append(names, v.Name)
+	}
+	names = append(names, "version")
+	return names
+}
 
 var publishes = strings.Join(cairn.Policies, ", ")
 
@@ -257,15 +293,55 @@ func readWords(name string, stdin io.Reader) ([]byte, error) {
 	return os.ReadFile(name)
 }
 
-// index lists every entry; the coverage counts on its first line are never
-// capped, so the total is carried whether or not --max elides entries.
+// sessions lists the session ids a store holds, from sessions/<id>.md and a flat
+// <store>/<id>.md, in the rule Coverage applies them: so an empty session is
+// found and named by index.
+func sessions(store string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, dir := range [2]string{filepath.Join(store, "sessions"), store} {
+		if files, err := os.ReadDir(dir); err == nil {
+			for _, f := range files {
+				if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+					continue
+				}
+				if id := strings.TrimSuffix(f.Name(), ".md"); cairn.ValidID(id) && !seen[id] {
+					seen[id] = true
+					out = append(out, id)
+				}
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// index lists every entry; the coverage counts on its first line are the
+// selection's, so --session counts one session and the full index counts all.
+// An INDEX SESSION line is printed for every session in the selection, entries
+// or none, so an empty session is found.
 func index(c *tool.Call) *tool.Out {
 	store := c.Str("store")
-	all, total, err := cairn.Index(store, c.Str("session"), 0)
+	session := c.Str("session")
+	all, total, err := cairn.Index(store, session, 0)
 	if err != nil {
 		return refusal(err)
 	}
-	o := tool.Done().Fact("sessions", cairn.Coverage(store).Sessions).Fact("entries", total)
+	perSession := map[string]int{}
+	for _, r := range all {
+		perSession[r.Session]++
+	}
+	var names []string
+	if session != "" {
+		names = []string{session}
+	} else {
+		names = sessions(store)
+	}
+	o := tool.Done()
+	for _, s := range names {
+		o.Item("session", "session", s, "entries", perSession[s])
+	}
+	o.Fact("sessions", len(names)).Fact("entries", total)
 	for _, r := range all {
 		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", sourceOf(r.Source))
 	}
