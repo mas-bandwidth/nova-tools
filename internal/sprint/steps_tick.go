@@ -162,6 +162,9 @@ type TickReq struct {
 	// AnswerRules says the tick answers the mechanical judgments by rule (rules.go; run
 	// --answer-rules); false leaves every judgment to the coordinator.
 	AnswerRules bool
+	// IdleAlarm says the tick watches for an idle fleet and tells the coordinator why
+	// (idle.go; run --idle-alarm).
+	IdleAlarm bool
 }
 
 func (r TickReq) who() string {
@@ -251,16 +254,23 @@ var TickEnd = []TickPartDef{
 	{PartDone, TickDone},
 }
 
-// TickEndAnswering is the tick's end when it answers by rule (TickReq.AnswerRules, run
-// --answer-rules): TickEnd with the rule parts (TickRules) after the deadlines, so a
-// judgment the end raises is answered in its own tick, and before the overdue part. Each
-// rule part is a step that may write any table, as a coordinator's verb does, its
-// work-table changes queued for the next pump. With the rules off the tick is TickEnd's
-// alone, as before the rules.
-func TickEndAnswering() []TickPartDef {
+// TickEndWith is the tick's end with the machine's own answers (run's defaults): with
+// rules (TickReq.AnswerRules, run --answer-rules), the rule parts (TickRules) after the
+// deadlines, so a judgment the end raises is answered in its own tick, and before the
+// overdue part, each a step that may write any table, as a coordinator's verb does, its
+// work-table changes queued for the next pump; with idle (TickReq.IdleAlarm, run
+// --idle-alarm), the idle alarm (TickIdle) after the overdue part, before the done part.
+// With neither the end is TickEnd's alone, as before them.
+func TickEndWith(rules, idle bool) []TickPartDef {
 	out := append([]TickPartDef(nil), TickEnd[:2]...)
-	out = append(out, TickRules...)
-	return append(out, TickEnd[2:]...)
+	if rules {
+		out = append(out, TickRules...)
+	}
+	out = append(out, TickEnd[2])
+	if idle {
+		out = append(out, TickPartDef{PartIdle, TickIdle})
+	}
+	return append(out, TickEnd[3:]...)
 }
 
 // TickParts is every part with a planner in the order a tick first runs them:

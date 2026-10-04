@@ -913,8 +913,8 @@ nova-sprint release <sentinel>... --reason <text> [--answers <note>]
 nova-sprint resolve [<id>...] [--stream <s>] [--limit <n>]
 nova-sprint start
 nova-sprint stop
-nova-sprint run [--answer-rules=false]
-nova-sprint tick [--answer-rules]
+nova-sprint run [--answer-rules=false] [--idle-alarm=false]
+nova-sprint tick [--answer-rules] [--idle-alarm]
 nova-sprint goal set <name> [--file <path>] [--to file:<path>]
 nova-sprint goal show [<name>]
 nova-sprint goal drop <name>
@@ -1044,6 +1044,15 @@ reader's finding stays yours. `nova-sprint rules` prints what the rules would an
 Xoff, and nova-config's sprint row turns single ones off: `nova-config sprint set
 --answer_rules_off late,conflict`, then `nova-config apply`. The contract is
 [SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-rule).
+
+### The fleet is idle
+
+When the fleet works under half its width for 5 minutes while cards wait, the run loop's
+tick pushes you one note, `the fleet is idle`: `fleet 4/68: 311 behind 21 drop-blocked
+judgments (oldest 1h50m); 89 behind md-secrets (a card reached its bound, 40m)`, every
+waiting card traced to the root of its chain and the roots named by the cards behind
+them; once an episode, and `the fleet is working again` when it recovers. `run
+--idle-alarm=false` turns it off. The contract is [SPEC-SPRINT.md section 14](SPEC-SPRINT.md#the-fleet-is-idle).
 
 ### Answering the routine judgments
 

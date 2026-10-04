@@ -2105,7 +2105,8 @@ work came back ok; fleet member up or down; cards returned to ready because no
 member is up; ci green on a primary; an operation was abandoned; a sentinel
 landed, released by the coordinator; the machine started or stopped; a stream
 resumed because the card it needed landed; a route rested because its children
-ended with no result (section 5).
+ended with no result (section 5); the fleet is idle, and working again (section 14, the
+fleet is idle, addressed to the coordinator).
 
 **judgment**: needs the coordinator. Each names the decisions open to it.
 
@@ -2934,6 +2935,31 @@ on them. `init` writes the machine STOPPED from the
 start, so the time before the first `start` is a STOPPED span and counts
 toward no deadline. `clear` writes, at the new epoch, the happened line that
 the machine is STOPPED by the clear.
+
+### The fleet is idle
+
+Rowan, 2026-10-04, measured at 1:30 PM: the fleet ran 4 of 68 slots with 561 cards held, 311
+of them behind 21 judgments "a primary is blocked on something dropped", and nothing said so
+until a person looked. The tick's idle alarm (`sprint.TickIdle`, internal/sprint/idle.go; run
+`--idle-alarm`, on by default; a tick by hand only with `--idle-alarm`) is its last part but
+the done part. An episode begins when the fleet works under half its width (the work cards
+working on the machines up, against their widths' sum: `sprint.FleetWorking`) while a
+primary waits; its start is the fleet table's property `idle_since`. Past `IdleWindow` (5
+minutes) of running time, one note goes to the coordinator, `the fleet is idle`, a happened
+note addressed to them (the tick end wakes them, and `inbox --push` carries it to the bus):
+`fleet <working>/<width>: <roots>`, and `idle_said` marks the episode said. The roots are
+`sprint.TraceIdle`: every waiting card traced through its needs and its place in line
+(memoized, so the counts are the table's, not a sample's) to where its chain ends, the
+kind that needs a person first: a need dropped (`<n> behind <k> drop-blocked judgments (oldest
+<age>)`), a need missing, a card in flight held by an open judgment (`<n> behind <card>
+(<judgment type>, <age>)`), a sentinel held or reached and not released, a held card, a stream
+stopped, a tier no route serves, else work in flight; grouped and named by the cards behind
+each, the most first, at most `IdleRoots` (8). When the fleet works at half its width again,
+or no primary waits, the episode ends: both properties are cleared, and when its note was
+pushed a second note says `the fleet is working again` with how long it lasted. One note an
+episode, a clear only after a note (tla/SprintRules.tla, `AlarmOncePerEpisode`,
+`ClearFollowsAlarm`; `TestTheIdleAlarmNamesTheRootsOnceAnEpisode`,
+`TestTheIdleTraceNamesACardAtItsBound`).
 
 ### The server
 

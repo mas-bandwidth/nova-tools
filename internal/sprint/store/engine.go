@@ -79,6 +79,9 @@ type Store struct {
 	// --answer-rules, on by default there; docs/SPEC-SPRINT.md section 8, answered by rule):
 	// false, every judgment is the coordinator's, as before the rules.
 	AnswerRules bool
+	// IdleAlarm says the tick watches for an idle fleet and pushes the coordinator one note
+	// of why an episode (run --idle-alarm, on by default there; sprint.TickIdle).
+	IdleAlarm bool
 	// Stats is what the store's reads cost (stats.go); nil is made on the
 	// first tick. Its pinned copies share it.
 	Stats *Stats

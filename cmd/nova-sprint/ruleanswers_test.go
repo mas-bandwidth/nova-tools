@@ -1,7 +1,9 @@
 package main
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,4 +33,25 @@ func TestRulesPrintsTheAnswersAndTickAppliesThem(t *testing.T) {
 	ta.ok("tick") // the rework is the next pump's
 	assert.Contains(t, ta.ok("card --fields s1-1"), "rule_answer=failed:")
 	ta.clean()
+}
+
+// tick --idle-alarm: an idle fleet with cards waiting tells the coordinator why, once.
+func TestTickIdleAlarmTellsTheCoordinatorWhy(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --members m1,m2 --readers reader-a,reader-b,reader-c")
+	ta.ok("add --stream s1 root other")
+	ta.ok("add --stream s2 a b --needs root")
+	ta.ok("drop root --reason re-cut --one")
+	ta.ok("start")
+	ta.ok("tick --idle-alarm")
+	ta.mu.Lock()
+	ta.now = ta.now.Add(6 * time.Minute)
+	ta.mu.Unlock()
+	ta.ok("tick --idle-alarm")
+	inbox := ta.ok("inbox")
+	assert.Contains(t, inbox, "the fleet is idle")
+	assert.Contains(t, inbox, "2 behind 2 drop-blocked judgments (oldest 6m0s)")
+	ta.ok("tick --idle-alarm")
+	assert.Equal(t, 1, strings.Count(ta.ok("inbox"), "the fleet is idle"), "once an episode")
 }
