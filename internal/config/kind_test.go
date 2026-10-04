@@ -547,3 +547,28 @@ func TestTheSprintRowHoldsTheJudgmentBar(t *testing.T) {
 	assert.NoError(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "0.9"}}))
 	assert.ErrorContains(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "1.5"}}), "want --decide_judgment_bar <p>, a probability")
 }
+
+// checkFleet rejects pg_dsn with a password parameter; this test ensures it also
+// rejects passwords with space-padding around the key, matching pgconn's trimming.
+func TestCheckFleetRefusesASpacePaddedPasswordKey(t *testing.T) {
+	t.Parallel()
+	fleet, _ := Lookup(KindFleet)
+	// Leading space on the key (pgconn trims)
+	err := fleet.Check(Row{Name: "fleet", Fields: map[string]string{
+		"pg_dsn":      "postgres://cfgu@db.invalid:5432/nova? password=x",
+		"machine_ref": "m",
+	}})
+	assert.ErrorContains(t, err, "carries a password")
+	// Space after the key
+	err = fleet.Check(Row{Name: "fleet", Fields: map[string]string{
+		"pg_dsn":      "postgres://cfgu@db.invalid:5432/nova?password =x",
+		"machine_ref": "m",
+	}})
+	assert.ErrorContains(t, err, "carries a password")
+	// Without space - should also be refused
+	err = fleet.Check(Row{Name: "fleet", Fields: map[string]string{
+		"pg_dsn":      "postgres://cfgu@db.invalid:5432/nova?password=x",
+		"machine_ref": "m",
+	}})
+	assert.ErrorContains(t, err, "carries a password")
+}
