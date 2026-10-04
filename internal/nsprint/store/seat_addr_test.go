@@ -28,7 +28,8 @@ func TestOpenFallsBackToTheSeatsAddress(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, "open with no address under a seat row: %v", err)
 	}
-	defer st.Close()
+	// ignored: a test's teardown; the test's own assertions are the report
+	defer func() { _ = st.Close() }()
 	if o := st.Client().Options(); o.Addr != "seat.invalid:6380" || o.Username != "coordinator" {
 		require.Failf(t, "assertion failed", "dials %s as %q; want the row's address as coordinator", o.Addr, o.Username)
 	}
@@ -36,7 +37,8 @@ func TestOpenFallsBackToTheSeatsAddress(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	defer st2.Close()
+	// ignored: a test's teardown; the test's own assertions are the report
+	defer func() { _ = st2.Close() }()
 	if a := st2.Client().Options().Addr; a != "named.invalid:1" {
 		require.Equal(t, "named.invalid:1", a, "an address the verb names lost to the row: %s", a)
 	}
