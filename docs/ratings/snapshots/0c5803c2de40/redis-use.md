@@ -30,6 +30,6 @@ This rates the USE of nova-redis at 0c5803c2de40 (full SHA 0c5803c2de406c1b0b2b0
 
 | earlier | now | evidence |
 |---|---|---|
-| acl apply's remedy names one of four missing users | CHANGED | `nova-redis acl apply --dry-run --addr 127.0.0.1:6379` now fails at the ignored dry run before it can name any user, printing ACL-APPLY FAILED: --dry-run was given and the verb never read it |
-| recall hex-escapes the value | CHANGED | `nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note` prints err=redis\x20at\x20127.0.0.1:6379\x20as the default user on the plain line, while `nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note --json` shows the same text with normal spaces |
+| acl apply's remedy names one of four missing users | STILL THERE | cmd/nova-redis/acl.go:336 at this snapshot still builds the remedy from unsourced[0] alone, so a store that answers names one missing user where several are |
+| recall hex-escapes the value | STILL THERE | cmd/nova-redis/main.go:261 at this snapshot still returns the value as a plain Fact, and internal/tool/out.go:260 renders a plain value through oneline.Field, which hex-escapes its spaces |
 | --addr refuses the socket nova-table's first run makes | STILL THERE | `nova-redis spill --dry-run --addr unix:///tmp/novaredis.sock --owner ada --name note --ttl 10m --value hi` prints SPILL REFUSED: --addr "unix:///tmp/novaredis.sock" needs a port from 1 to 65535 |
