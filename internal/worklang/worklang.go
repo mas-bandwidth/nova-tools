@@ -17,6 +17,7 @@ package worklang
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -315,7 +316,11 @@ func (r *reader) integer() (Form, error) {
 	}
 	var n int64
 	for _, c := range r.data[begin:r.pos] {
-		n = n*10 + int64(c-'0')
+		d := int64(c - '0')
+		if n > (math.MaxInt64-d)/10 {
+			return Form{}, refuse(r.file, fmt.Sprintf("forbidden token at byte=%d", start))
+		}
+		n = n*10 + d
 	}
 	if start < len(r.data) && r.data[start] == '-' {
 		n = -n
