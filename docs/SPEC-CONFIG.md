@@ -626,13 +626,21 @@ a named variable that is empty is refused with its name, the shape
 `NOVA_SPRINT_REDIS_PASSWORD_ENV` keeps for Redis. A DSN with no password
 anywhere connects with none (a throwaway database trusts).
 
+`--seat <name>` (env `NOVA_SEAT`) supplies the PostgreSQL DSN and the name
+of the password environment variable from the seat's profile row in
+`seats.tsv` (`$XDG_CONFIG_HOME/nova-config/seats.tsv`, else
+`~/.config/nova-config/seats.tsv`), exclusive with `--file`. Writes accept
+`--seat <name>` so that commands like `nova-config machine set m1 --width 8 --seat <name>`
+need no explicit DSN or secrets wrapper; an unknown seat is a one-line
+refusal naming the known seats.
+
 `--redis <addr>` is the flag, else `NOVA_SPRINT_REDIS`, else
 `NOVA_REDIS_ADDR`, else the selected seat's address; the Redis login is the
 one `internal/nsprint/store.Open` makes. `machine
 list` and `machine show` take the same flag for the live facts but stop at
 the environment: with none named they print the declared fields alone and
-open no store. `--as` is the flag, else `NOVA_FRIEND`, required on every
-write.
+open no store. `--as` is the flag, else `NOVA_FRIEND`, else the seat name,
+required on every write.
 
 ## Deliberately not configuration
 

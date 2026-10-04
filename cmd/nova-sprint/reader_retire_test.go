@@ -70,3 +70,39 @@ func TestReaderRetireDryRunWritesNothing(t *testing.T) {
 	assert.Contains(t, errs, "no reader reader-x")
 	ta.clean()
 }
+
+// reader retire's help says what happens to a read the reader is reading, and
+// the next tick does that (internal/sprint/readers.go sweepReads: a reader
+// that is not up, and retired is not up, has a read asked or reading taken
+// back when a reader up has no card at that attempt).
+func TestReaderRetireHelpSaysWhatHappensToAReadInReading(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	code, out, errs := ta.do("reader retire -h")
+	require.Equal(t, 0, code, errs)
+	const sentence = "a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it"
+	assert.Contains(t, out, sentence)
+
+	ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
+	ta.inReview(1)
+	ta.ok("ask")
+	var reading string
+	for _, r := range []string{"reader-a", "reader-b"} {
+		if len(ta.askedOf(r)) == 1 {
+			reading = r
+			break
+		}
+	}
+	require.NotEmpty(t, reading, "a pro card is asked of a reader")
+	ta.ok("read --as " + reading + " --begin --limit 5")
+	ta.ok("reader retire " + reading)
+	for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
+		if r != reading {
+			_ = ta.askedOf(r)
+		}
+	}
+	ta.ok("start")
+	ta.ok("tick")
+	assert.Empty(t, ta.askedOf(reading), "the read in reading was taken back")
+	assert.Equal(t, []string{"s1-1.r1.reader-c"}, ta.askedOf("reader-c"), "asked of a reader up with no card at that attempt")
+}

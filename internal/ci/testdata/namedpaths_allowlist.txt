@@ -48,6 +48,10 @@ cmd/nova-bus/verb_reply.go a file of the git bus, removed 2026-10-04; the rating
 cmd/nova-bus/version.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 cmd/nova-bus/wait_on_note_empty_tick_functional_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 cmd/nova-bus/testdata/example-bus a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/help.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/inbox.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/send.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/wait.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 internal/bus/draft_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 internal/bus/git.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 internal/bus/instrument.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day

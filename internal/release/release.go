@@ -32,6 +32,7 @@ package release
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -196,6 +197,11 @@ func refuse(remedy, format string, a ...any) error {
 	return &refusalErr{reason: fmt.Sprintf(format, a...), remedy: remedy}
 }
 
+// validVersionSuffix holds the prerelease or build suffix after the first - or +
+// to safe characters that will not be parsed as shell syntax when joined into
+// remote paths (security#72 finding 1).
+var validVersionSuffix = regexp.MustCompile(`^[0-9A-Za-z.+-]*$`)
+
 // ValidVersion holds a release version to the same shape tools/ghrelease's ldflags verb
 // refuses at, and for the same reasons: the string travels into `-X main.version=`,
 // into a printf format, and into a one-line field. Whitespace splits the linker
@@ -224,6 +230,7 @@ func ValidVersion(v string) error {
 	if len(parts) != 3 {
 		return refuse(remedy, "the version %q is not three dotted numbers after the v", v)
 	}
+	var suffix string
 	for i, p := range parts {
 		n := p
 		if i == 2 {
@@ -231,6 +238,7 @@ func ValidVersion(v string) error {
 			// in front of it still has to be a number.
 			if c := strings.IndexAny(p, "-+"); c >= 0 {
 				n = p[:c]
+				suffix = p[c+1:]
 			}
 		}
 		if n == "" {
@@ -241,6 +249,9 @@ func ValidVersion(v string) error {
 				return refuse(remedy, "the version %q is not three dotted numbers after the v", v)
 			}
 		}
+	}
+	if !validVersionSuffix.MatchString(suffix) {
+		return refuse(remedy, "the version %q carries invalid characters in prerelease suffix", v)
 	}
 	return nil
 }

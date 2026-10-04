@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"os"
 	"slices"
 	"sort"
@@ -69,9 +70,14 @@ type Counts struct {
 }
 
 // Set records a measurement. A second Set on one type ADDS, which is how a row fed by two
-// sources sums per type over the sources that reported that type.
+// sources sums per type over the sources that reported that type. Saturates at math.MaxInt64
+// instead of wrapping (security#75 finding 1).
 func (c *Counts) Set(t Type, v int64) {
-	c.n[t] += v
+	if v > 0 && c.n[t] > math.MaxInt64-v {
+		c.n[t] = math.MaxInt64
+	} else {
+		c.n[t] += v
+	}
 	c.has[t] = true
 }
 
