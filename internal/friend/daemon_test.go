@@ -71,7 +71,7 @@ func newRig(t *testing.T) *rig {
 			}
 			<-r.gate
 		},
-		Beat: func(context.Context) error {
+		Beat: func(context.Context, bool) error {
 			r.mu.Lock()
 			r.beats++
 			f, stop := r.at[r.beats], r.beats >= r.stopAfter

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +31,13 @@ const MaxDeliveries = 3
 // put back on the bus, never counted toward MaxDeliveries, never acked.
 const RecheckEvery = 10 * time.Second
 
+// DaemonConsumer keeps held deliveries separate from interactive receivers.
+const DaemonConsumer = "nova-friend-daemon"
+
+// At the bus's 1 MiB body ceiling, one read retains at most 128 MiB of
+// payloads transiently. Held work retains IDs, not another copy of bodies.
+const DaemonReadBatch = 128
+
 // StatusErrorEvery bounds how often a status file that cannot be written
 // is said in the record: the loop goes on beating and delivering without it.
 // DeferredSaidEvery bounds how often a deferral still in hand is said.
@@ -49,12 +58,13 @@ const (
 // Everything it reaches outside itself is a field, so a test runs it over
 // bus2's Fake, a fake harness and its own clock.
 type Daemon struct {
-	Friend, Harness, Dir string
-	Width                int
-	Store                bus2.Store
-	Deliver              Deliverer
-	Beat                 func(ctx context.Context) error // one beat to the sprint server
-	Now                  func() time.Time
+	Friend, Harness, Dir  string
+	StateDir, Coordinator string
+	Width                 int
+	Store                 bus2.Store
+	Deliver               Deliverer
+	Beat                  func(ctx context.Context, asleep bool) error // one beat to the sprint server
+	Now                   func() time.Time
 	// Pause waits d when the store did not: after a read that answered at
 	// once (blocked false: an error, or a store that does not block), and
 	// while a delivery runs and the loop only peeks.
@@ -119,30 +129,168 @@ func dash(s string) string {
 // result; a beat when the store answered; the session's pong; the status.
 // A ping is answered twice: the daemon pong at once (transport), and the
 // session's own pong as a turn, which alone makes the friend up.
-func (d *Daemon) Run(ctx context.Context) error {
+func (d *Daemon) Run(ctx context.Context) (runErr error) {
 	bus := &bus2.Bus{Store: d.Store}
+	if d.StateDir != "" {
+		lock, err := TakeDaemonLock(d.StateDir, d.Friend)
+		if err != nil {
+			return err
+		}
+		defer func() { runErr = errors.Join(runErr, lock.Unlock()) }()
+	}
+	if d.StateDir != "" && d.Coordinator != "" {
+		if _, err := UpdateSessionState(d.StateDir, func(s *SessionState) error { s.Coordinator = d.Coordinator; return nil }); err != nil {
+			return err
+		}
+	}
+	state, err := d.sessionState()
+	if err != nil {
+		return err
+	}
+	if state.Asleep && state.Coordinator == "" {
+		return errors.New("asleep friend needs a configured coordinator or local wake")
+	}
 	_, passive := d.Deliver.(interface{ Passive() })
 	d.m = Start(d.Now())
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	answered := map[string]bool{} // entries whose ping the daemon has ponged
 	failed := map[string]int{}    // entries whose turn failed, and how often
 	var queue []job
+	queueDirty := true
+	lastBarrier := state.WakeBarrier
+	known := map[string]bool{}
 	var busy *job
 	var retry time.Time // when the deferred turn in hand is tried again; zero while none is
 	var deferrals int
 	var deferSaid time.Time
 	results := make(chan result, 1)
-	start := func(j job, now time.Time) {
-		j.started = now
-		busy = &j
+	start := func(j job, now time.Time) (bool, error) {
+		if j.entry != "" {
+			entries, err := d.Store.Get(ctx, bus2.StreamOf(d.Friend), []string{j.entry})
+			if err != nil {
+				return false, err
+			}
+			if len(entries) != 1 {
+				return false, fmt.Errorf("pending delivery %s is missing; reconcile the stream before restarting", j.entry)
+			}
+			msg := entries[0].Message()
+			j.id, j.subject, j.text = msg.ID, msg.Subject, Text(msg)
+			if nonce, _, _, isPing := ParsePing(msg.Body); isPing && d.PongCommand != nil {
+				j.text = "Run this now, first, exactly as written: " + d.PongCommand(nonce) + "\nThen read on.\n\n" + j.text
+			}
+		}
+		reserved := false
+		reserve := func(s SessionState) error {
+			state = s
+			if !s.Asleep && (s.WakeBarrier == "" || s.WakeBarrier == j.entry) {
+				j.started = now
+				busy = &j
+				reserved = true
+			}
+			return nil
+		}
+		if d.StateDir != "" {
+			if err := WithSessionState(d.StateDir, reserve); err != nil {
+				return false, err
+			}
+		} else {
+			_ = reserve(state)
+		}
+		if !reserved {
+			return false, nil
+		}
+		// The reservation is the start boundary; harness I/O begins after unlock.
 		go func() {
 			exit, err := d.Deliver.Deliver(ctx, j.text)
 			results <- result{j, exit, err}
 		}()
+		return true, nil
+	}
+	handle := func(e bus2.Entry, now time.Time) error {
+		msg := e.Message()
+		if d.StateDir != "" {
+			s, err := UpdateSessionState(d.StateDir, func(s *SessionState) error {
+				if s.Asleep && s.Coordinator != "" && s.Coordinator == msg.From && e.Entry != s.WakeBarrier {
+					s.Asleep = false
+					s.WakeBarrier = e.Entry
+				}
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+			state = s
+		}
+		if nonce, seat, since, isPing := ParsePing(msg.Body); isPing && !answered[e.Entry] {
+			d.daemonPong(ctx, bus, msg, nonce, state.Asleep)
+			answered[e.Entry] = true
+			if !state.Asleep {
+				var pushes []Push
+				if state.Coordinator == "" {
+					pushes = d.m.Ping(now, seatOf(seat, msg), since, nonce)
+				} else {
+					pushes = d.m.ReceivePing(now, msg.From, state.Coordinator, seatOf(seat, msg), since, nonce)
+				}
+				for _, p := range pushes {
+					queueDirty = true
+					queue = append(queue, job{subject: p.Subject, text: p.Text})
+				}
+			}
+		}
+		if !known[e.Entry] {
+			queueDirty = true
+			queue = append(queue, job{entry: e.Entry})
+			known[e.Entry] = true
+		}
+		return nil
+	}
+	// Recover every page of this daemon's PEL; never claim an interactive
+	// consumer's current entries. Empty recovery also validates the group.
+	for cursor := ""; !passive; {
+		entries, next, err := bus.PendingPage(ctx, d.Friend, DaemonConsumer, cursor, DaemonReadBatch)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if err := handle(e, d.Now()); err != nil {
+				return err
+			}
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	if !passive && state.WakeBarrier != "" && !known[state.WakeBarrier] {
+		return fmt.Errorf("wake barrier %s is missing from daemon-owned pending deliveries; reconcile missing or foreign-owned entry before restarting", state.WakeBarrier)
 	}
 	for ctx.Err() == nil {
 		now := d.Now()
-		for _, p := range d.m.Tick(now) {
+		state, err = d.sessionState()
+		if err != nil {
+			return err
+		}
+		d.status.Asleep = state.Asleep
+		if busy != nil && !retry.IsZero() && (state.Asleep || (state.WakeBarrier != "" && state.WakeBarrier != busy.entry)) {
+			queueDirty = true
+			queue = append(queue, job{entry: busy.entry})
+			busy = nil
+			retry = time.Time{}
+			deferrals = 0
+		}
+		if state.Asleep {
+			// A deferred adapter has returned: park its pending job so a later
+			// coordinator wake can take priority without retrying the held turn.
+			kept := queue[:0]
+			for _, j := range queue {
+				if j.entry != "" {
+					kept = append(kept, j)
+				}
+			}
+			queue = kept
+		}
+		for _, p := range d.m.TickWhen(now, state.Asleep) {
+			queueDirty = true
 			queue = append(queue, job{subject: p.Subject, text: p.Text})
 		}
 		if passive {
@@ -153,8 +301,22 @@ func (d *Daemon) Run(ctx context.Context) error {
 			queue = nil
 		}
 		storeOK := true
-		if busy == nil && !passive {
-			e, ok, err := bus.Recv(ctx, d.Friend, BeatEvery)
+		barrierQueued := false
+		for _, j := range queue {
+			if j.entry == state.WakeBarrier && j.entry != "" {
+				barrierQueued = true
+			}
+		}
+		if !passive && (state.Asleep || (state.WakeBarrier != "" && !barrierQueued && busy == nil) || (busy == nil && len(queue) == 0)) {
+			var entries []bus2.Entry
+			var err error
+			if state.Asleep || state.WakeBarrier != "" {
+				// Only fresh reads: reclaiming our old held jobs can starve a
+				// coordinator wake behind them. Recovery already ensured the group.
+				entries, err = d.Store.Read(ctx, bus2.StreamOf(d.Friend), d.Friend, DaemonConsumer, BeatEvery, DaemonReadBatch)
+			} else {
+				entries, err = bus.RecvBatch(ctx, d.Friend, DaemonConsumer, BeatEvery, 1)
+			}
 			switch {
 			case ctx.Err() != nil:
 				return nil
@@ -162,28 +324,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 				storeOK = false
 				d.status.StoreError = err.Error()
 				d.Pause(ctx, BeatEvery)
-			case ok:
+			case len(entries) > 0:
 				d.status.StoreError = ""
-				msg := e.Message()
-				if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
-					if !answered[e.Entry] {
-						d.daemonPong(ctx, bus, msg, nonce)
-						answered[e.Entry] = true
-						// A peek already applied this event while a turn was running.
-						for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
-							queue = append(queue, job{subject: p.Subject, text: p.Text})
-						}
+				for _, e := range entries {
+					if err := handle(e, now); err != nil {
+						return err
 					}
 				}
-				text := Text(msg)
-				if nonce, _, _, isPing := ParsePing(msg.Body); isPing && d.PongCommand != nil {
-					text = "Run this now, first, exactly as written: " + d.PongCommand(nonce) + "\nThen read on.\n\n" + text
-				}
-				queue = append(queue, job{entry: e.Entry, id: msg.ID, subject: msg.Subject, text: text})
 			default:
 				d.status.StoreError = ""
 			}
-		} else { // a turn is running, or the harness is passive: peek, take nothing
+		} else if busy != nil || passive { // a turn is running, or the harness is passive: peek, take nothing
 			_, fresh, err := bus.Peek(ctx, d.Friend)
 			if ctx.Err() != nil {
 				return nil
@@ -195,11 +346,30 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.status.StoreError = ""
 				for _, e := range fresh {
 					msg := e.Message()
+					if passive && d.StateDir != "" && msg.From == state.Coordinator {
+						s, err := UpdateSessionState(d.StateDir, func(s *SessionState) error {
+							if s.Coordinator == msg.From {
+								s.Asleep = false
+							}
+							return nil
+						})
+						if err != nil {
+							return err
+						}
+						state = s
+					}
 					if nonce, seat, since, isPing := ParsePing(msg.Body); isPing && !answered[e.Entry] {
-						d.daemonPong(ctx, bus, msg, nonce)
+						d.daemonPong(ctx, bus, msg, nonce, state.Asleep)
 						answered[e.Entry] = true
 						// the machine sees the ping when the daemon does: a turn longer than a window is no silence
-						for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
+						var pushes []Push
+						if state.Coordinator == "" {
+							pushes = d.m.Ping(now, seatOf(seat, msg), since, nonce)
+						} else {
+							pushes = d.m.ReceivePing(now, msg.From, state.Coordinator, seatOf(seat, msg), since, nonce)
+						}
+						for _, p := range pushes {
+							queueDirty = true
 							queue = append(queue, job{subject: p.Subject, text: p.Text})
 						}
 					}
@@ -218,7 +388,26 @@ func (d *Daemon) Run(ctx context.Context) error {
 					d.Record(fmt.Sprintf("%s subject=%q deferred=%d: %s; tried again every %s, counted toward nothing (said once per %s)",
 						now.UTC().Format(time.RFC3339), r.job.subject, deferrals, deferred.Reason, RecheckEvery, DeferredSaidEvery))
 				}
+				if state.Asleep || (state.WakeBarrier != "" && state.WakeBarrier != busy.entry) {
+					queueDirty = true
+					queue = append(queue, job{entry: busy.entry})
+					busy = nil
+					retry = time.Time{}
+					deferrals = 0
+				}
 				break
+			}
+			if d.StateDir != "" && state.WakeBarrier != "" && state.WakeBarrier == r.job.entry {
+				s, err := UpdateSessionState(d.StateDir, func(s *SessionState) error {
+					if s.WakeBarrier != "" && s.WakeBarrier == r.job.entry {
+						s.WakeBarrier = ""
+					}
+					return nil
+				})
+				if err != nil {
+					return err
+				}
+				state = s
 			}
 			line := fmt.Sprintf("%s subject=%q took=%s exit=%d", now.UTC().Format(time.RFC3339), r.job.subject, now.Sub(r.job.started).Round(time.Millisecond), r.exit)
 			if r.err != nil {
@@ -242,23 +431,50 @@ func (d *Daemon) Run(ctx context.Context) error {
 					}
 					line += " acked=true"
 					delete(failed, r.job.entry)
+					delete(known, r.job.entry)
 				}
 			}
 			d.Record(line)
+			if r.job.entry != "" {
+				delete(known, r.job.entry)
+			}
 			busy, retry, deferrals, deferSaid = nil, time.Time{}, 0, time.Time{}
 		default:
 		}
 		switch {
-		case busy == nil && len(queue) > 0:
+		case !state.Asleep && busy == nil && len(queue) > 0:
+			if queueDirty || lastBarrier != state.WakeBarrier {
+				sort.SliceStable(queue, func(i, j int) bool {
+					if state.WakeBarrier != "" && (queue[i].entry == state.WakeBarrier) != (queue[j].entry == state.WakeBarrier) {
+						return queue[i].entry == state.WakeBarrier
+					}
+					if queue[i].entry == "" || queue[j].entry == "" {
+						return queue[i].entry != "" && queue[j].entry == ""
+					}
+					return entryBefore(queue[i].entry, queue[j].entry)
+				})
+				queueDirty, lastBarrier = false, state.WakeBarrier
+			}
 			j := queue[0]
-			queue = queue[1:]
-			start(j, now)
-		case busy != nil && !retry.IsZero() && !now.Before(retry):
-			retry = time.Time{}
-			start(*busy, now)
+			started, err := start(j, now)
+			if err != nil {
+				return err
+			}
+			if started {
+				queue = queue[1:]
+			}
+		case !state.Asleep && busy != nil && !retry.IsZero() && !now.Before(retry):
+			started, err := start(*busy, now)
+			if err != nil {
+				return err
+			}
+			if started {
+				retry = time.Time{}
+			}
 		}
+		d.status.Asleep = state.Asleep
 		if storeOK {
-			if err := d.Beat(ctx); err != nil {
+			if err := d.Beat(ctx, state.Asleep); err != nil {
 				d.status.BeatError = err.Error()
 			} else {
 				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
@@ -285,11 +501,35 @@ func seatOf(seat string, m bus2.Message) string {
 // daemonPong answers a ping at once, from the daemon: transport is up.
 // A send that fails is the store's error on the status; the ping still
 // goes into the session.
-func (d *Daemon) daemonPong(ctx context.Context, bus *bus2.Bus, ping bus2.Message, nonce string) {
-	_, err := bus.Send(ctx, bus2.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + "\n"})
+func (d *Daemon) daemonPong(ctx context.Context, bus *bus2.Bus, ping bus2.Message, nonce string, asleep bool) {
+	state := ""
+	if asleep {
+		state = " asleep=true"
+	}
+	_, err := bus.Send(ctx, bus2.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + state + "\n"})
 	if err != nil {
 		d.status.StoreError = "daemon pong: " + err.Error()
 	}
+}
+
+func (d *Daemon) sessionState() (SessionState, error) {
+	if d.StateDir == "" {
+		return SessionState{Coordinator: d.Coordinator}, nil
+	}
+	return ReadSessionState(d.StateDir)
+}
+
+func entryBefore(a, b string) bool {
+	am, as, _ := strings.Cut(a, "-")
+	bm, bs, _ := strings.Cut(b, "-")
+	x, _ := strconv.ParseUint(am, 10, 64)
+	y, _ := strconv.ParseUint(bm, 10, 64)
+	if x != y {
+		return x < y
+	}
+	x, _ = strconv.ParseUint(as, 10, 64)
+	y, _ = strconv.ParseUint(bs, 10, 64)
+	return x < y
 }
 
 // flush writes the status when it changed, and every StatusEvery anyway,
