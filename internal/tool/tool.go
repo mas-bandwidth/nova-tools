@@ -15,8 +15,10 @@
 // an answer at exit 0. A tool may name a default verb (`<tool> <file>`) and its
 // own status words (STALE beside FAIL). A verb may be hidden (Verb.Hidden): it
 // runs and answers `-h`, and the banner, the usage block and the unknown-verb
-// list do not show it, a probe step verb a user never types. A command holds
-// only what its verbs do.
+// list do not show it, a probe step verb a user never types. A verb that counts
+// what it read names the fact (Verb.Looks), and an OK over that count at zero
+// is a FAILED unless --allow-empty accepts nothing as the answer. A command
+// holds only what its verbs do.
 package tool
 
 import (
@@ -99,6 +101,7 @@ type Verb struct {
 	ExitTable string         // this verb's exit codes, quoted by its -h; "" quotes the tool's
 	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
 	Hidden    bool           // the verb runs and answers -h and `help <it>`, but the banner, the usage block and the verb lists a refusal names do not show it: a probe step verb a user never types (STANDARD §3, help is never a refusal; §2, a list names the verbs there are for the reader)
+	Looks     string         // the name of the fact that counts what the verb read: an OK with that fact 0 is a FAILED naming it and the same command with --allow-empty, the flag the skeleton adds to a verb that declares Looks, since a check that looked at nothing is not green (STANDARD §2, exit codes tell the truth)
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
 	Run       func(c *Call) *Out
 }
@@ -490,6 +493,15 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	if o == nil {
 		o = Fail("the verb returned no result") // never silent
 	}
+	if v.Looks != "" && o.Status == OK && !c.Bool("allow-empty") && o.lookedAtNothing(v.Looks) {
+		// No green over nothing (STANDARD §2: exit codes tell the truth): the
+		// FAILED names the count, and its remedy is the same command with the
+		// flag that accepts nothing as the answer.
+		o.Status, o.Exit = Failed, 1
+		o.Why = append(o.Why, "looked at nothing: "+v.Looks+"=0")
+		o.Remedy = strings.TrimSpace(t.Name+" "+v.Name+" "+strings.Join(args, " ")) +
+			" --allow-empty if nothing is the answer"
+	}
 	if c.Given("dry-run") && c.Bool("dry-run") {
 		switch {
 		case !c.dryRead: // a tool bug its own tests meet: the verb ran as if for real
@@ -512,6 +524,9 @@ func (v Verb) flags() *Flags {
 	}
 	if v.DryRun {
 		f.Bool("dry-run", false, "print what the verb would write and write nothing")
+	}
+	if v.Looks != "" { // the skeleton adds the flag to a verb that declares Looks
+		f.Bool("allow-empty", false, "answer OK even when the count of what the verb read ("+v.Looks+") is 0")
 	}
 	if !f.prints {
 		f.Bool("json", false, "print the result as one JSON object instead of lines")

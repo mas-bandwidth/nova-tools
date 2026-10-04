@@ -896,3 +896,64 @@ func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
 		})
 	}
 }
+
+// looksTool is a tool whose one verb declares Looks: "files", the fact that
+// counts what the verb reads.
+func looksTool() *Tool {
+	return &Tool{
+		Name: "nova-look", What: "counts what it reads", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{
+			{Name: "scan", Usage: "scan [--files <n>]", Effect: Inspection, Looks: "files",
+				Flags: func(f *Flags) { f.Int("files", 0, "how many files the verb reads") },
+				Run:   func(c *Call) *Out { return Done().Fact("files", c.Int("files")) }},
+		},
+	}
+}
+
+// TestNoGreenOverNothing pins Verb.Looks: a verb that returns OK with the
+// fact that counts what it read at 0 is turned into FAILED at exit 1 naming
+// the count, with the same command and the --allow-empty the skeleton adds
+// to a verb that declares Looks as the remedy; with --allow-empty the OK
+// stands, and the JSON is the same value (STANDARD §2: exit codes tell the
+// truth, one result value, two renderings).
+func TestNoGreenOverNothing(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		code     int
+		stdout   string   // the whole stream, exact; "" asserts only what contains does
+		stderr   string   // the whole stream, exact
+		contains []string // substrings of stdout
+	}{
+		{name: "a count above zero stays OK", args: []string{"scan", "--files", "3"}, code: 0,
+			stdout: "SCAN OK files=3\n"},
+		{name: "a count of zero is FAILED at exit 1", args: []string{"scan", "--files", "0"}, code: 1,
+			stderr: "SCAN FAILED files=0: looked at nothing: files=0; run: nova-look scan --files 0 --allow-empty if nothing is the answer\n"},
+		{name: "--allow-empty keeps the OK over nothing", args: []string{"scan", "--files", "0", "--allow-empty"}, code: 0,
+			stdout: "SCAN OK files=0\n"},
+		{name: "the same FAILED is one JSON object", args: []string{"scan", "--files", "0", "--json"}, code: 1,
+			contains: []string{`{"result":{"verb":"scan","status":"failed","exit":1,` +
+				`"remedy":"nova-look scan --files 0 --json --allow-empty if nothing is the answer",` +
+				`"why":["looked at nothing: files=0"]},"facts":{"files":0}}`}},
+		{name: "the skeleton's flag is in the verb's -h", args: []string{"scan", "-h"}, code: 0,
+			contains: []string{"usage: nova-look scan [flags]", "--allow-empty", "exit codes: 0 done"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(looksTool().Run).Run(tc.args...)
+			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			if tc.stdout != "" {
+				assert.Equal(t, tc.stdout, r.Stdout)
+				assert.Empty(t, r.Stderr)
+			}
+			if tc.stderr != "" {
+				assert.Equal(t, tc.stderr, r.Stderr)
+				assert.Empty(t, r.Stdout)
+			}
+			for _, s := range tc.contains {
+				assert.Contains(t, r.Stdout, s)
+			}
+		})
+	}
+}
