@@ -91,7 +91,8 @@ hold), whatever she beats; else `down` without a beat under
 `FriendDownAfter` (15 s) old, including when she has never beaten; else
 `asleep` when the fresh beat was `friend beat --asleep <friend>`; else `up`.
 The optional flag records a contactable sleeping session in the beat's
-`asleep` field. An ordinary beat clears that field and wakes her at once.
+`asleep` field. An ordinary beat clears recorded sleep and shows `up`; it
+does not change the daemon's durable session state or invoke its wake command.
 `friend down` holds her and shows `held`, never `down`. `friend up` is not a beat: a friend released
 with no beat in the last 15 s is `down` until she beats. A friend's statuses
 are `up`, `asleep`, `held` and `down`; the fleet table's rule is unchanged. A

@@ -279,13 +279,7 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 	}
 }
 
-// A friend is up while her last beat is under sprint.FriendDownAfter (15 s)
-// old and down once she has gone that long without one, or when she has
-// never beaten; a beat wakes her at once; held while friend down holds her
-// whatever she beats, and friend up releases the hold without counting as a
-// beat. The rows go up, then held, then down, each by name
-// (store.FleetOrder).
-func TestFriendAsleepBeatAppearsOnTheTableAndOrdinaryBeatWakes(t *testing.T) {
+func TestFriendAsleepBeatAppearsOnTheTableAndOrdinaryBeatShowsUp(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendApp(t, "amy")
 	ta.ok("friend sync")
@@ -303,6 +297,12 @@ func TestFriendAsleepBeatAppearsOnTheTableAndOrdinaryBeatWakes(t *testing.T) {
 	assert.Equal(t, "down", ta.friendStatus()["amy"])
 }
 
+// A friend is up while her last beat is under sprint.FriendDownAfter (15 s)
+// old and down once she has gone that long without one, or when she has
+// never beaten; a beat wakes her at once; held while friend down holds her
+// whatever she beats, and friend up releases the hold without counting as a
+// beat. The rows go up, then held, then down, each by name
+// (store.FleetOrder).
 func TestAFriendsStatusIsTheFriendsRuleOverItsBeatsAndItsHold(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendApp(t, "zed", "amy", "bob", "cat")

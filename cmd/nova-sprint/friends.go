@@ -59,7 +59,8 @@ and her status is up while her last beat is under `+sprint.FriendDownAfter.Strin
 she has gone `+sprint.FriendDownAfter.String()+` without a beat or when she has never beaten (a beat
 wakes her at once), held while friend down holds her whatever she beats.
 friend beat --asleep <friend> records a contactable sleeping session: a fresh
-beat shows asleep, and an ordinary beat clears sleep and shows up. A sleeping
+beat shows asleep, and an ordinary beat clears recorded sleep and shows up.
+This records presence; it does not invoke the daemon's wake command. A sleeping
 friend without a fresh beat is down; a hold still shows held.
 friend up releases the hold and is not a beat: a friend released with no beat
 in the last `+sprint.FriendDownAfter.String()+` is down until she beats. A friend down shows
