@@ -156,20 +156,29 @@ func TestAnswerDecideNeverAnswersAPaymentRefusal(t *testing.T) {
 	ta.group(sprint.NWorkFailed, "s1")
 }
 
-// A blocked card the decision acks is acked by the line the inbox prints, with the
-// decision's reason: its dropped need is waived and the card runs.
+// The drop of a card that waiting cards need is refused, and the add of a
+// card that needs a dropped one is refused, so the blocked judgment the
+// decision would ack is never written: a need names a card that can still
+// land (docs/SPEC-SPRINT.md section 11), or the pair goes together with
+// --cascade. The waiver path of a judgment that persisted from before the
+// rule is kept by internal/sprint/store (missing_needs_test.go seeds it).
 func TestAnswerDecideAcksABlockedCard(t *testing.T) {
 	t.Parallel()
 	ta, _, record := answering(t, always(decide.VerbAck, 0.88, "own", "need-dropped"))
 	ta.ok("add --stream s1 --count 1")
 	ta.ok("add --stream s2 b --needs s1-1")
-	ta.ok("drop s1-1 --reason obsolete")
-	g := ta.group(sprint.NBlocked, "s2")
-	out := ta.ok("answer --bar 0.8 --record " + record)
-	assert.Contains(t, out, g.ID+"  b     blocked  ack   0.88  applied  nova-sprint ack "+g.Notes[0]+" --reason 'nova-decide (p=0.88): the card can run without the dropped need; a conflict is handled at merge'")
-	assert.Contains(t, ta.ok("card b"), "needs s1-1 (off the table (dropped)), waived")
+	code, out, errs := ta.do("drop s1-1 --reason obsolete")
+	require.Equal(t, 1, code, "drop of a needed card: exit=%d out=%s err=%s", code, out, errs)
+	require.Contains(t, out+errs, "s1-1 is needed by b; drop them too with --cascade", "the refusal names the dependant")
+	ta.ok("drop s1-1 --reason obsolete --cascade")
+	code, out, errs = ta.do("add --stream s2 c --needs s1-1")
+	require.Equal(t, 1, code, "add of a waiter on a dropped card: exit=%d out=%s err=%s", code, out, errs)
+	require.Contains(t, out+errs, "REFUSED c: needs s1-1, which was dropped", "the refusal names the id and its outcome")
+	out = ta.ok("answer --bar 0.8 --record " + record)
+	assert.Contains(t, out, "applied=0", "no blocked card is left to ack: %s", out)
+	assert.NotContains(t, out, " blocked ", "the routine kind of a dropped need is gone: %s", out)
 	for _, g := range ta.inboxGroups() {
-		assert.False(t, g.Kind == sprint.Judgment && g.Type == sprint.NBlocked, "the judgment is answered: %+v", g)
+		assert.False(t, g.Kind == sprint.Judgment && g.Type == sprint.NBlocked, "no blocked judgment is open: %+v", g)
 	}
 }
 

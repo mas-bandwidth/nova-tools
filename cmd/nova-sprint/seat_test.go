@@ -189,17 +189,23 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s2 --count 1")
 	ta.ok("drop s2-1 --reason 'obsolete: the tool went away'")
-	ta.ok("add --stream s3 b --needs s2-1")
+	// a need names a card that can still land (docs/SPEC-SPRINT.md section
+	// 11): the add of a card needing the dropped s2-1 is refused, so the
+	// open judgment handover prints is the ci-red one
+	code, out, errs := ta.do("add --stream s3 b --needs s2-1")
+	assert.Equal(t, 1, code, "%s: %s%s", "add --stream s3 b --needs s2-1", out, errs)
+	assert.Contains(t, out+errs, "needs s2-1, which was dropped", "the refusal names the id and its outcome")
+	ta.ok("add --stream s3 --count 1")
+	ta.ok("ci s3-1 --red --run 1")
 	ta.ok("fleet down m2")
-	blocked := ta.group(sprint.NBlocked, "s3")
-
-	out := ta.ok("handover")
+	red := ta.group(sprint.NCIRed, "s3")
+	out = ta.ok("handover")
 	for _, want := range []string{
 		"HANDOVER seat=coordinator since=init\n",
 		"STREAM s1 waiting=3 ready=1 working=0 review=0 merging=0 landed=0\n",
 		"SENTINEL s1-stop stream=s1 held: 2 wait behind it (s1-",
-		"JUDGMENT " + blocked.ID,
-		"    nova-sprint ack " + blocked.Notes[0],
+		"JUDGMENT " + red.ID,
+		"    nova-sprint ack " + red.Notes[0],
 		"MEMBER m2 held by coordinator\n",
 		"DECISION ",
 		" drop s2-1 by coordinator: obsolete: the tool went away\n",
@@ -231,7 +237,7 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	out = ta.ok("handover --json")
 	require.NoError(t, json.Unmarshal([]byte(out), &h), out)
 	assert.Equal(t, "coordinator", h.Seat.Holder)
-	require.Len(t, h.Judgments, 2, "the stopped machine's and the blocked primary's")
+	require.Len(t, h.Judgments, 2, "the stopped machine's and the ci-red primary's")
 	require.Len(t, h.Sentinels, 1)
 	assert.Equal(t, "s1-stop", h.Sentinels[0].ID)
 	assert.Len(t, h.Sentinels[0].Behind, 2)

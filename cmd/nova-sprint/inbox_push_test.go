@@ -198,16 +198,17 @@ func TestInboxPushRefusesWhatItCannotCombine(t *testing.T) {
 
 // The ack line inbox prints joins the group's notes with commas; ack takes
 // that line as printed (nova-tools#5096, item 14): the comma list is every
-// note of the group, closed in one step.
+// note of the group, closed in one step. The group is two ci-red notes: the
+// blocked pair a drop used to write is no longer constructible, a need
+// naming a card that can still land (docs/SPEC-SPRINT.md section 11).
 func TestAckTakesTheCommaListInboxPrints(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
-	ta.ok("drop s1-1 --reason obsolete")
-	ta.ok("add --stream s2 b --needs s1-1")
-	ta.ok("add --stream s2 c --needs s1-1")
-	g := ta.group(sprint.NBlocked, "s2")
+	ta.ok("add --stream s1 --count 2")
+	ta.ok("ci s1-1 --red --run 1")
+	ta.ok("ci s1-2 --red --run 2")
+	g := ta.group(sprint.NCIRed, "s1")
 	require.Len(t, g.Notes, 2, "%+v", g)
 	var line string
 	for _, c := range g.Commands {
@@ -216,10 +217,10 @@ func TestAckTakesTheCommaListInboxPrints(t *testing.T) {
 		}
 	}
 	require.Contains(t, line, "ack "+strings.Join(g.Notes, ",")+" --reason", "the printed ack line: %+v", g.Commands)
-	out := ta.ok(strings.TrimPrefix(strings.Replace(line, "'<why nothing is to be done>'", "'the need is waived'", 1), "nova-sprint "))
-	assert.Equal(t, 2, strings.Count(out, "acknowledged: the need is waived"), out)
+	out := ta.ok(strings.TrimPrefix(strings.Replace(line, "'<why nothing is to be done>'", "'the red run is superseded'", 1), "nova-sprint "))
+	assert.Equal(t, 2, strings.Count(out, "acknowledged: the red run is superseded"), out)
 	for _, g := range ta.inboxGroups() {
-		assert.False(t, g.Kind == sprint.Judgment && g.Type == sprint.NBlocked, "the blocked judgment is still open: %+v", g)
+		assert.False(t, g.Kind == sprint.Judgment && g.Type == sprint.NCIRed, "the ci-red judgment is still open: %+v", g)
 	}
 }
 
