@@ -155,7 +155,7 @@ func spillVerb(d deps) tool.Verb {
 					c.Problem(fmt.Sprintf("--ttl %q is not a duration (try 10m)", c.Str("ttl")))
 				}
 				for _, e := range keyErrors(c.Str("owner"), c.Str("name"), ttl) {
-					if !(err != nil && e == errNoTTL) {
+					if err == nil || e != errNoTTL {
 						c.Problem(e.Error())
 					}
 				}
@@ -468,7 +468,7 @@ func unconfirmed(conn *redisconn.Conn, store login, owner, name string, err erro
 func shellWord(s string) string {
 	plain := s != ""
 	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_-.,:/@%+=", r)) {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("_-.,:/@%+=", r) {
 			plain = false
 			break
 		}
