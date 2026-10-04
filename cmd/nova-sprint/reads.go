@@ -449,6 +449,9 @@ type whereView struct {
 	// judgments naming one of their primaries; absent without --cards.
 	Cards     []dealtCard   `json:"cards,omitempty"`
 	Judgments []judgmentRef `json:"judgments,omitempty"`
+	// Rows is where --json --rows's: every primary's row of the work table, in work
+	// order, its fields but the brief; absent without --rows.
+	Rows []primaryRow `json:"rows,omitempty"`
 }
 
 // dealtCard is a work card dealt to a fleet row and not finished: the row (a machine, or a
@@ -519,6 +522,7 @@ type whereRun struct {
 	watch   bool
 	all     bool
 	cards   bool
+	rows    bool
 	every   time.Duration
 	stale   time.Duration
 	atEpoch int64
@@ -530,6 +534,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	every := fs.Duration("every", time.Second, "the redraw interval with --watch, above 0")
 	all := fs.Bool("all", false, "draw the readers and merge tables too, hidden from the default frame (--json always carries them)")
 	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them")
+	rows := fs.Bool("rows", false, "with --json: also every primary's row of the work table (id, stream, state, score, and its fields but the brief: card <id> --brief), in work order, so a child reads every card in one call and never loops card calls")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
@@ -555,7 +560,10 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if *cards && !c.json {
 		return refuse(stderr, "where", "--cards is a field of the JSON view: give --json with it")
 	}
-	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, every: *every, stale: *stale, atEpoch: *atEpoch}
+	if *rows && !c.json {
+		return refuse(stderr, "where", "--rows is a field of the JSON view: give --json with it")
+	}
+	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, every: *every, stale: *stale, atEpoch: *atEpoch}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -605,6 +613,13 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				return "", a.readFailed("where", err, stderr), false
 			}
 			v.Cards, v.Judgments = dealtView(d, st.Names.Prefix, v.Epoch)
+		}
+		if r.c.json && r.rows {
+			s, err := st.Load(ctx, []string{sprint.Work}, nil)
+			if err != nil {
+				return "", a.readFailed("where", err, stderr), false
+			}
+			v.Rows = rowsView(s)
 		}
 		if r.c.json {
 			b, _ := json.Marshal(v)
@@ -1623,4 +1638,36 @@ func printBrief(stdout, stderr io.Writer, id, brief string, asJSON bool) int {
 	}
 	fmt.Fprintln(stdout, brief)
 	return 0
+}
+
+// primaryRow is one primary's row of the work table as where --json --rows carries
+// it: its place and score, and every field but the brief (card <id> --brief prints
+// that; the comfort list of 2026-10-03, item 8: a child's loop of card calls timed
+// out against the store).
+type primaryRow struct {
+	ID     string            `json:"id"`
+	Stream string            `json:"stream"`
+	State  string            `json:"state"`
+	Score  float64           `json:"score"`
+	Fields map[string]string `json:"fields"`
+}
+
+// rowsView is every placed primary of the work table, in work order (stream, then
+// score and id), with its fields but the brief.
+func rowsView(s *sprint.Snapshot) []primaryRow {
+	cards := s.Work.Column(sprint.States...)
+	rows := make([]primaryRow, 0, len(cards))
+	for _, c := range cards {
+		fields := make(map[string]string, len(c.Fields))
+		for k, v := range c.Fields {
+			if k != "brief" {
+				fields[k] = v
+			}
+		}
+		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, State: c.Col, Score: c.Score, Fields: fields})
+	}
+	slices.SortStableFunc(rows, func(a, b primaryRow) int {
+		return cmp.Or(cmp.Compare(a.Stream, b.Stream), cmp.Compare(a.Score, b.Score), cmp.Compare(a.ID, b.ID))
+	})
+	return rows
 }
