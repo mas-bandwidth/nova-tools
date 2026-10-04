@@ -270,6 +270,16 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 			return nil
 		}
 		if strings.HasSuffix(p, ".md") && (exclude == nil || !exclude(p)) {
+			// A .md name is not a .md file, and os.DirFS follows a leaf
+			// symlink on open: a symlink, FIFO, socket or device named .md is
+			// indexed as corpus, reading whatever it points at — outside the
+			// root — as if the corpus wrote it. Refuse at walk time, before
+			// any open, naming the exclusion that keeps the rest of the
+			// corpus building (security#76 finding 1, re-filed from
+			// security#58 finding 1).
+			if !d.Type().IsRegular() {
+				return fmt.Errorf("%s is not a regular file; exclude it with --exclude or remove it", p)
+			}
 			files = append(files, p)
 		}
 		return nil
