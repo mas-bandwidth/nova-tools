@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build darwin || linux
 
 package fuse
 
@@ -137,4 +137,32 @@ func TestWriteBoxAllowsOrdinaryPathAndRootOwnedAncestors(t *testing.T) {
 	require.NoError(t, CreateBox(path))
 	_, err := os.Stat(path)
 	require.NoError(t, err)
+}
+
+// TestWriteBoxRefusesAUserOwnedSymlinkBehindARootOwnedAlias covers a root-owned
+// alias whose immediate target is itself a user-owned symlink. The owner seam
+// models the root-owned outer alias without requiring privileged test setup.
+func TestWriteBoxRefusesAUserOwnedSymlinkBehindARootOwnedAlias(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	require.NoError(t, os.Mkdir(target, 0o755))
+	inner := filepath.Join(dir, "user-link")
+	require.NoError(t, os.Symlink(target, inner))
+	outer := filepath.Join(dir, "root-alias")
+	require.NoError(t, os.Symlink(inner, outer))
+
+	owner := func(path string, info os.FileInfo) (uint32, bool) {
+		if path == outer {
+			return 0, true
+		}
+		if path == inner {
+			return 1, true
+		}
+		return posixLinkOwner(path, info)
+	}
+	err := checkBoxAncestorsWith(filepath.Join(outer, "box.json"), os.Lstat, os.Readlink, owner)
+	require.Error(t, err, "a user-owned link reached through a root-owned alias must be refused")
+	require.Contains(t, err.Error(), inner)
+	require.Contains(t, err.Error(), filepath.Join(target, "box.json"))
 }
