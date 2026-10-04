@@ -88,14 +88,16 @@ first, at most 32 messages or 256 KiB (`MaxBatch`, `BatchBytes`; the rest is
 the next turn): one envelope listing each message's id, from and subject, with
 the message as `nova-bus recv` prints it, the pong line first while a challenge
 is open, and the daemon's latest word about the coordinator; a single message
-with nothing else is its `recv` text alone. The adapter blocks for the whole
-turn; exit 0 acks every message it carried, together. Any other exit leaves
+with nothing else is its `recv` text alone. A synchronous adapter blocks for
+the whole turn. The Codex queue route waits for the exact user input to be
+recorded in the target session; this confirms delivery, not a completed model
+answer. Exit 0 acks every message it carried, together. Any other exit leaves
 them pending, handed in again when their claims open, and the third failure
 acks a message with `given_up=true` on the record, so a message the session
 cannot take never comes back for ever. A delivery the adapter defers,
-`Deferred`, the session unable to take a turn now with nothing wrong, such as a
-Codex thread open in the app holding its writer lock, is neither a failure nor
-an ack: the turn stays in the daemon's hand, tried again every ten seconds,
+`Deferred`, the session unable to take a turn now with nothing wrong, such as
+both Codex delivery routes being unavailable, is neither a failure nor an ack:
+the turn stays in the daemon's hand, tried again every ten seconds,
 `RecheckEvery`, and counted toward nothing, so a chat open all day loses no
 message, and the record says so at the first deferral and once a minute after.
 While a turn runs: one peek, so a ping that lands during a long turn is still
