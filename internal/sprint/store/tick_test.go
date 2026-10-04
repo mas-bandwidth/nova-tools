@@ -705,7 +705,7 @@ func TestTwoLateReadsOfOnePrimaryAreTwoJudgments(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.takeAndFinish(false, "p")
-	h.machine() // asks the first reader
+	h.machine()                                                                        // asks the first reader
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"p"}}, Another: true})) // and one more: two reads outstanding
 	cards := h.snap().Readers.Of("p")
 	require.Len(t, cards, 2, "asked: %d", len(cards))

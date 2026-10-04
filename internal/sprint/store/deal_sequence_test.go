@@ -217,7 +217,7 @@ const streamsRoom = 8 * sprint.DealAhead * 2
 // seqRun is what the streams run did, a tick at a time.
 type seqRun struct {
 	deal, ask, accept                []seqPart
-	dealCounts, askCounts, accCounts []map[string]int    // what each step could take, by stream, before it
+	dealCounts, askCounts, accCounts []map[string]int      // what each step could take, by stream, before it
 	had                              []map[string][]string // before each tick, the readers who read each primary wanting a read at its attempt
 	props                            []map[string]uint64   // every index after the tick and its accept
 }

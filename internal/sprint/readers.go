@@ -202,6 +202,43 @@ func ReadsWanted(s *Snapshot, pr *Card) int {
 	return max(readsWantedOf(pr, live), len(placed)-len(live))
 }
 
+// FieldFindingReader is the primary's field naming the reader whose finding its
+// last rework sent back (the first broken read's reader at that attempt, in
+// reader row order; Rework): the next attempt's first read is asked of them
+// (Ask, finderFirst). Absent when the rework was of failed work.
+const FieldFindingReader = "finding_reader"
+
+// FieldFinderRead marks a read card asked of the finder out of turn (finderFirst):
+// placed on purpose, the level leaves it where it is (levelReads).
+const FieldFinderRead = "finder"
+
+// finderFirst is the reader the primary's first read at attempt is asked of out
+// of turn: the reader whose finding the attempt's fix answers (FieldFindingReader
+// at FieldFindingAttempt, the attempt before), so the check is against the finding
+// and not a fresh opinion (docs/SPEC-SPRINT.md section 6; the owner, 2026-10-04),
+// when that reader is up and free at the attempt (free) and has room
+// (readerHasRoom); "" otherwise, and the round chooses. The second reader stays
+// fresh: only the first read is the finder's.
+func finderFirst(s *Snapshot, c *Card, attempt int, free []string) string {
+	rd := c.F(FieldFindingReader)
+	if rd == "" || c.Int(FieldFindingAttempt) != attempt-1 || !contains(free, rd) || !readerHasRoom(s, rd) {
+		return ""
+	}
+	return rd
+}
+
+// readerHasRoom says the reader runs fewer reads (asked and reading) than its
+// machine's width (ReaderMachine, width.go): a reader named for no fleet row, or
+// in a snapshot with no fleet table, has room (the sprint holds no width of its own
+// for it).
+func readerHasRoom(s *Snapshot, rd string) bool {
+	m, ok := ReaderMachine(rd)
+	if !ok || s.Fleet == nil || s.MemberCtl(m) == nil {
+		return true
+	}
+	return s.Readers.Count(rd, Asked)+s.Readers.Count(rd, Reading) < s.Width(m)
+}
+
 // readsWantedOf is ReadsWanted over the reads that stand, live.
 func readsWantedOf(pr *Card, live []*Card) int {
 	for _, rc := range live {
@@ -302,7 +339,7 @@ func levelReads(s *Snapshot, p *Plan) {
 	for _, rd := range up {
 		held[rd] = s.Readers.Count(rd, Asked) + s.Readers.Count(rd, Reading)
 		for _, c := range s.Readers.Cell(rd, Asked) {
-			if c.F(FieldLeveled) == "" {
+			if c.F(FieldLeveled) == "" && c.F(FieldFinderRead) == "" { // a finder's read is placed on purpose
 				queues[rd] = append(queues[rd], c)
 			}
 		}

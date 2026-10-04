@@ -739,6 +739,7 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 	if err != nil {
 		return s, err
 	}
+	next.Spent = nil // a verb is one step: a finder passed over once is passed over in it alone
 	return next, nil
 }
 

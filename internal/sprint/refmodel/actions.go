@@ -436,14 +436,19 @@ func Ask(s State, p string, readers []string) (State, error) {
 		return s, refuse("fewer than two readers free for %s", p)
 	}
 	sorted := addSorted(nil, readers...)
-	next := s.NextReaders(p, want)
+	next, finder, passed := s.askChoice(p)
 	if len(readers) != want || Join(sorted) != Join(addSorted(nil, next...)) {
 		return s, badChoice("%s asked of %v, not the next %d round the readers, %v (past %q)", p, readers, want, next, s.AskLast)
 	}
 	n := s.Clone()
 	order := addSorted(nil, s.Readers...)
-	for _, r := range next {
-		n.AskLast = roundPast(order, n.AskLast, r)
+	if !finder { // the finder's read is out of turn: the index stays (tickAsk counts it as spent)
+		for _, r := range passed {
+			n.Spent[r]--
+		}
+		for _, r := range next {
+			n.AskLast = roundPast(order, n.AskLast, r)
+		}
 	}
 	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it
 	for _, r := range readers {
@@ -451,7 +456,7 @@ func Ask(s State, p string, readers []string) (State, error) {
 		if _, made := n.Reads[id]; made {
 			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
 		}
-		n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked}
+		n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked, Finder: finder}
 	}
 	var pair []string
 	for _, id := range n.LiveReadsOf(p) {
@@ -635,12 +640,17 @@ func Rework(s State, p, m string) (State, error) {
 		w.Place = Gone
 		n.Work[bound] = w
 	}
+	// the reader who found it broken checks the fix (sprint.Rework, FieldFindingReader)
+	pr := n.Primaries[p]
+	pr.Finder, pr.FindingAttempt = "", pr.Attempt
 	for _, id := range n.LiveReadsOf(p) {
 		rc := n.Reads[id]
+		if rc.Place == Broken && pr.Finder == "" {
+			pr.Finder = rc.Reader // the first in reader order: LiveReadsOf is sorted by id, the reader last
+		}
 		rc.Place = Retired
 		n.Reads[id] = rc
 	}
-	pr := n.Primaries[p]
 	pr.Attempt++
 	if len(up) > 0 {
 		if m != choice {
@@ -1197,7 +1207,7 @@ func (n *State) levelReads() {
 		mean := floorDiv(total, len(rs))
 		var asked []string
 		for _, id := range Keys(n.Reads) {
-			if c := n.Reads[id]; c.Reader == hi && c.Place == Asked {
+			if c := n.Reads[id]; c.Reader == hi && c.Place == Asked && !c.Finder { // a finder's read is placed on purpose
 				asked = append(asked, id)
 			}
 		}

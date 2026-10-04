@@ -610,10 +610,11 @@ func (d *Driver) waits() {
 // readAttempt is the attempt number in a read card's id (<primary>.r<attempt>.<reader>,
 // sprint.ReadCardID), "" when the id has no such part.
 func readAttempt(id string) string {
-	i := strings.LastIndex(id, ".r")
-	if i < 0 {
+	// <primary>.r<attempt>.<reader>: the parts, never a cut at ".r" (a reader's name
+	// may hold it: reader-c, and the cut gave the attempt as "eader-c")
+	parts := strings.Split(id, ".")
+	if len(parts) < 3 {
 		return ""
 	}
-	n, _, _ := strings.Cut(id[i+2:], ".")
-	return n
+	return strings.TrimPrefix(parts[len(parts)-2], "r")
 }

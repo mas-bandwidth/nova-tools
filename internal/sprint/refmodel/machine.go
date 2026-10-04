@@ -216,10 +216,19 @@ func (n *State) tickAsk(choice map[string][]string) error {
 	// in stream turns from the ask's stream index;
 	// Ask moves it past each primary's stream
 	review = n.streamTurns(review, n.AskStreamLast)
+	// the finders asked out of turn in this step, each passed over once by the round
+	// whichever primary comes first (sprint.Ask, spent)
+	n.Spent = map[string]int{}
+	for _, p := range review {
+		if readers, finder := n.AskChoice(p); finder {
+			n.Spent[readers[0]]++
+		}
+	}
+	defer func() { n.Spent = nil }()
 	for _, p := range review {
 		readers := choice[p]
 		if readers == nil {
-			readers = n.NextReaders(p, n.ReadsWanted(p))
+			readers, _ = n.AskChoice(p)
 		}
 		next, err := Ask(*n, p, readers)
 		if err != nil {

@@ -141,6 +141,28 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	if s.Fleet != nil && len(s.Routes) > 0 {
 		ri = routeIndexesOf(s)
 	}
+	// the reader who found the defect checks the fix: a rework's next attempt has its
+	// first read asked of the reader whose finding it carries, when that reader is up,
+	// free at the attempt and has room (finderFirst). A finder asked out of turn is
+	// passed over once by the round in this step, whichever primary comes first, so
+	// its load is what its turn would have given it and the level has nothing to even
+	// (spent: the finders chosen, each passed over once)
+	finders, spent := map[string]string{}, map[string]int{}
+	for _, c := range chosen {
+		attempt := c.Int("attempt")
+		if another || len(readsAt(s, c, attempt)) > 0 {
+			continue
+		}
+		var free []string
+		for _, rd := range s.Readers.Rows() {
+			if s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil && s.ReaderIsUp(rd) {
+				free = append(free, rd)
+			}
+		}
+		if f := finderFirst(s, c, attempt, free); f != "" {
+			finders[c.ID], spent[f] = f, spent[f]+1
+		}
+	}
 	for _, c := range chosen {
 		attempt := c.Int("attempt")
 		have := map[string]bool{}
@@ -192,7 +214,27 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			// not even its first read is asked when no reader could ever read the rest
 			want = ReadsNeeded(c) - len(all)
 		}
-		chosenReaders := rr.picks(want, nil, func(x string) bool { return contains(free, x) })
+		// the finder's read (finders) comes first and moves the index not at all (it is
+		// out of turn: the round goes on where it was); the rest come round the readers
+		var chosenReaders []string
+		finder := ""
+		if want > 0 {
+			finder = finders[c.ID]
+		}
+		if finder != "" {
+			chosenReaders = append(chosenReaders, finder)
+		}
+		inTurn := func(x string) bool {
+			if !contains(free, x) || contains(chosenReaders, x) {
+				return false
+			}
+			if spent[x] > 0 {
+				spent[x]-- // its out-of-turn read was its turn
+				return false
+			}
+			return true
+		}
+		chosenReaders = append(chosenReaders, rr.picks(want-len(chosenReaders), chosenReaders, inTurn)...)
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
@@ -232,11 +274,17 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: takenBack}
 		for _, rd := range chosenReaders {
+			if rd == finder {
+				continue
+			}
 			rr.moved(rd)
 			moves[c.ID] = joinMoves(moves[c.ID], rd)
 		}
 		for i, rd := range chosenReaders {
 			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
+			if rd == finder {
+				fields[FieldFinderRead] = "1" // placed on purpose: the level leaves it where it is
+			}
 			maps.Copy(fields, s.readRouteOf(ri, c, failed))
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
@@ -248,6 +296,9 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": pair})))
 		}
 		named := append([]string{}, chosenReaders...)
+		if finder != "" {
+			named[0] = finder + " (who found attempt " + c.F(FieldFindingAttempt) + " broken: it checks the fix)"
+		}
 		for _, rd := range again {
 			named = append(named, rd+" (again, its read returned)")
 		}
@@ -1003,6 +1054,14 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		given := reworkGiven(s, c)
 		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"], FieldFindingAttempt: c.F("attempt"),
 			"reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
+		// the reader who found it broken checks the fix: the next attempt's first read is
+		// asked of them (Ask, finderFirst); a rework of failed work names none
+		unset := []string{"readers"}
+		if finder := finderOf(s, c); finder != "" {
+			set[FieldFindingReader] = finder
+		} else {
+			unset = append(unset, FieldFindingReader)
+		}
 		if bound != nil {
 			// the attempt ended at its bound: its end is the primary's record of its failed
 			// work, as a failed finish writes it (failureSet), read by the next rework at a bound
@@ -1019,7 +1078,6 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		// the head a reader passed: a next attempt that finds nothing to do at it goes back to
 		// review there, not to the coordinator as failed work (FieldPassedHead, Finish)
-		unset := []string{"readers"}
 		if len(okReaders(s, c)) > 0 && c.F("result") != "failed" {
 			set[FieldPassedHead] = c.F("head")
 		} else {
@@ -1113,6 +1171,17 @@ func ownFix(s *Snapshot, c *Card) string {
 	if c.F("result") == "failed" {
 		if wc := s.Fleet.Card(c.F("work")); wc != nil {
 			return wc.F("report")
+		}
+	}
+	return ""
+}
+
+// finderOf is the reader who found the primary broken at its attempt: the first
+// broken read's reader in reader row order, "" when no read of it is broken.
+func finderOf(s *Snapshot, c *Card) string {
+	for _, rc := range s.Readers.Of(c.ID) {
+		if rc.Col == Broken && rc.Int("attempt") == c.Int("attempt") {
+			return rc.Row
 		}
 	}
 	return ""

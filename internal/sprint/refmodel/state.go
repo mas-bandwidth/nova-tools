@@ -171,6 +171,11 @@ type Primary struct {
 	// ReturnedAt is the attempt at which the coordinator last returned it to
 	// review, 0 when never (sprint.FieldReturnedAttempt).
 	ReturnedAt int
+	// Finder is the reader whose finding its last rework sent back and
+	// FindingAttempt that attempt (sprint.FieldFindingReader, FieldFindingAttempt):
+	// the next attempt's first read is asked of the finder, out of turn (Ask).
+	Finder         string
+	FindingAttempt int
 }
 
 // WorkCard is one work card: <primary>.w<attempt>.
@@ -200,6 +205,7 @@ type ReadCard struct {
 	Reader  string
 	Place   string // Asked, Reading, OK, Broken, Retired
 	Verdict string // "", "ok" or "broken"
+	Finder  bool   // asked of the finder out of turn: the level leaves it (sprint.FieldFinderRead)
 }
 
 // MergeCard is one primary's merge place, and a stuck card's cross-stream
@@ -249,6 +255,11 @@ type State struct {
 	// DealLast modulo the members in name order, wrapping; the next readers
 	// the first able from AskLast modulo the readers.
 	DealLast, AskLast string
+	// Spent is each reader's reads asked of it out of turn as a finder in the
+	// step being planned (Ask): the round passes it over once for each, so its
+	// load is what its turn would have given it (sprint.Ask, spent). Cleared when
+	// the step ends (the tick's ask; the differential harness after a verb).
+	Spent map[string]int
 	// StreamLast, AskStreamLast and AcceptStreamLast are the work table's
 	// stream indexes of the deal, the ask and the accept (sprint.PropStreamIndex,
 	// PropAskStreamIndex, PropAcceptStreamIndex):
@@ -304,6 +315,8 @@ func (s State) Clone() State {
 	for k := range s.Acked {
 		c.Acked[k] = true
 	}
+	c.Spent = make(map[string]int, len(s.Spent))
+	maps.Copy(c.Spent, s.Spent)
 	return c
 }
 
@@ -581,15 +594,28 @@ func without(xs []string, x string) []string {
 // order, wrapping, the first reader without a read card at the attempt, then
 // the first past it, and so on.
 func (s State) NextReaders(p string, k int) []string {
+	out, _ := s.nextReaders(p, k)
+	return out
+}
+
+// nextReaders is NextReaders and the readers it passed over as finders asked out
+// of turn (Spent), once each.
+func (s State) nextReaders(p string, k int) (out, passed []string) {
 	order := sorted(s.Readers)
 	attempt := s.Primaries[p].Attempt
 	at := roundFrom(order, s.AskLast)
-	var out []string
+	spent := map[string]int{}
+	maps.Copy(spent, s.Spent)
 	for len(out) < k && len(order) > 0 {
 		pick := -1
 		for i := range order {
 			j := (at + i) % len(order)
 			if _, made := s.Reads[RC(p, attempt, order[j])]; !made && !slices.Contains(out, order[j]) {
+				if spent[order[j]] > 0 {
+					spent[order[j]]--
+					passed = append(passed, order[j])
+					continue
+				}
 				pick = j
 				break
 			}
@@ -600,7 +626,7 @@ func (s State) NextReaders(p string, k int) []string {
 		out = append(out, order[pick])
 		at = pick + 1
 	}
-	return out
+	return out, passed
 }
 
 // AskedLen is SprintTables.tla AskedLen(r).
@@ -654,6 +680,28 @@ func (s State) OkReaders(p string) []string {
 
 // Acceptable is SprintTables.tla Acceptable(p) (Broken = "none").
 func (s State) Acceptable(p string) bool { return len(s.OkReaders(p)) >= 2 }
+
+// AskChoice is the readers the ask asks p of now, and whether the first is the
+// finder out of turn (sprint.finderFirst): p's first read goes to the reader whose
+// finding the attempt's fix answers when that reader has no card at the attempt;
+// the rest come round the readers (NextReaders).
+func (s State) AskChoice(p string) (readers []string, finder bool) {
+	readers, finder, _ = s.askChoice(p)
+	return readers, finder
+}
+
+// askChoice is AskChoice and the readers the round passed over (nextReaders).
+func (s State) askChoice(p string) (readers []string, finder bool, passed []string) {
+	want := s.ReadsWanted(p)
+	pr := s.Primaries[p]
+	if want == 1 && len(s.LiveReadsOf(p)) == 0 && pr.Finder != "" && pr.FindingAttempt == pr.Attempt-1 {
+		if _, made := s.Reads[RC(p, pr.Attempt, pr.Finder)]; !made {
+			return []string{pr.Finder}, true, nil
+		}
+	}
+	readers, passed = s.nextReaders(p, want)
+	return readers, false, passed
+}
 
 // ReadsWanted is how many reads the ask places on p now (sprint.ReadsWanted,
 // sequential reads): one while no read of its attempt stands, none while one
