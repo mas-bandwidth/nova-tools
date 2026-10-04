@@ -56,7 +56,7 @@ func TestIndexLockSequenceFreshStaleOwnedAndBack(t *testing.T) {
 	ownerOK = false
 	c, err = clearStaleIndexLockAs(dir, late, scan, seam, self)
 	require.False(t, c, "2b unknown owner: c=%v err=%v", c, err)
-	require.True(t, err == errLockOwnerUnknown, "2b unknown owner: c=%v err=%v", c, err)
+	require.Same(t, errLockOwnerUnknown, err, "2b unknown owner: c=%v err=%v", c, err)
 	require.Equal(t, 0, scans, "2b unknown owner: c=%v err=%v", c, err)
 	present("2b")
 	// 3. handed to the caller, a foreign git names the checkout with -C: kept.
