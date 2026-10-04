@@ -2591,11 +2591,28 @@ func within(root, path string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
+// unlinkAuthCopy removes a copy copyAuth has just written and returns the clause naming
+// the copy it could not remove (empty when the copy is already gone). Every refusal
+// raised after a write runs through it, so a refusal leaves no plaintext key on disk and
+// a failed unlink is named in the reason rather than swallowed (docs/SPEC-SECRETS.md, the
+// bench standard that fails loudly on a plaintext key file).
+func unlinkAuthCopy(path string) string {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Sprintf("; the auth copy %s could not be removed: %s", oneline.Field(path), oneline.Escape(err.Error()))
+	}
+	return ""
+}
+
 // copyAuth moves exactly the provider's entry from the auth file into
 // dataHome/auth.json, mode 0600, and returns the refusal reason when the source is
 // looser than 0600 or the copy cannot end 0600. Both mode questions are asked of the
 // platform (authmode.go): windows reports 0666 for every readable file, so neither rule
 // refuses there (#915).
+//
+// A REFUSAL LEAVES NO COPY. Once dataHome/auth.json is written, every later refusal --
+// the mode it ended with, a dataHome/opencode that could not be made, a second copy that
+// could not be written -- unlinks what was written before it returns, so a plaintext key
+// never outlives the run whose defer (nativeRun) would have removed it (#E56).
 func copyAuth(src, provider, dataHome string) string {
 	st, err := os.Stat(src)
 	if err != nil {
@@ -2623,14 +2640,15 @@ func copyAuth(src, provider, dataHome string) string {
 		return fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error()))
 	}
 	if dstSt, err := os.Stat(dst); err == nil && authModeNotOwnerOnly(runtime.GOOS, dstSt.Mode()) {
-		return fmt.Sprintf("the auth copy would not be 0600: %s ended mode %04o", oneline.Field(dst), dstSt.Mode().Perm())
+		return fmt.Sprintf("the auth copy would not be 0600: %s ended mode %04o%s", oneline.Field(dst), dstSt.Mode().Perm(), unlinkAuthCopy(dst))
 	}
 	ocDir := filepath.Join(dataHome, "opencode")
 	if err := os.MkdirAll(ocDir, 0o755); err != nil {
-		return fmt.Sprintf("the auth directory %s could not be made: %s", oneline.Field(ocDir), oneline.Escape(err.Error()))
+		return fmt.Sprintf("the auth directory %s could not be made: %s%s", oneline.Field(ocDir), oneline.Escape(err.Error()), unlinkAuthCopy(dst))
 	}
-	if err := os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600); err != nil {
-		return fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(filepath.Join(ocDir, "auth.json")), oneline.Escape(err.Error()))
+	ocDst := filepath.Join(ocDir, "auth.json")
+	if err := os.WriteFile(ocDst, body, 0o600); err != nil {
+		return fmt.Sprintf("the auth copy %s could not be written: %s%s%s", oneline.Field(ocDst), oneline.Escape(err.Error()), unlinkAuthCopy(ocDst), unlinkAuthCopy(dst))
 	}
 	return ""
 }
