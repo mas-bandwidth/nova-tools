@@ -224,7 +224,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.Len(t, rows, 1, assertionMsg169...)
 		require.Equal(t, KindFleet, rows[0].Name, assertionMsg169...)
 		// A store or coordinator must be a machine row.
-		_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space"}, "rowan")
+		_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space", "loops_dir": "~/nova-bench/loops"}, "rowan")
 		assertionMsg172 := []any{"store naming no machine: %v", err}
 		require.Error(t, err, assertionMsg172...)
 		require.ErrorIs(t, err, ErrNoRef, assertionMsg172...)
@@ -234,11 +234,11 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		_, setupErr12147 := st.Insert(ctx, KindMachine, mk(machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"}), "rowan")
 		require.NoError(t, setupErr12147)
 		for _, changes := range []map[string]string{
-			{"redis_port": "65536"},
-			{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova"},
-			{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print;sslmode=disable"},
-			{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print%zz"},
-			{"pg_dsn": "postgres://user@localhost:5432/nova?%70aSsWoRd=do-not-print"},
+			{"redis_port": "65536", "loops_dir": "~/nova-bench/loops"},
+			{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"},
+			{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print;sslmode=disable", "loops_dir": "~/nova-bench/loops"},
+			{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print%zz", "loops_dir": "~/nova-bench/loops"},
+			{"pg_dsn": "postgres://user@localhost:5432/nova?%70aSsWoRd=do-not-print", "loops_dir": "~/nova-bench/loops"},
 		} {
 			_, _, err = st.Update(ctx, KindFleet, KindFleet, changes, "rowan")
 			require.Error(t, err)
@@ -247,7 +247,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		rev, err := st.Rev(ctx, KindFleet)
 		require.NoError(t, err)
 		require.Zero(t, rev, "a refused endpoint update wrote history")
-		after, id, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space", "coordinator": "studio"}, "rowan")
+		after, id, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space", "coordinator": "studio", "loops_dir": "~/nova-bench/loops"}, "rowan")
 		assertionMsg182 := []any{"set the fleet: %+v id %d err %v", after.Fields, id, err}
 		require.NoError(t, err, assertionMsg182...)
 		require.Equal(t, int64(3), id, assertionMsg182...)

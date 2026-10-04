@@ -219,14 +219,14 @@ func TestALoopArgvWithAWidthIsRefused(t *testing.T) {
 	assert.Contains(t, out, ` argv=["nova-swarm","member","--as","reader-m1","--reader"] `, "the row as it was")
 	assert.NotContains(t, out, "width=", "a loop has no width field")
 
-	code, _, errs = h.run(t, "fleet", "set", "--redis_port", "6380", "--pg_dsn", dsn)
+	code, _, errs = h.run(t, "fleet", "set", "--redis_port", "6380", "--pg_dsn", dsn, "--loops_dir", "~/nova-bench/loops")
 	require.Equal(t, 0, code, errs)
 	for _, kind := range []string{"machine", "fleet", "loop"} {
 		code, out, errs = h.run(t, "apply", "--kind", kind)
 		require.Equal(t, 0, code, "%s\n%s", out, errs)
 	}
 	// the fake Redis writes a row's fields; apply's derived log field is the real applier's (redis.go)
-	h.redis.views["loop"]["reader-m1"]["log"] = config.LoopLog("reader-m1")
+	h.redis.views["loop"]["reader-m1"]["log"] = config.LoopLog("~/nova-bench/loops", "reader-m1")
 	code, out, errs = h.run(t, "inventory", "--host", "m1")
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, strings.Join(strings.Fields(out), ""), `"argv":["nova-swarm","member","--as","reader-m1","--reader"]`, "the plays render the argv the row holds, with no width:\n%s", out)

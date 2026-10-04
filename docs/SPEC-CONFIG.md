@@ -198,10 +198,13 @@ row's.
 | `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
 | `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
+| `loops_dir` | text | | the inventory and plays: the directory where loop logs are written; seeded to `~/nova-bench/loops` | `fleet:loops_dir` |
 
 The kind's `Check` bounds `redis_port` and accepts only a password-free
 `postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal
-never reproduces a password from the input.
+never reproduces a password from the input. `loops_dir` must be non-empty: a
+store write checks the row it would leave, which carries every field, so a
+fleet that has declared no directory is refused until one is.
 Fleet apply and inventory refuse either endpoint unset, naming one
 `nova-config fleet set --redis_port <port> --pg_dsn <dsn>` command. Migration 0014 (`0014_fleet_endpoints.sql`)
 leaves the port NULL and the DSN empty. Full apply checks both before writing
@@ -265,7 +268,7 @@ Migration 0013 had made a loop's width a field its command ran with;
 migration 0017 removed the field, took `--width` out of every member argv that
 carried one and removed the second reader rows (`reader-<m>-2`), one reader
 per machine.
-The log path is derived from the name, `~/nova-bench/loops/<name>.log`
+The log path is derived from the fleet row's `loops_dir` and the name, `<loops_dir>/<name>.log`
 (`LoopLog`), and is never typed. A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
@@ -405,8 +408,9 @@ config.machines          (name PK, "user", seat, slots, runners,
                           default)
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,
-                          created_at, updated_at;
-                          the one row inserted by the migration)
+                          loops_dir, created_at, updated_at;
+                          the one row inserted by the migration; loops_dir
+                          added by 0027, text NOT NULL DEFAULT '~/nova-bench/loops')
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
                           width added by 0018, integer NOT NULL DEFAULT 8, which fills every row there
                           CHECK (width >= 1))
