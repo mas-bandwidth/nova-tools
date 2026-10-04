@@ -536,11 +536,7 @@ func readTar(r io.Reader, dest string) error {
 		if int64(len(body)) > fetchFileCap {
 			return fmt.Errorf("%s is larger than the %d byte ceiling for one fetched artifact", header.Name, fetchFileCap)
 		}
-		mode := os.FileMode(header.Mode).Perm()
-		if mode == 0 {
-			mode = 0o755
-		}
-		if err := writeNoFollow("unpack", filepath.Join(dest, name), body, mode); err != nil {
+		if err := writeNoFollow("unpack", filepath.Join(dest, name), body, 0o755); err != nil {
 			return err
 		}
 	}
