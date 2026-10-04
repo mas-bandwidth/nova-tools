@@ -37,6 +37,10 @@ type friendEntry struct {
 	At    time.Time `json:"at,omitempty"`
 	By    string    `json:"by,omitempty"`
 	Width int       `json:"width,omitempty"`
+	// Reason is the coordinator's reason for the hold (hold <friend>, hold.go), and
+	// Return whether it took her cards back.
+	Reason string `json:"reason,omitempty"`
+	Return bool   `json:"return,omitempty"`
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row

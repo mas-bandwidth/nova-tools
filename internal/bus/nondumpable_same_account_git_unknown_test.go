@@ -22,5 +22,5 @@ func TestRead4420NonDumpableSameAccountGitIsUnknown(t *testing.T) {
 		owner:  0, ownerKnown: true} // root-owned /proc/42: the non-dumpable shape
 	_ = syscall.EACCES
 	procs, unknown := classifyViews([]procView{v}, self)
-	require.True(t, unknown != nil, "a root-owned /proc entry of an unplaced git was skipped as foreign (procs=%v): a non-dumpable git of this account is out of sight and its stale lock can be unlinked", procs)
+	require.Error(t, unknown, "a root-owned /proc entry of an unplaced git was skipped as foreign (procs=%v): a non-dumpable git of this account is out of sight and its stale lock can be unlinked", procs)
 }

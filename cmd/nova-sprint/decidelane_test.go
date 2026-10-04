@@ -171,7 +171,7 @@ func TestTheDecideLaneSaysAFailureOnceAndGradesNothingWithNoKey(t *testing.T) {
 	}
 	assert.Equal(t, 1, strings.Count(out.String(), "DECIDE FAILED the work table could not be read"), out.String())
 	out.Reset()
-	stopped, stop := context.WithCancel(context.Background())
+	stopped, stop := context.WithCancel(t.Context())
 	stop()
 	ta.a.decideLoop(stopped, "mem:0", &out)
 	assert.Contains(t, out.String(), "no grading: JEV_API_KEY is absent from this environment", "the loop says it grades nothing")

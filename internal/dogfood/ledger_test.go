@@ -69,8 +69,8 @@ func TestTheRowShowsTheReceiptThatSpeaksBestForTheVerb(t *testing.T) {
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0),
 	}, authors)
 	require.Equal(t, "Stella", rows[0].By, "row shows by=%s, want the non-author's pass", rows[0].By)
-	require.True(t, rows[0].OK == "yes", "row %q", rows[0].Line())
-	require.True(t, rows[0].At == "2026-09-18T09:00:00Z", "row %q", rows[0].Line())
+	require.Equal(t, "yes", rows[0].OK, "row %q", rows[0].Line())
+	require.Equal(t, "2026-09-18T09:00:00Z", rows[0].At, "row %q", rows[0].Line())
 }
 
 func TestTheRowCarriesTheIssueWhenAnEdgeWasFiled(t *testing.T) {
@@ -122,8 +122,8 @@ func TestLedgerCountsAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
 	rows, summary := Ledger(verbs("nova-check links"), []Receipt{
 		receipt("nova-check ghost", "Stella", "2026-09-18T09:00:00Z", true, 0),
 	}, nil)
-	require.True(t, len(rows) == 1, "a receipt for an undeclared verb landed on a row: %q", rows[0].Line())
-	require.True(t, rows[0].By == "nobody", "a receipt for an undeclared verb landed on a row: %q", rows[0].Line())
+	require.Len(t, rows, 1, "a receipt for an undeclared verb landed on a row: %q", rows[0].Line())
+	require.Equal(t, "nobody", rows[0].By, "a receipt for an undeclared verb landed on a row: %q", rows[0].Line())
 	require.Equal(t, 1, summary.Unmatched, "unmatched=%d, want 1; docs drift is a finding, not a silent drop", summary.Unmatched)
 }
 
@@ -181,8 +181,8 @@ func TestGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0),
 	}, authors, true)
 	require.Empty(t, findings, "findings %+v, want none", findings)
-	require.True(t, summary.ByNonAuthor == 1, "summary %q", summary.Line())
-	require.True(t, summary.OpenEdges == 0, "summary %q", summary.Line())
+	require.Equal(t, 1, summary.ByNonAuthor, "summary %q", summary.Line())
+	require.Equal(t, 0, summary.OpenEdges, "summary %q", summary.Line())
 }
 
 // Edge 5 of the 2026-09-18 dogfood pass: `open-edges=0` on a bench whose
@@ -208,8 +208,8 @@ func TestAnEdgeWithAnIssueIsOpenButFiled(t *testing.T) {
 	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 1301)
 	r.Notes = "worked; Edge: the refusal names no remedy"
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{r}, nil)
-	require.True(t, summary.OpenEdges == 1, "summary %q, want one open edge, filed", summary.Line())
-	require.True(t, summary.Unfiled == 0, "summary %q, want one open edge, filed", summary.Line())
+	require.Equal(t, 1, summary.OpenEdges, "summary %q, want one open edge, filed", summary.Line())
+	require.Equal(t, 0, summary.Unfiled, "summary %q, want one open edge, filed", summary.Line())
 }
 
 func TestNotesThatMerelyUseTheWordEdgeAreNotAnEdge(t *testing.T) {
@@ -246,8 +246,8 @@ func TestGateSaysNoToAnEdgeNamedOnlyInTheNotes(t *testing.T) {
 	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
 	r.Notes = "Edge: the refusal names no remedy"
 	findings, _ := Gate(verbs("nova-check links"), []Receipt{r}, nil, false)
-	require.True(t, len(findings) == 1, "findings %+v, want the open edge", findings)
-	require.True(t, findings[0].Kind == "open-edge", "findings %+v, want the open edge", findings)
+	require.Len(t, findings, 1, "findings %+v, want the open edge", findings)
+	require.Equal(t, "open-edge", findings[0].Kind, "findings %+v, want the open edge", findings)
 	require.Contains(t, findings[0].Line(), "no issue filed", "the finding does not say the edge was never filed: %q", findings[0].Line())
 }
 

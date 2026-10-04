@@ -100,26 +100,7 @@ func exampleNext(verb, file string) string {
 	if strings.HasPrefix(file, "-") {
 		command += " --"
 	}
-	return command + " " + shellQuote(file)
-}
-
-// shellQuote renders one path for exampleNext (SPEC.md §2). Ordinary paths stay unchanged;
-// adjacent quote segments preserve shell syntax and apostrophes literally.
-func shellQuote(s string) string {
-	if s != "" {
-		safe := true
-		for _, c := range s {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-				c == '/' || c == '.' || c == '_' || c == '-' || c == ':') {
-				safe = false
-				break
-			}
-		}
-		if safe {
-			return s
-		}
-	}
-	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+	return command + " " + oneline.ShellWord(file)
 }
 
 // dash is a field's empty value as the typed line spells it.

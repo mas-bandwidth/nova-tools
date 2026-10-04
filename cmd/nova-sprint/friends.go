@@ -95,9 +95,9 @@ func friendVerbWords(name string) string {
 	case "friend beat":
 		return "friend beat records that this friend is present. The friend's own machinery runs it every " + every + ". The friend is up while the last beat is under " + down + " old, and down once that long has passed with no beat, or when the friend has never beaten. A beat wakes the friend at once. " + sync + "\n"
 	case "friend down":
-		return "friend down holds the named friend. The friend stays held whatever beat arrives, and where counts working as 0 while the friend is held. friend up releases the hold. " + sync + "\n"
+		return "friend down holds the named friend. The friend stays held whatever beat arrives, and where counts working as 0 while the friend is held. friend up releases the hold. friend down is hold <friend> in the old words, kept for one release: run nova-sprint hold <friend> --reason <text> (her cards finish; --return withdraws them), and unhold <friend>. " + sync + "\n"
 	case "friend up":
-		return "friend up releases a hold that friend down set. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. " + sync + "\n"
+		return "friend up releases a hold that friend down set. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. friend up is unhold <friend> in the old words, kept for one release. " + sync + "\n"
 	default:
 		return ""
 	}
@@ -247,12 +247,15 @@ func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	if err := st.SetFriendHeld(context.Background(), friend, held, c.actor); err != nil {
+	if err := st.FriendNamed(context.Background(), friend); err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
-	sayOK(stdout, c.json, name, token(name)+" OK "+friend+" held="+fmt.Sprint(held), map[string]any{"friend": friend, "held": held})
-	return 0
+	// the old words of hold <friend> and unhold <friend> (one release): she keeps the cards
+	// she holds, as a friend held always has (docs/SPEC-SPRINT.md section 11)
+	return a.runHold(name, "", *c, st, sprint.HoldReq{Names: []string{friend}, Kind: sprint.HoldFriend, Release: !held, Who: c.actor}, func() (string, map[string]any) {
+		return token(name) + " OK " + friend + " held=" + fmt.Sprint(held), map[string]any{"friend": friend, "held": held}
+	}, stdout, stderr)
 }
 
 // oneFriend is the one friend a verb names, or its refusal.

@@ -129,11 +129,18 @@ func TestQuackRereadOverlappingExactRetriesShareOneOperation(t *testing.T) {
 		code      int
 		out, errs string
 	}
+	tb := newTestApp(t)
+	tb.m = ta.m
+	tb.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return gate, nil }
+	tb.a.now = ta.a.now
+	tb.a.sleep = ta.a.sleep
+	apps := []*testApp{ta, tb}
 	start, replies := make(chan struct{}), make(chan reply, 2)
 	for i := 0; i < 2; i++ {
+		app := apps[i]
 		go func() {
 			<-start
-			code, out, errs := ta.do(line)
+			code, out, errs := app.do(line)
 			replies <- reply{code: code, out: out, errs: errs}
 		}()
 	}
