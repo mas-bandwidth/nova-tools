@@ -16,13 +16,14 @@ import (
 
 // A friend's cards taken back (docs/SPEC-SPRINT.md section 1, a friend's card taken back;
 // sprint.FriendTake): friend take <friend> <id>... takes back the cards named that she has
-// not started, friend take --all-unstarted every one, and friend down every one as it holds
+// not started and refuses the rest (the card friend-take-partial.w1; --all-or-nothing takes
+// none when one is refused), friend take --all-unstarted every one, and friend down every one as it holds
 // her. What she has started is read here, outside the step: her beat's running cards and a
 // push on each card's branch (one git ls-remote each, the tip friend sync reads); the step
 // is a function of the tables and that set.
 
 // friendTakeWords is what friend take says on -h.
-const friendTakeWords = "friend take takes back cards dealt to the friend that she has not started: each goes back to ready, withdrawn from her row (no failure, no bound spent: the card records \"taken back by the coordinator: <reason>\"), and the next tick deals the same card at its next generation to another friend up with room, never back to her (a friend's card is never a machine's); a card whose WHO line names her waits until it is briefed for another friend or dropped. A card is refused, one line each and nothing taken, when it is not dealt to that friend or when she has started it: a push on its branch, her beat naming it running (friend beat --running), or finished (in review or later). --all-unstarted takes every card of hers she has not started and says the ones she keeps. A working card taken frees her lane, and her oldest ready card is taken into working at once. friend sync marks a card taken back as taken in her queue file.\n"
+const friendTakeWords = "friend take takes back cards dealt to the friend that she has not started: each goes back to ready, withdrawn from her row (no failure, no bound spent: the card records \"taken back by the coordinator: <reason>\"), and the next tick deals the same card at its next generation to another friend up with room, never back to her (a friend's card is never a machine's); a card whose WHO line names her waits until it is briefed for another friend or dropped. A card is refused, one REFUSED line each, when it is not dealt to that friend or when she has started it: a push on its branch, her beat naming it running (friend beat --running), or finished (in review or later); the others named are taken, and the exit is 1 when any is refused. --all-or-nothing takes none when one is refused. --all-unstarted takes every card of hers she has not started and says the ones she keeps. A working card taken frees her lane, and her oldest ready card is taken into working at once. friend sync marks a card taken back as taken in her queue file.\n"
 
 // friendStarted is the friend's cards she has started, each with its why: every work card
 // ready or working on her row that her last beat names running (by its id, its job or its
@@ -81,6 +82,7 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	reason := fs.String("reason", "", "why the cards are taken back, kept on each card (\"taken back by the coordinator: <reason>\")")
 	all := fs.Bool("all-unstarted", false, "take every card of hers she has not started, naming no card")
+	allOrNothing := fs.Bool("all-or-nothing", false, "take none of the cards named when any one is refused")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
@@ -115,7 +117,9 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 	if *all {
 		c.says = keptSays(friend, started)
 	}
-	return a.runStep(name, *c, st, store.FriendTakeStep(sprint.FriendTakeReq{Friend: friend, IDs: ids, All: *all, Reason: *reason, Started: started, Who: c.actor}), stdout, stderr)
+	step := store.FriendTakeStep(sprint.FriendTakeReq{Friend: friend, IDs: ids, All: *all, AllOrNothing: *allOrNothing, Reason: *reason, Started: started, Who: c.actor})
+	step.Named = false // the takeable are taken and the rest refused; sprint.FriendTake keeps --all-or-nothing itself
+	return a.runStep(name, *c, st, step, stdout, stderr)
 }
 
 // friendLevelWords is what friend level says on -h.

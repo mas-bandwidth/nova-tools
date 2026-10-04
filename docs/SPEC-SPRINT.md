@@ -620,6 +620,20 @@ written with the moves. A step whose write committed and whose display copies
 then failed to sync reports OK, for every verb, with the sync's error on its own
 line, never FAILED: the table holds what the step wrote.
 
+### friend-take-partial.w1
+
+**friend take of several cards takes the takeable** (the coordinator took eight
+cards back from one friend one at a time in a loop because one of the set had
+started; `sprint.FriendTake`, `FriendTakeReq.AllOrNothing`). `friend take
+<friend> <id>...` takes back every card named that it may take and refuses each
+one the friend keeps (one she has started, or one not dealt to her), one
+`REFUSED` line each, exit 1 when any is refused; this replaces "with ids named,
+all or none" in "A friend's card taken back" above. `--all-or-nothing` keeps the
+old behaviour: when any card named is refused it takes none, and each card that
+would have been taken is refused too, "not taken: --all-or-nothing, and <n> of
+the cards named <was|were> refused"
+(`TestFriendTakeTakesTheTakeableAndNamesTheRest`).
+
 ## 2. The cards
 
 **Primary.** One unit of work, between an issue and a pull request. One stream
