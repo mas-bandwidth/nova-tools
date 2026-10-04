@@ -21,12 +21,12 @@ func TestEveryMistakeIsRefusedWithTheWayForward(t *testing.T) {
 		args []string
 		want string
 	}{
-		{nil, "nova-check REFUSED: no verb given; quickstart is the first run; the verbs are quickstart, attest, links"},
-		{[]string{"linsk"}, `nova-check REFUSED: unknown verb "linsk"; did you mean links? the verbs are quickstart`},
-		{[]string{"links", "--dri", "x"}, "nova-check links REFUSED: unknown flag --dri; the flags of links are"},
-		{[]string{"spelling", "--dri", "x"}, "nova-check spelling REFUSED: unknown flag --dri; the flags of spelling are"},
-		{[]string{"version", "x"}, "nova-check version REFUSED: takes no flags and no arguments"},
-		{[]string{"version", "--zz"}, "nova-check version REFUSED: takes no flags and no arguments except --json: unknown flag --zz"},
+		{nil, "CHECK REFUSED: no verb given; the verbs are quickstart, attest, links"},
+		{[]string{"linsk"}, `CHECK REFUSED: unknown verb "linsk"; did you mean links? the verbs are quickstart`},
+		{[]string{"links", "--dri", "x"}, "LINKS REFUSED: unknown flag --dri; the flags of links are"},
+		{[]string{"spelling", "--dri", "x"}, "SPELLING REFUSED: unknown flag --dri; the flags of spelling are"},
+		{[]string{"version", "x"}, `VERSION REFUSED: takes no positional arguments, got "x"`},
+		{[]string{"version", "--zz"}, "VERSION REFUSED: unknown flag --zz; the flags of version are"},
 	} {
 		exit, stdout, stderr := runCheck(t, tc.args...)
 		assert.Equal(t, 2, exit, "%v", tc.args)
@@ -119,7 +119,7 @@ func TestTheBannerQuickstartAndKernelExamplesMatchOutput(t *testing.T) {
 		{"nova-check quickstart --dir ./self", []string{
 			"QUICKSTART RUN dir=./self checks=2: links, then nocode",
 			"LINKS OK files=1 links=0 excluded=0",
-			"NOCODE OK files=1 clean deny-list=floor-list",
+			"NOCODE OK files=1 clean=true deny-list=floor-list",
 			"QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)",
 		}},
 		{"nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000", []string{"KERNEL OK bytes=9 budget=4000"}},

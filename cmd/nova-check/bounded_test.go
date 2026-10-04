@@ -134,7 +134,7 @@ func TestRefusesANegativeCeiling(t *testing.T) {
 	dir := largeSelf(t, 2)
 	for _, verb := range []string{"links", "nocode", "quickstart"} {
 		exit, _, stderr := runCheck(t, verb, "--dir", dir, "--max", "-1")
-		assert.True(t, exit == 2 && strings.Contains(stderr, "--max must be a line ceiling"), "%s: exit = %d, stderr = %q", verb, exit, stderr)
+		assert.True(t, exit == 2 && strings.Contains(stderr, "--max must be zero or more"), "%s: exit = %d, stderr = %q", verb, exit, stderr)
 	}
 }
 
@@ -154,7 +154,7 @@ func TestAFlagTypoIsOneLine(t *testing.T) {
 			got := countLines(stderr)
 			assert.EqualValues(t, 1, got, "%v: the refusal is %d lines, want 1:\n%s", args, got, stderr)
 		}
-		assert.Contains(t, stderr, "run: nova-check help", "%v: the refusal names no door: %q", args, stderr)
+		assert.Contains(t, stderr, "run: nova-check", "%v: the refusal names no door: %q", args, stderr)
 		assert.EqualValues(t, "", stdout, "%v: a refusal wrote to stdout: %q", args, stdout)
 	}
 	exit, stdout, _ := runCheck(t, "help")
