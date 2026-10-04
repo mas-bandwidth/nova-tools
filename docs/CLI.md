@@ -706,7 +706,10 @@ nova-bus2 log --max 5
 nova-bus2 names
 ```
 
-`send` prints `SEND OK id= to= cc= at=`: the id is the message's for ever. `peek`
+`send` prints `SEND OK id= to= cc= at=`: the id is the message's for ever. Who you
+are is the user the connection logged in as (`NOVA_SPRINT_REDIS_USER`): `--as`
+may repeat it or be left out, and another name is refused; on a store with no
+users (this first run) `--as` is your word and every write says `login=none`. `peek`
 prints `PEEK OK pending= new=` and one `PEEK MESSAGE state= id= from= at=
 subject=` line per message waiting, moving nothing. `recv` prints the oldest
 message a reader lost (delivered, not acked, idle a minute), else the oldest new
@@ -739,9 +742,9 @@ next run). The third is by hand, after a plain `recv`.
 | Command | What it does |
 | --- | --- |
 | `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction |
-| `peek --as <me>` | What waits: pending and new, moving nothing |
-| `recv --as <me> [--forever --exec <cmd>] [--exec <cmd>]` | The oldest message a reader lost, else the oldest new one; with `--exec`, delivered and acked |
-| `ack --as <me> --id <id,...>` | Acks by message id; idempotent |
+| `peek [--as <me>]` | What waits: pending and new, moving nothing |
+| `recv [--as <me>] [--forever --exec <cmd>] [--exec <cmd>]` | The oldest message a reader lost, else the oldest new one; with `--exec`, delivered and acked |
+| `ack [--as <me>] --id <id,...>` | Acks by message id; idempotent |
 | `log [--bodies] [--max <n>]` | The log, oldest first |
 | `names` | The known names: nova-config's friend and machine rows |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |

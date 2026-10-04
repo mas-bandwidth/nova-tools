@@ -163,23 +163,25 @@ The sitting is the loop: ada sends bob one message; bob peeks (new, not yet
 delivered), receives it through `--exec` (the header line and the body go to the
 command, acked when it exits 0), acks an id that is not pending (false, exit 0: ack is idempotent), reads the
 log, and lists the names. The run-owned values are the message's `id=` (a ULID
-from the store's time) and its `at=`.
+from the store's time) and its `at=`. The throwaway store has no users, so every
+write says `login=none`: on the fleet's store the identity is the login user and
+`--as` may be left out.
 
 ### First run
 
 ```text
 $ nova-bus2 send --as ada --to bob --subject hello --body "are you there?"
-SEND OK id=01M42BA18Y1K3SE57HE26SY8T0 to=bob cc=- at=2026-10-04T02:18:54Z
+SEND OK id=01M42BA18Y1K3SE57HE26SY8T0 to=bob cc=- at=2026-10-04T02:18:54Z login=none
 
 $ nova-bus2 peek --as bob
 PEEK OK pending=0 new=1
 PEEK MESSAGE state=new id=01M42BA18Y1K3SE57HE26SY8T0 from=ada at=2026-10-04T02:18:54Z subject="hello"
 
 $ nova-bus2 recv --as bob --exec true
-RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z acked=true exec_exit=0 subject="hello"
+RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z login=none acked=true exec_exit=0 subject="hello"
 
 $ nova-bus2 ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
-ACK OK acked=0 asked=1
+ACK OK acked=0 asked=1 login=none
 ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
 
 $ nova-bus2 log --max 5
