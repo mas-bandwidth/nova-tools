@@ -17,7 +17,8 @@ import (
 // The first run needs the binary alone, so it runs in the test's own empty
 // directory: the manifest path the example lines name is resolved under
 // t.TempDir(), so nothing is written into the checkout and the process working
-// directory is never changed.
+// directory is never changed. t.TempDir for a path is the seam the serial-tests
+// ledger names (internal/ci/testdata/serial-tests_allowlist.txt).
 func TestExecutableFirstRun(t *testing.T) {
 	t.Parallel()
 
