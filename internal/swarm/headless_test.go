@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -168,17 +169,26 @@ func TestHeadlessLoginIsReadFromTheStatusVerb(t *testing.T) {
 	assert.Nil(t, HeadlessLoginArgv(harness.OpenCode))
 }
 
-// Each harness's login lives in the bench's own ~/.<kind>, which the child is pointed at
-// by name where the program reads one, and by a link under its data home where it reads
-// HOME alone.
-func TestAHeadlessHarnessIsPointedAtTheBenchsOwnHome(t *testing.T) {
+// Each harness runs from a private home under the child's data home, never the bench's own
+// ~/.<kind>: the child is pointed at it by name where the program reads one, and grok, which
+// reads HOME alone, finds it where HOME puts it. Of the bench's login only the credential
+// file is named for copying.
+func TestAHeadlessHarnessRunsFromAPrivateHome(t *testing.T) {
 	t.Parallel()
-	h := HeadlessHomeOf(harness.Claude, "/home/b")
-	assert.Equal(t, HeadlessHome{Dir: "/home/b/.claude", Env: []string{"CLAUDE_CONFIG_DIR=/home/b/.claude"}}, h)
-	h = HeadlessHomeOf(harness.Codex, "/home/b")
-	assert.Equal(t, HeadlessHome{Dir: "/home/b/.codex", Env: []string{"CODEX_HOME=/home/b/.codex"}}, h)
-	h = HeadlessHomeOf(harness.Grok, "/home/b")
-	assert.Equal(t, HeadlessHome{Dir: "/home/b/.grok", Link: ".grok"}, h)
+	h := HeadlessHomeOf(harness.Claude, "/home/b", "/s/data")
+	assert.Equal(t, HeadlessHome{Source: "/home/b/.claude", Dir: "/s/data/.claude", Env: []string{"CLAUDE_CONFIG_DIR=/s/data/.claude"}, Login: []string{".credentials.json"}}, h)
+	h = HeadlessHomeOf(harness.Codex, "/home/b", "/s/data")
+	assert.Equal(t, HeadlessHome{Source: "/home/b/.codex", Dir: "/s/data/.codex", Env: []string{"CODEX_HOME=/s/data/.codex"}, Login: []string{"auth.json"}}, h)
+	h = HeadlessHomeOf(harness.Grok, "/home/b", "/s/data")
+	assert.Equal(t, HeadlessHome{Source: "/home/b/.grok", Dir: "/s/data/.grok", Login: []string{"auth.json"}}, h)
+	for _, k := range harness.Headless {
+		h := HeadlessHomeOf(k, "/home/b", "/s/data")
+		assert.NotEqual(t, h.Source, h.Dir, k)
+		assert.True(t, strings.HasPrefix(h.Dir, "/s/data/"), "%s: the home is under the data home, a write of the wall", k)
+		for _, f := range h.Login {
+			assert.Equal(t, filepath.Base(f), f, "%s: a credential is a file by name, never a path", k)
+		}
+	}
 }
 
 // The fence of an opencode child denies webfetch (FencePermission); a headless child has no

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,28 +36,66 @@ func TestAHeadlessLaunchHasTheHarnesssOwnArgv(t *testing.T) {
 	assert.Equal(t, "run", argv[1], "an opencode binary launches through the providers table's row")
 }
 
-// The wall grants the headless harness's own home as a write where it exists, and the
-// child is pointed at it by name (claude, codex) or by a link under its data home (grok).
-func TestAHeadlessChildIsPointedAtTheHarnesssHome(t *testing.T) {
+// A headless child runs from a private home under its data home, which the wall already
+// writes, and the bench's own login directory is on no mount list at all: neither a write
+// (a card could edit its config or hooks, or the credential) nor a read (its shell would
+// read the whole login and the interactive history). Of that directory only the credential
+// file is copied, 0600, to the private home; the bench's own file is only read.
+func TestAHeadlessChildIsGivenNoMountOfTheBenchsLogin(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(home, ".codex"), 0o755))
-	cfg := nativeRunConfig{binary: "codex", model: "subscription-codex/m", slotDir: "/s", benchHome: home, benchOS: "linux", noSharedCaches: true}
-	argv := nativeSandboxArgv([]string{"codex"}, cfg, "/s/data", "/s/jobs/l", "/s/tmp/l")
-	assert.Contains(t, argv, filepath.Join(home, ".codex"))
-	cfg.binary = "claude" // no ~/.claude here: nothing to grant
-	argv = nativeSandboxArgv([]string{"claude"}, cfg, "/s/data", "/s/jobs/l", "/s/tmp/l")
-	assert.NotContains(t, argv, filepath.Join(home, ".claude"))
+	for _, k := range harness.Headless {
+		require.NoError(t, os.MkdirAll(filepath.Join(home, "."+k, "sessions"), 0o755))
+		cfg := nativeRunConfig{binary: k, model: "subscription-" + k + "/m", slotDir: "/s", benchHome: home, benchOS: "linux", noSharedCaches: true}
+		argv := nativeSandboxArgv([]string{k}, cfg, "/s/data", "/s/jobs/l", "/s/tmp/l")
+		for _, a := range argv {
+			assert.False(t, strings.HasPrefix(a, filepath.Join(home, "."+k)), "%s: the bench's login directory is mounted: %s", k, a)
+		}
+		i := slices.Index(argv, "/s/data")
+		require.GreaterOrEqual(t, i, 1)
+		assert.Equal(t, "--write", argv[i-1], "%s: the private home sits in the data home, the one write it needs", k)
+	}
+}
 
-	data := t.TempDir()
-	h := swarm.HeadlessHomeOf(harness.Grok, home)
-	require.NoError(t, linkHeadlessHome(data, h))
-	target, err := os.Readlink(filepath.Join(data, ".grok"))
+func TestAHeadlessChildsPrivateHomeHoldsItsCredentialAndNothingElse(t *testing.T) {
+	t.Parallel()
+	home, data := t.TempDir(), t.TempDir()
+	login := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(filepath.Join(login, "archived_sessions"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(login, "auth.json"), []byte(`{"tokens":"x"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(login, "config.toml"), []byte("hooks = 1\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(login, "archived_sessions", "s.jsonl"), []byte("history\n"), 0o600))
+
+	// a previous card's leftovers in the private home are gone
+	h := swarm.HeadlessHomeOf(harness.Codex, home, data)
+	require.NoError(t, os.MkdirAll(h.Dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(h.Dir, "old-session.jsonl"), nil, 0o600))
+
+	require.NoError(t, seedHeadlessHome(h))
+	names, err := os.ReadDir(h.Dir)
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(home, ".grok"), target)
-	require.NoError(t, linkHeadlessHome(data, h), "a link already there is kept")
-	require.NoError(t, os.WriteFile(filepath.Join(data, ".claude"), nil, 0o644))
-	assert.Error(t, linkHeadlessHome(data, swarm.HeadlessHome{Dir: home, Link: ".claude"}), "a file of the link's name is refused")
+	require.Len(t, names, 1, "the credential alone")
+	assert.Equal(t, "auth.json", names[0].Name())
+	b, err := os.ReadFile(filepath.Join(h.Dir, "auth.json"))
+	require.NoError(t, err)
+	assert.Equal(t, `{"tokens":"x"}`, string(b))
+	fi, err := os.Stat(filepath.Join(h.Dir, "auth.json"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
+
+	// the card writing its copy leaves the bench's login as it was
+	require.NoError(t, os.WriteFile(filepath.Join(h.Dir, "auth.json"), []byte("tampered"), 0o600))
+	b, err = os.ReadFile(filepath.Join(login, "auth.json"))
+	require.NoError(t, err)
+	assert.Equal(t, `{"tokens":"x"}`, string(b))
+
+	// a bench with no login for the harness gets an empty private home: the harness says
+	// logged out, a provider failure of class auth
+	h = swarm.HeadlessHomeOf(harness.Grok, home, data)
+	require.NoError(t, seedHeadlessHome(h))
+	names, err = os.ReadDir(h.Dir)
+	require.NoError(t, err)
+	assert.Empty(t, names)
 }
 
 // A headless launch's usage row is read from its capture: the harness's figures, or
@@ -149,4 +189,27 @@ func TestAHeadlessWallOpensNoAddressBeyondAnOpencodeChilds(t *testing.T) {
 	argv := nativeSandboxArgv([]string{"codex"}, hl, "/s/data", "/s/jobs/l", "/s/tmp/l")
 	assert.NotContains(t, argv, "--net-allow")
 	assert.NotContains(t, argv, "--net-deny")
+}
+
+// A codex install lives inside the bench's own ~/.codex (its `bin/codex` is reached through
+// `~/.local/bin/codex`): the wall reads that install, by the resolved path, and still not
+// the login directory around it.
+func TestAHeadlessChildReadsItsInstallAndNotTheLoginAroundIt(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	release := filepath.Join(home, ".codex", "packages", "standalone", "releases", "0.153.4")
+	bin := filepath.Join(release, "bin", "codex")
+	cfg := nativeRunConfig{binary: "codex", model: "subscription-codex/m", slotDir: "/s", benchHome: home, benchOS: "linux", noSharedCaches: true}
+	argv := nativeSandboxArgv([]string{bin}, cfg, "/s/data", "/s/jobs/l", "/s/tmp/l")
+	reads := map[string]bool{}
+	for i, a := range argv {
+		if a == "--read" {
+			reads[argv[i+1]] = true
+		}
+		assert.NotEqual(t, filepath.Join(home, ".codex"), a, "the login directory itself is on no mount list")
+	}
+	assert.True(t, reads[filepath.Join(release, "bin")], "the binary's directory is read")
+	assert.True(t, reads[release], "so is the install above bin, where codex keeps its resources")
+	assert.Equal(t, release, swarm.HeadlessProgramRoot(bin))
+	assert.Equal(t, "/v/claude/versions", swarm.HeadlessProgramRoot("/v/claude/versions/2.1.220"), "a binary outside a bin directory is read by its own directory")
 }

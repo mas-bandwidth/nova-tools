@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/big"
 	"net"
 	"net/url"
@@ -343,6 +344,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if !isExecutable(bin) {
 		refuseNative(errOut, fmt.Sprintf("the harness binary %s is not executable", oneline.Field(bin)))
 		return nativeRunResult{}, 2
+	}
+	// A headless harness is launched by its resolved path: the wall reads its install, and
+	// never the bench's login directory the symlink chain to it may run through
+	// (swarm.HeadlessProgramRoot).
+	if cfg.headless() != "" {
+		if real, err := filepath.EvalSymlinks(bin); err == nil {
+			bin = real
+		}
 	}
 
 	// (2) THE MODEL. Native routes are named provider/model, and a model id with no
@@ -889,16 +898,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin)
-	// A headless harness is pointed at its own home on the bench (swarm.HeadlessHomeOf): by
-	// name where it reads one, by a link under the data home where it reads HOME alone.
+	// A headless harness runs from a private home under the data home, seeded with its credential
+	// file alone (swarm.HeadlessHomeOf), and is pointed at it by name where it reads one.
 	if k := cfg.headless(); k != "" {
-		h := swarm.HeadlessHomeOf(k, benchHome(cfg))
+		h := swarm.HeadlessHomeOf(k, benchHome(cfg), dataHome)
 		for _, kv := range h.Env {
 			name, _, _ := strings.Cut(kv, "=")
 			childEnv = append(environWithoutName(childEnv, name), kv)
 		}
-		if err := linkHeadlessHome(dataHome, h); err != nil {
-			refuseNative(errOut, fmt.Sprintf("%s the harness's home could not be linked under the data home: %s", oneline.Field(cfg.label), oneline.Err(err)))
+		if err := seedHeadlessHome(h); err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s the harness's private home could not be made under the data home: %s", oneline.Field(cfg.label), oneline.Err(err)))
 			return nativeRunResult{}, 2
 		}
 	}
@@ -1823,6 +1832,11 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	// Without the harness directory the wall denies even the resolver's own files, and
 	// without /opt/homebrew the common toolchain roots are invisible.
 	argv = append(argv, "--read", filepath.Dir(bin))
+	if cfg.headless() != "" {
+		if root := swarm.HeadlessProgramRoot(bin); root != filepath.Dir(bin) {
+			argv = append(argv, "--read", root)
+		}
+	}
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
 		argv = append(argv, "--read", "/opt/homebrew")
 	}
@@ -1851,13 +1865,6 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 			flag = "--read"
 		}
 		argv = append(argv, flag, root.Path)
-	}
-	// A headless harness's own home on the bench (swarm.HeadlessHomeOf): its login and its
-	// sessions. A write, because the harness writes there, and only where it exists.
-	if k := cfg.headless(); k != "" {
-		if h := swarm.HeadlessHomeOf(k, benchHome(cfg)); isDir(h.Dir) {
-			argv = append(argv, "--write", h.Dir)
-		}
 	}
 	// The worker description's own read roots (issue #1463): the directories a person at the
 	// desk declared every job of this worker may read. They are --read and never --write and
@@ -2276,27 +2283,32 @@ func headlessLaunchUsage(kind string, capture []byte) (usage swarm.ProviderUsage
 	return u, "", ""
 }
 
-// linkHeadlessHome links the harness's home under the child's data home when the harness
-// reads HOME alone (HeadlessHome.Link); a link already there is kept, a file of that name
-// is refused.
-func linkHeadlessHome(dataHome string, h swarm.HeadlessHome) error {
-	if h.Link == "" {
-		return nil
+// seedHeadlessHome makes the harness's private home (swarm.HeadlessHome): emptied of what
+// an earlier card of this slot left, then given a copy of the credential files the harness
+// needs, 0600, and nothing else of the bench's own login. A credential the bench has not got
+// is skipped: the harness then answers logged out, which the run classes as a provider
+// failure of class auth (swarm.HeadlessFailure). The bench's own files are only read, so
+// the card can write its copy and never the login.
+func seedHeadlessHome(h swarm.HeadlessHome) error {
+	if err := safepath.RemoveUnder(filepath.Dir(h.Dir), h.Dir); err != nil {
+		return err
 	}
-	p := filepath.Join(dataHome, h.Link)
-	if fi, err := os.Lstat(p); err == nil {
-		if fi.Mode()&os.ModeSymlink == 0 {
-			return fmt.Errorf("%s is not a link", p)
+	if err := os.MkdirAll(h.Dir, 0o700); err != nil {
+		return err
+	}
+	for _, name := range h.Login {
+		b, err := os.ReadFile(filepath.Join(h.Source, name))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
 		}
-		return nil
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(h.Dir, name), b, 0o600); err != nil {
+			return err
+		}
 	}
-	return os.Symlink(h.Dir, p)
-}
-
-// isDir says whether path is a directory that exists.
-func isDir(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.IsDir()
+	return nil
 }
 
 // launchSpend is one launch's final read as a cost record (internal/cardcost): the five

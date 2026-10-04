@@ -49,28 +49,37 @@ func HeadlessArgv(kind, bin, model, prompt string) ([]string, error) {
 	return nil, fmt.Errorf("%q is not a headless harness; want one of %s", kind, strings.Join(harness.Headless, ", "))
 }
 
-// HeadlessHome is where a headless harness keeps its login and settings on the bench,
-// and how the child is pointed at it: the bench's own `~/.<kind>`, which the wall must
-// grant as a write (the harness writes its sessions there), handed by name in Env
-// (claude: CLAUDE_CONFIG_DIR, codex: CODEX_HOME) or, for a program that derives it from
-// HOME alone (grok), by a link of that name under the child's data home (Link).
+// HeadlessHome is the home a headless harness runs from: a PRIVATE directory under the
+// child's data home, which is the child's HOME and a write of the wall, so the harness
+// writes whatever it keeps (sessions, databases, caches, its config) there and the card
+// discards it. The bench's own login directory (`~/.claude`, `~/.codex`, `~/.grok`) is
+// never mounted, readable or writable: it holds the whole login, the interactive history,
+// the harness's config and hooks, and a write there is a code path outside the wall. What
+// the harness needs of it is its credential file alone, Login, copied into Dir before the
+// launch (docs/SPEC-SWARM.md, what a card can reach). The harness is pointed at Dir by name
+// in Env (claude: CLAUDE_CONFIG_DIR, codex: CODEX_HOME) or, grok reading HOME alone, by
+// being where HOME puts it.
 type HeadlessHome struct {
-	Dir  string   // the harness's own directory on the bench
-	Env  []string // NAME=value entries the child carries, nil when the harness reads none
-	Link string   // the name under the data home linked to Dir, "" when none
+	Source string   // the harness's own directory on the bench, where Login is copied from
+	Dir    string   // the private home under the data home
+	Env    []string // NAME=value entries the child carries, nil when the harness reads none
+	Login  []string // the credential files, by name, copied from Source to Dir: nothing else is
 }
 
-// HeadlessHomeOf is HeadlessHome for one harness under the bench's home directory.
-func HeadlessHomeOf(kind, benchHome string) HeadlessHome {
-	dir := filepath.Join(benchHome, "."+kind)
+// HeadlessHomeOf is HeadlessHome for one harness: Source under the bench's home directory,
+// Dir under the child's data home. The credential file is claude's `.credentials.json` (a
+// machine that keeps it in the OS keychain has none to copy), codex's and grok's `auth.json`.
+func HeadlessHomeOf(kind, benchHome, dataHome string) HeadlessHome {
+	h := HeadlessHome{Source: filepath.Join(benchHome, "."+kind), Dir: filepath.Join(dataHome, "."+kind)}
 	switch kind {
 	case harness.Claude:
-		return HeadlessHome{Dir: dir, Env: []string{"CLAUDE_CONFIG_DIR=" + dir}}
+		h.Env, h.Login = []string{"CLAUDE_CONFIG_DIR=" + h.Dir}, []string{".credentials.json"}
 	case harness.Codex:
-		return HeadlessHome{Dir: dir, Env: []string{"CODEX_HOME=" + dir}}
+		h.Env, h.Login = []string{"CODEX_HOME=" + h.Dir}, []string{"auth.json"}
 	default:
-		return HeadlessHome{Dir: dir, Link: "." + kind}
+		h.Login = []string{"auth.json"}
 	}
+	return h
 }
 
 // HeadlessLoginArgv is the verb that says whether a headless harness is logged in,
@@ -329,4 +338,19 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// HeadlessProgramRoot is the install a resolved (symlink-free) headless binary runs from,
+// the one directory the wall reads for it: the binary's own directory, and when that is a
+// `bin` directory the install above it, where the program keeps what it runs beside bin
+// (codex: codex-path and codex-resources). A launch is by the resolved path because the
+// wall reads the install and not the symlink chain that leads to it (`~/.local/bin/codex`
+// points into `~/.codex/packages`, which no mount names), so the bench's login directory
+// stays on no mount list.
+func HeadlessProgramRoot(resolved string) string {
+	dir := filepath.Dir(resolved)
+	if filepath.Base(dir) == "bin" {
+		return filepath.Dir(dir)
+	}
+	return dir
 }

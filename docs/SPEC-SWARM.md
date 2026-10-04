@@ -204,11 +204,32 @@ one that has it. `native` learns the harness from the binary's name.
 The same wall, the same job directory, the same allowlist environment and the same
 deadline and idle watch as an opencode child; the permission mode is bypass because the
 wall is the boundary, as it is for an opencode child whose own fence allows every tool
-inside it. The harness's own home on the bench (`~/.claude`, `~/.codex`, `~/.grok`: its
-login and its sessions) is granted to the wall as a write where it exists, and the child
-is pointed at it by name (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) or, for grok, which reads
-`HOME` alone, by a link of that name under the data home. There is no session database
-to sample: the usage is read once from `<job>/harness-output.log` when the child is
+inside it, and the harness's own web tools are off (the opencode fence denies webfetch;
+the argv carries `--disallowed-tools WebFetch,WebSearch`, `-c web_search="disabled"`,
+`--disable-web-search`). The network is the opencode child's and no wider: the wall makes
+no network promise to either, and the one address it opens by name, a keyless provider's
+loopback (`--net-allow`), a headless child is never given.
+
+**What a card's shell can reach.** The harness runs from a private home under the data
+home (`<slot>/data/.claude`, `.codex`, `.grok`), which is the child's `HOME` and a write of
+the wall, and the child is pointed at it by name (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) or,
+for grok, which reads `HOME` alone, by being where `HOME` puts it. Each launch empties it
+and copies in the harness's credential file and nothing else of the bench's own login:
+claude's `.credentials.json` (a machine that keeps it in the OS keychain has none to copy),
+codex's and grok's `auth.json`, mode 0600. The bench's own `~/.claude`, `~/.codex` and
+`~/.grok` are on no mount list, readable or writable, apart from the install the binary
+runs from: the binary is launched by its resolved path and the wall reads its directory
+and, when that is a `bin` directory, the install above it (`swarm.HeadlessProgramRoot`),
+read-only. So a card's shell can read and write the job, the data home and its private
+home, and can read the copy of the credential file there, which the harness itself needs
+inside the same wall (a shell inside the wall cannot be kept from the file the harness
+beside it reads); it cannot read the interactive history, the config, hooks or plugins of
+the bench's login, cannot write anything of it (a write there would run outside the wall
+the next time the login's owner started the harness), and cannot change the credential the
+bench keeps: the copy is the card's and is replaced at the next launch. A token the
+harness refreshes during a turn is refreshed in the copy only.
+
+There is no session database to sample: the usage is read once from `<job>/harness-output.log` when the child is
 gone, so the live sampler is not started, the budgets (`--tokens`, `--usd`) are asked of
 the final read, and the deadline is the live stop; a numeric budget needs no `sqlite3`.
 The usage row's `usage=none reason=` is `no-usage` when the harness printed no result
