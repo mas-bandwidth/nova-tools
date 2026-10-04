@@ -16,8 +16,8 @@ import (
 // card's go vet exit 126: the step process's HOME is the slot, and the wall must still
 // grant the bench sdk the shim execs.
 func TestStepReadsGrantsTheToolchainFromTheBenchHomeWhenProcessHomeIsTheSlot(t *testing.T) {
-	slot := t.TempDir()
-	t.Setenv("HOME", slot)
+	t.Parallel()
+	slot := t.TempDir() // the process HOME of a script step; stepReads takes the bench home as an argument and never reads it
 	home := t.TempDir()
 	sdk := filepath.Join(home, "sdk")
 	require.NoError(t, os.MkdirAll(sdk, 0o755))
