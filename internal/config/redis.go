@@ -98,6 +98,7 @@ type RedisApplier struct {
 	coordinatorRead bool
 	friendHosts     map[string]string // friend name -> beat host
 	loopsDir        string
+	loopsDirRead    bool
 }
 
 func (a *RedisApplier) now() int64 {
@@ -747,6 +748,27 @@ func boolText(s string) string {
 	return strconv.FormatBool(b)
 }
 
+// readLoopsDir settles the directory a loop's log path is derived from: the
+// fleet row's loops_dir (docs/SPEC-CONFIG.md, "fleet"). The value is the one
+// the row this applier read or wrote carries; a run that applies only loops
+// reads no fleet row, so the applied key is read once here, as charge reads
+// the coordinator.
+func (a *RedisApplier) readLoopsDir(ctx context.Context) error {
+	if a.loopsDirRead {
+		return nil
+	}
+	a.loopsDirRead = true
+	if a.loopsDir != "" {
+		return nil
+	}
+	dir, err := a.Client.Get(ctx, FleetKey("loops_dir")).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("redis: read %s: %w", FleetKey("loops_dir"), err)
+	}
+	a.loopsDir = dir
+	return nil
+}
+
 // writeHash writes the row's whole hash (every field, name, rev, at and the
 // derived fields) and its name into the set, in one transaction. The hash
 // is replaced, not merged: a field the row leaves empty is written empty.
@@ -755,6 +777,11 @@ func (a *RedisApplier) writeHash(ctx context.Context, h hashKind, row Row, idem 
 	rev, _ := strings.CutPrefix(idem, "config:"+h.kind+":")
 	fields := []any{"name", row.Name, "rev", rev, "at", strconv.FormatInt(a.now(), 10)}
 	if h.extra != nil {
+		// A loop's derived log is the fleet's loops_dir and its name, and
+		// this kind may be the only one the run applies.
+		if err := a.readLoopsDir(ctx); err != nil {
+			return err
+		}
 		fields = append(fields, h.extra(a, row.Name)...)
 	}
 	for _, f := range k.Fields {
@@ -804,16 +831,21 @@ func (a *RedisApplier) readSingleton(ctx context.Context, kind string, key func(
 		v[f.Name] = vals[i].Val()
 	}
 	if kind == KindFleet {
-		a.loopsDir = v["loops_dir"]
+		a.loopsDir, a.loopsDirRead = v["loops_dir"], true
 	}
 	return map[string]View{kind: v}, revValue(rev), nil
 }
 
 // writeSingleton is a plain SET per field (nova-config's own keys; no
 // function in the library reads or writes them), DEL when the row names
-// nothing.
+// nothing. The fleet row's loops_dir is the directory a loop's log path is
+// derived from, so the row written settles it: on a first apply the key read
+// above is absent and this row carries the migration's seed.
 func (a *RedisApplier) writeSingleton(ctx context.Context, kind string, key func(string) string, row Row) error {
 	k, _ := Lookup(kind)
+	if kind == KindFleet {
+		a.loopsDir, a.loopsDirRead = row.Fields["loops_dir"], true
+	}
 	pipe := a.Client.TxPipeline()
 	for _, f := range k.Fields {
 		if v := row.Fields[f.Name]; v == "" {

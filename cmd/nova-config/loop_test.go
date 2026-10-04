@@ -219,7 +219,7 @@ func TestALoopArgvWithAWidthIsRefused(t *testing.T) {
 	assert.Contains(t, out, ` argv=["nova-swarm","member","--as","reader-m1","--reader"] `, "the row as it was")
 	assert.NotContains(t, out, "width=", "a loop has no width field")
 
-	code, _, errs = h.run(t, "fleet", "set", "--redis_port", "6380", "--pg_dsn", dsn)
+	code, _, errs = h.run(t, "fleet", "set", "--redis_port", "6380", "--pg_dsn", dsn, "--loops_dir", "~/nova-bench/loops")
 	require.Equal(t, 0, code, errs)
 	for _, kind := range []string{"machine", "fleet", "loop"} {
 		code, out, errs = h.run(t, "apply", "--kind", kind)

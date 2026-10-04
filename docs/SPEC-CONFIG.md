@@ -202,13 +202,13 @@ row's.
 
 The kind's `Check` bounds `redis_port`, accepts only a password-free
 `postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`, and
-requires that `loops_dir` must be non-empty: a missing or blank value is
-refused, not only a present empty string. A refusal never reproduces a
-password from the input. Fleet apply and inventory refuse either endpoint
-unset, naming one `nova-config fleet set --redis_port <port> --pg_dsn <dsn>`
-command. Migration 0014 (`0014_fleet_endpoints.sql`) leaves the port NULL and
-the DSN empty. Full apply checks both before writing any kind; applying
-another kind alone does not require these endpoints.
+requires `loops_dir` to be non-empty: a store write checks the row it would
+leave, which carries every field, so a fleet that has declared no directory
+is refused until one is. A refusal never reproduces a password from the
+input. Fleet apply and inventory refuse either endpoint unset, naming one
+`nova-config fleet set --redis_port <port> --pg_dsn <dsn>` command. Migration 0014 (`0014_fleet_endpoints.sql`)
+leaves the port NULL and the DSN empty. Full apply checks both before writing
+any kind; applying another kind alone does not require these endpoints.
 
 **`friend`** (`config.friends`): what someone decides for a friend. Anything
 a friend would just know is runtime Redis data. Where she runs, her harness, her logins and her wake path are hers: her own
