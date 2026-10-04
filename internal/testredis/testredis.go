@@ -411,7 +411,7 @@ func redact(args []string) []string {
 }
 
 // commandLine is the arguments on one line, every word quoted, so an empty
-// argument (--save "") and one with whitespace in it read as what they are.
+// argument (--save "") and one with a blank in it read as what they are.
 func commandLine(args []string) string {
 	words := make([]string, len(args))
 	for i, arg := range args {
