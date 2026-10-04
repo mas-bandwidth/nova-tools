@@ -12,6 +12,7 @@ import (
 func asleepRig(t *testing.T, barrier string) *rig {
 	t.Helper()
 	r := newRig(t)
+	r.gate = make(chan struct{}, 2048)
 	r.d.StateDir = t.TempDir()
 	_, err := UpdateSessionState(r.d.StateDir, func(s *SessionState) error {
 		s.Coordinator = "ada"
@@ -25,6 +26,7 @@ func asleepRig(t *testing.T, barrier string) *rig {
 }
 
 func TestDaemonSleepHoldsWithoutAttempt(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		r := asleepRig(t, "")
 		r.send(t, "bob", "held", "ordinary")
@@ -38,6 +40,7 @@ func TestDaemonSleepHoldsWithoutAttempt(t *testing.T) {
 }
 
 func TestDaemonSleepLargeBacklogCoordinatorFirst(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		r := asleepRig(t, "")
 		for i := 0; i < 1001; i++ {
@@ -54,6 +57,7 @@ func TestDaemonSleepLargeBacklogCoordinatorFirst(t *testing.T) {
 }
 
 func TestDaemonRestartRememberedBarrierDoesNotWake(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		r := asleepRig(t, "")
 		r.send(t, "bob", "held", "ordinary")
@@ -72,6 +76,7 @@ func TestDaemonRestartRememberedBarrierDoesNotWake(t *testing.T) {
 }
 
 func TestDaemonRestartAwakeBarrierBeforeHeld(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		r := asleepRig(t, "")
 		r.send(t, "bob", "held", "ordinary")
@@ -88,6 +93,7 @@ func TestDaemonRestartAwakeBarrierBeforeHeld(t *testing.T) {
 }
 
 func TestDaemonMissingBarrierRefuses(t *testing.T) {
+	t.Parallel()
 	r := asleepRig(t, "123-0")
 	err := r.d.Run(context.Background())
 	require.ErrorContains(t, err, "missing from daemon-owned pending")
@@ -95,6 +101,7 @@ func TestDaemonMissingBarrierRefuses(t *testing.T) {
 }
 
 func TestDaemonSingletonCannotChangeCoordinator(t *testing.T) {
+	t.Parallel()
 	r := asleepRig(t, "")
 	lock, err := TakeDaemonLock(r.d.StateDir, "bob")
 	require.NoError(t, err)
@@ -108,6 +115,7 @@ func TestDaemonSingletonCannotChangeCoordinator(t *testing.T) {
 }
 
 func TestDaemonEntryOrderNumeric(t *testing.T) {
+	t.Parallel()
 	require.True(t, entryBefore("9-100", "10-0"))
 	require.True(t, entryBefore("10-2", "10-11"))
 	require.False(t, entryBefore("10-11", "10-2"))

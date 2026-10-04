@@ -272,8 +272,10 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 		}
 		d.status.Asleep = state.Asleep
 		if busy != nil && !retry.IsZero() && (state.Asleep || (state.WakeBarrier != "" && state.WakeBarrier != busy.entry)) {
-			queueDirty = true
-			queue = append(queue, job{entry: busy.entry})
+			if busy.entry != "" {
+				queueDirty = true
+				queue = append(queue, job{entry: busy.entry})
+			}
 			busy = nil
 			retry = time.Time{}
 			deferrals = 0
@@ -389,8 +391,10 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 						now.UTC().Format(time.RFC3339), r.job.subject, deferrals, deferred.Reason, RecheckEvery, DeferredSaidEvery))
 				}
 				if state.Asleep || (state.WakeBarrier != "" && state.WakeBarrier != busy.entry) {
-					queueDirty = true
-					queue = append(queue, job{entry: busy.entry})
+					if busy.entry != "" {
+						queueDirty = true
+						queue = append(queue, job{entry: busy.entry})
+					}
 					busy = nil
 					retry = time.Time{}
 					deferrals = 0
