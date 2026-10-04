@@ -541,9 +541,8 @@ Progress ==
 CopiesEnd ==
   \A i \in CopyId : (cw[i] \in Live) ~> (cw[i] \in {"ok", "fail"})
 
-\* Ready means READY: a card in ready is dealt, not returned (Glenn
-\* 2026-09-25 1:40 PM ET: waiting -> ready is one way); stated as: from
-\* ready, the next place is working
+\* Ready means READY: a card in ready is dealt, not returned; stated as:
+\* from ready, the next place is working
 ReadyIsOneWay ==
   [][\A c \in Cards : where[c] = "ready" /\ where'[c] /= "ready" => where'[c] \in {"working", "landed", "done"}]_vars
 

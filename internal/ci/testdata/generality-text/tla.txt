@@ -1,4 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
-tla/CardMachine.tla:glenn 1
+# ceiling: 1
 tla/RedisFn.tla:glenn 1
