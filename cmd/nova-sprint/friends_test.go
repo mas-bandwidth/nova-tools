@@ -839,3 +839,47 @@ func TestRegressionFinding4_TrailingNonDigitBytesRefused(t *testing.T) {
 	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
 }
 
+// TestFriendHoldOccupiedRowQueueOnceAndReplayCLI proves that holding a friend with 1 working card
+// clears her queue, returns the card to ready on tick, and replay returns nothing (empty queue).
+func TestFriendHoldOccupiedRowQueueOnceAndReplayCLI(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root)
+
+	// Amy takes the card from ready reserve into working
+	ta.ok("take --as friend.amy s1-1.w1@1")
+
+	// Amy's queue holds the 1 working card
+	var q struct{ Cards []queueCard }
+	ta.json("queue --as friend.amy", &q)
+	require.Len(t, q.Cards, 1)
+	assert.Equal(t, "working", q.Cards[0].Col)
+	assert.Equal(t, "s1-1.w1", q.Cards[0].ID)
+
+	// Hold friend amy (friend down)
+	ta.ok("friend down amy")
+
+	// Amy's queue returns empty (the working card was withdrawn without penalty)
+	ta.json("queue --as friend.amy", &q)
+	assert.Empty(t, q.Cards, "queue must be empty after friend down")
+
+	// Replay: duplicate friend down is idempotent and queue remains empty
+	ta.ok("friend down amy")
+	ta.json("queue --as friend.amy", &q)
+	assert.Empty(t, q.Cards, "replay returns nothing: queue remains empty")
+
+	// Status is held and working is 0
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, "held", w.Tables[sprint.Friends]["amy"]["status"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["ready"])
+
+	// Advance machine tick: primary is back in ready pool
+	ta.ok("tick")
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Work]["s1"][sprint.Ready])
+}
+
+
