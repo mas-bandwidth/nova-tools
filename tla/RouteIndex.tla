@@ -41,12 +41,23 @@
 \* again: a read handed back is asked again on its own card or on a new one,
 \* each a deal of its own (internal/sprint Ask).
 \*
+\* THE MASK (docs/SPEC-SPRINT.md, route-applies-to). Every route has a mask
+\* (Mask[r]) over the executor classes (Executors) and every card an executor
+\* class (ClassOf[c]). A deal takes only an entry whose mask holds the card's
+\* class (Fits): an entry the mask leaves out is skipped as a redeal skips an
+\* entry it leaves out, and the index moves past it. The mask never lapses (a
+\* card is never drawn on a route outside its mask); when no entry of the tier
+\* holds the class the card waits. A pinned card is on its pin and outside the
+\* mask. RouteHonoursMask is the invariant.
+\*
 \* Broken: "none" is the design; "random" takes any entry of the array (the
 \* weighted draw this replaces: RouteFair fails); "noadvance" is a redeal that
 \* takes the entry at the place without moving past the excluded one
 \* (ExcludedNeverDrawn fails); "readapart" is a read that takes the entry at
 \* the place and leaves the index where it is, a read kept apart from the
-\* tier's rotation (RouteIndexAdvancesOncePerCard fails).
+\* tier's rotation (RouteIndexAdvancesOncePerCard fails); "ignore_mask" is a
+\* deal that ignores the mask and takes the entry at the place whatever its
+\* class (RouteHonoursMask fails: the witness).
 \*
 \* WHAT IS NOT MODELLED. Members, widths and the tick (DirtyTick.tla); an entry
 \* that names no enabled route (the deal skips it as it skips an excluded one,
@@ -56,7 +67,7 @@
 \* takes an entry does not change what the index does.
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Tiers, Arr, Cards, TierOf, Pinned, Reads, MaxRedeals, Broken
+CONSTANTS Tiers, Arr, Cards, TierOf, Pinned, Reads, MaxRedeals, Broken, Executors, ClassOf, Mask
 
 VARIABLES ridx, st, route, drawn, rdl, deals, skipped, hist, last
 
@@ -76,10 +87,26 @@ Steps(t, i, ex) ==
          /\ At(t, i + s - 1) \notin ex
          /\ \A u \in 1..(s - 1) : At(t, i + u - 1) \in ex
 
+\* A route's mask holds the executor class: the route applies to it.
+Fits(class, r) == r \in Routes /\ class \in Mask[r]
+
+\* The steps a deal from place i takes for a card of class: the first entry whose
+\* mask holds the class and that is not left out; a fitting entry already left
+\* out is taken only when every fitting entry is left out (the exclusion lapses,
+\* the mask never does). 0 when no entry of the tier holds the class.
+MaskSteps(t, i, ex, class) ==
+  IF \A k \in 1..Len(Arr[t]) : ~Fits(class, Arr[t][k])
+  THEN 0
+  ELSE CHOOSE s \in 1..Len(Arr[t]) :
+         /\ Fits(class, At(t, i + s - 1))
+         /\ \A u \in 1..(s - 1) :
+              ~Fits(class, At(t, i + u - 1)) \/ At(t, i + u - 1) \in ex
+
 \* A pick: the card, the tier, the route, what it left out, whether an entry was
 \* not left out (the exclusion held), and the entries passed over by the rule.
 Pick(c, r, ex, by) == [c |-> c, t |-> TierOf[c], r |-> r, ex |-> ex,
-                       fresh |-> \E k \in 1..Len(Arr[TierOf[c]]) : Arr[TierOf[c]][k] \notin ex,
+                       fresh |-> \E k \in 1..Len(Arr[TierOf[c]]) :
+                                   Fits(ClassOf[c], Arr[TierOf[c]][k]) /\ Arr[TierOf[c]][k] \notin ex,
                        sk |-> by - 1]
 
 TypeOK ==
@@ -90,6 +117,8 @@ TypeOK ==
   /\ rdl \in [Cards -> 0..MaxRedeals]
   /\ deals \in [Tiers -> Nat]
   /\ skipped \in [Tiers -> Nat]
+  /\ ClassOf \in [Cards -> Executors]
+  /\ Mask \in [Routes -> SUBSET Executors]
 
 Init ==
   /\ ridx = [t \in Tiers |-> 0]
@@ -113,17 +142,26 @@ Take(c, r, adv, by) ==
   /\ hist' = [hist EXCEPT ![t] = Append(@, [r |-> r, sk |-> by > 1])]
   /\ last' = Pick(c, r, drawn[c], by)
 
-\* The deal of a ready card that pins no model: the entry at the place, one step.
+\* The deal of a ready card that pins no model: the first entry at or after the
+\* place whose mask holds the card's class, the index moved past the entries the
+\* mask left out. A tier no entry of which holds the class deals nothing.
 Deal(c) ==
   /\ c \notin Pinned
   /\ st[c] = "ready"
-  /\ st' = [st EXCEPT ![c] = "dealt"]
-  /\ UNCHANGED rdl
-  /\ IF Broken = "random"
-     THEN \E k \in 1..Len(Arr[TierOf[c]]) : Take(c, Arr[TierOf[c]][k], 1, 1)
-     ELSE IF Broken = "readapart" /\ c \in Reads
-     THEN Take(c, At(TierOf[c], ridx[TierOf[c]]), 0, 1)
-     ELSE Take(c, At(TierOf[c], ridx[TierOf[c]]), 1, 1)
+  /\ LET t == TierOf[c] IN
+       IF Broken = "random"
+       THEN /\ st' = [st EXCEPT ![c] = "dealt"] /\ UNCHANGED rdl
+            /\ \E k \in 1..Len(Arr[t]) : Take(c, Arr[t][k], 1, 1)
+       ELSE IF Broken = "readapart" /\ c \in Reads
+       THEN /\ st' = [st EXCEPT ![c] = "dealt"] /\ UNCHANGED rdl
+            /\ Take(c, At(t, ridx[t]), 0, 1)
+       ELSE IF Broken = "ignore_mask"
+       THEN /\ st' = [st EXCEPT ![c] = "dealt"] /\ UNCHANGED rdl
+            /\ Take(c, At(t, ridx[t]), 1, 1)
+       ELSE /\ \E k \in 1..Len(Arr[t]) : Fits(ClassOf[c], Arr[t][k])
+            /\ st' = [st EXCEPT ![c] = "dealt"] /\ UNCHANGED rdl
+            /\ LET s == MaskSteps(t, ridx[t], {}, ClassOf[c]) IN
+                 Take(c, At(t, ridx[t] + s - 1), s, s)
 
 \* A pinned card is dealt on its pin: the array and the index untouched.
 Pin(c) ==
@@ -142,18 +180,22 @@ Withdraw(c) ==
   /\ st' = [st EXCEPT ![c] = "withdrawn"]
   /\ UNCHANGED <<ridx, route, drawn, rdl, deals, skipped, hist, last>>
 
-\* The redeal: the next entry from the place that is not left out, the index
-\* moved past it and every entry skipped.
+\* The redeal: the next entry from the place whose mask holds the card's class and
+\* that is not left out, the index moved past it and every entry skipped; the
+\* exclusion lapses to a fitting entry when every fitting one is left out.
 Redeal(c) ==
   LET t == TierOf[c]
-      s == Steps(t, ridx[t], drawn[c])
   IN
   /\ st[c] = "withdrawn"
   /\ st' = [st EXCEPT ![c] = "dealt"]
   /\ rdl' = [rdl EXCEPT ![c] = @ + 1]
   /\ IF Broken = "noadvance"
-     THEN Take(c, At(t, ridx[t]), 1, s)
-     ELSE Take(c, At(t, ridx[t] + s - 1), s, s)
+     THEN LET s == Steps(t, ridx[t], drawn[c]) IN Take(c, At(t, ridx[t]), 1, s)
+     ELSE IF Broken = "ignore_mask"
+          THEN LET s == Steps(t, ridx[t], drawn[c]) IN Take(c, At(t, ridx[t] + s - 1), s, s)
+          ELSE LET s == MaskSteps(t, ridx[t], drawn[c], ClassOf[c]) IN
+               /\ s > 0
+               /\ Take(c, At(t, ridx[t] + s - 1), s, s)
 
 \* A card that finishes is one that is not withdrawn again: no action of its own.
 Next == \E c \in Cards : Deal(c) \/ Pin(c) \/ Withdraw(c) \/ Redeal(c)
@@ -182,6 +224,14 @@ PinNeverAdvances == [][\A c \in Pinned : (st[c] = "ready" /\ st'[c] = "dealt") =
 
 \* A redeal never takes a route left out while an entry of the array is not.
 ExcludedNeverDrawn == last.fresh => last.r \notin last.ex
+
+\* A card is dealt only on a route whose mask holds its executor class: the deal
+\* and a redeal both walk past the entries the mask leaves out, and take none
+\* outside it. A pinned card is on its pin, outside the mask.
+RouteHonoursMask ==
+  \A c \in Cards :
+    (st[c] = "dealt" /\ c \notin Pinned) =>
+      IF route[c] \in Routes THEN ClassOf[c] \in Mask[route[c]] ELSE TRUE
 
 \* Reachability (a reversed witness, written to be false where the design must
 \* reach): a redeal that passed over an entry it left out.
