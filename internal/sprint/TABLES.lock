@@ -96,6 +96,20 @@
 # are as they were. No column changed, so the lines below are unchanged. Held by
 # TestAFriendsStatusIsTheFriendsRuleOverItsBeatsAndItsHold and
 # TestADownFriendShowsNoneWorking.
+#
+# Change, 2026-10-04, a cell's word, not a column: the hold verb (nova-sprint hold and
+# unhold, one verb pair for fleet members, readers, friends and streams; asked by Glenn
+# 1:50 PM ET, "there should be a hold verb in nova-sprint", and 1:51 PM ET, the same for
+# friends, hold and unhold). The card's amendment, in Glenn's words as the card gives them:
+# "trust but VERIFY"; "I want to trust the ok%"; "Mechanical. You know the drill."; "Are
+# they actually doing the work that is shown in the friend table? Really?"; "i don't want
+# dollar amounts for friends. token counts are fine." merge.state reads held while the
+# coordinator holds the stream and it is not stopped (sprint.StreamStateText); fleet.status
+# and friends.status read held as they did. The reason is on the control card and in the
+# hold records, carried by where --json --cards as holds, never a column. No column, fold
+# or row changes, so the lines below are unchanged. Held by
+# TestHoldAndUnholdServeMembersReadersFriendsAndStreams and
+# TestTheHoldVerbsHoldAndReleaseWithTheReason.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
