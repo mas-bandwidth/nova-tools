@@ -22,7 +22,7 @@ The `--against` offline recipe ships a copy-paste smallest tree, and `--json` mi
 ## Compared with earlier ratings
 | earlier | now | evidence |
 |---|---|---|
-|import cannot be tried without a login (6.5 on 2026-10-02) | STILL THERE| `nova-work import --org acme --dry-run` prints IMPORT REFUSED naming the login path, exit 2 |
-|value shapes undocumented (6.5 on 2026-10-02) | CHANGED| `nova-work verify -h` documents the MISSING, EXTRA and DRIFT lines, the path grammar and the 80-byte rule; repo-level want="0-issues" stays unexplained |
-|tree errors one per run (6.5 on 2026-10-02) | FIXED| `nova-work import` with no flags prints two IMPORT REFUSED lines at once, one naming --org and one naming --out, exit 2 |
-|offline drift verification works (10 on 2026-10-02) | STILL THERE| `nova-work verify --tree a.lisp --against b.lisp` prints VERIFY FAILED plus one VERIFY DRIFT line for field=archived, exit 1, with no network read |
+| import cannot be tried without a login (6.5 on 2026-10-02) | STILL THERE | `nova-work import --org acme --dry-run` prints IMPORT REFUSED naming the login path, exit 2 |
+| value shapes undocumented (6.5 on 2026-10-02) | CHANGED | `nova-work verify -h` documents the MISSING, EXTRA and DRIFT lines, the path grammar and the 80-byte rule; repo-level want="0-issues" stays unexplained |
+| tree errors one per run (6.5 on 2026-10-02) | FIXED | `nova-work import` with no flags prints two IMPORT REFUSED lines at once, one naming --org and one naming --out, exit 2 |
+| offline drift verification works (10 on 2026-10-02) | STILL THERE | `nova-work verify --tree a.lisp --against b.lisp` prints VERIFY FAILED plus one VERIFY DRIFT line for field=archived, exit 1, with no network read |
