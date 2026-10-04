@@ -258,6 +258,26 @@ func TestPeekedPingThenPongThenReceiveDoesNotReopenTheChallenge(t *testing.T) {
 	assert.Len(t, r.adaGot(t), 1, "peek and receive share the existing entry reply guard")
 }
 
+func TestReceivingTwoPeekedPingsDoesNotReplayTheOlderChallenge(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.hold, r.releaseAt = make(chan struct{}), 8
+	r.send(t, "ada", "long", "a long task")
+	r.at[2] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) }
+	r.at[4] = func() { r.send(t, "ada", "PING n2", PingText("ada", t0, "n2")) }
+	var asked time.Time
+	r.at[6] = func() { asked = r.d.m.Asked }
+	r.at[11] = func() {
+		assert.Equal(t, "n2", r.d.m.Nonce, "receiving the older peeked entry must not replace the newer nonce")
+		assert.Equal(t, asked, r.d.m.Asked)
+	}
+	r.run(t, 17)
+	assert.Equal(t, "n2", r.d.m.Nonce)
+	assert.Equal(t, asked, r.d.m.Asked)
+	require.Len(t, r.delivered, 3)
+	assert.Len(t, r.adaGot(t), 2)
+}
+
 func TestNoPingForAWindowTellsTheSessionOnceAndAPingTellsItBack(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)

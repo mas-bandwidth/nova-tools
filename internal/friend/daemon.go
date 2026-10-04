@@ -169,9 +169,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 					if !answered[e.Entry] {
 						d.daemonPong(ctx, bus, msg, nonce)
 						answered[e.Entry] = true
-					}
-					for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
-						queue = append(queue, job{subject: p.Subject, text: p.Text})
+						// A peek already applied this event while a turn was running.
+						for _, p := range d.m.Ping(now, seatOf(seat, msg), since, nonce) {
+							queue = append(queue, job{subject: p.Subject, text: p.Text})
+						}
 					}
 				}
 				text := Text(msg)
