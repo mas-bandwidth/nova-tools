@@ -178,6 +178,8 @@ Give a lower-cost worker one bounded behavior, named files, exact base, acceptan
 
 A flash card carries one independently verifiable change in named files with one acceptance gate. Split changes that can each stand on their own, naming ordering dependencies with `DEPENDS-ON`; use pro for inseparable decisions when a later change needs unfinished work in the same files. Setup, editing, tests and reporting can be steps of one task: the number of commands or occurrences of "then" is not the routing test. After two attempts with the same capability failure, preserve useful work and escalate; do not send the unchanged task to flash a third time. Repair transport and result-format failures mechanically before judging capability. Verify the assigned route: `tier: pro` is a ceiling, not proof of a pro starting tier. These are coordinator practices, not a claim that automatic routing enforces them.
 
+Every flash brief says: write the draft early, within the first third of the budget, and commit it before extra probes. Label the checkpoint as a draft and record unfinished work and checks not yet run. Continue the required validation and review; the early commit does not establish completion or a passing gate.
+
 ## 3. The result shape
 
 The child's end is one shape, one `key: value` per line, then free text. `typedrec.ParseCardResult`
