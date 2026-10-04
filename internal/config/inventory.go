@@ -31,7 +31,7 @@ const loopField = "nova_loops"
 type Snapshot struct {
 	// Machines are the machine views by name: user, seat, slots, runners.
 	Machines map[string]View
-	// Fleet is the fleet row's view: store, coordinator, redis_port, pg_dsn.
+	// Fleet is the fleet row's view: store, coordinator, redis_port, pg_dsn, bus.
 	Fleet View
 	// Loops are the loop views by name, nil when the loop kind was never
 	// applied (no rev:loop in config:decl).

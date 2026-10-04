@@ -28,6 +28,8 @@ type rig struct {
 	opened  int
 	openErr error
 	login   string // the user the store logs in as; "" is a store with no users
+	fleet   string // the applied fleet row's bus, read when nothing names the store
+	fleetAt []string
 }
 
 func newRig(names ...string) *rig {
@@ -55,6 +57,13 @@ func (r *rig) world() world {
 			ctx, cancel := context.WithCancel(ctx)
 			r.cancel = cancel
 			return ctx, cancel
+		},
+		fleetBus: func(_ context.Context, addr string) (string, error) {
+			r.fleetAt = append(r.fleetAt, addr)
+			if r.fleet == "down" {
+				return "", io.ErrUnexpectedEOF
+			}
+			return r.fleet, nil
 		},
 		lookup: func(_ context.Context, host string) ([]netip.Addr, error) {
 			return map[string][]netip.Addr{ // built from octets: nothing is dialled, and the ci net rule reads a spelled host
@@ -108,7 +117,7 @@ func TestSendRefusesNamingEveryProblem(t *testing.T) {
 		{"two bodies", []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x", "--stdin"}, nil, []string{"exactly one of --body"}},
 		{"unknown recipient and bad name", []string{"send", "--as", "ada", "--to", "zed,B", "--subject", "s", "--body", "x"}, nil, []string{`"B" is not lowercase`}},
 		{"unknown recipient", []string{"send", "--as", "ada", "--to", "zed", "--subject", "s", "--body", "x"}, nil, []string{"zed is no known name", "nova-config friend add zed"}},
-		{"no store named", []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x"}, map[string]string{}, []string{"--redis is required", RedisEnv}},
+		{"no store named", []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x"}, map[string]string{}, []string{"--redis is required", RedisEnv + " is unset"}},
 		{"empty body", []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", " "}, nil, []string{"the body is empty"}},
 	}
 	for _, c := range cases {
@@ -228,13 +237,30 @@ func TestRecvForeverJSONIsOneObjectPerMessageAndNothingElse(t *testing.T) {
 	assert.Empty(t, got.Stderr)
 }
 
-func TestTheRedisDefaultIsTheBusVariableAlone(t *testing.T) {
+// The store is --redis, else NOVA_BUS_REDIS, else the fleet row's bus field as
+// nova-config apply wrote it into the sprint store (fleet:bus), read at
+// NOVA_SPRINT_REDIS, so no friend types the address; with none of the three,
+// or an empty row, or a sprint store that does not answer, a refusal that
+// names the row and how it is set.
+func TestTheStoreIsTheFlagTheVariableOrTheFleetRow(t *testing.T) {
 	t.Parallel()
 	r := newRig("ada", "bob")
-	r.env = map[string]string{"NOVA_SPRINT_REDIS": "b:1", "NOVA_REDIS_ADDR": "c:1"}
-	r.cli().Do(t, "names").Exit(2).Err("--redis is required", RedisEnv)
-	r.env = map[string]string{RedisEnv: "127.0.0.1:1"}
+	r.env = map[string]string{"NOVA_REDIS_ADDR": "127.0.0.1:1"}
+	r.cli().Do(t, "names").Exit(2).Err("--redis is required", RedisEnv+" is unset", "no "+SprintRedisEnv, "nova-config fleet set --bus")
+	r.env = map[string]string{SprintRedisEnv: "127.0.0.1:6380"}
+	r.cli().Do(t, "names").Exit(2).Err("the fleet's bus row is empty", "nova-config fleet set --bus <host:port>", "nova-config apply")
+	assert.Equal(t, []string{"127.0.0.1:6380"}, r.fleetAt, "the row is read from the sprint store")
+	r.fleet = "down"
+	r.cli().Do(t, "names").Exit(2).Err("could not be read from the sprint store", "unexpected EOF")
+	r.fleet = "store.test:6381"
 	r.cli().Do(t, "names").Exit(0).Out("NAMES OK count=2")
+	r.fleet = "lan.test:6381"
+	r.cli().Do(t, "names").Exit(2).Err("loopback or the tailnet", "lan.test:6381 is 10.0.0.5")
+	r.env[RedisEnv] = "127.0.0.1:1"
+	r.fleetAt = nil
+	r.cli().Do(t, "names").Exit(0).Out("NAMES OK count=2")
+	r.cli().Do(t, "names", "--redis", "127.0.0.1:2").Exit(0).Out("NAMES OK count=2")
+	assert.Empty(t, r.fleetAt, "the variable or the flag names the store; the row is not read")
 }
 
 func TestSendReadsTheBodyFromStdinAndBoundsIt(t *testing.T) {

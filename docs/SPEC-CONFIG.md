@@ -198,6 +198,7 @@ row's.
 | `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
 | `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
+| `bus` | text | | nova-bus: the bus store's address, host:port, read from the applied key when `NOVA_BUS_REDIS` is unset so no friend types it (SPEC-BUS.md, the config); empty until set | `fleet:bus` |
 
 The kind's `Check` bounds `redis_port` and accepts only a password-free
 `postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal

@@ -117,7 +117,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	// The fleet row: there since migrate, set without a name, a machine it
 	// names cannot be removed.
 	out, _ = r.run(t, 0, "fleet", "show")
-	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- created="), "fleet show: %q", out)
+	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- bus=- created="), "fleet show: %q", out)
 	_, errs = r.run(t, 1, "fleet", "set", "--store", "space")
 	require.Equal(t, "nova-config fleet set REFUSED: --store space names no machine row; run: nova-config machine list\n", errs, "fleet set naming no machine: %q", errs)
 	out, _ = r.run(t, 0, "fleet", "set", "--coordinator", "studio")

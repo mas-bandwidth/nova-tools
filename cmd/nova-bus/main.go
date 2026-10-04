@@ -29,12 +29,21 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/redis/go-redis/v9"
 )
 
 var version string
 
-// RedisEnv names the store when --redis does not (SPEC-BUS.md, the config).
-const RedisEnv = "NOVA_BUS_REDIS"
+// RedisEnv names the store when --redis does not; with neither, the store is
+// the fleet row's bus field as nova-config apply wrote it (FleetBusKey) into
+// the sprint store at SprintRedisEnv, so no friend types the address
+// (SPEC-BUS.md, the config). The key is spelled here, as the roster's are in
+// internal/bus, so this command depends on no config code.
+const (
+	RedisEnv       = "NOVA_BUS_REDIS"
+	SprintRedisEnv = "NOVA_SPRINT_REDIS"
+	FleetBusKey    = "fleet:bus"
+)
 
 // ExecBudget bounds one run of --exec's command: a delivery into a harness
 // is a write of a few lines; one that takes longer is stuck. It is also how
@@ -57,6 +66,9 @@ type world struct {
 	run     func(ctx context.Context, command, stdin string, stdout, stderr io.Writer) (exit int, err error)
 	signals func(ctx context.Context) (context.Context, context.CancelFunc)
 	lookup  bus.Lookup // a store named by a host name is judged by every address it resolves to
+	// fleetBus reads the applied fleet row's bus address from the sprint store
+	// at addr ("" when the row has none).
+	fleetBus func(ctx context.Context, addr string) (string, error)
 }
 
 func realWorld() world {
@@ -68,6 +80,7 @@ func realWorld() world {
 			return signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		}}
 	w.open = w.openRedis
+	w.fleetBus = w.readFleetBus
 	return w
 }
 
@@ -84,7 +97,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 // (NOVA_REDIS_BENCH_PASSWORD when it names none); no user is the default
 // user with no password. The password is never on the line and never
 // printed (internal/redisconn).
-func (w world) openRedis(ctx context.Context, addr string) (bus.Store, string, func(), error) {
+// sprintOptions is the fleet's login for a store at addr (the convention above).
+func (w world) sprintOptions(addr string) redisconn.Options {
 	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
 	if w.getenv(redisauth.UserEnv) != "" {
 		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
@@ -92,6 +106,25 @@ func (w world) openRedis(ctx context.Context, addr string) (bus.Store, string, f
 			o.PasswordEnv = redisauth.DefaultPasswordEnv
 		}
 	}
+	return o
+}
+
+// readFleetBus is one GET of FleetBusKey on the sprint store.
+func (w world) readFleetBus(ctx context.Context, addr string) (string, error) {
+	conn, err := redisconn.Open(ctx, w.sprintOptions(addr), w.getenv)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	v, err := conn.Client().Get(ctx, FleetBusKey).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	return v, err
+}
+
+func (w world) openRedis(ctx context.Context, addr string) (bus.Store, string, func(), error) {
+	o := w.sprintOptions(addr)
 	resolved, err := redisconn.Resolve(o, w.getenv)
 	if err != nil {
 		return nil, "", nil, err
@@ -149,7 +182,7 @@ are, and the line says login=none.`,
 					f.String("body", "", "the message's text (or --stdin; at most 1 MiB)")
 					f.Bool("stdin", false, "read the message's text from stdin")
 					f.String("re", "", "the id of the message this one answers")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 					f.Check(func(c *tool.Call) {
 						if c.Given("body") == c.Given("stdin") {
 							c.Problem("the body comes from exactly one of --body <text> or --stdin")
@@ -167,7 +200,7 @@ are, and the line says login=none.`,
 at=<RFC3339> subject=<s> line per message: pending is delivered and not acked, new is never delivered.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 				},
 				Run: w.peek,
 			},
@@ -194,7 +227,7 @@ that fails.`,
 					f.Bool("ack", false, "ack each message after printing it (a plain recv leaves it pending)")
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 					f.Check(func(c *tool.Call) {
 						if c.Bool("forever") && c.Str("exec") == "" {
 							c.Problem("--forever wants --exec <command>: a loop that acks nothing would hand out the same message for ever")
@@ -227,7 +260,7 @@ user, as in send.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.Required("id", "the message ids, comma-separated, as recv printed them")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 				},
 				Run: w.ack,
 			},
@@ -241,7 +274,7 @@ at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<t
 				Flags: func(f *tool.Flags) {
 					f.Bool("bodies", false, "print each message's body as well")
 					f.Max()
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 				},
 				Run: w.log,
 			},
@@ -252,7 +285,7 @@ at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<t
 				Effect:  tool.Inspection,
 				Detail:  "Prints NAMES OK count=<n>, then one NAMES NAME name=<name> line per known name: nova-config's friend and machine rows.",
 				Flags: func(f *tool.Flags) {
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 				},
 				Run: w.names,
 			},
@@ -265,12 +298,12 @@ at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<t
 // is one (bus.CheckAddr, before any dial), and a store that did not answer
 // is one too (exit 2, the banner's table), in redisconn's one line.
 func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
-	addr := c.Want("redis", "the Redis address, host:port (or "+RedisEnv+")")
-	if o := c.Refused(); o != nil {
-		return nil, "", nil, o
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
 	defer cancel()
+	addr, refused := w.address(ctx, c)
+	if refused != nil {
+		return nil, "", nil, refused
+	}
 	if why := bus.CheckAddr(ctx, addr, w.lookup); why != "" {
 		return nil, "", nil, tool.Refuse(why)
 	}
@@ -573,4 +606,25 @@ func (w world) names(c *tool.Call) *tool.Out {
 		o.Item("name", "name", n)
 	}
 	return o
+}
+
+// address is the store a verb opens: --redis (its default is RedisEnv),
+// else the fleet row's bus field read from the sprint store at
+// SprintRedisEnv; with none of the three, a refusal naming all three.
+func (w world) address(ctx context.Context, c *tool.Call) (string, *tool.Out) {
+	if addr := c.Str("redis"); strings.TrimSpace(addr) != "" {
+		return addr, nil
+	}
+	sprint := w.getenv(SprintRedisEnv)
+	if sprint == "" {
+		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset, and with no " + SprintRedisEnv + " the fleet's bus row (nova-config fleet set --bus <host:port>, then apply) cannot be read either; refusing to guess")
+	}
+	addr, err := w.fleetBus(ctx, sprint)
+	if err != nil {
+		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset and the fleet's bus row could not be read from the sprint store: " + err.Error())
+	}
+	if addr == "" {
+		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset and the fleet's bus row is empty; set it once: nova-config fleet set --bus <host:port> --as <you>, then nova-config apply")
+	}
+	return addr, nil
 }

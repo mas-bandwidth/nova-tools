@@ -464,7 +464,8 @@ answers `acked=false` for an id that is not pending, at exit 0. What a first run
 gets wrong: a name that is not a nova-config friend or machine row (`send` and
 `recv` refuse it with the `nova-config friend add` line that adds one);
 `--forever` without `--exec` (a loop that acks nothing would hand out the same
-message for ever); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a store
+message for ever); no store named (`--redis`, else `NOVA_BUS_REDIS`, else the fleet row's `bus` field read
+from the sprint store at `NOVA_SPRINT_REDIS`: `nova-config fleet set --bus <host:port>`, then `apply`); a store
 off loopback and the tailnet (100.64.0.0/10), refused before any dial in one line naming the rule.
 
 ### The harness loop
@@ -1929,7 +1930,7 @@ nova-config <kind> <verb> -h                                             # the v
 nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
 nova-config machine width <name> [--pg <dsn> | --file <path>] [--json]  # the width of the sprint's member on the machine: the row's width field (machine set <name> --width <n>), what nova-sprint fleet sync sets; above 0 it is a member, 0 is none, unset (--width default) is the default, half the machine's cores as fleet sync resolves them from its beat; no Redis
 nova-config machine self [--check] [--json]                              # this machine's own name (NOVA_MACHINE, else the tailnet's name, else the hostname's first label); --check exits 2 when it is no machine row, 3 when unreadable
-nova-config fleet set --store <m> --coordinator <m> --redis_port <port> --pg_dsn <uri> --as <name>         # the one fleet row: no name, no add, remove or list
+nova-config fleet set --store <m> --coordinator <m> --redis_port <port> --pg_dsn <uri> --bus <host:port> --as <name>  # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <name>                # the one sprint row: who coordinates; set it to hand over
 nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
 nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--enabled false] --as <name>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive; a nova-swarm member argv spells no --width, its width is its machine row's

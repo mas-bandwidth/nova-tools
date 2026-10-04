@@ -477,7 +477,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	// The fleet: one row, there from the start, set without a name, its
 	// history the sets alone.
 	out, _ = step(0, "fleet", "show")
-	require.Equal(t, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
+	require.Equal(t, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- bus=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
 	out, _ = step(0, "fleet", "history")
 	require.Equal(t, "CONFIG HISTORY kind=fleet name=fleet changes=0\n", out, "fleet history before a set: %q", out)
 	_, errs = step(1, "fleet", "set", "--store", "space")
@@ -485,7 +485,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	out, _ = step(0, "fleet", "set", "--store", "hulk", "--coordinator", "studio")
 	require.Equal(t, "CONFIG SET kind=fleet name=fleet rev=8 changed=coordinator,store\n", out, "fleet set: %q", out)
 	out, _ = step(0, "fleet", "show")
-	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=hulk coordinator=studio redis_port=- pg_dsn=- created="), "fleet show: %q", out)
+	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=hulk coordinator=studio redis_port=- pg_dsn=- bus=- created="), "fleet show: %q", out)
 	_, errs = step(1, "machine", "remove", "hulk")
 	require.Equal(t, "nova-config machine remove REFUSED: machine hulk is the --store of the fleet; run: nova-config machine list\n", errs, "remove the store machine: %q", errs)
 	out, _ = step(0, "fleet", "set", "--store", "")

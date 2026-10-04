@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -345,12 +346,13 @@ var Kinds = []*Kind{
 		Name:      KindFleet,
 		Table:     "fleet",
 		Singleton: true,
-		Doc:       "the one row of fleet-wide facts: the store and coordinator machines, Redis port and explicit password-free Postgres URI",
+		Doc:       "the one row of fleet-wide facts: the store and coordinator machines, Redis port, explicit password-free Postgres URI and the bus store's address",
 		Fields: []Field{
 			{Name: "store", Type: TypeRef, Ref: KindMachine, Help: "the machine that runs Redis (a machine row), or empty"},
 			{Name: "coordinator", Type: TypeRef, Ref: KindMachine, Help: "the machine the coordinator's loops run on (a machine row), or empty"},
 			{Name: "redis_port", Type: TypeInt, Nullable: true, Help: "the explicit TCP port Redis listens on, from 1 through 65535; unset until declared"},
 			{Name: "pg_dsn", Type: TypeText, Help: "the explicit password-free postgres:// URI the configuration store uses; empty until set"},
+			{Name: "bus", Type: TypeText, Help: "the bus store's Redis address, host:port, what nova-bus reads from the applied fleet:bus when NOVA_BUS_REDIS is unset; empty until set"},
 		},
 		Check: checkFleet,
 	},
@@ -487,6 +489,12 @@ func noteField(what string) Field {
 // endpoints may be unset so an older fleet can migrate before an operator
 // declares them; apply and inventory refuse incomplete endpoints.
 func checkFleet(r Row) error {
+	if raw := r.Fields["bus"]; raw != "" {
+		host, port, err := net.SplitHostPort(raw)
+		if n, perr := strconv.Atoi(port); err != nil || host == "" || perr != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("--bus wants the bus store's address as host:port, the port from 1 through 65535")
+		}
+	}
 	if raw := r.Fields["redis_port"]; raw != "" {
 		port, err := strconv.Atoi(raw)
 		if err != nil || port < 1 || port > 65535 {

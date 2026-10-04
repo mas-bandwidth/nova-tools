@@ -151,7 +151,12 @@ what the bus needs today.
 
 ## The config
 
-The store is `--redis <host:port>`, else `NOVA_BUS_REDIS`. It is on loopback or
+The store is `--redis <host:port>`, else `NOVA_BUS_REDIS`, else the fleet row's
+`bus` field as `nova-config apply` wrote it (`fleet:bus`, in the sprint store at
+`NOVA_SPRINT_REDIS`, with the fleet's login below), so no friend types the
+address: `nova-config fleet set --bus <host:port> --as <me>`, then `apply`, once.
+With none of the three, or an empty row, or a sprint store that does not
+answer, the refusal names the row and how it is set. The store is on loopback or
 the tailnet (100.64.0.0/10) and nowhere else: the tailnet is the boundary and
 there is no ACL behind it (decided 2026-10-04), so an address outside both, by
 literal or by any address its name resolves to, is refused before a dial in one
