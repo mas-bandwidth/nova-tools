@@ -1,4 +1,4 @@
--- 0030: the sprint row's off switch of the tick's rule answers
+-- 0031: the sprint row's off switch of the tick's rule answers
 -- (internal/config/kind.go: Kinds, "sprint", AnswerRules; docs/SPEC-SPRINT.md
 -- section 8, answered by rule): a comma list of rule names, deduplicated and
 -- sorted, each a rule the tick does not answer by while it is listed; '' (the

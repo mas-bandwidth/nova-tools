@@ -430,7 +430,7 @@ config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           DEFAULT '', a decimal or '': no bar;
                           decide_brief_bar added by 0026, text NOT NULL
                           DEFAULT '', a decimal or '';
-                          answer_rules_off added by 0030, text NOT NULL
+                          answer_rules_off added by 0031, text NOT NULL
                           DEFAULT '', a list of rule names)
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,
