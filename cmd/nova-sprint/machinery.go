@@ -10,16 +10,17 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
 )
 
@@ -155,10 +156,18 @@ func (a *app) realOutside() outside {
 			if err != nil {
 				return seatcheck.QueueM{}, err
 			}
-			return readDevMergeQueue(ctx, a.ghQuery, path, a.now())
+			owner, name, err := moduleRepo()
+			if err != nil {
+				return seatcheck.QueueM{}, err
+			}
+			return readDevMergeQueue(ctx, a.ghQuery, owner, name, path, a.now())
 		},
 		machineVersions: func(ctx context.Context, machines []string) (seatcheck.VersionsM, error) {
-			return readMachineVersions(ctx, machines, a.ghQuery, a.sshNovaUpdateVersion)
+			owner, name, err := moduleRepo()
+			if err != nil {
+				return seatcheck.VersionsM{}, err
+			}
+			return readMachineVersions(ctx, machines, owner, name, a.ghQuery, a.novaUpdateVersion)
 		},
 	}
 }
@@ -343,13 +352,24 @@ func measureQueueAndVersions(ctx context.Context, m *seatcheck.Measures, o outsi
 	}
 }
 
-// devQueueOwner is nova-tools' dev merge queue, the one a pull request is
-// thrown out of. The seat check reads that queue and no other.
-const (
-	devQueueOwner  = "mas-bandwidth"
-	devQueueName   = "nova-tools"
-	devQueueBranch = "dev"
-)
+// devQueueBranch is the merge queue the seat check reads: this module's dev.
+// The owner and the repository name come from the module path (moduleRepo),
+// so the check is of the tool's own repository.
+const devQueueBranch = "dev"
+
+// moduleRepo is the owner and name of this module, from the build info, so
+// the queue read names the repository the binary belongs to.
+func moduleRepo() (owner, name string, err error) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info == nil || info.Main.Path == "" {
+		return "", "", fmt.Errorf("dev merge queue: no module path")
+	}
+	parts := strings.Split(info.Main.Path, "/")
+	if len(parts) < 2 || parts[len(parts)-1] == "" || parts[len(parts)-2] == "" {
+		return "", "", fmt.Errorf("dev merge queue: module path %q", info.Main.Path)
+	}
+	return parts[len(parts)-2], parts[len(parts)-1], nil
+}
 
 // devQueueQuery is one read of the queue, the open pull requests on dev, and
 // each one's removals from the queue. devTipQuery is dev's tip commit, whose
@@ -414,16 +434,16 @@ func (a *app) ghQuery(ctx context.Context, doc string, vars map[string]any) ([]b
 	return workgh.GhQuery("gh")(ctx, doc, vars)
 }
 
-func devQueueVars() map[string]any {
-	return map[string]any{"owner": devQueueOwner, "name": devQueueName, "branch": devQueueBranch}
+func devQueueVars(owner, name string) map[string]any {
+	return map[string]any{"owner": owner, "name": name, "branch": devQueueBranch}
 }
 
 // readDevMergeQueue measures the queue. Thrown-out names only pull requests
 // that left, or were removed, since the snapshot of the previous check; the
 // first check has no previous one and names none. A merged pull request left
 // the queue by landing, which is not a throw.
-func readDevMergeQueue(ctx context.Context, gh ghQuery, path string, now time.Time) (seatcheck.QueueM, error) {
-	body, err := gh(ctx, devQueueQuery, devQueueVars())
+func readDevMergeQueue(ctx context.Context, gh ghQuery, owner, name, path string, now time.Time) (seatcheck.QueueM, error) {
+	body, err := gh(ctx, devQueueQuery, devQueueVars(owner, name))
 	if err != nil {
 		return seatcheck.QueueM{}, err
 	}
@@ -435,7 +455,7 @@ func readDevMergeQueue(ctx context.Context, gh ghQuery, path string, now time.Ti
 	if err != nil {
 		return seatcheck.QueueM{}, err
 	}
-	thrown, err := thrownOut(ctx, gh, entries, prs, prev, hasPrev)
+	thrown, err := thrownOut(ctx, gh, owner, name, entries, prs, prev, hasPrev)
 	if err != nil {
 		return seatcheck.QueueM{}, err
 	}
@@ -525,14 +545,14 @@ func greenCount(prs []ghPR) int {
 	return n
 }
 
-func thrownOut(ctx context.Context, gh ghQuery, entries []string, prs []ghPR, prev queueSnap, hasPrev bool) ([]string, error) {
+func thrownOut(ctx context.Context, gh ghQuery, owner, name string, entries []string, prs []ghPR, prev queueSnap, hasPrev bool) ([]string, error) {
 	if !hasPrev {
 		return nil, nil
 	}
 	var set throwSet
 	gone := goneFrom(prev.Entries, entries)
 	if len(gone) > 0 {
-		states, err := prStates(ctx, gh, gone)
+		states, err := prStates(ctx, gh, owner, name, gone)
 		if err != nil {
 			return nil, err
 		}
@@ -589,8 +609,8 @@ func goneFrom(prev, entries []string) []string {
 	return gone
 }
 
-func prStates(ctx context.Context, gh ghQuery, nums []string) (map[string]string, error) {
-	doc, err := prStateQuery(nums)
+func prStates(ctx context.Context, gh ghQuery, owner, name string, nums []string) (map[string]string, error) {
+	doc, err := prStateQuery(owner, name, nums)
 	if err != nil {
 		return nil, err
 	}
@@ -601,9 +621,9 @@ func prStates(ctx context.Context, gh ghQuery, nums []string) (map[string]string
 	return parsePRStates(body)
 }
 
-func prStateQuery(nums []string) (string, error) {
+func prStateQuery(owner, name string, nums []string) (string, error) {
 	var b strings.Builder
-	fmt.Fprintf(&b, `query { repository(owner:%q, name:%q) {`, devQueueOwner, devQueueName)
+	fmt.Fprintf(&b, `query { repository(owner:%q, name:%q) {`, owner, name)
 	for _, n := range nums {
 		if _, err := strconv.Atoi(n); err != nil {
 			return "", fmt.Errorf("pull request %q is not a number", n)
@@ -679,8 +699,8 @@ func saveQueueSnap(path string, s queueSnap) error {
 
 // readMachineVersions asks nova-update version on each machine and reads dev's
 // tip as the same version identity (buildinfo.Resolve's vcs stamp of that commit).
-func readMachineVersions(ctx context.Context, machines []string, gh ghQuery, ssh func(context.Context, string) (string, error)) (seatcheck.VersionsM, error) {
-	body, err := gh(ctx, devTipQuery, map[string]any{"owner": devQueueOwner, "name": devQueueName})
+func readMachineVersions(ctx context.Context, machines []string, owner, name string, gh ghQuery, ssh func(context.Context, string) (string, error)) (seatcheck.VersionsM, error) {
+	body, err := gh(ctx, devTipQuery, map[string]any{"owner": owner, "name": name})
 	if err != nil {
 		return seatcheck.VersionsM{}, err
 	}
@@ -773,18 +793,18 @@ func okMachine(machine string) bool {
 	return true
 }
 
-// sshNovaUpdateVersion is `nova-update version` on the machine: the installed
-// nova-tools version, in that verb's own words.
-func (a *app) sshNovaUpdateVersion(ctx context.Context, machine string) (string, error) {
-	args := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=8", machine, "nova-update", "version"}
-	testguard.RefuseHosts("ssh", args...)
-	cmd, cancel := subproc.Command(ctx, subproc.SSH, "ssh", args...)
-	defer cancel()
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("ssh %s nova-update version: %w", machine, err)
+// novaUpdateVersion is `nova-update version` on the machine, through the one
+// remote this tree already runs (release.ExecSSH). The answer is that verb's
+// own line.
+func (a *app) novaUpdateVersion(ctx context.Context, machine string) (string, error) {
+	if !okMachine(machine) {
+		return "", fmt.Errorf("machine %q is not a destination", machine)
 	}
-	return string(out), nil
+	out, err := (release.ExecSSH{Path: "ssh"}).Run(ctx, machine, []string{"nova-update", "version"})
+	if err != nil {
+		return "", fmt.Errorf("nova-update version on %s: %w", machine, err)
+	}
+	return out, nil
 }
 
 // cmdMachinery is `nova-sprint machinery`: the seat check on demand, read-only

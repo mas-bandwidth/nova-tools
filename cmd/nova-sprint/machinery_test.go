@@ -306,7 +306,7 @@ func TestDevMergeQueueReadMeasuresEntriesGreenAndThrownOut(t *testing.T) {
 		t.Parallel()
 		body := list(entry("5281")+","+entry("5282"), pr("5300", "CLEAN", "", "")+","+pr("5301", "CLEAN", "draft", "")+","+pr("5302", "BLOCKED", "", ""))
 		path := filepath.Join(t.TempDir(), "q.json")
-		got, err := readDevMergeQueue(context.Background(), ghOf(body, ""), path, at)
+		got, err := readDevMergeQueue(context.Background(), ghOf(body, ""), "owner", "repo", path, at)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"5281", "5282"}, got.Entries)
 		assert.Equal(t, 1, got.Green)
@@ -321,7 +321,7 @@ func TestDevMergeQueueReadMeasuresEntriesGreenAndThrownOut(t *testing.T) {
 	t.Run("empty queue with open green pull requests", func(t *testing.T) {
 		t.Parallel()
 		body := list("", pr("5300", "CLEAN", "", "")+","+pr("5301", "CLEAN", "", ""))
-		got, err := readDevMergeQueue(context.Background(), ghOf(body, ""), filepath.Join(t.TempDir(), "q.json"), at)
+		got, err := readDevMergeQueue(context.Background(), ghOf(body, ""), "owner", "repo", filepath.Join(t.TempDir(), "q.json"), at)
 		require.NoError(t, err)
 		assert.Empty(t, got.Entries)
 		assert.Equal(t, 2, got.Green)
@@ -334,7 +334,7 @@ func TestDevMergeQueueReadMeasuresEntriesGreenAndThrownOut(t *testing.T) {
 		require.NoError(t, saveQueueSnap(path, queueSnap{At: at.Add(-time.Hour), Entries: []string{"5280", "5281"}}))
 		body := list(entry("5281"), pr("5281", "BLOCKED", "", ""))
 		states := `{"data":{"repository":{"n5280":{"number":5280,"state":"OPEN"}}}}`
-		got, err := readDevMergeQueue(context.Background(), ghOf(body, states), path, at)
+		got, err := readDevMergeQueue(context.Background(), ghOf(body, states), "owner", "repo", path, at)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"5281"}, got.Entries)
 		assert.Equal(t, []string{"5280"}, got.ThrownOut)
@@ -346,7 +346,7 @@ func TestDevMergeQueueReadMeasuresEntriesGreenAndThrownOut(t *testing.T) {
 		require.NoError(t, saveQueueSnap(path, queueSnap{At: at.Add(-time.Hour), Entries: []string{"5280"}}))
 		body := list("", "")
 		states := `{"data":{"repository":{"n5280":{"number":5280,"state":"MERGED"}}}}`
-		got, err := readDevMergeQueue(context.Background(), ghOf(body, states), path, at)
+		got, err := readDevMergeQueue(context.Background(), ghOf(body, states), "owner", "repo", path, at)
 		require.NoError(t, err)
 		assert.Empty(t, got.ThrownOut)
 	})
@@ -356,7 +356,7 @@ func TestDevMergeQueueReadMeasuresEntriesGreenAndThrownOut(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "q.json")
 		require.NoError(t, saveQueueSnap(path, queueSnap{At: at.Add(-time.Hour), Entries: []string{"5281"}}))
 		body := list(entry("5281"), pr("5290", "BLOCKED", "", at.Add(-time.Minute).Format(time.RFC3339)))
-		got, err := readDevMergeQueue(context.Background(), ghOf(body, ""), path, at)
+		got, err := readDevMergeQueue(context.Background(), ghOf(body, ""), "owner", "repo", path, at)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"5290"}, got.ThrownOut)
 	})
@@ -364,7 +364,7 @@ func TestDevMergeQueueReadMeasuresEntriesGreenAndThrownOut(t *testing.T) {
 	t.Run("the first check names no throw", func(t *testing.T) {
 		t.Parallel()
 		body := list("", pr("5290", "BLOCKED", "", at.Add(-time.Minute).Format(time.RFC3339)))
-		got, err := readDevMergeQueue(context.Background(), ghOf(body, ""), filepath.Join(t.TempDir(), "q.json"), at)
+		got, err := readDevMergeQueue(context.Background(), ghOf(body, ""), "owner", "repo", filepath.Join(t.TempDir(), "q.json"), at)
 		require.NoError(t, err)
 		assert.Empty(t, got.ThrownOut)
 	})
@@ -372,7 +372,7 @@ func TestDevMergeQueueReadMeasuresEntriesGreenAndThrownOut(t *testing.T) {
 	t.Run("a page past the read is an error", func(t *testing.T) {
 		t.Parallel()
 		body := `{"data":{"repository":{"mergeQueue":{"entries":{"pageInfo":{"hasNextPage":true},"nodes":[]}},"pullRequests":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}`
-		_, err := readDevMergeQueue(context.Background(), ghOf(body, ""), filepath.Join(t.TempDir(), "q.json"), at)
+		_, err := readDevMergeQueue(context.Background(), ghOf(body, ""), "owner", "repo", filepath.Join(t.TempDir(), "q.json"), at)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "more than 100 entries")
 	})
@@ -404,7 +404,7 @@ func TestMachineVersionReadParsesNovaUpdateAndDevTip(t *testing.T) {
 			return "", errors.New("down")
 		}
 	}
-	got, err := readMachineVersions(context.Background(), []string{"m1", "m2", "m3", "bad name"}, gh, ssh)
+	got, err := readMachineVersions(context.Background(), []string{"m1", "m2", "m3", "bad name"}, "owner", "repo", gh, ssh)
 	require.NoError(t, err)
 	assert.Equal(t, want, got.Dev)
 	assert.Equal(t, []seatcheck.MachineVersionM{
