@@ -502,9 +502,10 @@ func judgeVersions(v VersionsM, self bool, add func(Line)) {
 // directory (docs/FLEET.md, nova_bin_dir).
 const InstalledVersionCommand = "~/.local/bin/nova-update version"
 
-// Fresh says an installed version is the tip's build: the same identity, or
-// an identity naming a revision the tip's sha begins with (a vcs stamp's 12
-// hex, a release's -dev.<hex>). A dirty build is not the commit it names, and
+// Fresh says an installed version is the tip's build (docs/SPEC-SPRINT.md,
+// "The seat check", row 11): the same identity, or an identity naming a
+// revision the tip's sha begins with (a vcs stamp's 12 hex, a release's
+// -dev.<hex>). A dirty build is not the commit it names, and
 // a bare tag or devel names no revision: neither is fresh.
 func Fresh(installed, dev, devSHA string) bool {
 	if installed == "" {
