@@ -1,7 +1,9 @@
 package main
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,4 +63,14 @@ func TestReworkAndDropRefuseOneCardOfAGroupWithoutOne(t *testing.T) {
 	assert.Equal(t, sprint.Working, ta.primary("s1-1").Col, "--one reworks the one card")
 	ta.ok("drop s1-2 --reason 'obsolete'") // the group is of one now: named as before
 	ta.clean()
+}
+
+// A judgment group of a critical card (ten or more behind it) is prefixed CRITICAL n behind
+// in the inbox (weight.go; groupLine).
+func TestACriticalJudgmentLineIsPrefixed(t *testing.T) {
+	t.Parallel()
+	g := sprint.Group{ID: "j1", Kind: sprint.Judgment, Type: sprint.NWorkFailed, Stream: "s1", Size: 1, Behind: 140}
+	assert.True(t, strings.HasPrefix(groupLine(g, time.Time{}), "CRITICAL 140 behind: JUDGMENT j1   work came back failed"), groupLine(g, time.Time{}))
+	g.Behind = 9
+	assert.True(t, strings.HasPrefix(groupLine(g, time.Time{}), "JUDGMENT j1"), groupLine(g, time.Time{}))
 }

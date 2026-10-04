@@ -1641,6 +1641,23 @@ merges each batch's heads in work order onto a branch cut from the base, checks
 and pushes it, and reports it through this merge step, with the facts above
 when it cannot; it adds no state of its own.
 
+**Weight** (the owner, 2026-10-04: "these critical blockers should have some elevated
+priority ... they should be at front of queue"; one night the root of about 140 schema
+cards was dealt, read and reworked like any other card). A card's weight is the number of
+cards transitively waiting on it through their needs (`sprint.Weights`,
+internal/sprint/weight.go, walked backwards over every card on the table not landed); every
+needs change (`add`, `drop`) writes it on the primaries it changes as `behind`, exact, so no
+tick recounts it. The inbox lists judgment groups by the heaviest of their cards, after the
+marked ones, and a group of a card with 10 or more behind it, `sprint.CriticalBehind`, prints
+`CRITICAL <n> behind:` before its line. The deal, the ask and the lander's batch keep the
+modelled order (stream turns, work order; `tla/SprintTables.tla`, the differential test
+holds the store to it) until the model orders by weight too: owed, with the model. A
+critical card starts on a pro route from its first deal whatever its brief's tier says, with
+pro's deadline and budget, and is never dealt below it (`ceilingTier`; a pinned model or tier
+and a frontier card keep their own). `where` names the five heaviest under the summary, from
+the tick's where record: `critical: <id> <n> behind, <state>; ...`
+(`TestACriticalRootIsDealtReadAndJudgedFirst`, `TestACriticalCardStartsOnPro`).
+
 **Dev is behind** (the owner, 2026-10-04: "You should regularly, mechanically be reminded
 merges to dev are dirty, and should be done"; "We must merge into dev continually, at least
 in bursts"). The tick counts the primaries landed (sentinels aside, by their `landed` stamp)

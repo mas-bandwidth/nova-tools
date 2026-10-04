@@ -350,6 +350,9 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 		return v, err
 	}
 	req := sprint.InboxReq{Now: st.now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale, Prefix: st.Names.Prefix, Epoch: st.epoch}
+	if snap, err := st.Load(ctx, []string{sprint.Work}, nil); err == nil {
+		req.Weights = sprint.Weights(snap) // the heaviest judgments first (weight.go)
+	}
 	var machine []sprint.Group
 	if _, ok := st.B.(KV); ok {
 		// One clock for overdue: running time, as the tick's deadlines.

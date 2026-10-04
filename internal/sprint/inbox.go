@@ -43,10 +43,11 @@ type InboxReq struct {
 	Open     []Open
 	Recent   []Note // since the cursor, oldest first
 	Streams  []StreamClock
-	Deadline time.Duration // a judgment open longer, in running time, is overdue
-	Stale    time.Duration // a moving stream unchanged longer, in running time, needs a look
-	Prefix   string        // the deployment's prefix (empty for none), for the commands that name it
-	Epoch    uint64        // the sprint's epoch: the stale groups' ids carry it
+	Deadline time.Duration  // a judgment open longer, in running time, is overdue
+	Stale    time.Duration  // a moving stream unchanged longer, in running time, needs a look
+	Prefix   string         // the deployment's prefix (empty for none), for the commands that name it
+	Epoch    uint64         // the sprint's epoch: the stale groups' ids carry it
+	Weights  map[string]int // each open primary's weight (sprint.Weights): the heaviest judgments first
 	// Stopped is the time the machine was STOPPED between two clock
 	// readings: the deadlines count running time only, as the tick's do. nil
 	// is none.
@@ -114,6 +115,7 @@ type Group struct {
 	Decisions []string      `json:"decisions,omitempty"`
 	What      string        `json:"what,omitempty"`
 	Before    int           `json:"before,omitempty"`
+	Behind    int           `json:"behind,omitempty"`   // the heaviest of its primaries' weights (weight.go)
 	Suspects  []string      `json:"suspects,omitempty"` // a red branch: the suspects named
 	// Commands is every decision open to the coordinator as the commands
 	// that make it, filled in: the group's id, --expect and --answers.
@@ -243,10 +245,17 @@ func Inbox(r InboxReq) []Group {
 		sort.Strings(judg[i].Notes)
 		judg[i].Commands = commands(judg[i], first[i], r.Prefix)
 		judg[i].Quiet = !loud[i]
+		for _, m := range judg[i].Members {
+			judg[i].Behind = max(judg[i].Behind, r.Weights[m])
+		}
 	}
+	// marked first, then the heaviest (the cards most wait on, weight.go), then the oldest
 	sort.SliceStable(judg, func(i, j int) bool {
 		if judg[i].Marked != judg[j].Marked {
 			return judg[i].Marked
+		}
+		if judg[i].Behind != judg[j].Behind {
+			return judg[i].Behind > judg[j].Behind
 		}
 		return judg[i].Oldest.Before(judg[j].Oldest)
 	})

@@ -1324,6 +1324,8 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		u.Moved = fmt.Sprintf("%s %s -> off the table (%s)", c.ID, c.Col, r.Reason)
 		p.Units = append(p.Units, u)
 	}
+	// the weights the drop changes: every primary the dropped cards waited on (weight.go)
+	p.Units = append(p.Units, weighUnits(s, nil, dropping)...)
 	settle(&p, s, r.Who, dropping, dropping)
 	// Each stream counts its dropped primaries on its control card.
 	for _, st := range unitStreams(p) {
