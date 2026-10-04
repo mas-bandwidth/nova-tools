@@ -421,7 +421,8 @@ jobs:
           # comes first: macOS benches keep their newest Go there, and /usr/local/go
           # can be a stale root-owned install. The toolchain go.mod names wins when
           # ~/sdk holds it, so builds sharing one ~/sdk keep one toolchain: the
-          # toolchain line, else the go line, which is the toolchain a go.mod without that line implies; else as before
+          # toolchain line, else the go line, which is the toolchain a go.mod
+          # without that line implies; else as before
           want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
           [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
           sdk=
@@ -503,6 +504,15 @@ jobs:
     # one to two minutes; the budget itself is the run, and the run is what to
     # hold to the law. The fast jobs — lint, test-packages, lisp at 32, 11 and
     # 12 s — keep the 2 they always had.
+    # A macOS bench at load 55 ran a double-size shard in 6-7 min. Two runs
+    # were CANCELLED at 6:23 and 6:07 with every test PASS and
+    # `ok cmd/nova-merge 342.360s` in the log. Twice the slowest green shard
+    # of the last twenty green runs (348 s, run 35457289611) was the size
+    # the ceiling was raised to. `studio` is a GROUP over air, batman, studio
+    # and superman, and superman is an Intel Xeon W-2191B carrying ten runners
+    # while the Studio is an M3 Ultra: one ceiling over a 2x spread censors
+    # the slower machine. In run 35950929169 all sixteen whole-tree studio
+    # shards were cancelled at 12.
     # The reason lives beside the number
     # in internal/ci/ci_budget_test.go.
     timeout-minutes: 2
