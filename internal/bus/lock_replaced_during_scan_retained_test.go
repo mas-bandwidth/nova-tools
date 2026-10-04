@@ -21,5 +21,7 @@ func TestLockReplacedDuringScanIsRetained(t *testing.T) {
 		return nil, nil
 	})
 	got, readErr := os.ReadFile(lock)
-	require.True(t, cleared == false && readErr == nil && string(got) == string(replacement), "replacement lock lost: cleared=%v err=%v read=%v contents=%q", cleared, err, readErr, got)
+	require.True(t, cleared == false, "replacement lock lost: cleared=%v err=%v read=%v contents=%q", cleared, err, readErr, got)
+	require.True(t, readErr == nil, "replacement lock lost: cleared=%v err=%v read=%v contents=%q", cleared, err, readErr, got)
+	require.True(t, string(got) == string(replacement), "replacement lock lost: cleared=%v err=%v read=%v contents=%q", cleared, err, readErr, got)
 }

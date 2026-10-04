@@ -845,7 +845,7 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 // runners while its roles say `bench,services` passes every guard in the tools,
 // and the tools keep putting cards on a machine that is serving the merge group.
 //
-// It is also where a registration with no machine behind it is caught: `vision-nova-\u25cf`,
+// It is also where a registration with no machine behind it is caught: `<machine>-nova-\u25cf`,
 // a literal bullet, sat offline on the forge with no runner directory anywhere.
 func registryTruth(in CertifyInput, reg *Registry, m Machine) (string, string) {
 	runners, err := in.Forge.Runners(in.Repo)

@@ -24,7 +24,11 @@ func TestBodyPaginatorEmitsAnExactFitInsteadOfDeferringItForever(t *testing.T) {
 	items := []BodyItem{{Commit: paginationOne, Path: "from-bo/a.md", Entry: OpenEntry{Path: "from-bo/a.md"}, Body: []byte("exact")}}
 	page, err := BodyPageFor(items, paginationRequest("", paginationBase, 1, 5))
 	require.NoError(t, err)
-	require.True(t, len(page.Items) == 1 && page.PrintedBytes == 5 && page.Drained && page.Complete && page.Next == "", "exact-fit body was not terminally emitted: %+v", page)
+	require.True(t, len(page.Items) == 1, "exact-fit body was not terminally emitted: %+v", page)
+	require.True(t, page.PrintedBytes == 5, "exact-fit body was not terminally emitted: %+v", page)
+	require.True(t, page.Drained, "exact-fit body was not terminally emitted: %+v", page)
+	require.True(t, page.Complete, "exact-fit body was not terminally emitted: %+v", page)
+	require.True(t, page.Next == "", "exact-fit body was not terminally emitted: %+v", page)
 }
 
 func TestBodyPaginatorCarriesEarlierGapAcrossChangedBudgetAndLaterPages(t *testing.T) {
@@ -36,12 +40,21 @@ func TestBodyPaginatorCarriesEarlierGapAcrossChangedBudgetAndLaterPages(t *testi
 	}
 	first, err := BodyPageFor(items, paginationRequest("", paginationBase, 1, 3))
 	require.NoError(t, err)
-	require.True(t, len(first.Gaps) == 1 && first.GapCount == 1 && first.Next != "" && first.SafeFrontier == "", "first page did not record the named gap: %+v", first)
+	require.True(t, len(first.Gaps) == 1, "first page did not record the named gap: %+v", first)
+	require.True(t, first.GapCount == 1, "first page did not record the named gap: %+v", first)
+	require.True(t, first.Next != "", "first page did not record the named gap: %+v", first)
+	require.True(t, first.SafeFrontier == "", "first page did not record the named gap: %+v", first)
 	// Raising a later page's budget never rewrites the historical gap.  The token's
 	// last identity resumes after it; a fresh chain is the explicit way to retry it.
 	second, err := BodyPageFor(items, paginationRequest(first.Next, paginationBase, 1, 100))
 	require.NoError(t, err)
-	require.True(t, len(second.Items) == 1 && second.Items[0].Path == "from-bo/b.md" && second.GapCount == 1 && second.Drained && !second.Complete && second.SafeFrontier == "" && second.Next == "", "later page forgot or crossed the earlier gap: %+v", second)
+	require.True(t, len(second.Items) == 1, "later page forgot or crossed the earlier gap: %+v", second)
+	require.True(t, second.Items[0].Path == "from-bo/b.md", "later page forgot or crossed the earlier gap: %+v", second)
+	require.True(t, second.GapCount == 1, "later page forgot or crossed the earlier gap: %+v", second)
+	require.True(t, second.Drained, "later page forgot or crossed the earlier gap: %+v", second)
+	require.True(t, !second.Complete, "later page forgot or crossed the earlier gap: %+v", second)
+	require.True(t, second.SafeFrontier == "", "later page forgot or crossed the earlier gap: %+v", second)
+	require.True(t, second.Next == "", "later page forgot or crossed the earlier gap: %+v", second)
 }
 
 func TestBodyPaginatorAdvancesToWholePrefixBeforeLaterGap(t *testing.T) {
@@ -55,7 +68,9 @@ func TestBodyPaginatorAdvancesToWholePrefixBeforeLaterGap(t *testing.T) {
 	request.Advance = true
 	page, err := BodyPageFor(items, request)
 	require.NoError(t, err)
-	require.True(t, page.SafeFrontier == paginationOne && len(page.Items) == 1 && len(page.Gaps) == 1, "did not retain the complete prefix before the gap: %+v", page)
+	require.True(t, page.SafeFrontier == paginationOne, "did not retain the complete prefix before the gap: %+v", page)
+	require.True(t, len(page.Items) == 1, "did not retain the complete prefix before the gap: %+v", page)
+	require.True(t, len(page.Gaps) == 1, "did not retain the complete prefix before the gap: %+v", page)
 }
 
 func TestBodyPaginatorRefusesExternalCursorChange(t *testing.T) {
@@ -89,12 +104,15 @@ func TestBodyPaginatorContinuationSurvivesItsOwnWholeCommitAdvance(t *testing.T)
 	firstRequest.Advance = true
 	first, err := BodyPageFor(items, firstRequest)
 	require.NoError(t, err)
-	require.True(t, first.SafeFrontier == paginationOne && first.Next != "", "first page did not produce an advanceable frontier: %+v", first)
+	require.True(t, first.SafeFrontier == paginationOne, "first page did not produce an advanceable frontier: %+v", first)
+	require.True(t, first.Next != "", "first page did not produce an advanceable frontier: %+v", first)
 	secondRequest := paginationRequest(first.Next, paginationOne, 1, 10)
 	secondRequest.Advance = true
 	second, err := BodyPageFor(items, secondRequest)
 	require.NoError(t, err, "ordinary cursor advance invalidated its token: %v", err)
-	require.True(t, len(second.Items) == 1 && second.Items[0].Path == "from-bo/b.md" && second.Complete, "continuation did not deliver the second item: %+v", second)
+	require.True(t, len(second.Items) == 1, "continuation did not deliver the second item: %+v", second)
+	require.True(t, second.Items[0].Path == "from-bo/b.md", "continuation did not deliver the second item: %+v", second)
+	require.True(t, second.Complete, "continuation did not deliver the second item: %+v", second)
 }
 
 func TestBodySnapshotReadsFirstParentMergeDelta(t *testing.T) {
@@ -127,7 +145,9 @@ func TestBodySnapshotReadsFirstParentMergeDelta(t *testing.T) {
 	require.NoError(t, err, err)
 	items, err := BodyNewItemsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, c, mustParticipant(t, c, "Ada"), 40, LegacyLine{})
 	require.NoError(t, err, err)
-	require.True(t, len(items) == 2 && items[0].Path == "from-bo/main.md" && items[1].Path == "from-bo/side.md", "first-parent merge walk missed a note: %+v", items)
+	require.True(t, len(items) == 2, "first-parent merge walk missed a note: %+v", items)
+	require.True(t, items[0].Path == "from-bo/main.md", "first-parent merge walk missed a note: %+v", items)
+	require.True(t, items[1].Path == "from-bo/side.md", "first-parent merge walk missed a note: %+v", items)
 }
 
 func TestBodySnapshotUsesFinalRevisionAtHeadAndRetractedReplyDoesNotSettle(t *testing.T) {
@@ -153,7 +173,10 @@ func TestBodySnapshotUsesFinalRevisionAtHeadAndRetractedReplyDoesNotSettle(t *te
 	c, err := LoadConfig(clone)
 	require.NoError(t, err, err)
 	items, err := BodyNewItemsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, c, mustParticipant(t, c, "Ada"), 40, LegacyLine{})
-	require.True(t, err == nil && len(items) == 1 && items[0].Path == path && string(items[0].Body) == "final", "snapshot did not use H's final note/reply state: items=%+v err=%v", items, err)
+	require.True(t, err == nil, "snapshot did not use H's final note/reply state: items=%+v err=%v", items, err)
+	require.True(t, len(items) == 1, "snapshot did not use H's final note/reply state: items=%+v err=%v", items, err)
+	require.True(t, items[0].Path == path, "snapshot did not use H's final note/reply state: items=%+v err=%v", items, err)
+	require.True(t, string(items[0].Body) == "final", "snapshot did not use H's final note/reply state: items=%+v err=%v", items, err)
 }
 
 func TestBodySnapshotAllowsHardCeilingBodyAndNamesLargerBlobAsGap(t *testing.T) {
@@ -192,11 +215,20 @@ func TestBodySnapshotAllowsHardCeilingBodyAndNamesLargerBlobAsGap(t *testing.T) 
 			large = item
 		}
 	}
-	require.True(t, len(items) == 3 && bodyItemBytes(exact) == 1<<20 && bodyItemBytes(crlf) == 1<<20 && bodyItemBytes(large) == largeBytes, "bounded source did not preserve exact and oversize body sizes: %+v", items)
+	require.True(t, len(items) == 3, "bounded source did not preserve exact and oversize body sizes: %+v", items)
+	require.True(t, bodyItemBytes(exact) == 1<<20, "bounded source did not preserve exact and oversize body sizes: %+v", items)
+	require.True(t, bodyItemBytes(crlf) == 1<<20, "bounded source did not preserve exact and oversize body sizes: %+v", items)
+	require.True(t, bodyItemBytes(large) == largeBytes, "bounded source did not preserve exact and oversize body sizes: %+v", items)
 	crlfPage, err := BodyPageFor([]BodyItem{crlf}, paginationRequest("", base, 1, 1<<20))
-	require.True(t, err == nil && len(crlfPage.Items) == 1 && crlfPage.Complete, "CRLF body with heading and whitespace separator did not fit: page=%+v err=%v", crlfPage, err)
+	require.True(t, err == nil, "CRLF body with heading and whitespace separator did not fit: page=%+v err=%v", crlfPage, err)
+	require.True(t, len(crlfPage.Items) == 1, "CRLF body with heading and whitespace separator did not fit: page=%+v err=%v", crlfPage, err)
+	require.True(t, crlfPage.Complete, "CRLF body with heading and whitespace separator did not fit: page=%+v err=%v", crlfPage, err)
 	page, err := BodyPageFor([]BodyItem{large}, paginationRequest("", base, 1, 1<<20))
-	require.True(t, err == nil && len(page.Gaps) == 1 && page.Gaps[0].Bytes == largeBytes && page.Drained && !page.Complete, "large body was not recorded as a terminal gap: page=%+v err=%v", page, err)
+	require.True(t, err == nil, "large body was not recorded as a terminal gap: page=%+v err=%v", page, err)
+	require.True(t, len(page.Gaps) == 1, "large body was not recorded as a terminal gap: page=%+v err=%v", page, err)
+	require.True(t, page.Gaps[0].Bytes == largeBytes, "large body was not recorded as a terminal gap: page=%+v err=%v", page, err)
+	require.True(t, page.Drained, "large body was not recorded as a terminal gap: page=%+v err=%v", page, err)
+	require.True(t, !page.Complete, "large body was not recorded as a terminal gap: page=%+v err=%v", page, err)
 }
 
 func TestBodySnapshotRefusesOversizedHeaderInsteadOfCallingSmallBodyOversize(t *testing.T) {
@@ -214,5 +246,6 @@ func TestBodySnapshotRefusesOversizedHeaderInsteadOfCallingSmallBodyOversize(t *
 	c, err := LoadConfig(clone)
 	require.NoError(t, err, err)
 	_, err = BodyNewItemsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, c, mustParticipant(t, c, "Ada"), 40, LegacyLine{})
-	require.False(t, err == nil || !strings.Contains(err.Error(), "headers exceed"), "oversized header was silently treated as a body gap: %v", err)
+	require.False(t, err == nil, "oversized header was silently treated as a body gap: %v", err)
+	require.False(t, !strings.Contains(err.Error(), "headers exceed"), "oversized header was silently treated as a body gap: %v", err)
 }

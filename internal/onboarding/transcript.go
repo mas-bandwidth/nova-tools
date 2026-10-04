@@ -569,7 +569,7 @@ func (n Norm) applyRun(line string) string {
 	return out.String()
 }
 
-// boundary answers whether index i of line is off the end of it or a space --
+// boundary answers whether index i of line is off the end of it or a blank --
 // that is, whether a token may start after it or end before it.
 func boundary(line string, i int) bool {
 	if i < 0 || i >= len(line) {

@@ -137,7 +137,7 @@ func TestAWatchThroughTheServerSendsOneReadAFrame(t *testing.T) {
 	r := newServerRig(t, twoLanes()...)
 	var sent [][]string
 	c, boss := clientOf(t, r, "boss", &sent)
-	ctx, stop := context.WithCancel(context.Background())
+	ctx, stop := context.WithCancel(t.Context())
 	t.Cleanup(stop)
 	c.notify = func(context.Context) (context.Context, context.CancelFunc) { return ctx, stop }
 	frames := 0
@@ -188,7 +188,7 @@ func TestAnInboxWaitThroughTheServerPollsForATickEnd(t *testing.T) {
 	require.Equal(t, 0, code, errs)
 	assert.Equal(t, 2, polls, "woke at the tick end after the judgment, not at the timeout")
 	plain := r.boss("nova-sprint inbox")
-	assert.Equal(t, "inbox --wait: new=tick-ask-t26-1.1\n"+plain, out, "the wake line, then the inbox as inbox --wait prints it when it woke")
+	assert.Equal(t, "inbox --wait: new=tick-ask-t27-1.1\n"+plain, out, "the wake line, then the inbox as inbox --wait prints it when it woke")
 	assert.Contains(t, out, "fewer than two readers up")
 	assert.Len(t, sent, 6, "the log and the inbox at the start, two reads of the log, the inbox at the tick end, then the inbox")
 

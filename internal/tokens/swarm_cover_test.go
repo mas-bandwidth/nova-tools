@@ -91,7 +91,7 @@ func TestSwarmCoverReadSwarmFoldsUsageFiles(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(pool, "done", "orphan"), 0o700))
 	require.NoError(t, os.MkdirAll(filepath.Join(pool, "failed", "orphan2"), 0o700))
 
-	s := ReadSwarm("mylabel", pool, swarmCoverRules(t))
+	s := ReadSwarm("mylabel", pool, os.DirFS(pool), swarmCoverRules(t))
 
 	assert.Equalf(t, "swarm:mylabel", s.Label, "label=%q, want swarm:mylabel", s.Label)
 	assert.Equalf(t, KindSwarm, s.Kind, "kind=%q, want %q", s.Kind, KindSwarm)
@@ -232,7 +232,7 @@ func TestSwarmCoverReadSwarmRefusesWhatItCannotRead(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			pool := tc.write(t)
-			s := ReadSwarm("cover", pool, swarmCoverRules(t))
+			s := ReadSwarm("cover", pool, os.DirFS(pool), swarmCoverRules(t))
 			tc.want(t, s)
 		})
 	}

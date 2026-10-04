@@ -81,7 +81,8 @@ func TestSectionReadsOnlyTheFirstOfTwo(t *testing.T) {
 	require.True(t, ok, "Section did not find nova-alpha")
 	lines, err := FirstRun(twoSections, "nova-alpha")
 	require.NoError(t, err)
-	require.True(t, len(lines) == 2 && lines[0] == "$ nova-alpha go", "FirstRun read %q; it reads the FIRST `## nova-alpha`, and the second is read by nobody", lines)
+	require.True(t, len(lines) == 2, "FirstRun read %q; it reads the FIRST `## nova-alpha`, and the second is read by nobody", lines)
+	require.True(t, lines[0] == "$ nova-alpha go", "FirstRun read %q; it reads the FIRST `## nova-alpha`, and the second is read by nobody", lines)
 	require.NotContains(t, body, "ALPHA STALE", "Section reached into the second `## nova-alpha`; this test's premise is gone")
 }
 
@@ -90,7 +91,8 @@ func TestTranscriptReadsANamedSubsection(t *testing.T) {
 
 	lines, err := Transcript(twoSections, "nova-alpha", "Refusals")
 	require.NoError(t, err)
-	require.True(t, len(lines) == 2 && lines[0] == "$ nova-alpha", "Transcript(Refusals) = %q", lines)
+	require.True(t, len(lines) == 2, "Transcript(Refusals) = %q", lines)
+	require.True(t, lines[0] == "$ nova-alpha", "Transcript(Refusals) = %q", lines)
 	_, err = Transcript(twoSections, "nova-beta", "Refusals")
 	require.Error(t, err, "Transcript found a `### Refusals` that nova-beta does not have")
 	_, err = Transcript(twoSections, "nova-gamma", "First run")

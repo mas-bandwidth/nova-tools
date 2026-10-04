@@ -56,7 +56,7 @@ func TestIndexLockSequenceFreshStaleOwnedAndBack(t *testing.T) {
 	ownerOK = false
 	c, err = clearStaleIndexLockAs(dir, late, scan, seam, self)
 	require.False(t, c, "2b unknown owner: c=%v err=%v", c, err)
-	require.True(t, err == errLockOwnerUnknown, "2b unknown owner: c=%v err=%v", c, err)
+	require.Same(t, errLockOwnerUnknown, err, "2b unknown owner: c=%v err=%v", c, err)
 	require.Equal(t, 0, scans, "2b unknown owner: c=%v err=%v", c, err)
 	present("2b")
 	// 3. handed to the caller, a foreign git names the checkout with -C: kept.
@@ -70,7 +70,9 @@ func TestIndexLockSequenceFreshStaleOwnedAndBack(t *testing.T) {
 	// 4. the caller's own git with unreadable cwd: refused with the old sentence.
 	scanWith = []procView{{owner: self, ownerKnown: true, comm: "git\n", cmdline: []byte("git\x00commit"), cwdErr: denied}}
 	c, err = clearStaleIndexLockAs(dir, late, scan, seam, self)
-	require.False(t, c || err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown), "4 own unreadable: c=%v err=%v", c, err)
+	require.False(t, c, "4 own unreadable: c=%v err=%v", c, err)
+	require.False(t, err == nil, "4 own unreadable: c=%v err=%v", c, err)
+	require.False(t, !strings.HasPrefix(err.Error(), ownershipUnknown), "4 own unreadable: c=%v err=%v", c, err)
 	present("4")
 	// 5. back: owner flips to foreign again on the same stale lock: refused, no new scan.
 	ownerUID = other
@@ -93,7 +95,8 @@ func TestIndexLockSequenceFreshStaleOwnedAndBack(t *testing.T) {
 	ownerUID = self
 	scanWith = []procView{{owner: other, ownerKnown: true, account: other, accountKnown: true, comm: "git\n", cmdline: []byte("git\x00commit"), cwdErr: denied}}
 	c, err = clearStaleIndexLockAs(dir, now.Add(staleIndexLockAge+time.Second), scan, seam, self)
-	require.True(t, c && err == nil, "7 own stale, unplaced foreign: c=%v err=%v", c, err)
+	require.True(t, c, "7 own stale, unplaced foreign: c=%v err=%v", c, err)
+	require.True(t, err == nil, "7 own stale, unplaced foreign: c=%v err=%v", c, err)
 	{
 		_, e := os.Lstat(lock)
 		require.True(t, os.IsNotExist(e), "7 lock still here: %v", e)

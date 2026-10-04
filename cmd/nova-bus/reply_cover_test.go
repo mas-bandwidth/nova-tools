@@ -111,7 +111,7 @@ func TestReplyCoverReplyResolve(t *testing.T) {
 	}
 }
 
-// TestReplyCoverReplyDraftDirProblems pins replyDraftDirProblems: a draft
+// TestReplyCoverReplyDraftDirProblems pins replyDraftDirProblemsIn: a draft
 // directory outside the checkout passes; one inside the checkout is refused;
 // and a path that does not exist or is not a directory is refused.
 func TestReplyCoverReplyDraftDirProblems(t *testing.T) {
@@ -120,27 +120,27 @@ func TestReplyCoverReplyDraftDirProblems(t *testing.T) {
 		t.Parallel()
 		busDir := t.TempDir()
 		draftDir := t.TempDir()
-		assert.Empty(t, replyDraftDirProblems(busDir, draftDir))
+		assert.Empty(t, replyDraftDirProblemsIn("", busDir, draftDir))
 	})
 	t.Run("draft dir inside the bus is refused", func(t *testing.T) {
 		t.Parallel()
 		busDir := t.TempDir()
 		draftDir := filepath.Join(busDir, "drafts")
 		require.NoError(t, os.MkdirAll(draftDir, 0o755))
-		problems := replyDraftDirProblems(busDir, draftDir)
+		problems := replyDraftDirProblemsIn("", busDir, draftDir)
 		require.Len(t, problems, 1)
 		assert.Contains(t, problems[0].Error(), "is the bus checkout at")
 	})
 	t.Run("nonexistent draft dir is refused", func(t *testing.T) {
 		t.Parallel()
 		busDir := t.TempDir()
-		problems := replyDraftDirProblems(busDir, filepath.Join(busDir, "nonexistent"))
+		problems := replyDraftDirProblemsIn("", busDir, filepath.Join(busDir, "nonexistent"))
 		require.Len(t, problems, 1)
 		assert.Contains(t, problems[0].Error(), "is not a directory")
 	})
 }
 
-// TestReplyCoverResolveForCompare pins resolveForCompare: a real directory is
+// TestReplyCoverResolveForCompare pins resolveForCompareIn: a real directory is
 // absolutized and symlink-resolved; a nonexistent path falls back to the
 // cleaned absolute form rather than skipping the check.
 func TestReplyCoverResolveForCompare(t *testing.T) {
@@ -148,7 +148,7 @@ func TestReplyCoverResolveForCompare(t *testing.T) {
 	t.Run("real path resolves through EvalSymlinks", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
-		got := resolveForCompare(dir)
+		got := resolveForCompareIn("", dir)
 		abs, err := filepath.Abs(dir)
 		require.NoError(t, err)
 		want, err := filepath.EvalSymlinks(abs)
@@ -157,7 +157,7 @@ func TestReplyCoverResolveForCompare(t *testing.T) {
 	})
 	t.Run("nonexistent path falls back to cleaned absolute", func(t *testing.T) {
 		t.Parallel()
-		got := resolveForCompare("/nonexistent/path/here")
+		got := resolveForCompareIn("", "/nonexistent/path/here")
 		assert.True(t, filepath.IsAbs(got), "a nonexistent path falls back to an absolute form")
 	})
 }

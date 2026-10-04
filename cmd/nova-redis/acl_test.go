@@ -155,6 +155,24 @@ func TestACLCheckApplyConverge(t *testing.T) {
 	assert.Equal(t, 1, f.saves, "nothing set, nothing saved")
 }
 
+// TestACLApplyDryRunNeverDials: acl apply --dry-run prints the plan this
+// build renders and dials nothing. The plan comes from the rendering alone,
+// so a store that is not there cannot make the dry run fail, and the skeleton
+// never reports a --dry-run it was not read (STANDARD "a verb that writes has
+// a dry run"; docs/CLI.md's acl apply bullet; SPEC-REDIS rule 5 keeps this
+// unit test off the network).
+func TestACLApplyDryRunNeverDials(t *testing.T) {
+	t.Parallel()
+	f := &fakeACL{live: map[string]redisacl.Live{}, cat: redisacl.Catalog{"read": {"get"}, "write": {"set"}}}
+	code, out, errs := aclRun(t, f, append(append([]string{"apply", "--dry-run"}, login4...), sourced...)...)
+	require.Equal(t, 0, code, errs)
+	assert.Zero(t, f.opened, "acl apply --dry-run dialled the store")
+	assert.Zero(t, f.saves, "acl apply --dry-run saved the ACL")
+	assert.Empty(t, f.set, "acl apply --dry-run wrote")
+	assert.Equal(t, 4, strings.Count(out, "ACL WOULD-SET "), out)
+	assert.Contains(t, out, "ACL APPLY OK dry-run=true users=4 set=0 would=4 ")
+}
+
 // A drifted user is named with what apply would change, and only it is set;
 // a store with no ACL file says so.
 func TestACLApplySetsOnlyTheUsersThatDiffer(t *testing.T) {

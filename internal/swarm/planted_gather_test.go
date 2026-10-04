@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -50,16 +49,7 @@ func TestFriendSequencePlantedResultIsRefused(t *testing.T) {
 	fifoJob := filepath.Join(dir, "job-fifo")
 	require.NoError(t, os.MkdirAll(fifoJob, 0o755))
 	plantFIFO(t, ResultPath(fifoJob))
-	done := make(chan error, 1)
-	go func() {
-		_, err := readFileSteady(ResultPath(fifoJob))
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		require.Error(t, err, "a FIFO read as a published report")
-		require.Contains(t, err.Error(), "fifo", "the fifo refusal does not name the kind: %v", err)
-	case <-time.After(30 * time.Second):
-		t.Fatal("STILL BLOCKED after 30s: the dispatcher is wedged")
-	}
+	_, fifoErr := readFileSteady(ResultPath(fifoJob))
+	require.Error(t, fifoErr, "a FIFO read as a published report")
+	require.Contains(t, fifoErr.Error(), "fifo", "the fifo refusal does not name the kind: %v", fifoErr)
 }
