@@ -1140,17 +1140,6 @@ func TestASecondReplyOnOneCheckoutWaitsAndThenRefuses(t *testing.T) {
 	mustEmptyDir(t, drafts)
 }
 
-// withoutFetch disables the refresh at the seam, which is what proves the fetch is
-// load-bearing rather than incidental: the same invocation, against the same checkout,
-// with the one step removed.
-func withoutFetch(t *testing.T, fn func()) {
-	t.Helper()
-	old := refreshCheckout
-	refreshCheckout = func(dir, remote, branch string) (bool, error) { return false, nil }
-	defer func() { refreshCheckout = old }()
-	fn()
-}
-
 // ------------------------------------------------------------- the repair commit's tests
 
 // docs/SPEC-BUS-REPLY.md 254-259: "The test is the one `--bus` already makes: resolve both

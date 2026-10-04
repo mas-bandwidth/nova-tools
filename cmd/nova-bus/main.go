@@ -94,13 +94,6 @@ type runEnv struct {
 	publishDraft     func(dir, name string, content []byte) (string, error)
 }
 
-func (e runEnv) env(key string) string {
-	if e.getenv != nil {
-		return e.getenv(key)
-	}
-	return os.Getenv(key)
-}
-
 func (e runEnv) lockWait() time.Duration {
 	if e.checkoutLockWait > 0 {
 		return e.checkoutLockWait
@@ -113,13 +106,6 @@ func (e runEnv) refresh() func(string, string, string) (bool, error) {
 		return e.refreshCheckout
 	}
 	return refreshCheckout
-}
-
-func (e runEnv) publish() func(string, string, []byte) (string, error) {
-	if e.publishDraft != nil {
-		return e.publishDraft
-	}
-	return publishDraft
 }
 
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
@@ -199,10 +185,6 @@ func (e runEnv) lockCheckout(token, busDir string, stderr io.Writer) (func(), in
 		return nil, 1
 	}
 	return release, 0
-}
-
-func lockCheckout(token, busDir string, stderr io.Writer) (func(), int) {
-	return runEnv{}.lockCheckout(token, busDir, stderr)
 }
 
 // quoteList renders names a person will PASTE -- into a To line -- each quoted and joined
