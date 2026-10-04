@@ -12,6 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestLinks pins the walk through its production seam, LinksExcluding with no
+// exclusions — the tool calls LinksExcluding and LinksFiles; the Links
+// wrapper had no production caller and is deleted.
 func TestLinks(t *testing.T) {
 	t.Parallel()
 
@@ -99,11 +102,11 @@ func TestLinks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeTree(t, dir, tt.files)
-			_, checked, broken, err := Links(dir)
+			res, err := LinksExcluding(dir, nil)
 			require.NoError(t, err, "unexpected error: %v", err)
-			assert.Equal(t, tt.wantChecked, checked, "checked = %d, want %d", checked, tt.wantChecked)
+			assert.Equal(t, tt.wantChecked, res.Checked, "checked = %d, want %d", res.Checked, tt.wantChecked)
 			var asFailures []Failure
-			for _, b := range broken {
+			for _, b := range res.Broken {
 				asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
 			}
 			wantFailures(t, asFailures, tt.wantBroken)
@@ -123,11 +126,11 @@ func TestLinksBadgeOuterTargetChecked(t *testing.T) {
 			"a.md":    "[![build](img.png)](target.md)",
 			"img.png": "x",
 		})
-		_, checked, broken, err := Links(dir)
+		res, err := LinksExcluding(dir, nil)
 		require.NoError(t, err)
-		assert.Equal(t, 2, checked, "checked = %d, want 2 (outer target and inner image)", checked)
+		assert.Equal(t, 2, res.Checked, "checked = %d, want 2 (outer target and inner image)", res.Checked)
 		var asFailures []Failure
-		for _, b := range broken {
+		for _, b := range res.Broken {
 			asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
 		}
 		wantFailures(t, asFailures, []string{"target.md", "does not exist"})
@@ -139,10 +142,10 @@ func TestLinksBadgeOuterTargetChecked(t *testing.T) {
 			"img.png":   "x",
 			"target.md": "x",
 		})
-		_, checked, broken, err := Links(dir)
+		res, err := LinksExcluding(dir, nil)
 		require.NoError(t, err)
-		assert.Equal(t, 2, checked, "checked = %d broken = %v, want 2 checked and none broken", checked, broken)
-		assert.Empty(t, broken, "checked = %d broken = %v, want 2 checked and none broken", checked, broken)
+		assert.Equal(t, 2, res.Checked, "checked = %d broken = %v, want 2 checked and none broken", res.Checked, res.Broken)
+		assert.Empty(t, res.Broken, "checked = %d broken = %v, want 2 checked and none broken", res.Checked, res.Broken)
 	})
 }
 
@@ -156,11 +159,11 @@ func TestLinksAngleBracketDestination(t *testing.T) {
 		"a.md":        "[good](<my notes.md>) and [bad](<no such.md>)",
 		"my notes.md": "x",
 	})
-	_, checked, broken, err := Links(dir)
+	res, err := LinksExcluding(dir, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 2, checked, "checked = %d, want 2", checked)
+	assert.Equal(t, 2, res.Checked, "checked = %d, want 2", res.Checked)
 	var asFailures []Failure
-	for _, b := range broken {
+	for _, b := range res.Broken {
 		asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
 	}
 	wantFailures(t, asFailures, []string{"no such.md", "does not exist"})
@@ -183,11 +186,11 @@ func TestLinksTitleQuoteForms(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeTree(t, dir, map[string]string{"a.md": tt.md})
-			_, checked, broken, err := Links(dir)
+			res, err := LinksExcluding(dir, nil)
 			require.NoError(t, err)
-			assert.Equal(t, 1, checked, "checked = %d, want 1", checked)
-			if len(broken) != 1 || broken[0].Target != "missing.md" {
-				assert.Failf(t, "assertion failed", "broken = %v, want missing.md reported", broken)
+			assert.Equal(t, 1, res.Checked, "checked = %d, want 1", res.Checked)
+			if len(res.Broken) != 1 || res.Broken[0].Target != "missing.md" {
+				assert.Failf(t, "assertion failed", "broken = %v, want missing.md reported", res.Broken)
 			}
 		})
 	}
@@ -204,10 +207,10 @@ func TestLinksFenceRemembersOpeningMarker(t *testing.T) {
 		"a.md": "```\n~~~\n[fake](missing.md)\n~~~\n```\n[real](b.md)\n",
 		"b.md": "x",
 	})
-	_, checked, broken, err := Links(dir)
+	res, err := LinksExcluding(dir, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 1, checked, "checked = %d, want 1 (only the link outside the fence)", checked)
-	assert.Empty(t, broken, "broken = %v, want none: the fenced example is not a link", broken)
+	assert.Equal(t, 1, res.Checked, "checked = %d, want 1 (only the link outside the fence)", res.Checked)
+	assert.Empty(t, res.Broken, "broken = %v, want none: the fenced example is not a link", res.Broken)
 }
 
 // Issue #30 (fence length): the scanner stored a fixed three-character marker,
@@ -221,13 +224,13 @@ func TestLinksNestedFourBacktickFenceHidesInnerThree(t *testing.T) {
 	writeTree(t, dir, map[string]string{
 		"a.md": "````\n```\n[fake](missing.md)\n```\n````\n",
 	})
-	_, checked, broken, err := Links(dir)
+	res, err := LinksExcluding(dir, nil)
 	if err != nil {
 		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
 	}
-	assert.Equal(t, 0, checked, "checked = %d, want 0: a link inside a four-backtick fence is illustration", checked)
-	if len(broken) != 0 {
-		assert.Failf(t, "assertion failed", "broken = %s, want none: the nested three-backtick example is not a link", brief(fmt.Sprint(broken)))
+	assert.Equal(t, 0, res.Checked, "checked = %d, want 0: a link inside a four-backtick fence is illustration", res.Checked)
+	if len(res.Broken) != 0 {
+		assert.Failf(t, "assertion failed", "broken = %s, want none: the nested three-backtick example is not a link", brief(fmt.Sprint(res.Broken)))
 	}
 }
 
@@ -242,13 +245,13 @@ func TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink(t *testing.T) {
 	writeTree(t, dir, map[string]string{
 		"a.md": "````\n```\n````\n[real](missing.md)\n",
 	})
-	_, checked, broken, err := Links(dir)
+	res, err := LinksExcluding(dir, nil)
 	if err != nil {
 		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
 	}
-	assert.Equal(t, 1, checked, "checked = %d, want 1: the link below the closed four-fence must be checked", checked)
-	if len(broken) != 1 || broken[0].Target != "missing.md" {
-		assert.Failf(t, "assertion failed", "broken = %s, want the real missing.md reported", brief(fmt.Sprint(broken)))
+	assert.Equal(t, 1, res.Checked, "checked = %d, want 1: the link below the closed four-fence must be checked", res.Checked)
+	if len(res.Broken) != 1 || res.Broken[0].Target != "missing.md" {
+		assert.Failf(t, "assertion failed", "broken = %s, want the real missing.md reported", brief(fmt.Sprint(res.Broken)))
 	}
 }
 
@@ -267,13 +270,13 @@ func TestLinksLongerRunClosesShorterFence(t *testing.T) {
 	writeTree(t, dir, map[string]string{
 		"a.md": "```\n[fake](inside.md)\n````\n[real](missing.md)\n",
 	})
-	_, checked, broken, err := Links(dir)
+	res, err := LinksExcluding(dir, nil)
 	if err != nil {
 		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
 	}
-	assert.Equal(t, 1, checked, "checked = %d, want 1: a four-backtick run is at least as long as the three-backtick opener, so it closes it", checked)
-	if len(broken) != 1 || broken[0].Target != "missing.md" {
-		assert.Failf(t, "assertion failed", "broken = %s, want the link below the closed fence reported", brief(fmt.Sprint(broken)))
+	assert.Equal(t, 1, res.Checked, "checked = %d, want 1: a four-backtick run is at least as long as the three-backtick opener, so it closes it", res.Checked)
+	if len(res.Broken) != 1 || res.Broken[0].Target != "missing.md" {
+		assert.Failf(t, "assertion failed", "broken = %s, want the link below the closed fence reported", brief(fmt.Sprint(res.Broken)))
 	}
 }
 
@@ -284,13 +287,13 @@ func TestLinksSameLengthRunWithTrailingTextDoesNotClose(t *testing.T) {
 	writeTree(t, dir, map[string]string{
 		"a.md": "```\n[fake](inside.md)\n``` not a closer\n[alsofake](missing.md)\n",
 	})
-	_, checked, broken, err := Links(dir)
+	res, err := LinksExcluding(dir, nil)
 	if err != nil {
 		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
 	}
-	assert.Equal(t, 0, checked, "checked = %d, want 0: a run carrying text after it does not close the fence, so both links stay illustration", checked)
-	if len(broken) != 0 {
-		assert.Failf(t, "assertion failed", "broken = %s, want none: nothing below an unclosed fence is a link", brief(fmt.Sprint(broken)))
+	assert.Equal(t, 0, res.Checked, "checked = %d, want 0: a run carrying text after it does not close the fence, so both links stay illustration", res.Checked)
+	if len(res.Broken) != 0 {
+		assert.Failf(t, "assertion failed", "broken = %s, want none: nothing below an unclosed fence is a link", brief(fmt.Sprint(res.Broken)))
 	}
 }
 
@@ -299,11 +302,11 @@ func TestLinksReportsLineNumbers(t *testing.T) {
 
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.md": "fine\n\n[gone](missing.md)\n"})
-	_, _, broken, err := Links(dir)
+	res, err := LinksExcluding(dir, nil)
 	require.NoError(t, err)
-	require.Len(t, broken, 1, "want 1 broken link, got %v", broken)
-	assert.Equal(t, 3, broken[0].Line, "Line = %d, want 3", broken[0].Line)
-	assert.Equal(t, "a.md", broken[0].File, "File = %q, want relative path a.md", broken[0].File)
+	require.Len(t, res.Broken, 1, "want 1 broken link, got %v", res.Broken)
+	assert.Equal(t, 3, res.Broken[0].Line, "Line = %d, want 3", res.Broken[0].Line)
+	assert.Equal(t, "a.md", res.Broken[0].File, "File = %q, want relative path a.md", res.Broken[0].File)
 }
 
 // An unreadable .md is a NAMED FAILURE, not a refusal — the same posture as
@@ -330,16 +333,16 @@ func TestLinksUnreadableFileIsNamedFailureNotRefusal(t *testing.T) {
 	require.NoError(t, os.Chmod(locked, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o644) })
 
-	mdFiles, _, broken, err := Links(dir)
+	res, err := LinksExcluding(dir, nil)
 	require.NoError(t, err, "an unreadable .md must be a finding, not a refusal: %v", err)
-	assert.Equal(t, 2, mdFiles, "mdFiles = %d, want 2: the walk must continue past the unreadable file", mdFiles)
+	assert.Equal(t, 2, res.MDFiles, "mdFiles = %d, want 2: the walk must continue past the unreadable file", res.MDFiles)
 	var asFailures []Failure
-	for _, b := range broken {
+	for _, b := range res.Broken {
 		asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
 	}
 	// BOTH findings in one run: the unreadable file must not discard the broken link.
 	wantFailures(t, asFailures, []string{"broken.md", "missing.md", "does not exist", "locked.md", "unreadable"})
-	for _, b := range broken {
+	for _, b := range res.Broken {
 		if strings.Contains(b.Reason, "unreadable") {
 			assert.Zero(t, b.Line, "a whole-file failure carries no line and no target, got %+v", b)
 			assert.Empty(t, b.Target, "a whole-file failure carries no line and no target, got %+v", b)
@@ -354,9 +357,12 @@ func TestLinksUnreadableFileIsNamedFailureNotRefusal(t *testing.T) {
 // the walk cannot be listed ... A walk error stops the run without reporting
 // partial findings." The unreadable-FILE rule above (named failure, walk
 // continues) is a different case. So the refusal is the specified behaviour and
-// this test pins it, including the two halves a caller can observe: the
-// directory is named in the error, and the finding found before it is NOT
-// reported. Whether the spec should change is left open on #30.
+// this test pins it: the directory is named in the error, and the walk stops —
+// a.md was scanned, locked/'s contents never were. The accounting found before
+// the stop travels with the error for the caller to discard; "not reporting
+// partial findings" is the run's half, pinned at the CLI by
+// TestLinksUnlistableDirRefusesAtTheCLI (exit 2, no FAIL line). Whether the
+// spec should change is left open on #30.
 func TestLinksUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
 	t.Parallel()
 
@@ -375,14 +381,14 @@ func TestLinksUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
 	require.NoError(t, os.Chmod(locked, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-	mdFiles, checked, broken, err := Links(dir)
-	require.Error(t, err, "want a refusal for an unlistable directory; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))
+	res, err := LinksExcluding(dir, nil)
+	require.Error(t, err, "want a refusal for an unlistable directory; got mdFiles=%d checked=%d broken=%d", res.MDFiles, res.Checked, len(res.Broken))
 	if !strings.Contains(err.Error(), "locked") {
 		assert.Failf(t, "assertion failed", "error does not name the directory: %s", brief(err.Error()))
 	}
-	assert.Zero(t, mdFiles, "a refusal must report nothing; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))
-	assert.Zero(t, checked, "a refusal must report nothing; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))
-	assert.Empty(t, broken, "a refusal must report nothing; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))
+	assert.Equal(t, 1, res.MDFiles, "MDFiles = %d, want 1: a.md was scanned before the walk stopped at locked/", res.MDFiles)
+	assert.Equal(t, 1, res.Checked, "Checked = %d, want 1: the walk stopped before locked/inside.md", res.Checked)
+	assert.Len(t, res.Broken, 1, "Broken = %v, want the finding found before the stop: the accounting travels with the error for the caller to discard", res.Broken)
 }
 
 // A dangling .md symlink is the second face of the same case: the walk sees a
@@ -395,12 +401,12 @@ func TestLinksDanglingSymlinkMdIsNamedFailure(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "nowhere.md"), filepath.Join(dir, "dangling.md")); err != nil {
 		t.Skipf("cannot create symlink: %v", err)
 	}
-	mdFiles, checked, broken, err := Links(dir)
+	res, err := LinksExcluding(dir, nil)
 	require.NoError(t, err, "a dangling symlink must be a finding, not a refusal: %v", err)
-	assert.Equal(t, 3, mdFiles, "mdFiles = %d, want 3: the dangling symlink is seen, then reported", mdFiles)
-	assert.Equal(t, 1, checked, "checked = %d, want 1: a.md's good link is still checked", checked)
+	assert.Equal(t, 3, res.MDFiles, "mdFiles = %d, want 3: the dangling symlink is seen, then reported", res.MDFiles)
+	assert.Equal(t, 1, res.Checked, "checked = %d, want 1: a.md's good link is still checked", res.Checked)
 	var asFailures []Failure
-	for _, b := range broken {
+	for _, b := range res.Broken {
 		asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
 	}
 	wantFailures(t, asFailures, []string{"dangling.md", "unreadable"})
@@ -420,17 +426,17 @@ func TestLinksTargetResolvingThroughSymlinkIsOK(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "real.md"), filepath.Join(dir, "alias.md")); err != nil {
 		t.Skipf("cannot create symlink: %v", err)
 	}
-	mdFiles, checked, broken, err := Links(dir)
+	res, err := LinksExcluding(dir, nil)
 	require.NoError(t, err)
-	assert.Empty(t, broken, "a target that is a symlink resolves exactly when the symlink does; got %v", broken)
-	assert.Equal(t, 1, checked, "checked = %d, want 1", checked)
-	assert.Equal(t, 3, mdFiles, "mdFiles = %d, want 3: the symlinked .md is walked and read through the link", mdFiles)
+	assert.Empty(t, res.Broken, "a target that is a symlink resolves exactly when the symlink does; got %v", res.Broken)
+	assert.Equal(t, 1, res.Checked, "checked = %d, want 1", res.Checked)
+	assert.Equal(t, 3, res.MDFiles, "mdFiles = %d, want 3: the symlinked .md is walked and read through the link", res.MDFiles)
 }
 
 func TestLinksRefusesBadDir(t *testing.T) {
 	t.Parallel()
 
-	_, _, _, err := Links(t.TempDir() + "/nope")
+	_, err := LinksExcluding(t.TempDir()+"/nope", nil)
 	assert.Error(t, err, "nonexistent dir should be an error, not a guess")
 }
 
@@ -456,11 +462,11 @@ func TestLinksExcludeSubtreeCounted(t *testing.T) {
 	assert.Equal(t, 2, res.Excluded, "Excluded = %d, want 2 files under testdata", res.Excluded)
 	assert.Empty(t, res.Broken, "Broken = %v, want none: the broken link lives under the excluded subtree and the link into it is skipped", res.Broken)
 
-	mdFiles, checked, broken, err := Links(dir)
+	res, err = LinksExcluding(dir, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 4, mdFiles, "without --exclude, MDFiles = %d, want 4", mdFiles)
-	assert.Equal(t, 3, checked, "without --exclude, Checked = %d, want 3", checked)
-	assert.Len(t, broken, 1, "without --exclude the partial reference inside testdata must be reported; got %v", broken)
+	assert.Equal(t, 4, res.MDFiles, "without --exclude, MDFiles = %d, want 4", res.MDFiles)
+	assert.Equal(t, 3, res.Checked, "without --exclude, Checked = %d, want 3", res.Checked)
+	assert.Len(t, res.Broken, 1, "without --exclude the partial reference inside testdata must be reported; got %v", res.Broken)
 }
 
 // --dir naming a SYMLINK to the tree. os.Stat follows the link, so the
@@ -480,20 +486,20 @@ func TestLinksDirIsASymlinkToTheTree(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	realFiles, realChecked, realBroken, err := Links(real)
+	realRes, err := LinksExcluding(real, nil)
 	require.NoError(t, err)
-	require.Len(t, realBroken, 1, "fixture: the real path must report the broken link, got %v", realBroken)
+	require.Len(t, realRes.Broken, 1, "fixture: the real path must report the broken link, got %v", realRes.Broken)
 
-	mdFiles, checked, broken, err := Links(link)
+	res, err := LinksExcluding(link, nil)
 	require.NoError(t, err)
-	assert.Equal(t, realFiles, mdFiles, "mdFiles = %d through the symlink, want %d as by the real path: a clean pass over a tree never walked", mdFiles, realFiles)
-	assert.Equal(t, realChecked, checked, "checked = %d through the symlink, want %d as by the real path", checked, realChecked)
+	assert.Equal(t, realRes.MDFiles, res.MDFiles, "mdFiles = %d through the symlink, want %d as by the real path: a clean pass over a tree never walked", res.MDFiles, realRes.MDFiles)
+	assert.Equal(t, realRes.Checked, res.Checked, "checked = %d through the symlink, want %d as by the real path", res.Checked, realRes.Checked)
 	var asFailures []Failure
-	for _, b := range broken {
+	for _, b := range res.Broken {
 		asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
 	}
 	wantFailures(t, asFailures, []string{"a.md", "gone.md", "does not exist"})
-	for _, b := range broken {
+	for _, b := range res.Broken {
 		assert.Equal(t, "a.md", b.File, "File = %q, want a.md: a finding stays relative to the tree, not absolute through the resolved root", b.File)
 	}
 }

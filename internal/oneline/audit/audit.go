@@ -37,6 +37,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
@@ -317,6 +318,20 @@ func PrintedArguments(t *testing.T, cfg Config) {
 	}
 }
 
+// onelineImportPath returns the quoted import path of the oneline package,
+// derived at test time from the Go build info so the source carries no host
+// name. The generality ledger (internal/ci/testdata/generality/internal/oneline/audit.txt)
+// is a "migrated counted package ledger; original row keys preserved"; with the
+// host word absent, NOVA_CI_UPDATE=1 drops the stale row. Rule 1: no host name
+// in living code (docs/SPEC-CI.md#generality).
+func onelineImportPath() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info == nil {
+		return `""`
+	}
+	return strconv.Quote(info.Main.Path + "/internal/oneline")
+}
+
 // Bypasses refuses every way of writing to a stream that PrintedArguments cannot see.
 func Bypasses(t *testing.T, cfg Config) {
 	t.Helper()
@@ -324,7 +339,7 @@ func Bypasses(t *testing.T, cfg Config) {
 	for _, s := range cfg.Shadows {
 		shadows[s] = true
 	}
-	allowed := map[string]bool{`"github.com/mas-bandwidth/nova-tools/internal/oneline"`: true}
+	allowed := map[string]bool{onelineImportPath(): true}
 	for _, p := range cfg.Imports {
 		allowed[p] = true
 	}

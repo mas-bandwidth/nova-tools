@@ -51,12 +51,18 @@ const usage = `nova-memory: search your own markdown notes, and check a draft ag
 how it works: each run reads the --root directories and builds its index in
 memory (bm25 words, trigrams); nothing is written. search prints the k best
 passages with file:line and the quoted text; check names the notes a draft
-repeats; verify gates links and frontmatter. The CAL line is the score a fixed
-unrelated probe gets here: a hit scoring at or below it is no better than noise.
+repeats; verify gates links and frontmatter.
 first run: quickstart --root on any folder of .md files, or create the small
 corpus in setup: and run the lines under example:.
-class is the top-level directory ("." for root files); name/type are frontmatter
-values, with "-" meaning absent.
+
+SEARCH CAL score=1.46 score-channel=bm25 probe=unrelated-control
+is the CAL line every retrieval run prints: the score a fixed unrelated
+probe gets here, and a hit's score= at or below it is no better than noise
+when the hit's score-channel= names the same channel. The example's search
+prints, as its rank 1 of 2:
+SEARCH HIT rank=1 score=0.99 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/lantern.md:1 "The lantern glazing needs clean cloths for brass and glass."
+class is the top-level directory ("." for root files); name/type are
+frontmatter values, with "-" meaning absent.
 
 usage:
   nova-memory version    print this build identity (--version also accepted)
@@ -140,7 +146,12 @@ file or the query words; -- ends the flags, and a query word that starts
 with - goes after it. Every verb is an inspection: it reads the corpus and
 writes nothing (` + "`<verb> -h`" + ` says so, with the verb's flags).
 
-exit codes: 0 ran and passed, 1 ran and failed, 2 could not run (bad invocation).
+exit codes: by verb (each ran here), search, stats, boot: 0 ran; a search
+that finds nothing is still 0, and says so on its MISS line. check: 0 even
+when the draft repeats a note (the example's check does: it hands you
+receipts, and the verdict stays yours). verify: 0 clean, 1 a finding (a
+wikilink finding gates only under --links gate). eval: 0 at or above
+--floor, 1 recall@k under --floor. 2 could not run (bad invocation).
 
 setup:
   mkdir -p ./corpus/notes
@@ -576,35 +587,29 @@ func commandLine(argv []string) string {
 }
 
 // commandLineFor is commandLine with the platform passed in, so both shells'
-// rules are testable from either one.
+// rules are testable from either one. Each argument goes through oneline.Escape
+// first, so the echo is one line whatever an argument holds; the POSIX shell's
+// one quoter is oneline.ShellWord. Windows keeps its own form, because
+// oneline.ShellWord is POSIX-only: cmd.exe and PowerShell both take a
+// double-quoted argument literally, backslashes included, which is exactly what
+// a Windows path needs, and a double quote cannot appear in a Windows path at
+// all -- one arriving from --words is doubled, which is how that shell spells
+// its own quote.
 func commandLineFor(argv []string, windows bool) string {
 	parts := make([]string, 0, len(argv))
 	for _, a := range argv {
-		parts = append(parts, shellArg(a, windows))
+		esc := oneline.Escape(a)
+		if !windows {
+			parts = append(parts, oneline.ShellWord(esc))
+			continue
+		}
+		if esc != "" && !needsQuoting(esc, true) {
+			parts = append(parts, esc)
+			continue
+		}
+		parts = append(parts, `"`+strings.ReplaceAll(esc, `"`, `""`)+`"`)
 	}
 	return strings.Join(parts, " ")
-}
-
-// shellArg renders one argument for that platform's shell, and quotes only
-// when the argument holds something the shell would otherwise act on.
-func shellArg(s string, windows bool) string {
-	esc := oneline.Escape(s)
-	if esc != "" && !needsQuoting(esc, windows) {
-		return esc
-	}
-	if windows {
-		// cmd.exe and PowerShell both take a double-quoted argument literally,
-		// backslashes included, which is exactly what a Windows path needs. A
-		// double quote cannot appear in a Windows path at all; one arriving
-		// from --words is doubled, which is how that shell spells its own
-		// quote.
-		return `"` + strings.ReplaceAll(esc, `"`, `""`) + `"`
-	}
-	// A single-quoted POSIX word is literal up to its closing quote, so the
-	// backslashes, dollars and spaces inside it survive the paste. The one
-	// character it cannot hold is its own quote, which is closed, escaped and
-	// reopened.
-	return "'" + strings.ReplaceAll(esc, "'", `'\''`) + "'"
 }
 
 // needsQuoting is true for every character but the ones a shell hands to the
@@ -890,10 +895,25 @@ func cmdBoot(args []string, stdout, stderr io.Writer) int {
 
 // loadPin reads the pin file and loads exactly the files it names, relative to
 // root and never by walking the directory. It returns the count and the byte
-// total of the loaded memories. Every misshapen entry is a refusal, because a
-// boot that silently skipped a named memory is a self that loaded less than it
-// thinks it did.
+// total of the loaded memories, and the total is what the reads returned, not
+// what the directory entries promised (docs/SPEC.md, boot: "Boot reads exactly
+// those files ... The load is the named files' byte total"; the defect it
+// closes is docs/ratings/snapshots/0c5803c2de40/memory-read.md finding 4,
+// where an os.Lstat sum counted bytes nothing had read). Every misshapen
+// entry is a refusal, because a boot that silently skipped a named memory is
+// a self that loaded less than it thinks it did.
 func loadPin(root, pin string, stderr io.Writer) (int, int64, bool) {
+	return loadPinOpen(root, pin, stderr, func(name string) (io.ReadCloser, error) { return os.Open(name) })
+}
+
+// loadPinOpen is loadPin with each pinned file's opener handed in per call:
+// production opens with os.Open, and a test that must inject a read failure
+// after metadata validation injects its own. The seam is a parameter and
+// nothing else — no global to flip, so a run's behavior is fixed by its
+// arguments. os.Lstat below is kept, not swapped for os.Stat, so the
+// final-component symlink rejection stays exactly what validation has always
+// been: entry checking, not a path-security contract.
+func loadPinOpen(root, pin string, stderr io.Writer, open func(string) (io.ReadCloser, error)) (int, int64, bool) {
 	entries, err := readPin(pin)
 	if err != nil {
 		refuse(stderr, " boot", oneline.Err(err))
@@ -937,7 +957,28 @@ func loadPin(root, pin string, stderr io.Writer) (int, int64, bool) {
 			refuse(stderr, " boot", fmt.Sprintf("pin entry %q is empty; a memory of zero bytes cannot be loaded", oneline.Escape(e)))
 			return 0, 0, false
 		}
-		total += fi.Size()
+		// Validation is the entry's claim; the READ is the boot's. Open the
+		// file, stream every byte to io.Discard through a constant buffer so
+		// the pinned corpus never sits in memory however large it grows, and
+		// count what actually came back. A failed read or close is a refusal
+		// naming the offending entry, and each file is closed before the next
+		// one is opened.
+		f, err := open(full)
+		if err != nil {
+			refuse(stderr, " boot", fmt.Sprintf("pin entry %q could not be opened for reading: %s; check the file is readable and re-run, or correct the pin", oneline.Escape(e), oneline.Err(err)))
+			return 0, 0, false
+		}
+		n, readErr := io.Copy(io.Discard, f)
+		closeErr := f.Close()
+		if readErr != nil {
+			refuse(stderr, " boot", fmt.Sprintf("pin entry %q read %d of %d bytes before failing: %s; check the file is readable and re-run, or correct the pin", oneline.Escape(e), n, fi.Size(), oneline.Err(readErr)))
+			return 0, 0, false
+		}
+		if closeErr != nil {
+			refuse(stderr, " boot", fmt.Sprintf("pin entry %q read %d bytes but could not be closed: %s; check the file's storage and re-run, or correct the pin", oneline.Escape(e), n, oneline.Err(closeErr)))
+			return 0, 0, false
+		}
+		total += n
 	}
 	return len(entries), total, true
 }

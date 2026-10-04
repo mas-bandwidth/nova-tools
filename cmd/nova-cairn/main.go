@@ -15,16 +15,67 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cairn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 var version string
 
-func main() { os.Exit(cairnTool().Main()) }
+func main() { os.Exit(runCairn(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+
+// runCairn runs one invocation. `help` with more than one word refuses as help
+// before any verb runs its flag checks, so `nova-cairn help open append` is
+// one HELP REFUSED naming the single verb name it wants, not a verb dispatch
+// carrying a stray positional. main and the in-process tests both go through
+// it, so the refusal is exercised by the tests rather than owned by main alone.
+func runCairn(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	t := cairnTool()
+	if len(args) > 1 && args[0] == "help" && args[1] != "help" &&
+		!verbflag.IsHelp(args[1]) && helpNameWords(args[1:]) > 1 {
+		o := tool.Refuse("help takes one verb name; the verbs are " + verbflag.List(verbNames(t)))
+		o.Verb = "help"
+		o.Remedy = t.Name + " help"
+		asJSON := verbflag.BoolAsked(args, "json")
+		w := stderr
+		if asJSON {
+			w = stdout
+		}
+		return o.Render(w, asJSON)
+	}
+	return t.Run(args, stdin, stdout, stderr)
+}
+
+// helpNameWords counts the verb-name words after help: every argument that is
+// a word, not a flag (one beginning with -). `help open --json append` and
+// `help open -- append` each count two and refuse as help, while `help open
+// --json` counts one and forwards to open's own help, so a flag sitting between
+// help, the verb and a stray word cannot smuggle the call into the verb.
+func helpNameWords(args []string) int {
+	words := 0
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			words++
+		}
+	}
+	return words
+}
+
+// verbNames returns the tool's verb names, including the implicit version verb
+// the framework adds.
+func verbNames(t *tool.Tool) []string {
+	names := make([]string, 0, len(t.Verbs)+1)
+	for _, v := range t.Verbs {
+		names = append(names, v.Name)
+	}
+	names = append(names, "version")
+	return names
+}
 
 var publishes = strings.Join(cairn.Policies, ", ")
 
@@ -35,15 +86,22 @@ func cairnTool() *tool.Tool {
 		Stamp: version,
 		How: `a store is a directory you name (--store), plain files only, synced to disk before OK.
 open starts a session and records its --publish policy; append keeps an entry's exact words.
-The same entry id with the same words is a duplicate; with other words a conflict (exit 1).
+Same id, same words: duplicate (duplicate=true, exit 0); same id, other words: conflict (exit 1).
 --publish records your policy only: nothing is sent, and every line says published=false.
 first run: the four examples are one sitting: the open makes ./cairns, the rest read it back.`,
-		ExitTable: "0 ran and passed, 1 ran and failed (a conflict: an entry id holding other words, " +
-			"or a re-open naming another policy or source), 2 could not run (bad invocation, no such session or entry).",
+		ExitTable: "0 done, 2 usage or could not run, for every verb; by verb:\n" +
+			"  open: 0 the record stands (opened, or already matching); 1 a re-open naming\n" +
+			"    another policy or source; 2 usage, or a store that did not answer\n" +
+			"  append: 0 the words are written, or the entry already holds them\n" +
+			"    (duplicate=true); 1 the entry id holds other words; 2 usage, or a store that\n" +
+			"    did not answer\n" +
+			"  index: 0 listed; 2 usage, or a store that did not answer\n" +
+			"  receipt: 0 read; 2 usage, or no such session or entry",
 		Verbs: []tool.Verb{
 			{
-				Name:    "open",
-				Usage:   "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]",
+				Name: "open",
+				Usage: "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]\n" +
+					"NOTE: --publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append --publish records the entry's own word, and one that differs from the session's is recorded as given, not a conflict (exit 0).",
 				Example: "open --store ./cairns --session s1 --publish manual",
 				Effect:  tool.LocalWrite,
 				Detail: "A re-open naming the recorded policy (and source, when given) changes nothing; one naming\n" +
@@ -250,15 +308,55 @@ func readWords(name string, stdin io.Reader) ([]byte, error) {
 	return os.ReadFile(name)
 }
 
-// index lists every entry; the coverage counts on its first line are never
-// capped, so the total is carried whether or not --max elides entries.
+// sessions lists the session ids a store holds, from sessions/<id>.md and a flat
+// <store>/<id>.md, in the rule Coverage applies them: so an empty session is
+// found and named by index.
+func sessions(store string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, dir := range [2]string{filepath.Join(store, "sessions"), store} {
+		if files, err := os.ReadDir(dir); err == nil {
+			for _, f := range files {
+				if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+					continue
+				}
+				if id := strings.TrimSuffix(f.Name(), ".md"); cairn.ValidID(id) && !seen[id] {
+					seen[id] = true
+					out = append(out, id)
+				}
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// index lists every entry; the coverage counts on its first line are the
+// selection's, so --session counts one session and the full index counts all.
+// An INDEX SESSION line is printed for every session in the selection, entries
+// or none, so an empty session is found.
 func index(c *tool.Call) *tool.Out {
 	store := c.Str("store")
-	all, total, err := cairn.Index(store, c.Str("session"), 0)
+	session := c.Str("session")
+	all, total, err := cairn.Index(store, session, 0)
 	if err != nil {
 		return refusal(err)
 	}
-	o := tool.Done().Fact("sessions", cairn.Coverage(store).Sessions).Fact("entries", total)
+	perSession := map[string]int{}
+	for _, r := range all {
+		perSession[r.Session]++
+	}
+	var names []string
+	if session != "" {
+		names = []string{session}
+	} else {
+		names = sessions(store)
+	}
+	o := tool.Done()
+	for _, s := range names {
+		o.Item("session", "session", s, "entries", perSession[s])
+	}
+	o.Fact("sessions", len(names)).Fact("entries", total)
 	for _, r := range all {
 		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", sourceOf(r.Source))
 	}

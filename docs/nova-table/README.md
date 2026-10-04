@@ -1,20 +1,13 @@
 # nova-table: work tables and live views over Redis
 
-## The design, in the owner's words
+## The design
 
-"at an even simpler level, I think there should be a concept of ordered
-sets." / "The work stream table is really just a series of ordered sets,
-per-cell" / "and the value printed, happens to be for each cell, |s|" /
-"(but it doesn't need to be always)".
-
-"there are cells that are headers for columns, and cells that are headers
-for rows" / "and there are cells at the bottom of each row that are sums or
-some function of the column above." / "for example, for the stream table the
-bottom rows are the sum of the column above."
-
-"create a way to render this table to text, efficiently and mechanically,
-once per-second in a console window" / "it should only contain that table
-data, no bullshit around it. don't let extra stuff creep in."
+The table's primitive is the ordered set. A work stream table is a series of
+ordered sets, one per cell, and the value a cell prints is by default that
+set's cardinality, `|s|`. Header cells label the columns and the rows; footer
+cells fold the column above them, a sum or another function of its cells. The
+table renders to text efficiently and mechanically, once per second in a
+console window, and the frame holds the table data alone: nothing around it.
 
 ## Start locally
 
@@ -481,12 +474,12 @@ leaves a `noop` receipt.
 $ nova-table render crew
 crew    | busy | idle | note
 --------+------+------+-----
-studio  |    1 |    0 |
-hetzner |    0 |    0 |
-stella  |    0 |    0 |
-rowan   |    0 |    0 | here
-$ nova-table row order crew rowan stella        # friends on top, machines keep their order below
-$ nova-table row move crew hetzner --before studio
+bench-a |    1 |    0 |
+bench-b |    0 |    0 |
+ada     |    0 |    0 |
+bob     |    0 |    0 | here
+$ nova-table row order crew bob ada        # friends on top, machines keep their order below
+$ nova-table row move crew bench-b --before bench-a
 $ nova-table col move crew note --first
 $ nova-table col add crew 'share:pct(busy)' --after busy
 ```
@@ -526,7 +519,7 @@ Cells are separated by ` | ` and the rule joins dashes with `-+-`. A column
 is as wide as its widest cell (the footer counts) unless its width is fixed
 in the definition (`create --width`) or for one render (`render --width`);
 a wider cell is not cut. A last column is padded only when right-aligned,
-so no line ends in a space. `--label-width <n>` sets the separate row-label
+so no line ends in whitespace. `--label-width <n>` sets the separate row-label
 column width. Labels, text, member names, footers and view titles display control
 characters as literal escapes (for example, newline as `\x0a` and ESC as `\x1b`).
 Widths are measured after escaping. Stored values remain unchanged; text cannot

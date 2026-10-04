@@ -68,7 +68,7 @@ func TestAFailedQuickstartNamesTheCheckToFix(t *testing.T) {
 	exit, stdout, _ := runCheck(t, "quickstart", "--dir", dir)
 	assert.Equal(t, 1, exit)
 	last := strings.TrimSpace(stdout[strings.LastIndex(strings.TrimSpace(stdout), "\n")+1:])
-	assert.True(t, strings.HasPrefix(last, "QUICKSTART FAIL checks=2 failed=links worst-exit=1 next=nova-check links --dir "+dir), last)
+	assert.True(t, strings.HasPrefix(last, "QUICKSTART FAILED checks=2 failed=links worst-exit=1 next=nova-check links --dir "+dir), last)
 	assert.NotContains(t, last, "kernel")
 }
 
@@ -153,12 +153,12 @@ func TestDryRunWritesNothing(t *testing.T) {
 }
 
 // The banner's quickstart and kernel examples run as printed, on the tree the
-// banner's two setup lines make, and print what is written here, through the
+// banner's two `setup:` lines make, and print what is written here, through the
 // comparator; only the tree's directory is the run's.
 func TestTheBannerQuickstartAndKernelExamplesMatchOutput(t *testing.T) {
 	t.Parallel()
 	_, help, _ := runCheck(t, "help")
-	require.Contains(t, help, "mkdir -p ./self/docs\nprintf '# Kernel\\n' > ./self/docs/SEED-CORE.md\n")
+	require.Contains(t, help, "setup:\n  mkdir -p ./self/docs\n  printf '# Kernel\\n' > ./self/docs/SEED-CORE.md\n")
 	scratch := t.TempDir()
 	self := filepath.Join(scratch, "self")
 	require.NoError(t, os.MkdirAll(filepath.Join(self, "docs"), 0o755))

@@ -75,7 +75,8 @@ func TestVersionReportFileUsageStatesShape(t *testing.T) {
 		code := update.Main("nova-version", []string{"help"}, "", &out, &err)
 		require.Equal(t, 0, code, "help exit=%d stderr=%s", code, err.String())
 	}
-	for _, want := range []string{"--file <manifest: ", "one line per tool", "written by hand"} {
+	for _, want := range []string{"--file <manifest>", "one line per tool, six tab-separated fields name kind installed latest apply owner", "written by hand"} {
 		require.Contains(t, out.String(), want, "--file usage does not name the file's shape (%q):\n%s", want, out.String())
 	}
+	require.NotContains(t, out.String(), "--file <manifest: ", "the six-field sentence still crowds the usage line:\n%s", out.String())
 }

@@ -218,12 +218,6 @@ func ReleaseStep(r sprint.ReleaseReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Release(s, r) }}
 }
 
-// SentinelsDueStep marks reached every sentinel whose needs have all landed.
-func SentinelsDueStep(who string) Step {
-	return Step{Args: ArgsOf(who), Verb: "sentinels", Actor: who, Load: tables(sprint.Work),
-		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.SentinelsDue(s, who) }}
-}
-
 // AckStep is the coordinator closing judgments it looked at.
 func AckStep(r sprint.AckReq) Step {
 	// every table: ack is judged by the no-stall rule on the state after it

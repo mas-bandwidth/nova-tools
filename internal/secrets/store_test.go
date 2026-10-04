@@ -274,6 +274,27 @@ func TestParseDecryptedSecretsLargeLineBuffer(t *testing.T) {
 	})
 }
 
+// TestNamesReadsALongLineValue pins that names reads a store file holding a
+// single-line value between the scanner's starting 64KiB and the 1MB limit, the
+// same file the sibling parser ParseDecryptedSecrets accepts.
+func TestNamesReadsALongLineValue(t *testing.T) {
+	t.Parallel()
+
+	largeVal := strings.Repeat("A", 128*1024)
+	content := fmt.Sprintf("LARGE_KEY: %s\n", largeVal)
+	store := t.TempDir()
+	asName := "a"
+	require.NoError(t, os.Mkdir(filepath.Join(store, ".git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(store, ".sops.yaml"), nil, 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(store, asName+".yaml"), []byte(content), 0644))
+
+	report, err := RunNames(store, asName, 20)
+	require.NoError(t, err, "RunNames refused a 128KB single-line value: %v", err)
+	require.Equal(t, 1, report.Total, "expected 1 key, got %d", report.Total)
+	require.Len(t, report.Rows, 1, "expected the row shown, got %v", report.Rows)
+	assert.Equal(t, "LARGE_KEY", report.Rows[0].Name, "expected key LARGE_KEY, got %q", report.Rows[0].Name)
+}
+
 func TestReadGitIndexExtendedFlags(t *testing.T) {
 	t.Parallel()
 

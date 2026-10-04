@@ -505,10 +505,11 @@ func applyState(d decide.Decision) (act, op, at string) {
 	return d.Inputs["act"], d.Inputs["op"], d.At
 }
 
-// opOf is the operation id a decision's verbs carry: its record id, less the '~' the
-// sprint keeps for its epochs.
+// opOf is the operation id a decision's verbs carry: its record id, with the '~' the
+// sprint keeps for its epochs and the ':' between a grouped judgment's note and card made '_':
+// an op is one word (store.Run holds it so), and it becomes a file name downstream.
 func opOf(id string) string {
-	return "decide." + strings.ReplaceAll(id, "~", "_")
+	return "decide." + strings.NewReplacer("~", "_", ":", "_").Replace(id)
 }
 
 // withOp is a decision's lines each carrying its op: the decision's own for one line,

@@ -138,6 +138,38 @@ func counts(t ntable.Table) (landed, all int64) {
 	return landed, all
 }
 
+// readyPrimaries is the ready primaries across the work table's streams
+// (docs/SPEC-SPRINT.md section 1, the ready buffer a fleet is fed at): the sum
+// of the ready column's counts.
+func readyPrimaries(t ntable.Table) int64 {
+	j := t.Column(string(sprint.Ready))
+	var n int64
+	for _, r := range t.Rows {
+		if j >= 0 && j < len(r.Cells) {
+			n += r.Cells[j].Count
+		}
+	}
+	return n
+}
+
+// upWidth is the total width of the fleet members whose status is up
+// (docs/SPEC-SPRINT.md section 1, the fleet table's width column): the sum of
+// each up member's width, the default where its row names none.
+func upWidth(t ntable.Table) int {
+	var n int
+	for _, r := range t.Rows {
+		if r.Texts[sprint.Status] != sprint.Up {
+			continue
+		}
+		if w, err := sprint.ParseWidth(r.Texts[sprint.FieldWidth]); err == nil {
+			n += w
+		} else {
+			n += sprint.DefaultWidth
+		}
+	}
+	return n
+}
+
 // queueCard is one card of a queue, for a program.
 type queueCard struct {
 	ID      string  `json:"id"`
@@ -450,6 +482,14 @@ type whereView struct {
 	// judgments naming one of their primaries; absent without --cards.
 	Cards     []dealtCard   `json:"cards,omitempty"`
 	Judgments []judgmentRef `json:"judgments,omitempty"`
+	// Ready, Width, Buffer and Low are the ready buffer a program reads off
+	// the view (docs/SPEC-SPRINT-DASHBOARD.md): the ready primaries across the
+	// work table's streams, the total width of the fleet members that are up,
+	// the string "<ready>/<2*width>" and whether ready is under width.
+	Ready  int64  `json:"ready"`
+	Width  int    `json:"width"`
+	Buffer string `json:"buffer"`
+	Low    bool   `json:"low"`
 }
 
 // dealtCard is a work card dealt to a fleet row and not finished: the row (a machine, or a
@@ -697,6 +737,10 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		return whereView{}, "", err
 	}
 	v.Held = int64(facts.Held)
+	v.Ready = readyPrimaries(shapes[0])
+	v.Width = upWidth(shapes[3])
+	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)
+	v.Low = v.Ready < int64(v.Width)
 	rate := sprint.LandingRate(facts.Landed, v.Landed, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
 	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], rate)))
 

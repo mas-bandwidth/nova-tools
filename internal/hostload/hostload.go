@@ -142,7 +142,12 @@ func BusyPercent(prev, cur Ticks) (float64, bool) {
 }
 
 // ParseProcStat is the cpu line of /proc/stat: user nice system idle iowait
-// irq softirq steal ...; busy is every tick but idle and iowait.
+// irq softirq steal guest guest_nice. guest and guest_nice overlap user and
+// nice (Linux account_guest_time adds each guest interval to both USER/NICE
+// and GUEST/GUEST_NICE, so /proc/stat emits the redundant fields), so they are
+// parsed and validated but omitted from the total: counting them would sum the
+// guest time twice and inflate the load. The guest tick stays inside user/nice,
+// which is busy, so busy is every tick but idle and iowait as before.
 func ParseProcStat(s string) (Ticks, bool) {
 	for _, line := range strings.Split(s, "\n") {
 		f := strings.Fields(line)
@@ -158,7 +163,10 @@ func ParseProcStat(s string) (Ticks, bool) {
 			vals = append(vals, v)
 		}
 		var total uint64
-		for _, v := range vals {
+		for i, v := range vals {
+			if i >= 8 {
+				break // guest and guest_nice: already in user/nice, drop from total
+			}
 			total += v
 		}
 		idle := vals[3]

@@ -93,11 +93,14 @@ func (k Kind) String() string {
 
 // GitBudgetFor is the budget of one git command line: GitLongBudget for a subcommand
 // that goes to the network (clone, fetch, pull, push, ls-remote, submodule), GitBudget
-// for the rest. Leading options (-C dir, -c key=value) are skipped.
+// for the rest. Leading options are skipped, and one that takes a path or a config
+// assignment as its value (-C dir, -c key=value, --git-dir dir, --work-tree dir, in the
+// separated form; the equals form is a plain flag) consumes that value, so a repository
+// path is never read as the subcommand.
 func GitBudgetFor(args []string) time.Duration {
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
-		case a == "-C" || a == "-c":
+		case a == "-C" || a == "-c" || a == "--git-dir" || a == "--work-tree":
 			i++
 		case strings.HasPrefix(a, "-"):
 		default:

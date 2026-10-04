@@ -172,10 +172,10 @@ type Row struct {
 // Bases is the day bases that fed this row, sorted. More than one is a row that is not
 // written: a row must carry one day basis, and a mixed row is named and left out of the
 // file and the counts.
-func (r *Row) Bases() []string { return sortedKeys(r.bases) }
+func (r *Row) Bases() []string { return slices.Sorted(maps.Keys(r.bases)) }
 
 // Sources is the sorted, comma-joinable labels that fed this row.
-func (r *Row) Sources() []string { return sortedKeys(r.sources) }
+func (r *Row) Sources() []string { return slices.Sorted(maps.Keys(r.sources)) }
 
 // Basis is the row's one basis, or the empty string when it has two.
 func (r *Row) Basis() string {
@@ -268,7 +268,7 @@ func (f *Folder) Add(label string, m Message) {
 }
 
 // Days is every day the sources named, sorted.
-func (f *Folder) Days() []string { return sortedKeys(f.days) }
+func (f *Folder) Days() []string { return slices.Sorted(maps.Keys(f.days)) }
 
 // Turns is the message count for a day across the sources that count messages, and
 // whether any of them fed it. A day fed by a bus note alone has none, and its version
@@ -541,14 +541,6 @@ func ValidZone(s string) bool {
 		return false
 	}
 	return strings.IndexFunc(s, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }) < 0
-}
-
-// sortedKeys is m's keys, sorted, and never nil: an empty map gives an empty slice, so a
-// row with no source and a day file with no rows encode and compare as before.
-func sortedKeys(m map[string]bool) []string {
-	out := slices.AppendSeq(make([]string, 0, len(m)), maps.Keys(m))
-	slices.Sort(out)
-	return out
 }
 
 // Label is how a source names itself in a row's sources column and on its own line:
