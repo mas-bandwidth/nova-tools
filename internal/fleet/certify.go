@@ -168,37 +168,6 @@ func StandardWorkloads() ([]Workload, error) {
 	return out, nil
 }
 
-// ReadWorkloads reads an override directory: every `<class>.card` in it, whole and
-// validated. A directory holding one broken card is refused entire, for the registry's own
-// reason -- the half that reads is the half that lets a machine through.
-func ReadWorkloads(dir string) ([]Workload, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("cannot read the workloads directory %s: %w", dir, err)
-	}
-	var out []Workload
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".card") {
-			continue
-		}
-		p := filepath.Join(dir, e.Name())
-		raw, err := os.ReadFile(p)
-		if err != nil {
-			return nil, err
-		}
-		w, err := ParseWorkload(p, raw)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, w)
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("%s holds no <class>.card; refusing to guess (a workload is a file: roles, expect, then a blank line, then the body)", dir)
-	}
-	sortWorkloads(out)
-	return out, nil
-}
-
 func sortWorkloads(out []Workload) {
 	sort.Slice(out, func(i, j int) bool { return out[i].Class < out[j].Class })
 }
