@@ -79,15 +79,15 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 	assert.Contains(t, ta.ok("card s1-1"), "who=friend.amy", "card shows who")
 
 	out := ta.ok("friend sync --root " + root)
-	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1 job=s1-1.w1.g1 branch=sprint/s1-1.w1.g1.e0")
+	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1 job=s1-1.w1~0.g1 branch=sprint/s1-1.w1.g1.e0")
 	assert.Contains(t, out, "delivered=1 finished=0")
-	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1.g1", "BRIEF.md"))
+	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1~0.g1", "BRIEF.md"))
 	require.NoError(t, err)
 	lines := strings.Split(string(text), "\n")
-	assert.Equal(t, "STATUS: nova-sprint card s1-1.w1, epoch 0, attempt 1; push your work to the branch sprint/s1-1.w1.g1.e0; first take it: nova-sprint friend take s1-1.w1.g1; when done, write outbox/s1-1.w1.g1/REPORT.md with Assignment: s1-1.w1.g1, Verdict: LAND|HOLD|FAIL and Head: <sha>", lines[0])
-	assert.Contains(t, lines[1], "Work in ~/amy-working/jobs/s1-1.w1.g1/")
+	assert.Equal(t, "STATUS: nova-sprint card s1-1.w1, epoch 0, attempt 1; push your work to the branch sprint/s1-1.w1.g1.e0; first take it: nova-sprint friend take s1-1.w1~0.g1; when done, write outbox/s1-1.w1~0.g1/REPORT.md with Assignment: s1-1.w1~0.g1, Verdict: LAND|HOLD|FAIL and Head: <sha>", lines[0])
+	assert.Contains(t, lines[1], "Work in ~/amy-working/jobs/s1-1.w1~0.g1/")
 	assert.Contains(t, string(text), "\n\ns1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n", "the brief follows")
-	_, err = os.Stat(filepath.Join(root, "bob-working", "inbox", "s1-1.w1.g1"))
+	_, err = os.Stat(filepath.Join(root, "bob-working", "inbox", "s1-1.w1~0.g1"))
 	assert.True(t, os.IsNotExist(err), "bob's inbox is not written")
 
 	// a sync after a sync delivers nothing again, and the card is no job of hers
@@ -225,10 +225,10 @@ func TestTheInboxRefusesABadCardIDAndASymlinkedJob(t *testing.T) {
 
 	elsewhere := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
-	require.NoError(t, os.Symlink(elsewhere, filepath.Join(dir, "inbox", "s1-1.w1.g1")))
+	require.NoError(t, os.Symlink(elsewhere, filepath.Join(dir, "inbox", "s1-1.w1~0.g1")))
 	_, why, err = friendInbox(dir, sprint.Packet{Card: "s1-1.w1", Gen: 1})
 	require.NoError(t, err)
-	assert.Contains(t, why, "inbox/s1-1.w1.g1 is a symlink or a file, not a directory")
+	assert.Contains(t, why, "inbox/s1-1.w1~0.g1 is a symlink or a file, not a directory")
 
 	in, why, err := friendInbox(dir, sprint.Packet{Card: "s1-2.w1", Epoch: 3, Gen: 1})
 	require.NoError(t, err)
@@ -337,15 +337,15 @@ func TestBoundGenerationPreventsStaleReportAndFreshReportSucceeds(t *testing.T) 
 	ta, root := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
-	ta.ok("friend take s1-1.w1.g1")
+	ta.ok("friend take s1-1.w1~0.g1")
 
-	// verify gen 1 BRIEF was written under immutable path inbox/s1-1.w1.g1/BRIEF.md
-	brief1, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1.g1", "BRIEF.md"))
+	// verify gen 1 BRIEF was written under immutable path inbox/s1-1.w1~0.g1/BRIEF.md
+	brief1, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1~0.g1", "BRIEF.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(brief1), "Assignment: s1-1.w1.g1")
+	assert.Contains(t, string(brief1), "Assignment: s1-1.w1~0.g1")
 
 	// friend writes a report for gen 1
-	outboxReport(t, root, "amy", "s1-1.w1.g1", "Assignment: s1-1.w1.g1\nVerdict: LAND\nHead: "+landHead+"\n\nDone attempt 1.\n")
+	outboxReport(t, root, "amy", "s1-1.w1~0.g1", "Assignment: s1-1.w1~0.g1\nVerdict: LAND\nHead: "+landHead+"\n\nDone attempt 1.\n")
 
 	// now coordinator holds amy before sync collects the report
 	ta.ok("friend down amy")
@@ -367,15 +367,15 @@ func TestBoundGenerationPreventsStaleReportAndFreshReportSucceeds(t *testing.T) 
 
 	// sync delivers fresh brief for gen 3
 	outDeliv := ta.ok("friend sync --root " + root)
-	assert.Contains(t, outDeliv, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1 job=s1-1.w1.g3")
+	assert.Contains(t, outDeliv, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1 job=s1-1.w1~0.g3")
 
 	// verify fresh BRIEF.md delivered for gen 3
-	brief3, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1.g3", "BRIEF.md"))
+	brief3, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1~0.g3", "BRIEF.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(brief3), "Assignment: s1-1.w1.g3")
+	assert.Contains(t, string(brief3), "Assignment: s1-1.w1~0.g3")
 
 	// friend claims the new assignment (moves to working at gen 3)
-	ta.ok("friend take s1-1.w1.g3")
+	ta.ok("friend take s1-1.w1~0.g3")
 
 	// sync runs: only the old gen 1 report exists; it detects stale generation 1 vs 3
 	out := ta.ok("friend sync --root " + root)
@@ -390,7 +390,7 @@ func TestBoundGenerationPreventsStaleReportAndFreshReportSucceeds(t *testing.T) 
 	assert.Equal(t, 3, c.Work[0].Int("gen"))
 
 	// now friend writes a fresh report for gen 3
-	outboxReport(t, root, "amy", "s1-1.w1.g3", "Assignment: s1-1.w1.g3\nVerdict: LAND\nHead: "+landHead+"\n\nDone attempt 1 gen 3.\n")
+	outboxReport(t, root, "amy", "s1-1.w1~0.g3", "Assignment: s1-1.w1~0.g3\nVerdict: LAND\nHead: "+landHead+"\n\nDone attempt 1 gen 3.\n")
 
 	// sync finishes the fresh generation successfully
 	outFresh := ta.ok("friend sync --root " + root)
@@ -415,13 +415,13 @@ func TestStaleOrMissingMetadataCannotAcquireAuthority(t *testing.T) {
 	reportMissing := "Verdict: LAND\nHead: " + landHead + "\n\nDone.\n"
 	_, err := friendFinish(context.Background(), "amy", p, reportMissing, noTip)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "report lacks Assignment: line for generation 3; add Assignment: s1-1.w1.g3")
+	assert.Contains(t, err.Error(), "report lacks Assignment: line for generation 3; add Assignment: s1-1.w1~0.g3")
 
 	// 2. Corrupted / mismatched Assignment: token is rejected
 	reportCorrupt := "Assignment: invalid-token\nVerdict: LAND\nHead: " + landHead + "\n\nDone.\n"
 	_, err = friendFinish(context.Background(), "amy", p, reportCorrupt, noTip)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "report assignment invalid-token does not match current assignment s1-1.w1.g3")
+	assert.Contains(t, err.Error(), "report assignment invalid-token does not match current assignment s1-1.w1~0.g3")
 
 	// 3. Stale Assignment: from older generation is rejected
 	reportStale := "Assignment: s1-1.w1.g1\nVerdict: LAND\nHead: " + landHead + "\n\nDone.\n"
@@ -430,7 +430,7 @@ func TestStaleOrMissingMetadataCannotAcquireAuthority(t *testing.T) {
 	assert.Contains(t, err.Error(), "stale report assignment s1-1.w1.g1 (generation 1 is older than current generation 3)")
 
 	// 4. Valid Assignment: matches and succeeds
-	reportValid := "Assignment: s1-1.w1.g3\nVerdict: LAND\nHead: " + landHead + "\n\nDone.\n"
+	reportValid := "Assignment: s1-1.w1~0.g3\nVerdict: LAND\nHead: " + landHead + "\n\nDone.\n"
 	req, err := friendFinish(context.Background(), "amy", p, reportValid, noTip)
 	require.NoError(t, err)
 	assert.False(t, req.Failed)
@@ -448,12 +448,12 @@ func TestConcurrentOldAndNewDeliveriesCannotOverwriteIdentity(t *testing.T) {
 	in1, why1, err := friendInbox(dir, p1)
 	require.NoError(t, err)
 	assert.Empty(t, why1)
-	assert.Equal(t, filepath.Join(dir, "inbox", "s1-1.w1.g1"), in1)
+	assert.Equal(t, filepath.Join(dir, "inbox", "s1-1.w1~0.g1"), in1)
 
 	in3, why3, err := friendInbox(dir, p3)
 	require.NoError(t, err)
 	assert.Empty(t, why3)
-	assert.Equal(t, filepath.Join(dir, "inbox", "s1-1.w1.g3"), in3)
+	assert.Equal(t, filepath.Join(dir, "inbox", "s1-1.w1~0.g3"), in3)
 
 	// Write gen 3 first
 	require.NoError(t, os.MkdirAll(in3, 0o755))
@@ -471,9 +471,9 @@ func TestConcurrentOldAndNewDeliveriesCannotOverwriteIdentity(t *testing.T) {
 
 	content3, err := os.ReadFile(brief3)
 	require.NoError(t, err)
-	assert.Contains(t, string(content3), "Assignment: s1-1.w1.g3", "gen 3 identity remains intact")
+	assert.Contains(t, string(content3), "Assignment: s1-1.w1~0.g3", "gen 3 identity remains intact")
 
 	content1, err := os.ReadFile(brief1)
 	require.NoError(t, err)
-	assert.Contains(t, string(content1), "Assignment: s1-1.w1.g1", "gen 1 identity remains intact")
+	assert.Contains(t, string(content1), "Assignment: s1-1.w1~0.g1", "gen 1 identity remains intact")
 }

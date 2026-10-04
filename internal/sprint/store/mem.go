@@ -235,6 +235,13 @@ func (m *Mem) SettleEpoch(_ context.Context, n uint64) error {
 	return nil
 }
 
+// SetEpoch sets the current epoch, for tests.
+func (m *Mem) SetEpoch(n uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.epochSet, m.epochN, m.epoch = true, n, n
+}
+
 var errLost = errors.New("the store did not answer")
 
 func (m *Mem) fail(point string) error {

@@ -616,13 +616,13 @@ func needsEpoch(verbName string, coordinator bool) bool {
 // confirm.
 func (a *app) runStep(verbName string, c common, st *store.Store, step store.Step, stdout, stderr io.Writer) int {
 	ctx := context.Background()
-	if a.serving && c.epoch < 0 {
+	if a.serving && !c.hasEpoch {
 		// a worker's write through the server runs at the epoch its worker holds, as the
 		// verb parsed it: with none (or one a later word undid) the step could run in a
 		// sprint the worker has not read, a clear later (serve.go)
 		return refuse(stderr, strings.TrimSuffix(verbName, " by id"), "a worker's verb sent to the server names the epoch its worker holds, --epoch <n> (queue prints it), and this one runs at none; nothing was changed")
 	}
-	if epochVerbs[verbName] && c.epoch < 0 {
+	if epochVerbs[verbName] && !c.hasEpoch {
 		coordinator := false
 		if verbName == "merge" {
 			if name, err := st.B.Coordinator(ctx); err == nil {
@@ -639,9 +639,8 @@ func (a *app) runStep(verbName string, c common, st *store.Store, step store.Ste
 		}
 	}
 	step.CallerOp = c.op
-	if c.epoch >= 0 {
-		e := uint64(c.epoch)
-		step.Epoch = &e
+	if c.hasEpoch {
+		step.Epoch = &c.epoch
 	}
 	res, err := st.Run(ctx, step)
 	if c.packets != nil && err == nil {
@@ -1756,7 +1755,11 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 	limit := fs.Int("limit", 0, "take the first n of its ready queue (default 1); with several members, n of each")
 	words, err := parse(fs, args)
 	if err != nil {
-		return refuse(stderr, "take", err.Error())
+		msg := err.Error()
+		if a.serving && !strings.Contains(msg, "nothing was changed") {
+			msg += "; nothing was changed"
+		}
+		return refuse(stderr, "take", msg)
 	}
 	ids, gens, err := cardGens(words)
 	if err != nil {

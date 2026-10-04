@@ -288,7 +288,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	}
 	// the epoch the caller holds is checked before anything is read or run
 	// (tla/Land.tla, Read: a stale caller is refused before any push)
-	if c.epoch >= 0 && uint64(c.epoch) != st.PinnedEpoch() {
+	if c.hasEpoch && c.epoch != st.PinnedEpoch() {
 		fmt.Fprintf(stderr, "%s land: the sprint is at epoch %d, not %d (cleared since): nothing was fetched, pushed or reported; run: nova-sprint where\n", prog, st.PinnedEpoch(), c.epoch)
 		return 1
 	}

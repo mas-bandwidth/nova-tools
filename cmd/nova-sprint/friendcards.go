@@ -41,8 +41,10 @@ const (
 )
 
 // friendJobID returns the generation-bound immutable job identifier for a card at an epoch and generation.
+// Brief tokens dealt to friends carry their epoch explicitly (including ~0 at epoch 0) so old briefs
+// are fenced across epoch clears.
 func friendJobID(card string, epoch uint64, gen int) string {
-	stored := sprint.StoredID(card, epoch)
+	stored := fmt.Sprintf("%s~%d", card, epoch)
 	if gen > 0 {
 		return fmt.Sprintf("%s.g%d", stored, gen)
 	}
@@ -204,7 +206,7 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 
 	job := friendJobOf(p)
 	if assignment != "" {
-		if assignment != job && (p.Gen != 1 || (assignment != p.Card && assignment != sprint.StoredID(p.Card, p.Epoch))) {
+		if assignment != job && (p.Gen != 1 || (assignment != p.Card && assignment != sprint.StoredID(p.Card, p.Epoch) && assignment != fmt.Sprintf("%s.g%d", p.Card, p.Gen))) {
 			if c, ep, g, ok := parseFriendJob(assignment); ok && c == p.Card && ep == p.Epoch && g < p.Gen {
 				return r, fmt.Errorf("stale report assignment %s (generation %d is older than current generation %d); update outbox/%s/REPORT.md for current assignment %s", assignment, g, p.Gen, job, job)
 			}
@@ -352,6 +354,9 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		if errors.Is(err, fs.ErrNotExist) {
 			if p.Gen == 1 {
 				report, err = os.ReadFile(legacyPath)
+				if errors.Is(err, fs.ErrNotExist) && p.Epoch == 0 {
+					report, err = os.ReadFile(filepath.Join(dir, "outbox", fmt.Sprintf("%s.g1", p.Card), "REPORT.md"))
+				}
 				if err != nil && !errors.Is(err, fs.ErrNotExist) {
 					return delivered, finished, fmt.Errorf("cannot read report %s: %w; check file permissions", legacyPath, err)
 				}

@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -257,6 +258,37 @@ func libraryMatches(ctx context.Context, c *redis.Client, addr string) error {
 	return nil
 }
 
+// epochFlag parses an unsigned 64-bit epoch and rejects negative values.
+type epochFlag struct {
+	val *uint64
+	set *bool
+}
+
+func (f *epochFlag) String() string {
+	if f.val == nil || f.set == nil || !*f.set {
+		return ""
+	}
+	return strconv.FormatUint(*f.val, 10)
+}
+
+func (f *epochFlag) Set(s string) error {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "-") {
+		return errors.New("an epoch is a whole number of zero or more")
+	}
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return errors.New("an epoch is a whole number of zero or more")
+	}
+	if f.val != nil {
+		*f.val = v
+	}
+	if f.set != nil {
+		*f.set = true
+	}
+	return nil
+}
+
 // common is the flags every store verb takes.
 type common struct {
 	verb             string // the verb's name: its class (coordinator.go)
@@ -264,7 +296,8 @@ type common struct {
 	redis, actor, op string
 	json             bool
 	max              int
-	epoch            int64       // the epoch the caller holds; -1 is none
+	epoch            uint64      // the epoch the caller holds
+	hasEpoch         bool        // true when --epoch was given
 	group            groupReport // set by --group, for the verb's report
 	// packets, when set, is what the step hands its actor (take: each
 	// card's packet), read after the step and printed with its report.
@@ -289,14 +322,15 @@ func (c *common) register(fs flagSet, getenv func(string) string) {
 	c.registerStore(fs, getenv)
 	fs.StringVar(&c.op, "op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 	fs.IntVar(&c.max, "max", 20, "listed items of each kind; 0 is all")
-	fs.Int64Var(&c.epoch, "epoch", -1, "the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none")
+	fs.Var(&epochFlag{val: &c.epoch, set: &c.hasEpoch}, "epoch", "`uint` the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none")
 }
 
 // registerStore is the shared flags of a verb that takes no --op, --epoch or --max
 // (answer: each verb it applies carries its decision's own op): the store, the actor
 // and --json.
 func (c *common) registerStore(fs flagSet, getenv func(string) string) {
-	c.epoch = -1
+	c.epoch = 0
+	c.hasEpoch = false
 	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)")
 	fs.StringVar(&c.actor, "actor", getenv("NOVA_SPRINT_ACTOR"), "who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)")
 	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")

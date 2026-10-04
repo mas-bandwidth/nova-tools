@@ -280,20 +280,32 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed(name, err, stderr)
 	}
-	if c.epoch >= 0 && uint64(c.epoch) != es.N {
+	if c.hasEpoch && c.epoch != es.N {
 		return refuse(stderr, name, fmt.Sprintf("card %s was handed at epoch %d, and the sprint is at epoch %d; after clear, an old brief cannot take a card in a new epoch", ids[0], c.epoch, es.N))
 	}
 	for i, w := range words {
 		card := ids[i]
-		if idx := strings.LastIndexByte(w, '~'); idx != -1 {
-			j := idx + 1
-			for j < len(w) && w[j] >= '0' && w[j] <= '9' {
-				j++
+		base := w
+		if idx := strings.LastIndex(w, ".g"); idx != -1 {
+			if _, err := strconv.Atoi(w[idx+2:]); err == nil {
+				base = w[:idx]
 			}
-			if j == idx+1 {
+		} else if idx := strings.LastIndex(w, "@"); idx != -1 {
+			if _, err := strconv.Atoi(w[idx+1:]); err == nil {
+				base = w[:idx]
+			}
+		}
+		if idx := strings.LastIndexByte(base, '~'); idx != -1 {
+			epochStr := base[idx+1:]
+			if epochStr == "" || strings.Count(base, "~") > 1 {
 				return refuse(stderr, name, fmt.Sprintf("%s: an epoch is a whole number", w))
 			}
-			tokenEpoch, err := strconv.ParseUint(w[idx+1:j], 10, 64)
+			for _, ch := range epochStr {
+				if ch < '0' || ch > '9' {
+					return refuse(stderr, name, fmt.Sprintf("%s: an epoch is a whole number", w))
+				}
+			}
+			tokenEpoch, err := strconv.ParseUint(epochStr, 10, 64)
 			if err != nil {
 				return refuse(stderr, name, fmt.Sprintf("%s: an epoch is a whole number", w))
 			}
@@ -302,7 +314,8 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	c.epoch = int64(es.N)
+	c.epoch = es.N
+	c.hasEpoch = true
 	if target == "" && len(ids) > 0 {
 		if s, err := st.Load(ctx, []string{sprint.Fleet}, nil); err == nil {
 			if card := s.Fleet.Card(ids[0]); card != nil && card.Placed() {

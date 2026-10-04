@@ -185,7 +185,7 @@ func TestFriendSyncWritesOnlyACardsBriefAndReadsItsReport(t *testing.T) {
 	handText, err := os.ReadFile(hand)
 	require.NoError(t, err)
 	ta.ok("friend sync --root " + root)
-	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1.g1", "BRIEF.md"))
+	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1~0.g1", "BRIEF.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(text), "STATUS: nova-sprint card s1-1.w1")
 	assert.Contains(t, string(text), "WHO: friend amy")
@@ -445,12 +445,12 @@ func TestFriendTakeCommandInBriefE2E(t *testing.T) {
 	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
 
 	// verify BRIEF.md was delivered with the exact command format
-	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1.g1", "BRIEF.md"))
+	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1~0.g1", "BRIEF.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(text), "first take it: nova-sprint friend take s1-1.w1.g1")
+	assert.Contains(t, string(text), "first take it: nova-sprint friend take s1-1.w1~0.g1")
 
 	// execute exact command from BRIEF.md: nova-sprint friend take <job>
-	out := ta.ok("friend take s1-1.w1.g1")
+	out := ta.ok("friend take s1-1.w1~0.g1")
 	assert.Contains(t, out, "MOVED s1-1.w1 fleet ready -> working friend=amy gen=1")
 	assert.Contains(t, out, "FRIEND-TAKE OK moved=1")
 
@@ -460,7 +460,7 @@ func TestFriendTakeCommandInBriefE2E(t *testing.T) {
 	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"])
 
 	// a duplicate take is refused: not in ready
-	code, _, errs := ta.do("friend take s1-1.w1.g1")
+	code, _, errs := ta.do("friend take s1-1.w1~0.g1")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "not in friend.amy ready (it is friend.amy:working)")
 }
@@ -513,12 +513,12 @@ func TestFriendE2ETiersReservationHoldAndFinish(t *testing.T) {
 
 	// 1. Pro-only and mixed-tier enforcement on public CLI:
 	// Amy tries to take bob's pro card: refused (not dealt to amy)
-	code, _, errs := ta.do("friend take --as friend.amy s1-1.w1.g1")
+	code, _, errs := ta.do("friend take --as friend.amy s1-1.w1~0.g1")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "not dealt to friend amy (it is friend.bob:ready)")
 
 	// Bob takes pro card: succeeds
-	ta.ok("friend take s1-1.w1.g1")
+	ta.ok("friend take s1-1.w1~0.g1")
 	ta.json("where", &w)
 	assert.Equal(t, "0", w.Tables[sprint.Friends]["bob"]["ready"])
 	assert.Equal(t, "1", w.Tables[sprint.Friends]["bob"]["working"])
@@ -527,7 +527,7 @@ func TestFriendE2ETiersReservationHoldAndFinish(t *testing.T) {
 	_, _, err = cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"tiers": "pro"}, "t")
 	require.NoError(t, err)
 	ta.ok("friend sync --root " + root)
-	code, _, errs = ta.do("friend take s1-2.w1.g1")
+	code, _, errs = ta.do("friend take s1-2.w1~0.g1")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "cannot do tier flash (allowed: pro)")
 
@@ -538,8 +538,8 @@ func TestFriendE2ETiersReservationHoldAndFinish(t *testing.T) {
 
 	// 2. Ready reservation width:
 	// Amy takes her 2 ready cards: moves them to working
-	ta.ok("friend take s1-2.w1.g1")
-	ta.ok("friend take s1-3.w1.g1")
+	ta.ok("friend take s1-2.w1~0.g1")
+	ta.ok("friend take s1-3.w1~0.g1")
 	ta.json("where", &w)
 	assert.Equal(t, "2", w.Tables[sprint.Friends]["amy"]["working"])
 	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["ready"])
@@ -578,17 +578,17 @@ func TestFriendE2ETiersReservationHoldAndFinish(t *testing.T) {
 
 	// Sync delivers fresh briefs to amy's inbox
 	ta.ok("friend sync --root " + root)
-	briefText, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-2.w1.g3", "BRIEF.md"))
+	briefText, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-2.w1~0.g3", "BRIEF.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(briefText), "first take it: nova-sprint friend take s1-2.w1.g3")
+	assert.Contains(t, string(briefText), "first take it: nova-sprint friend take s1-2.w1~0.g3")
 
-	// Amy takes s1-2.w1.g3
-	ta.ok("friend take s1-2.w1.g3")
+	// Amy takes s1-2.w1~0.g3
+	ta.ok("friend take s1-2.w1~0.g3")
 	ta.json("where", &w)
 	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"])
 
-	// Amy writes fresh report with Assignment: s1-2.w1.g3
-	outboxReport(t, root, "amy", "s1-2.w1.g3", "Assignment: s1-2.w1.g3\nVerdict: LAND\nHead: "+landHead+"\n\nFinished flash task cleanly.\n")
+	// Amy writes fresh report with Assignment: s1-2.w1~0.g3
+	outboxReport(t, root, "amy", "s1-2.w1~0.g3", "Assignment: s1-2.w1~0.g3\nVerdict: LAND\nHead: "+landHead+"\n\nFinished flash task cleanly.\n")
 
 	// Friend sync finishes it
 	syncOut := ta.ok("friend sync --root " + root)
@@ -672,3 +672,170 @@ func TestOldEpochFriendTakeRefusesAfterClear(t *testing.T) {
 	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["ready"])
 	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"])
 }
+
+// TestRegressionFinding1_Epoch0BriefRefusesAfterClearAndBareIDAllowed verifies:
+// 1. Brief tokens dealt at epoch 0 carry ~0 (finding 1).
+// 2. An old epoch 0 brief token is refused after clear (epoch 1).
+// 3. A bare card ID without epoch succeeds in the live epoch.
+func TestRegressionFinding1_Epoch0BriefRefusesAfterClearAndBareIDAllowed(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root)
+
+	// Verify BRIEF in epoch 0 explicitly carries ~0
+	briefFile := filepath.Join(root, "amy-working", "inbox", "s1-1.w1~0.g1", "BRIEF.md")
+	text, err := os.ReadFile(briefFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(text), "first take it: nova-sprint friend take s1-1.w1~0.g1")
+
+	// Clear sprint to advance epoch from 0 to 1
+	ta.ok("clear --confirm sprint")
+	ta.ok("friend sync --root " + root)
+	ta.ok("friend beat amy")
+
+	// Recreate s1-1 in epoch 1
+	brief1 := filepath.Join(t.TempDir(), "s1-1.md")
+	require.NoError(t, os.WriteFile(brief1, []byte(passingBrief("s1-1: card in epoch 1\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy")), 0o644))
+	ta.ok("add --stream s1 --brief-dir " + filepath.Dir(brief1))
+	ta.ok("start")
+	ta.ok("tick")
+
+	// 1. Attempt to take with old brief token from epoch 0: refused with code 2
+	code, _, errs := ta.do("friend take s1-1.w1~0.g1")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "card s1-1.w1 was handed at epoch 0, and the sprint is at epoch 1; after clear, an old brief cannot take a card in a new epoch")
+
+	// Card remains in ready reserve; working count is 0
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
+
+	// 2. Bare card ID without epoch token succeeds in live epoch 1
+	out := ta.ok("friend take s1-1.w1")
+	assert.Contains(t, out, "FRIEND-TAKE OK")
+
+	ta.json("where", &w)
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"])
+}
+
+// TestRegressionFinding2_EpochUint64OverflowPrevention verifies that epochs >= 1<<63
+// do not overflow int64 in common.epoch, brief tokens, or --epoch flag parsing.
+func TestRegressionFinding2_EpochUint64OverflowPrevention(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	highEpoch := uint64(1<<63 + 12345)
+	ta.m.SetEpoch(highEpoch)
+
+	home, prev := t.TempDir(), ta.a.getenv
+	ta.a.getenv = func(k string) string {
+		if k == "HOME" {
+			return home
+		}
+		return prev(k)
+	}
+	cfg := config.NewMem()
+	ta.a.friends = func(ctx context.Context, _ string) ([]config.Row, error) {
+		return cfg.List(ctx, config.KindFriend)
+	}
+	_, err := cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "amy", Fields: map[string]string{"width": "2", "tiers": "flash"}}, "t")
+	require.NoError(t, err)
+
+	ta.ok("init --readers reader-a,reader-b --members m1,m2")
+	ta.a.tip = tipIs(t, landHead)
+	root := t.TempDir()
+	ta.ok("friend sync --root " + root)
+	ta.ok("friend beat amy")
+
+	brief1 := filepath.Join(t.TempDir(), "s1-1.md")
+	require.NoError(t, os.WriteFile(brief1, []byte(passingBrief("s1-1: card 1\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy")), 0o644))
+	ta.ok("add --stream s1 --brief-dir " + filepath.Dir(brief1))
+
+	brief2 := filepath.Join(t.TempDir(), "s2-1.md")
+	require.NoError(t, os.WriteFile(brief2, []byte(passingBrief("s2-1: card 2\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy")), 0o644))
+	ta.ok("add --stream s2 --brief-dir " + filepath.Dir(brief2))
+
+	ta.ok("start")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root)
+
+	// Verify brief directory and command carry high uint64 epoch
+	jobToken := fmt.Sprintf("s1-1.w1~%d.g1", highEpoch)
+	briefFile := filepath.Join(root, "amy-working", "inbox", jobToken, "BRIEF.md")
+	text, err := os.ReadFile(briefFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(text), "first take it: nova-sprint friend take "+jobToken)
+
+	// 1. Friend take using uint64 epoch token succeeds without int64 overflow
+	out := ta.ok("friend take " + jobToken)
+	assert.Contains(t, out, "FRIEND-TAKE OK")
+
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"])
+
+	// 2. Friend take using --epoch flag with high uint64 epoch succeeds
+	out = ta.ok(fmt.Sprintf("friend take s2-1.w1 --epoch %d", highEpoch))
+	assert.Contains(t, out, "FRIEND-TAKE OK")
+
+	ta.json("where", &w)
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "2", w.Tables[sprint.Friends]["amy"]["working"])
+}
+
+// TestRegressionFinding3_NegativeEpochRefused verifies that negative --epoch values
+// are rejected as invalid whole numbers across friend take and worker take.
+func TestRegressionFinding3_NegativeEpochRefused(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root)
+
+	for _, cmd := range []string{
+		"friend take s1-1.w1 --epoch -1",
+		"friend take s1-1.w1 --epoch=-5",
+		"take s1-1.w1 --epoch -1",
+	} {
+		code, _, errs := ta.do(cmd)
+		assert.Equal(t, 2, code, cmd)
+		assert.Contains(t, errs, "an epoch is a whole number", cmd)
+	}
+
+	// Card remains in ready reserve; state was unchanged
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
+}
+
+// TestRegressionFinding4_TrailingNonDigitBytesRefused verifies that tokens with
+// trailing non-digit bytes or malformed epoch formats are rejected.
+func TestRegressionFinding4_TrailingNonDigitBytesRefused(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root)
+
+	badTokens := []string{
+		"s1-1.w1~1EXTRA",
+		"s1-1.w1~0EXTRA.g1",
+		"s1-1.w1~",
+		"s1-1.w1~abc",
+		"s1-1.w1~1~2",
+	}
+	for _, tok := range badTokens {
+		code, _, errs := ta.do("friend take " + tok)
+		assert.Equal(t, 2, code, tok)
+		assert.Contains(t, errs, "an epoch is a whole number", tok)
+	}
+
+	// Card remains untouched in ready reserve
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
+}
+
