@@ -207,3 +207,27 @@ func TestTheReadLimitFollowsTheSlowestAnsweredRead(t *testing.T) {
 	b.s.readOnce()
 	assert.Equal(t, []time.Duration{swarm.LiveSampleLimit, swarm.LiveSampleLimit, 12 * time.Second, 12 * time.Second, LiveSampleMost}, limits, "one limit per sample, its retry given the same; the minute-long answer raises it to the most")
 }
+
+// A source that never answers (sqlite3 missing, wrong data home: observed false) ends
+// unverifiable once no answer ever has arrived within UnverifiableAfter.
+func TestASourceThatNeverAnswersEndsUnverifiableAfterTheBound(t *testing.T) {
+	t.Parallel()
+	b := newOutageBench(t, nativeRunConfig{tokens: 1000})
+	refused := errors.New("the usage source /j/opencode.db could not be read: sqlite3 missing")
+	b.answer = func(n int) (swarm.ProviderUsage, error) {
+		return swarm.ProviderUsage{}, refused
+	}
+	// Before UnverifiableAfter, failed reads do not end the card
+	b.now = b.now.Add(UnverifiableAfter - time.Second)
+	b.s.readOnce()
+	assert.Empty(t, b.fired(), "before UnverifiableAfter, no answer ever ends nothing yet")
+	assert.Empty(t, b.s.StopWordAtFinal(0, false, ""))
+
+	// At or past UnverifiableAfter with no answer ever, the card ends unverifiable
+	b.now = b.now.Add(2 * time.Second)
+	b.s.readOnce()
+	assert.Equal(t, stoppedUnverifiable, b.fired(), "no answer ever within UnverifiableAfter is unverifiable")
+	assert.Equal(t, stoppedUnverifiable, b.s.StopWordAtFinal(0, false, ""), "the word is kept at final")
+	assert.Equal(t, refused.Error(), b.s.Why())
+}
+

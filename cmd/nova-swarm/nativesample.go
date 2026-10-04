@@ -292,7 +292,7 @@ func (s *liveSampler) fold(usage swarm.ProviderUsage, err error, turns int) {
 		// reaches the ceiling (the comment on UnverifiableAfter). An `unmetered` card with
 		// no card budget has nothing to verify, so a reader that fails costs it nothing --
 		// there is no promise to break.
-		if s.watching() && s.reached == "" && s.atCeiling() {
+		if s.watching() && s.reached == "" && (s.atCeiling() || (!s.observed && s.clock().Sub(s.answered) >= UnverifiableAfter)) {
 			s.reached = stoppedUnverifiable
 			s.fire(stoppedUnverifiable)
 		}
