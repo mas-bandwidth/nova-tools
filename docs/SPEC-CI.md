@@ -713,6 +713,33 @@ function that returns a slice built elsewhere) is not followed. It does not know
 values a card supplies, so every non-literal operand in these two packages is held to
 the rule.
 
+### `never-force` — nothing rewrites a shared ref with force-push or hard-reset
+
+**The rule.** No `.go` file, shell script, `Makefile` or `.github/workflows/*.yml`
+under the repository contains `push --force`, `push -f`, `--force-with-lease`,
+`push origin +` or `reset --hard origin/`. These patterns rewrite refs without
+coordination; shared refs (anything not `origin/*`, `dev` or `main`) are never
+force-rewritten. A job-branch push goes to `origin/<job>`, never to `dev` or
+`main`.
+**The mistake it prevents.** A script that force-pushes `dev` or `main` can
+overwrite work in flight, and a hard-reset of an origin branch can break clones
+held by other jobs. Both shapes should never appear in the tree.
+**The test.** `TestNoForcePushOrHardResetOfASharedRef`
+(`internal/ci/never_force_class_test.go`), with
+`TestNoForcePushOrHardResetRefusesAFixtureScript`,
+`TestNoForcePushOrHardResetAllowsNormalPush`, and
+`TestNoForcePushOrHardResetAllowlistGrowsRefused`.
+**Its allowlist.** `internal/ci/never_force_allowlist.txt`, one `file:line kind
+date reason` per row; shrink-only. An exception is a fixture that asserts the
+refusal by running the forbidden pattern, and a script that resets a private
+clone to a fetched tip with legitimate cause.
+**Its remedy lines.** `remedy="nothing in nova-tools may rewrite a shared ref
+(dev, main, or an unlisted branch); use a job branch (push to origin/<job>)"`.
+**Its narrowings.** It reads literal patterns only, so a force flag hidden in a
+variable or built at runtime is not seen. It does not distinguish between
+different target refs—any occurrence of the patterns is searched for, and the
+patterns alone determine the refusal.
+
 ### `slowtests` — no package over the per-package time budget
 
 **The rule.** A package whose summed `go test -json` package elapsed time is over
