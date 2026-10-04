@@ -175,7 +175,8 @@ func TestReadReceiptsReadsSeveralRecordsInOneFile(t *testing.T) {
 	body := strings.Join(lines, "\n") + "\n\n" // a trailing blank line is not a record
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "hand-written.json"), []byte(body), 0o644))
 	got, failures, err := ReadReceipts(dir)
-	require.True(t, err == nil && len(failures) == 0, "ReadReceipts: %v %+v", err, failures)
+	require.NoError(t, err, "ReadReceipts: %v %+v", err, failures)
+	require.Empty(t, failures, "ReadReceipts: %v %+v", err, failures)
 	require.Len(t, got, 3, "read %d receipts from one file, want 3", len(got))
 }
 
@@ -198,5 +199,6 @@ func TestReadReceiptsAcceptsAnEmptyDirectory(t *testing.T) {
 
 	got, failures, err := ReadReceipts(t.TempDir())
 	require.NoError(t, err, "ReadReceipts: %v", err)
-	require.True(t, len(got) == 0 && len(failures) == 0, "empty directory read as %+v %+v", got, failures)
+	require.Empty(t, got, "empty directory read as %+v %+v", got, failures)
+	require.Empty(t, failures, "empty directory read as %+v %+v", got, failures)
 }

@@ -1,8 +1,5 @@
-//go:build ignore
-
-// timing.go is the committed script: it prints, for the
-// last 200 pull requests of the organisation/schema and
-// the organisation/nova-tools, the time from PR-open to all-green split into
+// citiming prints, for the last 200 pull requests of the
+// organisation/schema and the organisation/nova-tools, the time from PR-open to all-green split into
 // queue, setup and test per job -- one TSV row per job, its three spans in
 // whole seconds, and the envelope its PR opened under, "-" for a PR that
 // never went all-green. The script's purpose is the
@@ -15,17 +12,16 @@
 // harvest is a local file and there is no default: a guessed path is the one
 // thing this repository's tools never do.
 //
-// The script is a //go:build ignore file on purpose, the Go shape of a
-// scripts/ entry: it is run as a file, not built into the nova-ci binary,
-// because it is a one-off measurement, not a verb of the command. Run it
-// from a checkout of the repo:
+// The program is run as a file, not built into the nova-ci binary, because it
+// is a one-off measurement, not a verb of the command. Run it from a checkout
+// of the repo:
 //
-//	go run cmd/nova-ci/timing.go --log <events log>
+//	go run tools/citiming/main.go --log <events log>
 //
 // The table is deterministic: the same log renders byte-for-byte the same
-// table, so re-running the script reproduces the committed table --
+// table, so re-running the program reproduces the committed table --
 // internal/ci/timing/testdata/table.tsv -- and
-// TestTimingTableReproduces holds the script's own output against it.
+// TestTimingTableReproduces holds the program's own output against it.
 package main
 
 import (
@@ -44,7 +40,7 @@ import (
 const usage = `nova-ci timing: PR-open to all-green, split into queue, setup and test per job (ideas #791)
 
 usage:
-  go run cmd/nova-ci/timing.go --log <events log> [--repos <a,b>] [--last <n>]
+  go run tools/citiming/main.go --log <events log> [--repos <a,b>] [--last <n>]
 
   --log <path>   the harvested events log, one JSON object per line, one line
                  per CI job of one pull request; there is no default
@@ -62,7 +58,7 @@ exit codes: 0 the table printed, 2 the invocation could not run (bad flag,
             unreadable log, a log the table cannot use).
 
 example:
-  go run cmd/nova-ci/timing.go --log internal/ci/timing/testdata/events.jsonl
+  go run tools/citiming/main.go --log internal/ci/timing/testdata/events.jsonl
 `
 
 func main() {
@@ -120,8 +116,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// refuse prints this script's one-line refusal and names its door.
+// refuse prints this program's one-line refusal and names its door.
 func refuse(stderr io.Writer, what string) int {
-	fmt.Fprintf(stderr, "nova-ci timing: %s; run: go run cmd/nova-ci/timing.go help\n", oneline.Escape(what))
+	fmt.Fprintf(stderr, "nova-ci timing: %s; run: go run tools/citiming/main.go help\n", oneline.Escape(what))
 	return 2
 }

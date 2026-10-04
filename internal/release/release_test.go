@@ -420,6 +420,58 @@ func TestCutWritesTheChangelogTagsAndSaysWhatItDid(t *testing.T) {
 	}
 }
 
+// TestPreviousTagSelectsHighestOverPrereleases pins that previousTag orders by
+// semver precedence, not by the three dotted numbers alone: a release beats the
+// prerelease of the same version, and a higher prerelease beats a lower one, so
+// the changelog range starts from the tag the fleet actually adopted.
+func TestPreviousTagSelectsHighestOverPrereleases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		tags []string
+		want string
+	}{
+		{
+			name: "release beats prerelease of same version",
+			tags: []string{"v0.15.3", "v0.16.0-rc1", "v0.16.0"},
+			want: "v0.16.0",
+		},
+		{
+			name: "higher prerelease beats lower prerelease",
+			tags: []string{"v0.15.3", "v0.16.0-rc1", "v0.16.0-rc2"},
+			want: "v0.16.0-rc2",
+		},
+		{
+			name: "highest release selected from mixed tags",
+			tags: []string{"v0.9.0", "v0.15.3", "v0.15.10", "not-a-version"},
+			want: "v0.15.10",
+		},
+		{
+			name: "no valid versions returns empty",
+			tags: []string{"not-a-version", "also-not"},
+			want: "",
+		},
+		{
+			name: "skips tags without v prefix",
+			tags: []string{"0.16.0", "v0.15.3"},
+			want: "v0.15.3",
+		},
+		{
+			name: "skips fourth number",
+			tags: []string{"v0.16.0.1", "v0.16.0"},
+			want: "v0.16.0",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := previousTag(tc.tags)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // A commit whose subject carries no (#n) is not a pull request and is not a
 // changelog line; the count says 2 because two of the three commits were.
 func TestCutCountsOnlyCommitsThatNameAPullRequest(t *testing.T) {
@@ -1182,6 +1234,71 @@ func TestAdoptRefusesARemoteFromWithNoStage(t *testing.T) {
 
 // A fetch that arrived truncated is caught ONCE, here, rather than four times
 // on four machines that are then in four different states.
+func TestAdoptRemovesWhatItFetchedWhenTheDigestOrTheChecksRefuse(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []string{"damaged artifact", "wrong expected digest", "invalid sums", "missing sums"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			source := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+			dir := ArtifactDir(source, "v0.16.0", "linux", "amd64")
+			sums := filepath.Join(dir, SumsFile)
+			if kind == "damaged artifact" {
+				require.NoError(t, testbin.WriteExecutable(filepath.Join(dir, "nova-bus"), []byte("truncated"), 0o755))
+			}
+			if kind == "invalid sums" {
+				require.NoError(t, os.WriteFile(sums, []byte("invalid checksum file\n"), 0o644))
+			}
+			digest, err := fileSum(sums)
+			require.NoError(t, err)
+			if kind == "wrong expected digest" {
+				digest = strings.Repeat("0", 64)
+			}
+			if kind == "missing sums" {
+				require.NoError(t, os.Remove(sums))
+			}
+			stage := t.TempDir()
+			neighbor := filepath.Join(stage, "keep")
+			require.NoError(t, os.WriteFile(neighbor, []byte("operator data"), 0o600))
+			s := &fakeSSH{serves: map[string]string{"builder": dir}}
+			var out, errs bytes.Buffer
+			code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
+				"--machines", machinesFile(t, "target\n"), "--ssh", "/usr/bin/ssh",
+				"--from", "builder:/releases", "--stage", stage, "--expect-sums", digest,
+				"--bin", "/b", "--dest", "/d", "--platform", "linux-amd64"}, &out, &errs, Deps{SSH: s})
+			require.Equal(t, 2, code, errs.String())
+			require.Len(t, s.fetches, 1)
+			assert.Empty(t, s.sends)
+			assert.NoDirExists(t, ArtifactDir(stage, "v0.16.0", "linux", "amd64"), "a refused fetch must leave no unverified artifacts")
+			body, err := os.ReadFile(neighbor)
+			require.NoError(t, err)
+			assert.Equal(t, "operator data", string(body))
+		})
+	}
+}
+
+func TestAdoptLeavesAnExistingFetchDirectoryAlone(t *testing.T) {
+	t.Parallel()
+
+	stage := t.TempDir()
+	into := ArtifactDir(stage, "v0.16.0", "linux", "amd64")
+	require.NoError(t, os.MkdirAll(into, 0o755))
+	owned := filepath.Join(into, "operator-data")
+	require.NoError(t, os.WriteFile(owned, []byte("keep"), 0o600))
+	s := &fakeSSH{}
+	var out, errs bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "target\n"), "--ssh", "/usr/bin/ssh",
+		"--from", "builder:/releases", "--stage", stage, "--expect-sums", strings.Repeat("0", 64),
+		"--bin", "/b", "--dest", "/d", "--platform", "linux-amd64"}, &out, &errs, Deps{SSH: s})
+	require.Equal(t, 2, code, errs.String())
+	assert.Contains(t, errs.String(), "name a writable --stage without this version and platform")
+	assert.Empty(t, s.fetches, "an existing directory is refused before any fetch")
+	body, err := os.ReadFile(owned)
+	require.NoError(t, err)
+	assert.Equal(t, "keep", string(body))
+}
+
 func TestAdoptRefusesAFetchThatDoesNotMatchItsChecksums(t *testing.T) {
 	t.Parallel()
 

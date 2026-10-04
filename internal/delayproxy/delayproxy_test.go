@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,220 +17,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// These tests wait on no clock, bar one marked below. The proxy is given a
-// Clock whose waits are recorded and, where a test wants to look inside a wait, held on a gate: what
-// is proved is how many delays were paid and that nothing was sent before its
-// delay was over, never how long a machine took. The sockets are loopback ones
-// this file owns: the proxy's listener, an echo server standing for the target,
-// and the clients.
-
-// The delay the tests ask for. With the fake clock it is a number the proxy is
-// told, never a time that passes.
-const delay = 100 * time.Millisecond
-
-// ceiling bounds every read of a socket in these tests, generously: a test that
-// is not answered fails at it and does not hang.
-const ceiling = 30 * time.Second
-
-// ping is one command of a pipeline: PING as a RESP array, 14 bytes.
-const ping = "*1\r\n$4\r\nPING\r\n"
-
-// pipelined is how many commands the pipeline holds, and pipeline is that many
-// in one string: one write, well inside one read of the proxy's.
-const pipelined = 100
-
-var pipeline = strings.Repeat(ping, pipelined)
-
-// acceptLoop is the goroutine a proxy runs to accept, beside the
-// GoroutinesPerConn of each open connection.
-const acceptLoop = 1
-
-// echoBuffer is what the echo server reads at a time.
-const echoBuffer = 4096
-
-// largeWrite is a write of several reads, and patternPeriod is the period of
-// the bytes it carries: a prime, so no read of ChunkBytes ends where the
-// pattern starts over and a read that lost or repeated a byte cannot pass.
-const (
-	largeWrite    = 100 << 10
-	patternPeriod = 251
-)
-
-// apart is the time between one read of a client and the next in the test that
-// drives the two halves of the proxy by hand, and reads is how many there are.
-const (
-	apart = time.Millisecond
-	reads = 3
-)
-
-// heldClients is how many clients the Stop test leaves mid-hold.
-const heldClients = 4
-
-// realDelay is the least a timer can be asked for and the delay of the one test
-// that waits on time.
-const realDelay = 2 * time.Millisecond
-
-// onlyDelays reports whether the clock was asked for exactly n waits, each of
-// the whole delay.
-func onlyDelays(asked []time.Duration, n int) bool {
-	if len(asked) != n {
-		return false
-	}
-	for _, d := range asked {
-		if d != delay {
-			return false
-		}
-	}
-	return true
-}
-
-// echo is a loopback server the test owns. It sends back every byte it reads,
-// says what it has received, and hangs up when its peer stops sending.
-type echo struct {
-	ln       net.Listener
-	received atomic.Int64
-	accepted atomic.Int64
-	wg       sync.WaitGroup
-	mu       sync.Mutex
-	conns    []net.Conn
-}
-
-func startEcho(t *testing.T) *echo {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err, err)
-	e := &echo{ln: ln}
-	t.Cleanup(func() {
-		_ = ln.Close()
-		e.mu.Lock()
-		for _, c := range e.conns {
-			_ = c.Close()
-		}
-		e.mu.Unlock()
-		e.wg.Wait()
-	})
-	e.wg.Add(1)
-	go func() {
-		defer e.wg.Done()
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			e.accepted.Add(1)
-			e.mu.Lock()
-			e.conns = append(e.conns, c)
-			e.mu.Unlock()
-			e.wg.Add(1)
-			go func() {
-				defer e.wg.Done()
-				defer func() { _ = c.Close() }() // ignored: a test fixture's connection ends when the accept loop stops; the test's assertions are the report
-				buf := make([]byte, echoBuffer)
-				for {
-					n, err := c.Read(buf)
-					if n > 0 {
-						e.received.Add(int64(n))
-						if _, werr := c.Write(buf[:n]); werr != nil {
-							return
-						}
-					}
-					if err != nil {
-						return
-					}
-				}
-			}()
-		}
-	}()
-	return e
-}
-
-func (e *echo) addr() string { return e.ln.Addr().String() }
-
-// fakeClock stands still: Now never moves, so a write's delay is always the
-// whole delay. It writes down every wait it is asked for. Given a gate, a wait
-// signals on waiting and then blocks until the gate is closed or the connection
-// ends; with firstOnly, only the first wait it is asked for blocks, and every
-// later one returns at once.
-type fakeClock struct {
-	mu        sync.Mutex
-	waits     []time.Duration
-	gate      chan struct{}
-	waiting   chan struct{}
-	firstOnly bool
-}
-
-var epoch = time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
-
-func (f *fakeClock) clock() Clock {
-	return Clock{
-		Now: func() time.Time { return epoch },
-		Wait: func(stop <-chan struct{}, d time.Duration) bool {
-			f.mu.Lock()
-			f.waits = append(f.waits, d)
-			first := len(f.waits) == 1
-			f.mu.Unlock()
-			if f.waiting != nil {
-				f.waiting <- struct{}{}
-			}
-			if f.gate != nil && (first || !f.firstOnly) {
-				select {
-				case <-f.gate:
-				case <-stop:
-					return false
-				}
-			}
-			return true
-		},
-	}
-}
-
-func (f *fakeClock) asked() []time.Duration {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]time.Duration(nil), f.waits...)
-}
-
-// serveTo starts a proxy in front of target on a loopback listener the test
-// owns, and stops it at the end of the test.
-func serveTo(t *testing.T, target string, opts Options) *Proxy {
-	t.Helper()
-	return serveAfter(t, target, delay, opts)
-}
-
-// serveAfter is serveTo with a delay of its own.
-func serveAfter(t *testing.T, target string, after time.Duration, opts Options) *Proxy {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err, err)
-	p, err := Serve(ln, target, after, opts)
-	if err != nil {
-		_ = ln.Close()
-		require.NoError(t, err, "Serve: %v", err)
-	}
-	t.Cleanup(p.Stop)
-	return p
-}
-
-func dial(t *testing.T, addr string) net.Conn {
-	t.Helper()
-	c, err := net.Dial("tcp", addr)
-	require.NoError(t, err, err)
-	err = c.SetDeadline(time.Now().Add(ceiling))
-	require.NoError(t, err, err)
-	t.Cleanup(func() { _ = c.Close() })
-	return c
-}
-
-// roundTrip writes send in one write and reads that many bytes back.
-func roundTrip(t *testing.T, c net.Conn, send string) string {
-	t.Helper()
-	_, err := io.WriteString(c, send)
-	require.NoError(t, err, "write: %v", err)
-	got := make([]byte, len(send))
-	_, err = io.ReadFull(c, got)
-	require.NoError(t, err, "read %d bytes back: %v", len(send), err)
-	return string(got)
-}
+// The tests of the proxy live on the rig (rig_test.go): the echo target, the
+// clocks, the listeners and the clients are its, and a test here is the
+// scenario it runs and what it pins. They wait on no clock, bar the one
+// real-clock test marked below, and the sockets are loopback ones the rig owns.
 
 // Every write is held once, whatever it carries: three commands sent one after
 // the other pay the delay three times, a hundred sent in one write pay it once,
@@ -239,21 +28,20 @@ func roundTrip(t *testing.T, c net.Conn, send string) string {
 func TestEachWriteIsHeldOnceAndAPipelinePaysOnce(t *testing.T) {
 	t.Parallel()
 
-	target := startEcho(t)
-	fake := &fakeClock{}
-	p := serveTo(t, target.addr(), Options{Clock: fake.clock()})
-	c := dial(t, p.Addr())
+	r := newRig(t)
+	p := r.serve()
+	c := r.client()
 
 	separate := []string{"one", "two", "three"} // each waits for its reply
 	for i, send := range separate {
 		got := roundTrip(t, c, send)
 		require.Equal(t, send, got, "command %d came back as %q", i, got)
 	}
-	asked := fake.asked()
+	asked := r.fake.asked()
 	require.True(t, onlyDelays(asked, len(separate)), "%d commands, each waiting for its reply, asked the clock for %v; want the delay once each", len(separate), asked)
 	got := roundTrip(t, c, pipeline)
 	require.Equal(t, pipeline, got, "the pipeline did not come back whole")
-	asked = fake.asked()
+	asked = r.fake.asked()
 	require.True(t, onlyDelays(asked, len(separate)+1), "%d commands in one write brought the clock's waits to %v; want one more delay, not %d", pipelined, asked, pipelined)
 	require.Equal(t, len(separate)+1, p.Writes(), "the proxy counts %d writes; want %d", p.Writes(), len(separate)+1)
 }
@@ -264,18 +52,18 @@ func TestEachWriteIsHeldOnceAndAPipelinePaysOnce(t *testing.T) {
 func TestNothingIsForwardedBeforeItsDelayIsOver(t *testing.T) {
 	t.Parallel()
 
-	target := startEcho(t)
-	fake := &fakeClock{gate: make(chan struct{}), waiting: make(chan struct{}, 1)}
-	p := serveTo(t, target.addr(), Options{Clock: fake.clock()})
-	c := dial(t, p.Addr())
+	r := newRig(t)
+	r.hold(1)
+	p := r.serve()
+	c := r.client()
 
 	_, err := io.WriteString(c, "hello")
 	require.NoError(t, err, err)
-	<-fake.waiting // the write is held
-	n := target.received.Load()
+	r.await() // the write is held
+	n := r.echo.received.Load()
 	require.Zero(t, n, "the target has received %d bytes while the write is still held", n)
 	require.Zero(t, p.Writes(), "the proxy counts %d writes while the first is still held", p.Writes())
-	close(fake.gate)
+	r.release()
 	got := make([]byte, len("hello"))
 	_, err = io.ReadFull(c, got)
 	require.NoError(t, err, "after the delay the reply is %q, %v; want hello", got, err)
@@ -292,14 +80,13 @@ func TestALargeWriteComesOutWholeAndInOrder(t *testing.T) {
 	for i := range send {
 		send[i] = byte(i % patternPeriod)
 	}
-	target := startEcho(t)
-	fake := &fakeClock{}
-	p := serveTo(t, target.addr(), Options{Clock: fake.clock()})
-	c := dial(t, p.Addr())
+	r := newRig(t)
+	p := r.serve()
+	c := r.client()
 
 	got := roundTrip(t, c, string(send))
 	require.Equal(t, string(send), got, "the large write did not come back whole and in order")
-	asked := fake.asked()
+	asked := r.fake.asked()
 	least := (largeWrite + ChunkBytes - 1) / ChunkBytes
 	require.GreaterOrEqual(t, len(asked), least, "%d bytes came in as %d reads; want at least %d", largeWrite, len(asked), least)
 	for i, d := range asked {
@@ -403,17 +190,17 @@ func TestReadsThatArriveTogetherPayTheDelayOnce(t *testing.T) {
 func TestAClientThatStopsSendingStillGetsTheRepliesToWhatWasHeld(t *testing.T) {
 	t.Parallel()
 
-	target := startEcho(t)
-	fake := &fakeClock{gate: make(chan struct{}), waiting: make(chan struct{}, 1)}
-	p := serveTo(t, target.addr(), Options{Clock: fake.clock()})
-	c := dial(t, p.Addr()).(*net.TCPConn)
+	r := newRig(t)
+	r.hold(1)
+	r.serve()
+	c := r.client().(*net.TCPConn)
 
 	_, err := io.WriteString(c, "abc")
 	require.NoError(t, err, err)
 	err = c.CloseWrite()
 	require.NoError(t, err, err)
-	<-fake.waiting
-	close(fake.gate)
+	r.await()
+	r.release()
 	got, err := io.ReadAll(c)
 	require.NoError(t, err, "read after the client stopped sending: %q, %v; want abc", got, err)
 	require.Equal(t, "abc", string(got), "read after the client stopped sending: %q, %v; want abc", got, err)
@@ -424,19 +211,15 @@ func TestAClientThatStopsSendingStillGetsTheRepliesToWhatWasHeld(t *testing.T) {
 func TestStopEndsEveryGoroutineWhileWritesAreHeld(t *testing.T) {
 	t.Parallel()
 
-	target := startEcho(t)
-	fake := &fakeClock{gate: make(chan struct{}), waiting: make(chan struct{}, heldClients)}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err, err)
-	p, err := Serve(ln, target.addr(), delay, Options{Clock: fake.clock()})
-	require.NoError(t, err, err)
-	t.Cleanup(p.Stop)
+	r := newRig(t)
+	r.hold(heldClients)
+	p := r.serve()
 	conns := make([]net.Conn, heldClients)
 	for i := range conns {
-		conns[i] = dial(t, p.Addr())
+		conns[i] = r.client()
 		_, err := io.WriteString(conns[i], "held")
 		require.NoError(t, err, err)
-		<-fake.waiting
+		r.await()
 	}
 	got, want := p.Live(), acceptLoop+GoroutinesPerConn*heldClients
 	require.Equal(t, want, got, "Live = %d with %d connections held; want %d: one to accept and %d each", got, heldClients, want, GoroutinesPerConn)
@@ -448,7 +231,7 @@ func TestStopEndsEveryGoroutineWhileWritesAreHeld(t *testing.T) {
 		got, err := io.ReadAll(c)
 		require.Zero(t, len(got), "client %d read %q, %v after Stop; want it hung up on with nothing", i, got, err)
 	}
-	n := target.received.Load()
+	n := r.echo.received.Load()
 	require.Zero(t, n, "the target received %d bytes of writes that were held when Stop ran", n)
 	require.Zero(t, p.Writes(), "the proxy counts %d writes; want 0", p.Writes())
 }
@@ -459,17 +242,17 @@ func TestStopEndsEveryGoroutineWhileWritesAreHeld(t *testing.T) {
 func TestAClientPastTheBoundWaitsForASlot(t *testing.T) {
 	t.Parallel()
 
-	target := startEcho(t)
-	fake := &fakeClock{}
+	r := newRig(t)
 	const slots = 1
-	p := serveTo(t, target.addr(), Options{Clock: fake.clock(), MaxConns: slots})
-	first := dial(t, p.Addr())
+	r.opts.MaxConns = slots
+	p := r.serve()
+	first := r.client()
 	got := roundTrip(t, first, "first")
 	require.Equal(t, "first", got, "first came back as %q", got)
-	second := dial(t, p.Addr())
+	second := r.client()
 	_, err := io.WriteString(second, "second")
 	require.NoError(t, err, err)
-	n := target.accepted.Load()
+	n := r.echo.accepted.Load()
 	require.Equal(t, int64(slots), n, "the target has taken %d connections with %d slot and the first still open; want %d", n, slots, slots)
 	live, want := p.Live(), acceptLoop+GoroutinesPerConn*slots
 	require.Equal(t, want, live, "Live = %d; want %d: the accept loop and the one connection", live, want)
@@ -479,7 +262,7 @@ func TestAClientPastTheBoundWaitsForASlot(t *testing.T) {
 	_, err = io.ReadFull(second, gotBytes)
 	require.NoError(t, err, "the second client, once a slot was free, read %q, %v; want second", gotBytes, err)
 	require.Equal(t, "second", string(gotBytes), "the second client, once a slot was free, read %q, %v; want second", gotBytes, err)
-	n = target.accepted.Load()
+	n = r.echo.accepted.Load()
 	require.Equal(t, int64(slots+1), n, "the target has taken %d connections; want %d", n, slots+1)
 }
 
@@ -580,11 +363,12 @@ func TestLoopbackAcceptsOnlyTheMachinesOwn(t *testing.T) {
 func TestTheRealClockHoldsAWriteForAtLeastTheDelay(t *testing.T) {
 	t.Parallel()
 
-	target := startEcho(t)
-	p := serveAfter(t, target.addr(), realDelay, Options{})
+	r := newRig(t)
+	r.delay, r.opts = realDelay, Options{} // the real clock is the proxy's own when no clock is given
+	p := r.serve()
 	require.Zero(t, p.Writes(), "a new proxy counts %d writes, shortest %v; want none", p.Writes(), p.Shortest())
 	require.Zero(t, p.Shortest(), "a new proxy counts %d writes, shortest %v; want none", p.Writes(), p.Shortest())
-	c := dial(t, p.Addr())
+	c := r.client()
 	got := roundTrip(t, c, "real clock")
 	require.Equal(t, "real clock", got, "came back as %q", got)
 	require.Equal(t, 1, p.Writes(), "after one write through the real clock: %d writes, shortest %v; want 1, at least %v", p.Writes(), p.Shortest(), realDelay)
@@ -611,25 +395,26 @@ func TestServeAcceptsEveryDelayItDocuments(t *testing.T) {
 func TestOneClientsHoldDoesNotDelayAnother(t *testing.T) {
 	t.Parallel()
 
-	target := startEcho(t)
-	fake := &fakeClock{gate: make(chan struct{}), waiting: make(chan struct{}, 2), firstOnly: true}
-	p := serveTo(t, target.addr(), Options{Clock: fake.clock()})
+	r := newRig(t)
+	r.hold(2)
+	r.fake.firstOnly = true // the first client's hold does not end
+	r.serve()
 
-	first := dial(t, p.Addr())
+	first := r.client()
 	_, err := io.WriteString(first, "a")
 	require.NoError(t, err, err)
-	<-fake.waiting // the first client's write is held, and its wait does not end
+	r.await() // the first client's write is held, and its wait does not end
 
-	second := dial(t, p.Addr())
+	second := r.client()
 	_, err = io.WriteString(second, "b")
 	require.NoError(t, err, err)
 	got := make([]byte, 1)
 	_, err = io.ReadFull(second, got)
 	require.NoError(t, err, "a client that came while another client's write was held was not answered: %v; the clients share the delay", err)
 	require.Equal(t, "b", string(got), "a client that came while another client's write was held read %q; want b", got)
-	n := target.received.Load()
+	n := r.echo.received.Load()
 	require.Equal(t, int64(1), n, "the target has received %d bytes; want the second client's one, for the first is still held", n)
-	close(fake.gate)
+	r.release()
 	_, err = io.ReadFull(first, got)
 	require.NoError(t, err, "the first client, once its hold was over, read %q, %v; want a", got, err)
 	require.Equal(t, "a", string(got), "the first client, once its hold was over, read %q, %v; want a", got, err)
@@ -781,186 +566,3 @@ drive:
 // queue while the forwarding half waits: the read that half has taken out to
 // wait for, and the read the reading half has stamped and cannot yet queue.
 const heldOutsideTheQueue = 2
-
-// sunk is what a target that only takes bytes received, and how it ended.
-type sunk struct {
-	n   int64
-	err error
-}
-
-// takeAll is a target that reads total bytes from c and hangs up, and says what it
-// got. It gives up at the ceiling.
-func takeAll(c net.Conn, total int64, done chan<- sunk) {
-	defer func() { _ = c.Close() }() // ignored: a test fixture's connection ends when the copy does; the test's assertions are the report
-	_ = c.SetReadDeadline(time.Now().Add(ceiling))
-	n, err := io.CopyN(io.Discard, c, total)
-	done <- sunk{n: n, err: err}
-}
-
-// steppedClock is a clock that moves only when the test lets it: Now is the time
-// so far, and a Wait writes itself down, says so on waiting, blocks until the
-// test releases it or the connection ends, and then moves the time on by what it
-// waited. It counts every call of Now and ticks on each, so a test can wait for
-// the reads the proxy stamps.
-type steppedClock struct {
-	mu      sync.Mutex
-	now     time.Time
-	calls   int
-	waits   []time.Duration
-	waiting chan struct{}
-	release chan struct{}
-	ticked  chan struct{} // one tick is pending while a call of Now has not been seen
-}
-
-func newSteppedClock() *steppedClock {
-	return &steppedClock{
-		now:     epoch,
-		waiting: make(chan struct{}, 8),
-		release: make(chan struct{}),
-		ticked:  make(chan struct{}, 1),
-	}
-}
-
-// stamps is how many reads the reading half has stamped, given that the forwarding
-// half is held in a wait and has sent writes writes. That half asks the time twice
-// for each write it has sent, before it waits and when it sends, and once for the
-// one it holds; every other call is a stamp.
-func (c *steppedClock) stamps(writes int) int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.calls - 2*writes - 1
-}
-
-func (c *steppedClock) clock() Clock {
-	return Clock{
-		Now: func() time.Time {
-			c.mu.Lock()
-			c.calls++
-			now := c.now
-			c.mu.Unlock()
-			select {
-			case c.ticked <- struct{}{}:
-			default:
-			}
-			return now
-		},
-		Wait: func(stop <-chan struct{}, d time.Duration) bool {
-			c.mu.Lock()
-			c.waits = append(c.waits, d)
-			c.mu.Unlock()
-			select {
-			case c.waiting <- struct{}{}:
-			case <-stop:
-				return false
-			}
-			select {
-			case <-c.release:
-				c.mu.Lock()
-				c.now = c.now.Add(d)
-				c.mu.Unlock()
-				return true
-			case <-stop:
-				return false
-			}
-		},
-	}
-}
-
-func (c *steppedClock) asked() []time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]time.Duration(nil), c.waits...)
-}
-
-// pipeListener is a listener that owns no port: a test hands it one end of a
-// pipe and the proxy accepts the other.
-type pipeListener struct {
-	conns chan net.Conn
-	done  chan struct{}
-	once  sync.Once
-}
-
-func newPipeListener() *pipeListener {
-	return &pipeListener{conns: make(chan net.Conn), done: make(chan struct{})}
-}
-
-func (l *pipeListener) Accept() (net.Conn, error) {
-	select {
-	case c := <-l.conns:
-		return c, nil
-	case <-l.done:
-		return nil, net.ErrClosed
-	}
-}
-
-func (l *pipeListener) Close() error {
-	l.once.Do(func() { close(l.done) })
-	return nil
-}
-
-func (l *pipeListener) Addr() net.Addr { return pipeAddr{} }
-
-// client is a new client of the proxy: one end of a pipe, the other handed to
-// the proxy's Accept. Its reads and writes give up at the ceiling.
-func (l *pipeListener) client(t *testing.T) net.Conn {
-	t.Helper()
-	client, server := net.Pipe()
-	// The deadline is set before the proxy has the other end: a pipe refuses a
-	// deadline once either end is closed, and a proxy that hangs up at once closes it.
-	err := client.SetDeadline(time.Now().Add(ceiling))
-	require.NoError(t, err, err)
-	t.Cleanup(func() { _ = client.Close() })
-	select {
-	case l.conns <- server:
-	case <-l.done:
-		require.FailNow(t, "the listener is closed")
-	}
-	return client
-}
-
-// pipeAddr is the address of a listener that owns no port.
-type pipeAddr struct{}
-
-func (pipeAddr) Network() string { return "pipe" }
-func (pipeAddr) String() string  { return "pipe" }
-
-// errAccept is what a failing listener's Accept returns.
-var errAccept = errors.New("too many open files")
-
-// failingListener is a listener whose Accept fails at once, and that fires its
-// closed event when it is closed.
-type failingListener struct{ closed *event }
-
-func (failingListener) Accept() (net.Conn, error) { return nil, errAccept }
-func (l failingListener) Close() error            { l.closed.fire(); return nil }
-func (failingListener) Addr() net.Addr            { return pipeAddr{} }
-
-// event is a signal a test waits on with a bound that fails by name, where a
-// bare receive would hang. It is a pipe: firing is closing one end, waiting is a
-// read of the other that gives up at the ceiling, like every socket here.
-type event struct{ fired, watch net.Conn }
-
-// newEvent starts the ceiling: a pipe refuses a deadline once an end is closed, so
-// it is set here, before the event can fire.
-func newEvent(t *testing.T) *event {
-	t.Helper()
-	fired, watch := net.Pipe()
-	// newEvent starts the ceiling: a pipe refuses a deadline once an end is closed, so
-	// it is set here, before the event can fire.
-	err := watch.SetReadDeadline(time.Now().Add(ceiling))
-	require.NoError(t, err, err)
-	t.Cleanup(func() {
-		_ = fired.Close()
-		_ = watch.Close()
-	})
-	return &event{fired: fired, watch: watch}
-}
-
-func (e *event) fire() { _ = e.fired.Close() }
-
-// wait reports whether the event fired before the ceiling, which runs from
-// newEvent.
-func (e *event) wait() bool {
-	_, err := e.watch.Read(make([]byte, 1))
-	return errors.Is(err, io.EOF)
-}

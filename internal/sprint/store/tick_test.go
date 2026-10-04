@@ -102,7 +102,7 @@ func TestStartAndStopAreIdempotentAndRecorded(t *testing.T) {
 	require.True(t, again.Since.Equal(after.Since), "start when running changed something: %+v %+v %v", again, res, err)
 	h.tick(MachineSilence + time.Second)
 	line = h.st.MachineLine(h.ctx)
-	require.Equal(t, "machine: STOPPED", line, "no tick: %q", line)
+	require.Equal(t, "machine: running (tick late 16s)", line, "a late tick is running, never STOPPED: %q", line)
 	require.NotContains(t, line, "(no tick", "no tick: %q", line)
 	h.machine()
 	line = h.st.MachineLine(h.ctx)

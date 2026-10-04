@@ -59,6 +59,11 @@ type replyOpts struct {
 	reGiven                     bool
 	toGiven, ccGiven            bool
 	subjectGiven                bool
+
+	publishDraft     func(dir, name string, content []byte) (string, error)
+	refreshCheckout  func(dir, remote, branch string) (bool, error)
+	checkoutLockWait time.Duration
+	workingDir       string
 }
 
 // cmdDraftReply is the whole transaction. Every refusal it makes is one `DRAFT REFUSED`
@@ -122,7 +127,11 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 			problems = append(problems, err)
 		}
 	}
-	c, err := bus.LoadConfig(o.busDir)
+	busDir := o.busDir
+	if !filepath.IsAbs(busDir) && o.workingDir != "" {
+		busDir = filepath.Join(o.workingDir, busDir)
+	}
+	c, err := bus.LoadConfig(busDir)
 	if err != nil {
 		// The roster is what the checks below are made AGAINST, so this is where the
 		// collection ends -- with everything found so far printed beside it, rather than
@@ -139,7 +148,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 	toNames := replyResolve(c, "--to", o.to, o.toGiven, &problems)
 	ccNames := replyResolve(c, "--cc", o.cc, o.ccGiven, &problems)
 	if !missing["--draft-dir"] {
-		problems = append(problems, replyDraftDirProblems(o.busDir, o.draftDir)...)
+		problems = append(problems, replyDraftDirProblemsIn(o.workingDir, o.busDir, o.draftDir)...)
 	}
 	if !missing["--body-file"] {
 		problems = append(problems, replyBodyFileProblems(o.bodyFile)...)
@@ -156,7 +165,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 
 	// (4) The checkout, held for the fetch and the listing exactly as `wait`'s poll holds
 	// it, and the refresh itself -- which is that poll, and not a second spelling of it.
-	release, code := lockCheckout("DRAFT", o.busDir, stderr)
+	release, code := runEnv{checkoutLockWait: o.checkoutLockWait}.lockCheckout("DRAFT", o.busDir, stderr)
 	if code != 0 {
 		return code
 	}
@@ -166,7 +175,11 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 1
 	}
-	moved, err := refreshCheckout(o.busDir, o.remote, o.branch)
+	refresh := o.refreshCheckout
+	if refresh == nil {
+		refresh = refreshCheckout
+	}
+	moved, err := refresh(o.busDir, o.remote, o.branch)
 	if err != nil {
 		// Never a fall back to the checkout. A refusal costs the caller one turn; a wrong
 		// Re: line costs a thread, and is wrong exactly when nobody is watching.
@@ -273,7 +286,11 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 	if entry.ID == "" {
 		name = bus.LegacyDraftID(target.Path)
 	}
-	path, err := publishDraft(o.draftDir, now.UTC().Format(bus.FileTimeLayout)+"-re-"+name+".md", []byte(content))
+	publish := o.publishDraft
+	if publish == nil {
+		publish = publishDraft
+	}
+	path, err := publish(o.draftDir, now.UTC().Format(bus.FileTimeLayout)+"-re-"+name+".md", []byte(content))
 	switch {
 	case errors.Is(err, bus.ErrDraftExists):
 		fmt.Fprintf(stderr, "DRAFT REFUSED: a draft already exists at %s; this tool never overwrites a draft; run: nova-bus draft -h\n",
@@ -331,25 +348,29 @@ func replyResolve(c *bus.Config, flagName, value string, given bool, problems *[
 	return names
 }
 
-// replyDraftDirProblems is the in-checkout rule, moved from the end of the job to the
+// replyDraftDirProblemsIn is the in-checkout rule, moved from the end of the job to the
 // start of it. `send` needs the bus's tree clean but for the note it is about to write, and
 // today a draft written into the checkout is refused AFTER the body, the headers and the
 // turns have been spent. Both paths are resolved and both sides follow their links, which
 // is the test `--bus` already makes.
-func replyDraftDirProblems(busDir, draftDir string) []error {
-	info, err := os.Stat(draftDir)
+func replyDraftDirProblemsIn(base, busDir, draftDir string) []error {
+	statDir := draftDir
+	if !filepath.IsAbs(statDir) && base != "" {
+		statDir = filepath.Join(base, statDir)
+	}
+	info, err := os.Stat(statDir)
 	if err != nil || !info.IsDir() {
 		return []error{fmt.Errorf("--draft-dir %s is not a directory on this bench; this tool creates no directories", draftDir)}
 	}
-	dir := resolveForCompare(draftDir)
-	root := resolveForCompare(busDir)
+	dir := resolveForCompareIn(base, draftDir)
+	root := resolveForCompareIn(base, busDir)
 	if dir == root || strings.HasPrefix(dir, root+string(filepath.Separator)) {
 		return []error{fmt.Errorf("--draft-dir %s is the bus checkout at %s, or inside it; drafts go outside the bus, because send needs its tree clean", draftDir, root)}
 	}
 	return nil
 }
 
-// resolveForCompare is the test `--bus` already makes, both halves of it: ABSOLUTIZE, then
+// resolveForCompareIn is the test `--bus` already makes, both halves of it: ABSOLUTIZE, then
 // follow every link.
 //
 // THE DEFECT THE FIRST HALF CLOSES. Comparing two EvalSymlinks outputs without absolutizing
@@ -362,10 +383,16 @@ func replyDraftDirProblems(busDir, draftDir string) []error {
 // A path that cannot be resolved falls back to the absolute form rather than to no check at
 // all: the comparison is then lexical, which is weaker than following the links and is
 // still a comparison.
-func resolveForCompare(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
+func resolveForCompareIn(base, path string) string {
+	abs := path
+	if !filepath.IsAbs(path) {
+		if base != "" {
+			abs = filepath.Join(base, path)
+		} else {
+			if a, err := filepath.Abs(path); err == nil {
+				abs = a
+			}
+		}
 	}
 	resolved, err := filepath.EvalSymlinks(abs)
 	if err != nil {
@@ -395,7 +422,7 @@ func replyBody(path string, budget int, stderr io.Writer) ([]byte, int) {
 		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s cannot be read: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return nil, 2
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file was opened only for reading
 	buf := make([]byte, budget+1)
 	n, err := io.ReadFull(f, buf)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
