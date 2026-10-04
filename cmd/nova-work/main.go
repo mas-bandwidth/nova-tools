@@ -44,7 +44,7 @@ first run: needs gh logged in (gh auth status) and ORG and REPO set to one repos
 		Verbs: []tool.Verb{
 			{
 				Name:    "import",
-				Usage:   "import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]",
+				Usage:   "import --org <org> (--out <tree.lisp> [--replace] | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]",
 				Example: "import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run\nimport --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp",
 				Effect:  tool.LocalWrite,
 				Detail: `Reads every issue (open and closed) of every repository of --org from GitHub,
@@ -120,6 +120,14 @@ func sum(b []byte) string {
 func dirExists(path string) bool {
 	fi, err := os.Stat(filepath.Dir(path))
 	return err == nil && fi.IsDir()
+}
+
+// fileExists reports whether path names a file already on disk, so import can
+// refuse to replace it without --replace (docs/SPEC-WORK-V1.md section 1.6,
+// the write through a temporary file and a rename).
+func fileExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // writeFile writes data to path through a temporary file in the same

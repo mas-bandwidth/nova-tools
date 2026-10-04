@@ -18,22 +18,35 @@ var lookPath = exec.LookPath
 // now is the clock; a test fixes it.
 var now = time.Now
 
-// importFlags declares import's flags: the shared ones, --org, --out, and the
-// rules that tie --out to --dry-run and --repo to --org. It declares Prints
-// because runImport writes its own lines (GH, PLAN, REPO, IMPORT) and answers
+// importFlags declares import's flags: the shared ones, --org, --out,
+// --replace, and the rules that tie --out to --dry-run and --repo to --org.
+// The checks refuse before runImport reads anything (docs/SPEC-WORK-V1.md
+// section 1.6; docs/STANDARD.md section 2, ONBOARDING point 2): a dry run with
+// no --repo would spend the organization's whole call budget, and --out would
+// replace an existing tree without --replace. It declares Prints because
+// runImport writes its own lines (GH, PLAN, REPO, IMPORT) and answers
 // tool.Exit, so the skeleton renders nothing for it and offers no --json
 // (internal/tool, Flags.Prints).
 func importFlags(f *tool.Flags) {
 	f.Prints()
 	commonFlags(f)
 	f.Required("org", "the organization")
-	f.String("out", "", "the tree file to write (created or replaced; its directory must exist). Required unless --dry-run.")
+	f.String("out", "", "the tree file to write (created; refused if it exists unless --replace; its directory must exist). Required unless --dry-run.")
+	f.Bool("replace", false, "replace an existing --out file instead of refusing")
 	f.Check(func(c *tool.Call) {
 		if c.Str("out") == "" && !c.Bool("dry-run") {
 			c.Problem("--out is required unless --dry-run")
 		}
 		if c.Str("out") != "" && c.Bool("dry-run") {
 			c.Problem("--out and --dry-run exclude each other")
+		}
+		if c.Bool("dry-run") && len(repos(c)) == 0 {
+			c.Problem(fmt.Sprintf("--dry-run with no --repo reads every repository of --org %s, up to --max-calls %d calls; name one repository and run: nova-work import --org %s --repo %s/<name> --dry-run",
+				c.Str("org"), c.Int("max-calls"), c.Str("org"), c.Str("org")))
+		}
+		if c.Str("out") != "" && !c.Bool("replace") && fileExists(c.Str("out")) {
+			c.Problem(fmt.Sprintf("--out %s exists; pass --replace to replace it: nova-work import --org %s --out %s --replace",
+				c.Str("out"), c.Str("org"), c.Str("out")))
 		}
 		if c.Str("out") != "" && !dirExists(c.Str("out")) {
 			c.Problem(fmt.Sprintf("the directory of --out %q does not exist", c.Str("out")))

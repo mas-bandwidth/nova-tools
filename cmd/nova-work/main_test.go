@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
@@ -14,6 +16,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// countingQuery is the injected workgh.Query fake: it records every call and
+// answers none, so only a refusal that fires before any call lets a test pass.
+func countingQuery() (workgh.Query, *atomic.Int64) {
+	var calls atomic.Int64
+	return func(ctx context.Context, doc string, vars map[string]any) ([]byte, error) {
+		calls.Add(1)
+		return nil, fmt.Errorf("the query ran before the refusal")
+	}, &calls
+}
 
 func replay(t *testing.T) workgh.Query {
 	t.Helper()
@@ -79,6 +91,44 @@ func TestTheBudgetIsCheckedBeforeTheIssuesAreRead(t *testing.T) {
 	require.Contains(t, res.Stderr, "needs\\x20about\\x203\\x20calls", "exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 }
 
+// TestImportRefusesAnOrgWideDryRunAndAnExistingOut (SPEC-WORK-V1 section 1.6;
+// docs/STANDARD.md section 2, ONBOARDING point 2): --dry-run with no --repo
+// would spend the organization's whole call budget, and --out naming an
+// existing file would replace it; both are refused in the flag checks, before
+// any call, each naming the next command.
+func TestImportRefusesAnOrgWideDryRunAndAnExistingOut(t *testing.T) {
+	t.Parallel()
+	tree := filepath.Join(t.TempDir(), "tree.lisp")
+	testkit.WriteFile(t, tree, "existing")
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "org-wide dry run",
+			args: []string{"import", "--org", "mas-bandwidth", "--dry-run"},
+			want: "nova-work import --org mas-bandwidth --repo mas-bandwidth/<name> --dry-run",
+		},
+		{
+			name: "existing out",
+			args: []string{"import", "--org", "mas-bandwidth", "--out", tree},
+			want: "nova-work import --org mas-bandwidth --out " + tree + " --replace",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			q, calls := countingQuery()
+			res := workCLI(q).Run(tc.args...)
+			require.Equal(t, 2, res.Code, "%s: exit %d\nstdout:\n%s\nstderr:\n%s", tc.name, res.Code, res.Stdout, res.Stderr)
+			require.Contains(t, res.Stderr, "REFUSED", "%s: stderr:\n%s", tc.name, res.Stderr)
+			require.Contains(t, res.Stderr, tc.want, "%s: the refusal does not name the next command:\n%s", tc.name, res.Stderr)
+			require.Zero(t, calls.Load(), "%s: the query ran before the refusal:\n%s", tc.name, res.Stderr)
+		})
+	}
+}
+
 // TestRefusalsNameTheFlag: a malformed invocation exits 2 naming every
 // problem at once and pointing at the verb's help; help exits 0.
 func TestRefusalsNameTheFlag(t *testing.T) {
@@ -98,7 +148,7 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 		{"missing out dir", []string{"import", "--org", "o", "--out", "/nonexistent-dir/t.lisp"}, 2, []string{"does not exist"}},
 		{"repo not in org", []string{"import", "--org", "o", "--dry-run", "--repo", "p/r"}, 2, []string{"--repo p/r is not in --org o"}},
 		{"bad repo name", []string{"import", "--org", "o", "--dry-run", "--repo", "bad"}, 2, []string{"is not owner/name"}},
-		{"nonexistent gh", []string{"import", "--org", "o", "--dry-run", "--gh", "/nonexistent/gh-cli"}, 2, []string{"is not found", "--gh"}},
+		{"nonexistent gh", []string{"import", "--org", "o", "--dry-run", "--repo", "o/r", "--gh", "/nonexistent/gh-cli"}, 2, []string{"is not found", "--gh"}},
 		{"bogus flag", []string{"import", "--bogus"}, 2, []string{"bogus", "run: nova-work import -h"}},
 		{"json on import", []string{"import", "--org", "o", "--dry-run", "--json"}, 2, []string{"unknown flag --json", "run: nova-work import -h"}},
 		{"json on verify", []string{"verify", "--tree", "t.lisp", "--json"}, 2, []string{"unknown flag --json", "run: nova-work verify -h"}},
