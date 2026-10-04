@@ -226,8 +226,9 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 func RouteOf(name string, h map[string]string) sprint.Route {
 	n := func(k string) int { v, _ := strconv.Atoi(h[k]); return v }
 	enabled, _ := strconv.ParseBool(h["enabled"])
+	first, _ := strconv.ParseBool(h["first"])
 	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Tokens: n("tokens"), USD: h["usd"],
-		Deadline: n("deadline"), Enabled: enabled, Prices: cardcost.PricesOf(h)}
+		Deadline: n("deadline"), Enabled: enabled, First: first, Prices: cardcost.PricesOf(h)}
 }
 
 // Routes is the routes SetRoutes gave the store and the arrays SetTiers gave it.

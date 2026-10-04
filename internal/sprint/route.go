@@ -48,6 +48,9 @@ type Route struct {
 	USD      string `json:"usd,omitempty"`
 	Deadline int    `json:"deadline"` // seconds
 	Enabled  bool   `json:"enabled"`
+	// First is the route row's first field (docs/SPEC-CONFIG.md, route). A route
+	// with it set is drawn before the others of its tier (routeOf).
+	First bool `json:"first"`
 	// Prices is the route's price sheet (cardcost.PricesOf), what a card that ran on it
 	// is priced by (cost.go); every price "" when the route has none.
 	Prices cardcost.Prices `json:"prices"`
@@ -204,11 +207,28 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		at, _ = strconv.ParseUint(v, 10, 64)
 	}
 	n := uint64(len(arr))
-	for i := uint64(0); i < n; i++ {
-		r, ok := served[arr[(at+i)%n]]
-		if !ok || fresh && contains(drawn, r.Name) {
-			continue
+	// A route with first set deals before the others of its tier (docs/SPEC-SPRINT.md,
+	// the deal; docs/SPEC-CONFIG.md, the route field first). The walk from the index
+	// is unchanged; the first pass keeps only those entries, and the second pass is
+	// the walk as it was when none of them is drawable.
+	take := func(wantFirst bool) (Route, uint64, bool) {
+		for i := uint64(0); i < n; i++ {
+			r, ok := served[arr[(at+i)%n]]
+			if !ok || fresh && contains(drawn, r.Name) {
+				continue
+			}
+			if r.First != wantFirst {
+				continue
+			}
+			return r, i, true
 		}
+		return Route{}, 0, false
+	}
+	r, i, ok := take(true)
+	if !ok {
+		r, i, ok = take(false)
+	}
+	if ok {
 		if ri != nil {
 			ri[tier].r.count += i + 1
 			ri[tier].moves[c.ID] = strconv.FormatUint(i+1, 10)
