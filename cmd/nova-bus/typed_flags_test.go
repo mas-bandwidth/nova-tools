@@ -50,15 +50,13 @@ func TestEveryTypedFlagRefusesABadValueAndTheVerbDoesNotRun(t *testing.T) {
 			cases = append(cases, tcase{verb, m[1], "abc", "invalid value for --" + m[1]})
 		}
 	}
-	for _, c := range []tcase{
+	cases = append(cases, []tcase{
 		{"close", "before", "not-an-instant", "--before"},
 		{"wait", "until", "not-an-instant", "--until"},
 		{"inbox", "legacy-before", "not-an-instant", "--legacy-before"},
 		{"wait", "legacy-before", "not-an-instant", "--legacy-before"},
 		{"check", "legacy-before", "not-an-instant", "--legacy-before"},
-	} {
-		cases = append(cases, c)
-	}
+	}...)
 	covered := map[string]int{}
 	for _, c := range cases {
 		covered[c.verb]++
