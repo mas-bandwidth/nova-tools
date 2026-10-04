@@ -55,6 +55,10 @@ func TestMain(m *testing.M) {
 		os.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
 		os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 		os.Setenv("GIT_TERMINAL_PROMPT", "0")
+		os.Setenv("GIT_AUTHOR_NAME", "Other")
+		os.Setenv("GIT_AUTHOR_EMAIL", "other@example.com")
+		os.Setenv("GIT_COMMITTER_NAME", "Other")
+		os.Setenv("GIT_COMMITTER_EMAIL", "other@example.com")
 		// The seeded bare bus bareBus copies is made under this directory too, so it
 		// is removed with it.
 		barebusRoot = dir
@@ -69,11 +73,16 @@ func TestMain(m *testing.M) {
 // loudly here instead of silently reading the runner's ~/.gitconfig.
 func hermetic(t *testing.T) {
 	t.Helper()
-	// All four, not just the first: three of them are what keeps a machine's system
-	// config, its ~/.gitconfig and its credential prompt out of these tests, and an
-	// assertion on one of four would pass over a TestMain that set one of four.
-	for _, key := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"} {
-		require.False(t, os.Getenv(key) == "", "%s is not set: the hermetic git environment is TestMain's, in this package, and it sets four", key)
+	// All eight, not just the first: three of them are what keeps a machine's system
+	// config, its ~/.gitconfig and its credential prompt out of these tests, and four
+	// are what keeps a foreign git identity in the calling environment from leaking
+	// into the commit identity, and an assertion on one of eight would pass over a
+	// TestMain that set one of eight.
+	for _, key := range []string{
+		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT",
+		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+	} {
+		require.False(t, os.Getenv(key) == "", "%s is not set: the hermetic git environment is TestMain's, in this package, and it sets eight", key)
 	}
 }
 
@@ -181,6 +190,29 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 	require.NoError(t, err)
 	if strings.TrimSpace(who) != "Ada <ada@example.com>" {
 		require.Equal(t, "Ada <ada@example.com>", strings.TrimSpace(who), "the commit is authored by %q", strings.TrimSpace(who))
+	}
+}
+
+// CommitAndPush carries only the sender's identity even when the calling
+// environment sets the four GIT_AUTHOR_* and GIT_COMMITTER_* variables to
+// another. The four are dropped from the environment passed to git so that
+// the roster identity (via -c) is the only source, per the rule that the
+// identity a note is committed under must come from the roster and from
+// nowhere else.
+func TestCommitUsesRosterIdentityEvenUnderOtherGitIdentityEnv(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
+	res, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one", "origin", "main", 3)
+	require.NoError(t, err)
+	require.True(t, res.Pushed && res.Attempts == 1, "res = %+v, want pushed on the first attempt", res)
+	who, err := git(bare, "log", "-1", "--format=%an <%ae>|%cn <%ce>", "main")
+	require.NoError(t, err)
+	want := "Ada <ada@example.com>|Ada <ada@example.com>"
+	if strings.TrimSpace(who) != want {
+		require.Equal(t, want, strings.TrimSpace(who), "the commit is author|committer %q, want %q: the identity comes from the roster on every invocation that records one", strings.TrimSpace(who), want)
 	}
 }
 
