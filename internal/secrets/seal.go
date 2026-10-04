@@ -588,7 +588,7 @@ func sealApply(existing []byte, name, value string) []byte {
 			b.WriteString("\n")
 		}
 	}
-	b.WriteString(name + ": " + value + "\n")
+	b.WriteString(name + ": " + yamlSingleQuote(value) + "\n")
 	return []byte(b.String())
 }
 
