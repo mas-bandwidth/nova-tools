@@ -5,11 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -96,7 +94,8 @@ func report(ctx context.Context, verb string, all, entries []Entry, o options, k
 		return &tool.Out{Verb: verb, Status: res.Status, Exit: res.Exit, Payload: body.String()}
 	}
 	if o.send {
-		sent, err := deliver(ctx, o, state, seen, body.Bytes(), res, env)
+		subject := fmt.Sprintf("versions on %s at %s", dash(o.host), at)
+		sent, err := deliver(ctx, o, subject, body.Bytes(), res, env)
 		if err != nil {
 			res.Note(err.Error())
 			res.Status, res.Exit = tool.Failed, 1
@@ -151,25 +150,50 @@ func busSaid(r ProcessResult) string {
 	return "a line outside the bus's refusal grammar, not relayed"
 }
 
-// busBounds are the finite retry controls the reporter hands the bus, computed
-// from what is LEFT of the reporter's own budget.
-//
-// Rule 23's --timeout bounds one version probe, so it does not bound the bus
-// child: a default run would otherwise kill its own delivery at five seconds.
-// The delivery allowance is the remaining budget instead (rule 25 and
-// SPEC-BUS-DELIVERY both name the budget as the resolution horizon), and these
-// two flags are what let the bus stop on its own inside that horizon rather than
-// be killed at the end of it: one git operation gets a third of what remains,
-// capped at a minute and never more than remains, and the attempt count is how
-// many such operations fit, never more than the bus's own 25.
-func busBounds(remaining time.Duration) (attempts, gitSeconds int) {
-	git := min(remaining/3, time.Minute, remaining)
-	// The bus counts this flag in whole seconds, so below a second there is no number to
-	// name but one. The caller's own deadline is then the tighter of the two bounds, which
-	// is the safe way round.
-	gitSeconds = max(int(git/time.Second), 1)
-	attempts = min(max(int(remaining/(time.Duration(gitSeconds)*time.Second)), 1), 25)
-	return attempts, gitSeconds
+// busSendArgs is the one Redis-bus send: the sender, the recipients, the
+// one-line subject and the note on stdin. The store comes from NOVA_BUS_REDIS
+// as nova-bus reads it, so no flag names it; no --bus, --remote or --branch
+// names a git checkout, and no prepare step runs first.
+func busSendArgs(o options, subject string) []string {
+	return []string{"nova-bus", "send", "--as", o.as, "--to", o.to, "--subject", subject, "--stdin"}
+}
+
+// sendID reads the Redis bus's confirmation: a `SEND OK` line carrying a
+// non-empty `id=<id>`. The id is what the receipt records; any other line,
+// including a SEND OK for no id, is not a confirmation.
+func sendID(line string) (string, bool) {
+	f := strings.Fields(line)
+	if len(f) < 3 || f[0] != "SEND" || f[1] != "OK" {
+		return "", false
+	}
+	for _, v := range f[2:] {
+		if id, ok := strings.CutPrefix(v, "id="); ok && id != "" {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// sendNote runs one Redis-bus send and returns the confirmed id and the whole
+// confirmation line. A send that is refused or unconfirmed is an error naming
+// the bus's own words; the caller retries the same send.
+func sendNote(ctx context.Context, args []string, body []byte, env Environment) (id, line string, err error) {
+	allowance := deliveryAllowance(ctx, env.Now())
+	if allowance <= 0 {
+		return "", "", fmt.Errorf("delivery budget exhausted (retry the send)")
+	}
+	child, cancel := context.WithTimeout(ctx, allowance)
+	defer cancel()
+	r := env.runProcess(child, args, bytes.NewReader(body), ChildCap)
+	for _, l := range strings.Split(r.Stdout, "\n") {
+		if id, ok := sendID(l); ok {
+			return id, l, nil
+		}
+	}
+	if r.Reason != "" {
+		return "", "", fmt.Errorf("send not confirmed: %s; the bus said: %s (retry the send)", dash(r.Reason), busSaid(r))
+	}
+	return "", "", fmt.Errorf("send not confirmed; the bus said: %s (retry the send)", busSaid(r))
 }
 
 // deliveryAllowance is what is left of the budget. A delivery that cannot start
@@ -181,85 +205,20 @@ func deliveryAllowance(ctx context.Context, now time.Time) time.Duration {
 	}
 	return deadline.Sub(now)
 }
-func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observed, body []byte, res *tool.Out, env Environment) (string, error) {
-	scope := snapshotScope(o)
-	save := func() error {
-		if o.snapshot != "" {
-			return writeSnapshot(o.snapshot, s)
-		}
-		return nil
-	}
-	send := func(p pending) (string, error) {
-		allowance := deliveryAllowance(ctx, env.Now())
-		if allowance <= 0 {
-			return "uncertain", fmt.Errorf("pending %s not sent: the budget is spent (retry this --send with the same --snapshot; do not prepare again)", p.ID)
-		}
-		attempts, gitSeconds := busBounds(allowance)
-		args := []string{"nova-bus", "send", "--prepared-stdin", "--bus", o.bus, "--remote", o.remote, "--branch", o.branch, "--as", o.as,
-			"--attempts", strconv.Itoa(attempts), "--git-timeout", strconv.Itoa(gitSeconds)}
-		child, cancel := context.WithTimeout(ctx, allowance)
-		r := captureRun(child, args, p.Artifact, ChildCap)
-		cancel()
-		line := ""
-		for _, l := range strings.Split(r.Stdout, "\n") {
-			if confirmed(l, p.ID) {
-				line = l
-				break
-			}
-		}
-		if r.Reason != "" || line == "" {
-			return "uncertain", fmt.Errorf("pending %s not confirmed: %s; the bus said: %s (retry this --send with the same --snapshot; do not prepare again)", p.ID, dash(r.Reason), busSaid(r))
-		}
-		s.Delivered[scope] = delivery{cloneObserved(p.Observed), p.ID, env.Now().UTC().Format(time.RFC3339)}
-		delete(s.Pending, scope)
-		if err := save(); err != nil {
-			return "uncertain", err
-		}
-		res.Item("sent", "to", o.to, "via", strings.Join(args, " "), "line", line)
-		return "yes", nil
-	}
-	sent := "no"
-	if p, ok := s.Pending[scope]; ok {
-		id, err := validatePrepared(p.Artifact)
-		if err != nil || id != p.ID {
-			return "uncertain", fmt.Errorf("invalid pending artifact (preserve the snapshot and repair it before retry)")
-		}
-		var err2 error
-		sent, err2 = send(p)
-		if err2 != nil {
-			return sent, err2
-		}
-	}
-	if d, ok := s.Delivered[scope]; ok && sameObserved(d.Observed, seen) {
-		if sent == "no" {
-			res.Note(fmt.Sprintf("unchanged since %s to %s; nothing sent", d.ID, o.to))
-		}
-		return sent, nil
-	}
+
+// deliver sends the report note in one child through the Redis bus
+// (SPEC-UPDATE rule 24: delivery is nova-bus's; only a confirmed SEND OK
+// records delivery). There is no prepare step and no pending artifact: a
+// refused or unconfirmed send is retried as the same send.
+func deliver(ctx context.Context, o options, subject string, body []byte, res *tool.Out, env Environment) (string, error) {
 	if ctx.Err() != nil {
-		return sent, fmt.Errorf("delivery budget exhausted (retry --send with the same --snapshot)")
+		return "no", fmt.Errorf("delivery budget exhausted (retry --send)")
 	}
-	// prepare runs no Git and touches no network, so it takes no attempt or
-	// git-timeout flag; what it must not take is the version probe's timeout,
-	// which is a bound on reading a tool's version and not on a delivery.
-	allowance := deliveryAllowance(ctx, env.Now())
-	if allowance <= 0 {
-		return sent, fmt.Errorf("delivery budget exhausted (retry --send with the same --snapshot)")
-	}
-	child, cancel := context.WithTimeout(ctx, allowance)
-	prepared := captureRun(child, []string{"nova-bus", "prepare", "--bus", o.bus, "--as", o.as, "--stdin"}, body, ChildCap)
-	cancel()
-	if prepared.Reason != "" {
-		return sent, fmt.Errorf("prepare refused: %s; the bus said: %s (check nova-bus and the named bus; retry --send)", prepared.Reason, busSaid(prepared))
-	}
-	id, err := validatePrepared([]byte(prepared.Stdout))
+	args := busSendArgs(o, subject)
+	_, line, err := sendNote(ctx, args, body, env)
 	if err != nil {
-		return sent, fmt.Errorf("%s (use a compatible nova-bus)", err)
+		return "uncertain", err
 	}
-	p := pending{json.RawMessage(prepared.Stdout), cloneObserved(seen), id}
-	s.Pending[scope] = p
-	if err = save(); err != nil {
-		return sent, err
-	}
-	return send(p)
+	res.Item("sent", "to", o.to, "via", strings.Join(args, " "), "line", line)
+	return "yes", nil
 }

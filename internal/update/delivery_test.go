@@ -2,16 +2,15 @@ package update
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 
@@ -121,48 +120,6 @@ func calls(t *testing.T, p string) (int, int) {
 	s := string(b)
 	return strings.Count(s, "prepare\n"), strings.Count(s, "send\n")
 }
-func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
-	log := fakeBusPath(t)
-	p := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
-	sp := filepath.Join(t.TempDir(), "s.json")
-	args := []string{"report", "--file", p, "--send", "--snapshot", sp, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main"}
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "uncertain")
-	run(t, Environment{}, args...)
-	s, _ := readSnapshot(sp)
-	var old string
-	for _, v := range s.Pending {
-		old = v.ID
-	}
-	os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600)
-	if c, _, _ := run(t, Environment{}, args...); c != 1 {
-		require.EqualValues(t, 1, c, c)
-	}
-	if np, ns := calls(t, log); np != 1 || ns != 2 {
-		require.Fail(t, fmt.Sprintln(np, ns))
-	}
-	s, _ = readSnapshot(sp)
-	for _, v := range s.Pending {
-		if v.ID != old || v.Observed["x"].Raw != "v1.0.0" {
-			require.Fail(t, fmt.Sprintln("pending was replaced"))
-		}
-	}
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "ok")
-	if c, o, e := run(t, Environment{}, args...); c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
-	}
-	if np, ns := calls(t, log); np != 2 || ns != 4 {
-		require.Fail(t, fmt.Sprintln(np, ns))
-	}
-	s, _ = readSnapshot(sp)
-	if len(s.Pending) != 0 {
-		require.Len(t, s.Pending, 0, "pending not cleared")
-	}
-	for _, v := range s.Delivered {
-		if v.Observed["x"].Raw != "v2.0.0" || v.ID == old {
-			require.Fail(t, fmt.Sprintln(v))
-		}
-	}
-}
 func TestDeliveryScopeAndPreparedArtifactChecks(t *testing.T) {
 	t.Parallel()
 
@@ -258,18 +215,28 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL " + strings.Repeat("x", 500)}); len(got) != 203 || !strings.HasSuffix(got, "...") {
 		require.Failf(t, "", "unbounded: %d bytes: %q", len(got), got)
 	}
-	for _, mode := range []string{"prepare-fail", "prepare-shouty"} {
+	for _, mode := range []string{"send-fail", "send-shouty"} {
 		t.Run(mode, func(t *testing.T) {
-			fakeBusPath(t)
 			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
-			c, _, errout := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+			line := "SEND FAIL synthetic refusal"
+			if mode == "send-shouty" {
+				// A binary on PATH that answers with many lines and a very long one.
+				// The caller's grammar must survive it.
+				line = "SEND FAIL " + strings.Repeat("y", 4000)
+			}
+			env := Environment{Process: func(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
+				if len(args) == 0 || args[0] != "nova-bus" {
+					return process(ctx, args, input, cap)
+				}
+				return ProcessResult{Reason: "exit 1", Stderr: line + "\nand a second line\nand a third\n"}
+			}}
+			c, _, errout := run(t, env, "report", "--file", p, "--send", "--snapshot",
 				filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 				"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
 			if c != 1 {
 				require.EqualValues(t, 1, c, c)
 			}
-			need(t, errout, "the bus said: PREPARE FAIL")
+			need(t, errout, "the bus said: SEND FAIL")
 			note := ""
 			for _, line := range strings.Split(errout, "\n") {
 				if strings.HasPrefix(line, "REPORT NOTE") {
@@ -338,84 +305,6 @@ func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
 	}
 }
 
-// Rule 23's --timeout bounds one version probe. It was also bounding the bus
-// child, so a default --send killed its own delivery at five seconds. The
-// delivery allowance is what is left of the budget, and the bus is handed finite
-// retry controls that fit inside it.
-func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
-	for _, c := range []struct {
-		remaining            time.Duration
-		attempts, gitSeconds int
-	}{
-		{60 * time.Second, 3, 20},
-		{10 * time.Minute, 10, 60},
-		{2 * time.Second, 2, 1},
-		{500 * time.Millisecond, 1, 1},
-		{0, 1, 1},
-	} {
-		// Below a second there is no whole number of seconds to name, so one is
-		// named and the caller's own deadline stays the tighter of the two.
-		a, g := busBounds(c.remaining)
-		if a != c.attempts || g != c.gitSeconds {
-			assert.Failf(t, "", "%s left: attempts=%d git-timeout=%d, want %d and %d", c.remaining, a, g, c.attempts, c.gitSeconds)
-		}
-		if a < 1 || g < 1 {
-			assert.Failf(t, "", "%s left: a bound below one is not a bound", c.remaining)
-		}
-		if want := c.remaining; want >= time.Second && time.Duration(g)*time.Second > want {
-			assert.Failf(t, "", "%s left: a git timeout of %ds promises more than remains", want, g)
-		}
-	}
-	log := fakeBusPath(t)
-	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
-		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
-		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--budget", "60s")
-	if c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
-	}
-	b, err := os.ReadFile(log)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
-	sendArgv := ""
-	for _, line := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(line, "argv send ") {
-			sendArgv = line
-		}
-	}
-	if sendArgv == "" {
-		require.NotEqualValuesf(t, "", sendArgv, "no send argv was logged:\n%s", b)
-	}
-	for _, want := range []string{"--attempts ", "--git-timeout ", "--prepared-stdin"} {
-		if !strings.Contains(sendArgv, want) {
-			assert.Containsf(t, sendArgv, want, "the send argv does not carry %s: %s", want, sendArgv)
-		}
-	}
-	fields := strings.Fields(sendArgv)
-	for i, f := range fields {
-		if f != "--attempts" && f != "--git-timeout" {
-			continue
-		}
-		if i+1 >= len(fields) {
-			require.Failf(t, "", "%s names no value: %s", f, sendArgv)
-		}
-		n, err := strconv.Atoi(fields[i+1])
-		if err != nil || n < 1 {
-			assert.Failf(t, "", "%s is %q, which is not a finite bound", f, fields[i+1])
-		}
-		if f == "--git-timeout" && n > 60 {
-			assert.Failf(t, "", "--git-timeout %d exceeds the 60s budget", n)
-		}
-	}
-	// prepare takes neither: it runs no Git and touches no network.
-	for _, line := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(line, "argv prepare ") && (strings.Contains(line, "--attempts") || strings.Contains(line, "--git-timeout")) {
-			assert.Failf(t, "", "prepare was handed a Git bound it has no use for: %s", line)
-		}
-	}
-}
-
 // A binary on PATH called nova-bus that answers in no grammar this tool knows
 // must not get to write on the caller's event line.
 func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
@@ -430,10 +319,16 @@ func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
 			assert.Failf(t, "", "%q was relayed as %q", alien, got)
 		}
 	}
-	fakeBusPath(t)
+	fake := Environment{Process: func(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
+		if len(args) == 0 || args[0] != "nova-bus" {
+			return process(ctx, args, input, cap)
+		}
+		// A binary that answers in no grammar this tool knows. It must not
+		// get to put its words on the caller's event line.
+		return ProcessResult{Reason: "exit 1", Stderr: "gobbledegook tell-nobody-this\n"}
+	}}
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "prepare-alien")
-	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+	c, out, errs := run(t, fake, "report", "--file", p, "--send", "--snapshot",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
 	if c != 1 {

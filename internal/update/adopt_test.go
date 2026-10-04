@@ -1,9 +1,12 @@
 package update
 
 import (
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +16,14 @@ import (
 // #525: watch --adopt runs the coordinator's own adoption pass after every
 // rebuild and escalates refusals.
 func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
-	log := fakeBusPath(t)
+	var mu sync.Mutex
+	var calls [][]string
+	fake := Environment{Process: func(_ context.Context, args []string, _ io.Reader, _ int) ProcessResult {
+		mu.Lock()
+		calls = append(calls, append([]string(nil), args...))
+		mu.Unlock()
+		return ProcessResult{Stdout: "SEND OK id=01ABC to=duty cc=- at=2026-10-04T17:00:00Z\n"}
+	}}
 	bus := t.TempDir()
 	checks := filepath.Join(t.TempDir(), "checks.tsv")
 	rows := []string{
@@ -27,7 +37,7 @@ func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
 	if err := os.WriteFile(checks, []byte(strings.Join(rows, "\n")+"\n"), 0600); err != nil {
 		require.NoError(t, err, err)
 	}
-	c, out, errs := run(t, Environment{}, "watch", "--adopt", checks,
+	c, out, errs := run(t, fake, "watch", "--adopt", checks,
 		"--bus", bus, "--remote", "origin", "--branch", "main",
 		"--as", "coordinator", "--to", "duty")
 	combined := out + "\n" + errs
@@ -42,12 +52,28 @@ func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
 	need(t, combined, "ADOPT ESCALATE check=snapshot-report")
 	need(t, combined, "ADOPT DONE sha=", "ok=4 refused=1")
 	need(t, combined, "ADOPT SENT")
-	b, err := os.ReadFile(log)
-	if err != nil {
-		require.NoErrorf(t, err, "coordinator posted no bus receipt: %v", err)
+	mu.Lock()
+	defer mu.Unlock()
+	var sent [][]string
+	for _, argv := range calls {
+		if len(argv) > 0 && argv[0] == "nova-bus" {
+			sent = append(sent, argv)
+		}
 	}
-	if strings.Count(string(b), "prepare\n") != 1 || strings.Count(string(b), "send\n") != 1 {
-		require.Failf(t, "", "adoption receipt was not posted once via prepare+send:\n%s", string(b))
+	if len(sent) != 1 {
+		require.Failf(t, "", "adoption receipt was not posted with exactly one bus child, got %q", sent)
+	}
+	joined := strings.Join(sent[0], " ")
+	if !strings.HasPrefix(joined, "nova-bus send --as ") {
+		require.Failf(t, "", "adoption receipt was not one Redis send: %q", sent[0])
+	}
+	for _, want := range []string{"--to", "--subject", "--stdin"} {
+		if !strings.Contains(joined, want) {
+			require.Failf(t, "", "the send carries no %s: %q", want, sent[0])
+		}
+	}
+	if strings.Contains(joined, "prepare") {
+		require.Failf(t, "", "the retired prepare step still runs: %q", sent[0])
 	}
 }
 

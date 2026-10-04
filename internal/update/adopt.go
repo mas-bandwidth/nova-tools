@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -177,7 +176,7 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 		body.Write(okBuf.Bytes())
 		body.Write(refuseBuf.Bytes())
 		fmt.Fprintln(&body, done)
-		line, serr := postAdoptReceipt(ctx, o, body.Bytes(), env)
+		line, serr := postAdoptReceipt(ctx, o, body.Bytes(), started, env)
 		if serr != nil {
 			fmt.Fprintf(errs, "ADOPT NOTE %s\n", oneline.Err(serr))
 			return 1
@@ -187,41 +186,21 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 	return code
 }
 
-// postAdoptReceipt publishes the adoption receipt through the prepared
-// artifact protocol, the same validation-before-send the reporter uses.
-func postAdoptReceipt(ctx context.Context, o options, body []byte, env Environment) (string, error) {
-	allowance := deliveryAllowance(ctx, env.Now())
-	if allowance <= 0 {
+// postAdoptReceipt publishes the adoption receipt in one child through the
+// Redis bus (SPEC-UPDATE rule 24: delivery is nova-bus's; only a confirmed
+// SEND OK records delivery), the same send the reporter uses. The id the
+// bus's confirmation names is what the receipt records.
+func postAdoptReceipt(ctx context.Context, o options, body []byte, started time.Time, env Environment) (string, error) {
+	if ctx.Err() != nil {
 		return "", fmt.Errorf("delivery budget exhausted (retry watch with the same --adopt)")
 	}
-	child, cancel := context.WithTimeout(ctx, allowance)
-	prepared := captureRun(child, []string{"nova-bus", "prepare", "--bus", o.bus, "--as", o.as, "--stdin"}, body, ChildCap)
-	cancel()
-	if prepared.Reason != "" {
-		return "", fmt.Errorf("prepare refused: %s; the bus said: %s (check nova-bus and the named bus; retry watch)", prepared.Reason, busSaid(prepared))
-	}
-	id, err := validatePrepared([]byte(prepared.Stdout))
+	subject := fmt.Sprintf("adoption on %s at %s", dash(o.host), started.UTC().Format("2006-01-02T15:04:05Z"))
+	args := busSendArgs(o, subject)
+	_, line, err := sendNote(ctx, args, body, env)
 	if err != nil {
-		return "", fmt.Errorf("%s (use a compatible nova-bus)", err)
+		return "", fmt.Errorf("%s (retry watch with the same --adopt)", err)
 	}
-	var artifact map[string]string
-	_ = artifact
-	allowance = deliveryAllowance(ctx, env.Now())
-	if allowance <= 0 {
-		return "", fmt.Errorf("pending %s not sent: the budget is spent (retry watch with the same --adopt)", id)
-	}
-	attempts, gitSeconds := busBounds(allowance)
-	args := []string{"nova-bus", "send", "--prepared-stdin", "--bus", o.bus, "--remote", o.remote, "--branch", o.branch, "--as", o.as,
-		"--attempts", strconv.Itoa(attempts), "--git-timeout", strconv.Itoa(gitSeconds)}
-	child2, cancel2 := context.WithTimeout(ctx, allowance)
-	r := captureRun(child2, args, []byte(prepared.Stdout), ChildCap)
-	cancel2()
-	for _, l := range strings.Split(r.Stdout, "\n") {
-		if confirmed(l, id) {
-			return l, nil
-		}
-	}
-	return "", fmt.Errorf("pending %s not confirmed: %s; the bus said: %s (retry watch with the same --adopt)", id, dash(r.Reason), busSaid(r))
+	return line, nil
 }
 
 func loadAdoptFile(path string) ([]AdoptCheck, error) {
