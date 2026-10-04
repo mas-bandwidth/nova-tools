@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -743,8 +744,9 @@ func realFileSize(path string) (int64, error) {
 }
 
 // realFileLine reads a wake file from an offset, answering its first line
-// past the offset and the offset past everything read: "" when nothing new
-// is there. A file that is not there is no wake yet, never an error.
+// past the offset and the offset just past that line's newline: "" and the
+// same offset when no newline is there yet (a fragment is not a line). A
+// file that is not there is no wake yet, never an error.
 func realFileLine(path string, from int64) (string, int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -761,8 +763,10 @@ func realFileLine(path string, from int64) (string, int64, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	line, _, _ := strings.Cut(string(raw), "\n")
-	return line, from + int64(len(raw)), nil
+	if i := bytes.IndexByte(raw, '\n'); i >= 0 {
+		return string(raw[:i]), from + int64(i) + 1, nil
+	}
+	return "", from, nil
 }
 
 // streamID is whether s is a stream entry id (<ms>-<seq>, both numbers): the

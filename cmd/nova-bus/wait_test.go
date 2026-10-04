@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -165,6 +167,38 @@ func TestWaitTimesOutAsNoneAtExitOne(t *testing.T) {
 	r.clock()
 	got = cli.Do(t, "wait", "--as", "bob", "--timeout", "5s", "--json").Exit(1)
 	assert.Equal(t, `{"status":"ok","word":"NONE","after":"0-0","messages":[]}`+"\n", got.Stdout)
+}
+
+// realFileLine answers a wake file's first line past an offset and the offset
+// just past that line's newline: a fragment with no newline is not a line
+// yet, so it answers "" and leaves the offset put, and a leading empty line
+// advances only past its own newline, never past the rest (SPEC-BUS.md, the
+// verbs: wait).
+func TestRealFileLineWaitsForANewlineAndAdvancesPastIt(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "wake")
+	require.NoError(t, os.WriteFile(path, []byte("frag"), 0o600))
+	line, end, err := realFileLine(path, 0)
+	require.NoError(t, err)
+	assert.Empty(t, line, "a fragment with no newline is not a line yet")
+	assert.Equal(t, int64(0), end, "the offset stays put until a newline is there")
+	require.NoError(t, os.WriteFile(path, []byte("fragment\nnext"), 0o600))
+	line, end, err = realFileLine(path, 0)
+	require.NoError(t, err)
+	assert.Equal(t, "fragment", line)
+	assert.Equal(t, int64(9), end, "the offset is just past the first newline")
+	line, end, err = realFileLine(path, end)
+	require.NoError(t, err)
+	assert.Empty(t, line, "the rest has no newline yet")
+	assert.Equal(t, int64(9), end)
+	require.NoError(t, os.WriteFile(path, []byte("\nreal\n"), 0o600))
+	line, end, err = realFileLine(path, 0)
+	require.NoError(t, err)
+	assert.Empty(t, line, "a leading empty line is not a wake")
+	assert.Equal(t, int64(1), end, "the offset is just past the first newline, not the whole read")
+	line, end, err = realFileLine(path, end)
+	require.NoError(t, err)
+	assert.Equal(t, "real", line)
 }
 
 // A wrong flag, a wrong timeout, a name off the roster and a store that does

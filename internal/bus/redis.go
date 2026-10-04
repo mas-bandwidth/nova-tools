@@ -154,15 +154,23 @@ func (r Redis) Tail(ctx context.Context, stream string) (string, bool, error) {
 	return info.LastGeneratedID, true, nil
 }
 
+// blockArg is the BLOCK a wait's read sends: 0 is for ever (the store holds
+// the read until an entry is there), a positive duration is that long, and
+// -1 is never sent -- that is recv's "do not block", not the wait's
+// (SPEC-BUS.md, the verbs: wait).
+func blockArg(block time.Duration) time.Duration {
+	if block > 0 {
+		return block
+	}
+	return 0
+}
+
 // BlockRead is XREAD past the id after, waiting up to block (0 is for ever:
 // one read the store holds until an entry is there), never the consumer
 // group, so a later recv still delivers and acks what it handed out
 // (SPEC-BUS.md, the verbs: wait).
 func (r Redis) BlockRead(ctx context.Context, stream, after string, block time.Duration, count int) ([]Entry, error) {
-	args := &redis.XReadArgs{Streams: []string{stream, after}, Count: int64(count), Block: -1}
-	if block > 0 {
-		args.Block = block
-	}
+	args := &redis.XReadArgs{Streams: []string{stream, after}, Count: int64(count), Block: blockArg(block)}
 	res, err := r.C.XRead(ctx, args).Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil // the block ran out with nothing: not an error

@@ -358,6 +358,16 @@ func TestTheFakesTailAndBlockReadAnswerPastTheCursorAndWaitOutTheBlock(t *testin
 	assert.Equal(t, 30*time.Second, waited, "the block waits its duration out on the injected clock")
 }
 
+// blockArg is the BLOCK a wait's read sends: 0 is for ever (the store holds
+// the read until an entry is there), a positive duration is that long, and
+// -1 is never sent -- that is recv's "do not block", not the wait's
+// (SPEC-BUS.md, the verbs: wait).
+func TestBlockArgIsForeverForZeroAndTheDurationForPositive(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, time.Duration(0), blockArg(0), "a wait with no timeout parks for ever: BLOCK 0, never -1")
+	assert.Equal(t, 5*time.Second, blockArg(5*time.Second), "a positive duration is the block")
+}
+
 func TestNamesAreSortedAndUnique(t *testing.T) {
 	t.Parallel()
 	b, _ := rig(t, "zed", "ada", "zed")
