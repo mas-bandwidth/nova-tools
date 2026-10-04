@@ -47,7 +47,8 @@ func (e *ListError) Error() string { return strings.TrimRight(e.Text, "\n") }
 // plus every in-repo package that imports one of them, or with All the whole
 // tree. The diff is read against Options.Base. A go.mod or go.sum change puts
 // every package in scope. A changed file that is not Go selects the packages
-// whose tests or testdata name it (keyedPackages). Deprecated packages are never selected (Live).
+// whose tests or testdata name it or whose source embeds it (keyedPackages).
+// Deprecated packages are never selected (Live).
 //
 // NEVER SILENTLY NOTHING. A `go list` that fails on a runner must not read as
 // "nothing to test": the selection would print an empty list, the caller would
