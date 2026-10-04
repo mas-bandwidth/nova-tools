@@ -32,6 +32,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -385,12 +386,7 @@ func normalizeStagedAllow(allow []string) []string {
 }
 
 func isStagedAllowed(rel string, allow []string) bool {
-	for _, a := range allow {
-		if rel == a || strings.HasPrefix(rel, a+"/") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(allow, func(a string) bool { return rel == a || strings.HasPrefix(rel, a+"/") })
 }
 
 // stagedBlobHead is the first two bytes of one staged blob -- all a shebang

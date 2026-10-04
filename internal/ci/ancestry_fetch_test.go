@@ -27,7 +27,8 @@ func TestAncestryFetchesAreOneVerb(t *testing.T) {
 		`"+"+branch+":refs/remotes/origin/"+branch`,
 		`"--is-shallow-repository"`,
 		`a one-parent commit: no promotion to read`,
-		`len(strings.Fields(res.Stdout)) < 3`,
+		`"git", "cat-file", "-p", "HEAD"`,
+		`strings.Count("\n"+headers, "\nparent ") < 2`,
 		`e.getenv("GITHUB_EVENT_NAME") != "pull_request"`,
 	} {
 		assert.Contains(t, verb, want, "tools/ci/sel_ancestry.go: the fetch is not the one %s and %s name", devHistoryFetch, foundationHistoryFetch)

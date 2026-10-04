@@ -421,12 +421,19 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "drop":
 				add(d, cmd+"drop "+ids+" --reason "+whyText+ans)
 			}
+		case g.Type == NScoredLow && d == "add a repair card":
+			// the work landed: its repair is a new card, then the judgment is answered by ack
+			add(d, append(look(), cmd+"add --stream "+s+" '<fix id>' --brief '<the finding: file:line, the class, the wanted text>'",
+				cmd+"ack "+strings.Join(g.Notes, ",")+" --reason 'repair card <fix id> added'")...)
 		case g.Type == NStreamStale:
 			add(d, cmd+"where", cmd+"queue --stream "+s)
 		case g.Type == NConflict:
 			switch d {
 			case "resolve and resume":
-				add(d, resume(didText))
+				// resume: the lander merges the card's head again, regenerating the generated
+				// ledgers (docs/SPEC-SPRINT.md section 7); a conflict outside the ledgers is
+				// answered by rework or drop
+				add(d, resume("'<what you did; the lander merges again, regenerating the ledgers; a conflict outside the ledgers is answered by rework or drop>'"))
 			case "rework":
 				add(d, cmd+"return "+card+" --reason conflict", cmd+"rework "+card+" --fix "+fixText, resume("'returned "+card+" for rework'"))
 			case "drop":
@@ -464,6 +471,8 @@ func commands(g Group, first Note, prefix string) []Command {
 			}
 		case d == "rework with the finding" || d == "rework with a fix" && g.Type == NWorkFailed:
 			add(d, cmd+"rework"+subj+subjAns) // each takes its own finding or report
+		case d == ReworkOnAHigherTier:
+			add(d, cmd+"rework"+subj+" --fix "+fixText+" --tier '<a higher tier>'"+subjAns)
 		case d == "rework with a fix" || d == "rework":
 			add(d, cmd+"rework"+subj+" --fix "+fixText+subjAns)
 		case d == "ask":
@@ -507,6 +516,8 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+d+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))
 		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "goal "):
 			add(d, cmd+d)
+		case strings.HasPrefix(d, "funded "):
+			add(d, cmd+d+" --reason '<the payment made>'")
 		case d == "ack":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)
 		case d == "resume" && s != "":

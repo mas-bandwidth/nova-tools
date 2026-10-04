@@ -36,7 +36,7 @@ func scenarios() []sample {
 func (k *walk) addTo(stream string, needs ...string) string {
 	id := fmt.Sprintf("p%d", k.next)
 	k.next++
-	if !k.try(sprint.Add(k.s, sprint.AddReq{Stream: stream, IDs: []string{id}, Needs: needs, Who: coordinator})) {
+	if !k.try(sprint.Add(k.s, sprint.AddReq{Brief: proBrief, Stream: stream, IDs: []string{id}, Needs: needs, Who: coordinator})) {
 		return ""
 	}
 	return id

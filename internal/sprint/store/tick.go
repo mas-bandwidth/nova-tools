@@ -207,6 +207,9 @@ func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	if m.Done() {
 		return "machine: " + DoneState
 	}
+	if !m.Running() && m.Cause == sprint.FundsCause {
+		return "machine: STOPPED (" + sprint.FundsCause + ")"
+	}
 	if !m.Running() {
 		return "machine: STOPPED"
 	}
@@ -275,6 +278,11 @@ func (st *Store) MachineLine(ctx context.Context) string {
 	if err != nil {
 		return ""
 	}
+	return st.MachineLineOf(m, hb)
+}
+
+// MachineLineOf is MachineLine of the records read.
+func (st *Store) MachineLineOf(m Machine, hb Heartbeat) string {
 	if st.ByHand && m.Running() {
 		return "machine: running"
 	}
@@ -611,6 +619,11 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		if err != nil {
 			return res, fmt.Errorf("fleet: %w", err)
 		}
+		// a verb moves cards while the machine is STOPPED: where's record
+		// follows them
+		if err := st.keepWhere(ctx, m); err != nil {
+			return res, fmt.Errorf("where: %w", err)
+		}
 		now := st.now()
 		if now.Sub(hb.Alive()) < HeartbeatIdleEvery && !hb.Looked.IsZero() {
 			return res, nil
@@ -636,6 +649,14 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		if nerr := st.tellTick(ctx, "tick recovered", sprint.NTickRecovered, fmt.Sprintf("failed=%d; the last error: %s", hb.Failures, hb.Error), ""); nerr != nil {
 			err = fmt.Errorf("tick recovered: %w", nerr)
 		}
+	}
+	if err == nil && res.Stale == "" {
+		// where's record counted from what the tick left (where.go)
+		mt := st.meter()
+		if werr := st.keepWhere(ctx, m); werr != nil {
+			err = fmt.Errorf("where: %w", werr)
+		}
+		res.Times = append(res.Times, mt.part("", "where"))
 	}
 	if err == nil && res.Stale == "" {
 		// the coordinator's one wake of the tick, last (tickend.go); a tick the
@@ -877,6 +898,11 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if err := pinned.readerStatesInto(ctx, &first); err != nil {
 		return last, err
 	}
+	// the friends the deal may give a friend's card to, read only when one is ready
+	// (sprint.FriendDeal): a sprint with none reads nothing more
+	if req.Friends, err = pinned.friendSeats(ctx, &first, now); err != nil {
+		return last, err
+	}
 	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
 	defer func() { res.RouteTrips = t.routes.Trips }()
 	updates := st.Updates
@@ -1059,6 +1085,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		began := t.st.meter()
 		due := 0
 		var done *sprint.Note
+		stop := "" // the deal's: every provider out of credit (sprint.FundsCause)
 		var planned sprint.Plan
 		fn := func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
 			if drain {
@@ -1067,6 +1094,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			}
 			p, d := part.Fn(s, r)
 			planned = p
+			stop = p.Stop
 			if part.Name == sprint.PartDone {
 				done = nil
 				if len(p.Notes) > 0 {
@@ -1142,6 +1170,15 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 					t.dirtied = append(t.dirtied, x)
 				}
 			}
+		}
+		if stop != "" && !r.Lost {
+			// Every provider is out of credit: the machine stops itself as the part's step
+			// commits, with the cause, and the tick ends here (nova-tools#5199).
+			if err := t.st.stopFor(t.ctx, sprint.FundsCause, stop, t.res); err != nil {
+				t.err = fmt.Errorf("tick %s: stopping the machine: %w", part.Name, err)
+				return tickFailed
+			}
+			return tickDone
 		}
 		if done != nil && r.Notes > 0 && !r.Lost {
 			// The sprint is done: the machine stops itself as the part's step
@@ -1353,6 +1390,28 @@ func (st *Store) stopDone(ctx context.Context, n sprint.Note, res *TickResult) e
 	return st.pushDone(ctx, n, res)
 }
 
+// stopFor stops the machine as the tick's step commits, its record STOPPED with the cause
+// and a STOPPED span opened (the done part's stop, stopDone, is the other): the tick's
+// result says why. A machine STOPPED already is left as it is.
+func (st *Store) stopFor(ctx context.Context, cause, why string, res *TickResult) error {
+	m, _, err := st.Machine(ctx)
+	if err != nil {
+		return err
+	}
+	res.State, res.Halted = Stopped, why
+	if !m.Running() {
+		return nil
+	}
+	now := st.now()
+	after := m
+	after.Spans = append(append([]Span(nil), m.Spans...), Span{From: now})
+	if len(after.Spans) > MaxStopSpans {
+		after.Spans = after.Spans[len(after.Spans)-MaxStopSpans:]
+	}
+	after.State, after.Since, after.Who, after.Cause = Stopped, now, sprint.MachineActor, cause
+	return st.putMachine(ctx, after)
+}
+
 // pushDone delivers "the sprint is done" down the route of the goal of the
 // one it is addressed to (the coordinator), when they have a goal: the text
 // the route carries is the note's, with the hint, and the goal's pushes are
@@ -1408,6 +1467,22 @@ func (st *Store) SinceFirstStart(ctx context.Context) (time.Duration, bool) {
 		return 0, false
 	}
 	return now.Sub(first), true
+}
+
+// LandingRate is sprint.LandingRate at the clock's reading: landed is the
+// landed cards' stamps (LandedAt; nil for the whole-sprint average alone) and
+// total the landed count; 0 when the machine has not started in this epoch,
+// or the records are not read.
+func (st *Store) LandingRate(ctx context.Context, landed []time.Time, total int64) float64 {
+	m, _, err := st.Machine(ctx)
+	if err != nil {
+		return 0
+	}
+	es, err := st.EpochNow(ctx)
+	if err != nil {
+		return 0
+	}
+	return sprint.LandingRate(landed, total, m.Spans, m.FirstStart(es.Cleared), st.now())
 }
 
 // undone takes the cause off a machine STOPPED because the sprint was done

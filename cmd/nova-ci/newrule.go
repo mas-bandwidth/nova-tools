@@ -37,7 +37,7 @@ func cmdScaffold(verb, wants string, nargs int, args []string, stdout, stderr io
 	root := fs.String("root", ".", "the nova-tools checkout to write into (default the current directory)")
 	dryRun := fs.Bool("dry-run", false, "list the files it would write, checked against the tree, and write nothing")
 	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, where, flagProblem(fs, err))
+		return refuse(stderr, where, verbflag.Explain(fs, err))
 	}
 	if fs.NArg() != nargs {
 		return refuse(stderr, where, fmt.Sprintf("%s wants %s, after the flags; got %d", verb, wants, fs.NArg()))

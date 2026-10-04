@@ -56,10 +56,12 @@ reader with its row says it is there by asking for its own queue (queue --as
 <reader> is its beat); the queue of a name with no row writes none and answers
 reader false, and the reader loop says MEMBER NOT A READER. A reader is up while its last beat is under `+sprint.ReaderBeatBound.String()+` old, away
 when it beat and has lapsed, down when it has never beaten; reader away holds
-one away whatever it beats and reader up releases the hold. The ask deals a
-read to a reader up only: a read asked of a reader that is not up is asked of
-another at the next tick, and with fewer than two readers up the tick asks none
-and raises one judgment (fewer than two readers up). reader remove takes a row off the readers table, refused while the
+one away whatever it beats and reader up releases the hold. A flash card is
+read once and a pro card twice, by two different readers, each read on a route
+of the card's tier. The ask deals a read to a reader up only: a read asked of a
+reader that is not up is asked of another at the next tick, and a card that
+needs more readers than are up is not asked: the tick raises one judgment
+(fewer than two readers up). reader remove takes a row off the readers table, refused while the
 reader holds a read (asked, reading, ok or broken).`) + "\n"
 }
 

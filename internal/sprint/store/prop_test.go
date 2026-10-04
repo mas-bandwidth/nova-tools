@@ -433,7 +433,7 @@ func (r *propRun) tick() {
 // admitted, in line before a reached sentinel of the stream when inLine.
 func (r *propRun) add(stream string, picks []int, inLine bool) {
 	id := r.newID("p")
-	req := sprint.AddReq{Stream: stream, IDs: []string{id}, Who: "coord"}
+	req := sprint.AddReq{Brief: proBrief, Stream: stream, IDs: []string{id}, Who: "coord"}
 	for _, k := range picks {
 		if n, ok := pickOf(r.ids, k); ok && !contains(req.Needs, n) {
 			req.Needs = append(req.Needs, n)
@@ -714,6 +714,9 @@ func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool)
 		rework(members, "", notes)
 	case d == "rework with a fix" || d == "rework":
 		rework(members, "fix", notes)
+	case d == sprint.ReworkOnAHigherTier:
+		r.run("nova-sprint rework "+strings.Join(members, " ")+" --fix 'fix' --tier pro --answers "+strings.Join(notes, ","),
+			ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: members}, Fix: "fix", Tier: "pro", Answers: notes, Who: "coord"}))
 	case d == "ask":
 		r.run("nova-sprint ask "+strings.Join(members, " ")+" --answers "+strings.Join(notes, ","), AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: members}, Answers: notes, Who: "coord"}))
 	case d == "ask another reader" || d == "ask --another":

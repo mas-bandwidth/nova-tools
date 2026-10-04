@@ -25,7 +25,7 @@ func TestNothingToDoAtAHeadAReaderPassedIsBackInReview(t *testing.T) {
 			t.Parallel()
 			ta := newTestApp(t)
 			ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
-			ta.ok("add --stream s1 --count 1")
+			ta.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
 			ta.deal(1)
 			ta.ok("take --as m1 s1-1.w1@1")
 			ta.ok("finish --as m1 s1-1.w1@1 --head " + head + " --branch sprint/s1-1.w1")
@@ -63,7 +63,7 @@ func TestNothingToDoWithNoPassedHeadIsFailedWork(t *testing.T) {
 	const head = "0123456789abcdef0123456789abcdef01234567"
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --head " + head + " --branch sprint/s1-1.w1")

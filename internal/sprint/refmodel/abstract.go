@@ -32,11 +32,11 @@ type Observed struct {
 // clock's and are left out.
 func Abstract(o Observed) State {
 	s := o.Snap
-	a := New(s.Readers.Rows(), s.Fleet.Rows(), "")
+	a := New(s.Readers.Rows(), s.Members(), "")
 	a.Epoch = s.Epoch
 	a.Pending = o.Pending
 	a.Machine = o.Machine
-	for _, m := range s.Fleet.Rows() {
+	for _, m := range s.Members() {
 		a.Members[m] = Down
 		if ctl := s.MemberCtl(m); ctl != nil && ctl.F("status") == sprint.Up {
 			a.Members[m] = Up

@@ -291,67 +291,81 @@ func WriteFile(path string, data []byte, perm os.FileMode, opts ...Option) error
 }
 
 func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts ...Option) (err error) {
-	var opt options
+	if h == nil {
+		h = defaultHooks()
+	}
+	opt, dir, base, err := validate(path, perm, h, opts)
+	if err != nil {
+		return err
+	}
+	return publish(path, data, perm, h, opt, dir, base)
+}
+
+// validate is every check Write makes before it touches the disk, shared with
+// Check so a plan refuses exactly where the write would.
+func validate(path string, perm os.FileMode, h *hooks, opts []Option) (opt options, dir, base string, err error) {
 	for _, fn := range opts {
 		if fn != nil {
 			fn(&opt)
 		}
 	}
 	if path == "" {
-		return fmt.Errorf("atomicfile: path is empty")
+		return opt, dir, base, fmt.Errorf("atomicfile: path is empty")
 	}
 
 	if filepath.Clean(path) != path {
-		return fmt.Errorf("atomicfile: path %q is not clean: use filepath.Clean", path)
+		return opt, dir, base, fmt.Errorf("atomicfile: path %q is not clean: use filepath.Clean", path)
 	}
 
 	if perm&^0o777 != 0 {
-		return fmt.Errorf("atomicfile: unsupported file mode %04o for %q: only permissions 0000-0777 supported", perm, path)
+		return opt, dir, base, fmt.Errorf("atomicfile: unsupported file mode %04o for %q: only permissions 0000-0777 supported", perm, path)
 	}
 
-	base := filepath.Base(path)
+	base = filepath.Base(path)
 	if len(base) > maxBaseNameLen {
-		return fmt.Errorf("atomicfile: base name of %q exceeds maximum length %d: name too long", path, maxBaseNameLen)
+		return opt, dir, base, fmt.Errorf("atomicfile: base name of %q exceeds maximum length %d: name too long", path, maxBaseNameLen)
 	}
 
-	if h == nil {
-		h = defaultHooks()
-	}
-
-	dir := filepath.Dir(path)
+	dir = filepath.Dir(path)
 	// Lstat, not Stat. Stat follows a symlink parent, so the directory looks real
 	// and the temporary file is created in the link target. Do not compare
 	// EvalSymlinks to the lexical path: on macOS /tmp is /private/tmp.
 	dirInfo, err := h.lstat(dir)
 	if err != nil {
-		return wrapErr(fmt.Sprintf("atomicfile: parent directory for %q", path), err)
+		return opt, dir, base, wrapErr(fmt.Sprintf("atomicfile: parent directory for %q", path), err)
 	}
 	if dirInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("atomicfile: parent directory %q for %q is a symlink: pass the real directory", dir, path)
+		return opt, dir, base, fmt.Errorf("atomicfile: parent directory %q for %q is a symlink: pass the real directory", dir, path)
 	}
 	if !dirInfo.IsDir() {
-		return fmt.Errorf("atomicfile: parent directory %q for %q is not a directory", dir, path)
+		return opt, dir, base, fmt.Errorf("atomicfile: parent directory %q for %q is not a directory", dir, path)
 	}
 
 	if _, err := h.evalSymlinks(dir); err != nil {
-		return wrapErr(fmt.Sprintf("atomicfile: resolve parent directory for %q", path), err)
+		return opt, dir, base, wrapErr(fmt.Sprintf("atomicfile: resolve parent directory for %q", path), err)
 	}
 
 	targetInfo, err := h.lstat(path)
 	if err == nil {
 		if opt.noReplace {
-			return wrapErr(fmt.Sprintf("atomicfile: create %q", path), os.ErrExist)
+			return opt, dir, base, wrapErr(fmt.Sprintf("atomicfile: create %q", path), os.ErrExist)
 		}
 		if targetInfo.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("atomicfile: target %q is a symlink", path)
+			return opt, dir, base, fmt.Errorf("atomicfile: target %q is a symlink", path)
 		}
 		if targetInfo.IsDir() {
-			return fmt.Errorf("atomicfile: target %q is a directory", path)
+			return opt, dir, base, fmt.Errorf("atomicfile: target %q is a directory", path)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return wrapErr(fmt.Sprintf("atomicfile: stat %q", path), err)
+		return opt, dir, base, wrapErr(fmt.Sprintf("atomicfile: stat %q", path), err)
 	}
 
+	return opt, dir, base, nil
+}
+
+// publish is Write after validate: the temporary file, its sync, and the rename
+// or the exclusive link.
+func publish(path string, data []byte, perm os.FileMode, h *hooks, opt options, dir, base string) (err error) {
 	f, err := h.createTemp(dir, base, perm)
 	if err != nil {
 		return wrapErr(fmt.Sprintf("atomicfile: create temporary file for %q", path), err)

@@ -388,10 +388,10 @@ func readXaiJSON(kind, path, text string, s *Source) *Source {
 		// ticks, the unit the fold's usd= holds: the cost comes from the
 		// usage `usd` column or from a cost tick the source reported. A lexeme that
 		// is not a non-negative integer is an absence rather than a guess, and
-		// usd= is 0 where no source reported one.
+		// such a message is not Priced: usd= prints - where no source reported one.
 		if v, ok := turn["costUsdTicks"].(json.Number); ok {
 			if n, err := strconv.ParseInt(v.String(), 10, 64); err == nil && n >= 0 {
-				m.Usd = n
+				m.Usd, m.Priced = n, true
 			}
 		}
 		s.Stream = append(s.Stream, m)

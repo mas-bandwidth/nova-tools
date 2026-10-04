@@ -12,12 +12,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// run parses args on a flag set the way a dispatcher does: Recover deferred,
-// the exit code and what Recover printed returned beside Parse's error.
+// noExtra is RecoverWith's extra for a tool that adds nothing to a verb's help.
+func noExtra(string) string { return "" }
+
+// run parses args on a flag set the way a dispatcher does: RecoverWith
+// deferred, the exit code and what it printed returned beside Parse's error.
 func run(fs *flag.FlagSet, args []string) (out string, code int, err error) {
 	var b bytes.Buffer
 	func() {
-		defer Recover(&b, "nova-demo", "", &code)
+		defer RecoverWith(&b, "nova-demo", "", &code, noExtra)
 		err = fs.Parse(args)
 	}()
 	return b.String(), code, err
@@ -135,7 +138,7 @@ func TestRecoverLetsAnyOtherPanicThrough(t *testing.T) {
 	got := func() (r any) {
 		defer func() { r = recover() }()
 		func() {
-			defer Recover(&b, "nova-demo", "", &code)
+			defer RecoverWith(&b, "nova-demo", "", &code, noExtra)
 			panic("not help")
 		}()
 		return nil
@@ -149,7 +152,7 @@ func TestRecoverWithNoPanicChangesNothing(t *testing.T) {
 	t.Parallel()
 	var b bytes.Buffer
 	code := 1
-	func() { defer Recover(&b, "nova-demo", "", &code) }()
+	func() { defer RecoverWith(&b, "nova-demo", "", &code, noExtra) }()
 	if b.Len() != 0 || code != 1 {
 		require.Failf(t, "assertion failed", "printed %q, code %d", b.String(), code)
 	}
@@ -176,7 +179,7 @@ func TestHelpIfAskedRaisesHelpForAHandReadVerb(t *testing.T) {
 		var b bytes.Buffer
 		code := 7
 		func() {
-			defer Recover(&b, "nova-demo", "", &code)
+			defer RecoverWith(&b, "nova-demo", "", &code, noExtra)
 			HelpIfAsked(c.args, "task push", Flag{Name: "id", Wants: "the card's `id`"}, Flag{Name: "as", Wants: "who pushes"},
 				Flag{Name: "force", Wants: "push over a newer card", Bool: true})
 		}()
@@ -196,7 +199,7 @@ func parseRun(fs *flag.FlagSet, banner string, args []string) (out string, code 
 	var b bytes.Buffer
 	code = 7
 	func() {
-		defer Recover(&b, "nova-demo", banner, &code)
+		defer RecoverWith(&b, "nova-demo", banner, &code, noExtra)
 		err = Parse(fs, args)
 	}()
 	return b.String(), code, err
@@ -482,6 +485,29 @@ func TestNamesInARefusal(t *testing.T) {
 	}
 	assert.True(t, strings.HasSuffix(List(many), ", v15 and 4 more"), List(many))
 	assert.Equal(t, "a, b", List([]string{"a", "b"}))
+}
+
+// A synopsis replaces the placeholder. No synopsis, and a group, keep [flags],
+// which is the line the other tools' help already prints.
+func TestUsageLineSynopsisNamesTheRealLine(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "usage: nova-demo put [flags]", UsageLine("nova-demo", "put", nil))
+	assert.Equal(t, "usage: nova-demo row <add|del> [flags]", UsageLineSynopsis("nova-demo", "row", []string{"add", "del"}, "<ignored>"))
+	got := UsageLineSynopsis("nova-demo", "inbox", nil, "[--open <group>] [--wait]")
+	assert.Equal(t, "usage: nova-demo inbox [--open <group>] [--wait]", got)
+	assert.NotContains(t, got, "[flags]")
+
+	fs := New("run")
+	fs.Bool("land", false, "land what passed")
+	fs.String("listen", "", "on this `address:port`")
+	syn := FlagSynopsis(fs)
+	assert.Equal(t, "[--land] [--listen <address:port>]", syn)
+	assert.NotContains(t, syn, "[flags]")
+	line := UsageLineSynopsis("nova-demo", "run", nil, syn)
+	assert.Equal(t, "usage: nova-demo run [--land] [--listen <address:port>]", line)
+	assert.NotContains(t, line, "[flags]")
+	assert.Empty(t, FlagSynopsis(nil))
+	assert.Empty(t, FlagSynopsis(New("bare")))
 }
 
 // TestAGroupsHelpNamesItsVerbs pins the group form: a verb with no flags whose

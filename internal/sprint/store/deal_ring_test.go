@@ -148,7 +148,7 @@ func dealRingAcrossTicks(t *testing.T, h *harness) {
 			o := h.st
 			h.st = &Store{B: o.B, Names: o.Names, Actor: o.Actor, Now: o.Now, NewID: o.NewID, Sleep: o.Sleep}
 		}
-		h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{fmt.Sprintf("c%02d", i)}}))
+		h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", IDs: []string{fmt.Sprintf("c%02d", i)}}))
 		r := ringMachineTick(h)
 		t.Logf("tick %d: %s", i+1, r)
 		deals = append(deals, r.deals...)

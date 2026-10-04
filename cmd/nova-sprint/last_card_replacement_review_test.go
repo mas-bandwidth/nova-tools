@@ -15,7 +15,7 @@ func TestTheLastCardLandsAfterReplacingItsReaskedReader(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	r.a.serveAddr = "mem:0"
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
 	head := r.head("s1-1", "main", "last.txt", "finished\n")
 	r.git(r.worker, "push", "-q", "origin", "refs/heads/sprint/s1-1:refs/heads/sprint/s1-1")
 	r.deal(1)

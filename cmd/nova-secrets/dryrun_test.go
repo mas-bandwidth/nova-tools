@@ -128,3 +128,27 @@ func TestDryRunIsInTheHelpOfEveryVerbThatTakesIt(t *testing.T) {
 	assert.Equal(t, 0, code, "help does not say what --dry-run does (exit %d):\n%s", code, out)
 	assert.Contains(t, spaces.ReplaceAllString(out, " "), "--dry-run prints the plan and writes nothing", "help does not say what --dry-run does (exit %d):\n%s", code, out)
 }
+
+// The help says what a dry run reads, as well as what it does not write: each of the
+// three decrypts the seat file its real run reads first (place to find --secret, seal to
+// say add or replace, seat inject to find the names), and none reads a new value or
+// prints one. A help that said "no value read" over a dry run that decrypts was a claim
+// a reader of the code could catch the tool in.
+func TestEveryDryRunHelpSaysWhatItDecrypts(t *testing.T) {
+	t.Parallel()
+	help := func(args ...string) string {
+		var stdout, stderr strings.Builder
+		require.Equal(t, 0, run(args, strings.NewReader(""), &stdout, &stderr), stderr.String())
+		return stdout.String()
+	}
+	banner := help("help")
+	assert.NotContains(t, banner, "no value read", "the banner still says a dry run reads no value")
+	assert.Contains(t, banner, "seal: the existing <as>.yaml, to say add or replace")
+	for verb, says := range map[string]string{
+		"place":       "--dry-run still decrypts that file to find --secret, prints no value, writes nothing",
+		"seal":        "--dry-run reads no new value, decrypts the existing <as>.yaml (when there is one) to say whether NAME is added or replaced, prints no value and writes nothing",
+		"seat inject": "--dry-run decrypts the --from seat's file to find the names, prints no value and writes nothing",
+	} {
+		assert.Contains(t, help(append(strings.Fields(verb), "-h")...), says, "%s -h", verb)
+	}
+}

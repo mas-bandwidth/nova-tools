@@ -233,7 +233,7 @@ func TestOldEpochUnchangedByReuse(t *testing.T) {
 		return b.String()
 	}
 	was := dump()
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 4}))
+	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 4}))
 	h.through("s1-1", "s1-2", "s1-3", "s1-4")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
 	s := h.snap()

@@ -20,6 +20,7 @@ takes no new card and stops when the last is reported).`
 
 // verbExit is each verb's own exit codes.
 var verbExit = map[string]string{
+	"step":          "exit codes: 0 every step run is ok, each on its STEP OK line (--remainder: the card printed); 1 a step failed, on its STEP FAILED line, and the steps after it were not run; 2 could not run: a missing flag, a card that cannot be read, whose tree has a finding or that is not script steps only, no wall and no --no-wall",
 	"lint":          "exit codes: 0 the card is clean (a NOTE line is advice and changes nothing); 1 a drift, each on its LINT DRIFT line; 2 could not run: a missing flag, a file that cannot be read, a bad invocation",
 	"verify":        "exit codes: 0 the result holds its contract; 1 it does not (the line says why); 2 could not run: a missing flag, a file that cannot be read, a receipt that cannot be written",
 	"worker":        "exit codes: 0 WORKER OK; 1 the description was read and drifts, each on its WORKER DRIFT line; 2 it cannot be read, or a bad invocation",
@@ -28,7 +29,23 @@ var verbExit = map[string]string{
 	"native":        "exit codes: 0 the child exited 0 (the NATIVE line's OK, or INCOMPLETE and its why=, is the verdict); 1 the child was killed (its deadline, a TERM) or exited 255; any other code is the child's own; 2 could not run: a missing flag, a wall, a card or a worker description that is not there",
 	"slots take":    "exit codes: 0 the leases are granted; 2 refused: the owner's share or the bench is full (SLOTS REFUSED names the holders), a missing flag, or a store that cannot be read",
 	"doctor":        "exit codes: 0 the binaries agree, or there is one to read; 2 they drift, one shadows the other, or one cannot be read (the DOCTOR line says which)",
+	"disk-guard":    "exit codes: 0 DISK-GUARD OK, everything it looked at done (a KEPT line is a refusal it means); 1 DISK-GUARD INCOMPLETE, something could not be read or removed (each on its NOTE line); 2 could not run: a bad flag",
 	"slots release": "exit codes: 0 the leases named are freed; 2 a lease's holder still runs (SLOTS KEPT; --force frees it), a missing flag or a store that cannot be read",
+}
+
+// verbEffect is what running a verb does beyond printing, the last line of its -h, in the
+// skeleton's words (internal/tool Effect: inspection, local write or delivery; docs/
+// STANDARD.md section 2, "Its effects are explicit").
+var verbEffect = map[string]string{
+	"version":      "inspection: reads, writes nothing",
+	"doctor":       "inspection: reads, writes nothing",
+	"lint":         "inspection: reads, writes nothing",
+	"template":     "inspection: prints a template, writes nothing",
+	"worker":       "inspection: reads, writes nothing",
+	"worker check": "inspection: reads, writes nothing",
+	"slots list":   "inspection: reads, writes nothing",
+	"native":       "delivery: runs the card's harness, which calls the model's provider, and writes the job directory under --root",
+	"member":       "delivery: joins a sprint's fleet through --server, runs its cards as native children, pushes their commits and opens their pull requests",
 }
 
 // commonExit is the codes of every other verb.
@@ -60,6 +77,9 @@ func recoverHelp(out io.Writer, code *int) {
 	verbflag.Print(&b, "nova-swarm", strings.Replace(usage, exitParagraph, verbExits(name), 1), h.FS)
 	*code = 0
 	help := verbflag.Insert(b.String(), verbHelpLines(name))
+	if e, ok := verbEffect[name]; ok {
+		help += "effect: " + e + "\n"
+	}
 	if _, err := fmt.Fprint(out, help); err != nil {
 		// the help did not reach its reader (a closed stdout): the exit code says so
 		*code = 1

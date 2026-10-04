@@ -285,7 +285,7 @@ func TestCROneReaderThenTwo(t *testing.T) {
 	require.NoError(t, h.st.Init(h.ctx))
 	h.beat()
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
+	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 3}))
 	h.startMachine()
 	h.machine()
 	h.work("m1")

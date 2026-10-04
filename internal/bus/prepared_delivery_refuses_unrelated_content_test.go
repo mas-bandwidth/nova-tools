@@ -24,10 +24,8 @@ func stellaIndependentPrepared(t *testing.T) (string, string, Prepared, Prepared
 }
 func TestStellaPreparedAttributePrefixesPublishExactBytes(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
+	// No clock: the test was skipped for its length (four sends one after another, over 5 s);
+	// its cases are independent buses, so they run side by side.
 
 	full, _ := ExpectedMergeAttributes("")
 	cases := []struct {
@@ -41,6 +39,7 @@ func TestStellaPreparedAttributePrefixesPublishExactBytes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			bare, clone, p, a := stellaIndependentPrepared(t)
 			if tc.prefix > len(full) {
 				require.False(t, tc.prefix > len(full), "prefix %d exceeds expected %d", tc.prefix, len(full))

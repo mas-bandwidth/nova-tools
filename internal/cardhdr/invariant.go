@@ -31,14 +31,15 @@ import (
 	"strings"
 )
 
-// The card lines this file reads.
+// The card lines this file reads; KeyPaths is also the one spelling of the PATHS key a
+// tree card's steps are read by (internal/cardtree).
 const (
 	KeyInvariant = "INVARIANT"
 	KeyClassTest = "CLASS-TEST"
 	KeyPlatforms = "PLATFORMS"
 	KeyBuild     = "BUILD"
 	keyDoneWhen  = "DONE-WHEN"
-	keyPaths     = "PATHS"
+	KeyPaths     = "PATHS"
 	keyKind      = "KIND"
 )
 
@@ -438,7 +439,7 @@ var rules = []rule{
 		return nil
 	}},
 	{RulePathsPackages, func(lc *lintCard) *Refusal {
-		l, ok := lc.keys[keyPaths]
+		l, ok := lc.keys[KeyPaths]
 		if ok && !lc.plan() && len(Packages(l.value, lc.files)) > MaxPackages {
 			return &Refusal{Line: l.text, Remedy: RemedyParent}
 		}

@@ -104,7 +104,7 @@ func readsWorld(t *testing.T, primaries int) *world {
 	pairs := [][2]string{{"r1", "r2"}, {"r2", "r3"}, {"r1", "r3"}}
 	for i := 1; i <= primaries; i++ {
 		p := fmt.Sprintf("p%d", i)
-		w.s.Work.Put(&Card{ID: p, Row: "s1", Col: Review, Score: float64(i), Rev: 1, Fields: map[string]string{"kind": "primary", "attempt": "1", "stream": "s1"}})
+		w.s.Work.Put(&Card{ID: p, Row: "s1", Col: Review, Score: float64(i), Rev: 1, Fields: map[string]string{"kind": "primary", "attempt": "1", "stream": "s1", "brief": proBrief}})
 		for _, r := range pairs[i%3] {
 			w.s.Readers.Put(&Card{ID: ReadCardID(p, 1, r), Row: r, Col: Asked, Score: float64(i), Rev: 1,
 				Fields: map[string]string{"kind": "read", "primary": p, "stream": "s1", "reader": r, "attempt": "1"}})

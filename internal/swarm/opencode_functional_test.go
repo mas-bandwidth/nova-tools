@@ -28,7 +28,7 @@ func TestTheOpenCodeSourceSumsTheMessageRows(t *testing.T) {
 	// providerID, modelID, input, output, cache write, cache read, reasoning -- a NULL
 	// column prints as the empty string, which is what the provider not reporting it looks
 	// like on the wire.
-	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\ndeepseek\tdeepseek-chat\t7\t3\t\t20\t\n")
+	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\t\ndeepseek\tdeepseek-chat\t7\t3\t\t20\t\t\n")
 
 	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
 	require.NoError(t, err, "a readable database is not an error: %v", err)
@@ -88,7 +88,7 @@ func TestOpenCodeSourceFindsTheLocalShareStore(t *testing.T) {
 	fakeSQLite3(t)
 	dataHome := t.TempDir()
 	fallback := filepath.Join(dataHome, ".local", "share", "opencode", "opencode.db")
-	writeDBAt(t, fallback, "deepseek\tdeepseek-chat\t100\t50\t\t\t\n")
+	writeDBAt(t, fallback, "deepseek\tdeepseek-chat\t100\t50\t\t\t\t\n")
 
 	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
 	require.NoError(t, err, "a store under the data home's .local/share is readable: %v", err)
@@ -108,7 +108,7 @@ func TestOpenCodeSourceFindsTheLocalShareStore(t *testing.T) {
 func TestOpenCodeSourceWaitsOutAWriteAheadLog(t *testing.T) {
 	fakeSQLite3(t)
 	dataHome := t.TempDir()
-	db := writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\n")
+	db := writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\t\n")
 	wal := db + "-wal"
 	require.NoError(t, os.WriteFile(wal, []byte("unflushed\n"), 0o644))
 	// The flush lands on the reader's first refusal, not after a sleep: the fake takes the

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -237,4 +238,47 @@ func TestATicksPartsTripsArePinned(t *testing.T) {
 	// beats and holds are read once by the tick, before its parts (first read)
 	want := map[string]int64{"work/drain": 8, "readers/ask": 9}
 	require.Equal(t, fmt.Sprint(want), fmt.Sprint(got), "the busy tick's parts made %v round trips, want %v: %s", got, want, busy.TimesLine())
+}
+
+// A pending operation whose later manifest needs lifecycle rejudgment is
+// repaired against the twin's incremental work read, preserving newer state.
+// This distinguishes repair reads from a genuine change-stream invalidation.
+func TestTwinRepairKeepsTheWorkReadIncremental(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		age  time.Duration
+	}{{"live writer", 0}, {"past grace", time.Hour}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.setup(2)
+			h.st.CheckTwin = nil
+			h.st.stats() // pinned reads share the observer counters
+			tw := h.st.twin()
+			pinned, err := h.st.pin(h.ctx)
+			require.NoError(t, err)
+			_, _, err = pinned.twinRead(h.ctx, tw, All, nil, nil)
+			require.NoError(t, err)
+			world := &Store{B: h.outsideWrite("s1-1"), Names: h.st.Names, Actor: h.st.Actor, Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep}
+			_, err = world.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
+			var cut *CutError
+			require.ErrorAs(t, err, &cut)
+			h.tick(tc.age)
+			before := h.st.meter()
+			var repaired []string
+			_, _, err = pinned.twinRead(h.ctx, tw, All, nil, &repaired)
+			require.NoError(t, err)
+			cost := before.part("", "first read")
+			require.Zero(t, cost.Reads, "pending repair read work whole: %+v, repaired %v", cost, repaired)
+			require.Zero(t, cost.Mismatch)
+			require.NotEmpty(t, repaired)
+			require.Nil(t, h.m.Pending())
+			s := h.snap()
+			require.Equal(t, sprint.Ready, s.Work.Card("s1-1").Col)
+			require.Equal(t, "outside", s.Work.Card("s1-1").F("brief"))
+			require.Equal(t, sprint.Working, s.Work.Card("s1-2").Col)
+			require.Len(t, h.skipNotes(), 1)
+		})
+	}
 }

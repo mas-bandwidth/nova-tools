@@ -11,9 +11,15 @@
 \*   att       the attempt: 1, 2 or 3 (a rework of the attempts before)
 \*   earlier   the earlier attempts whose head reached origin (each finished
 \*             ok, its push landed), whatever the attempts between them did
-\*   from      what staging checked out: kind base, head (with n, the attempt
-\*             whose pushed head it is) or branch (the previous attempt's
-\*             branch by name)
+\*   from      what staging checked out: kind base (a first attempt), carry
+\*             (a rework: the tip of the base branch with the pushed head of
+\*             attempt n carried on top, a three-way merge that applied
+\*             cleanly), tip (a rework: the bare tip of the base branch; n > 0
+\*             is the attempt whose pushed work did not apply there, which
+\*             JOB.md asks to be redone, and n = 0 is no work to carry), head
+\*             (attempt n's pushed head itself, the rework's stage before
+\*             nova-tools#5215) or branch (the previous attempt's branch by
+\*             name)
 \*   commit    the child made a commit no origin branch held
 \*   shape     RESULT.md has the contract's shape
 \*   verdict   the result's verdict: ok or notdone
@@ -79,7 +85,12 @@
 \* attempt's branch by name, pushed or not), "previousonly" (a rework staged
 \* from the immediately previous attempt's head only: an attempt between
 \* that failed with no commit sends the next one back to the base, losing
-\* the work pushed before it), "providerfailed" (a provider failure judged as
+\* the work pushed before it), "oldhead" (a rework staged at the last pushed
+\* head itself, its base as old as the first attempt's: the stage before
+\* nova-tools#5215, whose child could not start again from the tip),
+\* "silentconflict" (a rework whose earlier work did not apply at the tip
+\* staged at the bare tip with no word that the work must be redone: the
+\* pushed work lost in silence), "providerfailed" (a provider failure judged as
 \* failed work), "sameroute" (a redeal on the route that failed though another
 \* remains), "unbounded" (a redeal past MaxRedeals), "stagingfailed" (a staging
 \* refusal judged as failed work), "levelrefuser" (the level moves a card onto a
@@ -94,7 +105,10 @@
 \* functional tests hold it), the pull request (it never changes the finish),
 \* reads (a read's verdict is reported as the reader gives it), more than three
 \* attempts, the store's own refusal of a stale finish (SprintEvents and
-\* DirtyTick hold it).
+\* DirtyTick hold it), whether a carry applies (git's merge decides it; both
+\* outcomes are open to every rework here), and a base that is a sha or a tag,
+\* which never moves and whose rework is staged at the pushed head itself (the
+\* base modelled is a branch, as every sprint stream's is).
 EXTENDS Integers, FiniteSets
 
 CONSTANTS Cards, Broken, Routes, MaxRedeals, Members
@@ -139,22 +153,27 @@ Init ==
 
 MaxOf(S) == CHOOSE m \in S : \A n \in S : n <= m
 
-\* Staging (cmd/nova-swarm frameOf, internal/swarm StageCard): a rework starts
-\* from the last pushed head of any earlier attempt (sprint.BaseOf, the
-\* packet's base_head and base_attempt), whatever the attempts between did,
-\* else from the base.
-StageFrom(c) ==
-  IF att[c] = 1 THEN [k |-> "base", n |-> 0]
-  ELSE IF Broken = "branchname" THEN [k |-> "branch", n |-> 0]
-  ELSE IF Broken = "previousonly" THEN
-    IF (att[c] - 1) \in earlier[c] THEN [k |-> "head", n |-> att[c] - 1] ELSE [k |-> "base", n |-> 0]
-  ELSE IF earlier[c] = {} THEN [k |-> "base", n |-> 0]
-  ELSE [k |-> "head", n |-> MaxOf(earlier[c])]
+\* Staging (cmd/nova-swarm frameOf, internal/swarm StageCard and restageAtTip): a first
+\* attempt is staged at the base; a rework at the tip of its base branch, carrying the work of
+\* the last pushed head of any earlier attempt (sprint.BaseOf, the packet's base_head and
+\* base_attempt), whatever the attempts between did, when it applies cleanly, and else the bare
+\* tip with JOB.md asking that work be redone; with no earlier pushed head, the bare tip.
+CarriedOf(c) ==
+  IF Broken = "previousonly" THEN (IF (att[c] - 1) \in earlier[c] THEN att[c] - 1 ELSE 0)
+  ELSE IF earlier[c] = {} THEN 0 ELSE MaxOf(earlier[c])
+
+StageFroms(c) ==
+  IF att[c] = 1 THEN {[k |-> "base", n |-> 0]}
+  ELSE IF Broken = "branchname" THEN {[k |-> "branch", n |-> 0]}
+  ELSE IF Broken = "oldhead" /\ earlier[c] # {} THEN {[k |-> "head", n |-> MaxOf(earlier[c])]}
+  ELSE IF CarriedOf(c) = 0 THEN {[k |-> "tip", n |-> 0]}
+  ELSE {[k |-> "carry", n |-> CarriedOf(c)],
+        [k |-> "tip", n |-> IF Broken = "silentconflict" THEN 0 ELSE CarriedOf(c)]}
 
 Stage(c) ==
   /\ ph[c] = "new"
   /\ ph' = [ph EXCEPT ![c] = "running"]
-  /\ from' = [from EXCEPT ![c] = StageFrom(c)]
+  /\ \E f \in StageFroms(c) : from' = [from EXCEPT ![c] = f]
   /\ UNCHANGED <<att, earlier, commit, shape, verdict, push, claim, fin, rep, pvars>>
 
 \* The member's machine refuses the launch at staging (cmd/nova-swarm native's STAGE
@@ -313,7 +332,7 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
 
 TypeOK ==
   /\ ph \in [Cards -> {"new", "running", "ended", "pushed", "done"}]
-  /\ from \in [Cards -> [k : {"none", "base", "head", "branch"}, n : 0..2]]
+  /\ from \in [Cards -> [k : {"none", "base", "head", "branch", "carry", "tip"}, n : 0..2]]
   /\ push \in [Cards -> {"none", "ok", "refused", "nocommit"}]
   /\ fin \in [Cards -> {"none", "ok", "failed", "reaped", "provider", "retired", "staging", "stagingall"}]
   /\ rep \in [Cards -> {"none", "ok", "failed", "provider", "retired", "staging", "stagingall"}]
@@ -339,18 +358,26 @@ ReapedIsNotReported == \A c \in Cards : fin[c] = "reaped" => rep[c] = "none"
 \* What the sprint is told is the judgment, never a reaped launch's.
 ReportedIsTheJudgment == \A c \in Cards : rep[c] # "none" => rep[c] = fin[c]
 
-\* A launch is staged from a commit origin holds: the base, or an earlier
-\* attempt's head only when it was pushed (never a branch name).
+\* A launch is staged from a commit origin holds: the base, the base branch's tip, or an
+\* earlier attempt's head (itself or carried) only when it was pushed (never a branch name).
 StagedFromOrigin == \A c \in Cards :
-  /\ from[c].k = "head" => from[c].n \in earlier[c]
+  /\ from[c].k \in {"head", "carry"} => from[c].n \in earlier[c]
+  /\ (from[c].k = "tip" /\ from[c].n > 0) => from[c].n \in earlier[c]
   /\ from[c].k = "branch" => (att[c] - 1) \in earlier[c]
 
-\* No pushed work of an earlier attempt is unreachable from a later attempt's
-\* staged base: a rework with a pushed earlier attempt is staged at a head, and
-\* at one no earlier pushed attempt is after (each attempt's head holds the
-\* base it was staged at, so the last pushed head holds every pushed before it).
+\* No pushed work of an earlier attempt is lost to a later attempt: a rework with a pushed
+\* earlier attempt carries a head no earlier pushed attempt is after (each attempt's head
+\* holds the work it was staged with, so the last pushed head holds every pushed before it),
+\* or, when that work did not apply at the tip, its JOB.md names that head's work to be redone.
 NoPushedWorkUnreachable == \A c \in Cards :
-  (from[c].k # "none" /\ earlier[c] # {}) => (from[c].k = "head" /\ \A m \in earlier[c] : m <= from[c].n)
+  (from[c].k # "none" /\ earlier[c] # {}) =>
+    (from[c].k \in {"carry", "tip"} /\ \A m \in earlier[c] : m <= from[c].n)
+
+\* A rework is staged at the tip of its base branch, never at a commit as old as an earlier
+\* attempt's base, so a child told to start again from the tip finishes from the staged commit
+\* (nova-tools#5215).
+ReworkStagedAtTheTip == \A c \in Cards :
+  (from[c].k # "none" /\ att[c] > 1) => from[c].k \in {"carry", "tip"}
 
 \* A provider failure never opens a failed-work judgment: a run the provider failed
 \* that left no result, its push not refused, is never finished `failed`.
@@ -387,11 +414,12 @@ BoundJudgedOnce ==
 RedealAvoidsFailedRoute ==
   \A c \in Cards : (ph[c] = "new" /\ rds[c] > 0 /\ tried[c] # Routes) => rt[c] \notin tried[c]
 
-\* A redeal is the same attempt: the earlier attempts' heads stay the ones the launch is
-\* staged from, so a redealt launch is staged from the same base as the first (the
+\* A redeal is the same attempt: the earlier attempts' heads stay the ones the launch carries,
+\* so a redealt launch carries the same head as the first, onto the tip as it is then (the
 \* record of what staging checked out is the unstaged one until it is staged again).
 RedealRestagesTheSameBase ==
-  \A c \in Cards : (ph[c] = "running" /\ rds[c] > 0 /\ earlier[c] # {}) => from[c].k = "head"
+  \A c \in Cards : (ph[c] = "running" /\ rds[c] > 0 /\ earlier[c] # {}) =>
+    (from[c].k \in {"carry", "tip"} /\ from[c].n = MaxOf(earlier[c]))
 
 \* Every launch ends judged, reaped or retired (a provider finish is dealt again, and
 \* the bound ends the dealing; a staging finish is dealt to another member, and the fleet

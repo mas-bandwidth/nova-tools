@@ -31,7 +31,7 @@ func TestAppendKeepsExactProseAndReportsPersistenceSeparately(t *testing.T) {
 	t.Parallel()
 
 	store := t.TempDir()
-	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // nanoseconds: the stamp round-trips at full precision
 	require.NoError(t, Open(store, "sess-1", "bench-a/session-7", now, "manual"), "Open")
 	prose := "the friend's chosen words — \"as above\" is banned, \"café — 日本語\" stays byte-exact\nsecond line"
 	res, err := Append(store, "sess-1", "e-1", prose, "bench-a/session-7#L3", now, "manual")
@@ -51,7 +51,7 @@ func TestDuplicateAppendIsIdempotentAndConflictingEntryRefused(t *testing.T) {
 	t.Parallel()
 
 	store := t.TempDir()
-	now := time.Now().UTC()
+	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
 	require.NoError(t, Open(store, "s", "src", now, "never"), "Open")
 	_, err := Append(store, "s", "e", "same words", "src", now, "never")
 	require.NoError(t, err, "Append")
@@ -69,7 +69,7 @@ func TestInterruptedAppendRecoversAndPreservesOtherWriters(t *testing.T) {
 	t.Parallel()
 
 	store := t.TempDir()
-	now := time.Now().UTC()
+	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
 	require.NoError(t, Open(store, "s", "src", now, "never"), "Open")
 	_, err := Append(store, "s", "other", "other writer's note", "src", now, "never")
 	require.NoError(t, err, "Append other")
@@ -89,7 +89,7 @@ func TestOfflineAppendSucceedsWithPublicationPending(t *testing.T) {
 	t.Parallel()
 
 	store := t.TempDir()
-	now := time.Now().UTC()
+	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
 	require.NoError(t, Open(store, "s", "src", now, "deferred"), "Open")
 	res, err := Append(store, "s", "e", "offline note", "", now, "deferred")
 	require.NoError(t, err, "offline append must succeed locally")
@@ -100,7 +100,7 @@ func TestOpenConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 	t.Parallel()
 
 	store := t.TempDir()
-	now := time.Now().UTC()
+	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
 	for _, s := range []string{"alpha", "beta"} {
 		require.NoError(t, Open(store, s, "src", now, "never"), "Open %s", s)
 		_, err := Append(store, s, "e", "note in "+s, "src", now, "never")
@@ -126,7 +126,7 @@ func TestUnreadableExistingEntryRefusedOnAppendAndRead(t *testing.T) {
 	t.Parallel()
 
 	store := t.TempDir()
-	now := time.Now().UTC()
+	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
 	require.NoError(t, Open(store, "s", "src", now, "manual"), "Open")
 	prose := "initial durable words"
 	res, err := Append(store, "s", "e1", prose, "src", now, "manual")
@@ -169,7 +169,7 @@ func TestCorruptStampRejectedByReaders(t *testing.T) {
 	t.Parallel()
 
 	store := t.TempDir()
-	now := time.Now().UTC()
+	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
 	require.NoError(t, Open(store, "s", "src", now, "manual"), "Open")
 
 	entriesDir := filepath.Join(store, "entries", "s")

@@ -6,7 +6,6 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,50 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// splitShell splits a documented command line the way a POSIX shell would
-// for the quotes this repo's examples use: double quotes group, backslash
-// escapes the next character inside them. The examples never nest quotes,
-// so anything fancier is a test bug, not a feature.
-func splitShell(cmd string) ([]string, error) {
-	var fields []string
-	var cur strings.Builder
-	inQuote := false
-	escaped := false
-	has := false
-	for _, r := range cmd {
-		switch {
-		case escaped:
-			cur.WriteRune(r)
-			escaped = false
-		case r == '\\' && inQuote:
-			escaped = true
-		case r == '"':
-			inQuote = !inQuote
-			has = true
-		case r == ' ' || r == '\t':
-			if inQuote {
-				cur.WriteRune(r)
-				break
-			}
-			if has {
-				fields = append(fields, cur.String())
-				cur.Reset()
-				has = false
-			}
-		default:
-			cur.WriteRune(r)
-			has = true
-		}
-	}
-	if inQuote || escaped {
-		return nil, errors.New("unterminated quote")
-	}
-	if has {
-		fields = append(fields, cur.String())
-	}
-	return fields, nil
-}
 
 // usageExamples returns the command lines under the banner's `example:`
 // heading. It asks for the banner, because a bare invocation is a refusal
@@ -72,23 +27,39 @@ func usageExamples(t *testing.T) []string {
 }
 
 // The usage banner ends in one example per verb, in the order a first run
-// types them: the append needs the record the open created.
+// types them: the append needs the record the open created. Each runs as
+// printed, in one store, and prints what is written under it here, through
+// the comparator: only the store's directory and the clock's instants belong
+// to the run.
 func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 
-	examples := usageExamples(t)
-	require.Len(t, examples, 4, "want an open, an append, an index and a receipt example under `example:`, got %d: %q", len(examples), examples)
-	for i, want := range []string{
-		"nova-cairn open ", "nova-cairn append ", "nova-cairn index ", "nova-cairn receipt ",
-	} {
-		assert.True(t, strings.HasPrefix(examples[i], want), "example %d is not %q: %q", i, want, examples[i])
+	sitting := []struct {
+		example string
+		want    []string
+	}{
+		{"nova-cairn open --store ./cairns --session s1 --publish manual",
+			[]string{"OPEN OK session=s1 store=./cairns source=- publish=manual stamp=2026-01-01T00:00:00Z"}},
+		{`nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep"`,
+			[]string{"APPEND OK session=s1 entry=e1 source=- persisted=true published=false publish=manual duplicate=false stamp=2026-01-01T00:00:00Z"}},
+		{"nova-cairn index --store ./cairns",
+			[]string{"INDEX OK sessions=1 entries=1", "INDEX ENTRY session=s1 entry=e1 stamp=2026-01-01T00:00:00Z bytes=17 source=-"}},
+		{"nova-cairn receipt --store ./cairns --session s1 --entry e1 --text",
+			[]string{`RECEIPT OK session=s1 entry=e1 stamp=2026-01-01T00:00:00Z bytes=17 source=- persisted=true published=false publish=manual text="the words to keep"`}},
 	}
+	examples := usageExamples(t)
+	require.Len(t, examples, len(sitting), "want an open, an append, an index and a receipt example under `example:`, got %q", examples)
 	// One store for the whole first run: the examples are a sitting, not four.
 	store := filepath.Join(t.TempDir(), "cairns")
-	for _, ex := range examples {
-		fields, err := splitShell(strings.ReplaceAll(ex, "./cairns", store))
-		require.NoError(t, err, "cannot split the usage example %q: %v", ex, err)
-		assert.NotEmpty(t, cli.OK(t, fields[1:]...).Stdout, "the usage example %q printed nothing", ex)
+	norms := []onboarding.Norm{onboarding.Path("./cairns", store), onboarding.Instant("stamp")}
+	for i, s := range sitting {
+		require.Equal(t, s.example, examples[i], "example %d", i)
+		fields, err := onboarding.SplitShell(strings.ReplaceAll(s.example, "./cairns", store))
+		require.NoError(t, err, "cannot split the usage example %q", s.example)
+		step := onboarding.Step{Line: "$ " + s.example, Want: s.want}
+		for _, p := range onboarding.Compare(step, onboarding.Result(cli.Run(fields[1:]...)), norms) {
+			assert.Fail(t, p.Error())
+		}
 	}
 }
 

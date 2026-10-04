@@ -51,15 +51,24 @@ func GhQuery(program string) Query {
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
 		if err != nil {
-			msg := strings.TrimSpace(stderr.String())
 			if len(out) > 0 {
 				// GitHub answered with errors; the body says which.
-				return out, fmt.Errorf("%s api graphql: %v: %s", program, err, msg)
+				return out, ghError(program, err, stderr.String())
 			}
-			return nil, fmt.Errorf("%s api graphql: %v: %s", program, err, msg)
+			return nil, ghError(program, err, stderr.String())
 		}
 		return out, nil
 	}
+}
+
+// ghError is a failed gh run in words: the program, how it ended, and what it
+// said on stderr, or that it said nothing.
+func ghError(program string, err error, stderr string) error {
+	msg := strings.TrimSpace(stderr)
+	if msg == "" {
+		msg = "it printed nothing on stderr"
+	}
+	return fmt.Errorf("%s api graphql: %v: %s", program, err, msg)
 }
 
 // RefuseMutation refuses a GraphQL document that is not a plain query.

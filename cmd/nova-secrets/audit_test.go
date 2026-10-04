@@ -36,10 +36,10 @@ var secretsAudit = audit.Config{
 		"main.go|runSeatInjectCLI|line":   "formatted SEAT INJECT OK line from internal/secrets.RunSeatInject, which never renders a value",
 		// A caller's word in a refusal is free text, printed plain in quotes (oneline.Quote is
 		// strconv.Quote: one line, every control, separator and bidi rune escaped, injective).
-		"main.go|secretsMain|oneline.Quote(verb)":        "the unknown verb, quoted on one line",
-		"main.go|runExecCLI|oneline.Quote(fs.Args()[0])": "the stray argument before '--', quoted on one line",
-		"main.go|runGateCLI|oneline.Quote(fs.Args()[0])": "the stray argument, quoted on one line",
-		"main.go|runSeatCLI|oneline.Quote(args[0])":      "the unknown seat subverb, quoted on one line",
+		"main.go|dispatch|oneline.Quote(verb)": "the unknown verb, quoted on one line",
+		// The token of a verb's refusal is the verb's own name, a literal of this file's
+		// dispatch upper-cased, never a caller's word.
+		"main.go|refuse|strings.ToUpper(verb)": "the verb's name, a literal of this file's dispatch, upper-cased",
 	},
 	Imports: []string{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,

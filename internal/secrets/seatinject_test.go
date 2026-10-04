@@ -204,11 +204,11 @@ func TestSeatInjectRefusalsTouchNothing(t *testing.T) {
 		{"target with a third recipient", func(t *testing.T, f *injectFixture, o *SeatInjectOptions) {
 			mustWrite(t, filepath.Join(f.storeDir, "air.yaml"),
 				injectTargetFile([]string{pubAir, pubRecovery, thirdKey}, injectSealedBody), 0644)
-		}, []string{"air.yaml", "3 recipients"}},
+		}, []string{"air.yaml", "recipients differ from .sops.yaml", "sops updatekeys air.yaml"}},
 		{"target without the recovery key", func(t *testing.T, f *injectFixture, o *SeatInjectOptions) {
 			mustWrite(t, filepath.Join(f.storeDir, "air.yaml"),
 				injectTargetFile([]string{pubAir, thirdKey}, injectSealedBody), 0644)
-		}, []string{"air.yaml", "recovery.pub"}},
+		}, []string{"air.yaml", "recipients differ from .sops.yaml", "sops updatekeys air.yaml"}},
 		{"rule and metadata disagree", func(t *testing.T, f *injectFixture, o *SeatInjectOptions) {
 			mustWrite(t, filepath.Join(f.storeDir, "air.yaml"),
 				injectTargetFile([]string{thirdKey, pubRecovery}, injectSealedBody), 0644)

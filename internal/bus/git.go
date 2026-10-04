@@ -258,14 +258,21 @@ func busGit(dir string) gitrun.Options {
 func git(dir string, args ...string) (string, error) {
 	budget := gitTimeout()
 	out, err := gitrun.Combined(context.Background(), busGit(dir), args...)
+	return string(out), gitFailure(dir, args, budget, string(out), err)
+}
+
+// gitFailure is what one git call's error says, apart from running it: a call killed on its
+// budget names the call, the budget and the flag that widens it; any other failure is a
+// gitError carrying git's own words; nil stays nil.
+func gitFailure(dir string, args []string, budget time.Duration, out string, err error) error {
 	var timedOut *subproc.TimeoutError
 	if errors.As(err, &timedOut) {
-		return string(out), fmt.Errorf("git %s did not finish within %s and was killed; nothing was left half-done by this tool, and a longer budget is --git-timeout <seconds>", strings.Join(args, " "), budget)
+		return fmt.Errorf("git %s did not finish within %s and was killed; nothing was left half-done by this tool, and a longer budget is --git-timeout <seconds>", strings.Join(args, " "), budget)
 	}
 	if err != nil {
-		return string(out), &gitError{args: append([]string{"-C", dir}, args...), err: err, output: string(out)}
+		return &gitError{args: append([]string{"-C", dir}, args...), err: err, output: out}
 	}
-	return string(out), nil
+	return nil
 }
 
 // ValidGitArg holds the shape a --remote or --branch may have: letters, digits, "-", "_",

@@ -402,3 +402,15 @@ func TestAReadersBeatAsksForNoPacket(t *testing.T) {
 	assert.Equal(t, []string{"queue --as r --json --packets 0 --have p000.r1.r,p001.r1.r"}, s.queues())
 	assert.Zero(t, s.lastHanded())
 }
+
+// The brief a card file begins with is the brief alone: the sprint's mechanics, a read's
+// worker's report among them, are cut off (the decide read asks over it, as its bars were
+// calibrated on the work card alone).
+func TestBriefOfIsTheBriefAlone(t *testing.T) {
+	t.Parallel()
+	brief := "c1: do it (s1) tier: flash\n\nThe task.\n"
+	card := CardText(Packet{Card: "c1.r1", Kind: "read", Attempt: 1, Primary: "c1", Head: "abc", Report: "fine by me", Brief: brief})
+	assert.Equal(t, brief, BriefOf(card))
+	assert.Empty(t, BriefOf(CardText(Packet{Card: "c1.r1", Kind: "read", Attempt: 1})))
+	assert.Equal(t, "no mechanics", BriefOf("no mechanics"))
+}

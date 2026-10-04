@@ -237,30 +237,15 @@ func distance(a, b string) int {
 	return row[len(b)]
 }
 
-// Recover is deferred by the dispatcher. A Help panic becomes that verb's
-// help on out (stdout) and *code 0; any other panic goes on unwinding. banner
-// is the tool's own help text (what `<prog> help` prints), from which the
-// verb's usage lines and examples are quoted; "" quotes nothing.
-func Recover(out io.Writer, prog, banner string, code *int) {
-	r := recover()
-	if r == nil {
-		return
-	}
-	h, ok := r.(Help)
-	if !ok {
-		panic(r)
-	}
-	Print(out, prog, banner, h.FS)
-	*code = 0
-}
-
-// RecoverWith is Recover for a tool that adds lines of its own to a verb's
-// help: extra is given the verb's name (as Verb gives it) and returns the
-// lines to print above the flags, each line ending in a newline ("" for none).
-// It is what a tool defers in place of Recover to show a worked example per
-// verb. It is deferred directly, as Recover is. A line of extra that opens
-// `exit codes:` and the lines after it are that verb's own exit codes: they
-// stand where the tool's paragraph would.
+// RecoverWith is deferred directly by the dispatcher. A Help panic becomes
+// that verb's help on out (stdout) and *code 0 (1 when out refuses the write);
+// any other panic goes on unwinding. banner is the tool's own help text (what
+// `<prog> help` prints), from which the verb's usage lines and examples are
+// quoted; "" quotes nothing. extra is given the verb's name (as Verb gives it)
+// and returns lines of the tool's own to print above the flags, each ending in
+// a newline ("" for none): a worked example per verb. A line of extra that
+// opens `exit codes:` and the lines after it are that verb's own exit codes:
+// they stand where the tool's paragraph would.
 func RecoverWith(out io.Writer, prog, banner string, code *int, extra func(verb string) string) {
 	r := recover()
 	if r == nil {
@@ -367,12 +352,46 @@ func hasFlags(fs *flag.FlagSet) bool {
 
 // UsageLine is `usage: <prog> <verb> [flags]`, and for a group, a verb whose
 // words only lead to its verbs (subs), `usage: <prog> <group> <a|b> [flags]`.
+// The bracketed word is the placeholder for a caller that passes no synopsis
+// (UsageLineSynopsis). A tool whose help already prints that placeholder keeps it.
 func UsageLine(prog, verb string, subs []string) string {
+	return UsageLineSynopsis(prog, verb, subs, "")
+}
+
+// UsageLineSynopsis is UsageLine with the verb's own synopsis in place of the
+// placeholder [flags]: positionals and the flags the verb takes, as its usage
+// line names them. An empty synopsis keeps the placeholder. A group (subs)
+// keeps `<a|b> [flags]`; its verbs are the synopsis.
+func UsageLineSynopsis(prog, verb string, subs []string, synopsis string) string {
 	name := strings.TrimSpace(prog + " " + verb)
 	if len(subs) > 0 {
 		name += " <" + strings.Join(subs, "|") + ">"
+	} else if s := strings.TrimSpace(synopsis); s != "" {
+		return "usage: " + name + " " + s
 	}
 	return "usage: " + name + " [flags]"
+}
+
+// FlagSynopsis names each flag of fs for a usage line, `[--name]` or
+// `[--name <kind>]`, sorted by name. Empty when fs is nil or defines none.
+// It never prints the placeholder [flags], and it never prints a default.
+func FlagSynopsis(fs *flag.FlagSet) string {
+	if fs == nil {
+		return ""
+	}
+	var names []string
+	fs.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		kind, _ := flag.UnquoteUsage(fs.Lookup(n))
+		if kind == "" {
+			parts = append(parts, "[--"+n+"]")
+			continue
+		}
+		parts = append(parts, "[--"+n+" <"+kind+">]")
+	}
+	return strings.Join(parts, " ")
 }
 
 // subverbRe is one word that names a verb, or several joined by | (list|show).

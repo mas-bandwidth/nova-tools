@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -128,7 +129,33 @@ type Result struct {
 	// Staging is why End is EndStaging: the reason of native's STAGE FAIL line, the launch
 	// refused before any child ran (tla/CardContract.tla, StageRefused).
 	Staging string
+	// Budget is which budget ended a run whose End is EndBudget, and at what count, as
+	// native's NATIVE BUDGET line says it ("tokens 509,940 of 400,000, $0.03"); Judge
+	// says it after the end (nova-tools #5094). "" when native named none.
+	Budget string
+	// Step is why a tree card failed at its first work step: `step <n> <verdict>: <words>`
+	// (treeFinish; docs/SPEC-SPRINT.md, a card is a tree of steps). Judge names it as the
+	// failed finish's reason; "" for every other card.
+	Step string
+	// Gate is where native's gate decision sent a not-done child's red gate, its NATIVE GATE
+	// line's route (docs/SPEC-SPRINT.md section 5, the gate verdict): GatePreExisting, which
+	// Judge names as the failed finish's reason with GateTests; GateGreen (its flaky failures
+	// passed their rerun), which the reader of the result takes as the verdict ok; "" for none.
+	Gate      string
+	GateTests string
+	// Carry is where a rework was staged, as native's STAGE CARRY line says it
+	// (cardcontract.Carry.Words: the staged commit, the tip of its base branch, and whether
+	// the work before it carried); the finish's report carries it, so the card's timeline
+	// says it. "" for a first attempt and a read.
+	Carry string
 }
+
+// The gate routes the member acts on (native's NATIVE GATE line): a gate red only on
+// pre-existing failures, and a gate whose every failure was flaky and passed its rerun.
+const (
+	GatePreExisting = cardhdr.EndPreExisting
+	GateGreen       = "green"
+)
 
 // The ends Judge names first in a failed finish.
 const (
@@ -165,6 +192,9 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// a budget or a deadline names how the run ended first; the provider's kind is
 		// the provider case's own (below), never a prefix on another reason
 		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging {
+			if r.End == EndBudget && r.Budget != "" {
+				why = r.Budget + ": " + why // which budget, and at what count (#5094)
+			}
 			why = r.End + ": " + why
 		}
 	}()
@@ -187,12 +217,18 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		return FinishFailed, EndNoResult + ": no RESULT.md shape"
 	case !r.Shaped:
 		return FinishFailed, "no RESULT.md shape"
+	case r.Step != "":
+		return FinishFailed, r.Step
 	case r.Verdict == "nothing":
 		why := strings.TrimSpace(r.Report)
 		if len(why) >= len("nothing:") && strings.EqualFold(why[:len("nothing:")], "nothing:") {
 			why = strings.TrimSpace(why[len("nothing:"):])
 		}
 		return FinishFailed, cardhdr.EndNothing + ": " + why
+	case r.Verdict == "not-done" && r.Gate == GatePreExisting:
+		// the gate decision classed every failure that stayed red pre-existing: the base's
+		// or the member's, never the card's (sprint.FailureClass gives it no class)
+		return FinishFailed, cardhdr.EndPreExisting + ": " + r.GateTests
 	case r.Verdict != "ok":
 		return FinishFailed, "verdict " + r.Verdict
 	case pu.Sha == "":
@@ -213,6 +249,7 @@ type Packet struct {
 	Gen        int      `json:"gen,omitempty"`
 	Epoch      uint64   `json:"epoch"`
 	Brief      string   `json:"brief,omitempty"`
+	Rules      string   `json:"rules,omitempty"` // the held rules file the card names, "" when it carries its own (sprint.Packet)
 	Fix        string   `json:"fix,omitempty"`
 	Finding    string   `json:"finding,omitempty"` // a rework's: the readers' words that found the attempt before broken
 	Why        string   `json:"why,omitempty"`     // a rework's: how the attempt before ended
@@ -232,10 +269,19 @@ type Packet struct {
 	Route    string `json:"route,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
+	USD      string `json:"usd,omitempty"` // the dollar budget per card, a decimal; "" for none (#5094)
 	Deadline int    `json:"deadline,omitempty"`
 	// Tier is the tier the route was drawn from when the sprint decided it (a read's
 	// read tier, a rework's --tier); empty when the brief's line 1 names it.
 	Tier string `json:"tier,omitempty"`
+	// A decide read's bars on p(defect), as the ask wrote them on the read card
+	// (docs/SPEC-SPRINT.md section 6, the decide read); empty for a strings read.
+	DecideBounce string `json:"decide_bounce,omitempty"`
+	DecideReview string `json:"decide_review,omitempty"`
+	// A work card's gate decision bars, as the deal wrote them on the work card
+	// (docs/SPEC-SPRINT.md section 5, the gate verdict); empty for none.
+	DecideGateFlaky       string `json:"decide_gate_flaky,omitempty"`
+	DecideGatePreexisting string `json:"decide_gate_preexisting,omitempty"`
 }
 
 // queueCard is one card of `nova-sprint queue --as <me> --json`. Its claim is the
@@ -295,6 +341,14 @@ type Config struct {
 	// Wake says when one posted or a child exited. false (the tests' member) does each where
 	// the pass asks for it, so a pass is one step.
 	Background bool
+	// Attempt asks the attempt decision over every work take's end (docs/SPEC-SPRINT.md
+	// section 2, the attempt decision; the card's bars decide at the server whether it routes
+	// the finish, never whether it is asked): the packet,
+	// the child's RESULT.md as text and the finish's reason line in; the decision's card line
+	// (decide.Decided) and the decision as one JSON record line out, both carried by the
+	// finish. It is long (a backend's answer), so it runs in the end's long work, beside the
+	// push, never in the pass. nil asks none.
+	Attempt func(p Packet, result, reason string) (decided string, decision []byte, err error)
 }
 
 // launch is one child and the claim it was started for: the card at the
@@ -316,6 +370,7 @@ type launch struct {
 	busyAt  time.Time // when that long work began
 	res     *Result   // how the child ended, once its end has been collected
 	push    *Push     // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
+	decided *decided  // the take's attempt decision, once asked (Config.Attempt): reported with the finish, never asked again
 	spent   bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
 	retryAt time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
 	retried bool      // a read run again after a stage failure: a second one is returned
@@ -383,6 +438,15 @@ type post struct {
 	startErr error
 	res      *Result
 	push     *Push
+	decided  *decided
+}
+
+// decided is a take's attempt decision as the finish carries it (Config.Attempt): its card
+// line and its record line, or why none was made.
+type decided struct {
+	line     string
+	decision []byte
+	err      error
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
@@ -811,16 +875,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			args = append(append([]string{"read", "--as", m.cfg.As, word, id, "--finding", finding}, usageArgs(r)...), launched...)
 		} else {
 			pu := *l.push
-			fin, why := Judge(r, pu)
-			report := oneLine(r.Report)
+			fin, why, report := finishReport(r, pu, l.branch)
 			switch {
 			case pu.Sha != "":
-				// the report carries the push first, so the 500-byte cut never takes it
-				said := "pushed=" + pu.Sha + " to " + l.branch
-				if pu.PR != "" {
-					said += " pr=" + pu.PR
-				}
-				report = cut(said + ": " + report)
 				fmt.Fprintf(m.out, "push %s pushed=%s branch=%s\n", id, pu.Sha, l.branch)
 				if pu.PRNote != "" {
 					fmt.Fprintf(m.out, "NOTE pr %s not opened: %s\n", id, oneLine(pu.PRNote))
@@ -831,7 +888,6 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				fmt.Fprintf(m.out, "push %s: not pushed: %s\n", id, pu.None)
 			}
 			if fin != FinishOK {
-				report = cut(why + "; " + report)
 				fmt.Fprintf(m.out, "NOTE finish %s failed: %s\n", id, why)
 			}
 			args = []string{"finish", "--as", m.cfg.As, id + "@" + strconv.Itoa(l.gen), "--report", report}
@@ -846,6 +902,13 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				args = append(args, "--failed")
 			}
 			args = append(args, usageArgs(r)...)
+			// the take's attempt decision, when one was asked (attempt): the finish carries it
+			if d := l.decided; d != nil && d.err != nil {
+				fmt.Fprintf(m.out, "NOTE attempt %s not decided: %s; the reason line routes the finish\n", id, oneLine(d.err.Error()))
+			} else if d != nil {
+				fmt.Fprintf(m.out, "decide %s attempt %s\n", id, d.line)
+				args = append(args, "--decision", string(d.decision))
+			}
 			ok = fin == FinishOK
 			args = append(args, launched...)
 		}
@@ -1126,7 +1189,7 @@ func (m *Member) collect() (acted int) {
 			m.running[card] = l
 			fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", card, l.attempt, l.gen, m.Running(), m.width, routeWords(l.packet))
 		default:
-			l.res, l.push = po.res, po.push
+			l.res, l.push, l.decided = po.res, po.push, po.decided
 			m.running[card] = l
 		}
 	}
@@ -1196,7 +1259,7 @@ func (m *Member) refuseStaging(p Packet, why string) bool {
 // started again every tick, the refusal only in this log, until judged late.
 func (m *Member) failLaunch(p Packet, why error) {
 	args := []string{"finish", "--as", m.cfg.As, p.Card + "@" + strconv.Itoa(p.Gen), "--failed",
-		"--report", cut("launch refused: " + oneLine(why.Error())), "--epoch", strconv.FormatUint(p.Epoch, 10)}
+		"--report", cut(cardhdr.EndLaunch + ": " + oneLine(why.Error())), "--epoch", strconv.FormatUint(p.Epoch, 10)}
 	code, out := m.run(args...)
 	fmt.Fprintf(m.out, "finish %s ok=false exit=%d launch refused%s\n", p.Card, code, routeWords(p))
 	if code != 0 {
@@ -1210,7 +1273,7 @@ func (m *Member) failLaunch(p Packet, why error) {
 // before ReadStageRetry. A read left reading with no child would be started again every
 // pass, the refusal only in this log, for the read's whole deadline.
 func (m *Member) returnUnstarted(p Packet, why error) {
-	reason := cut("launch refused: " + oneLine(why.Error()))
+	reason := cut(cardhdr.EndLaunch + ": " + oneLine(why.Error()))
 	code, out := m.run("read", "--as", m.cfg.As, "--return", p.Card, "--reason", reason, "--epoch", strconv.FormatUint(p.Epoch, 10))
 	fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", p.Card, code, reason)
 	if code != 0 {
@@ -1339,6 +1402,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 				m.post(id, post{res: &r})
 				return
 			}
+			r = treeFinish(p, r)
 			var pu Push
 			switch {
 			case r.Head == "":
@@ -1355,13 +1419,70 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 					pu.Refused = "the pusher said nothing"
 				}
 			}
-			m.post(id, post{res: &r, push: &pu})
+			m.post(id, post{res: &r, push: &pu, decided: m.attempt(p, r, pu, branch)})
 		}()
 	}
 	m.longWork()
 	if !m.cfg.Background {
 		ends.Wait() // a pass is one step: the ends it began, side by side, are its own
 	}
+}
+
+// finishReport is a work card's finish as the member reports it, from its result and its
+// push (Judge): ok or failed, why when failed, and the report: the push first, so the
+// 500-byte cut never takes it, then the child's line, and a failed finish's reason before
+// both. The attempt decision is asked over the same report (attempt).
+func finishReport(r Result, pu Push, branch string) (fin Finish, why, report string) {
+	fin, why = Judge(r, pu)
+	report = oneLine(r.Report)
+	if r.Carry != "" {
+		// where the rework was staged, before the child's words and after the push
+		report = cut("stage: " + oneLine(r.Carry) + "; " + report)
+	}
+	if pu.Sha != "" {
+		said := "pushed=" + pu.Sha + " to " + branch
+		if pu.PR != "" {
+			said += " pr=" + pu.PR
+		}
+		report = cut(said + ": " + report)
+	}
+	if fin != FinishOK {
+		report = cut(why + "; " + report)
+	}
+	return fin, why, report
+}
+
+// attempt is a work take's attempt decision (Config.Attempt), asked in its end's long work
+// over the child's result as RESULT.md says it and the finish's report; nil when the member
+// has no decider, or no take ran (a launch refused at staging).
+func (m *Member) attempt(p Packet, r Result, pu Push, branch string) *decided {
+	if m.cfg.Attempt == nil || r.End == EndStaging {
+		return nil
+	}
+	_, _, report := finishReport(r, pu, branch)
+	line, decision, err := m.cfg.Attempt(p, ResultText(r), report)
+	return &decided{line: line, decision: decision, err: err}
+}
+
+// ResultText is a child's result as its RESULT.md says it (docs/SPEC-CARD-CONTRACT.md
+// section 3), the fields the member read and its body; "" when it wrote none.
+func ResultText(r Result) string {
+	if !r.Shaped && r.Head == "" && r.Verdict == "" && r.Report == "" && r.Body == "" {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "head: %s\nverdict: %s\nreport: %s\n", orDash(r.Head), orDash(r.Verdict), orDash(oneLine(r.Report)))
+	if body := strings.TrimSpace(r.Body); body != "" {
+		b.WriteString("\n" + body + "\n")
+	}
+	return b.String()
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // cut is a report cut at 500 bytes, the bound oneLine keeps.
@@ -1421,6 +1542,22 @@ func oneLine(s string) string {
 	return ""
 }
 
+// fromTheSprint opens what CardText appends to the brief.
+const fromTheSprint = "## From the sprint\n\n"
+
+// BriefOf is the brief a card file (CardText) begins with, the sprint's mechanics after it
+// cut off: what the decide read is asked over, as its bars were calibrated (the work card
+// alone, never the read's mechanics or the worker's report).
+func BriefOf(card string) string {
+	if i := strings.Index(card, "\n\n"+fromTheSprint); i >= 0 {
+		return card[:i+1]
+	}
+	if strings.HasPrefix(card, fromTheSprint) {
+		return ""
+	}
+	return card
+}
+
 // CardText is the card file a child is given: the brief VERBATIM first (a
 // card's brief is a whole child brief in the card grammar `nova-swarm lint
 // --card` checks, whose line 1 is the contract line), then, appended, the
@@ -1434,7 +1571,7 @@ func CardText(p Packet) string {
 		b.WriteString(brief)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("## From the sprint\n\n")
+	b.WriteString(fromTheSprint)
 	if p.Kind == "read" {
 		fmt.Fprintf(&b, "This is read %s: attempt %d of %s, worked by %s, at head %s on branch %s", p.Card, p.Attempt, p.Primary, p.Worker, p.Head, p.WorkBranch)
 		if p.WorkBase != "" {
@@ -1450,6 +1587,7 @@ func CardText(p Packet) string {
 			fmt.Fprintf(&b, " The checkout is on branch %s; JOB.md, which the prompt names first, says where it is and how this card ends. When you end, the member pushes your commit to origin's branch %s from outside the wall.", p.Branch, p.Branch)
 		}
 		b.WriteString("\n\n")
+		b.WriteString(cardtree.Guide(cardtree.Parse(p.Brief)))
 	}
 	if strings.TrimSpace(p.Fix) != "" {
 		fmt.Fprintf(&b, "Fix, this attempt:\n\n%s\n\n", strings.TrimSpace(p.Fix))

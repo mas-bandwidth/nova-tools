@@ -14,7 +14,7 @@ import (
 // statsSprint plays s1-1 and s1-2 to landed on the twin, the clock stepped by hand:
 // both dealt at 0; s1-1 taken at 2 and finished at 12 (wall 8); s1-2 taken at 14,
 // failed by its provider at 16 (wall 1) and dealt again, taken at 20 and finished at
-// 30 (wall 6); asked at 30; reader-a begins both at 33 and reads them at 53 (wall
+// 30 (wall 6); asked at 30, each of a second reader too; reader-a begins both at 33 and reads them at 53 (wall
 // 15), reader-b reads both at 60 with no begin (wall 5); accepted at 70, landed at 75.
 func statsSprint(t *testing.T) *testApp {
 	ta := newTestApp(t)
@@ -41,6 +41,7 @@ func statsSprint(t *testing.T) *testApp {
 	step(10)
 	ta.ok("finish --as m1 s1-2.w1@" + gen + usage("6.00s", "deepseek-v4-flash"))
 	ta.ok("ask")
+	ta.ok("ask s1-1 s1-2 --another") // a flash card is read once: each one more reader, both read by both
 	step(3)
 	ta.ok("read --as reader-a --begin --limit 2")
 	step(20)

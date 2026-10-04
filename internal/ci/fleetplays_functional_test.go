@@ -140,9 +140,18 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		"WOULD-RETIRE old on localhost (" + filepath.Join(units, "nova-loop-old.service") + ")",
 		"NOTE localhost " + filepath.Join(units, "nova-loop-mirror.service") + ": not written by this play",
 		"retired=1 (check: nothing changed)",
+		// the disk guard the play adds to every machine, its --root the member record's
+		`ExecStart="` + home + `/.local/bin/nova-swarm" "disk-guard" "--root" "` + home + `/nova-bench/run/member-local" "--scan" "` + home + `/nova-bench/run" "--cache" "` + home + `/runner-*/_cache/go-build"`,
+		"OnUnitActiveSec=900",
+		"StandardOutput=append:" + home + "/nova-bench/loops/disk-guard.log",
+		"records=3 enabled=2",
 	} {
 		assert.Contains(t, loops, w)
 	}
+	assert.NotContains(t, loops, "WOULD-RETIRE disk-guard")
+	off := play("loops.yml", append(check, "-e", "ansible_system=Linux", "-e", "nova_disk_guard=false")...)
+	assert.NotContains(t, off, "nova-loop-disk-guard")
+	assert.Contains(t, off, "records=2 ")
 	assert.NotContains(t, loops, "WOULD-RETIRE member-local")
 	// --check says which units a run restarts and why: a member's restart drains it
 	// (nova-tools#5096 item 25); a disabled loop is stopped, not restarted
@@ -164,6 +173,8 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		"<string>localhost:6380</string>",
 		"<string>50%</string>",
 		"<key>Disabled</key>",
+		"<string>com.nova.loop.disk-guard</string>",
+		"<integer>900</integer>",
 	} {
 		assert.Contains(t, plist, w)
 	}

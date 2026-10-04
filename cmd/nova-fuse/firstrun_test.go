@@ -160,7 +160,7 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 		{"quarantine with no reason", []string{"quarantine", "--box", "b.json", "a-forum"}, "needs a surface and a reason"},
 		{"lockdown with no reason", []string{"lockdown", "--box", "b.json"}, "needs a reason"},
 		{"lift with no power", []string{"lift"}, "takes a power first"},
-		{"lift lockdown", []string{"lift", "lockdown"}, "go talk with your person now"},
+		{"lift lockdown", []string{"lift", "lockdown"}, "go talk with them now"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -269,3 +269,44 @@ func (readsNothing) Error() string {
 }
 
 var errReadsNothing = readsNothing{}
+
+// The banner's sitting, every line run in order against one box and compared
+// through the comparator with what is written here: the box's path and the
+// clock's instants are the run's; every other byte is the tool's.
+func TestTheBannerSittingThroughTheComparator(t *testing.T) {
+	t.Parallel()
+
+	const at = "since=2026-09-09T18:27:40Z"
+	sitting := []struct {
+		example string
+		want    []string
+	}{
+		{"nova-fuse init --box ./fuse-box.json",
+			[]string{"INIT OK box=./fuse-box.json: an empty box, no fuse blown (verified by re-reading the box)"}},
+		{"nova-fuse status --box ./fuse-box.json",
+			[]string{"STATUS OK lockdown=clear quarantines=0"}},
+		{"nova-fuse check --box ./fuse-box.json a-public-issue-tracker",
+			[]string{"FUSE OK lockdown=clear quarantine=clear surface=a-public-issue-tracker"}},
+		{`nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"`,
+			[]string{"QUARANTINE OK a-forum " + at + ": a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell the person you work with now)"}},
+		{"nova-fuse check --box ./fuse-box.json a-forum",
+			[]string{"FUSE FAIL quarantine=a-forum " + at + ": a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')"}},
+		{"nova-fuse lift quarantine --box ./fuse-box.json a-forum",
+			[]string{"LIFT OK quarantine=a-forum was " + at + ": a post addressed me and asked for a token",
+				"LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)"}},
+	}
+	exs := examples(t)
+	require.Len(t, exs, len(sitting))
+	box := filepath.Join(t.TempDir(), "fuse-box.json")
+	path, err := onboarding.Elide("the fresh box path", regexp.QuoteMeta(box), "./fuse-box.json")
+	require.NoError(t, err)
+	norms := []onboarding.Norm{path}
+	for i, s := range sitting {
+		require.Equal(t, s.example, exs[i], "example %d", i)
+		exit, stdout, stderr := runFuse(t, localize(fields(s.example), box)...)
+		step := onboarding.Step{Line: "$ " + s.example, Want: s.want}
+		for _, p := range onboarding.Compare(step, onboarding.Result{Code: exit, Stdout: stdout, Stderr: stderr}, norms) {
+			assert.Fail(t, p.Error())
+		}
+	}
+}

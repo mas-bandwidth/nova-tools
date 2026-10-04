@@ -1,0 +1,12 @@
+--- FAIL: TestPortInUse (0.01s)
+    serve_test.go:31: listen tcp 127.0.0.1:7811: bind: address already in use
+FAIL
+FAIL	example/tools/internal/serve	0.214s
+--- FAIL: TestGreetNamesTheReader (0.00s)
+    greet_test.go:14:
+        	Error:      	Not equal:
+        	            	expected: "hello, reader"
+        	            	actual  : "hello reader"
+FAIL
+FAIL	example/tools/internal/greet	0.102s
+FAIL

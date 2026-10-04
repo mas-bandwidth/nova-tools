@@ -1,23 +1,14 @@
-// nova-cairn checkpoints a session without imposing a memory lifecycle.
+// nova-cairn keeps a session's words as plain files: it opens a session
+// record, appends the caller's exact words with a clock stamp, a stable id
+// and a source pointer, and reads them back as an index and receipts. It
+// stores checkpoints and leaves every lifecycle decision (sealing, deleting,
+// grading, consolidating) to the caller; those verbs are refused as unknown.
 //
-// WHAT IT IS FOR. The repeated cost of carrying work across a session's end:
-// manual timestamps, repeated append/commit commands, recovering session
-// pointers, reconstructing what was preserved. This tool opens a session
-// record, appends the friend's exact words with a real clock stamp, stable
-// identifiers and source pointers, and builds a bounded index and coverage
-// ledger over them — mechanically, with the caller choosing the publication
-// policy on every mutating verb.
-//
-// WHAT IT REFUSES TO BE. Not a lifecycle: no seal, no consume, no delete,
-// no grading, no consolidation, no liveness inference, no mandatory
-// cardinality, no keeper/bud model, no prescribed headings. Those are
-// separate explicit choices and are refused here as unknown verbs, so no
-// friend's practice is renamed by adopting this tool.
-//
-// Every path, every identity and every policy comes from a flag. There is no
-// default store, no environment variable and no discovery: a missing flag is
-// a refusal, never a guess. The dispatch, the banner, the help, the version
-// verb, the refusals and the output envelope are internal/tool's.
+// Every path and identity comes from a flag. There is no default store, no
+// environment variable and no discovery: a missing flag is a refusal, never a
+// guess. The publication policy is named once, at open, and an append carries
+// it. The dispatch, the banner, the help, the version verb, the refusals and
+// the output envelope are internal/tool's.
 package main
 
 import (
@@ -35,11 +26,7 @@ var version string
 
 func main() { os.Exit(cairnTool().Main()) }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return cairnTool().Run(args, stdin, stdout, stderr)
-}
-
-const publishes = "never, manual, deferred or immediate"
+var publishes = strings.Join(cairn.Policies, ", ")
 
 func cairnTool() *tool.Tool {
 	return &tool.Tool{
@@ -47,40 +34,50 @@ func cairnTool() *tool.Tool {
 		What:  "a session's words, kept durably as plain files you can come back to",
 		Stamp: version,
 		How: `a store is a directory you name (--store), plain files only, synced to disk before OK.
-open starts a session; append keeps an entry's exact words in entries/<session>/<entry>.json.
+open starts a session and records its --publish policy; append keeps an entry's exact words.
 The same entry id with the same words is a duplicate; with other words a conflict (exit 1).
 --publish records your policy only: nothing is sent, and every line says published=false.
 first run: the four examples are one sitting: the open makes ./cairns, the rest read it back.`,
-		ExitTable: "0 ran and passed, 1 ran and failed (conflict), 2 could not run (bad invocation).",
+		ExitTable: "0 ran and passed, 1 ran and failed (a conflict: an entry id holding other words, " +
+			"or a re-open naming another policy or source), 2 could not run (bad invocation, no such session or entry).",
 		Verbs: []tool.Verb{
 			{
 				Name:    "open",
-				Usage:   "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>]",
+				Usage:   "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]",
 				Example: "open --store ./cairns --session s1 --publish manual",
 				Effect:  tool.LocalWrite,
+				Detail: "A re-open naming the recorded policy (and source, when given) changes nothing; one naming\n" +
+					"another is a conflict, exit 1, and names the open that matches.",
+				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					record(f)
 					f.String("source", "", "where the record points back to; appends with no --source carry it")
 					f.Required("publish", "the publication policy: "+publishes)
 					now(f)
+					checkPublish(f)
 				},
 				Run: open,
 			},
 			{
 				Name:    "append",
-				Usage:   "append --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>]",
-				Example: `append --store ./cairns --session s1 --entry e1 --text "the words to keep" --publish manual`,
+				Usage:   "append --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] [--publish <policy>] [--now <rfc3339-utc>] [--dry-run]",
+				Example: `append --store ./cairns --session s1 --entry e1 --text "the words to keep"`,
 				Effect:  tool.LocalWrite,
+				Detail: "With no --source or --publish the entry carries the session's, as open recorded them; a flat\n" +
+					"record (<store>/<session>.md) records no policy, and says publish=unknown.",
+				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					record(f)
 					f.Required("entry", "the stable entry identifier")
-					f.String("text", "", "the friend's exact words, stored byte for byte; exactly one of --text or --file")
+					f.String("text", "", "the exact words, stored byte for byte; exactly one of --text or --file")
 					f.String("file", "", "file holding the exact words; - reads stdin")
-					f.String("source", "", "where the words came from; recorded, never opened")
-					f.Required("publish", "the publication policy: "+publishes)
+					f.String("source", "", "where the words came from; recorded, never opened (default: the session's)")
+					f.String("publish", "", "the publication policy: "+publishes+" (default: the one the session was opened with)")
 					now(f)
-					// The words arrive by exactly one road: two roads is two candidates
-					// for "the friend's chosen words", and the tool must not pick.
+					checkPublish(f)
+					checkID(f, "entry")
+					// The words arrive by exactly one road: two roads are two
+					// candidates for the words to keep, and the tool must not pick.
 					f.Check(func(c *tool.Call) {
 						switch {
 						case c.Given("text") && c.Given("file"):
@@ -100,6 +97,7 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 				Flags: func(f *tool.Flags) {
 					f.Required("store", "the checkpoint store directory")
 					f.String("session", "", "one session to index; default every record")
+					checkID(f, "session")
 					f.Max()
 				},
 				Run: index,
@@ -107,12 +105,13 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 			{
 				Name:    "receipt",
 				Usage:   "receipt --store <dir> --session <id> --entry <id> [--text]",
-				Example: "receipt --store ./cairns --session s1 --entry e1",
+				Example: "receipt --store ./cairns --session s1 --entry e1 --text",
 				Effect:  tool.Inspection,
 				Flags: func(f *tool.Flags) {
 					record(f)
 					f.Required("entry", "the stable entry identifier")
-					f.Bool("text", false, "include the entry's stored words as a text fact")
+					checkID(f, "entry")
+					f.Bool("text", false, "include the entry's stored words as a quoted text fact")
 				},
 				Run: receipt,
 			},
@@ -124,7 +123,29 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 func record(f *tool.Flags) {
 	f.Required("store", "the checkpoint store directory")
 	f.Required("session", "the stable session identifier")
+	checkID(f, "session")
 }
+
+// checkID holds a given id flag to cairn's id rule, so a bad id is named with
+// every other problem of the run rather than after them.
+func checkID(f *tool.Flags, name string) {
+	f.Check(func(c *tool.Call) {
+		if v := c.Str(name); v != "" && !cairn.ValidID(v) {
+			c.Problem("--" + name + " " + quote(v) + " is not an id: " + cairn.IDRule)
+		}
+	})
+}
+
+// checkPublish holds a given --publish to the policies.
+func checkPublish(f *tool.Flags) {
+	f.Check(func(c *tool.Call) {
+		if v := c.Str("publish"); v != "" && !cairn.ValidPublish(v) {
+			c.Problem("--publish " + quote(v) + " is not a policy; it is one of " + publishes)
+		}
+	})
+}
+
+func quote(s string) string { return `"` + s + `"` }
 
 // now declares --now and its rule: a masked, local-format or otherwise
 // unparsable time is a refusal, because a stamp that did not come from a clock
@@ -157,21 +178,43 @@ func sourceOf(s string) string {
 	return s
 }
 
+// refusal is the result for an error from the store: a conflict ran and said
+// no (exit 1); anything else could not run (exit 2). Either names the command
+// to run next when the store knows it.
+func refusal(err error) *tool.Out {
+	var conflict *cairn.ConflictError
+	var missing *cairn.NotFoundError
+	switch {
+	case errors.As(err, &conflict):
+		o := tool.Fail(conflict.Msg)
+		o.Remedy = conflict.Remedy
+		return o
+	case errors.As(err, &missing):
+		o := tool.Refuse(missing.Msg)
+		o.Remedy = missing.Remedy
+		return o
+	}
+	return tool.Refuse(err.Error())
+}
+
 func open(c *tool.Call) *tool.Out {
 	store, session, publish, stamp := c.Str("store"), c.Str("session"), c.Str("publish"), clock(c)
-	if err := cairn.Open(store, session, c.Str("source"), stamp, publish); err != nil {
-		return tool.Refuse(err.Error())
+	var rec cairn.OpenRecord
+	var err error
+	if c.DryRun() {
+		rec, err = cairn.PlanOpen(store, session, c.Str("source"), stamp, publish)
+	} else if err = cairn.Open(store, session, c.Str("source"), stamp, publish); err == nil {
+		rec, err = cairn.ReadOpen(store, session)
 	}
-	stored, err := cairn.SessionSource(store, session)
 	if err != nil {
-		return tool.Refuse(err.Error())
+		return refusal(err)
 	}
-	return tool.Done().Fact("session", session).Fact("store", store).Fact("source", sourceOf(stored)).
+	return tool.Done().Fact("session", session).Fact("store", store).Fact("source", sourceOf(rec.Source)).
 		Fact("publish", publish).Fact("stamp", stampOf(stamp))
 }
 
 func appendEntry(c *tool.Call) *tool.Out {
-	store, session, entry, publish := c.Str("store"), c.Str("session"), c.Str("entry"), c.Str("publish")
+	store, session, entry := c.Str("store"), c.Str("session"), c.Str("entry")
 	words := c.Str("text")
 	if c.Given("file") {
 		raw, err := readWords(c.Str("file"), c.Stdin)
@@ -180,33 +223,31 @@ func appendEntry(c *tool.Call) *tool.Out {
 		}
 		words = string(raw)
 	}
-	stamp := clock(c)
-	res, err := cairn.Append(store, session, entry, words, c.Str("source"), stamp, publish)
-	var conflict *cairn.ConflictError
-	switch {
-	case errors.As(err, &conflict):
-		return tool.Fail(err.Error()).Fact("session", session).Fact("entry", entry)
-	case err != nil:
-		return tool.Refuse(err.Error())
+	write := cairn.Append
+	if c.DryRun() {
+		write = cairn.PlanAppend
+	}
+	res, err := write(store, session, entry, words, c.Str("source"), clock(c), c.Str("publish"))
+	if err != nil {
+		o := refusal(err)
+		if o.Status == tool.Failed { // a conflict names what it is about
+			o.Fact("session", session).Fact("entry", entry)
+		}
+		return o
 	}
 	return tool.Done().Fact("session", session).Fact("entry", entry).Fact("source", sourceOf(res.Source)).
-		Fact("persisted", true).Fact("published", false).Fact("publish", res.Policy).
+		Fact("persisted", res.Persisted).Fact("published", false).Fact("publish", res.Policy).
 		Fact("duplicate", res.Duplicate).Fact("stamp", stampOf(res.Stamp))
 }
 
 // readWords reads the exact words from a file, or from stdin when the path
-// is -. The bytes are never trimmed: trimming would file different words
-// than the friend chose.
+// is -. The bytes are never trimmed: trimming would file other words than
+// the caller chose.
 func readWords(name string, stdin io.Reader) ([]byte, error) {
 	if name == "-" {
 		return io.ReadAll(stdin)
 	}
-	f, err := os.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return io.ReadAll(f)
+	return os.ReadFile(name)
 }
 
 // index lists every entry; the coverage counts on its first line are never
@@ -215,7 +256,7 @@ func index(c *tool.Call) *tool.Out {
 	store := c.Str("store")
 	all, total, err := cairn.Index(store, c.Str("session"), 0)
 	if err != nil {
-		return tool.Refuse(err.Error())
+		return refusal(err)
 	}
 	o := tool.Done().Fact("sessions", cairn.Coverage(store).Sessions).Fact("entries", total)
 	for _, r := range all {
@@ -227,7 +268,7 @@ func index(c *tool.Call) *tool.Out {
 func receipt(c *tool.Call) *tool.Out {
 	rc, err := cairn.Receipt(c.Str("store"), c.Str("session"), c.Str("entry"))
 	if err != nil {
-		return tool.Refuse(err.Error())
+		return refusal(err)
 	}
 	o := tool.Done().Fact("session", rc.Session).Fact("entry", rc.ID).Fact("stamp", stampOf(rc.Stamp)).
 		Fact("bytes", rc.Bytes).Fact("source", sourceOf(rc.Source)).Fact("persisted", true).
@@ -235,9 +276,10 @@ func receipt(c *tool.Call) *tool.Out {
 	if c.Bool("text") {
 		text, err := cairn.EntryText(c.Str("store"), c.Str("session"), c.Str("entry"))
 		if err != nil {
-			return tool.Refuse(err.Error())
+			return refusal(err)
 		}
-		o.Fact("text", text)
+		// Text: quoted with its spaces kept, never hex-escaped; JSON carries it as a string.
+		o.Fact("text", tool.Text(text))
 	}
 	return o
 }

@@ -1,0 +1,9 @@
+diff --git a/internal/greet/greet_test.go b/internal/greet/greet_test.go
+--- a/internal/greet/greet_test.go
++++ b/internal/greet/greet_test.go
+@@ -11,5 +11,5 @@ func TestGreetNamesTheReader(t *testing.T) {
+ 	t.Parallel()
+ 	got := Greet("reader")
+-	assert.False(t, got != "hello, reader", "the greeting")
++	assert.Equal(t, "hello, reader", got, "the greeting")
+ }

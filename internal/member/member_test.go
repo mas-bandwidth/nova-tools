@@ -305,6 +305,7 @@ func TestJudgeNamesTheProviderOnlyForTheRunItFailedWithNoResult(t *testing.T) {
 		"a result not done is the card's":                      {Result{End: EndProvider, Provider: "provider: x", Shaped: true, Verdict: "not-done"}, Push{None: "no commit"}, "verdict not-done"},
 		"no provider end: the child left no result":            {Result{Provider: "provider: x"}, Push{None: "nothing"}, "no result: no RESULT.md shape"},
 		"a budget still names itself first":                    {Result{End: EndBudget}, Push{None: "nothing"}, "budget: no RESULT.md shape"},
+		"a budget names which one and at what count":           {Result{End: EndBudget, Budget: "tokens 509,940 of 400,000, $0.03"}, Push{None: "nothing"}, "budget: tokens 509,940 of 400,000, $0.03: no RESULT.md shape"},
 	} {
 		fin, why := Judge(c.r, c.pu)
 		require.Equal(t, FinishFailed, fin, name)

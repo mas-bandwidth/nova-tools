@@ -9,6 +9,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The lander's scope includes NEW in the typed header, with the same block
+// boundary and duplicate-key rule as the lint; body and step fields grant none.
+func TestCardPathsKeepsNewFilesInsideTheTypedHeader(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, card string
+		want       []string
+	}{
+		{"header", "RESULT: x\nPATHS: a.go, b.go\nNEW: c_test.go\n", []string{"a.go", "b.go", "c_test.go"}},
+		{"new only", "RESULT: x\nPATHS: none\nNEW: c_test.go\n", []string{"c_test.go"}},
+		{"none", "RESULT: x\nPATHS: none\n", nil},
+		{"body", "RESULT: x\nPATHS: a.go\n\nThe task starts here.\nNEW: c_test.go\n", []string{"a.go"}},
+		{"step", "RESULT: x\nPATHS: a.go\nSTEP 1. Work.\n  NEW: c_test.go\n", []string{"a.go"}},
+		{"duplicate", "RESULT: x\nPATHS: a.go\nNEW: c_test.go\nNEW: other.go\n", []string{"a.go", "c_test.go"}},
+		{"lower case", "RESULT: x\nPATHS: a.go\nnew: c_test.go\n", []string{"a.go"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, CardPaths([]byte(tc.card)))
+		})
+	}
+}
+
 // THE HEADER BLOCK IS THE LEADING RUN OF `KEY: value` LINES, IN ANY CASE (#2605).
 //
 // The two lines every card the darwin launchers stage must carry are lower case --

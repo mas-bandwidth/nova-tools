@@ -276,7 +276,7 @@ func checkPaths(entries []entry, globs []string) []Finding {
 		}
 		if !matched {
 			findings = append(findings, Finding{Token: "out-of-path", At: e.path,
-				Why: "this path matches none of the card's declared PATHS:"})
+				Why: "this path matches none of the card's declared PATHS: " + strings.Join(globs, ",")})
 		}
 	}
 	return findings

@@ -17,6 +17,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// proBrief is a pro card's brief: line 1 names tier pro, so its reads are two,
+// from two different readers (sprint.ReadsNeeded). The tests of the
+// two-reader machinery admit pro cards; a card with no tier is flash and needs
+// one read.
+const proBrief = "tier: pro"
+
 var t0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 
 type harness struct {
@@ -127,7 +133,7 @@ func (h *harness) setup(n int) {
 		}
 		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: m, Width: w}))
 	}
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: n}))
+	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: n}))
 	h.clean("setup")
 }
 

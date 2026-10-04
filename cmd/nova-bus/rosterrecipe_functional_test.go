@@ -32,18 +32,7 @@ func TestTheBannersFirstSendRecipeRunsAsPrinted(t *testing.T) {
 	var recipe []string
 	for i := 0; i < len(lines); i++ {
 		text := strings.TrimSpace(lines[i])
-		if roster == "" && strings.HasPrefix(text, `{"participants":[`) {
-			cur, end := text, i
-			for strings.Count(cur, "{") != strings.Count(cur, "}") || !strings.HasSuffix(cur, "}") {
-				end++
-				cur += strings.TrimSpace(lines[end])
-			}
-			// the paragraph's roster (with its group) is the one the recipe says to save
-			if strings.Contains(cur, `"groups"`) {
-				roster, i = cur, end
-			}
-		}
-		if strings.HasPrefix(text, "From nothing to a first send") {
+		if strings.HasPrefix(text, "first send, from nothing") {
 			// the recipe's own sentence runs on to its first indented command
 			for i++; i < len(lines) && !strings.HasPrefix(lines[i], "  git "); i++ {
 			}
@@ -52,7 +41,6 @@ func TestTheBannersFirstSendRecipeRunsAsPrinted(t *testing.T) {
 			}
 		}
 	}
-	require.NotEmpty(t, roster, "the banner's roster paragraph has no roster")
 	require.Falsef(t, len(recipe) < 4, "the banner's recipe has %d lines, want its five commands: %q", len(recipe), recipe)
 
 	root := t.TempDir()
@@ -91,10 +79,12 @@ func TestTheBannersFirstSendRecipeRunsAsPrinted(t *testing.T) {
 					b, err := cmd.CombinedOutput()
 					require.NoErrorf(t, err, "%q: %v\n%s", part, err, b)
 				}
-				if fields[1] == "init" {
-					// the recipe says to save the roster as participants.json in the new directory
-					require.NoError(t, os.WriteFile(filepath.Join(root, "bus", "participants.json"), []byte(roster), 0o600))
-				}
+			case "printf":
+				// printf '%s\n' '<roster>' > bus/participants.json: the recipe's roster
+				at := strings.Index(part, `{"participants":[`)
+				require.GreaterOrEqual(t, at, 0, "the recipe's printf writes no roster: %q", part)
+				roster = strings.TrimSuffix(strings.TrimSpace(part[at:strings.LastIndex(part, ">")]), "'")
+				require.NoError(t, os.WriteFile(out, []byte(roster+"\n"), 0o600))
 			case "nova-bus":
 				args := append([]string(nil), fields[1:]...)
 				for i := 0; i+1 < len(args); i++ {

@@ -28,9 +28,17 @@ func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	require.NoError(t, c.HSet(ctx, config.RouteKey("flash-a"), "tier", "flash", "provider", "deepseek", "model", "v4-flash",
 		"tokens", "0", "deadline", "900", "enabled", "true").Err())
 	require.NoError(t, c.HSet(ctx, config.TierKey("flash"), "name", "flash", "routes", "flash-a,flash-a", "rev", "8", "at", "0").Err())
+	// each nova-decide bar by its own field: a distinct value per key, read back by name
+	for f, v := range map[string]string{config.FieldDecideBounce: "0.5", config.FieldDecideReview: "0.3", config.FieldDecideAttemptNoResult: "0.71",
+		config.FieldDecideAttemptNothingToDo: "0.72", config.FieldDecideGrade: "0.73",
+		config.FieldDecideGateFlaky: "0.8", config.FieldDecideGatePreexisting: "0.75",
+		config.FieldDecideJudgment: "0.85"} {
+		require.NoError(t, c.Set(ctx, config.SprintKey(f), v, 0).Err())
+	}
 	set, trips, err := st.B.(RouteReader).Routes(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), trips, "the arrays ride in the routes' second trip")
+	assert.Equal(t, int64(2), trips, "the arrays and the bars ride in the routes' second trip")
+	assert.Equal(t, Bars{Bounce: "0.5", Review: "0.3", AttemptNoResult: "0.71", AttemptNothingToDo: "0.72", Grade: "0.73", GateFlaky: "0.8", GatePreexisting: "0.75", Judgment: "0.85"}, set.Bars, "each bar read by its field's name")
 	assert.Equal(t, map[string][]string{"flash": {"flash-a", "flash-a"}}, set.Tiers, "pro has no array: it takes its routes in name order")
 	rs, _, err := st.Routes(ctx)
 	require.NoError(t, err)
@@ -44,6 +52,7 @@ func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	h := &harness{t: t, st: st, ctx: ctx, now: time.Now(), live: []string{"m1", "m2"}}
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1, Brief: "c: the work (s1) tier: pro\n\nThe task.\n"}))
+	h.setPrimary("s1-1", map[string]string{sprint.FieldTierNow: "pro"}) // a pro card on pro (flash first: escalated)
 	h.must(DealStep(sprint.DealReq{}))
 	wc := h.snap().Fleet.Card("s1-1.w1")
 	require.NotNil(t, wc)
@@ -53,11 +62,11 @@ func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	assert.Equal(t, "1800", wc.F(sprint.FieldDeadline))
 }
 
-// The owner's store, 2026-10-01, by the current code: the machine running, five
-// routes applied as nova-config writes them (three flash, two pro), then a fresh
+// The owner's store, 2026-10-01, by the current code: five routes applied as
+// nova-config writes them (three flash, two pro), the machine running, then a fresh
 // card whose line 1 names flash added and dealt by the tick (not by the deal verb,
-// not by a rework): it draws a flash route; and a fresh pro card while no pro
-// route is enabled stays ready, held by its tier's one judgment.
+// not by a rework): it draws a flash route; and a pro card on pro (escalated: flash
+// first) while no pro route is enabled stays ready, held by its tier's one judgment.
 func TestRedisTheTickDealsAFreshCardOnARouteOfItsTier(t *testing.T) {
 	t.Parallel()
 	st, c := liveStore(t)
@@ -65,8 +74,6 @@ func TestRedisTheTickDealsAFreshCardOnARouteOfItsTier(t *testing.T) {
 	h := &harness{t: t, st: st, ctx: ctx, now: time.Now(), live: []string{"m1", "m2"}}
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.beat()
-	h.startMachine()
-	h.machine()
 	put := func(name, tier, enabled string) {
 		require.NoError(t, c.SAdd(ctx, config.RoutesKey, name).Err())
 		require.NoError(t, c.HSet(ctx, config.RouteKey(name), "name", name, "tier", tier, "provider", "p-"+name, "model", "m",
@@ -77,9 +84,14 @@ func TestRedisTheTickDealsAFreshCardOnARouteOfItsTier(t *testing.T) {
 	}
 	put("pro-a", "pro", "false")
 	put("pro-b", "pro", "false")
+	// a pro card on pro (escalated: flash first), written before the machine runs, while
+	// the work table takes a step's write at once
+	h.must(AddStep(sprint.AddReq{Stream: "tools", IDs: []string{"pro-card"}, Brief: "pro-card: the work (tools) tier: pro\n\nThe task.\n"}))
+	h.setPrimary("pro-card", map[string]string{sprint.FieldTierNow: "pro"})
+	h.startMachine()
+	h.machine()
 	h.must(AddStep(sprint.AddReq{Stream: "testify", IDs: []string{"testify-docs"},
 		Brief: "testify-docs: internal/docs tests to testify by the PR 4926 recipe (testify) tier: flash\nBASE: sprint/foundation\n\nThe task.\n"}))
-	h.must(AddStep(sprint.AddReq{Stream: "tools", IDs: []string{"pro-card"}, Brief: "pro-card: the work (tools) tier: pro\n\nThe task.\n"}))
 	for i := 0; i < 3; i++ {
 		h.tick(time.Second)
 		h.machine()

@@ -105,7 +105,10 @@ func TestAddResultLineMatchesTheTableWhenTheDisplaySyncFails(t *testing.T) {
 func TestAVerbWhoseDisplaySyncFailsAfterItsWriteReportsOK(t *testing.T) {
 	t.Parallel()
 	cards := func(n int) func(*testApp) {
-		return func(ta *testApp) { ta.ok(fmt.Sprintf("add --stream s1 --count %d", n)) }
+		// pro: two readers
+		return func(ta *testApp) {
+			ta.ok(fmt.Sprintf("add --stream s1 --count %d --brief-file %s", n, proBriefFile(t)))
+		}
 	}
 	for _, tc := range []struct {
 		name, token, line string

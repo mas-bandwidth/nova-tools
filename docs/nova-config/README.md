@@ -322,7 +322,10 @@ nova-config apply
 The harness is launched with `<provider>/<model>`: `--provider` is one word
 with no slash, and `--model` is the rest, which may hold slashes
 (`x-ai/grok-4`). `--tokens 0` (the default) is unmetered, the deadline the only
-stop; `--deadline` is required and above 0; `--enabled false` takes a route out
+stop; `--usd 0.50` is a dollar budget per card beside it, the harness's reported
+cost at which the card is stopped (a model that re-sends its whole context
+uncached spends tokens fast and cents slowly, so its token budget can be a
+generous ceiling and the dollars the bound); `--deadline` is required and above 0; `--enabled false` takes a route out
 of the deal. The deal takes `routes[index mod len]` of the card's tier's array
 for each card, the index a counter on the fleet table moved by one a card
 dealt, and a redeal moves past the routes already taken for that card when
@@ -430,7 +433,7 @@ CHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn
 CONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=3 applied=0
 CHECK ADD kind=friend name=f1
 CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=5 applied=0
-CHECK SET kind=sprint name=sprint changed=coordinator
+CHECK SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review
 CONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0
 CONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0
 CONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0
@@ -442,7 +445,7 @@ APPLY SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn
 CONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=3 ms=1
 APPLY ADD kind=friend name=f1
 CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=5 ms=6
-APPLY SET kind=sprint name=sprint changed=coordinator
+APPLY SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review
 CONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms=1
 CONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0
 CONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0

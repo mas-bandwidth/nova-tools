@@ -12,7 +12,7 @@ import (
 func TestWrongFlagNamesTheVerbsActualFlags(t *testing.T) {
 	t.Parallel()
 	code, out, errout := runTable("view", "set", "work", "--summry", "done")
-	for _, want := range []string{"unknown flag --summry", "view set flags:", "--summary", "--tables", "run: nova-table help view set"} {
+	for _, want := range []string{"VIEW-SET REFUSED: unknown flag --summry", "the flags of view set are", "--summary", "--tables", "did you mean --summary?", "run: nova-table help view set"} {
 		assert.Contains(t, errout, want, "missing %q in %q", want, errout)
 	}
 	require.EqualValues(t, 2, code, "%d %q %q", code, out, errout)

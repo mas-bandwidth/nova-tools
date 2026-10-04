@@ -214,7 +214,7 @@ func (f *Fetcher) Issues(ctx context.Context, meta RepoMeta) (workfile.Repo, err
 			}
 			size = max(size/2, MinPageSize)
 			if f.Log != nil {
-				fmt.Fprintf(f.Log, "PAGE RETRY repo=%s size=%d reason=%s\n", meta.Name, size, strings.ReplaceAll(err.Error(), " ", "_"))
+				fmt.Fprintf(f.Log, "PAGE RETRY repo=%s size=%d reason=%q\n", meta.Name, size, err.Error())
 			}
 			continue
 		}

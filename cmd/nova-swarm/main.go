@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -45,11 +47,16 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
+                       (a bare --card holds the card to nova-swarm's own card contract, the shape native runs, the same for every adopter: the RESULT line first and written last, numbered STEPs entering the repository, a test and its command, a deadline, the files named, scratch under a named root; --rules lists every check; an adopter's own rules go in --child-rules-file)
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
                        (--child-rules holds the card to the rules the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; the sentences are the built-in general rules, or the lines of --child-rules-file, one required sentence per line; template --name card prints a card that passes the general ones)
+                       (--member-injects lints the card as the member stages it, rules by reference: the rules are appended at stage time from the held file of the card's REPO: (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another), or --child-rules-file; a card need not carry them, and a line that contradicts them is still a finding)
+                       (--decide asks the brief decision nova-sprint add asks (nova-decide's brief: p(converges), the minutes, the questions the card leaves open) through Jev with JEV_API_KEY, or from --decide-answers, and prints one LINT DECIDE line after the lint's own; it never changes the verdict, and a failing backend prints the verdict, then why, exit 2)
                        (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
                        (nova-sprint add holds a brief to the --child-rules tokens only, and to its model lines: rule-<name> for each rule of its set (the six general rules, or the file add --rules or init --rules names), the step-<what> scans (step-go-clean and step-go-test-timeout only when the file carries those rules), and rule-libraries-considered when the file carries [libraries-considered]; every other token --rules lists is this lint's alone)
+  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <wall> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
+                       (runs the card's own programs: a card whose every work step is a script step, walked in the checkout with no model, each program, POST command and git in its own wall (network denied, no credential, the checkout and a private temp the only writes); one STEP OK|FAILED line per step, stopping at the first failed; refused with no wall unless --no-wall, which runs them unconfined; --remainder prints the card a failed step leaves)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
@@ -60,6 +67,12 @@ usage:
                         Each card runs as one native child with its frame and an allowlist environment.
                         Its packet supplies the model, budget and deadline; the flags fill missing route values.
                         --reader runs reads from the readers table; its flags override the read's route.
+                        A flash card's first read asks a decide read using JEV_API_KEY in the reader environment.
+                        The key stays with the reader process (docs/SPEC-SPRINT.md section 6).
+                        A work member with JEV_API_KEY asks an attempt decision when a take ends; the finish carries it.
+                        Native classifies a not-done child's red gate with the same key, with one bounded base test run.
+                        Decisions are recorded and routed on the sprint row's gate bars; flaky failures rerun once
+                        and pre-existing failures never count against the card (docs/SPEC-SPRINT.md sections 2 and 5).
                         The member pushes the child's commit and opens its requested PR outside the wall, never force-pushing.
                         Each finish is judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md).
                         --pass names environment secrets to hand to children; a harness that needs one must receive it.
@@ -67,6 +80,8 @@ usage:
                         Completed launches leave no checkout; each pool keeps its newest five failed launches.
                         No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
                         A staging refusal reports why so the sprint can deal the card to another member.)
+  nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
+                       (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 10, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -97,8 +112,9 @@ carries the variable's name, never its value. The legacy --auth option copies
 the provider's auth entry into the data home, mode 0600, and removes it when
 the run ends. A worker naming secret refuses --auth and writes no auth file.
 
-Sandbox: native uses nova-sandbox unless --no-wall is explicit
-(docs/SPEC-SANDBOX.md). The job directory, data home, temporary directory and
+Sandbox: native and member use nova-sandbox unless --no-wall is explicit
+(docs/SPEC-SANDBOX.md); no card can opt out. The NATIVE line reports the opt-out
+as sandbox=none-by-flag. The job directory, data home, temporary directory and
 default shared cache are writable. The slot, harness and toolchain directories,
 worker read_roots and any borrowed Git objects are readable.
 The worker's key file is kept outside its readable roots. If a command runs
@@ -121,8 +137,10 @@ example:
 // from the verb's own flags: what a stranger copies, then edits. template and
 // lint quote theirs from the banner's example block.
 var verbExamples = map[string]string{
-	"native": "nova-swarm native --harness ./harness --model provider/model --card card.md --slot slots/1 --root jobs --deadline 30m --tokens unmetered",
-	"member": "nova-swarm member --as m1 --server sprint.example:6390 --harness ./harness --root jobs --once",
+	"native":     "nova-swarm native --harness ./harness --model provider/model --card card.md --slot slots/1 --root jobs --deadline 30m --tokens unmetered",
+	"step":       "nova-swarm step --card card.md --dir repo",
+	"member":     "nova-swarm member --as m1 --server sprint.example:6390 --harness ./harness --root jobs --once",
+	"disk-guard": "nova-swarm disk-guard --root ~/nova-bench/run/member --scan ~/nova-bench/run --cache-max-gb 10",
 }
 
 // cardLines is what `template -h` lists: the lines a card needs, in the order
@@ -146,6 +164,12 @@ func verbHelpLines(verb string) string {
 	if verb == "template" {
 		add = cardLines
 	}
+	if verb == "step" {
+		add = "effect: local write: commits in the checkout --dir names, and runs the card's programs in their own wall; --dry-run writes nothing\n"
+	}
+	if verb == "disk-guard" {
+		add = "effect: local write: removes and rotates files on this machine; --dry-run writes nothing\n"
+	}
 	if ex, ok := verbExamples[verb]; ok {
 		add = "example:\n  " + ex + "\n" + add
 	}
@@ -154,13 +178,14 @@ func verbHelpLines(verb string) string {
 
 // verbNames are the verbs, in the usage's order: what a bare command and an unknown verb
 // are answered with (the tool-answers rule).
-var verbNames = []string{"template", "lint", "member", "native", "worker", "verify", "doctor", "profile", "slots", "version"}
+var verbNames = []string{"template", "lint", "member", "native", "step", "disk-guard", "worker", "verify", "doctor", "profile", "slots", "version"}
 
 // helpVerbs are the verbs `help <verb>` answers with that verb's help, the same text
 // `<verb> -h` prints.
 var helpVerbs = map[string]bool{
 	"version": true, "doctor": true, "verify": true, "lint": true,
 	"template": true, "profile": true, "native": true, "member": true, "slots": true, "worker": true,
+	"step": true, "disk-guard": true,
 }
 
 // refuse is what an unusable invocation costs: ONE line, `nova-swarm[ <verb>] REFUSED:
@@ -223,15 +248,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "verify":
 		return cmdVerify(rest, stdout, stderr)
 	case "lint":
-		return cmdLint(rest, stdout, stderr)
+		return cmdLint(rest, stdout, stderr, os.Getenv, now)
 	case "template":
 		return cmdTemplate(rest, stdout, stderr)
 	case "native":
 		return cmdNative(rest, stdout, stderr)
+	case "step":
+		return cmdStep(rest, stdout, stderr)
 	case "member":
 		return cmdMember(rest, stdout, stderr, nil)
 	case "slots":
 		return cmdSlots(rest, stdout, stderr)
+	case "disk-guard":
+		return cmdDiskGuard(rest, stdout, stderr)
 	case "profile":
 		return cmdProfile(rest, stdout, stderr)
 	case "worker":
@@ -362,6 +391,14 @@ func (f *flags) tokens(value string) (int, bool) {
 		f.add(fmt.Sprintf("--tokens is a budget and is at least 1, got %d; `unmetered` is how a caller says there is no accounting", n))
 	}
 	return n, false
+}
+
+// ratText is a budget's decimal, "" for none.
+func ratText(r *big.Rat) string {
+	if r == nil {
+		return ""
+	}
+	return cardcost.Text(r)
 }
 
 // maxFlag is the ceiling every listing here carries.
@@ -520,6 +557,7 @@ type nativeFlags struct {
 	resultsRootFlag *string
 	sweepNow        *bool
 	tokensWord      *string
+	usd             *string
 	usageInterval   *secondsFlag
 	benchFlag       *string
 	stageTimeout    *string
@@ -565,6 +603,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	_ = f.fs.String("slots-store", "", "accepted and read by nothing: native takes no slot lease (the dealer holds a bench's capacity)")
 	_ = f.fs.String("owner", "", "accepted and read by nothing, with --slots-store")
 	nf.tokensWord = f.fs.String("tokens", "", "required: the token budget, a number of tokens, or the word unmetered when the provider has no live accounting and the deadline is the only stop (`n|unmetered`)")
+	nf.usd = f.fs.String("usd", "", "the dollar budget per card, a decimal such as 0.50: the harness's reported cost at which the card is stopped (stopped=usd), beside --tokens; empty for none")
 	nf.usageInterval = newSecondsFlag(f.fs, "usage-interval", swarm.DefaultUsageInterval, "how often the token budget's source is read, a `duration` or whole seconds, at least 1s and under --deadline (default 5s)")
 	nf.benchFlag = f.fs.String("bench", "", "this bench's `name`, in a staging timeout's report (default: this machine's host name up to its first dot)")
 	nf.stageTimeout = f.fs.String("stage-timeout", "", "the bound on staging the card's checkout from the bench mirror, a `duration` (default 120s)")
@@ -647,6 +686,19 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// nativeRun's own job directory, data home and temp directory -- because 13d
 	// refuses "before any directory is made".
 	budgetTokens, budgetUnmetered := f.tokens(*tokensWord)
+	// THE DOLLAR BUDGET (nova-tools #5094), optional: a decimal, refused with the rest.
+	var budgetUSD *big.Rat
+	if w := strings.TrimSpace(*nf.usd); w != "" {
+		r, err := cardcost.Decimal(w)
+		switch {
+		case err != nil:
+			f.add(fmt.Sprintf("--usd wants a dollar budget per card, a decimal like 0.50: %s", oneline.Err(err)))
+		case r.Sign() <= 0:
+			f.add("--usd is a budget and is above 0; leave it out for no dollar budget")
+		default:
+			budgetUSD = r
+		}
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -678,7 +730,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if workerGiven {
 		workerForBudget = &w
 	}
-	if reason := swarm.NativeBudgetSourceRefusal(swarm.NativeUsageSource(workerForBudget), budgetTokens, budgetUnmetered, workerForBudget); reason != "" {
+	if reason := swarm.NativeBudgetSourceRefusal(swarm.NativeUsageSource(workerForBudget), budgetTokens, budgetUnmetered, budgetUSD != nil, workerForBudget); reason != "" {
 		refuseNative(stderr, reason)
 		return 2
 	}
@@ -762,6 +814,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		noSharedCaches: *noSharedCaches,
 		resultsRoot:    resultsRootOf(*resultsRootFlag, *root),
 		tokens:         budgetTokens,
+		usd:            budgetUSD,
 		unmetered:      budgetUnmetered,
 		usageInterval:  usageInterval.d,
 		benchName:      *benchFlag,
@@ -844,6 +897,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// here it is printed and nothing is written.
 	if res.defect != "" {
 		fmt.Fprintln(stdout, oneline.Escape(res.defect))
+	}
+	// WHICH BUDGET ENDED THE CARD, AND AT WHAT COUNT: the member carries
+	// these words into the finish's reason, so the coordinator reads "budget: tokens 509,940
+	// of 400,000, $0.03" and not only "budget".
+	if res.stopped != "" {
+		fmt.Fprintf(stdout, "NATIVE BUDGET label=%s budget: %s\n", oneline.Field(cfg.label),
+			oneline.Escape(nativeBudgetWords(res.stopped, cfg.tokens, res.spent, res.partial, cardcost.ParseSpend(res.spend).Actual, ratText(cfg.usd))))
 	}
 	// THE WALL REPORT: a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.

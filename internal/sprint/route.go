@@ -2,12 +2,14 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
 // The card decides the model it runs on.
@@ -40,7 +42,10 @@ type Route struct {
 	Tier     string `json:"tier"`
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
-	Tokens   int    `json:"tokens"`   // 0 is unmetered
+	Tokens   int    `json:"tokens"` // 0 is unmetered
+	// USD is the route's dollar budget per card, a canonical decimal ("0.5"), "" for none:
+	// the harness's reported cost at which native stops the card (nova-tools #5094).
+	USD      string `json:"usd,omitempty"`
 	Deadline int    `json:"deadline"` // seconds
 	Enabled  bool   `json:"enabled"`
 	// Prices is the route's price sheet (cardcost.PricesOf), what a card that ran on it
@@ -56,15 +61,21 @@ const (
 	FieldRoute    = "route"
 	FieldModel    = "model"
 	FieldTokens   = "tokens"
+	FieldUSD      = "usd"
 	FieldDeadline = "deadline"
 	FieldRoutes   = "routes"
 	FieldUsage    = "usage"
 	RoutePin      = "pin"
-	// FieldTier is the primary's tier when the coordinator gave it one (rework --tier):
-	// every later deal and read of the card draws from it, over its brief's line 1
-	// (cardTier); on a read card, the tier its route was drawn from (readTierOf),
-	// which its packet hands the reader and its JOB.md names.
+	// FieldTier is the primary's tier when the coordinator pinned it to one (rework
+	// --tier): every later deal and read of the card draws from it, over its brief's
+	// line 1, and the machine never escalates it (cardTier, NextTier); on a work or read
+	// card, the tier its route was drawn from, which its packet hands the child or reader,
+	// its JOB.md names and its cost record keeps.
 	FieldTier = "tier"
+	// FieldTierNow is the tier the primary is on, written by every deal on a route:
+	// flash first on every card, then the tier the machine escalated it to (NextTier);
+	// the tier its brief's line 1 names is its ceiling.
+	FieldTierNow = "tier_now"
 )
 
 // PropRouteIndex is the fleet table's property that holds the tier's route index
@@ -118,7 +129,7 @@ type routeIndexes map[string]*routeIndex
 // routeIndexesOf is the route indexes at the counters the fleet table's properties hold.
 func routeIndexesOf(s *Snapshot) routeIndexes {
 	out := routeIndexes{}
-	for _, t := range []string{cardhdr.RouteFlash, cardhdr.RoutePro} {
+	for _, t := range tierLadder {
 		r := tableRound(s.Fleet, PropRouteIndex(t), nil)
 		r.steps = true
 		out[t] = &routeIndex{r: r, moves: roundMoves{}}
@@ -129,7 +140,7 @@ func routeIndexesOf(s *Snapshot) routeIndexes {
 // write writes where the plan's kept units left each tier's index, in its batch
 // (roundWrites; tla/RouteIndex.tla, Deal and Redeal).
 func (ri routeIndexes) write(p *Plan) {
-	for _, t := range []string{cardhdr.RouteFlash, cardhdr.RoutePro} {
+	for _, t := range tierLadder {
 		roundWrites(p, ri[t].r, ri[t].moves)
 	}
 }
@@ -142,14 +153,18 @@ func (ri routeIndexes) write(p *Plan) {
 // the array was set) is skipped as an excluded one is.
 func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
-	tier = cardTier(c, m)
+	tier = drawTier(c, m)
+	if tier == "" {
+		tier = s.startTier(c, m) // its first deal on a route: flash first, or its grade's pro (decide.go)
+	}
 	if bad != "" {
+		tier = ceilingTier(c, m)
 		// a card admitted before the lint read its lines: judged under the tier it
 		// names (an unknown word too), else flash's
 		return nil, tier, "its brief's model lines: " + bad
 	}
 	if m.Pin != "" {
-		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldDeadline: strconv.Itoa(m.Deadline)}, "", ""
+		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldUSD: "", FieldDeadline: strconv.Itoa(m.Deadline)}, "", ""
 	}
 	if len(s.Routes) == 0 {
 		return nil, "", ""
@@ -157,11 +172,18 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	if tier == cardhdr.RouteFrontier {
 		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line"
 	}
+	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends
 	served := map[string]Route{}
+	var rested []string
 	for _, r := range s.Routes {
-		if r.Tier == tier && r.Enabled {
-			served[r.Name] = r
+		if r.Tier != tier || !r.Enabled {
+			continue
 		}
+		if rest, ok := s.resting(r.Name); ok {
+			rested = append(rested, r.Name+" until "+rest.UntilSaid()+": "+rest.Said())
+			continue
+		}
+		served[r.Name] = r
 	}
 	arr := s.tierArray(tier)
 	drawn := Split(c.F(FieldRoutes))
@@ -191,16 +213,64 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			ri[tier].r.count += i + 1
 			ri[tier].moves[c.ID] = strconv.FormatUint(i+1, 10)
 		}
-		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
-			FieldDeadline: strconv.Itoa(r.Deadline), FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}, tier, ""
+		set := map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
+			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}
+		if !pinnedTier(c, m) {
+			set[FieldTierNow] = tier // the primary is on the tier drawn (cardTier)
+		}
+		return set, tier, ""
+	}
+	if len(rested) > 0 {
+		return nil, tier, "every enabled route of tier " + tier + " in its array rests (" + strings.Join(rested, "; ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
 	}
 	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
 }
 
-// cardTier is the tier the deal draws the primary c's route from: the tier the card
-// records (FieldTier, a rework's --tier: the card is the persistent store), else the
-// tier its brief's line 1 names, flash when it names none.
+// Flash first on every card (the owner, 2026-10-02, cost rule 1 of nova-tools#5174,
+// agreed after "The cost of the sprint at $5,400 seems excessive.": "Flash first on
+// every card; pro only on escalation"). The tier a brief's line 1 names is the card's
+// ceiling, what it likely needs, never its first deal: every card is dealt on flash, and
+// one that reaches its bound below its ceiling is escalated by the machine to the next
+// tier of the ladder and dealt a new attempt there, no judgment raised; at its ceiling
+// the bound is the coordinator's judgment as before. A frontier card is the
+// coordinator's and is never dealt (it climbs no ladder); a pinned model runs on its pin;
+// a tier the coordinator pinned (rework --tier, FieldTier) is the card's tier and its
+// ceiling both.
+var tierLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro}
+
+// cardTier is the tier the primary c is on, what its reads, its read count and its
+// escalation go by: the tier its last deal on a route drew (FieldTierNow, which every
+// such deal writes: flash first, then the tier the machine escalated it to); before
+// any (a card not dealt yet, or a store with no route, where its member runs its own
+// model and no deal draws a tier) and for a pinned tier or model or a frontier card,
+// its ceiling.
 func cardTier(c *Card, m cardhdr.Model) string {
+	if t := c.F(FieldTierNow); t != "" && !pinnedTier(c, m) {
+		return t
+	}
+	return ceilingTier(c, m)
+}
+
+// drawTier is the tier the deal draws the primary c's route from: its ceiling when its
+// tier is pinned (pinnedTier), else the tier the machine escalated it to, else "": its first
+// deal on a route, whose tier is the snapshot's to say (startTier: flash first, or pro by
+// its grade).
+func drawTier(c *Card, m cardhdr.Model) string {
+	if pinnedTier(c, m) {
+		return ceilingTier(c, m)
+	}
+	return c.F(FieldTierNow)
+}
+
+// pinnedTier says the primary c climbs no ladder: the coordinator pinned its tier
+// (FieldTier, rework --tier), its brief pins a model, or it is a frontier card.
+func pinnedTier(c *Card, m cardhdr.Model) bool {
+	return m.Tier == cardhdr.RouteFrontier || m.Pin != "" || c.F(FieldTier) != ""
+}
+
+// ceilingTier is the highest tier the machine escalates the primary c to: the tier the
+// coordinator pinned, else the tier its brief's line 1 names, flash when it names none.
+func ceilingTier(c *Card, m cardhdr.Model) string {
 	if t := c.F(FieldTier); t != "" {
 		return t
 	}
@@ -208,6 +278,37 @@ func cardTier(c *Card, m cardhdr.Model) string {
 		return cardhdr.RouteFlash
 	}
 	return m.Tier
+}
+
+// CardTiers is the tier the primary is on (cardTier) and its ceiling, as `card` prints
+// them.
+func CardTiers(c *Card) (now, ceiling string) {
+	m, _ := cardhdr.ReadModel(c.F("brief"))
+	return cardTier(c, m), ceilingTier(c, m)
+}
+
+// cardTierOf is the tier the primary c is on (cardTier).
+func cardTierOf(c *Card) string {
+	now, _ := CardTiers(c)
+	return now
+}
+
+// NextTier is the tier the primary c escalates to when it reaches its bound: the next tier
+// of the ladder above the one it is on, up to its ceiling; "" at its ceiling (a pinned
+// model or tier is on its ceiling, cardTier), for brief lines that cannot be read, and in
+// a store with no route (a twin: its member runs its own model whatever the tier). One
+// function decides it for every bound that escalates: the redeal bound (Deal) and the
+// failure bounds.
+func (s *Snapshot) NextTier(c *Card) string {
+	m, bad := cardhdr.ReadModel(c.F("brief"))
+	if bad != "" || len(s.Routes) == 0 {
+		return ""
+	}
+	i, top := slices.Index(tierLadder, cardTier(c, m)), slices.Index(tierLadder, ceilingTier(c, m))
+	if i < 0 || i >= top {
+		return ""
+	}
+	return tierLadder[i+1]
 }
 
 // readTierOf is the tier a primary's reads are drawn from: the tier of the work
@@ -266,7 +367,7 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 		ri[tier].r.count += i + 1
 		was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
 		ri[tier].moves[key] = strconv.FormatUint(was+i+1, 10)
-		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
+		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
 			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier}
 	}
 	return map[string]string{FieldTier: tier}
@@ -305,7 +406,7 @@ func tokensWord(n int) string {
 func splitRoute(route map[string]string) (work, primary map[string]string) {
 	work, primary = map[string]string{}, map[string]string{}
 	for k, v := range route {
-		if k == FieldRoutes {
+		if k == FieldRoutes || k == FieldTierNow {
 			primary[k] = v
 			continue
 		}
@@ -334,7 +435,7 @@ func TierRoutes(routes []Route) string {
 }
 
 // AttemptLine is one attempt's record as `card <id>` prints it: the work card's
-// route and model, its member, when it was dealt, taken and finished, how it
+// route, model and tier, its member, when it was dealt, taken and finished, how it
 // ended, the head it pushed (head=, "-" when none) and what it spent.
 func AttemptLine(wc *Card) string {
 	end := "in flight (" + wc.Col + ")"
@@ -351,21 +452,43 @@ func AttemptLine(wc *Card) string {
 	case !wc.Placed():
 		end = "retired"
 	}
-	return fmt.Sprintf("ATTEMPT %s card=%s gen=%s route=%s model=%s member=%s dealt=%s taken=%s finished=%s head=%s usage=%s end=%s",
-		orDash(wc.F("attempt")), wc.ID, orDash(wc.F("gen")), orDash(wc.F(FieldRoute)), orDash(wc.F(FieldModel)), orDash(wc.F("member")),
-		orDash(wc.F("dealt")), orDash(wc.F("taken")), orDash(wc.F("finished")), orDash(PushedHead(wc)), orDash(wc.F(FieldUsage)), end)
+	return fmt.Sprintf("ATTEMPT %s card=%s gen=%s route=%s model=%s tier=%s member=%s dealt=%s taken=%s finished=%s head=%s%s usage=%s end=%s",
+		orDash(wc.F("attempt")), wc.ID, orDash(wc.F("gen")), orDash(wc.F(FieldRoute)), orDash(wc.F(FieldModel)), orDash(wc.F(FieldTier)), orDash(wc.F("member")),
+		orDash(wc.F("dealt")), orDash(wc.F("taken")), orDash(wc.F("finished")), orDash(PushedHead(wc)), DecidedWords(wc.F(FieldDecided), wc.F(FieldDecidedUsed) == "yes"), orDash(wc.F(FieldUsage)), end)
+}
+
+// DecidedWords is a work card's attempt decision as `card` prints it on its ATTEMPT line,
+// " decided=<class>:<p>", with " decided_used=yes" when it routed the finish; "" when the
+// card carries none.
+func DecidedWords(line string, used bool) string {
+	d, ok := decide.ParseDecided(line)
+	if !ok {
+		return ""
+	}
+	w := " decided=" + d.Value + ":" + strconv.FormatFloat(d.P, 'f', 2, 64)
+	if used {
+		w += " decided_used=yes"
+	}
+	return w
 }
 
 // ProviderTake is the record of one take of a work card the provider failed, kept on the
 // card beside the takes after it (FieldProviderTake plus the take's number, the card's
 // redeals when it ended plus one): the route and model it ran on, the member, when it
 // ended, what it spent and the error line. `card <id>` prints one ATTEMPT line for each,
-// and the route stats count it against its route.
-type ProviderTake struct{ Route, Model, Member, Finished, Usage, Error string }
+// and the route stats count it against its route. Taken is when the member took the card for
+// the take, its child launched ("" in a record written before it was kept): a provider's
+// refusal is read against the rest window its launch fell in (provider_funds.go).
+type ProviderTake struct{ Route, Model, Member, Finished, Usage, Error, Taken string }
 
-// String is the take as the card's field holds it: tab separated, the line last.
+// String is the take as the card's field holds it: tab separated, the line, whose tabs are
+// blanks, before the launch's time, so a record written before Taken reads as it did.
 func (t ProviderTake) String() string {
-	return strings.Join([]string{t.Route, t.Model, t.Member, t.Finished, t.Usage, strings.ReplaceAll(t.Error, "\t", " ")}, "\t")
+	v := strings.Join([]string{t.Route, t.Model, t.Member, t.Finished, t.Usage, strings.ReplaceAll(t.Error, "\t", " ")}, "\t")
+	if t.Taken != "" {
+		v += "\t" + t.Taken
+	}
+	return v
 }
 
 // ProviderTakes is the takes of the work card the provider failed, in the order they ended,
@@ -376,8 +499,7 @@ func ProviderTakes(wc *Card) (takes []ProviderTake, numbers []int) {
 		if v == "" {
 			continue
 		}
-		f := append(strings.SplitN(v, "\t", 6), "", "", "", "", "", "")
-		takes, numbers = append(takes, ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5]}), append(numbers, n)
+		takes, numbers = append(takes, parseTake(v)), append(numbers, n)
 	}
 	return takes, numbers
 }
@@ -418,6 +540,15 @@ type RouteStat struct {
 	Failed   int    `json:"failed"`
 	Provider int    `json:"provider_failures"`
 	MeanWall string `json:"mean_wall"` // taken to finished, over the finished; "-" when none
+	// RestedUntil is when the route's rest ends while it rests (rule 3, route_rest.go):
+	// RFC3339, "" when it does not rest; `routes` fills it at its clock.
+	RestedUntil string `json:"rested_until,omitempty"`
+	// RestedFor is why it rests (RouteRest.Cause and its words), and Balance and
+	// BalanceAt its provider's balance as the balance poll last read it (balance.go):
+	// dollars and cents rounded up, or "unknown"; "" before any read.
+	RestedFor string `json:"rested_for,omitempty"`
+	Balance   string `json:"balance,omitempty"`
+	BalanceAt string `json:"balance_at,omitempty"`
 }
 
 // RouteStats is every route's record over the fleet table's work cards, the

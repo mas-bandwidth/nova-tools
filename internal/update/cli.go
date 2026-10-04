@@ -108,7 +108,8 @@ func flagProblem(f *flag.FlagSet, err error) error {
 // the spec file and compares the two. nova-version's usage lines are its
 // verbs' own (versiontool.go). The release verbs are one line here; their own
 // lines are release.Verbs, printed by `nova-update help release`.
-const updateVerbs = `nova-update example [--out <path>]
+const updateVerbs = `usage:
+nova-update example [--out <path>]
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]

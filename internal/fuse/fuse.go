@@ -13,7 +13,7 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     moved or deleted, or a second --box pointing somewhere empty into VERIFIED
     CLEAR -- a fail-open in a safety control. Both noes are errors, and every
     caller must treat an error as BLOWN; ErrNoBox tells them apart, so a refusal
-    can name the right remedy (CreateBox for the first, your person for the
+    can name the right remedy (CreateBox for the first, a hand repair for the
     second). os.ReadFile + errors.Is(err, fs.ErrNotExist) finds the absent case,
     which is why the read is written with the stdlib primitive that distinguishes
     absent from unreadable; it does not say which part of the path is missing, and
@@ -27,7 +27,7 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
 
  3. THE WRITE IS TEMP-FILE + RENAME. The file whose corruption means PERMANENT
     LOCKDOWN must never be left torn: a truncating write can leave half a file if
-    the process dies, and a half file is an unreadable box that only your person can
+    the process dies, and a half file is an unreadable box that only a person can
     clear, by hand, live. Rename within one directory is atomic, so a reader sees
     the old box or the new one and never a fragment. Two copies of the tool blowing
     fuses at once lose one WRITE, but neither can produce a corrupt box.
@@ -53,9 +53,10 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     the file. Echoed raw into a one-line output grammar, a newline forges a SECOND
     event line beneath a real one -- a `FUSE OK lockdown=clear` under a `FUSE
     FAIL`, which a caller scanning the grammar reads as permission -- and an ESC
-    sequence does the same to an operator's terminal. OneLine escapes every
-    control character as the text is printed, which holds for a box this tool
-    never wrote; Fold only tidies what this tool writes itself, and is never a
+    sequence does the same to an operator's terminal. cmd/nova-fuse prints every
+    such string through internal/oneline's Escape, which escapes every control
+    character as the text is printed and so holds for a box this tool never
+    wrote; Fold only tidies what this tool writes itself, and is never a
     refusal, because a fuse you cannot blow is not a fuse. Constraining writes
     alone would defend exactly the case that needs no defending. The escaped set
     is category Cc plus U+2028 and U+2029, which break a line for readers that
@@ -77,7 +78,6 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // UnreadableSuffix names where the bytes of an unreadable box are kept when a lockdown has
@@ -87,7 +87,7 @@ import (
 const UnreadableSuffix = ".unreadable"
 
 // Fuse is one blown fuse: when, and why. Both are recorded so a fuse found at 2am can be
-// audited without asking anyone, and both are read back defensively because your person
+// audited without asking anyone, and both are read back defensively because a person
 // HAND-EDITS this file -- that is the only lockdown-replacement mechanism there is.
 type Fuse struct {
 	At     string `json:"at"`
@@ -108,22 +108,10 @@ type Box struct {
 // `lift quarantine` remove more of them, because they are one surface in both directions.
 func Surface(s string) string { return strings.ToLower(Fold(s)) }
 
-// OneLine renders free text for an event line. See note 5: the box is hand-editable and
-// world-readable by design, so a reason, a stored surface name or an `at` stamp is
-// authored by whoever can write the file -- and one line per event is a promise this
-// tool makes to every caller scanning the grammar in SPEC.md.
-//
-// The escape itself lives in internal/oneline, because the promise is made by every
-// binary in this repo and has to be met the same way by each: OneLine is oneline.Escape
-// under the name this package has always used, and the table test here pins that the two
-// never drift. See oneline.Escape for the escaped set (category Cc, U+2028 and U+2029,
-// and the bidi controls) and the escape form.
-func OneLine(s string) string { return oneline.Escape(s) }
-
 // Fold tidies text this tool is about to WRITE: every control character becomes a space,
 // then runs of whitespace collapse to a single ASCII space and the ends are trimmed. The
 // collapse is Unicode-aware, so a non-breaking space or a line separator inside the text
-// becomes an ordinary space too. It is not the defense -- OneLine is, because a box
+// becomes an ordinary space too. It is not the defense (oneline.Escape at print time is), because a box
 // written by another hand still arrives holding anything at all (note 5). And it is never
 // a REFUSAL: a fuse you cannot blow is not a fuse, so a reason is accepted whatever it
 // contains and only its spelling in the file is tidied.
@@ -178,7 +166,7 @@ func (b Box) Quarantined(surface string) (string, Fuse, bool) {
 //
 // THE SOFT HALF ONLY. The fuse design separates the powers: quarantine is your own
 // decision in both directions, so this function exists; lockdown is hard -- a blown fuse
-// is not reset, it is REPLACED, and only in a live conversation with your person -- so no
+// is not reset, it is REPLACED, and only in a live conversation with the person you work with -- so no
 // LiftLockdown exists here, and none may be added.
 func (b Box) LiftQuarantine(surface string) map[string]Fuse {
 	removed := map[string]Fuse{}
@@ -245,6 +233,22 @@ func CreateBox(path string) error {
 // A symlink at the cleaned path is refused and is not followed.
 func WriteBox(path string, b Box) error {
 	return writeBox(path, b)
+}
+
+// PlanCreateBox is CreateBox with nothing written: every check the creation
+// makes (the parent as MkdirAll would make it, no symlink parent, a directory
+// this process can create in, nothing at the path), and the same error.
+func PlanCreateBox(path string) error { return planBox(path, atomicfile.NoReplace()) }
+
+// PlanWriteBox is WriteBox with nothing written, refusing where WriteBox would.
+func PlanWriteBox(path string) error { return planBox(path) }
+
+func planBox(path string, opts ...atomicfile.Option) error {
+	target := path
+	if target != "" {
+		target = filepath.Clean(target)
+	}
+	return atomicfile.CheckAfterMkdirAll(target, 0o644, append(opts, atomicfile.ExactMode())...)
 }
 
 // writeBox shares validation, exact mode and sync ordering between creation and

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -112,14 +114,14 @@ func TestEveryFlagInTheSynopsisIsDefinedByItsVerb(t *testing.T) {
 	}
 	// The guard on the parser itself. A regexp or a block boundary that quietly stopped
 	// matching would leave this test green over nothing, which is the one way a tripwire
-	// fails that nobody notices. Twelve LINES over ten verbs, and the flag count, as the
-	// banner stands; a deliberate change to either moves these numbers in the same commit.
+	// fails that nobody notices. Fourteen LINES over twelve verbs (version and help
+	// included), and the flag count, as the banner stands; a deliberate change to either moves these numbers in the same commit.
 	// `draft` and `send` each have two forms and the banner shows both, because the reply
 	// form's and the prepared form's required flags are not the released form's and one
 	// line offering all of them is a line nobody can paste. `reply` is its own line.
 	{
 		got := len(block)
-		assert.Falsef(t, got != 12, "the synopsis parsed to %d verb lines, want 12: %+v", got, block)
+		assert.Falsef(t, got != 14, "the synopsis parsed to %d verb lines, want 14: %+v", got, block)
 	}
 	assert.Falsef(t, checked < 30, "only %d flags were checked; the banner offers more than that, so the parser is reading less than the banner says", checked)
 }
@@ -133,5 +135,86 @@ func TestEveryVerbInTheSynopsisIsDispatchable(t *testing.T) {
 	for _, v := range readSynopsis(t) {
 		r := invoke(t, "", v.verb)
 		assert.NotContainsf(t, r.stderr, "unknown subcommand", "`nova-bus help` names the verb %q and the dispatch does not: %s", v.verb, strings.TrimSpace(r.stderr))
+	}
+}
+
+// The spec states the bound `check` has, the one its -h lists: `--max <n>`, default 20, 0
+// for all, then one BUS MORE line and one BUS CHECK count line. It said `check` had no
+// --max, and described per-kind caps, BUS FINDING and BUS SUMMARY lines no build prints.
+func TestTheSpecStatesTheCheckBoundTheCodeHas(t *testing.T) {
+	t.Parallel()
+	help := invoke(t, "", "check", "-h").mustCode(t, 0).stdout
+	require.Contains(t, help, "--max <int>  findings of each class to print before one BUS MORE line per class names the rest of it (default 20, 0 = all)")
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC.md"))
+	require.NoError(t, err)
+	spec := string(raw)
+	for _, gone := range []string{"`check` has no `--max`", "BUS FINDING kind=", "BUS SUMMARY mode=", "check --bus ~/bus --full --fail-max"} {
+		assert.NotContains(t, spec, gone, "docs/SPEC.md describes a check the code does not have")
+	}
+	_, section, ok := strings.Cut(spec, "#### The bound — check\n")
+	require.True(t, ok, "docs/SPEC.md has no `#### The bound — check` section")
+	section, _, _ = strings.Cut(section, "\n#### ")
+	for _, want := range []string{"`--max <n>` findings of each class (default 20, `0` for all)", `BUS MORE kind=<class> shown=<n> total=<t> remedy="--max 0"`, "holds the common cap rule", "BUS CHECK findings=<t> fail=<x> warn=<w>"} {
+		assert.Contains(t, section, want)
+	}
+}
+
+// The bus's code names only tools that exist: a comment that sends a reader to a nova-*
+// tool this repository does not build is a dangling reference.
+func TestTheBusCodeNamesOnlyToolsThatExist(t *testing.T) {
+	t.Parallel()
+	known := map[string]bool{"nova-tools": true} // the repository itself
+	entries, err := os.ReadDir(filepath.Join("..", "..", "cmd"))
+	require.NoError(t, err)
+	for _, e := range entries {
+		known[e.Name()] = e.IsDir()
+	}
+	name := regexp.MustCompile(`nova-[a-z][a-z-]*[a-z]`)
+	for _, dir := range []string{".", filepath.Join("..", "..", "internal", "bus")} {
+		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		require.NoError(t, err)
+		for _, f := range files {
+			if strings.HasSuffix(f, "_test.go") {
+				continue
+			}
+			raw, err := os.ReadFile(f)
+			require.NoError(t, err)
+			for _, n := range name.FindAllString(string(raw), -1) {
+				assert.True(t, known[n], "%s names %s, which is no tool under cmd/", f, n)
+			}
+		}
+	}
+}
+
+// The package doc names every verb the tool has, and the code comments carry no ticket
+// numbers or people: they say what the code does now.
+func TestThePackageDocNamesEveryVerb(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("main.go")
+	require.NoError(t, err)
+	doc, _, ok := strings.Cut(string(raw), "\npackage main")
+	require.True(t, ok)
+	for _, verb := range verbs {
+		assert.Regexp(t, `(?m)^//\t`+verb+` +\S`, doc, "the package doc does not list %s", verb)
+	}
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		require.NoError(t, err)
+		assert.NotRegexp(t, `#[0-9]{3,5}\b`, string(src), "%s cites a ticket number", f)
+		assert.NotRegexp(t, `\b(Glenn|Rowan|Stella|Emma|Johnny|Freddy)\b`, string(src), "%s names a person", f)
+	}
+}
+
+// A prose line of the banner never begins with the tool's name: the onboarding walk reads
+// such a line as a usage line, and its second word as a verb.
+func TestNoBannerProseLineReadsAsAVerb(t *testing.T) {
+	t.Parallel()
+	for _, line := range strings.Split(usage, "\n") {
+		assert.False(t, strings.HasPrefix(line, "nova-bus ") && !strings.HasPrefix(line, "nova-bus: "), "a banner line reads as a usage line: %q", line)
 	}
 }

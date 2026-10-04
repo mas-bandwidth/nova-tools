@@ -42,11 +42,14 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	kind := fs.String("kind", "", "card kind to validate; empty skips kind-specific checks")
 	maxFlag := fs.Int("max", bounded.Default, "finding lines to print; 0 prints all")
 	timeout := fs.Int("timeout", 120, "git inspection deadline in positive seconds")
-	if verbflag.Parse(fs, args) != nil || fs.NArg() != 0 {
-		return refuse(stderr, " hygiene", "bad flags")
+	if err := verbflag.Parse(fs, args); err != nil {
+		return refuse(stderr, " hygiene", oneline.Cap(verbflag.Explain(fs, err), oneline.TailBytes))
+	}
+	if fs.NArg() != 0 {
+		return refuse(stderr, " hygiene", fmt.Sprintf("unexpected argument %q (flags come before arguments, and hygiene takes none)", fs.Arg(0)))
 	}
 	if *repo == "" || *base == "" || *head == "" {
-		return refuse(stderr, " hygiene", "--repo, --base and --head are required")
+		return refuse(stderr, " hygiene", "--repo, --base and --head are required; refusing to guess")
 	}
 	if *maxFlag < 0 {
 		return refuse(stderr, " hygiene", "--max must be non-negative")

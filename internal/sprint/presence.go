@@ -32,6 +32,24 @@ const (
 	MissedBeatsDown = 3
 	// LoadWindow is the span of beats whose highest load the load cell shows.
 	LoadWindow = 10 * time.Second
+	// FriendBeatEvery is how often a friend's machinery beats (friend beat in
+	// a loop beside her harness). The owner, 2026-10-02 9:46 PM ET: "heartbeat
+	// should ping once every 10sec", then "or every 1sec if you really want,
+	// then after 15 sec. asleep. better."
+	FriendBeatEvery = time.Second
+	// FriendDownAfter is how long a friend goes without a beat before she is
+	// down (docs/SPEC-SPRINT.md section 1, the friends table): fifteen beats
+	// missed in a row. The owner, 2026-10-02 9:44 PM ET, on a friend shown up
+	// while she was gone: "two minutes is too long. 1m", "maybe even 30 secs.";
+	// and at 9:46 PM: "then after 15 sec. asleep. better." The word was
+	// asleep until the owner, 2026-10-03 8:04 AM ET, looking at the friends
+	// table: "Please change 'asleep' to 'down' so we have consistency across
+	// all tables". A friend holds the cards dealt to her row (FriendRow) and
+	// keeps them when she goes down: nothing is taken back, the deadline
+	// judges them. The fleet's MissedBeatsDown windows (kept long so a
+	// working machine is not taken down by one slow store call) do not apply
+	// to her.
+	FriendDownAfter = 15 * time.Second
 )
 
 // Held is the status of a member the coordinator holds down.
@@ -110,15 +128,36 @@ func MemberStatus(ctl *Card, b Beat, now time.Time) string {
 	return PresenceStatus(ctl.F("held") != "", b, now)
 }
 
-// PresenceStatus is the one rule of a fleet member's and a friend's status at
-// now: held while the coordinator holds it (fleet down, friend down), else up
-// while it has missed fewer than MissedBeatsDown beat windows of BeatDeadline,
-// else down (never beaten, or lapsed).
+// PresenceStatus is the one rule of a fleet member's status at now: held while
+// the coordinator holds it (fleet down), else up while it has missed fewer
+// than MissedBeatsDown beat windows of BeatDeadline, else down (never beaten,
+// or lapsed).
 func PresenceStatus(held bool, b Beat, now time.Time) string {
 	switch {
 	case held:
 		return Held
 	case b.Alive(now):
+		return Up
+	}
+	return Down
+}
+
+// FriendBeating says the friend has beaten within FriendDownAfter of now: a
+// beat wakes her at once, and FriendDownAfter without one puts her down.
+func FriendBeating(b Beat, now time.Time) bool {
+	return now.Sub(b.At) < FriendDownAfter // never beaten: At is zero, long ago
+}
+
+// FriendStatus is the one rule of a friend's status at now: held while the
+// coordinator holds her (friend down), else up while her last beat is within
+// FriendDownAfter, else down (never beaten, or silent that long).
+// Releasing a hold (friend up) is not a beat: a friend released with no
+// recent beat is down until she beats.
+func FriendStatus(held bool, b Beat, now time.Time) string {
+	switch {
+	case held:
+		return Held
+	case FriendBeating(b, now):
 		return Up
 	}
 	return Down
@@ -157,7 +196,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		return Plan{}, 0
 	}
 	var live, ups, downs []string
-	for _, m := range s.Fleet.Rows() {
+	for _, m := range s.Members() {
 		ctl := s.MemberCtl(m)
 		if ctl == nil {
 			continue
@@ -190,7 +229,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		p.Units = append(p.Units, q.Units...)
 		p.Refused = append(p.Refused, q.Refused...)
 	}
-	receivers := orderLike(s.Fleet.Rows(), all, "")
+	receivers := orderLike(s.Members(), all, "")
 	q, widths := memberLoads(s, receivers), memberWidths(s, receivers)
 	for _, m := range downs {
 		why := "no beat for " + (MissedBeatsDown * BeatDeadline).String()

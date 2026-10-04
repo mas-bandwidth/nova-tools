@@ -138,8 +138,8 @@ func localSelectThrough(runner localRunner) localSelector {
 }
 
 // cmdLocal is `nova-ci local [--base <ref>] [--functional]`. Exit 0 is CI's
-// green; 1 a red test or a package that did not build; 2 a CI-SLEEPS line (a
-// SLEEPS skip off the ledger), a step that could not run, or a refusal. A
+// green; 1 a red test, a package that did not build, or a CI-SLEEPS line (a
+// SLEEPS skip off the ledger); 2 a step that could not run, or a refusal. A
 // CI-SLOW line is printed and, as on every CI leg but the nightly one, is not
 // a verdict.
 //
@@ -153,7 +153,7 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner, selec
 	functional := fs.Bool("functional", false, "add the functional build tag (make test GOTEST_TAGS=functional), the tests CI's functional job runs")
 	dryRun := fs.Bool("dry-run", false, "print the packages CI's selection picks and the make test line, and run no test")
 	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " local", flagProblem(fs, err))
+		return refuse(stderr, " local", verbflag.Explain(fs, err))
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, " local", fmt.Sprintf("unexpected argument %q; the packages are CI's selection, never named by hand", fs.Arg(0)))
@@ -183,7 +183,7 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner, selec
 		return refuse(stderr, " local", fmt.Sprintf("%s's Makefile has no test target, the one entry CI's unit legs call", oneline.Quote(root)))
 	}
 	if *functional && !bytes.Contains(makefile, []byte("GOTEST_TAGS")) {
-		return refuse(stderr, " local", "--functional: this checkout's Makefile test target takes no GOTEST_TAGS (the functional tier, nova-tools#4328); run without --functional")
+		return refuse(stderr, " local", "--functional: this checkout's Makefile test target takes no GOTEST_TAGS (the functional tier); run without --functional")
 	}
 	tags := ""
 	if *functional {
@@ -324,12 +324,14 @@ type localPkg struct {
 
 // localCollector reads make test's stdout: a `go test -json` TestEvent line is
 // folded into its package, and anything else (make's own lines, slowtests'
-// CI-SLOW, CI-SLEEPS and CI-LOAD lines) is printed as it came.
+// CI-SLOW, CI-SLEEPS and CI-LOAD lines) is printed as it came, the CI-SLEEPS
+// lines counted.
 type localCollector struct {
-	out   io.Writer
-	order []string
-	pkgs  map[string]*localPkg
-	build []string
+	out    io.Writer
+	order  []string
+	pkgs   map[string]*localPkg
+	build  []string
+	sleeps int // CI-SLEEPS lines: SLEEPS skips off the ledger
 }
 
 func (c *localCollector) line(b []byte) {
@@ -339,6 +341,9 @@ func (c *localCollector) line(b []byte) {
 			c.event(ev)
 			return
 		}
+	}
+	if bytes.HasPrefix(bytes.TrimSpace(b), []byte("CI-SLEEPS ")) {
+		c.sleeps++
 	}
 	fmt.Fprintf(c.out, "%s\n", b)
 }
@@ -440,8 +445,12 @@ func (c *localCollector) finish(makeCode int) int {
 		return 0
 	case reds > 0:
 		return 1
+	case c.sleeps > 0:
+		// The check said no, as slowtests says it: exit 1.
+		fmt.Fprintf(c.out, "nova-ci local: make test failed on %d CI-SLEEPS line(s) above: a SLEEPS skip off the ledger; inject a clock or tag the test //go:build functional and remove the skip\n", c.sleeps)
+		return 1
 	default:
-		fmt.Fprintln(c.out, "nova-ci local: make test failed with no red test: a CI-SLEEPS line above is a SLEEPS skip off the ledger, or a step could not run (its words are above)")
+		fmt.Fprintln(c.out, "nova-ci local: make test failed with no red test and no CI-SLEEPS line: a step could not run (its words are above)")
 		return 2
 	}
 }

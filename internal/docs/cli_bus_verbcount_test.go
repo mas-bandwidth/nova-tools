@@ -22,8 +22,8 @@ import (
 // hard-coded, so the test keeps its meaning when a verb is added. It reads text
 // and runs nothing.
 
-// busMainPath holds the banner this test treats as the truth.
-const busMainPath = "../../cmd/nova-bus/main.go"
+// busHelpPath holds the banner this test treats as the truth.
+const busHelpPath = "../../cmd/nova-bus/help.go"
 
 // cliBusPath is the command reference judged against the banner.
 const cliBusPath = "../../docs/CLI.md"
@@ -70,16 +70,17 @@ func TestTheCLIReferenceCountsNovaBusVerbsCorrectly(t *testing.T) {
 		len(verbs), strings.Join(verbs, ", "), cliBusPath, heading)
 }
 
-// busUsageVerbs cuts the `const usage` banner from cmd/nova-bus/main.go and
-// returns the distinct verb names in its `usage:` block, sorted. It t.Fatal's
+// busUsageVerbs cuts the `const usage` banner from cmd/nova-bus/help.go and
+// returns the distinct verb names in its `usage:` block but help and version,
+// sorted. It t.Fatal's
 // when either banner end is missing, when the `usage:` line is absent, or when
 // the scan finds fewer than five verbs — a scan that finds almost none would
 // pass by asking nothing.
 func busUsageVerbs(t *testing.T) []string {
 	t.Helper()
 
-	src, err := os.ReadFile(busMainPath)
-	require.NoError(t, err, "%s: %v; the banner in the source is the truth this test reads", busMainPath, err)
+	src, err := os.ReadFile(busHelpPath)
+	require.NoError(t, err, "%s: %v; the banner in the source is the truth this test reads", busHelpPath, err)
 
 	var banner []string
 	started, closed := false, false
@@ -97,9 +98,9 @@ func busUsageVerbs(t *testing.T) []string {
 		banner = append(banner, line)
 	}
 	require.True(t, started, "%s: no line begins %q, so the banner cannot be cut; the banner in the source is the truth this test reads",
-		busMainPath, "const usage = `")
+		busHelpPath, "const usage = `")
 	require.True(t, closed, "%s: the banner, opened by %q, has no closing line that is one backtick at column one; the banner in the source is the truth this test reads",
-		busMainPath, "const usage = `")
+		busHelpPath, "const usage = `")
 
 	seen := map[string]bool{}
 	var verbs []string
@@ -121,15 +122,17 @@ func busUsageVerbs(t *testing.T) []string {
 		if len(fields) < 2 {
 			continue
 		}
-		if name := fields[1]; !seen[name] {
+		// help and version are every tool's two built-in verbs, not the bus
+		// verbs the section counts and walks one by one.
+		if name := fields[1]; !seen[name] && name != "help" && name != "version" {
 			seen[name] = true
 			verbs = append(verbs, name)
 		}
 	}
 	require.True(t, inUsage, "%s: the banner has no line exactly %q, so no verb list can be read; the banner in the source is the truth this test reads",
-		busMainPath, "usage:")
+		busHelpPath, "usage:")
 	require.GreaterOrEqual(t, len(verbs), 5, "%s: the usage scan found only %d distinct verbs (%s); a scan that finds almost none would pass by asking nothing",
-		busMainPath, len(verbs), strings.Join(verbs, ", "))
+		busHelpPath, len(verbs), strings.Join(verbs, ", "))
 	sort.Strings(verbs)
 	return verbs
 }

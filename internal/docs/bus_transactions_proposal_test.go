@@ -34,10 +34,13 @@ func TestBusTransactionsProposalBoundaries(t *testing.T) {
 		"state=already-published",
 		"second identity is how a message is delivered twice",
 		"docs/SPEC-BUS-DELIVERY.md",
-		"BUS FINDING",
-		"BUS SUMMARY",
-		"shared collector",
 		"no savings percentage is claimed yet",
+		// the bounded check: the per-class cap and count that ship, held to the common
+		// cap rule, and the aggregation, summary and continuation named as withdrawn
+		"**bounded full checks**. What ships is the",
+		"`check` holds the common cap rule",
+		"BUS MORE kind=<class> shown=<n> total=<t>",
+		"proposed beside it and is withdrawn, not built",
 	} {
 		assert.Contains(t, content, want, "docs/SPEC.md missing %q", want)
 	}

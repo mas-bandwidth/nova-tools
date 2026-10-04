@@ -679,3 +679,28 @@ func TestALegacyTwelveColumnDayFileReadsWithTheUnitsColumnIgnored(t *testing.T) 
 		assert.False(t, len(f) == 0, "a second (model, repo) row in an eleven-column file was accepted")
 	}
 }
+
+// Row.Sources, Row.Bases and Folder.Days are never nil: an empty set is an empty slice, so a
+// caller that encodes, compares or nil-checks one sees the same value it always did.
+func TestSortedKeysIsSortedAndNeverNil(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		in   map[string]bool
+		want []string
+	}{
+		{"nil map", nil, []string{}},
+		{"empty map", map[string]bool{}, []string{}},
+		{"sorted out of insertion order", map[string]bool{"claude:b": true, "bus:a": true, "claude:a": true}, []string{"bus:a", "claude:a", "claude:b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sortedKeys(tc.in)
+			assert.NotNil(t, got)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+	assert.NotNil(t, (&Row{}).Sources())
+	assert.NotNil(t, (&Row{}).Bases())
+	assert.NotNil(t, NewFolder().Days())
+}

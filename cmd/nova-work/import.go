@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"os/exec"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -13,139 +15,166 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
 )
 
-var lookPath = exec.LookPath
-
-// now is the clock; a test fixes it.
-var now = time.Now
-
-// importFlags declares import's flags: the shared ones, --org, --out, and the
-// rules that tie --out to --dry-run and --repo to --org. It declares Prints
-// because runImport writes its own lines (GH, PLAN, REPO, IMPORT) and answers
-// tool.Exit, so the skeleton renders nothing for it and offers no --json
-// (internal/tool, Flags.Prints).
-func importFlags(f *tool.Flags) {
-	f.Prints()
-	commonFlags(f)
-	f.Required("org", "the organization")
-	f.String("out", "", "the tree file to write (created or replaced; its directory must exist). Required unless --dry-run.")
-	f.Check(func(c *tool.Call) {
-		if c.Str("out") == "" && !c.Bool("dry-run") {
-			c.Problem("--out is required unless --dry-run")
+// checkImport is import's rules over its flags, run with every other rule so
+// one invocation names every problem.
+func checkImport(c *tool.Call) {
+	org, out, dry := c.Str("org"), c.Str("out"), c.Bool("dry-run")
+	switch {
+	case out == "" && !dry:
+		c.Problem("--out is required unless --dry-run; it wants the tree file to write")
+	case out != "" && dry:
+		c.Problem("--out and --dry-run exclude each other; a dry run writes nothing")
+	case !dirExists(out):
+		c.Problem(fmt.Sprintf("the directory of --out %q does not exist; make it first, or name a file in one that does", out))
+	}
+	for _, r := range repos(c) {
+		if o, _, _ := strings.Cut(r, "/"); org != "" && o != org {
+			c.Problem(fmt.Sprintf("--repo %s is not in --org %s", r, org))
 		}
-		if c.Str("out") != "" && c.Bool("dry-run") {
-			c.Problem("--out and --dry-run exclude each other")
-		}
-		if c.Str("out") != "" && !dirExists(c.Str("out")) {
-			c.Problem(fmt.Sprintf("the directory of --out %q does not exist", c.Str("out")))
-		}
-		for _, r := range repos(c) {
-			if o, _, _ := cut(r); o != c.Str("org") && c.Str("org") != "" {
-				c.Problem(fmt.Sprintf("--repo %s is not in --org %s", r, c.Str("org")))
-			}
-		}
-	})
-	commonChecks(f)
+	}
 }
 
-// resolveGH resolves the GitHub seam: the injected q when there is one, else
-// the gh named by --gh (or on PATH), echoing the program found.
-func resolveGH(c *tool.Call, q workgh.Query) (workgh.Query, error) {
-	if q != nil {
-		return q, nil
-	}
-	prog := c.Str("gh")
-	if prog == "" {
-		prog = workgh.DefaultProgram()
-	}
-	found, err := lookPath(prog)
-	if err != nil {
-		return nil, fmt.Errorf("the GitHub CLI %q is not found (%v); install it or name it with --gh", prog, err)
-	}
-	fmt.Fprintf(c.Stdout, "GH OK path=%s\n", oneline.Field(found))
-	return workgh.GhQuery(found), nil
-}
-
-// runImport is layer 1's import (SPEC-WORK-V1 section 1.5): read-only,
+// importTree is layer 1's import (SPEC-WORK-V1 section 1.5): read-only,
 // non-destructive, every issue of every repository in scope, checked
 // through the file before it is written. tla/WorkImport.tla's Fetch and
-// WriteTree actions.
-func runImport(c *tool.Call, q workgh.Query) *tool.Out {
-	org := c.Str("org")
-	out := c.Str("out")
-	dry := c.DryRun()
-	named := repos(c)
-
-	q, err := resolveGH(c, q)
-	if err != nil {
-		return tool.Refuse(err.Error())
+// WriteTree actions. A dry run reads all the same and writes nothing.
+func (g github) importTree(c *tool.Call) *tool.Out {
+	org, out, dry := c.Str("org"), c.Str("out"), c.DryRun()
+	q, ghPath, refused := g.open(c, "import")
+	if refused != nil {
+		return refused
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.Dur("timeout"))
 	defer cancel()
-	start := now()
-	f := &workgh.Fetcher{Q: q, PageSize: c.Int("page-size"), MaxCalls: c.Int("max-calls"), Log: c.Stderr, Remaining: -1}
-	fail := func(code int, format string, a ...any) *tool.Out {
-		fmt.Fprintf(c.Stderr, "IMPORT FAILED org=%s calls=%d points=%d reason=%s\n", oneline.Field(org), f.Calls, f.Points,
-			oneline.Field(fmt.Sprintf(format, a...)))
-		return tool.Exit(code)
+	start := g.now()
+	var retries bytes.Buffer
+	f := &workgh.Fetcher{Q: q, PageSize: c.Int("page-size"), MaxCalls: c.Int("max-calls"), Log: &retries, Remaining: -1}
+	// ended gives every result, OK or not, the calls spent, the gh run and
+	// the pages retried; more are facts of its own after the calls.
+	ended := func(o *tool.Out, more ...tool.Field) *tool.Out {
+		o.Facts = append(tool.Fields{{K: "org", V: org}}, o.Facts...)
+		o.Fact("calls", f.Calls).Fact("points", f.Points)
+		o.Facts = append(o.Facts, more...)
+		o.Fact("gh", ghPath)
+		for _, l := range strings.Split(strings.TrimSpace(retries.String()), "\n") {
+			if l != "" {
+				o.Note(l)
+			}
+		}
+		return o
+	}
+	refuse := func(err error) *tool.Out {
+		o := tool.Refuse(err.Error())
+		o.Remedy = ghRemedy(ghPath)
+		if errors.Is(err, workgh.ErrBudget) {
+			o.Remedy = importAgain(c, 2*c.Int("max-calls"))
+		}
+		return ended(o)
 	}
 
-	metas, err := scope(ctx, f, org, named)
+	metas, err := scope(ctx, f, org, repos(c))
 	if err != nil {
-		return fail(2, "%v", err)
+		return refuse(err)
 	}
 	issues, est := 0, f.Calls
 	for _, m := range metas {
 		issues += m.Issues
 		est += pages(m.Issues, c.Int("page-size"))
 	}
-	fmt.Fprintf(c.Stdout, "PLAN OK org=%s repos=%d issues=%d est_calls=%d max_calls=%d page_size=%d\n",
-		oneline.Field(org), len(metas), issues, est, c.Int("max-calls"), c.Int("page-size"))
+	plan := []any{"repos", len(metas), "issues", issues, "est_calls", est, "max_calls", c.Int("max-calls"), "page_size", c.Int("page-size")}
 	if est > c.Int("max-calls") {
-		return fail(2, "the plan needs about %d calls and --max-calls is %d; narrow it with --repo or raise --max-calls", est, c.Int("max-calls"))
+		o := tool.Refuse(fmt.Sprintf("the plan needs about %d calls and --max-calls is %d; narrow it with --repo or raise --max-calls", est, c.Int("max-calls")))
+		o.Remedy = importAgain(c, est)
+		return ended(o).Item("plan", plan...)
 	}
 
 	tree := &workfile.Tree{Source: "github", Org: org, Fetched: start.UTC().Format(time.RFC3339)}
+	var perRepo [][]any
 	for _, m := range metas {
 		before := f.Calls
 		r, err := f.Issues(ctx, m)
 		if err != nil {
-			return fail(2, "%v", err)
+			return refuse(err)
 		}
 		tree.Repos = append(tree.Repos, r)
-		n := workfile.Tree{Repos: []workfile.Repo{r}}
-		cnt := n.Count()
-		fmt.Fprintf(c.Stdout, "REPO OK repo=%s issues=%d comments=%d references=%d linked_prs=%d calls=%d\n",
-			oneline.Field(m.Name), cnt.Issues, cnt.Comments, cnt.References, cnt.LinkedPRs, f.Calls-before)
+		cnt := (&workfile.Tree{Repos: []workfile.Repo{r}}).Count()
+		perRepo = append(perRepo, []any{"repo", m.Name, "issues", cnt.Issues, "comments", cnt.Comments,
+			"references", cnt.References, "linked_prs", cnt.LinkedPRs, "calls", f.Calls - before})
 	}
 
 	data, err := workfile.Encode(tree)
 	if err != nil {
-		return fail(2, "%v", err)
+		o := tool.Refuse("the tree cannot be written without loss: " + err.Error())
+		o.Remedy = "nova-work import -h"
+		return ended(o)
 	}
 	// The round trip through the file, before anything is written: the tree
 	// read back must equal what was fetched, field for field.
 	back, err := workfile.Decode("(encoded)", data, workfile.Limits(len(data)+1))
 	if err != nil {
-		return fail(1, "the encoded tree does not read back: %v", err)
+		return ended(tool.Fail("the encoded tree does not read back: " + err.Error()))
 	}
 	if diffs := workfile.Diff(back, tree, nil); len(diffs) > 0 {
 		d := diffs[0]
-		return fail(1, "the encoded tree reads back with %d differences, first %s %s %s", len(diffs), d.Kind, d.Path, d.Field)
+		return ended(tool.Fail(fmt.Sprintf("the encoded tree reads back with %d differences, first %s %s %s", len(diffs), d.Kind, d.Path, d.Field)))
 	}
-	if !dry {
-		if err := writeFile(out, data); err != nil {
-			return fail(2, "write %s: %v", out, err)
-		}
-	}
-	cnt := tree.Count()
 	outField := "-"
 	if !dry {
+		if err := writeFile(out, data); err != nil {
+			o := tool.Refuse(fmt.Sprintf("write %s: %v", out, err))
+			o.Remedy = "nova-work import -h"
+			return ended(o)
+		}
 		outField = out
 	}
-	fmt.Fprintf(c.Stdout, "IMPORT OK org=%s out=%s repos=%d issues=%d comments=%d references=%d linked_prs=%d bytes=%d sha256=%s calls=%d points=%d rest=0 seconds=%.1f dry_run=%t\n",
-		oneline.Field(org), oneline.Field(outField), cnt.Repos, cnt.Issues, cnt.Comments, cnt.References, cnt.LinkedPRs,
-		len(data), sum(data), f.Calls, f.Points, now().Sub(start).Seconds(), dry)
-	return tool.Exit(0)
+	cnt := tree.Count()
+	o := tool.Done().Fact("out", outField).Fact("repos", cnt.Repos).Fact("issues", cnt.Issues).
+		Fact("comments", cnt.Comments).Fact("references", cnt.References).Fact("linked_prs", cnt.LinkedPRs).
+		Fact("bytes", len(data)).Fact("sha256", sum(data))
+	o = ended(o, tool.Field{K: "rest", V: 0}, tool.Field{K: "seconds", V: fmt.Sprintf("%.1f", g.now().Sub(start).Seconds())})
+	o.Item("plan", plan...)
+	for _, r := range perRepo {
+		o.Item("repo", r...)
+	}
+	if dry {
+		// A dry run is not offline: it reads what the import reads. The run
+		// says so, not only the help.
+		o.Note(fmt.Sprintf("the dry run read GitHub as the import does (calls=%d, read-only) and wrote nothing", f.Calls))
+	}
+	return o
+}
+
+// importAgain is the import as it was asked, with --max-calls set to n: the
+// remedy of a run the budget stopped.
+func importAgain(c *tool.Call, n int) string {
+	return again(c, "import", []string{"org", "repo", "out", "dry-run", "page-size", "gh", "timeout", "max-calls"},
+		map[string]string{"max-calls": fmt.Sprint(n)})
+}
+
+// again is the verb as it was asked, every flag given in the order named,
+// with set's values in place of the ones given: a remedy that keeps the run's
+// inputs (CLI-STYLE (k)). Every value is one shell word (oneline.ShellWord),
+// so a path with a blank, a quote or a $ is pasted back as that path.
+func again(c *tool.Call, verb string, order []string, set map[string]string) string {
+	cmd := []string{"nova-work", verb}
+	for _, name := range order {
+		v, override := set[name]
+		switch {
+		case name == "repo":
+			for _, r := range repos(c) {
+				cmd = append(cmd, "--repo", oneline.ShellWord(r))
+			}
+		case name == "dry-run":
+			if c.Bool("dry-run") {
+				cmd = append(cmd, "--dry-run")
+			}
+		case override:
+			cmd = append(cmd, "--"+name, oneline.ShellWord(v))
+		case c.Given(name):
+			cmd = append(cmd, "--"+name, oneline.ShellWord(fmt.Sprint(c.Get(name))))
+		}
+	}
+	return strings.Join(cmd, " ")
 }
 
 // scope is the repositories a run reads: every repository of org, or the
@@ -176,13 +205,4 @@ func pages(issues, size int) int {
 		return 1
 	}
 	return (issues + size - 1) / size
-}
-
-func cut(repo string) (string, string, bool) {
-	for i := 0; i < len(repo); i++ {
-		if repo[i] == '/' {
-			return repo[:i], repo[i+1:], true
-		}
-	}
-	return repo, "", false
 }

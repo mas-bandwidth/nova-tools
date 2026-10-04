@@ -569,7 +569,7 @@ func TestToBlankIsRefused(t *testing.T) {
 			dir := t.TempDir()
 			r := invoke(t, "", replyArgs(checkout, dir, "bo-abcdef012345", body, "--to", tc.to)...).
 				mustCode(t, 2)
-			r.mustContain(t, "stderr", "DRAFT REFUSED: nova-bus draft: --to is required; refusing to guess")
+			r.mustContain(t, "stderr", "DRAFT REFUSED: --to is required; refusing to guess")
 			mustEmptyDir(t, dir)
 		})
 	}

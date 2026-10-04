@@ -210,8 +210,8 @@ func TestEveryJudgmentPrintsItsDecisionsAsCommands(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 3")
-	ta.ok("add --stream s2 --count 2")
+	ta.ok("add --stream s1 --count 3 --brief-file " + proBriefFile(t))
+	ta.ok("add --stream s2 --count 2 --brief-file " + proBriefFile(t))
 	ta.deal(100)
 	ta.ok("take --as m1 --limit 100")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1 s1-3.w1@1 s2-2.w1@1")
@@ -391,7 +391,8 @@ func TestAStoppedStreamsCommandsRunAndAnswerIt(t *testing.T) {
 			ta.toMerging("s1", "s2")
 			ta.ok("merge --stream s1 " + c.fact)
 			g := ta.group(c.typ, "s1")
-			fill := strings.NewReplacer("'<fix>'", "x", "'<why>'", "x", "'<what you did>'", "x", "'<suspect>'", "s1-3")
+			fill := strings.NewReplacer("'<fix>'", "x", "'<why>'", "x", "'<what you did>'", "x", "'<suspect>'", "s1-3",
+				"'<what you did; the lander merges again, regenerating the ledgers; a conflict outside the ledgers is answered by rework or drop>'", "x")
 			found := false
 			for _, cmd := range g.Commands {
 				if cmd.Decision != c.decision {
@@ -418,8 +419,9 @@ func TestAStoppedStreamsCommandsRunAndAnswerIt(t *testing.T) {
 func TestHelpShowsTheWorkedExample(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
-	for _, line := range []string{"help", "help inbox"} {
+	for _, line := range []string{"help", "help inbox", "inbox -h"} {
 		out := ta.ok(line)
+		require.Equal(t, 1, strings.Count(out, "reading the inbox and answering a judgment:"), "%s drops or repeats the walkthrough", line)
 		for _, want := range []string{"reading the inbox and answering a judgment:", "$ nova-sprint inbox",
 			"nova-sprint rework --group finish-0314a1b2-1.1 --expect 2 --answers finish-0314a1b2-1.1", "a group number is refused",
 			"one answer to each judgment"} {
@@ -436,6 +438,14 @@ func TestHelpShowsTheWorkedExample(t *testing.T) {
 		require.Contains(t, out, "  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator", "%s does not show the sprint done", line)
 	}
 	out := ta.ok("help inbox")
-	require.True(t, strings.HasPrefix(out, "usage: nova-sprint inbox [flags]"), "help inbox: %s", out)
+	var syntax string
+	for _, v := range verbs {
+		if v.name == "inbox" {
+			syntax = strings.TrimSpace(v.syntax)
+		}
+	}
+	first, _, _ := strings.Cut(out, "\n")
+	require.Equal(t, "usage: nova-sprint inbox "+syntax, first, "help inbox: %s", out)
+	require.NotContains(t, first, "[flags]", "help inbox usage line went back to the placeholder: %s", first)
 	require.Contains(t, out, "--open <string>", "help inbox")
 }

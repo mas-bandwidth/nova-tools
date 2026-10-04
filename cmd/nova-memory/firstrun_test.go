@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -308,12 +309,16 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
 
 	require.Truef(t, strings.HasPrefix(lines[0], "QUICKSTART RUN root="), "the first line does not say what this run chose: %q", lines[0])
-	words := field(t, lines[0], "words")
+	// The words are quoted free text at the end of the line, their spaces kept.
+	i := strings.Index(lines[0], " words=")
+	require.GreaterOrEqualf(t, i, 0, "the first line names no words: %q", lines[0])
+	words, err := strconv.Unquote(lines[0][i+len(" words="):])
+	require.NoErrorf(t, err, "the words are not one quoted value: %q", lines[0])
 	{
 		got := field(t, lines[0], "words-source")
 		assert.Equalf(t, "corpus-top-terms", got, "words-source = %q, want corpus-top-terms when --words was not given", got)
 	}
-	for _, w := range strings.Split(words, `\x20`) {
+	for _, w := range strings.Split(words, " ") {
 		assert.Falsef(t, quickstartFunctionWords[w], "the demonstration query offers %q, a function word, as one of this corpus's own terms", w)
 	}
 	assert.Equalf(t, "QUICKSTART OK done=3", lines[len(lines)-2], "the line before NOTE is\n  %s\nwant\n  %s", lines[len(lines)-2], "QUICKSTART OK done=3")
@@ -327,7 +332,7 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 	// forgets the other fails here.
 	steps := []struct{ echo, token string }{
 		{"$ nova-memory stats --root " + corpus, "STATS"},
-		{"$ nova-memory search --root " + corpus + " --channels bm25 --k 3 " + strings.ReplaceAll(words, `\x20`, " "), "SEARCH"},
+		{"$ nova-memory search --root " + corpus + " --channels bm25 --k 3 " + words, "SEARCH"},
 		{"$ nova-memory check --root " + corpus + " --channels bm25 --k 2 -", "MEMORY"},
 	}
 	at := 0
@@ -700,6 +705,28 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	}
 	require.Equalf(t, strings.Join(firstRun, "\n"), strings.Join(flat, "\n"), "the two readers of `### First run` disagree:\nblocks:\n%s\nFirstRun:\n%s",
 		strings.Join(flat, "\n"), strings.Join(firstRun, "\n"))
+
+	// docs/CLI.md shows the same first run, and it is this one: the command reference's
+	// transcript is the executed one, line for line, so it cannot drift from the tool.
+	cli, err := os.ReadFile(filepath.Join(root, "docs", "CLI.md"))
+	require.NoError(t, err)
+	cliRun, err := onboarding.FirstRun(string(cli), "nova-memory")
+	require.NoError(t, err)
+	assert.Equal(t, firstRun, cliRun, "CLI.md's `### First run` for nova-memory is not the transcript this test executes")
+	// And the help's search and check examples are the sitting's two commands.
+	helpExamples, err := onboarding.ExampleLines(usage, "nova-memory")
+	require.NoError(t, err)
+	var examples []string
+	for _, ex := range helpExamples {
+		examples = append(examples, strings.Join(strings.Fields(ex), " "))
+	}
+	for _, ex := range []string{
+		"nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass",
+		"nova-memory check --root ./corpus --channels bm25 --k 3 draft.md",
+	} {
+		assert.Contains(t, examples, ex, "the help's example block does not hold %q", ex)
+		assert.Contains(t, flat, "$ "+ex, "the sitting does not run %q", ex)
+	}
 
 	require.Lenf(t, blocks, 2, "`### First run` holds %d fenced blocks, want 2: the quickstart transcript and the two-verb sitting", len(blocks))
 	require.Truef(t, strings.HasPrefix(blocks[0][0], "$ nova-memory quickstart "), "the first `### First run` block does not open on the quickstart command: %q", blocks[0][0])
