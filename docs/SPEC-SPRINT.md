@@ -644,6 +644,12 @@ line, never FAILED: the table holds what the step wrote.
 
 ## 2. The cards
 
+Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a
+card is one instruction, the coordinator is the front end that issues it, and
+one `wait` kind whose operand names what it waits for replaces the hold, the
+sentinel and the wave. The kinds there are the vocabulary the layer's model
+checks.
+
 **Primary.** One unit of work, between an issue and a pull request. One stream
 for life. Fields: stream, score, brief, rules (the held rules file the member injects, section 2's rules by reference), who (the friend its brief's WHO line names, section 1, a friend's card), needs, head, attempt, fix, finding and why (a rework's, kept
 for the attempt a rework with no member up deals later), work (its live
