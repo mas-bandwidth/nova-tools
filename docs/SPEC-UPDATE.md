@@ -47,7 +47,7 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
    is a refusal naming the line number, exit 2, never a skip. A manifest with several problems is refused ONCE, naming every one of them with its line (the header, each line's bad fields, each bad line; at most fifty, the rest counted as `and <n> more`), so a file is fixed in one pass. No graph, no lockfile.
 3. **A command is argv, never a shell.** `installed`, `apply` and `local:<argv>`
    — this tool's three exec sites — are split on single spaces and executed directly: no
-   shell, no pipe, no glob, no `&&`, no environment expansion. An argument needing a space
+   shell, no pipe, no glob, no `&&`, no environment expansion. An argument needing whitespace
    is refused at load time with the remedy *put it in a script and name the script* — as
    is a field carrying two adjacent spaces or a leading or trailing one, so the split
    never makes an empty argument. This makes the argument boundary provable.
@@ -393,10 +393,10 @@ One header line, then one entry per line, tabs between fields; `#` opens a comme
 
 ```
 name	kind	installed	latest	apply	owner
-gh	tool	gh --version	github:cli/cli	brew upgrade gh	rowan
-sops	tool	sops --version --disable-version-check	github:getsops/sops	brew upgrade sops	rowan
-opencode	harness	opencode --version	npm:opencode-ai	npm install -g opencode-ai@{version}	freddy
-qwen3-coder:30b	model	ollama list	ollama:qwen3-coder:30b	none	stella
+gh	tool	gh --version	github:cli/cli	brew upgrade gh	the repository owner
+sops	tool	sops --version --disable-version-check	github:getsops/sops	brew upgrade sops	the repository owner
+opencode	harness	opencode --version	npm:opencode-ai	npm install -g opencode-ai@{version}	the repository owner
+qwen3-coder:30b	model	ollama list	ollama:qwen3-coder:30b	none	the repository owner
 ```
 
 `owner` is the line who answers when that entry is not current, on every STALE, NEWER or
@@ -456,7 +456,7 @@ carries, and what `pull` deletes.
   green either. It then reads the highest existing version tag, compares it to the head,
   **classifies the range against the sensitive path list** (SPEC-RELEASE §1: a range that
   touches one of those prefixes, or that is too big for the forge to list, refuses until
-  `--security-read` names Johnny's read, and then says so on a
+  `--security-read` names the security reader's read, and then says so on a
   `RELEASE CUT SENSITIVE paths=… read=…` line), writes a new `--changelog` section from the
   pull requests merged since (their numbers, their titles, and for an integration batch the
   members named in its own body, so a batch does not hide ten pieces of work behind one
@@ -892,7 +892,7 @@ Beside those: the first-run block runs against the fixture, compared by shape pe
 ONBOARDING.md 5(c); `nova-update help` prints the verbs block on stdout, exit 0; a
 bare invocation or a flag typo costs one line, never a banner.
 
-## Open questions — each with a default, and the default stands unless Glenn says otherwise
+## Open questions — each with a default, and the default stands unless the coordinator says otherwise
 
 1. **Ollama publishes no JSON API, but its registry speaks registry-v2.** Default: rule 4a's
 one manifest GET, digest as text; the rejected alternative, scraping
