@@ -915,6 +915,7 @@ nova-sprint start
 nova-sprint stop
 nova-sprint run [--answer-rules=false] [--idle-alarm=false]
 nova-sprint tick [--answer-rules] [--idle-alarm]
+nova-sprint selftest [--dir <d>] [--keep]
 nova-sprint goal set <name> [--file <path>] [--to file:<path>]
 nova-sprint goal show [<name>]
 nova-sprint goal drop <name>

@@ -313,8 +313,10 @@ under `--check`, which restarts nothing). A member's unit (a record whose argv
 runs `nova-swarm member`, a reader's too) is never killed mid-card
 (nova-tools#5096 items 25, 26): its unit signals the member alone (systemd
 `KillMode=mixed`; launchd signals the job's process and abandons its group)
-and waits `nova_member_stop_timeout` (7260 s, a minute above the member's
-longest drain) before it kills anything, and the member drains on that SIGTERM:
+and waits `nova_member_stop_timeout` (180 s, a minute above the member's
+longest drain, which is bounded at two minutes: a member that drains does no
+new work, so the restart gives the machine back and the cards still running are
+redealt) before it kills anything, and the member drains on that SIGTERM:
 it takes no new card, lets its running cards finish and reports them, then
 exits (at once when it runs none). So the restart is the drain: the play waits
 for it (on darwin until launchd no longer holds the member) and then starts the
