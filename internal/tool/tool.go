@@ -13,7 +13,10 @@
 // the object stay one value. A tool whose exit 0 already means CLEAR sets
 // HelpRefused, and `<verb> -h` is then a refusal at exit 2 naming `help`, never
 // an answer at exit 0. A tool may name a default verb (`<tool> <file>`) and its
-// own status words (STALE beside FAIL). A command holds only what its verbs do.
+// own status words (STALE beside FAIL). A verb may be hidden (Verb.Hidden): it
+// runs and answers `-h`, and the banner, the usage block and the unknown-verb
+// list do not show it, a probe step verb a user never types. A command holds
+// only what its verbs do.
 package tool
 
 import (
@@ -95,6 +98,7 @@ type Verb struct {
 	Detail    string         // lines `help <verb>` prints above its flags: a format, a worked example
 	ExitTable string         // this verb's exit codes, quoted by its -h; "" quotes the tool's
 	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
+	Hidden    bool           // the verb runs and answers -h and `help <it>`, but the banner, the usage block and the verb lists a refusal names do not show it: a probe step verb a user never types (STANDARD §3, help is never a refusal; §2, a list names the verbs there are for the reader)
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
 	Run       func(c *Call) *Out
 }
@@ -371,9 +375,24 @@ func (t *Tool) verbs() []Verb {
 	})
 }
 
+// shown is the verbs every list the tool prints names: the banner's usage and
+// example blocks, the --json sentence and a refusal's verb list. A hidden verb
+// (Verb.Hidden) is off every one of them, while it runs and answers help like
+// any verb (STANDARD §2: an unknown name is answered with the names there are
+// for the reader, and a probe step verb is not one of them).
+func (t *Tool) shown() []Verb {
+	var vs []Verb
+	for _, v := range t.verbs() {
+		if !v.Hidden {
+			vs = append(vs, v)
+		}
+	}
+	return vs
+}
+
 func (t *Tool) names() []string {
 	var names []string
-	for _, v := range t.verbs() {
+	for _, v := range t.shown() {
 		names = append(names, v.Name)
 	}
 	return names
@@ -392,7 +411,7 @@ func (t *Tool) Banner() string {
 		b.WriteString(HowLabel + how + "\n\n")
 	}
 	b.WriteString("usage:\n")
-	for _, v := range t.verbs() {
+	for _, v := range t.shown() {
 		for _, l := range lines(v.Usage) {
 			fmt.Fprintf(&b, "  %s %s\n", t.Name, l)
 		}
@@ -402,7 +421,7 @@ func (t *Tool) Banner() string {
 		b.WriteString(t.UsageNote + "\n\n")
 	}
 	var own []string
-	for _, v := range t.verbs() {
+	for _, v := range t.shown() {
 		if v.flags().prints {
 			own = append(own, v.Name)
 		}
@@ -418,7 +437,7 @@ func (t *Tool) Banner() string {
 	b.WriteString(json + ": " + why + ". A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
 	b.WriteString("example:\n")
-	for _, v := range t.verbs() {
+	for _, v := range t.shown() {
 		for _, l := range lines(v.Example) {
 			fmt.Fprintf(&b, "  %s %s\n", t.Name, l)
 		}
