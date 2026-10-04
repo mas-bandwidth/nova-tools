@@ -1,6 +1,6 @@
 // The egress wall is the card's OUTBOUND half: the filesystem wall this package builds
 // everywhere else says what a card may read and write, and this file says what it may
-// talk to. Johnny's design page of 2026-09-18 is the contract:
+// talk to. The coordinator's design page of 2026-09-18 is the contract:
 //
 //	Where: nftables on the bench, applied to the slirp/pasta veth of each `podman run`.
 //	Not an env list the worker applies (the worker is the adversary). Not --network=host.
@@ -38,7 +38,7 @@ import (
 	"strings"
 )
 
-// EgressBaseNames are the three names EVERY card gets, fixed by Johnny's page. They are
+// EgressBaseNames are the three names EVERY card gets, fixed by the coordinator's page. They are
 // named here AND asserted present in infra/image/egress.txt: the file is the contract, and
 // this constant is checked against it rather than trusted beside it.
 var EgressBaseNames = []string{"github.com", "api.github.com", "objects.githubusercontent.com"}
