@@ -151,27 +151,27 @@ func TestKeptQueueAsksTheForgeOncePerKeep(t *testing.T) {
 func TestForgeRepoReadsOnlyAnAddressOnTheForge(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ repo, owner, name string }{
-		{"https://forge.example/o/r.git", "o", "r"},
-		{"https://forge.example/o/r", "o", "r"},
-		{"https://forge.example/o/r/", "o", "r"},
-		{"git@forge.example:o/r.git", "o", "r"},
-		{"ssh://git@forge.example/o/r.git", "o", "r"},
+		{"https://forge.test/o/r.git", "o", "r"},
+		{"https://forge.test/o/r", "o", "r"},
+		{"https://forge.test/o/r/", "o", "r"},
+		{"git@forge.test:o/r.git", "o", "r"},
+		{"ssh://git@forge.test/o/r.git", "o", "r"},
 		{"/srv/git/r.git", "", ""},
 		{"", "", ""},
 		{"https://example.com/o/r.git", "", ""},
-		{"https://forge.example/o", "", ""},
-		{"https://forge.example/o/r/tree/main", "", ""},
+		{"https://forge.test/o", "", ""},
+		{"https://forge.test/o/r/tree/main", "", ""},
 	} {
 		t.Run(c.repo, func(t *testing.T) {
 			t.Parallel()
-			owner, name, ok := forgeRepo("forge.example", c.repo)
+			owner, name, ok := forgeRepo("forge.test", c.repo)
 			assert.Equal(t, c.owner != "", ok)
 			if ok {
 				assert.Equal(t, [2]string{c.owner, c.name}, [2]string{owner, name})
 			}
 		})
 	}
-	held, err := ghMergeQueue{host: "forge.example"}.HoldsGroup(context.Background(), "/srv/git/r.git", "main")
+	held, err := ghMergeQueue{host: "forge.test"}.HoldsGroup(context.Background(), "/srv/git/r.git", "main")
 	require.NoError(t, err, "a repository on no forge asks nothing")
 	assert.False(t, held)
 }
