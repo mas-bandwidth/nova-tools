@@ -78,6 +78,8 @@ func init() {
 		{"friend down", "<friend>", "friend down friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(true, args, o, e) }},
 		{"friend up", "<friend>", "friend up friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(false, args, o, e) }},
 		{"friend clean", "[--pg <dsn> | --file <path>] [--root <dir>] [--days <n>] [--dry-run]", "friend clean --dry-run", (*app).cmdFriendClean},
+		{"selftest land", "[--dir <empty dir>]", "selftest land", (*app).cmdSelftestLand},
+		{"server switch", "<binary> --install <path> --log <file> [--keep <path>] [--restart <command>] [--window <duration>] [--every <duration>] [--dry-run] | --rollback --install <path> [--keep <path>] [--restart <command>]", "server switch nova-sprint.new --install bin/nova-sprint --log run.log --dry-run", (*app).cmdServerSwitch},
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
 		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
 		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
@@ -170,7 +172,7 @@ release). The
 coordinator's verbs are the coordinator's alone (the first init names it:
 --coordinator, else the actor); take, finish, read, fleet beat and friend
 beat are the workers', whose actor is the member, reader or friend named; merge and ci are
-reports; tick, run and friend clean are the machine's; the reads need no actor (inbox
+reports; tick, run, friend clean, selftest land and server switch are the machine's; the reads need no actor (inbox
 --read, which moves the coordinator's cursor, is the coordinator's). The seat
 moves by coordinator <name> --reason <text>: given by its holder or the owner
 (init --owner), or taken by <name> itself with --take --approved-by <owner>,

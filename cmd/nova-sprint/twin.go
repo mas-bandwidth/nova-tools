@@ -40,26 +40,9 @@ func (a *app) twinOpen(addr string) bool { return a.twins[addr] != nil }
 // real: on a twin, through a bare repository standing for the forge, the worker
 // finishing at its pushed commit (--head) and the coordinator landing with land
 // (git merges, pushes and reports in one step). A line not of nova-sprint is the
-// shell's. walkthrough_real_test.go runs it as written.
-var realSteps = []string{
-	"git init -q --bare origin.git && git clone -q origin.git work",
-	"git -C work commit -q --allow-empty -m base && git -C work push -q origin HEAD:main",
-	"nova-sprint init --readers reader-a,reader-b --members m1",
-	"nova-sprint add --stream s1 --count 1",
-	"nova-sprint start",
-	"nova-sprint tick",
-	"nova-sprint tick",
-	"nova-sprint take --as m1 --epoch 0",
-	"git -C work commit -q --allow-empty -m s1-1 && git -C work push -q origin HEAD:sprint/s1-1.w1.g1.e0",
-	`nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --head "$(git -C work rev-parse HEAD)" --report done`,
-	"nova-sprint tick",
-	"nova-sprint read --as reader-a --begin --epoch 0",
-	"nova-sprint read --as reader-a --ok --epoch 0",
-	"nova-sprint tick",
-	"nova-sprint land --stream s1 --repo-dir work --base main",
-	"nova-sprint tick",
-	"nova-sprint where",
-}
+// shell's. walkthrough_real_test.go runs it as written, and selftest land runs it as
+// the canned card (internal/sprint, SelftestLines).
+var realSteps = sprint.SelftestLines
 
 // twinSteps is the same flow with no git, as the first-run transcript
 // (docs/TESTS.md) records it: the finish names no head (it is then the card's

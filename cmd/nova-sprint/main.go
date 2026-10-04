@@ -170,6 +170,10 @@ type app struct {
 	briefRecord   func() (string, error)
 	briefBar      func(ctx context.Context) (string, error)
 	gateOnly      *briefAsked
+	// selftestRun, when set (a test), stands in for `<binary> selftest land` in server
+	// switch, and restart for its restart command (selftest.go): nil runs them.
+	selftestRun func(ctx context.Context, binary string) error
+	restart     func(ctx context.Context, command string) error
 }
 
 func newApp(getenv func(string) string) *app {

@@ -155,6 +155,8 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 			continue // ticks for ever; tick is its one tick
 		case "dashboard":
 			continue // serves until interrupted, and reads as where does, which is here
+		case "selftest land":
+			continue // lands the canned card on a twin and a clone of its own, never this store (selftest_test.go)
 		case "play":
 			lines = append(lines, v.example+" --ticks 2")
 			continue

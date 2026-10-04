@@ -2164,7 +2164,7 @@ coordinator takes init and teardown only. The workers' verbs (take, finish,
 read, fleet beat, friend beat) are anyone's who names the member, reader or friend, and their
 actor is that name, whatever `--actor` or NOVA_SPRINT_ACTOR say: the record
 names the worker the verb was run as, as the server's does. The reports (merge, ci) want an
-actor; the machine's verbs (tick, run, friend clean) are recorded as the machine; the reads
+actor; the machine's verbs (tick, run, friend clean, selftest land, server switch) are recorded as the machine; the reads
 (queue, inbox, card, check, where, dashboard, goal show) need no actor, except `inbox
 --read`, which moves the coordinator's cursor and is the coordinator's alone:
 anyone reads the inbox, and nothing another actor does hides anything from
@@ -2216,6 +2216,8 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | fleet | `up|down <member>`, `level`; down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 10 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
+| selftest land | lands the canned card with this binary on a scratch clone (section 14, switching the server's binary): `selftest land [--dir <empty dir>]`, the machine's, never the store's; exit 0 `SELFTEST OK land card= base= head= tip= took=`, 1 `SELFTEST FAILED land step= dir=` naming the line that failed or the landing the base lacks, 2 usage |
+| server switch | the server's binary replaced by a new build whose selftest land is green, the previous one kept, and put back when a land fails in the window (section 14, switching the server's binary): `server switch <binary> --install <path> --log <file> [--keep <path>] [--restart <command>] [--window <duration>] [--every <duration>] [--dry-run]`, or `server switch --rollback --install <path> [--keep <path>] [--restart <command>]`; the machine's, never the store's; exit 0 `SWITCH OK`, 1 refused with nothing changed or rolled back, 2 usage, 3 the rollback failed |
 | friend beat | a friend's beat, `friend beat <friend>`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and nothing more |
 | friend down, friend up | hold a friend (status `held`, whatever it beats) and release the hold (not a beat: `down` until she beats) |
 | reader add | declares readers |
@@ -2620,6 +2622,41 @@ The server is `serve` in cmd/nova-sprint/serve.go, a step with no network in it;
 a shell around it; the wire and the worker's client are internal/sprintwire. Each rule here has a
 test in cmd/nova-sprint/serve_test.go and internal/sprintwire/worker_test.go, and none opens a
 socket.
+
+### Switching the server's binary
+
+A release build that breaks the lander lands nothing for as long as it serves, and the server
+replaced by hand (the old binary copied aside, the new one copied in, a restart, the LAND lines
+watched) is put back by hand. Two verbs of the machine do it, and neither reads or writes the
+sprint's store.
+
+`selftest land` lands the canned card with the binary that runs it: the flow nova-sprint help
+walks through (`SelftestLines`, internal/sprint/selftest.go), in a scratch directory (`--dir`, an
+empty one, else a new one under nova-sprint/selftest in the user's cache directory, removed when
+green and kept when red): a twin file,
+a bare repository standing for the forge, the worker's clone, every verb of the flow run with
+this binary's code on the twin, git with no global or system configuration and an identity of
+its own, and land merging and pushing in the clone. Every line must answer 0, and after the
+last the base on the bare origin must hold the landing, `land s1-1 (sprint stream s1)` on its
+first-parent line with the card's head below it: a lander that says it landed and pushed nothing
+is red. Green is `SELFTEST OK`, exit 0; red is `SELFTEST FAILED` naming the step and the line,
+exit 1, and the build is not to be installed.
+
+`server switch <binary>` replaces the installed binary (`--install`, a link followed to the file
+it names) in this order, each step only after the one before took: `<binary> selftest land` (red:
+refused, nothing changed); the installed binary kept (`--keep`, else `<install>.prev`); the new
+binary written in its place, whole or not at all; the restart (`--restart <command>`, by `sh -c`;
+none: the run loop stops on its replaced binary and its supervisor starts the new one, section
+14, run); then the window (`--window`, ten minutes), the server's log (`--log`, the file its
+supervisor writes `run --land`'s output to) read from where it ended at the start every
+`--every`. A land line that fails through no card (`LAND FAILED`, or a `LAND REFUSED` that
+records no fact: git failed for a reason of its own) puts the kept binary back and restarts
+again, exit 1; a refusal with a fact (conflict, red, rejected) is a card's and changes nothing; a
+`LAND OK` confirms the new binary and ends the window; a window that passes with no land keeps it.
+`--rollback` puts the kept binary back and restarts, alone. A rollback that cannot be made is exit
+3, and the line names the copy to make by hand. `--dry-run` reads nothing and runs nothing. The
+steps are `sprint.Switch` (internal/sprint/switch.go), the restart and the log given to it, so
+its tests run on an install in a test's own directory with a fake restart and touch no service.
 
 ## 15. Reminders
 
