@@ -44,10 +44,11 @@ type InboxReq struct {
 	Open     []Open
 	Recent   []Note // since the cursor, oldest first
 	Streams  []StreamClock
-	Deadline time.Duration // a judgment open longer, in running time, is overdue
-	Stale    time.Duration // a moving stream unchanged longer, in running time, needs a look
-	Prefix   string        // the deployment's prefix (empty for none), for the commands that name it
-	Epoch    uint64        // the sprint's epoch: the stale groups' ids carry it
+	Deadline time.Duration  // a judgment open longer, in running time, is overdue
+	Stale    time.Duration  // a moving stream unchanged longer, in running time, needs a look
+	Prefix   string         // the deployment's prefix (empty for none), for the commands that name it
+	Epoch    uint64         // the sprint's epoch: the stale groups' ids carry it
+	Weights  map[string]int // each open primary's weight (sprint.Weights): the heaviest judgments first
 	// Stopped is the time the machine was STOPPED between two clock
 	// readings: the deadlines count running time only, as the tick's do. nil
 	// is none.
@@ -118,6 +119,7 @@ type Group struct {
 	Decisions []string      `json:"decisions,omitempty"`
 	What      string        `json:"what,omitempty"`
 	Before    int           `json:"before,omitempty"`
+	Behind    int           `json:"behind,omitempty"`   // the heaviest of its primaries' weights (weight.go)
 	Suspects  []string      `json:"suspects,omitempty"` // a red branch: the suspects named
 	// Commands is every decision open to the coordinator as the commands
 	// that make it, filled in: the group's id, --expect and --answers.
@@ -247,10 +249,17 @@ func Inbox(r InboxReq) []Group {
 		sort.Strings(judg[i].Notes)
 		judg[i].Commands = commands(judg[i], first[i], r.Prefix)
 		judg[i].Quiet = !loud[i]
+		for _, m := range judg[i].Members {
+			judg[i].Behind = max(judg[i].Behind, r.Weights[m])
+		}
 	}
+	// marked first, then the heaviest (the cards most wait on, weight.go), then the oldest
 	sort.SliceStable(judg, func(i, j int) bool {
 		if judg[i].Marked != judg[j].Marked {
 			return judg[i].Marked
+		}
+		if judg[i].Behind != judg[j].Behind {
+			return judg[i].Behind > judg[j].Behind
 		}
 		return judg[i].Oldest.Before(judg[j].Oldest)
 	})
@@ -421,13 +430,13 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "release":
 				add(d, cmd+"release "+ids+" --reason '<what you looked at and found>'"+ans)
 			case "do more before going on":
-				add(d, cmd+"add --stream "+s+" --before "+card+" '<new id>' --brief '<brief>'")
+				add(d, cmd+"add --stream "+s+" --before "+card+" '<new id>' --brief '<brief>' --one")
 			case "drop":
 				add(d, cmd+"drop "+ids+" --reason "+whyText+ans)
 			}
 		case g.Type == NScoredLow && d == "add a repair card":
 			// the work landed: its repair is a new card, then the judgment is answered by ack
-			add(d, append(look(), cmd+"add --stream "+s+" '<fix id>' --brief '<the finding: file:line, the class, the wanted text>'",
+			add(d, append(look(), cmd+"add --stream "+s+" '<fix id>' --brief '<the finding: file:line, the class, the wanted text>' --one",
 				cmd+"ack "+strings.Join(g.Notes, ",")+" --reason 'repair card <fix id> added'")...)
 		case g.Type == NStreamStale:
 			add(d, cmd+"where", cmd+"queue --stream "+s)
@@ -439,9 +448,9 @@ func commands(g Group, first Note, prefix string) []Command {
 				// answered by rework or drop
 				add(d, resume("'<what you did; the lander merges again, regenerating the ledgers; a conflict outside the ledgers is answered by rework or drop>'"))
 			case "rework":
-				add(d, cmd+"return "+card+" --reason conflict", cmd+"rework "+card+" --fix "+fixText, resume("'returned "+card+" for rework'"))
+				add(d, cmd+"return "+card+" --reason conflict", cmd+"rework "+card+" --fix "+fixText+" --one", resume("'returned "+card+" for rework'"))
 			case "drop":
-				add(d, cmd+"drop "+card+" --reason "+whyText+ans, resume("'dropped "+card+"'"))
+				add(d, cmd+"drop "+card+" --reason "+whyText+ans+" --one", resume("'dropped "+card+"'"))
 			}
 		case g.Type == NRed:
 			ret := cmd + "return " + suspects + " --reason 'suspect of the red batch'" + ans
@@ -449,7 +458,7 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "take the suspect off and resume":
 				add(d, append(listBatch, ret, resume("'returned "+strings.Trim(suspects, "'")+"'"))...)
 			case "rework the suspect":
-				add(d, append(listBatch, ret, cmd+"rework "+suspects+" --fix "+fixText, resume("'returned "+strings.Trim(suspects, "'")+" for rework'"))...)
+				add(d, append(listBatch, ret, cmd+"rework "+suspects+" --fix "+fixText+" --one", resume("'returned "+strings.Trim(suspects, "'")+" for rework'"))...)
 			}
 		case g.Type == NCross:
 			switch d {
@@ -462,7 +471,14 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "return":
 				add(d, cmd+"return "+card+" --reason "+whyText+ans, resume("'returned "+card+"'"))
 			case "drop":
-				add(d, cmd+"drop "+card+" --reason "+whyText+ans, resume("'dropped "+card+"'"))
+				add(d, cmd+"drop "+card+" --reason "+whyText+ans+" --one", resume("'dropped "+card+"'"))
+			}
+		case g.Type == NBaseRed:
+			switch d {
+			case "resume":
+				add(d, resume("'<the base passes its tree gate again>'"))
+			case "wait":
+				add(d, cmd+"wait "+first.ID+" --for 30m")
 			}
 		case g.Type == NRejected:
 			switch d {
@@ -485,6 +501,10 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"accept"+grp+ans)
 		case d == "ask another reader":
 			add(d, cmd+"ask"+subj+" --another"+subjAns)
+		case d == "brief":
+			// the brief is wrong, not the worker (brief_bound.go): replaced while the card waits,
+			// else dropped and added again corrected; the placeholder keeps it the coordinator's
+			add(d, cmd+"brief"+subj+" --brief-file '<the corrected brief>'"+subjAns)
 		case d == "drop":
 			add(d, cmd+"drop"+subj+" --reason "+whyText+subjAns)
 		case d == "return":
@@ -518,8 +538,16 @@ func commands(g Group, first Note, prefix string) []Command {
 		case strings.HasPrefix(d, "merge --stream "):
 			// a merge step is a report: it names its epoch, the judgment's
 			add(d, cmd+d+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))
-		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "goal "):
+		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "fleet up ") || strings.HasPrefix(d, "reader up ") || strings.HasPrefix(d, "goal "):
 			add(d, cmd+d)
+		case d == "promoted":
+			add(d, cmd+"promoted --sha '<merge sha>'"+ans)
+		case d == "wait 15m" || d == "wait 10m" || d == "wait 30m":
+			add(d, cmd+"wait "+cmp.Or(first.ID, g.ID)+" --for "+strings.TrimPrefix(d, "wait "))
+		case strings.HasPrefix(d, "restart "):
+			// a reader reading under its width: its loop unit is nova-config's record of
+			// the reader's name; restarted, it reads its machine's width (readers_behind.go)
+			add(d, "nova-config loop show "+strings.TrimPrefix(d, "restart ")+"  # restart this loop's unit on its machine: it reads its machine row's width at start")
 		case strings.HasPrefix(d, "funded "):
 			add(d, cmd+d+" --reason '<the payment made>'")
 		case d == "ack":

@@ -22,8 +22,8 @@ func heldAndWaiting(t *testing.T) (*testApp, sprint.Group) {
 	t.Helper()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
-	ta.ok("add --stream s2 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
+	ta.ok("add --stream s2 --count 1 --one")
 	ta.deal(2)
 	ta.failOnce("m1", "s1-1.w1@1", "tests red")
 	held := ta.group(sprint.NWorkFailed, "s1")
@@ -73,7 +73,7 @@ func TestInboxWaitWakesOnlyForANewJudgment(t *testing.T) {
 	// --json carries the new groups' ids, and woke.
 	ta.atSleep(func(n int) {
 		if n == 2 {
-			ta.ok("add --stream s3 --count 1")
+			ta.ok("add --stream s3 --count 1 --one")
 			ta.deal(1)
 			ta.failOnce("m1", "s3-1.w1@1", "tests red")
 			ta.ok("tick")
@@ -203,10 +203,10 @@ func TestAckTakesTheCommaListInboxPrints(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.ok("drop s1-1 --reason obsolete")
-	ta.ok("add --stream s2 b --needs s1-1")
-	ta.ok("add --stream s2 c --needs s1-1")
+	ta.ok("add --stream s2 b --one --needs s1-1")
+	ta.ok("add --stream s2 c --one --needs s1-1")
 	g := ta.group(sprint.NBlocked, "s2")
 	require.Len(t, g.Notes, 2, "%+v", g)
 	var line string
@@ -229,7 +229,7 @@ func TestAckTakesTheCommaListInboxPrints(t *testing.T) {
 func TestInboxPushThroughTheServerWritesTheGroupWhole(t *testing.T) {
 	t.Parallel()
 	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1:2",
-		"nova-sprint add --stream s1 --count 1 --brief-file "+proBriefFile(t), "nova-sprint start", "nova-sprint tick", "nova-sprint tick",
+		"nova-sprint add --stream s1 --count 1 --one --brief-file "+proBriefFile(t), "nova-sprint start", "nova-sprint tick", "nova-sprint tick",
 		"nova-sprint take --as m1 --limit 1", "nova-sprint finish --as m1 --epoch 0 s1-1.w1@1")
 	clock := r.a.now()
 	r.a.now = func() time.Time { return clock }

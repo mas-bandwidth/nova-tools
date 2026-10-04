@@ -56,7 +56,7 @@ func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
 	var out, errs bytes.Buffer
 	c := update.Main("nova-update", []string{"report", "--send"}, "", &out, &errs)
 	require.Equal(t, 2, c, fmt.Sprint(c))
-	for _, flag := range []string{"--file", "--as", "--to", "--bus", "--remote", "--branch"} {
+	for _, flag := range []string{"--file", "--as", "--to"} {
 		require.Contains(t, errs.String(), flag, "missing "+flag+": "+errs.String())
 	}
 	require.LessOrEqual(t, strings.Count(errs.String(), "\n"), 2, "refusal printed a banner")

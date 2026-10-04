@@ -262,6 +262,18 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			return a.readFailed("queue", err, stderr)
 		}
 		add(sprint.Merge, cs)
+		// a merge card carries no head: it is the primary's, read here with the queue
+		mg, err := st.ReadCells(ctx, sprint.Work, *stream, sprint.Merging)
+		if err != nil {
+			return a.readFailed("queue", err, stderr)
+		}
+		for _, m := range mg {
+			for i := range cards {
+				if cards[i].ID == m.ID {
+					cards[i].Head, cards[i].Attempt = m.F("head"), m.Int("attempt")
+				}
+			}
+		}
 	} else {
 		var mine []*sprint.Card
 		for _, t := range []struct{ table, a, b string }{{sprint.Readers, sprint.Asked, sprint.Reading}, {sprint.Fleet, sprint.Ready, sprint.Working}} {
@@ -463,6 +475,7 @@ type whereView struct {
 	Tables      map[string]map[string]map[string]string `json:"tables"` // table -> row -> column -> cell as printed
 	Streams     []sprint.StreamClock                    `json:"streams"`
 	Stalled     []string                                `json:"stalled,omitempty"`
+	Critical    []sprint.CriticalCard                   `json:"critical,omitempty"` // the five heaviest (weight.go)
 	Coordinator string                                  `json:"coordinator,omitempty"`
 	Pending     string                                  `json:"pending,omitempty"`
 	Epoch       uint64                                  `json:"epoch"`
@@ -479,7 +492,11 @@ type whereView struct {
 	// Cards and Judgments are where --json --cards's, read for the dashboard's pull routes
 	// (store.Dealt): every work card dealt to a fleet row and not finished, and the open
 	// judgments naming one of their primaries; absent without --cards.
-	Cards     []dealtCard   `json:"cards,omitempty"`
+	Cards []dealtCard `json:"cards,omitempty"`
+	// Merging is where --json --cards's merge queue with heads: every primary merging, its
+	// stream, its head and its attempt, so a program reads the queue and the heads in one call
+	// (merge --landed names a card by id@head); absent without --cards.
+	Merging   []mergingCard `json:"merging,omitempty"`
 	Judgments []judgmentRef `json:"judgments,omitempty"`
 	// Rows is where --json --rows's: every primary's row of the work table, in work
 	// order, its fields but the brief; absent without --rows.
@@ -492,6 +509,9 @@ type whereView struct {
 	Width  int    `json:"width"`
 	Buffer string `json:"buffer"`
 	Low    bool   `json:"low"`
+	// Friends is the friends table's rows with what each friend's last beat reported (her
+	// load and her own counts, friend beat), beside the table's counts, which are the sprint's.
+	Friends []store.FriendRow `json:"friends,omitempty"`
 }
 
 // dealtCard is a work card dealt to a fleet row and not finished: the row (a machine, or a
@@ -507,6 +527,24 @@ type dealtCard struct {
 	Since    time.Time `json:"since,omitzero"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Branch   string    `json:"branch"`
+}
+
+// mergingCard is a primary merging: its stream, the head its merge would land, its attempt.
+type mergingCard struct {
+	ID      string `json:"id"`
+	Stream  string `json:"stream"`
+	Head    string `json:"head"`
+	Attempt int    `json:"attempt,omitempty"`
+}
+
+// mergingView is the merging primaries, by stream then id.
+func mergingView(cs []*sprint.Card) []mergingCard {
+	out := make([]mergingCard, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, mergingCard{ID: c.ID, Stream: c.Row, Head: c.F("head"), Attempt: c.Int("attempt")})
+	}
+	slices.SortFunc(out, func(a, b mergingCard) int { return cmp.Or(cmp.Compare(a.Stream, b.Stream), cmp.Compare(a.ID, b.ID)) })
+	return out
 }
 
 // judgmentRef is an open judgment naming a dealt card's primary: its note and its kind.
@@ -653,6 +691,7 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				return "", a.readFailed("where", err, stderr), false
 			}
 			v.Cards, v.Judgments = dealtView(d, st.Names.Prefix, v.Epoch)
+			v.Merging = mergingView(d.Merging)
 		}
 		if r.c.json && r.rows {
 			s, err := st.Load(ctx, []string{sprint.Work}, nil)
@@ -765,7 +804,13 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		v.Machine = st.MachineLineOf(facts.Machine, facts.Heartbeat)
 	}
 	var b strings.Builder
-	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
+	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n")
+	// the five heaviest cards, the ones the most wait on, under the summary: the tick's where
+	// record carries them (weight.go; store.WhereRecord)
+	if v.Critical = facts.Critical; len(v.Critical) > 0 {
+		b.WriteString(sprint.CriticalLine(v.Critical) + "\n")
+	}
+	b.WriteString("\n")
 	parts := map[string]string{}
 	var friendCards map[string]store.FriendRow
 	for i, t := range shapes {
@@ -822,7 +867,8 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 			friends[i].Working = 0 // down, she works nothing
 		}
 	}
-	ft := friendsTable(friends)
+	v.Friends = friends
+	ft := a.friendsTable(friends, now)
 	v.Tables[sprint.Friends] = map[string]map[string]string{}
 	for _, r := range ft.Rows {
 		cells := map[string]string{}
@@ -902,7 +948,7 @@ func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, 
 // hidden ok and failed, her width and her status as text; done and ok% are the
 // table's own formulas over the counts (ntable.CellText), as the fleet
 // table's are.
-func friendsTable(friends []store.FriendRow) ntable.Table {
+func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Table {
 	t := sprint.FriendsDef()
 	at := map[string]int{}
 	for j, c := range t.Columns {
@@ -915,7 +961,7 @@ func friendsTable(friends []store.FriendRow) ntable.Table {
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
-			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: f.Status}})
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now)}})
 	}
 	return t
 }
@@ -1352,6 +1398,9 @@ func groupLine(g sprint.Group, now time.Time) string {
 	}
 	kind := strings.ToUpper(g.Kind)
 	l := fmt.Sprintf("%s %s %s %s", kind, g.ID, mark, g.Type)
+	if g.Behind >= sprint.CriticalBehind {
+		l = fmt.Sprintf("CRITICAL %d behind: %s", g.Behind, l) // the cards that wait on it (weight.go)
+	}
 	if g.Alias != "" {
 		l += "  alias=" + g.Alias
 	}
@@ -1784,4 +1833,18 @@ func rowsView(s *sprint.Snapshot) []primaryRow {
 		return cmp.Or(cmp.Compare(a.Stream, b.Stream), cmp.Compare(a.Score, b.Score), cmp.Compare(a.ID, b.ID))
 	})
 	return rows
+}
+
+// statusCell is a friend's status as the table shows it: the word (up, held or
+// down), and for a friend held or down with a reason, the reason and when she
+// is expected back: `down (opus rate limited, until 6:00 PM)`.
+func (a *app) statusCell(f store.FriendRow, now time.Time) string {
+	if f.Reason == "" && f.Until.IsZero() {
+		return f.Status
+	}
+	why := f.Reason
+	if !f.Until.IsZero() {
+		why = strings.TrimPrefix(why+", until "+a.clock12(f.Until, now), ", ")
+	}
+	return f.Status + " (" + why + ")"
 }

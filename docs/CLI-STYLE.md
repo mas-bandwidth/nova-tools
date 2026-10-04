@@ -27,18 +27,17 @@ The command-line contract, written so a cold AI can predict any nova tool. SPEC.
 | `--max` | displayed items; default 20, 0 means all |
 | `--timeout` | a Go duration |
 
-A resource limit keeps its unit or scope in its name; these spellings stand: nova-check kernel `--max-bytes`, `--max-tokens`; nova-bus `--max-notes`, `--max-bytes`, `--max-body-bytes`, `--open-max`. A resource budget of 0 is a refusal, not "all"; help states each zero. A storage-shape noun (`--bus`, `--box`) stays; help names the shape.
+A resource limit keeps its unit or scope in its name; these spellings stand: nova-check kernel `--max-bytes`, `--max-tokens`. A resource budget of 0 is a refusal, not "all"; help states each zero. A storage-shape noun (`--bus`, `--box`) stays; help names the shape.
 
 ## Exits and output
 
 **(d) Exits.** 0 passed or done. 1 ran and said NO. 2 could not run. A wrapper may pass through its program's code; no tool invents another. The protocol exceptions:
 - nova-fuse's write verbs (SPEC.md's table).
-- nova-bus wait `--idle-exit <n>`, a caller-selected code for an idle timeout.
 
 **(e) Output: events and payloads.**
 - EVENT output is one line per event, `<TOKEN> OK|FAILED key=value ...`; OK to stdout, FAILED and REFUSED to stderr. One exception, per SPEC.md: nova-self-talk's `SELFTALK FAIL files=...` summary count line goes to stdout beside its advisory note.
 - Item OK events may precede a later failure; the closing status is then FAILED, exit not 0.
-- PAYLOAD output: a verb documented to emit a payload names its format in help and emits exactly that payload on stdout and nothing else; its events go to stderr. The documented cases: nova-bus prepare (a JSON artifact), nova-bus draft (a drafted note) and nova-fuse path (a bare value). A payload is never capped like a listing.
+- PAYLOAD output: a verb documented to emit a payload names its format in help and emits exactly that payload on stdout and nothing else; its events go to stderr. The documented case: nova-fuse path (a bare value). A payload is never capped like a listing.
 - A remedy is a command, printed shell-quoted so it pastes.
 
 **(e2) Token and escaping grammar.** SPEC.md's oneline escaping, whitespace-safe `key=value` fields and the `VERB STATUS` token shape govern. The caller knows which tool it ran, so the token does not repeat it, and a field needs no quoted-string parser.
@@ -87,8 +86,7 @@ An ignored flag is a refusal; a stale checker (`last=` past its bound) is FAILED
 1. **Token shape:** `VERB STATUS`.
 2. **Field quoting:** oneline escaping.
 3. **The seat's Redis:** a tool may default to the Redis its seat is configured with; that is configuration, not a guess. Every other store is named with `--addr`.
-4. **`--idle-exit`:** nova-bus wait keeps its caller-selected code.
-5. **Help pointer:** a malformed invocation's remedy is `<tool> <verb> -h`.
+4. **Help pointer:** a malformed invocation's remedy is `<tool> <verb> -h`.
 
 ## Enforce in this order
 

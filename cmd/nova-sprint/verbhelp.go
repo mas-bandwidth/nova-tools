@@ -37,16 +37,25 @@ var verbExit = map[string]string{
 // verbEffect is a verb's effect line, the last line of its -h, where the verb
 // states one (docs/STANDARD.md: `effect: inspection|local write|delivery`).
 var verbEffect = map[string]string{
-	"handover":      "inspection: reads the store, writes nothing",
-	"needs":         "inspection: reads the waiting cards, writes nothing",
-	"held":          "inspection: reads the held cards of the table, writes nothing",
-	"sentinels":     "inspection: reads the sentinels and what each waits on, writes nothing",
-	"reader retire": "local write: retires the named readers in the sprint's store; a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it; --dry-run writes nothing",
-	"preflight":     "inspection: reads the briefs, the table and the repository, writes nothing",
-	"selftest":      "local write: makes a fresh directory, a bare origin and a clone whose base holds a go module, runs the card's flow of the walkthrough on a twin file in it and lands one card through the tree gate; writes only in that directory, opens no store of the caller's and no network, and removes it unless --keep",
-	"dashboard":     "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
-	"coordinator":   "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
-	"answer":        "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
+	"handover":         "inspection: reads the store, writes nothing",
+	"needs":            "inspection: reads the waiting cards, writes nothing",
+	"held":             "inspection: reads the held cards of the table, writes nothing",
+	"sentinels":        "inspection: reads the sentinels and what each waits on, writes nothing",
+	"view coordinator": "inspection: reads what needs the seat (the tables, the inbox, the friends and the machines), writes nothing",
+	"view worker":      "inspection: reads the worker's cards, their packets and its results not landed, writes nothing",
+	"seat":             "inspection: reads the seat (holder, epoch, generation), writes nothing",
+	"rules":            "inspection: reads the rules the tick answers by and why the fleet is idle, writes nothing",
+	"relink":           "local write: re-points what waited on the old cards to their twin in the sprint's store and answers their blocked judgments; --dry-run writes nothing",
+	"friend take":      "local write: takes the named cards back from the friend in the sprint's store; --dry-run writes nothing",
+	"friend level":     "local write: moves queued cards between the friends' rows in the sprint's store; --dry-run writes nothing",
+	"friend health":    "local write: records the coordinator's observation of the friend in the sprint's store; --dry-run writes nothing",
+	"reader retire":    "local write: retires the named readers in the sprint's store; a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it; --dry-run writes nothing",
+	"promoted":         "local write: records the promotion in the sprint's store; --dry-run writes nothing",
+	"preflight":        "inspection: reads the briefs, the table and the repository, writes nothing",
+	"selftest":         "local write: makes a fresh directory, a bare origin and a clone whose base holds a go module, runs the card's flow of the walkthrough on a twin file in it and lands one card through the tree gate; writes only in that directory, opens no store of the caller's and no network, and removes it unless --keep",
+	"dashboard":        "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
+	"coordinator":      "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
+	"answer":           "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
 }
 
 // commonExit is the codes of every other verb.
@@ -166,8 +175,12 @@ func verbProse(name string) string {
 		return inboxExample
 	case "release":
 		return releaseHoldWords
-	case "friend beat", "friend down", "friend up":
+	case "friend beat", "friend down", "friend up", "friend health":
 		return friendVerbWords(name)
+	case "friend take":
+		return friendTakeWords
+	case "friend level":
+		return friendLevelWords
 	case "add", "brief":
 		return cardHelpWords
 	default:

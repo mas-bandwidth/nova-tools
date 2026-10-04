@@ -136,16 +136,18 @@ type handoverView struct {
 	Members   []memberView    `json:"members"`
 	Routes    routesView      `json:"routes"`
 	Decisions []decisionView  `json:"decisions"`
+	Rules     []string        `json:"rules"`
 	First     []string        `json:"first"`
 	groups    []sprint.Group  // the open judgments, as inbox prints them
 }
 
-// seatView is the holder and the last change of the seat; Since is nil while
-// the seat has not moved since init.
+// seatView is the holder, the seat's generation and the last change of the
+// seat; Since is nil while the seat has not moved since init.
 type seatView struct {
-	Holder string             `json:"holder"`
-	Since  *time.Time         `json:"since,omitempty"`
-	Last   *sprint.SeatChange `json:"last,omitempty"`
+	Holder     string             `json:"holder"`
+	Generation uint64             `json:"generation"`
+	Since      *time.Time         `json:"since,omitempty"`
+	Last       *sprint.SeatChange `json:"last,omitempty"`
 }
 
 type streamCounts struct {
@@ -201,9 +203,9 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	if err != nil {
 		return h, "", err
 	}
-	h.Seat.Holder, h.Machine, h.Summary = v.Coordinator, v.Machine, v.Summary
+	h.Seat.Holder, h.Seat.Generation, h.Machine, h.Summary = v.Coordinator, sprint.FirstSeatGeneration, v.Machine, v.Summary
 	if v.Seat != nil {
-		h.Seat.Since, h.Seat.Last = &v.Seat.At, v.Seat
+		h.Seat.Since, h.Seat.Last, h.Seat.Generation = &v.Seat.At, v.Seat, max(v.Seat.Generation, sprint.FirstSeatGeneration)
 	}
 	if h.Owner, err = a.owner(ctx, st); err != nil {
 		return h, "", err
@@ -281,6 +283,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 			h.Members = append(h.Members, memberView{Member: m, Status: status})
 		}
 	}
+	h.Rules = []string{handoverWaves}
 	h.First = []string{"nova-sprint where", "nova-sprint inbox --wait --push " + pushSeat, `read docs/SPEC-SPRINT.md, "Handing over the seat"`}
 	return h, a.handoverText(h), nil
 }
@@ -314,6 +317,11 @@ func decisionOf(l sprint.Line) (decisionView, bool) {
 	}
 	return decisionView{At: l.At, Verb: l.Verb, What: what, By: l.Actor, Reason: reason}, true
 }
+
+// handoverWaves is the first rule of the seat (the owner, 2026-10-03: "BATCH EVERYTHING"):
+// the verbs refuse singles (add --one, rework and drop --one) and the tick raises "the fleet
+// is starving" under twice the width.
+const handoverWaves = "Cards are admitted and released in waves of at least the fleet's width: add takes a directory, release names a wave, rework and drop answer a group; a single-card verb outside a judgment is the sign of doing it wrong."
 
 // handoverText is the handover in lines a person reads in one screen.
 func (a *app) handoverText(h handoverView) string {
@@ -371,6 +379,9 @@ func (a *app) handoverText(h handoverView) string {
 			s += ": " + d.Reason
 		}
 		line("%s", s)
+	}
+	for _, r := range h.Rules {
+		line("RULE %s", r)
 	}
 	for _, f := range h.First {
 		line("FIRST %s", f)
@@ -507,5 +518,25 @@ func (p *pushTarget) follow(holder string, first bool, stdout, stderr io.Writer)
 	case !first:
 		fmt.Fprintf(stdout, "NOTE the seat is %s's: pushing to %s\n", oneline.Field(holder), oneline.Field(dir))
 	}
+	return 0
+}
+
+// cmdSeat is the seat as the friends' daemons read it every second: the
+// holder, the epoch and the seat's generation, from three keys and no table
+// (store.SeatState), so the keepalive loop never serializes the board.
+func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("seat")
+	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
+		return refuse(stderr, "seat", argErr("takes no words ", err, pos...))
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "seat", err.Error())
+	}
+	s, err := st.SeatState(context.Background())
+	if err != nil {
+		return a.readFailed("seat", err, stderr)
+	}
+	sayOK(stdout, c.json, "seat", fmt.Sprintf("SEAT holder=%s epoch=%d generation=%d", orDashStr(s.Holder, "-"), s.Epoch, s.Generation), map[string]any{"holder": s.Holder, "epoch": s.Epoch, "generation": s.Generation})
 	return 0
 }

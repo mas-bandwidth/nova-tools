@@ -24,10 +24,10 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "routes", k.Table)
 	assert.False(t, k.Singleton)
-	assert.Equal(t, "tier,provider,model,tokens,usd,deadline,enabled,first,"+
+	assert.Equal(t, "tier,provider,model,harness,tokens,usd,deadline,enabled,first,"+
 		"price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of,note",
 		strings.Join(k.FieldNames(), ","), "the deal reads exactly these names, the card's cost the price sheet after them, and the note last")
-	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool, "first": TypeBool,
+	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "harness": TypeEnum, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool, "first": TypeBool,
 		"price_input": TypeDecimal, "price_cache_read": TypeDecimal, "price_cache_write": TypeDecimal, "price_output": TypeDecimal, "reasoning_as_output": TypeBool,
 		"long_context": TypeInt, "price_input_long": TypeDecimal, "price_output_long": TypeDecimal, "price_request": TypeDecimal, "billing": TypeEnum,
 		"gateway_percent": TypeDecimal, "price_source": TypeText, "price_as_of": TypeText, "note": TypeText}
@@ -37,7 +37,7 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 		assert.Equal(t, required[f.Name], f.Required, "--%s required", f.Name)
 	}
 	tier, _ := k.Field("tier")
-	assert.Equal(t, []string{"flash", "pro"}, tier.Enum, "frontier cards escalate to the coordinator and are never drawn from routes")
+	assert.Equal(t, []string{"flash", "pro", "heavy"}, tier.Enum, "frontier cards escalate to the coordinator and are never drawn from routes")
 	for _, w := range tier.Enum {
 		assert.Contains(t, Tiers, w, "a route tier is a tier")
 	}
@@ -79,6 +79,21 @@ func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 			name: "a model holding slashes",
 			raw:  map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "deadline": "1800", "enabled": "false", "note": "held while the price is read"},
 			want: map[string]string{"model": "x-ai/grok-4", "enabled": "false", "note": "held while the price is read"},
+		},
+		{
+			name: "a headless harness on its own provider word",
+			raw:  map[string]string{"tier": "heavy", "provider": "subscription-claude", "model": "m", "harness": "claude", "deadline": "900"},
+			want: map[string]string{"provider": "subscription-claude", "harness": "claude"},
+		},
+		{
+			name: "a headless harness on a provider word shared with the others",
+			raw:  map[string]string{"tier": "heavy", "provider": "subscription", "model": "m", "harness": "grok", "deadline": "900"},
+			errs: []string{`--harness grok and has --provider "subscription"`, "want --provider subscription-grok", "rests only its own routes"},
+		},
+		{
+			name: "a headless harness on another headless harness's provider word",
+			raw:  map[string]string{"tier": "heavy", "provider": "subscription-claude", "model": "m", "harness": "codex", "deadline": "900"},
+			errs: []string{"want --provider subscription-codex"},
 		},
 		{
 			name: "frontier is no route's tier",
@@ -197,6 +212,8 @@ func TestRouteSetIsCheckedOnTheRowItWouldLeave(t *testing.T) {
 		{name: "a slashed provider", changes: map[string]string{"provider": "x-ai/grok"}, refuse: "no slash"},
 		{name: "an empty model", changes: map[string]string{"model": ""}, refuse: `--model ""`},
 		{name: "out of the deal with its reason", changes: map[string]string{"enabled": "false", "note": "4 of 52 ok"}},
+		{name: "a headless harness left on the provider word of opencode", changes: map[string]string{"harness": "claude"}, refuse: "want --provider subscription-claude"},
+		{name: "a headless harness with its own provider word", changes: map[string]string{"harness": "claude", "provider": "subscription-claude"}},
 		{name: "another provider and model", changes: map[string]string{"provider": "openrouter", "model": "x-ai/grok-4"}},
 		{name: "a price sheet", changes: map[string]string{"price_input": "0.27", "price_output": "1.10", "price_as_of": "2026-10-01"}},
 		{name: "a threshold with no long prices", changes: map[string]string{"long_context": "128000"}, refuse: "no --price_input_long"},

@@ -56,7 +56,7 @@ var LinuxOnly = []string{"./cmd/nova-sprint", "./cmd/nova-swarm"}
 // HeavyFirst are the packages the fan-out deals first, so the heaviest never
 // share a shard: dealt round-robin from the sorted list, the two heaviest sat
 // eight apart and so shared a leg on every push.
-var HeavyFirst = []string{"./cmd/nova-bus"}
+var HeavyFirst = []string{"./cmd/nova-swarm"}
 
 // DarwinBranches are the target branches whose changes meet the darwin legs:
 // the integration branches (the concurrency group's integration list in

@@ -192,16 +192,24 @@ func writeNativeShellShims(slotDir string) (dir, shell string, err error) {
 	return dir, shell, nil
 }
 
-// pathWithDirFirst is one environment with shimDir prepended to its PATH -- the child
-// resolves `bash` and `sh` through the wrapper before it reaches the bench's own, and
-// `go` and `gofmt` through the bench's GOROOT/bin (nativeChildEnv). An environment
-// carrying no PATH gains one naming the directory alone, because a child that resolves no
-// shell at all is better than one that resolves an unscrubbed shell.
-func pathWithDirFirst(env []string, shimDir string) []string {
-	if shimDir == "" {
+// pathWithDirsFirst is one environment with dirs prepended to its PATH, in order and
+// skipping empty ones: the child resolves `bash` and `sh` through the wrapper before it
+// reaches the bench's own, and `go`, `gofmt`, `dotnet` and the rest through the bench's
+// toolchain directories (nativeChildEnv, swarm.BenchPath). An environment carrying no PATH
+// gains one naming the directories alone, because a child that resolves no shell at all is
+// better than one that resolves an unscrubbed shell. No dirs leaves it as it was.
+func pathWithDirsFirst(env []string, dirs ...string) []string {
+	var head []string
+	for _, d := range dirs {
+		if d != "" {
+			head = append(head, d)
+		}
+	}
+	if len(head) == 0 {
 		return env
 	}
 	sep := string(os.PathListSeparator)
+	prefix := strings.Join(head, sep)
 	out := make([]string, 0, len(env)+1)
 	found := false
 	for _, kv := range env {
@@ -212,13 +220,13 @@ func pathWithDirFirst(env []string, shimDir string) []string {
 		}
 		found = true
 		if val == "" {
-			out = append(out, "PATH="+shimDir)
+			out = append(out, "PATH="+prefix)
 			continue
 		}
-		out = append(out, "PATH="+shimDir+sep+val)
+		out = append(out, "PATH="+prefix+sep+val)
 	}
 	if !found {
-		out = append(out, "PATH="+shimDir)
+		out = append(out, "PATH="+prefix)
 	}
 	return out
 }

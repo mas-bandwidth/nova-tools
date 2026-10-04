@@ -18,9 +18,9 @@ func TestBriefDependsOnOnlyChangeIsTakenInAnyState(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	dir := t.TempDir()
-	ta.ok("add --stream a a-1 --brief-file " + writeHeaderBrief(t, dir, "a-1", "-", "internal/a1.go"))
-	ta.ok("add --stream a a-2 --brief-file " + writeHeaderBrief(t, dir, "a-2", "a-1", "internal/a2.go"))
-	ta.ok("add --stream a a-3 --brief-file " + writeHeaderBrief(t, dir, "a-3", "-", "internal/a3.go"))
+	ta.ok("add --one --stream a a-1 --brief-file " + writeHeaderBrief(t, dir, "a-1", "-", "internal/a1.go"))
+	ta.ok("add --one --stream a a-2 --brief-file " + writeHeaderBrief(t, dir, "a-2", "a-1", "internal/a2.go"))
+	ta.ok("add --one --stream a a-3 --brief-file " + writeHeaderBrief(t, dir, "a-3", "-", "internal/a3.go"))
 	require.Equal(t, "a-1", ta.primary("a-2").F("needs"))
 
 	for id, line := range map[string]string{

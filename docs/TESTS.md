@@ -31,9 +31,7 @@ which stream each expectation was on.
 
 The marker is being applied section by section. Until a
 section carries it, read an unmarked line as *not yet checked* rather than as
-*checked and found to be standard output*. The one line known today to be
-mismarked by that gap is `DRAFT NOTE …` under [`## nova-bus`](#nova-bus), which
-the tool writes to standard error.
+*checked and found to be standard output*.
 
 **Preconditions: what a step needs that the machine may not have.** Some steps
 cannot run everywhere, and a reader is owed that before the fence rather than by
@@ -60,98 +58,86 @@ those steps need that binary on PATH.
 
 ## nova-bus
 
-Fixture: `cmd/nova-bus/testdata/example-bus`, copied out and given a repository of its own, with a bare repository beside it as `origin`. That is the setup block of docs/CLI.md's nova-bus `### First run`, which `cmd/nova-bus/firstrun_functional_test.go` runs as written to build this bus, and it is what the tool requires — every git-reading verb refuses a `--bus` that is not its repository's root, because git reports changed paths from the root and a bus one directory down would report an empty change set over unread notes. It builds both in `t.TempDir()`, so every push below lands in a bare repository on this disk and no line here reaches a network. A real bus is a **private** repository; this one is three participants and four notes, small enough to read in a sitting.
-
-Two AI friends share it. Ada has already written; Bo is arriving. The sitting below is Bo's whole first one — who is on this bus, is the bus sound, what is she carrying, say heard, put her cursor down, write one note — and then Ada's two reads, because the cursor is the thing worth seeing twice.
-
-The `> draft.md` line is a redirect: `draft` prints a skeleton on standard output and nothing else, so its stdout is a file. The transcript test does what the shell does with it, and then does what the writer does — replaces the `<the note goes here>` placeholder with a body — before the `send` line runs.
-
-The last line is the other form of the same verb. `draft --reply-to` ANSWERS a note on your live listing: it fetches first, so the id it writes is the id of the note you are answering and not of whatever your checkout last saw; it writes every header line for you from the target and the roster; it puts the file OUTSIDE the bus, because `send` needs the bus's tree clean; and it returns one line. `reply.md` there is body text and nothing else — a line in it reading `To: somebody` is prose in the note that goes out — and `./drafts` is a scratch directory of yours, which the tool will not create and will not guess.
+Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
+`friends` set names ada and bob (what `nova-config apply` writes for two friend
+rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types them.
+The sitting is the loop: ada sends bob one message; bob peeks (new, not yet
+delivered), receives it through `--exec` (the header line and the body go to the
+command, acked when it exits 0), acks an id that is not pending (false, exit 0: ack is idempotent), reads the
+log, and lists the names. The run-owned values are the message's `id=` (a ULID
+from the store's time) and its `at=`. The throwaway store has no users, so every
+write says `login=none`: on the fleet's store the identity is the login user and
+`--as` may be left out.
 
 ### First run
 
-```
-$ nova-bus names --bus ./bus
-NAMES NAME name="Ada" lane=from-ada aliases="Ada Vale";"the archivist"
-NAMES NAME name="Bo" lane=from-bo aliases="Bo Quill"
-NAMES NAME name="Dana" lane=- aliases=-
-NAMES GROUP name="Everybody on the bus" members="Ada";"Bo";"Dana"
-NAMES OK participants=3 groups=1 senders=2
+```text
+$ nova-bus send --as ada --to bob --subject hello --body "are you there?"
+SEND OK id=01M42BA18Y1K3SE57HE26SY8T0 to=bob cc=- at=2026-10-04T02:18:54Z bytes=14 sha256=cf97adc337983a14daab1089bf14c6ab50e658f0136517e0048407e786b6e745 login=none
 
-$ nova-bus check --bus ./bus --full
-BUS SCOPE mode=full cursor=- changed=0
-BUS OK notes=4 lanes=2 receipts=1 participants=3 warn=0
+$ nova-bus peek --as bob
+PEEK OK pending=0 new=1
+PEEK MESSAGE state=new id=01M42BA18Y1K3SE57HE26SY8T0 from=ada at=2026-10-04T02:18:54Z subject="hello"
 
-$ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --full --open
-INBOX SCOPE mode=full cursor=- changed=0 carrying=1
-INBOX OPEN carrying=1 heard=0 large=false remedy=inbox --advance
-INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
-INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unreadable=0
+$ nova-bus recv --as bob --exec true
+RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z login=none acked=true exec_exit=0 subject="hello"
 
-$ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --full --bodies
-INBOX SCOPE mode=full cursor=- changed=0 carrying=1
-INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
-INBOX BODY id=ada-0f1e2d3c4b5a bytes=195
-Bo,
+$ nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+ACK OK acked=0 asked=1 login=none
+ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
 
-Yes, on the merge queue too. A gate that only runs on the pull request passes a
-branch that was green against a base that has since moved, which is the failure
-we were trying to close.
+$ nova-bus log --max 5
+LOG OK total=1
+LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
 
-Ada
-INBOX BODY END id=ada-0f1e2d3c4b5a
-INBOX BODIES printed=1 bytes=195 oversize=0 gaps=0 drained=true complete=true next=-
-INBOX OPEN carrying=1 heard=0 large=false remedy=inbox --advance
-INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
-INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unreadable=0
-
-$ nova-bus receipt --bus ./bus --as Bo --note ada-0f1e2d3c4b5a --remote origin --branch main
-RECEIPT OK recorded=1 already=0 commit=9750ba9617d4a42a5fdedf372ec70132aa46f936 pushed=true attempts=1
-
-$ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --advance --legacy-now --remote origin --branch main
-INBOX SCOPE mode=full cursor=- changed=0 carrying=0
-INBOX LEGACY before=2026-09-12T20:15:33Z notes=1 unreadable=0
-INBOX OPEN carrying=0 heard=0 large=false remedy=inbox --advance
-INBOX OK as=Bo carrying=0 open=0 notes=0 receipts=0 heard=0 unaddressed=0 unreadable=0
-INBOX CURSOR commit=9750ba9617d4a42a5fdedf372ec70132aa46f936 carrying=0 pushed=true attempts=1
-
-$ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md   # Stderr: whole
-! DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>
-
-$ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
-SEND OK id=bo-8405301fd99d path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md commit=57dc978d3ad645788c4236b0da99b1c59f89282d pushed=true attempts=1 wakes=1 body_bytes=46
-
-$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
-INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
-
-$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
-INBOX SCOPE mode=full cursor=- changed=0 carrying=3
-INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
-INBOX NOTE id=bo-8405301fd99d from=Bo addr=to at=2026-09-12T20:15:41Z path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md: gate
-INBOX HEARD id=bo-222222222222 from=Bo addr=to at=2026-09-09T14:00:00Z path=from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md: The Windows runner skips three steps
-INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-09T13:00:00Z path=from-bo/2026-09-09T1300Z-heard-111111111111.md: Heard
-INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
-INBOX CURSOR commit=57dc978d3ad645788c4236b0da99b1c59f89282d carrying=3 pushed=true attempts=1
-
-$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40
-INBOX SCOPE mode=since cursor=57dc978d3ad645788c4236b0da99b1c59f89282d changed=2 carrying=3
-INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
-INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
-
-$ nova-bus draft --bus ./bus --as Ada --reply-to gate --body-file reply.md --draft-dir ./drafts --remote origin --branch main
-DRAFT NOTE the bus had nothing new; this id was resolved against 36e7270d2e96325b3588828d17fb81a1aa918730
-DRAFT OK path=./drafts/2026-09-12T2015Z-re-bo-ce10834fbfea.md re=bo-ce10834fbfea from=Ada to="Bo" cc=- at=36e7270d2e96325b3588828d17fb81a1aa918730 moved=false bytes=86
+$ nova-bus names
+NAMES OK count=2
+NAMES NAME name=ada
+NAMES NAME name=bob
 ```
 
-**Identity is the roster, not the shell.** `names` is the whole of it: a participant with a `lane` can send, one without a lane (Dana) can be written to and cannot write, and `--as` takes a name or any alias on that line — `--as "the archivist"` is Ada. There is no default `--as`, and a name the roster does not know is a refusal rather than a new participant.
+## nova-friend
 
-**`--bodies` is the note's text in the call that reported it.** Without it, `inbox` and `wait` print what a note IS -- id, sender, address, date, path and subject -- and a reader who wants to answer opens the file. With it, each NEW note's body follows its line inside a counted frame: `INBOX BODY id=<id> bytes=<n>`, exactly `n` bytes, the one newline the framing supplies when the body does not end in one, and `INBOX BODY END id=<id>`. The count is the frame, so nothing a body holds can be read as an event line. It is also the one flag that BOUNDS the NEW half -- `--max-notes` (20, ceiling 1000) and `--max-bytes` (65536, ceiling 1048576) -- and the `INBOX BODIES` line says what printed, whether the snapshot is drained, whether anything was left behind, and the opaque `next=` token that continues it as `--after <token>`. Drain while `next=` is present; never loop on `complete=false`.
+Run by `cmd/nova-friend/firstrun_test.go` on a throwaway redis-server whose
+`friends` set names ada and bob (what `nova-config apply` writes for two friend
+rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types
+them. The sitting is the canary by hand, with no daemon running: a dry-run
+install prints the plan for bob's agent; a dry-run uninstall the plan to undo
+it; ada, as the coordinator, pings bob with a nonce; bob's session answers
+with `pong` (one note to ada, and the pong file under the home directory,
+`./home/.nova-friend/bob`); `wait-pong` finds it on the log from bob's own
+stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, and so are the
+home directory and the uid the plan names. The run-owned values are the
+message `id=` (a ULID from the store's time), `at=`, and `took=`.
 
-**`heard` and `closed` are different answers.** Bo's `receipt` says she read Ada's note without answering it: one line in her lane's `RECEIPTS`, pushed, and the note leaves her carried list. A note is *closed* instead by a `Re:` line naming it, which is what `draft --re` and `send` write for you.
+### First run
 
-**The cursor is why a read costs the change and not the bus.** `--advance` records the commit read to, in the reader's own lane, and pushes it like a receipt; the first advance on a bus holding notes that predate it is refused until the reader says what to do with the history, and `--legacy-now` is that sentence — everything already there is history, everything after it is news. The `INBOX LEGACY` line counts what the line hid.
+```text
+$ nova-friend install --as bob --harness opencode --dir ./bob --dry-run
+INSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist launchd_log=./home/Library/Logs/nova-friend-bob.log dry_run=true
+INSTALL PLAN command="write ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
+INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"
+INSTALL PLAN command="launchctl bootstrap gui/501 ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
+INSTALL NOTE the agent runs: nova-friend run --as bob --harness opencode --dir ./bob --width 0, with --redis and --server as given here
 
-Ada's first line above is the refusal worth meeting here rather than on a live bus: **the example bus ships a `CURSOR` naming a commit from the history it was written in**, and copying it out gives it a new one, so that commit is not an ancestor of `HEAD`. The tool says so instead of diffing from it, and names the way out. Her `--full --advance` replaces it, and the read after that is `mode=since` over `changed=2` — two changed lane paths. That is the property the whole design is for, and it is visible in one pair of lines.
+$ nova-friend uninstall --as bob --dry-run
+UNINSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist dry_run=true
+UNINSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"
+UNINSTALL PLAN command="rm ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
+
+$ nova-friend ping --as ada --to bob --nonce abc123
+PING OK nonce=abc123 id=01M42EJZ1D4JEFR6ESF1YJ3YJA to=bob at=2026-10-04T03:40:12Z
+PING NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123
+
+$ nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
+PONG OK nonce=abc123 to=ada id=01M42EJZ1F8FXB5T0F6EXJCRS1 at=2026-10-04T03:40:12Z
+
+$ nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
+WAIT-PONG OK nonce=abc123 from=bob at=2026-10-04T03:40:12Z took=1ms queue=2 working=1 width=4 daemon=false
+
+$ nova-friend status --as bob --dir ./bob
+! STATUS NONE: no daemon has run as bob (no status file in ./home/.nova-friend/bob); run: nova-friend install --as bob --harness <h> --dir ./bob
+```
 
 ## nova-sandbox
 
@@ -546,7 +532,7 @@ findings: 2
 
 ```
 $ nova-swarm native --tokens unmetered --usage-interval 900ms … --deadline 30s
-! nova-swarm native: --usage-interval is at least 1s, got 900ms; three failed reads in a row end a card budget-unverifiable, and under a second that is a moment's bad luck rather than a source that has stopped answering
+! nova-swarm native: --usage-interval is at least 1s, got 900ms; each sample launches sqlite3 against the harness's own live database, and under a second that is more launches than there is anything new to read
 
 $ nova-swarm native --tokens unmetered --usage-interval 30s … --deadline 30s
 ! nova-swarm native: --usage-interval is shorter than --deadline, got 30s against a deadline of 30s; at or past the deadline no sample would ever run and the budget could not fire
@@ -696,7 +682,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=28 applied=28
+CONFIG MIGRATE file=try.json from=0 to=32 applied=32
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -987,7 +973,7 @@ FLEET-UP OK moved=1 refused=0 notes=0 op=fleet-release-t1-1
 STOPPED
 NOTE a twin beats every member at every verb: each member added is up after the next nova-sprint tick
 
-$ nova-sprint add --stream s1 --count 1
+$ nova-sprint add --stream s1 --count 1 --one
 MOVED s1-1 -> ready stream=s1 score=1
 ADD OK stream=s1 cards=1 before=- moved=1 refused=0 notes=0 op=add-t2-1
 NOTE the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>
@@ -1139,14 +1125,14 @@ TICK OK state=RUNNING idle=no moved=2 notes=0
 
 $ nova-sprint answer --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
 judgment        card  kind    verb    p     act     why
-finish-t24-1.1  s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1
-finish-t24-1.1  s1-2  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-2
+finish-t24-1.1  s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1 --one
+finish-t24-1.1  s1-2  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-2 --one
 ANSWER OK rows=2 applied=0 would_apply=0 listed=2 refused=0 failed=0 left=0 outcomes=0 bar=- record=./judgment.jsonl; run: nova-sprint inbox
 
 $ nova-sprint answer --bar 0.8 --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
 judgment        card  kind    verb    p     act      why
-finish-t24-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --op decide.finish-t24-1.1_s1-1
-finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --op decide.finish-t24-1.1_s1-2
+finish-t24-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --one --op decide.finish-t24-1.1_s1-1
+finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --one --op decide.finish-t24-1.1_s1-2
 ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
 ```
 
@@ -1194,3 +1180,22 @@ prints the same plan, one `IMPORT REPO` per repository, and the `sha256` of the
 file it wrote; verify names the same `sha256`, and when the two differ it says
 `VERIFY FAILED` with one `VERIFY MISSING`, `EXTRA` or `DRIFT` line per difference.
 `differences=0` is the proof the tree holds what GitHub holds.
+
+## nova-card
+
+Fixture: `cmd/nova-card/testdata/findings.tsv`, a reader's findings on two
+files, typed as `./cmd/nova-card/testdata/findings.tsv` from the root of a
+checkout; `./cards` is a directory the first line creates.
+
+### First run
+
+```
+$ nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./cards
+CARDS OK dir=./cards cards=2 waves=1 tier=pro
+
+$ nova-card lint --card ./cards/finding-internal-bus-send.md
+LINT OK file=./cards/finding-internal-bus-send.md
+
+$ nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
+LINT OK file=./cards/finding-cmd-nova-bus-main.md
+```

@@ -687,6 +687,13 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		p.Set(ctx, r.Names.Key(keyCoordinator), op.Seat.Holder, 0)
 		p.Set(ctx, r.Names.Key(keySeat), rec, 0)
 	}
+	if op.Health != nil {
+		rec, err := json.Marshal(op.Health.Health)
+		if err != nil {
+			return err
+		}
+		p.Set(ctx, r.Names.Key(friendHealthKey(op.Health.Friend)), string(rec), 0)
+	}
 	return nil
 }
 
@@ -933,6 +940,7 @@ type changeEvent struct {
 	epoch, verb         string
 	before, after       uint64
 	members, batchDelta string
+	args                string // the write's arguments, a JSON list (the table, then its own)
 }
 
 // changePage is how many events one read of a change stream takes.
@@ -986,6 +994,17 @@ func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64)
 			if ev.after != need {
 				return gap(fmt.Sprintf("the event before revision %d leaves revision %d", need, ev.after))
 			}
+			if ev.verb == "set" && orderOnly(ev.args) {
+				// the rows' order alone: no record changed, and the shape read beside the
+				// catch-up carries the order
+				if need = ev.before; need == from {
+					return ids, true, nil
+				}
+				if need < from {
+					return gap(fmt.Sprintf("the events skip revision %d", from))
+				}
+				continue
+			}
 			if !twinVerbs[ev.verb] {
 				return gap(fmt.Sprintf("a write %q at revision %d names no records", ev.verb, ev.after))
 			}
@@ -1009,7 +1028,7 @@ func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64)
 
 func readChange(v map[string]any) changeEvent {
 	str := func(k string) string { s, _ := v[k].(string); return s }
-	ev := changeEvent{epoch: str("epoch"), verb: str("verb"), members: str("members"), batchDelta: str("batch_delta")}
+	ev := changeEvent{epoch: str("epoch"), verb: str("verb"), members: str("members"), batchDelta: str("batch_delta"), args: str("args")}
 	ev.before, _ = strconv.ParseUint(str("rev_before"), 10, 64)
 	ev.after, _ = strconv.ParseUint(str("rev_after"), 10, 64)
 	return ev
@@ -1022,7 +1041,7 @@ func changeIDs(ev changeEvent) ([]string, error) {
 	var moved []struct {
 		ID string `json:"id"`
 	}
-	if ev.members != "" && ev.members != "[]" {
+	if ev.members != "" && ev.members != "[]" && ev.members != "{}" {
 		if err := json.Unmarshal([]byte(ev.members), &moved); err != nil {
 			return nil, err
 		}
@@ -1032,14 +1051,22 @@ func changeIDs(ev changeEvent) ([]string, error) {
 	}
 	if ev.batchDelta != "" {
 		var d struct {
-			Members []struct {
-				ID string `json:"id"`
-			} `json:"members"`
+			Members json.RawMessage `json:"members"`
 		}
 		if err := json.Unmarshal([]byte(ev.batchDelta), &d); err != nil {
 			return nil, err
 		}
-		for _, m := range d.Members {
+		// a batch that changed no record (a properties-only apply, such as promoted) is
+		// encoded by the store's cjson with its empty members as {}: it names none
+		var members []struct {
+			ID string `json:"id"`
+		}
+		if m := strings.TrimSpace(string(d.Members)); m != "" && m != "{}" && m != "null" {
+			if err := json.Unmarshal(d.Members, &members); err != nil {
+				return nil, err
+			}
+		}
+		for _, m := range members {
 			out = append(out, m.ID)
 		}
 	} else if ev.verb == "apply" {
@@ -1073,6 +1100,7 @@ func (r *Redis) ReadView(ctx context.Context, tables []string) (View, error) {
 	}
 	open := p.HGetAll(ctx, r.key(keyOpen))
 	coord := p.Get(ctx, r.Names.Key(keyCoordinator))
+	seat := p.Get(ctx, r.Names.Key(keySeat))
 	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReply(err) {
 		return View{}, err
 	}
@@ -1094,6 +1122,13 @@ func (r *Redis) ReadView(ctx context.Context, tables []string) (View, error) {
 	if v.Coordinator, err = coord.Result(); err != nil && !errors.Is(err, redis.Nil) {
 		return View{}, err
 	}
+	raw, err := seat.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return View{}, err
+	}
+	if v.SeatGeneration, err = seatGenerationOf(raw, err == nil); err != nil {
+		return View{}, err
+	}
 	if v.Open, err = r.openOf(ctx, idx); err != nil {
 		return View{}, err
 	}
@@ -1111,3 +1146,29 @@ func (r *Redis) RowsOrder(ctx context.Context, table string, rows []string) erro
 }
 
 var _ RowsOrderer = (*Redis)(nil)
+
+// orderOnly says a set's arguments (its event's args: the table, then the change) change
+// the rows' order and nothing else: row_order, row_sort and row_move alone. Such a write
+// names no record because it changes none: the fleet's order by status (orderFleet)
+// moves rows, and the twin, which takes each table's rows from the shape it reads beside
+// its catch-up, read the fleet table whole after every such write (34 times on
+// 2026-10-04, each ~2,800 records). Any other key, or arguments it cannot read, is a
+// write that may change records, and the table is read whole as before.
+func orderOnly(args string) bool {
+	var list []string
+	if json.Unmarshal([]byte(args), &list) != nil || len(list) != 2 {
+		return false
+	}
+	var change map[string]json.RawMessage
+	if json.Unmarshal([]byte(list[1]), &change) != nil || len(change) == 0 {
+		return false
+	}
+	for k := range change {
+		switch k {
+		case "row_order", "row_sort", "row_move":
+		default:
+			return false
+		}
+	}
+	return true
+}

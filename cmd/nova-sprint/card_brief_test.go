@@ -15,8 +15,8 @@ func TestCardBriefPrintsTheBriefAlone(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream a --count 1 --brief-file " + writeBrief(t, "the whole work"))
-	ta.ok("add --stream a --count 1")
+	ta.ok("add --one --stream a --count 1 --brief-file " + writeBrief(t, "the whole work"))
+	ta.ok("add --one --stream a --count 1")
 
 	out := ta.ok("card a-1 --brief")
 	assert.Equal(t, strings.TrimSuffix(passingBrief("the whole work"), "\n")+"\n", out)

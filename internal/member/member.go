@@ -19,11 +19,13 @@ package member
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -34,8 +36,10 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -164,6 +168,13 @@ const (
 	EndNoResult = cardhdr.EndNoResult // the child left no result: the sprint deals the card again
 	EndBudget   = "budget"
 	EndDeadline = "deadline"
+	// EndUnverifiable is native's end=budget-unverifiable (docs/SPEC-SWARM.md, native): the
+	// member's usage source, its read of the harness's usage database, stopped answering and
+	// native ended the child for a budget it could no longer see. Judge says it as a budget
+	// end when the child left a result; a child it ended with none is the member's failure
+	// (the source is this machine's), finished staging refused, and the member rests
+	// (UsageRest).
+	EndUnverifiable = "budget-unverifiable"
 )
 
 // Finish is how a work launch ended, as the member judges it (tla/CardContract.tla).
@@ -190,12 +201,17 @@ const (
 func Judge(r Result, pu Push) (fin Finish, why string) {
 	defer func() {
 		// a budget or a deadline names how the run ended first; the provider's kind is
-		// the provider case's own (below), never a prefix on another reason
-		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging {
-			if r.End == EndBudget && r.Budget != "" {
+		// the provider case's own (below), never a prefix on another reason, and nor is
+		// the staging kind (the stage's own case, and the usage source's)
+		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging && !strings.HasPrefix(why, EndStaging) {
+			end := r.End
+			if end == EndUnverifiable {
+				end = EndBudget // the budget's words say which: "budget: unverifiable: ..."
+			}
+			if end == EndBudget && r.Budget != "" {
 				why = r.Budget + ": " + why // which budget, and at what count (#5094)
 			}
-			why = r.End + ": " + why
+			why = end + ": " + why
 		}
 	}()
 	switch {
@@ -203,6 +219,14 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// the member's machine refused the launch before any child ran: the kind and the
 		// stage's reason; the sprint deals the card to another member (StageRefused)
 		return FinishFailed, EndStaging + ": " + r.Staging
+	case r.End == EndUnverifiable && !r.Shaped:
+		// this member's usage source stopped answering and native ended the child for it,
+		// which left no result: the member's failure and never the card's (the owner,
+		// 2026-10-03: a provider problem is never a card problem), on the staging kind, so
+		// the sprint deals the card to another member without spending its redeal bound
+		// and opens no judgment on it (StageRefused); a result with the shape is judged
+		// below as any budget end's is
+		return FinishFailed, EndStaging + ": budget " + cmp.Or(r.Budget, "unverifiable: the usage source stopped answering")
 	case pu.Refused != "":
 		return FinishFailed, "push refused: " + pu.Refused
 	case r.End == EndProvider && r.Provider != "" && !r.Shaped:
@@ -269,7 +293,8 @@ type Packet struct {
 	Route    string `json:"route,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
-	USD      string `json:"usd,omitempty"` // the dollar budget per card, a decimal; "" for none (#5094)
+	USD      string `json:"usd,omitempty"`     // the dollar budget per card, a decimal; "" for none (#5094)
+	Harness  string `json:"harness,omitempty"` // the harness the route names (internal/harness); "" is the member's --harness
 	Deadline int    `json:"deadline,omitempty"`
 	// Tier is the tier the route was drawn from when the sprint decided it (a read's
 	// read tier, a rework's --tier); empty when the brief's line 1 names it.
@@ -349,6 +374,12 @@ type Config struct {
 	// finish. It is long (a backend's answer), so it runs in the end's long work, beside the
 	// push, never in the pass. nil asks none.
 	Attempt func(p Packet, result, reason string) (decided string, decision []byte, err error)
+	// ScriptVerify makes this reader a script reader (docs/SPEC-SPRINT.md, the script read):
+	// a read of a script card (CLASS: script) is first asked of it, with the card's program
+	// and deadline; ok is an ok read, whose finding is the one line why, counted as all the
+	// reads the card needs. Not ok is no verdict: the read goes on to a model child as any
+	// read does. nil asks none.
+	ScriptVerify func(p Packet, class cardhdr.Class) (ok bool, why string)
 }
 
 // launch is one child and the claim it was started for: the card at the
@@ -398,6 +429,9 @@ type Member struct {
 	noRow        bool   // a reader whose queue said it is no row of the readers table, said once
 	beaten       uint64 // the Meter's samples the last written beat has carried
 	noRoom       bool   // Room said no on the last tick it was asked
+	// usageStopped is when a launch of this member last ended because its usage source
+	// stopped answering (EndUnverifiable); zero when none has, or the rest after it ended
+	usageStopped time.Time
 	// spent is where the last pass's time went, by part (PassTimes)
 	spent PassTimes
 	// have is the --have of the cards the last pass ended holding (haveWords), for the
@@ -434,6 +468,7 @@ type Member struct {
 // post is what a launch's long work found: its start (the child, or why there is none),
 // or its end (how the child ended and, for a work card, its push).
 type post struct {
+	note     string // a line for the log: a script read that gave no verdict, its model read begun
 	child    Child
 	startErr error
 	res      *Result
@@ -731,23 +766,6 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		fmt.Fprintf(m.out, "NOTE width 0: no fleet row names this worker's width, so it takes nothing; a member runs at its own fleet row's, a reader named reader-<m> runs at machine m's (nova-config machine set <m> --width <n>, then nova-sprint fleet sync)\n")
 	}
 	held := []string{"--epoch", strconv.FormatUint(q.Epoch, 10)}
-	// every card this tick would start is started, or, when Config.Room says no, finished as
-	// refused at staging with its reason, so the sprint deals it to another member and says why
-	// (refuseStaging)
-	launch := m.start
-	if ok, why := m.room(); !ok {
-		launch = func(p Packet) bool {
-			returned := m.refuseStaging(p, why)
-			if returned && p.Kind == "read" {
-				// a read handed back under the floor is a return like any other: the
-				// sprint asks it again in place at most twice, then judges it
-				// (internal/sprint MaxReadReasks; tla/DirtyTick.tla, ReasksBounded),
-				// and this reader waits ReadStageRetry before it begins it again
-				m.returnedAt[p.Card] = now
-			}
-			return returned
-		}
-	}
 	ids := make([]string, 0, len(q.Cards))
 	byID := map[string]queueCard{}
 	for _, c := range q.Cards {
@@ -798,6 +816,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			continue
 		}
 		r := *l.res
+		if r.End == EndUnverifiable {
+			m.usageStopped = now // the member's rest (UsageRest), from the last such end
+		}
 		launched := []string{"--epoch", strconv.FormatUint(l.epoch, 10)}
 		var args []string
 		ok := r.OK // as reported: a work card whose push was refused is reported failed
@@ -938,6 +959,24 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	m.spent.Report = since()
 	if m.drain {
 		return acted, nil
+	}
+	// every card this tick would start is started, or, when Config.Room says no, finished as
+	// refused at staging with its reason, so the sprint deals it to another member and says why
+	// (refuseStaging); asked after the reports, so a launch whose end rested the member
+	// (room) rests it in this pass
+	launch := m.start
+	if ok, why := m.room(now); !ok {
+		launch = func(p Packet) bool {
+			returned := m.refuseStaging(p, why)
+			if returned && p.Kind == "read" {
+				// a read handed back under the floor is a return like any other: the
+				// sprint asks it again in place at most twice, then judges it
+				// (internal/sprint MaxReadReasks; tla/DirtyTick.tla, ReasksBounded),
+				// and this reader waits ReadStageRetry before it begins it again
+				m.returnedAt[p.Card] = now
+			}
+			return returned
+		}
 	}
 	// 2. Recover in-flight (working/reading) cards that have no child of ours,
 	// clamped to width. A card in the queue as working (reading) with no child
@@ -1110,9 +1149,9 @@ func (m *Member) start(p Packet) bool {
 	m.long(func() {
 		m.startMu.Lock()
 		m.staggerStart()
-		ch, err := m.runner.Start(p)
+		ch, note, err := m.scriptOrStart(p)
 		m.startMu.Unlock()
-		m.post(p.Card, post{child: ch, startErr: err})
+		m.post(p.Card, post{child: ch, note: note, startErr: err})
 	})
 	m.longWork()
 	if m.cfg.Background {
@@ -1174,6 +1213,9 @@ func (m *Member) collect() (acted int) {
 			continue // unreachable while a busy launch is left alone; nothing to give it to
 		}
 		l.busy = false
+		if po.note != "" {
+			fmt.Fprintf(m.out, "read %s: %s\n", card, po.note)
+		}
 		switch {
 		case po.startErr != nil:
 			p := l.packet
@@ -1220,13 +1262,33 @@ type Waiter interface {
 	Wait() <-chan struct{}
 }
 
-// room is whether a child may be started this tick (Config.Room) and why, saying so when
-// the answer changes: the refusal once when it begins, and once when it ends.
-func (m *Member) room() (bool, string) {
-	if m.cfg.Room == nil {
-		return true, ""
+// UsageRest is how long a member starts no card after a launch of its ended because its
+// usage source stopped answering (EndUnverifiable: native's read of the harness's usage
+// database, this machine's own): a launch started while it stays so would end the same way,
+// and each such end is the member's failure, reported on the staging kind (Judge). A launch
+// that ends so during the rest begins it again from its end; the rest is a clock's, since no
+// launch runs to read the source again while it holds (the usage source outage of
+// 2026-10-03, 11:46 PM, ended every child on the flash routes together, and each end was
+// judged as its card's).
+const UsageRest = 10 * time.Minute
+
+// room is whether a child may be started this tick (Config.Room, then the usage source's
+// rest) and why, saying so when the answer changes: the refusal once when it begins, and
+// once when it ends.
+func (m *Member) room(now time.Time) (bool, string) {
+	ok, why := true, ""
+	if m.cfg.Room != nil {
+		ok, why = m.cfg.Room()
 	}
-	ok, why := m.cfg.Room()
+	if ok && !m.usageStopped.IsZero() {
+		since := m.usageStopped.UTC().Format(time.RFC3339)
+		if until := m.usageStopped.Add(UsageRest); now.Before(until) {
+			ok, why = false, "the usage source stopped answering since "+since+": no card is started until "+until.UTC().Format(time.RFC3339)
+		} else {
+			why = "the rest after the usage source stopped answering (" + since + ") ended"
+			m.usageStopped = time.Time{}
+		}
+	}
 	switch {
 	case !ok && !m.noRoom:
 		fmt.Fprintf(m.out, "take REFUSED: %s\n", why)
@@ -1657,4 +1719,136 @@ func (m *Member) staggerStart() {
 		}
 	}
 	m.lastStart = now()
+}
+
+// scriptReadPrefix begins the finding of a script read that found the head the program's own
+// output; it is sprint.ScriptReadPrefix, which the sprint counts (the member does not import
+// the sprint, and the test holds the two equal).
+const scriptReadPrefix = "script read: "
+
+// scriptChild is a read already ended: the script reader's own verdict, with no process.
+type scriptChild struct{ res Result }
+
+func (c scriptChild) Done() bool     { return true }
+func (c scriptChild) Result() Result { return c.res }
+
+// scriptOrStart is a launch's start: a read of a script card is asked of this reader's
+// ScriptVerify first, and an ok answer is the read, ended with no child and no model
+// (docs/SPEC-SPRINT.md, the script read); any other answer is no verdict and the read is
+// started as a model child, the note saying why. Every other card is started as it is.
+func (m *Member) scriptOrStart(p Packet) (ch Child, note string, err error) {
+	if m.cfg.Reader && p.Kind == "read" && m.cfg.ScriptVerify != nil {
+		if c, why := cardhdr.ReadClass(p.Brief); why == "" && c.IsScript() {
+			ok, why := m.cfg.ScriptVerify(p, c)
+			if ok {
+				return scriptChild{Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: scriptReadPrefix + oneLine(why)}}, "", nil
+			}
+			note = "script read gave no verdict (" + oneLine(why) + "); asked of a model"
+		}
+	}
+	ch, err = m.runner.Start(p)
+	return ch, note, err
+}
+
+// DefaultScriptDeadline bounds a script run whose card names no deadline.
+const DefaultScriptDeadline = 30 * time.Minute
+
+// ScriptVerifier is a script reader's means (docs/SPEC-SPRINT.md, the script read). Mirror
+// is a repository that holds the attempt's start commit and the head; Temp is a directory
+// the checkout is made in (removed after); Run runs the program's argv in a directory
+// under the wall, with the card's deadline in ctx, and is the one place a program runs:
+// the caller wires the wall, a test a fake. Git is the git program, "" for git on PATH.
+type ScriptVerifier struct {
+	Mirror string
+	Temp   string
+	Git    string
+	Run    func(ctx context.Context, dir string, argv []string) error
+}
+
+// Verify is Config.ScriptVerify: it checks out the attempt's start commit (the packet's
+// base head, else the merge base of the head and the work's base branch), runs the
+// card's program from the repository root under the card's deadline, and compares the
+// resulting diff with the head's diff byte for byte. Identical is ok, with the one line
+// that says what was compared; a difference, an empty diff, a missing commit or a failed
+// run is not ok, with the reason. The head is never taken on the worker's word.
+func (v ScriptVerifier) Verify(p Packet, class cardhdr.Class) (ok bool, why string) {
+	argv := strings.Fields(class.Script)
+	switch {
+	case len(argv) == 0:
+		return false, "the card names no program"
+	case p.Head == "":
+		return false, "the read names no head"
+	}
+	deadline := cmp.Or(class.Deadline, DefaultScriptDeadline)
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	g := func(dir string, args ...string) (string, error) {
+		res, err := gitrun.Run(ctx, gitrun.Options{Bin: v.Git, C: dir, OwnRepo: true, Timeout: deadline}, args...)
+		if err != nil {
+			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(res.Stderr)))
+		}
+		return string(res.Stdout), nil
+	}
+	start := p.BaseHead
+	if start == "" {
+		for _, base := range []string{p.WorkBase, "origin/" + p.WorkBase} {
+			if base == "" || base == "origin/" {
+				continue
+			}
+			if out, err := g(v.Mirror, "merge-base", p.Head, base); err == nil {
+				start = strings.TrimSpace(out)
+				break
+			}
+		}
+	}
+	if start == "" {
+		return false, "no start commit: the packet has no base head and no base branch to take the merge base with"
+	}
+	want, err := g(v.Mirror, "diff", "--binary", "--full-index", start, p.Head)
+	if err != nil {
+		return false, err.Error()
+	}
+	if want == "" {
+		return false, "the head's diff against the start commit is empty"
+	}
+	dir, err := os.MkdirTemp(v.Temp, "script-read-")
+	if err != nil {
+		return false, err.Error()
+	}
+	defer func() {
+		// a checkout left behind is the bench's disk: the read gives no verdict for it
+		if err := safepath.RemoveUnder(cmp.Or(v.Temp, os.TempDir()), dir); err != nil {
+			ok, why = false, "the checkout was not removed: "+err.Error()
+		}
+	}()
+	for _, args := range [][]string{{"clone", "-q", "--no-checkout", v.Mirror, dir}} {
+		if _, err := g("", args...); err != nil {
+			return false, err.Error()
+		}
+	}
+	if _, err := g(dir, "checkout", "-q", "--detach", start); err != nil {
+		return false, err.Error()
+	}
+	if err := v.Run(ctx, dir, argv); err != nil {
+		return false, "the program failed: " + err.Error()
+	}
+	if _, err := g(dir, "add", "-A"); err != nil {
+		return false, err.Error()
+	}
+	got, err := g(dir, "diff", "--cached", "--binary", "--full-index", start)
+	if err != nil {
+		return false, err.Error()
+	}
+	if got != want {
+		return false, fmt.Sprintf("the program's diff (%d bytes) is not the head's (%d bytes)", len(got), len(want))
+	}
+	return true, fmt.Sprintf("ran %q at %s: its diff is %s's, %d bytes, identical", class.Script, short(start), short(p.Head), len(got))
+}
+
+// short is the first twelve characters of a sha.
+func short(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }

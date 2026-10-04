@@ -47,8 +47,8 @@ func TestAGroupIsNamedByItsIDNeverItsPosition(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
-	ta.ok("add --stream s2 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
+	ta.ok("add --stream s2 --count 1 --one")
 	ta.deal(2)
 	ta.failOnce("m1", "s1-1.w1@1", "tests red")
 	first := ta.group(sprint.NWorkFailed, "s1")
@@ -257,7 +257,7 @@ JUDGMENT N3   stream stopped: stream branch red  alias=j4  stream=s1  size=3  wa
     nova-sprint resume --stream s1 --did 'returned s1-2' --answers N3
   rework the suspect:
     nova-sprint return s1-2 --reason 'suspect of the red batch' --answers N3
-    nova-sprint rework s1-2 --fix '<fix>'
+    nova-sprint rework s1-2 --fix '<fix>' --one
     nova-sprint resume --stream s1 --did 'returned s1-2 for rework' --answers N3
   resume with what you did:
     nova-sprint resume --stream s1 --did '<what you did>' --answers N3
@@ -292,7 +292,7 @@ func TestInboxPrintsTheReaderFindingInFullUnderTheJudgment(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.ok("take --as m1 --limit 1")
 	ta.ok("finish --as m1 s1-1.w1@1")
@@ -322,7 +322,7 @@ func TestInboxNamesASingleCardJudgmentByItsCard(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.ok("take --as m1 --limit 1")
 	ta.ok("finish --as m1 s1-1.w1@1")

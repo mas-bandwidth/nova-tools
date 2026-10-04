@@ -61,6 +61,8 @@ func TestPostgresRouteRoundTripsAndHoldsItsRules(t *testing.T) {
 		{name: "a slashed provider", sql: `INSERT INTO config.routes (name, tier, provider, model, deadline) VALUES ('w2', 'pro', 'a/b', 'm', 60)`},
 		{name: "a model with a blank", sql: `INSERT INTO config.routes (name, tier, provider, model, deadline) VALUES ('w3', 'pro', 'p', 'a b', 60)`},
 		{name: "deadline 0", sql: `INSERT INTO config.routes (name, tier, provider, model, deadline) VALUES ('w4', 'pro', 'p', 'm', 0)`},
+		{name: "a headless harness on a shared provider word", sql: `INSERT INTO config.routes (name, tier, provider, model, harness, deadline) VALUES ('w5', 'heavy', 'subscription', 'm', 'claude', 60)`},
+		{name: "deadline 0", sql: `INSERT INTO config.routes (name, tier, provider, model, deadline) VALUES ('w4', 'pro', 'p', 'm', 0)`},
 	}
 	for _, w := range walls {
 		_, err := st.db.ExecContext(ctx, w.sql)
@@ -89,7 +91,7 @@ func TestApplyWritesTheRouteViewTheDealReads(t *testing.T) {
 	assert.ElementsMatch(t, []string{"pro-a", "flash-b"}, c.SMembers(ctx, RoutesKey).Val())
 	got := c.HGetAll(ctx, RouteKey("pro-a")).Val()
 	want := map[string]string{
-		"name": "pro-a", "tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4",
+		"name": "pro-a", "tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "harness": "opencode",
 		"tokens": "300000", "usd": "", "deadline": "1800", "enabled": "true", "first": "false", // usd empty: no dollar cap
 		// the price sheet, not set: every price empty, never 0
 		"price_input": "", "price_cache_read": "", "price_cache_write": "", "price_output": "", "reasoning_as_output": "true", "long_context": "0",
@@ -138,7 +140,7 @@ func TestTheTierArrayRoundTripsAndApplyWritesIt(t *testing.T) {
 	st := migrated(t)
 	tiers, err := st.List(ctx, KindTier)
 	require.NoError(t, err)
-	require.Len(t, tiers, 2, "migrate makes flash and pro")
+	require.Len(t, tiers, 3, "migrate makes flash, heavy and pro")
 	for _, row := range []Row{
 		newRoute(t, "flash-a", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600"}),
 		newRoute(t, "flash-off", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600", "enabled": "false", "note": "off for the test"}),
@@ -166,5 +168,5 @@ func TestTheTierArrayRoundTripsAndApplyWritesIt(t *testing.T) {
 	require.NoError(t, err)
 	applyKinds(t, st, ap, "t")
 	assert.Equal(t, "flash-a,flash-a", c.HGet(ctx, TierKey("flash"), "routes").Val())
-	assert.ElementsMatch(t, []string{"flash", "pro"}, c.SMembers(ctx, TiersKey).Val())
+	assert.ElementsMatch(t, []string{"flash", "heavy", "pro"}, c.SMembers(ctx, TiersKey).Val())
 }

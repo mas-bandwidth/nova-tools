@@ -411,7 +411,7 @@ func TestLandTwoStreamsAsTheirOwnBatches(t *testing.T) {
 func TestLandRefusesWhatItCannotPlace(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 	for _, tc := range []struct{ line, want string }{
 		{"land --base main", "the card names no REPO: line and no --repo-dir was given; run: nova-sprint land --repo-dir <clone>"},
@@ -464,7 +464,7 @@ func TestLandReviewClonesOfTwoRepositoriesNeverShareADirectory(t *testing.T) {
 	briefs := t.TempDir()
 	path := filepath.Join(briefs, "a.md")
 	require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
-	r.ok("add --stream s1 a --brief-file " + path)
+	r.ok("add --stream s1 a --one --brief-file " + path)
 	r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
 	before, otherBefore := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
 	code, _, errs := r.do("land")
@@ -480,7 +480,7 @@ func TestLandReviewClonesOfTwoRepositoriesNeverShareADirectory(t *testing.T) {
 func TestLandReviewAWrongEpochPushesNothing(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 	before, applies := r.git(r.remote, "rev-parse", "main"), r.applies()
 	code, _, errs := r.do("land --repo-dir " + r.clone + " --base main --epoch 999")
@@ -522,7 +522,7 @@ func TestLandReviewAGitEnvironmentFailureBlamesNoCard(t *testing.T) {
 func TestLandRefusesAReworkedHeadAndLandsItOnTheNextRun(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	old := r.head("s1-1", "main", "a.txt", "attempt 1\n")
 	r.queued(map[string]string{"s1-1": old}, "s1-1")
 	var replacement string
@@ -572,10 +572,10 @@ func TestLandRefusesAReworkedHeadAndLandsItOnTheNextRun(t *testing.T) {
 func TestLandAReusedOpLandsTheNewBatchForReal(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 first")
+	r.ok("add --stream s1 first --one")
 	r.queued(map[string]string{"first": r.head("first", "main", "a.txt", "a\n")}, "first")
 	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main --op repeated-land"), "LAND OK stream=s1 cards=1")
-	r.ok("add --stream s1 second")
+	r.ok("add --stream s1 second --one")
 	r.queued(map[string]string{"second": r.head("second", "main", "b.txt", "b\n")}, "second")
 	out := r.ok("land --repo-dir " + r.clone + " --base main --op repeated-land")
 	assert.Contains(t, out, "LAND OK stream=s1 cards=1")
@@ -610,7 +610,7 @@ func TestLandHoldsEveryPushURLToTheRepository(t *testing.T) {
 			briefs := t.TempDir()
 			path := filepath.Join(briefs, "a.md")
 			require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
-			r.ok("add --stream s1 a --brief-file " + path)
+			r.ok("add --stream s1 a --one --brief-file " + path)
 			r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
 			before, otherBefore := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
 			code, _, errs := r.do("land --repo-dir " + r.clone)
@@ -641,7 +641,7 @@ func TestLandChecksNewFilesAgainstTheTypedHeader(t *testing.T) {
 			t.Parallel()
 			r := newLandRig(t)
 			brief := writeNeedsBrief(t, t.TempDir(), "a", "RESULT: a\nPATHS: a.txt\n"+tc.scope, "")
-			r.ok("add --stream s1 a --brief-file " + brief)
+			r.ok("add --stream s1 a --one --brief-file " + brief)
 			head := r.head("a", "main", tc.file, "added\n")
 			r.queued(map[string]string{"a": head}, "a")
 			before := r.git(r.remote, "rev-parse", "main")

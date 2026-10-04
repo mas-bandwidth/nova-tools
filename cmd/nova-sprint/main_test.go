@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,8 @@ type testApp struct {
 	live []string
 	// quiet is the readers that do not beat: every other reader of the readers
 	// table beats with the members (a reader's own queue is its beat).
+	// sent is every message the app sent on the friends' bus.
+	sent  []bus.Message
 	quiet map[string]bool
 }
 
@@ -44,6 +47,13 @@ func newTestApp(t *testing.T) *testApp {
 	ta.a.now = func() time.Time { ta.mu.Lock(); defer ta.mu.Unlock(); return ta.now }
 	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock(); ta.beat() }
 	ta.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return ta.m, nil }
+	// the friends' bus: every message sent is kept, none goes anywhere
+	ta.a.bus = func(_ context.Context, m bus.Message) error {
+		ta.mu.Lock()
+		defer ta.mu.Unlock()
+		ta.sent = append(ta.sent, m)
+		return nil
+	}
 	// run's wait on a quiet log steps the clock by the time it may take
 	ta.m.LogWait = func(d time.Duration) { ta.a.sleep(d) }
 	ta.a.meter = hostload.Source{NCPU: 4, Load1: func() (float64, bool) { return 1, true }}
@@ -404,7 +414,7 @@ func TestVerbLineOnAStoppedMachineHasNoETA(t *testing.T) {
 	require.Equal(t, "STOPPED  0/3 0.0%", lastLine(out), "add on a stopped machine: last line %q in %s", lastLine(out), out)
 	require.NotContains(t, out, "-> ETA", "add on a stopped machine: last line %q in %s", lastLine(out), out)
 	ta.ok("start")
-	out = ta.ok("add --stream s2 --count 1")
+	out = ta.ok("add --stream s2 --count 1 --one")
 	// the added card is queued for the next tick's pump: the table counts it
 	// once the pump has drained the queue
 	require.Equal(t, "0/3 0.0% -> ETA -  machine: running", lastLine(out), "add on a running machine: last line %q in %s", lastLine(out), out)
@@ -510,4 +520,17 @@ func TestParseTakesEveryWordAfterTheTerminatorAsItIs(t *testing.T) {
 	pos, err := parse(fs, []string{"a", "--", "--help"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "--help"}, pos, "help after -- is a word")
+}
+
+// dry runs a --dry-run line and holds that it wrote nothing: the store's whole state
+// (store.Mem.Snapshot) is the same after it as before.
+func (ta *testApp) dry(line string) string {
+	ta.t.Helper()
+	before, err := ta.m.Snapshot()
+	require.NoError(ta.t, err)
+	out := ta.ok(line)
+	after, err := ta.m.Snapshot()
+	require.NoError(ta.t, err)
+	require.JSONEq(ta.t, string(before), string(after), "%s wrote to the store", line)
+	return out
 }

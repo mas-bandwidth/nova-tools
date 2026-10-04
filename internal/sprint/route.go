@@ -43,7 +43,10 @@ type Route struct {
 	Tier     string `json:"tier"`
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
-	Tokens   int    `json:"tokens"` // 0 is unmetered
+	// Harness is the harness a card on it runs under (internal/harness: opencode, the
+	// default, or a headless program of the heavy tier); the member launches by it.
+	Harness string `json:"harness,omitempty"`
+	Tokens  int    `json:"tokens"` // 0 is unmetered
 	// USD is the route's dollar budget per card, a canonical decimal ("0.5"), "" for none:
 	// the harness's reported cost at which native stops the card (nova-tools #5094).
 	USD      string `json:"usd,omitempty"`
@@ -66,6 +69,7 @@ const (
 	FieldModel    = "model"
 	FieldTokens   = "tokens"
 	FieldUSD      = "usd"
+	FieldHarness  = "harness"
 	FieldDeadline = "deadline"
 	FieldRoutes   = "routes"
 	FieldUsage    = "usage"
@@ -243,7 +247,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			ri[tier].r.count += steps
 			ri[tier].moves[c.ID] = strconv.FormatUint(steps, 10)
 		}
-		set := map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
+		set := map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD, FieldHarness: r.Harness,
 			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}
 		if !pinnedTier(c, m) {
 			set[FieldTierNow] = tier // the primary is on the tier drawn (cardTier)
@@ -266,7 +270,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 // coordinator's and is never dealt (it climbs no ladder); a pinned model runs on its pin;
 // a tier the coordinator pinned (rework --tier, FieldTier) is the card's tier and its
 // ceiling both.
-var tierLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro}
+var tierLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteHeavy}
 
 // cardTier is the tier the primary c is on, what its reads, its read count and its
 // escalation go by: the tier its last deal on a route drew (FieldTierNow, which every
@@ -303,6 +307,9 @@ func pinnedTier(c *Card, m cardhdr.Model) bool {
 func ceilingTier(c *Card, m cardhdr.Model) string {
 	if t := c.F(FieldTier); t != "" {
 		return t
+	}
+	if t, ok := criticalTier(c, m); ok {
+		return t // a critical card runs on pro from its first deal (weight.go)
 	}
 	if m.Tier == "" {
 		return cardhdr.RouteFlash
@@ -346,17 +353,17 @@ func (s *Snapshot) NextTier(c *Card) string {
 // readers being conservatively the same tier as the work being done seems
 // fine?"), raised to the read tier set for its stream or the sprint when that is
 // stronger (settings.go; nova-tools#5096 item 27), never lowered. A card that pins
-// a model and names no tier is read on flash; a frontier card, a tier no route
-// serves, is read on pro. The value returned is that collapse: a route drawn for the
-// card is named from it, and route_cover's pin of the collapse (frontier to the
-// strongest tier a route serves, heavy on the harness this tree has not landed) is
-// not edited here. The tick's ask does not draw that route for a card whose read
-// tier before the collapse is frontier (friend_read.go): that ask is a friend's.
+// a model and names no tier is read on flash. A heavy card is read on heavy. A frontier
+// card, a tier no route serves, is read on heavy, the strongest tier a route serves: a
+// read on pro would be weaker than the writer, which item 27 refuses. The value returned
+// is that collapse: a route drawn for the card is named from it. The tick's ask does not
+// draw that route for a card whose read tier before the collapse is frontier
+// (friend_read.go): that ask is a friend's, one of frontier class (docs/SPEC-SPRINT.md, reads).
 func (s *Snapshot) readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	t := cardTier(pr, m)
 	if t == cardhdr.RouteFrontier {
-		t = cardhdr.RoutePro
+		t = cardhdr.RouteHeavy
 	}
 	if set := s.readTierSetting(pr.Row); set != "" {
 		t = stronger(t, set)
@@ -399,7 +406,7 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 	ri[tier].r.count += steps
 	was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
 	ri[tier].moves[key] = strconv.FormatUint(was+steps, 10)
-	return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
+	return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD, FieldHarness: r.Harness,
 		FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier}
 }
 
@@ -458,7 +465,7 @@ func TierRoutes(routes []Route) string {
 		return ""
 	}
 	var out []string
-	for _, t := range []string{cardhdr.RouteFlash, cardhdr.RoutePro} {
+	for _, t := range tierLadder {
 		out = append(out, fmt.Sprintf("%s=%d", t, n[t]))
 	}
 	return strings.Join(out, " ")

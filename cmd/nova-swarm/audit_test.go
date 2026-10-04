@@ -35,6 +35,9 @@ var swarmAudit = audit.Config{
 		"main.go|cmdTemplate|body":    "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
 		"native.go|initRunState|line": "the line NewWallReader announces a refusal on: swarm.WallRefusedLine builds the whole line and puts the kind, the path, the task and the step through oneline.Field inside itself, so what arrives at this closure is already one safe token, and escaping it a second time would fold it into one unreadable form. TestNativeIdleZeroWatchesNothing asserts the line this site prints byte for byte.",
 
+		// the bare argument of `lint <file>` (parse, main.go)
+		"main.go|parse|f.positional": "the name of the one flag a bare argument fills, the literal lint.go assigns (\"card\"); the bare argument itself is printed quoted (%q)",
+
 		// a verb's -h with its own exit codes (verbhelp.go)
 		"verbhelp.go|recoverHelp|help": "a verb's help, what verbflag.RecoverWith prints: lines of this package's usage const, flag names and their usage literals, the verb's example and exit lines, all constants; never an argument the caller typed",
 
@@ -206,6 +209,10 @@ var swarmAudit = audit.Config{
 		// cardhdr reads a card's header lines (its tier, a model: pin) into a value: the
 		// one parser the frame and the deal share. It holds no writer and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/cardhdr"`,
+		// harness (doctor.go, member.go, native.go) is the harness words: which program a
+		// binary is (KindOf) and whether it is headless. Standard library only, no writer,
+		// prints nothing; a kind reaches a line only through oneline.Field.
+		`"github.com/mas-bandwidth/nova-tools/internal/harness"`,
 		// cardcost (native.go, member.go) folds what a run spent into a value and spells it
 		// as one word (SpendWord) or one record line (Usage.String); it holds no writer and
 		// prints nothing. The spend word reaches the NATIVE line only through oneline.Field.

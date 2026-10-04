@@ -66,7 +66,7 @@ func TestTierFollowsTheGatesMeasuredWall(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+			// not parallel: the cases share w.s, whose tables index lazily on read (Table.index)
 			id := "new-" + itoa(i+1)
 			p := Add(w.s, AddReq{Stream: "new", Cards: []CardAdd{{ID: id, Brief: tc.brief}}})
 			require.Empty(t, p.Refused)

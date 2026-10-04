@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -23,6 +24,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 	"time"
 	"unicode"
 
@@ -196,6 +199,30 @@ func FriendWidth(r Row) int {
 	return r.Int("width")
 }
 
+// FriendModes are how a friend's daemon (nova-friend run) hands her work:
+// batch, every waiting message as one turn of her one session; one-shot,
+// width lanes, each its own session of her, handed one card per turn and
+// waiting for that card's RESULT.md before the next (docs/SPEC-FRIEND.md,
+// one-shot lanes; the owner, 2026-10-04: "so [she] can still be wide, it's
+// just 8 [of her]").
+var FriendModes = []string{FriendModeBatch, FriendModeOneShot}
+
+// The delivery modes, and the default a row without one has.
+const (
+	FriendModeBatch   = "batch"
+	FriendModeOneShot = "one-shot"
+	DefaultFriendMode = FriendModeBatch
+)
+
+// FriendMode is a friend row's delivery mode: its mode field,
+// DefaultFriendMode when the row has none.
+func FriendMode(r Row) string {
+	if m := r.Fields["mode"]; m != "" {
+		return m
+	}
+	return DefaultFriendMode
+}
+
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
 // instead). A width that failed its own validation is absent and skipped.
@@ -208,11 +235,11 @@ func checkFriend(r Row) error {
 
 // Tiers are the model tiers a friend can do, capacity.lua's filter_ok
 // spelling (frontier, pro, flash).
-var Tiers = []string{"flash", "frontier", "pro"}
+var Tiers = []string{"flash", "frontier", "heavy", "pro"}
 
 // RouteTiers are the tiers a route serves: Tiers less frontier, whose cards
 // are never drawn from routes and escalate to the coordinator.
-var RouteTiers = []string{"flash", "pro"}
+var RouteTiers = []string{"flash", "pro", "heavy"}
 
 // The sprint row's two bars on a decide read's p(defect) (internal/decide, Bars;
 // docs/SPEC-SPRINT.md section 6, the decide read): apply writes them to
@@ -257,6 +284,18 @@ const (
 // nova-sprint answer applies the verb it chose at or above it. Apply writes
 // it to SprintKey(FieldDecideJudgment), which the sprint's routes read takes.
 const FieldDecideJudgment = "decide_judgment_bar"
+
+// FieldAnswerRulesOff is the sprint row's off switch of the tick's rule answers (docs/SPEC-SPRINT.md
+// section 8, answered by rule): a list of AnswerRules, each a rule the machine does not
+// answer a judgment by while it is listed. Apply writes it to SprintKey(FieldAnswerRulesOff),
+// which the sprint's routes read takes.
+const FieldAnswerRulesOff = "answer_rules_off"
+
+// AnswerRules is every rule the sprint answers a mechanical judgment by (internal/sprint,
+// RuleNames, which a test holds equal): work came back failed, a card at its bound, a work
+// card past its deadline, a stream stopped on a conflict in a file no ledger owns, the same
+// finding twice (a brief defect), and the lander's base tree gate retried.
+var AnswerRules = []string{"base-gate", "bound", "brief-defect", "conflict", "failed", "late"}
 
 // FieldDecideBriefBar is the sprint row's bar on a brief decision's p(converges)
 // (internal/decide, BriefBar; docs/SPEC-NOVA-DECIDE.md section 14): nova-sprint add
@@ -345,12 +384,13 @@ var Kinds = []*Kind{
 		Name:      KindFleet,
 		Table:     "fleet",
 		Singleton: true,
-		Doc:       "the one row of fleet-wide facts: the store and coordinator machines, Redis port and explicit password-free Postgres URI",
+		Doc:       "the one row of fleet-wide facts: the store and coordinator machines, Redis port, explicit password-free Postgres URI and the bus store's address",
 		Fields: []Field{
 			{Name: "store", Type: TypeRef, Ref: KindMachine, Help: "the machine that runs Redis (a machine row), or empty"},
 			{Name: "coordinator", Type: TypeRef, Ref: KindMachine, Help: "the machine the coordinator's loops run on (a machine row), or empty"},
 			{Name: "redis_port", Type: TypeInt, Nullable: true, Help: "the explicit TCP port Redis listens on, from 1 through 65535; unset until declared"},
 			{Name: "pg_dsn", Type: TypeText, Help: "the explicit password-free postgres:// URI the configuration store uses; empty until set"},
+			{Name: "bus", Type: TypeText, Help: "the bus store's Redis address, host:port, what nova-bus reads from the applied fleet:bus when NOVA_BUS_REDIS is unset; empty until set"},
 		},
 		Check: checkFleet,
 	},
@@ -361,12 +401,13 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, and her delivery mode",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
+			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
@@ -394,6 +435,7 @@ var Kinds = []*Kind{
 			{Name: FieldDecideGatePreexisting, Type: TypeDecimal, Default: "", Help: "the gate decision's pre-existing bar: a work card's failing test whose p(pre-existing) is at or above it is reported `pre-existing: <test>`, the base's or the member's and never the card's; a probability; empty (the default) reclassifies nothing; 0.8 is the starting point, though at 0.8 24 of the calibration's 39 flaky failures would have been reported pre-existing"},
 			{Name: FieldDecideJudgment, Type: TypeDecimal, Help: "the judgment bar: nova-sprint answer applies the verb the judgment decision chose when its probability is at or above it, and lists it for the coordinator below it; a probability; empty (the default) applies nothing: every decision is recorded and what a bar would apply is listed; 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration"},
 			{Name: FieldDecideBriefBar, Type: TypeDecimal, Help: "the brief bar: nova-sprint add asks the brief decision of each card and refuses a card whose p(converges) is under it, naming the questions it failed; a probability; empty (the default) asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels, docs/SPEC-NOVA-DECIDE.md section 14): leave it empty until calibrate on the brief record's own outcomes supports a bar"},
+			{Name: FieldAnswerRulesOff, Type: TypeList, Enum: AnswerRules, Help: "the rules the machine does not answer judgments by: comma list of " + strings.Join(AnswerRules, ", ") + "; empty (the default) answers by every rule: failed and no-result work redealt then raised a tier, a card at its bound raised a tier (heavy to a friend), a late card waited once or returned and redealt, a conflict in a file no ledger owns returned, redone on the tip and resumed, the same finding twice marked a brief defect, and the base tree gate retried before a stream stops (docs/SPEC-SPRINT.md section 8, answered by rule)"},
 		},
 		Check: checkSprint,
 	},
@@ -431,6 +473,7 @@ var Kinds = []*Kind{
 			{Name: "tier", Type: TypeEnum, Enum: RouteTiers, Required: true, Help: "the tier it serves: one of " + strings.Join(RouteTiers, ", ") + " (frontier cards are never drawn from routes, they escalate to the coordinator)"},
 			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
+			{Name: "harness", Type: TypeEnum, Enum: harness.Kinds, Default: harness.OpenCode, Help: "the harness a card on this route runs under: opencode (the default: the providers table launches it with the provider's key) or a headless program of the machine's own subscription login, " + strings.Join(harness.Headless, ", ") + " (the heavy tier), whose --provider is " + harness.ProviderPrefix + "<harness>, one word per harness so one login's failure rests only its own routes"},
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
 			{Name: "usd", Type: TypeDecimal, Help: "the dollar budget per card, a decimal like 0.50: the harness's reported cost at which the card is stopped, beside the token budget; empty (the default) is none"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
@@ -488,6 +531,12 @@ func noteField(what string) Field {
 // endpoints may be unset so an older fleet can migrate before an operator
 // declares them; apply and inventory refuse incomplete endpoints.
 func checkFleet(r Row) error {
+	if raw := r.Fields["bus"]; raw != "" {
+		host, port, err := net.SplitHostPort(raw)
+		if n, perr := strconv.Atoi(port); err != nil || host == "" || perr != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("--bus wants the bus store's address as host:port, the port from 1 through 65535")
+		}
+	}
 	if raw := r.Fields["redis_port"]; raw != "" {
 		port, err := strconv.Atoi(raw)
 		if err != nil || port < 1 || port > 65535 {
@@ -537,6 +586,11 @@ func checkTier(r Row) error {
 // given) is skipped, so its own refusal stands alone.
 func checkRoute(r Row) error {
 	var problems []string
+	if k := r.Fields["harness"]; harness.IsHeadless(k) {
+		if p, ok := r.Fields["provider"]; ok && p != harness.ProviderOf(k) {
+			problems = append(problems, fmt.Sprintf("route %s runs under --harness %s and has --provider %q; want --provider %s: one provider word per harness, so one harness's expired login rests only its own routes", r.Name, k, p, harness.ProviderOf(k)))
+		}
+	}
 	if p, ok := r.Fields["provider"]; ok && (p == "" || strings.ContainsFunc(p, func(c rune) bool { return c == '/' || unicode.IsSpace(c) })) {
 		problems = append(problems, fmt.Sprintf("route %s has --provider %q; want the provider word of the model id <provider>/<model>: one word, no slash, no blank", r.Name, p))
 	}

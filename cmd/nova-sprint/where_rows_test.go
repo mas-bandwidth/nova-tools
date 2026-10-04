@@ -14,9 +14,9 @@ func TestWhereRowsCarriesEveryPrimary(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream b --count 1 --brief-file " + writeBrief(t, "the work"))
+	ta.ok("add --one --stream b --count 1 --brief-file " + writeBrief(t, "the work"))
 	ta.ok("add --stream a a-1 a-2")
-	ta.ok("add --stream a a-3 --needs a-1")
+	ta.ok("add --one --stream a a-3 --needs a-1")
 
 	var v struct{ Rows []primaryRow }
 	ta.json("where --rows", &v)

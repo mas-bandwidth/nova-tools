@@ -677,6 +677,7 @@ func TestMachLookupIsNarrowed(t *testing.T) {
 		"com.apple.system.opendirectoryd.libinfo",
 		"com.apple.SecurityServer",
 		"com.apple.system.logger",
+		"com.apple.trustd.agent", // Go's TLS verification on darwin (profiles/darwin.sb.tmpl, measured 2026-10-04)
 	} {
 		assert.Contains(t, text, name, "the measured mach-lookup set is missing %s", name)
 	}

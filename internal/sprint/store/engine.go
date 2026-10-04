@@ -75,6 +75,13 @@ type Store struct {
 	// Updates is the tick's table updates, in order; nil is the tick's own
 	// (sprint.TickTables). A test gives its own.
 	Updates []sprint.TableUpdate
+	// AnswerRules says the tick answers the mechanical judgments by rule (run and tick
+	// --answer-rules, on by default there; docs/SPEC-SPRINT.md section 8, answered by rule):
+	// false, every judgment is the coordinator's, as before the rules.
+	AnswerRules bool
+	// IdleAlarm says the tick watches for an idle fleet and pushes the coordinator one note
+	// of why an episode (run --idle-alarm, on by default there; sprint.TickIdle).
+	IdleAlarm bool
 	// Stats is what the store's reads cost (stats.go); nil is made on the
 	// first tick. Its pinned copies share it.
 	Stats *Stats
@@ -617,7 +624,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Attempts--
 			continue
 		}
-		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 {
+		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 && op.Health == nil {
 			res.Moved = nil
 			return st.after(ctx, step, res)
 		}
@@ -1221,7 +1228,7 @@ func hasChanges(e ntable.BatchMemberEntry) bool {
 // entries, each expecting the revision the one before it leaves; then the
 // notifications and the answers.
 func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprint.Snapshot) (OpRecord, error) {
-	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat}
+	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat, Health: plan.Health}
 	entries := map[string][]ntable.BatchMemberEntry{}
 	seen := map[entryKey]int{} // index+1 in entries[table]
 	cause := map[entryKey]string{}

@@ -16,9 +16,9 @@ func TestHeldAndSentinelsListWhatAWaveWaitsOn(t *testing.T) {
 	ta.ok("add --stream a --count 2")
 	ta.ok("add --stream a --sentinel a-stop")
 	ta.ok("add --stream a a-3 a-4 --needs a-1")
-	ta.ok("add --stream a a-5 --held")
-	ta.ok("add --stream b --count 1")
-	ta.ok("add --stream b b-2 --needs b-1 --held")
+	ta.ok("add --one --stream a a-5 --held")
+	ta.ok("add --one --stream b --count 1")
+	ta.ok("add --one --stream b b-2 --needs b-1 --held")
 
 	out := ta.ok("held")
 	assert.Contains(t, out, "HELD a-3 stream=a held=- behind=a-stop needs=a-1\n")

@@ -192,11 +192,11 @@ func TestAnOldWorkersFinishIsRefusedAfterAClear(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 p1")
+	ta.ok("add --stream s1 p1 --one")
 	ta.deal(1)
 	ta.ok("take --as m1 p1.w1@1")
 	ta.ok("clear --confirm sprint")
-	ta.ok("add --stream s1 p1")
+	ta.ok("add --stream s1 p1 --one")
 	ta.deal(1)
 	raw := func(line string) (int, string) {
 		var out, errb bytes.Buffer
