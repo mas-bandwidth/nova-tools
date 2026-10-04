@@ -264,6 +264,7 @@ above the bar with no class there. A class that keeps coming back is a finder ru
 				},
 				Run: w.findings,
 			},
+			shadowVerb(w),
 		},
 	}
 }

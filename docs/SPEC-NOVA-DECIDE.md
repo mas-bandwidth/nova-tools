@@ -671,3 +671,47 @@ it does not discriminate (0.509) and is to be reframed or dropped before any bar
 A card written to every question scores 0.72; the reviewed cards 0.33 to 0.48; the
 schema wave's tree cards 0.08 to 0.21. The review label is a diff's quality, not a
 card's convergence: the brief record's own outcomes are the measure that counts.
+
+## 15. Recording a shadow feed
+
+`nova-decide shadow --manifest <file> --backend jev --record <file>
+--budget 100 --max 1 [--truth <file>]` consumes a bounded, label-free JSON
+array. Each row names `task`, a full forty-character `head`, `prompt_version`,
+and `card` and `diff` files (optional `rule`); alternatively it names `schema`
+and `state` files for another typed decision. Relative files resolve beside the
+manifest. The tuple `(task, head, prompt_version)` has one deterministic op.
+An optional `op` adopts an existing decision from the named record only; its
+schema and exact state must match. The manifest refuses unknown fields,
+duplicate tuples, reused ops, changed inputs, and more than 100 rows before
+asking. A state is at most 256 KiB; a manifest is at most 1 MiB. At this bound
+one hundred states occupy at most 25 MiB and fit in one process. Larger feeds
+use successive bounded manifests and the same record and journal.
+
+The sole truth is the ordinary decide record plus its sibling
+`<record>.shadow.json` journal, serialized by `<record>.shadow.lock` through
+`go-internal/lockedfile`. Libraries considered: the existing decide Make and
+Attach, go-internal/lockedfile and internal/atomicfile; no service or second
+store is added. `tla/DecideShadow.tla` models Reserve, Send, Response, Record,
+Label and Restart. A reservation is durably published before a provider call,
+and consumes the budget even when the response is missing or an error.
+The allowance is at most 1000 calls, each saved raw response at most 64 KiB;
+an oversized response records its hash and error and is not called again.
+The journal reader is bounded at 128 MiB.
+The raw response, token usage through the normal decision, backend, schema,
+state hash, timestamps, elapsed time and error are retained. A captured response
+can finish recording on restart without another provider call. A reservation
+with no durable response is uncertain: the same invocation names it and asks
+nothing again. Operator reconciliation of an uncertain request is external;
+a restart never guesses whether the backend ran. Existing decisions are
+counted against the same total budget; --max bounds new calls in this invocation.
+Failures, partial progress and the total remaining allowance are printed.
+
+`--truth` is a separate JSON array of `task`, `head`, `prompt_version`, `label`
+and optional `note`. It is read only after asking finishes, and only a recorded
+decision can receive its outcome. It never enters a request or input manifest.
+Duplicate truth rows and changed labels refuse. The command has no sprint,
+verdict, gate, ranking or routing effect: it records observations only. Repeated
+invocations read an updated ready manifest, adopting completed work and asking
+only unseen tuples. A dry run reads inputs and counts work, creates no journal,
+asks nothing and reads no truth. Raw probabilities and provider confidence
+are evidence, not calibrated correctness or authority.

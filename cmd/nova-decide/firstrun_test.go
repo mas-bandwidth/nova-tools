@@ -21,7 +21,7 @@ func sitting(t *testing.T) func(args []string) onboarding.Result {
 	dir := t.TempDir()
 	testdata, err := filepath.Abs("testdata")
 	require.NoError(t, err)
-	stand := strings.NewReplacer("./cmd/nova-decide/testdata/", testdata+"/", "./decisions.jsonl", filepath.Join(dir, "decisions.jsonl"))
+	stand := strings.NewReplacer("./cmd/nova-decide/testdata/", testdata+"/", "./decisions.jsonl", filepath.Join(dir, "decisions.jsonl"), "./shadow-decisions.jsonl", filepath.Join(dir, "shadow-decisions.jsonl"))
 	return func(args []string) onboarding.Result {
 		local := make([]string, len(args))
 		for i, a := range args {
@@ -31,13 +31,13 @@ func sitting(t *testing.T) func(args []string) onboarding.Result {
 	}
 }
 
-// The usage banner's examples are the ten verbs in the order a first run
+// The usage banner's examples are the eleven verbs in the order a first run
 // types them, and each one runs and exits 0.
 func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 	examples, err := onboarding.ExampleLines(cli.OK(t, "help").Stdout, "nova-decide")
 	require.NoError(t, err)
-	verbs := []string{"ask", "read", "score", "attempt", "grade", "gate", "brief", "outcome", "calibrate", "findings"}
+	verbs := []string{"ask", "read", "score", "attempt", "grade", "gate", "brief", "outcome", "calibrate", "findings", "shadow"}
 	require.Len(t, examples, len(verbs), "want one example of each of %v under `example:`, got %q", verbs, examples)
 	run := sitting(t)
 	for i, verb := range verbs {
@@ -69,6 +69,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		`nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"`,
 		"nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok",
 		"nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01",
+		"nova-decide shadow --manifest ./cmd/nova-decide/testdata/shadow.json --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./shadow-decisions.jsonl --budget 100 --max 1",
 	}
 	examples, err := onboarding.ExampleLines(cli.OK(t, "help").Stdout, "nova-decide")
 	require.NoError(t, err)
