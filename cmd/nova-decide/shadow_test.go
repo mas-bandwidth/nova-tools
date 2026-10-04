@@ -177,6 +177,12 @@ func TestShadowAdoptsLegacyEvidenceAndCountsItAgainstTheAllowance(t *testing.T) 
 	require.NoError(t, err)
 	calls := new(atomic.Int32)
 	cli := testkit.Main(decideTool(testWorld("key", calls, jevReply(0.2))).Run)
+	b.rows[0].Op = ""
+	b.write(t)
+	cli.Do(t, b.args()...).Refused("shadow record has unmapped decision")
+	assert.Zero(t, calls.Load())
+	b.rows[0].Op = works[0].ID
+	b.write(t)
 	args := b.args()
 	for i, v := range args {
 		if v == "3" {

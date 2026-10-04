@@ -75,7 +75,7 @@ type shadowTruth struct {
 func shadowVerb(w world) tool.Verb {
 	return tool.Verb{
 		Name: "shadow", Usage: "shadow --manifest <file> --backend <jev|fixed> [--answers <file>] --record <file> [--budget <n>] [--max <n>] [--truth <file>] [--timeout <d>] [--dry-run]",
-		Example: "shadow --manifest " + fixture + "shadow.json --backend fixed --answers " + fixture + "read-answers.json --record ./decisions.jsonl --budget 100 --max 1",
+		Example: "shadow --manifest " + fixture + "shadow.json --backend fixed --answers " + fixture + "read-answers.json --record ./shadow-decisions.jsonl --budget 100 --max 1",
 		Effect:  tool.Delivery + "; asks unseen evidence and records it locally, with no authority action",
 		Detail:  "A label-free JSON array names task, full head, prompt_version and card/diff (or schema/state) files. New calls consume --budget across restarts. --max bounds calls now. A reserved request without a saved response stays uncertain and is never called again. --truth is read after decisions only, and attaches outcomes. Repeating the same line resumes from the record and its .shadow.json journal.",
 		DryRun:  true,
@@ -273,6 +273,15 @@ func (w world) shadowRun(c *tool.Call, b decide.Backend, works []shadowWork, rec
 		return tool.Refuse(err.Error())
 	}
 	// Validate every replay before spending on any new row.
+	manifestIDs := map[string]bool{}
+	for _, v := range works {
+		manifestIDs[v.ID] = true
+	}
+	for _, d := range ds {
+		if _, imported := j.Rows[d.ID]; !imported && !manifestIDs[d.ID] {
+			return tool.Refuse("shadow record has unmapped decision " + d.ID + "; first import its sealed evidence with the original op identity")
+		}
+	}
 	for _, v := range works {
 		for id, r := range j.Rows {
 			if id != v.ID && r.Task == v.Task && r.Head == v.Head && r.PromptVersion == v.PromptVersion {
