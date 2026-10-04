@@ -69,18 +69,30 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 			in = os.Stdin
 		}
 		var readErr error
-		raw, readErr = io.ReadAll(in)
+		raw, readErr = readManifest(in)
 		if readErr != nil {
 			return refuse(stderr, verb, fmt.Sprintf("cannot read the manifest from stdin: %v; changed=no; run: nova-table batch -h", readErr))
 		}
 	case strings.HasPrefix(strings.TrimSpace(pos[0]), "{"):
 		raw = []byte(pos[0])
 	default:
-		content, readErr := os.ReadFile(pos[0])
-		if readErr != nil {
-			return refuse(stderr, verb, fmt.Sprintf("cannot read the manifest file %q: %v (a manifest is a file path, - for stdin, or JSON that starts with {); changed=no; run: nova-table batch -h", pos[0], readErr))
+		info, statErr := os.Lstat(pos[0])
+		if statErr != nil {
+			return refuse(stderr, verb, fmt.Sprintf("cannot read the manifest file %q: %v (a manifest is a file path, - for stdin, or JSON that starts with {); changed=no; run: nova-table batch -h", pos[0], statErr))
 		}
-		raw = content
+		if !info.Mode().IsRegular() {
+			return refuse(stderr, verb, fmt.Sprintf("cannot read the manifest file %q: not a regular file (a manifest is a regular file, - for stdin, or JSON that starts with {); changed=no; run: nova-table batch -h", pos[0]))
+		}
+		f, openErr := os.Open(pos[0])
+		if openErr != nil {
+			return refuse(stderr, verb, fmt.Sprintf("cannot read the manifest file %q: %v (a manifest is a file path, - for stdin, or JSON that starts with {); changed=no; run: nova-table batch -h", pos[0], openErr))
+		}
+		defer f.Close()
+		var readErr error
+		raw, readErr = readManifest(f)
+		if readErr != nil {
+			return refuse(stderr, verb, fmt.Sprintf("cannot read the manifest file %q: %v; changed=no; run: nova-table batch -h", pos[0], readErr))
+		}
 		fromFile = true
 	}
 
@@ -187,6 +199,17 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 			scoreOrDash(m.BeforeScoreText), scoreOrDash(m.AfterScoreText), m.BeforeRev, m.AfterRev, fieldChanges(m))
 	}
 	return 0
+}
+
+// readManifest reads a manifest from r with a ceiling one byte past
+// ntable.LimitManifestBytes, the bound the validator applies
+// (ntable.ValidateBatchManifestRaw, internal/ntable/manifest_validate.go:185).
+// A reader that never ends cannot grow the buffer past the cap plus one, and a
+// manifest over the cap is refused by that same validator limit instead of read
+// whole: the path form's FIFO or link target and the stdin form's stream meet
+// one bound.
+func readManifest(r io.Reader) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r, ntable.LimitManifestBytes+1))
 }
 
 // batchPlan answers batch --dry-run: the manifest has passed every check made
