@@ -95,7 +95,7 @@ func FirstField(row string) string {
 	return ""
 }
 
-// Fields returns a key of the row's first n fields joined by one space, for a list
+// Fields returns a key of the row's first n fields joined by one blank, for a list
 // whose identity is more than one field (`file:line kind`, `file spell`).
 func Fields(n int) func(string) string {
 	return func(row string) string {

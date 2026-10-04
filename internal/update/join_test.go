@@ -9,9 +9,9 @@ package update
 // These tests use a disposable bare Git remote and the nova-bus built from this
 // same tree, so the thing under test is the pair.
 //
-// Until #138 lands in this tree, the nova-bus here has no prepared verbs and
-// every test in this file skips with that reason named. Nothing is stubbed to
-// make them pass: a skip says the gate is unproven, which is the truth.
+// The nova-bus in this tree has the prepared verbs, so the join runs against
+// it. Nothing is stubbed to make a test pass: a failure says the gate is
+// unproven, which is the truth.
 
 import (
 	"bytes"
@@ -41,7 +41,6 @@ var (
 	joinDir      string
 	joinBuildErr error
 	joinBusErr   error
-	joinPrepared bool
 )
 
 func exeName(n string) string {
@@ -52,9 +51,9 @@ func exeName(n string) string {
 }
 
 // joinBinaries builds nova-bus and nova-update from THIS tree once per package
-// run and reports whether that nova-bus understands the prepared verbs. The
-// binaries come from the tree rather than from PATH so that a version somebody
-// happens to have installed can never be what a gate was proven against.
+// run. The binaries come from the tree rather than from PATH so that a version
+// somebody happens to have installed can never be what a gate was proven
+// against.
 func joinBinaries(t *testing.T) string {
 	t.Helper()
 	dir := buildTreeBinaries(t)
@@ -67,22 +66,17 @@ func joinBinaries(t *testing.T) string {
 			joinBusErr = fmt.Errorf("go build %s: %v\n%s", pkg, err, out)
 			return
 		}
-		out, _ := exec.Command(filepath.Join(dir, exeName("nova-bus")), "help").CombinedOutput()
-		joinPrepared = bytes.Contains(out, []byte("--prepared-stdin")) && bytes.Contains(out, []byte("prepare --bus"))
 	})
 	if joinBusErr != nil {
 		require.Nil(t, joinBusErr, joinBusErr)
-	}
-	if !joinPrepared {
-		t.Skip("waits on #138: nova-bus in this tree has no prepared verbs (no --prepared-stdin in help)")
 	}
 	return dir
 }
 
 // buildTreeBinaries builds this tree's nova-update once per package
 // run, without deciding anything about it. A test that needs a real reporter
-// process but no bus uses this; the join uses joinBinaries, which adds the
-// capability probe and the skip.
+// process but no bus uses this; the join uses joinBinaries, which also builds
+// nova-bus.
 func buildTreeBinaries(t *testing.T) string {
 	t.Helper()
 	joinOnce.Do(func() {

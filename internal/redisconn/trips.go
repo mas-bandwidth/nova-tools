@@ -48,14 +48,6 @@ func (t *Trips) N() int64 {
 
 type tripLabelKey struct{}
 
-// WithTripLabel returns a context that carries label. Every round trip made
-// with that context, or with one derived from it, is counted under the label
-// as well as in N, so one counter can say which part of the work made which
-// trips. An empty label is no label.
-func WithTripLabel(ctx context.Context, label string) context.Context {
-	return context.WithValue(ctx, tripLabelKey{}, label)
-}
-
 // TripLabel is the label ctx carries, "" when it carries none.
 func TripLabel(ctx context.Context) string {
 	label, _ := ctx.Value(tripLabelKey{}).(string)

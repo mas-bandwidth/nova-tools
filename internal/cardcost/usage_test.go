@@ -138,6 +138,78 @@ func TestTheSpendWordCarriesTheJobsTokensCostAndModel(t *testing.T) {
 	assert.Equal(t, "", SpendWord(None(), "", ""))
 }
 
+// TestInvalidActualDoesNotSuppressValidPrediction pins Add's rule (usage.go,
+// "a cost is never guessed"; Total's exact-cost contract): only a valid
+// non-negative decimal amount is summed, counted and named as a reporter. A
+// rejected actual must not stand in for, or contaminate, a valid prediction or a
+// valid total already accumulated, and a rejected actual must not hide the valid
+// prediction behind it.
+func TestInvalidActualDoesNotSuppressValidPrediction(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		lines []string
+		want  Total
+	}{
+		{
+			name:  "a malformed actual does not suppress the valid prediction",
+			lines: []string{"actual_usd=not-decimal actual_by=harness predicted_usd=0.25"},
+			want:  Total{Predicted: "0.25", PredOf: 1, Charged: "0.25", ChargedOf: 1},
+		},
+		{
+			name:  "a valid actual overrides the prediction",
+			lines: []string{"actual_usd=0.5 actual_by=harness predicted_usd=0.25"},
+			want:  Total{Predicted: "0.25", PredOf: 1, Actual: "0.5", ActualOf: 1, ActualBy: "harness", Charged: "0.5", ChargedOf: 1},
+		},
+		{
+			name:  "zero is a valid actual and overrides the prediction",
+			lines: []string{"actual_usd=0 actual_by=harness predicted_usd=0.25"},
+			want:  Total{Predicted: "0.25", PredOf: 1, Actual: "0", ActualOf: 1, ActualBy: "harness", Charged: "0", ChargedOf: 1},
+		},
+		{
+			name:  "a malformed prediction alone counts nothing",
+			lines: []string{"predicted_usd=not-decimal actual_by=harness"},
+			want:  Total{},
+		},
+		{
+			name:  "both amounts malformed count nothing and name no reporter",
+			lines: []string{"actual_usd=nope actual_by=harness predicted_usd=also-bad"},
+			want:  Total{},
+		},
+		{
+			name: "a rejected actual between valid records contaminates neither sum nor reporter",
+			lines: []string{
+				"actual_usd=0.1 actual_by=harness",
+				"actual_usd=bad actual_by=other",
+				"predicted_usd=0.2",
+			},
+			want: Total{Predicted: "0.2", PredOf: 1, Actual: "0.1", ActualOf: 1, ActualBy: "harness", Charged: "0.3", ChargedOf: 2},
+		},
+		{
+			name: "a rejected actual leaves an already-summed valid actual alone",
+			lines: []string{
+				"actual_usd=0.5 actual_by=harness",
+				"actual_usd=oops actual_by=other",
+			},
+			want: Total{Actual: "0.5", ActualOf: 1, ActualBy: "harness", Charged: "0.5", ChargedOf: 1},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tot := NoTotal()
+			for _, line := range tc.lines {
+				tot = tot.Add(ParseUsage(line))
+			}
+			want := tc.want
+			want.Records = len(tc.lines)
+			want.Tokens = None()
+			want.Wait, want.Run = Unreported, Unreported
+			assert.Equal(t, want, tot)
+		})
+	}
+}
+
 func TestSumUsageTotalsOverWhatWasReported(t *testing.T) {
 	t.Parallel()
 	us := []Usage{

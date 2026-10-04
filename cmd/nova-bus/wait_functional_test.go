@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/stretchr/testify/require"
 )
 
@@ -85,14 +86,14 @@ func TestWaitEndsWithRearmLine(t *testing.T) {
 	require.Containsf(t, r.stdout, done, "wait return is missing the terminal re-arm line:\n%s", r.stdout)
 	trimmed := strings.TrimRight(r.stdout, "\n")
 	last := trimmed[strings.LastIndex(trimmed, "\n")+1:]
-	// The expected --bus word is built with the binary's OWN shellQuote, never spelled
+	// The expected --bus word is built with the binary's OWN oneline.ShellWord, never spelled
 	// out here. A hard-coded bare path made this assertion an assertion about the
-	// PLATFORM: a darwin temporary directory holds nothing shellQuote acts on, so the
+	// PLATFORM: a darwin temporary directory holds nothing ShellWord acts on, so the
 	// bare spelling matched, while a Windows temporary path -- backslashes and the
 	// RUNNER~1 tilde -- comes back single-quoted and the same line read as "not last".
 	// The line under test is that the re-arm line is LAST; what one argument looks like
 	// quoted is TestRearmCommandQuotesArgumentsWithSpaces's.
-	require.Truef(t, strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait --bus "+shellQuote(checkout)), "the re-arm line is not last:\n%s", r.stdout)
+	require.Truef(t, strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait --bus "+oneline.ShellWord(checkout)), "the re-arm line is not last:\n%s", r.stdout)
 }
 
 // THE POINT OF THE VERB: a note pushed by somebody else, mid-call, ends the wait. The

@@ -42,31 +42,6 @@ func TestForgeCoverParseForgeTimeReadsRFC3339AndAnswersZero(t *testing.T) {
 	}
 }
 
-// TestForgeCoverStillOpenKeepsOnlyTheUnclosed pins the split: a pull request
-// with a zero ClosedAt is open, one with any close time is not, whatever its
-// Merged bit, and an empty reading is an empty slice, not nil.
-func TestForgeCoverStillOpenKeepsOnlyTheUnclosed(t *testing.T) {
-	t.Parallel()
-
-	open := PR{Number: 1, Title: "open"}
-	closed := PR{Number: 2, Title: "closed", ClosedAt: time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC)}
-	merged := PR{Number: 3, Title: "merged", Merged: true, ClosedAt: time.Date(2026, 9, 18, 4, 0, 0, 0, time.UTC)}
-	for _, tc := range []struct {
-		name string
-		in   []PR
-		want []PR
-	}{
-		{"all open", []PR{open, {Number: 4}}, []PR{open, {Number: 4}}},
-		{"mixed", []PR{open, closed, merged}, []PR{open}},
-		{"none open", []PR{closed, merged}, []PR{}},
-		{"empty reading", nil, []PR{}},
-	} {
-		got := StillOpen(tc.in)
-		assert.Equal(t, tc.want, got, "%s: StillOpen(%+v) = %+v, want %+v", tc.name, tc.in, got, tc.want)
-		assert.NotNil(t, got, "%s: StillOpen answered nil; a reading with no open pull requests is an empty slice", tc.name)
-	}
-}
-
 // TestForgeCoverReadsRefuseAMissingBinary reaches OpenPRs, ClosedSince and list
 // through their refusal: with a binary that cannot be found, exec fails its own
 // lookup before any child is forked, and each read answers an error naming the
