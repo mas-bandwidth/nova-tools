@@ -171,8 +171,17 @@ The test requirements are listed under **Tests this spec demands**.
    (allow mach-lookup
      (global-name "com.apple.system.opendirectoryd.libinfo")   ; getpwuid, getaddrinfo
      (global-name "com.apple.SecurityServer")                  ; TLS trust evaluation
-     (global-name "com.apple.system.logger"))                  ; os_log
+     (global-name "com.apple.system.logger")                   ; os_log
+     (global-name "com.apple.trustd.agent"))                   ; SecTrustEvaluateWithError: Go's TLS
    ```
+
+   The fourth name is the Go toolchain's (measured 2026-10-04 on a darwin/amd64
+   bench): Go's crypto/x509 verifies a server certificate through
+   `SecTrustEvaluateWithError`, which talks to `com.apple.trustd.agent`, while curl
+   verifies through `SecurityServer`. Under the three-name set `go mod download`
+   failed every fetch with `tls: failed to verify certificate: x509: OSStatus -26276`
+   and the same fetch passed with this name added; `com.apple.trustd` alone did not
+   help, and `pbpaste` stays `rc=1` under the four.
 
    All five pass under it and `pbpaste` is `rc=1`
    (`tools/sandboxcheck`, check `clipboard_denied`). **Accepted width,
@@ -1893,9 +1902,10 @@ Each item is a claim in this document that was written from documentation and
 must be **executed on the machine** before the spec's word is trusted. A build
 that cannot confirm one changes this document rather than asserting it.
 
-1. That the measured three-service `mach-lookup` set
+1. That the measured `mach-lookup` set
    (`com.apple.system.opendirectoryd.libinfo`, `com.apple.SecurityServer`,
-   `com.apple.system.logger`), with `/` and `/dev` in the roots, is enough for
+   `com.apple.system.logger`, and `com.apple.trustd.agent` for Go's TLS, measured
+   2026-10-04), with `/` and `/dev` in the roots, is enough for
    a Node-based harness and a Go toolchain under the profile, and if not, which
    further service each needs, added by measurement — the unqualified
    `(allow mach-lookup)` is forbidden and is not the fallback, while
