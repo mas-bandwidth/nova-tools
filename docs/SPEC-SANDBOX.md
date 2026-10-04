@@ -161,23 +161,34 @@ The test requirements are listed under **Tests this spec demands**.
    (`tools/sandboxcheck`, checks `dns_resolves` and
    `dns_resolves_control`: the same profile with the literal removed does not
    resolve, so the check cannot pass by the socket being irrelevant.)
-   **`mach-lookup` is narrowed to three services, measured.** An unqualified
+   **`mach-lookup` is limited to four named services.** An unqualified
    `(allow mach-lookup)` allows `pbpaste` to read the clipboard inside the
-   wall. The bounded set supports
-   `/bin/sh -c true`, `git status`, `curl https://example.com`,
-   `opencode --version` and `node -e 1`:
+   wall. Three services were measured on 2026-09-11; the fourth is the exact
+   Open Directory membership service reported when `git` and `sqlite3`
+   launches stalled inside the wall. The initial measured three-name set
+   supported `/bin/sh -c true`, `git status`, `curl https://example.com`,
+   `opencode --version` and `node -e 1`. The current four-name profile is:
 
    ```
    (allow mach-lookup
      (global-name "com.apple.system.opendirectoryd.libinfo")   ; getpwuid, getaddrinfo
+     (global-name "com.apple.system.opendirectoryd.membership") ; account membership lookup
      (global-name "com.apple.SecurityServer")                  ; TLS trust evaluation
      (global-name "com.apple.system.logger"))                  ; os_log
    ```
 
-   All five pass under it and `pbpaste` is `rc=1`
-   (`tools/sandboxcheck`, check `clipboard_denied`). **Accepted width,
-   named rather than removed:** under this narrowed set `launchctl print
-   system` still answers and `security list-keychains` still lists the keychain
+   The five commands pass under the measured original three-service set and
+   `pbpaste` is `rc=1` (`tools/sandboxcheck`, check `clipboard_denied`). The
+   membership addition is a single named lookup grant, not permission to use
+   arbitrary mach services. On macOS 27.2, 20 launches under otherwise
+   identical profiles measured no membership-related delay: `sqlite3` was
+   0.0100 s mean with and without the grant; `git status` was 0.0305 s without
+   it and 0.0295 s with it. Both commands exited 0 in both profiles, and
+   `pbpaste` remained denied (`rc=1`) with and without the grant. Thus this
+   machine does not reproduce the historically reported 0.8 s launch delay.
+   **Accepted width, named rather than removed:** under the original
+   three-name set, `launchctl print system` still answers and `security
+   list-keychains` still lists the keychain
    **file names** — neither reads a secret, and both were measured to still
    answer. `osascript` evaluates a local expression; Apple Events are denied at
    every width. A service a future harness needs is added to this list by
@@ -1893,9 +1904,10 @@ Each item is a claim in this document that was written from documentation and
 must be **executed on the machine** before the spec's word is trusted. A build
 that cannot confirm one changes this document rather than asserting it.
 
-1. That the measured three-service `mach-lookup` set
+1. That the four-name `mach-lookup` set
    (`com.apple.system.opendirectoryd.libinfo`, `com.apple.SecurityServer`,
-   `com.apple.system.logger`), with `/` and `/dev` in the roots, is enough for
+   `com.apple.system.logger`, `com.apple.system.opendirectoryd.membership`),
+   with `/` and `/dev` in the roots, is enough for
    a Node-based harness and a Go toolchain under the profile, and if not, which
    further service each needs, added by measurement — the unqualified
    `(allow mach-lookup)` is forbidden and is not the fallback, while
@@ -1992,7 +2004,8 @@ One per rule:
    because a rule whose only witness is a live DNS query has no test at all:
    the generated policy carries the literal `/private/var/run/mDNSResponder`
    **inside** the network marker, so `--net-deny` takes it away with the rest;
-   and it carries exactly the three measured `global-name`s and no bare
+   and it carries exactly the three previously measured `global-name`s plus
+   the named Open Directory membership service, and no bare
    `(allow mach-lookup)`. A mutation deleting either turns a Go test red. The
    live DNS measurement stays in `tools/sandboxcheck`, where the operator
    run and the mac CI job execute it and a Go test does not (test 16).

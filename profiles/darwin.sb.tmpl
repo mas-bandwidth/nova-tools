@@ -76,9 +76,10 @@
 
 (allow sysctl-read)
 
-;; mach-lookup is NARROWED to the three services the harnesses actually need, measured
-;; 2026-09-11 on this Mac by growing the set until `/bin/sh -c true`, `git status`,
-;; `curl https://example.com`, `opencode --version` and `node -e 1` all passed:
+;; mach-lookup is NARROWED to four named services: three measured 2026-09-11 on this
+;; Mac until `/bin/sh -c true`, `git status`, `curl https://example.com`,
+;; `opencode --version` and `node -e 1` all passed, plus the reported membership
+;; lookup used by git and sqlite3:
 ;;   opendirectoryd.libinfo  getpwuid(3)/getaddrinfo(3) -- without it HOME lookup and
 ;;                           name resolution fail;
 ;;   SecurityServer          TLS trust evaluation -- without it curl to an https name fails;
@@ -91,6 +92,7 @@
 ;; are denied at every width.
 (allow mach-lookup
   (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership")
   (global-name "com.apple.SecurityServer")
   (global-name "com.apple.system.logger"))
 

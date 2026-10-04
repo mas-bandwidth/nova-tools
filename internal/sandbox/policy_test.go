@@ -660,8 +660,8 @@ func TestScrubSetIsExactlyTheSpecs(t *testing.T) {
 	assert.NotContains(t, dropped, "CLAUDE_AGENT_SDK_VERSION", "the NOTE line claims to have dropped a variable it did not: %q", dropped)
 }
 
-// Rule 7, revision 7: mach-lookup is narrowed and the unqualified form is gone.
-func TestMachLookupIsNarrowed(t *testing.T) {
+// Rule 7: mach-lookup is limited to named services and the unqualified form is gone.
+func TestDarwinProfileAllowsOpenDirectoryMembershipLookups(t *testing.T) {
 	t.Parallel()
 
 	needUnixPaths(t)
@@ -675,9 +675,10 @@ func TestMachLookupIsNarrowed(t *testing.T) {
 	}
 	for _, name := range []string{
 		"com.apple.system.opendirectoryd.libinfo",
+		"com.apple.system.opendirectoryd.membership",
 		"com.apple.SecurityServer",
 		"com.apple.system.logger",
 	} {
-		assert.Contains(t, text, name, "the measured mach-lookup set is missing %s", name)
+		assert.Contains(t, text, name, "the named mach-lookup set is missing %s", name)
 	}
 }
