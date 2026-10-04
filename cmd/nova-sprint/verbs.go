@@ -85,6 +85,7 @@ func init() {
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
 		{"stream set", "<stream>... --read-tier <flash|pro|default>", "stream set skips --read-tier pro", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
+		{"merge-window open", "--for <duration> --reason <text>", "merge-window open --for 10m --reason 'the release merges by hand'", (*app).cmdMergeWindowOpen},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
@@ -122,7 +123,7 @@ func verbNames() []string {
 	return append(out, "help", "version")
 }
 
-// groupVerbs is the verbs of the group word names (fleet, friend, reader, goal, stream):
+// groupVerbs is the verbs of the group word names (fleet, friend, reader, goal, stream, merge-window):
 // every verb whose name is that word and more; nil for a word that is no group.
 func groupVerbs(word string) []string {
 	var out []string
@@ -152,7 +153,7 @@ block shows the coordinator's day on that store.
 For one verb's usage, examples, flags and exit codes:
   nova-sprint help <verb> (or <verb> -h)
 For one group's help: nova-sprint help <group> (fleet, friend, reader, goal,
-stream).`
+stream, merge-window).`
 
 func banner() string {
 	var b strings.Builder

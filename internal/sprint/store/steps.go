@@ -165,6 +165,13 @@ func SetStep(r sprint.SetReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Set(s, r) }}
 }
 
+// MergeWindowStep opens the merge window: landing pauses for its duration, its reason
+// shown (sprint.MergeWindowOpen; docs/SPEC-SPRINT.md section 7, the lander's pause).
+func MergeWindowStep(r sprint.MergeWindowReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "merge-window open", Load: tables(sprint.Merge),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MergeWindowOpen(s, r) }}
+}
+
 // BalanceStep writes the providers' balances the run loop's poll read, and the rests they
 // call for (sprint.Balance; nova-tools#5199).
 func BalanceStep(r sprint.BalanceReq) Step {

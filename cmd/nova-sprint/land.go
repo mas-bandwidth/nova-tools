@@ -101,7 +101,14 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     try never reports; and a base that moves twice between the read and the
     push gives up (one rebuild, then the rejected fact, the stream stopped):
     nothing is pushed or lost and the cards stay queued; resume the stream
-    (nova-sprint resume --stream s1 --did 'the base moved') and run land again.`) + "\n"
+    (nova-sprint resume --stream s1 --did 'the base moved') and run land again.
+  nova-sprint merge-window open --for 10m --reason 'the release merges by hand'
+    pauses every landing for 10 minutes, its reason on each batch it pauses;
+    land pauses a batch too while the merge queue of the branch it lands onto
+    holds a group (a GitHub repository's, asked through gh; a queue that
+    cannot be read pauses as a held one). A paused batch is refused before any
+    git and again just before its push: nothing is pushed or recorded, no
+    stream stops, and the cards land on a run after the pause ends.`) + "\n"
 }
 
 // landBatch is one batch's outcome, a line of output and an item of --json.
@@ -480,7 +487,7 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		for n < len(cards) && cards[n].repo == cards[0].repo && cards[n].base == cards[0].base {
 			n++
 		}
-		landed, ok := l.batch(ctx, stream, cards[:n])
+		landed, ok := l.batch(ctx, s, stream, cards[:n])
 		if !ok {
 			return false
 		}
@@ -498,7 +505,7 @@ var shaRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 // batch lands one batch: landed says every card of it landed (the stream
 // goes on to its next batch), ok is false when a push landed and its report
 // did not.
-func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (landed, ok bool) {
+func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, cards []landCard) (landed, ok bool) {
 	ids := make([]string, len(cards))
 	for i, c := range cards {
 		ids[i] = c.id
@@ -511,6 +518,11 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 	}
 	if why, also := l.placeWhy(stream, cards); why != "" {
 		b.Also = also
+		return refuse(why)
+	}
+	// a merge window open, or the base's merge queue holding a group, pauses the batch before
+	// any git; the queue is asked again just before the push (queueHead)
+	if why := l.pause(ctx, s, b.Repo, b.Base); why != "" {
 		return refuse(why)
 	}
 	dir, why := l.clone(ctx, b.Repo)
@@ -827,7 +839,9 @@ func stepWhy(res store.Result, err error) string {
 }
 
 // queueHead is why the stream's merge queue, read again at the epoch land
-// read, no longer holds the pinned cards at their heads; "" when it does.
+// read, no longer holds the pinned cards at their heads, or why the push pauses
+// (a merge window opened since, or the base's merge queue holding a group:
+// docs/SPEC-SPRINT.md section 7, the lander's pause); "" when it does not.
 func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) string {
 	l.a.serial.Lock()
 	s, err := l.st.Load(ctx, []string{sprint.Merge, sprint.Work}, nil)
@@ -835,7 +849,10 @@ func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) 
 	if err != nil {
 		return "the merge queue could not be read again at epoch " + strconv.FormatUint(l.epoch, 10) + ": " + oneline.Err(err)
 	}
-	return headWhy(s, stream, pins)
+	if why := headWhy(s, stream, pins); why != "" {
+		return why
+	}
+	return l.pause(ctx, s, pins[0].repo, pins[0].base)
 }
 
 // headWhy is why the stream's queue no longer holds every pinned card at the

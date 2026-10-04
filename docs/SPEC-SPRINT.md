@@ -1700,6 +1700,27 @@ cannot read, is red as before with why no decision was made. Asked with the base
 the calibration of 2026-10-03 gave p(caused) AUC 0.8 and p(pre-existing) 0.522, so the
 lander acts on flaky alone.
 
+**The lander's pause.** `land` does not land onto a branch while a merge window is
+open, nor while that branch's merge queue on the forge holds a group: a direct push
+under a group being checked moves the base the group was cut from (windows were
+negotiated by message before this was a verb). `merge-window open --for <duration>
+--reason <text>` (the coordinator's) opens the window from the step's clock: its end, RFC
+3339 in UTC, and its reason are the merge table's properties `merge_window_until` and
+`merge_window_reason`, written guarded on the values read and replacing a window open
+before; a clear starts the next epoch with neither. While it is open every batch is
+refused, its reason `paused: a merge window is open until <end> (<reason>); the cards stay
+queued and land when it closes`, and no forge is asked. Otherwise the merge queue of the
+batch's base is asked (through an interface: a GitHub repository's through `gh api
+graphql`, its entries counted, each answer kept 20 s so the land loop's rounds do not ask
+every round; a repository on no forge with a merge queue, a path or a bare clone, has none,
+and tests give a fake): a group held refuses the batch, `paused: the merge queue of <base>
+holds a group; ...`, and a queue that cannot be read refuses it too, naming why: an
+unreadable queue is not an empty one. The pause is checked before any git and again just
+before the push. A paused batch records nothing, pushes nothing and stops no stream; its
+cards stay queued and land on a run after the pause ends. A dry run reads the store only:
+it shows the window and asks no forge. An end that cannot be read pauses, naming it, until
+the window is opened again (`sprint.LandPause`, `sprint.MergeWindowOpen`).
+
 A cross-stream need is recorded as data on the stuck card (the needed card and
 its stream); it is resolved when that card has landed, and ranking the needed
 card is not landing it. The notification names both streams and both cards.
@@ -2154,7 +2175,7 @@ default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, fleet
-up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
+up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, reader add, reader away, reader up, reader remove, stream remove, merge-window open, wait, ack, answer, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it (the seat
@@ -2213,6 +2234,7 @@ first on the `LAND REFUSED` line, each other on a `NOTE` line and in the `--json
 which has no git, a `NOTE` that `merge --stream <s> --batch <n>` records the landing in
 land's place; a head that is not a commit id stops the dry run where land stops, the cards before it a batch, that card refused with the conflict fact land would record and nothing recorded; `--json`. A batch landed and reported tags the branches its cards' work cards of every attempt record (`branches_queued=<n>` on its line, `prune` on its item; never the base, an empty name, an option-like name or one not under `sprint/`, each said on a NOTE and counted as `branches_kept=<n>`), and the cleanup deletes only canonical successful-attempt branches from origin later, many in one push, each with an explicit lease against its recorded head; advanced or recreated tips, unowned branches and all recorded stream bases stay on origin, and a retry keeps the original lease; then removes the clone's remote-tracking refs of branches origin no longer holds, never while a landing builds or pushes: the one-shot land once after every stream, the land loop (`run --land`) between rounds when a round finds nothing queued or 256 branches wait, a line per clone `PRUNE OK|FAILED branches= refs= dir= took=` (`--json` `prune`); a failed cleanup fails no landing, and the loop keeps its branches and tries again after a minute; the queue is the process's memory, so a crash or a stop loses it and those branches stay on origin; a dry run queues and deletes nothing and says how many it would queue |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
+| merge-window open | `merge-window open --for <duration> --reason <text>`: landing pauses from now for the duration, the reason on every batch it pauses (section 7, the lander's pause); a store write of the merge table's properties `merge_window_until` and `merge_window_reason`, replacing a window open before; the coordinator's; refused whole, nothing written, for a duration that is none or not above zero, no reason, a reason over 8 KiB, or another actor |
 | fleet | `up|down <member>`, `level`; down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 10 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
