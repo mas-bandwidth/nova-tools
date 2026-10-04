@@ -561,7 +561,8 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 }
 
 // withTierCosts puts the tier counts on the view and, on each work row with cards, the
-// stream's `tiers`, `cost_by_tier` and `per_landed` (sprint.TierCosts).
+// stream's `tiers`, `cost_by_tier` and `per_landed`, and the diagnostic `cost_no_tier` and
+// `no_tier_routes` when some record's tier cannot be found (sprint.TierCosts).
 func withTierCosts(v *whereView, tiers map[string]int, streams map[string]sprint.TierCosts) {
 	v.Tiers = tiers
 	for s, row := range v.Tables[sprint.Work] {
@@ -575,6 +576,9 @@ func withTierCosts(v *whereView, tiers map[string]int, streams map[string]sprint
 		}
 		if len(tc.CostByTier) > 0 {
 			row["cost_by_tier"] = tc.CostByTier
+		}
+		if tc.NoTierCost != "" { // a diagnostic, never a tier (sprint.TierCosts)
+			row["cost_no_tier"], row["no_tier_routes"] = tc.NoTierCost, tc.NoTierRoutes
 		}
 	}
 }

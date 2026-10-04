@@ -225,8 +225,10 @@ keep the machine line where silence reads `STOPPED`. `where --json --costs` adds
 visibility, read from every card's cost records in one read of the work table's cards,
 which the plain view never makes: `tiers` at the top (every card by its brief's tier) and
 on each work row `tiers`, `cost_by_tier` (the stream's spend by the tier each attempt ran
-on, so a flash card escalated to pro shows both) and `per_landed` (dollars per landed
-card); a cell stays a string. Every count cell is an ordered set.
+on, so a flash card escalated to pro shows both; a record with no tier of its own takes its
+route's, and only tiers are keys) and `per_landed` (dollars per landed card), and, when some
+record's tier cannot be found (a data bug: every route has a tier), the diagnostic
+`cost_no_tier` and `no_tier_routes`; a cell stays a string. Every count cell is an ordered set.
 The summary line shows `held=N` after the percent when cards are held back:
 waiting behind a sentinel not released, admitted held (`add --held`), or
 waiting on one of those through a need (`sprint.HeldBack`, counted by the

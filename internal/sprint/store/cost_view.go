@@ -48,6 +48,15 @@ func (st *Store) TierCosts(ctx context.Context) (map[string]int, map[string]spri
 			t.Put(c)
 		}
 	}
+	// a record with no tier of its own takes its route's (sprint.RouteTierOf)
+	routes, _, err := st.Routes(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	tiers := map[string]string{}
+	for _, r := range routes {
+		tiers[r.Name] = r.Tier
+	}
 	s := &sprint.Snapshot{Work: t}
-	return sprint.TierCounts(s), sprint.StreamTierCosts(s), nil
+	return sprint.TierCounts(s), sprint.StreamTierCosts(s, tiers), nil
 }
