@@ -190,8 +190,12 @@ func (a *app) cmdViewCoordinator(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	all := fs.Bool("all", false, "every friend's and machine's row too, as rows (by default only the rows that need a look, as items)")
 	since := fs.String("since", "", "the cursor an earlier view printed: leave out every item it showed that has not changed, and count them (same) and the ones that stand no more (gone)")
+	needs := fs.Bool("needs", false, "instead, list every decision waiting on the coordinator (open judgments, held sentinels, stopped streams, held cards), ranked by the cards blocked behind each, ties by age, each with its evidence; takes no --all or --since")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
 		return refuse(stderr, name, argErr("takes no words ", err, pos...))
+	}
+	if *needs && (*all || *since != "") {
+		return refuse(stderr, name, "--needs lists the decisions only and takes neither --all nor --since; run: nova-sprint view coordinator --needs [--json]")
 	}
 	seen, err := parseCursor(*since)
 	if err != nil {
@@ -200,6 +204,18 @@ func (a *app) cmdViewCoordinator(args []string, stdout, stderr io.Writer) int {
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
+	}
+	if *needs {
+		v, err := a.readCoordNeeds(context.Background(), st)
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		if c.json {
+			viewJSON(stdout, v)
+			return 0
+		}
+		fmt.Fprint(stdout, coordNeedsText(v))
+		return 0
 	}
 	v, err := a.coordinatorView(context.Background(), st, *all)
 	if err != nil {
@@ -526,6 +542,56 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	v.Cursor = cursorOf(itemDigests(v.Items), rowDigests(v.Rows))
 	v.Sum = coordinatorSum(v, merr == nil, machine)
 	return v, nil
+}
+
+// coordNeedsView is view coordinator --needs' document, schema 1: sprint.NeedsRank over one read of
+// the work and merge tables and the open judgments, at one epoch, no git (docs/SPEC-SPRINT.md,
+// view-coordinator-needs.w1).
+type coordNeedsView struct {
+	View   string        `json:"view"`
+	Schema int           `json:"schema"`
+	At     time.Time     `json:"at"`
+	Epoch  uint64        `json:"epoch"`
+	Total  int           `json:"total"`
+	Needs  []sprint.Need `json:"needs"`
+}
+
+func (a *app) readCoordNeeds(ctx context.Context, st *store.Store) (coordNeedsView, error) {
+	v := coordNeedsView{View: "coordinator-needs", Schema: viewSchema, Needs: []sprint.Need{}}
+	st, err := st.Pinned(ctx)
+	if err != nil {
+		return v, err
+	}
+	v.Epoch = st.PinnedEpoch()
+	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+	if err != nil {
+		return v, err
+	}
+	in, err := st.Inbox(ctx, defaultDeadline, defaultStale, 10000)
+	if err != nil {
+		return v, err
+	}
+	s.Open = in.Open
+	v.At = s.Now.UTC().Truncate(time.Second)
+	if n := sprint.NeedsRank(s); n != nil {
+		v.Needs = n
+	}
+	v.Total = len(v.Needs)
+	return v, nil
+}
+
+// coordNeedsText is the needs a line each, heaviest first, at most viewTextLines lines.
+func coordNeedsText(v coordNeedsView) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "VIEW coordinator --needs total=%d\n", v.Total)
+	for i, n := range v.Needs {
+		if i == viewTextLines-2 && len(v.Needs)-i > 1 {
+			fmt.Fprintf(&b, "+%d more: nova-sprint view coordinator --needs --json\n", len(v.Needs)-i)
+			break
+		}
+		b.WriteString(oneline.Escape(strconv.Itoa(n.Behind)+" behind "+ageWord(n.Age)+" "+n.Evidence()) + "\n")
+	}
+	return b.String()
 }
 
 // judgmentItem is an open judgment as an item: its first decision's command when it is short
