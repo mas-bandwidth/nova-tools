@@ -50,6 +50,9 @@ type needsStream struct {
 	Widths  []needsWidth `json:"width"`
 	Total   int          `json:"total"`
 	Orphans int          `json:"dropped_or_absent"`
+	// Cycle names the cards whose needs make a cycle in this stream, so the
+	// graph prints the cycle instead of being followed around it.
+	Cycle []string `json:"cycle,omitempty"`
 }
 
 // needsView is the whole graph: a stream a section, and the sprint's totals.
@@ -180,6 +183,11 @@ func sprintNeeds(s *sprint.Snapshot, only string, rootsOnly bool) needsView {
 	for i := range v.Streams {
 		st := &v.Streams[i]
 		st.Widths = needsWidths(waiting, depth, st.Stream)
+		for _, c := range waiting {
+			if c.Row == st.Stream && cycle[c.ID] {
+				st.Cycle = append(st.Cycle, c.ID)
+			}
+		}
 		if st.Cards == nil {
 			st.Cards = []needsCard{}
 		}
@@ -270,6 +278,9 @@ func needsText(v needsView, rootsOnly bool) string {
 			fmt.Fprintf(&b, "depth %d: %d", w.Depth, w.Width)
 		}
 		b.WriteString("\n")
+		if len(st.Cycle) > 0 {
+			fmt.Fprintf(&b, "CYCLE stream=%s its needs make a cycle through %s\n", st.Stream, strings.Join(st.Cycle, ", "))
+		}
 		if rootsOnly {
 			continue
 		}
