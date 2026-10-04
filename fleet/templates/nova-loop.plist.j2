@@ -51,8 +51,8 @@
 <key>AbandonProcessGroup</key>
 <true/>
 <key>StandardOutPath</key>
-<string>{{ loop_log | e }}</string>
+<string>{{ ansible_env.HOME }}/Library/Logs/nova-loop-{{ l.name }}.log</string>
 <key>StandardErrorPath</key>
-<string>{{ loop_log | e }}</string>
+<string>{{ ansible_env.HOME }}/Library/Logs/nova-loop-{{ l.name }}.log</string>
 </dict>
 </plist>

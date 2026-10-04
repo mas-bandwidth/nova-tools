@@ -27,7 +27,8 @@
 # tool's of the same shape is left as it is and named in a NOTE; a record of
 # its name takes it over. --check lists each retirement as WOULD-RETIRE with its
 # file and changes nothing. A loop logs to its record's log, under
-# ~/nova-bench/loops.
+# ~/nova-bench/loops (on darwin, launchd agents log under the user's home,
+# ~/Library/Logs/nova-loop-<name>.log).
 #
 # Beside the records, every machine gets one more unit, disk-guard: nova-swarm
 # disk-guard every nova_disk_guard_every seconds, which keeps the disk from
@@ -156,6 +157,10 @@
 
     - name: the log directory
       ansible.builtin.file: { path: "{{ nova_home }}/nova-bench/loops", state: directory, mode: "0755" }
+
+    - name: the launchd log directory (darwin)
+      ansible.builtin.file: { path: "{{ ansible_env.HOME }}/Library/Logs", state: directory, mode: "0755" }
+      when: loop_darwin
 
     - name: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)
       ansible.builtin.stat: { path: "{{ item }}" }

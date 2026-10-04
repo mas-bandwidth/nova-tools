@@ -255,8 +255,10 @@ One unit per record of `nova_loops`, from the record's fields and the host's
 layout: the command is the record's `argv`, word for word (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
-record's log under `~/nova-bench/loops/`, which the play creates. Every unit
-gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
+record's log under `~/nova-bench/loops/`, which the play creates (on darwin,
+launchd agents log under the user's home, `~/Library/Logs/nova-loop-<name>.log`,
+because launchd cannot open log files on network volumes such as `/Volumes/nova`).
+Every unit gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
 a `nova-swarm member`, inventory removes an older endpoint assignment from the
 rendered `/usr/bin/env` prefix while preserving its Redis user, password
 variable name and every other word. This compatibility projection does not
@@ -267,7 +269,9 @@ cleanup.
 
 - darwin: `com.nova.loop.<name>.plist` (`templates/nova-loop.plist.j2`) in
   `~/Library/LaunchAgents` (GUI domain) or `/Library/LaunchDaemons` (system,
-  `UserName` the login). A kept-alive record has `KeepAlive`; a periodic one
+  `UserName` the login), with `StandardOutPath` and `StandardErrorPath` logging
+  to `~/Library/Logs/nova-loop-<name>.log` under the user's home. A kept-alive
+  record has `KeepAlive`; a periodic one
   `StartInterval`. A record with `enabled: false` is written with `Disabled`
   and not loaded. A changed unit is booted out and bootstrapped again.
 - linux: `nova-loop-<name>.service` (`templates/nova-loop.service.j2`) in
