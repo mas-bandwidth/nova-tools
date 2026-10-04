@@ -178,7 +178,7 @@ func TestLandScoresAfterThePassAndStopsAtTheFirstFailure(t *testing.T) {
 				heads[id] = r.head(id, "main", id+".txt", id+"\n")
 			}
 			r.queued(heads, "s1-1", "s1-2", "s2-1")
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			f := &stalling{hang: hang, stop: cancel}
 			f.landed = func() bool {

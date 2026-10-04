@@ -430,7 +430,7 @@ gh pr create --title T --body B >&2`)
 		Brief: e.brief(), Branch: "sprint/a-1.w1"}
 	c, err := rn.Start(p)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	for !c.Done() {
 		require.NoError(t, ctx.Err(), "the child did not end in time:\n%s", e.log())
@@ -484,7 +484,7 @@ gh pr create --title T --body B >&2`)
 			rout := &lockedBuf{}
 			reader := member.New(member.Config{As: "reader-a", Width: 1, Reader: true}, d.worker(), rr, nil, rout)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 			defer cancel()
 			for cellInt(d.where(), "readers", "reader-a", tc.col) == 0 {
 				require.NoError(t, ctx.Err(), "the read did not reach %s:\n%s\nreader:\n%s", tc.col, d.must("card", "a-1"), rout.String())

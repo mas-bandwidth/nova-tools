@@ -137,7 +137,7 @@ func TestAWatchThroughTheServerSendsOneReadAFrame(t *testing.T) {
 	r := newServerRig(t, twoLanes()...)
 	var sent [][]string
 	c, boss := clientOf(t, r, "boss", &sent)
-	ctx, stop := context.WithCancel(context.Background())
+	ctx, stop := context.WithCancel(t.Context())
 	t.Cleanup(stop)
 	c.notify = func(context.Context) (context.Context, context.CancelFunc) { return ctx, stop }
 	frames := 0

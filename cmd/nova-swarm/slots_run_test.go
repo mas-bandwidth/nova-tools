@@ -151,7 +151,7 @@ echo "exit $1" >> "$2"
 	require.Equal(t, 0, slotLeaseCount(t, store), "store must hold no leases after reuse exit")
 
 	// Cancellation leaves the slot reusable.
-	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancelCtx, cancel := context.WithCancel(t.Context())
 	var cancelOut, cancelErrs bytes.Buffer
 	cancelDone := make(chan int, 1)
 	go func() {
