@@ -20,15 +20,18 @@ import (
 
 // The things, in the order they print.
 const (
-	Server    = "server"
-	Store     = "store"
-	Loop      = "loop"
-	Fleet     = "fleet"
-	Friends   = "friends"
-	Readers   = "readers"
-	Dashboard = "dashboard"
-	Bus       = "bus"
-	Inbox     = "inbox"
+	Server     = "server"
+	Store      = "store"
+	Loop       = "loop"
+	Fleet      = "fleet"
+	Friends    = "friends"
+	Readers    = "readers"
+	Dashboard  = "dashboard"
+	Bus        = "bus"
+	Inbox      = "inbox"
+	Queue      = "queue"
+	MergeQueue = Queue
+	Versions   = "versions"
 )
 
 // Token is the first word of every line.
@@ -121,6 +124,27 @@ type InboxM struct {
 	Oldest time.Duration `json:"oldest_ns"`
 }
 
+// QueueM is the dev merge queue as measured: its entries, any pull request
+// thrown out of the queue since the previous check, and the count of open green
+// pull requests.
+type QueueM struct {
+	Entries   []string `json:"entries,omitempty"`
+	Green     int      `json:"green,omitempty"`
+	ThrownOut []string `json:"thrown_out,omitempty"`
+}
+
+// MachineVersionM is one machine's installed nova-tools version.
+type MachineVersionM struct {
+	Machine string `json:"machine"`
+	Version string `json:"version"`
+}
+
+// VersionsM is each machine's installed nova-tools version against dev's tip.
+type VersionsM struct {
+	Dev      string            `json:"dev"`
+	Machines []MachineVersionM `json:"machines,omitempty"`
+}
+
 // Measures is everything the probes measured, in one struct so a test can
 // hand Judge any state of the machinery.
 type Measures struct {
@@ -132,6 +156,8 @@ type Measures struct {
 	Dashboard DashM     `json:"dashboard"`
 	Bus       BusM      `json:"bus"`
 	Inbox     InboxM    `json:"inbox"`
+	Queue     QueueM    `json:"queue"`
+	Versions  VersionsM `json:"versions"`
 	// Host is the short host name the check ran on: the server's unit is
 	// named by it.
 	Host string `json:"host"`
@@ -376,6 +402,84 @@ func Judge(m Measures, now time.Time) Report {
 			f = append(f, "oldest="+age(in.Oldest), "next="+q("nova-sprint inbox"))
 		}
 		add(Line{Thing: Inbox, Up: true, Facts: f})
+	}
+
+	// 10. the dev merge queue
+	if !failed(Queue) {
+		qLine := m.Queue
+		entriesStr := "0"
+		if len(qLine.Entries) > 0 {
+			entriesStr = strings.Join(qLine.Entries, ",")
+		}
+		switch {
+		case len(qLine.ThrownOut) > 0:
+			remedy := "gh pr view " + qLine.ThrownOut[0]
+			add(Line{
+				Thing:  Queue,
+				Facts:  []string{"entries=" + entriesStr, "thrown=" + strings.Join(qLine.ThrownOut, ","), "why=" + q("pull request "+strings.Join(qLine.ThrownOut, ",")+" thrown out")},
+				Remedy: remedy,
+			})
+		case len(qLine.Entries) == 0 && qLine.Green > 0:
+			add(Line{
+				Thing:  Queue,
+				Facts:  []string{"entries=0", fmt.Sprintf("green=%d", qLine.Green), "why=" + q("empty queue with open green PRs")},
+				Remedy: "gh pr list",
+			})
+		default:
+			facts := []string{"entries=" + entriesStr}
+			if qLine.Green > 0 {
+				facts = append(facts, fmt.Sprintf("green=%d", qLine.Green))
+			}
+			add(Line{Thing: Queue, Up: true, Facts: facts})
+		}
+	}
+
+	// 11. each machine's installed nova-tools version against dev's tip
+	if !failed(Versions) {
+		v := m.Versions
+		var stale []MachineVersionM
+		for _, mv := range v.Machines {
+			if v.Dev != "" && mv.Version != v.Dev {
+				stale = append(stale, mv)
+			}
+		}
+		if len(stale) > 0 {
+			var facts []string
+			var remedies []string
+			if len(stale) == 1 {
+				facts = []string{
+					"machine=" + stale[0].Machine,
+					"version=" + stale[0].Version,
+					"dev=" + v.Dev,
+				}
+				remedies = append(remedies, "nova-update apply")
+			} else {
+				var names []string
+				for _, sm := range stale {
+					names = append(names, sm.Machine+":"+sm.Version)
+					remedies = append(remedies, "nova-update apply")
+				}
+				facts = []string{
+					"stale=" + strings.Join(names, ","),
+					"dev=" + v.Dev,
+				}
+			}
+			add(Line{
+				Thing:  Versions,
+				Facts:  facts,
+				Remedy: strings.Join(remedies, "; "),
+			})
+		} else {
+			dev := v.Dev
+			if dev == "" {
+				dev = "none"
+			}
+			facts := []string{"dev=" + dev}
+			if len(v.Machines) > 0 {
+				facts = append(facts, fmt.Sprintf("fresh=%d", len(v.Machines)))
+			}
+			add(Line{Thing: Versions, Up: true, Facts: facts})
+		}
 	}
 	return r
 }

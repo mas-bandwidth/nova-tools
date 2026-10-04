@@ -40,7 +40,9 @@ func TestEverythingUp(t *testing.T) {
 		"MACHINERY dashboard OK addr=127.0.0.1:7390 status=200 build=3f2a",
 		`MACHINERY bus OK redis=none note="not configured: NOVA_BUS_REDIS is not set"`,
 		`MACHINERY inbox OK open=2 oldest=42m0s next="nova-sprint inbox"`,
-		"MACHINERY OK n=9",
+		"MACHINERY queue OK entries=0",
+		"MACHINERY versions OK dev=none",
+		"MACHINERY OK n=11",
 	}, "\n")+"\n", lines(r))
 }
 
@@ -124,7 +126,7 @@ func TestSummaryAndNeverDown(t *testing.T) {
 	assert.Contains(t, lines(r), "MACHINERY bus OK redis=127.0.0.1:6381\n")
 	assert.Contains(t, lines(r), "MACHINERY inbox OK open=0\n")
 	assert.Equal(t, 3, r.Down)
-	assert.Equal(t, "MACHINERY DOWN n=3 of=11", r.Summary())
+	assert.Equal(t, "MACHINERY DOWN n=3 of=13", r.Summary())
 	assert.Contains(t, r.JSON(), `"down":3`)
 }
 
@@ -147,4 +149,77 @@ func TestServedCheckSaysNotMeasured(t *testing.T) {
 	assert.Equal(t, 2, r.Down, lines(r))
 	m.Bus = BusM{}
 	assert.Contains(t, lines(Judge(m, t0)), `MACHINERY bus OK redis=none note="not configured: NOVA_BUS_REDIS is not set"`+"\n")
+}
+
+// The seat check judges the dev merge queue and each machine's installed version.
+func TestTheSeatCheckJudgesTheMergeQueueAndEachMachinesInstalledVersion(t *testing.T) {
+	t.Parallel()
+
+	// 1. queue healthy
+	t.Run("queue healthy", func(t *testing.T) {
+		t.Parallel()
+		m := up()
+		m.Queue = QueueM{Entries: []string{"5281", "5282"}}
+		m.Versions = VersionsM{Dev: "v2.0.0", Machines: []MachineVersionM{{Machine: "m1", Version: "v2.0.0"}}}
+		r := Judge(m, t0)
+		assert.Equal(t, 0, r.Down)
+		assert.Contains(t, lines(r), "MACHINERY queue OK entries=5281,5282\n")
+		assert.Equal(t, "MACHINERY OK n=11", r.Summary())
+	})
+
+	// 2. queue empty with open green PRs
+	t.Run("queue empty with open green PRs", func(t *testing.T) {
+		t.Parallel()
+		m := up()
+		m.Queue = QueueM{Entries: nil, Green: 2}
+		r := Judge(m, t0)
+		assert.Greater(t, r.Down, 0)
+		assert.Contains(t, lines(r), `MACHINERY queue DOWN entries=0 green=2 why="empty queue with open green PRs" remedy="gh pr list"`+"\n")
+		assert.Contains(t, r.Summary(), "MACHINERY DOWN n=")
+	})
+
+	// 3. a PR thrown out
+	t.Run("a PR thrown out", func(t *testing.T) {
+		t.Parallel()
+		m := up()
+		m.Queue = QueueM{Entries: []string{"5281"}, ThrownOut: []string{"5280"}}
+		r := Judge(m, t0)
+		assert.Greater(t, r.Down, 0)
+		assert.Contains(t, lines(r), `MACHINERY queue DOWN entries=5281 thrown=5280 why="pull request 5280 thrown out" remedy="gh pr view 5280"`+"\n")
+		assert.Contains(t, r.Summary(), "MACHINERY DOWN n=")
+	})
+
+	// 4. a stale machine
+	t.Run("a stale machine", func(t *testing.T) {
+		t.Parallel()
+		m := up()
+		m.Versions = VersionsM{
+			Dev: "v2.0.0",
+			Machines: []MachineVersionM{
+				{Machine: "m1", Version: "v1.0.0"},
+				{Machine: "m2", Version: "v2.0.0"},
+			},
+		}
+		r := Judge(m, t0)
+		assert.Greater(t, r.Down, 0)
+		assert.Contains(t, lines(r), `MACHINERY versions DOWN machine=m1 version=v1.0.0 dev=v2.0.0 remedy="nova-update apply"`+"\n")
+		assert.Contains(t, r.Summary(), "MACHINERY DOWN n=")
+	})
+
+	// 5. all fresh
+	t.Run("all fresh", func(t *testing.T) {
+		t.Parallel()
+		m := up()
+		m.Versions = VersionsM{
+			Dev: "v2.0.0",
+			Machines: []MachineVersionM{
+				{Machine: "m1", Version: "v2.0.0"},
+				{Machine: "m2", Version: "v2.0.0"},
+			},
+		}
+		r := Judge(m, t0)
+		assert.Equal(t, 0, r.Down)
+		assert.Contains(t, lines(r), "MACHINERY versions OK dev=v2.0.0 fresh=2\n")
+		assert.Equal(t, "MACHINERY OK n=11", r.Summary())
+	})
 }
