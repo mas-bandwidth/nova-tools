@@ -452,7 +452,7 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 	go func() {
 		pw.CloseWithError(writeTar(pw, dir, base, allowed))
 	}()
-	defer pr.Close()
+	defer func() { _ = pr.Close() }() // ignored: the pipe's read end needs no close error
 	args := append(s.sshArgs(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
 	testguard.RefuseHosts(s.Path, args...)
 	return runCommandInput(ctx, pr, "", s.Path, args...)

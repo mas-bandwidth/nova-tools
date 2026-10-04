@@ -744,7 +744,7 @@ func TestPullHoldsItsEdgeFences(t *testing.T) {
 		if err := os.Chmod(changelog, 0o000); err != nil {
 			require.NoError(t, err, err)
 		}
-		defer os.Chmod(changelog, 0o644)
+		defer func() { _ = os.Chmod(changelog, 0o644) }() // ignored: the test's cleanup restores the mode
 		var o, e bytes.Buffer
 		code := Run("nova-update", []string{"pull", "--version", "v0.16.0", "--out", out,
 			"--changelog", changelog, "--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
