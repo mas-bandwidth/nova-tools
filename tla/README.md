@@ -15,7 +15,7 @@
 > fleet passes proved, or deleted. `BenchStage` is current. The table-layer models below (`TableMachine`, `MemberTable`, `EpochMemberTable`,
 > `TableEdit`, `TableOrder`, `TableSession`, `RedisFn`, `TableFirstContact`, `FirstConn`, `FuseBox`) are current.
 
-The TLA+ modules here are the specifications of the state machines this repo implements (the repo SPEC-COORDINATOR section 8: the backend is the state machine, the verbs are its actions; the owner 2026-09-27: TLA+ for every state machine, every project). The findings each model produced, verified against the code by hand, are in the repo `specs/tla/FINDINGS.md`; the model documents (`TABLE-MODEL.md`, `MEMBER-TABLE-MODEL.md`) are copied here beside the modules they describe.
+The TLA+ modules here are the specifications of the state machines this repo implements (the sibling repo's SPEC-COORDINATOR section 8: the backend is the state machine, the verbs are its actions; the owner 2026-09-27: TLA+ for every state machine, every project). The findings each model produced, verified against the code by hand, are in the sibling repo's `specs/tla/FINDINGS.md`; the model documents (`TABLE-MODEL.md`, `MEMBER-TABLE-MODEL.md`) are copied here beside the modules they describe.
 
 | Module | Instance | What it is |
 |---|---|---|
