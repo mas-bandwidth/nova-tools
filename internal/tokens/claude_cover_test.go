@@ -84,6 +84,11 @@ func TestClaudeCoverToolInputsPullsEveryToolUseInput(t *testing.T) {
 			want:    nil,
 		},
 		{
+			name:    "an array that is not an array of blocks is refused",
+			content: `[1,2]`,
+			want:    nil,
+		},
+		{
 			name:    "a content that is not JSON is refused",
 			content: `not json`,
 			want:    nil,
@@ -168,6 +173,8 @@ func TestClaudeCoverReadClaudeFoldsTheTranscriptTree(t *testing.T) {
 		// A streamed turn: the same id twice with a growing usage block, the LAST line the message.
 		`{"timestamp":"2026-09-16T09:02:00Z","message":{"id":"m3","model":"claude-opus-5","usage":{"input_tokens":7,"output_tokens":100}}}`,
 		`{"timestamp":"2026-09-16T09:02:02Z","message":{"id":"m3","model":"claude-opus-5","usage":{"input_tokens":7,"output_tokens":210}}}`,
+		// A message with no usage block is not a measurement, and not an error.
+		`{"timestamp":"2026-09-16T09:04:00Z","message":{"id":"m5","model":"claude-opus-5"}}`,
 		// The harness talking to itself: counted nowhere.
 		`{"timestamp":"2026-09-16T09:03:00Z","message":{"id":"m4","model":"<synthetic>","usage":{"input_tokens":9999,"output_tokens":9999}}}`,
 		// A user turn with no id: counted in noid=, never folded as a second row.
@@ -202,6 +209,7 @@ func TestClaudeCoverReadClaudeFoldsTheTranscriptTree(t *testing.T) {
 	m3 := claudeCoverMessage(s.Stream, "m3")
 	assert.Equalf(t, "210", m3.Counts.Cell(Output), "m3 output=%s, want 210: the last line for an id is the message", m3.Counts.Cell(Output))
 	assert.Equalf(t, Message{}, claudeCoverMessage(s.Stream, "m4"), "the synthetic turn is not a message a model is paid for")
+	assert.Equalf(t, Message{}, claudeCoverMessage(s.Stream, "m5"), "a message with no usage block is not a measurement")
 	assert.Equalf(t, Message{}, claudeCoverMessage(s.Stream, ""), "the user turn with no id is counted in noid= and never folded")
 }
 
