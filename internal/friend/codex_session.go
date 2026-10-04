@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// NewestCodexSession resolves the saved thread before probing its writer lock
+// NewestCodexSession resolves the saved thread before discovering its app owner
 // (SPEC-FRIEND.md, Codex). Only the index and first session_meta line are read.
 func NewestCodexSession(home, dir string) (string, error) {
 	wanted, err := filepath.Abs(dir)

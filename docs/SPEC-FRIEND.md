@@ -74,12 +74,13 @@ challenge ends.
 
 Each second: the clock is stepped; when the session is free, one read of the
 stream (a ping is answered by the daemon at once and the message is handed to
-the adapter, which blocks for the whole turn, and acked when the turn ends at
-exit 0; any other exit leaves it pending, handed in again when its claim opens,
+the adapter, and acked on exit 0: usually when the turn ends, or for desktop
+Codex when the owning app confirms admission; any other exit leaves it
+pending, handed in again when its claim opens,
 and the third failure acks it with `given_up=true` on the record, so a message
 the session cannot take never comes back for ever; a delivery the adapter
 defers, `Deferred`, the session unable to take a turn now with nothing wrong,
-such as a Codex thread open in the app holding its writer lock, is neither a
+such as a Codex app that does not confirm admission, is neither a
 failure nor an ack: the message stays in the daemon's hand, tried again every
 ten seconds, `RecheckEvery`, and counted toward nothing, so a chat open all
 day loses no message, and the record says so at the first deferral and once a
