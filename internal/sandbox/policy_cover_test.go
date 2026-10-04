@@ -83,7 +83,7 @@ func TestPolicyCoverResolveCallerFile(t *testing.T) {
 		raw        string
 		wantReason string // empty: the path must resolve
 		wantText   string
-	} {
+	}{
 		{name: "a file that exists resolves", raw: secret},
 		{name: "empty wants the file", raw: "", wantReason: "bad_read",
 			wantText: "--secret wants a path to the file this probe proves it cannot read: --secret <path>"},
