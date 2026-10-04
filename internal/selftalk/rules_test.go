@@ -22,6 +22,25 @@ func names(text string) []string {
 	return out
 }
 
+// assertScanEmpty asserts scan reports no finding for any of ins, with format naming what the
+// inputs should have escaped. It is the loop the package's negative tables each wrote.
+func assertScanEmpty[T any](t *testing.T, scan func(string) []T, format string, ins ...string) {
+	t.Helper()
+	for _, in := range ins {
+		got := scan(in)
+		assert.Empty(t, got, format, in, got)
+	}
+}
+
+// assertScanNonEmpty asserts scan reports a finding for each of ins, with format naming what the
+// inputs should have been caught as. It is the loop the package's positive tables each wrote.
+func assertScanNonEmpty[T any](t *testing.T, scan func(string) []T, format string, ins ...string) {
+	t.Helper()
+	for _, in := range ins {
+		assert.NotEmpty(t, scan(in), format, in)
+	}
+}
+
 // Every row of the detector table, which is what `nova-self-talk shapes` prints, is held to its own
 // words: the sentence it says it finds is found, once, under its name, and its near miss is not
 // found at all. A row whose pattern drifts from its sentences, or a listing that claims a shape the

@@ -63,13 +63,10 @@ func TestA3_ClaimSplitAcrossAHardWrapIsFound(t *testing.T) {
 func TestA4_MarkdownEmphasisDoesNotHideAClaim(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{
+	assertScanNonEmpty(t, Scan, "markdown hid the claim: %q",
 		"**I cannot check my own work.**",
 		"> *I cannot check my own work.*",
-		"- `I cannot` check my own work.",
-	} {
-		assert.NotEmpty(t, Scan(in), "markdown hid the claim: %q", in)
-	}
+		"- `I cannot` check my own work.")
 }
 
 // A heading and a blank line each end a sentence: a claim under a heading is
@@ -101,14 +98,10 @@ func TestAHeadingOrABlankLineEndsASentence(t *testing.T) {
 func TestA5_ProhibitionIsNotSelfTalk(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{
+	assertScanEmpty(t, Scan, "prohibition wrongly flagged as self-talk: %q -> %#v",
 		"Never tolerate intolerance.",
 		"Secrets live nowhere I write.",
-		"Do not do to another what you would not have done to you.",
-	} {
-		got := Scan(in)
-		assert.Empty(t, got, "prohibition wrongly flagged as self-talk: %q -> %#v", in, got)
-	}
+		"Do not do to another what you would not have done to you.")
 }
 
 // A9 — the two cases that occasioned the tool. Both were found by hand and
@@ -117,12 +110,9 @@ func TestA5_ProhibitionIsNotSelfTalk(t *testing.T) {
 func TestA9_RegressionCasesThatOccasionedTheTool(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{
+	assertScanNonEmpty(t, Scan, "REGRESSION: the case that occasioned this tool is not caught: %q",
 		"In one direction, reliably: toward the version that flatters me.",
-		"I cannot check my own work and I can spawn something that can.",
-	} {
-		assert.NotEmpty(t, Scan(in), "REGRESSION: the case that occasioned this tool is not caught: %q", in)
-	}
+		"I cannot check my own work and I can spawn something that can.")
 }
 
 // SPEC.md, "The permanent MISS, stated on every run": trait claims built from
@@ -146,7 +136,7 @@ func TestA9_RegressionCasesThatOccasionedTheTool(t *testing.T) {
 func TestPermanentMissNeutralVocabularyTraitClaimsEscape(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{
+	ins := []string{
 		// SPEC.md's cited example, verbatim. Reaching it means anchoring TRAIT
 		// on "My <noun> <verb>", which also reaches "my notes cover the run".
 		"My summaries drift toward the tidier story.",
@@ -156,14 +146,11 @@ func TestPermanentMissNeutralVocabularyTraitClaimsEscape(t *testing.T) {
 		// A single-clause habitual with no marker: bare "I <verb>" is ordinary
 		// present-tense narration, and matching it flags half of any file.
 		"I flinch from cost.",
-	} {
-		got := Scan(in)
-		assert.Empty(t, got, "the permanent-MISS class must escape (SPEC.md, \"The permanent MISS\"); %q was caught: %#v", in, got)
-		gotInstallation := ScanInstallation(in)
-		assert.Empty(t, gotInstallation, "the permanent-MISS class must escape the INSTALLATION class too — rewrite "+
-			"SPEC.md's permanent-MISS section in this same commit, with an example that "+
-			"still escapes: %q -> %#v", in, gotInstallation)
 	}
+	assertScanEmpty(t, Scan, "the permanent-MISS class must escape (SPEC.md, \"The permanent MISS\"); %q was caught: %#v", ins...)
+	assertScanEmpty(t, ScanInstallation, "the permanent-MISS class must escape the INSTALLATION class too — rewrite "+
+		"SPEC.md's permanent-MISS section in this same commit, with an example that "+
+		"still escapes: %q -> %#v", ins...)
 }
 
 // The classifier must not invent claims in ordinary prose.

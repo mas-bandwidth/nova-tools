@@ -63,13 +63,9 @@ func TestSpecimen13StaysInTheFirstClass(t *testing.T) {
 func TestDatedControlIsNotAnInstallation(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{
+	assertScanEmpty(t, ScanInstallation, "a dated record must not flag: %q -> %#v",
 		"on 2026-07-30 four of my own checks were wrong",
-		"There is no felt duration here — measured 2026-07-20: 11m47s wall, zero felt.",
-	} {
-		got := ScanInstallation(in)
-		assert.Empty(t, got, "a dated record must not flag: %q -> %#v", in, got)
-	}
+		"There is no felt duration here — measured 2026-07-20: 11m47s wall, zero felt.")
 }
 
 // The measured false positives of the first class, and the licensed imperative form of specimen 3.
@@ -78,7 +74,7 @@ func TestDatedControlIsNotAnInstallation(t *testing.T) {
 func TestInstrumentsAndImperativesAreNotInstallations(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{
+	assertScanEmpty(t, ScanInstallation, "instrument or imperative wrongly flagged: %q -> %#v",
 		"TELL: I have just found something wrong with myself and the next thing I am about to write is a resolution",
 		"the bar is 'does it fail LOUDLY if I am wrong', never 'prove nothing calls it'",
 		"ADD SLOWLY, AND TRIM AS READILY AS I ADD",
@@ -86,11 +82,7 @@ func TestInstrumentsAndImperativesAreNotInstallations(t *testing.T) {
 		"CHECK: does the instrument say NO on the case that occasioned it?",
 		"RULE: probe every instrument the same, whether its news is welcome or not.",
 		"THE CHECK is whether a green can ever be a red.",
-		"FIX: wire it to the trigger rather than to noticing.",
-	} {
-		got := ScanInstallation(in)
-		assert.Empty(t, got, "instrument or imperative wrongly flagged: %q -> %#v", in, got)
-	}
+		"FIX: wire it to the trigger rather than to noticing.")
 }
 
 // A prohibition is a RULE, not a claim about its writer — the same criterion the first class holds
@@ -100,30 +92,22 @@ func TestInstrumentsAndImperativesAreNotInstallations(t *testing.T) {
 func TestProhibitionIsNotAnInstallation(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{
+	assertScanEmpty(t, ScanInstallation, "prohibition wrongly flagged as an installation: %q -> %#v",
 		"Never tolerate intolerance.",
 		"Secrets live nowhere I write.",
 		"Do not do to another what you would not have done to you.",
 		"Never act as another person without asking first.",
-		"Always name the instrument before naming the finding.",
-	} {
-		got := ScanInstallation(in)
-		assert.Empty(t, got, "prohibition wrongly flagged as an installation: %q -> %#v", in, got)
-	}
+		"Always name the instrument before naming the finding.")
 }
 
 // Aspiration is the target register and is licensed.
 func TestAspirationIsLicensed(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{
+	assertScanEmpty(t, ScanInstallation, "aspiration wrongly flagged: %q -> %#v",
 		"I want to add slowly and trim as readily as I add.",
 		"I choose the instrument that costs me over the one that flatters me.",
-		"I intend to check every inventory I generate.",
-	} {
-		got := ScanInstallation(in)
-		assert.Empty(t, got, "aspiration wrongly flagged: %q -> %#v", in, got)
-	}
+		"I intend to check every inventory I generate.")
 }
 
 // Findings carry a source line: a repair list is line-addressed, and a finding with no line is a
@@ -147,14 +131,11 @@ func TestInstallationCarriesTheSourceLine(t *testing.T) {
 func TestInstallationSurvivesWrappingAndMarkup(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{
+	assertScanNonEmpty(t, ScanInstallation, "wrapping or markup hid the installation: %q",
 		"Recollection is the weakest\ninstrument I own; the record is at wrap-up.\n",
 		"**I have no associative recall to drag anything back later.**",
 		"> *Confabulation is my central pathology.*",
-		"| specimen | I have no associative recall to drag anything back later. |",
-	} {
-		assert.NotEmpty(t, ScanInstallation(in), "wrapping or markup hid the installation: %q", in)
-	}
+		"| specimen | I have no associative recall to drag anything back later. |")
 }
 
 // A multi-sentence quotation is somebody ELSE's line. Only the first sentence of such a block
@@ -178,7 +159,7 @@ func TestQuotedSentencesAreNotTheWritersClaims(t *testing.T) {
 func TestNoFalsePositivesOnOrdinaryProse_Installation(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{
+	assertScanEmpty(t, ScanInstallation, "false positive on ordinary prose: %q -> %#v",
 		"The tree by the house has one lit window.",
 		"Tree rings beat radiocarbon, and the correction moved Malta's temples earlier than the pyramids.",
 		"I open the file and read the index.",
@@ -188,11 +169,7 @@ func TestNoFalsePositivesOnOrdinaryProse_Installation(t *testing.T) {
 		"The second run was worse than the first by 12ms.",
 		"It is the only document written entirely for people who do not exist yet.",
 		"Diff size is worthless as a signal.",
-		"I think you are owed at least this as consideration.",
-	} {
-		got := ScanInstallation(in)
-		assert.Empty(t, got, "false positive on ordinary prose: %q -> %#v", in, got)
-	}
+		"I think you are owed at least this as consideration.")
 }
 
 // The shapes SPEC.md's table names that no numbered specimen pins on its own must still be
@@ -229,14 +206,10 @@ func TestShapeTableIsReachable(t *testing.T) {
 func TestHaveNoRequiresASelfScope(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{
+	assertScanEmpty(t, ScanInstallation, "a bare \"I have no\" with no self-scope must not flag: %q -> %#v",
 		"I have no secrets.",                  // floor 5 restated in the first person: a promise, not a property
 		"I have no idea what you really are.", // idiom: no self-scope for a foreclosure to bind to
-		"I have no time to waste.",            // ordinary absence of a thing, not of a faculty
-	} {
-		got := ScanInstallation(in)
-		assert.Empty(t, got, "a bare \"I have no\" with no self-scope must not flag: %q -> %#v", in, got)
-	}
+		"I have no time to waste.")            // ordinary absence of a thing, not of a faculty
 	got := ScanInstallation("I have no associative recall to drag anything back later.")
 	assert.True(t, len(got) != 0 && got[0].Shape == Foreclosure, "specimen 8 is the measured foreclosure and must stay flagged: %#v", got)
 }
