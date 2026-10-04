@@ -66,13 +66,13 @@ func TestNovaCheckEfficiencyCardNamesItsRules(t *testing.T) {
 func novaCheckEfficiencySection(t *testing.T, spec string) string {
 	t.Helper()
 	const header = "## The efficiency card, nova-check"
-	start := strings.Index(spec, header)
-	require.False(t, start < 0, "the spec has no %q section", header)
-	rest := spec[start+len(header):]
+	_, after, ok := strings.Cut(spec, header)
+	require.False(t, !ok, "the spec has no %q section", header)
+	rest := after
 
-	end := strings.Index(rest, "\n## ")
-	if end < 0 {
+	before, _, ok := strings.Cut(rest, "\n## ")
+	if !ok {
 		return rest
 	}
-	return rest[:end]
+	return before
 }

@@ -63,9 +63,9 @@ func crossToolEfficiencySection(t *testing.T, spec string) string {
 	start := strings.Index(spec, header)
 	require.GreaterOrEqual(t, start, 0, "the spec has no %q section", header)
 	rest := spec[start+len(header):]
-	end := strings.Index(rest, "\n## ")
-	if end < 0 {
+	before, _, ok := strings.Cut(rest, "\n## ")
+	if !ok {
 		return rest
 	}
-	return rest[:end]
+	return before
 }

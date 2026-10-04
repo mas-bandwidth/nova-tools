@@ -72,11 +72,11 @@ func TestTheCLIReferenceNamesEveryLinksFlag(t *testing.T) {
 				break
 			}
 			rest = rest[idx+len("fs.Var("):]
-			comma := strings.Index(rest, ",")
-			if comma < 0 {
+			_, after, ok := strings.Cut(rest, ",")
+			if !ok {
 				break
 			}
-			name, ok := nameAfterQuote(rest[comma+1:])
+			name, ok := nameAfterQuote(after)
 			if !ok {
 				break
 			}
@@ -116,14 +116,14 @@ func TestTheCLIReferenceNamesEveryLinksFlag(t *testing.T) {
 }
 
 func nameAfterQuote(s string) (string, bool) {
-	i := strings.Index(s, "\"")
-	if i < 0 {
+	_, after, ok := strings.Cut(s, "\"")
+	if !ok {
 		return "", false
 	}
-	rest := s[i+1:]
-	j := strings.Index(rest, "\"")
-	if j < 0 {
+	rest := after
+	before, _, ok := strings.Cut(rest, "\"")
+	if !ok {
 		return "", false
 	}
-	return rest[:j], true
+	return before, true
 }

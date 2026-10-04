@@ -203,11 +203,11 @@ func metaValue(s, key string) string {
 
 // cmdValue reads `cmd=` to the end of the line, because a command carries spaces.
 func cmdValue(s string) string {
-	i := strings.Index(s, "cmd=")
-	if i < 0 {
+	_, after, ok := strings.Cut(s, "cmd=")
+	if !ok {
 		return ""
 	}
-	return strings.TrimSpace(s[i+len("cmd="):])
+	return strings.TrimSpace(after)
 }
 
 // tokenOrEmpty keeps a token count the harness gave, and reads `-` (the harness's own word

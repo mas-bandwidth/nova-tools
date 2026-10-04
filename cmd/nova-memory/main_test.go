@@ -664,8 +664,8 @@ func TestExampleGoldHeaderCommentMatchesRowCount(t *testing.T) {
 		if !strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if idx := strings.Index(trimmed, "benchmark:"); idx != -1 {
-			rest := strings.TrimSpace(trimmed[idx+len("benchmark:"):])
+		if _, after, ok := strings.Cut(trimmed, "benchmark:"); ok {
+			rest := strings.TrimSpace(after)
 			fields := strings.Fields(rest)
 			if len(fields) >= 2 && strings.HasPrefix(fields[1], "row") {
 				found = true

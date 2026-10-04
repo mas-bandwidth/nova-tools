@@ -321,8 +321,8 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 		fmName, fmType := frontmatter(text)
 		text = stripFrontmatter(text)
 		class := "."
-		if i := strings.IndexByte(f, '/'); i >= 0 {
-			class = f[:i]
+		if before, _, ok := strings.Cut(f, "/"); ok {
+			class = before
 		}
 		para := 0
 		line := 1

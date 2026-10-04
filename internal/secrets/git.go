@@ -276,17 +276,17 @@ func readLooseObject(gitDir, sha string) (string, []byte, error) {
 		return "", nil, err
 	}
 
-	nullIdx := bytes.IndexByte(data, 0)
-	if nullIdx < 0 {
+	before, after, ok := bytes.Cut(data, []byte{0})
+	if !ok {
 		return "", nil, fmt.Errorf("malformed loose object %s: missing null byte", sha)
 	}
-	header := string(data[:nullIdx])
+	header := string(before)
 	parts := strings.SplitN(header, " ", 2)
 	if len(parts) != 2 {
 		return "", nil, fmt.Errorf("malformed loose object %s header", sha)
 	}
 	objType := parts[0]
-	return objType, data[nullIdx+1:], nil
+	return objType, after, nil
 }
 
 func readLooseCommitTree(gitDir, commitSHA string) (map[string]string, error) {

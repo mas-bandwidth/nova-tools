@@ -298,8 +298,8 @@ func flaggedOutputWrites(src string) []outputFinding {
 				continue
 			}
 			if heredocKeyRe.MatchString(payload) {
-				if i := strings.Index(payload, "<<"); i >= 0 {
-					heredoc = strings.Trim(strings.TrimSpace(payload[i+2:]), `'"`)
+				if _, after, ok := strings.Cut(payload, "<<"); ok {
+					heredoc = strings.Trim(strings.TrimSpace(after), `'"`)
 				}
 				continue
 			}

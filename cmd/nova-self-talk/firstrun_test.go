@@ -368,8 +368,8 @@ func runExampleLine(t *testing.T, dir, binDir, line string) (int, string) {
 
 // exampleFirstLine is the first line of an output, which is where a refusal says what was wrong.
 func exampleFirstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
+	if before, _, ok := strings.Cut(s, "\n"); ok {
+		return before
 	}
 	return s
 }

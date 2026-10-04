@@ -153,9 +153,9 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 
 	// The clause that names them, bounded by the `--` that closes it.
 	const marker = "can empty a file --"
-	at := strings.Index(rule9, marker)
-	require.False(t, at < 0, "rule 9 no longer says %q before naming the calls that can empty a file; this test finds the list by that clause and could not find it", marker)
-	clause := rule9[at+len(marker):]
+	_, after, ok := strings.Cut(rule9, marker)
+	require.False(t, !ok, "rule 9 no longer says %q before naming the calls that can empty a file; this test finds the list by that clause and could not find it", marker)
+	clause := after
 
 	// Walk it: collect the backticked names, and skip any inside a parenthetical, which is
 	// prose about a name (`os.OpenFile`, the call the flag empties) and not a name of its own.

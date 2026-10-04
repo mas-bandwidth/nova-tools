@@ -88,8 +88,8 @@ func ParseSubject(subject string) (parsedSubject, bool) {
 	}
 	day := rest
 	trailer := ""
-	if i := strings.IndexByte(rest, ' '); i >= 0 {
-		day, trailer = rest[:i], rest[i+1:]
+	if before, after, ok0 := strings.Cut(rest, " "); ok0 {
+		day, trailer = before, after
 	}
 	if !ValidDay(day) {
 		return parsedSubject{}, false

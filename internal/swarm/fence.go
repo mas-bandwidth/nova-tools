@@ -195,16 +195,16 @@ const (
 // at it, and every later line is a consequence of the same missing rule.
 func FenceRejection(raw []byte) (string, bool) {
 	for _, line := range strings.Split(string(raw), "\n") {
-		i := strings.Index(line, FenceRejectionMark)
-		if i < 0 {
+		_, after, ok := strings.Cut(line, FenceRejectionMark)
+		if !ok {
 			continue
 		}
-		rest := line[i+len(FenceRejectionMark):]
-		j := strings.Index(rest, fenceRejectionTail)
-		if j < 0 {
+		rest := after
+		before, _, ok := strings.Cut(rest, fenceRejectionTail)
+		if !ok {
 			continue
 		}
-		asked := strings.TrimSpace(rest[:j])
+		asked := strings.TrimSpace(before)
 		// `external_directory (/x/y/*)` -- the patterns are in the parentheses, the first
 		// of which is the path the card was stopped at. A form with no parentheses (a
 		// permission that carries no pattern) names the permission itself.

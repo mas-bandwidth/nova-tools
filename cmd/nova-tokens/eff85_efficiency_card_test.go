@@ -67,15 +67,15 @@ func TestNovaTokensEfficiencyCardNamesItsRules(t *testing.T) {
 func tokensEfficiencySection(t *testing.T, spec string) string {
 	t.Helper()
 	const header = "## The efficiency card (#85), nova-tokens"
-	start := strings.Index(spec, header)
-	if start < 0 {
+	_, after, ok := strings.Cut(spec, header)
+	if !ok {
 		require.FailNowf(t, "spec section missing", "the spec has no %q section", header)
 		return ""
 	}
-	rest := spec[start+len(header):]
-	end := strings.Index(rest, "\n## ")
-	if end < 0 {
+	rest := after
+	before, _, ok := strings.Cut(rest, "\n## ")
+	if !ok {
 		return rest
 	}
-	return rest[:end]
+	return before
 }

@@ -215,8 +215,8 @@ func shapesOf(stream string) []string {
 // compared here either.
 func shape(line string) string {
 	head := line
-	if i := strings.Index(line, ": "); i >= 0 {
-		head = line[:i]
+	if before, _, ok := strings.Cut(line, ": "); ok {
+		head = before
 	}
 	toks := strings.Fields(head)
 	if len(toks) < 2 || strings.ToUpper(toks[0]) != toks[0] {

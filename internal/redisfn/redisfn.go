@@ -354,9 +354,9 @@ func (l Library) refuse(format string, args ...any) error {
 // what scan read of it.
 func (l Library) text(file, src string) (scanned, error) {
 	shown := oneline.Escape(file)
-	if at := strings.IndexByte(src, '\r'); at >= 0 {
+	if before, _, ok := strings.Cut(src, "\r"); ok {
 		return scanned{}, l.refuse(`%s line %d holds a carriage return; write its line breaks as "\n" (Lua counts a carriage return as a line break and an editor may not, so a line number would mean two things)`,
-			shown, 1+strings.Count(src[:at], "\n"))
+			shown, 1+strings.Count(before, "\n"))
 	}
 	read, bad := scan(file, src)
 	if bad != nil {

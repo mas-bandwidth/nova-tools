@@ -65,9 +65,9 @@ func benchSlotLeasesSection(t *testing.T, spec string) string {
 		_ = line
 		break
 	}
-	end := strings.Index(rest, "\n## ")
-	if end < 0 {
+	before, _, ok := strings.Cut(rest, "\n## ")
+	if !ok {
 		return rest
 	}
-	return rest[:end]
+	return before
 }

@@ -411,8 +411,8 @@ func (b Budgets) ledgered(pkg, test string) bool {
 
 // topLevel is a test name's top-level test: a subtest's skip is its parent's.
 func topLevel(test string) string {
-	if i := strings.Index(test, "/"); i >= 0 {
-		return test[:i]
+	if before, _, ok := strings.Cut(test, "/"); ok {
+		return before
 	}
 	return test
 }

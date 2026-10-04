@@ -567,8 +567,8 @@ func ParseMicro(s string) (int64, bool) {
 		return 0, false
 	}
 	whole, frac := s, ""
-	if i := strings.IndexByte(s, '.'); i >= 0 {
-		whole, frac = s[:i], s[i+1:]
+	if before, after, ok := strings.Cut(s, "."); ok {
+		whole, frac = before, after
 	}
 	if whole != "" {
 		for _, c := range whole {

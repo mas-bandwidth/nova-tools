@@ -279,11 +279,11 @@ func TestCheckReportsLandlock(t *testing.T) {
 
 // fieldOf pulls one key=value field out of a one-line status line.
 func fieldOf(line, key string) string {
-	i := strings.Index(line, key)
-	if i < 0 {
+	_, after, ok := strings.Cut(line, key)
+	if !ok {
 		return ""
 	}
-	rest := line[i+len(key):]
+	rest := after
 	if j := strings.IndexAny(rest, " \n"); j >= 0 {
 		rest = rest[:j]
 	}

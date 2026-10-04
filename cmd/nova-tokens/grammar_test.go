@@ -134,8 +134,8 @@ func grammarPlaceholder(name, v string, alts []string) bool {
 }
 
 func head(s string) string {
-	if i := strings.Index(s, ": "); i >= 0 {
-		return s[:i]
+	if before, _, ok := strings.Cut(s, ": "); ok {
+		return before
 	}
 	return s
 }

@@ -65,11 +65,11 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 				break
 			}
 			rest = rest[idx+len("fs.Var("):]
-			comma := strings.Index(rest, ",")
-			if comma < 0 {
+			_, after, ok := strings.Cut(rest, ",")
+			if !ok {
 				break
 			}
-			name, ok := nameAfterQuote(rest[comma+1:])
+			name, ok := nameAfterQuote(after)
 			if !ok {
 				break
 			}

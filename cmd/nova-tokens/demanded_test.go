@@ -1582,9 +1582,9 @@ func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
 func subjectOf(t *testing.T, r result) string {
 	t.Helper()
 	line := lineWith(r.stderr, "REPORT OK")
-	i := strings.Index(line, "subject=")
-	require.False(t, i < 0, "no subject= on %q", line)
-	return line[i+len("subject="):]
+	_, after, ok := strings.Cut(line, "subject=")
+	require.False(t, !ok, "no subject= on %q", line)
+	return after
 }
 
 // ---------------------------------------------------------------- rule 21: the provider export

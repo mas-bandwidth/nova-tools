@@ -1174,8 +1174,8 @@ var notNameRE = regexp.MustCompile(`[^A-Za-z0-9.-]+`)
 func normRepo(u string) string {
 	u = strings.TrimSpace(u)
 	host, path := "", u
-	if i := strings.Index(u, "://"); i >= 0 {
-		host, path, _ = strings.Cut(u[i+3:], "/")
+	if _, after, ok := strings.Cut(u, "://"); ok {
+		host, path, _ = strings.Cut(after, "/")
 	} else if colon := strings.Index(u, ":"); colon > 0 && !strings.Contains(u[:colon], "/") {
 		host, path = u[:colon], u[colon+1:] // scp-like: [user@]host:path
 	}

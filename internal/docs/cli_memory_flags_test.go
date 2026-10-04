@@ -167,23 +167,23 @@ func cmdVerbName(line string) string {
 
 // varFlagName reads fs.Var(&value, "name", ...) and returns name.
 func varFlagName(line string) (string, bool) {
-	i := strings.Index(line, "fs.Var(")
-	if i < 0 {
+	_, after, ok := strings.Cut(line, "fs.Var(")
+	if !ok {
 		return "", false
 	}
-	rest := line[i+len("fs.Var("):]
-	comma := strings.IndexByte(rest, ',')
-	if comma < 0 {
+	rest := after
+	_, after, ok = strings.Cut(rest, ",")
+	if !ok {
 		return "", false
 	}
-	return quotedLiteral(rest[comma+1:])
+	return quotedLiteral(after)
 }
 
 // directFlagName reads fs.String("name", ...) and friends and returns name.
 func directFlagName(line string) (string, bool) {
 	for _, call := range directFlagCalls {
-		if i := strings.Index(line, call); i >= 0 {
-			return quotedLiteral(line[i+len(call):])
+		if _, after, ok := strings.Cut(line, call); ok {
+			return quotedLiteral(after)
 		}
 	}
 	return "", false
@@ -191,14 +191,14 @@ func directFlagName(line string) (string, bool) {
 
 // quotedLiteral returns the first double-quoted string in s.
 func quotedLiteral(s string) (string, bool) {
-	i := strings.IndexByte(s, '"')
-	if i < 0 {
+	_, after, ok := strings.Cut(s, "\"")
+	if !ok {
 		return "", false
 	}
-	rest := s[i+1:]
-	j := strings.IndexByte(rest, '"')
-	if j < 0 {
+	rest := after
+	before, _, ok := strings.Cut(rest, "\"")
+	if !ok {
 		return "", false
 	}
-	return rest[:j], true
+	return before, true
 }

@@ -100,8 +100,8 @@ func (w *firstLineWriter) Write(p []byte) (int, error) {
 	overflow := false
 	if !w.done {
 		take := p
-		if i := bytes.IndexByte(p, '\n'); i >= 0 {
-			take, w.done = p[:i], true
+		if before, _, ok := bytes.Cut(p, []byte{'\n'}); ok {
+			take, w.done = before, true
 		}
 		if room := w.limit - len(w.line); len(take) > room {
 			w.line = append(w.line, take[:room]...)

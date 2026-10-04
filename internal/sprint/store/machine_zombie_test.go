@@ -132,8 +132,8 @@ func TestCRZombieWriter(t *testing.T) {
 			msg := bad.Error()
 			t.Logf("trial %d: %s", trial, msg)
 			var member string
-			if i := strings.Index(msg, "member "); i >= 0 {
-				member = strings.Fields(msg[i+7:])[0]
+			if _, after, ok := strings.Cut(msg, "member "); ok {
+				member = strings.Fields(after)[0]
 			}
 			var tail []string
 			for _, l := range lm.log {

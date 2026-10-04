@@ -121,11 +121,11 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 
 	var cleanEnv []string
 	for _, envEntry := range os.Environ() {
-		idx := strings.IndexByte(envEntry, '=')
-		if idx == -1 {
+		before, _, ok := strings.Cut(envEntry, "=")
+		if !ok {
 			continue
 		}
-		envKey := envEntry[:idx]
+		envKey := before
 		collides := false
 		for sKey := range scrubKeys {
 			if envKey == sKey || (runtime.GOOS == "windows" && strings.EqualFold(envKey, sKey)) {
