@@ -94,7 +94,9 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 		return &OpenCode{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "codex":
 		return &Codex{Dir: dir, Session: session, Run: run, Out: out}, nil
-	case "claude", "antigravity":
+	case "antigravity":
+		return &Antigravity{Dir: dir, Session: session, Run: run, Out: out}, nil
+	case "claude":
 		return Stub{Harness: harness}, nil
 	case "dsh":
 		return &DSH{Dir: dir, Session: session, Run: run, Out: out}, nil

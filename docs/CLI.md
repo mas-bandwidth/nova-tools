@@ -829,7 +829,7 @@ launchd runs `nova-friend run` from then on, at every login, and restarts it
 when it dies; it is never started by the model. The session's one duty: when a
 message beginning `PING <nonce>` arrives, run the `nova-friend pong` line it
 carries, first. A harness with no deliver command yet (codex, claude,
-antigravity, dsh) has a passive daemon: it takes nothing off the stream (the
+dsh) has a passive daemon: it takes nothing off the stream (the
 session's own `nova-bus2 recv --as <me>` does), answers pings with the daemon
 pong, beats, and records what it could not push in; the beat and the daemon
 pong are real for it all the same.
