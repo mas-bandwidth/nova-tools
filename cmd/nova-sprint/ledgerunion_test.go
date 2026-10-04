@@ -9,8 +9,10 @@ import (
 
 // unionRemovals over three byte slices: two sides that remove adjacent rows give the
 // base less both; the same row removed by both is removed once and counted on each;
-// a lowered ceiling line is honoured at the lower of the two; a side that adds a line,
-// one that raises the ceiling and a base that is not a list of lines at all are refused;
+// a lowered ceiling line is honoured at the lower of the two; a counted row holds its
+// count less what each side lowered it by, and goes at zero; a side that adds a line,
+// one that raises a count or the ceiling and a base that is not a list of lines at all
+// are refused;
 // a side that changed nothing removes nothing; the trailing newline follows the base.
 func TestUnionRemovals(t *testing.T) {
 	t.Parallel()
@@ -27,6 +29,11 @@ func TestUnionRemovals(t *testing.T) {
 		{"ceilings lowered unevenly", base, "# the ledger\n# ceiling: 2\nc\nd\n", "# the ledger\n# ceiling: 3\na\nc\nd\n", "# the ledger\n# ceiling: 2\nc\nd\n", 2, 1, ""},
 		{"no ceiling, no trailing newline", "a\nb\nc", "a\nc", "b\nc", "c", 1, 1, ""},
 		{"everything removed", "a\nb\n", "b\n", "a\n", "", 1, 1, ""},
+		{"counts lowered on different keys", "# ceiling: 2\na 5\nb 3\n", "# ceiling: 2\na 4\nb 3\n", "# ceiling: 2\na 5\nb 1\n", "# ceiling: 2\na 4\nb 1\n", 1, 1, ""},
+		{"the same key lowered by both", "a 5 reason\nb 1\n", "a 4 reason\nb 1\n", "a 3 reason\nb 1\n", "a 2 reason\nb 1\n", 1, 1, ""},
+		{"a count lowered to nothing by both", "a 2\nb 1\n", "a 1\nb 1\n", "a 1\nb 1\n", "b 1\n", 1, 1, ""},
+		{"a row dropped on one side and lowered on the other", "a 3\nb 1\n", "b 1\n", "a 2\nb 1\n", "b 1\n", 1, 1, ""},
+		{"a raised count is refused", "a 3\n", "a 4\n", "a 3\n", "", 0, 0, `the left side raises the count of "a 3", which is no removal: "a 4"`},
 		{"an added line is refused", base, "# the ledger\n# ceiling: 3\na\nc\nd\n", "# the ledger\n# ceiling: 5\na\nb\nc\nd\ne\n", "", 0, 0, "the right side raises the ceiling from 4 to 5"},
 		{"an added row is refused", base, "# the ledger\n# ceiling: 4\na\nb\nc\nd\ne\n", base, "", 0, 0, `the left side adds a line, which is no removal: "e"`},
 		{"a changed row is refused", base, base, "# the ledger\n# ceiling: 4\na\nb 2\nc\nd\n", "", 0, 0, `the right side adds a line, which is no removal: "b 2"`},
