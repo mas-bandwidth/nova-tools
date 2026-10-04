@@ -105,20 +105,26 @@ func flagProblem(f *flag.FlagSet, err error) error {
 // <who,who> not <recipients>, <r> and <b> for the remote and the branch, and the
 // report line's alternation showing that --send is the one that needs a bus. A
 // change here belongs in the spec first, and TestHelpIsTheSpecsVerbsBlock reads
-// the spec file and compares the two. nova-version's usage lines are its
-// verbs' own (versiontool.go). The release verbs are one line here; their own
-// lines are release.Verbs, printed by `nova-update help release`.
+// the spec file and compares the two. The lines are indented two spaces and
+// wrapped at 100 columns with a deeper continuation, as nova-ci's usage is, so
+// the report line's synopsis is not one 270-character line. nova-version's usage
+// lines are its verbs' own (versiontool.go). The release verbs are one line
+// here; their own lines are release.Verbs, printed by `nova-update help release`.
 const updateVerbs = `usage:
-nova-update example [--out <path>]
-nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
-nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update report --store <host:port> [--timeout <d>]
-nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
-nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release <cut|build|install|adopt|pull> ...   nova-tools' own release pipeline: nova-update help release prints its usage lines
-nova-update help`
+  nova-update example [--out <path>]
+  nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
+  nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to
+    <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>]
+    [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update report --store <host:port> [--timeout <d>]
+  nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to
+    <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
+  nova-update adoption --file <path> [--as <friend>] [--max <n>]
+  nova-update release <cut|build|install|adopt|pull> ...
+    nova-tools' own release pipeline: nova-update help release prints its usage lines
+  nova-update help`
 
 // manifestShape is the one sentence that says what the file --file names holds:
 // the rule-2 manifest, one tab-separated line per tool, written by hand in git.
@@ -156,10 +162,16 @@ func help(name string, w io.Writer) {
 	// and the help cannot drift apart. This is that string.
 	fmt.Fprintf(w, "%s\n\n", updateOpening)
 	fmt.Fprintln(w, updateVerbs)
-	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds. Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n", name)
-	note := "Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
-	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
-	fmt.Fprintln(w, note)
+	// The notes are one short paragraph per subject (a cold rating named the
+	// wall of text): the defaults, the --json rendering, the verbs' shape,
+	// then report's send recovery, where pending and artifact are each named
+	// in one clause, and the snapshot's lock (SPEC-UPDATE rule 25).
+	fmt.Fprintf(w, "  %s version (or --version)\n", name)
+	fmt.Fprintf(w, "\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n")
+	fmt.Fprintf(w, "\nEvery verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n")
+	fmt.Fprintf(w, "\nReport needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing.\n")
+	fmt.Fprintf(w, "\nCross-process delivery recovery needs --snapshot: the snapshot saves the artifact (the note nova-bus prepared) before each send, and a note still pending (prepared, not yet confirmed sent) is retried by the same --send, never prepared again.\n")
+	fmt.Fprintf(w, "\nA snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running.\n")
 	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
 	fmt.Fprint(w, twoBinaries())
 	fmt.Fprint(w, manifestHelp(name))
@@ -183,7 +195,9 @@ func twoBinaries() string {
 
 // manifestHelp is the manifest format in six lines, under the `report` example line so
 // `report -h` quotes it (verbflag.Excerpt reads a verb's lines with the lines indented
-// beneath them): the rule-2 file --file names, the same for both tools.
+// beneath them): the rule-2 file --file names, the same for both tools. Rule 5 is
+// worded from rule 3 (a command is argv, never a shell): the apply argv is split on
+// single spaces, no quotes, no shell, so a pipe, a glob or a $VAR is a literal argument.
 func manifestHelp(name string) string {
 	return "\nTHE MANIFEST is the file --file names, written by hand, the same for both tools:\n" +
 		"  " + name + " report --file versions.tsv     the six lines that say what versions.tsv holds:\n" +
@@ -191,7 +205,7 @@ func manifestHelp(name string) string {
 		"      2. kind is harness, engine, model, tool or pin; name is unique in the file; owner is who answers for it\n" +
 		"      3. installed is a version (v1.2.3), a command name on PATH, or an argv whose first line of output carries the version (single spaces, no quotes)\n" +
 		"      4. latest is github:<owner>/<repo>, npm:<package>, brew:<formula>, ollama:<model>:<tag> (kind model), local:<argv> (a pin takes this only), or - for not known yet\n" +
-		"      5. apply is the argv that updates it, or none; a run prints EVERY problem of the file at once, each with its line, never the first alone\n" +
+		"      5. apply is the argv that updates it, or none, split on single spaces, no quotes, no shell: a pipe, a glob or a $VAR is a literal argument; a run prints EVERY problem of the file at once, each with its line, never the first alone\n" +
 		"      6. example: go<TAB>tool<TAB>go version<TAB>local:go version<TAB>none<TAB>me\n"
 }
 
