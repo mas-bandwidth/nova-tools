@@ -481,6 +481,10 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"accept"+grp+ans)
 		case d == "ask another reader":
 			add(d, cmd+"ask"+subj+" --another"+subjAns)
+		case d == "brief":
+			// the brief is wrong, not the worker (brief_bound.go): replaced while the card waits,
+			// else dropped and added again corrected; the placeholder keeps it the coordinator's
+			add(d, cmd+"brief"+subj+" --brief-file '<the corrected brief>'"+subjAns)
 		case d == "drop":
 			add(d, cmd+"drop"+subj+" --reason "+whyText+subjAns)
 		case d == "return":

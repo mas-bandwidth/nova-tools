@@ -560,6 +560,34 @@ have no class, and are never identical. Two places count tries:
   primary stays in review at that attempt (`AtIdenticalFailure`), and a rework or a
   drop closes it (`TestASecondIdenticalFailureRaisesTheBoundAtOnce`).
 
+**The brief is wrong, not the worker** (the owner, 2026-10-03, after two gating cards
+were reworked to attempts 262 and 17 with the same reader finding every time, by hand
+and by `answer`: "These two gating cards getting rejected, should have been escalated to
+you, the coordinator, way sooner than this"). The same finding twice means the brief is
+wrong, not the worker, and no further attempt is possible without changing the brief.
+The decision is one pure function over the primary, `sprint.AtBriefBound`
+(brief_bound.go): the primary carries the finding its last rework sent back and that
+attempt (`finding`, `finding_attempt`), and a card is at its brief's bound when its
+readers' finding at its current attempt is the same finding (`sprint.SameFinding` over
+`sprint.FindingClass`: the first sentence, whitespace collapsed and case folded, and a
+finding of files outside the card's PATHS one class however worded) as that one, both
+since the brief last changed, or when it has made more than `MaxAttemptsPerBrief` (5)
+attempts since the brief last changed (`brief_attempt`, written by `brief`; absent is
+attempt 0). Then `rework` is refused, nothing written, one line: `<id> has failed the
+same way twice (attempts <n> and <m>: <the finding's first sentence>); the brief is
+wrong, not the worker; run: nova-sprint brief <id> --brief-file <path> (a waiting card)
+or drop <id> and add it again with the brief corrected` (or `<id> has made <k> attempts
+since its brief last changed (its bound is 5); ...`); a `--fix` changes the brief not
+at all, so it lifts nothing; a replaced brief resets the count
+(`TestReworkRefusesACardWhoseLastTwoFindingsMatch`). The judgment raised for such a
+card is "a card has reached its bound: the brief is wrong, not the worker", in place of
+"a reader found it broken" at the read and of "work came back failed" at the finish; it
+names the two findings and their attempts, and its decisions are brief and drop, never
+rework (`TestTheBoundJudgmentNamesTheBriefNotTheWorker`); the tick's "a card reached its
+bound" on a card past the count says the same and offers the same. `answer` applies
+only a verb the judgment prints, so it cannot rework such a card
+(`TestTheAnswerPathCannotReworkACardAtTheBriefBound`), and the verb refuses it besides.
+
 **The attempt decision** (nova-decide's layer 2; the owner, 2026-10-02, the agreed
 plan: "result classification after each attempt (done / nothing to do / wrong scope /
 no result / needs pro)"; 2026-10-03: "Please push Jev wide."; docs/SPEC-NOVA-DECIDE.md
@@ -1748,6 +1776,7 @@ the tick would make, no other open judgment on it).
 |---|---|---|
 | work came back failed | rework (with a fix), drop | no |
 | a reader found it broken | rework (with the finding), ask --another, drop | no |
+| a card has reached its bound: the brief is wrong, not the worker | brief (a waiting card; else drop and add again), drop | no |
 | stream stopped: conflict on a card | resume (resolved), rework, drop | no |
 | stream stopped: stream branch red | return the suspect and resume, rework the suspect | no |
 | stream stopped: needs a card of another stream first | rank that card first (the tick resumes when it lands), wait, card (look at both), return, drop | no |

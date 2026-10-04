@@ -249,7 +249,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			u.Moved += "; its read taken back from " + instead + " (instead)"
 		}
 		if another {
-			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded, NStalled}, c.ID)
+			u.Closes = closesFor(s.Open, []string{NReadBroken, NBriefWrong, NReadsExhausted, NStranded, NStalled}, c.ID)
 		} else {
 			u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, c.ID)
 		}
@@ -504,6 +504,13 @@ func Read(s *Snapshot, r ReadReq) Plan {
 				broken[pr.ID]++
 				n := judgment(NReadBroken, pr.Row, s.Now, before, pr.ID)
 				n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), r.Finding
+				if bb, ok := AtBriefBound(pr, r.Finding); ok {
+					// the same finding as the attempt before, or too many attempts on one brief:
+					// the brief is wrong, not the worker, and the judgment offers brief and drop
+					// (brief_bound.go)
+					n = judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
+					n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), bb.String()+"; attempt "+c.F("attempt")+" found: "+firstSentence(r.Finding)
+				}
 				u.Notes = append(u.Notes, n)
 			}
 			if moved[pr.ID] == nil {
@@ -876,7 +883,7 @@ type ReworkReq struct {
 }
 
 // ReworkResolves is the judgments a rework discharges on its primary.
-var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded, NStalled, NBound}
+var ReworkResolves = []string{NWorkFailed, NReadBroken, NBriefWrong, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded, NStalled, NBound}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
 // cut into the next member round the fleet (round.go:
@@ -943,6 +950,14 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 				continue
 			}
 		}
+		// the brief's bound: the same finding twice, or too many attempts on one brief, and
+		// the brief is wrong, not the worker; a --fix changes the brief not at all, so it does
+		// not lift it (brief_bound.go)
+		if bb, ok := AtBriefBound(c, brokenFindings(s, c)); ok {
+			p.refuse(c.ID, bb.Why())
+			stays()
+			continue
+		}
 		fix := r.Fix
 		if fix == "" {
 			if fix = cutText(ownFix(s, c), MaxCardTextBytes); fix == "" {
@@ -965,7 +980,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		// the finding and why ride on the primary too: a rework with no member up deals later
 		// (start), from the primary, and its child is told all the same
 		given := reworkGiven(s, c)
-		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"],
+		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"], FieldFindingAttempt: c.F("attempt"),
 			"reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
 		if bound != nil {
 			// the attempt ended at its bound: its end is the primary's record of its failed

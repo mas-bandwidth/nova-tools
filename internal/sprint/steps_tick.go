@@ -539,6 +539,12 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 				cd.what += "; a second bound on tier " + cardTierOf(c) + ": not reworked on it again"
 			}
 			cd.decisions = boundDecisions(c, wc, held != "")
+			if bb, ok := AtBriefBound(c, ""); ok {
+				// too many attempts on one brief: the brief is wrong, not the worker, and the
+				// judgment offers brief and drop, never rework (brief_bound.go)
+				cd.what = bb.String() + "; " + cd.what
+				cd.decisions = append([]string(nil), Decisions[NBriefWrong]...)
+			}
 			conds = append(conds, cd)
 			continue
 		}

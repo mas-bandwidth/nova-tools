@@ -1297,6 +1297,11 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 				Card: c.ID, Attempt: attempt, What: identicalWorkWhat(c.ID, attempt, set[FieldFailure], pr.ID),
 				Decisions: append([]string(nil), TickDecisions[NBound]...)}
 			u.Notes = append(u.Notes, n)
+		} else if bb, ok := AtBriefBound(pr, ""); ok {
+			// too many attempts on one brief: the brief is wrong, not the worker (brief_bound.go)
+			n := judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
+			n.Who, n.Attempt, n.What = who, attempt, bb.String()+"; attempt "+itoa(attempt)+" failed: "+r.Report
+			u.Notes = append(u.Notes, n)
 		} else {
 			n := judgment(NWorkFailed, pr.Row, s.Now, pr.Int("failed"), pr.ID)
 			n.Who, n.Attempt, n.What = who, attempt, r.Report
