@@ -13,9 +13,9 @@ import (
 )
 
 // Harnesses are the harness names run and install take, in the order the
-// help lists them; OpenCode and Codex have a deliver command, the rest refuse
+// help lists them; implemented delivery routes have adapters, the rest refuse
 // honestly (Stub).
-var Harnesses = append([]string{"opencode", "codex", "claude", "antigravity", "dsh", "gemini"}, RefusedHarnesses...)
+var Harnesses = append([]string{"opencode", "codex", "claude", "antigravity", "dsh", "gemini", "grok"}, RefusedHarnesses...)
 
 // Deliverer pushes one text into the friend's running session as a turn
 // and blocks until the turn ends: its exit code is the harness's, 0 acking
@@ -96,6 +96,8 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 		return &Codex{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "antigravity":
 		return &Antigravity{Dir: dir, Session: session, Run: run, Out: out}, nil
+	case "grok":
+		return &Grok{Dir: dir, Wake: session, Run: run, Out: out}, nil
 	case "claude":
 		return Stub{Harness: harness}, nil
 	case "dsh":
