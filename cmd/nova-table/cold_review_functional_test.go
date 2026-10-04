@@ -127,7 +127,9 @@ func TestTheHelpPastesTheStaleRefusalItPrints(t *testing.T) {
 	require.EqualValues(t, 1, code, "stale cell add: %d %s %q", code, out, errout)
 	got, _, ok := strings.Cut(errout, "\n")
 	require.True(t, ok, "one refusal line: %q", errout)
-	require.Contains(t, banner, got+"\n", "the banner does not paste the refusal the tool prints:\n  tool: %q\n", got)
+	// the banner indents the lines it quotes by two spaces, as it indents
+	// every command line
+	require.Contains(t, banner, "  "+got+"\n", "the banner does not paste the refusal the tool prints:\n  tool: %q\n", got)
 	code, out, errout = runTable(at(addr, "show", "stale-help")...)
 	require.EqualValues(t, 0, code, "show: %d %s %q", code, out, errout)
 	require.Contains(t, out, " epoch=1 ", "show prints the live epoch: %s", out)

@@ -38,7 +38,7 @@ is refused, naming the place it already sits, and a second row add rewrites the 
 place) and --receipt. create also takes --epoch-key, --epoch-field (default n), and --member-prefix
 (default table::member:).
 A stale epoch is refused, naming the live epoch:
-CELL-ADD REFUSED: requested epoch is stale, not the active epoch: requested 0, active 1; run: nova-table help cell add
+  CELL-ADD REFUSED: requested epoch is stale, not the active epoch: requested 0, active 1; run: nova-table help cell add
 read the epoch off show <table> (it prints epoch=<n>) or off the receipt of every write (it prints
 the new one, epoch=<n>). drop keeps the saved column definition and the
 table's identity unless --definition is given, which removes both and the rows
