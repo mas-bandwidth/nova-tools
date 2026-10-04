@@ -255,8 +255,10 @@ One unit per record of `nova_loops`, from the record's fields and the host's
 layout: the command is the record's `argv`, word for word (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
-record's log under `~/nova-bench/loops/`, which the play creates. Every unit
-gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
+record's log under `~/nova-bench/loops/`, which the play creates (on darwin,
+launchd agents log under the user's home, `~/Library/Logs/nova-loop-<name>.log`,
+because launchd cannot open log files on network volumes such as `/Volumes/nova`).
+Every unit gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
 a `nova-swarm member`, inventory removes an older endpoint assignment from the
 rendered `/usr/bin/env` prefix while preserving its Redis user, password
 variable name and every other word. This compatibility projection does not
@@ -267,7 +269,9 @@ cleanup.
 
 - darwin: `com.nova.loop.<name>.plist` (`templates/nova-loop.plist.j2`) in
   `~/Library/LaunchAgents` (GUI domain) or `/Library/LaunchDaemons` (system,
-  `UserName` the login). A kept-alive record has `KeepAlive`; a periodic one
+  `UserName` the login), with `StandardOutPath` and `StandardErrorPath` logging
+  to `~/Library/Logs/nova-loop-<name>.log` under the user's home. A kept-alive
+  record has `KeepAlive`; a periodic one
   `StartInterval`. A record with `enabled: false` is written with `Disabled`
   and not loaded. A changed unit is booted out and bootstrapped again.
 - linux: `nova-loop-<name>.service` (`templates/nova-loop.service.j2`) in
@@ -317,7 +321,8 @@ adopted by the new member while they live.
 Beside the records, the play adds one periodic row to every machine,
 `disk-guard`: `nova-swarm disk-guard` every `nova_disk_guard_every` seconds
 (900), its `--root` each root a record's argv names, then
-`nova_disk_guard_args`, logging to `~/nova-bench/loops/disk-guard.log`. A record
+`nova_disk_guard_args`, logging to `~/nova-bench/loops/disk-guard.log` (on darwin,
+launchd logs to `~/Library/Logs/nova-loop-disk-guard.log`). A record
 named `disk-guard` on the machine takes its place; `nova_disk_guard: false` in
 `host_vars` leaves it out (and retires the unit). Owner's rule, 2026-10-02: "We
 must not fill discs again", "cleanup must be auto!". Every per-card or
@@ -330,7 +335,7 @@ per-machine artifact the fleet writes, and what removes it, when:
 | a root's Go build cache, `<root>/cache/go-build` | the member's cleaner, held under 10 GiB while it runs; the disk guard every run, under `--cache-max-gb` (10), whether or not a loop runs |
 | the login's Go build cache (`$GOCACHE`, else the user cache directory's `go-build`) and every `--cache` (the CI runners' `_cache/go-build`) | the disk guard every run, under `--cache-max-gb`: entries used longest ago first, never one used in the last two hours, down to the cap less a fifth |
 | a module cache (`<root>/cache/go-mod`, the login's `$GOMODCACHE` or `~/go/pkg/mod`) | the disk guard, emptied when over `--modcache-max-gb` (50), no `go` command runs and no process holds a file in it |
-| a loop log, `~/nova-bench/loops/*.log` | the disk guard, over `--log-max-mb` (50): copied to `<log>.1` and emptied in place, the copies shifted, the one past `--log-keep` (3) removed |
+| a loop log, `~/nova-bench/loops/*.log` (on darwin, `~/Library/Logs/nova-loop-<name>.log`, which the disk guard does not rotate unless `--logs` points to `~/Library/Logs`) | the disk guard, over `--log-max-mb` (50): copied to `<log>.1` and emptied in place, the copies shifted, the one past `--log-keep` (3) removed |
 | a land clone, `<user cache dir>/nova-sprint/land/<repo>-<hash>` (`~/Library/Caches` on darwin, `~/.cache` on linux; never `/tmp`) | the disk guard, unused for `--clone-age` (24h), with no uncommitted work and no process naming it or working in it; land clones it again on its next use |
 | a mirror's temporary packs, `~/nova-bench/mirror/<repo>/objects/pack/tmp_pack_*` and `.tmp-*` (an aborted fetch's) | the disk guard, older than an hour, when no process names the mirror or works in it and no git fetch naming no path runs; never `git prune` |
 | release copies, `nova_release_out` | `tools.yml`, after a build: all but the built, the running and the 3 newest |
