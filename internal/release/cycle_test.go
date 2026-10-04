@@ -7,14 +7,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// secretFlag reads the secret names an adopter's wrapper passes to
+// nova-secrets in the example: --only <name>, --require=<name>, and the
+// variable that holds the password.
+var secretFlag = regexp.MustCompile(`(?:--only |--require=|NOVA_SPRINT_REDIS_PASSWORD_ENV=)([A-Za-z0-9_-]+)`)
 
 // fakeAnsible answers each play with the output the real one prints for it.
 type fakeAnsible struct {
@@ -180,4 +187,20 @@ func TestCycleRefusesAnInventoryThatCannotList(t *testing.T) {
 	called, err := os.ReadFile(calls)
 	require.NoError(t, err)
 	assert.Equal(t, "--list\n", string(called), "the inventory is listed once, with --list")
+}
+
+// TestCycleInventoryExampleNamesASealableSecret keeps the secret named in the
+// adopter's wrapper example (docs/FLEET.md, "An adopter's path") to the shape
+// nova-secrets seal accepts, ^[A-Z][A-Z0-9_]*$ (internal/secrets). A name no
+// seat file can hold would send the adopter back to the refusal the --list run
+// exists to remove, and cycle.go points that refusal at the page.
+func TestCycleInventoryExampleNamesASealableSecret(t *testing.T) {
+	t.Parallel()
+	body, err := os.ReadFile("../../docs/FLEET.md")
+	require.NoError(t, err, "docs/FLEET.md: %v", err)
+	matches := secretFlag.FindAllStringSubmatch(string(body), -1)
+	require.NotEmpty(t, matches, "docs/FLEET.md has no nova-secrets exec example")
+	for _, m := range matches {
+		assert.True(t, secrets.IsValidEnvVar(m[1]), "docs/FLEET.md names the secret %q, which nova-secrets seal cannot hold", m[1])
+	}
 }

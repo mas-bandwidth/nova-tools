@@ -39,9 +39,9 @@ chmod +x nova-inventory
 `NOVA_SPRINT_REDIS_USER` names the user, and `NOVA_SPRINT_REDIS_PASSWORD_ENV` names the
 variable that holds the password, never the password. A store with ACLs needs that login
 in the wrapper's environment, so the wrapper runs under `nova-secrets exec`, for example
-`nova-secrets exec --only nova-redis-bench-password --require=nova-redis-bench-password
--- env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=nova-redis-bench-password
-nova-config inventory "$@"`, where `nova-redis-bench-password` is the secret that holds the
+`nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD --require=NOVA_REDIS_BENCH_PASSWORD
+-- env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD
+nova-config inventory "$@"`, where `NOVA_REDIS_BENCH_PASSWORD` is the secret that holds the
 password. `nova-update release cycle` runs the wrapper with `--list` before any play and
 refuses with the wrapper's own line when it cannot list.
 
