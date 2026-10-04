@@ -301,7 +301,7 @@ func hostFromDefaults(busDir string) string {
 // An empty or unusable value is "absent".
 func (f *flags) receiptMaxWordsFromEnv() (int, bool) {
 	getenv := os.Getenv
-	if f != nil && f.getenv != nil {
+	if f.getenv != nil {
 		getenv = f.getenv
 	}
 	s := strings.TrimSpace(getenv("NOVA_BUS_RECEIPT_MAX_WORDS"))
