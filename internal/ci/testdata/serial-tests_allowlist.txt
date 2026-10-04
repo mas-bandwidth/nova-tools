@@ -257,7 +257,7 @@ cmd/nova-swarm/native_test.go:TestNativeWorkerModelGateComparesQualifiedName ser
 cmd/nova-swarm/provider_retry_test.go:TestUnrecordedUnknownIsStillAHarvestHold serial: swaps package var main.persistUnknownFn
 cmd/nova-swarm/shellshim_test.go:TestTheChildEnvIsUnchangedWithoutAShim serial: t.Setenv
 cmd/nova-swarm/slow_test.go:TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeThreeFailedReadsEndTheCardUnverifiable serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeFailedReadsEndNothingByThemselves serial: t.Setenv
 cmd/nova-swarm/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
 cmd/nova-swarm/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-swarm/workercheck_test.go:TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue serial: t.Setenv

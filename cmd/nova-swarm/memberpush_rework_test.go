@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 )
 
@@ -47,4 +50,36 @@ func TestAReworkStagedAtTheTipFinishesFromItAndNotFromTheOldHead(t *testing.T) {
 	write(t, logPath, "STAGE OK bench=b repo=r base=x secs=1 clone=0.1 fetch=0.1 checkout=0.1\n"+carry.Line()+"\nFRAME OK secs=0.1\n")
 	c := &nativeChild{card: "c1", logPath: logPath, results: filepath.Join(b.root, "results"), job: filepath.Join(b.root, "job"), done: done}
 	assert.Equal(t, carry.Words(), c.Result().Carry, "the finish's report is told where the rework was staged")
+}
+
+// A carried rework's staged commit is the attempt before's head: a commit origin holds and
+// the checkout started from. The member's push repository holds it itself once the checkout
+// is fetched, and borrows nothing from the bench mirror, which is refreshed under it. On
+// 2026-10-03 (tokens-version-go attempt 3, rerate2-use-redis attempt 2) the push repository
+// read the staged commit through the mirror's objects, the mirror lost it between the fetch
+// and the count (the attempt before's branch gone with a refresh), and a correct carry was
+// refused "does not descend from the staged commit: fatal: Not a valid commit name <staged>".
+// Here the mirror is origin itself (a card naming a repository on disk), and it loses the
+// staged commit after the fetch and before the count.
+func TestACarriedReworksStagedCommitIsThePushRepositorysOwn(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	prev := b.commit(t, "attempt 1\n")
+	gitAs(t, b.checkout, "push", "-q", "origin", prev+":refs/heads/sprint/c1.a1") // attempt 1's push
+	b.staged(t, prev)                                                             // attempt 2 starts from it
+	head := b.commit(t, "attempt 2\n")
+	g := b.pusher()
+	real, lost := g.git, false
+	g.git = func(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error) {
+		if args[0] == "merge-base" && !lost {
+			lost = true
+			runGit(t, b.origin, "branch", "-q", "-D", "sprint/c1.a1")
+			runGit(t, b.origin, "gc", "-q", "--prune=now")
+		}
+		return real(ctx, o, args...)
+	}
+	assert.Equal(t, member.Push{Sha: head}, g.Push(b.p, member.Result{Head: head}))
+	require.True(t, lost, "the mirror lost the staged commit before the count")
+	assert.Equal(t, head, b.originHas(t, b.p.Branch))
+	assert.NoFileExists(t, filepath.Join(b.root, "push.git", "objects", "info", "alternates"), "the push repository borrows no objects")
 }

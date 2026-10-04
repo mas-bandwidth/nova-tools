@@ -700,6 +700,8 @@ func nativeEnd(log []byte) string {
 	switch {
 	case nativeProvider.Match(log):
 		return member.EndProvider
+	case nativeUnverifiable.Match(log):
+		return member.EndUnverifiable
 	case nativeStopped.Match(log):
 		return member.EndBudget
 	case nativeKilled.Match(log) && !nativeTermed.Match(log):
@@ -752,6 +754,9 @@ var nativeYieldRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: (yield to CI: 
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
+	// nativeUnverifiable is a launch native ended because its usage source stopped
+	// answering (docs/SPEC-SWARM.md, native: stopped=unverifiable, end=budget-unverifiable)
+	nativeUnverifiable = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=unverifiable\b`)
 	// nativeBudgetWhy is the NATIVE BUDGET line's words: which budget ended the run and at
 	// what count (nativeBudgetWords)
 	nativeBudgetWhy = regexp.MustCompile(`(?m)^NATIVE BUDGET \S+ budget: (.+)$`)
@@ -806,7 +811,7 @@ func (c *nativeChild) Result() member.Result {
 			}
 			end = nativeEnd(b)
 			provider = providerReason(b)
-			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && end == member.EndBudget {
+			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && (end == member.EndBudget || end == member.EndUnverifiable) {
 				budget = strings.TrimSpace(string(m[1]))
 			}
 		}

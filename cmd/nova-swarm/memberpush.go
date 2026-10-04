@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
@@ -39,6 +38,17 @@ import (
 // configuration), and pushes the commit from there. Never forced: a branch
 // that origin holds at another commit refuses the push, and the finish says so.
 // The rule is docs/SPEC-SWARM.md's `member`.
+//
+// The push repository holds every object its judgment and its push need itself, and
+// borrows none from the bench mirror. It once named the mirror's objects as an alternate,
+// so a fetch copied only the child's own commits and read the rest from the mirror; but
+// the mirror is refreshed under it, and a commit it borrowed can be gone when the finish
+// reads it. On 2026-10-03 the staged commit of a carried rework (the attempt before's head,
+// on a branch the mirror no longer held) was gone by the time the finish counted the
+// child's commits from it, and a correct carry was refused: "does not descend from the
+// staged commit: fatal: Not a valid commit name <staged>". The first fetch of a repository
+// copies its history once (nova-tools, 4,000 commits: 1.9 s and 66 MB), and every fetch
+// after it copies the child's own commits, as before.
 type gitPusher struct {
 	root, slots string
 	// gh is the GitHub CLI the member opens a card's pull request with, as itself,
@@ -49,7 +59,7 @@ type gitPusher struct {
 	env []string
 	// git runs one git; gitrun.Run, or a test's fake.
 	git func(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error)
-	mu  sync.Mutex // the push repository's creation and its alternates
+	mu  sync.Mutex // the push repository's creation
 	// sleep waits between two tries of a push origin rejected on its own side, or of
 	// a fetch from the checkout that failed (pushWaits); nil is time.Sleep, a test
 	// gives its own.
@@ -94,7 +104,7 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	if fi, err := os.Stat(filepath.Join(checkout, ".git")); err != nil || !fi.IsDir() {
 		return member.Push{Refused: "no checkout at " + checkout + " to push " + head + " from"}
 	}
-	repo, err := g.repo(url)
+	repo, err := g.repo()
 	if err != nil {
 		return member.Push{Refused: "the member's push repository: " + oneLineOf(err.Error())}
 	}
@@ -112,12 +122,12 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 		if err == nil {
 			break
 		}
-		// the push repository is shared by every launch of this member and borrows the bench
-		// mirror's objects, which the mirror's own repack can move: a fetch's check of every ref
-		// can find another launch's ref unreadable for a moment (git reports "fatal: bad
-		// object refs/member/<another launch>/HEAD"). It is the member's moment, never the
-		// card's: this launch's refs are dropped and the fetch is made again after a wait,
-		// and only a fetch that fails every time is the refusal
+		// the push repository is shared by every launch of this member, whose refs come and
+		// go while this fetch checks every ref: it can find another launch's ref unreadable
+		// for a moment (the 5000-card load test of 2026-10-01: "fatal: bad object
+		// refs/member/<another launch>/HEAD"). It is the member's moment, never the card's:
+		// this launch's refs are dropped and the fetch is made again after a wait, and only
+		// a fetch that fails every time is the refusal
 		if try == len(pushWaits) {
 			return member.Push{Refused: "fetch from the checkout into the member's push repository, " + strconv.Itoa(try+1) + " tries: " + gitLine(res, err)}
 		}
@@ -298,11 +308,9 @@ func prRepo(url string) string {
 // githubHost is the forge whose repositories gh names by owner/name alone.
 const githubHost = "github.com"
 
-// repo is the member's push repository, made once: a bare repository with no
-// hooks, no automatic gc (pushes run side by side), and the bench mirror of
-// the card's repository as an alternate when there is one, so a fetch from a
-// checkout copies only the child's own objects.
-func (g *gitPusher) repo(url string) (string, error) {
+// repo is the member's push repository, made once: a bare repository with no hooks and
+// no automatic gc (pushes run side by side), whose objects are its own (the type's comment).
+func (g *gitPusher) repo() (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	repo := filepath.Join(g.root, "push.git")
@@ -319,41 +327,7 @@ func (g *gitPusher) repo(url string) (string, error) {
 			}
 		}
 	}
-	if mirror := swarm.FindBenchMirror("", url); mirror != "" {
-		objects := filepath.Join(mirror, "objects")
-		if _, err := os.Stat(objects); err != nil {
-			objects = filepath.Join(mirror, ".git", "objects")
-		}
-		if err := addAlternate(repo, objects); err != nil {
-			return "", err
-		}
-	}
 	return repo, nil
-}
-
-// addAlternate lists an object directory in the repository's alternates once
-// (the file written whole, beside the lines it held).
-func addAlternate(repo, objects string) error {
-	if _, err := os.Stat(objects); err != nil {
-		return nil // a mirror with no object directory lends nothing; the fetch copies what it needs
-	}
-	path := filepath.Join(repo, "objects", "info", "alternates")
-	held, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	for _, l := range strings.Split(string(held), "\n") {
-		if strings.TrimSpace(l) == objects {
-			return nil
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	if len(held) > 0 && !strings.HasSuffix(string(held), "\n") {
-		held = append(held, '\n')
-	}
-	return atomicfile.Write(path, append(held, []byte(objects+"\n")...), 0o644)
 }
 
 // wait is the pause before a fetch or a push is made again: sleep, else time.Sleep.

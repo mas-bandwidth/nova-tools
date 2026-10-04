@@ -106,10 +106,9 @@ func SQLiteOnPath() bool {
 // `native` takes the same flag and the same default.
 const DefaultUsageInterval = 5 * time.Second
 
-// UsageIntervalFloor is the shortest interval `native` accepts. An interval under
-// one second could end an honest card on three quick reads -- three failed reads in a row
-// end a card `budget-unverifiable`, and at a tenth of a second that is a third of a second
-// of bad luck rather than a source that has really stopped answering.
+// UsageIntervalFloor is the shortest interval `native` accepts. Each sample launches
+// sqlite3 against the harness's own live database, and under a second that is more launches
+// than there is anything new to read.
 const UsageIntervalFloor = time.Second
 
 // NativeUsageIntervalRefusal is the reason `native` refuses an interval, or "" when it takes
@@ -119,7 +118,7 @@ const UsageIntervalFloor = time.Second
 func NativeUsageIntervalRefusal(interval, deadline time.Duration) string {
 	switch {
 	case interval < UsageIntervalFloor:
-		return fmt.Sprintf("--usage-interval is at least %s, got %s; three failed reads in a row end a card budget-unverifiable, and under a second that is a moment's bad luck rather than a source that has stopped answering", UsageIntervalFloor, interval)
+		return fmt.Sprintf("--usage-interval is at least %s, got %s; each sample launches %s against the harness's own live database, and under a second that is more launches than there is anything new to read", UsageIntervalFloor, interval, SQLiteBinary)
 	case deadline > 0 && interval >= deadline:
 		return fmt.Sprintf("--usage-interval is shorter than --deadline, got %s against a deadline of %s; at or past the deadline no sample would ever run and the budget could not fire", interval, deadline)
 	}
