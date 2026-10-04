@@ -28,7 +28,10 @@ serves the page on each `--listen` address (default `127.0.0.1:7390`), one liste
 each, sharing one cached copy of the sprint. It reads the sprint in-process the way
 `where --json` does (through the sprint's server when `NOVA_SPRINT_SERVER` names one,
 else on the store `--redis` names), at most once per `--every` and only while a page
-asks: `/api/sprint` is that copy, with the build number and the throughput. Every answer
+asks: `/api/sprint` is that copy, with the build number and the throughput. It also
+names the ready buffer: `ready`, the ready primaries across streams; `width`, the total
+width of the members that are up; `buffer`, the string `"<ready>/<2*width>"`; and `low`,
+true while `ready` is under `width`. Every answer
 is no-store; the page reloads itself when the build number changes (a new binary, or a
 new `--logo` file). A read that fails holds the last good copy, the page says nothing,
 and the dashboard's output takes one line per new failure, and once a minute a line of
