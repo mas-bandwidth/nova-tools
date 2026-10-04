@@ -20,7 +20,7 @@ func TestVerifyInode_EdgeCases(t *testing.T) {
 
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the test writes nothing through it, a close error loses nothing
 
 	match, err := verifyInode(f, path)
 	require.True(t, err == nil && match, "verifyInode normal = %v, %v, want true, nil", match, err)
@@ -35,7 +35,7 @@ func TestVerifyInode_EdgeCases(t *testing.T) {
 
 	dirF, err := os.Open(dir)
 	require.NoError(t, err)
-	defer dirF.Close()
+	defer func() { _ = dirF.Close() }() // ignored: the open is read-only, a close error loses nothing
 	_, errDir := verifyInode(dirF, dir)
 	assert.Error(t, errDir, "verifyInode on directory should error")
 }
@@ -69,7 +69,7 @@ func TestMutant_VerifyInode(t *testing.T) {
 			return false, nil // always mismatch
 		},
 	})
-	lock.Unlock() // nil-safe: releases a mutant lock, no-ops on nil
+	release(t, lock) // nil-safe: releases a mutant lock, no-ops on nil
 	require.Nil(t, lock, "tryLockWithOptions succeeded despite inode mismatch (mutant: verifyInode check bypassed)")
 	require.ErrorContains(t, err, "failed after 5 inode collision retries")
 	require.Equal(t, 5, calls, "verifyInode called %d times, want 5 retries", calls)

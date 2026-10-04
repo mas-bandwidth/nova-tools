@@ -14,13 +14,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// release unlocks the test's lock and reports a failed release (docs/STANDARD.md
+// section 2: an error is surfaced, never dropped silently): the take the test
+// holds must leave cleanly, and a nil lock, a refused take's, no-ops.
+func release(t *testing.T, lock *FileLock) {
+	t.Helper()
+	require.NoError(t, lock.Unlock(), "release the test's lock")
+}
+
 func TestTryLock_Success(t *testing.T) {
 	t.Parallel()
 
 	path := newRig(t).path("test.lock")
 	lock, err := TryLock(path, "worker-1")
 	require.NoError(t, err, "TryLock failed: %v", err)
-	defer lock.Unlock()
+	defer release(t, lock)
 
 	// The file names its holder (tla/FileLock.tla, HolderIsNamed).
 	st, err := ReadStamp(path)
@@ -42,7 +50,7 @@ func TestTryLock_Held(t *testing.T) {
 
 	lock2, err := r.try(path, "contender")
 	assert.ErrorIs(t, err, ErrHeld, "second TryLock error = %v, want ErrHeld", err)
-	lock2.Unlock() // nil-safe: releases a mutant lock, no-ops on nil
+	release(t, lock2) // nil-safe: releases a mutant lock, no-ops on nil
 	require.Nil(t, lock2, "second TryLock succeeded, want refusal")
 
 	heldErr, ok := AsHeldError(err)
@@ -56,7 +64,7 @@ func TestLock_Success(t *testing.T) {
 
 	lock, err := Lock(newRig(t).path("lock_success.lock"), "winner", time.Second)
 	require.NoError(t, err, "Lock failed: %v", err)
-	defer lock.Unlock()
+	defer release(t, lock)
 }
 
 func TestLock_TimeoutBound(t *testing.T) {
@@ -88,7 +96,7 @@ func TestH1_ContendedTakerVsSharedProbe_ReturnsErrBusy(t *testing.T) {
 
 	f, err := openFileSafe(path, os.O_RDWR, 0)
 	require.NoError(t, err, "openFileSafe failed: %v", err)
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the probe writes nothing, a close error loses nothing
 
 	shOk, shErr := trySharedLock(f)
 	require.True(t, shOk && shErr == nil, "trySharedLock failed: ok=%v, err=%v", shOk, shErr)
@@ -105,7 +113,7 @@ func TestH1_ContendedTakerVsSharedProbe_ReturnsErrBusy(t *testing.T) {
 
 	takerLock, err := TryLock(path, "taker")
 	require.NoError(t, err, "TryLock failed after shared lock released: %v", err)
-	defer takerLock.Unlock()
+	defer release(t, takerLock)
 }
 
 func TestMutant_LastSleepCappedAtRemaining(t *testing.T) {
@@ -138,7 +146,7 @@ func TestLock_AcquiresAfterRelease(t *testing.T) {
 
 	lock2, err := Lock(path, "second", time.Second)
 	require.NoError(t, err, "second Lock failed: %v", err)
-	defer lock2.Unlock()
+	defer release(t, lock2)
 }
 
 func TestUnlock_IdempotentAndNeverDeletes(t *testing.T) {
@@ -175,7 +183,7 @@ func TestTryLock_OverwritesAnUnreleasedNote(t *testing.T) {
 
 	lock, err := TryLock(path, "recovery-worker")
 	require.NoError(t, err, "TryLock failed: %v", err)
-	defer lock.Unlock()
+	defer release(t, lock)
 
 	st, err := ReadStamp(path)
 	require.NoError(t, err)
@@ -383,12 +391,12 @@ func TestTryLock_AskerIsNotAHolder(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, nil, 0666))
 	asker, err := os.OpenFile(path, os.O_RDWR, 0)
 	require.NoError(t, err)
-	defer asker.Close()
+	defer func() { _ = asker.Close() }() // ignored: the asker writes nothing, a close error loses nothing
 	ok, err := trySharedLock(asker)
 	require.True(t, ok && err == nil, "asker's shared lock = %v, %v, want granted", ok, err)
 
 	lock, err := TryLock(path, "taker")
-	lock.Unlock() // nil-safe: releases a mutant lock, no-ops on nil
+	release(t, lock) // nil-safe: releases a mutant lock, no-ops on nil
 	require.Nil(t, lock, "TryLock succeeded while a shared lock was held")
 	assert.NotErrorIs(t, err, ErrHeld, "told held with nobody holding: %v", err)
 	_, isHeld := AsHeldError(err)
@@ -404,7 +412,7 @@ func TestTryLock_AskerIsNotAHolder(t *testing.T) {
 	unlockFile(asker)
 	lock, err = TryLock(path, "taker")
 	require.NoError(t, err, "TryLock after the asker left: %v", err)
-	lock.Unlock()
+	release(t, lock)
 }
 
 // H2 witness, the bound on the virtual clock. A bounded Lock against a holder
@@ -423,7 +431,7 @@ func TestLock_RunOutNamesTheHolder(t *testing.T) {
 	for _, bound := range []time.Duration{0, 1, time.Millisecond, 10 * time.Millisecond, 200 * time.Millisecond, time.Second} {
 		clk := newLockStepClock(time.Time{})
 		lock, err := lockWithOptions(path, "waiter", bound, options{clock: clk})
-		lock.Unlock() // nil-safe: releases a mutant lock, no-ops on nil
+		release(t, lock) // nil-safe: releases a mutant lock, no-ops on nil
 		require.Nil(t, lock, "bound %s: acquired a held lock", bound)
 		w := clk.Waited()
 		assert.LessOrEqual(t, w, bound, "bound %s exceeded: waited %s", bound, w)
@@ -471,7 +479,7 @@ func TestMutant_Fsync(t *testing.T) {
 	lock, err := tryLockWithOptions(path, "fsync-fail", options{
 		sync: func(*os.File) error { return syncErr },
 	})
-	lock.Unlock() // nil-safe: releases a mutant lock, no-ops on nil
+	release(t, lock) // nil-safe: releases a mutant lock, no-ops on nil
 	require.Nil(t, lock, "tryLockWithOptions succeeded despite sync error")
 	require.ErrorIs(t, err, syncErr, "err = %v, want syncErr", err)
 
@@ -530,7 +538,7 @@ func TestTryLock_DedicatedPathTruncates(t *testing.T) {
 
 	lock, err := TryLock(path, "dedicated-taker")
 	require.NoError(t, err, "TryLock on existing file failed: %v", err)
-	defer lock.Unlock()
+	defer release(t, lock)
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err, "ReadFile failed: %v", err)
@@ -556,7 +564,7 @@ func TestCappedHostileLabelAndPathSanitization(t *testing.T) {
 	bigLabel := strings.Repeat("X", 1024*1024) // 1 MB label
 	lock, err := TryLock(path, bigLabel)
 	require.NoError(t, err, "TryLock with 1MB label failed: %v", err)
-	defer lock.Unlock()
+	defer release(t, lock)
 
 	st, err := ReadStamp(path)
 	require.NoError(t, err)
@@ -572,7 +580,7 @@ func TestCappedHostileLabelAndPathSanitization(t *testing.T) {
 	if err := os.Mkdir(badDir, 0755); err == nil {
 		badLock := filepath.Join(badDir, "l.lock")
 		if l, err := TryLock(badLock, "test"); err == nil {
-			defer l.Unlock()
+			defer release(t, l)
 			if _, err2 := TryLock(badLock, "test2"); err2 != nil {
 				requireNoControlChars(t, err2.Error())
 			}
