@@ -49,7 +49,6 @@ internal/ci/testdata/generality/internal/memindex.txt the Go scan's ledger: each
 internal/ci/testdata/generality/internal/nsprint/store.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/onboarding.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/oneline.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality/internal/oneline/audit.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/redisconn.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/redisfn.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/release.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
