@@ -1026,7 +1026,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	after := fs.String("after", "", "place the cards in line after this primary of the stream")
 	every := fs.Int("sentinel-every", 0, "with --count: a sentinel <stream>-gate-<n> after every k cards (a stop by its place in line)")
 	last := fs.Bool("sentinel-last", false, "with --sentinel-every: a sentinel after the last card too")
-	allowShared := fs.Bool("allow-shared-paths", false, "with a card per brief file (--brief-dir, or --brief-file with no ids): admit cards that name one file in their PATHS: lines though neither needs the other (by default refused, naming the file and the cards)")
+	allowShared := fs.Bool("allow-shared-paths", false, "with a card per brief file (--brief-dir, or --brief-file with no ids): admit cards that name one file in their PATHS: lines though neither needs the other and neither brief declares it on a SHARED: line (by default refused, naming the file and the cards)")
 	held := fs.Bool("held", false, "admit the cards held: waiting, a sentinel never reached and no card dealt, nothing raised, until nova-sprint release <id> --reason <text>; a wave loads behind a held sentinel with nothing before it")
 	decideRecord := fs.String("decide-record", "", "the record `file` of the cards' brief decisions under JEV_API_KEY (default ~/nova-sprint/decide/brief.jsonl, the coordinator's root); each card stores it and its op, and land and drop attach the card's end there")
 	var briefOps stringList
@@ -1331,10 +1331,16 @@ func sharedPaths(cards []sprint.CardAdd) string {
 	}
 	byPath := map[string][]string{}
 	var order []string
+	// shared is each card's SHARED: header line: the files it declares it edits
+	// beside other cards of the add (a ledger every card touches)
+	shared := map[string]map[string]bool{}
 	for _, c := range cards {
-		value, _ := swarm.CardHeaderValue([]byte(c.Brief), "PATHS")
-		for _, p := range strings.FieldsFunc(value, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
-			if p == "none" || p == "-" || slices.Contains(byPath[p], c.ID) {
+		shared[c.ID] = map[string]bool{}
+		for _, p := range headerPaths(c.Brief, "SHARED") {
+			shared[c.ID][p] = true
+		}
+		for _, p := range headerPaths(c.Brief, "PATHS") {
+			if slices.Contains(byPath[p], c.ID) {
 				continue
 			}
 			if len(byPath[p]) == 0 {
@@ -1348,7 +1354,7 @@ func sharedPaths(cards []sprint.CardAdd) string {
 		ids := byPath[p]
 		for i := range ids {
 			for _, b := range ids[i+1:] {
-				if a := ids[i]; !reaches(a, b, map[string]bool{}) && !reaches(b, a, map[string]bool{}) {
+				if a := ids[i]; !reaches(a, b, map[string]bool{}) && !reaches(b, a, map[string]bool{}) && !(shared[a][p] && shared[b][p]) {
 					clash = append(clash, fmt.Sprintf("%s is named in PATHS by %s and %s, and neither needs the other", p, a, b))
 				}
 			}
@@ -1357,7 +1363,20 @@ func sharedPaths(cards []sprint.CardAdd) string {
 	if len(clash) == 0 {
 		return ""
 	}
-	return strings.Join(clash, "; ") + "; two cards that edit one file at once conflict at the merge: chain them (DEPENDS-ON: or Needs: in the later brief), or give --allow-shared-paths"
+	return strings.Join(clash, "; ") + "; two cards that edit one file at once conflict at the merge: chain them (DEPENDS-ON: or Needs: in the later brief), declare the file on a SHARED: line of both briefs, or give --allow-shared-paths"
+}
+
+// headerPaths is the files a brief's typed header line names (PATHS:, SHARED:),
+// commas or blanks between them; none and - name no file.
+func headerPaths(brief, key string) []string {
+	value, _ := swarm.CardHeaderValue([]byte(brief), key)
+	var out []string
+	for _, p := range strings.FieldsFunc(value, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		if p != "none" && p != "-" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // uniquify keeps the first of each id, in order: a need named by a brief and
