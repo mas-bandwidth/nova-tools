@@ -84,10 +84,12 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 
 // Ask deals every primary in review that lacks reads to as many different
 // readers up as it needs (ReadsNeeded: one for a flash card, two for a pro
-// card; readers.go), in work order, each the next reader round the readers
-// (round.go: from the rolling index, wrapping, each the
-// first that has no read card at the attempt, the index moved past it: the
-// readers table's ask_index, written with the ask). Reworked work is asked by
+// card; readers.go), in work order, each the reader with the greatest share
+// of room, its free room as a part of its width (readerRooms, round.pickByRoom),
+// that has no read card at the attempt, ties round the readers (round.go:
+// from the rolling index, wrapping, the index moved past it: the readers
+// table's ask_index, written with the ask); a reader at width is given
+// nothing, and a read no reader has room for waits (TickAsk). Reworked work is asked by
 // the same rotation: a read is a fresh child on a freshly drawn route, so the
 // readers of an earlier attempt are not preferred. A read its reader handed
 // back with no verdict is not a read: it is asked of a reader
@@ -128,6 +130,10 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	}
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Review), eligible, srr), rowOf, eligible, s.primaryCard)
 	rr := askRound(s)
+	// a read goes to the reader with the greatest share of room, its free room
+	// as a part of its width (readerRooms), the reads this ask places taken
+	// off as it goes; a reader at width is given nothing
+	room := s.readerRooms(s.Readers.Rows())
 	moves := roundMoves{}
 	// a read card's route is drawn as a work card's is, from its primary's tier
 	// at that tier's rolling index on the fleet table (route.go, readRouteOf;
@@ -139,7 +145,6 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	}
 	for _, c := range chosen {
 		attempt := c.Int("attempt")
-		have := map[string]bool{}
 		var all []string
 		var takenBack []Change
 		var away []string
@@ -163,23 +168,15 @@ func Ask(s *Snapshot, r AskReq) Plan {
 				returned = append(returned, rc)
 				continue
 			}
-			have[rc.F("reader")] = true
 			all = append(all, rc.F("reader"))
 			kept = append(kept, rc)
 		}
-		var free []string
-		for _, rd := range s.Readers.Rows() {
-			// a reader with a card at this attempt, even retired, has read it
-			// and a reader not up is not asked (reader away, reader up)
-			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil && s.ReaderIsUp(rd) {
-				free = append(free, rd)
-			}
-		}
+		free := s.freeReaders(c, attempt)
 		want := max(0, ReadsNeeded(c)-len(all)) // a read taken back from a reader away leaves one to ask
 		if another {
 			want = 1
 		}
-		chosenReaders := rr.picks(want, nil, func(x string) bool { return contains(free, x) })
+		chosenReaders := rr.pickByRoom(want, free, room)
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
@@ -203,7 +200,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			retiredFrom = append(retiredFrom, rc.F("reader"))
 		}
 		if len(chosenReaders)+len(again) < want {
-			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s; a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, or nova-sprint reader up <name>", want, len(chosenReaders)+len(again), attempt, c.ID, readersText(s)))
+			full := 0
+			for _, rd := range free {
+				if room[rd].free <= 0 {
+					full++
+				}
+			}
+			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s (%d free but at width); a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, or nova-sprint reader up <name>", want, len(chosenReaders)+len(again), attempt, c.ID, full, readersText(s)))
 			continue
 		}
 		// the first read of a flash card's attempt is a decide read (decideFields): one

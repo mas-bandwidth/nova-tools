@@ -2,7 +2,6 @@ package sprint
 
 import (
 	"fmt"
-	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -114,9 +113,10 @@ const FieldReturned = "returned"
 // the fleet machine m, and it runs at m's width, the fleet row's, read with its
 // queue every tick as the member on m reads its own (the owner, 2026-10-02:
 // "The reader widths seem to be very ad-hoc, unlike the machine widths"; "why
-// not just have as many readers as workers per-machine"). The sprint holds no
-// reader's width of its own: `queue --as reader-<m>` carries m's fleet row's
-// width, and a reader named for no row carries none and begins nothing.
+// not just have as many readers as workers per-machine"). The readers table
+// holds no width column: a reader's width is derived from its fleet row
+// (ReaderWidth), `queue --as reader-<m>` carries m's fleet row's width, and a
+// reader named for no row carries none and begins nothing.
 const ReaderPrefix = "reader-"
 
 // ReaderMachine is the machine a reader is named for: reader-<m> names m; a
@@ -185,6 +185,33 @@ func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
+// returnedReadsAt is the primary's read cards at an attempt handed back with
+// no verdict by readers up (returnedRead): the ask places each again, on a
+// free reader with room, or in place on its own reader, whose room already
+// holds it (readerLoad counts it).
+func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
+	var out []*Card
+	for _, rc := range readsAt(s, pr, attempt) {
+		if !awayRead(s, rc) && returnedRead(rc) {
+			out = append(out, rc)
+		}
+	}
+	return out
+}
+
+// freeReaders is the readers the ask may ask the primary's attempt of: up,
+// with no read card of it at the attempt, placed or retired (a reader with
+// one, even retired, has read it).
+func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
+	var out []string
+	for _, rd := range s.Readers.Rows() {
+		if s.ReaderIsUp(rd) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
+			out = append(out, rd)
+		}
+	}
+	return out
+}
+
 // sweepReads is the readers' rebalance safety: every read asked or reading of a
 // reader that is not up is taken back, retired as the ask takes back a read
 // asked of a reader away
@@ -240,59 +267,118 @@ func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 	return bound(p)
 }
 
-// levelReads evens the up readers' loads, the fleet's level (level) in the
-// readers' shape: a reader's load is its reads asked and reading together.
-// While the largest load of a reader with an asked read and the smallest load
-// of a reader up differ by more than one, the newest asked read (the last in
-// work order) of the largest moves to the next reader up round the readers
-// from the ask's index (askRound, round.levelTo) whose load is at or below the
-// mean, the index moved past it as the ask moves it. So no reader up is idle
-// while another holds a backlog. A read moves only to a reader with no card
-// at its primary's attempt, placed or retired: a primary's two reads stay
-// with two different readers, and no reader is asked an attempt it already
-// read. The move retires the read card (retired_by level: the reader it left
-// is never asked that attempt again) and asks the read of the other reader
-// at the same attempt and head, its route kept, in the readers table only,
+// ReaderWidth is a reader's width, the most reads it runs at once: its
+// machine's fleet row's (ReaderPrefix: reader-<m> runs at m's width, the width
+// the reader itself reads with its queue every tick), so the ask and the level
+// know it too (the owner, 2026-10-03: with widths 4/8/16/16/24 the count-levelled
+// reads queued seven deep on the two narrow machines while 31 reader slots sat
+// idle). A reader named for no fleet row, or read with no fleet table, keeps
+// the unbounded room it had: math.MaxInt, so it is never at width and its room
+// is ordered by its load alone.
+func (s *Snapshot) ReaderWidth(reader string) int {
+	m, ok := ReaderMachine(reader)
+	if !ok || s.Fleet == nil {
+		return math.MaxInt
+	}
+	ctl := s.MemberCtl(m)
+	if ctl == nil {
+		return math.MaxInt
+	}
+	return MemberWidth(ctl)
+}
+
+// readerLoad is a reader's reads asked and reading together.
+func (s *Snapshot) readerLoad(reader string) int {
+	return s.Readers.Count(reader, Asked) + s.Readers.Count(reader, Reading)
+}
+
+// readerRoom is a reader's room: its width (ReaderWidth) and its free room,
+// the width less its load (readerLoad), below zero for a reader over its
+// width. The ask and the level compare rooms by share, free room as a part of
+// width, so a machine of 4 and one of 24 are each filled to the same fraction
+// (ten reads: the 24 takes eight), never by count alone.
+type readerRoom struct{ width, free int }
+
+// roomParts is the parts a share is counted in.
+const roomParts = 1 << 20
+
+// share is the reader's free room as parts of its width (roomParts when idle,
+// below zero when over width); a reader with unbounded width (no fleet row)
+// counts roomParts less its load, so such readers order by load alone, below
+// an idle reader with a width and above any that has begun to fill.
+func (r readerRoom) share() int {
+	if r.width == math.MaxInt {
+		return roomParts - (r.width - r.free)
+	}
+	return r.free * roomParts / r.width
+}
+
+// after is the room with n more reads placed on it.
+func (r readerRoom) after(n int) readerRoom { return readerRoom{width: r.width, free: r.free - n} }
+
+// readerRooms is each reader's room (readerRoom). The ask gives a read to the
+// reader with the greatest share (round.pickByRoom, taking the reads it places
+// off the room as it goes) and the level moves reads toward it
+// (round.levelToRoom); a reader with no free room is given nothing by either.
+func (s *Snapshot) readerRooms(readers []string) map[string]readerRoom {
+	room := make(map[string]readerRoom, len(readers))
+	for _, rd := range readers {
+		w := s.ReaderWidth(rd)
+		room[rd] = readerRoom{width: w, free: w - s.readerLoad(rd)}
+	}
+	return room
+}
+
+// levelReads evens the up readers' room, the fleet's level (level) in the
+// readers' shape: a reader's room is its width less its load, reads asked and
+// reading together, compared as a share of its width (readerRoom), and a
+// reader named for no fleet row has unbounded room, so among such readers the
+// share differs by the load alone. While the reader with the least share that
+// holds an asked read not yet levelled (over its width when the share is
+// below zero) could hand one to a reader with free room whose share would
+// still not fall under its own, its newest such read (the last in work order)
+// moves to the reader with the greatest share, ties the first round the
+// readers from the ask's index (askRound, round.levelToRoom), the index moved
+// past it as the ask moves it. So no reader up has free lanes while another
+// holds a backlog, no move fills a reader past its width (a reader at width is
+// given nothing), and no read is shuttled back: the ask's placement is the
+// level's fixed point. A read moves only to a reader with no card at
+// its primary's attempt, placed or retired: a primary's two reads stay with
+// two different readers, and no reader is asked an attempt it already read.
+// The move retires the read card (retired_by level: the reader it left is
+// never asked that attempt again) and asks the read of the other reader at
+// the same attempt and head, its route kept, in the readers table only,
 // marked leveled: a read is moved at most once, so a late read is not asked
-// afresh on reader after reader. A read begun stays with its reader; a
-// reader that is not up is neither a source nor a target: sweepReads takes
-// its reads back first.
-//
-// The sprint knows no reader's width: a reader runs at its machine's width,
-// not a loop's own --width (there is none), and the readers table has no width
-// column, so every reader up counts alike and nothing here bounds a reader at
-// DealAhead times a width.
+// afresh on reader after reader. A read begun stays with its reader; a reader
+// that is not up is neither a source nor a target: sweepReads takes its reads
+// back first. Each move takes a read off a queue, so the level ends.
 func levelReads(s *Snapshot, p *Plan) {
 	sweepReads(s, p)
 	up := s.UpReaders()
 	if len(up) < 2 {
 		return
 	}
-	held, queues, room := map[string]int{}, map[string][]*Card{}, map[string]int{}
+	queues := map[string][]*Card{}
 	for _, rd := range up {
-		held[rd] = s.Readers.Count(rd, Asked) + s.Readers.Count(rd, Reading)
 		for _, c := range s.Readers.Cell(rd, Asked) {
 			if c.F(FieldLeveled) == "" {
 				queues[rd] = append(queues[rd], c)
 			}
 		}
 		SortCards(queues[rd])
-		room[rd] = math.MaxInt // no reader width is known: none bounds the move
 	}
+	room := s.readerRooms(up)
 	rr := askRound(s)
 	moves := roundMoves{}
 	planned := map[string]bool{} // the read cards this plan already creates: none is created twice
 	for {
-		long, short := "", ""
+		long := ""
 		for _, rd := range up {
-			if len(queues[rd]) > 0 && (long == "" || held[rd] > held[long]) {
+			if len(queues[rd]) > 0 && (long == "" || room[rd].share() < room[long].share()) {
 				long = rd
 			}
-			if short == "" || held[rd] < held[short] {
-				short = rd
-			}
 		}
-		if long == "" || held[long]-held[short] <= 1 {
+		if long == "" {
 			break
 		}
 		q := queues[long]
@@ -304,15 +390,15 @@ func levelReads(s *Snapshot, p *Plan) {
 					avoid = append(avoid, rd)
 				}
 			}
-			to = rr.levelTo(up, maps.Clone(held), held, room, long, avoid)
+			to = rr.levelToRoom(up, room, long, avoid)
 		}
 		if to == "" {
 			break
 		}
 		i++
 		c := q[i]
-		held[long]--
-		held[to]++
+		room[long] = room[long].after(-1)
+		room[to] = room[to].after(1)
 		queues[long] = append(q[:i:i], q[i+1:]...)
 		moves[c.ID] = to
 		fields := movedReadFields(c, to, s.Now)
