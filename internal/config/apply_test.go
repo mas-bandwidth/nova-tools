@@ -370,3 +370,53 @@ func TestApplyRefusesAnUnknownKind(t *testing.T) {
 	require.Error(t, err, assertionMsg324...)
 	require.ErrorContains(t, err, "unknown kind \"lane\"; the kinds are machine, fleet, friend, sprint, loop, route", assertionMsg324...)
 }
+
+// TestApplyRefusesToMoveTheSeat: apply must never write a differing
+// sprint:coordinator without move-seat. See AGENTS.md "When working in the tree"
+// and the sprint seat rule (docs/SPRINT-COORDINATOR.md).
+func TestApplyRefusesToMoveTheSeat(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	// live has a; row has b plus an unrelated field
+	st := NewMem()
+	friendK, _ := Lookup(KindFriend)
+	fr, _ := friendK.NewRow("b", map[string]string{"slots": "8", "tiers": "flash"})
+	_, err := st.Insert(ctx, KindFriend, fr, "rowan")
+	require.NoError(t, err)
+	_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "b", "decide_bounce": "0.9"}, "rowan")
+	require.NoError(t, err)
+	ap := newFake()
+	ap.views[KindSprint] = map[string]View{KindSprint: {"coordinator": "a", "decide_bounce": ""}}
+	ap.revs[KindSprint] = 0
+	var reported []string
+	report := func(op Op) { reported = append(reported, op.Op+":"+op.Name+":"+strings.Join(op.Changed, ",")) }
+
+	// apply without move-seat (internal entry): must hold
+	_, err = apply(ctx, st, ap, KindSprint, "rowan", false, false, report)
+	require.NoError(t, err)
+	require.Equal(t, "a", ap.views[KindSprint][KindSprint]["coordinator"], "live coordinator must be unchanged")
+	require.Equal(t, "0.9", ap.views[KindSprint][KindSprint]["decide_bounce"], "other sprint field must be written")
+	held := "APPLY HELD kind=sprint field=coordinator live=a row=b: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator a to make the row agree, or apply --move-seat"
+	require.Contains(t, strings.Join(reported, " "), "HELD", "output must contain HELD line")
+	_ = held
+
+	// with move-seat, it writes b
+	_, err = apply(ctx, st, ap, KindSprint, "rowan", false, true, report)
+	require.NoError(t, err)
+	require.Equal(t, "b", ap.views[KindSprint][KindSprint]["coordinator"])
+
+	// second case: no live key, writes the row's coordinator
+	st2 := NewMem()
+	fr2, _ := friendK.NewRow("c", map[string]string{"slots": "8", "tiers": "flash"})
+	_, err = st2.Insert(ctx, KindFriend, fr2, "rowan")
+	require.NoError(t, err)
+	_, _, err = st2.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "c"}, "rowan")
+	require.NoError(t, err)
+	ap2 := newFake()
+	ap2.views[KindSprint] = map[string]View{KindSprint: View{}} // absent treated as ""
+	ap2.revs[KindSprint] = 0
+	_, err = apply(ctx, st2, ap2, KindSprint, "rowan", false, false, func(Op) {})
+	require.NoError(t, err)
+	require.Equal(t, "c", ap2.views[KindSprint][KindSprint]["coordinator"], "first apply must write the coordinator")
+}
