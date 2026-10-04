@@ -933,11 +933,16 @@ and it is the coordinator's decision, receipted.
   cards independently; 0.7 is the starting point, the calibration beside it in
   docs/SPEC-NOVA-DECIDE.md section 11: grade=pro AUC 0.930 over the store's
   landed cards, 0.547 over the mechanical set, part of it the brief's own `tier:`
-  word); with a bar set, a card graded pro at or above it whose
-  ceiling is pro starts on pro instead of flash (`Snapshot.startTier`): the
-  deal draws its first route from pro and writes `tier_now` pro, and flash
-  first is overridden for that card alone. A grade never raises a card above
-  its ceiling, and a card dealt before its grade came starts on flash.
+  word). The grade decides no tier: a brief's tier on line 1 is the card's
+  starting tier, not only its ceiling (the owner, 2026-10-03, after seven of
+  seven first flash attempts of pro cards died at the budget or the deadline
+  with no result, each needing `rework --tier pro` after: "tier: pro remains
+  only a ceiling" was the defect). Flash first (section 5) applies to a brief
+  that says flash or says no tier; a card that says pro starts on a pro route
+  (`Snapshot.startTier`: the deal draws its first route from pro and writes
+  `tier_now` pro) and is never dealt below it; `rework --tier` stays the pin it
+  is (`TestABriefThatSaysProStartsOnPro`). A card dealt on flash below a pro
+  ceiling (dealt before this rule) still escalates at its bound as before.
 - The gate verdict (docs/SPEC-NOVA-DECIDE.md section 12; the owner, 2026-10-02,
   layer 3 of the nova-decide plan: "gate verdict: flaky vs caused vs
   pre-existing"). Every deal of a work card (a first deal, a redeal, a rework's)
