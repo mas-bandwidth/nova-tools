@@ -76,7 +76,9 @@ func span(ids []string) string {
 
 // MergeStep merges the head of the stream's queue, in work order, as one
 // batch; or, given a fact that stops the stream, stops it and tells the
-// coordinator why. A stopped stream moves only after resume.
+// coordinator why. A stopped stream moves only after resume, except a stop
+// by a rejected push (a transient push refusal): its landing report is the
+// push succeeding, and the machine resumes the stream by itself.
 func MergeStep(s *Snapshot, r MergeReq) Plan { return Lawful(mergeStep(s, r)) }
 
 func mergeStep(s *Snapshot, r MergeReq) Plan {
@@ -88,10 +90,20 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		return p
 	}
 	state := ctl.F("state")
+	resumed := false
 	switch state {
 	case StreamStopped:
-		p.refuse(r.Stream, "stopped ("+ctl.F("cause")+"); run: nova-sprint resume --stream "+r.Stream)
-		return p
+		// A stream stopped by a rejected push resumes when the push succeeds:
+		// this report is that push, and it landed (docs/SPEC-SPRINT.md
+		// section 7). A fact that stops the stream again (a conflict, a cross,
+		// a red, a second rejection) is refused: the stop keeps its one
+		// judgment open while the push keeps failing, and no person is needed
+		// once it succeeds.
+		if ctl.F("cause") != "rejected" || r.Conflict != "" || r.Cross != "" || r.Red || r.Rejected {
+			p.refuse(r.Stream, "stopped ("+ctl.F("cause")+"); run: nova-sprint resume --stream "+r.Stream)
+			return p
+		}
+		resumed, state = true, StreamMerging
 	case StreamLanded:
 		p.refuse(r.Stream, "landed")
 		return p
@@ -145,6 +157,21 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		m := happened(NStartedMerging, r.Stream, s.Now)
 		m.Who = r.Who
 		notes = append(notes, m)
+	}
+	// A resumed stream goes back to merging with the landing, its stop's
+	// cause gone; the landing switch below still settles waiting or landed.
+	// Every judgment open on the stream closes with it, as resume closes
+	// them: the one judgment the stop raised.
+	var closes []Open
+	unset := []string(nil)
+	if resumed {
+		ctlSet["state"], ctlSet["since"] = StreamMerging, now
+		unset = []string{"cause", "card", "other"}
+		for _, o := range s.Open {
+			if o.Subject() == StreamSubject(r.Stream) {
+				closes = append(closes, o)
+			}
+		}
 	}
 	// A card named by a fact is a card of the batch: the first n queued, or the
 	// cards the batch names.
@@ -295,8 +322,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
-				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
+				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet, unset...)))
 				u.Notes = notes
+				u.Closes = append(u.Closes, closes...)
 			}
 			merged := map[string]string{"merged": now}
 			if v := r.Resolved[c.ID]; v != "" {

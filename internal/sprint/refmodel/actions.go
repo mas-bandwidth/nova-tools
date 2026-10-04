@@ -796,7 +796,12 @@ func MergeGreen(s State, stream string, batch int) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
-	if s.Streams[stream].State != SMerging {
+	st := s.Streams[stream]
+	// A stream stopped by a rejected push resumes when the push succeeds: the
+	// landing report lands the batch on it, as the engine's merge step does
+	// (steps_merge.go); every other stop keeps refusing a landing.
+	resumed := st.State == SStopped && st.Cause == CRejected
+	if st.State != SMerging && !resumed {
 		return s, refuse("stream %s is not merging", stream)
 	}
 	q := s.MergeCell(stream, Queued)
@@ -811,8 +816,15 @@ func MergeGreen(s State, stream string, batch int) (State, error) {
 		}
 	}
 	n := s.Clone()
+	if resumed {
+		n.closeOn(StreamSubject(stream))
+	}
 	x := n.Streams[stream]
-	x.State = n.streamAfter(stream, SMerging, b, nil)
+	was := x.State
+	if resumed {
+		was, x.Cause = SMerging, ""
+	}
+	x.State = n.streamAfter(stream, was, b, nil)
 	n.Streams[stream] = x
 	for _, p := range b {
 		mc := n.Merge[p]
