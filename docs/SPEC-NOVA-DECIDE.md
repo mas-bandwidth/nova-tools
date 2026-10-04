@@ -638,6 +638,27 @@ no real answer yet. Verbs are compared as recorded: the shadow verb is one of th
 decision's, the real one any of the answer verbs, so a `recut` or `hold` never agrees. It
 duplicates no verb of `nova-decide`.
 
+### jev-shadow-heavy-read.w1: Jev reads every card in shadow
+
+The server's decide lane asks the read decision (`ReadSchema`, the first read's) of each card in review
+at its head, over its brief and diff, through the lane's backend, and appends the answer to
+`<dir>/read-shadow.jsonl`: decision name `read-shadow`, every answer marked `method: "shadow"`, inputs
+`card`, `verdict`, `shadow` (`true`), `broken_reads` (the card's count when it was read) and the brief's
+and diff's hashes. The id is `<card>@shadow-read.<12 hex of the state>`, so a card at a diff is read once.
+A shadow read is never a read: it is not in the read record, has no act, writes nothing on the work
+table and no reader sees it. The lane takes the diff from a source it is given; with none, or with no
+backend, nothing is asked. A failed ask is a DECIDE FAILED line and is asked again on the next round.
+
+The readers' outcome is attached to the shadow read once, by the lane: `BOUNCE` when more reads have
+found the card broken than its `broken_reads`, `LAND` when the card lands, `dropped` when it leaves the
+table. The gold of the heavy reads is the import of heavy-read verdicts (section 4, `import --verdicts`):
+the card is the second word of a verdict's first line and its label is ACCEPT (not broken) or any other
+(broken). `nova-decide findings --record <file> --read-shadow <read-shadow.jsonl> [--heavy <import record>]`
+prints one `shadow_read` item per gold, `readers` and, with `--heavy`, `heavy`: cards joined, `tp`, `fp`,
+`fn`, `tn` and the percent precision and recall of the shadow read's broken answer (verdict BOUNCE; UNSURE
+is not broken). A shadow read with no gold yet, or whose card was dropped, is not counted. The pin is
+`TestShadowReadsAreScoredAgainstHeavyVerdictsAndReaders`.
+
 ## 14. The brief decision: card quality before add
 
 **Uncalibrated.** p(converges) is a rank, not a probability, and on the only labels
