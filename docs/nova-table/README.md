@@ -1,20 +1,13 @@
 # nova-table: work tables and live views over Redis
 
-## The design, in the owner's words
+## The design
 
-"at an even simpler level, I think there should be a concept of ordered
-sets." / "The work stream table is really just a series of ordered sets,
-per-cell" / "and the value printed, happens to be for each cell, |s|" /
-"(but it doesn't need to be always)".
-
-"there are cells that are headers for columns, and cells that are headers
-for rows" / "and there are cells at the bottom of each row that are sums or
-some function of the column above." / "for example, for the stream table the
-bottom rows are the sum of the column above."
-
-"create a way to render this table to text, efficiently and mechanically,
-once per-second in a console window" / "it should only contain that table
-data, no bullshit around it. don't let extra stuff creep in."
+The table's primitive is the ordered set. A work stream table is a series of
+ordered sets, one per cell, and the value a cell prints is by default that
+set's cardinality, `|s|`. Header cells label the columns and the rows; footer
+cells fold the column above them, a sum or another function of its cells. The
+table renders to text efficiently and mechanically, once per second in a
+console window, and the frame holds the table data alone: nothing around it.
 
 ## Start locally
 
