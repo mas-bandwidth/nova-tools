@@ -137,12 +137,19 @@ func TestSumCoverSumMonthWalksDayFilesInOrder(t *testing.T) {
 			c.Set(Output, 10)
 		}, 3),
 	)
+	// Stray entries the walk must step over: a directory named like a day file, a
+	// file without the suffix, a file of another month, and a day that is not a
+	// calendar day. None of them is a day file, and none may enter the sum.
+	require.NoError(t, os.MkdirAll(filepath.Join(out, "2026-03-05.tsv"), 0o755))
+	for _, stray := range []string{"notes.txt", "2026-04-01.tsv", "2026-03-00.tsv"} {
+		require.NoError(t, os.WriteFile(filepath.Join(out, stray), []byte("junk\n"), 0o644))
+	}
 	s, err := SumMonth(out, "2026-03")
 	require.NoError(t, err)
 	require.NotNil(t, s)
 
 	assert.Equal(t, "2026-03", s.Month)
-	assert.Equal(t, []string{"2026-03-01", "2026-03-03"}, s.Days, "the days walk in name order")
+	assert.Equal(t, []string{"2026-03-01", "2026-03-03"}, s.Days, "the days walk in name order and the strays stepped over")
 	assert.Equal(t, []string{"2026-03-02"}, s.Missing, "the day between the two files is named, not filled")
 	assert.Equal(t, 3, s.Rows)
 	assert.Equal(t, 12, s.Turns, "turns sum over the files that counted any")
