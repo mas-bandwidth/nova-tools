@@ -127,7 +127,17 @@ func Idem(kind string, rev int64) string { return fmt.Sprintf("config:%s:%d", ki
 // CONFLICT when Redis is ahead, plan, and unless check is set write every op
 // in order and stamp the revision. Every op is reported to report before it
 // is written, so a refusal part way names what was written before it.
+// The sprint coordinator seat rule is implemented here (moveSeat path);
+// see AGENTS.md "When working in the tree".
 func Apply(ctx context.Context, st Store, ap Applier, kind, actor string, check bool, report func(Op)) (Result, error) {
+	return apply(ctx, st, ap, kind, actor, check, true, report)
+}
+
+// apply is the entry that receives moveSeat (true keeps historical behaviour
+// for Apply callers; false holds the coordinator). It implements the rule
+// that apply never writes a sprint:coordinator differing from live without
+// move-seat. Cites the working-in-the-tree rule in AGENTS.md.
+func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check, moveSeat bool, report func(Op)) (Result, error) {
 	k, ok := Lookup(kind)
 	if !ok {
 		return Result{}, fmt.Errorf("unknown kind %q; the kinds are %s", kind, strings.Join(KindNames(), ", "))
@@ -203,9 +213,23 @@ func Apply(ctx context.Context, st Store, ap Applier, kind, actor string, check 
 	for _, op := range res.Ops {
 		report(op)
 		var err error
+		rowToWrite := op.Row
+		if kind == KindSprint && !moveSeat {
+			liveC := ""
+			if v, ok := views[KindSprint]; ok {
+				liveC = v["coordinator"]
+			}
+			rowC := op.Row.Fields["coordinator"]
+			if rowC != liveC && liveC != "" {
+				held := fmt.Sprintf("APPLY HELD kind=sprint field=coordinator live=%s row=%s: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator %s to make the row agree, or apply --move-seat", liveC, rowC, liveC)
+				report(Op{Op: "HELD", Name: held})
+				rowToWrite = op.Row.Clone()
+				rowToWrite.Fields["coordinator"] = liveC
+			}
+		}
 		switch op.Op {
 		case OpAdd, OpSet:
-			err = ap.Write(ctx, kind, op.Row, op.Prev, actor, idem)
+			err = ap.Write(ctx, kind, rowToWrite, op.Prev, actor, idem)
 		case OpRemove:
 			err = ap.Remove(ctx, kind, op.Name, actor, idem)
 		}
