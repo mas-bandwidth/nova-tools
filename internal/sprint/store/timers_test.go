@@ -341,3 +341,43 @@ func TestTimerSetOverwrittenByAnotherVerbIsMadeAgain(t *testing.T) {
 	assert.GreaterOrEqual(t, b.Timers.Find(first.ID), 0, "the first stands")
 	assert.GreaterOrEqual(t, b.Timers.Find(second.ID), 0, "the overwritten set was made again: %+v", b.Timers)
 }
+
+func TestTimerVerbsOnTheRealClock(t *testing.T) {
+	t.Parallel()
+	// the live binary's clock carries a monotonic reading the record never keeps:
+	// a verb's read-back must still find its own write, once
+	h := newHarness(t)
+	tm := h.setTimer(h.st.Actor, "fires", time.Minute, time.Hour)
+	h.tick(time.Minute)
+	h.machine()
+	real := *h.st
+	real.Now = nil
+	due := time.Now().Add(time.Hour)
+	set, err := real.SetTimer(h.ctx, sprint.Timer{Actor: h.st.Actor, Setter: h.st.Actor, Note: "real", Due: due}, false)
+	require.NoError(t, err)
+	b, err := h.st.TimerBook(h.ctx)
+	require.NoError(t, err)
+	assert.Len(t, b.Timers.All, 2, "one timer for one set: %+v", b.Timers.All)
+	_, err = real.CancelTimer(h.ctx, set.ID, false)
+	require.NoError(t, err)
+	_, _, changed, err := real.AckTimer(h.ctx, tm.ID, false)
+	require.NoError(t, err)
+	assert.True(t, changed)
+}
+
+func TestTimerJudgmentWaitedIsNotSeen(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	tm := h.setTimer(h.st.Actor, "later", time.Minute, time.Hour)
+	h.tick(time.Minute)
+	h.machine()
+	js := h.timerJudgments()
+	require.Len(t, js, 1)
+	_, _, err := h.st.Wait(h.ctx, js[0].Notes[0], h.st.now().Add(10*time.Minute))
+	require.NoError(t, err)
+	h.tick(time.Second)
+	h.machine()
+	state, _ := h.timerState(tm.ID)
+	assert.Equal(t, sprint.TimerFired, state, "a wait puts the judgment off; it does not see the timer")
+	assert.Equal(t, []string{tm.ID}, h.missed())
+}

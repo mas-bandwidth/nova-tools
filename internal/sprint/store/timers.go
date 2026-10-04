@@ -1,7 +1,9 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -94,7 +96,7 @@ func (st *Store) updateTimers(ctx context.Context, dry bool, fn func(b *TimerBoo
 		if err := st.getJSON(ctx, keyTimers, &back); err != nil {
 			return b, err
 		}
-		if i, j := back.Find(id), b.Timers.Find(id); i >= 0 && j >= 0 && back.All[i] == b.Timers.All[j] {
+		if i, j := back.Find(id), b.Timers.Find(id); i >= 0 && j >= 0 && sameTimer(back.All[i], b.Timers.All[j]) {
 			return b, nil
 		}
 	}
@@ -103,6 +105,15 @@ func (st *Store) updateTimers(ctx context.Context, dry bool, fn func(b *TimerBoo
 
 // timerWrites bounds updateTimers' tries.
 const timerWrites = 3
+
+// sameTimer says two timers are one as the record holds them: their JSON, so a
+// clock reading's monotonic part and zone, which the record never keeps, do not
+// tell them apart.
+func sameTimer(a, b sprint.Timer) bool {
+	x, errA := json.Marshal(a)
+	y, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(x, y)
+}
 
 // knownActor is why the actor cannot be given a timer, "" when it can: the
 // seat's holder or a friend of the sprint.
@@ -329,7 +340,7 @@ func (st *Store) answeredTimers(ctx context.Context) (map[string]bool, error) {
 	}
 	out := map[string]bool{}
 	for _, o := range open {
-		if o.Note.Type == sprint.NTimer && o.Note.Kind == sprint.Acknowledged {
+		if o.Note.Type == sprint.NTimer && o.Note.Kind == sprint.Acknowledged && o.Note.Review.IsZero() { // a wait is no answer
 			out[o.Subject()] = true
 		}
 	}
