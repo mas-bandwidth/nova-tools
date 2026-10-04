@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os/exec"
@@ -13,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/mas-bandwidth/nova-tools/internal/workfile"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
 	"github.com/stretchr/testify/assert"
@@ -100,6 +103,34 @@ func TestTheToolMeetsTheStandard(t *testing.T) {
 	// The method is not on this tree, so the banner's what line is what this
 	// test holds.
 	assert.NotEmpty(t, workTool(realGitHub()).What)
+}
+
+// TestVerifyDefaultMaxBytesIsAMemoryBoundNotJustAByteBound pins the verify
+// read budget in SPEC-WORK-V1 section 1.2 without allocating a large tree.
+func TestVerifyDefaultMaxBytesIsAMemoryBoundNotJustAByteBound(t *testing.T) {
+	t.Parallel()
+	f := &tool.Flags{FlagSet: flag.NewFlagSet("verify", flag.ContinueOnError)}
+	found := false
+	for _, verb := range workTool(unreachable(t)).Verbs {
+		if verb.Name == "verify" {
+			verb.Flags(f)
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "verify verb is not registered")
+	maxBytes := f.Lookup("max-bytes")
+	require.NotNil(t, maxBytes, "verify has no --max-bytes flag")
+	bound, ok := maxBytes.Value.(flag.Getter).Get().(int)
+	require.True(t, ok, "--max-bytes default is not an integer")
+	require.Positive(t, bound)
+	assert.LessOrEqual(t, bound, 128<<20, "the default admits a tree too large for the memory budget")
+	match := regexp.MustCompile(`\bdefault ([0-9]+)\b`).FindStringSubmatch(maxBytes.Usage)
+	require.Len(t, match, 2, "--max-bytes help omits its numeric default: %q", maxBytes.Usage)
+	assert.Equal(t, fmt.Sprint(bound), match[1], "--max-bytes help disagrees with its registered default")
+	help := workMain(unreachable(t)).Run("verify", "-h")
+	require.Equal(t, 0, help.Code)
+	assert.Contains(t, help.Stdout, maxBytes.Usage)
 }
 
 // TestImportThenVerifyIsZeroDifferences (SPEC-WORK-V1 sections 1.6 and
@@ -195,7 +226,7 @@ func TestImportRefusesAnOrgWideDryRunAndAnExistingOut(t *testing.T) {
 		{
 			name: "existing out",
 			args: []string{"import", "--org", "mas-bandwidth", "--out", tree},
-			want: "nova-work import --org mas-bandwidth --out " + tree + " --replace",
+			want: "nova-work import --org mas-bandwidth --out " + oneline.ShellWord(tree) + " --replace",
 		},
 	}
 	for _, tc := range cases {
