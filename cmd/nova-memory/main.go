@@ -990,7 +990,8 @@ func readPin(name string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	// ignored: a file opened only for reading
+	defer func() { _ = f.Close() }()
 	var out []string
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -1088,7 +1089,8 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err != nil {
 			return refuse(stderr, " check", oneline.Err(err))
 		}
-		defer f.Close()
+		// ignored: a file opened only for reading
+		defer func() { _ = f.Close() }()
 		src, name = f, pos[0]
 	}
 	raw, err := io.ReadAll(src)
@@ -1391,7 +1393,8 @@ func readGold(name string) ([]goldRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	// ignored: a file opened only for reading
+	defer func() { _ = f.Close() }()
 	var rows []goldRow
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)

@@ -813,7 +813,8 @@ func runDocumented(t *testing.T) onboarding.Runner {
 			if err != nil {
 				return onboarding.Result{}, err
 			}
-			defer f.Close()
+			// ignored: a file opened only for reading
+			defer func() { _ = f.Close() }()
 			stdin = f
 		}
 		var out, errb bytes.Buffer

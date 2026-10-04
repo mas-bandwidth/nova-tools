@@ -86,7 +86,7 @@ func TestBootReadsPinnedBytes(t *testing.T) {
 		require.True(t, fi.Mode().IsRegular(), "the fixture must still pass the regular-file rule")
 		require.NotZero(t, fi.Size(), "the fixture must still pass the nonempty rule")
 		if f, err := os.Open(filepath.Join(dir, "b.md")); err == nil {
-			f.Close()
+			_ = f.Close() // ignored: the test fails on this branch either way
 			require.FailNowf(t, "unreadable fixture was readable", "mode 000 did not make b.md refuse a read")
 		}
 
