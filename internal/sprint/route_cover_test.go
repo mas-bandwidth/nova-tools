@@ -25,10 +25,10 @@ func TestRouteCoverTierRoutes(t *testing.T) {
 			{Name: "pro-a", Tier: cardhdr.RoutePro, Enabled: true},
 			{Name: "pro-b", Tier: cardhdr.RoutePro, Enabled: true},
 			{Name: "pro-off", Tier: cardhdr.RoutePro, Enabled: false},
-		}, "flash=1 pro=2"},
+		}, "flash=1 pro=2 heavy=0"},
 		{"a tier with no route counts zero", []Route{
 			{Name: "pro-a", Tier: cardhdr.RoutePro, Enabled: true},
-		}, "flash=0 pro=1"},
+		}, "flash=0 pro=1 heavy=0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

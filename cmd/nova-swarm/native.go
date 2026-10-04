@@ -28,6 +28,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
@@ -155,6 +156,16 @@ type nativeRunConfig struct {
 	// gateRun, when set, is the gate decision's test runner (nativegate.go): a test's; nil
 	// runs go test in the child's wall with the child's environment.
 	gateRun gateRunner
+}
+
+// headless is the headless harness this run's binary is (internal/harness: claude, codex
+// or grok, by the program's name), and "" for an opencode launch through the providers
+// table (docs/SPEC-SWARM.md, the headless harnesses).
+func (cfg nativeRunConfig) headless() string {
+	if k := harness.KindOf(cfg.binary); harness.IsHeadless(k) {
+		return k
+	}
+	return ""
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -718,7 +729,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// STAGE UNSEEN even though staging already ended.
 			fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s secs=%d reason=stage-timeout\n",
 				oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), secs)
-			writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], startTime, time.Now(), time.Time{}, -1, 1, "stage-timeout", errOut)
+			writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], startTime, time.Now(), time.Time{}, -1, 1, "stage-timeout", nil, errOut)
 			res := nativeRunResult{
 				rc:           -1,
 				cardSHA256:   hex.EncodeToString(cardHash[:]),
@@ -880,6 +891,19 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin)
+	// A headless harness is pointed at its own home on the bench (swarm.HeadlessHomeOf): by
+	// name where it reads one, by a link under the data home where it reads HOME alone.
+	if k := cfg.headless(); k != "" {
+		h := swarm.HeadlessHomeOf(k, benchHome(cfg))
+		for _, kv := range h.Env {
+			name, _, _ := strings.Cut(kv, "=")
+			childEnv = append(environWithoutName(childEnv, name), kv)
+		}
+		if err := linkHeadlessHome(dataHome, h); err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s the harness's home could not be linked under the data home: %s", oneline.Field(cfg.label), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
+	}
 	if cfg.root != "" {
 		var id swarm.StagingIdentity
 		if cfg.identity != nil {
@@ -1049,7 +1073,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// card at their own instants whatever a read is doing (nativesample.go says why at
 	// length).
 	sampler := startLiveSampler("", 0, cfg, outLog)
-	if !cfg.unmetered && cfg.tokens > 0 || cfg.usd != nil || (cfg.worker != nil && cfg.worker.HasCardBudget()) {
+	// A headless child has no database to sample: it prints its usage once, when it ends,
+	// so its budgets are asked of the final read and the deadline is its live stop.
+	if (!cfg.unmetered && cfg.tokens > 0 || cfg.usd != nil || (cfg.worker != nil && cfg.worker.HasCardBudget())) && cfg.headless() == "" {
 		sampler = startLiveSampler(dataHome, cfg.usageInterval, cfg, outLog)
 	}
 	defer sampler.Stop()
@@ -1217,7 +1243,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
 		var launchUsage swarm.ProviderUsage
 		launchEnd := time.Now()
-		launchUsage, res.usageReason, res.usageState, res.usage = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, launchEnd, previousLaunchEnd, res.rc, attempt, res.end, errOut)
+		launchUsage, res.usageReason, res.usageState, res.usage = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, launchEnd, previousLaunchEnd, res.rc, attempt, res.end, tail, errOut)
 		// The floor for the NEXT launch's window: its rows begin where this launch's ended,
 		// so that adding a job's rows counts each launch once.
 		previousLaunchEnd = launchEnd
@@ -1273,7 +1299,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// SPEC-SPRINT section 5: a credit/key refusal rests its provider. A
 		// transient wrapper cannot buy another launch; read only this launch.
 		if !published && (failed || launchFailure) {
-			if refusal, ok := providerEnd(dataHome, providerBefore, attemptStart, res.rc, tail); ok &&
+			if refusal, ok := providerEnd(cfg.headless(), dataHome, providerBefore, attemptStart, res.rc, tail); ok &&
 				(refusal.Class == swarm.CauseCredit || refusal.Class == swarm.CauseAuth) {
 				break
 			}
@@ -1501,7 +1527,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if !res.lost && !res.idled && !res.terminated && !handedBack && res.stopped == "" && res.wallReport == "" &&
 		(res.wallRefusal == swarm.WallRefusal{}) && (res.shellDenial == swarm.ShellDenial{}) {
 		if _, published := swarm.FindCardResult(jobDir); !published {
-			if cause, ok := providerEnd(dataHome, providerMark, runStart, res.rc, tailSince(outLog, captureMark)); ok {
+			if cause, ok := providerEnd(cfg.headless(), dataHome, providerMark, runStart, res.rc, tailSince(outLog, captureMark)); ok {
 				fmt.Fprintln(errOut, oneline.Escape(providerLine(cfg.label, res.wallSeconds, cfg.model, cause)))
 			}
 		}
@@ -1827,6 +1853,13 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 			flag = "--read"
 		}
 		argv = append(argv, flag, root.Path)
+	}
+	// A headless harness's own home on the bench (swarm.HeadlessHomeOf): its login and its
+	// sessions. A write, because the harness writes there, and only where it exists.
+	if k := cfg.headless(); k != "" {
+		if h := swarm.HeadlessHomeOf(k, benchHome(cfg)); isDir(h.Dir) {
+			argv = append(argv, "--write", h.Dir)
+		}
 	}
 	// The worker description's own read roots (issue #1463): the directories a person at the
 	// desk declared every job of this worker may read. They are --read and never --write and
@@ -2172,11 +2205,21 @@ func sameDir(a, b string) bool {
 // launches' own final reads -- "a job's rows are disjoint, so that adding them counts each
 // launch once", and two launches reported at 40 and 70 keep 40 and 70 here while the line
 // prints 110. The caller folds; this function never sees the job's running sum.
-func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end, notBefore time.Time, rc, attempt int, endWord string, errOut io.Writer) (usage swarm.ProviderUsage, reason, path string, written swarm.UsageRow) {
+// A HEADLESS CHILD'S ROW IS READ FROM ITS CAPTURE (swarm.HeadlessUsage): what the launch
+// appended to `<job>/harness-output.log`, handed here as capture. The reason is `no-usage`
+// when it printed no result and `unreadable` when the result would not parse; the path is
+// the capture's.
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end, notBefore time.Time, rc, attempt int, endWord string, capture []byte, errOut io.Writer) (usage swarm.ProviderUsage, reason, path string, written swarm.UsageRow) {
 	// notBefore is the EARLIER launch's end, and it is the floor that keeps this row
 	// disjoint from that one: without it the window's five-second widening reaches back over
 	// the previous launch's rows and counts them twice (usagecard.go says what that cost).
-	usage, note, storePath, rr := swarm.ReadCardUsageAfter(dataHome, start, end, notBefore)
+	var note, storePath, rr string
+	if k := cfg.headless(); k != "" {
+		usage, note, rr = headlessLaunchUsage(k, capture)
+		storePath = filepath.Join(cfg.slotDir, "jobs", cfg.label, "harness-output.log")
+	} else {
+		usage, note, storePath, rr = swarm.ReadCardUsageAfter(dataHome, start, end, notBefore)
+	}
 	rcCol := "-"
 	if rc >= 0 {
 		rcCol = strconv.Itoa(rc)
@@ -2220,6 +2263,42 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		storePath = filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
 	}
 	return usage, rr, storePath, row
+}
+
+// headlessLaunchUsage is one headless launch's usage read from its capture: the usage, a
+// note for errOut, and the usage=none reason ("" when the harness reported).
+func headlessLaunchUsage(kind string, capture []byte) (usage swarm.ProviderUsage, note, reason string) {
+	u, err := swarm.HeadlessUsage(kind, capture)
+	switch {
+	case err != nil:
+		return swarm.ProviderUsage{Values: map[string]string{}}, "the harness's usage could not be read from its output: " + err.Error(), "unreadable"
+	case !u.Observed:
+		return u, "", "no-usage"
+	}
+	return u, "", ""
+}
+
+// linkHeadlessHome links the harness's home under the child's data home when the harness
+// reads HOME alone (HeadlessHome.Link); a link already there is kept, a file of that name
+// is refused.
+func linkHeadlessHome(dataHome string, h swarm.HeadlessHome) error {
+	if h.Link == "" {
+		return nil
+	}
+	p := filepath.Join(dataHome, h.Link)
+	if fi, err := os.Lstat(p); err == nil {
+		if fi.Mode()&os.ModeSymlink == 0 {
+			return fmt.Errorf("%s is not a link", p)
+		}
+		return nil
+	}
+	return os.Symlink(h.Dir, p)
+}
+
+// isDir says whether path is a directory that exists.
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
 }
 
 // launchSpend is one launch's final read as a cost record (internal/cardcost): the five
@@ -2410,6 +2489,11 @@ var launchArgvFor = swarm.LaunchArgvFor
 // typed card, by the RESULT-FORMAT paragraph (swarm.CardPrompt). The
 // card's sha256 stays the sha of the card text alone.
 func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]string, error) {
+	// a headless harness has one argv shape of its own (swarm.HeadlessArgv), the model
+	// the part of the route after its provider
+	if k := cfg.headless(); k != "" {
+		return swarm.HeadlessArgv(k, bin, cfg.model[len(provider)+1:], nativePrompt(cfg))
+	}
 	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
 		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: nativePrompt(cfg),
 	})

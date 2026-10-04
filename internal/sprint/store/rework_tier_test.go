@@ -149,7 +149,7 @@ func TestASecondReworkAtTheSameBoundIsRefused(t *testing.T) {
 		h.boundBy("s1-1", noResultLine)
 		return h
 	}
-	refusal := "attempt 2 reached its bound on tier flash as attempt 1 did (no result), and is not reworked on flash again: rework it with a fix and --tier pro (a tier above flash"
+	refusal := "attempt 2 reached its bound on tier flash as attempt 1 did (no result), and is not reworked on flash again: rework it with a fix and --tier pro or heavy (a tier above flash"
 	t.Run("a fix alone is refused", func(t *testing.T) {
 		t.Parallel()
 		h := twoBounds(t)
@@ -161,7 +161,7 @@ func TestASecondReworkAtTheSameBoundIsRefused(t *testing.T) {
 			refused := h.reworkOf("run on the pro tier", tier)
 			require.Len(t, refused, 1, "--tier %q", tier)
 			assert.Contains(t, refused[0].Why, refusal)
-			assert.Contains(t, refused[0].Why, "the ladder: flash, pro, frontier")
+			assert.Contains(t, refused[0].Why, "the ladder: flash, pro, heavy, frontier")
 			assert.Contains(t, refused[0].Why, "nova-sprint drop s1-1")
 			assert.NotContains(t, refused[0].Why, "wait")
 			assert.NotContains(t, refused[0].Why, "\n", "one line")
@@ -203,8 +203,8 @@ func TestASecondReworkAtTheSameBoundIsRefused(t *testing.T) {
 		h.boundBy("s1-1", noResultLine)
 		refused := h.reworkOf("again on pro", "")
 		require.Len(t, refused, 1, "the second on pro is refused")
-		assert.Contains(t, refused[0].Why, "attempt 4 reached its bound on tier pro as attempt 3 did (no result), and is not reworked on pro again: drop it (nova-sprint drop s1-1")
-		assert.Equal(t, []string{"drop"}, h.openOf(sprint.NBound)[0].Note.Decisions, "no tier above pro is dealt")
+		assert.Contains(t, refused[0].Why, "attempt 4 reached its bound on tier pro as attempt 3 did (no result), and is not reworked on pro again: rework it with a fix and --tier heavy (a tier above pro")
+		assert.Equal(t, []string{sprint.ReworkOnAHigherTier, "drop"}, h.openOf(sprint.NBound)[0].Note.Decisions, "heavy is dealt above pro")
 		require.Len(t, h.reworkOf("again on flash", "flash"), 1, "nor lowered")
 		top := h.reworkOf("on frontier", "frontier")
 		require.Len(t, top, 1, "the top of the ladder is the coordinator's, never dealt: the ladder ends here")

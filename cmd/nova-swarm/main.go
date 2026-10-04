@@ -26,6 +26,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -619,7 +620,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	harness := nf.harness
+	harnessBin := nf.harness
 	model := nf.model
 	cardPath := nf.cardPath
 	slot := nf.slot
@@ -672,7 +673,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	f.want(*harness, "harness", "the harness binary path, checked for existence and execution")
+	f.want(*harnessBin, "harness", "the harness binary path, checked for existence and execution")
 	if !workerGiven {
 		f.want(*model, "model", "the model to run: provider/model, one slash, both sides nonempty; --worker <file> names a description that pins the model instead")
 	}
@@ -730,7 +731,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if workerGiven {
 		workerForBudget = &w
 	}
-	if reason := swarm.NativeBudgetSourceRefusal(swarm.NativeUsageSource(workerForBudget), budgetTokens, budgetUnmetered, budgetUSD != nil, workerForBudget); reason != "" {
+	budgetSource := swarm.NativeUsageSource(workerForBudget)
+	if k := harness.KindOf(*harnessBin); harness.IsHeadless(k) {
+		budgetSource = k // a headless harness prints its own usage (docs/SPEC-SWARM.md, the headless harnesses)
+	}
+	if reason := swarm.NativeBudgetSourceRefusal(budgetSource, budgetTokens, budgetUnmetered, budgetUSD != nil, workerForBudget); reason != "" {
 		refuseNative(stderr, reason)
 		return 2
 	}
@@ -797,7 +802,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	cfg := nativeRunConfig{
 		frame:          frame,
-		binary:         *harness,
+		binary:         *harnessBin,
 		model:          effectiveModel,
 		label:          lbl,
 		card:           cardRaw,

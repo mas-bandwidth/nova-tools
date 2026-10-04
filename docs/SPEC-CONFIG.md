@@ -50,7 +50,7 @@ Where each field of this cut sits:
 | friend (decided for her) | `slots`, `tiers`, `roles`, `width` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
-| route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
+| route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
 | tier (decided per tier) | `routes` |
 
 A kind is one registry: one table under schema `config`, one Go descriptor
@@ -275,14 +275,16 @@ and model a card of that tier runs on, its token and dollar budgets and deadline
 tier has several routes so the deal spreads its cards across providers and
 models, in the order of the tier's array (the `tier` kind below); a card's
 `model:` header pins it instead. Frontier cards are never dealt from
-routes: they escalate to the coordinator, so `frontier` is no route's tier. Every value is data in the
-row: the code names no provider or model.
+routes: they escalate to the coordinator, so `frontier` is no route's tier. A heavy route
+names a headless harness (`harness`), the class of the owner's 2026-10-04 "the tier is a
+class, never a model name". Every value is data in the row: the code names no provider or model.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `tier` | enum `flash`, `pro` | yes | the deal: the cards of this tier are dealt on it | `route:<r>` |
+| `tier` | enum `flash`, `pro`, `heavy` | yes | the deal: the cards of this tier are dealt on it; `heavy` is the headless subscription harnesses of one machine (docs/SPEC-SWARM.md, the headless harnesses) | `route:<r>` |
 | `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
+| `harness` | enum `opencode`, `claude`, `codex`, `grok` | (opencode) | the member: the harness a card on the route runs under; `opencode` launches through the providers table with the provider's key, a headless one is the machine's own program and subscription login (the heavy tier) | `route:<r>` |
 | `tokens` | int | (0) | the deal: the token budget per card; 0 is unmetered and the deadline is the only stop | `route:<r>` |
 | `usd` | decimal | (empty) | the deal: the dollar budget per card, the harness's reported cost at which native stops the card (`stopped=usd`), beside the token budget; above 0 when set (a 0 is refused at `add` and `set`), empty is no cap | `route:<r>` |
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
@@ -351,7 +353,7 @@ every route verb on one older than 0007 (`behindSchema`).
 
 **`tier`** (`config.tiers`): a model tier's route array (the owner,
 2026-10-01: "the per-tier provider/model array should be specified in
-nova-config"). It has two rows, `flash` and `pro`, made by migrate, so `set`
+nova-config"). It has three rows, `flash`, `pro` and `heavy`, made by migrate, so `set`
 takes them on a new store and there is nothing to add. The deal takes
 `routes[index mod len]` for each card of the tier, the index a uint64
 counter on the fleet table (`route_index_flash`, `route_index_pro`), moved

@@ -66,7 +66,7 @@ func (s *Snapshot) readTierSetting(stream string) string {
 // readTiers is the tiers a read tier may name, weakest first: a setting raises a
 // card's reads to it and never lowers them (the coordinator, 2026-10-02: "A pro
 // card's reads should run on a tier at least as strong as the writer's").
-var readTiers = []string{cardhdr.RouteFlash, cardhdr.RoutePro}
+var readTiers = []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteHeavy}
 
 // stronger is the stronger of two read tiers.
 func stronger(a, b string) string {

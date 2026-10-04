@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -24,6 +25,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/gocache"
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
@@ -418,8 +420,9 @@ type nativeRunner struct {
 	tokens, auth, config, worker, identity         string
 	noWall                                         bool
 	stderr                                         io.Writer
-	env                                            []string // added to this process's environment: none in production, a test's
-	pass                                           []string // the secret names handed to native (--pass, the worker's secret)
+	env                                            []string                     // added to this process's environment: none in production, a test's
+	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
+	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -513,11 +516,15 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if err != nil {
 		return nil, err
 	}
+	bin, err := r.harnessFor(p)
+	if err != nil {
+		return nil, err
+	}
 	framePath := filepath.Join(r.slots, name+cardcontract.FrameName)
 	if err := cardcontract.WriteFrame(framePath, frameOf(p, model, r.root)); err != nil {
 		return nil, err
 	}
-	args := []string{"native", "--harness", r.harness, "--model", model, "--card", cardPath, "--frame", framePath, "--slot", slot,
+	args := []string{"native", "--harness", bin, "--model", model, "--card", cardPath, "--frame", framePath, "--slot", slot,
 		"--root", r.root, "--deadline", deadline.String(), "--tokens", tokens, "--label", p.Card, "--results-root", results,
 		"--stage-timeout", r.stageTimeout().String()}
 	if p.USD != "" {
@@ -629,6 +636,25 @@ func (r *nativeRunner) route(p member.Packet) (model, tokens string, deadline ti
 		return "", "", 0, fmt.Errorf("card %s has no route (model %q tokens %q deadline %s) and this member no override for what is missing: add the tier's route with nova-config route add, or start the member with --model, --tokens and --deadline", p.Card, model, tokens, deadline)
 	}
 	return model, tokens, deadline, nil
+}
+
+// harnessFor is the binary a packet's child runs under: the member's --harness, or for a
+// route naming a headless harness (internal/harness; docs/SPEC-SWARM.md, the headless
+// harnesses) that program on this member's PATH. A headless program this machine has not
+// got refuses the launch, so the sprint deals the card to a member that has.
+func (r *nativeRunner) harnessFor(p member.Packet) (string, error) {
+	if !harness.IsHeadless(p.Harness) {
+		return r.harness, nil
+	}
+	lookPath := r.lookPath
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	bin, err := lookPath(p.Harness)
+	if err != nil {
+		return "", fmt.Errorf("card %s's route %s runs under %s, which is on no PATH entry of this member: install it and log in, or deal the card to a member that has it", p.Card, p.Route, p.Harness)
+	}
+	return bin, nil
 }
 
 // launchName is the name of one launch: the card at its generation (a read:
