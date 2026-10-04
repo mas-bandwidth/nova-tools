@@ -464,10 +464,15 @@ func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 // stops when Running is 0.
 func (m *Member) Drain() { m.drain = true }
 
-// DrainMost is the longest a draining member waits for its children: the stop timeout of
-// the loop units (fleet/templates: TimeoutStopSec, ExitTimeOut) is DrainMost and a minute,
-// so a member always stops by itself before its supervisor kills what is left.
-const DrainMost = 2 * time.Hour
+// DrainMost is the longest a draining member waits for its children: two minutes.
+// A member that drains does no new work, so a restart that waits longer costs the
+// machine's whole width, while a card killed at the bound is redealt at the cost of
+// one card; past the bound the member reports what finished and stops, and the
+// cards still running are left for the server to redeal as for any member that
+// stops. The stop timeout of the loop units (fleet/templates: TimeoutStopSec,
+// ExitTimeOut) is DrainMost and a minute, so a member always stops by itself
+// before its supervisor kills what is left.
+const DrainMost = 2 * time.Minute
 
 // DrainBound is how long a member stopped by its supervisor (SIGTERM) waits for the children
 // it runs: the longest deadline they run to, and LongStall for the push and the report after
