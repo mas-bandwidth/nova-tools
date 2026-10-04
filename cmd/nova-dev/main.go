@@ -46,6 +46,7 @@ func devTool(args []string) *tool.Tool {
 	if len(args) > 0 && args[0] != "help" && args[0] != "-h" && args[0] != "--help" && args[0] != "--version" {
 		rest = args[1:]
 	}
+	isHelp := len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help"
 	return &tool.Tool{
 		Name:  "nova-dev",
 		What:  "this repository's own development process: the dogfood ledger, the convergence reading and the branch hygiene check",
@@ -80,8 +81,10 @@ first run: the three examples are one sitting over ./docs/CLI.md and ./dogfood-r
 				Usage:  "convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>]",
 				Effect: tool.Inspection,
 				Flags: func(f *tool.Flags) {
-					f.Prints()
-					declareConvergenceFlags(f.FlagSet, true)
+					if !isHelp {
+						f.Prints()
+					}
+					declareConvergenceFlags(f.FlagSet, !isHelp)
 				},
 				Run: func(c *tool.Call) *tool.Out {
 					c.DryRun()
@@ -93,8 +96,10 @@ first run: the three examples are one sitting over ./docs/CLI.md and ./dogfood-r
 				Usage:  "hygiene --repo <dir> --base <ref> --head <ref> --identity \"<Name> <email>\" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]",
 				Effect: tool.Inspection,
 				Flags: func(f *tool.Flags) {
-					f.Prints()
-					declareHygieneFlags(f.FlagSet, true)
+					if !isHelp {
+						f.Prints()
+					}
+					declareHygieneFlags(f.FlagSet, !isHelp)
 				},
 				Run: func(c *tool.Call) *tool.Out {
 					return tool.Exit(cmdHygiene(rest, c.Stdout, c.Stderr))

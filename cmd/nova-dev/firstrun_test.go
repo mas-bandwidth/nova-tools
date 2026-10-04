@@ -192,3 +192,12 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	}
 	assert.Empty(t, onboarding.CompareTranscript(steps, got, nil), "the `### First run` block and the tool disagree")
 }
+
+// Every verb but dogfood takes --json, and the banner footer states it.
+func TestHelpBannerFooter(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, stderr := runCheck(t, "help")
+	require.EqualValues(t, 0, exit, "`nova-dev help` must exit 0; stderr: %s", stderr)
+	assert.Contains(t, stdout, "Every verb but dogfood takes --json: the same result as one JSON object on stdout.")
+}
