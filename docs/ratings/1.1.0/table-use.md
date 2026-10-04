@@ -1,42 +1,27 @@
 # nova-table USE rating, nova-tools 1.1.0
 
-Rater: qwen3.8-flash
-Build: bd7949b97aec
-Score: 6.5/10
+Rater: GLM
+Build: 6c30868ccba8
+Score: 8.5/10
 
 ## Reasons
-
-The question asked of every tool: is this a good tool for an AI to use? Cold against the binary, the command side is met and the result side is not.
-
-Good first: `nova-table help` answers what it does, how it works and how to use it; every verb's -h carries usage, a runnable example, one wants-line per flag, the effect word (inspection, store write) and the exit table, at exit 0 before anything is dialled. Refusals name the problem, say what the flag wants, and answer a near miss with the nearest name (`did you mean --columns?`). Every write verb plans offline under `--dry-run` and states its own bound honestly: what only the store can check is left to the real run. `batch` runs one manifest through lines or `--json` from one value, plan, receipt and refusal alike, and replays by operation id.
-
-What costs the score: the read side cannot be met at all without a live store, and the tool offers no store-free form: `--redis mem:` is refused as not an address, so the banner's example: block cannot run as printed on a cold machine (finding 1). `show`, `render`, `list`, `member read` and `cell members` refuse `--json`, offered only on `batch`, while the house shape says every verb accepts it, and the help never prints the line shape an AI must scrape (finding 2). One refusal names one problem: a width error waits behind the columns error, and a second unknown flag waits behind the first, so recovery costs a turn per problem (finding 3). No verb takes `--max`, so listings are unbounded (finding 4). The dry-run line leads with the undocumented status word DRY-RUN after the tool prefix (finding 5).
-
-Where I guessed: whether reads accept `--json` (the house shape says they do; they refuse), `--redis mem:` as the in-memory form a first try wants, and that the width error rides behind the columns error rather than beside it (two runs to learn).
-
-Verbs not tried, each needing a real store this rater may not start: `list`, `show`, `render`, `watch`, `check`, the drop-to-create round trip, the epoch and receipt lines, bound cells, `row sort --keep`, `shell`, `view show` and `view list`; they are judged from their help and, where offered, `--dry-run`.
-
-A 10 would need: a store-free trial (an in-memory `--redis` form or a quickstart that loads a fixture), `--json` on every verb, one refusal naming every independent problem at once, `--max` with its MORE line on the listings, and dry-run lines in the documented grammar.
+Cold use with no store permitted on this machine: help and -h answer, and the store-less form the help offers (every write verb under --dry-run) is real enough to run jobs end to end. Two jobs ran so: a board built one verb at a time (create, row add, cell add, cell move), then a batch manifest applied with --json; each dry-run prints the exact call it would send (sends="FCALL ns_table_create", dialled=0, written=0) and refuses exactly where the real run would refuse before sending. Every refusal met (missing required flag, unknown flag, unknown verb, bad value, unreachable address, read with no store) names the problem, the valid alternatives and one runnable next command; the read-with-no-store refusal prints the whole throwaway-store recipe it wants. Help is layered (help, help verb, help verb subverb, -h) and each verb page carries usage, example, flags, connection, exit codes and effect. What keeps this below 9.5: no daemon may start here and the refused mem: guess leaves no in-memory form, so every read verb, watch and shell is judged from its help alone; the reads have no --json (only batch does), so their output must be parsed as drawn text; and a batch manifest with several missing required keys is refused one problem at a time. A 10 needs a store-less way to run the reads end to end, --json on the reads, and manifest checks that name every problem at once.
 
 ## Findings
 | # | where | finding | fix | size |
 |---|---|---|---|---|
-| 1 | `nova-table show demo` | SHOW REFUSED: --redis is required; with no store every read verb refuses, --redis mem: is refused as not an address, and the example: block (create through render) exits 2 as printed, so a cold AI can plan writes but never sees a table | add a store-free trial: an in-memory --redis value or a quickstart that loads a fixture, so the read verbs answer offline and the example block runs as printed | L |
-| 2 | `nova-table show demo --json` | SHOW REFUSED: unknown flag --json; batch is the only verb whose help offers --json, so the results an AI most needs to parse (show, render, list, member read, cell members) arrive only as scrapeable text whose shape the help never prints | route every verb's one result value through the shared skeleton's JSON rendering, and print a sample result line in the read verbs' help | M |
-| 3 | `nova-table create demo --columns 'a:pct(x' --width bad --dry-run` | one CREATE REFUSED names only the columns error; the width error appears only on the next run, and two unknown flags name only the first, so a reader fixes the call over turns instead of once | collect all independent validation errors and print them in one refusal, each with its wants-line | M |
-| 4 | `nova-table help list` | no verb's help offers --max (none appears anywhere in the tool), so list, show, render and cell members print unbounded and a large store floods the reader with no totals to act on | add --max with the MORE shown total line to the listing verbs, as the rest of the set carries it | M |
-| 5 | `nova-table create demo --columns ready,working,done --dry-run` | the plan line reads TABLE DRY-RUN verb=create ..., leading with a fourth status word after the tool prefix while the documented grammar is the verb name then OK, REFUSED or FAILED, so a parser built from the help misreads it | print CREATE OK with a dry_run fact, or name DRY-RUN in the banner's status and exit lines | S |
+| 1 | `nova-table list` | with no daemon permitted and `--redis mem:` refused ("not an address: its port is not a number"), no read verb (list, show, render, check, member, view), watch or shell can be tried at all here; the first-run text's only path to real data asks for a daemon | accept a mem: address (or an embedded store) so the reads run end to end with nothing dialled | L |
+| 2 | `nova-table help list` | the read verbs' flags are --redis and --seat only: list, show, render, member read and cell members print drawn text with no --json, so an AI consuming them parses prose-drawn tables | give the reads the same --json receipt batch has | M |
+| 3 | `nova-table batch --dry-run '{"schema":1,"table":"demo","members":[{"id":"b1"}]}'` | a manifest missing epoch, expected_table_revision and operation_id is refused with only the first problem ("member entry has no expect record"), so the caller fixes one fault per attempt | check the whole manifest and name every problem in one refusal | S |
 
 ## Good, keep
-Every verb's -h answers at exit 0 before anything is dialled: usage, a runnable example, a wants-line per flag, the effect word and the exit table; help is never a refusal.
-
-Refusals carry the remedy in the line: what the flag wants, the nearest name for a near miss, and for an unreachable store the address tried plus a runnable throwaway-store command.
-
-`batch` is the model of the house shape: one manifest, one value rendered as lines or `--json`, dry-run plan and refusal included, replay by operation id documented in the help.
+- Refusals that name the problem, the valid alternatives and a runnable next command every time, including the full verb list on an unknown verb and the whole throwaway-store recipe on a read with no store.
+- --dry-run that prints the exact call the verb would send with dialled=0 written=0, and refuses exactly where the real run would before sending.
+- Layered help with usage, example, flags, connection, exit codes and effect on every verb page, and subverb pages for row, col, cell and view.
 
 ## Compared with earlier ratings
 | earlier | now | evidence |
 |---|---|---|
-| the remedy after drop ping-pongs between create and set (rated 2026-10-02 at 1aac13259) | CHANGED | `nova-table drop demo --dry-run` prints TABLE DRY-RUN verb=drop sends=FCALL ns_table_drop, and `nova-table help drop` now states what drop keeps (the column definition and the table identity) and what --definition removes; the real round trip needs a store and could not be run here |
-| reads have no --json (rated 2026-10-02 at 1aac13259) | STILL THERE | `nova-table show demo --json` prints SHOW REFUSED: unknown flag --json; the flags of show are --at-epoch, --redis |
-| the unknown-option refusal is generic (rated 2026-10-02 at 1aac13259) | FIXED | `nova-table create demo --column a --dry-run` prints CREATE REFUSED: unknown flag --column; the flags of create are --actor, --columns, ...; did you mean --columns?; run: nova-table help create |
+| 2026-10-02: reads have no --json | STILL THERE | `nova-table help list` shows --redis and --seat only; a read of every verb's help page finds --json on batch alone |
+| 2026-10-02: the unknown-option refusal is generic | FIXED | `nova-table list --bogus` says "unknown flag --bogus; the flags of list are --redis; run: nova-table help list" |
+| 2026-10-02: the remedy after drop ping-pongs between create and set | CHANGED | `nova-table drop` says "wants one table name: drop <table>; run: nova-table help drop"; the store-level refusal needs a store, not triable here |
