@@ -300,15 +300,20 @@ func flatLockFile(store, session string) string {
 //
 // An actual write holds an exclusive lock on the sibling lock file around the
 // read-decide-append using internal/filelock (docs/SPEC-CAIRN.md, tla/FileLock.tla;
-// security#73 finding 1). A dry run (write false) neither takes the lock nor
-// creates the file; the duplicate and conflict rules run on the re-read inside
-// the lock.
+// security#73 finding 1). The file is replaced atomically using internal/atomicfile,
+// keeping the existing file permissions (docs/SPEC-CAIRN.md; security#73 finding 3).
+// A dry run (write false) neither takes the lock nor creates the file; the
+// duplicate and conflict rules run on the re-read inside the lock.
 func appendFlat(store, session, path, id, text string, now time.Time, publish string, write bool) (AppendResult, error) {
 	var res AppendResult
 	if publish == "" {
 		publish = PublishUnknown
 	}
 	if !write {
+		fi, err := os.Lstat(path)
+		if err != nil {
+			return res, err
+		}
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return res, err
@@ -324,7 +329,7 @@ func appendFlat(store, session, path, id, text string, now time.Time, publish st
 			return AppendResult{Stamp: stamp, Persisted: true, Policy: publish, Duplicate: true}, nil
 		}
 		stamp := now.UTC().Truncate(time.Second)
-		return AppendResult{Stamp: stamp, Policy: publish}, atomicfile.CheckAppend(path)
+		return AppendResult{Stamp: stamp, Policy: publish}, atomicfile.Check(path, fi.Mode().Perm(), atomicfile.ExactMode())
 	}
 
 	lock, err := filelock.Lock(flatLockFile(store, session), "nova-cairn append", flatLockTimeout)
@@ -333,6 +338,10 @@ func appendFlat(store, session, path, id, text string, now time.Time, publish st
 	}
 	defer lock.Unlock()
 
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return res, err
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return res, err
@@ -349,32 +358,15 @@ func appendFlat(store, session, path, id, text string, now time.Time, publish st
 	}
 	stamp := now.UTC().Truncate(time.Second)
 	var b strings.Builder
+	b.Write(raw)
 	if len(raw) > 0 && !strings.HasSuffix(string(raw), "\n") {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n" + flatHeading(id, now) + "\n\n" + strings.TrimRight(text, "\n") + "\n")
-	if err := appendBytes(path, b.String()); err != nil {
+	if err := atomicfile.WriteFile(path, []byte(b.String()), fi.Mode().Perm(), atomicfile.ExactMode()); err != nil {
 		return res, err
 	}
 	return AppendResult{Stamp: stamp, Persisted: true, Policy: publish}, nil
-}
-
-// appendBytes adds content to an existing file and fsyncs before return, so a
-// flat append is as durable as a nested one before success is reported.
-func appendBytes(name, content string) error {
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(content); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
 }
 
 func entryPath(store, session, id string) string {
