@@ -146,6 +146,8 @@ func TestEveryUnreadableFileIsNamedInOneRun(t *testing.T) {
 // every finding: a rewritten path is no longer the line the document promised,
 // which is what the old test's `localize` gave up.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	doc := transcriptDoc(t)
 	lines, err := onboarding.FirstRun(doc, "nova-self-talk")
 	require.NoError(t, err)
@@ -153,11 +155,20 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, steps, 3, "the `### First run` block runs %d commands, want 3: one file, the rule document beside it, then the rule document skipped", len(steps))
 
-	dir := t.TempDir()
-	copyDir(t, examplePages, filepath.Join(dir, "pages"))
-	t.Chdir(dir)
-
-	for _, p := range onboarding.Execute(steps, runDocumented) {
+	// The fixture is copied to a directory of this test's own and the documented
+	// ./pages stands for it, so the test runs in parallel without moving the
+	// process's working directory (the serial ledger's header: a t.TempDir for a
+	// path, internal/ci/testdata/serial-tests_allowlist.txt).
+	pages := filepath.Join(t.TempDir(), "pages")
+	copyDir(t, examplePages, pages)
+	for _, s := range steps {
+		for i, a := range s.Args {
+			if rest, ok := strings.CutPrefix(a, "./pages/"); ok {
+				s.Args[i] = filepath.Join(pages, rest)
+			}
+		}
+	}
+	for _, p := range onboarding.Execute(steps, runDocumented, onboarding.Path("./pages", pages)) {
 		t.Error(p)
 	}
 }
@@ -218,8 +229,8 @@ func (readsNothing) Error() string {
 
 var errReadsNothing = readsNothing{}
 
-// transcriptDoc is docs/TESTS.md, read BEFORE the test moves into its own
-// directory.
+// transcriptDoc is docs/TESTS.md, read from the checkout, which stays the
+// process's working directory: no test here moves it.
 func transcriptDoc(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))

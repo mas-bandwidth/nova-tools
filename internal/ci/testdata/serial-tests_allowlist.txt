@@ -122,9 +122,6 @@ cmd/nova-sandbox/worktree_test.go:TestWorktreePruneRemovesMergedAndClosedAndKeep
 cmd/nova-sandbox/worktree_test.go:TestWorktreePruneStaleUsesTheClockAndTheProbe serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit, swaps package var main.worktreeInUse, swaps package var main.worktreeNow
 cmd/nova-sandbox/worktree_test.go:TestWorktreeRefusals serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
 cmd/nova-sandbox/worktree_test.go:TestWorktreeSecondCallReusesTheTree serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
-cmd/nova-self-talk/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-self-talk/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
-cmd/nova-self-talk/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-tokens/boundary_test.go:TestNoVerbTouchesACheckoutOrItsRemote serial: t.Setenv
 cmd/nova-tokens/contract_test.go:TestEachDeclaredFileIsOpenedOncePerRun serial: counts the process-wide tokens.Opens(), which every parallel fold adds to
 cmd/nova-tokens/demanded_test.go:TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout serial: t.Setenv

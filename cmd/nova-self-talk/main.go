@@ -212,7 +212,7 @@ func runStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) (code in
 		return 0
 	case "version", "--version":
 		verbflag.HelpIfAsked(args[1:], "version")
-		return cmdVersion(args[1:], stdout, stderr)
+		return cmdVersion(args[1:], version, stdout, stderr)
 	case "shapes":
 		return cmdShapes(args[1:], stdout, stderr)
 	case "example":

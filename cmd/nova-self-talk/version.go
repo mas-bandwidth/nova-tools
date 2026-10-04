@@ -17,16 +17,19 @@ import (
 // version is empty in every ordinary build and is the one override: a release stamps it
 // with -ldflags "-X main.version=<tag>". It is a var rather than a const because -X can
 // only write a string var, and it is package-level and unexported for the same reason.
+// It is the production default only: cmdVersion takes the stamp as a parameter, so a
+// test names its own instead of swapping this var, which races every parallel test
+// reading it (the serial ledger's header, internal/ci/testdata/serial-tests_allowlist.txt).
 var version string
 
 // cmdVersion prints the one line. It takes no flags and no arguments: there is no
 // --short, no --json and no --long, because a second output shape is a second thing to
 // agree about and this verb exists to end an argument rather than to start one.
-func cmdVersion(args []string, stdout, stderr io.Writer) int {
+func cmdVersion(args []string, stamp string, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
 		fmt.Fprintf(stderr, "nova-self-talk version REFUSED: takes no flags and no arguments, got %d; run: nova-self-talk version -h\n", len(args))
 		return 2
 	}
-	fmt.Fprintln(stdout, buildinfo.Line("nova-self-talk", version))
+	fmt.Fprintln(stdout, buildinfo.Line("nova-self-talk", stamp))
 	return 0
 }
