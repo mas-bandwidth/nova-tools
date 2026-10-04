@@ -284,6 +284,9 @@ type Dealt struct {
 	Cards []*sprint.Card
 	Work  *sprint.Table
 	Open  []sprint.Open
+	// Merging is every primary in the work table's merging column, with its head: the queue a
+	// program reads with heads in one call (merge --landed names a card by id and head).
+	Merging []*sprint.Card
 }
 
 // Dealt reads the cards dealt and not finished: one read of the work and fleet shapes, one of
@@ -302,8 +305,11 @@ func (st *Store) Dealt(ctx context.Context) (Dealt, error) {
 	d.Work = sprint.NewTable(sprint.Work)
 	d.Work.SetProps(shapes[0].Props)
 	inFlight := []string{string(sprint.Ready), string(sprint.Working)}
-	ids, err := st.B.CellIDs(ctx, []ntable.Table{cellsOf(shapes[1], inFlight)})
+	ids, err := st.B.CellIDs(ctx, []ntable.Table{cellsOf(shapes[1], inFlight), cellsOf(shapes[0], []string{string(sprint.Merging)})})
 	if err != nil {
+		return d, err
+	}
+	if d.Merging, err = st.storedRecords(ctx, sprint.Work, ids[shapes[0].Name]); err != nil {
 		return d, err
 	}
 	// the cell read gives stored ids: read as they are, never bound to the epoch a second
