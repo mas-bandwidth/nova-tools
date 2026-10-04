@@ -92,11 +92,14 @@ usage:
   nova-check dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]
                                                      exit 1 with the verbs no non-author has
                                                      run and the edges nobody has cleared.
-                                                     An edge is a receipt that records a
-                                                     finding the run did not clear; the
+                                                     An edge is what the run found; a
+                                                     receipt records it: --not-ok, or an
+                                                     Edge: or Edges: in the notes. The
                                                      remedy is one nova-check dogfood record
-                                                     per verb named, with --ok and a filed
-                                                     issue. The line the release lane calls.
+                                                     --ok per verb named, and per edge
+                                                     --closes <id> or the finder
+                                                     running it again. The line the release
+                                                     lane calls.
   nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir>
                          --retired <file> --since <RFC3339|24h>
         [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
@@ -110,8 +113,10 @@ usage:
                                                      an unnamed optional source is ABSENT,
                                                      not zero. Exit 1 after two consecutive
                                                      widening ticks. A widening tick is a tick whose
-                                                     <stream> ratio rose against --state's last;
-                                                     the exit-1 line prints
+                                                     <stream> moved the wrong way against
+                                                     its before: --state's last for LEDGER
+                                                     and FLEET, --since's for the rest.
+                                                     The exit-1 line prints
                                                      trend=widening on the CONVERGENCE line,
                                                      and the next run is
                                                      nova-check convergence --state <file>
