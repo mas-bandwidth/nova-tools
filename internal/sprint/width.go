@@ -45,13 +45,24 @@ func ParseWidth(text string) (int, error) {
 }
 
 // MemberWidth is the width a member's control card names: DefaultWidth when
-// it names none or one that is not a width.
+// it names none or one that is not a width; 0 is a member that drains (fleet
+// up --width 0): no room for a deal or the level, its working cards finish.
 func MemberWidth(ctl *Card) int {
+	if strings.TrimSpace(ctl.F(FieldWidth)) == DrainWidth {
+		return 0
+	}
 	if n, err := ParseWidth(ctl.F(FieldWidth)); err == nil {
 		return n
 	}
 	return DefaultWidth
 }
+
+// DrainWidth is the width cell of a member that drains: fleet up <m> --width 0
+// writes it, and it is no member of the deal, the level or a take by count
+// (every room is DealAhead times 0) while its working cards finish, unlike
+// fleet down, which deals them again elsewhere (the comfort list of
+// 2026-10-03, item 5).
+const DrainWidth = "0"
 
 // WidthText is the fleet table's width cell of a member's control card.
 func WidthText(ctl *Card) string { return strconv.Itoa(MemberWidth(ctl)) }
