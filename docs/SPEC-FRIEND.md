@@ -294,11 +294,15 @@ A background process on this platform needs the user's permission to touch a
 removable volume (the TCC service for removable volumes; measured 2026-10-04:
 the daemon, and a plain `touch` launchd starts, both refused with "operation
 not permitted" where the same commands from a shell succeed, and tccd logged
-the access request). The permission is granted to the binary in the system's
-privacy settings, by the person, never by the tool, and a rebuilt binary is a
-new one to it. The state files are out of its way, under the home directory;
-until it is granted the daemon beats and answers the daemon pong but cannot
-run the harness on the volume, and the record says so.
+the access request). `install` resolves the agent binary's symlinks and refuses
+an executable under `/Volumes` before it writes the plist or invokes
+`launchctl`; the executable must live on local disk. The permission needed to
+run a harness whose working directory is on a removable volume is granted to
+the binary in the system's privacy settings, by the person, never by the tool,
+and a rebuilt binary is a new one to it. The state files are out of its way,
+under the home directory; until permission is granted the daemon beats and
+answers the daemon pong but cannot run the harness on the volume, and the
+record says so.
 
 The server side of the ping (the coordinator pinging every friend each window
 from the sprint's run loop, and the table's `awake` and `deaf` columns) is not

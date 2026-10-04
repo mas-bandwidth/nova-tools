@@ -104,3 +104,21 @@ func TestInstallBootsOutThenBootstrapsAndIsTheSameTwice(t *testing.T) {
 	assert.Equal(t, []string{"launchctl bootout gui/501/com.nova.friend-bob"}, commands)
 	assert.Equal(t, []string{a.PlistPath()}, removed)
 }
+
+func TestInstallRefusesABinaryOnARemovableVolume(t *testing.T) {
+	t.Parallel()
+	a := agent()
+	a.Binary = "/Volumes/nova/nova-friend"
+	wrote := false
+	ran := false
+	path, commands, err := Install(context.Background(), a, 501,
+		func(context.Context, ...string) (string, error) { ran = true; return "", nil },
+		func(string, []byte) error { wrote = true; return nil },
+		func() {},
+	)
+	assert.Equal(t, a.PlistPath(), path)
+	assert.Empty(t, commands)
+	assert.ErrorContains(t, err, "local disk")
+	assert.False(t, wrote, "the plist is not written")
+	assert.False(t, ran, "launchctl is not invoked")
+}
