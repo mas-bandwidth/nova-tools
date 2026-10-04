@@ -131,9 +131,7 @@ func TestRowsComeBackInTheReferencesOrder(t *testing.T) {
 	rows, _ := Ledger(verbs("nova-check quickstart", "nova-check links", "nova-bus send"), nil, nil)
 	got := []string{rows[0].Verb, rows[1].Verb, rows[2].Verb}
 	want := []string{"quickstart", "links", "send"}
-	for i := range want {
-		require.Equal(t, want[i], got[i], "order %v, want %v", got, want)
-	}
+	require.Equal(t, want, got, "order %v, want %v", got, want)
 }
 
 func TestGateSaysNoOnAnOpenEdgeWithoutRequireAll(t *testing.T) {
