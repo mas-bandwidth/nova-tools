@@ -114,3 +114,5 @@ cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend status --as bob --dir ./bob
+cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend sleep --as bob --coordinator ada
+cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend wake --as bob

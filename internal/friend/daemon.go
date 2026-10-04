@@ -194,7 +194,9 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 				return false, err
 			}
 		} else {
-			_ = reserve(state)
+			if err := reserve(state); err != nil {
+				return false, err
+			}
 		}
 		if !reserved {
 			return false, nil
