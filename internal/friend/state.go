@@ -187,7 +187,7 @@ func Record(stateDir, line string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer f.Close() // ignored: a read-only file, nothing was written through it
 	_, err = f.WriteString(line + "\n")
 	return err
 }

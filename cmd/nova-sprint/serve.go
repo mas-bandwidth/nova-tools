@@ -147,19 +147,13 @@ func flagWord(words []string, name string) (value string, ok bool) {
 // serves a page until it is interrupted and reads through the server.
 var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend clean", "dashboard", "answer"}
 
-// serveFrom is the server's one step: the batch's verbs run in order, each through
+// serveCtx is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The
 // server's own words (the store, the actor) go between the verb and what the
 // worker sent. A verb the server does not run (workerVerb) is answered as a
 // usage refusal, exit 2, and the batch goes on: every verb has its own answer.
 // Local batches run any verb the server runs (verbArgs.unserved), while fleet
-// batches run a worker's verbs only. serveFrom is serveCtx for a caller that never
-// goes away (a test's step).
-func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response {
-	return a.serveCtx(context.Background(), req, local)
-}
-
-// serveCtx is serveFrom for a caller that can go away (ctx, the request's). A friend's
+// batches run a worker's verbs only. It is for a caller that can go away (ctx, the request's). A friend's
 // beat runs on the beat lane and a read on the read lane, neither on the line
 // (servelanes.go); every other verb runs on the line (a.serial), one batch's verbs and
 // one tick at a time: the line is taken at the batch's first such verb, after the

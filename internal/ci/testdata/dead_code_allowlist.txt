@@ -7,7 +7,7 @@
 
 cmd/nova-sandbox 3
 cmd/nova-swarm 2
-internal/bus 16
+internal/bus 18
 internal/ci/slowtests 2
 internal/dogfood 1
 internal/filelock 2

@@ -593,7 +593,6 @@ func coordinatorText(v coordinatorView) string {
 	for i, it := range v.Items {
 		if lines == viewTextLines-1 && len(v.Items)-i > 1 {
 			fmt.Fprintf(&b, "+%d more: nova-sprint view coordinator --json\n", len(v.Items)-i)
-			lines++
 			break
 		}
 		b.WriteString(oneline.Escape(itemLine(it)) + "\n")
