@@ -19,7 +19,7 @@ func TestFirstRunExampleRuns(t *testing.T) {
 func TestPacketIsWrittenWhereItIsAsked(t *testing.T) {
 	var out, errb bytes.Buffer
 	packet := filepath.Join(t.TempDir(), "packet.md")
-	if code := run([]string{"packet", "--who", "emma", "--out", packet}, &out, &errb); code != 0 {
+	if code := run([]string{"packet", "--who", "worker", "--out", packet}, &out, &errb); code != 0 {
 		t.Fatalf("packet exit=%d stderr=%s", code, errb.String())
 	}
 }
