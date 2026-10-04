@@ -37,15 +37,18 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 	// The boundary is the flag's own text, judged before any parse: the
 	// refusal quotes nothing, while a parse error quotes the DSN it could
 	// not read, so a flag that carries a password must never reach one. A
-	// DSN from the environment is not on a command line and is never
-	// refused for its password, and a password pgconn takes from the
-	// process environment is never mistaken for one on the line.
+	// flag whose text cannot be parsed at all is refused without echo too,
+	// because the raw text may carry a credential in a spelling
+	// flagCarriesPassword did not anticipate. A DSN from the environment is
+	// not on a command line and is never refused for its password, and a
+	// password pgconn takes from the process environment is never mistaken
+	// for one on the line.
 	if flagValue != "" && flagCarriesPassword(flagValue) {
 		return "", refuseFlagPassword()
 	}
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
-		if flagValue != "" && strings.Contains(strings.ToLower(flagValue), "password") {
+		if flagValue != "" {
 			return "", refuseFlagPassword()
 		}
 		return "", fmt.Errorf("--pg: %v; want postgres://user@host:5432/nova", err)
@@ -100,13 +103,15 @@ func flagCarriesPassword(dsn string) bool {
 		if _, has := u.User.Password(); has {
 			return true
 		}
-		// ignored: ParseQuery returns the pairs it read beside its error, and
-		// a pair it drops (a bad escape) makes the pgconn URI reader refuse
-		// the DSN, whose parse error never quotes a flag whose text names a
-		// password.
+		// ignored: ParseQuery returns the pairs it read beside its error; a
+		// pair it drops (a bad escape) still reaches the parse-error refusal
+		// below, which quotes nothing.
 		query, _ := url.ParseQuery(u.RawQuery)
 		for key := range query {
-			if strings.EqualFold(key, "password") {
+			// The pgconn URI reader trims the keyword whitespace around a
+			// query key before it reads it, so a padded key is the same
+			// password field.
+			if strings.EqualFold(strings.Trim(key, kwSpaces), "password") {
 				return true
 			}
 		}
@@ -124,8 +129,8 @@ const kwSpaces = " \t\n\r\v\f"
 // long enough to find a password key; it reads no values, so a value that
 // quotes the word password is not one. A key is read before its value, so a
 // password key is refused even when its value never closes; a key whose
-// value fails to close is left to the pgconn parser, and ResolveDSN never
-// quotes a parse error for a flag whose text names a password.
+// value fails to close is left to the pgconn parser, and ResolveDSN refuses
+// a flag it cannot parse without quoting it.
 func keywordCarriesPassword(dsn string) bool {
 	s := strings.TrimLeft(dsn, kwSpaces)
 	for len(s) > 0 {

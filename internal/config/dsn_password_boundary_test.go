@@ -27,6 +27,8 @@ func TestResolveDSNRefusesEveryFlagPassword(t *testing.T) {
 		{name: "url query password", flag: "postgres://store@db.invalid:5432/nova?password=synthetic-secret", refuse: true},
 		{name: "url query percent-encoded password key", flag: "postgres://store@db.invalid:5432/nova?pass%77ord=synthetic-secret", refuse: true},
 		{name: "url query mixed-case encoded password key", flag: "postgres://store@db.invalid:5432/nova?%70aSsWoRd=synthetic-secret", refuse: true},
+		{name: "url query password key with trailing space", flag: "postgres://store@db.invalid:5432/nova?password =synthetic-secret", refuse: true},
+		{name: "url query password key with leading space", flag: "postgres://store@db.invalid:5432/nova? password=synthetic-secret", refuse: true},
 		{name: "keyword password", flag: "host=db.invalid user=store port=5432 password=synthetic-secret", refuse: true},
 		{name: "keyword quoted password", flag: "host=db.invalid port=5432 password='synthetic-secret'", refuse: true},
 		{name: "keyword quoted escaped password", flag: `host=db.invalid password='synth\'etic-secret'`, refuse: true},
@@ -35,6 +37,8 @@ func TestResolveDSNRefusesEveryFlagPassword(t *testing.T) {
 		{name: "keyword quoted explicit empty password", flag: "host=db.invalid port=5432 password=''", refuse: true},
 		{name: "keyword bare explicit empty password", flag: "host=db.invalid port=5432 password=", refuse: true},
 		{name: "malformed keyword carrying a password", flag: "host=db.invalid password='synthetic-secret", refuse: true},
+		{name: "malformed encoded password key never echoes the dsn", flag: "postgres://store@db.invalid:5432/nova?%70assword=synthetic-secret%zz", refuse: true},
+		{name: "malformed keyword never echoes the dsn", flag: `pass\ word=synthetic-secret`, refuse: true},
 		{
 			name: "environment dsn with a password is kept",
 			flag: "",
