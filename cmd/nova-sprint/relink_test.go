@@ -1,0 +1,39 @@
+package main
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// The twin's verbs from the command line (docs/SPEC-SPRINT.md section 2, "A card replaced
+// by its twin"): add --replaces is one card and needs no --one; card shows the dependent's
+// new need; relink repairs a drop and an add made apart and answers their judgments.
+func TestAddReplacesAndRelinkFromTheCommandLine(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --members m1,m2 --readers reader-a,reader-b,reader-c")
+	ta.ok("add --stream s1 old other")
+	ta.ok("add --stream s2 dep1 dep2 --needs old")
+	out := ta.ok("add --stream s1 old-tb --replaces old")
+	assert.Contains(t, out, "dep1 needs old -> old-tb")
+	assert.Contains(t, ta.ok("card dep1"), "needs old-tb (ready)")
+	assert.Contains(t, ta.ok("card old"), "replaced by old-tb")
+	assert.NotRegexp(t, `(?m)^JUDGMENT .*blocked on something dropped`, ta.ok("inbox"))
+	ta.clean()
+
+	// the drop and the add made apart, then relinked
+	ta.ok("add --stream s2 dep3 --needs other --one")
+	ta.ok("drop other --reason re-cut")
+	require.Regexp(t, `(?m)^JUDGMENT .*blocked on something dropped`, ta.ok("inbox"))
+	ta.ok("add --stream s1 other-tb --one")
+	out = ta.ok("relink other other-tb --reason 're-cut as its twin'")
+	assert.Contains(t, out, "dep3 needs other -> other-tb")
+	assert.Contains(t, ta.ok("card dep3"), "needs other-tb (ready)")
+	assert.NotRegexp(t, `(?m)^JUDGMENT .*blocked on something dropped`, ta.ok("inbox"))
+	code, _, errs := ta.do("relink other other-tb")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "nothing waits on other")
+	ta.clean()
+}

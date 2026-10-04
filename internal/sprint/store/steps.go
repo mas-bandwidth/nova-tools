@@ -9,11 +9,17 @@ func tables(ts ...string) []string { return ts }
 
 // AddStep admits primaries; it reads the named needs as well, placed or not,
 // and the stream's control card, kept unplaced when the stream was removed in
-// this epoch (sprint.RemovedStream).
+// this epoch (sprint.RemovedStream). With Replaces (add --replaces) it is the
+// twin's step (sprint.Replace): it reads every table, as the drop of the old
+// cards does, and the old cards' records, placed or not.
 func AddStep(r sprint.AddReq) Step {
-	return Step{Named: len(r.IDs) > 0 || len(r.Cards) > 0, Args: ArgsOf(r), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
+	load := tables(sprint.Work, sprint.Merge, sprint.Fleet)
+	if len(r.Replaces) > 0 {
+		load = All
+	}
+	return Step{Named: len(r.IDs) > 0 || len(r.Cards) > 0 || len(r.Replaces) > 0, Args: ArgsOf(r), Verb: "add", Load: load, Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
-			ids := append([]string(nil), sprint.AddIDs(s, r)...)
+			ids := append(append([]string(nil), sprint.AddIDs(s, r)...), r.Replaces...)
 			needs := append([]string(nil), r.Needs...)
 			for _, c := range r.Cards {
 				needs = append(needs, c.Needs...)
@@ -276,4 +282,14 @@ func NoteStep(verb string, n sprint.Note) Step {
 		n.At = s.Now
 		return sprint.Plan{Notes: []sprint.Note{n}}
 	}}
+}
+
+// RelinkStep re-points the needs of an old card to its twin (sprint.Relink): it reads the
+// work table and the old cards' records, placed or not.
+func RelinkStep(r sprint.RelinkReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "relink", Load: tables(sprint.Work),
+		Extras: func(*sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Work: append(append([]string(nil), r.Old...), r.New)}
+		},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Relink(s, r) }}
 }

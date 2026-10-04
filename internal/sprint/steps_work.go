@@ -68,6 +68,11 @@ type AddReq struct {
 	// none.
 	BriefOps    map[string]string
 	BriefRecord string
+	// Replaces names the cards the one card this add admits replaces (add --replaces, twins.go):
+	// it takes over every edge where a waiting card needs one of them, and each still on the
+	// table is dropped "replaced by <the new id>", in the same step, raising no blocked
+	// judgment.
+	Replaces []string `json:",omitempty"`
 	Only        []string
 	Who         string
 }
@@ -128,6 +133,9 @@ func AddIDs(s *Snapshot, r AddReq) []string {
 // back to waiting, and those in flight are past the stop: it waits for them as
 // well. It is one step: a cycle of needs refuses the whole add.
 func Add(s *Snapshot, r AddReq) Plan {
+	if len(r.Replaces) > 0 {
+		return Replace(s, r)
+	}
 	var p Plan
 	p.on(s)
 	ids := AddIDs(s, r)

@@ -773,6 +773,40 @@ bound" on a card past the count says the same and offers the same. `answer` appl
 only a verb the judgment prints, so it cannot rework such a card
 (`TestTheAnswerPathCannotReworkACardAtTheBriefBound`), and the verb refuses it besides.
 
+**A card replaced by its twin** (Rowan, 2026-10-04, measured at 1:30 PM: the fleet ran 4
+of 68 slots while 311 cards sat behind 21 judgments "a primary is blocked on something
+dropped", up to 1h50m old; each was raised because a card had been re-cut as a twin, its
+old id dropped and a new id added, `lint-pkg-cairn-tb` for `lint-pkg-cairn-t`, and every
+card that needed the old id waited for a person's ack). A twin takes over its old card's
+edges: every waiting card whose needs name the old id, and did not waive it, needs the new
+id instead, in the same place of its needs, each id once; nothing else of it changes (its
+column, its score, its other needs, its waivers), and the card records the relink
+(`relinked`: `<old,...> -> <new> <time> by <who>`), which `card` shows with the new need.
+Two verbs make it (internal/sprint/twins.go; the model is tla/SprintRules.tla,
+`TwinsInherit` and `NoDanglingNeed`):
+
+- `add ... --replaces <old-id>[,<old-id>]` admits one card, the twin, and in the same step
+  re-points every such edge to it, drops each old card still on the table with the reason
+  `replaced by <new>` (the drop plans on the state with the edges already re-pointed, so it
+  raises no blocked judgment), answers the blocked (or missing) judgments that named only
+  the old ids (`replaced by <new>: <card> needs <new> in place of <old>`), and writes the
+  weights once for the state after (the twin carries what waits on it). An old card dropped
+  before is replaced the same way: its edges and its judgments. It means `--one`. Refused
+  whole, nothing written, for an add of more or less than one card or of a sentinel, an old
+  id that is the new one, no card, a sentinel or landed, a cycle the new edges would close,
+  or any refusal of the add or the drop (`TestAddReplacesTakesOverEveryEdgeOfTheOldCard`,
+  `TestAddReplacesADroppedCardClosesItsBlockedJudgments`,
+  `TestAddReplacesIsRefusedWholeWhenItCannotHold`).
+- `relink <old-id>[,<old-id>] <new-id> [--reason <text>]`, the coordinator's alone, is the
+  one-shot repair of the edges a drop and an add made apart: the same re-pointing and the
+  same answers, the twin a card on the table. Refused whole for a twin not on the table or a
+  sentinel, an old id that is the twin, landed, or that nothing waits on, and a cycle
+  (`TestRelinkRepairsTheEdgesOfADropAndAnAdd`,
+  `TestRelinkIsTheCoordinatorsAndRefusesWhatCannotHold`).
+
+A blocked judgment that names a need not replaced stays open, and its ack waives what it
+names, as before.
+
 **The attempt decision** (nova-decide's layer 2; the owner, 2026-10-02, the agreed
 plan: "result classification after each attempt (done / nothing to do / wrong scope /
 no result / needs pro)"; 2026-10-03: "Please push Jev wide."; docs/SPEC-NOVA-DECIDE.md
@@ -2093,7 +2127,7 @@ the tick would make, no other open judgment on it).
 | stream stopped: the merge queue rejected | resume, return, drop | no |
 | ci red on a primary | rework (with a fix), return, drop, card (look), ack (looked, nothing to do) | yes |
 | a primary came back a second time for the same cause | card (stop and look) | no |
-| a primary is blocked on something dropped | drop, ack (waives the dropped need) | yes |
+| a primary is blocked on something dropped | drop, ack (waives the dropped need); `relink <old> <new>` answers it when the dropped card has a twin (section 2, a card replaced by its twin) | yes |
 | a primary is blocked on something missing | drop, ack (waives the named missing need) | yes |
 | reads exhausted | ask --another, rework, drop | no |
 | ready to accept | accept, rework, drop | no |
