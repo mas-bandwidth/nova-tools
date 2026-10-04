@@ -28,12 +28,17 @@ const keyWhere = "where" // STRING, the where record (JSON)
 // WhereRecord is the where record: the epoch and the work table's revision it
 // was counted at, the held cards there (sprint.HeldBack), and the landings
 // LandingRate may count from then on (sprint.RecentLandings), in Unix seconds,
-// oldest first.
+// oldest first. Tiers and CostByTier are the friends cost category
+// (docs/SPEC-SPRINT.md, the friends category): the same rows, counted here from
+// the twin this tick already holds, so where copies them and reads no card for
+// them. The friends row carries token counts and no dollar field.
 type WhereRecord struct {
-	Epoch    uint64  `json:"epoch"`
-	Rev      uint64  `json:"rev"`
-	Held     int     `json:"held"`
-	Landings []int64 `json:"landings,omitempty"`
+	Epoch      uint64                `json:"epoch"`
+	Rev        uint64                `json:"rev"`
+	Held       int                   `json:"held"`
+	Landings   []int64               `json:"landings,omitempty"`
+	Tiers      []sprint.CostCategory `json:"tiers,omitempty"`
+	CostByTier []sprint.CostCategory `json:"cost_by_tier,omitempty"`
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -46,6 +51,7 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 		}
 	}
 	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s)}
+	r.Tiers, r.CostByTier = sprint.TierCosts(s)
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -104,13 +110,17 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 
 // WhereFacts is what where shows beside the tables' counts: the machine's
 // records (Records: the store keeps them), the held cards and the landing
-// stamps for the rate.
+// stamps for the rate, and the friends cost category when the where record
+// was taken (docs/SPEC-SPRINT.md, the friends category). Absent on the
+// fallback that reads the cards: where does not scan them to build the rows.
 type WhereFacts struct {
-	Records   bool
-	Machine   Machine
-	Heartbeat Heartbeat
-	Held      int
-	Landed    []time.Time
+	Records    bool
+	Machine    Machine
+	Heartbeat  Heartbeat
+	Held       int
+	Landed     []time.Time
+	Tiers      []sprint.CostCategory
+	CostByTier []sprint.CostCategory
 }
 
 // WhereFacts reads the machine's records and the where record in one exchange.
@@ -143,6 +153,7 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 		}
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
 			f.Held = r.Held
+			f.Tiers, f.CostByTier = r.Tiers, r.CostByTier
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}

@@ -231,6 +231,12 @@ footer a:hover { color: var(--text); }
 .streams .row.head > :nth-child(8) { text-align: center; }  /* width set by app.js to the n / total cell's */
 .streams .row > :nth-child(2) { justify-self: end; }
 .streams .row:not(.head):not(.total) { border-bottom: 0; }
+/* Cost breakdown: the where record's tiers, inside Work so the locked panels stay
+   in order. A friends row is token counts, never a dollar (docs/SPEC-SPRINT.md). */
+.cost-breakdown { padding: 0.25rem 2rem 1.25rem; }
+.cost-head { margin: 0.75rem 0 0.35rem; color: var(--text-3); font-size: 0.875rem; }
+.cost-line { display: flex; justify-content: space-between; gap: 1.5rem; padding: 0.15rem 0; }
+.cost-line .num { text-align: right; }
 .streams .row.group-start { border-top: 1px solid var(--border); }
 .fleet .row > :nth-child(2), .friends .row > :nth-child(2) { justify-self: end; }
 
@@ -342,6 +348,10 @@ footer a:hover { color: var(--text); }
 <section class="panel streams">
   <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span></div>
   <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
+  <div class="cost-breakdown" id="cost-breakdown">
+    <div class="cost-head">Cost breakdown</div>
+    <div id="cost-by-tier"></div>
+  </div>
 </section>
 
 <section class="panel fleet">

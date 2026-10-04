@@ -449,6 +449,11 @@ type whereView struct {
 	// judgments naming one of their primaries; absent without --cards.
 	Cards     []dealtCard   `json:"cards,omitempty"`
 	Judgments []judgmentRef `json:"judgments,omitempty"`
+	// Tiers and CostByTier are the friends cost category (docs/SPEC-SPRINT.md,
+	// the friends category), copied from the where record. The friends row is
+	// token counts and has no dollar field. Absent when the record was not taken.
+	Tiers      []sprint.CostCategory `json:"tiers,omitempty"`
+	CostByTier []sprint.CostCategory `json:"cost_by_tier,omitempty"`
 }
 
 // dealtCard is a work card dealt to a fleet row and not finished: the row (a machine, or a
@@ -696,6 +701,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		return whereView{}, "", err
 	}
 	v.Held = int64(facts.Held)
+	v.Tiers, v.CostByTier = facts.Tiers, facts.CostByTier
 	rate := sprint.LandingRate(facts.Landed, v.Landed, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
 	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], rate)))
 

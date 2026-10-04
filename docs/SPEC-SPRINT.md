@@ -356,9 +356,10 @@ table's count cells; the whole sprint's average is the landed count over the
 running time since the first start. What the cells do not carry is the where
 record, one key beside the machine's (`sprint:where`, removed by `teardown`):
 the epoch and the work table's revision it was counted at, the held cards
-there, and the landing stamps the rate can still count (those from the start
+there, the landing stamps the rate can still count (those from the start
 of the last 60 minutes of running time on, oldest first, at most 10,000: the
-window only moves forward). Held is not a count a step can keep by adding
+window only moves forward), and `tiers` and `cost_by_tier` (section 2, the
+friends category), counted from that same twin so where reads no card for them. Held is not a count a step can keep by adding
 one, since one release or one need frees or holds a whole chain, so the tick
 counts it whole: at the end of every tick, RUNNING or STOPPED (a verb moves
 cards while the machine is stopped), when the work table's revision is not the
@@ -792,6 +793,8 @@ section 5), end, the tokens, wait, run, predicted, actual and
 `--json` carries the same value as `cost`. No reader or member removed, no read
 card retired and no consumer record cleaned up can lose cost: the record is
 already in the card. A figure not known prints `-`, never 0.
+
+**The friends category.** The owner, 2026-10-04: "i don't want dollar amounts for friends. token counts are fine." `tiers` and `cost_by_tier` are the same rows (`sprint.TierCosts`), counted by the tick into the where record from the twin it already holds (section 1), and `where --json` carries both. One row per machine tier that spent (flash, pro, frontier, then any other tier by name) and then a friends row. A consumer whose who is a friend's row is that friends row: the token counts reported, by class, a class not reported left out, and no dollar field, not on the row and not moved onto a machine tier. A dollar the friend reported is dropped. Every other consumer is its tier (the tier on its record, else its route's) and that tier's charged dollars, actual where one was reported, else predicted, the exact decimal. A category with nothing reported is left out. Until the where record is taken the two are absent: where does not scan cards to build them. The dashboard's Cost breakdown shows the same rows, the friends row as token counts and not as dollars. The words that asked for the category are the lock amendment (internal/sprint/TABLES.lock).
 
 **A card is a tree of steps** (`internal/cardtree`; nova-tools#5174 rule 7). The owner,
 2026-10-02: "any card can be a tree"; "a batch card is just nomenclature"; a script step is "a
