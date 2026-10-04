@@ -23,6 +23,7 @@ usage:
   nova-bus draft --bus <dir> --as <name> --reply-to <id-or-path-or-subject> --body-file <path> --draft-dir <dir> --remote <name> --branch <name>
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
   nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--no-push] [--dry-run]
+  nova-bus send --redis <addr> --op <id> (--file <path>|--stdin) --as <name>
   nova-bus send --bus <dir> (--prepared <path>|--prepared-stdin) --as <name> --remote <name> --branch <name>
   nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run]
   nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--bodies] [--advance --remote <name> --branch <name> [--dry-run]]

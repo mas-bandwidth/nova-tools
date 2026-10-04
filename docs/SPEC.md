@@ -123,7 +123,8 @@ SELFTALK OK files=<n> claims=<n> standing=0 installations=0 dated=<n>
 SELFTALK FAIL <file>:<line>: STANDING: <claim>
 SELFTALK FAIL <file>:<line>: <SHAPE>: <sentence>
 SELFTALK FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> shown=<n>
-SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n> body_bytes=<n>
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> to=<n> body_bytes=<n>
+SEND OK id=<id> queued=<n> body_bytes=<n>
 SEND FAIL <path or (stdin)>: <reason>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> ...
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
@@ -2865,6 +2866,7 @@ would be the most dangerous thing on the bus.
 ```
 nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>]
 nova-bus send --bus <dir> --file <path>|--stdin [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
+nova-bus send --redis <address> --op <stable-id> (--file <path>|--stdin) --as <name>
 nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
@@ -2881,6 +2883,15 @@ nova-bus names --bus <dir>
 
 every verb that runs git also takes [--git-timeout <seconds>], default 60
 ```
+
+Git remains `send`'s default transport. The explicit Redis form is
+`send --redis <address> --op <stable-id> (--file <path>|--stdin) --as
+<name>`: it queues one addressed delivery per `To:` recipient and retains
+`Cc:` as message data. Reusing `--op` makes the same sender's retry idempotent.
+`queued=<n>` confirms Redis accepted queue entries; it does not report a harness
+wake, acceptance receipt or completed work. The other verbs remain Git-backed.
+Redis `To:` values must be explicit recipient names; the Git roster aliases
+`all` and `table` are not expanded on this route.
 
 The binary is `nova-bus`, and that is its only name: no second binary, no alias
 shipped in the tool, no short form it also answers to. A tool that answers to two
@@ -2946,7 +2957,8 @@ SEND NOTE <what a tolerance did to this draft>
 SEND NOTE this note answers nothing (no Re: line); if it is a reply, name the note: Re: <id>
 SEND NOTE Re: subject matched <n> notes; closed the newest <id>; name the id to be exact
 DRAFT NOTE <what --re resolved, on stderr, because draft's stdout is a file>
-SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n> body_bytes=<n>
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> to=<n> body_bytes=<n>
+SEND OK id=<id> queued=<n> body_bytes=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>

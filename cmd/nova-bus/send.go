@@ -75,6 +75,8 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("send")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
+	redisAddr := f.fs.String("redis", "", "explicitly send through the Redis friend bus at this address; Git remains the default transport")
+	op := f.fs.String("op", "", "stable operation identity used to make Redis send retries idempotent")
 	file := f.fs.String("file", "", "the draft to send")
 	useStdin := f.fs.Bool("stdin", false, "read the draft from standard input instead of --file")
 	preparedFile := f.fs.String("prepared", "", "the prepared artifact to send or confirm")
@@ -88,8 +90,36 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "commit but do not push; the note is NOT on the bus until it is pushed")
 	dryRun := f.fs.Bool("dry-run", false, "stop after the preflight and the shaping: commit nothing, push nothing, print the note that would be sent")
-	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "remote": remote, "branch": branch}) {
+	redisSelected := false
+	for _, arg := range args {
+		if arg == "--redis" || arg == "-redis" || strings.HasPrefix(arg, "--redis=") || strings.HasPrefix(arg, "-redis=") {
+			redisSelected = true
+			break
+		}
+	}
+	required := map[string]*string{"bus": busDir, "remote": remote, "branch": branch}
+	if redisSelected {
+		required = nil
+	}
+	if !f.parse(args, stderr, required) {
 		return 2
+	}
+	if redisSelected {
+		if strings.TrimSpace(*redisAddr) == "" {
+			return refuse(stderr, "send", "--redis requires an address", verbHelp("send"))
+		}
+		for _, name := range []string{"bus", "remote", "branch", "no-push", "attempts", "git-timeout"} {
+			if f.set(name) {
+				return refuse(stderr, "send", "--"+name+" belongs to Git transport and cannot be combined with --redis", verbHelp("send"))
+			}
+		}
+		if strings.TrimSpace(*op) == "" {
+			return refuse(stderr, "send", "--op is required with Redis transport and must be reused for retries", verbHelp("send"))
+		}
+		return cmdSendRedis(*redisAddr, *op, *file, *useStdin, *preparedFile, *usePreparedStdin, *as, *slug, *host, *dryRun, stdin, stdout, stderr, now)
+	}
+	if f.set("op") {
+		return refuse(stderr, "send", "--op is only used with Redis transport", verbHelp("send"))
 	}
 	if !f.attempts(*attempts, stderr) {
 		return 2
@@ -181,7 +211,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 			return 1
 		}
 		to, _ := p.Note.Header.Recipients(c)
-		fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d state=%s wakes=%d body_bytes=%d\n",
+		fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d state=%s to=%d body_bytes=%d\n",
 			oneline.Field(art.ID), oneline.Field(art.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, oneline.Field(res.State), len(to), len(p.Note.Body))
 		return 0
 	}
@@ -314,7 +344,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		return 1
 	}
 	to, _ := prepared.Note.Header.Recipients(t.Config)
-	fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d wakes=%d body_bytes=%d\n",
+	fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d to=%d body_bytes=%d\n",
 		oneline.Field(prepared.Note.Header.ID), oneline.Field(prepared.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, len(to), len(prepared.Note.Body))
 	return 0
 }

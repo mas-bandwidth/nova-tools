@@ -310,6 +310,11 @@ func splitAddresses(line string) []string {
 	return out
 }
 
+// AddressNames applies the bus's parenthesis-aware address-list syntax without
+// roster resolution. Redis transport uses it for the explicit recipient names
+// carried directly in a draft.
+func AddressNames(line string) []string { return splitAddresses(line) }
+
 // wordSeparatorAt reports the word separator beginning at byte i, case-insensitively. It
 // compares in place rather than over a lower-cased copy of the line, because lower-casing
 // can change a string's LENGTH -- U+0130 is one rune and lower-cases to two -- and an

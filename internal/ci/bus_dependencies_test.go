@@ -10,24 +10,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The bus is messages over Git. Only its bus, build-info and one-line modules
-// are needed, the verb-help seam every living tool parses its flags through
-// (internal/nsprint/verbflag: standard library only, no decision and no
-// storage; it prints a verb's help on -h), and the three general process and file
-// doors: internal/gitrun (the one git runner) and internal/subproc (the deadline
-// and WaitDelay every child gets), both standard library only, and
-// internal/atomicfile (write-then-rename with fsync; it imports only
-// internal/oneline). Every other import is standard library. Walk all platforms
+// nova-bus keeps Git as its default transport and offers Redis only through
+// send --redis. The binary therefore reaches both narrow transport adapters:
+// internal/gitrun/subproc for Git and internal/friendbus/redisconn for explicit
+// Redis sends. The Redis client is allowed only underneath those adapters; all
+// other dependencies remain standard-library-only. Walk all platforms
 // transitively so an intermediate package cannot hide an added dependency.
 // busAllowed is the module-local packages cmd/nova-bus may reach.
 var busAllowed = map[string]bool{
-	"github.com/mas-bandwidth/nova-tools/internal/bus":              true,
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo":        true,
-	"github.com/mas-bandwidth/nova-tools/internal/oneline":          true,
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag": true,
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile":       true,
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun":           true,
-	"github.com/mas-bandwidth/nova-tools/internal/subproc":          true,
+	"github.com/mas-bandwidth/nova-tools/internal/bus":               true,
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo":         true,
+	"github.com/mas-bandwidth/nova-tools/internal/friendbus":         true,
+	"github.com/mas-bandwidth/nova-tools/internal/oneline":           true,
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth": true,
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag":  true,
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile":        true,
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun":            true,
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn":         true,
+	"github.com/mas-bandwidth/nova-tools/internal/subproc":           true,
 }
 
 func TestBusHasOnlyGeneralModulesAndStandardLibrary(t *testing.T) {
@@ -66,8 +66,14 @@ func TestBusHasOnlyGeneralModulesAndStandardLibrary(t *testing.T) {
 					}
 					walk(dep)
 				} else {
+					redisClient := strings.HasPrefix(dep, "github.com/redis/go-redis/v9")
+					redisAdapter := pkg == module+"internal/friendbus" || pkg == module+"internal/redisconn"
+					if redisClient {
+						assert.True(t, redisAdapter, "%s reaches Redis client %s outside the explicit transport adapters through %s", root, dep, pkg)
+						continue
+					}
 					first, _, _ := strings.Cut(dep, "/")
-					assert.False(t, strings.Contains(first, "."), "%s reaches third-party dependency %s through %s; the bus uses the standard library", root, dep, pkg)
+					assert.False(t, strings.Contains(first, "."), "%s reaches third-party dependency %s through %s; only friendbus and redisconn may use the Redis client", root, dep, pkg)
 				}
 			}
 		}

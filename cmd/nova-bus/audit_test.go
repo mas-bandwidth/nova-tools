@@ -94,6 +94,15 @@ var messageBusAudit = audit.Config{
 		"oneline.Quote", "quoteList", "cappedList", "hostField",
 	},
 	Imports: []string{
+		// send_redis.go opens a bounded Redis connection and publishes through the
+		// durable friendbus package. context carries request lifetime, os reads only
+		// credentials and draft input, and none writes directly to a stream; every
+		// command result is rendered through the normal one-line escape below.
+		`"context"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/friendbus"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/redisconn"`,
 		// the verb-help seam (the CLI style's rule (b), #4505): it prints only flag names, their
 		// usage literals and lines of this package's own usage const, to the stdout run hands
 		// it, on -h; it never prints an argument, so nothing it writes can carry a newline in.

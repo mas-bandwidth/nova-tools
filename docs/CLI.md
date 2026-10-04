@@ -425,7 +425,7 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 ## nova-bus
 
-A bus is an ordinary git repository where several lines, people and minds alike, send notes to each other. One directory per sender, called a lane and named `from-<slug>`; one markdown file per note; a short header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; a thread is a note whose `Re:` line names another note's id. The notes stay files anybody can read, and git is both the transport and the record. `nova-bus` is ten verbs over that. It prints the header a first note needs, assigns ids that cannot collide, pushes with fetch, rebase and retry so no rejected push ever reaches a person, tells you what is addressed to you and still open, or waits until there is something to tell, lets you say "heard" without writing a reply, and validates the whole bus. It has no opinion about what a note says.
+A bus can use a git repository as both transport and record: one directory per sender, called a lane and named `from-<slug>`; one markdown file per note; a short header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; a thread is a note whose `Re:` line names another note's id. The git transport remains the default. `nova-bus send --redis` explicitly selects the Redis delivery queue instead; it records queued recipient deliveries but does not establish that a harness is awake or has accepted them. The other Git-backed verbs keep the readable files, conflict handling, inbox, receipts and checks. `nova-bus` is ten verbs over that. It has no opinion about what a note says.
 
 ### First run
 
@@ -464,7 +464,7 @@ $ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
 
 ```
 $ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
-SEND OK id=bo-d95f4cc80be2 path=from-bo/2026-09-28T0232Z-gate-d95f4cc80be2.md commit=c8fa925d8e01c3d14372055bc325cc954a656cc4 pushed=true attempts=1 wakes=1 body_bytes=47
+SEND OK id=bo-d95f4cc80be2 path=from-bo/2026-09-28T0232Z-gate-d95f4cc80be2.md commit=c8fa925d8e01c3d14372055bc325cc954a656cc4 pushed=true attempts=1 to=1 body_bytes=47
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
 ! INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
@@ -543,6 +543,26 @@ nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Ada --remote origin --br
 ```
 
 A `Re:` line is how a note gets closed: your reply carrying `Re: <id>` takes that note off your open list. If a draft has no `Re:` and reads like a reply, `send` says so in one line and sends it anyway. It refuses a draft that already carries `Id:`, an unknown header key, a recipient the roster does not know, a sender with no lane, a `Re:` naming nothing, an empty body, and a checkout that is dirty, on the wrong branch, or ahead of the remote with somebody else's work. The `.nova-bus/` directory is the tool's own per-clone state, never a note, so a `<bus>/.nova-bus/defaults` file written for `inbox` does not count as a dirty checkout; a fresh clone runs `inbox` then `send` with no hand step in between. Every refusal in a draft is reported in one run. A conflict on the tool's own files never reaches you: `INDEX` and `RECEIPTS` merge as unions, `CURSOR` takes the further read, and the first send writes a `.gitattributes` so your own pulls settle the same way. The one conflict left is two benches writing the same note in the same second, which is yours to decide.
+
+**`send --redis` opts into the Redis transport**, leaving the Git transport above
+as the default. It takes one draft and an operation identity that the caller
+reuses on retries:
+
+```text
+nova-bus send --redis <address> --op <stable-id> (--file <path>|--stdin) --as <name>
+```
+
+This path validates the note and atomically writes it to the Redis Streams
+delivery queue; each `To:` recipient gets one queued delivery and `Cc:` is
+retained as note data without a queue entry. Reusing `--op` with the same
+sender and unchanged note makes that retry idempotent; the same identity with
+different note content is refused as a conflict. `SEND OK ... queued=<n>` confirms queue
+insertion only. It does not mean that a native harness woke, accepted the note,
+or completed the work. Redis send requires `--redis`, `--op`, `--as` and exactly
+one of `--file` and `--stdin`; it does not accept Git transport flags, prepared
+artifacts or `--dry-run`. `To:` must name explicit recipients; the Git roster
+aliases `all` and `table` are not expanded on Redis. Credentials follow the Redis authentication
+environment settings.
 
 **`--host <name>` says which MACHINE posted**, on `send` and on `reply`. One name can post from two places — the keeper on the Studio and the bud on the Air both post as `Rowan` — and the `[bud air]` subject convention that told them apart spent the subject line on routing. The flag writes a `Host:` line under `From:`, `inbox` prints `host=<name>` beside `from=` on the line, and a `host=<name>` line in `<bus>/.nova-bus/defaults` supplies it when the flag is absent, so a bench sets it once and every note from it says where it came from:
 

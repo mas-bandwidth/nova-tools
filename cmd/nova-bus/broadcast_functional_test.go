@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --to all resolved from participants; to wakes, cc does not; send prints wakes=<n>
+// --to all resolved from participants; To counts exclude Cc; send prints to=<n>
 func TestSendToAllExpandsToExactlyTheParticipants(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -19,7 +19,7 @@ func TestSendToAllExpandsToExactlyTheParticipants(t *testing.T) {
 	r := invoke(t, "From: Ada\nTo: all\nSubject: s\n\nbody\n",
 		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3", "--no-push").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "wakes=3")
+		mustContain(t, "stdout", "to=3")
 	path := field(t, r.stdout, "path=")
 	stored, err := os.ReadFile(filepath.Join(checkout, filepath.FromSlash(path)))
 	require.NoError(t, err)
@@ -34,17 +34,17 @@ func TestSendCcLandsWithoutAWakeMark(t *testing.T) {
 	invoke(t, "From: Ada\nTo: Bo\nCc: Dana\nSubject: s\n\nbody\n",
 		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3", "--no-push").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "wakes=1")
+		mustContain(t, "stdout", "to=1")
 }
 
-func TestSendPrintsWakesCountingToNamesOnlyForTable(t *testing.T) {
+func TestSendPrintsToCountOnlyForTable(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	r := invoke(t, "From: Ada\nTo: table\nSubject: s\n\nbody\n",
 		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3", "--no-push").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "wakes=2")
+		mustContain(t, "stdout", "to=2")
 	path := field(t, r.stdout, "path=")
 	stored, err := os.ReadFile(filepath.Join(checkout, filepath.FromSlash(path)))
 	require.NoError(t, err)
@@ -64,5 +64,5 @@ func TestDraftToAllRoundTripResolvesAtSend(t *testing.T) {
 	sent := strings.Replace(r.stdout, "<the note goes here>\n", "the gate opens.\n", 1)
 	invoke(t, sent, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3", "--no-push").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "wakes=3")
+		mustContain(t, "stdout", "to=3")
 }
