@@ -9,6 +9,9 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
@@ -92,9 +95,7 @@ func TestNoTestGlobsTheSharedTempDir(t *testing.T) {
 			if src.HasDirNamed("testdata") {
 				continue
 			}
-			if src.ParseErr != nil {
-				t.Fatal(src.ParseErr)
-			}
+			require.NoError(t, src.ParseErr)
 			for _, f := range sharedTempReadsIn(src.Rel, tree.FSet, src.AST) {
 				key := f.File + ":" + f.Func
 				seen[key] = true
@@ -112,7 +113,7 @@ func TestNoTestGlobsTheSharedTempDir(t *testing.T) {
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -125,36 +126,24 @@ func TestSharedTempReadScannerReadsTheFixtures(t *testing.T) {
 
 	before := readFile(t, filepath.Join("testdata", "sharedtemp", "before.go.txt"))
 	found, err := sharedTempReads("internal/fixture/mutate_test.go", []byte(before))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := []struct{ fn, call string }{
 		{"TestRemovesItsWorktree", "filepath.Glob"},
 		{"TestRemovesItsWorktree", "filepath.Glob"},
 		{"TestReadsTheTempDirThroughAVariable", "os.ReadDir"},
 		{"TestReadsTheTempDirThroughIoutil", "ioutil.ReadDir"},
 	}
-	if len(found) != len(want) {
-		t.Fatalf("the pre-fix fixture holds %d shared-temp listings, the scanner found %d: %v", len(want), len(found), found)
-	}
+	require.Equalf(t, len(want), len(found), "the pre-fix fixture holds %d shared-temp listings, the scanner found %d: %v", len(want), len(found), found)
 	for i, w := range want {
 		got := found[i]
-		if got.Func != w.fn || got.Call != w.call {
-			t.Errorf("finding %d = %s %s, want %s %s", i, got.Func, got.Call, w.fn, w.call)
-		}
-		if got.Line == 0 {
-			t.Errorf("finding %d carries no line; a finding a reader cannot open is half a finding", i)
-		}
+		assert.Truef(t, got.Func == w.fn && got.Call == w.call, "finding %d = %s %s, want %s %s", i, got.Func, got.Call, w.fn, w.call)
+		assert.NotZerof(t, got.Line, "finding %d carries no line; a finding a reader cannot open is half a finding", i)
 	}
 
 	after := readFile(t, filepath.Join("testdata", "sharedtemp", "after.go.txt"))
 	found, err = sharedTempReads("internal/fixture/mutate_test.go", []byte(after))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(found) != 0 {
-		t.Errorf("the fixed fixture reads its own t.TempDir() and must pass, the scanner found %v", found)
-	}
+	require.NoError(t, err)
+	assert.Emptyf(t, found, "the fixed fixture reads its own t.TempDir() and must pass, the scanner found %v", found)
 }
 
 // sharedTempReads reads one _test.go and returns every listing of a directory

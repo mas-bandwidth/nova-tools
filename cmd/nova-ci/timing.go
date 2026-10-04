@@ -1,11 +1,11 @@
 //go:build ignore
 
-// timing.go is the committed script behind ideas #791: it prints, for the
+// timing.go is the committed script: it prints, for the
 // last 200 pull requests of mas-bandwidth/schema and
 // mas-bandwidth/nova-tools, the time from PR-open to all-green split into
 // queue, setup and test per job -- one TSV row per job, its three spans in
 // whole seconds, and the envelope its PR opened under, "-" for a PR that
-// never went all-green. The next-sprint report of 2026-09-22 asked for the
+// never went all-green. The script's purpose is the
 // measurement ("Cards to cut"): how long a pull request waits before its
 // first runner, how long setup holds it, how long its tests run, is the
 // split every "CI feels slow" argument actually turns on.
@@ -33,7 +33,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/timing"
@@ -111,21 +113,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, fmt.Sprintf("%s is not a log the table can use: %s", oneline.Field(*logPath), oneline.Err(err)))
 	}
-	rows, err := timing.Rows(timing.Select(events, keys(want), *last))
+	rows, err := timing.Rows(timing.Select(events, slices.Collect(maps.Keys(want)), *last))
 	if err != nil {
 		return refuse(stderr, oneline.Err(err))
 	}
 	fmt.Fprint(stdout, timing.Render(rows))
 	return 0
-}
-
-// keys flattens the set of wanted repositories back to a slice for Select.
-func keys(want map[string]bool) []string {
-	var out []string
-	for r := range want {
-		out = append(out, r)
-	}
-	return out
 }
 
 // refuse prints this script's one-line refusal and names its door.

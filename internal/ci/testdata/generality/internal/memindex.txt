@@ -1,0 +1,4 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 2
+internal/memindex/memindex.go:space 5
+internal/memindex/verify.go:space 1

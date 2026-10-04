@@ -5,6 +5,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // THE SEQUENCE A FRIEND ACTUALLY RUNS, end to end, in the order they run it: wait for
@@ -31,8 +33,9 @@ func TestFriendSequenceWaitSendReceiptInbox(t *testing.T) {
 
 	clean := func(after string) {
 		t.Helper()
-		if out := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain", "--untracked-files=all")); out != "" {
-			t.Fatalf("%s left the checkout dirty, so the next verb in the sequence refuses over files the friend never touched:\n%s", after, out)
+		{
+			out := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain", "--untracked-files=all"))
+			require.Emptyf(t, out, "%s left the checkout dirty, so the next verb in the sequence refuses over files the friend never touched:\n%s", after, out)
 		}
 	}
 	clean("the fixture")
@@ -50,9 +53,7 @@ func TestFriendSequenceWaitSendReceiptInbox(t *testing.T) {
 		mustCode(t, 0).
 		mustContain(t, "stdout", "WAIT OK new=1").
 		mustContain(t, "stdout", "WAIT DONE reason=new")
-	if err := <-pushed; err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, <-pushed)
 	clean("wait")
 
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").

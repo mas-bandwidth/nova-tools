@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fake is a store that answers what a test tells it to and keeps what it was
@@ -150,11 +153,11 @@ func shelf(held map[string]string, between func(map[string]string)) *fake {
 func oneLine(t *testing.T, what string, err error) string {
 	t.Helper()
 	if err == nil {
-		t.Fatalf("%s: no error", what)
+		require.Error(t, err, "%s: no error", what)
 	}
 	line := err.Error()
 	if strings.ContainsAny(line, "\n\r") {
-		t.Errorf("%s: the error is more than one line: %q", what, line)
+		assert.False(t, strings.ContainsAny(line, "\n\r"), "%s: the error is more than one line: %q", what, line)
 	}
 	return line
 }
@@ -162,7 +165,7 @@ func oneLine(t *testing.T, what string, err error) string {
 func TestQueryAsksForTheLibrarysCodeByItsName(t *testing.T) {
 	t.Parallel()
 	if got, want := two().Query(), (redis.FunctionListQuery{LibraryNamePattern: "lib_one", WithCode: true}); got != want {
-		t.Fatalf("Query = %+v, want %+v", got, want)
+		require.Equal(t, want, got, "Query = %+v, want %+v", got, want)
 	}
 }
 
@@ -190,22 +193,22 @@ func TestJudgeSaysSameOnlyForThisLibrarysNameAndCode(t *testing.T) {
 	} {
 		state, err := lib.Judge(c.reply)
 		if state != c.want {
-			t.Errorf("%s: %v, want %v", c.name, state, c.want)
+			assert.Equal(t, c.want, state, "%s: %v, want %v", c.name, state, c.want)
 		}
 		if c.want == Same {
 			if err != nil {
-				t.Errorf("%s: %v", c.name, err)
+				assert.NoError(t, err, "%s: %v", c.name, err)
 			}
 			continue
 		}
 		line := oneLine(t, c.name, err)
 		var mismatch *MismatchError
 		if !errors.As(err, &mismatch) {
-			t.Errorf("%s: the error is no *MismatchError: %v", c.name, err)
+			assert.ErrorAs(t, err, &mismatch, "%s: the error is no *MismatchError: %v", c.name, err)
 			continue
 		}
 		if *mismatch != (MismatchError{Library: "lib_one", Want: twoDigest, Loaded: c.loaded, Remedy: mismatch.Remedy}) {
-			t.Errorf("%s: %+v, want lib_one, want=%s loaded=%q", c.name, *mismatch, twoDigest, c.loaded)
+			assert.Equal(t, (MismatchError{Library: "lib_one", Want: twoDigest, Loaded: c.loaded, Remedy: mismatch.Remedy}), *mismatch, "%s: %+v, want lib_one, want=%s loaded=%q", c.name, *mismatch, twoDigest, c.loaded)
 		}
 		loaded := c.loaded
 		if c.want == Absent {
@@ -213,7 +216,7 @@ func TestJudgeSaysSameOnlyForThisLibrarysNameAndCode(t *testing.T) {
 		}
 		for _, want := range []string{"library lib_one ", "loaded=" + loaded + " ", "want=" + twoDigest + ";", "remedy: load this binary's library"} {
 			if !strings.Contains(line, want) {
-				t.Errorf("%s: the error does not say %q: %s", c.name, want, line)
+				assert.Contains(t, line, want, "%s: the error does not say %q: %s", c.name, want, line)
 			}
 		}
 	}
@@ -226,7 +229,7 @@ func TestTheMismatchNamesTheRemedyTheLibraryCarries(t *testing.T) {
 	for _, reply := range [][]redis.Library{nil, {{Name: "lib_one", Code: "other"}}} {
 		_, err := lib.Judge(reply)
 		if line := oneLine(t, "Judge", err); !strings.HasSuffix(line, `; remedy: mytool fn load\x0a--redis <addr>`) {
-			t.Errorf("the error does not end with the library's remedy on its one line: %s", line)
+			assert.Failf(t, "", "the error does not end with the library's remedy on its one line: %s", line)
 		}
 	}
 }
@@ -241,7 +244,7 @@ func TestTheErrorsAreOneLineWhateverTheyHold(t *testing.T) {
 			`remedy: a function name belongs to one library: load the version of the other library that no longer registers it, then load a\x0ab again`: &CollisionError{Library: "a\nb", Held: []Held{{"c d", "e\nf"}}},
 	} {
 		if got := oneLine(t, want, err); got != want {
-			t.Errorf("the error reads\n%s\nwant\n%s", got, want)
+			assert.Equal(t, want, got, "the error reads\n%s\nwant\n%s", got, want)
 		}
 	}
 }
@@ -250,18 +253,18 @@ func TestStatesAndOutcomesHaveTheirWords(t *testing.T) {
 	t.Parallel()
 	for state, want := range map[State]string{Unknown: "unknown", Same: "same", Different: "different", Absent: "absent", State(9): "unknown"} {
 		if got := state.String(); got != want {
-			t.Errorf("State %d reads %q, want %q", state, got, want)
+			assert.Equal(t, want, got, "State %d reads %q, want %q", state, got, want)
 		}
 	}
 	for outcome, want := range map[Outcome]string{Failed: "FAILED", Unchanged: "UNCHANGED", Loaded: "LOADED", Replaced: "REPLACED", Skipped: "SKIPPED", Outcome(9): "FAILED"} {
 		if got := outcome.String(); got != want {
-			t.Errorf("Outcome %d reads %q, want %q", outcome, got, want)
+			assert.Equal(t, want, got, "Outcome %d reads %q, want %q", outcome, got, want)
 		}
 	}
 	var state State
 	var outcome Outcome
 	if state != Unknown || outcome != Failed {
-		t.Errorf("the zero State is %v and the zero Outcome %v: a value nobody set must claim nothing", state, outcome)
+		assert.Failf(t, "", "the zero State is %v and the zero Outcome %v: a value nobody set must claim nothing", state, outcome)
 	}
 }
 
@@ -276,7 +279,7 @@ func TestAReceiptIsOneLineInTheLoadersShape(t *testing.T) {
 		`FAILED not\x20a\x0aname sha=`:                                   {Library: "not a\nname"},
 	} {
 		if got := receipt.String(); got != want {
-			t.Errorf("%+v reads %q, want %q", receipt, got, want)
+			assert.Equal(t, want, got, "%+v reads %q, want %q", receipt, got, want)
 		}
 	}
 }
@@ -296,14 +299,14 @@ func TestCheckAsksOnceAndChangesNothing(t *testing.T) {
 		store := holding(c.reply...)
 		state, err := lib.Check(context.Background(), store)
 		if state != c.want || (err == nil) != (c.want == Same) {
-			t.Errorf("%s: Check = %v %v", c.name, state, err)
+			assert.Failf(t, "", "%s: Check = %v %v", c.name, state, err)
 		}
 		judged, jerr := lib.Judge(c.reply)
 		if judged != state || (err != nil && err.Error() != jerr.Error()) {
-			t.Errorf("%s: Check says %v %v and Judge %v %v", c.name, state, err, judged, jerr)
+			assert.Failf(t, "", "%s: Check says %v %v and Judge %v %v", c.name, state, err, judged, jerr)
 		}
 		if sent := store.commands(); !slices.Equal(sent, []string{"FUNCTION LIST LIBRARYNAME lib_one WITHCODE"}) {
-			t.Errorf("%s: Check sent %q, want one FUNCTION LIST", c.name, sent)
+			assert.True(t, slices.Equal(sent, []string{"FUNCTION LIST LIBRARYNAME lib_one WITHCODE"}), "%s: Check sent %q, want one FUNCTION LIST", c.name, sent)
 		}
 	}
 }
@@ -326,20 +329,20 @@ func TestCheckSaysUnknownWhenTheStoreCannotBeRead(t *testing.T) {
 		store.list = func(context.Context, redis.FunctionListQuery) ([]redis.Library, error) { return nil, c.cause }
 		state, err := two().Check(context.Background(), store)
 		if state != Unknown {
-			t.Errorf("%s: Check = %v, want unknown", c.name, state)
+			assert.Equal(t, Unknown, state, "%s: Check = %v, want unknown", c.name, state)
 		}
 		line := oneLine(t, c.name, err)
 		for _, want := range c.want {
 			if !strings.Contains(line, want) {
-				t.Errorf("%s: the error does not say %q: %s", c.name, want, line)
+				assert.Contains(t, line, want, "%s: the error does not say %q: %s", c.name, want, line)
 			}
 		}
 		if !errors.Is(err, c.cause) {
-			t.Errorf("%s: the error does not wrap its cause", c.name)
+			assert.ErrorIs(t, err, c.cause, "%s: the error does not wrap its cause", c.name)
 		}
 		var mismatch *MismatchError
 		if errors.As(err, &mismatch) {
-			t.Errorf("%s: a store that was not read is said to hold another library: %v", c.name, err)
+			assert.Failf(t, "", "%s: a store that was not read is said to hold another library: %v", c.name, err)
 		}
 	}
 }
@@ -349,10 +352,10 @@ func TestLoadSendsTheSourceOnceAndReturnsItsDigest(t *testing.T) {
 	store := holding()
 	digest, err := two().Load(context.Background(), store)
 	if err != nil || digest != twoDigest {
-		t.Fatalf("Load = %q %v, want %q", digest, err, twoDigest)
+		require.Failf(t, "", "Load = %q %v, want %q", digest, err, twoDigest)
 	}
 	if sent := store.commands(); !slices.Equal(sent, []string{"FUNCTION LOAD REPLACE " + twoSource}) {
-		t.Fatalf("Load sent %q, want one FUNCTION LOAD REPLACE of the source", sent)
+		require.True(t, slices.Equal(sent, []string{"FUNCTION LOAD REPLACE " + twoSource}), "Load sent %q, want one FUNCTION LOAD REPLACE of the source", sent)
 	}
 }
 
@@ -378,19 +381,19 @@ func TestLoadSaysWhatTheStoreHoldsAfterAnError(t *testing.T) {
 		store.load = func(context.Context, string) (string, error) { return "", c.cause }
 		digest, err := two().Load(context.Background(), store)
 		if digest != "" {
-			t.Errorf("%s: Load returned the digest %q beside its error", c.name, digest)
+			assert.Empty(t, digest, "%s: Load returned the digest %q beside its error", c.name, digest)
 		}
 		line := oneLine(t, c.name, err)
 		for _, want := range c.want {
 			if !strings.Contains(line, want) {
-				t.Errorf("%s: the error does not say %q: %s", c.name, want, line)
+				assert.Contains(t, line, want, "%s: the error does not say %q: %s", c.name, want, line)
 			}
 		}
 		if !errors.Is(err, c.cause) {
-			t.Errorf("%s: the error does not wrap its cause", c.name)
+			assert.ErrorIs(t, err, c.cause, "%s: the error does not wrap its cause", c.name)
 		}
 		if sent := store.commands(); len(sent) != 1 {
-			t.Errorf("%s: Load sent %d commands, want the load alone", c.name, len(sent))
+			assert.Len(t, sent, 1, "%s: Load sent %d commands, want the load alone", c.name, len(sent))
 		}
 	}
 }
@@ -405,7 +408,7 @@ func TestLoadTakesOnlyTheLibrarysNameForAnAnswer(t *testing.T) {
 		digest, err := two().Load(context.Background(), store)
 		line := oneLine(t, "Load", err)
 		if digest != "" || !strings.Contains(line, "redisfn: load lib_one: the store answered ") || !strings.Contains(line, "and not the library's name") {
-			t.Errorf("answer %q: Load = %q %s", answer, digest, line)
+			assert.Failf(t, "", "answer %q: Load = %q %s", answer, digest, line)
 		}
 	}
 }
@@ -431,19 +434,19 @@ func TestLoadNamesTheFunctionAndTheLibraryThatHoldsIt(t *testing.T) {
 	line := oneLine(t, "Load", err)
 	var collision *CollisionError
 	if digest != "" || !errors.As(err, &collision) {
-		t.Fatalf("Load = %q %v, want a *CollisionError", digest, err)
+		require.Failf(t, "", "Load = %q %v, want a *CollisionError", digest, err)
 	}
 	want := []Held{{"Moved_Two", "lib_old"}, {"computed", "lib_other"}, {"moved_one", "lib_old"}}
 	if collision.Library != "lib_new" || !slices.Equal(collision.Held, want) || collision.Unread != nil {
-		t.Errorf("the collision is %+v, want lib_new and %+v", *collision, want)
+		assert.Failf(t, "", "the collision is %+v, want lib_new and %+v", *collision, want)
 	}
 	if want := "redisfn: load lib_new: the store refused it and holds what it held before: " +
 		"function Moved_Two is registered by library lib_old, function computed is registered by library lib_other, function moved_one is registered by library lib_old; " +
 		"remedy: a function name belongs to one library: load the version of the other library that no longer registers it, then load lib_new again"; line != want {
-		t.Errorf("the error reads\n%s\nwant\n%s", line, want)
+		assert.Failf(t, "", "the error reads\n%s\nwant\n%s", line, want)
 	}
 	if sent := store.commands(); len(sent) != 2 || sent[1] != "FUNCTION LIST" {
-		t.Errorf("Load sent %d commands ending in %q, want the load and one FUNCTION LIST of every library", len(sent), sent[len(sent)-1])
+		assert.Failf(t, "", "Load sent %d commands ending in %q, want the load and one FUNCTION LIST of every library", len(sent), sent[len(sent)-1])
 	}
 }
 
@@ -458,10 +461,10 @@ func TestLoadNamesTheFunctionWhenItsHolderIsGone(t *testing.T) {
 	line := oneLine(t, "Load", err)
 	var collision *CollisionError
 	if !errors.As(err, &collision) || !slices.Equal(collision.Held, []Held{{Function: "fa"}}) || collision.Unread != nil {
-		t.Fatalf("Load = %v, want a collision on fa with no holder", err)
+		require.Failf(t, "", "Load = %v, want a collision on fa with no holder", err)
 	}
 	if !strings.Contains(line, "function fa was registered by another library when the store refused, and by none a moment later;") {
-		t.Errorf("the error does not say the holder is gone: %s", line)
+		assert.Contains(t, line, "function fa was registered by another library when the store refused, and by none a moment later;", "the error does not say the holder is gone: %s", line)
 	}
 }
 
@@ -475,13 +478,13 @@ func TestLoadNamesTheFunctionWhenTheHoldersCannotBeRead(t *testing.T) {
 	line := oneLine(t, "Load", err)
 	var collision *CollisionError
 	if !errors.As(err, &collision) || !slices.Equal(collision.Held, []Held{{Function: "fa"}}) || collision.Unread != error(cause) {
-		t.Fatalf("Load = %v, want a collision on fa whose holders were not read", err)
+		require.Failf(t, "", "Load = %v, want a collision on fa whose holders were not read", err)
 	}
 	if !errors.Is(err, cause) {
-		t.Errorf("the error does not wrap the reason the holders were not read")
+		assert.ErrorIs(t, err, cause, "the error does not wrap the reason the holders were not read")
 	}
 	if !strings.Contains(line, "function fa is registered by another library (which one could not be read: NOPERM User seat has no permissions") {
-		t.Errorf("the error does not say why the holder is not named: %s", line)
+		assert.Contains(t, line, "function fa is registered by another library (which one could not be read: NOPERM User seat has no permissions", "the error does not say why the holder is not named: %s", line)
 	}
 }
 
@@ -510,10 +513,10 @@ func TestEnsureLoadsOnlyWhenTheStoreDoesNotHoldThisCode(t *testing.T) {
 		store := holding(c.reply...)
 		receipt, err := lib.Ensure(context.Background(), store)
 		if err != nil || receipt != c.want {
-			t.Errorf("%s: Ensure = %+v %v, want %+v", c.name, receipt, err, c.want)
+			assert.Failf(t, "", "%s: Ensure = %+v %v, want %+v", c.name, receipt, err, c.want)
 		}
 		if sent := store.commands(); !slices.Equal(sent, c.sent) {
-			t.Errorf("%s: Ensure sent %q, want %q", c.name, sent, c.sent)
+			assert.True(t, slices.Equal(sent, c.sent), "%s: Ensure sent %q, want %q", c.name, sent, c.sent)
 		}
 	}
 }
@@ -545,16 +548,16 @@ func TestLoadMissingLoadsOnlyWhenTheStoreHoldsNoLibraryOfTheName(t *testing.T) {
 	} {
 		store := holding(c.reply...)
 		store.load = func(context.Context, string) (string, error) {
-			t.Errorf("%s: LoadMissing sent FUNCTION LOAD REPLACE", c.name)
+			assert.Failf(t, "", "%s: LoadMissing sent FUNCTION LOAD REPLACE", c.name)
 			return "", errors.New("never")
 		}
 		store.add = func(_ context.Context, code string) (string, error) { return nameOf(code), nil }
 		receipt, err := lib.LoadMissing(context.Background(), store)
 		if err != nil || receipt != c.want {
-			t.Errorf("%s: LoadMissing = %+v %v, want %+v", c.name, receipt, err, c.want)
+			assert.Failf(t, "", "%s: LoadMissing = %+v %v, want %+v", c.name, receipt, err, c.want)
 		}
 		if sent := store.commands(); !slices.Equal(sent, c.sent) {
-			t.Errorf("%s: LoadMissing sent %q, want %q", c.name, sent, c.sent)
+			assert.True(t, slices.Equal(sent, c.sent), "%s: LoadMissing sent %q, want %q", c.name, sent, c.sent)
 		}
 	}
 }
@@ -579,21 +582,21 @@ func TestLoadMissingNeverReplacesALibraryTheStoreHolds(t *testing.T) {
 		} {
 			receipt, err := load(two(), context.Background(), shelf(c.held, c.between))
 			if err != nil {
-				t.Fatalf("%s: %v", c.name, err)
+				require.NoError(t, err, "%s: %v", c.name, err)
 			}
 			if c.held["lib_one"] != other {
 				found = append(found, c.name+": "+receipt.String())
 			} else if receipt.Outcome != Unchanged {
-				t.Errorf("%s: the store was left as it was and the receipt says %s", c.name, receipt)
+				assert.Failf(t, "", "%s: the store was left as it was and the receipt says %s", c.name, receipt)
 			}
 		}
 		return found
 	}
 	if found := replaced(Library.LoadMissing); len(found) != 0 {
-		t.Errorf("LoadMissing replaced a library the store held: %q", found)
+		assert.Len(t, found, 0, "LoadMissing replaced a library the store held: %q", found)
 	}
 	if found := replaced(Library.Ensure); len(found) != 2 {
-		t.Errorf("the reversed witness: a load that replaces (Ensure) replaced in %d of the 2 cases (%q), so this test would not see a LoadMissing that sent REPLACE", len(found), found)
+		assert.Len(t, found, 2, "the reversed witness: a load that replaces (Ensure) replaced in %d of the 2 cases (%q), so this test would not see a LoadMissing that sent REPLACE", len(found), found)
 	}
 }
 
@@ -630,7 +633,7 @@ func TestLoadMissingTakesTheStoresAnswersAndFailsOnTheRest(t *testing.T) {
 		store := holding()
 		store.list = func(context.Context, redis.FunctionListQuery) ([]redis.Library, error) { return nil, c.listErr }
 		store.load = func(context.Context, string) (string, error) {
-			t.Errorf("%s: LoadMissing sent FUNCTION LOAD REPLACE", c.name)
+			assert.Failf(t, "", "%s: LoadMissing sent FUNCTION LOAD REPLACE", c.name)
 			return "", errors.New("never")
 		}
 		store.add = func(_ context.Context, code string) (string, error) {
@@ -641,18 +644,18 @@ func TestLoadMissingTakesTheStoresAnswersAndFailsOnTheRest(t *testing.T) {
 		}
 		receipt, err := lib.LoadMissing(context.Background(), store)
 		if receipt != c.want {
-			t.Errorf("%s: LoadMissing = %+v, want %+v", c.name, receipt, c.want)
+			assert.Equal(t, c.want, receipt, "%s: LoadMissing = %+v, want %+v", c.name, receipt, c.want)
 		}
 		switch {
 		case c.errText == "" && err != nil:
-			t.Errorf("%s: LoadMissing: %v, want no error", c.name, err)
+			assert.Failf(t, "", "%s: LoadMissing: %v, want no error", c.name, err)
 		case c.errText != "":
 			if line := oneLine(t, c.name, err); !strings.HasPrefix(line, c.errText) {
-				t.Errorf("%s: the error reads %q, want it to start %q", c.name, line, c.errText)
+				assert.True(t, strings.HasPrefix(line, c.errText), "%s: the error reads %q, want it to start %q", c.name, line, c.errText)
 			}
 		}
 		if sent := store.commands(); len(sent) != c.sent {
-			t.Errorf("%s: LoadMissing sent %q, want %d commands", c.name, sent, c.sent)
+			assert.Len(t, sent, c.sent, "%s: LoadMissing sent %q, want %d commands", c.name, sent, c.sent)
 		}
 	}
 }
@@ -668,10 +671,10 @@ func TestEnsureFailsWithTheErrorOfTheCommandThatFailed(t *testing.T) {
 	receipt, err := lib.Ensure(context.Background(), unread)
 	if line := oneLine(t, "a store that cannot be read", err); receipt != (Receipt{Library: "lib_one", Digest: twoDigest}) ||
 		!strings.Contains(line, "redisfn: check lib_one: the store refused: NOPERM no permissions; nothing was changed") {
-		t.Errorf("a store that cannot be read: Ensure = %+v %s", receipt, line)
+		assert.Failf(t, "", "a store that cannot be read: Ensure = %+v %s", receipt, line)
 	}
 	if sent := unread.commands(); len(sent) != 1 {
-		t.Errorf("a store that cannot be read was sent %d commands, want the read alone", len(sent))
+		assert.Len(t, sent, 1, "a store that cannot be read was sent %d commands, want the read alone", len(sent))
 	}
 
 	refused := holding(redis.Library{Name: "lib_one", Code: "other"})
@@ -679,7 +682,7 @@ func TestEnsureFailsWithTheErrorOfTheCommandThatFailed(t *testing.T) {
 	receipt, err = lib.Ensure(context.Background(), refused)
 	if line := oneLine(t, "a load the store refuses", err); receipt != (Receipt{Library: "lib_one", Digest: twoDigest, Was: DigestOf("other")}) ||
 		!strings.Contains(line, "redisfn: load lib_one: the store refused: ERR No functions registered; the store holds what it held before") {
-		t.Errorf("a load the store refuses: Ensure = %+v %s", receipt, line)
+		assert.Failf(t, "", "a load the store refuses: Ensure = %+v %s", receipt, line)
 	}
 
 	taken := holding(redis.Library{Name: "lib_old", Functions: []redis.Function{{Name: "FB"}}})
@@ -687,7 +690,7 @@ func TestEnsureFailsWithTheErrorOfTheCommandThatFailed(t *testing.T) {
 	receipt, err = lib.Ensure(context.Background(), taken)
 	var collision *CollisionError
 	if !errors.As(err, &collision) || !slices.Equal(collision.Held, []Held{{"fb", "lib_old"}}) || receipt.Outcome != Failed {
-		t.Errorf("a function another library holds: Ensure = %+v %v", receipt, err)
+		assert.Failf(t, "", "a function another library holds: Ensure = %+v %v", receipt, err)
 	}
 }
 
@@ -699,24 +702,24 @@ func TestARefusedLibraryNeverReachesTheStore(t *testing.T) {
 		_, refused := c.lib.Source()
 		digest, err := c.lib.Load(context.Background(), store)
 		if digest != "" || !errors.Is(err, ErrRefused) || err.Error() != refused.Error() {
-			t.Errorf("%s: Load = %q %v, want the refusal", c.name, digest, err)
+			assert.Failf(t, "", "%s: Load = %q %v, want the refusal", c.name, digest, err)
 		}
 		state, err := c.lib.Check(context.Background(), store)
 		if state != Unknown || !errors.Is(err, ErrRefused) || err.Error() != refused.Error() {
-			t.Errorf("%s: Check = %v %v, want unknown and the refusal", c.name, state, err)
+			assert.Failf(t, "", "%s: Check = %v %v, want unknown and the refusal", c.name, state, err)
 		}
 		for name, call := range map[string]func(Library, context.Context, redis.UniversalClient) (Receipt, error){"Ensure": Library.Ensure, "LoadMissing": Library.LoadMissing} {
 			receipt, err := call(c.lib, context.Background(), store)
 			if receipt != (Receipt{Library: c.lib.Name}) || !errors.Is(err, ErrRefused) || err.Error() != refused.Error() {
-				t.Errorf("%s: %s = %+v %v, want the refusal", c.name, name, receipt, err)
+				assert.Failf(t, "", "%s: %s = %+v %v, want the refusal", c.name, name, receipt, err)
 			}
 		}
 		state, err = c.lib.Judge([]redis.Library{{Name: c.lib.Name, Code: "any"}})
 		if state != Unknown || !errors.Is(err, ErrRefused) {
-			t.Errorf("%s: Judge = %v %v, want unknown and the refusal", c.name, state, err)
+			assert.Failf(t, "", "%s: Judge = %v %v, want unknown and the refusal", c.name, state, err)
 		}
 		if sent := store.commands(); len(sent) != 0 {
-			t.Errorf("%s: the store was sent %q", c.name, sent)
+			assert.Len(t, sent, 0, "%s: the store was sent %q", c.name, sent)
 		}
 	}
 }
@@ -726,16 +729,16 @@ func TestWithoutAClientNothingIsSent(t *testing.T) {
 	lib := two()
 	const want = "redisfn: library lib_one: no client to reach a store with"
 	if digest, err := lib.Load(context.Background(), nil); digest != "" || err == nil || err.Error() != want {
-		t.Errorf("Load = %q %v", digest, err)
+		assert.Failf(t, "", "Load = %q %v", digest, err)
 	}
 	if state, err := lib.Check(context.Background(), nil); state != Unknown || err == nil || err.Error() != want {
-		t.Errorf("Check = %v %v", state, err)
+		assert.Failf(t, "", "Check = %v %v", state, err)
 	}
 	if receipt, err := lib.Ensure(context.Background(), nil); receipt != (Receipt{Library: "lib_one"}) || err == nil || err.Error() != want {
-		t.Errorf("Ensure = %+v %v", receipt, err)
+		assert.Failf(t, "", "Ensure = %+v %v", receipt, err)
 	}
 	if receipt, err := lib.LoadMissing(context.Background(), nil); receipt != (Receipt{Library: "lib_one"}) || err == nil || err.Error() != want {
-		t.Errorf("LoadMissing = %+v %v", receipt, err)
+		assert.Failf(t, "", "LoadMissing = %+v %v", receipt, err)
 	}
 }
 
@@ -773,28 +776,28 @@ func TestACallWhoseContextHasEndedSendsNothing(t *testing.T) {
 	said := func(what string, err error, doing string) {
 		t.Helper()
 		if line := oneLine(t, what, err); !errors.Is(err, context.Canceled) || line != "redisfn: "+doing+" lib_one"+nothing {
-			t.Errorf("%s: %s", what, line)
+			assert.Failf(t, "", "%s: %s", what, line)
 		}
 	}
 	digest, err := lib.Load(ended, store)
 	said("Load", err, "load")
 	if digest != "" {
-		t.Errorf("Load = %q", digest)
+		assert.Empty(t, digest, "Load = %q", digest)
 	}
 	state, err := lib.Check(ended, store)
 	said("Check", err, "check")
 	if state != Unknown {
-		t.Errorf("Check = %v", state)
+		assert.Equal(t, Unknown, state, "Check = %v", state)
 	}
 	for name, call := range map[string]func(Library, context.Context, redis.UniversalClient) (Receipt, error){"Ensure": Library.Ensure, "LoadMissing": Library.LoadMissing} {
 		receipt, err := call(lib, ended, store)
 		said(name, err, "load")
 		if receipt != (Receipt{Library: "lib_one", Digest: twoDigest}) {
-			t.Errorf("%s = %+v", name, receipt)
+			assert.Equal(t, (Receipt{Library: "lib_one", Digest: twoDigest}), receipt, "%s = %+v", name, receipt)
 		}
 	}
 	if sent := store.commands(); len(sent) != 0 {
-		t.Errorf("the store was sent %q", sent)
+		assert.Len(t, sent, 0, "the store was sent %q", sent)
 	}
 }
 
@@ -806,14 +809,14 @@ func TestEveryCallReturnsWhenItsWaitEndsThoughTheStoreNeverAnswers(t *testing.T)
 	digest, err := lib.Load(ctx, store)
 	if line := oneLine(t, "Load", err); digest != "" || !errors.Is(err, context.Canceled) ||
 		line != "redisfn: load lib_one: no answer from the store before the wait ended: context canceled; the store holds the whole library it held before or the whole of this one, and Check says which" {
-		t.Errorf("Load = %q %s", digest, line)
+		assert.Failf(t, "", "Load = %q %s", digest, line)
 	}
 
 	store, ctx = stalled(t)
 	state, err := lib.Check(ctx, store)
 	if line := oneLine(t, "Check", err); state != Unknown || !errors.Is(err, context.Canceled) ||
 		line != "redisfn: check lib_one: no answer from the store before the wait ended: context canceled; nothing was changed" {
-		t.Errorf("Check = %v %s", state, line)
+		assert.Failf(t, "", "Check = %v %s", state, line)
 	}
 
 	for name, call := range map[string]func(Library, context.Context, redis.UniversalClient) (Receipt, error){"Ensure": Library.Ensure, "LoadMissing": Library.LoadMissing} {
@@ -821,7 +824,7 @@ func TestEveryCallReturnsWhenItsWaitEndsThoughTheStoreNeverAnswers(t *testing.T)
 		receipt, err := call(lib, ctx, store)
 		if line := oneLine(t, name, err); receipt != (Receipt{Library: "lib_one", Digest: twoDigest}) || !errors.Is(err, context.Canceled) ||
 			!strings.Contains(line, "no answer from the store before the wait ended: context canceled") {
-			t.Errorf("%s = %+v %s", name, receipt, line)
+			assert.Failf(t, "", "%s = %+v %s", name, receipt, line)
 		}
 	}
 }
@@ -858,19 +861,19 @@ func TestTheContextOfEveryCallEndsAtTheBound(t *testing.T) {
 			return "lib_one", endsWithin(ctx, c.want)
 		}
 		if _, err := lib.Check(c.ctx, store); !isMismatch(err) {
-			t.Errorf("%s: Check: %v", c.name, err)
+			assert.Failf(t, "", "%s: Check: %v", c.name, err)
 		}
 		if _, err := lib.Load(c.ctx, store); err != nil {
-			t.Errorf("%s: Load: %v", c.name, err)
+			assert.NoError(t, err, "%s: Load: %v", c.name, err)
 		}
 		if _, err := lib.Ensure(c.ctx, store); err != nil {
-			t.Errorf("%s: Ensure: %v", c.name, err)
+			assert.NoError(t, err, "%s: Ensure: %v", c.name, err)
 		}
 		if _, err := lib.LoadMissing(c.ctx, store); err != nil {
-			t.Errorf("%s: LoadMissing: %v", c.name, err)
+			assert.NoError(t, err, "%s: LoadMissing: %v", c.name, err)
 		}
 		if reached != 6 {
-			t.Errorf("%s: %d calls reached the store, want 6", c.name, reached)
+			assert.Equal(t, 6, reached, "%s: %d calls reached the store, want 6", c.name, reached)
 		}
 	}
 }

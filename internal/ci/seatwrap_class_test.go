@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // THE CLASS RULE: NO SCRIPT WRAPS nova-secrets exec AROUND A SEAT TOOL FOR ITS
@@ -135,9 +137,7 @@ func TestNoSecretsExecWrapsASeatTool(t *testing.T) {
 		src := f.Src
 		if src == nil {
 			b, err := os.ReadFile(f.Path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			src = b
 		}
 		if !seatWrapScanned(f.Rel, src) {
@@ -148,13 +148,9 @@ func TestNoSecretsExecWrapsASeatTool(t *testing.T) {
 			violations = append(violations, f.Rel+":"+v)
 		}
 	}
-	if scanned < 20 {
-		t.Fatalf("only %d shell files and docs pages scanned; the tree has more than that, so the filter has stopped matching", scanned)
-	}
-	if len(violations) > 0 {
-		t.Fatalf("%d line(s) wrap nova-secrets exec around a seat tool for its Redis password (#4052); pass the tool --seat <name> (or set NOVA_SEAT) and, for a hand read, run nova-sprint redis-cli --seat <name> -- <cmd...>:\n  %s",
-			len(violations), strings.Join(violations, "\n  "))
-	}
+	require.GreaterOrEqual(t, scanned, 20, "only %d shell files and docs pages scanned; the tree has more than that, so the filter has stopped matching", scanned)
+	require.Empty(t, violations, "%d line(s) wrap nova-secrets exec around a seat tool for its Redis password (#4052); pass the tool --seat <name> (or set NOVA_SEAT) and, for a hand read, run nova-sprint redis-cli --seat <name> -- <cmd...>:\n  %s",
+		len(violations), strings.Join(violations, "\n  "))
 }
 
 // TestSeatWrapRuleSeesEachShape is the rule's own control: the two retired
@@ -170,9 +166,9 @@ func TestSeatWrapRuleSeesEachShape(t *testing.T) {
 		`nova-secrets exec --as b --only=NOVA_REDIS_BENCH_PASSWORD -- nova-card S/l/1`,
 		`nova-secrets exec --as b --only NOVA_REDIS_BENCH_PASSWORD -- timeout 60 nova-swarm native --card c`,
 	} {
-		if v := seatWrapViolations([]byte("# ok\n" + bad + "\n")); len(v) != 1 || !strings.HasPrefix(v[0], "2: ") {
-			t.Fatalf("%q: violations %q, want one at line 2", bad, v)
-		}
+		v := seatWrapViolations([]byte("# ok\n" + bad + "\n"))
+		require.Len(t, v, 1, "%q: violations %q, want one at line 2", bad, v)
+		require.True(t, strings.HasPrefix(v[0], "2: "), "%q: violations %q, want one at line 2", bad, v)
 	}
 	good := strings.Join([]string{
 		`nova-secrets exec --as b --only OPENROUTER_API_KEY -- nova-swarm native --card c`,
@@ -181,16 +177,14 @@ func TestSeatWrapRuleSeesEachShape(t *testing.T) {
 		`nova-sprint redis-cli --seat studio --redis h:6380 -- ZCARD sprint:S:cards`,
 		`nova-secrets exec --as b --only GH_TOKEN,NOVA_REDIS_BENCH_PASSWORD -- nova-sprint read post`,
 	}, "\n")
-	if v := seatWrapViolations([]byte(good)); len(v) != 0 {
-		t.Fatalf("good shapes flagged: %q", v)
-	}
+	v := seatWrapViolations([]byte(good))
+	require.Empty(t, v, "good shapes flagged: %q", v)
 	for rel, want := range map[string]bool{"scripts/x.sh": true, "docs/A.md": true, "README.md": false, "tools/run": true, "tools/data": false} {
 		head := []byte("#!/usr/bin/env bash\n")
 		if rel == "tools/data" {
 			head = []byte("plain\n")
 		}
-		if got := seatWrapScanned(rel, head); got != want {
-			t.Fatalf("seatWrapScanned(%q) = %v, want %v", rel, got, want)
-		}
+		got := seatWrapScanned(rel, head)
+		require.Equal(t, want, got, "seatWrapScanned(%q) = %v, want %v", rel, got, want)
 	}
 }

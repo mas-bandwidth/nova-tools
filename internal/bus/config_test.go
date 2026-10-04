@@ -3,25 +3,27 @@ package bus
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadConfigReadsTheRoster(t *testing.T) {
 	t.Parallel()
 	root := writeBus(t, nil)
 	c, err := LoadConfig(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := c.Senders(); len(got) != 2 || got[0] != "Ada" || got[1] != "Bo" {
-		t.Fatalf("Senders() = %v, want [Ada Bo] -- Dana has no lane and is not a sender", got)
+	require.NoError(t, err)
+	{
+		got := c.Senders()
+		require.Equal(t, 2, len(got), "Senders() = %v, want [Ada Bo] -- Dana has no lane and is not a sender", got)
+		require.Equal(t, "Ada", got[0], "Senders() = %v, want [Ada Bo] -- Dana has no lane and is not a sender", got)
+		require.Equal(t, "Bo", got[1], "Senders() = %v, want [Ada Bo] -- Dana has no lane and is not a sender", got)
 	}
 	ada := mustParticipant(t, c, "the archivist")
-	if ada.Name != "Ada" || ada.Slug() != "ada" {
-		t.Fatalf("an alias resolved to %+v, want Ada with slug ada", ada)
-	}
-	if _, ok := c.Lookup("Adda"); ok {
-		t.Fatal("a misspelling resolved; the whole point of the roster is that it does not")
-	}
+	require.Equal(t, "Ada", ada.Name, "an alias resolved to %+v, want Ada with slug ada", ada)
+	require.Equal(t, "ada", ada.Slug(), "an alias resolved to %+v, want Ada with slug ada", ada)
+	_, ok := c.Lookup("Adda")
+	require.False(t, ok, "a misspelling resolved; the whole point of the roster is that it does not")
 }
 
 // Every refusal here is a roster a bus could otherwise run on for weeks before two names
@@ -62,12 +64,8 @@ func TestLoadConfigRefuses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := writeBus(t, map[string]string{ConfigName: tc.json})
 			_, err := LoadConfig(root)
-			if err == nil {
-				t.Fatal("want a refusal, got none")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("refusal %q does not name %q", err, tc.want)
-			}
+			require.Error(t, err, "want a refusal, got none")
+			require.Contains(t, err.Error(), tc.want, "refusal %q does not name %q", err, tc.want)
 		})
 	}
 }
@@ -75,10 +73,57 @@ func TestLoadConfigRefuses(t *testing.T) {
 func TestLoadConfigRefusesAMissingRoster(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	if _, err := LoadConfig(root); err == nil {
-		t.Fatal("a bus with no roster loaded")
+	_, err := LoadConfig(root)
+	require.Error(t, err, "a bus with no roster loaded")
+	_, err = LoadConfig("")
+	require.Error(t, err, "an empty bus root loaded")
+}
+
+// A roster a cold reader got wrong is refused with the shape it should have: a missing
+// file, an array where the object goes, and an empty roster each carry the one-line
+// example and the door to the help, where the Go decoder's own words said only that an
+// array could not be unmarshalled.
+func TestLoadConfigRefusalsCarryTheRosterShape(t *testing.T) {
+	t.Parallel()
+	for name, files := range map[string]map[string]string{
+		"no file":        {},
+		"an array":       {ConfigName: `[{"name":"Ada"}]`},
+		"not json":       {ConfigName: `participants: Ada`},
+		"no participant": {ConfigName: `{"participants":[]}`},
+	} {
+		root := t.TempDir()
+		for n, body := range files {
+			write(t, root, n, body)
+		}
+		_, err := LoadConfig(root)
+		if err == nil {
+			assert.Failf(t, "assertion failed", "%s: loaded", name)
+			continue
+		}
+		for _, want := range []string{`"participants":[{"name":"Ada","lane":"from-ada"`, "git_email", "ROSTER AND LANES"} {
+			assert.Contains(t, err.Error(), want, "%s: the refusal %q does not carry %q", name, err, want)
+		}
 	}
-	if _, err := LoadConfig(""); err == nil {
-		t.Fatal("an empty bus root loaded")
+}
+
+// Onboarding point 2: malformed user input names the expected shape, without Go types.
+func TestRosterShapeErrorsNameJSONInputs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, raw, want string }{
+		{"array", `[1,2]`, "participants.json must be one JSON object"},
+		{"null", `null`, "participants.json must be one JSON object"},
+		{"field", `{"participants":"Ada"}`, `field "participants" has the wrong JSON value type`},
+		{"name", `{"participants":[{"name":1}]}`, `field "participants.name" has the wrong JSON value type`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := LoadConfig(writeBus(t, map[string]string{ConfigName: tc.raw}))
+			require.Error(t, err)
+			// Go 1.27 includes the array index in UnmarshalTypeError.Field;
+			// earlier supported toolchains identify the same field without it.
+			assert.Contains(t, strings.ReplaceAll(err.Error(), "participants.0.name", "participants.name"), tc.want)
+			assert.NotContains(t, err.Error(), "Go value")
+			assert.NotContains(t, err.Error(), "bus.Config")
+		})
 	}
 }

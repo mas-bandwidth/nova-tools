@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The shipped set is every cmd/nova-* directory, the list `release build`
@@ -17,33 +19,22 @@ func TestReadShippedIsEveryNovaDirectoryUnderCmd(t *testing.T) {
 	cmd := t.TempDir()
 	write := func(rel string) {
 		p := filepath.Join(cmd, rel)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("package main\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte("package main\n"), 0o644))
 	}
 	write("nova-table/main.go")
 	write("nova-bus/main.go")
 	write("nova-left/main_test.go")
 	write("helper/main.go")
-	if err := os.Mkdir(filepath.Join(cmd, "nova-empty"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(filepath.Join(cmd, "nova-empty"), 0o755))
 	write("AGENTS.md")
 
 	s, err := ReadShipped(cmd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := []string{"nova-bus", "nova-empty", "nova-left", "nova-table"}
-	if got := s.Tools(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("shipped = %v, want %v", got, want)
-	}
-	if got, err := CmdTools(cmd); err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("CmdTools = %v, %v, want %v: the gate and the builder read one list", got, err, want)
-	}
+	require.Equal(t, want, s.Tools(), "shipped = %v, want %v", s.Tools(), want)
+	got, err := CmdTools(cmd)
+	require.True(t, err == nil && reflect.DeepEqual(got, want), "CmdTools = %v, %v, want %v: the gate and the builder read one list", got, err, want)
 }
 
 // AN I/O ERROR IS NOT A PARKED TOOL. A second tool directory that cannot be
@@ -60,32 +51,21 @@ func TestReadShippedRefusesAToolDirectoryItCannotRead(t *testing.T) {
 	cmd := t.TempDir()
 	for _, tool := range []string{"nova-bus", "nova-example"} {
 		dir := filepath.Join(cmd, tool)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644))
 	}
 	locked := filepath.Join(cmd, "nova-example")
-	if err := os.Chmod(locked, 0o000); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chmod(locked, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 	if _, err := os.ReadDir(locked); err == nil {
 		t.Skip("this filesystem reads a mode-000 directory; the refusal cannot be provoked")
 	}
 
 	s, err := ReadShipped(cmd)
-	if err == nil {
-		t.Fatalf("an unreadable tool directory was read as a shipped set %v", s.Tools())
-	}
-	if !strings.Contains(err.Error(), locked) {
-		t.Fatalf("the refusal does not name the tool's path %s: %v", locked, err)
-	}
-	if _, err := CmdTools(cmd); err == nil {
-		t.Fatal("CmdTools listed a tool directory it could not read")
-	}
+	require.Error(t, err, "an unreadable tool directory was read as a shipped set %v", s.Tools())
+	require.Contains(t, err.Error(), locked, "the refusal does not name the tool's path %s: %v", locked, err)
+	_, err = CmdTools(cmd)
+	require.Error(t, err, "CmdTools listed a tool directory it could not read")
 }
 
 // A scope that came back empty would set aside every receipt and pass on
@@ -93,12 +73,10 @@ func TestReadShippedRefusesAToolDirectoryItCannotRead(t *testing.T) {
 func TestReadShippedRefusesADirectoryWithNoTool(t *testing.T) {
 	t.Parallel()
 
-	if _, err := ReadShipped(t.TempDir()); err == nil {
-		t.Error("an empty cmd/ was read as a shipped set")
-	}
-	if _, err := ReadShipped(filepath.Join(t.TempDir(), "nowhere")); err == nil {
-		t.Error("a missing cmd/ was read as a shipped set")
-	}
+	_, err := ReadShipped(t.TempDir())
+	assert.Error(t, err, "an empty cmd/ was read as a shipped set")
+	_, err = ReadShipped(filepath.Join(t.TempDir(), "nowhere"))
+	assert.Error(t, err, "a missing cmd/ was read as a shipped set")
 }
 
 // THE GATE JUDGES WHAT SHIPS. A parked tool's open edge and its not-ok receipt
@@ -119,22 +97,17 @@ func TestAParkedToolsOpenItemDoesNotBlockAndAShippedToolsDoes(t *testing.T) {
 	shipped := NewShipped("nova-table", "nova-bus")
 
 	scopedVerbs, scoped, outside := shipped.Scope(list, got)
-	if len(outside) != 2 {
-		t.Fatalf("outside = %d, want the two parked receipts", len(outside))
-	}
+	require.Len(t, outside, 2, "outside = %d, want the two parked receipts", len(outside))
 	findings, _ := Gate(scopedVerbs, scoped, nil, false)
-	if len(findings) != 1 || findings[0].Tool != "nova-table" || findings[0].Kind != "open-edge" {
-		t.Fatalf("findings = %+v, want exactly the shipped tool's open edge", findings)
-	}
+	require.True(t, len(findings) == 1 && findings[0].Tool == "nova-table" && findings[0].Kind == "open-edge", "findings = %+v, want exactly the shipped tool's open edge", findings)
 
 	// The shipped tool's edge answered: nothing blocks, the parked ones are
 	// still set aside rather than counted.
 	answer := receipt("nova-table show", "Rowan", "2026-09-18T10:00:00Z", true, 0)
 	answer.Closes = got[2].ID()
 	scopedVerbs, scoped, _ = shipped.Scope(list, append(got, answer))
-	if findings, _ := Gate(scopedVerbs, scoped, nil, false); len(findings) != 0 {
-		t.Fatalf("findings = %+v, want none once the shipped edge is answered", findings)
-	}
+	findings, _ = Gate(scopedVerbs, scoped, nil, false)
+	require.Empty(t, findings, "findings = %+v, want none once the shipped edge is answered", findings)
 
 	// A shipped tool's not-ok receipt on a verb nobody declares still blocks:
 	// the scope is by tool, and a misspelling inside a shipped tool is exactly
@@ -142,7 +115,5 @@ func TestAParkedToolsOpenItemDoesNotBlockAndAShippedToolsDoes(t *testing.T) {
 	misspelt := stranded("nova-table shwo", "Stella", "2026-09-18T11:00:00Z", false, "r/b.json:1")
 	scopedVerbs, scoped, _ = shipped.Scope(list, append(got, answer, misspelt))
 	findings, _ = Gate(scopedVerbs, scoped, nil, false)
-	if len(findings) != 1 || findings[0].Kind != "unmatched" || findings[0].Tool != "nova-table" {
-		t.Fatalf("findings = %+v, want the shipped tool's unmatched not-ok receipt", findings)
-	}
+	require.True(t, len(findings) == 1 && findings[0].Kind == "unmatched" && findings[0].Tool == "nova-table", "findings = %+v, want the shipped tool's unmatched not-ok receipt", findings)
 }

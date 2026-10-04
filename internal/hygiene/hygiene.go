@@ -1,7 +1,7 @@
 // Package hygiene is the one place that answers "is this diff clean", for the accept
 // gate, for the merge lane and for a hand.
 //
-// SPEC-TOOLWORK.md, Hygiene (PR #1637), issue #1647. Four mechanical questions, none of
+// SPEC-TOOLWORK.md, Hygiene. Four mechanical questions, none of
 // which reads prose and none of which needs a model:
 //
 //	identity     every commit in the range is the pool's own, and none is a merge
@@ -25,13 +25,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -276,7 +276,7 @@ func checkPaths(entries []entry, globs []string) []Finding {
 		}
 		if !matched {
 			findings = append(findings, Finding{Token: "out-of-path", At: e.path,
-				Why: "this path matches none of the card's declared PATHS:"})
+				Why: "this path matches none of the card's declared PATHS: " + strings.Join(globs, ",")})
 		}
 	}
 	return findings
@@ -311,7 +311,7 @@ func checkStray(ctx context.Context, repo string, entries []entry, rules []stray
 				continue
 			}
 		}
-		// §3 rule 5 is about what a card ADDED. A file that was already over the
+		// The size limit is about what a card ADDED. A file that was already over the
 		// limit at the base and that this card merely edited is not this card's
 		// finding, and charging it would make every later card in that repository
 		// unfixable by anybody.
@@ -364,12 +364,12 @@ var conflictMarker = regexp.MustCompile(`^(<{7}|={7}|>{7})( |$)`)
 // pastes into a chat. A finding that quotes the key has copied the key into every one
 // of those places, and the check meant to contain a leak has published it.
 //
-// The markers used to be `git diff --check`'s answer, and that was a check the SUBJECT
+// The markers are read off the added lines, not asked of `git diff --check`, which the SUBJECT
 // could switch off. `--check` honours a `-diff` attribute whatever `--text` says, and
 // the attribute reaches git from three places: a committed `.gitattributes`,
 // `.git/info/attributes`, and a local `core.attributesFile`. `--attr-source` covers the
 // first and is git 2.42 and later; it covers neither of the others on any version, and
-// the gate's worktree shares the job clone's `.git` (§1 rule 3), so both are the
+// the gate's worktree shares the job clone's `.git`, so both are the
 // worker's to write. Reading the lines this function already holds has no version to
 // depend on, no skip, and nothing for the subject to turn off: `--text` is what makes
 // the lines appear, and `--text` is not optional here.
@@ -489,15 +489,6 @@ func diffPath(field string) string {
 	return strings.TrimPrefix(field, "b/")
 }
 
-func gitCmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", append(append([]string(nil), configOpts...), args...)...)
-	cmd.Dir = dir
-	// A bench's own git config cannot be allowed to change what this reads: the whole
-	// point of the identity check is that the bench's configuration is not evidence.
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
-	return cmd
-}
-
 func gitLine(ctx context.Context, dir string, args ...string) (string, error) {
 	out, err := gitOut(ctx, dir, args...)
 	return strings.TrimSpace(out), err
@@ -515,8 +506,10 @@ func verb(args []string) string {
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := gitCmd(ctx, dir, args...)
-	out, err := cmd.Output()
+	// A bench's own git config cannot be allowed to change what this reads: the whole
+	// point of the identity check is that the bench's configuration is not evidence.
+	res, err := gitrun.Run(ctx, gitrun.Options{Dir: dir, Env: append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")},
+		append(append([]string(nil), configOpts...), args...)...)
 	// A cancelled or expired context is a could-not-run whatever the process did on
 	// its way out, and this package has exactly one rule about could-not-run: it is
 	// never an empty answer, because an empty answer reads as a clean range.
@@ -524,13 +517,12 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %v", verb(args), ctx.Err())
 	}
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return "", fmt.Errorf("git %s: %v: %s", verb(args), err, strings.TrimSpace(string(ee.Stderr)))
+		if stderr := strings.TrimSpace(string(res.Stderr)); stderr != "" {
+			return "", fmt.Errorf("git %s: %v: %s", verb(args), err, stderr)
 		}
 		return "", err
 	}
-	return string(out), nil
+	return string(res.Stdout), nil
 }
 
 // modeFinding judges one entry's TYPE and MODE, and it is a function of its own so it

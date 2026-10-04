@@ -1,7 +1,7 @@
 package swarm
 
 // Bench slot leases: a bench-wide lease store with shares, reserve, expiry and
-// live-pid fencing (deprecated/docs/SPEC-SWARM.md, "Bench slot leases").
+// live-pid fencing (docs/SPEC-SWARM.md, "Bench slot leases").
 //
 // The store is <store>/slots with one directory per lease. A lease directory
 // is published by renaming a fully-written staging directory into place, so a
@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
@@ -50,10 +51,7 @@ type SlotLease struct {
 
 // Units is how many share units this lease occupies. Missing or zero weight is 1.
 func (l SlotLease) Units() int {
-	if l.Weight < 1 {
-		return 1
-	}
-	return l.Weight
+	return max(l.Weight, 1)
 }
 
 // Stranded reports a live-until lease whose holder is gone: the seat is still
@@ -227,25 +225,6 @@ func ListSlotLeases(store string, now time.Time) ([]SlotLease, error) {
 	return out, nil
 }
 
-// SlotHoldings reports how many leases owner holds and the share it holds them
-// within. It is the read `status` prints; it never reaps or grants.
-func SlotHoldings(store, owner string, now time.Time) (held, share int, err error) {
-	_, _, shares, err := loadSlotShares(store)
-	if err != nil {
-		return 0, 0, err
-	}
-	leases, err := ListSlotLeases(store, now)
-	if err != nil {
-		return 0, 0, err
-	}
-	for _, l := range leases {
-		if l.Owner == owner {
-			held += l.Units()
-		}
-	}
-	return held, shares[owner], nil
-}
-
 // publishSlotLease stages a complete lease directory beside the slot store
 // and renames it into place, so a directory in slots/ always arrives WITH
 // its lease file already inside. The staging directory lives beside slots/,
@@ -264,16 +243,19 @@ func publishSlotLease(store, id, body string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "lease"), []byte(body), 0o644); err != nil {
+	if err := atomicfile.Write(filepath.Join(tmp, "lease"), []byte(body), 0o644, atomicfile.ExactMode()); err != nil {
+		// ignored: a best-effort cleanup of this call's own temp directory; the write error is the one returned
 		_ = safepath.RemoveUnder(store, tmp)
 		return err
 	}
 	dest := filepath.Join(slotStoreDir(store), id)
 	if _, err := os.Lstat(dest); err == nil {
+		// ignored: a best-effort cleanup of this call's own temp directory; the exists error is the one returned
 		_ = safepath.RemoveUnder(store, tmp)
 		return &os.PathError{Op: "publish", Path: dest, Err: os.ErrExist}
 	}
 	if err := os.Rename(tmp, dest); err != nil {
+		// ignored: a best-effort cleanup of this call's own temp directory; the rename error is the one returned
 		_ = safepath.RemoveUnder(store, tmp)
 		return err
 	}
@@ -296,6 +278,7 @@ func MakeSlotLease(store, id, owner string, pid int, label string, until time.Ti
 
 func slotLeaseID(owner string, now time.Time) string {
 	var b [4]byte
+	// ignored: crypto/rand.Read never returns an error on the supported platforms (Go 1.24+ panics instead)
 	_, _ = rand.Read(b[:])
 	safe := strings.Map(func(r rune) rune {
 		switch {
@@ -330,33 +313,6 @@ func slotHolders(counts map[string]int) string {
 	return strings.Join(parts, ",")
 }
 
-// SlotUtilisation reports one bench store for `nova-pulse status --slots-store`:
-// capacity and reserve from shares.tsv, held and free after reaping expired
-// leases with a dead pid (expired leases with a live pid are DRIFT and stay
-// held), per-owner held counts and per-owner shares. Free is
-// capacity-reserve-held.
-func SlotUtilisation(store string, now time.Time) (capacity, reserve, held, free int, heldBy map[string]int, shares map[string]int, err error) {
-	capacity, reserve, shares, err = loadSlotShares(store)
-	if err != nil {
-		return 0, 0, 0, 0, nil, nil, err
-	}
-	leases, lerr := ListSlotLeases(store, now)
-	if lerr != nil {
-		return 0, 0, 0, 0, nil, nil, lerr
-	}
-	heldBy = map[string]int{}
-	for _, l := range leases {
-		if !l.Until.After(now) && !Alive(l.Pid, "") {
-			continue
-		}
-		u := l.Units()
-		heldBy[l.Owner] += u
-		held += u
-	}
-	free = capacity - reserve - held
-	return capacity, reserve, held, free, heldBy, shares, nil
-}
-
 // TakeSlotLeases grants k unweighted (weight 1) leases. See takeSlotLeases.
 func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string, now time.Time, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
 	return takeSlotLeases(store, owner, k, 1, "", dur, label, now, pid)
@@ -381,9 +337,7 @@ func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Du
 	if k < 1 {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("n is at least 1, got %d", k)
 	}
-	if weight < 1 {
-		weight = 1
-	}
+	weight = max(weight, 1)
 	if dur <= 0 {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("for is a positive duration")
 	}
@@ -428,6 +382,7 @@ func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Du
 			// directories (publishSlotLease), so a directory with no lease
 			// file in it holds no lease and no hold. Reap it so garbage
 			// never accumulates.
+			// ignored: a reap of an empty lease directory, which holds no lease; the next take tries again
 			_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), e.Name()))
 			continue
 		}
@@ -435,6 +390,7 @@ func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Du
 			// SPEC-JOBS section 3: the next take reaps the dead worker's lease
 			// and its card returns to queue/ before the slot is granted.
 			_ = returnCardForLease(store, l)
+			// ignored: a reap of a dead worker's lease; the next take tries again
 			_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), e.Name()))
 			continue
 		}
@@ -602,17 +558,6 @@ func ReleaseSlotLeasesByID(store string, ids []string, pid int) (released int, e
 	return released, nil
 }
 
-// NoSlotsStoreRefusal is the ONE line printed when a native launch was asked for without a
-// bench slot store or without an owner (nova-tools#1546). It lives here, beside the lease
-// code, because FOUR places must print the same sentence -- `nova-swarm native` itself, the
-// batch that refuses before any card runs, and the two paths that build a native argv --
-// and a remedy that drifts between them is a remedy a reader stops trusting.
-//
-// It names the store, the owner AND the exact command that makes a one-seat store, because
-// "pass --slots-store <dir>" on a bench that has never had one is not a remedy, it is a
-// second question.
-const NoSlotsStoreRefusal = "NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)"
-
 // SlotStoreLockName is the bench store's one lock file, beside shares.tsv and the
 // slots/ directory. It is NOT part of the store's format in the sense that matters:
 // shares.tsv keeps every byte of its shape, `slots list` still reads directories, and
@@ -639,4 +584,34 @@ const SlotStoreWait = 10 * time.Second
 // quietly making a directory.
 func takeSlotStoreLock(store string) (func(), error) {
 	return takeFileLock(filepath.Join(store, SlotStoreLockName), SlotStoreWait)
+}
+
+// The slot store's card directories: queue/ holds a card waiting for a lease,
+// taken/ the card a lease holds, one <owner>-<label> each.
+const (
+	QueueName = "queue"
+	TakenName = "taken"
+)
+
+// returnCardForLease puts the card an expired lease names back in queue/. The
+// taken file is <store>/taken/<owner>-<label>; the rename is what makes the card
+// queueable again. A lease with no label names no card, and a card already back
+// in queue/ is left alone. It returns the card name when it moved one.
+func returnCardForLease(store string, l SlotLease) string {
+	label := strings.TrimSpace(l.Label)
+	if label == "" || strings.ContainsAny(label, `/\`) {
+		return ""
+	}
+	taken := filepath.Join(store, TakenName, l.Owner+"-"+label)
+	if _, err := os.Stat(taken); err != nil {
+		return ""
+	}
+	queueDir := filepath.Join(store, QueueName)
+	if err := os.MkdirAll(queueDir, 0o755); err != nil {
+		return ""
+	}
+	if err := os.Rename(taken, filepath.Join(queueDir, label)); err != nil {
+		return ""
+	}
+	return label
 }

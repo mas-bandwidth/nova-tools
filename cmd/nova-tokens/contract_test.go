@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go/ast"
 	"go/parser"
 	"go/printer"
@@ -22,50 +24,36 @@ import (
 func pkgFiles(t *testing.T, pkg string) map[string]*ast.File {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	fset := token.NewFileSet()
 	out := map[string]*ast.File{}
 	ents, err := os.ReadDir(filepath.Join(root, pkg))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	for _, e := range ents {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
 		f, err := parser.ParseFile(fset, filepath.Join(root, pkg, e.Name()), nil, parser.ParseComments)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err, err)
 		out[e.Name()] = f
 	}
-	if len(out) == 0 {
-		t.Fatalf("no source files under %s; this tripwire was looking in the wrong place and would have passed by checking nothing", pkg)
-	}
+	require.False(t, len(out) == 0, "no source files under %s; this tripwire was looking in the wrong place and would have passed by checking nothing", pkg)
 	return out
 }
 
 func pkgText(t *testing.T, pkg string) map[string]string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	ents, err := os.ReadDir(filepath.Join(root, pkg))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	out := map[string]string{}
 	for _, e := range ents {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(root, pkg, e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err, err)
 		out[e.Name()] = string(raw)
 	}
 	return out
@@ -84,45 +72,30 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 	// Rule 9 says "deletes, truncates or trims", and a tripwire that searches only for the
 	// three removal names is hollow for the middle word: `f.Truncate(0)` on the lock and
 	// `os.Create` on the scratch copy both truncate and both walked past it. Every call
-	// that can empty a file is searched for, and the four the tool is allowed are carved
+	// that can empty a file is searched for, and the ones the tool is allowed are carved
 	// out here BY FILE, with the reason -- each one a file THIS RUN makes, never a file the
 	// tool was given.
 	allowed := map[string][]string{
 		// The platform with no flock: the lock is an exclusive create and its release
 		// removes the sentinel this run made.
 		"internal/tokens/lock_other.go": {"os.Remove"},
-		// The fold's own lock file, whose whole body this run wrote.
-		"internal/tokens/lock.go": {".Truncate("},
+		// The fold's own lock file, whose whole body this run wrote: the pid the
+		// platform with no flock writes, and on unix internal/filelock's holder
+		// stamp, which the take truncates to write and the release truncates to
+		// clear. The file itself is never removed.
+		"internal/tokens/lock_poll_other.go":    {".Truncate("},
+		"internal/filelock/filelock.go":         {".Truncate("},
+		"internal/filelock/filelock_unix.go":    {".Truncate("},
+		"internal/filelock/filelock_windows.go": {".Truncate("},
 		// The copy under --scratch, made from the live database this run and read there;
 		// the live file is never opened for writing.
 		"internal/tokens/opencode.go": {"os.Create("},
-		// The fixed `<day>.tsv.tmp` a day is written through before the one rename, the
-		// name `check` steps over by rule 9's own last sentence.
-		"internal/tokens/dayfile.go": {"os.WriteFile("},
-		// The same, for the report `report` writes.
-		"cmd/nova-tokens/main.go": {"os.WriteFile("},
-		// The ledger's own `<ledger>.tsv.tmp`, written through before the one rename that
-		// lands the day's rows; the ledger the caller names is the file this verb maintains.
-		"cmd/nova-tokens/sumswarm.go": {"os.WriteFile("},
-		// The pool ledger's own `<ledger>.tsv.tmp` for fold-pool, same shape: this run's
-		// staged ledger landing by one rename.
-		"internal/tokens/foldpool.go": {"os.WriteFile("},
-		// ExpandDir, nova-work's card writer: it makes a card directory and writes the
-		// card INSIDE it, and returns early on a directory that already exists, so it
-		// never truncates a file this tool or anybody else was given. nova-tokens imports
-		// internal/worklang for ParseWorkSet alone -- `fold --units` reads a work set and
-		// writes nothing -- and reaches ExpandDir from no code path in this binary. The
-		// carve-out is by FILE and by NAME, so a second writer appearing in that package
-		// is still a red run here.
-		"internal/worklang/expand.go": {"os.WriteFile("},
-		// AcceptFile, nova-work accept --graph's writer (#1796/#3229): it rewrites the job graph
-		// file the caller named, after reading and validating it. nova-tokens reaches
-		// internal/jobs only through internal/worklang's imports and calls AcceptFile from no
-		// code path in this binary; the carve-out is by FILE and by NAME, as for expand.go.
-		"internal/jobs/jobs.go": {"os.WriteFile("},
-		// In package staging, the publisher's own-run temporary marker batch.json.tmp
-		// unlinked via syscall.Unlink after successful atomic no-replace link to batch.json.
-		"internal/tokens/package.go": {"syscall.Unlink("},
+		// The private copy a dry run or sources made under --scratch this run, removed
+		// entry by entry before it returns, so --scratch is left as it was.
+		"cmd/nova-tokens/privatecopy.go": {"os.Remove"},
+		// The temporary file atomicfile writes through before rename; on error or
+		// cleanup, atomicfile removes the temporary file this run created.
+		"internal/atomicfile/atomicfile.go": {"os.Remove"},
 	}
 	used := map[string]bool{}
 	// Every package of the binary, walked from its imports and from the directories this
@@ -143,18 +116,14 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 						ok, used[path+" "+forbidden] = true, true
 					}
 				}
-				if !ok {
-					t.Errorf("%s calls %s; this tool deletes, truncates and trims nothing -- not a month file, not a log, not a stray (rule 9). A file THIS RUN makes is carved out by name in this test and in the spec, or it is a bug", path, forbidden)
-				}
+				assert.True(t, ok, "%s calls %s; this tool deletes, truncates and trims nothing -- not a month file, not a log, not a stray (rule 9). A file THIS RUN makes is carved out by name in this test and in the spec, or it is a bug", path, forbidden)
 			}
 		}
 	}
 	// A carve-out nothing uses any more is a hole left open in the tripwire.
 	for path, names := range allowed {
 		for _, n := range names {
-			if !used[path+" "+n] {
-				t.Errorf("%s no longer calls %s; drop the carve-out rather than leaving the tripwire open on that file (rule 9)", path, n)
-			}
+			assert.True(t, used[path+" "+n], "%s no longer calls %s; drop the carve-out rather than leaving the tripwire open on that file (rule 9)", path, n)
 		}
 	}
 }
@@ -169,33 +138,23 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 	t.Parallel()
 
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	specPath := filepath.Join(root, "docs", "SPEC-TOKENS.md")
 	raw, err := os.ReadFile(specPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	spec := string(raw)
 
 	// Rule 9's block: from its numbered opening to rule 10's.
 	begin := strings.Index(spec, "\n9. **One file per day")
-	if begin < 0 {
-		t.Fatalf("docs/SPEC-TOKENS.md has no rule 9 opening `9. **One file per day`; this test was reading the wrong place and would have passed by checking nothing")
-	}
+	require.False(t, begin < 0, "docs/SPEC-TOKENS.md has no rule 9 opening `9. **One file per day`; this test was reading the wrong place and would have passed by checking nothing")
 	end := strings.Index(spec[begin+1:], "\n10. ")
-	if end < 0 {
-		t.Fatalf("docs/SPEC-TOKENS.md rule 9 has no rule 10 after it; this test could not bound rule 9's text")
-	}
+	require.False(t, end < 0, "docs/SPEC-TOKENS.md rule 9 has no rule 10 after it; this test could not bound rule 9's text")
 	rule9 := strings.Join(strings.Fields(spec[begin:begin+1+end]), " ")
 
 	// The clause that names them, bounded by the `--` that closes it.
 	const marker = "can empty a file --"
 	at := strings.Index(rule9, marker)
-	if at < 0 {
-		t.Fatalf("rule 9 no longer says %q before naming the calls that can empty a file; this test finds the list by that clause and could not find it", marker)
-	}
+	require.False(t, at < 0, "rule 9 no longer says %q before naming the calls that can empty a file; this test finds the list by that clause and could not find it", marker)
 	clause := rule9[at+len(marker):]
 
 	// Walk it: collect the backticked names, and skip any inside a parenthetical, which is
@@ -220,9 +179,7 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 			i++
 		case '`':
 			close := strings.IndexByte(clause[i+1:], '`')
-			if close < 0 {
-				t.Fatalf("rule 9's clause has an unclosed backtick; the spec's own list cannot be read")
-			}
+			require.False(t, close < 0, "rule 9's clause has an unclosed backtick; the spec's own list cannot be read")
 			name := clause[i+1 : i+1+close]
 			if depth == 0 {
 				want = append(want, name)
@@ -232,9 +189,7 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 			i++
 		}
 	}
-	if len(want) < 5 {
-		t.Fatalf("read only %d names out of rule 9's clause (%v); the clause's shape changed and this test would have passed by checking almost nothing", len(want), want)
-	}
+	require.False(t, len(want) < 5, "read only %d names out of rule 9's clause (%v); the clause's shape changed and this test would have passed by checking almost nothing", len(want), want)
 
 	have := map[string]bool{}
 	for _, e := range rule9Emptiers {
@@ -243,14 +198,10 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 	inSpec := map[string]bool{}
 	for _, w := range want {
 		inSpec[w] = true
-		if !have[w] {
-			t.Errorf("rule 9 names %s as a call that can empty a file and rule9Emptiers does not carry it; the tripwire is open on that call. Add it to the list in %s, or change rule 9 in docs/SPEC-TOKENS.md -- never one alone", w, "cmd/nova-tokens/contract_test.go")
-		}
+		assert.True(t, have[w], "rule 9 names %s as a call that can empty a file and rule9Emptiers does not carry it; the tripwire is open on that call. Add it to the list in %s, or change rule 9 in docs/SPEC-TOKENS.md -- never one alone", w, "cmd/nova-tokens/contract_test.go")
 	}
 	for _, e := range rule9Emptiers {
-		if !inSpec[e] {
-			t.Errorf("rule9Emptiers carries %s and rule 9 does not name it; spec and tripwire have drifted. Name it in rule 9 of docs/SPEC-TOKENS.md, or drop it from the list -- never one alone", e)
-		}
+		assert.True(t, inSpec[e], "rule9Emptiers carries %s and rule 9 does not name it; spec and tripwire have drifted. Name it in rule 9 of docs/SPEC-TOKENS.md, or drop it from the list -- never one alone", e)
 	}
 }
 
@@ -266,12 +217,8 @@ func TestTheOnlySubprocessIsSqlite3AndThereIsNoNetwork(t *testing.T) {
 	for name, f := range files {
 		for _, imp := range f.Imports {
 			path := strings.Trim(imp.Path.Value, `"`)
-			if path == "net" || strings.HasPrefix(path, "net/") {
-				t.Errorf("internal/tokens/%s imports %q; this tool talks to no network", name, path)
-			}
-			if path == "os/exec" && name != "opencode.go" {
-				t.Errorf("internal/tokens/%s imports os/exec; the one subprocess is sqlite3, and it lives in opencode.go (rule 19)", name)
-			}
+			assert.False(t, path == "net" || strings.HasPrefix(path, "net/"), "internal/tokens/%s imports %q; this tool talks to no network", name, path)
+			assert.True(t, path != "os/exec" || name == "opencode.go", "internal/tokens/%s imports os/exec; the one subprocess is sqlite3, and it lives in opencode.go (rule 19)", name)
 		}
 	}
 	text := pkgText(t, "internal/tokens")
@@ -279,16 +226,12 @@ func TestTheOnlySubprocessIsSqlite3AndThereIsNoNetwork(t *testing.T) {
 		if name == "opencode.go" {
 			continue
 		}
-		if strings.Contains(body, "exec.Command") {
-			t.Errorf("internal/tokens/%s starts a subprocess; there is one, and it is sqlite3", name)
-		}
+		assert.False(t, strings.Contains(body, "exec.Command"), "internal/tokens/%s starts a subprocess; there is one, and it is sqlite3", name)
 	}
 	// And no git at all: an earlier draft ran `git log` to order competing notes, and
 	// that order is now in the notes themselves.
 	for name, body := range text {
-		if strings.Contains(body, `"git"`) {
-			t.Errorf("internal/tokens/%s names git; the tool runs none (rule 16)", name)
-		}
+		assert.False(t, strings.Contains(body, `"git"`), "internal/tokens/%s names git; the tool runs none (rule 16)", name)
 	}
 }
 
@@ -302,16 +245,12 @@ func TestOnlyRepoGoCarriesTheAttributionRule(t *testing.T) {
 		if name == "repo.go" || name == "bus.go" {
 			continue // bus.go's regexps are the note GRAMMAR, not a repo table
 		}
-		if strings.Contains(body, "regexp.MustCompile") || strings.Contains(body, "regexp.Compile") {
-			t.Errorf("internal/tokens/%s compiles a regexp; the repo table is the caller's file and the rule is one function in repo.go", name)
-		}
+		assert.False(t, strings.Contains(body, "regexp.MustCompile") || strings.Contains(body, "regexp.Compile"), "internal/tokens/%s compiles a regexp; the repo table is the caller's file and the rule is one function in repo.go", name)
 	}
 	// Every reader reaches a repo name through that one function.
 	for _, reader := range []string{"claude.go", "opencode.go", "swarm.go", "bus.go"} {
 		body := pkgText(t, "internal/tokens")[reader]
-		if !strings.Contains(body, "rules.Attribute") {
-			t.Errorf("internal/tokens/%s does not call the attribution function", reader)
-		}
+		assert.True(t, strings.Contains(body, "rules.Attribute"), "internal/tokens/%s does not call the attribution function", reader)
 	}
 }
 
@@ -325,9 +264,7 @@ func TestNoReaderWritesAZeroForATypeItDidNotRead(t *testing.T) {
 		if !strings.Contains(body, "Counts.Set") && !strings.Contains(body, ".Set(t,") && !strings.Contains(body, "Set(t, v)") {
 			continue
 		}
-		if strings.Contains(body, "Set(t, 0)") || strings.Contains(body, "Counts.Set(t, 0)") {
-			t.Errorf("internal/tokens/%s writes a literal 0 into a type cell; a type the source did not report is a dash (rule 15)", name)
-		}
+		assert.False(t, strings.Contains(body, "Set(t, 0)") || strings.Contains(body, "Counts.Set(t, 0)"), "internal/tokens/%s writes a literal 0 into a type cell; a type the source did not report is a dash (rule 15)", name)
 	}
 }
 
@@ -361,8 +298,9 @@ func TestEachDeclaredFileIsOpenedOncePerRun(t *testing.T) {
 	}
 	before := tokens.Opens()
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
-	if got := tokens.Opens() - before; got != 12 {
-		t.Errorf("%d source opens for 12 files; the fold is one pass over each declared file", got)
+	{
+		got := tokens.Opens() - before
+		assert.Equal(t, int64(12), got, "%d source opens for 12 files; the fold is one pass over each declared file", got)
 	}
 }
 
@@ -473,8 +411,9 @@ func TestAHalfReadSuccessorDoesNotReplaceItsPredecessor(t *testing.T) {
 	// Two tips now, so the lane-day is a conflict and nothing folds for it: the half-read
 	// correction never quietly became the day.
 	wantContains(t, r.stderr, "TOKENS CONFLICT label=bus:emma day=2026-09-11")
-	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err == nil {
-		t.Error("a day folded from a successor that did not parse whole")
+	{
+		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
+		assert.False(t, err == nil, "a day folded from a successor that did not parse whole")
 	}
 }
 
@@ -525,9 +464,7 @@ func TestCwdIsTheLowestRungOfTheAttributionLadder(t *testing.T) {
 	day := read(t, filepath.Join(out3, "2026-09-11.tsv"))
 	wantContains(t, day, "f\tserialize\t3\t") // 1 + 2: the path, then the previous repo
 	wantContains(t, day, "f\tother\t4\t")
-	if strings.Contains(day, "f\tschema\t") {
-		t.Errorf("cwd took a rung above the previous repo or above `other`:\n%s", day)
-	}
+	assert.False(t, strings.Contains(day, "f\tschema\t"), "cwd took a rung above the previous repo or above `other`:\n%s", day)
 }
 
 // TestMessagesWithNoIDReachTheRemedyLine: noid= was a number on a green TOKENS SOURCE line
@@ -585,13 +522,9 @@ func TestAMonthWithNoDayFilesSumsToDashesNotZeros(t *testing.T) {
 	out := mkdir(t, filepath.Join(dir, "out"))
 	r := invoke(t, "sum", "--out", out, "--month", "2026-09")
 	total := lineWith(r.stdout, "SUM TOTAL")
-	if total == "" {
-		t.Fatalf("no SUM TOTAL line over an empty month:\n%s%s", r.stdout, r.stderr)
-	}
+	require.False(t, total == "", "no SUM TOTAL line over an empty month:\n%s%s", r.stdout, r.stderr)
 	for _, want := range []string{"input=-", "output=-", "cache_write=-", "cache_read=-", "reasoning=-"} {
-		if !strings.Contains(total, want) {
-			t.Errorf("SUM TOTAL over a month with no day files is %q; want %s -- a type no source reported is a dash, never 0 (rule 15)", total, want)
-		}
+		assert.True(t, strings.Contains(total, want), "SUM TOTAL over a month with no day files is %q; want %s -- a type no source reported is a dash, never 0 (rule 15)", total, want)
 	}
 }
 
@@ -681,24 +614,18 @@ func TestNoFunctionAddsOneTypeColumnIntoAnother(t *testing.T) {
 	t.Parallel()
 
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	checked := 0
 	for _, pkg := range []string{"internal/tokens", "cmd/nova-tokens"} {
 		ents, err := os.ReadDir(filepath.Join(root, pkg))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err, err)
 		for _, e := range ents {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 				continue
 			}
 			fset := token.NewFileSet()
 			f, err := parser.ParseFile(fset, filepath.Join(root, pkg, e.Name()), nil, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err, err)
 			for _, d := range f.Decls {
 				fn, ok := d.(*ast.FuncDecl)
 				if !ok || fn.Body == nil {
@@ -735,17 +662,13 @@ func TestNoFunctionAddsOneTypeColumnIntoAnother(t *testing.T) {
 					checked++
 					want := exprText(fset, into)
 					for _, got := range typeExprs(fset, from) {
-						if got != want {
-							t.Errorf("%s/%s:%d writes the %s column from %s; the five types are kept apart and no function adds one type column into another (rule 15)",
-								pkg, e.Name(), fset.Position(n.Pos()).Line, want, got)
-						}
+						assert.Equal(t, want, got, "%s/%s:%d writes the %s column from %s; the five types are kept apart and no function adds one type column into another (rule 15)",
+							pkg, e.Name(), fset.Position(n.Pos()).Line, want, got)
 					}
 					return true
 				})
 			}
 		}
 	}
-	if checked < 5 {
-		t.Fatalf("%d type-column writes examined; this tripwire was looking at the wrong shape and would have passed by checking nothing", checked)
-	}
+	require.False(t, checked < 5, "%d type-column writes examined; this tripwire was looking at the wrong shape and would have passed by checking nothing", checked)
 }

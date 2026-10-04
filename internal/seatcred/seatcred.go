@@ -140,8 +140,8 @@ type Selection struct {
 	cred     Cred
 	credErr  error
 	addr     string
-	github   string
 	resolver func(seat string) (Cred, error)
+	getenv   func(string) string
 }
 
 var process Selection
@@ -151,27 +151,25 @@ func Process() *Selection { return &process }
 
 func defaultResolver(seat string) (Cred, error) { return Resolve(seat, os.Getenv) }
 
-// Select makes seat this process's seat ("" is none) and forgets any earlier
-// resolution. Nothing is decrypted until Active is first asked.
-func Select(seat string) { process.Select(seat) }
-
-// SelectWith is Select with the seat's Redis address; see Selection.SelectWith.
-func SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
-	process.SelectWith(seat, redisAddr, resolve)
-}
-
 // Addr is this process's seat's Redis address; see Selection.Addr.
 func Addr() string { return process.Addr() }
-
-// Selected is the seat Select recorded, "" when none.
-func Selected() string { return process.Selected() }
-
-// Active is this process's seat's login; see Selection.Active.
-func Active() (Cred, bool, error) { return process.Active() }
 
 // FromArgs selects this process's seat from args; see Selection.FromArgs.
 func FromArgs(args []string, getenv func(string) string) ([]string, error) {
 	return process.FromArgs(args, getenv)
+}
+
+func (s *Selection) withLookup(getenv func(string) string) *Selection {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.getenv = getenv
+	return s
+}
+
+func (s *Selection) getenvLookup() func(string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getenv
 }
 
 // Select makes seat the selection ("" is none) and forgets any earlier
@@ -185,25 +183,13 @@ func (s *Selection) Select(seat string) { s.SelectWith(seat, "", nil) }
 func (s *Selection) SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.github, s.resolver = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, "", resolve
+	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.resolver, s.getenv = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, resolve, nil
 }
 
-// SelectProfile is SelectWith for a seats.tsv row: the row's seat, its Redis
-// address and its GitHub token env (GitHubEnv), resolved through resolve.
+// SelectProfile is SelectWith for a seats.tsv row: the row's seat and its
+// Redis address, resolved through resolve.
 func (s *Selection) SelectProfile(p Profile, resolve func(seat string) (Cred, error)) {
 	s.SelectWith(p.Name, p.Addr, resolve)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.github = p.GitHubEnv
-}
-
-// GitHubEnv is the key of the selected seat's file that holds its GitHub
-// token, from its seats.tsv row's seventh column; "" when no seat is selected
-// or its row names none. Nothing is decrypted to answer it.
-func (s *Selection) GitHubEnv() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.github
 }
 
 // Addr is the selected seat's Redis address from its profile row, "" when no
@@ -234,7 +220,12 @@ func (s *Selection) Active() (c Cred, ok bool, err error) {
 	if !s.resolved {
 		resolve := s.resolver
 		if resolve == nil {
-			resolve = defaultResolver
+			if s.getenv != nil {
+				lookup := s.getenv
+				resolve = func(seat string) (Cred, error) { return Resolve(seat, lookup) }
+			} else {
+				resolve = defaultResolver
+			}
 		}
 		s.cred, s.credErr = resolve(s.selected)
 		s.resolved = true
@@ -246,6 +237,9 @@ func (s *Selection) Active() (c Cred, ok bool, err error) {
 // "--", which ends a tool's own flags), selects that seat or else getenv's
 // NOVA_SEAT, and returns the rest. A --seat with no name is an error.
 func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]string, error) {
+	if getenv == nil && s.getenvLookup() != nil {
+		getenv = s.getenvLookup()
+	}
 	seat, flagged := "", false
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -257,14 +251,14 @@ func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]strin
 		switch {
 		case a == "--seat" || a == "-seat":
 			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
-				return nil, fmt.Errorf("--seat wants a seat name, for example --seat studio")
+				return nil, fmt.Errorf("--seat <name>, for example --seat bench-a")
 			}
 			seat, flagged = args[i+1], true
 			i++
 		case strings.HasPrefix(a, "--seat=") || strings.HasPrefix(a, "-seat="):
 			seat, flagged = a[strings.IndexByte(a, '=')+1:], true
 			if seat == "" {
-				return nil, fmt.Errorf("--seat wants a seat name, for example --seat studio")
+				return nil, fmt.Errorf("--seat <name>, for example --seat bench-a")
 			}
 		default:
 			rest = append(rest, a)
@@ -274,24 +268,8 @@ func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]strin
 		seat = getenv(SeatEnv)
 	}
 	s.Select(seat)
-	return rest, nil
-}
-
-// ChildEnv is environ with the password variables a Redis child could confuse
-// for its own removed and REDISCLI_AUTH set to c's password: the environment of
-// the one child that is handed the password, never this process's.
-func ChildEnv(environ []string, c Cred) []string {
-	out := make([]string, 0, len(environ)+1)
-	for _, kv := range environ {
-		name, _, _ := strings.Cut(kv, "=")
-		if name == "REDISCLI_AUTH" || name == c.Key || (strings.HasPrefix(name, "NOVA_REDIS_") && strings.HasSuffix(name, "_PASSWORD")) {
-			continue
-		}
-		out = append(out, kv)
+	if getenv != nil {
+		s.withLookup(getenv)
 	}
-	_ = c.Password.Use(func(pw string) error {
-		out = append(out, "REDISCLI_AUTH="+pw)
-		return nil
-	})
-	return out
+	return rest, nil
 }

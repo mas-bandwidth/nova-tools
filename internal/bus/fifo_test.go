@@ -5,10 +5,10 @@ package bus
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"testing"
-	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // A FIFO planted at a lane's INDEX must never park the lane reader: the read refuses it by
@@ -19,26 +19,13 @@ func TestReadLaneIndexDoesNotBlockOnAPlantedFIFO(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	index := filepath.Join(root, "from-x", IndexName)
-	if err := os.MkdirAll(filepath.Dir(index), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(index), 0o755))
 	if err := syscall.Mkfifo(index, 0o644); err != nil {
 		t.Skipf("this platform will not make a FIFO: %v", err)
 	}
-	done := make(chan error, 1)
-	go func() {
-		_, err := ReadLaneIndex(root, "from-x")
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("a FIFO read as a lane INDEX")
-		}
-		if !strings.Contains(err.Error(), "fifo") {
-			t.Fatalf("the read refusal does not name the kind fifo: %v", err)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("STILL BLOCKED after 30s reading a FIFO at INDEX: the lane reader is wedged")
-	}
+	// Called directly: a read that opened the pipe would block here, and the test binary's
+	// -timeout names the goroutine parked in it. The refusal by kind is the assertion.
+	_, err := ReadLaneIndex(root, "from-x")
+	require.Error(t, err, "a FIFO read as a lane INDEX")
+	require.Contains(t, err.Error(), "fifo", "the read refusal does not name the kind fifo: %v", err)
 }

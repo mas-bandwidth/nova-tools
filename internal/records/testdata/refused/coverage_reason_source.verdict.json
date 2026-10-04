@@ -1,5 +1,0 @@
-{
-  "field": "body.reasons[0].source",
-  "rule": "coverage_reason_source",
-  "verdict": "refused"
-}

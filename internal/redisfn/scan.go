@@ -19,6 +19,9 @@ type registration struct {
 	name string // the name as the file spells it
 	file string
 	line int
+	// noWrites is true when the table form names the flag no-writes, the
+	// one flag FCALL_RO admits.
+	noWrites bool
 }
 
 type tokenKind int
@@ -311,8 +314,8 @@ func scan(file, src string) (scanned, *fault) {
 		case tok.text == "return" && functions == 0:
 			return scanned{}, &fault{tok.line, "this return is outside every function, so the library's load would end here and every later file would register nothing; return only inside a function"}
 		case tok.text == "redis" && !(i > 0 && toks[i-1].kind == tokenSymbol && (toks[i-1].text == "." || toks[i-1].text == ":")):
-			if name, at, ok := registered(toks[i:]); ok {
-				out.regs = append(out.regs, registration{name, file, at})
+			if name, at, noWrites, ok := registered(toks[i:]); ok {
+				out.regs = append(out.regs, registration{name: name, file: file, line: at, noWrites: noWrites})
 			}
 		}
 	}
@@ -356,40 +359,43 @@ func names(toks []token) int {
 }
 
 // registered reads a call of redis.register_function at the head of toks and
-// returns the name it registers, when the call spells the name as a string:
+// returns the name it registers, when the call spells the name as a string,
+// and whether the table form names the flag no-writes:
 //
 //	redis.register_function('name', callback)
-//	redis.register_function{function_name = 'name', callback = ...}
+//	redis.register_function{function_name = 'name', callback = ..., flags = {'no-writes'}}
 //
 // with or without the parentheses around the table. A name that is computed,
 // or a call made through another name for the function, is not read here; the
 // store still refuses it when another library holds the name.
-func registered(toks []token) (name string, line int, ok bool) {
+func registered(toks []token) (name string, line int, noWrites, ok bool) {
 	is := func(i int, kind tokenKind, text string) bool {
 		return i < len(toks) && toks[i].kind == kind && toks[i].text == text
 	}
 	if !is(1, tokenSymbol, ".") || !is(2, tokenName, "register_function") {
-		return "", 0, false
+		return "", 0, false, false
 	}
 	at := 3
 	if is(at, tokenSymbol, "(") {
 		at++
 		if at < len(toks) && toks[at].kind == tokenString && is(at+1, tokenSymbol, ",") {
-			return toks[at].text, toks[at].line, true
+			return toks[at].text, toks[at].line, false, true
 		}
 	}
 	braces, blocks := 0, 0
+	inFlags := false // inside the table that is the value of flags
 	for i := at; i < len(toks); i++ {
 		tok := toks[i]
 		switch {
 		case tok.kind == tokenSymbol && tok.text == "{":
 			braces++
 		case braces == 0:
-			return "", 0, false // the call's argument is not a table
+			return "", 0, false, false // the call's argument is not a table
 		case tok.kind == tokenSymbol && tok.text == "}":
 			braces--
+			inFlags = false
 			if braces == 0 {
-				return "", 0, false // the table names no function_name as a string
+				return name, line, noWrites, name != "" // the table names no function_name as a string when name is ""
 			}
 		case tok.kind == tokenName && opens(tok.text):
 			blocks++
@@ -398,10 +404,15 @@ func registered(toks []token) (name string, line int, ok bool) {
 		case braces == 1 && blocks == 0 && is(i, tokenName, "function_name") && is(i+1, tokenSymbol, "="):
 			if i+2 < len(toks) && toks[i+2].kind == tokenString &&
 				(is(i+3, tokenSymbol, ",") || is(i+3, tokenSymbol, ";") || is(i+3, tokenSymbol, "}")) {
-				return toks[i+2].text, toks[i+2].line, true
+				name, line = toks[i+2].text, toks[i+2].line
+				continue
 			}
-			return "", 0, false // the name is computed
+			return "", 0, false, false // the name is computed
+		case braces == 1 && blocks == 0 && is(i, tokenName, "flags") && is(i+1, tokenSymbol, "=") && is(i+2, tokenSymbol, "{"):
+			inFlags = true
+		case braces == 2 && inFlags && tok.kind == tokenString && tok.text == "no-writes":
+			noWrites = true
 		}
 	}
-	return "", 0, false
+	return "", 0, false, false
 }

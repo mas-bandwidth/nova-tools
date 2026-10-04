@@ -2,8 +2,9 @@ package ci
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // docs/TESTS.md must state, in its own words, what a first-run transcript owes
@@ -23,10 +24,6 @@ func TestTESTSmdStatesThePreconditionConvention(t *testing.T) {
 	t.Parallel()
 
 	md := readFile(t, filepath.Join(repoRoot(t), "docs", "TESTS.md"))
-	if !strings.Contains(md, "Requires:") {
-		t.Errorf("docs/TESTS.md never states `Requires:`; a section owes a reader one line per precondition the machine may not have, exactly as `Platform:` already does")
-	}
-	if !strings.Contains(md, "SKIP-PRECONDITION") {
-		t.Errorf("docs/TESTS.md never states `SKIP-PRECONDITION`; a harness that cannot meet a stated precondition has no word for it, and records the step as a defect")
-	}
+	assert.Contains(t, md, "Requires:", "docs/TESTS.md never states `Requires:`; a section owes a reader one line per precondition the machine may not have, exactly as `Platform:` already does")
+	assert.Contains(t, md, "SKIP-PRECONDITION", "docs/TESTS.md never states `SKIP-PRECONDITION`; a harness that cannot meet a stated precondition has no word for it, and records the step as a defect")
 }

@@ -97,6 +97,7 @@ func stand(in io.Reader, out io.Writer, kill func() error) int {
 	}
 	// The read ends when the pipe closes. An error ends it as well, and the
 	// answer to a pipe that broke is the same as to one that closed.
+	// ignored: a broken pipe and a closed one mean the same here (see the comment above); the kill below is checked
 	_, _ = io.Copy(io.Discard, in)
 	if err := kill(); err != nil {
 		return 1

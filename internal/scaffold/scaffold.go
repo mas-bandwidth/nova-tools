@@ -1,5 +1,5 @@
 // Package scaffold provides the shared write-confinement and template engine
-// for scaffolding verbs across this repository (nova-tools#2498 S5).
+// for scaffolding verbs across this repository.
 //
 // Every output goes through os.OpenRoot(root), so no path resolves outside
 // --root; a preflight walks each output path with Lstat and refuses a symlink
@@ -38,6 +38,7 @@ func Write(root string, outs []Planned) (written []string, err error) {
 	if err != nil {
 		return nil, err
 	}
+	// ignored: a deferred close of the root handle; every write through it was checked
 	defer func() { _ = r.Close() }()
 
 	for _, o := range outs {
@@ -52,9 +53,11 @@ func Write(root string, outs []Planned) (written []string, err error) {
 			return
 		}
 		for _, w := range slices.Backward(written) {
+			// ignored: the rollback of a failed scaffold; the write error is the one returned
 			_ = r.Remove(filepath.FromSlash(w))
 		}
 		for _, d := range slices.Backward(made) {
+			// ignored: the rollback of a failed scaffold; a non-empty directory stays by design (see the comment on the line)
 			_ = r.Remove(filepath.FromSlash(d)) // fails harmlessly if non-empty
 		}
 		written = nil
@@ -84,6 +87,25 @@ func Write(root string, outs []Planned) (written []string, err error) {
 		}
 	}
 	return written, nil
+}
+
+// Check is Write's dry run: the same preflight over every planned file, and
+// the paths Write would lay down, with nothing written.
+func Check(root string, outs []Planned) ([]string, error) {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	// ignored: a deferred close of a root handle only read through
+	defer func() { _ = r.Close() }()
+	var rels []string
+	for _, o := range outs {
+		if err := Preflight(r, o.Rel); err != nil {
+			return nil, err
+		}
+		rels = append(rels, o.Rel)
+	}
+	return rels, nil
 }
 
 // Preflight walks rel one element at a time with Lstat so no symlink is

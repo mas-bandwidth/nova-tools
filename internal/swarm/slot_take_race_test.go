@@ -6,6 +6,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Concurrent takes must never reap each other's half-written lease directory.
@@ -68,10 +71,6 @@ func TestConcurrentTakesKeepEveryTake(t *testing.T) {
 		t.Errorf("a concurrent take lost its lease directory mid-take: %s", p)
 	}
 	leases, err := ListSlotLeases(store, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Errorf("every take was released, so no lease may remain: %d left", len(leases))
-	}
+	require.NoError(t, err)
+	assert.Empty(t, leases, "every take was released, so no lease may remain: %d left", len(leases))
 }

@@ -1,0 +1,4 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 2
+cmd/nova-tokens/testdata/example-bench/bus/from-emma/2026-09-11T2130Z-tokens-emma-4c1f9a2b70de.md:emma 4
+cmd/nova-tokens/testdata/example-bench/bus/from-emma/2026-09-11T2130Z-tokens-emma-4c1f9a2b70de.md:rowan 1

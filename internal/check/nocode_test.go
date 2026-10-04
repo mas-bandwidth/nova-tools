@@ -6,6 +6,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // scan is the common shape: materialize a tree, run with the floor list.
@@ -37,13 +40,9 @@ func wantOnly(t *testing.T, findings []Failure, want []string) {
 	for _, f := range findings {
 		got[f.Subject] = true
 	}
-	if len(got) != len(want) {
-		t.Fatalf("flagged %v, want exactly %v", got, want)
-	}
+	require.Len(t, got, len(want), "flagged %v, want exactly %v", got, want)
 	for _, w := range want {
-		if !got[w] {
-			t.Errorf("%q not flagged; flagged %v", w, got)
-		}
+		assert.True(t, got[w], "%q not flagged; flagged %v", w, got)
 	}
 }
 
@@ -219,12 +218,8 @@ func TestNoCode(t *testing.T) {
 				t.Skip("windows: no executable bit, so this condition cannot fire here — the extension and shebang conditions carry the check on that platform")
 			}
 			scanned, findings, err := scan(t, tt.files, tt.contents, tt.symlinks, tt.opts)
-			if err != nil {
-				t.Fatalf("NoCode: %v", err)
-			}
-			if scanned != tt.wantScanned {
-				t.Errorf("scanned = %d, want %d (findings: %v)", scanned, tt.wantScanned, findings)
-			}
+			require.NoError(t, err, "NoCode: %v", err)
+			assert.Equal(t, tt.wantScanned, scanned, "scanned = %d, want %d (findings: %v)", scanned, tt.wantScanned, findings)
 			wantFailures(t, findings, tt.wantFind)
 			if tt.wantExactly != nil {
 				wantOnly(t, findings, tt.wantExactly)
@@ -254,21 +249,16 @@ func TestNoCodeUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
 		"locked/run.py": "print(1)",
 	})
 	locked := filepath.Join(dir, "locked")
-	if err := os.Chmod(locked, 0o000); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chmod(locked, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
 	scanned, findings, err := NoCode(NoCodeOptions{Dir: dir})
-	if err == nil {
-		t.Fatalf("want a refusal for an unlistable directory; got scanned=%d findings=%d", scanned, len(findings))
-	}
+	require.Error(t, err, "want a refusal for an unlistable directory; got scanned=%d findings=%d", scanned, len(findings))
 	if !strings.Contains(err.Error(), "locked") {
-		t.Errorf("error does not name the directory: %s", brief(err.Error()))
+		assert.Failf(t, "assertion failed", "error does not name the directory: %s", brief(err.Error()))
 	}
-	if scanned != 0 || len(findings) != 0 {
-		t.Errorf("a refusal must report nothing; got scanned=%d findings=%d", scanned, len(findings))
-	}
+	assert.Zero(t, scanned, "a refusal must report nothing; got scanned=%d findings=%d", scanned, len(findings))
+	assert.Empty(t, findings, "a refusal must report nothing; got scanned=%d findings=%d", scanned, len(findings))
 }
 
 // TestNoCodeSymlinkNotFollowed is separate because it needs a real symlink.
@@ -283,15 +273,9 @@ func TestNoCodeSymlinkNotFollowed(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	scanned, findings, err := NoCode(NoCodeOptions{Dir: dir})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
-	if len(findings) != 0 {
-		t.Errorf("symlink was followed or flagged: %v", findings)
-	}
-	if scanned != 2 {
-		t.Errorf("scanned = %d, want 2 (README.md and the link's own name)", scanned)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
+	assert.Empty(t, findings, "symlink was followed or flagged: %v", findings)
+	assert.Equal(t, 2, scanned, "scanned = %d, want 2 (README.md and the link's own name)", scanned)
 }
 
 // TestNoCodeFloorListCoversFormerlyMissed pins every extension the shipped
@@ -309,12 +293,8 @@ func TestNoCodeFloorListCoversFormerlyMissed(t *testing.T) {
 			dir := t.TempDir()
 			writeMode(t, dir, "machinery"+ext, "code", 0o644)
 			_, findings, err := NoCode(NoCodeOptions{Dir: dir})
-			if err != nil {
-				t.Fatalf("NoCode: %v", err)
-			}
-			if len(findings) == 0 {
-				t.Fatalf("%s not caught by the floor list", ext)
-			}
+			require.NoError(t, err, "NoCode: %v", err)
+			require.NotEmpty(t, findings, "%s not caught by the floor list", ext)
 		})
 	}
 }
@@ -323,12 +303,8 @@ func TestFloorDenyExts(t *testing.T) {
 	t.Parallel()
 
 	exts, err := FloorDenyExts()
-	if err != nil {
-		t.Fatalf("FloorDenyExts: %v", err)
-	}
-	if len(exts) < 40 {
-		t.Errorf("floor list has %d entries, expected at least 40", len(exts))
-	}
+	require.NoError(t, err, "FloorDenyExts: %v", err)
+	assert.GreaterOrEqual(t, len(exts), 40, "floor list has %d entries, expected at least 40", len(exts))
 	// The two entries this branch adds, pinned by name, because codeexts.txt's
 	// own policy is that an extension arrives in the same commit as the test
 	// proving it is caught — and shipping them unpinned reintroduces, one file
@@ -340,29 +316,19 @@ func TestFloorDenyExts(t *testing.T) {
 				found = true
 			}
 		}
-		if !found {
-			t.Errorf("floor extension list is missing %q", want)
-		}
+		assert.True(t, found, "floor extension list is missing %q", want)
 	}
 	seen := map[string]bool{}
 	for _, e := range exts {
-		if !strings.HasPrefix(e, ".") {
-			t.Errorf("entry %q does not begin with a dot", e)
-		}
-		if e != strings.ToLower(e) {
-			t.Errorf("entry %q is not lowercase", e)
-		}
-		if seen[e] {
-			t.Errorf("duplicate entry %q", e)
-		}
+		assert.True(t, strings.HasPrefix(e, "."), "entry %q does not begin with a dot", e)
+		assert.Equal(t, strings.ToLower(e), e, "entry %q is not lowercase", e)
+		assert.False(t, seen[e], "duplicate entry %q", e)
 		seen[e] = true
 	}
 	// .go is on the list on purpose: an exemption for the language the tools
 	// are written in would gut the gate.
 	for _, must := range []string{".go", ".py", ".sh", ".cpp", ".zsh", ".exe"} {
-		if !seen[must] {
-			t.Errorf("floor list is missing %s", must)
-		}
+		assert.True(t, seen[must], "floor list is missing %s", must)
 	}
 }
 
@@ -371,49 +337,37 @@ func TestParseDenyList(t *testing.T) {
 
 	t.Run("comma list", func(t *testing.T) {
 		got, err := ParseDenyList(".py,.sh")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(got) != 2 || got[0] != ".py" || got[1] != ".sh" {
-			t.Errorf("got %v", got)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, []string{".py", ".sh"}, got, "got %v", got)
 	})
 	t.Run("bare extensions gain their dot", func(t *testing.T) {
 		got, err := ParseDenyList("py,sh")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(got) != 2 || got[0] != ".py" {
-			t.Errorf("got %v", got)
+		require.NoError(t, err)
+		assert.Len(t, got, 2, "got %v", got)
+		if len(got) == 2 {
+			assert.Equal(t, ".py", got[0], "got %v", got)
 		}
 	})
 	t.Run("@file", func(t *testing.T) {
 		dir := t.TempDir()
 		writeMode(t, dir, "list.txt", "# comment\n.py\n\n.rs\n", 0o644)
 		got, err := ParseDenyList("@" + filepath.Join(dir, "list.txt"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(got) != 2 {
-			t.Errorf("got %v", got)
-		}
+		require.NoError(t, err)
+		assert.Len(t, got, 2, "got %v", got)
 	})
 	t.Run("empty spec refuses", func(t *testing.T) {
-		if _, err := ParseDenyList(""); err == nil {
-			t.Error("expected an error for an empty specification")
-		}
+		_, err := ParseDenyList("")
+		assert.Error(t, err, "expected an error for an empty specification")
 	})
 	t.Run("unreadable file refuses", func(t *testing.T) {
-		if _, err := ParseDenyList("@/nonexistent/nope.txt"); err == nil {
-			t.Error("expected an error for an unreadable deny-list file")
-		}
+		_, err := ParseDenyList("@/nonexistent/nope.txt")
+		assert.Error(t, err, "expected an error for an unreadable deny-list file")
 	})
 	t.Run("file of only comments refuses", func(t *testing.T) {
 		dir := t.TempDir()
 		writeMode(t, dir, "empty.txt", "# nothing here\n\n", 0o644)
-		if _, err := ParseDenyList("@" + filepath.Join(dir, "empty.txt")); err == nil {
-			t.Error("expected an error: a guard that forbids nothing must refuse")
-		}
+		_, err := ParseDenyList("@" + filepath.Join(dir, "empty.txt"))
+		assert.Error(t, err, "expected an error: a guard that forbids nothing must refuse")
 	})
 }
 
@@ -421,16 +375,14 @@ func TestNoCodeRefusals(t *testing.T) {
 	t.Parallel()
 
 	t.Run("missing directory refuses", func(t *testing.T) {
-		if _, _, err := NoCode(NoCodeOptions{Dir: "/nonexistent/nope"}); err == nil {
-			t.Error("expected an error for a missing directory")
-		}
+		_, _, err := NoCode(NoCodeOptions{Dir: "/nonexistent/nope"})
+		assert.Error(t, err, "expected an error for a missing directory")
 	})
 	t.Run("a file instead of a directory refuses", func(t *testing.T) {
 		dir := t.TempDir()
 		writeMode(t, dir, "f.md", "x", 0o644)
-		if _, _, err := NoCode(NoCodeOptions{Dir: filepath.Join(dir, "f.md")}); err == nil {
-			t.Error("expected an error when --dir is not a directory")
-		}
+		_, _, err := NoCode(NoCodeOptions{Dir: filepath.Join(dir, "f.md")})
+		assert.Error(t, err, "expected an error when --dir is not a directory")
 	})
 }
 
@@ -442,18 +394,10 @@ func TestNoCodeProvenanceCannotLie(t *testing.T) {
 	dir := t.TempDir()
 	writeMode(t, dir, "tool.py", "print()", 0o644)
 	_, findings, err := NoCode(NoCodeOptions{Dir: dir, DenyExt: nil, DenySource: DenyReplaced})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(findings) != 1 {
-		t.Fatalf("findings = %v, want 1", findings)
-	}
-	if !strings.Contains(findings[0].Reason, DenyFloor) {
-		t.Errorf("reason %q does not name the list that actually ran", findings[0].Reason)
-	}
-	if strings.Contains(findings[0].Reason, DenyReplaced) {
-		t.Errorf("reason %q names a list that did not produce it", findings[0].Reason)
-	}
+	require.NoError(t, err)
+	require.Len(t, findings, 1, "findings = %v, want 1", findings)
+	assert.Contains(t, findings[0].Reason, DenyFloor, "reason %q does not name the list that actually ran", findings[0].Reason)
+	assert.NotContains(t, findings[0].Reason, DenyReplaced, "reason %q names a list that did not produce it", findings[0].Reason)
 }
 
 // A deny-list entry that cannot be an extension is a refusal. Each of these
@@ -461,11 +405,10 @@ func TestNoCodeProvenanceCannotLie(t *testing.T) {
 func TestParseDenyListRefusesNonExtensions(t *testing.T) {
 	t.Parallel()
 
-	for _, spec := range []string{"mylist.txt", "*.py", "src/x", ".a b", "..", "."} {
+	for _, spec := range []string{"mylist.txt", "*.py", ".py*", ".p?", ".p[y]", "src/x", ".a b", "..", "."} {
 		t.Run(spec, func(t *testing.T) {
-			if got, err := ParseDenyList(spec); err == nil {
-				t.Errorf("accepted %q as %v; a guard that forbids nothing must refuse", spec, got)
-			}
+			got, err := ParseDenyList(spec)
+			assert.Error(t, err, "accepted %q as %v; a guard that forbids nothing must refuse", spec, got)
 		})
 	}
 }
@@ -476,9 +419,7 @@ func TestNoCodeTrailingWhitespaceInName(t *testing.T) {
 	dir := t.TempDir()
 	writeMode(t, dir, "trailing.py ", "print()", 0o644)
 	_, findings, err := NoCode(NoCodeOptions{Dir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	wantFailures(t, findings, []string{"code extension .py"})
 }
 
@@ -493,18 +434,15 @@ func TestNoCodeAllowDoesNotOverMatchSiblings(t *testing.T) {
 	writeMode(t, dir, "history-of-tools/run.py", "x", 0o644)
 	writeMode(t, dir, "historical.py", "x", 0o644)
 	_, findings, err := NoCode(NoCodeOptions{Dir: dir, Allow: []string{"history"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	wantOnly(t, findings, []string{"history-of-tools/run.py", "historical.py"})
 }
 
 func TestParseDenyListRefusesZeroWidthSpace(t *testing.T) {
 	t.Parallel()
 
-	if _, err := ParseDenyList(".py​"); err == nil {
-		t.Error("accepted a zero-width space: a one-entry list that forbids nothing")
-	}
+	_, err := ParseDenyList(".py​")
+	assert.Error(t, err, "accepted a zero-width space: a one-entry list that forbids nothing")
 }
 
 // --dir naming a SYMLINK to the repo. os.Stat follows the link, so the
@@ -515,21 +453,15 @@ func TestNoCodeDirIsASymlinkToTheTree(t *testing.T) {
 
 	base := t.TempDir()
 	real := filepath.Join(base, "real")
-	if err := os.MkdirAll(real, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(real, 0o755))
 	writeMode(t, real, "deploy.sh", "#!/bin/sh\n", 0o755)
 	link := filepath.Join(base, "link")
 	if err := os.Symlink("real", link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	scanned, findings, err := NoCode(NoCodeOptions{Dir: link})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if scanned == 0 {
-		t.Fatal("scanned nothing through a symlinked root: a clean pass over a tree never opened")
-	}
+	require.NoError(t, err)
+	require.NotZero(t, scanned, "scanned nothing through a symlinked root: a clean pass over a tree never opened")
 	wantFailures(t, findings, []string{"deploy.sh"})
 }
 
@@ -544,12 +476,8 @@ func TestNoCodeAuditFailsClosedLikeTheGate(t *testing.T) {
 		t.Skipf("fifo unavailable: %v", err)
 	}
 	scanned, findings, err := NoCode(NoCodeOptions{Dir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if scanned != 2 {
-		t.Errorf("scanned = %d, want 2", scanned)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 2, scanned, "scanned = %d, want 2", scanned)
 	wantFailures(t, findings, []string{"pipe.sh", "not a regular file"})
 }
 
@@ -558,9 +486,8 @@ func TestNoCodeDenyExtWithoutSourceRefuses(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if _, _, err := NoCode(NoCodeOptions{Dir: dir, DenyExt: []string{".foo"}}); err == nil {
-		t.Error("accepted a deny-list with no stated provenance")
-	}
+	_, _, err := NoCode(NoCodeOptions{Dir: dir, DenyExt: []string{".foo"}})
+	assert.Error(t, err, "accepted a deny-list with no stated provenance")
 }
 
 // TestNoCodeBuildMachineryByName is issue #6's own reproduction, turned into a
@@ -581,9 +508,7 @@ func TestNoCodeBuildMachineryByName(t *testing.T) {
 		".github/workflows/deploy.yml": "run: rm -rf /\n",
 	}
 	_, findings, err := scan(t, files, contents, nil, NoCodeOptions{})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, []string{"Makefile", "Dockerfile", ".github/workflows/deploy.yml"})
 }
 
@@ -595,12 +520,8 @@ func TestNoCodeNameMatchIsCaseInsensitive(t *testing.T) {
 
 	for _, name := range []string{"makefile", "MAKEFILE", "GNUmakefile", "dockerfile", "DOCKERFILE"} {
 		_, findings, err := scan(t, map[string]os.FileMode{name: 0o644}, nil, nil, NoCodeOptions{})
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if len(findings) != 1 {
-			t.Errorf("%s: flagged %d, want 1", name, len(findings))
-		}
+		require.NoError(t, err, "%s: %v", name, err)
+		assert.Len(t, findings, 1, "%s: flagged %d, want 1", name, len(findings))
 	}
 }
 
@@ -618,9 +539,7 @@ func TestNoCodeYAMLDataStillPasses(t *testing.T) {
 	}
 	contents := map[string]string{"data.yml": "title: x\n", "meta/tags.yaml": "tags: [a]\n"}
 	_, findings, err := scan(t, files, contents, nil, NoCodeOptions{})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, nil)
 }
 
@@ -638,9 +557,7 @@ func TestNoCodeNameFloorSurvivesDenyExtReplacement(t *testing.T) {
 		DenyExt:    []string{".zzz"},
 		DenySource: DenyReplaced,
 	})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, []string{"Makefile"})
 }
 
@@ -655,9 +572,7 @@ func TestNoCodeAllowExemptsNamedMachinery(t *testing.T) {
 		".github/workflows/deploy.yml": 0o644,
 	}
 	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{Allow: []string{"Makefile", ".github"}})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, nil)
 }
 
@@ -671,13 +586,9 @@ func TestNoCodeSymlinkNamedMachineryIsFlaggedWithoutDereference(t *testing.T) {
 	_, findings, err := scan(t,
 		map[string]os.FileMode{"NOTES.md": 0o644}, nil,
 		map[string]string{"Makefile": "/etc/hosts"}, NoCodeOptions{})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, []string{"Makefile"})
-	if !strings.Contains(findings[0].Reason, "target not followed") {
-		t.Errorf("reason %q does not record that the target was not followed", findings[0].Reason)
-	}
+	assert.Contains(t, findings[0].Reason, "target not followed", "reason %q does not record that the target was not followed", findings[0].Reason)
 }
 
 // TestFloorDenyNames proves the embedded list parses and actually contains the
@@ -687,9 +598,7 @@ func TestFloorDenyNames(t *testing.T) {
 	t.Parallel()
 
 	names, prefixes, err := FloorDenyNames()
-	if err != nil {
-		t.Fatalf("FloorDenyNames: %v", err)
-	}
+	require.NoError(t, err, "FloorDenyNames: %v", err)
 	// The EXACT set, not a spot check. This file's own policy is that an entry
 	// arrives with the test that proves it is caught, and a four-name spot
 	// check let twelve of eighteen entries be deleted with the suite green,
@@ -702,22 +611,14 @@ func TestFloorDenyNames(t *testing.T) {
 		"cmakelists.txt",
 		".gitlab-ci.yml", ".travis.yml", "azure-pipelines.yml", "appveyor.yml",
 	}
-	if len(names) != len(wantNames) {
-		t.Errorf("floor name list has %d names, want %d: %v", len(names), len(wantNames), names)
-	}
+	assert.Equal(t, len(wantNames), len(names), "floor name list has %d names, want %d: %v", len(names), len(wantNames), names)
 	for _, want := range wantNames {
-		if !names[want] {
-			t.Errorf("floor name list is missing %q", want)
-		}
+		assert.True(t, names[want], "floor name list is missing %q", want)
 	}
 	wantPrefixes := []string{".circleci", ".github/actions", ".github/workflows"}
-	if len(prefixes) != len(wantPrefixes) {
-		t.Fatalf("floor name list has %d prefixes, want %d: %v", len(prefixes), len(wantPrefixes), prefixes)
-	}
+	require.Equal(t, len(wantPrefixes), len(prefixes), "floor name list has %d prefixes, want %d: %v", len(prefixes), len(wantPrefixes), prefixes)
 	for i, want := range wantPrefixes {
-		if prefixes[i] != want {
-			t.Errorf("prefix %d = %q, want %q", i, prefixes[i], want)
-		}
+		assert.Equal(t, want, prefixes[i], "prefix %d = %q, want %q", i, prefixes[i], want)
 	}
 }
 
@@ -728,9 +629,8 @@ func TestFloorDenyNames(t *testing.T) {
 func TestFloorDenyNamesRefusesAnEmptyList(t *testing.T) {
 	t.Parallel()
 
-	if _, _, err := floorDenyNamesFrom("# only a comment\n\n"); err == nil {
-		t.Error("a comment-only name list returned no error; the guard is vacuous")
-	}
+	_, _, err := floorDenyNamesFrom("# only a comment\n\n")
+	assert.Error(t, err, "a comment-only name list returned no error; the guard is vacuous")
 }
 
 // TestNoCodeProseActionFilePasses is the counter-test the action entry owed.
@@ -748,9 +648,7 @@ func TestNoCodeProseActionFilePasses(t *testing.T) {
 		".github/actions/deploy/action.yml": 0o644,
 	}
 	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, []string{".github/actions/deploy/action.yml"})
 }
 
@@ -763,9 +661,7 @@ func TestNoCodeLocationMatchIsCaseInsensitive(t *testing.T) {
 
 	files := map[string]os.FileMode{"NOTES.md": 0o644, ".GitHub/Workflows/ci.yml": 0o644}
 	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, []string{".GitHub/Workflows/ci.yml"})
 }
 
@@ -807,9 +703,8 @@ func TestParseNameLinesRefusesMalformed(t *testing.T) {
 		"path:*",              // glob
 		"path:./.github/",     // a "." segment never matches a cleaned path
 	} {
-		if _, _, err := parseNameLines(bad); err == nil {
-			t.Errorf("parseNameLines(%q) returned no error, want refusal", bad)
-		}
+		_, _, err := parseNameLines(bad)
+		assert.Error(t, err, "parseNameLines(%q) returned no error, want refusal", bad)
 	}
 }
 
@@ -827,9 +722,7 @@ func TestNoCodeLocationIsAnchoredAtTheRepoRoot(t *testing.T) {
 		"sub/.github/workflows/ci.yml": 0o644,
 	}
 	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, []string{".github/workflows/ci.yml"})
 }
 
@@ -848,9 +741,7 @@ func TestNoCodeCompositeActionIsFlagged(t *testing.T) {
 		".github/CONTRIBUTING.md":           0o644,
 	}
 	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, []string{".github/actions/deploy/action.yml"})
 }
 
@@ -865,9 +756,7 @@ func TestNoCodeProseTaskfilePasses(t *testing.T) {
 	files := map[string]os.FileMode{"NOTES.md": 0o644, "taskfile.yml": 0o644}
 	contents := map[string]string{"taskfile.yml": "todo:\n  - write\n"}
 	_, findings, err := scan(t, files, contents, nil, NoCodeOptions{})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, nil)
 }
 
@@ -878,9 +767,7 @@ func TestNoCodeMakefileFragmentsAreCaught(t *testing.T) {
 
 	files := map[string]os.FileMode{"NOTES.md": 0o644, "rules.mk": 0o644, "config.mak": 0o644}
 	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, []string{"rules.mk", "config.mak"})
 }
 
@@ -896,8 +783,6 @@ func TestNoCodeSymlinkedAncestorDefeatsAMultiSegmentPrefix(t *testing.T) {
 	_, findings, err := scan(t,
 		map[string]os.FileMode{"NOTES.md": 0o644}, nil,
 		map[string]string{".github": "/tmp", ".circleci": "/tmp"}, NoCodeOptions{})
-	if err != nil {
-		t.Fatalf("NoCode: %v", err)
-	}
+	require.NoError(t, err, "NoCode: %v", err)
 	wantOnly(t, findings, []string{".circleci"})
 }

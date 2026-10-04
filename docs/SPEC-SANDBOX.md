@@ -30,10 +30,10 @@ Landlock on Linux; other platforms refuse to run the command.
 | a sandbox that silently does nothing on a platform it does not support | rules 1, 11 |
 | a credential file readable inside the wall | rules 6, 10 |
 | `/tmp` on macOS is a symlink to `/private/tmp`, and a policy written against the unresolved path grants nothing | rule 5 |
-| a deny-by-default policy makes the inherited temp directory unwritable and half a toolchain dies on its first scratch file | rule 8 |
-| OpenCode's `external_directory` is relative to the harness cwd, so a job directory that is not the cwd is "external" to itself | rule 13 |
-| 120 native cards each download the Go toolchain and every module into their own data home, up to 5 GB per slot, and the runners fill their disk (#1048) | rule 17: an explicitly named shared cache directory in the write set |
-| the wall stands and the job's first `git status` dies on `~/.gitconfig`, which reads as a broken sandbox | rule 9: the caller sets `HOME` to the per-job data home, and a `HOME` outside both lists is a refusal |
+| a deny-by-default policy makes the inherited temp directory unwritable and half a toolchain dies on its first scratch file | the tool creates its own temp directory under the **first** `--write` |
+| The harness's `external_directory` is relative to the harness cwd, so a job directory that is not the cwd is "external" to itself | rule 13 |
+| 120 native cards each download the Go toolchain and every module into their own data home, up to 5 GB per slot, and the runners fill their disk | an explicitly named shared cache directory in the write set |
+| the wall stands and the job's first `git status` dies on `~/.gitconfig`, which reads as a broken sandbox | the caller sets `HOME` to the per-job data home, and a `HOME` outside both lists is a refusal |
 
 ## The rules, numbered
 
@@ -45,7 +45,7 @@ The test requirements are listed under **Tests this spec demands**.
    `sandbox-exec` on `darwin` and Landlock on `linux`. On both, the tool
    waits and returns the command's status. On `linux` it restricts **itself**
    first and starts the command afterwards, so the tool is inside the wall it
-   applied while it waits (rule 12 and the Linux section). If the platform's backend is not available at run time — no
+   applied while it waits, as the Linux section describes. If the platform's backend is not available at run time — no
    Landlock in the running kernel, no `sandbox-exec` on `PATH` and none at
    `/usr/bin/sandbox-exec`, or a platform without an implemented backend — the tool prints `SANDBOX REFUSED
    reason=no_sandbox` and **the command does not run**. A backend that is
@@ -83,8 +83,8 @@ The test requirements are listed under **Tests this spec demands**.
    `--read-noexec` and `--write`, is a refusal naming both flags: one asks for
    execute and the other takes it away, and `--write` carries both. A
    default write set would be a guess about somebody else's job. **The two
-   named exceptions**, and there are no others: rule 8 puts the temp directory
-   under the **first** `--write` and rule 13 defaults the `--cwd` to the
+   named exceptions**, and there are no others: the tool puts the temp directory
+   under the **first** `--write` and defaults the `--cwd` to the
    **first** `--write`. Neither is a guess about the *lists* — the caller gave
    both paths — and both are stated here so that "never guessed" and "the first
    `--write`" stop contradicting each other. The order of `--write` flags is
@@ -129,7 +129,7 @@ The test requirements are listed under **Tests this spec demands**.
    else does. **Inbound is not granted at all** unless the caller asks with
    `--net-listen`, which emits `(allow network-inbound (local ip))` and
    nothing wider; a job that does not listen cannot be listened to.
-   (`profiles/darwin-check.sh`, checks `unix_socket_outside`,
+   (`tools/sandboxcheck`, checks `unix_socket_outside`,
    `unix_socket_outside_control` and `unix_socket_inside`.)
    **The loopback is opened by name with `--net-allow <host:port>`.** The
    no-promise grant `(allow network-outbound (remote ip))` reaches remote IP
@@ -156,9 +156,9 @@ The test requirements are listed under **Tests this spec demands**.
    `(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))`
    the same curl is `200`. Every wrapped worker would otherwise fail its first
    request while the `SANDBOX OK` line said `net=nopromise`, which is the
-   silent sandbox rule 1 forbids. The literal is emitted **inside** the network
+   silent sandbox this spec forbids. The literal is emitted **inside** the network
    marker, so `--net-deny` takes the resolver away with the network.
-   (`profiles/darwin-check.sh`, checks `dns_resolves` and
+   (`tools/sandboxcheck`, checks `dns_resolves` and
    `dns_resolves_control`: the same profile with the literal removed does not
    resolve, so the check cannot pass by the socket being irrelevant.)
    **`mach-lookup` is narrowed to three services, measured.** An unqualified
@@ -175,7 +175,7 @@ The test requirements are listed under **Tests this spec demands**.
    ```
 
    All five pass under it and `pbpaste` is `rc=1`
-   (`profiles/darwin-check.sh`, check `clipboard_denied`). **Accepted width,
+   (`tools/sandboxcheck`, check `clipboard_denied`). **Accepted width,
    named rather than removed:** under this narrowed set `launchctl print
    system` still answers and `security list-keychains` still lists the keychain
    **file names** — neither reads a secret, and both were measured to still
@@ -194,7 +194,7 @@ The test requirements are listed under **Tests this spec demands**.
    flag is not loud in the argv; the word on the line is what a reader sees,
    and it is the same word whether the caller never wanted a denial or gave
    one up. There is no `SANDBOX NOTE` that proceeds with a weaker wall than the
-   caller asked for — that is the silent sandbox rule 1 exists to prevent.
+   caller asked for — that is the silent sandbox this spec exists to prevent.
    Landlock restricts only TCP `bind`/`connect` even at ABI 4; UDP is not
    restricted at any ABI, and `net=denied` on linux means exactly TCP.
 8. **Temp is inside the wall.** The tool creates
@@ -227,21 +227,21 @@ The test requirements are listed under **Tests this spec demands**.
    starts: `SANDBOX NOTE dropped from the child's environment: <names>; an agent
    socket speaks for a key the wall denies`. `<names>` lists exactly the
    variables removed by the set above.
-   The scrub is the second half of rule 7's network policy: the wall denies
+   The scrub is the second half of the network policy: the wall denies
    the agent's *socket* and the scrub removes the *address* of it, so a
    command that would otherwise sign a push with a key it cannot read has
-   neither half. It is by **exclusion**, never an allow-list, because rule 6's
+   neither half. It is by **exclusion**, never an allow-list, because the caller's
    credential must still arrive: the tool drops the names it knows are agents
    and passes everything else through untouched. The evidence is a **Go test**, not
-   the check script: `internal/sandbox/policy_test.go`'s `TestChildEnv` and
+   the check: `internal/sandbox/policy_test.go`'s `TestChildEnv` and
    `TestScrubSetIsExactlyTheSpecs` (test 27(c)) plant `SSH_AUTH_SOCK`,
    `SSH_AGENT_PID`, `GPG_AGENT_INFO`, `PODMAN_AGENT_SOCK`, `AI_AGENT`,
    `CLAUDE_AGENT_SDK_VERSION` and `FOO_TOKEN` and assert the exact set, and
    `cmd/nova-sandbox`'s `TestTheNoteNamesExactlyWhatWasDropped` asserts the same
-   thing end to end through the binary. `profiles/darwin-check.sh`'s
+   thing end to end through the binary. `tools/sandboxcheck`'s
    `env_no_ssh_auth_sock` builds the child environment by its **own** filter
    before `sandbox-exec` runs, so it can only agree with itself. The credential
-   the caller deliberately passed by environment (rule 6) must arrive.
+   the caller deliberately passed by environment must arrive.
 
    **A credential passed by environment reaches the child.** The caller owns
    any further filtering before that child starts a tool subprocess; the
@@ -276,7 +276,7 @@ The test requirements are listed under **Tests this spec demands**.
    write is `Operation not permitted`, which is exactly the harness death two
    paragraphs up, moved later in the run and made harder to read. With `HOME`
    inside a `--write` the same `git status` exits 0 and the config write lands
-   (measured, `profiles/darwin-check.sh`, check `home_config_write`).
+   (measured, `tools/sandboxcheck`, check `home_config_write`).
    `HOME` rather than the XDG quartet (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
    `XDG_CACHE_HOME` plus `GIT_CONFIG_GLOBAL`) because one variable covers
    every home-derived path a tool invents — `~/.gitconfig`, `~/.ssh`,
@@ -284,13 +284,17 @@ The test requirements are listed under **Tests this spec demands**.
    no XDG variable reaches — while the quartet covers only the tools that
    honour it and must grow a name every time a toolchain invents one. (The
    quartet was measured too: `GIT_CONFIG_GLOBAL` + `XDG_CONFIG_HOME` fixes
-   git. It fixes git.) The tool does not set `HOME` itself: rule 4 forbids it
-   guessing which write path is a data home (rule 4 names its only two
+   git. It fixes git.) The tool does not set `HOME` itself: guessing
+   which write path is a data home is forbidden (the spec names its only two
    exceptions, and this is not one of them). It does **check**: a run whose
    `HOME` resolves outside every `--write` path is
    `SANDBOX REFUSED reason=home_outside` at exit 125 and the command does not
    run, because a wall that lets the job start and kills its first git
-   command is the silent sandbox rule 1 exists to prevent.
+   command is the silent sandbox this spec exists to prevent. The refusal (and
+   `probe`'s and `policy`'s) ends with the command that answers it, the same
+   invocation with a data home made inside the first `--write`:
+   `run: mkdir -p <first --write>/home && HOME=<first --write>/home nova-sandbox <the same arguments>`.
+   That is a line for the caller to paste, not a default: nothing is set.
 10. **The probe proves the wall before the work runs.** `nova-sandbox probe
     --write <dir> [--read <dir>...] [--secret <path>]` runs five checks under the
     real policy for this platform: the control write outside the wall must
@@ -300,7 +304,7 @@ The test requirements are listed under **Tests this spec demands**.
     check that comes back the wrong way is `PROBE REFUSED` at exit 1 naming
     the check. The last two are not decoration: a wall that denies the work
     too is broken, and a two-check probe would call it a pass. **`--secret` is
-    optional (issue #881).** A caller whose key is delivered by `nova-secrets
+    optional.** A caller whose key is delivered by `nova-secrets
     exec` into the environment has **no key file** for the wall to protect —
     the key is never a file on disk — so the probe runs its other four checks
     and no `read_secret` step is invented; the `secret_inside_allow` check of
@@ -316,9 +320,9 @@ The test requirements are listed under **Tests this spec demands**.
     a shell.
 11. **This tool has no way to run a command unwalled.** There is no
     `--no-sandbox`, no environment variable and no config file: a
-    `nova-sandbox --no-sandbox` is `SANDBOX REFUSED reason=no_command:
-    --no-sandbox is not a flag this tool has` at exit 125, like any other flag
-    the tool does not have. A wall this tool cannot build is a refusal (rule 1),
+    `nova-sandbox --no-sandbox` is `SANDBOX REFUSED reason=bad_flag:
+    unknown flag --no-sandbox; the flags are --read, ...; run: nova-sandbox help` at
+    exit 125, like any other flag the tool does not have. A wall this tool cannot build is a refusal (rule 1),
     and it stays a refusal — a tool whose whole reason is containment does not
     ship the switch that turns containment off.
 12. **The exec verb is transparent, and what happens to the tool's own process
@@ -396,9 +400,9 @@ The test requirements are listed under **Tests this spec demands**.
 
 ```
 nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny] [--net-listen] [--net-allow <host:port>]... [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
-nova-sandbox probe   --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny] [--max <n>]
-nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--net-allow <host:port>]... [--cwd <dir>] [-- <command> <args...>]
-nova-sandbox check   [--max <n>]
+nova-sandbox probe   --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny] [--max <n>] [--json]
+nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--net-allow <host:port>]... [--cwd <dir>] [--json] [-- <command> <args...>]
+nova-sandbox check   [--json]
 nova-sandbox run     --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] -- <command> <args...>
 nova-sandbox reap    [--dry-run]
 nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
@@ -429,6 +433,20 @@ or not a sandbox is available, because it is a question, not an attempt. The
 `hosts=none` field is a fixed fixture: this tool has no per-host wall rule, so
 the token is always `none` and is printed only to keep the check line's shape
 across platforms.
+
+`check`, `policy` and `probe` take `--json`: the same result as one JSON object
+on stdout, a refusal included (`{"result":{"verb","status","exit","remedy","why"},
+"facts":{...},"items":[...],"notes":[...],"payload":"..."}`, the shape of
+`internal/tool`'s output value). `policy`'s profile is the `payload`, `probe`'s
+steps are `items` of kind `step`, and every typed line's fields are `facts`. The
+bare form and `run` wrap a command whose output is its own, and refuse `--json`.
+
+A flag that belongs to another verb is never silently dropped: the bare form
+refuses `--secret`, `--max` and `--json`; `probe` refuses `--cwd`, `--tmp`,
+`--name`, `--acl` and `--net-allow`, because a probe of a wall built without them
+answers a different question; `policy` accepts `--secret`, `--max` and `--acl` and
+prints one `POLICY NOTE` per flag saying it changed nothing. `<verb> -h` lists
+each verb's flags with what each wants, and that verb's own exit codes.
 
 The binary is `nova-sandbox`.
 
@@ -816,6 +834,10 @@ What a run allows, and it is the whole list:
 | the resolver `--resolver` names | **UDP 53 only** |
 | everything else | dropped |
 
+`plan` judges every flag and the policy file before it resolves a name, and a
+plan refused there names every problem at once and resolves nothing, so a
+mistyped invocation never waits on a resolver.
+
 Denied outright, before any allow is considered: `169.254.169.254/32` (the
 metadata address, **by name**, so a reader finds it without arithmetic), the rest
 of `169.254.0.0/16`, `127.0.0.0/8` as a destination, `::1/128` and `fe80::/10`,
@@ -941,7 +963,10 @@ and exit 0; it removes only trees named by its own record files, so a `git
 worktree` the friends made by hand and a tree whose PR state is unknown are
 kept, never deleted.
 
-Every refusal is exit 2 with **one remedy line** and creates nothing. A missing,
+Every refusal is exit 2 with **one remedy line** and creates nothing, and one run
+names every problem it finds, one `WORKTREE REFUSED` line each, before that remedy
+line. An argument the verb has no flag for is `reason=bad_flag: unknown flag
+--<x>; run: nova-sandbox help worktree`, never ignored. A missing,
 non-numeric or zero `--pr`, or `--pr` together with `--prune`, is `WORKTREE
 REFUSED reason=bad_pr: --pr wants one pull-request number and one mode`; a
 `--repo` that is missing, relative, or not a git work tree is `reason=bad_repo:
@@ -1014,7 +1039,7 @@ range. This departure from the conventions preserves the child's exit status.
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
 | 3 | `run` only: the disposable volume could not be deleted — `SANDBOX LEAK`, naming the disk and the one command that removes it. It overrides the command's own status, because "nothing survives" is the whole contract and a caller that read `0` would believe the machine was clean |
 | 124 | `run` only: `--timeout` passed, the whole process group was killed and the volume was deleted anyway — `timeout(1)`'s status |
-| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), a missing `--` or nothing after it (`reason=no_command`); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`), a volume that could not be made, or that was made and not mounted (`reason=volume_failed`), and the handoff's own — `--artifact` or `--out-max-bytes` with no `--out`, or `--out` on windows (`reason=no_out`), an artifact path that is absolute, empty, `.` or carries `..` (`reason=bad_artifact`), a `--out-max-bytes` that is not a positive quantity (`reason=bad_out_max`), and a handoff that could not be completed after a command that exited 0 (`reason=out_failed`) |
+| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), a missing `--` or nothing after it (`reason=no_command`), a flag the bare form does not have (`reason=bad_flag`, naming the flags it has); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`), a volume that could not be made, or that was made and not mounted (`reason=volume_failed`), and the handoff's own — `--artifact` or `--out-max-bytes` with no `--out`, or `--out` on windows (`reason=no_out`), an artifact path that is absolute, empty, `.` or carries `..` (`reason=bad_artifact`), a `--out-max-bytes` that is not a positive quantity (`reason=bad_out_max`), and a handoff that could not be completed after a command that exited 0 (`reason=out_failed`) |
 | 126 | the command could not be executed **and the tool was still there to say so**: on `linux` the child could not be started inside the wall. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
 | 127 | the command could not be resolved on the caller's `PATH`: `SANDBOX REFUSED reason=not_found`, printed like every other refusal of the tool's own |
 | 128+N | the wrapped command was killed by signal `N` |
@@ -1022,10 +1047,15 @@ range. This departure from the conventions preserves the child's exit status.
 The reservation is ambiguous, as it is in `env(1)`: a wrapped command that
 itself exits 125, 126 or 127 — **and on darwin 71** — is indistinguishable from
 the tool's own refusal by exit status alone. The tool's refusals always print a
-`SANDBOX REFUSED` line to stderr and the command's do not, so a caller that
-needs to tell them apart reads the line, not the number. This is stated rather
-than fixed, because renumbering would break the convention the rest of the
-table follows.
+`SANDBOX REFUSED` line to stderr and the command's do not, and a status the
+command returned is announced after it ends by `SANDBOX DONE exit=<n>`, the last
+line the tool writes; so a caller that needs to tell them apart reads the line,
+not the number. This is stated rather than fixed, because renumbering would
+break the convention the rest of the table follows.
+
+A bare `nova-sandbox`, with no arguments at all, wrapped nothing: it is
+`SANDBOX REFUSED reason=no_command: no arguments; ...; run: nova-sandbox help`
+at exit **2**, SPEC.md's "could not run", like the verbs below.
 
 **Executability is checked before the wrap, not mapped after it.** Measured:
 when `sandbox-exec` cannot exec the command under the profile it prints
@@ -1052,7 +1082,8 @@ that is found and then dies inside the wall for want of its interpreter or a
 shared library exits `126` or dies by signal. There is **no** `SANDBOX NOTE`
 on that failure: on linux
 the tool is inside the wall it applied by the time the command runs, so it can
-print no more than the command's own status (rule 12), and a promise the tool
+print no more than the command's own status (rule 12), which is what `SANDBOX
+DONE exit=<n>` says and all it says, and a promise the tool
 can keep on one platform and not the other two is worse than no promise. The
 remedy is printed where it can be printed on all three — the usage banner and
 the `--read` paragraph of the roots section — and a reader diagnosing a `126`
@@ -1069,16 +1100,20 @@ and a platform with no nftables are **2**.
 
 ## Output grammar
 
-Every line below goes to **stderr** except the body of `policy`,
-which is the thing asked for and goes to stdout.
+Every line below goes to **stderr** except the body of `policy`, which is the
+thing asked for, and the answers of the verbs that wrap nothing (`CHECK OK`,
+`PROBE STEP`, `PROBE OK`, `WORKTREE OK`, `WORKTREE REMOVED`, the version line),
+which go to stdout; under `--json` the one object is all a verb prints, on
+stdout. A wrapped command's stdout is its own and the tool writes nothing there.
 
 ```
 SANDBOX OK backend=<sandbox-exec|landlock> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
-SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|no_name|no_container|no_command|not_found|not_executable|volume_exists|volume_failed|unknown_verb>: <text>
+SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|no_name|no_container|no_command|bad_flag|not_found|not_executable|volume_exists|volume_failed|unknown_verb>: <text>
 SANDBOX STEP name=<container|look|create|delete|denials|list> state=<start|done> [ms=<n>]
 SANDBOX DENIED path=<p> op=<read|write> remedy="--read <dir>"
 SANDBOX TIMEOUT after=<d> name=<n>
+SANDBOX DONE exit=<code> cmd=<name>   (the bare form: the last line, after the command ends)
 SANDBOX DONE name=<n> exit=<code> wall=<s> freed=<bytes>
 SANDBOX LEAK name=<n> volume=<disk> remedy="diskutil apfs deleteVolume <disk>"
 SANDBOX REAP volume=<n> procs=<n> deleted=<yes|no>
@@ -1087,6 +1122,7 @@ PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|re
 PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise> gpu=<none|metal>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>
 POLICY OK backend=<name> read=<n> read-noexec=<n> write=<n> bytes=<n> gpu=<none|metal>
+POLICY NOTE <flag> is <verb>'s flag and is ignored here: the policy printed is the same without it
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
 CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> hosts=none note=<one clause|->
 CHECK REFUSED reason=<bad_flag>: <text>
@@ -1107,12 +1143,19 @@ holding this binary at all (#1297). The backend and the platform a sandbox is
 judged by are not lost; they are said in the grammar the whole set shares.
 
 `SANDBOX OK` is printed **before** the command starts, so a log that ends in a
-crash still says what the wall was. It names `cmd=<name>` — the base name of
+crash still says what the wall was; its `OK` says the wall is up and the command
+is starting, never how the command ended. That is `SANDBOX DONE exit=<code>
+cmd=<name>`, the bare form's last line, printed when the command has ended with
+the status the tool then exits with: a reader that sees `SANDBOX OK` and then a
+non-zero `SANDBOX DONE` knows the wall stood and the command failed, and a
+refusal prints no `DONE` at all. It is printed after the command, which on
+linux is from inside the wall: the tool writes to the stderr it already holds
+and opens nothing. `SANDBOX OK` names `cmd=<name>` — the base name of
 the executable — and never the arguments, because arguments carry task text and
 task text carries quoted rules. The `cwd=<dir>` slot is a one-line field
 rendered through `internal/oneline` like every other path, so a directory whose
 path holds a space reaches a reader escaped; a consumer that compares it with a
-path it holds decodes that field first (issue #572).
+path it holds decodes that field first.
 
 **`SANDBOX OK` names the cwd twice.** `cwd=<dir>` is the readable rendering of
 the working directory through `oneline.Field`, for the operator;
@@ -1129,7 +1172,7 @@ Every `SANDBOX NOTE` is printed **before** the command starts, for the reason
 applied, and the wall goes up before the command does. There is no note about a failure the command suffered inside the
 wall, on any platform.
 
-`net=nopromise` is rule 7: the caller did not ask for network denial and the
+`net=nopromise` says the caller did not ask for network denial and the
 tool is not implying one. There is no `net=unenforced`; a denial that cannot be
 enforced is a refusal, not a word in a line.
 
@@ -1146,8 +1189,8 @@ rules the file actually holds (the default deny counted among the drops), and
 compared without reading the ruleset. `EGRESS CHECK` is the same shape read back
 out of a file by the audit.
 
-`SANDBOX STEP`, `SANDBOX DONE`, `SANDBOX LEAK` and `SANDBOX DENIED` are the `run`
-verb's alone. `SANDBOX DENIED` is the one line this tool prints about a failure
+`SANDBOX STEP`, `SANDBOX LEAK` and `SANDBOX DENIED` are the `run` verb's alone,
+and `SANDBOX DONE` with `name=` is its form of the bare form's last line. `SANDBOX DENIED` is the one line this tool prints about a failure
 the command suffered INSIDE the wall, and it is an exception to the sentence
 above with a reason: on the `run` verb the tool is still there when the command
 dies, because it owns the disposable volume and has to delete it. It is not a
@@ -1173,8 +1216,8 @@ the worker home with its `AGENTS.md` — belong in the read set, named once, so
 that N workers read one copy.
 
 **"Inside" is asked of the filesystem, not of a string prefix.** The one predicate
-behind rule 6's `--secret`, rule 10's outside path, rule 9's `HOME`, rule 13's
-`--cwd`, rule 8's `--tmp` and the command-directory home guard — and behind no
+behind `--secret`, the outside path, `HOME`,
+`--cwd`, `--tmp` and the command-directory home guard — and behind no
 other question — asks `os.SameFile` of the path and its existing ancestors against
 the directory, keeping the string prefix as the cheap first answer and, for a
 directory that is not there to be asked, falling back to that prefix
@@ -1215,7 +1258,7 @@ the wall unusable for any wrapped shell command. With the three literals and
 what is written: the literal grants the link, and what the link points at is
 granted, or not, by the other roots.
 
-One measured consequence of the same shape, repaired in #1557: `/usr/bin/c++`,
+One measured consequence of the same shape: `/usr/bin/c++`,
 `/usr/bin/cc` and `/usr/bin/git` on a Mac are Xcode shims that read
 `/var/db/xcode_select_link`. `/var` is a literal on the symlink, not a
 subpath, so without a literal on the link itself every C and C++ compile
@@ -1232,13 +1275,13 @@ stat `Info.plist` and load `SharedFrameworks` next to it — Developer alone is
 usual caller path; the shim no longer needs `--read /private/var/db`.
 
 There is no `--root` flag. A toolchain installed into a user directory — Go
-under `~/go`, node under `~/.nvm`, .NET under `~/.local`, the Studio's
+under `~/go`, node under `~/.nvm`, .NET under `~/.local`, a machine's
 `/Users/<user>/toolchains` — is named with `--read`, which is exactly a
 caller-supplied read-only root and needs no second spelling. On Windows,
 `--read` is what makes the tool add a read-only ACE for the container SID. A
 command that dies for want of an interpreter inside the wall and runs outside
 it is a missing `--read`. The tool cannot say so after the fact — on linux it
-is gone by then (rule 12) — so the sentence lives in the usage banner instead:
+is gone by then — so the sentence lives in the usage banner instead:
 *a command that runs outside the wall and dies inside it is missing a
 `--read`.*
 
@@ -1265,7 +1308,7 @@ host` while TCP by IP still worked. So `addRules` applies `linuxRoots`, not the
 bare `linuxReadRoots` slice: it is the table above plus the directory
 `/etc/resolv.conf` resolves to, read-only and skip-if-absent like every other
 root. The containing directory is granted rather than the file, because WSL
-rewrites the file and a rule on the old inode would be left holding a path that
+rewrites the file and a rule on the prior inode would be left holding a path that
 is no longer read.
 
 The home directory is never a root — **including by way of the command**. One
@@ -1277,10 +1320,10 @@ tool **refuses** when the directory of the resolved command is the caller's home
 directory — the passwd home, and `$HOME` as the tool inherited it — or an
 ancestor of it, naming the directory and the home: "install the command in a
 directory of its own". The refusal is `bad_read` and it happens before anything
-runs. Two exemptions, both of them rule 3's "a caller that adds one back has
+runs. Two exemptions, both of them "a caller that adds one back has
 done so in its own argv": a directory the caller named in its own `--read` or
 `--write`, and a home that lies inside the caller's own lists, which is what the
-job's data home of rule 9 always is.
+job's data home always is.
 
 ## macOS — `sandbox-exec` with a generated profile
 
@@ -1295,8 +1338,8 @@ works today; it applies the profile and `exec`s the command in place, so it is
 not a second process sitting between the tool and the command.
 
 The profile text is **not in this document**. It ships in the repository as
-`profiles/darwin.sb.tmpl`, and this section describes that file and the script
-that checks it. A second copy of the profile can diverge from the generator.
+`profiles/darwin.sb.tmpl`, and this section describes that file and the check
+that measures it. A second copy of the profile can diverge from the generator.
 
 **`profiles/darwin.sb.tmpl`** is Sandbox Profile Language (SBPL, a Scheme
 dialect) and is the generator's only input. It carries the fixed clauses
@@ -1306,10 +1349,10 @@ on this machine), `@@ANCESTORS@@`, `@@READS@@`, `@@WRITES@@` and `@@NET@@`
 (empty under `--net-deny`). Caller paths never enter the text: they arrive as
 `-D NAME=<resolved path>` and are read back as `(param "READn")`,
 `(param "WRITEn")` and `(param "HOME")`, so a directory with a quote or a paren
-in its name cannot rewrite the policy. Rule 15 still holds: the file is a
+in its name cannot rewrite the policy: the file is a
 template, never a policy, and nothing runs under it until the generator has
 filled it for one run's two lists. `HOME` gets no grant of its own beyond the
-`WRITEn` it must resolve inside (rule 9); it is passed so that the profile
+`WRITEn` it must resolve inside; it is passed so that the profile
 states the requirement.
 
 Four things in that file are load-bearing, and each was measured rather than
@@ -1360,9 +1403,25 @@ read:
   *tool* added and the caller never named, so it belongs in the generator. The
   grant stays `file-read-metadata`: `/opt` becomes traversable, never readable.
 
-**`profiles/darwin-check.sh`** is how that file is known to be right. It fills
-the template for a scratch write set beside itself (bash, `set -euo pipefail`,
-no `/tmp`, any cwd), then runs inside the wall, by absolute path, the first
+**What the wall costs, measured (2026-10-02).** A card is walled once:
+`nova-swarm native` wraps the harness in one `nova-sandbox`, `sandbox-exec`
+applies the profile and execs in place, and every process the harness starts
+inherits the sandbox; nothing re-enters it. A card's filled profile is 50-60
+rules (most of them the ancestor and PATH-directory metadata grants), not
+hundreds. On two Intel Mac benches (8 cores at 3.2 GHz, 18 cores at 2.3 GHz) and
+an Apple Silicon Mac, 500 execs of `/usr/bin/true`, a `git clone --shared` with
+checkout, and a warm-cache `go build ./cmd/nova-sprint` cost the same, best of
+five, inside this profile, inside a ten-rule profile of broad `subpath` grants,
+inside `(allow default)` and outside any sandbox: the generated profile against
+no sandbox was at most +7% (0.05 s on a clone), and the four walls showed no
+consistent order between them. So the profile's shape is not the wall's cost,
+and widening it to save time would trade a denial for nothing. A slow Intel
+bench is slow in the kernel for every process, walled or not.
+
+**`tools/sandboxcheck`** is how that file is known to be right. It is a Go
+driver (`internal/sandbox/darwincheck`) around the real probes, and it fills the
+embedded template for a scratch write set under the working directory (no
+`/tmp`, any cwd), then runs inside the wall, by absolute path, the first
 second of a real job: `cd`, `mkdir -p`, `git init`, `git clone --shared` of a
 local repository, a config write under `HOME`, `cat /etc/hosts`,
 `/bin/sh -c true`, `sleep 5 & kill $!`, stdout to a pipe the caller drains and
@@ -1371,39 +1430,44 @@ write outside every named path, a read of the named secret file, a listing of
 an ancestor, and a connect to a unix-domain socket outside the write set —
 **each with a control run outside the wall**, so that no denial can pass by
 being impossible. It also asserts that a unix-domain socket **outside** the
-write set cannot be connected to while the job's own socket **inside** it can
-(rule 7), and that the child environment holds none of rule 9's exact set while
+write set cannot be connected to while the job's own socket **inside** it can,
+and that the child environment holds none of the dropped set while
 a caller variable beside them survives. One line per check,
 `CHECK OK name=...` / `CHECK FAIL name=...`, exit 1 on any FAIL. **The count is
-the script's own** and no number is stated here: a document that named one would
+the check's own** and no number is stated here: a document that named one would
 be wrong the first time a check was added. The recorded macOS 26.6.2 arm64
-measurement has every check `OK`. A platform claim requires the script to run
-on that platform, with its output included in the commit.
+measurement has every check `OK`. A platform claim requires the check to run
+on that platform, with its output included in the commit. It removes only what
+it made: a scratch directory handed to it keeps whatever else it holds.
 
-The script's child-environment filter is the **script's**, so it can only agree
+The check's child-environment filter is the **check's**, so it can only agree
 with itself: what it measures is the profile, not the tool's scrub. The scrub is
-asserted in Go, and rule 9 names those tests rather than this check.
+asserted in Go, and the spec names those tests rather than this check.
 
-The script takes two environment variables for a caller that is a **test**
-rather than an operator, because test 16 is absolute — no test reaches outside
-`t.TempDir()` or touches the network, and a Go wrapper around this script was
-doing both. `NOVA_CHECK_SCRATCH` puts the scratch tree where the caller says
-instead of beside the script; `NOVA_CHECK_NO_NETWORK=1` skips the two DNS
-checks, which are the only ones that leave the machine, and prints
-`CHECK SKIP name=... reason=no_network` for each. The operator run and the mac
-CI job set neither: there the DNS checks are the rule-7 measurement and they
-run. (Built on #73 alongside `NOVA_SANDBOX_FILL`; this branch carries only the
-rule 9 scrub fix to the script.)
+The check takes four options for a caller that is a **test** rather than an
+operator, each a flag and each read from an environment variable when the flag
+is absent, because test 16 is absolute — no test reaches outside `t.TempDir()`
+or touches the network. `--scratch` (`NOVA_CHECK_SCRATCH`) puts the scratch tree
+where the caller says instead of under the working directory; `--no-network`
+(`NOVA_CHECK_NO_NETWORK=1`) skips the two DNS checks, which are the only ones
+that leave the machine, and prints `CHECK SKIP name=... reason=no_network` for
+each; `--dump-profile` (`NOVA_CHECK_DUMP_PROFILE=1`) prints the filled profile
+and exits 0 before any check runs, so a test can compare the hand filler with
+the tool generator; `--fill BIN` (`NOVA_SANDBOX_FILL`) judges the profile a
+`nova-sandbox` binary generates for the same write set instead of the hand-filled
+one, so a drift between the two fillings is a named FAIL. The operator run and
+the mac CI job set none of them: there the DNS checks are the rule-7
+measurement and they run.
 
-A third thing the script measured, small and load-bearing: `sun_path` is **104
+A third thing the check measured, small and load-bearing: `sun_path` is **104
 bytes**, and a socket bound by absolute path under a deep scratch directory
 silently fails to bind — which would make `unix_socket_outside` pass because
 nothing was listening, the exact shape of failure the controls exist to catch.
-The script binds and connects by **relative** path with the cwd set, and treats
+The check binds and connects by **relative** path with the cwd set, and treats
 a socket that did not appear within a bounded wait as a FAIL, not a pass.
 
-Two things the script measured that the rules above now carry. The **cwd** is
-load-bearing beyond rule 13's fence argument: with a cwd outside every named
+Two things the check measured that the rules above now carry. The **cwd** is
+load-bearing beyond the fence argument: with a cwd outside every named
 path, `getcwd(3)` is denied and every `git` command dies with
 `shell-init: error retrieving current directory ... Operation not permitted`
 before it looks at anything else. And git's upward repository discovery reaches
@@ -1420,7 +1484,7 @@ what the tool does with metacharacters in a path, is item 2 of **to verify at
 build**.
 
 The filled profile is **never written to a file**: it is handed to
-`sandbox-exec` inline with `-p` (rule 12), so no profile text lands in the
+`sandbox-exec` inline with `-p`, so no profile text lands in the
 write set and there is nothing to remove when the command ends. The darwin body
 waits rather than `exec`s in order to forward signals and return the command's
 status, not to clean anything up.
@@ -1467,8 +1531,8 @@ and `fork(2)` is what carries it to the command:
    ABI **below the first row** has no row to clamp to and is
    `SANDBOX REFUSED reason=landlock_abi_unknown` at exit 125, naming the
    discovered number and the lowest the tool knows, with the command not run;
-   so is no Landlock at all (`reason=no_sandbox`, rule 1). This tool has no
-   workaround for those two (rule 11). A backend must be available and its
+   so is no Landlock at all (`reason=no_sandbox`). This tool has no
+   workaround for those two. A backend must be available and its
    ABI supported before the command can run.
 
    **Why the clamp is valid.** A newer Landlock kernel accepts a ruleset for
@@ -1520,7 +1584,7 @@ takes it back out. A caller that runs `Run` twice in one process nests a second
 domain inside the first — which is what `probe` does, and because its walled
 steps all share one policy the nested domain is the same wall again. Anything a
 caller must do unwalled it must do **before** the first `Run`, which is exactly
-why rule 10 runs `write_outside_control` first.
+why the probe runs `write_outside_control` first.
 
 The ABI is discovered with `landlock_create_ruleset(NULL, 0,
 LANDLOCK_CREATE_RULESET_VERSION)`, and the handled set is masked down to what
@@ -1529,7 +1593,7 @@ is rejected. The discovered number is printed as `abi=<n>` on `SANDBOX OK`.
 
 **Network:** Landlock gained TCP `bind`/`connect` restriction at **ABI 4**
 (kernel 6.7). UDP is not restricted at any ABI. Below ABI 4, `--net-deny` is
-`SANDBOX REFUSED reason=net_unenforceable` (rule 7).
+`SANDBOX REFUSED reason=net_unenforceable`.
 
 **Abstract unix sockets and signals** are unrestricted below **ABI 6** (kernel
 6.12), which added `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET` and
@@ -1547,7 +1611,7 @@ item.
 Landlock is unavailable when the kernel predates 5.13, when it is not compiled
 in, or when it is not in the boot-time `lsm=` list. All three come back as a
 failed version query, and all three are `SANDBOX REFUSED reason=no_sandbox`
-(rule 1).
+— the command does not run.
 
 **What this backend cannot do that the darwin one can.** Four things, and they
 are here rather than in a footnote because a wall's gaps are the part a reader
@@ -1596,13 +1660,13 @@ filesystem containment.
 HOME=<jobdir>/home nova-sandbox probe --write <jobdir> --secret ~/.config/<provider>/env
 ```
 
-`HOME` is set here for the same reason it is set on the reader commands: rule 9's
+`HOME` is set here for the same reason it is set on the reader commands: the home-outside
 check runs before the policy is built, so a probe run with the dispatcher's own
 `HOME` — which is outside every `--write` by construction — is
 `PROBE REFUSED reason=check ... home_outside` and every swarm pass would refuse
 with it. A caller that runs the probe runs it with the job's data home. A caller
-whose key is delivered by `nova-secrets exec` names **no `--secret`** (issue
-#881): the key is never a file, so there is no secret file to prove unreadable,
+whose key is delivered by `nova-secrets exec` names **no `--secret`**: the
+key is never a file, so there is no secret file to prove unreadable,
 and the probe runs the other four checks.
 
 Five checks, under the real policy for this platform, each one line — the five
@@ -1631,7 +1695,7 @@ this user anyway (`/opt` is `EACCES` on a Mac), `write_outside` comes back
 write outside the wall first; if the control says `deny`, the probe is exit 2
 `reason=probe_outside_unwritable` naming the path, because the machine cannot
 answer the question — not a failed check, a misconfigured one. `read_secret`
-needs no control (rule 6 refuses a `--secret` inside a list, and the caller
+needs no control (the tool refuses a `--secret` inside a list, and the caller
 just read the file to pass its value by environment), and the two `allow`
 checks are their own controls.
 
@@ -1641,7 +1705,7 @@ independent problem at once). The exit is 1 if any check disagreed with its
 expectation, and `PROBE REFUSED reason=check` names each one.
 
 `write_outside` names its path instead of calling `os.TempDir()`, because
-rule 8 points `TMPDIR` **inside** the wall: a probe that wrote to
+the tool points `TMPDIR` **inside** the wall: a probe that wrote to
 `os.TempDir()` would write inside the write set, watch it succeed, and report
 a false refusal — it would fail on a working wall. If the named path resolves
 inside any `--read` or `--write` (a first `--write` whose parent is itself in
@@ -1653,25 +1717,16 @@ The secret file's **contents are never read into memory**: the check is that
 `open(2)` (or `CreateFileW`) fails, and a probe that succeeded in opening it
 closes it without reading and reports `got=allow`.
 
-### Local GPU, and what the capability is and is not (#230)
+### Local GPU, and what the capability is and is not
 
 A bounded local model trial on Apple Silicon runs MLX GPU arithmetic normally
 outside the wall but fails at import inside it with `[metal::load_device] No
 Metal device available`, under the narrowed mach-lookup profile with no IOKit
-clauses. The cheap answer is a tiny engine/device probe run under the proposed
-child policy — real GPU arithmetic, never an unconfined parent probe — and the
-bounded taxonomy it reports is `gpu_ok`, `missing_runtime`,
-`package_discovery`, `device_unavailable`, or `policy_refusal`
-(`internal/sandbox.ClassifyGPUProbe`, fakes only, no provider calls). The
-virtualenv half is explicit first: the wrapper resolves the venv Python
-symlink to its base executable and loses the venv's packages, so
-`VenvSitePackages` reads the link's own `<venv>/lib/python*/site-packages`
-and the caller names it with `--read` before Metal itself is tested. The only
+clauses. The only
 opt-in is `--gpu none|metal` (default `none`, printed as `gpu=` on every OK
 line); it records intent and never widens mach-lookup nor grants blanket
 device access, whose minimum mechanisms are still unmeasured — the generated
-profile stays closed and a metal run that reaches no device reports
-`device_unavailable`. The compared option is a separately supervised inference
+profile stays closed. The compared option is a separately supervised inference
 service: sandboxing its client does not sandbox the service, and that trust
 and resource boundary stays visible. Dedicated child HOME/cache/output roots,
 deadlines, process ownership, and measured receipts are unchanged.
@@ -1752,50 +1807,50 @@ the file outside both path lists. Filesystem containment does not revoke an
 environment credential or prevent its use over an allowed network connection.
 
 Standard output and error go to a pipe the caller drains or a file inside the
-write set (rule 12). The caller owns process-group cleanup, publication and
+write set. The caller owns process-group cleanup, publication and
 backup; none is performed by the bare wrapper. A missing backend refuses the
 command rather than running it without containment.
 
 ## What it deliberately does not do
 
-- **It does not manage credentials.** The environment passes through (rule 9).
+- **It does not manage credentials.** The environment passes through.
 - **It does not restrict syscalls.** No seccomp filter, no entitlement list;
   the question this tool answers is what a command can reach on disk.
 - **It does not restrict CPU, memory or process count.** A runaway worker is
   the deadline's problem.
 - **It does not create the directories it is handed.** Every `--read`,
   `--write`, `--cwd` and `--tmp` path must already exist; a missing one is a
-  refusal and is not created (rule 5). The one directory it creates is its
-  own: `<first --write>/.nova-sandbox-tmp` under rule 8 — inside the write
+  refusal and is not created. The one directory it creates is its
+  own: `<first --write>/.nova-sandbox-tmp` — inside the write
   set, named by the tool, never by the caller. An explicit `--tmp` is a caller
-  path and follows rule 5: it must exist.
-- **It does not run a shell.** Everything after `--` is `exec`'d (rule 12).
+  path like any other: it must exist.
+- **It does not run a shell.** Everything after `--` is `exec`'d.
 - **It does not take a caller-supplied profile.** The policy is generated
-  (rule 15).
+  from the lists the caller passes.
 - **It does not clone anything.** The dispatcher owns the checkout; the tool
   only names directories.
 - **It does not have a config file.** There is no file from which either list
   can arrive; both are argv, where `ps` shows them. There is no switch that
-  turns the wall off, in a file or anywhere else (rule 11).
+  turns the wall off, in a file or anywhere else.
 
 ## Commands for a reader
 
 A reader on another machine, or on another model, checks this document by
 running it rather than by trusting it. The darwin check is not four lines of
-shell in a document any more — it is `profiles/darwin-check.sh`, which ships in
+shell in a document any more — it is `tools/sandboxcheck`, which ships in
 this repository, fills `profiles/darwin.sb.tmpl` itself and prints one
 `CHECK` line per check:
 
 ```
-# 1. darwin, the whole wall, from any cwd, writing only beside itself:
-bash profiles/darwin-check.sh ; echo "exit=$?"
+# 1. darwin, the whole wall, from the repository root, writing only beside itself:
+go run ./tools/sandboxcheck ; echo "exit=$?"
 ```
 
 A reader who wants to see the policy itself asks the tool for it: the `policy`
 verb prints exactly what a wrapped run would apply, and runs nothing. It is
 pasteable as written — no scratch directory to find, no `-f <file>` form (which
-this tool never uses), no placeholder. `bash -x profiles/darwin-check.sh` shows
-the same profile filled the script's own way for every check, and the template's
+this tool never uses), no placeholder. `go run ./tools/sandboxcheck --dump-profile` shows
+the same profile filled the check's own way for every check, and the template's
 header says what each marker is replaced by.
 
 ```
@@ -1804,11 +1859,11 @@ header says what each marker is replaced by.
 #    with the cwd inside the write set (a cwd outside every named path denies
 #    getcwd(3), and every git command dies there before it reads anything) and
 #    stdout a PIPE the caller drains or a file inside it — a wrapped /bin/cat
-#    whose stdout is a file outside every named path is denied (rule 12).
-#    Expect: $PPID == the TOOL's pid — rule 12: sandbox-exec execs the command in
+#    whose stdout is a file outside every named path is denied.
+#    Expect: $PPID == the TOOL's pid — sandbox-exec execs the command in
 #    place and the tool waits, so the shell's parent is nova-sandbox itself —
 #    the first line of /etc/hosts, and no "Operation not permitted".
-#    HOME is set on BOTH lines: rule 9's check runs before the policy is built,
+#    HOME is set on BOTH lines: the HOME check runs before the policy is built,
 #    so `policy` refuses an outside HOME even though it runs nothing.
 mkdir -p w/home && cd w
 HOME="$PWD/home" nova-sandbox policy --read /opt/homebrew --write "$PWD"
@@ -1838,12 +1893,12 @@ Each item is a claim in this document that was written from documentation and
 must be **executed on the machine** before the spec's word is trusted. A build
 that cannot confirm one changes this document rather than asserting it.
 
-1. That rule 7's measured three-service `mach-lookup` set
+1. That the measured three-service `mach-lookup` set
    (`com.apple.system.opendirectoryd.libinfo`, `com.apple.SecurityServer`,
    `com.apple.system.logger`), with `/` and `/dev` in the roots, is enough for
    a Node-based harness and a Go toolchain under the profile, and if not, which
    further service each needs, added by measurement — the unqualified
-   `(allow mach-lookup)` is forbidden by rule 7 and is not the fallback, while
+   `(allow mach-lookup)` is forbidden and is not the fallback, while
    a deny-default profile that blocks `mach-lookup` outright breaks `dyld` and
    process spawn in ways that look like unrelated crashes.
 2. `-D` parameter escaping, which is a live risk and not a formality: one
@@ -1869,7 +1924,7 @@ that cannot confirm one changes this document rather than asserting it.
    side, release.
 8. That a unix-domain socket **under** a Landlock write rule can be connected
    to while one outside every rule cannot — the linux half of what
-   `profiles/darwin-check.sh` now measures on darwin. Landlock's path rules
+   `tools/sandboxcheck` now measures on darwin. Landlock's path rules
    govern the socket file's *lookup*, not `connect(2)` itself, so this may
    come back as "the filesystem wall does not close it below the ABI that
    adds `RESOLVE_UNIX`". Do not infer a socket restriction from the environment
@@ -1900,7 +1955,7 @@ One per rule:
    `cat /etc/hosts` succeeds and `/bin/sh -c true` exits 0 inside the wall
    (both fail without the `/etc`, `/tmp`, `/var` literals and
    `/private/var/select`). On darwin a wrapped `/usr/bin/c++` compiles and
-   runs a C++ probe inside the write set (#1557; it fails without the
+   runs a C++ probe inside the write set (it fails without the
    `xcode_select_link` literals). On linux a wrapped command's **child** reads
    `/proc/self/status` successfully, which `/proc/self` as a root would
    deny.
@@ -1939,7 +1994,7 @@ One per rule:
    **inside** the network marker, so `--net-deny` takes it away with the rest;
    and it carries exactly the three measured `global-name`s and no bare
    `(allow mach-lookup)`. A mutation deleting either turns a Go test red. The
-   live DNS measurement stays in `profiles/darwin-check.sh`, where the operator
+   live DNS measurement stays in `tools/sandboxcheck`, where the operator
    run and the mac CI job execute it and a Go test does not (test 16).
    On linux, an ABI forced **above** this tool's table is a **clamp**: the wall
    is built at the table's maximum, `abi=` carries the kernel's number and
@@ -1951,8 +2006,8 @@ One per rule:
    reason=landlock_abi_unknown` naming both numbers, at exit 125, with the
    tripwire on the exec path seeing no call — the mirror of the forced-down
    `net_unenforceable` case above, and the only thing that makes
-   `landlock_abi_unknown` more than a word in the exit table. Rule 1's own
-   `no_sandbox` refusal gets the linux test the ABI refusal used to stand in
+   `landlock_abi_unknown` more than a word in the exit table. The
+   `no_sandbox` refusal has its own linux test, where the ABI refusal once stood in
    for, through the same seam and with the same tripwire. End to end on a real
    kernel, a walled run on a machine whose ABI is above the table **runs and
    exits 0** and its line carries `used=`; on a machine at or below the table
@@ -1974,7 +2029,8 @@ One per rule:
    variable the child still has is a false statement about the wall.
 10. `TestProbeProvesTheWall`: the `write_outside` path is the named one and is
     asserted to be outside every list **with `TMPDIR` pointed inside the wall
-    by rule 8** — a probe built on `os.TempDir()` turns this red; a first
+    by the rule that `$TMPDIR` names the first `--write`** — a probe built on
+    `os.TempDir()` turns this red; a first
     `--write` whose parent is inside a list is exit 2
     `reason=probe_outside_inside`; all five checks run even when the first
     fails; a named outside path that this user cannot write to anyway is exit 2
@@ -1984,23 +2040,23 @@ One per rule:
     `PROBE REFUSED`, not `PROBE OK`; a policy with no wall at all fails
     `write_outside` and `read_secret`; a correct policy is
     `PROBE OK steps=5 passed=5`; the secret file's contents are never read.
-    A probe **without `--secret`** (issue #881) prints `PROBE OK steps=4
+    A probe **without `--secret`** prints `PROBE OK steps=4
     passed=4` with no `read_secret` step — the key delivered by `nova-secrets
     exec` is never a file.
-    And the shape rule 10 fixes, which is what makes `read_root` mean anything:
+    And the shape the probe enforces, which is what makes `read_root` mean anything:
     the printed `path=` of `read_root` **is `os.Executable()`**, the probe's own
     binary, and no step's `path=` is a shell. `/bin` is a fixed root in the
     profile verbatim, so a `read_root` that read `/bin/sh` would exercise none
     of the run-time root it exists for; and a step built as a shell **string**
     lets a `--secret` holding a quote and a `;` run a command inside the wall
     and flip the check's verdict, which is the test's second half, with the
-    injected file asserted absent afterwards. `--secret` is resolved by rule 5
+    injected file asserted absent afterwards. `--secret` is resolved
     like every other caller path, so one that names no file is a refusal rather
     than a probe that "could not read" a file that was never there.
 11. `--no-sandbox` is **not a flag this tool has**: the test runs
     `nova-sandbox --no-sandbox -- <command>` and asserts the existing refusal,
-    `SANDBOX REFUSED reason=no_command: --no-sandbox is not a flag this tool
-    has; run: nova-sandbox help`, at exit 125, with the command not run. No
+    `SANDBOX REFUSED reason=bad_flag: unknown flag --no-sandbox; the flags are
+    ...; run: nova-sandbox help`, at exit 125, with the command not run. No
     environment variable and no file can turn the wall off either — the test
     sets every plausible name and the tool still sandboxes.
 12. A wrapped command exiting 3 gives exit 3; one killed by `SIGKILL` gives
@@ -2059,7 +2115,7 @@ And one for each thing the rules above assert but no test yet reached:
     unavailable it prints `backend=none` and still **exits 0**, because it is a
     question, not an attempt.
 19. Exit `125`: a command that exists but is not executable — the pre-flight
-    stats the path rule 5 resolved, **outside the wall and before any profile
+    stats the resolved path, **outside the wall and before any profile
     exists**, and refuses `SANDBOX REFUSED reason=not_executable`. Exit `127`:
     a command on no `PATH` entry, with one `SANDBOX REFUSED reason=not_found`.
     A command that itself exits 125, 126 or 127 gives the same number with
@@ -2107,12 +2163,12 @@ And one for each thing the rules above assert but no test yet reached:
     push fails **before any connection**, with the planted `<home>/.ssh/id_test`
     of test 3 unreadable inside the wall and readable outside it in the same
     test; (c) the child's environment, read back from inside the wall, holds
-    none of rule 9's exact set — planted `SSH_AUTH_SOCK`, `SSH_AGENT_PID`,
+    none of the exact set — planted `SSH_AUTH_SOCK`, `SSH_AGENT_PID`,
     `GPG_AGENT_INFO` and `PODMAN_AGENT_SOCK` are all gone — while a planted
     `AI_AGENT` and `CLAUDE_AGENT_SDK_VERSION` and a caller variable set
     beside them arrive unchanged — and a connect to a unix-domain socket the
     test binds outside every named path is denied, with the control connect
-    outside the wall succeeding (darwin today: `profiles/darwin-check.sh`
+    outside the wall succeeding (darwin today: `tools/sandboxcheck`
     checks `unix_socket_outside` and `unix_socket_outside_control`; linux is
     **to verify at build** item 8 and the test skips by name, not by
     assertion, until it is); (d) `origin` rewritten to an HTTPS URL with no
@@ -2131,7 +2187,7 @@ And one for each thing the rules above assert but no test yet reached:
     about. One directory deeper (`<home>/tools/x.sh`) is a directory of its own
     and **is** a root, so the entry is guarded rather than removed. Both
     exemptions run: a command in a home the caller named in its own `--read`
-    is accepted, and so is one under the job's data home of rule 9, which lies
+    is accepted, and so is one under the job's data home, which lies
     inside a `--write` by construction — the guard refused the tool's own
     `probe` before that second exemption existed.
 

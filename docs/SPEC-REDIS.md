@@ -82,7 +82,7 @@ keys do not expire. A SIGTERM to `serve` is a clean stop: `redis-server`
 fsyncs the AOF, saves and exits 0. A bench runs it as
 
 ```
-nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.1,100.101.102.103 --port 6379 --dir /var/lib/nova-redis
+nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.1,<tailnet-address> --port 6379 --dir /var/lib/nova-redis
 ```
 
 ## Rules

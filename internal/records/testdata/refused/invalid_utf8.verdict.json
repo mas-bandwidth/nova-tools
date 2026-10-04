@@ -1,5 +1,0 @@
-{
-  "field": "envelope",
-  "rule": "invalid_utf8",
-  "verdict": "refused"
-}

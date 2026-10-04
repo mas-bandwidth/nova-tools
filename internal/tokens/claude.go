@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -40,10 +42,8 @@ type claudeLine struct {
 		Usage map[string]json.RawMessage `json:"usage"`
 		// `message.content` is a STRING on a user turn and an ARRAY of blocks on an
 		// assistant turn, and both are valid transcript lines. Declaring it the array
-		// alone made every user turn a type mismatch -- valid JSON that json.Unmarshal
-		// refuses -- and the reader called those lines "not JSON": 1,260 of 1,278 files
-		// flagged on a clean bench, TOKENS UNREADABLE, exit 1, and a remedy nobody could
-		// act on (measured 2026-09-11). Raw here, decoded below only when it is an array.
+		// alone made every user turn a type mismatch, causing the reader to reject
+		// those lines as invalid JSON.
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 }
@@ -92,9 +92,9 @@ const syntheticModel = "<synthetic>"
 
 // ReadClaude walks a transcript directory and returns its stream and its accounting.
 //
-// units may be nil, and is nil on every fold that was not given --units: every message
-// then carries no unit, which the fold writes as `-`.
-func ReadClaude(label, dir string, rules *Rules, units *Units) *Source {
+// Every message carries no unit, which the fold writes as `-`: a transcript names a repo,
+// never a piece of work.
+func ReadClaude(label, dir string, rules *Rules) *Source {
 	s := &Source{Label: Label(KindClaude, label), Kind: KindClaude, Path: dir, Reports: ClaudeTypes, Basis: UTC}
 
 	var files []string
@@ -130,13 +130,6 @@ func ReadClaude(label, dir string, rules *Rules, units *Units) *Source {
 			s.unreadable(path, err.Error())
 			continue
 		}
-		// A unit is attributed per TRANSCRIPT and not per message (units.go): the id is
-		// decided by the first tool input in the file that names one, and every message in
-		// the file carries it. The messages are written before that is known, so the file's
-		// own slice of the source is marked at the end -- which also means a file whose
-		// unit is never named costs nothing but the walk.
-		unitFirst := len(s.order)
-		unit := ""
 		prev := ""
 		bad := 0
 		n := 0
@@ -159,22 +152,18 @@ func ReadClaude(label, dir string, rules *Rules, units *Units) *Source {
 			if line.Message.Model == syntheticModel {
 				continue
 			}
-			inputs := toolInputs(line.Message.Content)
-			if unit == "" && units.Len() > 0 {
-				if u := units.Match(inputs); u != NoUnit {
-					unit = u
-				}
-			}
-			repo := rules.AttributeInputs(inputs, prev)
-			if repo == Unknown && line.Cwd != "" {
-				repo = rules.Attribute(PathTokens([]string{line.Cwd}), "")
-			}
-			prev = repo
 			day, ok := DayOfStamp(line.Timestamp)
 			if !ok {
 				s.unparsed(path, n, "the timestamp is not an RFC 3339 stamp and is not a day this tool can read: "+line.Timestamp)
 				continue
 			}
+			rules.SetDay(day)
+			inputs := toolInputs(line.Message.Content)
+			repo := rules.AttributeInputs(inputs, prev)
+			if repo == Unknown && line.Cwd != "" {
+				repo = rules.Attribute(PathTokens([]string{line.Cwd}), "")
+			}
+			prev = repo
 			m := Message{Day: day, Basis: UTC, Model: line.Message.Model, Repo: repo, Turn: true}
 			for key, t := range usageKeys {
 				if raw, ok := line.Message.Usage[key]; ok {
@@ -184,9 +173,6 @@ func ReadClaude(label, dir string, rules *Rules, units *Units) *Source {
 				}
 			}
 			s.AddMessage(line.Message.ID, m)
-		}
-		if unit != "" {
-			s.markUnit(unitFirst, unit)
 		}
 		scanErr := sc.Err()
 		f.Close()
@@ -209,12 +195,11 @@ func (s *Source) unreadable(path, why string) {
 	s.Unreadables = append(s.Unreadables, Unreadable{Label: s.Label, Path: path, Why: why})
 }
 
-// DayOfStamp is the UTC day of an RFC 3339 stamp (rule 17: "A day is a UTC day, from the
-// message's own stamp"). The stamp is PARSED and converted, never sliced: its first ten
-// characters are the day in whatever zone it was printed in, and a line stamped
-// 2026-09-11T20:30:00-07:00 belongs to 2026-09-12. A stamp this tool cannot read is not a
-// day, is not dated by a guess, and is not dropped either: every caller counts it and
-// prints it (rule 3).
+// DayOfStamp is the UTC day of an RFC 3339 stamp. The stamp is PARSED and converted,
+// never sliced: its first ten characters are the day in whatever zone it was printed
+// in, so a stamp offset from UTC can belong to a different UTC day. A stamp this tool
+// cannot read is not a day, is not dated by a guess, and is not dropped: every caller
+// counts and prints it.
 func DayOfStamp(stamp string) (string, bool) {
 	t, err := time.Parse(time.RFC3339, strings.TrimSpace(stamp))
 	if err != nil {
@@ -244,12 +229,7 @@ func jsonStrings(raw json.RawMessage) []string {
 				walk(e)
 			}
 		case map[string]any:
-			keys := make([]string, 0, len(t))
-			for k := range t {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
+			for _, k := range slices.Sorted(maps.Keys(t)) {
 				walk(t[k])
 			}
 		}

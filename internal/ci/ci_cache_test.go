@@ -4,6 +4,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestNoCacheStepRunsOnASelfHostedRunner holds a class shut. On 2026-09-17 the merge
@@ -27,20 +30,15 @@ func TestNoCacheStepRunsOnASelfHostedRunner(t *testing.T) {
 	for _, step := range steps {
 		if strings.Contains(step, "uses: actions/cache@") || strings.Contains(step, "uses: actions/cache/") {
 			caches++
-			if !strings.Contains(step, "if: runner.environment == 'github-hosted'") {
-				t.Errorf("an actions/cache step can run on a self-hosted runner; add `if: runner.environment == 'github-hosted'`:\n%s", firstLines(step, 4))
-			}
+			assert.Contains(t, step, "if: runner.environment == 'github-hosted'", "an actions/cache step can run on a self-hosted runner; add `if: runner.environment == 'github-hosted'`:\n%s", firstLines(step, 4))
 		}
 		if strings.Contains(step, "uses: actions/setup-go@") {
 			setups++
-			if !strings.Contains(step, "cache: false") {
-				t.Errorf("a setup-go step leaves its built-in cache on; say `cache: false`:\n%s", firstLines(step, 4))
-			}
+			assert.Contains(t, step, "cache: false", "a setup-go step leaves its built-in cache on; say `cache: false`:\n%s", firstLines(step, 4))
 		}
 	}
-	if caches == 0 || setups == 0 {
-		t.Fatalf("found %d cache steps and %d setup-go steps; the splitter no longer matches ci.yml's step indentation", caches, setups)
-	}
+	require.NotZero(t, caches, "found %d cache steps and %d setup-go steps; the splitter no longer matches ci.yml's step indentation", caches, setups)
+	require.NotZero(t, setups, "found %d cache steps and %d setup-go steps; the splitter no longer matches ci.yml's step indentation", caches, setups)
 }
 
 func firstLines(s string, n int) string {

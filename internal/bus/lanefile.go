@@ -1,8 +1,6 @@
 package bus
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -135,21 +133,4 @@ func writeLaneFile(root, full string, content []byte, perm os.FileMode) error {
 		return err
 	}
 	return f.Close()
-}
-
-// laneTempPath is the name replaceLaneFile writes through before it renames.
-//
-// It was `<file>.tmp`, fixed, so that a run killed between the write and the rename left a
-// single predictable name the lane walk steps over and a person can delete knowing what it
-// was. That is still true of the shape -- the name still ends in TempSuffix, and
-// isLaneStateTemp still recognises it -- but the middle is now twelve hex characters from
-// the OS random source, because a FIXED temp name is a path a hostile commit can plant a
-// symlink at, and the old write followed it. A name nobody can predict cannot be lain in
-// wait for, and the O_EXCL on the open refuses even a lucky one rather than truncating it.
-func laneTempPath(full string) (string, error) {
-	var b [6]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("the OS random source would not supply a temporary name for %s: %w", filepath.Base(full), err)
-	}
-	return full + "." + hex.EncodeToString(b[:]) + TempSuffix, nil
 }

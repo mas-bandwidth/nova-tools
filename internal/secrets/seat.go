@@ -7,13 +7,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// THE CIRCLE THIS VERB BREAKS (the Air seat, 2026-09-18).
+// `seal` cannot initialize a new seat: folding a value into a seat file means
+// decrypting that file with the target seat's own key first, so `seat add` is the
+// source-to-new-seat path that gives a brand-new seat its first value.
 //
 // `seal` folds one value into a seat file, and to do that it must first DECRYPT that
 // file: sops rewrites the whole document, so the values already in it have to be read
@@ -22,9 +25,9 @@ import (
 // value by `seal` -- there is no file to open, and the moment there is one, only the
 // new bench can open it, and the new bench is the one with nothing to seal from.
 //
-// The store's pull request #15 broke the circle by hand: a sops pipe out of a seat this
-// machine COULD open, straight into the new seat's file. `seat add` is that pipe as a
-// verb, with the refusals the hand pipe had to remember.
+// `seat add` runs the pipe a hand would run: sops reads a source seat this machine CAN
+// open and seals straight into the new seat's file, with the refusals a hand pipe
+// would have to remember.
 //
 // WHAT IT DELIBERATELY DOES NOT DO: commit, push, or open a pull request. The recipient
 // list is the grant, and a grant is reviewed. The verb leaves two changed files in the
@@ -74,14 +77,6 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 		return nil, err
 	}
 
-	sFi, err := os.Stat(opts.StoreDir)
-	if err != nil || !sFi.IsDir() {
-		return nil, fmt.Errorf("store %s is not a directory", opts.StoreDir)
-	}
-	gFi, err := os.Stat(filepath.Join(opts.StoreDir, ".git"))
-	if err != nil || !gFi.IsDir() {
-		return nil, fmt.Errorf("store %s has no .git directory; clone it: git clone <url> %s", opts.StoreDir, opts.StoreDir)
-	}
 	configPath := filepath.Join(opts.StoreDir, ".sops.yaml")
 	original, err := os.ReadFile(configPath)
 	if err != nil {
@@ -97,8 +92,10 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store %s: %w", opts.StoreDir, err)
 	}
-	if recoveryKey == opts.Pub {
-		return nil, fmt.Errorf("--pub is the store's recovery key; a seat's rule names its own key and the recovery key, not the recovery key twice")
+	// The rule this writes is --pub and the recovery key, held to the one judgement of a
+	// seat's recipients before anything is written.
+	if problem := ruleRecipientsProblem([]string{opts.Pub, recoveryKey}, recoveryKey); problem != "" {
+		return nil, fmt.Errorf("the rule seat add writes for %s %s; --pub is the new seat's own key, from its keygen receipt, never the store's recovery key", opts.AsName, problem)
 	}
 
 	seatFile := opts.AsName + ".yaml"
@@ -167,26 +164,17 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 // seatAddValidate checks the invocation and answers the --only names, sorted and
 // de-duplicated so the file this verb writes does not depend on argument order.
 func seatAddValidate(opts *SeatAddOptions) ([]string, error) {
-	if opts.StoreDir == "" {
-		return nil, fmt.Errorf("missing --store <dir>")
-	}
-	if opts.AsName == "" {
-		return nil, fmt.Errorf("missing --as <seat>: the seat being added")
-	}
-	if !IsValidAsName(opts.AsName) {
-		return nil, fmt.Errorf("invalid seat name %q for --as: must match [A-Za-z0-9_-]+", opts.AsName)
-	}
-	if opts.From == "" {
-		return nil, fmt.Errorf("missing --from <source-seat>: a seat this machine can already open")
-	}
-	if !IsValidAsName(opts.From) {
-		return nil, fmt.Errorf("invalid seat name %q for --from: must match [A-Za-z0-9_-]+", opts.From)
+	if err := preflight(opts.StoreDir, need{opts.StoreDir, "--store <dir>", false},
+		need{opts.AsName, "--as <seat> (the seat being added)", true},
+		need{opts.From, "--from <source-seat> (a seat this machine can already open)", true},
+		need{opts.Pub, "--pub <age1…> (the new seat's public key, from its own keygen receipt)", false},
+		need{opts.KeyPath, "--key <path> (this machine's key, the one that opens --from)", false},
+		need{opts.SopsPath, "--sops <path>", false},
+		need{strings.TrimSpace(opts.Only), "--only <NAME,…> (seat add carries the values it is told to carry and no others)", false}); err != nil {
+		return nil, err
 	}
 	if opts.From == opts.AsName {
 		return nil, fmt.Errorf("--from names %s, the seat being added; the source is a DIFFERENT seat, one this machine can already open", opts.AsName)
-	}
-	if opts.Pub == "" {
-		return nil, fmt.Errorf("missing --pub <age1…>: the new seat's public key, from its own keygen receipt")
 	}
 	if !IsValidAgePublicKey(opts.Pub) {
 		return nil, fmt.Errorf("--pub is not an age public key; expected age1… of 62 characters, got %d", len(opts.Pub))
@@ -194,16 +182,6 @@ func seatAddValidate(opts *SeatAddOptions) ([]string, error) {
 	if strings.HasPrefix(opts.Pub, "AGE-SECRET-KEY") {
 		return nil, fmt.Errorf("--pub was handed a PRIVATE key; a seat's private half never leaves the bench that made it")
 	}
-	if opts.KeyPath == "" {
-		return nil, fmt.Errorf("missing --key <path>: this machine's key, the one that opens --from")
-	}
-	if opts.SopsPath == "" {
-		return nil, fmt.Errorf("missing --sops <path>")
-	}
-	if strings.TrimSpace(opts.Only) == "" {
-		return nil, fmt.Errorf("missing --only <NAME,…>: seat add carries the values it is told to carry and no others")
-	}
-
 	seen := map[string]bool{}
 	var names []string
 	for _, raw := range strings.Split(opts.Only, ",") {
@@ -285,12 +263,9 @@ func seatAddRuleIsFree(config []byte, seatFile string) error {
 }
 
 func seatAddHasCreationRules(config []byte) bool {
-	for _, line := range strings.Split(string(config), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "creation_rules:") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(string(config), "\n"), func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), "creation_rules:")
+	})
 }
 
 // seatAddAppendRule adds one rule, in the shape invariant 1 demands and keygen prints:

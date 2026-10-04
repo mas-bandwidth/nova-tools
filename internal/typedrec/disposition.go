@@ -10,19 +10,19 @@ import (
 // DispositionWord is the first token of a typed DISPOSITION v1 line.
 const DispositionWord = "DISPOSITION"
 
-// ReadClaim is one typed DISPOSITION v1 line (#2506 rev 4, part B):
+// ReadClaim is one typed DISPOSITION v1 line:
 //
 //	DISPOSITION who=<name> head=<hex7-40> verdict=APPROVE|HOLD [score=<0-10>] [scope="<text>"]
 //
 // It is a claim, never an authority: parsing authenticates nobody, and the
 // reviewer principal, head match and release rules stay in merge.
 type ReadClaim struct {
-	Who     string // lower-cased and trimmed, so who=Johnny and who=johnny are one friend
+	Who     string // lower-cased and trimmed so equivalent names have one canonical form
 	Head    string // lower-cased as typed; empty when the line names no head
 	Verdict string // upper-cased as typed
 	Score   string
 	Scope   string
-	// Whole is the strict reading (#2550): the first token is exactly
+	// Whole is the strict reading: the first token is exactly
 	// DISPOSITION and everything after it is key=value fields with bare keys,
 	// closed quotes and no repeated key. An APPROVE must be whole; a HOLD
 	// stays lenient, so a sloppily typed HOLD still holds.
@@ -135,20 +135,15 @@ func lenientDispositionKV(s string) map[string]string {
 		if len(s) == 0 {
 			break
 		}
-		eq := strings.IndexByte(s, '=')
-		if eq <= 0 {
+		key, rest, found := strings.Cut(s, "=")
+		if !found || key == "" {
 			break
 		}
-		key := strings.TrimSpace(s[:eq])
-		s = s[eq+1:]
+		key, s = strings.TrimSpace(key), rest
 		var val string
 		if len(s) > 0 && s[0] == '"' {
 			s = s[1:]
-			if closeQuote := strings.IndexByte(s, '"'); closeQuote >= 0 {
-				val, s = s[:closeQuote], s[closeQuote+1:]
-			} else {
-				val, s = s, ""
-			}
+			val, s, _ = strings.Cut(s, `"`)
 		} else if sp := strings.IndexFunc(s, unicode.IsSpace); sp >= 0 {
 			val, s = s[:sp], s[sp+1:]
 		} else {
@@ -169,23 +164,19 @@ func strictDispositionKV(s string) (map[string]string, bool) {
 		if s == "" {
 			return res, true
 		}
-		eq := strings.IndexByte(s, '=')
-		if eq <= 0 {
+		key, rest, found := strings.Cut(s, "=")
+		if !found || !isBareDispositionKey(key) {
 			return nil, false
 		}
-		key := s[:eq]
-		if !isBareDispositionKey(key) {
-			return nil, false
-		}
-		s = s[eq+1:]
+		s = rest
 		var val string
 		if len(s) > 0 && s[0] == '"' {
 			s = s[1:]
-			closeQuote := strings.IndexByte(s, '"')
-			if closeQuote < 0 {
+			var closed bool
+			val, s, closed = strings.Cut(s, `"`)
+			if !closed {
 				return nil, false
 			}
-			val, s = s[:closeQuote], s[closeQuote+1:]
 			if s != "" && !isDispositionSpace(s[0]) {
 				return nil, false
 			}

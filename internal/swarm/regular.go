@@ -113,13 +113,6 @@ func isRegularFile(path string) bool {
 	return statRegular(path) == nil
 }
 
-// ReadRegular is os.ReadFile for a worker-writable path: the whole file when it is a
-// regular file within MaxRegularRecord, and a refusal when it is anything else or oversized.
-// A symlink is not followed and a FIFO is not opened (security#30, issue #233).
-func ReadRegular(path string) ([]byte, error) {
-	return readRegular(path)
-}
-
 // readRegular is os.ReadFile for a worker-writable path: the whole file when it is a
 // regular file within MaxRegularRecord, and a refusal when it is anything else or oversized.
 func readRegular(path string) ([]byte, error) {

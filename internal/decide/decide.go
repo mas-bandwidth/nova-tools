@@ -1,468 +1,207 @@
-// Package decide makes one typed decision per call through TypeSafe Jev.
+// Package decide is a decision system that is trained from its own record
+// (docs/SPEC-NOVA-DECIDE.md). It has two halves over one record:
 //
-// The provider is POST <baseURL> with header Authorization: Bearer <key> and
-// a JSON body {"state": <text>, "model": "jev-latest", "questions": {...}}.
-// Each question is one of three kinds: a choice among named options, a score
-// against ordered levels, or a noul (null) statement. The response carries
-// one typed answer per question plus a usage count.
+//   - the decide half (this file, backend.go, jev.go, read.go, attempt.go, grade.go): a decision is a
+//     named schema (a set of typed questions) asked over one state text through a
+//     backend; every answer carries its probabilities.
+//   - the train half (record.go, calibrate.go): every decision made is appended
+//     to the record with its inputs, answers and usage; an outcome (a review's
+//     label, a gate's result) is attached to it when it is known; the bar a
+//     decision's answers are trusted at is calibrated from the decisions whose
+//     outcome is known.
 //
-// The key comes ONLY from the environment variable the caller names (New's
-// keyEnv, default JEV_API_KEY with TYPESAFE_API_KEY also accepted): never a
-// file, never argv, and it is never printed. A decision below the floor is a
-// suggestion, never an authorization: callers keep today's behaviour as the
-// fallback.
+// A backend is a transport behind an interface: Jev (TypeSafe's System One
+// model) is the first, and Fixed (answers from a file) is the one that needs no
+// network. A decision never dials: the Jev backend sends through a Send function
+// the caller injects, and HTTPSend (jev.go), the real one, is the only code here
+// that opens a socket.
 package decide
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
-	"sync"
-	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// DefaultBaseURL is the TypeSafe Jev endpoint New uses when baseURL is empty.
-const DefaultBaseURL = "https://api.typesafe.ai/v1/systemone"
+// Question types (SPEC-NOVA-DECIDE section 2). A choice picks one of named
+// options and carries a probability per option; a noul is a yes/no over one
+// statement and carries the probability that the statement is true.
+const (
+	Choice = "choice"
+	Noul   = "noul"
+)
 
-// DefaultModel is the model every request names.
-const DefaultModel = "jev-latest"
-
-// DefaultKeyEnv is the environment variable New reads when keyEnv is empty.
-// TYPESAFE_API_KEY is accepted as a fallback.
-const DefaultKeyEnv = "JEV_API_KEY"
-
-// FallbackKeyEnv is accepted when the named variable is unset.
-const FallbackKeyEnv = "TYPESAFE_API_KEY"
-
-// deadline is the budget one Decide call gets.
-const deadline = 10 * time.Second
-
-// Question is one typed question. Exactly one of Choice, Score or Noul must
-// be set: a non-nil Choice is a choice question with per-option descriptions,
-// a non-nil Score is a score question with ordered level texts, and Noul true
-// is a noul question carrying only its statement in Instructions.
+// Question is one typed question of a schema.
 type Question struct {
-	Instructions string
-	Choice       map[string]string
-	Score        []string
-	Noul         bool
+	Type         string            `json:"type"`
+	Instructions string            `json:"instructions"`
+	Criteria     map[string]string `json:"criteria,omitempty"` // choice only: option -> what it means
 }
 
-// Answer is one typed answer. Type names which of the three it is ("choice",
-// "score" or "noul"). Choice and Probabilities are set for choice answers,
-// Score for score answers, Noul for noul answers; Confidence is set for
-// choice and score answers from the response, and for a noul answer it is the
-// noul value itself: the confidence that the question is null.
+// Schema is a named decision: the questions asked, by name, over one state.
+type Schema struct {
+	Name      string              `json:"name"`
+	Questions map[string]Question `json:"questions"`
+}
+
+// Answer is one typed answer. P is the probability of each option for a
+// choice, and of "yes" for a noul; Value is the chosen option, or "yes" or "no"
+// at 0.5 for a noul.
 type Answer struct {
-	Type          string
-	Choice        string
-	Probabilities map[string]float64
-	Score         float64
-	Noul          float64
-	Confidence    float64
+	Type  string             `json:"type"`
+	Value string             `json:"value"`
+	P     map[string]float64 `json:"p"`
 }
 
-// Usage counts the tokens one call spent, and says PER COUNTER whether the
-// provider reported it at all. A 200 carrying a valid answer is not evidence of
-// reported usage: a response with no usage object, or one naming only some of
-// the counters, has said nothing about the rest -- and nothing is not zero. An
-// explicitly reported 0 is a measurement and is kept as one (SPEC-TOKENS rule
-// 14).
+// Prob is the probability the answer gives to option (for a noul, "yes").
+func (a Answer) Prob(option string) float64 { return a.P[option] }
+
+// Usage is what one ask spent, as the backend reported it; zero is unreported.
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
-	HasInput     bool
-	HasOutput    bool
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
-// Known reports whether the provider measured anything at all.
-func (u Usage) Known() bool { return u.HasInput || u.HasOutput }
-
-// Client talks to one Jev endpoint with one key the caller named.
-//
-// One client's Decide is handed around as a decideFunc and called from several
-// goroutines at once (internal/swarm's task decider does exactly that), so the
-// per-call bookkeeping the receipt needs -- the row source and what the
-// decisions table did with the row -- is guarded. The fields set once before
-// any call, and read-only during them, are not.
-type Client struct {
-	baseURL   string
-	key       string
-	http      *http.Client
-	decisions DecisionDriver
-	floor     float64
-	constrain func(map[string]Answer) (map[string]Answer, error)
-
-	mu               sync.Mutex
-	rowSource        string
-	rowHasConfidence bool
-	recorded         int
-	recordErr        error
+// Backend answers a schema over a state. It is the transport of a decision:
+// the system above it (the record, the calibration) is the same whichever
+// backend answered.
+type Backend interface {
+	Name() string
+	Ask(ctx context.Context, s Schema, state string) (map[string]Answer, Usage, error)
 }
 
-// Constrain installs the machinery that stands over a provider's answers. It
-// runs after the answers are validated against their own questions and BEFORE
-// anything records or prints them, so a rule the evidence settles is never
-// something a confident answer can be read past. A nil function leaves the
-// client forwarding the provider's answer, which is every ordinary question.
-func (c *Client) Constrain(fn func(map[string]Answer) (map[string]Answer, error)) { c.constrain = fn }
-
-// New reads the key from the environment variable keyEnv (DefaultKeyEnv when
-// empty, with FallbackKeyEnv also accepted) and refuses with an error naming
-// the variable when it is unset. baseURL empty means DefaultBaseURL. The key
-// is never printed.
-func New(baseURL, keyEnv string) (*Client, error) {
-	if keyEnv == "" {
-		keyEnv = DefaultKeyEnv
+// ParseSchema reads a schema and names every problem in it at once: a schema
+// with no name or no questions, a question of an unknown type, a choice with
+// fewer than two options, a noul carrying options, an empty statement.
+func ParseSchema(raw []byte) (Schema, error) {
+	var s Schema
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&s); err != nil {
+		return Schema{}, fmt.Errorf("the schema is not JSON of the shape {name, questions: {<name>: {type, instructions, criteria}}}: %w", err)
 	}
-	if baseURL == "" {
-		baseURL = DefaultBaseURL
+	if problems := s.Problems(); len(problems) > 0 {
+		return Schema{}, fmt.Errorf("the schema %q: %s", s.Name, strings.Join(problems, "; "))
 	}
-	key := os.Getenv(keyEnv)
-	if key == "" && keyEnv != FallbackKeyEnv {
-		key = os.Getenv(FallbackKeyEnv)
-	}
-	if key == "" {
-		return nil, fmt.Errorf("decide: %s is not set; refusing to guess", keyEnv)
-	}
-	return &Client{baseURL: baseURL, key: key, http: &http.Client{Timeout: deadline}}, nil
+	return s, nil
 }
 
-// questionWire is the documented question shape.
-type questionWire struct {
-	Type         string `json:"type"`
-	Instructions string `json:"instructions"`
-	Criteria     any    `json:"criteria,omitempty"`
-}
-
-func (q Question) wire() (questionWire, error) {
-	kinds := 0
-	if q.Choice != nil {
-		kinds++
+// Problems is every reason the schema cannot be asked.
+func (s Schema) Problems() []string {
+	var p []string
+	if strings.TrimSpace(s.Name) == "" {
+		p = append(p, "it has no name; a decision is named so its record can be calibrated")
 	}
-	if q.Score != nil {
-		kinds++
+	if len(s.Questions) == 0 {
+		p = append(p, "it has no questions")
 	}
-	if q.Noul {
-		kinds++
-	}
-	if kinds != 1 {
-		return questionWire{}, fmt.Errorf("decide: question must be exactly one of choice, score or noul")
-	}
-	switch {
-	case q.Choice != nil:
-		if len(q.Choice) == 0 {
-			return questionWire{}, fmt.Errorf("decide: choice question needs at least one option")
+	for _, name := range slices.Sorted(maps.Keys(s.Questions)) {
+		q := s.Questions[name]
+		switch {
+		case strings.TrimSpace(q.Instructions) == "":
+			p = append(p, fmt.Sprintf("question %s has no instructions", name))
+		case q.Type == Choice && len(q.Criteria) < 2:
+			p = append(p, fmt.Sprintf("choice %s names %d options; it wants at least two in criteria", name, len(q.Criteria)))
+		case q.Type == Noul && len(q.Criteria) > 0:
+			p = append(p, fmt.Sprintf("noul %s carries criteria; a noul is one statement, yes or no", name))
+		case q.Type != Choice && q.Type != Noul:
+			p = append(p, fmt.Sprintf("question %s has type %q; it wants choice or noul", name, q.Type))
 		}
-		return questionWire{Type: "choice", Instructions: q.Instructions, Criteria: q.Choice}, nil
-	case q.Score != nil:
-		if len(q.Score) == 0 {
-			return questionWire{}, fmt.Errorf("decide: score question needs at least one level")
+	}
+	return p
+}
+
+// Hash is the schema's identity in the record: two decisions are calibrated
+// together only when they asked the same questions.
+func (s Schema) Hash() string { return hashJSON(s) }
+
+// Check holds a backend's answers to the schema: one answer per question, of
+// its type, a choice's value one of its options, every probability in [0, 1].
+// A backend that answers something else is refused, never repaired.
+func (s Schema) Check(answers map[string]Answer) error {
+	var p []string
+	for _, name := range slices.Sorted(maps.Keys(s.Questions)) {
+		q, a, ok := s.Questions[name], Answer{}, false
+		if a, ok = answers[name]; !ok {
+			p = append(p, fmt.Sprintf("no answer to %s", name))
+			continue
 		}
-		return questionWire{Type: "score", Instructions: q.Instructions, Criteria: q.Score}, nil
-	default:
-		return questionWire{Type: "noul", Instructions: q.Instructions}, nil
+		if a.Type != q.Type {
+			p = append(p, fmt.Sprintf("%s answered as %s, asked as %s", name, a.Type, q.Type))
+		}
+		if _, known := q.Criteria[a.Value]; q.Type == Choice && !known {
+			p = append(p, fmt.Sprintf("%s chose %q, not one of its options", name, a.Value))
+		}
+		if _, given := a.P[a.Value]; q.Type == Choice && !given {
+			p = append(p, fmt.Sprintf("%s gives its choice %q no probability", name, a.Value))
+		}
+		if _, given := a.P["yes"]; q.Type == Noul && (!given || len(a.P) != 1) {
+			p = append(p, fmt.Sprintf("%s is a noul and gives no probability of yes alone", name))
+		}
+		for opt := range a.P {
+			if _, known := q.Criteria[opt]; q.Type == Choice && !known {
+				p = append(p, fmt.Sprintf("%s gives a probability to %q, not one of its options", name, opt))
+			}
+		}
+		for opt, v := range a.P {
+			if v < 0 || v > 1 {
+				p = append(p, fmt.Sprintf("%s gives %s the probability %v, outside [0, 1]", name, opt, v))
+			}
+		}
 	}
+	for name := range answers {
+		if _, asked := s.Questions[name]; !asked {
+			p = append(p, fmt.Sprintf("an answer to %s, which was not asked", name))
+		}
+	}
+	if len(p) > 0 {
+		slices.Sort(p)
+		return fmt.Errorf("the backend's answers do not fit the schema: %s", strings.Join(p, "; "))
+	}
+	return nil
 }
 
-// answerWire is the documented answer shape.
-type answerWire struct {
-	Type          string             `json:"type"`
-	Choice        string             `json:"choice,omitempty"`
-	Probabilities map[string]float64 `json:"probabilities,omitempty"`
-	Score         float64            `json:"score,omitempty"`
-	Legend        map[string]string  `json:"legend,omitempty"`
-	Noul          float64            `json:"noul,omitempty"`
-	Confidence    float64            `json:"confidence,omitempty"`
-}
-
-func (w answerWire) answer() (Answer, error) {
-	switch w.Type {
-	case "choice":
-		return Answer{Type: "choice", Choice: w.Choice, Probabilities: w.Probabilities, Confidence: w.Confidence}, nil
-	case "score":
-		return Answer{Type: "score", Score: w.Score, Confidence: w.Confidence}, nil
-	case "noul":
-		return Answer{Type: "noul", Noul: w.Noul, Confidence: w.Noul}, nil
-	default:
-		return Answer{}, fmt.Errorf("decide: unknown answer type %q", w.Type)
+// Ask asks the schema over the state through the backend and returns the
+// answers held to the schema (Check).
+func Ask(ctx context.Context, b Backend, s Schema, state string) (map[string]Answer, Usage, error) {
+	if strings.TrimSpace(state) == "" {
+		return nil, Usage{}, fmt.Errorf("the state is empty; a decision is made over evidence")
 	}
-}
-
-// responseWire is the documented response shape. The usage counters are
-// POINTERS on purpose: a missing field decodes as nil, which is an absence, and
-// a present 0 decodes as a pointer to zero, which is a measurement. Decoding
-// them as plain ints made every silent response look like a free one.
-type responseWire struct {
-	Answers map[string]answerWire `json:"answers"`
-	Usage   struct {
-		InputTokens  *int `json:"input_tokens"`
-		OutputTokens *int `json:"output_tokens"`
-	} `json:"usage"`
-}
-
-// Decide asks the provider one typed decision and parses the answers. It
-// applies a 10 s deadline of its own. A decision below the caller's floor is
-// a suggestion, never an authorization: the caller keeps today's behaviour
-// as the fallback.
-func (c *Client) Decide(ctx context.Context, state string, qs map[string]Question) (map[string]Answer, Usage, error) {
-	req, cancel, err := c.newRequest(ctx, state, qs)
+	answers, usage, err := b.Ask(ctx, s, state)
 	if err != nil {
-		return nil, Usage{}, err
-	}
-	defer cancel()
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, Usage{}, fmt.Errorf("decide: provider error: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, Usage{}, fmt.Errorf("decide: read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, Usage{}, fmt.Errorf("decide: provider error: status %d", resp.StatusCode)
-	}
-	answers, usage, err := decodeResponse(raw)
-	if err != nil {
-		return nil, Usage{}, err
-	}
-	// A typed decision is typed at BOTH ends: an answer that is not one of the
-	// question's own criteria is the provider failing to answer, and not a
-	// decision with a confidence on it. It is refused HERE, before anything
-	// records it as a decision or a floor is applied to it (edges 22 and 23).
-	// The usage travels with the refusal: the call was made and it cost what it
-	// cost, and a refusal cannot unspend it.
-	if err := ValidateAnswers(qs, answers); err != nil {
 		return nil, usage, err
 	}
-	// Machinery the caller installed stands OVER the answer, and it stands
-	// here: before the row is recorded and before the caller can print it, so
-	// what is persisted and what is read are the constrained decision and not
-	// the provider's advice (Stella, 2026-09-19, r2 of the #1925 hold).
-	if c.constrain != nil {
-		constrained, err := c.constrain(answers)
-		if err != nil {
-			return nil, usage, err
-		}
-		answers = constrained
+	if err := s.Check(answers); err != nil {
+		return nil, usage, err
 	}
-	c.record(state, qs, answers)
 	return answers, usage, nil
 }
 
-// newRequest builds the documented POST: the state, the model and the typed
-// questions, with the key on the Authorization header and a 10 s deadline.
-// The key travels on the wire only, and is never printed. The caller holds
-// the returned cancel until the request completes.
-func (c *Client) newRequest(ctx context.Context, state string, qs map[string]Question) (*http.Request, context.CancelFunc, error) {
-	noop := func() {}
-	if len(qs) == 0 {
-		return nil, noop, fmt.Errorf("decide: no questions given; refusing to guess")
+// noulAnswer is the answer a noul probability makes.
+func noulAnswer(p float64) Answer {
+	v := "no"
+	if p >= 0.5 {
+		v = "yes"
 	}
-	wired := make(map[string]questionWire, len(qs))
-	for name, q := range qs {
-		w, err := q.wire()
-		if err != nil {
-			return nil, noop, fmt.Errorf("decide: question %q: %w", name, err)
-		}
-		wired[name] = w
-	}
-	body, err := json.Marshal(map[string]any{
-		"state":     state,
-		"model":     DefaultModel,
-		"questions": wired,
-	})
-	if err != nil {
-		return nil, noop, fmt.Errorf("decide: encode request: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(ctx, deadline)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
-	if err != nil {
-		cancel()
-		return nil, noop, fmt.Errorf("decide: build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	return req, cancel, nil
+	return Answer{Type: Noul, Value: v, P: map[string]float64{"yes": p}}
 }
 
-// decodeResponse parses the documented response shape into typed answers.
-func decodeResponse(raw []byte) (map[string]Answer, Usage, error) {
-	var rw responseWire
-	if err := json.Unmarshal(raw, &rw); err != nil {
-		return nil, Usage{}, fmt.Errorf("decide: decode response: %w", err)
-	}
-	out := make(map[string]Answer, len(rw.Answers))
-	for name, w := range rw.Answers {
-		a, err := w.answer()
-		if err != nil {
-			return nil, Usage{}, fmt.Errorf("decide: answer %q: %w", name, err)
-		}
-		out[name] = a
-	}
-	usage := Usage{}
-	if rw.Usage.InputTokens != nil {
-		usage.InputTokens, usage.HasInput = *rw.Usage.InputTokens, true
-	}
-	if rw.Usage.OutputTokens != nil {
-		usage.OutputTokens, usage.HasOutput = *rw.Usage.OutputTokens, true
-	}
-	return out, usage, nil
+// Sum is the hex SHA-256 of b: how the record names an input without holding
+// a second copy of a file.
+func Sum(b []byte) string {
+	s := sha256.Sum256(b)
+	return hex.EncodeToString(s[:])
 }
 
-// ParseQuestions parses a questions file: either a bare map of name to
-// question, or {"questions": {...}}. Each entry carries a type
-// (choice/score/noul), instructions, and criteria (a map for choice, a list
-// for score, absent for noul). Anything else is a refusal, never a guess.
-func ParseQuestions(data []byte) (map[string]Question, error) {
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(data, &top); err != nil {
-		return nil, fmt.Errorf("decide: bad questions: not a JSON object: %w", err)
+func hashJSON(v any) string {
+	raw, err := json.Marshal(v)
+	if err != nil { // ignored: a Schema always marshals; an empty hash is never a match
+		return ""
 	}
-	raw := top
-	if inner, ok := top["questions"]; ok {
-		// The envelope may carry the criteria the question is answered
-		// against -- their version, their file, and the state fields the
-		// asker computes first -- so that a question and its criteria are
-		// ONE versioned pair. Anything else beside it is a refusal that
-		// names the key: a misspelled metadata key that fell through to
-		// the bare form used to be read as a question.
-		for key := range top {
-			if key != "questions" && !questionEnvelopeKeys[key] {
-				return nil, fmt.Errorf("decide: bad questions: %q stands beside \"questions\" and is not one of comment, criteria_version, criteria_file, state_fields, machinery", key)
-			}
-		}
-		var m map[string]json.RawMessage
-		if err := json.Unmarshal(inner, &m); err != nil {
-			return nil, fmt.Errorf("decide: bad questions: \"questions\" is not an object")
-		}
-		raw = m
-	}
-	if len(raw) == 0 {
-		return nil, fmt.Errorf("decide: bad questions: no questions given")
-	}
-	out := make(map[string]Question, len(raw))
-	for name, r := range raw {
-		var qw questionWire
-		dec := json.NewDecoder(bytes.NewReader(r))
-		dec.UseNumber()
-		var generic map[string]json.RawMessage
-		if err := dec.Decode(&generic); err != nil {
-			return nil, fmt.Errorf("decide: bad questions: question %q is not an object", name)
-		}
-		var typ struct {
-			Type string `json:"type"`
-		}
-		if err := json.Unmarshal(r, &typ); err != nil {
-			return nil, fmt.Errorf("decide: bad questions: question %q is not an object", name)
-		}
-		_ = qw
-		var instr struct {
-			Instructions string `json:"instructions"`
-		}
-		if err := json.Unmarshal(r, &instr); err != nil {
-			return nil, fmt.Errorf("decide: bad questions: question %q is not an object", name)
-		}
-		if strings.TrimSpace(instr.Instructions) == "" {
-			return nil, fmt.Errorf("decide: bad questions: question %q has no instructions", name)
-		}
-		switch typ.Type {
-		case "choice":
-			var crit map[string]string
-			var cw struct {
-				Criteria json.RawMessage `json:"criteria"`
-			}
-			if err := json.Unmarshal(r, &cw); err != nil || len(cw.Criteria) == 0 {
-				return nil, fmt.Errorf("decide: bad questions: question %q needs criteria", name)
-			}
-			if err := json.Unmarshal(cw.Criteria, &crit); err != nil || len(crit) == 0 {
-				return nil, fmt.Errorf("decide: bad questions: question %q choice criteria must be a non-empty object", name)
-			}
-			out[name] = Question{Instructions: instr.Instructions, Choice: crit}
-		case "score":
-			var levels []string
-			var sw struct {
-				Criteria json.RawMessage `json:"criteria"`
-			}
-			if err := json.Unmarshal(r, &sw); err != nil || len(sw.Criteria) == 0 {
-				return nil, fmt.Errorf("decide: bad questions: question %q needs criteria", name)
-			}
-			if err := json.Unmarshal(sw.Criteria, &levels); err != nil || len(levels) == 0 {
-				return nil, fmt.Errorf("decide: bad questions: question %q score criteria must be a non-empty list", name)
-			}
-			out[name] = Question{Instructions: instr.Instructions, Score: levels}
-		case "noul":
-			out[name] = Question{Instructions: instr.Instructions, Noul: true}
-		default:
-			return nil, fmt.Errorf("decide: bad questions: question %q has unknown type %q", name, typ.Type)
-		}
-	}
-	return out, nil
-}
-
-// Line renders one status line for a decision: the prefix, one
-// <name>=<value> conf=<0-1> pair per answer in name order, then the floor and
-// the below list naming every answer under it. A decision below the floor is
-// a suggestion, never an authorization.
-func Line(prefix string, answers map[string]Answer, floor float64) string {
-	names := make([]string, 0, len(answers))
-	for name := range answers {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	var b strings.Builder
-	b.WriteString(oneline.Field(prefix))
-	for _, name := range names {
-		a := answers[name]
-		var value string
-		switch a.Type {
-		case "score":
-			value = fmt.Sprintf("%.2f", a.Score)
-		case "noul":
-			value = fmt.Sprintf("%.2f", a.Noul)
-		case "choice", "":
-			value = oneline.Field(a.Choice)
-		default:
-			value = oneline.Field(a.Choice)
-		}
-		fmt.Fprintf(&b, " %s=%s conf=%.2f", oneline.Field(name), value, a.Confidence)
-	}
-	fmt.Fprintf(&b, " floor=%.2f", floor)
-	below := make([]string, 0)
-	for _, name := range names {
-		if answers[name].Confidence < floor {
-			below = append(below, oneline.Field(name))
-		}
-	}
-	b.WriteString(" below=")
-	if len(below) == 0 {
-		b.WriteString("-")
-	} else {
-		b.WriteString(strings.Join(below, ","))
-	}
-	return b.String()
-}
-
-// questionEnvelopeKeys are the keys a question file may carry BESIDE its
-// questions: the criteria those questions are answered against, so the pair is
-// versioned together (Glenn, 2026-09-19 -- the criteria go in as input tokens),
-// and a comment. Anything else is a refusal that names it.
-var questionEnvelopeKeys = map[string]bool{
-	"comment":          true,
-	"criteria_version": true,
-	"criteria_file":    true,
-	"state_fields":     true,
-	// The rules the question is answered UNDER, so the binding between a
-	// question and its machinery lives in the versioned pair rather than in a
-	// name match inside a verb.
-	"machinery": true,
+	return Sum(raw)[:16]
 }

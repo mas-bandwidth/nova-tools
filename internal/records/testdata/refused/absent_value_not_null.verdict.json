@@ -1,5 +1,0 @@
-{
-  "field": "body.raw_usage.input.value",
-  "rule": "absent_value_not_null",
-  "verdict": "refused"
-}

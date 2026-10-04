@@ -4,11 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Issue #3501 / SWARM GATE #3501: inside the card sandbox, verbs installed in ~/.local/bin
@@ -24,19 +25,13 @@ func TestDarwinProfileGrantsMetadataOnInheritedPathEntries(t *testing.T) {
 	// Create a test directory representing a toolchain bin on PATH (like ~/.local/bin)
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "user", "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(binDir, 0o755))
 	fakeTool := filepath.Join(binDir, "my-tool")
-	if err := testbin.WriteExecutable(fakeTool, []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(fakeTool, []byte("#!/bin/sh\necho ok\n"), 0o755))
 
 	jobDir := t.TempDir()
 	dataHome := filepath.Join(jobDir, "data")
-	if err := os.MkdirAll(dataHome, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dataHome, 0o755))
 
 	// Policy built with LookAt containing binDir
 	p, bad := sandbox.Build(sandbox.Input{
@@ -45,32 +40,22 @@ func TestDarwinProfileGrantsMetadataOnInheritedPathEntries(t *testing.T) {
 		LookAt: binDir,
 		Argv:   []string{"/bin/sh", "-c", "echo test"},
 	})
-	if len(bad) > 0 {
-		t.Fatalf("sandbox.Build failed: %v", bad)
-	}
+	require.Empty(t, bad, "sandbox.Build failed: %v", bad)
 
 	text, _, err := sandbox.DarwinProfile(p)
-	if err != nil {
-		t.Fatalf("sandbox.DarwinProfile failed: %v", err)
-	}
+	require.NoError(t, err, "sandbox.DarwinProfile failed: %v", err)
 
 	// 1. Must grant file-read-metadata subpath on the PATH directory itself
 	wantSubpath := `(allow file-read-metadata (subpath "` + binDir + `"))`
-	if !strings.Contains(text, wantSubpath) {
-		t.Errorf("DarwinProfile does not contain file-read-metadata subpath for PATH entry %s\nProfile:\n%s", binDir, text)
-	}
+	assert.Contains(t, text, wantSubpath, "DarwinProfile does not contain file-read-metadata subpath for PATH entry %s\nProfile:\n%s", binDir, text)
 
 	// 2. Must grant file-read-metadata literal on all proper ancestors
 	for _, ancestor := range sandbox.Ancestors(binDir) {
 		wantLiteral := `(allow file-read-metadata (literal "` + ancestor + `"))`
-		if !strings.Contains(text, wantLiteral) {
-			t.Errorf("DarwinProfile does not contain file-read-metadata literal for ancestor %s\nProfile:\n%s", ancestor, text)
-		}
+		assert.Contains(t, text, wantLiteral, "DarwinProfile does not contain file-read-metadata literal for ancestor %s\nProfile:\n%s", ancestor, text)
 	}
 
 	// 3. Must NOT grant file-read* (subpath binDir) — files cannot be inspected
 	badRead := `(allow file-read* (subpath "` + binDir + `"))`
-	if strings.Contains(text, badRead) {
-		t.Errorf("DarwinProfile granted full file-read* on PATH entry %s; its files must not be inspectable", binDir)
-	}
+	assert.NotContains(t, text, badRead, "DarwinProfile granted full file-read* on PATH entry %s; its files must not be inspectable", binDir)
 }

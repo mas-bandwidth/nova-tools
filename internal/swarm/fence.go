@@ -2,12 +2,13 @@ package swarm
 
 import (
 	"encoding/json"
+	"maps"
 	"path"
 	"path/filepath"
 	"strings"
 )
 
-// THE HARNESS'S OWN FENCE (issue #644). OpenCode asks before a tool touches a path it calls
+// THE HARNESS'S OWN FENCE. OpenCode asks before a tool touches a path it calls
 // EXTERNAL, and a `run` with no terminal answers every such question by rejecting it:
 //
 //	permission requested: external_directory (<dir>/*); auto-rejecting
@@ -15,7 +16,7 @@ import (
 //
 // The model stops there, publishes nothing, and the batch scored the card `no-result` -- the
 // model's own doing -- when the truth is that the machinery fenced off a path the CARD was
-// told to use. Eight of thirty cards on Rowan's bench died this way on 2026-09-16.
+// told to use.
 //
 // TWO THINGS ARE WRONG AND BOTH ARE THIS FILE'S BUSINESS. The fence is configured by nothing
 // -- the job runs on the harness's defaults, which call everything outside the harness's own
@@ -28,7 +29,7 @@ import (
 // than the shell's cwd after `cd repo`; a real run of both binaries against the harness
 // showed it resolving after the `cd`, with no rejection either way, so the parent rule bought
 // nothing and widened a job's fence to every SIBLING job in the same slot on a --no-wall
-// bench. The WALL, not the fence, is what keeps a card inside its job (SPEC-SANDBOX rule 1),
+// bench. The WALL, not the fence, is what keeps a card inside its job,
 // and a fence rule is no place to hand one card another's work.
 //
 // BOTH WILDCARD SPELLINGS ARE WRITTEN, and not because `*` stops at a separator -- it does
@@ -37,13 +38,12 @@ import (
 // spelling a person reads as "everything under here", and a matcher that ever tightened `*`
 // to one segment would leave the rule meaning what it says.
 const (
-	// FenceAllow, FenceAsk and FenceDeny are the harness's own permission actions. `ask` in
+	// FenceAllow and FenceDeny are the harness's own permission actions. `ask` in
 	// a non-interactive `run` is auto-rejected and the model STOPS -- the whole run ends and
 	// the card's commits are stranded. `deny` is a TOOL ERROR returned to the model, which
-	// notes it, works inside the job instead, and continues (issue #918). So the fence's
+	// notes it, works inside the job instead, and continues. So the fence's
 	// fallback is deny, and `ask` is never written: there is no terminal to answer it.
 	FenceAllow = "allow"
-	FenceAsk   = "ask"
 	FenceDeny  = "deny"
 
 	// FenceExternalDirectory is the permission key the harness asks under for a path
@@ -87,7 +87,7 @@ func FenceReadPatterns(reads []string) []string {
 
 // FencePermission is the harness `permission` block one job runs under: everything external
 // is DENIED WITHOUT PROMPTING -- a tool error the model routes around, never the auto-reject
-// that ends the run (issue #918) -- and the job's own paths, plus the read-only paths the card
+// that ends the run -- and the job's own paths, plus the read-only paths the card
 // named, are allowed. webfetch is denied as well, for the same reason: a run with no terminal
 // has nobody to answer a prompt, and a prompt here is a dead card. The set is deduped so the
 // file this writes is byte-stable for one job.
@@ -103,7 +103,7 @@ func FencePermission(jobDir string, reads []string) map[string]any {
 // the caller carried (raw, which may be empty when `--config` named none) with this job's
 // permission block merged into it. A config this side cannot parse is returned unchanged and
 // ok=false -- the copy is not this function's to refuse (a provider config is carried
-// verbatim, #465) -- and the caller says on stderr that the fence went unconfigured.
+// verbatim) -- and the caller says on stderr that the fence went unconfigured.
 //
 // A permission block already in the carried config is KEPT and added to: a person's own
 // `read` or `bash` rules are theirs, and only the external_directory patterns this job needs
@@ -125,12 +125,8 @@ func MergeFencePermission(raw []byte, jobDir string, reads []string) ([]byte, bo
 		// they allowed is still allowed and the job's own are never absent.
 		if prior, ok := existing[FenceExternalDirectory].(map[string]any); ok {
 			merged := map[string]any{}
-			for k, v := range prior {
-				merged[k] = v
-			}
-			for k, v := range mine[FenceExternalDirectory].(map[string]any) {
-				merged[k] = v
-			}
+			maps.Copy(merged, prior)
+			maps.Copy(merged, mine[FenceExternalDirectory].(map[string]any))
 			existing[FenceExternalDirectory] = merged
 		} else {
 			existing[FenceExternalDirectory] = mine[FenceExternalDirectory]
@@ -212,17 +208,17 @@ func FenceRejection(raw []byte) (string, bool) {
 		// `external_directory (/x/y/*)` -- the patterns are in the parentheses, the first
 		// of which is the path the card was stopped at. A form with no parentheses (a
 		// permission that carries no pattern) names the permission itself.
-		open := strings.Index(asked, "(")
-		if open < 0 || !strings.HasSuffix(asked, ")") {
+		before, after, found := strings.Cut(asked, "(")
+		if !found || !strings.HasSuffix(asked, ")") {
 			if asked == "" {
 				continue
 			}
 			return asked, true
 		}
-		patterns := asked[open+1 : len(asked)-1]
+		patterns := after[:len(after)-1]
 		first := strings.TrimSpace(strings.Split(patterns, ",")[0])
 		if first == "" {
-			first = strings.TrimSpace(asked[:open])
+			first = strings.TrimSpace(before)
 		}
 		if first == "" {
 			continue

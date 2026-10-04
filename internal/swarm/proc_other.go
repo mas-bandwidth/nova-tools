@@ -41,6 +41,7 @@ func killPid(pid int) {
 		return
 	}
 	if p, err := os.FindProcess(pid); err == nil {
+		// ignored: a kill of a process that may already have exited; the caller reads liveness afterwards
 		_ = p.Kill()
 	}
 }
@@ -52,6 +53,3 @@ func StartStamp(pid int) string { return "-" }
 
 // GroupMembers counts the processes in a group other than self. Unavailable here.
 func GroupMembers(pgid, self int) (int, bool) { return 0, false }
-
-// pgidOf has no process group to report here, so a process is its own group of one.
-func pgidOf(pid int) int { return pid }

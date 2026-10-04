@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,72 +66,59 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	before := tokens.Opens()
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
 	wantExit(t, r, 0)
-	if opened := tokens.Opens() - before; opened != 1 {
-		t.Errorf("opened %d source files, want the one usage.json the flag names", opened)
+	{
+		opened := tokens.Opens() - before
+		assert.True(t, opened == 1, "opened %d source files, want the one usage.json the flag names", opened)
 	}
 	wantContains(t, r.stdout, "TOKENS DAY date=2026-09-12 rows=1 ")
 	body := read(t, filepath.Join(out, "2026-09-12.tsv"))
-	const wantRow = "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny\t-"
+	const wantRow = "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny"
 	var data []string
 	for _, line := range strings.Split(strings.TrimSuffix(body, "\n"), "\n") {
 		if strings.HasPrefix(line, "2026-") {
 			data = append(data, line)
 		}
 	}
-	if len(data) != 1 || data[0] != wantRow {
-		t.Fatalf("folded rows = %q, want [%s]", data, wantRow)
-	}
-	if strings.Contains(body, bait) || strings.Contains(r.all(), bait) || strings.Contains(body, "515151") {
-		t.Fatalf("the fold counted a usage.json the flag did not name:\n%s\n%s", body, r.all())
-	}
+	require.Equal(t, 1, len(data), "folded rows = %q, want [%s]", data, wantRow)
+	require.Equal(t, wantRow, data[0], "folded rows = %q, want [%s]", data, wantRow)
+	require.False(t, strings.Contains(body, bait) || strings.Contains(r.all(), bait) || strings.Contains(body, "515151"), "the fold counted a usage.json the flag did not name:\n%s\n%s", body, r.all())
 
 	missing := filepath.Join(dir, "no-such-usage.json")
 	outMiss := mkdir(t, filepath.Join(dir, "out-missing"))
 	before = tokens.Opens()
 	miss := invoke(t, "fold", "--out", outMiss, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+missing)
 	wantExit(t, miss, 1)
-	if opened := tokens.Opens() - before; opened != 0 {
-		t.Errorf("a missing xai path opened %d source files; that is a scan", opened)
+	{
+		opened := tokens.Opens() - before
+		assert.True(t, opened == 0, "a missing xai path opened %d source files; that is a scan", opened)
 	}
 	wantContains(t, miss.stderr, "TOKENS UNREADABLE")
 	wantContains(t, miss.stderr, "does not scan a session store")
-	if strings.Contains(miss.all(), bait) {
-		t.Fatalf("a missing path folded the session store:\n%s", miss.all())
-	}
+	require.False(t, strings.Contains(miss.all(), bait), "a missing path folded the session store:\n%s", miss.all())
 	_, err := tokens.ReadXaiUsageFile(missing)
 	var typed *tokens.XaiUsageMissingError
-	if !errors.As(err, &typed) {
-		t.Fatalf("missing file: got %v, want *XaiUsageMissingError", err)
-	}
-	if typed.Path != missing {
-		t.Errorf("missing error path = %q, want %q", typed.Path, missing)
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("missing file does not unwrap to not-exist: %v", err)
-	}
+	require.True(t, errors.As(err, &typed), "missing file: got %v, want *XaiUsageMissingError", err)
+	assert.Equal(t, missing, typed.Path, "missing error path = %q, want %q", typed.Path, missing)
+	assert.True(t, errors.Is(err, os.ErrNotExist), "missing file does not unwrap to not-exist: %v", err)
 
 	sessions := filepath.Join(home, ".grok", "sessions")
 	before = tokens.Opens()
 	_, err = tokens.ReadXaiUsageFile(sessions)
 	var notFile *tokens.XaiUsageNotFileError
-	if !errors.As(err, &notFile) {
-		t.Fatalf("directory: got %v, want *XaiUsageNotFileError", err)
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		t.Errorf("a directory that is there unwrapped as not-exist: %v", err)
-	}
-	if opened := tokens.Opens() - before; opened != 0 {
-		t.Errorf("reading the sessions directory opened %d files", opened)
+	require.True(t, errors.As(err, &notFile), "directory: got %v, want *XaiUsageNotFileError", err)
+	assert.False(t, errors.Is(err, os.ErrNotExist), "a directory that is there unwrapped as not-exist: %v", err)
+	{
+		opened := tokens.Opens() - before
+		assert.True(t, opened == 0, "reading the sessions directory opened %d files", opened)
 	}
 	outDir := mkdir(t, filepath.Join(dir, "out-dir"))
 	before = tokens.Opens()
 	dirFold := invoke(t, "fold", "--out", outDir, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+sessions)
 	wantExit(t, dirFold, 1)
-	if opened := tokens.Opens() - before; opened != 0 {
-		t.Errorf("fold of a directory opened %d source files; that is a scan", opened)
+	{
+		opened := tokens.Opens() - before
+		assert.True(t, opened == 0, "fold of a directory opened %d source files; that is a scan", opened)
 	}
 	wantContains(t, dirFold.stderr, "does not scan a directory")
-	if strings.Contains(dirFold.all(), bait) {
-		t.Fatalf("a directory flag folded the session store:\n%s", dirFold.all())
-	}
+	require.False(t, strings.Contains(dirFold.all(), bait), "a directory flag folded the session store:\n%s", dirFold.all())
 }

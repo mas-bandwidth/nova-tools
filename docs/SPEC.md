@@ -1,6 +1,6 @@
 # nova-tools — specification
 
-Fifteen binaries. `nova-check`: nine checks, all at the **record layer** — they verify
+Sixteen binaries. `nova-check`: ten checks, all at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
@@ -12,8 +12,8 @@ tool's own run cost does not, and every run pays the build. Every check can say
 NO, and the test suite proves each one saying it. A check never seen failing is
 not a check. Two of nova-memory's verbs are checks in that sense; the other
 five assert nothing at all, and its section says which is which and why.
-`nova-bus`: ten verbs at the **bus layer** — the only binary here that
-writes outside its own state, and the only one that runs another program (`git`).
+`nova-bus`: verbs at the **bus layer** — it reads and publishes shared notes
+through `git`.
 The bus it works on is a shared git repository of notes between several lines;
 what this takes out of it is the races a branch keyed by a clock produces — an id
 that cannot collide, a push that fetches, rebases and retries inside the tool, an
@@ -28,18 +28,18 @@ sums those day files into a month; it reads sources, and never estimates.
 `nova-secrets`: one binary at the **credential layer** — credentials for seats,
 pools and services, sealed in a git store. `nova-update` and `nova-version`:
 the shared tool inventory, optional updates and the build report. The other
-six — `nova-table` (tables of ordered sets over Redis), `nova-redis` (the
+seven — `nova-table` (tables of ordered sets over Redis), `nova-redis` (the
 local Redis instance and its scratch verbs), `nova-config` (the permanent
 configuration, in Postgres, applied into Redis), `nova-ci` (the checks CI runs
 on its own test output), `nova-sandbox` (one command, contained by the OS),
-`nova-cairn` (optional checkpoints) — and the four above each have their own
-normative text under `docs/` ([SPEC-TOKENS.md](SPEC-TOKENS.md),
+`nova-cairn` (optional checkpoints), `nova-swarm` (bounded worker runs and card
+batches) — and the four above each have their own normative text under `docs/` ([SPEC-TOKENS.md](SPEC-TOKENS.md),
 [SPEC-SECRETS.md](SPEC-SECRETS.md), [SPEC-UPDATE.md](SPEC-UPDATE.md),
 [SPEC-VERSION.md](SPEC-VERSION.md), [nova-table/README.md](nova-table/README.md),
 [SPEC-REDIS.md](SPEC-REDIS.md), [SPEC-CONFIG.md](SPEC-CONFIG.md),
 [SPEC-CI.md](SPEC-CI.md), [SPEC-SANDBOX.md](SPEC-SANDBOX.md),
-[SPEC-CAIRN.md](SPEC-CAIRN.md)); this file states the count, the layer and the
-Conventions they all keep.
+[SPEC-CAIRN.md](SPEC-CAIRN.md), [SPEC-SWARM.md](SPEC-SWARM.md)); this file states
+the count, the layer and the Conventions they all keep.
 
 This spec is normative. If the code and this document disagree, one of them has a
 bug, and the tests decide which.
@@ -120,19 +120,30 @@ CORPUS FAIL ledger: <reason>
 CORPUS FAIL ledger:<line>: <reason>
 CORPUS FAIL anchors=<n> floor=<n> failed=<n> shown=<n> malformed=<n> ledger=<file>
 SELFTALK OK files=<n> claims=<n> standing=0 installations=0 dated=<n>
-SELFTALK FAIL <file>: STANDING: <claim>
-SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
+SELFTALK FAIL <file>:<line>: STANDING: <claim>
+SELFTALK FAIL <file>:<line>: <SHAPE>: <sentence>
 SELFTALK FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> shown=<n>
 SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n> body_bytes=<n>
 SEND FAIL <path or (stdin)>: <reason>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> ...
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n>
-BUS FAIL <path, path:line, or lane>: <reason>
+BUS FAILED <path, path:line, or lane>: <reason>
 <TOKEN> MORE kind=<kind> shown=<n> total=<t> <remedy>
 ```
 
-`OK` lines go to stdout; `FAIL` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
+`OK` lines go to stdout; `FAIL` and `FAILED` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
+
+**One value, two renderings.** A tool built on `internal/tool` returns one result
+per verb and prints it as lines or, with `--json` (every verb takes it), as one
+JSON object on stdout holding the same value:
+`{"result":{"verb","status":"ok|failed|refused","exit","remedy","why"},"facts":{},"items":[{"kind","fields"}],"more":[{"kind","shown","total","remedy"}],"notes":[]}`.
+The lines are `<TOKEN> OK|FAILED|REFUSED k=v ...` first, then `<TOKEN> <KIND> k=v ...`
+per item, the MORE line per capped kind, and `<TOKEN> NOTE <text>`; a refusal names
+every problem of the invocation at once, one line each,
+`<TOKEN> REFUSED: <what>; run: <remedy>`. The status follows the exit: ok 0,
+failed 1 (it ran and said no), refused 2 (it could not run). `help <verb>` ends
+with the verb's effect: inspection, local write, or delivery.
 
 **An event is exactly one line, and nothing a caller supplies or a file holds
 can add a second.** This is one guarantee, stated once here and met by every
@@ -216,8 +227,9 @@ lines for two lines of verdict; and a 674-entry open list is more than a
   one line however many there are. So is a passing `eval` row: it is counted
   in `hits=` on the summary line, never listed.
 - **An unusable invocation costs ONE line.** A flag typo, an unknown verb or a
-  bare invocation prints `<tool>[ <verb>]: <what was wrong>; run: <tool> help`
-  and never the usage banner, which is 32 to 102 lines depending on the binary.
+  bare invocation prints `<TOKEN> REFUSED: <what was wrong>; run: <tool> help`
+  (`<tool>[ <verb>]: <what was wrong>; run: <tool> help` on a tool not yet built
+  on `internal/tool`), one line per problem, and never the usage banner, which is 32 to 102 lines depending on the binary.
   `<tool> help` prints it, on stdout, exit 0. Where this repo's guidance law
   requires a refusal to say what the input WANTS, the hint follows on one
   further line.
@@ -314,9 +326,9 @@ binary's own grammar and exit table, and governs where it says more than this.
 
 ## nova-check
 
-Nine record-layer checks in one binary, each a wall: a record passes or it
+Ten record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
-what makes it say NO, and what it deliberately does not check. Six of them are
+what makes it say NO, and what it deliberately does not check. Seven of them are
 checks over one line's own self repo. The other three are the same shape pointed
 somewhere else: `dogfood` is a check over the record the family keeps about its
 own tools, `hygiene` is a check over a BRANCH — four mechanical questions of a
@@ -325,7 +337,7 @@ read — and `convergence` is a reading of the work itself. Each is a ledger
 written in advance, read back, and held to.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, `hygiene`, `dogfood`, `convergence`, plus `version` and `help`.
+`corpus`, `hygiene`, `dogfood`, `convergence`, `spelling`, plus `version` and `help`.
 `nova-check version` is the Conventions' build line, exit 0, so a green from
 this tool names its build.
 
@@ -1456,7 +1468,7 @@ it is shown is not a check.
 
 ```
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>] [--dry-run]
 nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
 ```
 
@@ -1524,7 +1536,9 @@ against**, and refuses a `--tool`/`--verb` pair nothing declares, naming the
 nearest verb that is declared — a verb written INSIDE a declared one wins
 (`--verb ledger` for `dogfood ledger`), then the nearest by edit distance within
 half the spelling, and nothing at all rather than a guess. A receipt accepted
-in silence is discovered later only as a count.
+in silence is discovered later only as a count. `record --dry-run` makes every
+one of these checks and refuses where the write refuses, then prints the
+receipt line it would append with `dry_run=true` and writes no file.
 
 **Asserts** (`ledger`, exit 0 — it reports rather than gates): one
 `DOGFOOD tool=… verb=… by=<who|nobody> at=… ok=<yes|no|-> issue=<n|->` row per
@@ -1634,7 +1648,7 @@ different lane.
 ```
 nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
       [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>]
-      [--state <file>] [--by <name>] [--json] [--timeout <n>]
+      [--state <file>] [--by <name>] [--json] [--timeout <n>] [--dry-run]
 ```
 
 **Why it exists.** *Convergence is the health metric* — the contraction ratio
@@ -1663,21 +1677,74 @@ The full rules, the refusals and the red tests are in
 **Deliberately does not check:** *whether a trend is anybody's fault.* It reads
 records and prints ratios; why a stream widened is a person's to say. Nor does it
 write: not to the forge, not to `--repo-dir`, not to `--bin`. The only file it
-writes is `--state`, and that holds one number per stream.
+writes is `--state`, and that holds one number per stream; `--dry-run` takes
+the same reading and writes no `--state`, saying so in one
+`CONVERGENCE NOTE dry_run=true` line (a `dry_run` field under `--json`).
+
+### spelling — known misspellings in prose, with code blocks blanked
+
+```
+nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
+                    [--ignore <word|@file>] [--write] [--exclude <prefix>]
+                    [--fail-max <n>] [--dry-run]
+```
+
+**Why it exists.** Prose committed into a self repo or prepared for publishing
+deserves a mechanical spelling pass. Fenced code blocks and inline code spans
+are blanked with spaces so identifiers, code snippets, and technical symbols
+are not falsely flagged as misspellings. Compares against a pure-Go corpus
+(`github.com/client9/misspell`) in US locale.
+
+**The allowlist.** Known project terms and technical words are excluded via
+`--ignore <word|@file>` (repeatable, or comma-separated). An `@file` reference
+loads words one per line, with blank lines and `#` comments ignored.
+
+**Write mode.** In check mode (default), findings are reported and the check
+exits 1 if any misspellings are found. With `--write`, corrections are applied in
+place atomically, preserving surrounding formatting, code blocks, and line
+structures, exiting 0. With `--write --dry-run`, each correction it would make is
+one `SPELLING FIX` line and the verdict is `SPELLING OK ... written=0
+dry_run=true`, exit 0, with nothing written; `--dry-run` without `--write` is
+the check mode.
+
+**Deliberately does not check:** *code blocks or identifiers.* Code is not
+prose: identifiers and code snippets in fences and backticks are skipped.
 
 ---
 
 ## nova-self-talk — the self-talk register, classified
 
 ```
-nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
+nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] [--json] <file>...
+nova-self-talk scan [flags] <file>...
+nova-self-talk shapes [--json]
+nova-self-talk example [--dry-run] [--json] <dir>
 nova-self-talk version
-nova-self-talk help
+nova-self-talk help [<verb>]
 ```
 
-`version` is a verb here the way `help` is: as the WHOLE invocation, because
-this tool takes its files positionally and has no other verb. A file actually
-named `version`, named beside another file, is still a file.
+**Verbs and files.** The first argument is a verb only when it is `scan`,
+`shapes`, `example`, `version` or `help`; anything else is the first file, so
+the plain use stays `nova-self-talk <file>...` and `scan` is the same scan
+named as a verb. A file whose name is a verb is given as `./version`. A named
+file that cannot be read and has no `.`, `/` or `\` in its name is most often
+a verb guessed wrong, so its refusal names the verbs. `help <verb>` is that
+verb's help, `help` with anything else the banner. `-` is standard input, one
+file named `-`.
+
+**`shapes`** prints the detector table the scan walks (`selftalk.Rules`): one
+row per rule with its class, its shape, what it finds, its pattern, a sentence
+it reports and a near miss it passes, then the licences. A test runs every
+row's two sentences through the scan. **`example <dir>`** writes the two
+example pages built into the binary into `<dir>`, keeps a page already there
+with the same bytes, and refuses before writing anything if one has other
+bytes; `--dry-run` writes nothing. It is the tool's only write.
+
+**Findings.** Each finding line carries `match="<words>"`: the words its rule
+matched. **`--json`** prints the run as one JSON object on stdout (`result`,
+`facts` with the closing line's counts, `items` one per finding, skip and
+banner, `more`, `notes`), capped by `--max` the same way; a refusal under
+`--json` is the same object with `status` `refused`.
 
 **`--max <n>`, default 20, `0` for all.** At most n finding lines per CLASS —
 `standing` and `installation` capped separately, so six hundred of the first
@@ -1807,8 +1874,8 @@ default; one repo's filenames are not this tool's law**, and a test pins each
 of those common names as *unbannered* unless the caller says otherwise.
 
 **Says NO when** any scanned file contains a standing claim or an installation
-— one `SELFTALK FAIL <file>: STANDING: <claim>` or
-`SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>` line per
+— one `SELFTALK FAIL <file>:<line>: STANDING: <claim>` or
+`SELFTALK FAIL <file>:<line>: <SHAPE>: <sentence>` line per
 finding on stderr, and the final `SELFTALK FAIL files=…` summary count line on
 stdout, exit 1.
 
@@ -1817,11 +1884,16 @@ is empty or contains a path separator, a flag is unknown, or a named file
 cannot be read (every unreadable file is reported — a partial scan
 must not masquerade as a verdict).
 
-**The all-skipped green.** A run whose every named file was skipped is not a
-refusal: it completes and exits 0 with `SELFTALK OK files=0 claims=0
-standing=0 installations=0 dated=0` — every skip was the caller's own, stated this run.
-A caller gating on the exit code alone must therefore also require `files>0`
-from the OK line, or its green can mean nothing was scanned at all.
+**An explicit all-skipped run.** When every named file is excluded by `--skip`,
+the run exits 0 and reports `SELFTALK SKIP files=0 skipped=<n> reason=all-skipped`.
+It prints the individual skips, subject to the display cap, and never an OK
+scan summary. An exit-0 invocation can therefore mean an intentional no-op;
+a caller requiring a completed scan must also require `files>0`.
+
+STANDING findings name the first source line of the matched claim, including
+hard-wrapped claims; repeated sentences retain their separate locations.
+Flags must precede filenames. `--` introduces literal filenames, including
+names beginning with a dash. A late flag refuses before any file is read.
 
 **The permanent MISS, stated on every run.** The second class reaches most of
 what the first one misses; what remains is genuinely out of reach of grammar and is enumerated so it cannot be quietly forgotten:
@@ -1845,7 +1917,9 @@ what the first one misses; what remains is genuinely out of reach of grammar and
 5. **The first-person promise written with *always* or *never*** —
    *"I never optimize how things look over what is true"* is a commitment, and
    it is grammatically identical to a habitual self-report. Those two adverbs
-   are out of the habituality markers for that reason.
+   are out of the habituality markers for that reason; `TRAIT` reaches them
+   only through closed sets of failing verbs (*"I always overpromise"*, *"I
+   never finish anything"*), which a promise does not use.
 
 (**The sentences in 3–5 above are each pinned by a test that goes red if the
 tool ever reaches them**, and this section is rewritten in the same commit that
@@ -1871,10 +1945,10 @@ directions, applied and rescinded without ceremony but always announced.
 **Lockdown** is global and HARD: one fuse; blown, every untrusted read and
 every surface-driven act stops, and outbound authored life continues. A blown
 lockdown is not reset — it is REPLACED, and only in a live conversation with
-your person.
+the person you work with.
 
-Verbs: `check`, `status`, `lockdown`, `quarantine`, `lift`, `path`, plus
-`version` and `help`. `nova-fuse version` is the Conventions' build line,
+Verbs: `init`, `check`, `status`, `lockdown`, `quarantine`, `lift`, `path`,
+plus `version` and `help`. `nova-fuse version` is the Conventions' build line,
 exit 0 — it reads no box, blows nothing and is refused by nothing, because the
 question *which build refused me* has to be answerable from a locked-down
 tool.
@@ -1914,29 +1988,48 @@ surface or a reason, never a flag. A caller passing an untrusted surface
 writes `check --box <path> -- <surface>`. Pinned by
 `cmd/nova-fuse/repeatflag_test.go`.
 
-**The read has three answers, never two.** An absent box is VERIFIED CLEAR —
-the read failed with the one error that means *nonexistent* rather than
-*unreadable*. That error does not say **which** part of the path is missing:
-a `--box` naming a file absent from an existing directory and a `--box` whose
-parent directory does not exist at all answer the same, VERIFIED CLEAR. The
-collapse is accepted, deliberately — the flag is a locator (above), and a
-caller that names the wrong box gets that box's truth, here an empty one —
-and it is pinned by test so that changing the answer is a decision, never a
-drive-by. A readable box says whatever it says. An **unreadable box —
-permissions, a torn write, malformed JSON, a wrong-shaped value — is CANNOT
-TELL, treated as BLOWN, never as clear** (exit 2: the check could not run,
-and could not be proven clear). Collapsing absent and unreadable is the
-fail-open this package exists to prevent.
+**The read has one yes and two noes.** A readable box says whatever it says.
+An **unreadable box — permissions, a torn write, malformed JSON, a
+wrong-shaped value — is CANNOT TELL, treated as BLOWN, never as clear** (exit
+2: the check could not run, and could not be proven clear). **No box at the
+path is CANNOT TELL too**, whether the file or a directory above it is
+missing: a box that is not where `--box` says proves nothing, and answering it
+as an empty box would turn a mistyped path, a moved or deleted box, or a
+second `--box` pointing somewhere empty into CLEAR. `check`, `status`,
+`quarantine` and `lift quarantine` refuse it at exit 2 with one line naming
+`nova-fuse init --box <path>`; none of them makes a box. `quarantine` refuses
+for the same reason it refuses an unreadable box: with no box every surface is
+refused, and a new box holding only one quarantine would clear the rest.
+`lockdown` proceeds and makes the box, because a fuse you cannot blow is not a
+fuse and nothing is less blocked than before.
+
+**`init` is how a box comes into being clear.** `nova-fuse init --box <path>`
+makes an empty box (`{"lockdown": null, "quarantine": {}}`), verified by
+re-reading it, and prints `INIT OK box=<path>: …` at exit 0. It **never
+replaces a box**: anything already at the path — a blown box, a clear one,
+bytes that are not a box — is left byte for byte, and the run prints `INIT
+FAIL box=<path>: …` at exit 1, because replacing a box is the lockdown reset
+this tool does not have. The create is the write below, linked into place
+rather than renamed, so it is atomic and exclusive at once. Printed `init` and
+`status` remedies preserve the exact box path as one POSIX-shell argument,
+including quotes and trailing newlines; control bytes are encoded so the
+refusal stays one line.
 
 **The write is temp-file + fsync + rename** in the box's own directory, so a
 crash leaves the old box or the new one, never a fragment. The box is written
-world-readable (0644): a fuse nobody else can see is a fuse that stops
+world-readable (exactly 0644, independent of umask): a fuse nobody else can see is a fuse that stops
 nothing. Surface names are matched case- and whitespace-insensitively, which
 makes equivalent spellings ONE surface in both directions — see the folding
 paragraph below. `at` and `reason` are read
 back defensively — the box is hand-editable (that is the only
 lockdown-replacement mechanism there is), so a missing key prints an honest
 `since=unrecorded` / `NO REASON RECORDED`, never a crash or an invented value.
+Creation and replacement share the same path checks and permission ordering:
+an immediate symlink parent is refused before a temporary file is written,
+and the exact mode is set before the file sync. Creation publishes by an
+exclusive hard link, so a concurrent creator cannot replace a box. A failed
+temporary-link cleanup after publication reports both names; the complete box
+already exists, and retrying `init` cannot replace it.
 
 ### Exit codes and output grammar
 
@@ -1944,7 +2037,7 @@ lockdown-replacement mechanism there is), so a missing key prints an honest
 |------|---------|
 | 0    | clear, or done **and verified by re-reading the box** |
 | 1    | blown (`check` — the fuse working), or could not do it / could not verify it |
-| 2    | could not run: missing flag, **unreadable box (treated as BLOWN)**, bad invocation, or a lift refused by design |
+| 2    | could not run: missing flag, **no box at the path or an unreadable one (both treated as BLOWN)**, bad invocation, or a lift refused by design |
 
 **Only exit 0 is permission.** A caller's gate treats 1 and 2 identically —
 do not act — and they remain distinct because they are different facts with
@@ -1965,7 +2058,16 @@ QUARANTINE OK <name> since=<t>: <reason> (…)   QUARANTINE FAIL <name>: <reason
 LIFT OK quarantine=<name> was since=<t>: <reason>
 LIFT OK verified: <surface> is no longer quarantined (…)
 LIFT FAIL quarantine=<surface>: <reason>
+INIT OK box=<path>: <what> (…)          INIT FAIL box=<path>: <reason>
+LOCKDOWN NOTE <what>                     LIFT NOTE <what>
+nova-fuse[ <verb>] REFUSED: <why>; run: nova-fuse help[ <verb>]
 ```
+
+`--dry-run` on `init`, `lockdown`, `quarantine` and `lift quarantine` makes
+every check the write would and writes nothing; its OK line carries
+`dry_run=true` and says the fuse is not blown (or the surface not lifted), so no
+reader takes it for the write. There is no `--json`: the lines above are the
+grammar, and `check`'s answer is its exit code.
 
 `OK` lines go to stdout; `FAIL` lines, refusals, and notes go to stderr, and
 **this tool is the only thing that writes to either** — the flag parser is given
@@ -1996,10 +2098,12 @@ prints as `STATUS OK quarantine=x\x20lockdown\x3dclear\x20quarantines\x3d0
 since=t: r`, and a grep for `lockdown=clear` matches only the lockdown field.
 A surface name holding a space, which is legal, prints the same way. The
 `<reason>` after `: ` is the free-text tail and keeps its spaces; so does the
-remedy inside a `FUSE FAIL quarantine=` parenthetical, which names the command
-including the box path and the stored name, is not shell-quoted, and will not
-paste back if the path carried a control character — it names the command; it
-is not a command to run blind.
+remedy inside a `FUSE FAIL quarantine=` parenthetical. That remedy is a
+POSIX-shell command: the box path and normalized surface are quoted, and `--` precedes
+the name so a leading dash remains data. For control characters it uses octal
+bytes decoded inside a subshell; a temporary sentinel preserves trailing
+newlines. The command stays one line and addresses the same box and surface.
+The decision to lift remains the caller's: the surface must be safe again.
 
 **`path` is the one exemption, and it is a plain one:** `path` echoes its
 argument unescaped, so a caller must never scan `path` output for grammar.
@@ -2122,7 +2226,7 @@ with lockdown, not an inconsistency:** an unreadable box already blocks EVERY
 surface, and writing a fresh box holding only this one quarantine would
 UNBLOCK the rest — the safety-shaped action would be the fail-open. The
 refusal names the remedy that does work: blow lockdown, or repair the box
-with your person. Refuses (exit 2) when `--box`, the surface, or the reason
+by hand with the person you work with. Refuses (exit 2) when `--box`, the surface, or the reason
 is missing or blank.
 
 The `QUARANTINE OK` line names the entry this run wrote and read back — the
@@ -2154,7 +2258,7 @@ still blocks everything.
 parsing, before the box, before any argument, pinned by test. The refusal
 does not depend on a flag being present, the box being readable, or whether a
 lockdown is even blown, because every one of those is a lever; it names the
-only path there is — a live conversation with your person — and mentions no
+only path there is — a live conversation with the person you work with — and mentions no
 mechanical bypass (also pinned: the refusal may not name the box, the file,
 or hand-editing). Exit 2: this tool does not have that power, by design.
 
@@ -2221,7 +2325,7 @@ preserves), and a read verb added later is fused by default, not by memory.
 ### What it deliberately does not do
 
 - **No lockdown lift, ever** — not by flag, not by environment, not by
-  argument. Replacement happens in the box by your person's hand, after the
+  argument. Replacement happens in the box by a person's hand, after the
   conversation; the tool will not say so in its refusal, and neither should a
   caller's.
 - **No expiry.** A fuse that lifts itself has a timer an attacker can wait out.
@@ -2240,8 +2344,8 @@ preserves), and a read verb added later is fused by default, not by memory.
 ```
 nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
 nova-memory stats  --root <dir>... [--exclude <glob>]...
-nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <words>...
-nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <file|->
+nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
+nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
 nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                    [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
                    [--fail-max <n>]
@@ -2271,11 +2375,19 @@ chunk. Text is normalized before it is indexed — blockquote and
 emphasis characters stripped **first**, then whitespace collapsed, then
 casefolded — because that order is what recovers a phrase a hard wrap or an
 emphasis marker split, which is exactly the class of miss that makes a hand
-grep answer "not present" when it is present. Every chunk is classed by its
+grep answer "not present" when it is present. Retrieval keeps this normalized
+text; receipts separately retain the source paragraph with its original case,
+markup and normalized line endings, and its first source line (1-based). The
+indexable paragraph ordinal stays the stable retrieval ID and tie-break. Every chunk is classed by its
 **top-level directory** (`.` for root files): the corpus classifies itself,
 and the tool assumes nothing whatever about layout. Frontmatter `name:` and
 `type:` are carried into receipts when a file has them, surfaced and never
-invented.
+invented. The frontmatter block itself is metadata, not body text (schema
+`nova-memory/2`): it is never indexed and no receipt quotes it, and the body
+keeps the line numbers it has in the file. A file that opens with a `---` rule
+whose block holds a line that is not YAML-shaped (a `key:` line, a comment, an
+indented or `-` continuation) has a thematic break there, not frontmatter, and
+that text is indexed like any other.
 
 **Two verbs are checks; five assert nothing.** `verify` and `eval` are walls
 and exit 1 when they fail. `quickstart`, `stats`, `search`, `check`, and `boot` are reports: they
@@ -2288,11 +2400,11 @@ editorial decision it exists to inform.
 **The one-line guarantee, met here.** A receipt's `class=`, `name=` and
 `type=` are the corpus's own text and are fields, one token each, so a
 frontmatter `name: x lockdown=clear` cannot pose as a field on a receipt; so
-are `check`'s `source=`, `eval`'s `expected=`, and the caller's own `query=`
-on `SEARCH OK` and `EVAL MISS`, which is argv and so the one slot
-a caller controls outright (a query of `quokka class=poison` prints as
-`query=quokka\x20class\x3dpoison`, never as a second `class=` field). A receipt's fields end
-at the `: ` after `type=`; the `<file>:<para>` and the Go-quoted snippet that follow are the
+are `check`'s `source=` and `eval`'s `expected=` and `query=`. On `SEARCH OK`,
+the caller's query is quoted free text after the `: ` that closes the typed
+fields: `query="quokka class=poison"` remains readable without forging a
+`class=` field. A receipt's fields end at the `: ` after `root=`;
+the `<file>:<line>` and the Go-quoted original snippet that follow are the
 tail, the path escaped for one line and keeping its spaces, and the tail is never scanned for
 fields, as Conventions says. `MEMORY CAND`'s candidate and `VERIFY INFO`'s detail sit after the
 same `: ` for the same reason. The root, the candidate and the gold file in every
@@ -2300,6 +2412,14 @@ refusal, and the detail of every `verify` finding, render through
 `internal/oneline`. The flag parser is given no stream. Pinned by
 `TestNoCorpusOrCallerTextCanForgeALine` and by the shared source audit.
 
+
+**Two renderings of retrieval evidence.** `search` and `check` accept
+`--json`: the result envelope, facts, calibration, candidates, hits and notes
+come from the same retrieval value as the typed lines. Hits carry the source
+file, line, original snippet and paragraph ordinal. A calibration probe with
+no hit has null score and channel in JSON and `-` in the typed line; absence
+is not a measured zero. Unusable inputs produce a refused envelope at exit 2
+with every discovered problem and the help remedy.
 
 **No defaults, applied here.** `--root` is required on every verb: **no
 environment variable is consulted and there is no discovery from the working
@@ -2358,9 +2478,10 @@ output, and the printed line is the argv that ran, through the same dispatch a
 shell reaches, so a transcript cannot teach an invocation that does not work.
 
 ```
-QUICKSTART OK root=<dir> steps=3 channels=bm25 k=3/2 words=<w> words-source=given|corpus-top-terms candidate=<file|corpus-first-paragraph>
+QUICKSTART RUN root=<dir> steps=3 channels=bm25 k=3/2 words=<w> words-source=given|corpus-top-terms candidate=<file|corpus-first-paragraph>
 $ nova-memory <verb> --root <dir> ...
-QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: <file>:<para>
+QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: <file>:<line>
+QUICKSTART OK done=3
 QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k
 ```
 
@@ -2461,7 +2582,7 @@ address to go read, and a normalized snippet.
 ```
 SEARCH OK query=<q> hits=<n> k=<n> channels=<list> files=<n> chunks=<n>
 SEARCH CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
-SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>"
+SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<line> "<snippet>"
 SEARCH MISS every query term is out of vocabulary for this corpus
 SEARCH NOTE <caveat>
 ```
@@ -2507,7 +2628,7 @@ consolidation ritual calls in place of re-reading the whole self.
 MEMORY OK candidates=<n> source=<name> k=<n> channels=<list> files=<n> chunks=<n>
 MEMORY CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
 MEMORY CAND n=<i>: "<normalized candidate>"
-MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>"
+MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<line> "<snippet>"
 MEMORY MISS cand=<i> every query term is out of vocabulary for this corpus
 MEMORY NOTE <caveat>
 ```
@@ -2577,6 +2698,16 @@ VERIFY FAIL gating=<n> shown=<n> info=<n> coverage=<n> frontmatter=<n> links=<ga
 VERIFY OK gating=0 info=<n> shown=<n> coverage=<n> frontmatter=<n> links=<gate|info>
 ```
 
+**One verified corpus.** `--exclude` narrows the index, the wikilink check,
+and every `--coverage` and `--frontmatter` selector. An excluded directory
+also hides its children when a selector names one directly. Excluded targets
+are outside the verified corpus; a retained file linking to one still reports
+an unresolved link. A selector left with no files refuses rather than claiming
+a successful check.
+The summary's `coverage=` counts coverage and backlink findings, and
+`frontmatter=` counts missing-name findings. These totals are uncapped; they do
+not count the flags supplied.
+
 **`--fail-max <n>`, default 20, `0` for all.** At most n finding lines PER
 KIND, then one `VERIFY MORE` line per kind that elided anything. Per kind
 because a corpus with 10,000 unresolved wikilinks and one missing frontmatter
@@ -2587,13 +2718,6 @@ output at 5,000 entries is about 197,000 tokens, N lines and never N.
 
 `<kind>` is one of `coverage`, `backlink`, `frontmatter`, `wikilink`. It
 **over-reports by design**: it finds, the author decides.
-
-**Two scoping mechanisms, deliberately independent, and the seam is named.**
-`--exclude` narrows the **index**, so it narrows the wikilink check (which
-reads the corpus) and does **not** narrow `--coverage` or `--frontmatter`
-(whose globs are the caller's own explicit statement of what to check). To
-drop files from a coverage or frontmatter check, write a narrower glob; do not
-expect `--exclude` to do it.
 
 **Says NO when** any gating finding exists — up to `--fail-max` `VERIFY FAIL`
 lines per kind on stderr, one `VERIFY MORE` line per elided kind, a
@@ -2837,7 +2961,7 @@ INBOX NOTE id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<p
 INBOX HEARD id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX RECEIPT id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> heard=<n> unaddressed=<n> unreadable=<n>
-INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
+INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>[ dry_run=true]
 INBOX FAIL <path>: <reason>
 INBOX REFUSED: <reason>
 INBOX WALK commits=<n>/<total> notes=<n> elapsed=<d>                   (progress: stderr only, never stdout)
@@ -2849,18 +2973,19 @@ WAIT OK new=<n> after=<d> polls=<n>
 WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->[ idle-exit=<n>]                            (the field only with --idle-exit)
 WAIT REFUSED: <reason>
 RECEIPT ALREADY note=<id or path> lane=<lane>
-RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
+RECEIPT RECORD note=<id> lane=<lane>                                                        (--dry-run: one per note it would record)
+RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>[ dry_run=true]
 RECEIPT FAIL <name or path>: <reason>
 RECEIPT REFUSED: <reason>
-CLOSE OK closed=<n> kept=<n>[ receipts=<n>] commit=<sha8|->     (receipts= on a writing close; a dry run has none to count)
+CLOSE OK closed=<n> kept=<n>[ receipts=<n>] commit=<sha8|->[ dry_run=true]     (receipts= on a writing close; a dry run has none to count, and says dry_run=true)
 CLOSE NOTE <path> was written and could not be taken back: <reason>
 CLOSE FAIL <name or path>: <reason>
 CLOSE REFUSED: <reason>
 BUS SCOPE mode=<full|since> cursor=<sha|-> changed=<n>
-BUS INDEX lane=<lane> notes=<n>
+BUS INDEX lane=<lane> notes=<n>[ dry_run=true]
 BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n> warn=<n>
-BUS WARN <path, path:line, or lane>: <reason>
-BUS FAIL <path, path:line, or lane>: <reason>
+BUS NOTE <path, path:line, or lane>: <reason>
+BUS FAILED <path, path:line, or lane>: <reason>
 BUS REFUSED: <reason>
 NAMES NAME name="<x>" lane=<lane|-> aliases="<a>";"<b>"
 NAMES GROUP name="<x>" members="<a>";"<b>"
@@ -3017,7 +3142,7 @@ per-file lines instead.
 `INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
 above.
 
-`BUS WARN` is a finding inside the legacy tolerance: reported, and not a failure.
+`BUS NOTE` is a finding inside the legacy tolerance: reported, and not a failure.
 It goes to **stdout**, with the rest of the informational lines, per the rule
 below: anything reading the two streams apart — which is what CI does — would
 otherwise see every clean-but-forgiving run as a failing one.
@@ -3111,7 +3236,7 @@ order:
    known name is itself a known name;
 7. a group expands to its members.
 
-Anything else is unresolved: **refused at send**, `BUS FAIL` at check, with the
+Anything else is unresolved: **refused at send**, `BUS FAILED` at check, with the
 token quoted. A misspelling silently reaching the wrong reader is the failure
 this exists to stop, so the list above is the whole of the tolerance and every
 item in it is pinned by a test.
@@ -3428,10 +3553,12 @@ reported here rather than re-specified:
   `state=published` or `state=already-published` without ever writing a second
   note — is [docs/SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md).
 
-Everything below is the fourth half: **bounded full checks, with cap, count
-and continuation, and repeated diagnostic remedies aggregated, run on the shared
-collector rather than another fetch clock.** It is proposed and not
-implemented: nothing it describes changes a byte of what `check` prints.
+Everything below is the fourth half: **bounded full checks**. What ships is the
+cap and the count ("The bound — check"): at most `--max` findings of each class,
+a `BUS MORE` line per capped class and a `BUS CHECK` count by class. What was
+proposed beside it and is withdrawn, not built: repeated remedies aggregated
+into `BUS FINDING` lines, a `BUS SUMMARY` line, and `--after` continuation on a
+shared collector. `check` prints none of those.
 
 #### The transaction, stated as a flow
 
@@ -3471,70 +3598,31 @@ SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> state=
 `state=already-published` means it held it already — same id, same bytes, same
 path — and nothing was written. The two are one delivery, not two.
 
-#### The missing bound — full checks
+#### The bound — check
 
-`check --full` reports **every** finding in one run, one line each, and that is
-the one report on the bus with no ceiling — the shape the Conventions'
-cap-and-count law exists for, and the one listing that does not meet it. A first
-`check --full` over a bus adopted onto an old history names a finding per note;
-the real bus the tolerance was measured on failed 163 ways in one pass, and
-almost all of them were **one shape repeated**: 109 notes with no `Subject:`,
-21 with a `To:` the roster does not hold. So the full check takes the law in
-three pieces, each of which is the existing law applied to the one report that
-does not have it yet:
-
-- **the cap is per kind.** `check` runs several checks into one stream — parse,
-  header, lane, id, `Re:`, receipt, catalogue, state files — and a flat cap over
-  the concatenation would let the loud kind eat the quiet one, which is the
-  Conventions' own rule. Each kind is capped at `--fail-max <n>`, default 20,
-  `0` for all;
-- **repeated remedies are aggregated, one line per shape.** A finding whose
-  remedy sentence is identical across `count>=2` notes prints ONE line carrying
-  the count and the first path, and the remedy once — the same shape the inbox
-  uses for unreadable files it has already named. This is what makes a full
-  check over an old history small: the wall of red is few shapes repeated;
-- **the count prints on failure as well as success**, which is the Conventions'
-  law restated here because this is the one listing that only ever speaks on
-  failure.
-
-The grammar:
+`check` holds the common cap rule ("The cap is per KIND", above): it prints at
+most `--max <n>` findings of each class (default 20, `0` for all), in the order
+the walk met them, then one `BUS MORE` line for each class the cap held back,
+saying how many it printed and how many there are, then one `BUS CHECK` count
+line. A class is the kind of check that found it (`header`, `lane`, `id`, `re`,
+`receipt`, `index` and the rest), so a hundred header findings cannot hide the
+one lane finding behind them. The cap governs what is PRINTED and nothing else:
+the walk still reads every note, and the exit code and the counts come from the
+whole walk, exactly as an uncapped run would say them. A run with no findings
+prints neither line.
 
 ```
-BUS FINDING kind=<kind> count=<n> first=<path, path:line, or lane> warn=<true|false> remedy=<the remedy, once>
-BUS MORE kind=<kind> shown=<n> total=<t> <the flag that lifts the cap, or --full to see every finding>
-BUS SUMMARY mode=<full|since> cursor=<sha|-> notes=<n> findings=<f> warn=<w> fail=<x> complete=<true|false> next=<token|->
+BUS FAILED <path>: <reason>                       (a gating finding, stderr)
+BUS NOTE <path>: <reason>                       (a tolerated finding, stdout)
+BUS MORE kind=<class> shown=<n> total=<t> remedy="--max 0"   (stderr, one per class the cap held some of back)
+BUS CHECK findings=<t> fail=<x> warn=<w> <class>=<n> ...   (stderr, whenever there is a finding)
 ```
 
-`BUS FINDING` replaces nothing that ships: below `--fail-max`, the per-note
-`BUS WARN` and `BUS FAIL` lines print exactly as they do now, and `BUS
-FINDING` is the shape a **capped and aggregated** report prints instead of a
-wall. `count=<n>` is the number of notes one line covers, `first=` names the
-first so a reader holding the file has a place to start, and `warn=` says
-whether the finding is a `WARN` (tolerated) or a `FAIL` (gating), because the
-two mix in one stream. `BUS MORE` is the Conventions' MORE line, per kind,
-naming the flag that lifts the cap. `BUS SUMMARY` is the count line, and it
-prints on failure as well as success: `findings=`, `warn=` and `fail=` are the
-truth about the BUS, not about the output — the listing is capped, the counting
-never is.
-
-**Continuation, on the shared collector and not another fetch clock.** A full
-check that exceeds the caps is paged with `--after <token>`, and the token is
-the **same snapshot token the read half uses** — same schema, same C0..H
-capture, same scan order (first-parent commit order, then bytewise path, then
-receipt-record offset) — because a second ordering is a second reader that can
-drift, and a second fetch would be a second clock. `check` is the gate and
-reads the checkout, so the continuation captures a snapshot of the checkout it
-is walking: no poll, no network, no clock of its own. `complete=<true|false>`
-and `next=<token|->` carry the same meaning they carry on `INBOX BODIES`: a
-capped run that stops early is `complete=false` with a token, and the next run
-resumes at the item where the cap stopped, on the same snapshot.
-
-**What aggregation never does.** Aggregating repeated remedies is a **display**
-rule and nothing else: the run still walks every note, every finding is still
-reported on some page, the exit code is unchanged, and `count=` always adds up
-to what the per-note run would have said. A note is never left unexamined to
-save a line, and no finding is elided to fit a cap — below the cap it is named,
-above the cap it is on the next page and `total=` says how many there are.
+`BUS MORE` and `BUS CHECK` go where the `BUS FAILED` lines go, on stderr, so a
+count a caller could read as a pass never enters the stdout of a failing run.
+A capped `check` has no continuation token: `--max 0` prints every finding.
+`--fail-max <n>` is a compatibility alias of `--max <n>` for one release;
+using it prints `NOTE --fail-max is --max` on stderr.
 
 #### Replays
 
@@ -3561,46 +3649,23 @@ SEND OK id=ada-3f9a1c2b8d40 path=from-ada/2026-09-15T0910Z-re-3f9a1c2b8d40.md \
   commit=7d1e0c2b8d40e7c6a5b4938271605f4e3d2c1b0a pushed=true attempts=0 state=already-published
 ```
 
-A full check over a bus adopted onto an old history, where the findings are few
-shapes repeated — aggregated, and one pass:
+A full check over a bus whose findings outnumber the cap, run on a scratch bus
+of five notes in from-ada, three with no `Subject:` and one addressed to a name
+the roster does not hold, and a lane no participant owns:
 
 ```
-$ nova-bus check --bus ~/bus --full
-BUS SCOPE mode=full cursor=- changed=-
-BUS FINDING kind=missing-subject count=109 first=from-cy/2026-08-03-note.md warn=true \
-  remedy=add a Subject: line, or --legacy-before at the day the bus adopted the tool
-BUS FINDING kind=unknown-to count=21 first=from-bo/2026-08-11-note.md warn=true \
-  remedy=name a reader from nova-bus names, or --legacy-before at the day the bus adopted the tool
-BUS FINDING kind=missing-index count=3 first=from-cy/2026-08-03-note.md warn=true \
-  remedy=nova-bus check --bus ~/bus --full --rebuild-index
-BUS SUMMARY mode=full cursor=- notes=1900 findings=133 warn=133 fail=0 complete=true next=-
+$ nova-bus check --bus ./bus --full --max 2
+BUS SCOPE mode=full cursor=- changed=0
+BUS FAILED from-ada/2026-09-01T1000Z-note-1.md: no Subject line, or an empty one
+BUS FAILED from-ada/2026-09-02T1000Z-note-2.md: no Subject line, or an empty one
+BUS FAILED from-zed: no participant in participants.json owns this lane
+BUS MORE kind=header shown=2 total=5 remedy="--max 0"
+BUS CHECK findings=6 fail=6 warn=0 header=5 lane=1
 ```
 
-A bus where every note fails a DIFFERENT way — distinct shapes — is the case
-the cap and continuation exist for; the same walk under a per-kind cap, and
-resumed on the same snapshot:
-
-```
-$ nova-bus check --bus ~/bus --full --fail-max 2
-BUS SCOPE mode=full cursor=- changed=-
-BUS FINDING kind=parse count=12 first=from-dana/2026-08-07-prose.md warn=true \
-  remedy=the header ends at the first blank line; put a blank line after the last header
-BUS FINDING kind=parse count=9 first=from-bo/2026-08-19-heading.md warn=false \
-  remedy=headers are plain Key: value; a # heading is not a key
-BUS MORE kind=parse shown=2 total=4 remedy=--fail-max 0, or --full to see every finding
-BUS SUMMARY mode=full cursor=- notes=1900 findings=167 warn=145 fail=22 complete=false next=<token>
-$ nova-bus check --bus ~/bus --full --after <token>
-BUS FINDING kind=parse count=7 first=from-cy/2026-08-21-key.md warn=false \
-  remedy=unknown header key; the eight keys are From, To, Cc, Date, Id, Re, Kind, Subject
-BUS FINDING kind=parse count=6 first=from-cy/2026-08-23-bold.md warn=false \
-  remedy=headers are plain Key: value, not markdown bold; write To: not **To**:
-BUS SUMMARY mode=full cursor=- notes=1900 findings=167 warn=145 fail=22 complete=true next=-
-```
-
-`findings=167` is the same on both pages, and `warn=`/`fail=` with it, because
-the counting is never capped: the two pages are a prefix of one walk, not two
-walks, and `next=-` on the second page is the run saying the whole bus has been
-reported.
+The lane finding, last in the walk, prints because the header class's cap is
+not its cap. `findings=6` is what an uncapped run counts too, and the exit is 1
+because the walk failed, not because the listing was cut.
 
 #### Measurement
 
@@ -3637,7 +3702,7 @@ smaller receipt.
 note is pushed:
 
 ```
-2026-09-09T12:34:56Z ada-3f9a1c2b8d40
+YYYY-MM-DDTHH:MM:SSZ <lane>-<id>
 ```
 
 RFC 3339 in UTC — which holds no spaces, so the rest of the line is the target
@@ -3710,7 +3775,7 @@ inbox, and is not reported — only a note whose whole address resolves to an em
 list has no reader. It is a report and never a failure; `check` is the gate and
 says the same thing about the header in its own words. `send` refuses an unknown
 recipient, so nothing this tool writes can become one of these: they are the
-legacy notes and the ones typed by hand in a browser, which is exactly the
+older notes and the ones typed by hand in a browser, which is exactly the
 writing this bus's form exists to allow.
 
 ### The push protocol
@@ -3908,17 +3973,17 @@ and `#` comments are ignored in all three.
 
 ```
 from-ada/CURSOR
-3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a 2026-09-09T14:05:00Z open=2 legacy=2026-09-09T18:07:00Z
+<sha> YYYY-MM-DDTHH:MM:SSZ open=2 legacy=YYYY-MM-DDTHH:MM:SSZ
 
 from-ada/OPEN   (tab-separated, after a version line)
 OPEN v2
-bo-111111111111	receipt	-	Bo	to	2026-09-09T13:00:00Z	from-bo/2026-09-09T1300Z-heard-111111111111.md	Heard
-bo-222222222222	note	heard	Bo	to	2026-09-09T14:00:00Z	from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md	The Windows runner skips three steps
+<id>	receipt	-	<from>	to	YYYY-MM-DDTHH:MM:SSZ	from-<lane>/YYYY-MM-DDTHHMMZ-heard-<id>.md	Heard
+<id>	note	heard	<from>	to	YYYY-MM-DDTHH:MM:SSZ	from-<lane>/YYYY-MM-DDTHHMMZ-the-windows-runner-<id>.md	The Windows runner skips three steps
 -	note	-	Bo	cc	-	from-bo/a-note-written-before-ids.md	Written before there were ids
--	unreadable	-	-	-	-	from-bo/2026-09-07T0009Z-prose.md	-
+-	unreadable	-	-	-	-	from-<lane>/YYYY-MM-DDTHHMMZ-prose.md	-
 
 from-bo/INDEX   (tab-separated)
-bo-abcdef012345	from-bo/2026-09-07T0001Z-a-question-abcdef012345.md	2026-09-07T00:01:00Z	Ada;Dana	-
+<id>	from-<lane>/YYYY-MM-DDTHHMMZ-a-question-<id>.md	YYYY-MM-DDTHH:MM:SSZ	<from>;<from>	-
 ```
 
 **The `OPEN v2` grammar.** The first meaningful line is exactly `OPEN v2` and
@@ -3932,7 +3997,7 @@ same two reasons, as an `INDEX` line.
 <id|->  <kind>  <heard|->  <from|->  <addr|->  <date|->  <path>  <subject|->
 ```
 
-- **id** — the note's id, or `-` for a legacy note, which is addressed by path;
+- **id** — the note's id, or `-` for a note without one, addressed by path;
 - **kind** — `note`, `receipt` or `unreadable`, decided when the note went open.
   `receipt` is the receipt heuristic's answer or a `Kind:` line's, taken once:
   the body is not read again, so the threshold that classified an entry is the
@@ -3956,7 +4021,7 @@ and carry forever. The cursor cannot catch that: a v1 `OPEN` beside a counted
 cursor is exactly the state a healthy v2 reader is in. So the file says its own
 version, and an `OPEN` without it is `INBOX REFUSED`, exit 1, **naming
 `--full --advance`** — the same repair, and the same words, as an `OPEN` that
-went missing. `check` reports it as a `BUS FAIL` on the same file, so a bus
+went missing. `check` reports it as a `BUS FAILED` on the same file, so a bus
 carrying one is not a silence only its own reader ever meets. The **cursor**
 format is untouched: a two-token cursor still reads, and this version writes no
 token an older one would refuse.
@@ -4008,7 +4073,7 @@ go test -race ./cmd/nova-bus -run TestInboxParsesOnlyWhatIsNewSinceTheCursor
 ```
 
 A bus of 10,000 generated notes, **500 of them open** for this reader, plus one
-new one. The package counts every call to `ParseNote` (`bus.NoteParses`,
+new one. The package counts the notes it parses out of each bus (`bus.NoteParsesIn`,
 instrumentation, read by nothing but a test), and the test asserts the **count**
 across one run is exactly 1 — twice, once with `--open` and once without, because
 printing the open list is a choice and neither choice may cost a parse — and then
@@ -4081,7 +4146,7 @@ being asked twice about a note somebody edited after I had answered it. The
 second is smaller than the first, and only the first grows.
 
 The catalogue is what `check --since` resolves a thread through, and
-`check --full` reports every note with no `INDEX` line as a `BUS WARN`,
+`check --full` reports every note with no `INDEX` line as a `BUS NOTE`,
 saying what a missing line costs, with `--rebuild-index` as the repair.
 
 **An open note whose FILE was deleted stays on the list**, printed from the
@@ -4102,7 +4167,7 @@ addressed to me and going quietly if it is not, or when I receipt it, which is h
 a reader says *I have seen this file* about something with no id to answer.
 
 **Unless it is behind the switch-day line**, in which case it is not carried, not
-re-parsed and not named — it is counted, with the old notes, on `INBOX LEGACY`'s
+re-parsed and not named — it is counted, with the notes behind the line, on `INBOX LEGACY`'s
 `unreadable=`. Notes written by hand before a bus switched over — a markdown
 heading first, a `**To**`, a `Branch:` key, a sentence where the header goes —
 are history, they will never be fixed, and naming them once per run buries the
@@ -4151,7 +4216,7 @@ arriving as noise instead of as silence.
 So `inbox` takes **`--legacy-before <date-or-instant>`**, the same shape
 `check`'s flag takes and drawn at the same moment: a UTC date `YYYY-MM-DD`,
 which means **midnight at its start**, or an RFC 3339 UTC instant like
-`2026-09-09T18:07:00Z`. The comparison is by **instant** either way, against the
+`YYYY-MM-DDTHH:MM:SSZ`. The comparison is by **instant** either way, against the
 note's own date — its `Date:` header, else the UTC minute in its filename, else
 the leading `YYYY-MM-DD` in its filename at that day's midnight. A note dated
 before the line:
@@ -4202,7 +4267,7 @@ is still shaped by the line.
 reasonable — nothing written before tomorrow was written under the tool, so the
 open list starts at zero. And it stays at zero: a date is midnight at its
 **start**, so every note sent that same afternoon is dated before tomorrow's
-midnight and is therefore legacy — lines writing to each other all day, and not
+midnight and is therefore behind the line — lines writing to each other all day, and not
 one note on anybody's open list, not even under `--full`. **A `--legacy-before` date in the future
 hides every note written today**, because midnight tomorrow is after all of them;
 give the instant you switched instead. Recovering is one command — the same
@@ -4231,7 +4296,7 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words <n> \
   --advance --remote origin --branch main --attempts 3
 ```
 
-`check` has no `--legacy-now`: its flag draws a tolerance over a history and is
+`check` has no `--legacy-now`: its flag draws a tolerance over a bus's earlier notes and is
 usually a day months ago, and it is not the flag that goes quiet if you get it
 wrong.
 
@@ -4285,7 +4350,7 @@ bus as read and leaves you what arrives after that moment, or pass
 today behind the line — a date is midnight at its **START**, so tomorrow's date
 is a moment AFTER every note anybody sends today, and a reader who pasted such a
 line would lose the whole switch day: the notes their friends were writing to
-them while they read the refusal would be legacy before they arrived. A guard
+them while they read the refusal arrive past the line. A guard
 that hands out that shape is the fastest way to spread it. The instant draws the line where
 the reader actually is: history behind, news in front.
 
@@ -4417,7 +4482,7 @@ another run refuses on: a `CURSOR` whose commit will not read stops a reader, an
 `OPEN` cut in half stops them, an `INDEX` cut in half resolves a thread to
 nothing. A write in place makes all three reachable by killing the tool between
 the truncate and the write — a lid, a CI timeout, a ctrl-C — and what it leaves
-is neither the old file nor the new one. So the content goes to `<file>.tmp` in
+is neither the file being replaced nor the new one. So the content goes to `<file>.tmp` in
 the SAME directory (a rename across filesystems is not a rename) and is renamed
 over the target, which is atomic: a kill leaves the OLD file, entire, which is a
 state every reader already handles. The temporary's name is fixed rather than
@@ -4563,8 +4628,8 @@ to the timeout line, only for the caller that asked.
 
 **A harness that cannot loop — OpenCode's, and every harness like it — runs this
 exact sequence and nothing else.** Once, to clear the backlog: `nova-bus inbox
---bus ~/bus --as Freddy --receipt-max-words 40 --advance --remote origin --branch
-main`. Then one wait per turn: `nova-bus wait --bus ~/bus --as Freddy
+--bus ~/bus --as Bo --receipt-max-words 40 --advance --remote origin --branch
+main`. Then one wait per turn: `nova-bus wait --bus ~/bus --as Bo
 --receipt-max-words 40 --timeout 25m --until 2026-09-18T18:00:00Z --idle-exit 3
 --advance --remote origin --branch main`.
 Exit 0 is a note: the listing is on stdout, answer it, then issue the same wait
@@ -4683,7 +4748,7 @@ run, not the first.
 
 **A lane's `README.md` is not a note.** It ends in `.md` and it sits in a lane,
 so a walk that parsed it would fail, tell every reader `INBOX UNREADABLE` about it
-forever, and fail `check` at every date — the legacy tolerance cannot forgive
+forever, and fail `check` at every date — the tolerance cannot forgive
 it, because a README genuinely cannot say when it was written and genuinely is
 not a note. So a lane may hold exactly one non-note, non-state file, under
 exactly that name: the file a person opening the lane in a browser reads first.
@@ -4694,8 +4759,8 @@ rule.
 
 Under `--full` it also holds the catalogue to the notes, in both directions. An
 `INDEX` line naming a note that is not there, or giving it an id the note does
-not carry, is a `BUS FAIL`: that one could resolve a thread to the wrong note. A
-note with an id and **no** `INDEX` line is a `BUS WARN`, at any date — the notes
+not carry, is a `BUS FAILED`: that one could resolve a thread to the wrong note. A
+note with an id and **no** `INDEX` line is a `BUS NOTE`, at any date — the notes
 are the record and the catalogue is a cache, and somebody who wrote a note by
 hand in a browser, which this bus's whole form exists to allow, has not broken
 anything. The warning says what it **costs**, because the cost is not the same
@@ -4722,12 +4787,12 @@ there are two honest ways in, and a bus must pick one:
   or an RFC 3339 UTC instant like `2026-09-09T18:07:00Z`, compared by instant. A
   finding about the HEADER of a note dated before it — it will not parse; its `From`, `To` or `Cc` names
   somebody the roster does not know; it has no `Subject`; its `Kind` is neither
-  word; its `Re:` names nothing — is reported as `BUS WARN` and does **not** fail
+  word; its `Re:` names nothing — is reported as `BUS NOTE` and does **not** fail
   the run. Everything on or after that date, and every finding that is not about
-  a header at any date, still `BUS FAIL`s. Without the flag there is no
+  a header at any date, still `BUS FAILED`s. Without the flag there is no
   tolerance: every finding fails, which is what CI on a bus only this tool has
   written should use.
-- **A one-time sweep**: fix the old notes by hand and adopt the check with no
+- **A one-time sweep**: fix the notes by hand and adopt the check with no
   flag at all.
 
 `check` takes no `--legacy-now`. Its flag draws a tolerance over a history, and
@@ -4735,7 +4800,7 @@ the thing being drawn really is a day — usually one months back — so the sha
 that goes quiet on `inbox` does not arise here.
 
 Either way, run `check --full --rebuild-index` once at adoption. Every note on
-the bus that has an id gets a catalogue line, the `BUS WARN`s about missing
+the bus that has an id gets a catalogue line, the `BUS NOTE`s about missing
 `INDEX` lines go, and the first `inbox --advance` for each reader gives them a
 cursor. From then on both verbs read the change and not the record.
 
@@ -4822,7 +4887,7 @@ answerable by its path, so an answer written by hand, by path, keeps working.
 - **No sweep verb.** `--legacy-before` is a TOLERANCE and not a repair, in both
   verbs: `check`'s forgives an old note's header, `inbox`'s leaves an old note
   off one reader's open list, and neither fixes anything or touches a note. It is
-  a line drawn once rather than machinery. There is no verb that repairs legacy
+  a line drawn once rather than machinery. There is no verb that repairs
   headers and re-points orphaned `Re:` lines; one would want a person watching it.
 - **It refuses to run over a dirty checkout, so write your drafts elsewhere.**
   `send` needs the bus's working tree clean but for the note it is about to
@@ -4985,23 +5050,23 @@ is trusted.
 ## The efficiency card, nova-bus
 
 The card is a measurement, taken read-only against the live checkout
-`/Users/glenn/rowan-working/rowan-stella` as Rowan. That bus held **3,401
+`<bus-checkout>` as the keeper. That bus held **3,401
 notes** on disk, **65 MB** of `.git`, and one reader carrying `carrying=986`.
 This section is the part of the efficiency-card set that binds `nova-bus`.
 
 ### REPEATS: a git fetch per poll, and a whole-history walk on `check --full`
 
 `wait` polls on its own clock and **every poll is a git fetch** — the comment on
-`minWaitInterval` says so (`cmd/nova-bus/main.go:2423`), and the measured fetch
+`minWaitInterval` says so (`cmd/nova-bus/wait.go`, `minWaitInterval`), and the measured fetch
 was **0.98 s**:
 
 ```
 $ git -C <bus> fetch origin main     0.98 s
 ```
 
-At `defaultWaitInterval = 10 * time.Second` (`cmd/nova-bus/main.go:2404`) a
+At `defaultWaitInterval = 10 * time.Second` (`cmd/nova-bus/wait.go`, `defaultWaitInterval`) a
 60-minute wait is **360 fetches**, about **5m 53s** of the hour spent inside
-git. The same clock lives in `waitLoop` (`cmd/nova-bus/main.go:2443`).
+git. The same clock lives in `waitLoop` (`cmd/nova-bus/wait.go`, `waitLoop`).
 
 `check --full` re-walks everything every time it is run; `check --as` reads from
 the cursor and pays only for what changed:
@@ -5015,7 +5080,7 @@ $ nova-bus check --bus . --as Rowan    2 lines     135 B  0.09 s  rc=0
 <name>` is the bounded read, and the difference between the two is the cost
 this card prices.
 
-### COORDINATOR READ: bounded on `inbox`, unbounded on `check --full`
+### COORDINATOR READ: bounded on `inbox` and on `check`
 
 ```
 $ nova-bus names --bus .                                          8 lines     693 B
@@ -5030,20 +5095,12 @@ the shape `tool-output-costs-tokens` asks for, and it holds at the largest state
 on the bench: the carried list is behind `--full` and `--open`, not printed on
 every read.
 
-`check` has no `--max`. Its usage line is `nova-bus check --bus <dir> (--full |
---as <name> | --since <commit>) [--legacy-before ...] [--rebuild-index]` — no
-cap flag, no MORE line. 342 of the 342 lines printed; 340 of them were `BUS
-WARN` about one class of missing `INDEX` entry, each carrying the same
-**220-byte remedy** sentence. It is the one listing among the seven verbs
-measured that grows with the bus and has no ceiling.
-
-The missing bound is the one **"The missing bound — full checks"** above
-already states in full: a per-kind cap at `--fail-max <n>` (default 20, and
-`--fail-max 0` for all), repeated remedies aggregated to one `BUS FINDING` line
-per shape, one `BUS MORE` line per capped kind, and a `BUS SUMMARY` whose counts
-are the truth about the bus whether or not the lines printed, paged with
-`--after` (a snapshot token) on the shared collector. It is proposed and not
-implemented; this card is the measurement that motivates it.
+The `check --full` row is a historical measurement, taken before `check` had
+`--max`: 342 of 342 lines printed, 340 of them `BUS NOTE` about one class of
+missing `INDEX` entry, each carrying the same 220-byte remedy sentence. `check`
+now takes `--max <n>` (default 20, `0` for all) and prints at most that many
+findings of each class, then one `BUS MORE` line per capped class and one `BUS CHECK` count line by class
+("The bound — check" above), so the same bus prints about 23 lines.
 
 ### WAITS ON: its own clock, and a quiet poll prints nothing
 
@@ -5062,7 +5119,7 @@ trusted.
 
 - `inbox` at the largest carried state returns the SCOPE, LEGACY, OPEN, remedy and OK lines and not the carried list, so the coordinator read is bounded by the state's counts and not its length;
 - a wait's poll is one git fetch and a quiet poll prints nothing, so an idle tick costs zero tokens;
-- the uncapped `check --full` is the missing bound, and `--fail-max` is the flag that closes it.
+- `check` prints at most `--max` findings of each class (default 20, `0` for all), then one `BUS MORE` line per capped class and one `BUS CHECK` line, and its exit and counts come from the whole walk (`TestBusCheckFullIsCapped`).
 
 ## Tests this spec demands
 
@@ -5213,7 +5270,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 143. `TestSkipBeatsRuleDoc` — `--skip` wins over `--rule-doc`: a skipped file is never read and can never be bannered (line 1777).
 144. `TestExitOneOnStandingClaim` / `TestInstallationExitsOneWithShapeAndLine` — a standing claim or installation prints one FAIL line per finding on stderr and a summary count on stdout, exit 1 (line 1782).
 145. `TestNoFilesRefused` / `TestSkipRefusesPaths` / `TestUnknownFlagRefused` / `TestExitTwoOnUnreadableFile` / `TestEveryUnreadableFileIsNamedInOneRun` — refuses (exit 2) on no files, an empty/path-separator `--skip`/`--rule-doc` value, an unknown flag, or an unreadable file, every unreadable file reported (line 1788).
-146. `TestSkipReportsAndDoesNotAffectExit` — the all-skipped green: every named file skipped completes and exits 0 with `SELFTALK OK files=0 …` (line 1793).
+146. `TestSkipReportsAndDoesNotAffectExit` — an explicitly all-skipped run exits 0 with `SELFTALK SKIP files=0 skipped=<n> reason=all-skipped`, never an OK scan summary (line 1793).
 147. `TestPermanentMissNeutralVocabularyTraitClaimsEscape` — the permanent-MISS items 3 and 4 ("My summaries drift toward the tidier story", "I flinch from cost") are pinned by a test that goes red if the tool reaches them (lines 1811-1828).
 148. — — the permanent-MISS item 5 sentence ("I never optimize how things look over what is true") is pinned by a test that goes red if the tool reaches it (lines 1819-1829).
 149. `TestNotePrintedOnEveryRun` — every completed run ends with a `SELFTALK NOTE` line saying a green clears only the known shapes (line 1831).
@@ -5221,11 +5278,11 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 151. `TestVersionRefusesFlagsAndArguments` — `version` refuses flags and arguments at exit 2.
 152. `TestNoDefaultBoxRefusesToGuess` — the box path comes from `--box` on every verb; there is no default and no environment variable (`NOVA_FUSE_BOX` is not consulted).
 153. `TestNoDefaultBoxRefusesToGuess` — a missing `--box` is a refusal, exit 2, `refusing to guess`.
-154. `TestAbsentBoxIsClear` / `TestAbsentBoxIsVerifiedClearNotAnError` — an absent box is VERIFIED CLEAR (the read failed with the error meaning *nonexistent*, not *unreadable*).
-155. `TestCheckIntoANonexistentDirectoryIsAlsoClear` — a `--box` whose parent directory does not exist answers VERIFIED CLEAR too.
+154. `TestAnAbsentBoxIsNeverClear` / `TestAnAbsentBoxIsErrNoBoxNeverClear` — no box at the path, the file or a directory above it, is CANNOT TELL: `check`, `status`, `quarantine` and `lift quarantine` refuse at exit 2 naming `init`, and make no box; `TestLockdownMakesAnAbsentBox` — `lockdown` makes it.
+155. `TestInitMakesAnEmptyBoxOnceAndNeverReplacesOne` / `TestCreateBoxIsEmptyExclusiveAndNeverReplaces` — `init` makes an empty box once and never replaces whatever is at the path (exit 1); `TestASecondBoxCannotAnswerForABlownOne` / `TestEveryFlagOfEveryVerbTakesOneValue` / `TestABoxValueShapedLikeAFlagIsRefused` — a flag named twice, or a `--box` value beginning with `-`, is refused at exit 2.
 156. `TestUnreadableBoxIsTreatedAsBlownNeverClear` / `TestAnUnreadableFileTypeIsNotClear` — an unreadable box (permissions, torn write, malformed JSON, wrong-shaped value) is CANNOT TELL, treated as BLOWN, exit 2.
 157. `TestWriteLeavesNoLitter` / `TestWriteLeavesNoTempLitter` — the write is temp-file + fsync + rename in the box's own directory; a crash leaves the old box or the new, never a fragment.
-158. `TestWrittenBoxIsWorldReadable` — the box is written world-readable (0644).
+158. `TestWrittenBoxIsWorldReadable` — the box is written world-readable (exactly 0644, independent of umask).
 159. `TestSurfaceMatchingIgnoresCaseAndSpace` — surface names are matched case- and whitespace-insensitively; equivalent spellings are ONE surface.
 160. `TestStatusSurvivesAHandEditedBox` — `at`/`reason` are read back defensively; a missing key prints `since=unrecorded` / `NO REASON RECORDED`, never a crash or an invented value.
 161. `TestExitCodes` — exit 0 = clear or done and verified; 1 = blown or could not do/verify; 2 = could not run.
@@ -5259,7 +5316,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 189. `TestStatusCountsAllAndListsAtMostMax` / `TestStatusMaxWidensAndZeroListsAll` — `--max` defaults to 20, `0` means all; the `quarantines=<n>` count is never capped and at most n lines are listed before one `STATUS MORE` line.
 190. `TestLockdownIsWrittenVerifiedAndAnnounced` — `lockdown` records a global lockdown verified by re-reading the box (exit 0 means verified, never attempted).
 191. `TestLockdownReasonIsJoinedNotTruncated` — the reason is all remaining arguments joined, not silently truncated.
-192. `TestLockdownWorksOnAnUnreadableBox` / `TestPreserveUnreadableKeepsTheBytes` — `lockdown` works even on an unreadable box, first preserving the corrupt bytes to `<box>.unreadable`.
+192. `TestLockdownWorksOnAnUnreadableBox` / `TestPreserveUnreadableKeepsTheBytes` / `TestPreserveUnreadablePreservesExistingPermissions` — `lockdown` works even on an unreadable box, first preserving the corrupt bytes to `<box>.unreadable` (preserving existing permissions).
 193. `TestBlowingFailsLoudlyWhenItCannotWrite` — `lockdown` says NO (exit 1) when the write fails, loudly, naming the by-hand remedy.
 194. (A) `lockdown` says NO (exit 1) when the re-read verification fails (distinct from the write failure).
 195. `TestUsageErrorsExitTwo` — `lockdown` refuses (exit 2) when `--box` is missing or the reason is empty.
@@ -5338,7 +5395,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 268. `TestVerifyLinksRulingIsTheCallersBothWays` — `--links gate|info` has no default; the same findings exit 0 or 1 by caller choice.
 269. `TestVerifyCapsFindingsAndAlwaysPrintsTheCount` / `TestVerifyFailMaxWidensAndZeroPrintsAll` / `TestVerifyCapsEachKindSeparately` — `--fail-max` defaults to 20, `0` means all, and the cap is per kind.
 270. `TestVerifyCapsFindingsAndAlwaysPrintsTheCount` — the `gating=` count is never capped and prints on failure as well as success.
-271. `-` — `--exclude` narrows the index (and the wikilink check that reads it) but not `--coverage` or `--frontmatter`.
+271. `TestVerifyExcludesEveryCheck` / `TestVerifyLinksToExcludedTargetsRemainFindings` — `--exclude` narrows the whole verified corpus: the index, wikilinks, and every coverage and frontmatter selector; retained links to excluded targets remain findings.
 272. `TestVerifySaysNoOnPlantedFaults` / `TestVerifyDoesNotFlagLinksThatResolve` — verify says NO (exit 1, VERIFY FAIL lines, no OK) on any gating finding; informational findings don't touch the exit.
 273. `TestRefusesToGuess` / `TestVerifyRefusesAnEmptyCheck` — verify refuses a missing root/links, a non-gate/info `--links`, a coverage value not `A:B`, an empty glob side, `--exempt` without `--frontmatter`, or no gating check at all.
 274. `TestEvalOnTheShippedExampleGold` / `TestEvalRefusesABrokenGoldFile` — the gold file is `query<TAB>expected-substrings` per line; a row hits when any expected substring appears in a top-k path.
@@ -5359,7 +5416,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 289. `TestARefusalNamesEveryProblemOnItsOwnLine` — a refusal prints EVERY problem in the draft, one line per reason.
 290. `TestNamesPrintsSomethingASendWillAccept` — `NAMES` quotes rather than field-escapes, so a printed name is one `send` accepts.
 291. `TestSendRefusesASlugThatIsNotASlug` — a lane slug is lower-case letters, digits and hyphens, checked because it is the first half of every id.
-292. `TestResolveListToleratesTheShapesTheBusActuallyWrites` — a `To:`/`Cc:` line resolves against the roster through the enumerated tolerances (split on `;`,`,`, dashes, `and`, drop `for `, drop parentheticals, prefix-instance), unresolved refused at send / `BUS FAIL` at check.
+292. `TestResolveListToleratesTheShapesTheBusActuallyWrites` — a `To:`/`Cc:` line resolves against the roster through the enumerated tolerances (split on `;`,`,`, dashes, `and`, drop `for `, drop parentheticals, prefix-instance), unresolved refused at send / `BUS FAILED` at check.
 293. `TestAndIsASeparatorNotAQualifier` — `To: Ada and Bo` reaches both readers; a word separator is a separator.
 294. `TestAKnownNameFollowedByAKnownNameIsRefused` — a qualifier that is itself a known name is refused, not delivered to the first.
 295. `TestLongestKnownNameWins` — the longest known name wins the instance-qualifier prefix.
@@ -5404,7 +5461,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 334. `TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList` — `--legacy-before` leaves notes dated before the line off the open list, not carried and not listed; `TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne` — the line lives in the cursor as `legacy=` exactly as typed.
 335. `TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed` — unreadable files dated behind the line are counted on `INBOX LEGACY unreadable=`.
 336. `TestLegacyNowCannotBeGivenWithTheOtherAnswers` — `--legacy-now` equals `--legacy-before <this run's instant>` and cannot be given with `--legacy-before` or `--carry-history` (exit 2).
-337. `TestAFirstAdvanceOverOldNotesIsRefused` — the FIRST `--advance` on a lane with no cursor is refused (exit 1) when old notes would be carried and no line/`--carry-history` is given, naming the count and the `--legacy-now` command; `TestTheTwoAnswersToTheFirstAdvanceCannotBothBeGiven` — `--carry-history` cannot be given with the legacy flags.
+337. `TestAFirstAdvanceOverOldNotesIsRefused` — the FIRST `--advance` on a lane with no cursor is refused (exit 1) when notes dated before the line would be carried and no line/`--carry-history` is given, naming the count and the `--legacy-now` command; `TestTheTwoAnswersToTheFirstAdvanceCannotBothBeGiven` — `--carry-history` cannot be given with the legacy flags.
 338. `TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt` — a cursor whose switch-day line is a bare DATE at today or later prints `INBOX SWITCH` once, after `INBOX SCOPE`; `TestTheSwitchDayNoteFiresOnAForwardDateAndNothingElse` — it fires on a forward date and not on an instant or a date behind today; the same line comes out of `check --as`.
 339. `TestWaitReturnsWhenANoteArrivesDuringTheWait` — `wait` blocks, fetches every `--interval`, and returns the moment the inbox lists something new; `TestWaitTimesOutQuietlyAndCountsItsPolls` — a timeout is one `WAIT TIMEOUT` line and exit 0.
 340. `TestWaitUntilIsAnAbsoluteDeadlineAndTheEarlierOneWins` / `TestWaitIdleExitGivesATimeoutItsOwnCode` — `--until` is an absolute deadline and `--idle-exit <n>` gives a timeout its own code (1 and 2 refused).
@@ -5413,17 +5470,17 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 343. `TestCheckRefusesToGuessItsBaseline` — `check` with none of `--full`/`--as`/`--since` is exit 2 `refusing to guess`; `TestCheckSinceChecksOnlyWhatChanged` — `--as`/`--since` check only the changed lane files, `Re:` and id from the catalogue.
 344. `TestCheckPassesACleanBus` / `TestCheckReportsEveryFailureNotTheFirst` — `check` asserts parse, header, lane, id well-formedness/uniqueness, `Re:` resolution, receipt lines, lane ownership, state-file parses, and lane contents, reporting every finding in one run.
 345. `TestALanesReadmeIsNotANote` — a lane may hold exactly one non-note file, `README.md`; dotfiles are tolerated; any other stray (a `NOTES.md`) is a finding.
-346. `TestCheckFullAgainstTheIndex` — under `--full` the catalogue is held to the notes in both directions: a forged/dangling `INDEX` line is `BUS FAIL`, a note with no `INDEX` line is `BUS WARN`; `TestRebuildLaneIndexFromTheNotes` — `--rebuild-index` rewrites every lane's catalogue.
-347. `TestLegacyBeforeWarnsOnOldNotesAndStillFailsOnNew` — `check --legacy-before` forgives a header finding dated before the line as `BUS WARN` and still fails everything on/after it; `TestTheHeaderFindingsAreInsideTheLegacyTolerance` — the tolerance covers a note's HEADER; `TestTheLegacyToleranceStillFailsOnWhatIsNotAHeader` — wrong lane, malformed/duplicate id, broken receipt, unowned lane and strays fail at any date.
+346. `TestCheckFullAgainstTheIndex` — under `--full` the catalogue is held to the notes in both directions: a forged/dangling `INDEX` line is `BUS FAILED`, a note with no `INDEX` line is `BUS NOTE`; `TestRebuildLaneIndexFromTheNotes` — `--rebuild-index` rewrites every lane's catalogue.
+347. `TestLegacyBeforeWarnsOnOldNotesAndStillFailsOnNew` — `check --legacy-before` forgives a header finding dated before the line as `BUS NOTE` and still fails everything on/after it; `TestTheHeaderFindingsAreInsideTheLegacyTolerance` — the tolerance covers a note's HEADER; `TestTheLegacyToleranceStillFailsOnWhatIsNotAHeader` — wrong lane, malformed/duplicate id, broken receipt, unowned lane and strays fail at any date.
 348. `TestLegacyToleranceNeedsADateItCanRead` — a note whose date cannot be read at all is never tolerated; `TestTheLegacyLineReadsTheDayAtTheFrontOfAFilename` — the wider `YYYY-MM-DD`-at-front read is used by the tolerance and the open list only.
 349. `TestANoteWithAnIDIsStillAnswerableByPath` — a note without an `Id:` is addressed by path everywhere, and a note WITH an id is still answerable by its path.
 350. `TestSendRefusesAWrongBranchOrADirtyCheckout` — `send` refuses a wrong branch or a dirty checkout (write drafts elsewhere); the `.nova-bus/` per-clone state is not such a change.
 351. `TestADivergedCheckoutIsRefusedAndLosesNothing` — a diverged checkout (for `wait`/`reply`) is a refusal naming the recovery, never a merge or rebase.
-352. `TestCheckFullCapsEachKindAtFailMax` — `check --full` takes a per-kind cap `--fail-max <n>` (default 20, `0` means all), so the loud kind cannot eat the quiet one.
-353. `TestCheckFullAggregatesRepeatedRemediesIntoSingleFindingLine` — a finding whose remedy is identical across `count>=2` notes prints one `BUS FINDING kind=<kind> count=<n> first=<path> warn=<true|false> remedy=…` line per shape.
-354. `TestCheckFullPrintsBusMoreNamingTheFlagThatLiftsTheCap` — one `BUS MORE kind=<kind> shown=<n> total=<t> …` line per capped kind names the flag that lifts the cap.
-355. `TestBusSummaryCountsAreTheTruthEvenWhenOutputIsCapped` — `BUS SUMMARY mode=<full|since> notes=<n> findings=<f> warn=<w> fail=<x> complete=<true|false> next=<token|->` prints on failure as well as success; the counting is never capped, the listing is.
-356. `TestCheckFullContinuationWithAfterResumesOnTheSameSnapshot` — a full check that exceeds the caps is paged with `--after <token>` (the read half's snapshot token and scan order), and the next run resumes on the same snapshot.
+352. `TestBusCheckFullIsCapped` — `check` prints at most `--max <n>` findings of each class (default 20, `0` means all), so a loud class cannot hide a quiet one, then one `BUS MORE kind=<class> shown=<n> total=<t>` line per capped class naming the flag that lifts the cap, then one `BUS CHECK` line counting every finding by class; the exit and the counts come from the whole walk.
+353. (withdrawn: `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; the per-class cap of 352 is.)
+354. (withdrawn: `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; the per-class cap of 352 is.)
+355. (withdrawn: `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; the per-class cap of 352 is.)
+356. (withdrawn: `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; the per-class cap of 352 is.)
 357. `TestQuickstartWalksTheRootOnceAndSharesThePathList` — a `quickstart` of one tree walks the root once and hands the same path list to `links` and `nocode` (docs/SPEC.md:5041).
 358. `TestEachVerbKeepsItsOwnWalkWhenRunAlone` — `links`, `nocode`, `attest`, `floors` and `corpus` each keep their own walk when run as their own verb (docs/SPEC.md:5000).
 359. `TestLinksCapsFindingsAndAlwaysPrintsTheCount` / `TestNoCodeCapsFindingsAndAlwaysPrintsTheCount` — a first run prints 20 finding lines per kind, one MORE line and one FAIL/count line (docs/SPEC.md:5005).
@@ -5440,7 +5497,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 370. `TestInboxParsesOnlyWhatIsNewSinceTheCursor` — `check --full` re-walks the whole history; `check --as` reads from the cursor and pays only for what changed (docs/SPEC.md:5067).
 371. `TestInboxParsesOnlyWhatIsNewSinceTheCursor` / `TestInboxOpenIsOneLine` — `inbox` at the largest carried state returns the SCOPE, LEGACY, OPEN, remedy and OK lines, not the carried list (docs/SPEC.md:5125).
 372. `TestInboxParsesOnlyWhatIsNewSinceTheCursor` — the carried list prints only behind `--open`, capped at `--open-max`, never on the default read (docs/SPEC.md:5091).
-373. `TestCheckFullCapsPerKindWithFailMax` — the missing bound: a per-kind cap `--fail-max <n>` (default 20, 0 = all) with one BUS FINDING per shape, one BUS MORE per capped kind, a BUS SUMMARY whose counts are the truth, paged with `--after` (docs/SPEC.md:5101).
+373. `TestBusCheckFullIsCapped` — the bound on `check` (docs/SPEC.md, "The bound — check"): the listing is capped per class at `--max`, the counting never is.
 374. `TestTheDefaultWaitIntervalIsTenSeconds` — `waitLoop` polls immediately then every `--interval`, default 10 s (docs/SPEC.md:5111).
 375. `TestWaitRefusesATimeoutLongerThanAToolCall` — the wait ceiling is `maxWaitTimeout = 60 * time.Minute`: a longer timeout is refused (docs/SPEC.md:5111).
 376. `TestWaitRefusesAnIntervalBelowTheFloor` — the wait floor is 100 ms: an `--interval` shorter than that is refused (docs/SPEC.md:5111).

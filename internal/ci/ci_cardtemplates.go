@@ -4,14 +4,14 @@ package ci
 // docs/SPEC-CI.md. A card template is the text a worker is handed verbatim: the
 // swarm does not rewrite it, so every command spelt in it runs, as written, on
 // whatever bench the card was dealt to. The estate is mixed -- linux benches
-// (hulk, vision, space, mini) and darwin ones (the Studio, the Air) -- so a
+// and darwin ones -- so a
 // template that spells a GNU-only command is a card that is dead on arrival the
 // first time the router picks a Mac.
 //
-// The hurt, measured 2026-09-18 by the schema dogfood: the round-1 card
-// templates spelt `/usr/bin/time -f`, `nproc`, `go --version` and `java
-// --version`. Every one of them is fine on hulk and wrong on the Air, and the
-// card did not fail at cut time or at admission -- it failed inside the worker,
+// The hurt the schema dogfood measures: card templates that spell
+// `/usr/bin/time -f`, `nproc`, `go --version` or `java --version` run on a
+// linux bench and fail on a darwin one, and the
+// card does not fail at cut time or at admission -- it fails inside the worker,
 // minutes in, with a shell error that named nothing about portability.
 //
 // This file reads every *.md and *.card under the template directories as TEXT
@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
@@ -40,6 +41,7 @@ const CardTemplatesVerbLine = "cardtemplates  read every shipped card template; 
 // error: the list names where a template MAY live, and the estate grows its
 // directories before it grows its templates.
 var CardTemplateDirs = []string{
+	"cmd/nova-swarm/testdata/templates",
 	"docs/templates",
 	"tools/templates",
 }
@@ -300,6 +302,11 @@ const maxCardTemplateLine = 160
 // repository, so a test drives it with a fixture tree. A directory that does
 // not exist is skipped.
 func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardTemplatesResult, error) {
+	return checkCardTemplatesWith(root, dirs, allowlistPath, defaultSourceSeams())
+}
+
+// checkCardTemplatesWith is CheckCardTemplates reading the tree through seams.
+func checkCardTemplatesWith(root string, dirs []string, allowlistPath string, seams SourceSeams) (CardTemplatesResult, error) {
 	var res CardTemplatesResult
 	entries, err := readCardTemplateAllowlist(allowlistPath)
 	if err != nil {
@@ -313,7 +320,7 @@ func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardT
 		if statErr != nil || !info.IsDir() {
 			continue
 		}
-		walkErr := walkSourceDir(base, func(path string, d os.DirEntry, err error) error {
+		walkErr := seams.walk(base, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -323,7 +330,7 @@ func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardT
 			if !hasCardTemplateExt(path) {
 				return nil
 			}
-			raw, readErr := readSourceFile(path)
+			raw, readErr := seams.readFile(path)
 			if readErr != nil {
 				return readErr
 			}
@@ -373,12 +380,7 @@ func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardT
 // hasCardTemplateExt reports whether the path is one of the two card suffixes.
 func hasCardTemplateExt(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	for _, want := range cardTemplateExts {
-		if ext == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(cardTemplateExts, ext)
 }
 
 // scanCardTemplate reads one template's text and returns its findings, in file

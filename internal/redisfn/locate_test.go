@@ -4,6 +4,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Every line of the fixed library (twoSource) and where it came from.
@@ -27,11 +30,11 @@ func TestLocateMapsEveryLineOfTheSourceToItsFileAndLine(t *testing.T) {
 	} {
 		got, err := lib.Locate(line)
 		if err != nil || got != want {
-			t.Errorf("Locate(%d) = %+v %v, want %+v", line, got, err, want)
+			assert.Failf(t, "", "Locate(%d) = %+v %v, want %+v", line, got, err, want)
 		}
 	}
 	if lines := strings.Count(twoSource, "\n"); lines != 13 {
-		t.Fatalf("the fixed library has %d lines, and this test maps 13", lines)
+		require.Equal(t, 13, lines, "the fixed library has %d lines, and this test maps 13", lines)
 	}
 }
 
@@ -40,14 +43,14 @@ func TestLocateRefusesALineOutsideTheSource(t *testing.T) {
 	for _, line := range []int{-1, 0, 14, 1 << 40} {
 		got, err := two().Locate(line)
 		if err == nil || got != (Origin{}) {
-			t.Errorf("Locate(%d) = %+v %v, want an error", line, got, err)
+			assert.Failf(t, "", "Locate(%d) = %+v %v, want an error", line, got, err)
 			continue
 		}
 		if errors.Is(err, ErrRefused) {
-			t.Errorf("Locate(%d): the error says the library is refused, and it is the line that is wrong: %v", line, err)
+			assert.Failf(t, "", "Locate(%d): the error says the library is refused, and it is the line that is wrong: %v", line, err)
 		}
 		if !strings.Contains(err.Error(), "library lib_one has 13 lines") {
-			t.Errorf("Locate(%d): the error does not say how many lines there are: %v", line, err)
+			assert.Contains(t, err.Error(), "library lib_one has 13 lines", "Locate(%d): the error does not say how many lines there are: %v", line, err)
 		}
 	}
 }
@@ -59,20 +62,20 @@ func TestLocateCountsThePreludesLines(t *testing.T) {
 	lib := two()
 	lib.Prelude = ""
 	if got, err := lib.Locate(5); err != nil || got != (Origin{File: "lua/a.lua", Line: 1}) {
-		t.Errorf("with no prelude, Locate(5) = %+v %v, want line 1 of a", got, err)
+		assert.Failf(t, "", "with no prelude, Locate(5) = %+v %v, want line 1 of a", got, err)
 	}
 	if got, err := lib.Locate(2); err != nil || got != (Origin{File: "lua/a.lua"}) {
-		t.Errorf("with no prelude, Locate(2) = %+v %v, want the empty line that begins a's block", got, err)
+		assert.Failf(t, "", "with no prelude, Locate(2) = %+v %v, want the empty line that begins a's block", got, err)
 	}
 	if got, err := lib.Locate(3); err != nil || got != (Origin{File: "lua/a.lua"}) {
-		t.Errorf("with no prelude, Locate(3) = %+v %v, want the header of a", got, err)
+		assert.Failf(t, "", "with no prelude, Locate(3) = %+v %v, want the header of a", got, err)
 	}
 	lib.Prelude = "local NS = {}\n\nlocal shared = 1\n"
 	if got, err := lib.Locate(4); err != nil || got != (Origin{Line: 3, Prelude: true}) {
-		t.Errorf("with a prelude of three lines, Locate(4) = %+v %v, want its line 3", got, err)
+		assert.Failf(t, "", "with a prelude of three lines, Locate(4) = %+v %v, want its line 3", got, err)
 	}
 	if got, err := lib.Locate(8); err != nil || got != (Origin{File: "lua/a.lua", Line: 1}) {
-		t.Errorf("with a prelude of three lines, Locate(8) = %+v %v, want line 1 of a", got, err)
+		assert.Failf(t, "", "with a prelude of three lines, Locate(8) = %+v %v, want line 1 of a", got, err)
 	}
 }
 
@@ -87,7 +90,7 @@ func TestOriginReadsAsOneLine(t *testing.T) {
 		`the loader's lines around a\x0db.lua`: {File: "a\rb.lua"},
 	} {
 		if got := origin.String(); got != want {
-			t.Errorf("%+v reads %q, want %q", origin, got, want)
+			assert.Equal(t, want, got, "%+v reads %q, want %q", origin, got, want)
 		}
 	}
 }
@@ -127,11 +130,11 @@ func TestExplainWritesTheOriginOfEveryLineTheErrorNames(t *testing.T) {
 		in := text(c.in)
 		got := lib.Explain(in)
 		if got.Error() != c.want {
-			t.Errorf("%s:\n got %s\nwant %s", c.name, got, c.want)
+			assert.Equal(t, c.want, got.Error(), "%s:\n got %s\nwant %s", c.name, got, c.want)
 		}
 		var cause text
 		if !errors.As(got, &cause) || cause != in {
-			t.Errorf("%s: the error does not wrap the one it explains", c.name)
+			assert.Failf(t, "", "%s: the error does not wrap the one it explains", c.name)
 		}
 	}
 }
@@ -139,16 +142,16 @@ func TestExplainWritesTheOriginOfEveryLineTheErrorNames(t *testing.T) {
 func TestExplainLeavesAnErrorItHasNothingToSayAboutAsItIs(t *testing.T) {
 	t.Parallel()
 	if got := two().Explain(nil); got != nil {
-		t.Errorf("Explain(nil) = %v", got)
+		assert.NoError(t, got, "Explain(nil) = %v", got)
 	}
 	plain := text("ERR value is not an integer or out of range")
 	if got := two().Explain(plain); got != error(plain) {
-		t.Errorf("an error that names no line came back as %v", got)
+		assert.Equal(t, error(plain), got, "an error that names no line came back as %v", got)
 	}
 	named := text("ERR user_function:9: boom")
 	refused := two()
 	refused.Name = "not a name"
 	if got := refused.Explain(named); got != error(named) {
-		t.Errorf("a refused library explained an error: %v", got)
+		assert.Equal(t, error(named), got, "a refused library explained an error: %v", got)
 	}
 }

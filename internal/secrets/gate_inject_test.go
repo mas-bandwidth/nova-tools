@@ -3,6 +3,8 @@ package secrets
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestGateApprovesAnInjectPullRequest: the shape `seat inject` opens is an existing
@@ -25,10 +27,6 @@ func TestGateApprovesAnInjectPullRequest(t *testing.T) {
 	})
 	registry := gateMachines(t, gateRow("mini", "-"))
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head, MachinesPath: registry})
-	if code != 0 {
-		t.Fatalf("RunGate = (%q, %d), want APPROVE at exit 0", line, code)
-	}
-	if !strings.HasPrefix(line, "GATE APPROVE files=1 ") {
-		t.Fatalf("RunGate line = %q, want APPROVE of the one re-sealed file", line)
-	}
+	require.Equal(t, 0, code, "RunGate = (%q, %d), want APPROVE at exit 0", line, code)
+	require.True(t, strings.HasPrefix(line, "GATE APPROVE files=1 "), "RunGate line = %q, want APPROVE of the one re-sealed file", line)
 }

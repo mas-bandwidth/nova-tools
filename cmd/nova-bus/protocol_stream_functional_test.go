@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestProgressNeverEntersTheProtocolStream is the CLASS this lane closes, held
@@ -80,12 +81,10 @@ func TestProgressNeverEntersTheProtocolStream(t *testing.T) {
 				continue
 			}
 			if bus.IsProgress(line) {
-				t.Errorf("%s put a PROGRESS line on stdout, which is the stream consumers parse:\n%s", run.what, line)
+				assert.Failf(t, "assertion failed", "%s put a PROGRESS line on stdout, which is the stream consumers parse:\n%s", run.what, line)
 				continue
 			}
-			if !bus.IsProtocol(line) {
-				t.Errorf("%s wrote a line on stdout with no documented protocol prefix; add the prefix to internal/bus.ProtocolPrefixes or move the line to stderr:\n%s", run.what, line)
-			}
+			assert.Truef(t, bus.IsProtocol(line), "%s wrote a line on stdout with no documented protocol prefix; add the prefix to internal/bus.ProtocolPrefixes or move the line to stderr:\n%s", run.what, line)
 		}
 		for _, line := range strings.Split(r.stderr, "\n") {
 			if bus.IsProgress(line) {
@@ -93,7 +92,5 @@ func TestProgressNeverEntersTheProtocolStream(t *testing.T) {
 			}
 		}
 	}
-	if !sawProgress {
-		t.Error("no progress line was written on stderr by any of these runs; a program over 0.1 s says what it is doing, and this test must not pass by the program having gone quiet")
-	}
+	assert.True(t, sawProgress, "no progress line was written on stderr by any of these runs; a program over 0.1 s says what it is doing, and this test must not pass by the program having gone quiet")
 }

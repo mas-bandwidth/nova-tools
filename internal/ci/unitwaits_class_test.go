@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 )
 
@@ -36,11 +39,9 @@ import (
 //
 // A wait that goes through an injected clock seam is not a wall-clock wait
 // and is not found: the test calls the seam, never package time. The seams the
-// tree already has: internal/wake.Clock (a fake that advances on Sleep),
-// internal/bus lockClock, internal/swarm batchClock and pullClock,
-// internal/nsprint/land.Clock, internal/log.Clock, and the injected
-// `Sleep func(time.Duration)` / `now func() time.Time` fields of internal/merge,
-// internal/gh, internal/swarm and cmd/nova-merge.
+// tree already has: internal/bus lockClock, internal/swarm batchClock and pullClock,
+// internal/log.Clock, and the injected `Sleep func(time.Duration)` /
+// `now func() time.Time` fields of internal/swarm.
 //
 // THE LEDGER. A wait is keyed by its package directory and the top-level
 // function it is written in (a Test, a helper, a method `Type.Method`), and it
@@ -265,9 +266,7 @@ func treeSleepsSkips(t *testing.T) map[string]string {
 func readSleepsLedger(t *testing.T) []slowtests.SleepRow {
 	t.Helper()
 	rows, err := slowtests.ParseSleeps(strings.NewReader(readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(sleepsLedger)))))
-	if err != nil {
-		t.Fatalf("%s: %v", sleepsLedger, err)
-	}
+	require.NoErrorf(t, err, "%s: %v", sleepsLedger, err)
 	return rows
 }
 
@@ -294,9 +293,7 @@ func TestNoUnitTestWaitsOnTheWallClock(t *testing.T) {
 	t.Parallel()
 
 	waits, files := treeWallClockWaits(t)
-	if files == 0 {
-		t.Fatal("read no unit-tier test file; the rule would pass by checking nothing")
-	}
+	require.NotZerof(t, files, "read no unit-tier test file; the rule would pass by checking nothing")
 	left := unledgeredWaits(waits, readSleepsLedger(t))
 	keys := map[string]bool{}
 	for _, w := range waits {
@@ -304,8 +301,8 @@ func TestNoUnitTestWaitsOnTheWallClock(t *testing.T) {
 	}
 	t.Logf("unit-tier test files=%d wall-clock waits=%d in functions=%d unledgered=%d (the waits the tree owes; SPEC-CI's ratchet row)", files, len(waits), len(keys), len(left))
 	for _, w := range left {
-		t.Errorf("%s:%d: %s in %s waits on the wall clock and %s has no row %s %s; inject a clock (internal/wake.Clock, an injected Sleep func) or tag the file //go:build functional (the ledger only shrinks)",
-			w.Rel, w.Line, w.What, w.Func, sleepsLedger, path.Dir(w.Rel), w.Func)
+		assert.Failf(t, fmt.Sprintf("%s:%d: %s in %s waits on the wall clock and %s has no row %s %s; inject a clock (an injected Sleep func) or tag the file //go:build functional (the ledger only shrinks)",
+			w.Rel, w.Line, w.What, w.Func, sleepsLedger, path.Dir(w.Rel), w.Func), "")
 	}
 }
 
@@ -332,15 +329,11 @@ func TestSleepsLedgerIsTheTreesSleepsSkips(t *testing.T) {
 		named[w.Key()] = true
 	}
 	for key, rel := range skips {
-		if !ledger[key] {
-			t.Errorf("%s: %s skips with the SLEEPS marker but %s has no row for it; inject a clock or tag it //go:build functional (a SLEEPS skip off the ledger is red on every leg)",
-				rel, strings.Replace(key, "\t", " ", 1), sleepsLedger)
-		}
+		assert.Truef(t, ledger[key], "%s: %s skips with the SLEEPS marker but %s has no row for it; inject a clock or tag it //go:build functional (a SLEEPS skip off the ledger is red on every leg)",
+			rel, strings.Replace(key, "\t", " ", 1), sleepsLedger)
 	}
 	for _, row := range rows {
-		if !named[sleepsLedgerKey(row.Package, row.Test)] {
-			t.Errorf("%s lists %s %s, but it neither skips with the SLEEPS marker nor waits on the wall clock any more; delete the row", sleepsLedger, row.Package, row.Test)
-		}
+		assert.Truef(t, named[sleepsLedgerKey(row.Package, row.Test)], "%s lists %s %s, but it neither skips with the SLEEPS marker nor waits on the wall clock any more; delete the row", sleepsLedger, row.Package, row.Test)
 	}
 }
 
@@ -412,16 +405,14 @@ func TestSleepsLedgerOnlyShrinksAgainstTheMergeParent(t *testing.T) {
 	t.Parallel()
 
 	added, parent, seed, err := sleepsLedgerGrowth(repoTree(t).Root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if seed {
 		t.Logf("%s is not in the merge base %s: this change is the ledger's seed", sleepsLedger, parent[:9])
 		return
 	}
 	for _, key := range added {
-		t.Errorf("%s adds the row %s, which its merge base %s does not have; the ledger only shrinks: inject a clock or tag the test //go:build functional, and drop the row",
-			sleepsLedger, strings.Replace(key, "\t", " ", 1), parent[:9])
+		assert.Failf(t, fmt.Sprintf("%s adds the row %s, which its merge base %s does not have; the ledger only shrinks: inject a clock or tag the test //go:build functional, and drop the row",
+			sleepsLedger, strings.Replace(key, "\t", " ", 1), parent[:9]), "")
 	}
 }
 
@@ -489,9 +480,7 @@ func TestThroughTheSeam(t *testing.T) {
 	scan := func(rel, src string) []wallClockWait {
 		t.Helper()
 		fset, f, err := parseSourceFile(rel, []byte(src), 0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		if !unitTierFile([]byte(src)) {
 			return nil
 		}
@@ -508,35 +497,26 @@ func TestThroughTheSeam(t *testing.T) {
 		"TestRealClockIntoASeam: time.Sleep as a value",
 		"TestDeadlineWaited: a context deadline waited on (<-ctx.Done())",
 	}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("waits in the bare file:\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
-	if w := scan("cmd/p/seam_test.go", seam); len(w) != 0 {
-		t.Errorf("the same wait through a fake clock seam: %+v, want none", w)
-	}
-	if w := scan("cmd/p/p_functional_test.go", "//go:build functional\n\n"+bare); len(w) != 0 {
-		t.Errorf("a functional-tagged file: %+v, want none (not a unit file)", w)
-	}
+	assert.Equalf(t, strings.Join(want, "\n"), strings.Join(got, "\n"), "waits in the bare file:\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	w := scan("cmd/p/seam_test.go", seam)
+	assert.Emptyf(t, w, "the same wait through a fake clock seam: %+v, want none", w)
+	w = scan("cmd/p/p_functional_test.go", "//go:build functional\n\n"+bare)
+	assert.Emptyf(t, w, "a functional-tagged file: %+v, want none (not a unit file)", w)
 	for src, unit := range map[string]bool{
 		"package p\n": true, "//go:build functional\n\npackage p\n": false, "//go:build slow\n\npackage p\n": false,
 		"//go:build !functional\n\npackage p\n": true, "//go:build darwin\n\npackage p\n": true, "//go:build windows\n\npackage p\n": false,
 		"//go:build unix && functional\n\npackage p\n": false, "//go:build !race\n\npackage p\n": true, "//go:build !unix\n\npackage p\n": false,
 	} {
-		if got := unitTierFile([]byte(src)); got != unit {
-			t.Errorf("unitTierFile(%q) = %v, want %v", src, got, unit)
-		}
+		got := unitTierFile([]byte(src))
+		assert.Equalf(t, unit, got, "unitTierFile(%q) = %v, want %v", src, got, unit)
 	}
 
 	waits := scan("cmd/p/p_test.go", bare)
 	ledgered, err := slowtests.ParseSleeps(strings.NewReader("cmd/p\tTestBareSleep\tseed\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var left []string
 	for _, w := range unledgeredWaits(waits, ledgered) {
 		left = append(left, w.Func)
 	}
-	if strings.Join(left, ",") != "TestSelectAfter,TestTimer,TestRealClockIntoASeam,TestDeadlineWaited" {
-		t.Errorf("unledgered with TestBareSleep on the ledger: %v; want every wait but TestBareSleep", left)
-	}
+	assert.Equalf(t, "TestSelectAfter,TestTimer,TestRealClockIntoASeam,TestDeadlineWaited", strings.Join(left, ","), "unledgered with TestBareSleep on the ledger: %v; want every wait but TestBareSleep", left)
 }

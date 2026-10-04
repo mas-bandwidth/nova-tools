@@ -157,7 +157,7 @@ func resolveReSubjects(t *Bus, sender Participant, header *Header) (notices []st
 		}
 		matches := MatchOpenSubject(open, re)
 		if len(matches) == 0 {
-			problems = append(problems, fmt.Errorf("%s: %q is not an id on this bus, not a note that exists, and not the subject of a note on your open list; threads are named by id, and a slug is not a thread", KeyRe, truncate(re, maxQuotedKey)))
+			problems = append(problems, UnresolvedRe(t, KeyRe+":", re))
 			continue
 		}
 		target := matches[0].Target()
@@ -169,6 +169,45 @@ func resolveReSubjects(t *Bus, sender Participant, header *Header) (notices []st
 		notices = append(notices, fmt.Sprintf("%s named the subject %q rather than an id; it is the open note %s from %s, and this note closes it", KeyRe, truncate(re, maxQuotedKey), target, orDash(matches[0].From)))
 	}
 	return notices, problems
+}
+
+// UnresolvedRe is the refusal for a Re target (a header's `Re:` or draft's `--re`, named by
+// what) that names no id, no path and no subject on the reader's open list. It says why the
+// subject did not match -- a subject is matched against the open list `inbox --advance`
+// writes, never against every note on the bus -- and what to write instead: the id of the
+// newest note on the bus with that subject, when there is one.
+func UnresolvedRe(t *Bus, what, re string) error {
+	want, count := ReplySubject(re), 0
+	var newest *Note
+	for i := range t.Notes {
+		n := &t.Notes[i]
+		if want == "" || n.Parse != nil || ReplySubject(n.Header.Subject) != want {
+			continue
+		}
+		count++
+		if newest == nil || newerNote(n, newest) {
+			newest = n
+		}
+	}
+	why := fmt.Sprintf("%s %q names no id and no path on this bus, and no note with that subject is on your open list (the list `inbox --advance` writes; a subject is matched only there); threads are named by id, and a slug is not a thread", what, truncate(re, maxQuotedKey))
+	if newest == nil {
+		return fmt.Errorf("%s; no note on this bus has that subject; name the note by its id, which `nova-bus inbox --open` lists", why)
+	}
+	id := newest.Header.ID
+	if id == "" {
+		id = newest.Path
+	}
+	return fmt.Errorf("%s; the bus holds %d note(s) with that subject, the newest %s; name it by id: %s %s", why, count, id, what, id)
+}
+
+// newerNote orders notes by when they were written (Note.When: the Date line, else the
+// filename's minute), across lanes, and by path where two share a moment, so the order is
+// one order. A path alone sorts by its lane first: from-bo/ after from-ada/, whatever the dates.
+func newerNote(a, b *Note) bool {
+	if wa, wb := a.When(), b.When(); !wa.Equal(wb) {
+		return wa.After(wb)
+	}
+	return a.Path > b.Path
 }
 
 // answersNothingNotice is the sentence a draft with no Re line gets when it looks like a

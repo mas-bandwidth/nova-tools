@@ -2,10 +2,10 @@ package main
 
 // `nova-check hygiene` is the hand's door to the same function the gate runs.
 //
-// SPEC-TOOLWORK.md hygiene rule 1 (PR #1637), issue #1647: one implementation and three
-// callers -- `nova-pulse accept` at harvest, `nova-merge batch` on every member, and
-// this, for a person who wants to know before they ask a friend for a read. One
-// implementation, so the lane and the harvest cannot disagree about what clean means.
+// One implementation serves three callers: `nova-pulse accept` at harvest,
+// `nova-merge batch` on every member, and this one, for a person who wants to
+// know before they ask a friend for a read. A single implementation keeps the
+// lane and the harvest from disagreeing about what clean means.
 // A second copy of these rules is a second definition of clean, and the day the two
 // drift is the day a branch passes one and fails the other with nobody able to say
 // which is right.
@@ -28,21 +28,28 @@ import (
 )
 
 func cmdHygiene(args []string, stdout, stderr io.Writer) int {
+	var asJSON bool
+	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
+	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("hygiene", flag.ContinueOnError)
+	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
 	fs.SetOutput(io.Discard)
-	repo := fs.String("repo", "", "")
-	base := fs.String("base", "", "")
-	head := fs.String("head", "", "")
-	pathsFlag := fs.String("paths", "", "")
-	identity := fs.String("identity", "", "")
-	kind := fs.String("kind", "", "")
-	maxFlag := fs.Int("max", bounded.Default, "")
-	timeout := fs.Int("timeout", 120, "")
-	if verbflag.Parse(fs, args) != nil || fs.NArg() != 0 {
-		return refuse(stderr, " hygiene", "bad flags")
+	repo := fs.String("repo", "", "git checkout to inspect (required)")
+	base := fs.String("base", "", "base git ref of the comparison (required)")
+	head := fs.String("head", "", "head git ref of the comparison (required)")
+	pathsFlag := fs.String("paths", "", "comma-separated allowed path globs; empty skips out-of-path checking")
+	identity := fs.String("identity", "", "comma-separated allowed authors in Name <email> form")
+	kind := fs.String("kind", "", "card kind to validate; empty skips kind-specific checks")
+	maxFlag := fs.Int("max", bounded.Default, "finding lines to print; 0 prints all")
+	timeout := fs.Int("timeout", 120, "git inspection deadline in positive seconds")
+	if err := verbflag.Parse(fs, args); err != nil {
+		return refuse(stderr, " hygiene", oneline.Cap(verbflag.Explain(fs, err), oneline.TailBytes))
+	}
+	if fs.NArg() != 0 {
+		return refuse(stderr, " hygiene", fmt.Sprintf("unexpected argument %q (flags come before arguments, and hygiene takes none)", fs.Arg(0)))
 	}
 	if *repo == "" || *base == "" || *head == "" {
-		return refuse(stderr, " hygiene", "--repo, --base and --head are required")
+		return refuse(stderr, " hygiene", "--repo, --base and --head are required; refusing to guess")
 	}
 	if *maxFlag < 0 {
 		return refuse(stderr, " hygiene", "--max must be non-negative")
@@ -62,10 +69,11 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, " hygiene", fmt.Sprintf("--identity %q: want `Name <email>`", one))
 		}
 		email = strings.TrimSpace(strings.TrimSuffix(email, ">"))
-		// The help and the command reference spelled the form `"<Name> <<email>>"` for
-		// three months (#1805). Pasted as written, `Rowan <<r@example.com>>` PARSES --
+		// The help and the command reference spelled the form `"<Name> <<email>>"`:
+		// an extra pair of angle brackets around the email. Pasted as written,
+		// `Name <<email>>` parses --
 		// it holds a `<` and it ends in `>` -- and leaves the address as
-		// `<r@example.com>`, which equals no git author alive. Every commit on a clean
+		// `<email>`, brackets included, which equals no git author alive. Every commit on a clean
 		// branch came back as an identity finding and nothing said why. An address is
 		// never spelled with an angle bracket in it, so this is the typo caught rather
 		// than guessed at: the refusal spells the form, and a wrong answer about who
@@ -85,15 +93,16 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " hygiene", "--identity is required: `Name <email>`, repeatable with commas")
 	}
 
-	// A kind is a shape of work the TOOL declares and a card cannot widen
-	// (SPEC-TOOLWORK.md hygiene rule 6): a kind the tool does not declare is refused,
+	// A kind is a shape of work the TOOL declares, and a card cannot widen.
+	// A kind the tool does not declare is refused,
 	// and there is no default kind.
 	//
 	// Here it was neither. `--kind` went straight through to hygiene.Check, where it
 	// unlocks an allowlisted stray exception and nothing else, so an undeclared kind
 	// unlocked nothing and the run printed HYGIENE OK -- a clean answer about a shape
-	// of work that does not exist. Eleven of the tools12 cards carried
-	// `fix-with-red-test` and every one of them came back clean (#1848).
+	// of work that does not exist, and every card carrying an undeclared kind
+	// came back clean. Refusing the kind here, by name, is what makes that
+	// answer impossible.
 	if *kind != "" && !hygiene.KindDeclared(*kind) {
 		return refuse(stderr, " hygiene", fmt.Sprintf("--kind %q is not a kind this tool declares; one of: %s",
 			*kind, strings.Join(hygiene.Kinds(), ", ")))
@@ -128,15 +137,15 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	// The remedy is THE SAME RUN with the cap lifted, and it is built from the flags
 	// this run was actually given -- not from the three that happen to be easy.
 	//
-	// It carried --repo, --base and --head and dropped --identity, --paths and --kind
-	// (#1804). --identity is required, so the one thing a capped listing exists to
+	// It carried --repo, --base and --head and dropped --identity, --paths and --kind.
+	// --identity is required, so the one thing a capped listing exists to
 	// offer -- the rest of the list -- exited 2 for everyone who pasted it; and --paths
 	// and --kind decide WHICH findings there are, so a remedy without them would have
 	// answered a different question even had it run.
 	//
 	// Quote and not Field for the values: Field escapes every space to \x20, which is
 	// right for a scanner reading one token and wrong for a line a person is meant to
-	// copy -- `Emma <emma@example.com>` would print as `Emma\x20<emma@example.com>`,
+	// copy -- `Name <email>` remains readable instead of printing escaped spaces,
 	// and an unquoted `<` is a shell redirect besides. Quote is the form for a value
 	// that is meant to be pasted back.
 	remedy := fmt.Sprintf("nova-check hygiene --repo %s --base %s --head %s --identity %s",
@@ -148,6 +157,9 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 		remedy += " --kind " + oneline.Quote(*kind)
 	}
 	remedy += " --max 0"
+	if asJSON {
+		return renderHygiene(stdout, findings, *maxFlag, remedy, *repo, *base, *head, shown)
+	}
 	list := bounded.Capped(stdout, *maxFlag, "HYGIENE", "finding", remedy)
 	for _, f := range findings {
 		list.Line(fmt.Sprintf("HYGIENE FINDING reason=%s at=%s: %s",

@@ -30,7 +30,7 @@ const templateReadPR = `read-pr — read one pull request against the rules
    [batch 1: 5 of 67 findings were wrong, each a paraphrase]
 3. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
    You may be killed at your deadline; what is on disk is what you found.
-4. A FILE BUDGET: read at most <n> files (the task's --files). When the budget
+4. A FILE BUDGET: read at most <n> files (the limit stated in the card). When the budget
    is spent, write what you have and stop. Say in RESULT.md which files you
    did not open.
    [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]
@@ -57,13 +57,14 @@ shape and its mandatory ` + "`## Head`" + `, ` + "`## Findings`" + `, ` + "`## P
 In Gates, distinguish source checks from tests and report-writing commands.
 Mark only checks actually performed as pass; no tests run does not mean no commands run.
 
-BOUND THE REPORT (issue #74): findings only. No narration of the clone, no
-restated task, no praise, no summary. One line per finding: ` + "`file:line`" + `, the
-rule in twelve words, the severity, and the fix in one clause. Keep RESULT.md
-under 40 lines and every line under 300 characters, and no pipe inside backticks:
-a ` + "`|`" + ` in a quote broke the table grammar twice (D12), so quote the rule without
-it. Put the verdict line last. When there is nothing to report, write
-` + "`findings: 0`" + `.
+BOUND THE REPORT: findings only. No narration of the clone, no restated
+task, no praise, no summary. One line per finding: ` + "`file:line`" + `, the rule
+quoted verbatim in at most twelve words (a longer rule by the twelve of its
+own words the finding rests on, never a paraphrase: rule 2 holds), the
+severity, and the fix in one clause. Keep RESULT.md under 40 lines and
+every line under 300 characters, and no pipe inside backticks: a ` + "`|`" + ` in a
+quote breaks the report's table grammar, so quote the rule without it. Put
+the verdict line last. When there is nothing to report, write ` + "`findings: 0`" + `.
 `
 
 const templateProbeRow = `probe-row — make one claim true or false
@@ -72,7 +73,7 @@ const templateProbeRow = `probe-row — make one claim true or false
 2. The probe is a command, a file:line, or a measurement — never an opinion.
    Paste the command and its tail into RESULT.md.
 3. Append the result the moment you have it.
-4. A file budget: read at most <n> files (the task's --files). When the budget
+4. A file budget: read at most <n> files (the limit stated in the card). When the budget
    is spent, write what you have and stop.
 5. A probe that could not be run is a RESULT with ` + "`not done`" + ` and the reason.
    That is a complete task; a guess is not.
@@ -87,11 +88,37 @@ const templateFixCard = `fix-card — take one card and land the fix
 3. Quote the rule the fix serves, verbatim, with file:line.
 4. Write the gate you ran and its result into RESULT.md's Gates table. A fix
    with no gate is ` + "`not done`" + `.
-5. A file budget: read at most <n> files (the task's --files). When the budget
+5. A file budget: read at most <n> files (the limit stated in the card). When the budget
    is spent, write what you have and stop.
 6. Leave what you did not do under ` + "`Left owed`" + `, named so the next worker can
    pick it up with no other context.
 `
+
+// templateCard is the card the coordinator starts from: the contract line, the RULES
+// paragraph with every general rule of DefaultChildRules quoted verbatim (lintchild.go), the task,
+// and the steps. It passes `nova-swarm lint --card --child-rules` as printed; under a rules file
+// carrying [libraries-considered] its Libraries considered placeholder line is the one finding until
+// the writer fills it. It is what `nova-sprint add` holds every brief to under the general rules: a
+// card without the paragraph is refused
+// before anything is written. The <angle> words are the writer's to fill.
+var templateCard = "RESULT: <label> sha=<sha12>\n" +
+	"REPO: <owner>/<name>\n" +
+	"BASE: <branch>\n" +
+	"The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).\n" +
+	"You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.\n" +
+	"Deadline: finish within <n> minutes.\n" +
+	"\n" +
+	ChildRulesParagraph() +
+	"\n" +
+	"THE TASK. <What is wrong or wanted, in a paragraph a stranger can act on, and the file or package the work lives in: internal/<package>/<file>.go. Name the worktree path, the branch, the base branch, and every file you may touch.>\n" +
+	"Libraries considered: <what the standard library and the adopted modules offer for this work, and why each is used or not; the search comes before any helper of more than about thirty lines is written>\n" +
+	"\n" +
+	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.\n" +
+	"STEP 2. Write the red test first, named TestSomething, in <file>_test.go, opening with t.Parallel(). Run go test -count=1 -timeout 600s ./internal/<package>/ -run TestSomething and keep the failing line.\n" +
+	"STEP 3. Make it pass in the files this card names, and only those. Cite the model or the design section from each function that implements a rule.\n" +
+	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each.\n" +
+	"STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against <base>, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n" +
+	"STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).\n"
 
 // templateResult is the ONE shape a report has, so the fold is mechanical and a person
 // reads counts. The parser in result.go parses exactly this and nothing else.
@@ -127,9 +154,9 @@ important fact.>
 <one sentence a coordinator can paste into the board.>
 `
 
-// templateWorker is the ONE FILE A FIRST RUN CANNOT START WITHOUT, and it was the one with
-// no template: the audit guessed `"env"`, met a good refusal listing the fields, and had to
-// read a refusal to learn a schema (S1 and S2, 2026-09-11). Every value in angle brackets
+// templateWorker is the ONE FILE A FIRST RUN CANNOT START WITHOUT: a first run
+// without it learns the schema the hard way, guessing a field name and reading
+// the fields out of a refusal. Every value in angle brackets
 // is a thing only the caller knows; everything else is the shape this tool reads.
 const templateWorker = `{
   "name": "<what this worker is called on a RUN POOL line>",
@@ -147,7 +174,7 @@ const templateWorker = `{
 }
 `
 
-// templateSetup is the PER-FRIEND SAFETY-SETUP AGREEMENT (#184): one form per friend,
+// templateSetup is the PER-FRIEND SAFETY-SETUP AGREEMENT: one form per friend,
 // reviewed and agreed BEFORE any staged security implementation is built, because a
 // blanket restrictive setup prevents useful work and ignores each friend's chosen harness,
 // while a blanket permissive one hands every friend every other friend's secrets. It is
@@ -249,7 +276,7 @@ synthetic secrets and disposable repositories and record both runs:
 a denied destructive operation and successful permitted work.
 `
 
-// templateCapacity is the OFFERED-CAPACITY AND ROUTING-LOG FORM (#176): a manual
+// templateCapacity is the OFFERED-CAPACITY AND ROUTING-LOG FORM: a manual
 // census of one friend's bounded, expiring capacity offer, plus the coordinator's
 // manual routing log that matches dependency-ready work to compatible offers
 // without double-counting shared pools. It is the issue's near-term endpoint and
@@ -354,15 +381,14 @@ friend chooses offers, reserves, and rest, not a scheduler that maximises
 occupation beyond that offer.
 `
 
-// THE PULSE CARD TEMPLATES (docs/SPEC-PULSE.md rule 4). nova-pulse `cut` reads a templates
+// THE PULSE CARD TEMPLATES. nova-pulse `cut` reads a templates
 // directory holding read.md, fix.md, text.md, replay.md, drift.md, tone.md and models.tsv,
-// and renders one card per pool candidate from the template the candidate names. Until the
-// dogfood probe 2026-09-16 the directory was copied out of cmd/nova-pulse/testdata by hand;
-// now every card is a constant here and `template --name <kind>` prints it, so a templates
-// dir can be built from the tool. A text-only card (read, text, tone) carries rule 6's
-// no-build line, and a writing card (fix, replay, drift) carries the red-then-green row.
-// STEP 1 clones with the bench mirror as --reference (nova-tools#3600: GitHub is a git
-// remote only, and a brief never carries gh); internal/ci refuses a brief clone without it.
+// and renders one card per pool candidate from the template the candidate names. Every
+// card is a constant here and `template --name <kind>` prints it, so a templates dir can
+// be built from the tool. A text-only card (read, text, tone) carries the no-build line,
+// and a writing card (fix, replay, drift) carries the red-then-green row.
+// STEP 1 clones with the bench mirror as --reference: GitHub is a git
+// remote only, and a brief never carries gh; internal/ci refuses a brief clone without it.
 
 const pulseRead = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
@@ -421,14 +447,14 @@ STEP 2. Fix the tone of the named page and write notes.txt in the repo directory
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 `
 
-// pulseModels is the cost table nova-pulse rule 7 reads beside the .md templates when no
+// pulseModels is the cost table nova-pulse reads beside the .md templates when no
 // benches.tsv or routes.tsv sits there: one line `flash <id>` and/or one line `pro <id>`.
 const pulseModels = `flash opencode/deepseek-v4-flash
 pro opencode/deepseek-v4-pro
 `
 
 // IsPulseTemplate reports whether name is one of the pulse card templates or the cost table
-// nova-pulse `cut` reads (SPEC-PULSE rule 4). They are cards cut renders, never task
+// nova-pulse `cut` reads. They are cards cut renders, never task
 // templates to wrap.
 func IsPulseTemplate(name string) bool {
 	switch name {
@@ -455,6 +481,8 @@ func Template(name string) (string, error) {
 		return templateSetup, nil
 	case "capacity":
 		return templateCapacity, nil
+	case "card":
+		return templateCard, nil
 	case "read":
 		return pulseRead, nil
 	case "fix":
@@ -475,7 +503,7 @@ func Template(name string) (string, error) {
 
 // TemplateNames is every name Template answers to, in a fixed order.
 func TemplateNames() []string {
-	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity",
+	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity", "card",
 		"read", "fix", "text", "replay", "drift", "tone", "models.tsv"}
 	sort.Strings(names)
 	return names
@@ -483,7 +511,7 @@ func TemplateNames() []string {
 
 // IsCardTemplate reports whether name is one of the task templates a card is built from
 // (read-pr, probe-row, fix-card). The other names Template answers to -- result, worker,
-// setup, capacity, and the pulse card templates of SPEC-PULSE rule 4 -- are not cards:
+// setup, capacity, and the pulse card templates -- are not cards:
 // result is the report's shape, worker is a JSON worker description, setup and capacity
 // are forms, and the pulse names are the cards nova-pulse `cut` renders, all printed
 // verbatim for their own purpose.
@@ -511,6 +539,9 @@ func WrapTemplate(name string, files int, text []byte) ([]byte, error) {
 	}
 	if name == "capacity" {
 		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `capacity` is the per-friend offer and routing-log form of issue #176, printed by `template --name capacity`")
+	}
+	if name == "card" {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `card` is a whole card with its RULES paragraph, printed by `template --name card`, the shape the coordinator starts from")
 	}
 	if IsPulseTemplate(name) {
 		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `%s` is a nova-pulse card template of SPEC-PULSE rule 4, printed by `template --name %s`, not a task template", name, name)

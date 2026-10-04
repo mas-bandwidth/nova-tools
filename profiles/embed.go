@@ -1,5 +1,5 @@
 // Package profiles holds the generated-policy TEMPLATES this repository ships, and it
-// exists so that the tool and profiles/darwin-check.sh fill ONE text rather than two
+// exists so that the tool and tools/sandboxcheck fill ONE text rather than two
 // (SPEC-SANDBOX rule 15, and the work list's "the file is embedded with go:embed").
 //
 // go:embed cannot reach outside its own directory, so the embed lives beside the

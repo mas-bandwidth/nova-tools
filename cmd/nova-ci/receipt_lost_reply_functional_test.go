@@ -15,8 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestReceiptCommittedWriteWithLostReplyIsReportedUnconfirmed is Stella's
@@ -40,9 +43,7 @@ func TestReceiptCommittedWriteWithLostReplyIsReportedUnconfirmed(t *testing.T) {
 	backend := redis.NewClient(&redis.Options{Addr: testredis.Start(t)})
 	defer backend.Close()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var proxyErr error
@@ -107,29 +108,18 @@ func TestReceiptCommittedWriteWithLostReplyIsReportedUnconfirmed(t *testing.T) {
 	args := receiptArgs()
 	args[3] = ln.Addr().String()
 	var out, errOut bytes.Buffer
-	code := cmdReceipt(ctx, args[1:], &out, &errOut, noEnv)
+	code := cmdReceipt(ctx, args[1:], &out, &errOut, noEnv, store.Open)
 	_ = ln.Close()
 	wg.Wait()
-	if proxyErr != nil {
-		t.Fatal(proxyErr)
-	}
+	require.NoError(t, proxyErr)
 	n, err := backend.XLen(ctx, "ev:github").Result()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Logf("exit=%d committed_rows=%d stdout=%q stderr=%q", code, n, out.String(), errOut.String())
-	if n < 1 {
-		t.Fatalf("the probe did not reach the committed-but-unconfirmed write: rows=%d", n)
-	}
-	if code != 1 || out.Len() != 0 {
-		t.Errorf("an unconfirmed write must be exit 1 with nothing on stdout: code=%d stdout=%q", code, out.String())
-	}
-	if strings.Contains(errOut.String(), "no receipt is on ev:github") {
-		t.Errorf("claims no receipt although the store holds %d committed row(s): %q", n, errOut.String())
-	}
-	if !strings.Contains(errOut.String(), "receipt write could not be confirmed") {
-		t.Errorf("missing the unconfirmed-write sentence: %q", errOut.String())
-	}
+	require.GreaterOrEqual(t, n, int64(1), "the probe did not reach the committed-but-unconfirmed write: rows=%d", n)
+	assert.Equal(t, 1, code, "an unconfirmed write must be exit 1 with nothing on stdout: code=%d stdout=%q", code, out.String())
+	assert.Equal(t, 0, out.Len(), "an unconfirmed write must be exit 1 with nothing on stdout: code=%d stdout=%q", code, out.String())
+	assert.NotContains(t, errOut.String(), "no receipt is on ev:github", "claims no receipt although the store holds %d committed row(s): %q", n, errOut.String())
+	assert.Contains(t, errOut.String(), "receipt write could not be confirmed", "missing the unconfirmed-write sentence: %q", errOut.String())
 }
 
 // readRESPCommand reads one RESP array of bulk strings, a client command.

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // waitFlags is the invocation the tests share; extra flags follow it.
@@ -49,12 +51,8 @@ func afterOf(t *testing.T, stdout string) time.Duration {
 	if i < 0 {
 		i = strings.Index(stdout, "WAIT OK")
 	}
-	if i < 0 {
-		t.Fatalf("no WAIT TIMEOUT or WAIT OK line to read after= from:\n%s", stdout)
-	}
+	require.Falsef(t, i < 0, "no WAIT TIMEOUT or WAIT OK line to read after= from:\n%s", stdout)
 	d, err := time.ParseDuration(field(t, stdout[i:], "after="))
-	if err != nil {
-		t.Fatalf("after= is not a duration: %v\n%s", err, stdout)
-	}
+	require.NoErrorf(t, err, "after= is not a duration: %v\n%s", err, stdout)
 	return d
 }

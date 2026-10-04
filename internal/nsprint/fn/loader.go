@@ -31,9 +31,7 @@ func Spec() redisfn.Library {
 
 // Prelude is the one chunk-level local of the assembled library: NS, the
 // table through which a file hands helpers to a file that sorts after it
-// (friend.lua -> redistribute*.lua as NS.friend, redistribute.lua ->
-// redistribute_assign.lua as NS.redistribute, task_claim.lua -> task_queue.lua
-// as NS.DEP).
+// (capacity.lua as NS.capacity, friend_roles.lua as NS.friend_roles).
 const Prelude = "local NS = {}\n"
 
 // MaxLocals is the most active locals the library's main function may hold.
@@ -54,8 +52,8 @@ const (
 // Lua file in lua/; no central Lua registry needs to change. Each file is
 // wrapped in its own do-block, so its top-level locals leave scope at its end:
 // the main function holds len(Prelude locals) + the largest file's locals at
-// once, not the sum over every file (Lua's limit is 200 active locals; the sum
-// passed it at #3487). A file shares nothing by bare local; what a later file
+// once, not the sum over every file (Lua allows 200 active locals). A file shares
+// nothing by bare local; what a later file
 // needs goes through NS.
 func Source() (string, error) {
 	names, err := fs.Glob(sources, "lua/*.lua")
@@ -98,13 +96,13 @@ func Load(ctx context.Context, client *redis.Client) error {
 }
 
 // LoadMissing installs the embedded library only when the server holds no
-// nova_sprint library, and never replaces one it holds (#3620). A verb that
+// nova_sprint library, and never replaces one it holds. A verb that
 // loads on the way to its FCALL (card push, drain and release, the
 // reconciler's calls and expire duty) runs whatever binary its host has; with
 // Load, an older binary REPLACEd the deployed library with its own and every
-// function added since vanished from the store ("ERR Function not found" from
-// the reconciler's ns_fleet_step, #3620). Upgrading the library is the
-// deploy's job (`nova-sprint fn load`, which uses Ensure). A caller whose ACL
+// function added since can vanish from the store, leaving newer callers without
+// the functions they need. Upgrading the library is the
+// deploy's job (`nova-sprint fn load`, which uses redisfn.Ensure). A caller whose ACL
 // refuses FUNCTION LIST is not the deployer: it loads nothing and its FCALL
 // answers for the store.
 func LoadMissing(ctx context.Context, client *redis.Client) error {
@@ -154,7 +152,7 @@ func Loaded(ctx context.Context, client *redis.Client) (string, bool, error) {
 
 // ListQuery is the FUNCTION LIST that Loaded sends: the nova_sprint library
 // with its code. A reader that pipelines it with other reads passes the reply
-// to FromList and Judge.
+// to FromList.
 var ListQuery = redis.FunctionListQuery{LibraryNamePattern: Library, WithCode: true}
 
 // FromList is the nova_sprint library's code in a FUNCTION LIST reply, and
@@ -166,28 +164,6 @@ func FromList(libs []redis.Library) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// Ensure loads the embedded library only when the server does not already
-// hold that exact source, so a converge that runs it every pass is a no-op
-// once the version matches. It returns the embedded Sum and whether it loaded.
-func Ensure(ctx context.Context, client *redis.Client) (string, bool, error) {
-	source, err := Source()
-	if err != nil {
-		return "", false, err
-	}
-	sum := Sum(source)
-	code, found, err := Loaded(ctx, client)
-	if err != nil {
-		return sum, false, err
-	}
-	if found && code == source {
-		return sum, false, nil
-	}
-	if err := client.FunctionLoadReplace(ctx, source).Err(); err != nil {
-		return sum, false, fmt.Errorf("load %s function library: %w", Library, err)
-	}
-	return sum, true, nil
 }
 
 // State is what fn check found on a server.
@@ -227,21 +203,6 @@ func Check(ctx context.Context, client *redis.Client) (State, error) {
 	reply, err := client.FCall(ctx, "ns_ping", nil).Result()
 	st.Ping = PingReply(reply, err)
 	return st, nil
-}
-
-// Judge is Check's verdict on the code a server holds (found false: none),
-// with no round trip: Want, Loaded and Missing, and ours true only when that
-// code is exactly the embedded source, the one case in which the caller may
-// call ns_ping and set Ping with PingReply. When ours is false Ping is
-// PingSkipped, as Check leaves it. `nova-sprint doctor` pipelines FUNCTION
-// LIST (ListQuery) with its other reads and judges the reply here.
-func Judge(code string, found bool) (State, bool, error) {
-	source, err := Source()
-	if err != nil {
-		return State{}, false, err
-	}
-	st, ours := judge(source, code, found)
-	return st, ours, nil
 }
 
 func judge(source, code string, found bool) (State, bool) {

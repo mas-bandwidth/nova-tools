@@ -1,10 +1,9 @@
 // Package converge answers one question mechanically: are we converging?
 //
-// Glenn, 2026-09-15: convergence is the health metric — the contraction ratio
-// per stream, every tick. Rowan answered it by hand on 2026-09-18 out of six
-// different places, and the answer was a paragraph nobody could diff against
-// the next one. A stream here is one number a converging family drives in one
-// direction, read now and read at --since, with the ratio between them.
+// Convergence is the health metric — the contraction ratio per stream, every
+// tick. It is computed here, mechanically, so one run's answer can be diffed
+// against the next. A stream here is one number a converging family drives in
+// one direction, read now and read at --since, with the ratio between them.
 //
 // Everything in this file is PURE: it takes already-fetched data and returns
 // findings. The forge, git, the filesystem and the clock are seams (forge.go,
@@ -22,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -278,6 +278,15 @@ func LoadState(path string) (State, error) {
 // Save writes the state file, whole, through a temporary file in the same
 // directory: a tick killed halfway through leaves the previous tick's memory
 // rather than half of this one's.
+// PlanSave is Save with nothing written: every check the write makes, and the
+// same error.
+func PlanSave(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	return atomicfile.Check(filepath.Clean(path), 0o600, atomicfile.ExactMode())
+}
+
 func (s State) Save(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
@@ -287,26 +296,7 @@ func (s State) Save(path string) error {
 		return err
 	}
 	raw = append(raw, '\n')
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".convergence-state-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	if _, err := tmp.Write(raw); err != nil {
-		tmp.Close()
-		os.Remove(name)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(name)
-		return err
-	}
-	if err := os.Rename(name, path); err != nil {
-		os.Remove(name)
-		return err
-	}
-	return nil
+	return atomicfile.Write(filepath.Clean(path), raw, 0o600, atomicfile.ExactMode())
 }
 
 // Apply folds the remembered tick into this one and returns the report with its

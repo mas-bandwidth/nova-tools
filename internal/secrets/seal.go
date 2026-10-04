@@ -3,6 +3,7 @@ package secrets
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,10 +11,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // execCommand runs one helper process and returns its stdout. The encrypt step
@@ -22,7 +27,10 @@ import (
 type execCommand func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error)
 
 func realExecCommand(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
+	// The deadline is the kind of the program named: git, gh, sops and the rest each have
+	// their own default (subproc.KindOf).
+	cmd, cancel := subproc.CommandFor(context.Background(), subproc.BudgetOf(name, args), name, args...)
+	defer cancel()
 	cmd.Env = env
 	cmd.Dir = dir
 	cmd.Stdin = stdin
@@ -56,6 +64,11 @@ type SealOptions struct {
 	NoPR     bool
 	UseStdin bool
 
+	// DryRun prints the plan and writes nothing: no value is read, nothing is encrypted,
+	// no file is written, and no git write, push, gh or sops encrypt runs. The plan is
+	// read off the same carry the real run walks (sealCarry), so the two cannot differ.
+	DryRun bool
+
 	Stdin           io.Reader
 	StdinIsTerminal bool
 
@@ -85,23 +98,9 @@ var prNumberRegex = regexp.MustCompile(`/pull/(\d+)`)
 // RunSeal reads one value, folds it into the seat file under --name, and carries the
 // change through a branch, a commit and, unless --no-pr, a pull request to its merge.
 func RunSeal(opts SealOptions) (line string, err error) {
-	if opts.StoreDir == "" {
-		return "", fmt.Errorf("missing --store <dir>")
-	}
-	if opts.AsName == "" {
-		return "", fmt.Errorf("missing --as <name>")
-	}
-	if !IsValidAsName(opts.AsName) {
-		return "", fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", opts.AsName)
-	}
-	if opts.KeyPath == "" {
-		return "", fmt.Errorf("missing --key <path>")
-	}
-	if opts.SopsPath == "" {
-		return "", fmt.Errorf("missing --sops <path>")
-	}
-	if opts.Name == "" {
-		return "", fmt.Errorf("missing --name <NAME>")
+	if err := preflight(opts.StoreDir, need{opts.StoreDir, "--store <dir>", false}, need{opts.AsName, "--as <name>", true},
+		need{opts.KeyPath, "--key <path>", false}, need{opts.SopsPath, "--sops <path>", false}, need{opts.Name, "--name <NAME>", false}); err != nil {
+		return "", err
 	}
 	if !IsValidEnvVar(opts.Name) {
 		return "", fmt.Errorf("invalid key name %q: must match [A-Z][A-Z0-9_]*", opts.Name)
@@ -116,18 +115,6 @@ func RunSeal(opts SealOptions) (line string, err error) {
 		opts.Now = time.Now
 	}
 
-	sFi, err := os.Stat(opts.StoreDir)
-	if err != nil || !sFi.IsDir() {
-		return "", fmt.Errorf("store %s is not a directory", opts.StoreDir)
-	}
-	gitDir := filepath.Join(opts.StoreDir, ".git")
-	gFi, err := os.Stat(gitDir)
-	if err != nil || !gFi.IsDir() {
-		return "", fmt.Errorf("store %s has no .git directory; clone it: git clone <url> %s", opts.StoreDir, opts.StoreDir)
-	}
-	if _, err := os.Stat(filepath.Join(opts.StoreDir, ".sops.yaml")); err != nil {
-		return "", fmt.Errorf("store %s carries no .sops.yaml", opts.StoreDir)
-	}
 	if err := CheckInvariant6(opts.KeyPath); err != nil {
 		return "", err
 	}
@@ -135,31 +122,12 @@ func RunSeal(opts SealOptions) (line string, err error) {
 		return "", err
 	}
 
-	value, err := readSealValue(opts)
-	if err != nil {
-		return "", err
-	}
-
 	run := opts.exec()
 	seatFile := opts.AsName + ".yaml"
 	targetFile := filepath.Join(opts.StoreDir, seatFile)
-
-	opts.say("reading %s", seatFile)
-	existing, err := sealDecrypt(run, opts.SopsPath, opts.KeyPath, targetFile)
-	if err != nil {
-		return "", err
-	}
-	plaintext := sealApply(existing, opts.Name, value)
-
-	opts.say("encrypting to the seat's recipients")
-	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, plaintext)
-	if err != nil {
-		return "", err
-	}
-
 	branch := fmt.Sprintf("seal/%s-%s-%s", opts.AsName, opts.Name, opts.Now().UTC().Format("20060102-150405"))
 	commitMsg := fmt.Sprintf("seal %s into %s", opts.Name, seatFile)
-	prNum, merged, err := sealCarry{
+	carry := sealCarry{
 		run:      run,
 		storeDir: opts.StoreDir,
 		gitPath:  opts.GitPath,
@@ -178,14 +146,41 @@ func RunSeal(opts SealOptions) (line string, err error) {
 			}
 			return checkFn(opts.StoreDir, opts.AsName, opts.KeyPath, opts.SopsPath)
 		},
-	}.carry(ciphertext)
+	}
+
+	if opts.DryRun {
+		return sealDryRun(opts, carry, targetFile)
+	}
+
+	value, err := readSealValue(opts)
+	if err != nil {
+		return "", err
+	}
+
+	opts.say("reading %s", seatFile)
+	existing, err := sealDecrypt(run, opts.SopsPath, opts.KeyPath, targetFile)
+	if err != nil {
+		return "", err
+	}
+	plaintext := sealApply(existing, opts.Name, value)
+
+	opts.say("encrypting to the seat's recipients")
+	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, plaintext)
+	if err != nil {
+		return "", err
+	}
+
+	prNum, merged, err := carry.carry(ciphertext)
 	if err != nil {
 		return "", err
 	}
 	switch {
+	// A --no-pr value is not on the store's own branch, so it is not what exec reads: the
+	// NOTE says so, with the next command, so nobody takes the OK for a delivered value.
 	case opts.NoPR:
-		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s committed branch=%s",
-			oneline.Field(opts.Name), oneline.Field(opts.AsName), oneline.Field(branch)), nil
+		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s committed branch=%s\n"+
+			"SECRETS SEAL NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C %s push -u origin %s, then open and merge its pull request",
+			oneline.Field(opts.Name), oneline.Field(opts.AsName), oneline.Field(branch), oneline.Field(opts.StoreDir), oneline.Field(branch)), nil
 	case !merged:
 		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s pr=#%s open (gate not yet approved)",
 			oneline.Field(opts.Name), oneline.Field(opts.AsName), prNum), nil
@@ -228,34 +223,22 @@ type sealCarry struct {
 
 // carry writes the ciphertext into place on a fresh branch and carries it to
 // the store. It returns the pull request number ("" under noPR) and whether the
-// request merged. On every path out the store is back on the branch it was on
-// (#2016); the commit stays on c.branch.
+// request merged. On every path out the store is back on the branch it was on; the commit stays on c.branch.
 func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err error) {
 	say := c.say
 	if say == nil {
 		say = func(string, ...interface{}) {}
 	}
-	home, err := sealGitOutput(c.run, c.storeDir, c.gitPath, "rev-parse", "--abbrev-ref", "HEAD")
+	home, err := c.preflight()
 	if err != nil {
 		return "", false, err
-	}
-	if home == "" || home == "HEAD" {
-		return "", false, fmt.Errorf("store %s is not on a branch; seal needs a named branch to return to", c.storeDir)
-	}
-	// checkout -f of home would discard these. Refuse before checkout -b.
-	status, err := sealGitOutput(c.run, c.storeDir, c.gitPath, "status", "--porcelain", "-uno")
-	if err != nil {
-		return "", false, err
-	}
-	if status != "" {
-		return "", false, fmt.Errorf("store %s is not clean; commit, stash, or restore tracked changes before seal (git status). seal will not discard them", c.storeDir)
 	}
 
 	say("committing on branch %s", c.branch)
 	if err := sealGit(c.run, c.storeDir, c.gitPath, "checkout", "-b", c.branch); err != nil {
 		return "", false, err
 	}
-	// #2016: restore the starting branch on every path; the commit stays on c.branch.
+	// Restore the starting branch on every path; the commit stays on c.branch.
 	restored := false
 	restore := func() error {
 		if restored {
@@ -363,6 +346,100 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 	return prNum, true, nil
 }
 
+// preflight is the two git reads the road opens with: the branch the store stands on and
+// that no tracked change would be discarded by the return to it. `seal`, `seat inject`
+// and their --dry-run all ask it, so a dry run refuses exactly where the real run would.
+func (c sealCarry) preflight() (home string, err error) {
+	home, err = sealGitOutput(c.run, c.storeDir, c.gitPath, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		// In a working copy (the store's shape is checked first) this is a HEAD with no
+		// commit under it: a store made with git init and nothing committed yet.
+		return "", fmt.Errorf("%w; a store with no commit yet has no branch to return to; run: git -C %s add .sops.yaml recovery.pub && git -C %s commit -m 'a new store'", err, c.storeDir, c.storeDir)
+	}
+	if home == "" || home == "HEAD" {
+		return "", fmt.Errorf("store %s is not on a branch; seal needs a named branch to return to", c.storeDir)
+	}
+	// checkout -f of home would discard these. Refuse before checkout -b.
+	status, err := sealGitOutput(c.run, c.storeDir, c.gitPath, "status", "--porcelain", "-uno")
+	if err != nil {
+		return "", err
+	}
+	if status != "" {
+		return "", fmt.Errorf("store %s is not clean; commit, stash, or restore tracked changes before seal (git status). seal will not discard them", c.storeDir)
+	}
+	return home, nil
+}
+
+// planLines are the carry's own steps as a --dry-run prints them: the branch and commit
+// the real run makes, and the push and pull request it opens unless noPR. They are read
+// off the fields carry() acts on, so the plan is the road, not a description of it.
+func (c sealCarry) planLines(token, home string) []string {
+	lines := []string{fmt.Sprintf("SECRETS %s PLAN git store=%s from=%s branch=%s commit=%s",
+		token, oneline.Field(c.storeDir), oneline.Field(home), oneline.Field(c.branch), oneline.Quote(c.message))}
+	if c.noPR {
+		return append(lines, fmt.Sprintf("SECRETS %s PLAN push none (--no-pr): no push, no gh call; the store returns to %s",
+			token, oneline.Field(home)))
+	}
+	return append(lines, fmt.Sprintf("SECRETS %s PLAN push remote=origin branch=%s pr title=%s then waits up to 2m for the gate's approval, merges --squash, pulls and checks the seat",
+		token, oneline.Field(c.branch), oneline.Quote(c.title)))
+}
+
+// sealRecipients are the public keys sops will encrypt seatFile to: the recipients of the
+// rule in .sops.yaml that matches it, which is the rule `sops -e --filename-override`
+// picks (SPEC-SECRETS, seal "How it seals").
+func sealRecipients(storeDir, seatFile string) ([]string, error) {
+	cfg, err := ParseSopsConfig(storeDir)
+	if err != nil {
+		return nil, fmt.Errorf("store %s: %w", storeDir, err)
+	}
+	rule, err := FindMatchingRule(cfg, seatFile)
+	if err != nil {
+		return nil, fmt.Errorf(".sops.yaml carries no rule matching %s, so sops has no recipients to encrypt to; the rule is added in a pull request the store's gate reviews", seatFile)
+	}
+	return rule.Recipients, nil
+}
+
+// sealDryRun is `seal --dry-run`: the refusals the real run has, the plan its road
+// takes, and nothing written. The value is never read (a dry run takes no stdin and
+// opens no terminal prompt); the one sops call is the decrypt the real run also
+// makes, to say whether NAME is added or replaced, and no value reaches a line.
+func sealDryRun(opts SealOptions, carry sealCarry, targetFile string) (string, error) {
+	seatFile := carry.seatFile
+	recipients, err := sealRecipients(opts.StoreDir, seatFile)
+	if err != nil {
+		return "", err
+	}
+	action := "add"
+	if _, statErr := os.Stat(targetFile); statErr == nil {
+		opts.say("reading %s", seatFile)
+		existing, err := sealDecrypt(carry.run, opts.SopsPath, opts.KeyPath, targetFile)
+		if err != nil {
+			return "", err
+		}
+		if sealHas(existing, opts.Name) {
+			action = "replace"
+		}
+	}
+	home, err := carry.preflight()
+	if err != nil {
+		return "", err
+	}
+	lines := []string{fmt.Sprintf("SECRETS SEAL PLAN write=%s action=%s name=%s seat=%s recipients=%s value=not read (dry run)",
+		oneline.Field(targetFile), action, oneline.Field(opts.Name), oneline.Field(opts.AsName), oneline.Field(strings.Join(recipients, ",")))}
+	lines = append(lines, carry.planLines("SEAL", home)...)
+	lines = append(lines, fmt.Sprintf("SECRETS SEAL DRY-RUN OK name=%s seat=%s nothing written, no value read, no push, no gh call",
+		oneline.Field(opts.Name), oneline.Field(opts.AsName)))
+	return strings.Join(lines, "\n"), nil
+}
+
+// sealHas reports whether the decrypted seat file already holds name: the same line
+// sealApply drops before it appends the new one.
+func sealHas(existing []byte, name string) bool {
+	return slices.ContainsFunc(strings.Split(string(existing), "\n"), func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), name+":")
+	})
+}
+
 // readSealValue takes the value from stdin when asked or when stdin is not a terminal,
 // and otherwise from the controlling terminal with echo off.
 func readSealValue(opts SealOptions) (string, error) {
@@ -399,7 +476,7 @@ func readSealValue(opts SealOptions) (string, error) {
 }
 
 // readSealFromTTY opens /dev/tty twice -- one handle to write the prompt, one to read the
-// value -- because a single read-write open did not work on the Stella bench.
+// value -- because a single read-write open of /dev/tty does not work on the bench.
 func readSealFromTTY() (string, error) {
 	w, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
 	if err != nil {
@@ -419,6 +496,7 @@ func readSealFromTTY() (string, error) {
 	defer restore()
 
 	line, err := bufio.NewReader(r).ReadString('\n')
+	// ignored: the newline the disabled echo swallowed, to the terminal; the read error is judged on the next line
 	_, _ = fmt.Fprintln(w)
 	if err != nil && err != io.EOF {
 		return "", err
@@ -434,11 +512,13 @@ func disableEcho(tty *os.File) func() {
 	if err := runStty(tty, "-echo"); err != nil {
 		return func() {}
 	}
+	// ignored: echo is restored best effort; a terminal that refuses stty shows its own state to the person at it
 	return func() { _ = runStty(tty, "echo") }
 }
 
 func runStty(tty *os.File, arg string) error {
-	cmd := exec.Command("stty", arg)
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, "stty", arg)
+	defer cancel()
 	cmd.Stdin = tty
 	return cmd.Run()
 }
@@ -491,7 +571,7 @@ func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile string, 
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		}
-		return nil, fmt.Errorf("sops encrypt failed: exit %d (transcript withheld; the value is on stdin only)", exitCode)
+		return nil, fmt.Errorf("sops encrypt failed: exit %d (transcript withheld; the value is on stdin only); the usual cause is a recipient in the .sops.yaml rule for %s that is not an age1… public key, such as keygen's <recovery key> placeholder left in; the same call with --dry-run lists the recipients", exitCode, seatFile)
 	}
 	return out, nil
 }
@@ -534,7 +614,7 @@ func sealGit(run execCommand, dir, gitPath string, args ...string) error {
 }
 
 func sealGitOutput(run execCommand, dir, gitPath string, args ...string) (string, error) {
-	out, err := run(nil, append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), dir, gitPath, args...)
+	out, err := run(nil, append(gitrun.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0"), dir, gitPath, args...)
 	if err != nil {
 		return "", fmt.Errorf("git %s failed: %s (transcript withheld)", args[0], oneline.Err(err))
 	}
@@ -552,36 +632,8 @@ func sealGH(run execCommand, ghPath, dir string, args ...string) (string, error)
 
 // atomicWriteFile writes the ciphertext beside the target and renames it into place.
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".nova-seal-*.tmp")
-	if err != nil {
-		return fmt.Errorf("unable to create temporary file in %s: %w", dir, err)
-	}
-	tmpName := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			os.Remove(tmpName)
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+	if err := atomicfile.Write(filepath.Clean(path), data, perm, atomicfile.ExactMode()); err != nil {
 		return fmt.Errorf("unable to write %s: %w", path, err)
 	}
-	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
-		return fmt.Errorf("unable to chmod %s: %w", path, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("unable to sync %s: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("unable to close %s: %w", path, err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("unable to rename into %s: %w", path, err)
-	}
-	cleanup = false
 	return nil
 }

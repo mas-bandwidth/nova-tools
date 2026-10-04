@@ -55,10 +55,12 @@ func openFileSafe(path string, flag int, perm os.FileMode) (*os.File, error) {
 	// Post-open verification: check f.Stat on open handle
 	fiAfter, err := f.Stat()
 	if err != nil {
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 		_ = f.Close()
 		return nil, fmt.Errorf("filelock %q stat: %w", cleanPath, wrapPathError(err))
 	}
 	if !fiAfter.Mode().IsRegular() {
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 		_ = f.Close()
 		if fiAfter.IsDir() {
 			return nil, fmt.Errorf("filelock %q: is a directory", cleanPath)
@@ -73,6 +75,7 @@ func openFileSafe(path string, flag int, perm os.FileMode) (*os.File, error) {
 	fiPost, err := os.Lstat(path)
 	if err == nil {
 		if fiPost.Mode()&os.ModeSymlink != 0 {
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, fmt.Errorf("filelock %q: symlink not permitted", cleanPath)
 		}
@@ -116,6 +119,7 @@ func trySharedLock(f *os.File) (bool, error) {
 func unlockFile(f *os.File) {
 	if f != nil {
 		ov := lockRange()
+		// ignored: unlock has no caller to report to; the kernel lock is released when the handle closes
 		_, _, _ = procUnlockFileEx.Call(f.Fd(), 0, 1, 0, uintptr(unsafe.Pointer(ov)))
 	}
 }
@@ -131,23 +135,20 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 
 	// Refused is not yet held: see takeExclusive (tla/FileLock.tla, Blocked).
 	if err := takeExclusive(f, path); err != nil {
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 		_ = f.Close()
 		return nil, err
 	}
 
-	existing := readExistingStamp(f)
-	var prev *Stamp
-	if !existing.IsZero() {
-		prev = &existing
-	}
-
 	if err := f.Truncate(0); err != nil {
 		unlockFile(f)
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 		_ = f.Close()
 		return nil, fmt.Errorf("filelock %q truncate: %w", cleanPath, wrapPathError(err))
 	}
 	if _, err := f.Seek(0, 0); err != nil {
 		unlockFile(f)
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 		_ = f.Close()
 		return nil, fmt.Errorf("filelock %q seek: %w", cleanPath, wrapPathError(err))
 	}
@@ -160,53 +161,20 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 	}
 	if _, err := f.WriteString(stamp.Format() + "\n"); err != nil {
 		unlockFile(f)
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 		_ = f.Close()
 		return nil, fmt.Errorf("filelock %q write stamp: %w", cleanPath, wrapPathError(err))
 	}
 	if err := syncFn(f); err != nil {
 		unlockFile(f)
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 		_ = f.Close()
 		return nil, fmt.Errorf("filelock %q sync: %w", cleanPath, wrapPathError(err))
 	}
 
-	return &FileLock{
-		path:     path,
-		file:     f,
-		stamp:    stamp,
-		previous: prev,
-	}, nil
+	return &FileLock{file: f}, nil
 }
 
 func lockWithOptions(path string, label string, timeout time.Duration, opts options) (*FileLock, error) {
 	return lockLoop(path, label, timeout, opts, tryLockWithOptions)
-}
-
-func probeWithOptions(path string, opts options) (State, Stamp, error) {
-	f, err := openFileSafe(path, os.O_RDWR, 0)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return StateAbsent, Stamp{}, nil
-		}
-		f, err = openFileSafe(path, os.O_RDONLY, 0)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return StateAbsent, Stamp{}, nil
-			}
-			return "", Stamp{}, err
-		}
-	}
-	defer f.Close()
-
-	ok, lockErr := trySharedLock(f)
-	if lockErr != nil {
-		cleanPath := oneline.Escape(oneline.Cap(path, 1024))
-		return "", Stamp{}, fmt.Errorf("filelock %q probe: %w", cleanPath, wrapPathError(lockErr))
-	}
-	if ok {
-		unlockFile(f)
-		return StateFree, Stamp{}, nil
-	}
-
-	holder := readExistingStamp(f)
-	return StateHeld, holder, nil
 }

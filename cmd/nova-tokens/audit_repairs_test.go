@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/stretchr/testify/assert"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,9 +57,7 @@ func TestCheckThroughFlag(t *testing.T) {
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "CHECK REFUSED: --through is not a day: not-a-day")
 	wantContains(t, r.stderr, "it wants YYYY-MM-DD")
-	if strings.Contains(r.stderr, "--all") {
-		t.Errorf("--through refusal mentions --all: %s", r.stderr)
-	}
+	assert.False(t, strings.Contains(r.stderr, "--all"), "--through refusal mentions --all: %s", r.stderr)
 
 	// Last folded day (2026-09-18) is older than through (2026-09-20) -> exit 1 with stale message
 	r = invoke(t, "check", "--out", out, "--through", "2026-09-20")

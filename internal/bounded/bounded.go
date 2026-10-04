@@ -123,8 +123,14 @@ func (l *List) More() {
 	if l.total <= l.shown {
 		return
 	}
-	fmt.Fprintf(l.w, "%s MORE kind=%s shown=%d total=%d %s\n",
-		oneline.Field(l.token), oneline.Field(l.kind), l.shown, l.total, oneline.Escape(l.remedy))
+	fmt.Fprintln(l.w, MoreLine(l.token, l.kind, l.shown, l.total, l.remedy))
+}
+
+// MoreLine is the MORE line itself, the one spelling every listing prints:
+// internal/tool renders a capped result's MORE through it.
+func MoreLine(token, kind string, shown, total int, remedy string) string {
+	return fmt.Sprintf("%s MORE kind=%s shown=%d total=%d %s",
+		oneline.Field(token), oneline.Field(kind), shown, total, oneline.Escape(remedy))
 }
 
 // Shown is how many item lines reached the stream.
@@ -133,9 +139,6 @@ func (l *List) Shown() int { return l.shown }
 // Total is how many there were. This is the number a summary line must carry, and the
 // reason Line counts past the ceiling instead of stopping at it.
 func (l *List) Total() int { return l.total }
-
-// Elided is Total minus Shown: what the reader would have to widen the cap to see.
-func (l *List) Elided() int { return l.total - l.shown }
 
 // Group is one cap per kind over a single stream, for a verb that runs several checks and
 // prints their findings together.
@@ -198,15 +201,36 @@ func (g *Group) Total() int {
 	return n
 }
 
-// Elided is Total minus Shown across every kind.
-func (g *Group) Elided() int { return g.Total() - g.Shown() }
+// Tally counts a capped listing without printing it, for a caller that keeps
+// the listing as a value (internal/tool): Add reports whether an item of a kind
+// is listed under a ceiling of max per kind (0 lists all), in the order added.
+type Tally struct {
+	max          int
+	order        []string
+	shown, total map[string]int
+}
 
-// List is one kind's list, or nil when this group has not seen that kind. It is
-// here for a verb whose MORE line carries a field this package does not print
-// -- nova-wake's carries n=<elided>, which its spec requires -- so that such a
-// verb can reuse the per-kind capping and still write its own summary, rather
-// than hand-rolling a second map of lists beside this one.
-func (g *Group) List(kind string) *List { return g.lists[kind] }
+// NewTally is a Tally with a ceiling of max items per kind.
+func NewTally(max int) *Tally {
+	return &Tally{max: max, shown: map[string]int{}, total: map[string]int{}}
+}
 
-// Kinds returns the kinds seen, in first-seen order.
-func (g *Group) Kinds() []string { return append([]string(nil), g.order...) }
+// Add counts one item of kind and reports whether it is listed.
+func (t *Tally) Add(kind string) bool {
+	if t.total[kind] == 0 {
+		t.order = append(t.order, kind)
+	}
+	t.total[kind]++
+	if t.max > 0 && t.shown[kind] >= t.max {
+		return false
+	}
+	t.shown[kind]++
+	return true
+}
+
+// Kinds is every kind added, in first-seen order.
+func (t *Tally) Kinds() []string { return append([]string(nil), t.order...) }
+
+// Shown and Total are one kind's listed and counted items.
+func (t *Tally) Shown(kind string) int { return t.shown[kind] }
+func (t *Tally) Total(kind string) int { return t.total[kind] }

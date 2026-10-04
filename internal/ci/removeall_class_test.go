@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
@@ -47,9 +50,7 @@ func TestRemoveAllOnlyOnTempOrThroughSafepath(t *testing.T) {
 			if strings.HasPrefix(rel, safepathPkgDir+"/") {
 				continue
 			}
-			if src.ParseErr != nil {
-				t.Fatal(src.ParseErr)
-			}
+			require.NoError(t, src.ParseErr)
 			fset := tree.FSet
 			for _, decl := range src.AST.Decls {
 				fn, ok := decl.(*ast.FuncDecl)
@@ -96,7 +97,7 @@ func TestRemoveAllOnlyOnTempOrThroughSafepath(t *testing.T) {
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 

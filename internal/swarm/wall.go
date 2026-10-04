@@ -1,14 +1,16 @@
 package swarm
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -77,7 +79,7 @@ func repoCommits(jobDir string) (string, int, bool) {
 	if base == "" {
 		return "", 0, false
 	}
-	n, err := strconv.Atoi(gitOut(dir, "rev-list", "--count", base+"..HEAD"))
+	n, err := strconv.Atoi(gitOut(dir, "rev-list", "--count", "--end-of-options", base+"..HEAD"))
 	if err != nil || n <= 0 {
 		return "", 0, false
 	}
@@ -88,7 +90,7 @@ func repoCommits(jobDir string) (string, int, bool) {
 // the remote's default branch under the names a clone writes.
 func repoBase(dir string) string {
 	for _, ref := range []string{"@{upstream}", "origin/HEAD", "origin/main", "origin/master", "origin/dev"} {
-		if gitOut(dir, "rev-parse", "--verify", "--quiet", ref) != "" {
+		if gitOut(dir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref) != "" {
 			return ref
 		}
 	}
@@ -167,16 +169,6 @@ func WallRefused(log []byte) (WallRefusal, bool) {
 	return WallRefusal{}, false
 }
 
-// wallRefusedInLog reads one log file and reports the wall refusal in it, or false when the
-// file cannot be read or holds no refusal.
-func wallRefusedInLog(path string) (WallRefusal, bool) {
-	raw, err := readRegular(path)
-	if err != nil {
-		return WallRefusal{}, false
-	}
-	return WallRefused(raw)
-}
-
 // WallStep returns the number on the LAST `STEP <n>` line the card printed, or "" when it
 // printed none. A card that died at its second step says so, so the remedy can name where.
 func WallStep(log []byte) string {
@@ -218,19 +210,18 @@ func wallPathToken(line string) string {
 	for _, q := range []string{"'", `"`} {
 		rest := line
 		for {
-			i := strings.Index(rest, q)
-			if i < 0 {
+			_, after, found := strings.Cut(rest, q)
+			if !found {
 				break
 			}
-			j := strings.Index(rest[i+1:], q)
-			if j < 0 {
+			cand, next, found := strings.Cut(after, q)
+			if !found {
 				break
 			}
-			cand := rest[i+1 : i+1+j]
 			if strings.Contains(cand, "/") {
 				return cand
 			}
-			rest = rest[i+1+j+1:]
+			rest = next
 		}
 	}
 	for _, f := range strings.Fields(line) {
@@ -240,12 +231,6 @@ func wallPathToken(line string) string {
 		}
 	}
 	return ""
-}
-
-// wallTail is the bounded field the batch's ABSTAIN line carries after log=<n>: the path the
-// wall refused and the step the card reached. The full report line is WallLine, on the notes.
-func wallTail(w WallRefusal) string {
-	return "path=" + dashOr(w.Path) + " step=" + dashOr(w.Step)
 }
 
 // WallLine is the ONE line a wall death is reported on, to the coordinator and to the
@@ -283,7 +268,7 @@ func WallCommits(repoDir string) (branch string, commits int, ok bool) {
 	if base != "" {
 		count = base + "..HEAD"
 	}
-	n, err := strconv.Atoi(gitOut(repoDir, "rev-list", "--count", count))
+	n, err := strconv.Atoi(gitOut(repoDir, "rev-list", "--count", "--end-of-options", count))
 	if err != nil || n < 0 {
 		return "", 0, false
 	}
@@ -311,13 +296,8 @@ func wallBaseRef(repoDir string) string {
 // empty string, because every caller here treats a missing answer as "no answer" and never
 // as zero.
 func gitOut(dir string, args ...string) string {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+	out, _ := gitrun.Output(context.Background(), gitrun.Options{C: dir, Env: append(os.Environ(), "GIT_TERMINAL_PROMPT=0")}, args...)
+	return out
 }
 
 // A DENIAL IN THE CAPTURE IS NEVER AN OK, AND IT IS NEVER A DIAGNOSIS EITHER
@@ -432,12 +412,12 @@ func (r *ShellDenialReader) Write(p []byte) (int, error) {
 	defer r.mu.Unlock()
 	r.buf = append(r.buf, p...)
 	for {
-		i := strings.IndexByte(string(r.buf), '\n')
-		if i < 0 {
+		raw, rest, found := bytes.Cut(r.buf, []byte{'\n'})
+		if !found {
 			break
 		}
-		r.line(string(r.buf[:i]))
-		r.buf = r.buf[i+1:]
+		r.line(string(raw))
+		r.buf = rest
 	}
 	return len(p), nil
 }

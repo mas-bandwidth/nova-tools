@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // Receipt is one person saying: I ran this verb, on this day, on real work, and
@@ -30,20 +32,17 @@ type Receipt struct {
 
 	// Closes is the ID of the finding this run answers, when it answers one.
 	//
-	// Dogfood round 5, edge 2: an edge used to be closed by "somebody runs the
-	// verb again, later, and records neither" — ANYBODY, on any run. So on a
-	// bench where two people dogfood the same verb, one of them finding
-	// something and the other happening to run it afterwards and finding
-	// nothing put the first one's finding out of the gate's sight: nobody read
-	// the note, nobody filed the issue, and the ledger row showed ok=yes over
-	// it. A finding is a PERSON'S, and it is answered by a receipt that names
-	// it or by the person who found it running the verb again.
+	// A finding is closed only by a receipt that names it or by the person who
+	// found it running the verb again. Any other later run leaves it open: a
+	// run that happened to find nothing must not put the finding out of the
+	// gate's sight, where nobody reads the note, nobody files the issue, and
+	// the ledger row shows ok=yes over it.
 	Closes string `json:"closes,omitempty"`
 
 	// File is where this receipt was read from. It is not part of the record —
-	// a receipt does not know its own path — and it is here so a strand can be
-	// NAMED: the dogfood pass of 2026-09-18 was told nine receipts matched
-	// nothing and which nine was left to the reader to work out.
+	// a receipt does not know its own path — and it is here so a failure can
+	// name the receipt it came from: a reader told that receipts matched
+	// nothing learns which ones without working it out.
 	File string `json:"-"`
 }
 
@@ -53,10 +52,9 @@ type Receipt struct {
 func (r Receipt) Key() string { return NormalizeKey(r.Tool, r.Verb) }
 
 // edgeMarker is how the family writes an edge in a note: the word, then a
-// colon. The 2026-09-18 pass wrote "Edges: (1) … (2) …" in six receipts and
-// every one of them was recorded with --ok, because the verb DID work and the
-// edges were beside it. Counting only ok=false said open-edges=0 about a bench
-// that had found six things.
+// colon. A receipt records an edge beside a successful run, because the verb
+// did work and the edges are in the notes; counting only ok=false would say
+// open-edges=0 about a bench that found things.
 var edgeMarker = regexp.MustCompile(`(?i)(^|[^a-z])edges?:`)
 
 // receiptIDShape is what an ID looks like: the eight hex characters a content
@@ -191,12 +189,7 @@ func (r Receipt) Validate() []error {
 }
 
 func hasControl(s string) bool {
-	for _, r := range s {
-		if r == '\n' || r == '\r' || unicode.IsControl(r) {
-			return true
-		}
-	}
-	return false
+	return strings.ContainsFunc(s, func(r rune) bool { return r == '\n' || r == '\r' || unicode.IsControl(r) })
 }
 
 // Record appends one receipt to the receipts directory and returns the file it
@@ -204,15 +197,19 @@ func hasControl(s string) bool {
 // the same directory and renamed into place, because two benches recording at
 // once must not interleave halves of two JSON lines into one file — the
 // directory is the append-only log, and each file is one atomic entry.
-func Record(dir string, r Receipt) (string, error) {
+func Record(dir string, r Receipt) (string, error) { return record(dir, r, true) }
+
+// PlanRecord is Record with nothing written: every check Record makes (the
+// receipt, the directory as MkdirAll would make it, the file as the atomic write
+// would check it), the same error, and the path the receipt would take.
+func PlanRecord(dir string, r Receipt) (string, error) { return record(dir, r, false) }
+
+func record(dir string, r Receipt, write bool) (string, error) {
 	if strings.TrimSpace(dir) == "" {
 		return "", errors.New("receipts: no directory given; refusing to guess")
 	}
 	if errs := r.Validate(); len(errs) > 0 {
 		return "", errs[0]
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("receipts: %w", err)
 	}
 	line, err := json.Marshal(r)
 	if err != nil {
@@ -230,25 +227,16 @@ func Record(dir string, r Receipt) (string, error) {
 		strings.ReplaceAll(r.Time().Format("20060102T150405Z"), ":", ""),
 		slug(r.Tool), slug(r.Verb), slug(r.By), sum)
 	final := filepath.Join(dir, name)
-
-	tmp, err := os.CreateTemp(dir, ".receipt-*.tmp")
-	if err != nil {
+	if !write {
+		if err := atomicfile.CheckAfterMkdirAll(filepath.Clean(final), 0o600, atomicfile.ExactMode()); err != nil {
+			return "", fmt.Errorf("receipts: %w", err)
+		}
+		return final, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("receipts: %w", err)
 	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename has taken it away
-	if _, err := tmp.Write(line); err != nil {
-		tmp.Close()
-		return "", fmt.Errorf("receipts: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return "", fmt.Errorf("receipts: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return "", fmt.Errorf("receipts: %w", err)
-	}
-	if err := os.Rename(tmpName, final); err != nil {
+	if err := atomicfile.Write(filepath.Clean(final), line, 0o600, atomicfile.ExactMode()); err != nil {
 		return "", fmt.Errorf("receipts: %w", err)
 	}
 	return final, nil

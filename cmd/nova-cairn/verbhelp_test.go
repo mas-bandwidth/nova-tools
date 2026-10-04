@@ -1,8 +1,6 @@
 package main
 
 import (
-	"io"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
@@ -13,16 +11,12 @@ import (
 func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
 	store := []string{"--store", "{dir}/cairns", "--session", "s1"}
-	testverbhelp.Check(t, cairnRun, []testverbhelp.Case{
+	testverbhelp.Check(t, cli.NoStdin(), []testverbhelp.Case{
 		{Verb: "open", Flags: store},
 		{Verb: "append", Flags: store},
 		{Verb: "index", Flags: store},
 		{Verb: "receipt", Flags: store},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cairnRun, "nova-cairn", "open", "append", "version")
-}
-
-func cairnRun(args []string, stdout, stderr io.Writer) int {
-	return run(args, strings.NewReader(""), stdout, stderr)
+	testverbhelp.HelpVerb(t, cli.NoStdin(), "nova-cairn", "open", "append", "version")
 }

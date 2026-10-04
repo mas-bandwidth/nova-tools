@@ -1,0 +1,66 @@
+TLC2 Version 2026.09.25.163503 (rev: 8f4bc8b)
+Running breadth-first search Model-Checking with fp 87 and seed -6046346398468720534 with 1 worker on 32 cores with 1926MB heap and 64MB offheap memory [pid: 4026409] (Linux 7.0.0-31-generic amd64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/port-tlc.GlG0Wb/tla/MCTableMachine.tla
+Parsing file /tmp/port-tlc.GlG0Wb/tla/TableMachine.tla
+Parsing file /tmp/tlc-17062803966252252364/_TLCTrace.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-17062803966252252364/Naturals.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-17062803966252252364/FiniteSets.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-17062803966252252364/Sequences.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-17062803966252252364/TLC.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-17062803966252252364/TLCExt.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-17062803966252252364/Integers.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TableMachine
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module MCTableMachine
+Linting of module TableMachine
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module MCTableMachine
+Starting... (2026-09-28 21:35:08)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-09-28 21:35:08.
+Error: Invariant OnePlacePerTable is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ writer = "initial"
+/\ op = "initial"
+/\ binds = {}
+/\ checks = [ move |-> TRUE,
+  bound |-> TRUE,
+  clear |-> TRUE,
+  dropBound |-> TRUE,
+  bind |-> TRUE,
+  external |-> TRUE ]
+/\ data = { <<<<"external", "external", "external">>, "m2", 2>>,
+  <<<<"t1", "r1", "c1">>, "m1", 1>> }
+/\ step = 0
+/\ rows = {<<"t1", "r1">>, <<"t1", "r2">>, <<"t2", "r1">>, <<"t2", "r2">>}
+/\ live = {"t1", "t2"}
+
+State 2: <Next line 123, col 2 to line 132, col 75 of module TableMachine>
+/\ writer = "w1"
+/\ op = "add"
+/\ binds = {}
+/\ checks = [ move |-> TRUE,
+  bound |-> TRUE,
+  clear |-> TRUE,
+  dropBound |-> TRUE,
+  bind |-> TRUE,
+  external |-> TRUE ]
+/\ data = { <<<<"external", "external", "external">>, "m2", 2>>,
+  <<<<"t1", "r1", "c1">>, "m1", 1>>,
+  <<<<"t1", "r1", "c2">>, "m1", 1>> }
+/\ step = 1
+/\ rows = {<<"t1", "r1">>, <<"t1", "r2">>, <<"t2", "r1">>, <<"t2", "r2">>}
+/\ live = {"t1", "t2"}
+
+3 states generated, 3 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-09-28 21:35:08)
+Trace exploration spec path: ./MCTableMachine_TTrace_1790631308.tla

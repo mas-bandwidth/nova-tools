@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // spell writes tokens as "kind:text@line", so a test reads what the lexer
@@ -56,11 +58,11 @@ func TestTokensAreLuasTokens(t *testing.T) {
 	} {
 		toks, bad := tokens(c.src)
 		if bad != nil {
-			t.Errorf("%s: %q is refused: line %d: %s", c.name, c.src, bad.line, bad.why)
+			assert.Nil(t, bad, "%s: %q is refused: line %d: %s", c.name, c.src, bad.line, bad.why)
 			continue
 		}
 		if got := spell(toks); got != c.want {
-			t.Errorf("%s: %q\n got %s\nwant %s", c.name, c.src, got, c.want)
+			assert.Equal(t, c.want, got, "%s: %q\n got %s\nwant %s", c.name, c.src, got, c.want)
 		}
 	}
 }
@@ -85,11 +87,11 @@ func TestTokensRefuseWhatDoesNotEndInsideTheFile(t *testing.T) {
 	} {
 		toks, bad := tokens(c.src)
 		if bad == nil {
-			t.Errorf("%s: %q is read as %s, want a fault", c.name, c.src, spell(toks))
+			assert.NotNil(t, bad, "%s: %q is read as %s, want a fault", c.name, c.src, spell(toks))
 			continue
 		}
 		if bad.line != c.line || !strings.Contains(bad.why, c.why) {
-			t.Errorf("%s: %q: line %d: %s; want line %d: %s", c.name, c.src, bad.line, bad.why, c.line, c.why)
+			assert.Failf(t, "", "%s: %q: line %d: %s; want line %d: %s", c.name, c.src, bad.line, bad.why, c.line, c.why)
 		}
 	}
 }
@@ -125,11 +127,11 @@ func TestScanCountsTheLocalsAsLuaDoes(t *testing.T) {
 	} {
 		read, bad := scan("a.lua", c.src)
 		if bad != nil {
-			t.Errorf("%s: %q is refused: line %d: %s", c.name, c.src, bad.line, bad.why)
+			assert.Nil(t, bad, "%s: %q is refused: line %d: %s", c.name, c.src, bad.line, bad.why)
 			continue
 		}
 		if read.peak != c.peak || read.left != c.left {
-			t.Errorf("%s: %q holds %d at most and %d at its end, want %d and %d", c.name, c.src, read.peak, read.left, c.peak, c.left)
+			assert.Failf(t, "", "%s: %q holds %d at most and %d at its end, want %d and %d", c.name, c.src, read.peak, read.left, c.peak, c.left)
 		}
 	}
 }
@@ -153,11 +155,11 @@ func TestAForsLocalsAreNotTakenByADoInsideItsExpressions(t *testing.T) {
 		text := forInFunction(174, depth)
 		read, bad := scan("scope.lua", text)
 		if bad != nil || read.peak != want {
-			t.Errorf("depth %d: the count is %d (%v), want %d", depth, read.peak, bad, want)
+			assert.Failf(t, "", "depth %d: the count is %d (%v), want %d", depth, read.peak, bad, want)
 		}
 		lib := Library{Name: "scope_probe", Files: tree(map[string]string{"scope.lua": text}), Glob: "*.lua"}
 		if _, err := lib.Source(); !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), fmt.Sprintf("would hold %d local variables", want)) {
-			t.Errorf("depth %d: Source = %v, want the refusal of %d locals over MaxLocals", depth, err, want)
+			assert.Failf(t, "", "depth %d: Source = %v, want the refusal of %d locals over MaxLocals", depth, err, want)
 		}
 	}
 }
@@ -194,18 +196,18 @@ func TestScanReadsTheNamesAFileRegisters(t *testing.T) {
 	} {
 		read, bad := scan("a.lua", c.src)
 		if bad != nil {
-			t.Errorf("%s: %q is refused: line %d: %s", c.name, c.src, bad.line, bad.why)
+			assert.Nil(t, bad, "%s: %q is refused: line %d: %s", c.name, c.src, bad.line, bad.why)
 			continue
 		}
 		var got []string
 		for _, reg := range read.regs {
 			if reg.file != "a.lua" {
-				t.Errorf("%s: %s is said to be registered in %q", c.name, reg.name, reg.file)
+				assert.Equal(t, "a.lua", reg.file, "%s: %s is said to be registered in %q", c.name, reg.name, reg.file)
 			}
 			got = append(got, fmt.Sprintf("%s@%d", reg.name, reg.line))
 		}
 		if strings.Join(got, " ") != c.want {
-			t.Errorf("%s: %q registers %v, want %s", c.name, c.src, got, c.want)
+			assert.Equal(t, c.want, strings.Join(got, " "), "%s: %q registers %v, want %s", c.name, c.src, got, c.want)
 		}
 	}
 }

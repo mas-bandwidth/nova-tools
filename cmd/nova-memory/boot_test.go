@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // boot loads a pin, not the whole directory: a pin naming three memories must
@@ -19,9 +21,7 @@ func TestBootLoadsExactlyThePinnedFiles(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, content string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
 	}
 	a := "alpha memory\n\nfirst paragraph aaa\n"
 	b := "beta memory\n\nsecond paragraph bbb\n"
@@ -32,21 +32,13 @@ func TestBootLoadsExactlyThePinnedFiles(t *testing.T) {
 	write("d.md", "delta memory\n\nfourth paragraph ddd\n") // unpinned, must not load
 
 	pin := filepath.Join(dir, "pin")
-	if err := os.WriteFile(pin, []byte("# the few memories this session loads\na.md\nb.md\nc.md\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(pin, []byte("# the few memories this session loads\na.md\nb.md\nc.md\n"), 0o644))
 
 	exit, stdout, stderr := runCLI(t, "", "boot", "--root", dir, "--pin", pin)
-	if exit != 0 {
-		t.Fatalf("exit = %d, want 0; stdout: %s stderr: %s", exit, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "files=3") {
-		t.Errorf("stdout = %q, want files=3: boot must load exactly the three pinned files", stdout)
-	}
+	require.Equalf(t, 0, exit, "exit = %d, want 0; stdout: %s stderr: %s", exit, stdout, stderr)
+	assert.Containsf(t, stdout, "files=3", "stdout = %q, want files=3: boot must load exactly the three pinned files", stdout)
 	// The byte total is the three named files' and never d.md's: a walk would
 	// add len("delta memory\n\nfourth paragraph ddd\n") to the total.
 	want := strconv.Itoa(len(a) + len(b) + len(c))
-	if !strings.Contains(stdout, "bytes="+want) {
-		t.Errorf("stdout = %q, want bytes=%s (exactly the three pinned files, not the unpinned d.md)", stdout, want)
-	}
+	assert.Containsf(t, stdout, "bytes="+want, "stdout = %q, want bytes=%s (exactly the three pinned files, not the unpinned d.md)", stdout, want)
 }

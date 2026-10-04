@@ -1,0 +1,3 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 1
+tools/bench-wsl2.ps1:stderr-null 6 six lines, each a probe whose empty answer the script reports (go version, id -un, systemctl is-active, tailscale ip, the ssh round trip) or an idempotent `id -u || useradd`

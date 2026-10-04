@@ -8,6 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE CLASS RULE: NO DOC AND NO CARD TELLS ANYONE TO RUN `go test ./...`, OR
@@ -20,20 +23,13 @@ import (
 // hand timing scripts. A doc or a card that spells `go test ./...` teaches the
 // next child to do it again, on a bench shared with the work it tests. The
 // door is `nova-ci local`: exactly the unit tier CI runs for the diff (the
-// packages select-packages.sh picks, `make test` at -p 2 with the budgets).
+// packages CI's selection picks, `make test` at -p 2 with the budgets).
 //
 // The rule reads, as text: every Markdown file in the tree outside testdata
 // (the docs, AGENTS.md, TESTING.md, READMEs), every card template
-// (CardTemplateDirs), every brief source the no-gh rule reads (briefSources),
-// and the Go files that write a harness card's standard lines. No allowlist:
+// (CardTemplateDirs) and every brief source the no-gh rule reads
+// (briefSources). No allowlist:
 // the offenders in the tree when it landed were rewritten.
-
-// wholeTreeCardSources are the Go files whose string constants are a card's
-// text: the harness card's standard lines and the copy cards built from them.
-var wholeTreeCardSources = []string{
-	"internal/nsprint/taskcard/complete.go",
-	"internal/nsprint/card/copy.go",
-}
 
 // wholeTreeGoTestRe is `go test`, any flags (a flag may take one value that is
 // not a path), then `./...` or one of the three trees that are most of it
@@ -43,7 +39,7 @@ var wholeTreeCardSources = []string{
 var wholeTreeGoTestRe = regexp.MustCompile(`\bgo test(?:\s+-\S+(?:\s+[^\s\-./` + "`" + `|][^\s` + "`" + `|]*)?)*\s+\./(?:(?:cmd|internal|tools)/)?\.\.\.(?:[^\w/]|$)`)
 
 // wholeTreeRemedy is the one thing to do instead.
-const wholeTreeRemedy = "run `nova-ci local` (the unit tier CI runs for this diff: select-packages.sh, make test at -p 2, the budgets) or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>"
+const wholeTreeRemedy = "run `nova-ci local` (the unit tier CI runs for this diff: its package selection, make test at -p 2, the budgets) or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>"
 
 // wholeTreeViolations returns "line: text" for every whole-tree go test in src.
 func wholeTreeViolations(src []byte) []string {
@@ -74,25 +70,13 @@ func wholeTreeSources(t *testing.T) []string {
 	}
 	for _, glob := range briefSources {
 		matches, err := filepath.Glob(filepath.Join(tree.Root, filepath.FromSlash(glob)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(matches) == 0 {
-			t.Fatalf("brief source %s matches no file; an empty set is not a pass, fix briefSources", glob)
-		}
+		require.NoError(t, err)
+		require.NotEmptyf(t, matches, "brief source %s matches no file; an empty set is not a pass, fix briefSources", glob)
 		for _, m := range matches {
 			rel, err := filepath.Rel(tree.Root, m)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			seen[filepath.ToSlash(rel)] = true
 		}
-	}
-	for _, rel := range wholeTreeCardSources {
-		if tree.ByRel(rel) == nil {
-			t.Fatalf("card source %s is not in the tree; a file that moves must move here too", rel)
-		}
-		seen[rel] = true
 	}
 	out := make([]string, 0, len(seen))
 	for rel := range seen {
@@ -112,9 +96,7 @@ func TestNoWholeTreeGoTestInDocs(t *testing.T) {
 	docs := 0
 	for _, rel := range files {
 		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		if strings.HasSuffix(rel, ".md") {
 			docs++
 		}
@@ -122,13 +104,9 @@ func TestNoWholeTreeGoTestInDocs(t *testing.T) {
 			bad = append(bad, rel+":"+v)
 		}
 	}
-	if docs < 50 {
-		t.Fatalf("read %d Markdown files; the tree ships more than a hundred, so the rule is reading the wrong tree", docs)
-	}
-	if len(bad) > 0 {
-		t.Fatalf("%d line(s) tell a reader to test the whole tree (nova-tools#4336; CPU is for real work); %s:\n  %s",
-			len(bad), wholeTreeRemedy, strings.Join(bad, "\n  "))
-	}
+	require.GreaterOrEqualf(t, docs, 50, "read %d Markdown files; the tree ships more than a hundred, so the rule is reading the wrong tree", docs)
+	require.Emptyf(t, bad, "%d line(s) tell a reader to test the whole tree (nova-tools#4336; CPU is for real work); %s:\n  %s",
+		len(bad), wholeTreeRemedy, strings.Join(bad, "\n  "))
 }
 
 // TestWholeTreeRuleSeesEachSpelling is the rule's control: each whole-tree
@@ -137,6 +115,8 @@ func TestWholeTreeRuleSeesEachSpelling(t *testing.T) {
 	t.Parallel()
 	for _, bad := range []string{
 		"go test ./...",
+		"go test -v ./...",
+		"go test -v -count=1 ./...",
 		"run `go test ./...` before you push",
 		"go build ./... && go vet ./... && go test -race ./...",
 		"go test -tags perf -p 1 -parallel 1 ./...",
@@ -146,9 +126,8 @@ func TestWholeTreeRuleSeesEachSpelling(t *testing.T) {
 		"go test ./internal/...",
 		"go test -count=1 ./tools/...",
 	} {
-		if v := wholeTreeViolations([]byte("fine\n" + bad + "\n")); len(v) != 1 || !strings.HasPrefix(v[0], "2: ") {
-			t.Errorf("%q: violations %q, want one at line 2", bad, v)
-		}
+		v := wholeTreeViolations([]byte("fine\n" + bad + "\n"))
+		assert.Truef(t, len(v) == 1 && strings.HasPrefix(v[0], "2: "), "%q: violations %q, want one at line 2", bad, v)
 	}
 	for _, good := range []string{
 		"nova-ci local",
@@ -159,8 +138,7 @@ func TestWholeTreeRuleSeesEachSpelling(t *testing.T) {
 		"go test on the touched packages, never ./... on a shared bench",
 		"go test ./cmd/nova-ci/...",
 	} {
-		if v := wholeTreeViolations([]byte(good + "\n")); len(v) != 0 {
-			t.Errorf("%q flagged: %q", good, v)
-		}
+		v := wholeTreeViolations([]byte(good + "\n"))
+		assert.Emptyf(t, v, "%q flagged: %q", good, v)
 	}
 }

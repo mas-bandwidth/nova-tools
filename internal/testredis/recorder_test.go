@@ -1,9 +1,13 @@
 package testredis
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // recorder is a testing.TB that writes down a failure or a skip instead of
@@ -22,6 +26,14 @@ func (r *recorder) Fatal(args ...any) {
 
 func (r *recorder) Fatalf(format string, args ...any) {
 	r.fatal = fmt.Sprintf(format, args...)
+	runtime.Goexit()
+}
+
+func (r *recorder) Errorf(format string, args ...any) {
+	r.fatal = fmt.Sprintf(format, args...)
+}
+
+func (r *recorder) FailNow() {
 	runtime.Goexit()
 }
 
@@ -54,4 +66,17 @@ func panics(f func()) (said any) {
 // standing is a sentry that stands without a process: group 0, never gone.
 func standing() *sentry {
 	return &sentry{enlist: func() (*post, error) { return &post{gone: make(chan struct{})}, nil }}
+}
+
+func TestRecorderCapturesTestifyFailureAndEndsTheCallback(t *testing.T) {
+	t.Parallel()
+
+	continued := false
+	r := provoke(t, func(tb testing.TB) {
+		require.NoError(tb, errors.New("recorded cause"), "recorded failure")
+		continued = true
+	})
+	assert.Contains(t, r.fatal, "recorded cause")
+	assert.Contains(t, r.fatal, "recorded failure")
+	assert.False(t, continued)
 }

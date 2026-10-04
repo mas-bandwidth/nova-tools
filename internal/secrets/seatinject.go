@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -13,14 +14,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// THE SECOND CIRCLE (the store's move to hetzner, 2026-09-27).
-//
-// `seat add` gives a NEW seat its first values out of a seat the coordinator can open.
-// The night the store moved, every bench seat that already existed needed the store's
-// new NOVA_REDIS_BENCH_PASSWORD, which the coordinator's seat held sealed; `seal` runs
-// only where the target's own key lives, and `seat add` refuses a seat file that exists.
-// So a value the coordinator holds could reach an existing seat by no verb at all, and
-// Glenn's rule is that a hand fix is not a road.
+// WHY `seat inject` EXISTS: when a value many seats share rotates (the store's
+// NOVA_REDIS_BENCH_PASSWORD, say), every seat holding it needs the new value sealed
+// into its own file. `seal` runs only where the target's own key lives, and `seat
+// add` refuses a seat file that exists, so without this verb a value the coordinator
+// holds sealed reaches an EXISTING seat only through a hand-run sops pipe -- a
+// one-off road that repeats no refusals and leaves nothing to review.
 //
 // `seat inject` is `seat add`'s pipe pointed at an EXISTING seat's file: the named
 // values come out of the source through sops, go straight into the encrypt of the
@@ -45,6 +44,12 @@ type SeatInjectOptions struct {
 	GitPath  string
 
 	NoPR bool
+
+	// DryRun prints the plan and writes nothing: the source is decrypted (the read the
+	// verb needs to know the names exist) but nothing is encrypted, no file is written
+	// and no git write, push or gh call runs. The plan is read off the same carry the
+	// real run walks, so the two cannot differ.
+	DryRun bool
 
 	// Progress receives one short line per step that can take time (nil = silent).
 	// It never carries a value: step names and public facts only.
@@ -79,17 +84,6 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 		return "", err
 	}
 
-	sFi, err := os.Stat(opts.StoreDir)
-	if err != nil || !sFi.IsDir() {
-		return "", fmt.Errorf("store %s is not a directory", opts.StoreDir)
-	}
-	gFi, err := os.Stat(filepath.Join(opts.StoreDir, ".git"))
-	if err != nil || !gFi.IsDir() {
-		return "", fmt.Errorf("store %s has no .git directory; clone it: git clone <url> %s", opts.StoreDir, opts.StoreDir)
-	}
-	if _, err := os.Stat(filepath.Join(opts.StoreDir, ".sops.yaml")); err != nil {
-		return "", fmt.Errorf("store %s carries no .sops.yaml", opts.StoreDir)
-	}
 	if err := CheckInvariant6(opts.KeyPath); err != nil {
 		return "", err
 	}
@@ -135,16 +129,10 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 		return "", err
 	}
 
-	opts.say("encrypting %d value(s) to %s's own recipients", len(names), seatFile)
-	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, document)
-	if err != nil {
-		return "", err
-	}
-
 	joined := strings.Join(names, "+")
 	branch := fmt.Sprintf("seal/%s-%s-%s", opts.AsName, joined, opts.Now().UTC().Format("20060102-150405"))
 	commitMsg := fmt.Sprintf("inject %s into %s from %s", strings.Join(names, ","), seatFile, opts.From)
-	prNum, merged, err := sealCarry{
+	carry := sealCarry{
 		run:      run,
 		storeDir: opts.StoreDir,
 		gitPath:  opts.GitPath,
@@ -164,7 +152,23 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 			}
 			return checkFn(opts.StoreDir, opts.AsName, opts.KeyPath, opts.SopsPath)
 		},
-	}.carry(ciphertext)
+	}
+
+	if opts.DryRun {
+		home, err := carry.preflight()
+		if err != nil {
+			return "", err
+		}
+		return seatInjectPlan(opts, names, held, carry, home, targetFile), nil
+	}
+
+	opts.say("encrypting %d value(s) to %s's own recipients", len(names), seatFile)
+	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, document)
+	if err != nil {
+		return "", err
+	}
+
+	prNum, merged, err := carry.carry(ciphertext)
 	if err != nil {
 		return "", err
 	}
@@ -182,32 +186,16 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 // seatInjectValidate checks the invocation and answers the --only names, sorted and
 // de-duplicated so the branch name and the file do not depend on argument order.
 func seatInjectValidate(opts *SeatInjectOptions) ([]string, error) {
-	if opts.StoreDir == "" {
-		return nil, fmt.Errorf("missing --store <dir>")
-	}
-	if opts.AsName == "" {
-		return nil, fmt.Errorf("missing --as <seat>: the existing seat receiving the values")
-	}
-	if !IsValidAsName(opts.AsName) {
-		return nil, fmt.Errorf("invalid seat name %q for --as: must match [A-Za-z0-9_-]+", opts.AsName)
-	}
-	if opts.From == "" {
-		return nil, fmt.Errorf("missing --from <source-seat>: a seat this machine can open")
-	}
-	if !IsValidAsName(opts.From) {
-		return nil, fmt.Errorf("invalid seat name %q for --from: must match [A-Za-z0-9_-]+", opts.From)
+	if err := preflight(opts.StoreDir, need{opts.StoreDir, "--store <dir>", false},
+		need{opts.AsName, "--as <seat> (the existing seat receiving the values)", true},
+		need{opts.From, "--from <source-seat> (a seat this machine can open)", true},
+		need{opts.KeyPath, "--key <path> (this machine's key, the one that opens --from)", false},
+		need{opts.SopsPath, "--sops <path>", false},
+		need{strings.TrimSpace(opts.Only), "--only <NAME,…> (seat inject delivers the values it is told to deliver and no others)", false}); err != nil {
+		return nil, err
 	}
 	if opts.From == opts.AsName {
 		return nil, fmt.Errorf("--from names %s, the seat receiving the values; a seat that can open its own file uses seal, and the source is a DIFFERENT seat this machine can open", opts.AsName)
-	}
-	if opts.KeyPath == "" {
-		return nil, fmt.Errorf("missing --key <path>: this machine's key, the one that opens --from")
-	}
-	if opts.SopsPath == "" {
-		return nil, fmt.Errorf("missing --sops <path>")
-	}
-	if strings.TrimSpace(opts.Only) == "" {
-		return nil, fmt.Errorf("missing --only <NAME,…>: seat inject delivers the values it is told to deliver and no others")
 	}
 	if opts.GHPath == "" {
 		opts.GHPath = "gh"
@@ -246,8 +234,9 @@ func seatInjectValidate(opts *SeatInjectOptions) ([]string, error) {
 // it holds, in file order, and which of them stand in the clear (with the clear value,
 // kept verbatim).
 type seatInjectHeld struct {
-	names []string
-	clear map[string]string
+	names      []string
+	clear      map[string]string
+	recipients []string // the file's own recipients, in metadata order
 }
 
 // seatInjectTarget reads the target's recipients out of its sops metadata and holds
@@ -265,12 +254,6 @@ func seatInjectTarget(storeDir, seatFile, recoveryKey string) (seatInjectHeld, e
 	if !hasSops || len(recipients) == 0 {
 		return held, fmt.Errorf("seat file %s carries no sops metadata naming its recipients, so there is nothing to encrypt to; a seat file is written only by sops (seal, seat add), never by hand", seatFile)
 	}
-	if len(recipients) != 2 {
-		return held, fmt.Errorf("seat file %s names %d recipients in its sops metadata; expected exactly two, the seat's own key and the key recovery.pub declares (SPEC-SECRETS invariant 1)", seatFile, len(recipients))
-	}
-	if !containsString(recipients, recoveryKey) {
-		return held, fmt.Errorf("seat file %s does not name the key recovery.pub declares among its recipients; the recovery key is always kept, so this file is re-sealed by sops updatekeys in a reviewed pull request first", seatFile)
-	}
 	cfg, err := ParseSopsConfig(storeDir)
 	if err != nil {
 		return held, fmt.Errorf("store %s: %w", storeDir, err)
@@ -279,9 +262,16 @@ func seatInjectTarget(storeDir, seatFile, recoveryKey string) (seatInjectHeld, e
 	if err != nil {
 		return held, fmt.Errorf(".sops.yaml carries no rule matching %s, so sops has no recipients to encrypt to; the rule is added in a pull request the store's gate reviews", seatFile)
 	}
-	if !sameKeySet(rule.Recipients, recipients) {
-		return held, fmt.Errorf("the rule for %s names recipients its sops metadata does not; the rule is what sops encrypts to, so the file is brought to it first: sops updatekeys %s on a bench that opens it, in a pull request the gate reviews", seatFile, seatFile)
+	// The rule is what sops encrypts to: it and the file's own recipients are held to the
+	// one judgement check and the gate make, before anything is encrypted.
+	if problem := seatFileRecipientsProblem(recipients, rule.Recipients, recoveryKey); problem != "" {
+		next := "the file is brought to its rule first"
+		if ruleRecipientsProblem(rule.Recipients, recoveryKey) != "" {
+			next = "the rule is fixed first, in a pull request the gate reviews, and the file brought to it"
+		}
+		return held, fmt.Errorf("seat file %s: %s; %s: sops updatekeys %s on a bench that opens it", seatFile, problem, next, seatFile)
 	}
+	held.recipients = append([]string(nil), recipients...)
 	var unencRe *regexp.Regexp
 	if rule.UnencryptedRegex != "" {
 		if unencRe, err = regexp.Compile(rule.UnencryptedRegex); err != nil {
@@ -302,19 +292,6 @@ func seatInjectTarget(storeDir, seatFile, recoveryKey string) (seatInjectHeld, e
 		held.clear[k.Name] = k.Value
 	}
 	return held, nil
-}
-
-// sameKeySet answers whether two recipient lists name the same keys, in any order.
-func sameKeySet(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for _, k := range a {
-		if !containsString(b, k) {
-			return false
-		}
-	}
-	return true
 }
 
 // seatInjectCompose renders the target's new document: every name the target held, in
@@ -383,4 +360,32 @@ func seatInjectCompose(plaintext []byte, held seatInjectHeld, names []string, fr
 			as, strings.Join(missingHeld, ", "), from, as, strings.Join(missingHeld, ", "), from, storeDir, from, missingHeld[0])
 	}
 	return []byte(b.String()), nil
+}
+
+// seatInjectPlan is `seat inject --dry-run`'s answer: the refusals the real run has
+// already passed (the target's recipients held to its rule, the source opened, every
+// --only name and every held sealed name present in the source), the file the real run
+// would write, and the road it would take. Only names and public keys appear: no value,
+// fragment or length reaches a line.
+func seatInjectPlan(opts SeatInjectOptions, names []string, held seatInjectHeld, carry sealCarry, home, targetFile string) string {
+	var kept []string
+	for _, n := range held.names {
+		if _, clear := held.clear[n]; clear && !slices.Contains(names, n) {
+			kept = append(kept, n)
+		}
+	}
+	lines := []string{fmt.Sprintf("SECRETS SEAT INJECT PLAN write=%s from=%s deliver=%s recipients=%s keep-clear=%s every other held name is re-sealed from the source; values not shown",
+		oneline.Field(targetFile), oneline.Field(opts.From), oneline.Field(strings.Join(names, ",")),
+		oneline.Field(strings.Join(held.recipients, ",")), oneline.Field(dashIfEmpty(strings.Join(kept, ","))))}
+	lines = append(lines, carry.planLines("SEAT INJECT", home)...)
+	lines = append(lines, fmt.Sprintf("SECRETS SEAT INJECT DRY-RUN OK seat=%s from=%s names=%d nothing written, no push, no gh call",
+		oneline.Field(opts.AsName), oneline.Field(opts.From), len(names)))
+	return strings.Join(lines, "\n")
+}
+
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

@@ -11,6 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE CLASS RULE: NO VERB REFUSES AN EMPTY --redis WHILE A SEAT IS SELECTED
@@ -29,7 +32,7 @@ import (
 //
 // WHICH PACKAGES: the rule was written over cmd/nova-sprint and
 // internal/nsprint. nova-sprint is deprecated (Glenn 2026-09-27: deprecated
-// code is not tested and never blocks CI; deprecated/PACKAGES), and a class
+// code is not tested and never blocks CI; internal/pkgselect/DEPRECATED), and a class
 // rule over it is a test of it, so the rule reads the live packages
 // (liveTree, the reading CI's selection uses) that select a seat: a package
 // whose Go calls seatcred's FromArgs, directly or on seatcred.Process().
@@ -193,15 +196,12 @@ func TestNoVerbRefusesAnEmptyRedisUnderASeat(t *testing.T) {
 	// nova-table selects a seat (selectSeat, seatcred.Process().FromArgs);
 	// a set without it means the selection matcher has stopped matching,
 	// and a rule over no package passes by checking nothing.
-	if i := sort.SearchStrings(dirs, "cmd/nova-table"); i == len(dirs) || dirs[i] != "cmd/nova-table" {
-		t.Fatalf("the live packages that select a seat are %q, without cmd/nova-table; the selection matcher has stopped matching", dirs)
-	}
+	i := sort.SearchStrings(dirs, "cmd/nova-table")
+	require.Truef(t, i < len(dirs) && dirs[i] == "cmd/nova-table", "the live packages that select a seat are %q, without cmd/nova-table; the selection matcher has stopped matching", dirs)
 	var violations []string
 	table := 0
 	for _, f := range tree.GoFilesUnder(false, dirs...) {
-		if f.ParseErr != nil {
-			t.Fatalf("%s: %v", f.Rel, f.ParseErr)
-		}
+		require.NoErrorf(t, f.ParseErr, "%s: %v", f.Rel, f.ParseErr)
 		v, n := seatRedisViolations(tree.FSet, f.AST)
 		if path.Dir(f.Rel) == "cmd/nova-table" {
 			table += n
@@ -213,13 +213,9 @@ func TestNoVerbRefusesAnEmptyRedisUnderASeat(t *testing.T) {
 	// nova-table declares its --redis once (redisFlag) and every verb takes
 	// it from there; none seen means the flag matcher has stopped seeing
 	// them. (nova-wake and nova-swarm select a seat and take no --redis.)
-	if table < 1 {
-		t.Fatalf("no --redis flag found in cmd/nova-table (set %s); the matcher has stopped matching", strings.Join(dirs, ", "))
-	}
-	if len(violations) > 0 {
-		t.Fatalf("%d --redis read(s) refuse an empty address under --seat (#4330); default the flag to the tool's seat-first default (nova-table: redisDefault(os.Getenv)), wrap a hand-parsed one in redisOr, or use seatcred.Addr():\n  %s",
-			len(violations), strings.Join(violations, "\n  "))
-	}
+	require.GreaterOrEqualf(t, table, 1, "no --redis flag found in cmd/nova-table (set %s); the matcher has stopped matching", strings.Join(dirs, ", "))
+	require.Emptyf(t, violations, "%d --redis read(s) refuse an empty address under --seat (#4330); default the flag to the tool's seat-first default (nova-table: redisDefault(os.Getenv)), wrap a hand-parsed one in redisOr, or use seatcred.Addr():\n  %s",
+		len(violations), strings.Join(violations, "\n  "))
 }
 
 // TestSeatRedisRuleSeesEachShape is the rule's own control: the four shapes
@@ -247,18 +243,12 @@ func bad7(a string) { _ = fs.String("redis", a, "") }
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "x.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got, n := seatRedisViolations(fset, f)
 	want := []string{"3:", "4:", "5:", "6:", "7:", "16:", "17:"}
-	if len(got) != len(want) || n != 11 {
-		t.Fatalf("violations %q (flags %d); want one on each of lines 3-7, 16 and 17 and 11 flags seen", got, n)
-	}
+	require.Truef(t, len(got) == len(want) && n == 11, "violations %q (flags %d); want one on each of lines 3-7, 16 and 17 and 11 flags seen", got, n)
 	for i, w := range want {
-		if !strings.HasPrefix(got[i], w) {
-			t.Fatalf("violation %d = %q; want line %s", i, got[i], w)
-		}
+		require.Truef(t, strings.HasPrefix(got[i], w), "violation %d = %q; want line %s", i, got[i], w)
 	}
 	// The selection matcher: both spellings a tool selects a seat by, and
 	// neither a Process() read with no FromArgs nor another package's
@@ -269,8 +259,7 @@ func bad7(a string) { _ = fs.String("redis", a, "") }
 		"addr := seatcred.Process().Addr()":                                  false,
 		"x := other.FromArgs(args)":                                          false,
 	} {
-		if got := seatRedisSelects.MatchString(src); got != want {
-			t.Errorf("seatRedisSelects on %q = %v, want %v", src, got, want)
-		}
+		got := seatRedisSelects.MatchString(src)
+		assert.Equalf(t, want, got, "seatRedisSelects on %q = %v, want %v", src, got, want)
 	}
 }

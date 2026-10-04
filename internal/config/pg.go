@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,9 +75,21 @@ type PG struct {
 	db *sql.DB
 }
 
+// ConnectTimeout bounds the connection check of OpenPG when the context
+// carries no deadline of its own.
+const ConnectTimeout = 10 * time.Second
+
 // OpenPG opens the store and pings it once, so a wrong address or login is
-// refused here rather than on the first verb.
+// refused here rather than on the first verb. The ping is bounded by the
+// context's deadline when it has one and by ConnectTimeout when it has none.
 func OpenPG(ctx context.Context, dsn string) (*PG, error) {
+	return openPGWithin(ctx, dsn, ConnectTimeout)
+}
+
+// openPGWithin is OpenPG with the bound for a context that carries no
+// deadline given, so the package's tests can shorten it: a caller's deadline,
+// longer or shorter, always governs.
+func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*PG, error) {
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres dsn: %w", err)
@@ -87,9 +100,14 @@ func OpenPG(ctx context.Context, dsn string) (*PG, error) {
 		return nil, fmt.Errorf("postgres: %w", err)
 	}
 	db.SetMaxOpenConns(2)
-	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	pingCtx := ctx
+	if _, has := ctx.Deadline(); !has {
+		var cancel context.CancelFunc
+		pingCtx, cancel = context.WithTimeout(ctx, noDeadline)
+		defer cancel()
+	}
 	if err := db.PingContext(pingCtx); err != nil {
+		// ignored: a close on the failure path; the ping error is the one returned
 		_ = db.Close()
 		return nil, fmt.Errorf("postgres at %s: %w", Redact(dsn), err)
 	}
@@ -133,6 +151,32 @@ func (p *PG) Version(ctx context.Context) (int, error) {
 	return int(v.Int64), nil
 }
 
+// Applied is the ledger: every version recorded in config.schema_migrations,
+// in order, none before the first migrate. migrate --dry-run prints it, so a
+// version missing below the greatest is seen rather than assumed.
+func (p *PG) Applied(ctx context.Context) ([]int, error) {
+	if v, err := p.Version(ctx); err != nil || v == 0 {
+		return nil, err
+	}
+	rows, err := p.db.QueryContext(ctx, `SELECT version FROM config.schema_migrations ORDER BY version`)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: read the migration ledger: %w", err)
+	}
+	defer rows.Close()
+	var out []int
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("postgres: read the migration ledger: %w", err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: read the migration ledger: %w", err)
+	}
+	return out, nil
+}
+
 // Migrate applies every embedded migration the ledger lacks, each in its own
 // transaction with its ledger row, and returns the version before, the
 // version after and the versions applied. Running it twice applies nothing
@@ -147,10 +191,7 @@ func (p *PG) Migrate(ctx context.Context) (from, to int, applied []int, err erro
 		return 0, 0, nil, err
 	}
 	to = from
-	for _, m := range all {
-		if m.Version <= from {
-			continue
-		}
+	for _, m := range Pending(all, from) {
 		if err := p.applyOne(ctx, m); err != nil {
 			return from, to, applied, err
 		}
@@ -168,6 +209,7 @@ func (p *PG) applyOne(ctx context.Context, m Migration) error {
 	if err != nil {
 		return fmt.Errorf("migration %d: begin: %w", m.Version, err)
 	}
+	// ignored: a rollback after a commit is a no-op, and on a failure path the failure is the one returned
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
 		return fmt.Errorf("migration %d (%s): %w", m.Version, m.Name, err)
@@ -179,6 +221,38 @@ func (p *PG) applyOne(ctx context.Context, m Migration) error {
 		return fmt.Errorf("migration %d: commit: %w", m.Version, err)
 	}
 	return nil
+}
+
+// Ownership reads schema config's owner, whether the connected role may
+// create in it, and each table's owner, in one catalog query; the schema's
+// absence is an empty SchemaOwner and no tables.
+func (p *PG) Ownership(ctx context.Context) (Ownership, error) {
+	rows, err := p.db.QueryContext(ctx, `SELECT current_user::text,
+       coalesce(pg_get_userbyid(n.nspowner)::text, ''),
+       coalesce(has_schema_privilege(n.oid, 'CREATE'), false),
+       coalesce(c.relname::text, ''),
+       coalesce(pg_get_userbyid(c.relowner)::text, '')
+  FROM (SELECT 1) AS one
+  LEFT JOIN pg_namespace n ON n.nspname = 'config'
+  LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relkind IN ('r', 'p')`)
+	if err != nil {
+		return Ownership{}, fmt.Errorf("postgres: read the owners of schema config: %w", err)
+	}
+	defer rows.Close()
+	o := Ownership{Tables: map[string]string{}}
+	for rows.Next() {
+		var table, owner string
+		if err := rows.Scan(&o.Role, &o.SchemaOwner, &o.Create, &table, &owner); err != nil {
+			return Ownership{}, fmt.Errorf("postgres: read the owners of schema config: %w", err)
+		}
+		if table != "" {
+			o.Tables[table] = owner
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Ownership{}, fmt.Errorf("postgres: read the owners of schema config: %w", err)
+	}
+	return o, nil
 }
 
 // grantRead lets the read role read the schema when the role exists.
@@ -212,11 +286,15 @@ func scanRow(k *Kind, scan func(dest ...any) error) (Row, error) {
 	row := Row{Fields: map[string]string{}}
 	dest := []any{&row.Name}
 	texts := make([]sql.NullString, len(k.Fields))
-	ints := make([]int64, len(k.Fields))
+	ints := make([]sql.NullInt64, len(k.Fields))
+	bools := make([]bool, len(k.Fields))
 	for i, f := range k.Fields {
-		if f.Type == TypeInt {
+		switch f.Type {
+		case TypeInt:
 			dest = append(dest, &ints[i])
-		} else {
+		case TypeBool:
+			dest = append(dest, &bools[i])
+		default:
 			dest = append(dest, &texts[i])
 		}
 	}
@@ -226,9 +304,16 @@ func scanRow(k *Kind, scan func(dest ...any) error) (Row, error) {
 		return Row{}, err
 	}
 	for i, f := range k.Fields {
-		if f.Type == TypeInt {
-			row.Fields[f.Name] = strconv.FormatInt(ints[i], 10)
-		} else {
+		switch f.Type {
+		case TypeInt:
+			if ints[i].Valid {
+				row.Fields[f.Name] = strconv.FormatInt(ints[i].Int64, 10)
+			} else {
+				row.Fields[f.Name] = ""
+			}
+		case TypeBool:
+			row.Fields[f.Name] = strconv.FormatBool(bools[i])
+		default:
 			// A NULL (an optional ref naming no row) is the empty value.
 			row.Fields[f.Name] = texts[i].String
 		}
@@ -248,13 +333,17 @@ func values(k *Kind, row Row) []any {
 }
 
 // fieldArg is one field's value as the column takes it: an int as a
-// number, an empty optional ref as NULL (the foreign key allows no ”), any
-// other value as text.
+// number, a bool as a boolean, an empty optional ref as NULL (the foreign
+// key allows no ”), any other value as text.
 func fieldArg(f Field, v string) any {
 	switch {
+	case f.Nullable && v == "":
+		return nil
 	case f.Type == TypeInt:
 		n, _ := strconv.ParseInt(v, 10, 64)
 		return n
+	case f.Type == TypeBool:
+		return v == "true"
 	case f.Type == TypeRef && v == "":
 		return nil
 	}
@@ -269,13 +358,23 @@ func kindOf(kind string) (*Kind, error) {
 	return k, nil
 }
 
+// queryer is what *sql.DB and *sql.Tx share, so one read runs on either.
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 func (p *PG) Get(ctx context.Context, kind, name string) (Row, bool, error) {
+	return getRow(ctx, p.db, kind, name)
+}
+
+func getRow(ctx context.Context, q queryer, kind, name string) (Row, bool, error) {
 	k, err := kindOf(kind)
 	if err != nil {
 		return Row{}, false, err
 	}
-	q := `SELECT ` + columns(k) + `, created_at, updated_at FROM config.` + quoteIdent(k.Table) + ` WHERE name = $1`
-	row, err := scanRow(k, p.db.QueryRowContext(ctx, q, name).Scan)
+	stmt := `SELECT ` + columns(k) + `, created_at, updated_at FROM config.` + quoteIdent(k.Table) + ` WHERE name = $1`
+	row, err := scanRow(k, q.QueryRowContext(ctx, stmt, name).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Row{}, false, nil
 	}
@@ -286,12 +385,16 @@ func (p *PG) Get(ctx context.Context, kind, name string) (Row, bool, error) {
 }
 
 func (p *PG) List(ctx context.Context, kind string) ([]Row, error) {
+	return listRows(ctx, p.db, kind)
+}
+
+func listRows(ctx context.Context, q queryer, kind string) ([]Row, error) {
 	k, err := kindOf(kind)
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT ` + columns(k) + `, created_at, updated_at FROM config.` + quoteIdent(k.Table) + ` ORDER BY name`
-	rows, err := p.db.QueryContext(ctx, q)
+	stmt := `SELECT ` + columns(k) + `, created_at, updated_at FROM config.` + quoteIdent(k.Table) + ` ORDER BY name`
+	rows, err := q.QueryContext(ctx, stmt)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list %s: %w", kind, err)
 	}
@@ -362,6 +465,7 @@ func (p *PG) Insert(ctx context.Context, kind string, row Row, actor string) (in
 	if err != nil {
 		return 0, fmt.Errorf("postgres: begin: %w", err)
 	}
+	// ignored: a rollback after a commit is a no-op, and on a failure path the failure is the one returned
 	defer func() { _ = tx.Rollback() }()
 	args := values(k, row)
 	marks := make([]string, len(args))
@@ -401,9 +505,7 @@ func (p *PG) Update(ctx context.Context, kind, name string, changes map[string]s
 		return Row{}, 0, &RefusedError{Err: ErrNotFound, Detail: fmt.Sprintf("%s %s not found", kind, name)}
 	}
 	next := cur.Clone()
-	for f, v := range changes {
-		next.Fields[f] = v
-	}
+	maps.Copy(next.Fields, changes)
 	if err := checkRefs(ctx, p, k, next); err != nil {
 		return Row{}, 0, err
 	}
@@ -411,6 +513,7 @@ func (p *PG) Update(ctx context.Context, kind, name string, changes map[string]s
 	if err != nil {
 		return Row{}, 0, fmt.Errorf("postgres: begin: %w", err)
 	}
+	// ignored: a rollback after a commit is a no-op, and on a failure path the failure is the one returned
 	defer func() { _ = tx.Rollback() }()
 	var sets []string
 	args := []any{name}
@@ -463,6 +566,7 @@ func (p *PG) Delete(ctx context.Context, kind, name string, actor string) (int64
 	if err != nil {
 		return 0, fmt.Errorf("postgres: begin: %w", err)
 	}
+	// ignored: a rollback after a commit is a no-op, and on a failure path the failure is the one returned
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM config.`+quoteIdent(k.Table)+` WHERE name = $1`, name); err != nil {
 		if sqlState(err) == "23503" {

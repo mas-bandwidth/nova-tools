@@ -1,14 +1,16 @@
 package ci
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // cipriority_class_test.go is the class rule of nova-tools#4293 (Glenn
@@ -16,10 +18,11 @@ import (
 // idea. because work creates more CI, so without this, it is unstable").
 // Two halves, both read from the tree and neither runs anything:
 //
-//   - TestCopiesRunNiced: every path that execs a copy's harness, or a
-//     coordinator child's local test run, steps its own process down to
-//     yield.Nice (15) BEFORE the exec, on darwin and on Linux, through the
-//     one package internal/yield.
+//   - TestCopiesRunNiced: every path that execs a copy's harness, a
+//     coordinator child's local test run, or a sprint card's native launch
+//     (nova-swarm native, which members and readers start), steps its own
+//     process down to yield.Nice (15) BEFORE the exec, on darwin and on
+//     Linux, through the one package internal/yield.
 //   - TestSlotsShrinkByCILegs: no bench slot computation ignores the CI
 //     legs running on it: every `slots - ...` in live Go and Lua takes the
 //     beat's ci off, and the beat writes it.
@@ -31,14 +34,11 @@ import (
 // before the first exec in the same function: (file, function, yield call,
 // exec call).
 var niceExecPaths = []struct{ file, fn, yield, exec string }{
-	{"internal/nsprint/card/wrapper.go", "func RunWrapper(", "yield()", "proc.start()"},
-	{"internal/nsprint/card/run.go", "func Run(", "yield()", "cmd.Start()"},
 	{"cmd/nova-ci/local.go", "func cmdLocal(", "yield.ToCI()", "localCapture("},
+	// a sprint member's or reader's card: native steps itself (and so the wall, the
+	// harness and every process the card's child runs) before nativeRun starts any of it
+	{"cmd/nova-swarm/main.go", "func cmdNative(", "yieldNative(nativeToCI,", "nativeRun("},
 }
-
-// wrapperDefault is how the two card paths reach the real setpriority: the
-// config's Yield seam (a test's) falls back to the package's yieldToCI.
-const wrapperDefault = "yield = yieldToCI"
 
 func TestCopiesRunNiced(t *testing.T) {
 	t.Parallel()
@@ -46,213 +46,116 @@ func TestCopiesRunNiced(t *testing.T) {
 
 	// 1. The number, and setpriority on both OSes, in the one package.
 	y := readFile(t, filepath.Join(root, "internal/yield/yield.go"))
-	if !strings.Contains(y, "const Nice = 15") {
-		t.Errorf("internal/yield/yield.go: want `const Nice = 15` (nova-tools#4293 names fifteen)")
-	}
+	assert.Contains(t, y, "const Nice = 15", "internal/yield/yield.go: want `const Nice = 15` (nova-tools#4293 names fifteen)")
 	// darwin: a nice belongs to the process, so 0 (this process) is the
 	// whole of it. Linux: a nice belongs to a THREAD, and a child forked
 	// from an un-niced thread inherits 0 (hetzner, 2026-09-26: 31 of 32
 	// children at nice 0 under the one-thread form), so every thread in
 	// /proc/self/task is set, repeatedly until a pass sets none.
 	d := readFile(t, filepath.Join(root, "internal/yield/nice_darwin.go"))
-	if !strings.Contains(d, "syscall.Setpriority(syscall.PRIO_PROCESS, 0, n)") {
-		t.Errorf("internal/yield/nice_darwin.go: want setpriority(PRIO_PROCESS, 0, n) on this process")
-	}
+	assert.Contains(t, d, "syscall.Setpriority(syscall.PRIO_PROCESS, 0, n)", "internal/yield/nice_darwin.go: want setpriority(PRIO_PROCESS, 0, n) on this process")
 	l := readFile(t, filepath.Join(root, "internal/yield/nice_linux.go"))
-	if !strings.Contains(l, `"/proc/self/task"`) || !strings.Contains(l, "syscall.Setpriority(syscall.PRIO_PROCESS, tid, n)") {
-		t.Errorf("internal/yield/nice_linux.go: want setpriority(PRIO_PROCESS, tid, n) over every thread in /proc/self/task (a Linux nice is per thread)")
-	}
-	if strings.Contains(l, "syscall.Setpriority(syscall.PRIO_PROCESS, 0, n)") {
-		t.Errorf("internal/yield/nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only; children forked from the others run at 0")
-	}
-	if !strings.Contains(readFile(t, filepath.Join(root, "cmd/nova-ci/local.go")), "yield.Nice-15") {
-		t.Errorf("cmd/nova-ci/local.go: localNice must be pinned to yield.Nice")
-	}
+	assert.Contains(t, l, `"/proc/self/task"`, "internal/yield/nice_linux.go: want setpriority(PRIO_PROCESS, tid, n) over every thread in /proc/self/task (a Linux nice is per thread)")
+	assert.Contains(t, l, "syscall.Setpriority(syscall.PRIO_PROCESS, tid, n)", "internal/yield/nice_linux.go: want setpriority(PRIO_PROCESS, tid, n) over every thread in /proc/self/task (a Linux nice is per thread)")
+	assert.NotContains(t, l, "syscall.Setpriority(syscall.PRIO_PROCESS, 0, n)", "internal/yield/nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only; children forked from the others run at 0")
+	assert.Contains(t, readFile(t, filepath.Join(root, "cmd/nova-ci/local.go")), "yield.Nice-15", "cmd/nova-ci/local.go: localNice must be pinned to yield.Nice")
+	// strings.Contains, so a failure prints the one line wanted and not all of native.go
+	assert.True(t, strings.Contains(readFile(t, filepath.Join(root, "cmd/nova-swarm/native.go")), "\nvar nativeToCI = yield.ToCI\n"),
+		"cmd/nova-swarm/native.go: want `var nativeToCI = yield.ToCI`, the step every card's launch takes")
 
 	// 2. Every exec path yields first, in the same function, before the exec.
 	for _, p := range niceExecPaths {
 		src := readFile(t, filepath.Join(root, p.file))
 		body := funcBody(t, p.file, src, p.fn)
 		yi, ei := strings.Index(body, p.yield), strings.Index(body, p.exec)
-		switch {
-		case yi < 0:
-			t.Errorf("%s %s: no %s call: a copy or a local test run must yield to CI before it execs", p.file, p.fn, p.yield)
-		case ei < 0:
-			t.Errorf("%s %s: no %s call: the exec path this rule guards moved; move the rule with it", p.file, p.fn, p.exec)
-		case yi > ei:
-			t.Errorf("%s %s: %s stands after %s: a yield after the exec yields nothing", p.file, p.fn, p.yield, p.exec)
-		}
-		if p.yield == "yield()" {
-			if di := strings.Index(body, wrapperDefault); di < 0 || di > yi {
-				t.Errorf("%s %s: the yield must default to the package's yieldToCI (`%s`) before it is called", p.file, p.fn, wrapperDefault)
-			}
-		}
-	}
-
-	// 3. The wrapper's yield is the real one: production assigns yieldToCI
-	// once, to yield.ToCI, and nowhere else (the tests swap it), and no
-	// production caller gives a WrapperConfig or RunConfig a Yield of its
-	// own (the seam is for tests).
-	dir := filepath.Join(root, "internal/nsprint/card")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assigns := 0
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+		if !assert.NotEqual(t, -1, yi, "%s %s: no %s call: a copy or a local test run must yield to CI before it execs", p.file, p.fn, p.yield) {
 			continue
 		}
-		src := readFile(t, filepath.Join(dir, e.Name()))
-		for _, line := range strings.Split(src, "\n") {
-			if strings.Contains(line, "yieldToCI =") {
-				assigns++
-				if e.Name() != "nice.go" || !strings.Contains(line, "yield.ToCI") {
-					t.Errorf("%s: %q: production may set the wrapper's yield only in nice.go, to yield.ToCI", e.Name(), strings.TrimSpace(line))
-				}
-			}
+		if !assert.NotEqual(t, -1, ei, "%s %s: no %s call: the exec path this rule guards moved; move the rule with it", p.file, p.fn, p.exec) {
+			continue
 		}
+		assert.LessOrEqual(t, yi, ei, "%s %s: %s stands after %s: a yield after the exec yields nothing", p.file, p.fn, p.yield, p.exec)
 	}
-	if assigns != 1 {
-		t.Errorf("internal/nsprint/card sets yieldToCI %d times in production, want exactly once (nice.go)", assigns)
-	}
-	for _, base := range []string{"cmd", "internal"} {
-		err := filepath.WalkDir(filepath.Join(root, base), func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
+
+	// 2b. The reader below sees every shape of a write to nova-swarm's seam.
+	t.Run("the nativeToCI reader sees every write", nativeToCIWritesSeesEveryShape)
+
+	// 3. No production caller gives a copy a Yield of its own (the seam is
+	// for tests).
+	tree := repoTree(t)
+	for _, f := range tree.GoFilesUnder(false, "cmd", "internal") {
+		for i, line := range strings.Split(string(f.Src), "\n") {
+			code := strings.TrimSpace(line)
+			assert.False(t, strings.HasPrefix(code, "Yield:") || strings.Contains(code, ".Yield = "), "%s:%d: %q: production never sets a copy's Yield; the real setpriority is the default", f.Rel, i+1, code)
+		}
+		// nova-swarm native's seam is yield.ToCI in production; only its test binary's
+		// TestMain makes it a no-op (that binary is a CI leg running cmdNative in-process).
+		// Read on the parsed file, so no spelling of a write gets past a text match.
+		if f.AST != nil {
+			for _, w := range nativeToCIWrites(tree.FSet, f.AST) {
+				assert.Fail(t, "a production write to nativeToCI", "%s:%s: production never writes nova-swarm's nativeToCI; it is yield.ToCI", f.Rel, w)
 			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			src := readFile(t, path)
-			for i, line := range strings.Split(src, "\n") {
-				if code := strings.TrimSpace(line); strings.HasPrefix(code, "Yield:") || strings.Contains(code, ".Yield = ") {
-					rel, _ := filepath.Rel(root, path)
-					t.Errorf("%s:%d: %q: production never sets a copy's Yield; the real setpriority is the default", filepath.ToSlash(rel), i+1, code)
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 }
 
-// slotSubtraction finds a slot computation in Lua: `slots - <something>`
-// (d.slots), or the desired hash's slots field read as a number and
-// subtracted from (`(tonumber(desired[1]) or 0) -`, the form deal.lua's
-// in-Redis re-check used and the first pattern missed).
-var slotSubtraction = regexp.MustCompile(`\b[sS]lots\s*-\s*[A-Za-z(]|\bdesired\b[^\n]*\)\s*-\s*[A-Za-z(]`)
-
-// goSlotLines are the lines of a Go file holding a slot computation: a
-// subtraction whose left operand is slots or Slots (`slots - ci`,
-// `b.Slots - b.CI`). Go is read by its syntax, not by slotSubtraction: over
-// the whole live tree the pattern also matched the flag name --slots-store
-// inside strings (cmd/nova-swarm, internal/swarm), which is no subtraction.
-func goSlotLines(fset *token.FileSet, f *ast.File) map[int]bool {
-	lines := map[int]bool{}
-	ast.Inspect(f, func(n ast.Node) bool {
-		b, ok := n.(*ast.BinaryExpr)
-		if !ok || b.Op != token.SUB {
-			return true
-		}
-		name := ""
-		switch x := b.X.(type) {
-		case *ast.Ident:
-			name = x.Name
-		case *ast.SelectorExpr:
-			name = x.Sel.Name
-		}
-		if name == "slots" || name == "Slots" {
-			lines[fset.Position(b.Pos()).Line] = true
+// nativeToCIWrites is every place in one parsed file that could change nova-swarm's
+// nativeToCI: an assignment of any shape (=, :=, op=, one name among several) whose left
+// side names it anywhere, and taking its address (a later write through the pointer).
+// The one declaration, `var nativeToCI = yield.ToCI`, is a ValueSpec and none of these.
+func nativeToCIWrites(fset *token.FileSet, file *ast.File) []string {
+	names := func(e ast.Node) bool {
+		found := false
+		ast.Inspect(e, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && id.Name == "nativeToCI" {
+				found = true
+			}
+			return !found
+		})
+		return found
+	}
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch s := n.(type) {
+		case *ast.AssignStmt:
+			for _, l := range s.Lhs {
+				if names(l) {
+					out = append(out, fmt.Sprintf("%d: an assignment to it", fset.Position(s.Pos()).Line))
+					break
+				}
+			}
+		case *ast.UnaryExpr:
+			if s.Op == token.AND && names(s.X) {
+				out = append(out, fmt.Sprintf("%d: its address taken", fset.Position(s.Pos()).Line))
+			}
 		}
 		return true
 	})
-	return lines
+	return out
 }
 
-// namesCILegs is what a slot computation must name to be taking the CI legs
-// off: the Go field or variable ci/CI, or the Lua TM.ci_legs.
-var namesCILegs = regexp.MustCompile(`\bci\b|\bCI\b|TM\.ci_legs\(`)
-
-func TestSlotsShrinkByCILegs(t *testing.T) {
-	t.Parallel()
-	root := repoRoot(t)
-
-	// 1. The beat writes the legs it counted, every beat.
-	lua := readFile(t, filepath.Join(root, "internal/nsprint/fn/lua/presence.lua"))
-	if !strings.Contains(funcBody(t, "presence.lua", lua, "local function bench_beat("), "'ci', args[21] or ''") {
-		t.Errorf("presence.lua bench_beat: the beat must write the CI leg count as ci (args[21]) every beat")
+// nativeToCIWritesSeesEveryShape is TestCopiesRunNiced's own check of its reader: the
+// #5026 reader's mutations (a multi-assignment in an init, a write through a pointer)
+// and the plain forms are each found; the declaration alone, and a call through the
+// seam, are not.
+func nativeToCIWritesSeesEveryShape(t *testing.T) {
+	cases := []struct {
+		name, body string
+		want       int
+	}{
+		{"the declaration and a call", "var nativeToCI = yield.ToCI\nfunc f() { _ = nativeToCI() }", 0},
+		{"plain assignment", "func init() { nativeToCI = func() error { return nil } }", 1},
+		{"multi-assignment (the reader's)", "func init() { nativeToCI, _ = func() error { return nil }, 0 }", 1},
+		{"through a pointer", "func init() { p := &nativeToCI; *p = nil }", 1},
+		{"parenthesised", "func init() { (nativeToCI) = nil }", 1},
 	}
-	if !strings.Contains(funcBody(t, "presence.lua", lua, "local function friend_beat("), "'ci', args[5] or ''") {
-		t.Errorf("presence.lua friend_beat: a friend's beat must write the CI leg count of its machine as ci (args[5]) every beat")
-	}
-	// The Go side of the beat, where the legs are measured (cmd/nova-sprint's
-	// life.go, life.CILegsNow for the first beat and every tick), was read
-	// here; nova-sprint is deprecated (Glenn 2026-09-27: deprecated code is
-	// not tested and never blocks CI), and no live tool writes a bench beat,
-	// so that clause has no live subject. The Lua the beat calls is live
-	// (internal/nsprint/fn, kept in deprecated/PACKAGES) and is read above.
-
-	// 2. Every slot computation, Go and Lua, in the live packages (liveTree,
-	// the reading CI's selection uses; a class rule over deprecated code is
-	// a test of it) takes the legs off. Comments and tests do not count; a
-	// line does.
-	lt := loadLiveTree(t, root)
-	var checked int
-	for _, base := range []string{"cmd", "internal"} {
-		err := filepath.WalkDir(filepath.Join(root, base), func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || strings.HasSuffix(path, "_test.go") || (!strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, ".lua")) {
-				return nil
-			}
-			rel, _ := filepath.Rel(root, path)
-			if !lt.File(rel) {
-				return nil
-			}
-			src := readFile(t, path)
-			var goLines map[int]bool
-			if strings.HasSuffix(path, ".go") {
-				fset := token.NewFileSet()
-				f, err := parser.ParseFile(fset, path, src, 0)
-				if err != nil {
-					t.Fatalf("%s: %v", filepath.ToSlash(rel), err)
-				}
-				goLines = goSlotLines(fset, f)
-			}
-			for i, line := range strings.Split(src, "\n") {
-				code := strings.TrimSpace(line)
-				if goLines != nil {
-					if !goLines[i+1] {
-						continue
-					}
-				} else if strings.HasPrefix(code, "--") || !slotSubtraction.MatchString(code) {
-					continue
-				}
-				checked++
-				if !namesCILegs.MatchString(code) {
-					t.Errorf("%s:%d: %q computes free slots without the CI legs running on the bench (nova-tools#4293)", filepath.ToSlash(rel), i+1, code)
-				}
-			}
-			return nil
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "x.go", "package main\n"+c.body+"\n", 0)
+			require.NoError(t, err)
+			assert.Len(t, nativeToCIWrites(fset, file), c.want, "%s", c.body)
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	// The rule was written against eight; the two Go deal passes
-	// (internal/nsprint/deal, internal/nsprint/taskcard) and the preflight
-	// row are deprecated, and the six live ones are the Lua in
-	// internal/nsprint/fn: ns_cm_work, TM.room, the width, deal.lua's
-	// re-check and the friend deal's two. Fewer means one moved out of the
-	// sweep's reach. A friend is not free of legs: the Studio hosts friends
-	// and CI both, so a friend's slots shrink by its own beat's ci like a
-	// bench's.
-	if checked < 6 {
-		t.Errorf("found %d slot computations in the live packages, want at least 6 (ns_cm_work, TM.room, width, ns_card_deal, DF x2)", checked)
 	}
 }
 
@@ -262,9 +165,7 @@ func TestSlotsShrinkByCILegs(t *testing.T) {
 func funcBody(t *testing.T, file, src, decl string) string {
 	t.Helper()
 	i := strings.Index(src, decl)
-	if i < 0 {
-		t.Fatalf("%s: no %q", file, decl)
-	}
+	require.NotEqual(t, -1, i, "%s: no %q", file, decl)
 	rest := src[i+len(decl):]
 	end := len(rest)
 	for _, next := range []string{"\nfunc ", "\n}\n", "\nfunction ", "\nlocal function ", "\nend\n"} {

@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -31,9 +33,8 @@ func TestOSProcessTreeCPUAccrual(t *testing.T) {
 	// The burner runs until the parent observes the CPU milestone and terminates it,
 	// eliminating any race against fixed sleep durations.
 	cmd := exec.Command(bin, "--spin-ms", "30000")
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("starting burner: %v", err)
-	}
+	err := cmd.Start()
+	require.NoError(t, err, "starting burner: %v", err)
 	defer func() {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
@@ -54,9 +55,7 @@ func TestOSProcessTreeCPUAccrual(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if !sawInitial {
-		t.Fatalf("process %d was not visible in procSnapshot", pid)
-	}
+	require.True(t, sawInitial, "process %d was not visible in procSnapshot", pid)
 
 	var accrued bool
 	for time.Now().Before(deadline) {
@@ -69,7 +68,5 @@ func TestOSProcessTreeCPUAccrual(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if !accrued {
-		t.Fatalf("procSnapshot did not observe %v CPU accrual for pid %d before deadline", floor, pid)
-	}
+	require.True(t, accrued, "procSnapshot did not observe %v CPU accrual for pid %d before deadline", floor, pid)
 }

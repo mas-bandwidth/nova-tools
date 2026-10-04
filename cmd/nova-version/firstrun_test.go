@@ -9,37 +9,35 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
+// The first run needs the binary alone, so it runs in an empty directory: the
+// example lines write their own manifest there, never into the checkout.
 func TestExecutableFirstRun(t *testing.T) {
-	t.Chdir("../..")
+	doc, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
+	require.NoError(t, err, err)
+	t.Chdir(t.TempDir())
 	var banner bytes.Buffer
 	update.Main("nova-version", []string{"help"}, "", &banner, &banner)
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-version")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	for _, line := range examples {
 		var out, errs bytes.Buffer
 		code := update.Main("nova-version", strings.Fields(line)[1:], "", &out, &errs)
-		if code == 2 {
-			t.Fatalf("%s refused: %s", line, errs.String())
-		}
-	}
-	doc, err := os.ReadFile("docs/TESTS.md")
-	if err != nil {
-		t.Fatal(err)
+		require.NotEqual(t, 2, code, "%s refused: %s", line, errs.String())
 	}
 	transcript, err := onboarding.FirstRun(string(doc), "nova-version")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	var wanted, actual []string
 	var out, errs bytes.Buffer
 	for _, line := range transcript {
 		if strings.HasPrefix(line, "$ ") {
-			if c := update.Main("nova-version", strings.Fields(line)[2:], "", &out, &errs); c != 0 {
-				t.Fatalf("first run: %d %s", c, errs.String())
+			{
+				c := update.Main("nova-version", strings.Fields(line)[2:], "", &out, &errs)
+				require.Equal(t, 0, c, "first run: %d %s", c, errs.String())
 			}
 		} else if s := firstRunShape(line); s != "" {
 			wanted = append(wanted, s)
@@ -50,38 +48,22 @@ func TestExecutableFirstRun(t *testing.T) {
 			actual = append(actual, s)
 		}
 	}
-	if strings.Join(wanted, "\n") != strings.Join(actual, "\n") {
-		t.Fatalf("document shape %v differs from run %v", wanted, actual)
-	}
+	require.Equal(t, strings.Join(wanted, "\n"), strings.Join(actual, "\n"), "document shape %v differs from run %v", wanted, actual)
 }
 func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
 	t.Parallel()
 
 	var out, errs bytes.Buffer
 	c := update.Main("nova-version", []string{"report", "--send"}, "", &out, &errs)
-	if c != 2 {
-		t.Fatal(c)
-	}
+	require.Equal(t, 2, c, fmt.Sprint(c))
 	for _, flag := range []string{"--file", "--as", "--to", "--bus", "--remote", "--branch"} {
-		if !strings.Contains(errs.String(), flag) {
-			t.Fatal("missing " + flag + ": " + errs.String())
-		}
+		require.Contains(t, errs.String(), flag, "missing "+flag+": "+errs.String())
 	}
-	if strings.Count(errs.String(), "\n") > 2 {
-		t.Fatal("refusal printed a banner")
-	}
+	require.LessOrEqual(t, strings.Count(errs.String(), "\n"), 2, "refusal printed a banner")
 }
 
-// REPORT has a dynamic timestamp as its second token, unlike two-word events.
-// Remove only that value; keep the field and every other output shape check.
-func firstRunShape(line string) string {
-	if strings.HasPrefix(line, "REPORT at=") {
-		fields := strings.Fields(line)
-		fields[1] = "at="
-		line = strings.Join(fields, " ")
-	}
-	return onboarding.Shape(line)
-}
+// firstRunShape is a line's event and field names, its values dropped.
+func firstRunShape(line string) string { return onboarding.Shape(line) }
 
 // TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine executes the
 // `### First run` block of docs/TESTS.md for nova-version -- every command, in
@@ -91,22 +73,14 @@ func firstRunShape(line string) string {
 // the words and drops the count and the order; this one keeps the whole
 // promise.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
-	t.Chdir(repoRoot(t))
-	raw, err := os.ReadFile(filepath.Join("docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
+	require.NoError(t, err, err)
+	t.Chdir(t.TempDir())
 	lines, err := onboarding.FirstRun(string(raw), "nova-version")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	steps, err := onboarding.Steps("nova-version", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) == 0 {
-		t.Fatal("the `### First run` block holds no nova-version command; this test would pass by running nothing")
-	}
+	require.NoError(t, err, err)
+	require.NotEmpty(t, steps, "the `### First run` block holds no nova-version command; this test would pass by running nothing")
 	// The transcript declares four values as owned by the RUN or the BENCH
 	// rather than by the document, and nothing else: the instant of the run
 	// (`at=`) and its duration (`took=`), and the three fields of the
@@ -123,7 +97,7 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 		elide(t, "path= (where this bench's Go is installed)", `path=[^ ]+`, "path=<where this bench's Go is installed>"),
 	}
 	for _, p := range onboarding.Execute(steps, runVersionDocumented(t), norms...) {
-		t.Error(p)
+		assert.Fail(t, fmt.Sprint(p))
 	}
 }
 
@@ -132,9 +106,7 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 func elide(t *testing.T, name, pattern, as string) onboarding.Norm {
 	t.Helper()
 	n, err := onboarding.Elide(name, pattern, as)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	return n
 }
 
@@ -160,11 +132,10 @@ func runVersionDocumented(t *testing.T) onboarding.Runner {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "docs", "TESTS.md")); err != nil {
-		t.Fatalf("docs/TESTS.md is not under %s: %v", root, err)
+	require.NoError(t, err, err)
+	{
+		_, err := os.Stat(filepath.Join(root, "docs", "TESTS.md"))
+		require.NoError(t, err, "docs/TESTS.md is not under %s: %v", root, err)
 	}
 	return root
 }

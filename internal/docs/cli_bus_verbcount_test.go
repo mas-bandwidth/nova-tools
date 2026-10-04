@@ -5,6 +5,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // cli_bus_verbcount_test.go holds docs/CLI.md — the command reference a
@@ -19,8 +22,8 @@ import (
 // hard-coded, so the test keeps its meaning when a verb is added. It reads text
 // and runs nothing.
 
-// busMainPath holds the banner this test treats as the truth.
-const busMainPath = "../../cmd/nova-bus/main.go"
+// busHelpPath holds the banner this test treats as the truth.
+const busHelpPath = "../../cmd/nova-bus/help.go"
 
 // cliBusPath is the command reference judged against the banner.
 const cliBusPath = "../../docs/CLI.md"
@@ -51,42 +54,33 @@ func TestTheCLIReferenceCountsNovaBusVerbsCorrectly(t *testing.T) {
 	verbs := busUsageVerbs(t)
 
 	word, ok := verbWords[len(verbs)]
-	if !ok {
-		t.Fatalf("the nova-bus banner names %d distinct verbs (%s); this test spells counts 1..12 and cannot judge a count outside that range — extend the lookup rather than trusting a number it cannot write",
-			len(verbs), strings.Join(verbs, ", "))
-	}
+	require.True(t, ok, "the nova-bus banner names %d distinct verbs (%s); this test spells counts 1..12 and cannot judge a count outside that range — extend the lookup rather than trusting a number it cannot write",
+		len(verbs), strings.Join(verbs, ", "))
 
 	cli, err := os.ReadFile(cliBusPath)
-	if err != nil {
-		t.Fatalf("%s: %v; docs/CLI.md is the command reference a stranger copies from", cliBusPath, err)
-	}
+	require.NoError(t, err, "%s: %v; docs/CLI.md is the command reference a stranger copies from", cliBusPath, err)
 	doc := string(cli)
 
 	claim := "`nova-bus` is " + word + " verbs over that."
-	if !strings.Contains(doc, claim) {
-		t.Errorf("the nova-bus banner names %d distinct verbs (%s), but %s does not contain %q; a counted claim about a tool's own verb list is the kind of sentence a reader trusts without checking, and the banner in the source is the truth the document is judged against",
-			len(verbs), strings.Join(verbs, ", "), cliBusPath, claim)
-	}
+	assert.Contains(t, doc, claim, "the nova-bus banner names %d distinct verbs (%s), but %s does not contain %q; a counted claim about a tool's own verb list is the kind of sentence a reader trusts without checking, and the banner in the source is the truth the document is judged against",
+		len(verbs), strings.Join(verbs, ", "), cliBusPath, claim)
 
 	heading := "### The " + word + " verbs"
-	if !hasExactLine(doc, heading) {
-		t.Errorf("the nova-bus banner names %d distinct verbs (%s), but %s has no line exactly %q; a counted heading about a tool's own verb list is the kind of sentence a reader trusts without checking, and it rots silently as verbs are added",
-			len(verbs), strings.Join(verbs, ", "), cliBusPath, heading)
-	}
+	assert.True(t, hasExactLine(doc, heading), "the nova-bus banner names %d distinct verbs (%s), but %s has no line exactly %q; a counted heading about a tool's own verb list is the kind of sentence a reader trusts without checking, and it rots silently as verbs are added",
+		len(verbs), strings.Join(verbs, ", "), cliBusPath, heading)
 }
 
-// busUsageVerbs cuts the `const usage` banner from cmd/nova-bus/main.go and
-// returns the distinct verb names in its `usage:` block, sorted. It t.Fatal's
+// busUsageVerbs cuts the `const usage` banner from cmd/nova-bus/help.go and
+// returns the distinct verb names in its `usage:` block but help and version,
+// sorted. It t.Fatal's
 // when either banner end is missing, when the `usage:` line is absent, or when
 // the scan finds fewer than five verbs — a scan that finds almost none would
 // pass by asking nothing.
 func busUsageVerbs(t *testing.T) []string {
 	t.Helper()
 
-	src, err := os.ReadFile(busMainPath)
-	if err != nil {
-		t.Fatalf("%s: %v; the banner in the source is the truth this test reads", busMainPath, err)
-	}
+	src, err := os.ReadFile(busHelpPath)
+	require.NoError(t, err, "%s: %v; the banner in the source is the truth this test reads", busHelpPath, err)
 
 	var banner []string
 	started, closed := false, false
@@ -103,14 +97,10 @@ func busUsageVerbs(t *testing.T) []string {
 		}
 		banner = append(banner, line)
 	}
-	if !started {
-		t.Fatalf("%s: no line begins %q, so the banner cannot be cut; the banner in the source is the truth this test reads",
-			busMainPath, "const usage = `")
-	}
-	if !closed {
-		t.Fatalf("%s: the banner, opened by %q, has no closing line that is one backtick at column one; the banner in the source is the truth this test reads",
-			busMainPath, "const usage = `")
-	}
+	require.True(t, started, "%s: no line begins %q, so the banner cannot be cut; the banner in the source is the truth this test reads",
+		busHelpPath, "const usage = `")
+	require.True(t, closed, "%s: the banner, opened by %q, has no closing line that is one backtick at column one; the banner in the source is the truth this test reads",
+		busHelpPath, "const usage = `")
 
 	seen := map[string]bool{}
 	var verbs []string
@@ -132,19 +122,17 @@ func busUsageVerbs(t *testing.T) []string {
 		if len(fields) < 2 {
 			continue
 		}
-		if name := fields[1]; !seen[name] {
+		// help and version are every tool's two built-in verbs, not the bus
+		// verbs the section counts and walks one by one.
+		if name := fields[1]; !seen[name] && name != "help" && name != "version" {
 			seen[name] = true
 			verbs = append(verbs, name)
 		}
 	}
-	if !inUsage {
-		t.Fatalf("%s: the banner has no line exactly %q, so no verb list can be read; the banner in the source is the truth this test reads",
-			busMainPath, "usage:")
-	}
-	if len(verbs) < 5 {
-		t.Fatalf("%s: the usage scan found only %d distinct verbs (%s); a scan that finds almost none would pass by asking nothing",
-			busMainPath, len(verbs), strings.Join(verbs, ", "))
-	}
+	require.True(t, inUsage, "%s: the banner has no line exactly %q, so no verb list can be read; the banner in the source is the truth this test reads",
+		busHelpPath, "usage:")
+	require.GreaterOrEqual(t, len(verbs), 5, "%s: the usage scan found only %d distinct verbs (%s); a scan that finds almost none would pass by asking nothing",
+		busHelpPath, len(verbs), strings.Join(verbs, ", "))
 	sort.Strings(verbs)
 	return verbs
 }

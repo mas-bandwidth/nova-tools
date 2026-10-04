@@ -10,7 +10,6 @@ const (
 	ReqRequired = "R" // Required always
 	ReqDone     = "D" // Required when status is DONE
 	ReqPass     = "P" // Required when DONE and CHECK=pass, optional otherwise
-	ReqOptional = "O" // Optional, type-checked when present
 	ReqUnknown  = "-" // Unknown for this kind, refused
 )
 
@@ -94,15 +93,6 @@ func (c *ContractDef) SectionNames() []string {
 	return []string{"Gates", "Left owed", "Verification", "Probes", "Summary", "Findings"}
 }
 
-// SectionHeadings returns the exact section headings `## <Name>`.
-func (c *ContractDef) SectionHeadings() []string {
-	var headings []string
-	for _, s := range c.SectionNames() {
-		headings = append(headings, "## "+s)
-	}
-	return headings
-}
-
 // RequirementFor returns the requirement code for a given field key and kind.
 func (c *ContractDef) RequirementFor(field, kind string) string {
 	for _, e := range c.Entries {
@@ -137,86 +127,6 @@ func RequiredSections(kind string) []string {
 		return []string{"Probes", "Summary"}
 	case KindRead:
 		return []string{"Findings"}
-	default:
-		return nil
-	}
-}
-
-// Fields returns the template field lines for a given kind.
-// These are the exact lines emitted in the typed field block of the kind's fill-in template.
-func Fields(kind string) []string {
-	switch kind {
-	case KindFix:
-		return []string{
-			"SCHEMA: v2",
-			"KIND: fix",
-			"ATTEMPT: 1",
-			"CHECK: <pass | fail | not-run>",
-			"REPO: <owner>/<name>",
-			"BRANCH: <branch>",
-			"PATHS: <paths>",
-			"RED: <command and failing output summary>",
-			"GREEN: <command and passing output summary>",
-		}
-	case KindRecut:
-		return []string{
-			"SCHEMA: v2",
-			"KIND: recut",
-			"ATTEMPT: 1",
-			"CHECK: <pass | fail | not-run>",
-			"REPO: <owner>/<name>",
-			"BRANCH: <branch>",
-			"PATHS: <paths>",
-			"RED: <command and failing output summary>",
-			"GREEN: <command and passing output summary>",
-			"PRIOR: #<int> @<hex12>",
-		}
-	case KindPort:
-		return []string{
-			"SCHEMA: v2",
-			"KIND: port",
-			"ATTEMPT: 1",
-			"CHECK: <pass | fail | not-run>",
-			"REPO: <owner>/<name>",
-			"BRANCH: <branch>",
-			"PATHS: <paths>",
-			"RED: <command and failing output summary>",
-			"GREEN: <command and passing output summary>",
-		}
-	case KindDocsGuard:
-		return []string{
-			"SCHEMA: v2",
-			"KIND: docs-guard",
-			"ATTEMPT: 1",
-			"CHECK: <pass | fail | not-run>",
-			"REPO: <owner>/<name>",
-			"BRANCH: <branch>",
-			"PATHS: <paths>",
-		}
-	case KindReport:
-		return []string{
-			"SCHEMA: v2",
-			"KIND: report",
-			"ATTEMPT: 1",
-			"CHECK: <pass | fail | not-run>",
-			"REPO: <owner>/<name>",
-			"BRANCH: <branch>",
-			"PATHS: <paths>",
-			"PROBES: <n>",
-		}
-	case KindRead:
-		return []string{
-			"SCHEMA: v2",
-			"KIND: read",
-			"ATTEMPT: 1",
-			"CHECK: <pass | fail | not-run>",
-			"REPO: <owner>/<name>",
-			"PR: <number>",
-			"HEAD: <sha40>",
-			"FINDINGS: <n>",
-			"FLOOR: <floor>",
-			"SUGGEST: <APPROVE | HOLD>",
-		}
 	default:
 		return nil
 	}

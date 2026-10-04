@@ -3,8 +3,10 @@ package sandbox
 import (
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // An OPTIONAL ROOT's ancestors were granted nothing, and a toolchain under one could not
@@ -48,23 +50,15 @@ func TestAnOptionalRootsAncestorsAreGranted(t *testing.T) {
 		Argv:     []string{"/bin/sh", "-c", "true"},
 	}
 	got := Ancestors(p.ancestorPaths()...)
-	if !hasPath(got, "/opt") {
-		t.Fatalf("/opt is not among the file-read-metadata ancestors for an /opt/homebrew root: %v\n"+
-			"a toolchain under an optional root resolves its own executable, and resolving a symlink lstats every leading component; without /opt the lstat is denied and the tool reports a fault of its own that names nothing about the wall", got)
-	}
+	require.True(t, hasPath(got, "/opt"), "/opt is not among the file-read-metadata ancestors for an /opt/homebrew root: %v\n"+
+		"a toolchain under an optional root resolves its own executable, and resolving a symlink lstats every leading component; without /opt the lstat is denied and the tool reports a fault of its own that names nothing about the wall", got)
 
 	text, _, err := DarwinProfile(p)
-	if err != nil {
-		t.Fatalf("the profile could not be generated: %s", err)
-	}
-	if !strings.Contains(text, `(allow file-read-metadata (literal "/opt"))`) {
-		t.Errorf("the generated profile carries no file-read-metadata literal for /opt, so the grant above never reaches the kernel")
-	}
+	require.NoError(t, err, "the profile could not be generated: %s", err)
+	assert.Contains(t, text, `(allow file-read-metadata (literal "/opt"))`, "the generated profile carries no file-read-metadata literal for /opt, so the grant above never reaches the kernel")
 	// The count on the SANDBOX OK line is the same set, or a reader comparing the line
 	// with the profile is comparing two different things.
-	if p.AncestorCount() != len(got) {
-		t.Errorf("ancestors=%d on the OK line is not the %d literals the profile emits", p.AncestorCount(), len(got))
-	}
+	assert.Equal(t, len(got), p.AncestorCount(), "ancestors=%d on the OK line is not the %d literals the profile emits", p.AncestorCount(), len(got))
 }
 
 // The ancestors of an optional root are METADATA only, exactly as every other ancestor is:
@@ -86,12 +80,8 @@ func TestAnOptionalRootsAncestorIsMetadataOnly(t *testing.T) {
 		Command:  "/bin/sh", Argv: []string{"/bin/sh"},
 	}
 	text, _, err := DarwinProfile(p)
-	if err != nil {
-		t.Fatalf("the profile could not be generated: %s", err)
-	}
-	if strings.Contains(text, `(allow file-read* (subpath "/opt"))`) {
-		t.Errorf("the profile grants a read subpath on /opt; the ancestor grant is file-read-metadata and nothing wider")
-	}
+	require.NoError(t, err, "the profile could not be generated: %s", err)
+	assert.NotContains(t, text, `(allow file-read* (subpath "/opt"))`, "the profile grants a read subpath on /opt; the ancestor grant is file-read-metadata and nothing wider")
 }
 
 func hasPath(list []string, want string) bool {
@@ -123,13 +113,9 @@ func TestOptionalRootsIncludeTheXcodeSelectDeveloperDir(t *testing.T) {
 	for _, dir := range dirs {
 		found := hasPath(roots, dir)
 		if underAny(dir, fixedDarwinPrefixes) {
-			if found {
-				t.Errorf("xcode-select points at %s, which is already under a fixed root, and it is still an optional root: %v", dir, roots)
-			}
+			assert.False(t, found, "xcode-select points at %s, which is already under a fixed root, and it is still an optional root: %v", dir, roots)
 			continue
 		}
-		if !found {
-			t.Errorf("xcode-select points at %s, which is under no fixed root and is not an optional root: %v", dir, roots)
-		}
+		assert.True(t, found, "xcode-select points at %s, which is under no fixed root and is not an optional root: %v", dir, roots)
 	}
 }

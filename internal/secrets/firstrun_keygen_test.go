@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // docs/TESTS.md is the page a stranger meets first, and its promise is exact: every
@@ -21,9 +24,7 @@ func TestTheKeygenFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T)
 	t.Parallel()
 
 	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	all := strings.Split(string(data), "\n")
 
 	start := -1
@@ -33,9 +34,7 @@ func TestTheKeygenFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T)
 			break
 		}
 	}
-	if start < 0 {
-		t.Fatal("docs/TESTS.md has no `## nova-secrets` section")
-	}
+	require.GreaterOrEqual(t, start, 0, "docs/TESTS.md has no `## nova-secrets` section")
 	end := len(all)
 	for i := start + 1; i < len(all); i++ {
 		if strings.HasPrefix(strings.TrimRight(all[i], "\r"), "## ") {
@@ -52,9 +51,7 @@ func TestTheKeygenFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T)
 			break
 		}
 	}
-	if firstRun < 0 {
-		t.Fatal("the `## nova-secrets` section has no `### First run` subsection")
-	}
+	require.GreaterOrEqual(t, firstRun, 0, "the `## nova-secrets` section has no `### First run` subsection")
 	fenceOpen := -1
 	for i := firstRun + 1; i < len(section); i++ {
 		if strings.HasPrefix(strings.TrimRight(section[i], "\r"), "```") {
@@ -62,9 +59,7 @@ func TestTheKeygenFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T)
 			break
 		}
 	}
-	if fenceOpen < 0 {
-		t.Fatal("the `### First run` subsection has no fenced block")
-	}
+	require.GreaterOrEqual(t, fenceOpen, 0, "the `### First run` subsection has no fenced block")
 	fenceClose := -1
 	for i := fenceOpen + 1; i < len(section); i++ {
 		if strings.HasPrefix(strings.TrimRight(section[i], "\r"), "```") {
@@ -72,9 +67,7 @@ func TestTheKeygenFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T)
 			break
 		}
 	}
-	if fenceClose < 0 {
-		t.Fatal("the `### First run` fenced block is not closed")
-	}
+	require.GreaterOrEqual(t, fenceClose, 0, "the `### First run` fenced block is not closed")
 	block := section[fenceOpen+1 : fenceClose]
 
 	var steps [][]string
@@ -92,20 +85,15 @@ func TestTheKeygenFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T)
 		}
 		steps[len(steps)-1] = append(steps[len(steps)-1], l)
 	}
-	if len(steps) == 0 {
-		t.Fatal("the `### First run` block documents no commands")
-	}
+	require.NotEmpty(t, steps, "the `### First run` block documents no commands")
 	for _, s := range steps {
-		if !strings.HasPrefix(s[0], "$ nova-secrets ") {
-			t.Fatalf("a documented first-run command is not `$ nova-secrets ...`: %q", s[0])
-		}
+		require.True(t, strings.HasPrefix(s[0], "$ nova-secrets "), "a documented first-run command is not `$ nova-secrets ...`: %q", s[0])
 	}
 
 	step := steps[0]
 	cmdFields := strings.Fields(strings.TrimPrefix(step[0], "$ "))
-	if len(cmdFields) < 2 || cmdFields[1] != "keygen" {
-		t.Fatalf("the first documented first-run command is not `keygen`: %q", step[0])
-	}
+	require.GreaterOrEqual(t, len(cmdFields), 2, "the first documented first-run command is not `keygen`: %q", step[0])
+	require.Equal(t, "keygen", cmdFields[1], "the first documented first-run command is not `keygen`: %q", step[0])
 
 	flagValue := func(name string) string {
 		for i, f := range cmdFields {
@@ -117,12 +105,8 @@ func TestTheKeygenFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T)
 	}
 	as := flagValue("--as")
 	key := flagValue("--key")
-	if as == "" {
-		t.Fatalf("the documented keygen command has no --as argument: %q", step[0])
-	}
-	if key == "" {
-		t.Fatalf("the documented keygen command has no --key argument: %q", step[0])
-	}
+	require.NotEmpty(t, as, "the documented keygen command has no --as argument: %q", step[0])
+	require.NotEmpty(t, key, "the documented keygen command has no --key argument: %q", step[0])
 
 	const rulePrefix = "SECRETS RULE       age: "
 	pub, recovery := "", ""
@@ -130,30 +114,21 @@ func TestTheKeygenFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T)
 	for _, l := range step[1:] {
 		if strings.HasPrefix(l, rulePrefix) {
 			parts := strings.Split(strings.TrimPrefix(l, rulePrefix), ",")
-			if len(parts) != 2 {
-				t.Fatalf("the documented SECRETS RULE age line does not carry exactly two keys: %q", l)
-			}
+			require.Len(t, parts, 2, "the documented SECRETS RULE age line does not carry exactly two keys: %q", l)
 			pub, recovery = parts[0], parts[1]
 			foundKeys = true
 			break
 		}
 	}
-	if !foundKeys {
-		t.Fatal("the keygen step documents no `SECRETS RULE       age: ` line to read the public keys from")
-	}
+	require.True(t, foundKeys, "the keygen step documents no `SECRETS RULE       age: ` line to read the public keys from")
 
 	printed := keygenLines(as, key, pub, recovery, false)
 	documented := step[1:]
 
-	if len(documented) != len(printed) {
-		t.Errorf("docs/TESTS.md promises every transcript line is real output pasted whole; the keygen first-run step documents %d line(s) where the tool prints %d, so the transcript is abridged or padded\n--- documented ---\n%s\n--- printed ---\n%s",
-			len(documented), len(printed), strings.Join(documented, "\n"), strings.Join(printed, "\n"))
-	} else {
+	if assert.Len(t, documented, len(printed), "docs/TESTS.md promises every transcript line is real output pasted whole; the keygen first-run step documents %d line(s) where the tool prints %d, so the transcript is abridged or padded\n--- documented ---\n%s\n--- printed ---\n%s",
+		len(documented), len(printed), strings.Join(documented, "\n"), strings.Join(printed, "\n")) {
 		for i := range documented {
-			if documented[i] != printed[i] {
-				t.Errorf("docs/TESTS.md promises every transcript line is real output pasted whole, in order; line %d of the keygen first-run transcript is not what the tool prints\n  documented: %q\n  printed:    %q",
-					i+1, documented[i], printed[i])
-			}
+			assert.Equal(t, printed[i], documented[i], "docs/TESTS.md promises every transcript line is real output pasted whole, in order; line %d of the keygen first-run transcript is not what the tool prints\n  documented: %q\n  printed:    %q", i+1, documented[i], printed[i])
 		}
 	}
 
@@ -163,7 +138,5 @@ func TestTheKeygenFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T)
 			foundNext = true
 		}
 	}
-	if !foundNext {
-		t.Errorf("the receipt no longer carries the exact KeygenNextLine const %q:\n%s", KeygenNextLine, strings.Join(printed, "\n"))
-	}
+	assert.True(t, foundNext, "the receipt no longer carries the exact KeygenNextLine const %q:\n%s", KeygenNextLine, strings.Join(printed, "\n"))
 }

@@ -48,7 +48,7 @@ type WaitRecovery struct {
 // Unknown is a process still present whose account or place could not be read (EPERM
 // or EACCES on its status, cmdline or cwd, or a root-owned /proc entry, the non-dumpable
 // shape, whose status cannot prove another account). A process that vanished or is dead
-// mid-read is gone: it holds no lock and is counted nowhere (#3029). The lock is unlinked
+// mid-read is gone: it holds no lock and is counted nowhere. The lock is unlinked
 // only from a scan with Owner and Unknown both zero.
 type LockScan struct {
 	Owner, Foreign, Unknown int
@@ -83,13 +83,6 @@ type IndexLockReport struct {
 // either ancient or not yet born, and both answers are lies.
 func ClearStaleIndexLock(dir string, now time.Time) (IndexLockReport, error) {
 	return clearStaleIndexLockReport(dir, now, gitProcesses, indexLockOwner, effectiveUID())
-}
-
-// clearStaleIndexLock is ClearStaleIndexLock with the process scan supplied.
-// A test hands back an incomplete scan — a cwd git with no -C whose cwd could
-// not be read, or a permission error — and the lock must still be here afterwards.
-func clearStaleIndexLock(dir string, now time.Time, scan func() ([]gitProc, error)) (bool, error) {
-	return clearStaleIndexLockAs(dir, now, scan, indexLockOwner, effectiveUID())
 }
 
 // indexLockScanHooks holds what the CLI tests run on their own fixture lock between the
@@ -186,15 +179,6 @@ func lockOwnerForeignErr(uid uint32) error {
 
 var errLockOwnerUnknown = errors.New("index.lock owner cannot be read, so it is not known to be this account's; ask its owner or the bench admin")
 
-// clearStaleIndexLockAs is clearStaleIndexLock with the lock file's owner reader and this
-// account's uid supplied. The age rule comes first; the owner of a stale lock is read
-// from the Lstat of the lock itself, and only a stale lock owned by self goes on to the
-// process scan.
-func clearStaleIndexLockAs(dir string, now time.Time, scan func() ([]gitProc, error), lockOwner func(os.FileInfo) (uint32, bool), self uint32) (bool, error) {
-	rep, err := clearStaleIndexLockReport(dir, now, scan, lockOwner, self)
-	return rep.Cleared, err
-}
-
 // clearStaleIndexLockReport is the whole of ClearStaleIndexLock, with the scan's counts.
 func clearStaleIndexLockReport(dir string, now time.Time, scan func() ([]gitProc, error), lockOwner func(os.FileInfo) (uint32, bool), self uint32) (IndexLockReport, error) {
 	var rep IndexLockReport
@@ -239,8 +223,8 @@ func clearStaleIndexLockReport(dir string, now time.Time, scan func() ([]gitProc
 	if found.Owner > 0 {
 		return rep, nil
 	}
-	// The scan took time, and the path may now hold a different lock: the old one finished
-	// and a new git took the path, or someone touched it. Only the lock that was inspected
+	// The scan takes time, and the path may now hold a different lock: the inspected lock released;
+	// a new git might take the path, or someone touched it. Only the lock that was inspected
 	// is removed: the same device and inode, the same owner, and no newer mtime.
 	if changed, err := indexLockChanged(lock, fi, owner, lockOwner); err != nil || changed {
 		if os.IsNotExist(err) {
@@ -443,6 +427,7 @@ func RecoverWaitFastForward(dir, remote, branch string, owned []string, now time
 	rec.Scanned, rec.Scan = rep.Scanned, rep.Scan
 	if errors.Is(err, ErrIndexLockChanged) {
 		rec.LockChanged = true
+		// ignored: a lock that changed under the scan is recorded as rec.LockChanged on the line above, which the caller reports
 		err = nil
 	}
 	if err != nil {
@@ -514,27 +499,6 @@ func RecoverWaitFastForward(dir, remote, branch string, owned []string, now time
 	}
 	rec.Moved = true
 	return rec, nil
-}
-
-// BehindRemote reports whether HEAD is a strict ancestor of the remote-tracking ref.
-//
-// A beat commit on a checkout that is still behind is not a repair and not a push: it is
-// a new local commit on a stale base, and the next tick is diverged instead of behind.
-// wait asks this before it lands a beat, and skips the commit when the answer is yes.
-func BehindRemote(dir, remote, branch string) (bool, error) {
-	ref := trackingRef(dir, remote, branch)
-	target, err := ResolveCommit(dir, ref)
-	if err != nil {
-		return false, err
-	}
-	head, err := HeadCommit(dir)
-	if err != nil {
-		return false, err
-	}
-	if head == target {
-		return false, nil
-	}
-	return isAncestorOf(dir, head, target)
 }
 
 // foreignDirtyError is a behind checkout whose fast-forward would have to discard a file
@@ -680,7 +644,7 @@ func procReadFailed(err error) (vanished bool, unknown error) {
 // procGone reports whether a read of a process's metadata failed because the process
 // no longer exists. ENOENT is a pid whose /proc entry is already gone. ESRCH is the
 // same process one step earlier: Linux answers a read of /proc/<pid>/comm, cmdline,
-// stat or cwd with "no such process" while an exited task is being torn down (#3029).
+// stat or cwd with "no such process" while an exited task is being torn down.
 // On a host running a test package in parallel some process is always in that window,
 // and treating it as an unreadable live process refused every wait that met it.
 func procGone(err error) bool {
@@ -963,13 +927,6 @@ type gitProc struct {
 	foreign  bool
 	unknown  bool
 	why      string
-}
-
-// gitOwnsCheckout reports whether a live git process is operating on dir. An error means
-// the question could not be answered, which the caller treats as "do not remove the lock".
-func gitOwnsCheckout(dir string) (bool, error) {
-	found, err := gitOwnsCheckoutScan(dir, gitProcesses)
-	return found.Owner > 0, err
 }
 
 // gitOwnsCheckoutScan classifies every process the scan listed (LockScan). An owner

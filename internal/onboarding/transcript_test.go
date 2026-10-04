@@ -4,6 +4,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests are the harness's own negative controls, kept where the harness
@@ -29,39 +32,25 @@ func TestStepsCutsCommandsFromTheirOutput(t *testing.T) {
 	t.Parallel()
 
 	steps, err := Steps("nova-alpha", transcriptLines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) != 2 {
-		t.Fatalf("Steps cut %d steps, want 2: %#v", len(steps), steps)
-	}
-	if got, want := strings.Join(steps[0].Args, " "), "put --name gate"; got != want {
-		t.Errorf("step 0 args = %q, want %q", got, want)
-	}
+	require.NoError(t, err)
+	require.Len(t, steps, 2, "Steps cut %d steps, want 2: %#v", len(steps), steps)
+	got := strings.Join(steps[0].Args, " ")
+	assert.Equal(t, "put --name gate", got, "step 0 args = %q, want %q", got, "put --name gate")
 	// The blank line between the two commands belongs to neither: it is the
 	// document's spacing, and counting it would make every first block one line
 	// longer than the tool prints.
-	if len(steps[0].Want) != 1 {
-		t.Errorf("step 0 wants %d lines, want 1 (the blank separator is not output): %q", len(steps[0].Want), steps[0].Want)
-	}
-	if len(steps[1].Want) != 2 {
-		t.Errorf("step 1 wants %d lines, want 2: %q", len(steps[1].Want), steps[1].Want)
-	}
+	assert.Len(t, steps[0].Want, 1, "step 0 wants %d lines, want 1 (the blank separator is not output): %q", len(steps[0].Want), steps[0].Want)
+	assert.Len(t, steps[1].Want, 2, "step 1 wants %d lines, want 2: %q", len(steps[1].Want), steps[1].Want)
 }
 
 func TestStepsReadsTheOneRedirectTheTranscriptsUse(t *testing.T) {
 	t.Parallel()
 
 	steps, err := Steps("nova-alpha", []string{"$ nova-alpha count < testdata/events.jsonl", "COUNT OK n=2"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if steps[0].Stdin != "testdata/events.jsonl" {
-		t.Errorf("Stdin = %q, want testdata/events.jsonl", steps[0].Stdin)
-	}
-	if got, want := strings.Join(steps[0].Args, " "), "count"; got != want {
-		t.Errorf("args = %q, want %q; the redirect is not an argument", got, want)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "testdata/events.jsonl", steps[0].Stdin, "Stdin = %q, want testdata/events.jsonl", steps[0].Stdin)
+	got := strings.Join(steps[0].Args, " ")
+	assert.Equal(t, "count", got, "args = %q, want %q; the redirect is not an argument", got, "count")
 }
 
 // A line this harness cannot run is said so rather than truncated and run
@@ -77,32 +66,24 @@ func TestStepsRefusesWhatItCannotRun(t *testing.T) {
 		"$ nova-alpha put --name \"gate",
 		"$ nova-beta list",
 	} {
-		if _, err := Steps("nova-alpha", []string{line, "LIST OK n=1"}); err == nil {
-			t.Errorf("Steps accepted %q; it cannot run that line", line)
-		}
+		_, err := Steps("nova-alpha", []string{line, "LIST OK n=1"})
+		assert.Error(t, err, "Steps accepted %q; it cannot run that line", line)
 	}
 	// Output before any command is the abridgement this harness exists to
 	// catch, wearing its other face: a command line that was lost.
-	if _, err := Steps("nova-alpha", []string{"LIST OK n=1", "$ nova-alpha list"}); err == nil {
-		t.Error("Steps accepted output standing before any command")
-	}
+	_, err := Steps("nova-alpha", []string{"LIST OK n=1", "$ nova-alpha list"})
+	assert.Error(t, err, "Steps accepted output standing before any command")
 }
 
 func TestSplitShellKeepsAQuotedSentenceWhole(t *testing.T) {
 	t.Parallel()
 
 	got, err := SplitShell(`nova-alpha say --body "a \"brass\" fitting" --to Emma`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := []string{"nova-alpha", "say", "--body", `a "brass" fitting`, "--to", "Emma"}
-	if len(got) != len(want) {
-		t.Fatalf("SplitShell gave %d fields, want %d: %q", len(got), len(want), got)
-	}
+	require.Equal(t, len(want), len(got), "SplitShell gave %d fields, want %d: %q", len(got), len(want), got)
 	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("field %d = %q, want %q", i, got[i], want[i])
-		}
+		assert.Equal(t, want[i], got[i], "field %d = %q, want %q", i, got[i], want[i])
 	}
 }
 
@@ -115,12 +96,8 @@ func TestAnAbridgedTranscriptIsRed(t *testing.T) {
 	step := Step{Line: "$ nova-alpha list", Want: []string{"LIST ENTRY name=gate"}}
 	res := Result{Stdout: "LIST ENTRY name=gate\nLIST OK n=1\n"}
 	problems := Compare(step, res, nil)
-	if len(problems) != 1 {
-		t.Fatalf("Compare found %d problems, want 1: %v", len(problems), problems)
-	}
-	if !strings.Contains(problems[0].Message, "prints 2 line(s) and the document shows 1") {
-		t.Errorf("the failure does not name the count:\n%s", problems[0].Message)
-	}
+	require.Len(t, problems, 1, "Compare found %d problems, want 1: %v", len(problems), problems)
+	assert.Contains(t, problems[0].Message, "prints 2 line(s) and the document shows 1", "the failure does not name the count:\n%s", problems[0].Message)
 }
 
 // A REORDERED TRANSCRIPT IS RED. The second failure the set comparison cannot
@@ -131,9 +108,7 @@ func TestAReorderedTranscriptIsRed(t *testing.T) {
 
 	step := Step{Line: "$ nova-alpha list", Want: []string{"LIST OK n=1", "LIST ENTRY name=gate"}}
 	res := Result{Stdout: "LIST ENTRY name=gate\nLIST OK n=1\n"}
-	if len(Compare(step, res, nil)) != 2 {
-		t.Error("Compare accepted the documented lines in the wrong order")
-	}
+	assert.Len(t, Compare(step, res, nil), 2, "Compare accepted the documented lines in the wrong order")
 }
 
 // A WRONG VALUE IS RED. The third: the shape of the line is what the document
@@ -144,12 +119,8 @@ func TestAWrongValueIsRed(t *testing.T) {
 
 	step := Step{Line: "$ nova-alpha list", Want: []string{"LIST OK n=1"}}
 	problems := Compare(step, Result{Stdout: "LIST OK n=2\n"}, nil)
-	if len(problems) != 1 {
-		t.Fatalf("Compare found %d problems, want 1: %v", len(problems), problems)
-	}
-	if !strings.Contains(problems[0].Message, "no normalisation") {
-		t.Errorf("a comparison with no declared norm does not say so:\n%s", problems[0].Message)
-	}
+	require.Len(t, problems, 1, "Compare found %d problems, want 1: %v", len(problems), problems)
+	assert.Contains(t, problems[0].Message, "no normalisation", "a comparison with no declared norm does not say so:\n%s", problems[0].Message)
 }
 
 // A declared norm covers the value it names and NOTHING ELSE. The failure mode
@@ -163,24 +134,16 @@ func TestADeclaredNormCoversOnlyItsOwnField(t *testing.T) {
 		Want: []string{"PUT OK name=gate id=0f1e2d3c created=2026-09-19T06:29:53Z seen=2026-09-19T06:29:53Z"},
 	}
 	res := Result{Stdout: "PUT OK name=gate id=0f1e2d3c created=2026-09-19T11:02:41Z seen=2026-09-19T06:29:53Z\n"}
-	if problems := Compare(step, res, []Norm{Instant("created")}); len(problems) != 0 {
-		t.Errorf("a declared created= instant was not normalised: %v", problems)
-	}
+	problems := Compare(step, res, []Norm{Instant("created")})
+	assert.Empty(t, problems, "a declared created= instant was not normalised: %v", problems)
 	// `seen=` is another instant on the same line and was not declared, so it
 	// is compared as written.
 	res.Stdout = "PUT OK name=gate id=0f1e2d3c created=2026-09-19T11:02:41Z seen=2026-09-19T11:02:41Z\n"
-	problems := Compare(step, res, []Norm{Instant("created")})
-	if len(problems) != 1 {
-		t.Fatalf("an undeclared instant on the same line was normalised too: %v", problems)
-	}
-	if !strings.Contains(problems[0].Message, "created= (the instant of this run)") {
-		t.Errorf("the failure does not list what was not compared:\n%s", problems[0].Message)
-	}
-	// An id the tool derives from its content reproduces, so HexID is declared
-	// only where a run really invents one -- and then it covers that field only.
-	if problems := Compare(step, res, []Norm{Instant("created"), Instant("seen"), HexID("id", 8)}); len(problems) != 0 {
-		t.Errorf("declaring every run-owned value still disagreed: %v", problems)
-	}
+	problems = Compare(step, res, []Norm{Instant("created")})
+	require.Len(t, problems, 1, "an undeclared instant on the same line was normalised too: %v", problems)
+	assert.Contains(t, problems[0].Message, "created= (the instant of this run)", "the failure does not list what was not compared:\n%s", problems[0].Message)
+	problems = Compare(step, res, []Norm{Instant("created"), Instant("seen")})
+	assert.Empty(t, problems, "declaring every run-owned value still disagreed: %v", problems)
 }
 
 func TestPathNormReducesBothSidesToTheDocumentedSpelling(t *testing.T) {
@@ -188,9 +151,8 @@ func TestPathNormReducesBothSidesToTheDocumentedSpelling(t *testing.T) {
 
 	step := Step{Line: "$ nova-alpha where", Want: []string{"WHERE OK store=./cairns"}}
 	res := Result{Stdout: "WHERE OK store=/var/folders/T/x9/cairns\n"}
-	if problems := Compare(step, res, []Norm{Path("./cairns", "/var/folders/T/x9/cairns")}); len(problems) != 0 {
-		t.Errorf("a declared path was not reduced to what the document writes: %v", problems)
-	}
+	problems := Compare(step, res, []Norm{Path("./cairns", "/var/folders/T/x9/cairns")})
+	assert.Empty(t, problems, "a declared path was not reduced to what the document writes: %v", problems)
 }
 
 func TestPathNormRecognizesACommaAfterThePath(t *testing.T) {
@@ -198,9 +160,8 @@ func TestPathNormRecognizesACommaAfterThePath(t *testing.T) {
 
 	step := Step{Line: "$ nova-alpha where", Want: []string{"WHERE NOTE store=./cairns, using the documented location"}}
 	res := Result{Stdout: "WHERE NOTE store=/var/folders/T/x9/cairns, using the documented location\n"}
-	if problems := Compare(step, res, []Norm{Path("./cairns", "/var/folders/T/x9/cairns")}); len(problems) != 0 {
-		t.Errorf("a comma immediately after the declared path prevented normalization: %v", problems)
-	}
+	problems := Compare(step, res, []Norm{Path("./cairns", "/var/folders/T/x9/cairns")})
+	assert.Empty(t, problems, "a comma immediately after the declared path prevented normalization: %v", problems)
 }
 
 // Which stream a line is on is part of what a transcript promises, and a
@@ -212,12 +173,8 @@ func TestAStepThatWroteToBothStreamsIsReported(t *testing.T) {
 
 	step := Step{Line: "$ nova-alpha list", Want: []string{"LIST OK n=1"}}
 	problems := Compare(step, Result{Stdout: "LIST OK n=1\n", Stderr: "nova-alpha: a warning\n"}, nil)
-	if len(problems) != 1 {
-		t.Fatalf("Compare found %d problems, want 1: %v", len(problems), problems)
-	}
-	if !strings.Contains(problems[0].Message, "stdout AND stderr") {
-		t.Errorf("the failure does not name the two streams:\n%s", problems[0].Message)
-	}
+	require.Len(t, problems, 1, "Compare found %d problems, want 1: %v", len(problems), problems)
+	assert.Contains(t, problems[0].Message, "stdout AND stderr", "the failure does not name the two streams:\n%s", problems[0].Message)
 }
 
 // A refusal is on stderr and is compared there, so a transcript may document
@@ -227,9 +184,8 @@ func TestARefusalIsComparedOnStderr(t *testing.T) {
 
 	step := Step{Line: "$ nova-alpha", Want: []string{"nova-alpha: no verb given; run: nova-alpha help"}}
 	res := Result{Code: 2, Stderr: "nova-alpha: no verb given; run: nova-alpha help\n"}
-	if problems := Compare(step, res, nil); len(problems) != 0 {
-		t.Errorf("a documented refusal on stderr disagreed: %v", problems)
-	}
+	problems := Compare(step, res, nil)
+	assert.Empty(t, problems, "a documented refusal on stderr disagreed: %v", problems)
 }
 
 // Execute walks the steps in order, as one sitting, and stops at the first
@@ -240,20 +196,14 @@ func TestExecuteStopsAtACommandItCannotInvoke(t *testing.T) {
 	t.Parallel()
 
 	steps, err := Steps("nova-alpha", transcriptLines)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	ran := 0
 	problems := Execute(steps, func(s Step) (Result, error) {
 		ran++
 		return Result{}, errNotInvokable
 	})
-	if ran != 1 {
-		t.Errorf("Execute invoked %d commands after the first could not run, want 1", ran)
-	}
-	if len(problems) != 1 || !strings.Contains(problems[0].Message, "could not be run") {
-		t.Errorf("Execute did not report the command it could not invoke: %v", problems)
-	}
+	assert.Equal(t, 1, ran, "Execute invoked %d commands after the first could not run, want 1", ran)
+	assert.True(t, len(problems) == 1 && strings.Contains(problems[0].Message, "could not be run"), "Execute did not report the command it could not invoke: %v", problems)
 }
 
 type notInvokable struct{}
@@ -267,11 +217,11 @@ var errNotInvokable = notInvokable{}
 // --- on that head; the comment on each names the one edit that reverts its fix.
 
 // ROW 1. A norm declared for one field must not match a DIFFERENT field whose
-// name merely ends in the declared one. `HexID("id", 8)` matched inside
-// `parent_id=`, and `Instant("created")` inside `last_created=`, so a changed
-// value on a field nobody declared was erased and the comparison found nothing.
-// Reverting fix: drop `field:` from the Norm that Instant and HexID build (one
-// edit each) and apply falls back to the unanchored ReplaceAllString.
+// name merely ends in the declared one. `Instant("created")` matched inside
+// `last_created=`, so a changed value on a field nobody declared was erased and
+// the comparison found nothing.
+// Reverting fix: drop `field:` from the Norm that Instant builds (one edit) and
+// apply falls back to the unanchored ReplaceAllString.
 func TestADeclaredNormDoesNotMatchAFieldWhoseNameEndsInIt(t *testing.T) {
 	t.Parallel()
 
@@ -282,12 +232,6 @@ func TestADeclaredNormDoesNotMatchAFieldWhoseNameEndsInIt(t *testing.T) {
 		norm Norm
 	}{
 		{
-			what: "an id field whose name ends in the declared one",
-			want: "OK parent_id=aaaaaaaa",
-			got:  "OK parent_id=bbbbbbbb",
-			norm: HexID("id", 8),
-		},
-		{
 			what: "an instant field whose name ends in the declared one",
 			want: "OK last_created=2026-09-19T01:00:00Z",
 			got:  "OK last_created=2026-09-19T11:02:41Z",
@@ -296,35 +240,7 @@ func TestADeclaredNormDoesNotMatchAFieldWhoseNameEndsInIt(t *testing.T) {
 	} {
 		step := Step{Line: "$ nova-alpha put", Want: []string{c.want}}
 		problems := Compare(step, Result{Stdout: c.got + "\n"}, []Norm{c.norm})
-		if len(problems) != 1 {
-			t.Errorf("%s: Compare found %d problems, want 1; the declared norm swallowed a field it does not name.\nwant: %s\ngot:  %s", c.what, len(problems), c.want, c.got)
-		}
-	}
-	// And the declared field itself is still normalised, so the fix is a
-	// boundary and not a norm that stopped working.
-	step := Step{Line: "$ nova-alpha put", Want: []string{"OK parent_id=aaaaaaaa id=0f1e2d3c"}}
-	if problems := Compare(step, Result{Stdout: "OK parent_id=aaaaaaaa id=9b8a7c6d\n"}, []Norm{HexID("id", 8)}); len(problems) != 0 {
-		t.Errorf("the declared id= was not normalised: %v", problems)
-	}
-}
-
-// ROW 1, the value's own boundary. `HexID(field, n)` promises EXACTLY n hex
-// digits, so an id longer than that is a tool disagreeing with the document and
-// not a value the norm declared. THIS ONE WAS ALREADY GREEN at 1b22de16 -- the
-// unanchored pattern normalised the first n digits and the remainder still
-// disagreed, so nothing was masked -- and it is written down because the fix
-// for the rows above REPLACES that pattern: a boundary that covered too much
-// must not become one that covers too little.
-func TestAHexIDNormCoversExactlyTheDigitsItDeclares(t *testing.T) {
-	t.Parallel()
-
-	step := Step{Line: "$ nova-alpha put", Want: []string{"OK id=aaaaaaaa"}}
-	if problems := Compare(step, Result{Stdout: "OK id=aaaaaaaabbbb\n"}, []Norm{HexID("id", 8)}); len(problems) != 1 {
-		t.Errorf("Compare found %d problems, want 1: an id longer than the %d digits declared was normalised anyway", len(problems), 8)
-	}
-	step = Step{Line: "$ nova-alpha put", Want: []string{"OK id=aaaaaaaabbbb"}}
-	if problems := Compare(step, Result{Stdout: "OK id=aaaaaaaa\n"}, []Norm{HexID("id", 8)}); len(problems) != 1 {
-		t.Errorf("Compare found %d problems, want 1: a document showing more digits than the norm declares was accepted", len(problems))
+		assert.Len(t, problems, 1, "%s: Compare found %d problems, want 1; the declared norm swallowed a field it does not name.\nwant: %s\ngot:  %s", c.what, len(problems), c.want, c.got)
 	}
 }
 
@@ -343,15 +259,13 @@ func TestAnInstantNormLeavesAnImpossibleInstantVisible(t *testing.T) {
 		"OK created=2026-13-01T01:00:00Z",
 	} {
 		step := Step{Line: "$ nova-alpha put", Want: []string{"OK created=2026-09-19T01:00:00Z"}}
-		if problems := Compare(step, Result{Stdout: got + "\n"}, []Norm{Instant("created")}); len(problems) != 1 {
-			t.Errorf("Compare found %d problems, want 1: %q is not an instant and was normalised as one", len(problems), got)
-		}
+		problems := Compare(step, Result{Stdout: got + "\n"}, []Norm{Instant("created")})
+		assert.Len(t, problems, 1, "Compare found %d problems, want 1: %q is not an instant and was normalised as one", len(problems), got)
 	}
 	// A real instant, with and without a fraction, is still the run's.
 	step := Step{Line: "$ nova-alpha put", Want: []string{"OK created=2026-09-19T01:00:00Z"}}
-	if problems := Compare(step, Result{Stdout: "OK created=2026-02-28T23:59:59.5Z\n"}, []Norm{Instant("created")}); len(problems) != 0 {
-		t.Errorf("a real instant of this run was not normalised: %v", problems)
-	}
+	problems := Compare(step, Result{Stdout: "OK created=2026-02-28T23:59:59.5Z\n"}, []Norm{Instant("created")})
+	assert.Empty(t, problems, "a real instant of this run was not normalised: %v", problems)
 }
 
 // ROW 3. `SplitShell` handed the runner an argv that is not the command the
@@ -364,31 +278,21 @@ func TestSplitShellKeepsASingleQuotedSentenceWhole(t *testing.T) {
 	t.Parallel()
 
 	got, err := SplitShell(`nova-alpha say --body 'hello world' --to Emma`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := []string{"nova-alpha", "say", "--body", "hello world", "--to", "Emma"}
-	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Errorf("SplitShell gave %q, want %q", got, want)
-	}
+	assert.Equal(t, strings.Join(want, "\x00"), strings.Join(got, "\x00"), "SplitShell gave %q, want %q", got, want)
 	// Inside single quotes nothing is special, as in the shell the reader types
 	// into: the backslash and the double quote are the argument's own.
 	got, err = SplitShell(`nova-alpha say --body 'a "brass" fitting\n'`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if last := got[len(got)-1]; last != `a "brass" fitting\n` {
-		t.Errorf("the single-quoted argument = %q, want %q", last, `a "brass" fitting\n`)
-	}
+	require.NoError(t, err)
+	last := got[len(got)-1]
+	assert.Equal(t, `a "brass" fitting\n`, last, "the single-quoted argument = %q, want %q", last, `a "brass" fitting\n`)
 	// A shell keeps a backslash that stands before an ordinary character inside
 	// double quotes; the old logic ate every one of them.
 	got, err = SplitShell(`nova-alpha say --body "a\tab and a \"quote\""`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if last := got[len(got)-1]; last != `a\tab and a "quote"` {
-		t.Errorf("the double-quoted argument = %q, want %q", last, `a\tab and a "quote"`)
-	}
+	require.NoError(t, err)
+	last = got[len(got)-1]
+	assert.Equal(t, `a\tab and a "quote"`, last, "the double-quoted argument = %q, want %q", last, `a\tab and a "quote"`)
 }
 
 // ROW 3's refusals. Each of these is a line whose argv this harness cannot know,
@@ -404,20 +308,16 @@ func TestSplitShellRefusesQuotingItCannotRead(t *testing.T) {
 		`nova-alpha say --body hello\ world`,
 		"nova-alpha say --body `hostname`",
 	} {
-		if got, err := SplitShell(cmd); err == nil {
-			t.Errorf("SplitShell accepted %q and returned %q; it cannot know that argv", cmd, got)
-		}
+		got, err := SplitShell(cmd)
+		assert.Error(t, err, "SplitShell accepted %q and returned %q; it cannot know that argv", cmd, got)
 	}
 	// What it DOES pass through untouched, and says so: no expansion happens
 	// here. `$PWD` reaches the runner as the document writes it, which is the
 	// contract the callers' Path norms are declared against.
 	got, err := SplitShell(`nova-alpha add --remote "$PWD/rehearsal.git"`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if last := got[len(got)-1]; last != "$PWD/rehearsal.git" {
-		t.Errorf("the documented remote = %q, want %q; SplitShell expands nothing", last, "$PWD/rehearsal.git")
-	}
+	require.NoError(t, err)
+	last := got[len(got)-1]
+	assert.Equal(t, "$PWD/rehearsal.git", last, "the documented remote = %q, want %q; SplitShell expands nothing", last, "$PWD/rehearsal.git")
 }
 
 // The build triple belongs to the machine; the version word before it does not,
@@ -427,12 +327,10 @@ func TestGoBuildCoversTheMachineAndNotTheVersionWord(t *testing.T) {
 	t.Parallel()
 
 	step := Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha devel linux/amd64 go1.26.5"}}
-	if problems := Compare(step, Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()}); len(problems) != 0 {
-		t.Errorf("a declared build triple was not normalised: %v", problems)
-	}
-	if problems := Compare(step, Result{Stdout: "nova-alpha v0.16.0 darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()}); len(problems) != 1 {
-		t.Errorf("GoBuild swallowed the version word too: %v", problems)
-	}
+	problems := Compare(step, Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()})
+	assert.Empty(t, problems, "a declared build triple was not normalised: %v", problems)
+	problems = Compare(step, Result{Stdout: "nova-alpha v0.16.0 darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()})
+	assert.Len(t, problems, 1, "GoBuild swallowed the version word too: %v", problems)
 }
 
 // A PRECONDITION IS A PROPERTY OF A COMMAND, NOT OF A SECTION. The 2026-09-19
@@ -457,58 +355,44 @@ func TestStepsReadsAPreconditionStatedOnTheCommandLine(t *testing.T) {
 		"$ nova-alpha say --body \"a # sign\"",
 		"SAY OK",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(steps[0].Platforms, ","); got != "darwin" {
-		t.Errorf("step 0 platforms = %q, want darwin", got)
-	}
-	if got := strings.Join(steps[0].Args, " "); got != "check" {
-		t.Errorf("step 0 args = %q; the declaration is not an argument", got)
-	}
-	if got := strings.Join(steps[1].Requires, ","); got != "JEV_API_KEY" {
-		t.Errorf("step 1 requires = %q, want JEV_API_KEY", got)
-	}
-	if got := strings.Join(steps[2].Platforms, ","); got != "darwin,linux" {
-		t.Errorf("step 2 platforms = %q, want darwin,linux", got)
-	}
-	if got := strings.Join(steps[2].Requires, ","); got != "age-keygen" {
-		t.Errorf("step 2 requires = %q, want age-keygen", got)
-	}
+	require.NoError(t, err)
+	got := strings.Join(steps[0].Platforms, ",")
+	assert.Equal(t, "darwin", got, "step 0 platforms = %q, want darwin", got)
+	got = strings.Join(steps[0].Args, " ")
+	assert.Equal(t, "check", got, "step 0 args = %q; the declaration is not an argument", got)
+	got = strings.Join(steps[1].Requires, ",")
+	assert.Equal(t, "JEV_API_KEY", got, "step 1 requires = %q, want JEV_API_KEY", got)
+	got = strings.Join(steps[2].Platforms, ",")
+	assert.Equal(t, "darwin,linux", got, "step 2 platforms = %q, want darwin,linux", got)
+	got = strings.Join(steps[2].Requires, ",")
+	assert.Equal(t, "age-keygen", got, "step 2 requires = %q, want age-keygen", got)
 	// A `#` that is not a declaration is an argument and is left alone.
-	if got := strings.Join(steps[3].Args, "|"); got != "say|--body|a # sign" {
-		t.Errorf("step 3 args = %q; a `#` inside an argument was eaten", got)
-	}
+	got = strings.Join(steps[3].Args, "|")
+	assert.Equal(t, "say|--body|a # sign", got, "step 3 args = %q; a `#` inside an argument was eaten", got)
 	// A comment that means to be a declaration and is not one is the document's
 	// bug, and is louder than a comment silently ignored would be.
-	if _, err := Steps("nova-alpha", []string{"$ nova-alpha check # Requires:", "CHECK OK"}); err == nil {
-		t.Error("Steps accepted a `Requires:` that requires nothing")
-	}
+	_, err = Steps("nova-alpha", []string{"$ nova-alpha check # Requires:", "CHECK OK"})
+	assert.Error(t, err, "Steps accepted a `Requires:` that requires nothing")
 }
 
 func TestSkipReasonAnswersOnlyWhatTheDocumentStated(t *testing.T) {
 	t.Parallel()
 
 	onDarwin := Step{Line: "$ nova-alpha check", Platforms: []string{"darwin"}}
-	if why := onDarwin.SkipReason("darwin", nil); why != "" {
-		t.Errorf("a darwin step on darwin was skipped: %s", why)
-	}
-	if why := onDarwin.SkipReason("linux", nil); why == "" {
-		t.Error("a darwin step ran on linux")
-	}
+	why := onDarwin.SkipReason("darwin", nil)
+	assert.Empty(t, why, "a darwin step on darwin was skipped: %s", why)
+	why = onDarwin.SkipReason("linux", nil)
+	assert.NotEmpty(t, why, "a darwin step ran on linux")
 	needsKey := Step{Line: "$ nova-alpha ask", Requires: []string{"JEV_API_KEY"}}
-	if why := needsKey.SkipReason("linux", nil); why == "" {
-		t.Error("a step requiring a key ran on a bench that has none")
-	}
-	if why := needsKey.SkipReason("linux", func(string) bool { return true }); why != "" {
-		t.Errorf("a step whose requirement is met was skipped: %s", why)
-	}
+	why = needsKey.SkipReason("linux", nil)
+	assert.NotEmpty(t, why, "a step requiring a key ran on a bench that has none")
+	why = needsKey.SkipReason("linux", func(string) bool { return true })
+	assert.Empty(t, why, "a step whose requirement is met was skipped: %s", why)
 	// #1570's last sentence: a step skipped for a reason the document does not
 	// state is a defect in the document, not a pass. An undeclared step runs.
 	plain := Step{Line: "$ nova-alpha list"}
-	if why := plain.SkipReason("plan9", nil); why != "" {
-		t.Errorf("a step that states no precondition was skipped: %s", why)
-	}
+	why = plain.SkipReason("plan9", nil)
+	assert.Empty(t, why, "a step that states no precondition was skipped: %s", why)
 }
 
 func TestExecuteWithSkipsAStatedPreconditionAndRunsTheRest(t *testing.T) {
@@ -521,28 +405,18 @@ func TestExecuteWithSkipsAStatedPreconditionAndRunsTheRest(t *testing.T) {
 		"$ nova-alpha list",
 		"LIST OK n=1",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var ran []string
 	problems, skips := ExecuteWith(steps, func(s Step) (Result, error) {
 		ran = append(ran, s.Args[0])
 		return Result{Stdout: "LIST OK n=1\n"}, nil
 	}, Conditions{GOOS: "darwin"})
-	if len(problems) != 0 {
-		t.Errorf("the runnable step disagreed: %v", problems)
-	}
-	if len(skips) != 1 || !strings.Contains(skips[0].Why, "plan9") {
-		t.Fatalf("the plan9 step was not skipped with the document's reason: %v", skips)
-	}
-	if strings.Join(ran, ",") != "list" {
-		t.Errorf("ExecuteWith ran %q; only the runnable step should have run", ran)
-	}
+	assert.Empty(t, problems, "the runnable step disagreed: %v", problems)
+	require.True(t, len(skips) == 1 && strings.Contains(skips[0].Why, "plan9"), "the plan9 step was not skipped with the document's reason: %v", skips)
+	assert.Equal(t, "list", strings.Join(ran, ","), "ExecuteWith ran %q; only the runnable step should have run", ran)
 	// The skip is RETURNED, never swallowed: a run whose skips are invisible is
 	// a green that means less than it looks like.
-	if !strings.Contains(skips[0].String(), "SKIP-PRECONDITION") {
-		t.Errorf("a skip does not print as one: %s", skips[0])
-	}
+	assert.Contains(t, skips[0].String(), "SKIP-PRECONDITION", "a skip does not print as one: %s", skips[0])
 }
 
 // #1570's stream convention, on the real block that needs it. nova-self-talk's
@@ -569,28 +443,21 @@ func TestAMarkedBlockComparesEachStreamOnItsOwnTerms(t *testing.T) {
 	}
 	// The third FAIL is narration the document has no room for: stderr may
 	// carry more than is shown.
-	if problems := Compare(step, res, nil); len(problems) != 0 {
-		t.Errorf("a marked block disagreed: %v", problems)
-	}
+	problems := Compare(step, res, nil)
+	assert.Empty(t, problems, "a marked block disagreed: %v", problems)
 	// Standard output is still compared WHOLE: a line the tool prints there and
 	// the document does not show is red, marker or no marker.
 	extra := res
 	extra.Stdout += "ALPHA NOTE catches known shapes only\n"
-	if len(Compare(step, extra, nil)) != 1 {
-		t.Error("an unshown standard-output line passed under the stream convention")
-	}
+	assert.Len(t, Compare(step, extra, nil), 1, "an unshown standard-output line passed under the stream convention")
 	// A shown stderr line the tool did not print is red.
 	missing := res
 	missing.Stderr = "ALPHA FAIL ./pages/journal.md: STANDING\n"
-	if len(Compare(step, missing, nil)) != 1 {
-		t.Error("a documented standard-error line that was never printed passed")
-	}
+	assert.Len(t, Compare(step, missing, nil), 1, "a documented standard-error line that was never printed passed")
 	// And so is a shown pair printed in the other order.
 	swapped := res
 	swapped.Stderr = "ALPHA FAIL ./pages/journal.md: STANDING\nALPHA FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM\n"
-	if len(Compare(step, swapped, nil)) != 1 {
-		t.Error("two documented standard-error lines passed in the wrong order")
-	}
+	assert.Len(t, Compare(step, swapped, nil), 1, "two documented standard-error lines passed in the wrong order")
 }
 
 // Shape must see through the stream marker. #1570 names this as owed by the
@@ -603,12 +470,9 @@ func TestShapeSeesThroughTheStreamMarker(t *testing.T) {
 
 	const line = "SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work."
 	want := Shape(line)
-	if want == "" {
-		t.Fatalf("Shape(%q) is empty; this test cannot say anything", line)
-	}
-	if got := Shape(StderrMarker + line); got != want {
-		t.Errorf("Shape of the marked line = %q, want %q", got, want)
-	}
+	require.NotEmpty(t, want, "Shape(%q) is empty; this test cannot say anything", line)
+	got := Shape(StderrMarker + line)
+	assert.Equal(t, want, got, "Shape of the marked line = %q, want %q", got, want)
 }
 
 // `# Stderr: whole` is the other half of the stream convention, and the reason
@@ -632,45 +496,29 @@ func TestStderrWholeMakesADroppedFindingRed(t *testing.T) {
 	}
 
 	shown, err := Steps("nova-alpha", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if problems := Compare(shown[0], res, nil); len(problems) != 0 {
-		t.Errorf("the whole block disagreed: %v", problems)
-	}
+	require.NoError(t, err)
+	problems := Compare(shown[0], res, nil)
+	assert.Empty(t, problems, "the whole block disagreed: %v", problems)
 
 	// Drop the second finding from the document. Without the declaration this
 	// is green, because stderr may carry more than is shown.
 	abridged := append([]string(nil), lines[:2]...)
 	abridged = append(abridged, lines[3])
 	loose, err := Steps("nova-alpha", abridged)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(Compare(loose[0], res, nil)) != 0 {
-		t.Error("the unqualified convention already caught a dropped standard-error line; this test is now saying nothing")
-	}
+	require.NoError(t, err)
+	assert.Empty(t, Compare(loose[0], res, nil), "the unqualified convention already caught a dropped standard-error line; this test is now saying nothing")
 
 	// With it, the same abridgement is red.
 	abridged[0] += "   # Stderr: whole"
 	strict, err := Steps("nova-alpha", abridged)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strict[0].StderrWhole {
-		t.Fatal("`# Stderr: whole` was not read off the command line")
-	}
-	problems := Compare(strict[0], res, nil)
-	if len(problems) != 1 {
-		t.Fatalf("Compare found %d problems, want 1: %v", len(problems), problems)
-	}
-	if !strings.Contains(problems[0].Message, "on standard error") {
-		t.Errorf("the failure does not say which stream it is about:\n%s", problems[0].Message)
-	}
+	require.NoError(t, err)
+	require.True(t, strict[0].StderrWhole, "`# Stderr: whole` was not read off the command line")
+	problems = Compare(strict[0], res, nil)
+	require.Len(t, problems, 1, "Compare found %d problems, want 1: %v", len(problems), problems)
+	assert.Contains(t, problems[0].Message, "on standard error", "the failure does not say which stream it is about:\n%s", problems[0].Message)
 	// And the only thing a step may say about that stream is `whole`.
-	if _, err := Steps("nova-alpha", []string{"$ nova-alpha check   # Stderr: quiet", "ALPHA OK"}); err == nil {
-		t.Error("Steps accepted a `Stderr:` value it does not understand")
-	}
+	_, err = Steps("nova-alpha", []string{"$ nova-alpha check   # Stderr: quiet", "ALPHA OK"})
+	assert.Error(t, err, "Steps accepted a `Stderr:` value it does not understand")
 }
 
 // A norm replaces LITERALLY. `As` is a sentence a reader is shown, not a
@@ -683,9 +531,8 @@ func TestANormReplacesLiterally(t *testing.T) {
 
 	step := Step{Line: "$ nova-alpha init", Want: []string{"INIT OK remote=$PWD/rehearsal.git"}}
 	res := Result{Stdout: "INIT OK remote=/tmp/T/001/rehearsal.git\n"}
-	if problems := Compare(step, res, []Norm{Path("$PWD/rehearsal.git", "/tmp/T/001/rehearsal.git")}); len(problems) != 0 {
-		t.Errorf("a declared path holding `$` was not normalised: %v", problems)
-	}
+	problems := Compare(step, res, []Norm{Path("$PWD/rehearsal.git", "/tmp/T/001/rehearsal.git")})
+	assert.Empty(t, problems, "a declared path holding `$` was not normalised: %v", problems)
 }
 
 // --- Fable's cold read of #1632 (medium): the repaired `version` line is not
@@ -700,14 +547,12 @@ func TestGoBuildCoversTwoWholeTokensAndNothingElse(t *testing.T) {
 
 	step := Step{Line: "$ nova-alpha where", Want: []string{"WHERE OK dir=/srv/linux/amd64 go1.26.5-cache"}}
 	res := Result{Stdout: "WHERE OK dir=/srv/darwin/arm64 go1.27.1-cache\n"}
-	if problems := Compare(step, res, []Norm{GoBuild()}); len(problems) != 1 {
-		t.Errorf("Compare found %d problems, want 1: GoBuild matched inside a path token", len(problems))
-	}
+	problems := Compare(step, res, []Norm{GoBuild()})
+	assert.Len(t, problems, 1, "Compare found %d problems, want 1: GoBuild matched inside a path token", len(problems))
 	// Its own two tokens, standing alone, are still normalised.
 	step = Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha devel linux/amd64 go1.26.5"}}
-	if problems := Compare(step, Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()}); len(problems) != 0 {
-		t.Errorf("a declared build triple was not normalised: %v", problems)
-	}
+	problems = Compare(step, Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()})
+	assert.Empty(t, problems, "a declared build triple was not normalised: %v", problems)
 }
 
 // Version covers the word a build stamps itself with, so that the document can
@@ -726,20 +571,17 @@ func TestVersionNormCoversTheStampAndDevelAndNothingElse(t *testing.T) {
 
 	step := Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha v0.16.0-dev.c839379e.0.20260919144920-705dd1c92534 darwin/arm64 go1.27.1"}}
 	res := Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}
-	if problems := Compare(step, res, []Norm{Version(), GoBuild()}); len(problems) != 0 {
-		t.Errorf("the document's stamp and the test binary's `devel` disagreed: %v", problems)
-	}
+	problems := Compare(step, res, []Norm{Version(), GoBuild()})
+	assert.Empty(t, problems, "the document's stamp and the test binary's `devel` disagreed: %v", problems)
 	// The tool's NAME is not the version word, and a tool that answered
 	// something that is neither a stamp nor `devel` is still a finding.
 	res.Stdout = "nova-alpha unknown darwin/arm64 go1.27.1\n"
-	if problems := Compare(step, res, []Norm{Version(), GoBuild()}); len(problems) != 1 {
-		t.Errorf("Compare found %d problems, want 1: a version word that is neither a stamp nor `devel` was normalised", len(problems))
-	}
+	problems = Compare(step, res, []Norm{Version(), GoBuild()})
+	assert.Len(t, problems, 1, "Compare found %d problems, want 1: a version word that is neither a stamp nor `devel` was normalised", len(problems))
 	// And it does not reach inside a longer token.
 	step = Step{Line: "$ nova-alpha list", Want: []string{"LIST OK tag=v1.2.3-rc1 name=alpha"}}
-	if problems := Compare(step, Result{Stdout: "LIST OK tag=v9.9.9-rc1 name=alpha\n"}, []Norm{Version()}); len(problems) != 1 {
-		t.Errorf("Compare found %d problems, want 1: Version matched inside `tag=`", len(problems))
-	}
+	problems = Compare(step, Result{Stdout: "LIST OK tag=v9.9.9-rc1 name=alpha\n"}, []Norm{Version()})
+	assert.Len(t, problems, 1, "Compare found %d problems, want 1: Version matched inside `tag=`", len(problems))
 }
 
 // --- Fable's cold read of #1674 (HIGH): Execute skipped every step that stated
@@ -761,20 +603,14 @@ func TestExecuteRunsAStepThatStatesAPreconditionThisBenchMeets(t *testing.T) {
 		"$ nova-alpha list   # Platform: " + runtime.GOOS,
 		"LIST OK n=1",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	ran := 0
 	problems := Execute(steps, func(Step) (Result, error) {
 		ran++
 		return Result{Stdout: "LIST OK n=1\n"}, nil
 	})
-	if ran != 1 {
-		t.Errorf("Execute ran %d of 1 steps; a step recorded for THIS platform must run here", ran)
-	}
-	if len(problems) != 0 {
-		t.Errorf("Execute reported %d problems on a step it should have run and agreed with: %v", len(problems), problems)
-	}
+	assert.Equal(t, 1, ran, "Execute ran %d of 1 steps; a step recorded for THIS platform must run here", ran)
+	assert.Empty(t, problems, "Execute reported %d problems on a step it should have run and agreed with: %v", len(problems), problems)
 }
 
 // AN ALL-SKIPPED BLOCK IS RED, IN THE HARNESS. #1677's caller checks this for
@@ -790,25 +626,17 @@ func TestExecuteRefusesABlockItSkippedEntirely(t *testing.T) {
 		"$ nova-alpha count   # Requires: NOPE",
 		"COUNT OK n=0",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	ran := 0
 	problems := Execute(steps, func(Step) (Result, error) {
 		ran++
 		return Result{Stdout: "LIST OK n=1\n"}, nil
 	})
-	if ran != 0 {
-		t.Fatalf("Execute ran %d steps whose requirement this bench does not have", ran)
-	}
-	if len(problems) == 0 {
-		t.Fatal("Execute found NO problem in a block it skipped from end to end; that is a green that proved nothing")
-	}
+	require.Equal(t, 0, ran, "Execute ran %d steps whose requirement this bench does not have", ran)
+	require.NotEmpty(t, problems, "Execute found NO problem in a block it skipped from end to end; that is a green that proved nothing")
 	whole := problems[0].Message
 	for _, want := range []string{"skipped", "NOPE", "nova-alpha list", "nova-alpha count"} {
-		if !strings.Contains(whole, want) {
-			t.Errorf("the refusal does not name %q:\n%s", want, whole)
-		}
+		assert.Contains(t, whole, want, "the refusal does not name %q:\n%s", want, whole)
 	}
 }
 
@@ -825,18 +653,12 @@ func TestExecuteReportsASkipItDidNotRun(t *testing.T) {
 		"$ nova-alpha count   # Requires: NOPE",
 		"COUNT OK n=0",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	problems := Execute(steps, func(Step) (Result, error) {
 		return Result{Stdout: "LIST OK n=1\n"}, nil
 	})
-	if len(problems) != 1 {
-		t.Fatalf("Execute reported %d problems, want 1 (the skipped step): %v", len(problems), problems)
-	}
-	if !strings.Contains(problems[0].Message, "NOPE") {
-		t.Errorf("the skip does not carry the document's own reason:\n%s", problems[0].Message)
-	}
+	require.Len(t, problems, 1, "Execute reported %d problems, want 1 (the skipped step): %v", len(problems), problems)
+	assert.Contains(t, problems[0].Message, "NOPE", "the skip does not carry the document's own reason:\n%s", problems[0].Message)
 }
 
 // `# Platform:` inside SINGLE quotes is part of the argument, not a declaration.
@@ -846,15 +668,10 @@ func TestAHashInsideSingleQuotesIsNotADeclaration(t *testing.T) {
 	t.Parallel()
 
 	steps, err := Steps("nova-alpha", []string{"$ nova-alpha say --body 'a # Platform: darwin thing'", "SAY OK"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps[0].Platforms) != 0 {
-		t.Errorf("a `# Platform:` inside single quotes was read as a declaration: %v", steps[0].Platforms)
-	}
-	if got, want := steps[0].Args[len(steps[0].Args)-1], "a # Platform: darwin thing"; got != want {
-		t.Errorf("the quoted argument = %q, want %q", got, want)
-	}
+	require.NoError(t, err)
+	assert.Empty(t, steps[0].Platforms, "a `# Platform:` inside single quotes was read as a declaration: %v", steps[0].Platforms)
+	got, want := steps[0].Args[len(steps[0].Args)-1], "a # Platform: darwin thing"
+	assert.Equal(t, want, got, "the quoted argument = %q, want %q", got, want)
 }
 
 // A `# Platform:` value that is not a GOOS is a step that skips on every bench
@@ -867,16 +684,14 @@ func TestAPlatformDeclarationMustNameAGOOS(t *testing.T) {
 		"$ nova-alpha list   # Platform: mac",
 		"$ nova-alpha list   # Platform: darwin,Linux",
 	} {
-		if _, err := Steps("nova-alpha", []string{line, "LIST OK n=1"}); err == nil {
-			t.Errorf("Steps accepted %q; that value is no GOOS and the step would skip everywhere for ever", line)
-		}
+		_, err := Steps("nova-alpha", []string{line, "LIST OK n=1"})
+		assert.Error(t, err, "Steps accepted %q; that value is no GOOS and the step would skip everywhere for ever", line)
 	}
 	for _, line := range []string{
 		"$ nova-alpha list   # Platform: darwin",
 		"$ nova-alpha list   # Platform: darwin,linux",
 	} {
-		if _, err := Steps("nova-alpha", []string{line, "LIST OK n=1"}); err != nil {
-			t.Errorf("Steps refused %q, which names real platforms: %v", line, err)
-		}
+		_, err := Steps("nova-alpha", []string{line, "LIST OK n=1"})
+		assert.NoError(t, err, "Steps refused %q, which names real platforms: %v", line, err)
 	}
 }

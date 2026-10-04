@@ -5,9 +5,10 @@ package main
 
 import (
 	"context"
-	"os/exec"
 	"strconv"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // logPath is where macOS ships the log tool.
@@ -44,7 +45,7 @@ func readOSDenials(sinceSeconds int, pidFloor int) []deniedPath {
 	// reader of a Cmd once it has been started.
 	ctx, cancel := context.WithTimeout(context.Background(), denialReadTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, logPath, "show",
+	cmd := subproc.Context(ctx, logPath, "show",
 		"--last", strconv.Itoa(sinceSeconds)+"s",
 		"--style", "syslog",
 		"--info", "--debug",

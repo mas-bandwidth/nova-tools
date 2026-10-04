@@ -7,12 +7,13 @@ package main
 // and its tokens never reached the day file.
 
 import (
+	"github.com/stretchr/testify/assert"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestIssue181SwarmRetryAttemptIsItsOwnRow(t *testing.T) {
+func TestSwarmRetryAttemptIsItsOwnRow(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -39,7 +40,5 @@ func TestIssue181SwarmRetryAttemptIsItsOwnRow(t *testing.T) {
 	day := read(t, filepath.Join(out, "2026-09-11.tsv"))
 	row := lineWith(day, "deepseek-v3\tserialize")
 	cols := strings.Split(row, "\t")
-	if cols[3] != "1100" || cols[4] != "220" {
-		t.Errorf("the failed attempt and its retry did not both fold: %q", row)
-	}
+	assert.True(t, cols[3] == "1100" && cols[4] == "220", "the failed attempt and its retry did not both fold: %q", row)
 }

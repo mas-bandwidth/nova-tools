@@ -18,23 +18,28 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 
 var secretsAudit = audit.Config{
 	Exempt: map[string]string{
-		"main.go|secretsMain|msg":                                      "messages in disallowedVerbs map are literal constants",
 		"main.go|cmdVersion|buildinfo.Line(\"nova-secrets\", version)": "shared buildinfo.Line renders the complete four-field version line through oneline.Field",
-		"main.go|runNamesCLI|n":                                        "formatted event line from internal/secrets.RunNames",
-		"main.go|runNamesCLI|more":                                     "formatted MORE line from internal/secrets.RunNames",
-		"main.go|runNamesCLI|okLine":                                   "formatted OK line from internal/secrets.RunNames",
-		"main.go|runCheckCLI|okLine":                                   "formatted OK line from internal/secrets.RunCheck",
-		"main.go|runCheckCLI|l":                                        "formatted FAIL line from internal/secrets.RunCheck",
-		"main.go|runCheckCLI|m":                                        "formatted MORE line from internal/secrets.RunCheck",
-		"main.go|runCheckCLI|summaryLine":                              "formatted summary line from internal/secrets.RunCheck",
-		"main.go|runGateCLI|line":                                      "formatted GATE line from internal/secrets.RunGate",
-		"main.go|runKeygenCLI|l":                                       "formatted receipt line from internal/secrets.RunKeygen, printed in the order that package returns them",
-		"main.go|runSeatAddCLI|l":                                      "formatted receipt line from internal/secrets.RunSeatAdd, which never renders a value",
-		"main.go|runPlaceCLI|okLine":                                   "formatted OK line from internal/secrets.RunPlace",
-		"main.go|runPlacedCLI|okLine":                                  "formatted OK line from internal/secrets.RunPlaced",
-		"main.go|runPlacedCLI|l":                                       "formatted ITEM line from internal/secrets.RunPlaced",
-		"main.go|runSealCLI|line":                                      "formatted SEAL OK line from internal/secrets.RunSeal",
-		"main.go|runSeatInjectCLI|line":                                "formatted SEAT INJECT OK line from internal/secrets.RunSeatInject, which never renders a value",
+		"main.go|runNamesCLI|n":           "formatted event line from internal/secrets.RunNames",
+		"main.go|runNamesCLI|more":        "formatted MORE line from internal/secrets.RunNames",
+		"main.go|runNamesCLI|okLine":      "formatted OK line from internal/secrets.RunNames",
+		"main.go|runCheckCLI|okLine":      "formatted OK line from internal/secrets.RunCheck",
+		"main.go|runCheckCLI|l":           "formatted FAIL line from internal/secrets.RunCheck",
+		"main.go|runCheckCLI|m":           "formatted MORE line from internal/secrets.RunCheck",
+		"main.go|runCheckCLI|summaryLine": "formatted summary line from internal/secrets.RunCheck",
+		"main.go|runGateCLI|line":         "formatted GATE line from internal/secrets.RunGate",
+		"main.go|runKeygenCLI|l":          "formatted receipt line from internal/secrets.RunKeygen, printed in the order that package returns them",
+		"main.go|runSeatAddCLI|l":         "formatted receipt line from internal/secrets.RunSeatAdd, which never renders a value",
+		"main.go|runPlaceCLI|okLine":      "formatted OK line from internal/secrets.RunPlace",
+		"main.go|runPlacedCLI|okLine":     "formatted OK line from internal/secrets.RunPlaced",
+		"main.go|runPlacedCLI|l":          "formatted ITEM line from internal/secrets.RunPlaced",
+		"main.go|runSealCLI|line":         "formatted SEAL OK line from internal/secrets.RunSeal",
+		"main.go|runSeatInjectCLI|line":   "formatted SEAT INJECT OK line from internal/secrets.RunSeatInject, which never renders a value",
+		// A caller's word in a refusal is free text, printed plain in quotes (oneline.Quote is
+		// strconv.Quote: one line, every control, separator and bidi rune escaped, injective).
+		"main.go|dispatch|oneline.Quote(verb)": "the unknown verb, quoted on one line",
+		// The token of a verb's refusal is the verb's own name, a literal of this file's
+		// dispatch upper-cased, never a caller's word.
+		"main.go|refuse|strings.ToUpper(verb)": "the verb's name, a literal of this file's dispatch, upper-cased",
 	},
 	Imports: []string{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
@@ -42,6 +47,11 @@ var secretsAudit = audit.Config{
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
 		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strings"`,
+		// slices.Index finds exec's '--' delimiter; it writes nothing.
+		`"slices"`,
+		// names --json: tool.Out renders one JSON object through encoding/json, which
+		// escapes every control character, so nothing it writes can break the line.
+		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/secrets"`,

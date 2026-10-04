@@ -7,12 +7,15 @@ import (
 	"syscall"
 )
 
+// Supported: Linux has setpriority, set on every thread below.
+const Supported = true
+
 // setNice is setpriority(PRIO_PROCESS, tid, n) on EVERY thread of this
 // process. On Linux a nice value belongs to a thread, not a process: the
 // 0 in setpriority(PRIO_PROCESS, 0, n) is the calling thread alone, and a
 // child the Go runtime forks from another of its threads inherits that
-// thread's nice, which is still 0 (measured on hetzner, 2026-09-26: 31 of
-// 32 children of a wrapper at nice 0). So the threads are read from
+// thread's nice, which is still 0 (measured: nearly every child of a wrapper
+// stayed at nice 0). So the threads are read from
 // /proc/self/task and each is set, and the read repeats until a pass finds
 // no thread it has not set: a thread the runtime starts meanwhile is
 // forked from a thread already at n and inherits it, but the loop does not
@@ -33,7 +36,11 @@ func setNice(n int) error {
 				if err == syscall.ESRCH {
 					continue // the thread ended between the read and the set
 				}
-				return fmt.Errorf("thread %d: %w", tid, err)
+				// a refusal to raise THIS thread is fine only when THIS thread is
+				// already at n or more; the others are each judged on their own
+				if now, err2 := threadNice(tid); err2 != nil || !alreadyBehind(err, now, n) {
+					return fmt.Errorf("thread %d: %w", tid, err)
+				}
 			}
 			done[tid] = true
 			fresh++
@@ -60,12 +67,12 @@ func threads() ([]int, error) {
 	return tids, nil
 }
 
-// currentNice is getpriority(PRIO_PROCESS, 0) for the calling thread. The
-// raw Linux system call answers 20 minus the nice value (so it never
+// threadNice is getpriority(PRIO_PROCESS, tid) for one thread (0: the calling
+// one). The raw Linux system call answers 20 minus the nice value (so it never
 // returns a negative), and Go's syscall.Getpriority hands that back
 // untouched; this undoes it.
-func currentNice() (int, error) {
-	raw, err := syscall.Getpriority(syscall.PRIO_PROCESS, 0)
+func threadNice(tid int) (int, error) {
+	raw, err := syscall.Getpriority(syscall.PRIO_PROCESS, tid)
 	if err != nil {
 		return 0, err
 	}

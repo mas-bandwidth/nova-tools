@@ -1,111 +1,203 @@
 // nova-ci runs the checks this repository's CI path makes on its own output.
 // Its first verb, slowtests, reads the newline-delimited `go test -json`
 // TestEvents on stdin, sums the package-level elapsed time for each package,
-// and refuses (exit 2) every package whose total is over the budget, one line
-// each. It exists because a slow test must surface the moment it happens:
-// nova-secrets sat at 120 seconds unnoticed until an alarm like this one.
+// and prints a CI-SLOW line for every package whose total is over the budget, a
+// measurement that fails the run only under --enforce, so a slow test surfaces
+// the moment it happens.
 //
 // Every path and every budget comes from a flag. There are no guessed paths; a
 // budget of zero or less is refused rather than read as unlimited.
 package main
 
 import (
+	_ "embed"
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"runtime"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/ci/functional"
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/internal/tty"
 )
 
-const usage = `nova-ci: the checks this repository's CI runs on its own test output (see docs/SPEC-CI.md)
+// exampleEvents is the go test -json stream slowtests --example reads: two
+// packages, one over the default budget, so a first run needs no Go module
+// and no file from a source checkout.
+//
+//go:embed testdata/example-events.jsonl
+var exampleEvents string
 
-usage:
-  nova-ci help        print this banner and the verbs below
+const usage = `nova-ci: test-time budgets over go test -json output, and this repository's own CI steps
+
+how it works: slowtests and functional work in any Go module and keep no state:
+slowtests reads go test -json events on stdin and prints a CI-SLOW line for each
+package or test over its budget and one CI-LOAD line; functional names the
+packages holding functional-tagged tests. local, new-rule and new-verb need a
+nova-tools checkout; github receipt writes one row of a CI run to a Redis store.
+first run: nothing to set up: slowtests --example reads a built-in event stream.
+In your own module: go test -json <packages> | nova-ci slowtests --budget 60.
+
+usage, in any Go module (no state, no store):
+  nova-ci help        print this banner and the verbs below (inspection)
   nova-ci version     which build this is: <version> <goos>/<goarch> <go version>
-  nova-ci slowtests --budget <seconds>
-                      read newline-delimited ` + "`go test -json`" + ` TestEvents on stdin and
-                      print one CI-SLOW line per package whose total elapsed
-                      time is over --budget (default 60) and a CI-LOAD line;
-                      exit 0: the times are a measurement. --enforce makes a
-                      CI-SLOW line exit 2 (the nightly reference leg only).
-  nova-ci local [--base origin/dev] [--functional]
-                      the unit tier CI runs for this diff, on this machine:
-                      the packages .github/scripts/select-packages.sh picks
-                      against the merge base of --base and HEAD, run through
-                      the Makefile's test target (its go test flags and its
-                      slowtests budgets) under nice -n 15 at -p 2, GOMAXPROCS=2
-                      and -count=1; one PKG line per package with its seconds,
-                      one RED line per failing test with its output.
-                      --functional adds the functional build tag
-                      (GOTEST_TAGS=functional); CI runs those tests in its
-                      functional job as a stream merges.
-                      Exit 0 green, 1 a red test or build, 2 a CI-SLEEPS
-                      line or could not run.
-  nova-ci slowtests --package-budget <s> --test-budget <s> [--allowlist <file>]
-                    [--sleeps <file>] [--enforce] [--load <n> --cpus <n>]
-                      the unit tier's budgets: a package over --package-budget
-                      and a top-level test over --test-budget are each a CI-SLOW
-                      line, unless the allowlist (pkg<TAB>test<TAB>seconds<TAB>
+  nova-ci slowtests [--budget <seconds> | --package-budget <s>] [--test-budget <s>]
+                    [--allowlist <file>] [--sleeps <file>] [--enforce]
+                    [--load <n> --cpus <n>] [--example] [--json] [--max <n>]
+                      (inspection) read newline-delimited ` + "`go test -json`" + `
+                      TestEvents on stdin (or the built-in example stream with
+                      --example) and print one CI-SLOW line per package whose
+                      total elapsed time is over its budget (--budget, whole
+                      seconds, default 60; --package-budget replaces it) and
+                      per top-level test over --test-budget, then one CI-LOAD
+                      line. The allowlist (pkg<TAB>test<TAB>seconds<TAB>
                       <measured>s@<where>, where is run<id> or a bench, - in
-                      the test column for a package's own row) names a higher
-                      one. The host's load average (the larger of its 1- and
-                      5-minute figures, over its CPUs; --load and --cpus give
-                      them by hand) is printed as a CI-LOAD line and never
-                      read by the verdict. A CI-SLOW line fails the run only
-                      with --enforce. A test skipped with the SLEEPS marker and
-                      not on --sleeps (pkg<TAB>test<TAB>where) is a CI-SLEEPS
-                      line and fails the run on every leg.
-                      A package go test served from its test cache reports a
-                      package elapsed near zero, so a cached run can never
-                      trip --package-budget (or --budget); its tests replay
-                      the times of the run that was cached, which
-                      --test-budget still reads. CI's unit legs run with the
-                      cache on (GOTEST_COUNT_FLAG=); its --enforce leg runs
-                      -count=1, and so does a measurement by hand.
+                      the test column for a package's own row) raises one
+                      package's or test's budget. The host's load average (the
+                      larger of its 1- and 5-minute figures, over its CPUs;
+                      --load and --cpus give them by hand) is printed and never
+                      read by the verdict. The times are a measurement: a
+                      CI-SLOW line fails the run only with --enforce (the
+                      nightly reference leg). A test skipped with the SLEEPS
+                      marker and not on --sleeps (pkg<TAB>test<TAB>where) is a
+                      CI-SLEEPS line and fails the run on every leg. A package
+                      go test served from its test cache reports a package
+                      elapsed near zero, so a cached run never trips a package
+                      budget; its tests replay the cached times, which
+                      --test-budget still reads (measure with -count=1).
+                      --json prints the same verdict as one JSON object.
+                      --max prints at most that many finding lines, then one
+                      CI-SLOW MORE shown=<n> total=<n> line naming the flag
+                      that prints the rest; --max 0 prints every finding.
   nova-ci functional <package-dir>...
-                      print the packages among these that hold functional tests
-                      (a _test.go built only under the functional build tag) on
-                      one line and a go test -run pattern naming exactly those
-                      tests on the next; when there are none, one line
+                      (inspection) print the packages among these that hold
+                      functional tests (a _test.go built only under the
+                      functional build tag) on one line and a go test -run
+                      pattern naming exactly those tests on the next; when
+                      there are none, one line
                       CI FUNCTIONAL OK packages=0 reason=<why>. A flag, and a
-                      pattern matching no package, are refused (exit 2).
-  nova-ci new-rule [--root <checkout>] <rule-name>
-                      scaffold a new class rule skeleton: class test, fixture, and makefile
-  nova-ci new-verb [--root <checkout>] <tool> <verb>
-                      scaffold a new CLI verb skeleton: command, test, fixture, and makefile
+                      pattern matching no package, are refused.
+
+usage, in a nova-tools checkout (this repository's own CI steps):
+  nova-ci local [--base origin/dev] [--functional] [--dry-run]
+                      (runs tests, writes only a temp dir; needs a nova-tools
+                      checkout) the unit tier CI runs for this diff, on this
+                      machine: the packages CI's selection picks against the
+                      merge base of --base and HEAD, run through the Makefile's
+                      test target (its go test flags and its slowtests budgets)
+                      under nice -n 15 at -p 2, GOMAXPROCS=2 and -count=1; one
+                      PKG line per package with its seconds, one RED line per
+                      failing test with its output. --functional adds the
+                      functional build tag (GOTEST_TAGS=functional); CI runs
+                      those tests in its functional job as a stream merges.
+                      --dry-run prints the packages and the make line, and
+                      runs nothing.
+  nova-ci new-rule [--root <checkout>] [--dry-run] <rule-name>
+                      (local write; needs a nova-tools checkout) scaffold a new
+                      class rule: class test, fixture and make target;
+                      --dry-run lists the files and writes nothing
+  nova-ci new-verb [--root <checkout>] [--dry-run] <tool> <verb>
+                      (local write; needs a nova-tools checkout) scaffold a new
+                      verb of an existing tool: command, test, fixture and make
+                      target; --dry-run lists the files and writes nothing
   nova-ci github receipt --from-runner --redis <addr> --repo owner/name
                     --sha <40hex> --run-id <n> --workflow <name>
                     --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
-                      the ci-ok job's run receipt: one ev:github row of the
-                      workflow_run shape, sender runner; dialled as the
-                      environment's seat (NOVA_SPRINT_REDIS_USER). One CI
-                      RECEIPT line;
-                      exit 0 written, 1 the store refused it, 2 usage.
+                    [--dry-run]
+                      (store write) the ci-ok job's run receipt: one ev:github
+                      row of the workflow_run shape, sender runner; dialled as
+                      the environment's seat (NOVA_SPRINT_REDIS_USER). One CI
+                      RECEIPT line. --dry-run checks the fields and prints the
+                      line with ev=-, dialling nothing.
 
-exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
-            line under --enforce, or the invocation could not run (bad flag,
-            unreadable stdin); local adds 1 for a red test or a package that
-            did not build, and github receipt adds 1 for a write the store
-            refused.
+exit codes: 0 done and 2 usage or could not run, for every verb; by verb:
+  slowtests: 0 inside budget, or CI-SLOW lines without --enforce (a
+    measurement); 1 a CI-SLEEPS line, or a CI-SLOW line under --enforce
+    (the check said no); 2 the invocation could not run (bad flag,
+    unreadable stdin)
+  local: 0 green; 1 a red test, a package that did not build, or a
+    CI-SLEEPS line; 2 a step that could not run, or usage
+  functional: 0 the selection printed (packages=0 included); 2 a flag, or
+    a pattern that matches no package
+  new-rule: 0 the files written (or listed, with --dry-run); 2 usage, not a
+    checkout, a bad name, or a file already there
+  new-verb: 0 the files written (or listed, with --dry-run); 2 usage, not a
+    checkout, a bad name, a tool with no func main, or a file already there
+  github receipt: 0 written (or checked, with --dry-run); 1 the store
+    refused the write or could not confirm it; 2 usage or a refused field
+  version: 0 printed; 2 an argument given
 
 example:
   nova-ci help
-  nova-ci version
-  nova-ci slowtests --budget 60
+  nova-ci slowtests --example --budget 60 --load 4 --cpus 16
+  nova-ci slowtests --example --budget 120 --load 4 --cpus 16
 `
 
-// refuse prints this tool's one-line refusal, escaped, and names the door.
-// Package flag is given no stream so an argument holding a newline cannot
-// author a second line of stderr before this code runs.
+// verbs is every verb in the order the banner lists them: what a refusal for a
+// missing or unknown verb names.
+const verbs = "slowtests, functional, local, new-rule, new-verb, github receipt, version, help"
+
+// verbEffect is what running a verb does beyond printing, the last line of its -h, in
+// internal/tool's words (inspection, local write or delivery; docs/STANDARD.md section 2).
+var verbEffect = map[string]tool.Effect{
+	"slowtests":      tool.Inspection,
+	"functional":     tool.Inspection,
+	"version":        tool.Inspection,
+	"local":          "local write: runs this checkout's unit tests, writing only a temp dir",
+	"new-rule":       tool.LocalWrite,
+	"new-verb":       tool.LocalWrite,
+	"github receipt": "delivery: writes one row of a CI run to a Redis store",
+}
+
+// refuse prints this tool's one refusal line, `nova-ci[ <verb>] REFUSED:
+// <what>; run: <remedy>` (STANDARD §2), at exit 2. The remedy is the verb's
+// own help, or the banner when no verb was named. Package flag is given no
+// stream so an argument holding a newline cannot author a second line of
+// stderr before this code runs.
 func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-ci%s: %s; run: nova-ci help\n", oneline.Escape(where), oneline.Escape(what))
+	next := "nova-ci help"
+	if where != "" {
+		next = "nova-ci" + where + " -h"
+	}
+	return refuseRun(stderr, where, what, next)
+}
+
+// refuseRun is refuse with a remedy of the verb's choosing: a command that
+// fixes the call, where the help would only describe it.
+func refuseRun(stderr io.Writer, where, what, next string) int {
+	fmt.Fprintf(stderr, "nova-ci%s REFUSED: %s; run: %s\n", where, oneline.Escape(what), oneline.Escape(next))
 	return 2
+}
+
+// exitTable is the exit-code paragraph a verb's -h quotes: the banner's first
+// line and that verb's own row, so no verb's help states another verb's codes.
+// A verb the table does not name (help) quotes the whole paragraph.
+func exitTable(verb string) string {
+	head, rest, _ := strings.Cut(usage, "\nexit codes: ")
+	table, tail, _ := strings.Cut(rest, "\n\n")
+	lines := strings.Split(table, "\n")
+	var own []string
+	for i := 1; i < len(lines); i++ {
+		if !strings.HasPrefix(lines[i], "  "+verb+":") && !strings.HasPrefix(lines[i], "  "+verb+" ") {
+			continue
+		}
+		own = append(own, lines[i])
+		for i+1 < len(lines) && strings.HasPrefix(lines[i+1], "    ") {
+			i++
+			own = append(own, lines[i])
+		}
+	}
+	if len(own) == 0 {
+		return usage
+	}
+	return head + "\nexit codes: " + lines[0] + "\n" + strings.Join(own, "\n") + "\n\n" + tail
 }
 
 func main() {
@@ -114,10 +206,27 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read, run or written (the CLI style's rule (b), #4505).
-	defer verbflag.Recover(stdout, "nova-ci", usage, &code)
+	// before anything is read, run or written (the CLI style's rule (b)),
+	// with that verb's own exit codes (verbflag.RecoverWith would quote the
+	// whole table).
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		h, ok := r.(verbflag.Help)
+		if !ok {
+			panic(r)
+		}
+		verb := verbflag.Verb("nova-ci", h.FS)
+		verbflag.Print(stdout, "nova-ci", exitTable(verb), h.FS)
+		if e, ok := verbEffect[verb]; ok {
+			fmt.Fprintf(stdout, "effect: %s\n", e)
+		}
+		code = 0
+	}()
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; the verb is slowtests (a package over its time budget)")
+		return refuse(stderr, "", "no verb given; the verbs are "+verbs)
 	}
 	switch args[0] {
 	case "version", "--version":
@@ -125,7 +234,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	case "slowtests":
 		return cmdSlowtests(args[1:], stdin, stdout, stderr)
 	case "local":
-		return cmdLocal(args[1:], stdout, stderr, execLocal)
+		return cmdLocal(args[1:], stdout, stderr, execLocal, localSelectThrough(execLocal))
 	case "functional":
 		return cmdFunctional(args[1:], stdout, stderr)
 	case "new-rule":
@@ -141,15 +250,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
-		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
+		return refuse(stderr, "", fmt.Sprintf("unknown verb %q; the verbs are %s", args[0], verbs))
 	}
 }
 
 // cmdSlowtests reads the events, sums them against the budgets, and prints one
 // CI-SLOW line per package or test over its budget (or the single CI-SLOW OK
 // line), one CI-SLEEPS line per unledgered SLEEPS skip, and the CI-LOAD line.
-// Exit 2 on a CI-SLEEPS line on every leg, on a CI-SLOW line only with
-// --enforce; 0 otherwise. A malformed line or an unusable flag is a refusal.
+// Exit 1 on a CI-SLEEPS line on every leg, and on a CI-SLOW line only with
+// --enforce; 0 otherwise. A malformed line or an unusable flag is a refusal,
+// and one run names every problem with the flags and the files they name.
 func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("slowtests", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -162,54 +272,53 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	enforce := fs.Bool("enforce", false, "fail the run on a CI-SLOW line (the nightly reference leg only); without it the times are printed and only a CI-SLEEPS line fails")
 	loadFlag := fs.Float64("load", -1, "the host's load average, instead of reading it")
 	cpusFlag := fs.Int("cpus", 0, "the host's logical CPUs, instead of runtime.NumCPU")
+	example := fs.Bool("example", false, "read the built-in six-event example stream instead of stdin: a first run with no Go module")
+	asJSON := fs.Bool("json", false, "print the verdict, or the refusal, as one JSON object {result, facts, items} on stdout instead of lines")
+	maxFlag := fs.Int("max", bounded.Default, "finding lines to print before one MORE line stands for the rest; 0 prints all")
 	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " slowtests", oneline.Cap(err.Error(), oneline.TailBytes))
+		return slowtestsRefuse(stdout, stderr, verbflag.BoolAsked(args, "json"), []string{verbflag.Explain(fs, err)}, "nova-ci slowtests -h")
 	}
+	problems := nonFinite(fs)
 	if fs.NArg() > 0 {
-		return refuse(stderr, " slowtests", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+		problems = append(problems, fmt.Sprintf("unexpected argument %q (the events come on stdin, the budgets from flags)", fs.Arg(0)))
 	}
 	if *budget <= 0 {
-		return refuse(stderr, " slowtests", fmt.Sprintf("--budget must be a whole number of seconds greater than zero (got %d)", *budget))
+		problems = append(problems, fmt.Sprintf("--budget must be a whole number of seconds greater than zero (got %d)", *budget))
 	}
-
-	if *packageBudget < 0 || *testBudget < 0 {
-		return refuse(stderr, " slowtests", "--package-budget and --test-budget must be seconds greater than zero")
+	// -Inf is named once, by nonFinite, not again as a negative.
+	if negative := func(v float64) bool { return v < 0 && !math.IsInf(v, -1) }; negative(*packageBudget) || negative(*testBudget) {
+		problems = append(problems, "--package-budget and --test-budget want seconds, zero or more (0 leaves the package budget to --budget, and judges no test alone)")
 	}
 	if *cpusFlag < 0 {
-		return refuse(stderr, " slowtests", "--cpus must not be negative")
+		problems = append(problems, "--cpus must not be negative")
+	}
+	if *maxFlag < 0 {
+		problems = append(problems, fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", *maxFlag))
 	}
 	budgets := slowtests.Budgets{Package: float64(*budget), Test: *testBudget}
 	if *packageBudget > 0 {
 		budgets.Package = *packageBudget
 	}
-	if *allowlist != "" {
-		f, err := os.Open(*allowlist)
-		if err != nil {
-			return refuse(stderr, " slowtests", fmt.Sprintf("--allowlist: %s", oneline.Err(err)))
-		}
-		rows, err := slowtests.ParseAllowlist(f)
-		_ = f.Close()
-		if err != nil {
-			return refuse(stderr, " slowtests", fmt.Sprintf("--allowlist %s: %s", *allowlist, oneline.Err(err)))
-		}
-		budgets.Rows = rows
+	var err error
+	if budgets.Rows, err = readRows(*allowlist, slowtests.ParseAllowlist); err != nil {
+		problems = append(problems, "--allowlist "+oneline.Err(err))
 	}
-	if *sleeps != "" {
-		f, err := os.Open(*sleeps)
-		if err != nil {
-			return refuse(stderr, " slowtests", fmt.Sprintf("--sleeps: %s", oneline.Err(err)))
-		}
-		rows, err := slowtests.ParseSleeps(f)
-		_ = f.Close()
-		if err != nil {
-			return refuse(stderr, " slowtests", fmt.Sprintf("--sleeps %s: %s", *sleeps, oneline.Err(err)))
-		}
-		budgets.Sleeps = rows
+	if budgets.Sleeps, err = readRows(*sleeps, slowtests.ParseSleeps); err != nil {
+		problems = append(problems, "--sleeps "+oneline.Err(err))
+	}
+	in := stdin
+	if *example {
+		in = strings.NewReader(exampleEvents)
+	} else if isTerminal(stdin) {
+		problems = append(problems, "stdin is a terminal, and slowtests reads go test -json events on stdin: pipe them in, or pass --example for the built-in stream")
+	}
+	if len(problems) > 0 {
+		return slowtestsRefuse(stdout, stderr, *asJSON, problems, "nova-ci slowtests -h")
 	}
 
-	events, err := slowtests.Parse(stdin)
+	events, err := slowtests.Parse(in)
 	if err != nil {
-		return refuse(stderr, " slowtests", fmt.Sprintf("stdin is not newline-delimited go test -json: %s", oneline.Err(err)))
+		return slowtestsRefuse(stdout, stderr, *asJSON, []string{fmt.Sprintf("stdin is not newline-delimited go test -json: %s", oneline.Err(err))}, "go test -json <packages> | nova-ci slowtests --budget 60")
 	}
 	report := slowtests.Judge(events, budgets)
 	// The load is printed, never judged: read from the host unless --load
@@ -226,15 +335,162 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		ledger = "the SLEEPS ledger (no --sleeps given)"
 	}
 	lines, code := slowtests.Verdict(report, load, *enforce, ledger)
-	for _, line := range lines {
+	if *asJSON {
+		return verdictJSON(report, load, *enforce, code, *maxFlag).Render(stdout, true)
+	}
+	for _, line := range capSlowLines(lines, *maxFlag) {
 		fmt.Fprintln(stdout, line)
 	}
 	return code
 }
 
+// maxRemedy is the second half of the MORE line slowtests prints under --max.
+// A cap with no remedy is censorship; a cap with one is an index
+// (internal/bounded).
+const maxRemedy = "--max <n> raises the ceiling, --max 0 prints every finding"
+
+// capSlowLines bounds the CI-SLOW finding lines Verdict returns: at most max
+// of them print, then one MORE line carrying the shown and total counts, so a
+// whole-tree run never buries a reader in findings (STANDARD §2: output is
+// bounded and keeps its totals). The cap is over the finding lines only: the
+// CI-SLEEPS lines, the OK line and the CI-LOAD line print either way, and the
+// exit code is Verdict's, from the uncapped report, so capping never flips a
+// verdict. max <= 0 prints everything with no MORE line.
+func capSlowLines(lines []string, max int) []string {
+	if max <= 0 {
+		return lines
+	}
+	capped := 0
+	for capped < len(lines) && isSlowFinding(lines[capped]) {
+		capped++
+	}
+	if capped <= max {
+		return lines
+	}
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, lines[:max]...)
+	out = append(out, bounded.MoreLine("CI-SLOW", "finding", max, capped, maxRemedy))
+	return append(out, lines[capped:]...)
+}
+
+// isSlowFinding reports whether line is a CI-SLOW finding: a package or a test
+// over its budget. The OK, SLEEPS and LOAD lines are not findings and are
+// never capped.
+func isSlowFinding(line string) bool {
+	return strings.HasPrefix(line, "CI-SLOW package=") || strings.HasPrefix(line, "CI-SLOW test=")
+}
+
+// slowtestsRefuse is slowtests' refusal: the house line on stderr, or with
+// --json the same refusal as the JSON of the one output value on stdout.
+func slowtestsRefuse(stdout, stderr io.Writer, asJSON bool, why []string, next string) int {
+	if !asJSON {
+		return refuseRun(stderr, " slowtests", strings.Join(why, "; "), next)
+	}
+	return (&tool.Out{Verb: "slowtests", Status: tool.Refused, Exit: 2, Why: why, Remedy: next}).Render(stdout, true)
+}
+
+// nonFinite names every float flag of fs whose value is NaN or an infinity:
+// strconv parses them, and no budget, load or count is one.
+func nonFinite(fs *flag.FlagSet) []string {
+	var bad []string
+	fs.VisitAll(func(f *flag.Flag) {
+		if v, ok := f.Value.(flag.Getter).Get().(float64); ok && (math.IsNaN(v) || math.IsInf(v, 0)) {
+			bad = append(bad, fmt.Sprintf("--%s wants a finite number, got %s", f.Name, f.Value.String()))
+		}
+	})
+	return bad
+}
+
+// readRows parses the file a ledger flag names; an empty name is no rows.
+func readRows[R any](path string, parse func(io.Reader) ([]R, error)) ([]R, error) {
+	if path == "" {
+		return nil, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := parse(f)
+	// ignored: a close after the parse read the whole file; the parse error is the one returned
+	_ = f.Close()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return rows, nil
+}
+
+// isTerminal reports whether r is a terminal: slowtests with nothing piped in
+// would wait for input that never comes, so it refuses instead. A file asks
+// internal/tty, which asks the terminal for its window size: a character
+// device alone is not one (/dev/null is the empty stream). A reader that
+// answers IsTerminal itself is the seam a test hands in.
+func isTerminal(r io.Reader) bool {
+	if t, ok := r.(interface{ IsTerminal() bool }); ok {
+		return t.IsTerminal()
+	}
+	f, ok := r.(*os.File)
+	return ok && tty.IsTerminal(f)
+}
+
+// verdictJSON is the slowtests verdict as the one output value (STANDARD §2):
+// the same findings the lines print, typed. Exit is the verb's own. max caps
+// the slow items the same way capSlowLines caps the slow lines, so the two
+// renderings cannot drift: the SLEEPS items print either way.
+func verdictJSON(r slowtests.Report, load slowtests.Load, enforce bool, code int, max int) *tool.Out {
+	o := &tool.Out{Verb: "slowtests", Status: tool.OK, Exit: code}
+	if code != 0 {
+		o.Status = tool.Failed
+		if len(r.Sleepers) > 0 {
+			o.Why = append(o.Why, fmt.Sprintf("%d SLEEPS skip(s) not on the ledger", len(r.Sleepers)))
+		}
+		if enforce && len(r.Over)+len(r.OverTests) > 0 {
+			o.Why = append(o.Why, fmt.Sprintf("%d CI-SLOW finding(s) under --enforce", len(r.Over)+len(r.OverTests)))
+		}
+	}
+	slowest := "none"
+	if r.Slowest.Name != "" {
+		slowest = r.Slowest.Name
+	}
+	o.Fact("packages", r.Packages).Fact("slowest", slowest).Fact("slowest_seconds", r.Slowest.Seconds).Fact("enforce", enforce)
+	if load.Known {
+		o.Fact("load", load.Avg)
+	} else {
+		o.Fact("load", "unknown").Fact("load_why", load.Why)
+	}
+	o.Fact("cpus", load.CPUs)
+	for _, p := range r.Over {
+		var tests []string
+		for _, t := range p.Slowest {
+			tests = append(tests, t.Name+":"+slowtests.Seconds(t.Seconds))
+		}
+		o.Item("slow-package", "package", p.Name, "seconds", p.Seconds, "budget", p.Budget, "slowest", strings.Join(tests, ","))
+	}
+	for _, t := range r.OverTests {
+		o.Item("slow-test", "test", t.Name, "package", t.Package, "seconds", t.Seconds, "budget", t.Budget)
+	}
+	for _, s := range r.Sleepers {
+		o.Item("sleeps", "test", s.Name, "package", s.Package)
+	}
+	if max > 0 {
+		tally := bounded.NewTally(max)
+		kept := o.Items[:0]
+		for _, it := range o.Items {
+			if (it.Kind == "slow-package" || it.Kind == "slow-test") && !tally.Add("finding") {
+				continue
+			}
+			kept = append(kept, it)
+		}
+		o.Items = kept
+		if tally.Shown("finding") < tally.Total("finding") {
+			o.More = append(o.More, tool.More{Kind: "finding", Shown: tally.Shown("finding"), Total: tally.Total("finding"), Remedy: maxRemedy})
+		}
+	}
+	return o
+}
+
 // cmdFunctional prints the functional tier's selection for `make
 // test-functional`: the package directories among args that hold functional
-// tests, space-separated, then one -run pattern naming exactly those tests.
+// tests, all on one line, then one -run pattern naming exactly those tests.
 // A change whose packages carry none prints one `CI FUNCTIONAL OK packages=0
 // reason=<why>` line and exits 0, and the target runs nothing. An unknown flag
 // and a pattern that matches no package are refused, every one in one line: a

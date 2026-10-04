@@ -13,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // helloAccepted is the reply of a store that accepted HELLO 3. Only a store
@@ -66,16 +67,16 @@ func TestConnectIsHelloAlone(t *testing.T) {
 		o.PoolSize, o.Dialer = 1, dial
 	})
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer s.Close()
 	if err := s.Client().Get(context.Background(), "k").Err(); err != redis.Nil {
-		t.Fatalf("get: %v", err)
+		require.True(t, err == redis.Nil, "get: %v", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if want := []string{"hello", "get"}; !reflect.DeepEqual(seen, want) {
-		t.Fatalf("the store received %q; want the connect to be HELLO alone, %q", seen, want)
+		require.Equal(t, want, seen, "the store received %q; want the connect to be HELLO alone, %q", seen, want)
 	}
 }
 

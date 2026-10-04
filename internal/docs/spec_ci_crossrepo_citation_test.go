@@ -5,6 +5,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // spec_ci_crossrepo_citation_test.go holds docs/SPEC-CI.md's pit-stop ledger
@@ -38,36 +41,27 @@ func TestTheCrossRepoCitationNamesItsRepository(t *testing.T) {
 	t.Parallel()
 
 	data, err := os.ReadFile(specCICrossRepoPath)
-	if err != nil {
-		t.Fatalf("%s: %v", specCICrossRepoPath, err)
-	}
+	require.NoError(t, err, "%s: %v", specCICrossRepoPath, err)
 
 	paragraphs := crossRepoParagraphs(string(data))
-	if len(paragraphs) != 1 {
-		t.Fatalf("%s: found %d paragraphs carrying %q, want exactly one; a second citation would split the contract and this test could not say which one it read",
-			specCICrossRepoPath, len(paragraphs), crossRepoCitation)
-	}
+	require.Len(t, paragraphs, 1, "%s: found %d paragraphs carrying %q, want exactly one; a second citation would split the contract and this test could not say which one it read",
+		specCICrossRepoPath, len(paragraphs), crossRepoCitation)
 	paragraph := paragraphs[0]
 
-	if !strings.Contains(paragraph, "rowan-new") {
-		t.Errorf("%s: the pit-stop citation does not name the rowan-new repository; the ledger it cites lives there and nowhere in this repository, so a reader cannot follow it — name the repository in the paragraph",
-			specCICrossRepoPath)
-	}
+	assert.Contains(t, paragraph, "rowan-new", "%s: the pit-stop citation does not name the rowan-new repository; the ledger it cites lives there and nowhere in this repository, so a reader cannot follow it — name the repository in the paragraph",
+		specCICrossRepoPath)
 
-	if !strings.Contains(paragraph, "reports/pitstop-tests-2026-09-17.md") {
-		t.Errorf("%s: the pit-stop citation does not name reports/pitstop-tests-2026-09-17.md; that path is the only thing a reader can follow to the ledger — name it in the paragraph",
-			specCICrossRepoPath)
-	}
+	assert.Contains(t, paragraph, "reports/pitstop-tests-2026-09-17.md", "%s: the pit-stop citation does not name reports/pitstop-tests-2026-09-17.md; that path is the only thing a reader can follow to the ledger — name it in the paragraph",
+		specCICrossRepoPath)
 
-	if match := crossRepoLinkRe.FindString(paragraph); match != "" {
-		t.Errorf("%s: the pit-stop citation is a link (%q); a markdown link whose destination has no target in THIS repository is what #1765 removed, so the citation must stay prose — do not re-add the link",
-			specCICrossRepoPath, match)
-	}
+	match := crossRepoLinkRe.FindString(paragraph)
+	assert.Empty(t, match, "%s: the pit-stop citation is a link (%q); a markdown link whose destination has no target in THIS repository is what #1765 removed, so the citation must stay prose — do not re-add the link",
+		specCICrossRepoPath, match)
 
-	if !strings.Contains(paragraph, "2026-09-17") || !strings.Contains(paragraph, "a rule lands with its sweep of the tree") {
-		t.Errorf("%s: the sentence lost what it said; it must still carry the date 2026-09-17 and the words \"a rule lands with its sweep of the tree\"",
-			specCICrossRepoPath)
-	}
+	assert.Contains(t, paragraph, "2026-09-17", "%s: the sentence lost what it said; it must still carry the date 2026-09-17 and the words \"a rule lands with its sweep of the tree\"",
+		specCICrossRepoPath)
+	assert.Contains(t, paragraph, "a rule lands with its sweep of the tree", "%s: the sentence lost what it said; it must still carry the date 2026-09-17 and the words \"a rule lands with its sweep of the tree\"",
+		specCICrossRepoPath)
 }
 
 // crossRepoParagraphs returns every blank-line-delimited paragraph of content

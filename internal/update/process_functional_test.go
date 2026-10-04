@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // process_functional_test.go holds the tests of this package that stage a real
@@ -33,13 +35,13 @@ func TestHeldPipePastGraceIsNamedAndEchoesNoContent(t *testing.T) {
 	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte(secret+"\n")), (killGrace+time.Second).String()))}
 	r := Installed(context.Background(), e, killGrace+5*time.Second, false)
 	if r.Known() || r.Reason != "output_not_closed" {
-		t.Fatalf("reason=%q remedy=%q", r.Reason, r.Remedy)
+		require.Failf(t, "", "reason=%q remedy=%q", r.Reason, r.Remedy)
 	}
 	if r.Remedy != leakRemedy {
-		t.Fatalf("remedy=%q", r.Remedy)
+		require.EqualValuesf(t, leakRemedy, r.Remedy, "remedy=%q", r.Remedy)
 	}
 	if strings.Contains(r.Reason, "9.9.9") || strings.Contains(r.Remedy, "9.9.9") {
-		t.Fatalf("diagnostic echoed child content: %q %q", r.Reason, r.Remedy)
+		require.Failf(t, "", "diagnostic echoed child content: %q %q", r.Reason, r.Remedy)
 	}
 }
 
@@ -70,7 +72,7 @@ func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
 		}
 		t.Logf("two-phase interruption missed live window on attempt %d of %d; retrying", attempt, stagingAttempts)
 	}
-	t.Fatalf("two-phase interruption failed to observe both live kill boundaries in %d attempts", stagingAttempts)
+	require.Failf(t, "", "two-phase interruption failed to observe both live kill boundaries in %d attempts", stagingAttempts)
 }
 
 // Killed after the note is ON the remote but before the confirmation is
@@ -99,17 +101,17 @@ func TestJoinInterruptionNegativeControlWithoutKillFails(t *testing.T) {
 	wrap, record := r.wrapperOnPath(t, killLostResult)
 	code, out, errs := r.send(t, wrap)
 	if code != 1 || !strings.Contains(errs+out, "sent=uncertain") {
-		t.Fatalf("negative control wrapper was not reported as failure: %d\n%s\n%s", code, out, errs)
+		require.Failf(t, "", "negative control wrapper was not reported as failure: %d\n%s\n%s", code, out, errs)
 	}
 	b, err := os.ReadFile(record)
 	if err != nil {
-		t.Fatalf("wrapper left no record: %v", err)
+		require.NoErrorf(t, err, "wrapper left no record: %v", err)
 	}
 	receipt := parseStageRecord(string(b))
 	if !receipt.observed {
-		t.Fatalf("expected boundary observed=true, got %s", string(b))
+		require.Failf(t, "", "expected boundary observed=true, got %s", string(b))
 	}
 	if receipt.killedAlive {
-		t.Fatalf("negative control must not report killed-alive=true: %s", string(b))
+		require.Failf(t, "", "negative control must not report killed-alive=true: %s", string(b))
 	}
 }

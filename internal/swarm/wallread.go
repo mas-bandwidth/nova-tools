@@ -3,12 +3,12 @@ package swarm
 // WHAT THE CARD IS SAYING, READ WHILE IT IS STILL SAYING IT.
 //
 // Until this file every wall question was asked of a file AFTER the child was gone:
-// deprecated/cmd/nova-swarm/native.go re-opened <job>/harness-output.log once the process had exited,
-// and internal/swarm/supervise.go did the same with <job>/harness.log. A run that stopped
+// cmd/nova-swarm/native.go re-opened <job>/harness-output.log once the process had exited.
+// A run that stopped
 // making progress therefore cost its WHOLE deadline before anybody looked, and the
 // coordinator watching it saw nothing at all in the meantime.
 //
-// MEASURED, 2026-09-19, on hulk (landlock abi 4) and on the Studio's own dead card:
+// MEASURED, inside the real wall (landlock abi 4) and on one dead card:
 //
 //   - A wall refusal does NOT stop a card. Three probe cards inside the real wall
 //     (`wallprobewrite`, `wallprobeexec`, `wallprobehang`) each took a refusal -- rc=2 and
@@ -16,8 +16,8 @@ package swarm
 //     rc=2 and `Permission denied` on a write to /tmp -- and each read the tool error, went
 //     on, and published a correct RESULT.md in 13-35 seconds. The model routes around the
 //     wall; killing a card at its first refusal would kill working cards.
-//   - The card that DID die (`js-under-20-bytes`, 2026-09-19, rc=-1 wall=1200.04s, no
-//     RESULT.md) was not stopped by the wall at all. Its ONE `Operation not permitted` is
+//   - The card that DID die (rc=-1, wall=1200.04s, no RESULT.md) was not stopped by the
+//     wall at all. Its ONE `Operation not permitted` is
 //     line 5 of its log -- the harness's own startup banner, before STEP 1 -- and the card
 //     then worked for SIXTEEN more model steps past it. Its last three log lines are a
 //     provider stream opening at 14:53:36.958Z and then nothing: it died waiting on a model
@@ -28,6 +28,7 @@ package swarm
 // card MOVED PAST is not what killed it, whatever order the lines are in.
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,7 +41,7 @@ import (
 // PermissionDeniedMark is the kernel's refusal on linux. landlock denies a write outside the
 // write set with EACCES, and the C library spells that `Permission denied` -- so the marks
 // this package had (`SANDBOX REFUSED`, `Operation not permitted`) named NO linux refusal at
-// all. Measured inside the swarm's own wall on hulk: `sh: 1: cannot create
+// all. Measured inside the swarm's own wall on linux: `sh: 1: cannot create
 // /tmp/nova-wall-probe-swarm: Permission denied`. Like OperationNotPermittedMark it counts
 // only ON A PATH: `Permission denied` with no path in the line is some other permission, and
 // a card's own test output is full of sentences.
@@ -189,12 +190,12 @@ func (r *WallReader) Write(p []byte) (int, error) {
 	r.buf = append(r.buf, p...)
 	var say string
 	for {
-		i := strings.IndexByte(string(r.buf), '\n')
-		if i < 0 {
+		raw, rest, found := bytes.Cut(r.buf, []byte{'\n'})
+		if !found {
 			break
 		}
-		line := strings.TrimSpace(stripPaint(string(r.buf[:i])))
-		r.buf = r.buf[i+1:]
+		line := strings.TrimSpace(stripPaint(string(raw)))
+		r.buf = rest
 		if line == "" {
 			continue
 		}
@@ -296,14 +297,4 @@ func WriteBlockedResult(jobDir, task, kind, path, step, reason string) (string, 
 		return "", false, err
 	}
 	return dest, true, nil
-}
-
-// wallStoppedInLog reads one log file and reports the refusal that STOPPED the card in it,
-// or false when the file cannot be read, holds no refusal, or holds one the card moved past.
-func wallStoppedInLog(path string) (WallRefusal, bool) {
-	raw, err := readRegular(path)
-	if err != nil {
-		return WallRefusal{}, false
-	}
-	return WallStopped(raw)
 }

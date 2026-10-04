@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // opened is a connection to a fake store that accepts everything, closed
@@ -17,7 +19,7 @@ func opened(t *testing.T, reply func(int, []string) string) (*Conn, *fakeStore) 
 	store := newFakeStore(t, reply)
 	conn, err := open(context.Background(), Options{Addr: storeAddr}, nothing, store.dial)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	store.commands()
@@ -35,7 +37,7 @@ func TestTripsCountWhatTheCallerSends(t *testing.T) {
 	client := conn.Client()
 	trips := CountTrips(client)
 	if n := trips.N(); n != 0 {
-		t.Fatalf("a new counter reads %d", n)
+		require.Zero(t, n, "a new counter reads %d", n)
 	}
 	ctx := context.Background()
 	for _, c := range []struct {
@@ -82,17 +84,17 @@ func TestTripsCountWhatTheCallerSends(t *testing.T) {
 	} {
 		before := trips.N()
 		if err := c.work(); err != nil {
-			t.Errorf("%s: %v", c.name, err)
+			assert.NoError(t, err, "%s: %v", c.name, err)
 		}
 		if got := trips.N() - before; got != c.want {
-			t.Errorf("%s took %d trips; want %d", c.name, got, c.want)
+			assert.EqualValues(t, c.want, got, "%s took %d trips; want %d", c.name, got, c.want)
 		}
 		if got := store.commands(); !reflect.DeepEqual(got, c.sent) {
-			t.Errorf("%s: the store received %q; want %q", c.name, got, c.sent)
+			assert.Equal(t, c.sent, got, "%s: the store received %q; want %q", c.name, got, c.sent)
 		}
 	}
 	if got := trips.ByLabel(); len(got) != 0 {
-		t.Errorf("trips made under no label were counted under %v", got)
+		assert.Len(t, got, 0, "trips made under no label were counted under %v", got)
 	}
 }
 
@@ -109,23 +111,23 @@ func TestTripsDoNotCountAConnectionsSetup(t *testing.T) {
 	trips := CountTrips(client)
 	ctx := WithTripLabel(context.Background(), "first")
 	if err := client.Set(ctx, "k", "v", 0).Err(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	sent := store.commands()
 	if len(sent) < 3 || sent[0] != "1: hello 3" || sent[len(sent)-1] != "1: set k v" {
-		t.Fatalf("the store received %q; want a handshake of several commands and then the command", sent)
+		require.FailNowf(t, "", "the store received %q; want a handshake of several commands and then the command", sent)
 	}
 	if trips.N() != 1 || trips.Of("first") != 1 {
-		t.Errorf("a command that set its connection up with %d commands took %d trips, %d under its label; want 1 and 1", len(sent)-1, trips.N(), trips.Of("first"))
+		assert.Failf(t, "", "a command that set its connection up with %d commands took %d trips, %d under its label; want 1 and 1", len(sent)-1, trips.N(), trips.Of("first"))
 	}
 	pipe := client.Pipeline()
 	pipe.Get(ctx, "a")
 	pipe.Get(ctx, "b")
 	if _, err := pipe.Exec(ctx); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if trips.N() != 2 {
-		t.Errorf("a command and a pipeline took %d trips; want 2", trips.N())
+		assert.EqualValues(t, 2, trips.N(), "a command and a pipeline took %d trips; want 2", trips.N())
 	}
 }
 
@@ -143,23 +145,23 @@ func TestTripsDoNotCountTheSetupOfAConnectionDialedLater(t *testing.T) {
 	trips := CountTrips(conn.Client())
 	ctx := context.Background()
 	if err := conn.Client().Incr(ctx, "n").Err(); Classify(err) != Unreachable {
-		t.Fatalf("the command the drop met = %v", err)
+		require.EqualValues(t, Unreachable, Classify(err), "the command the drop met = %v", err)
 	}
 	if trips.N() != 1 {
-		t.Errorf("the command the drop met took %d trips; want 1", trips.N())
+		assert.EqualValues(t, 1, trips.N(), "the command the drop met took %d trips; want 1", trips.N())
 	}
 	pipe := conn.Client().Pipeline()
 	pipe.Get(ctx, "a")
 	pipe.Get(ctx, "b")
 	if _, err := pipe.Exec(ctx); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if trips.N() != 2 {
-		t.Errorf("after the pipeline that dialed again: %d trips; want 2", trips.N())
+		assert.EqualValues(t, 2, trips.N(), "after the pipeline that dialed again: %d trips; want 2", trips.N())
 	}
 	want := []string{"1: incr n", "2: hello 3", "2: get a", "2: get b"}
 	if got := store.commands(); !reflect.DeepEqual(got, want) {
-		t.Errorf("the store received %q; want %q", got, want)
+		assert.Equal(t, want, got, "the store received %q; want %q", got, want)
 	}
 }
 
@@ -170,17 +172,17 @@ func TestTripLabels(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	if got := TripLabel(ctx); got != "" {
-		t.Errorf("a context with no label reads %q", got)
+		assert.Empty(t, got, "a context with no label reads %q", got)
 	}
 	read := WithTripLabel(ctx, "read")
 	type key struct{}
 	derived, cancel := context.WithCancel(context.WithValue(read, key{}, 1))
 	defer cancel()
 	if TripLabel(read) != "read" || TripLabel(derived) != "read" {
-		t.Errorf("labels %q and %q; want read and read", TripLabel(read), TripLabel(derived))
+		assert.Failf(t, "", "labels %q and %q; want read and read", TripLabel(read), TripLabel(derived))
 	}
 	if got := TripLabel(WithTripLabel(read, "write")); got != "write" {
-		t.Errorf("a label over a label reads %q; want the newer", got)
+		assert.EqualValues(t, "write", got, "a label over a label reads %q; want the newer", got)
 	}
 
 	conn, _ := opened(t, accepting)
@@ -188,31 +190,31 @@ func TestTripLabels(t *testing.T) {
 	trips := CountTrips(client)
 	for _, c := range []context.Context{ctx, read, read, derived, WithTripLabel(ctx, "write"), WithTripLabel(read, "")} {
 		if err := client.Set(c, "k", "v", 0).Err(); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	pipe := client.Pipeline()
 	pipe.Get(read, "a")
 	if _, err := pipe.Exec(WithTripLabel(ctx, "batch")); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if trips.N() != 7 {
-		t.Errorf("%d trips; want 7", trips.N())
+		assert.EqualValues(t, 7, trips.N(), "%d trips; want 7", trips.N())
 	}
 	want := map[string]int64{"read": 3, "write": 1, "batch": 1}
 	got := trips.ByLabel()
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("by label %v; want %v", got, want)
+		assert.Equal(t, want, got, "by label %v; want %v", got, want)
 	}
 	for label, n := range map[string]int64{"read": 3, "write": 1, "batch": 1, "": 0, "absent": 0} {
 		if trips.Of(label) != n {
-			t.Errorf("Of(%q) = %d; want %d", label, trips.Of(label), n)
+			assert.EqualValues(t, n, trips.Of(label), "Of(%q) = %d; want %d", label, trips.Of(label), n)
 		}
 	}
 	got["read"] = 99
 	got["new"] = 1
 	if !reflect.DeepEqual(trips.ByLabel(), want) {
-		t.Errorf("a change to the map ByLabel returned changed the counter: %v", trips.ByLabel())
+		assert.Equal(t, want, trips.ByLabel(), "a change to the map ByLabel returned changed the counter: %v", trips.ByLabel())
 	}
 }
 
@@ -221,10 +223,10 @@ func TestTripsOfNothing(t *testing.T) {
 	t.Parallel()
 	var trips *Trips
 	if trips.N() != 0 || trips.Of("read") != 0 {
-		t.Errorf("a nil counter reads %d and %d", trips.N(), trips.Of("read"))
+		assert.Failf(t, "", "a nil counter reads %d and %d", trips.N(), trips.Of("read"))
 	}
 	if got := trips.ByLabel(); got == nil || len(got) != 0 {
-		t.Errorf("a nil counter's labels are %#v; want an empty map", got)
+		assert.Failf(t, "", "a nil counter's labels are %#v; want an empty map", got)
 	}
 }
 
@@ -237,16 +239,16 @@ func TestTwoCountersEachCount(t *testing.T) {
 	ctx := WithTripLabel(context.Background(), "read")
 	first := CountTrips(client)
 	if err := client.Get(ctx, "k").Err(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	second := CountTrips(client)
 	for i := 0; i < 2; i++ {
 		if err := client.Get(ctx, "k").Err(); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	if first.N() != 3 || second.N() != 2 || first.Of("read") != 3 || second.Of("read") != 2 {
-		t.Errorf("the counters read %d (%d) and %d (%d); want 3 and 2", first.N(), first.Of("read"), second.N(), second.Of("read"))
+		assert.Failf(t, "", "the counters read %d (%d) and %d (%d); want 3 and 2", first.N(), first.Of("read"), second.N(), second.Of("read"))
 	}
 }
 
@@ -277,17 +279,17 @@ func TestTripsFromManyGoroutines(t *testing.T) {
 	wg.Wait()
 	close(errs)
 	for err := range errs {
-		t.Error(err)
+		assert.Fail(t, fmt.Sprint(err))
 	}
 	if trips.N() != workers*each {
-		t.Errorf("%d trips; want %d", trips.N(), workers*each)
+		assert.EqualValues(t, workers*each, trips.N(), "%d trips; want %d", trips.N(), workers*each)
 	}
 	for w := 0; w < workers; w++ {
 		if n := trips.Of(fmt.Sprint("worker-", w)); n != each {
-			t.Errorf("worker %d: %d trips; want %d", w, n, each)
+			assert.EqualValues(t, each, n, "worker %d: %d trips; want %d", w, n, each)
 		}
 	}
 	if faults := store.faults(); len(faults) != 0 {
-		t.Errorf("%q", faults)
+		assert.Len(t, faults, 0, "%q", faults)
 	}
 }

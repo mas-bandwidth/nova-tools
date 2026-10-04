@@ -15,6 +15,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
 	file := []string{"--file", "{dir}/manifest.tsv"}
 	testverbhelp.Check(t, versionRun, []testverbhelp.Case{
+		{Verb: "example", Flags: []string{"--out", "{dir}/versions.tsv"}},
 		{Verb: "moved", Flags: []string{"--repo", "{dir}/repo", "--out", "{dir}/moved.md"}},
 		{Verb: "snapshot", Flags: []string{"--bin", "{dir}/bin", "--out", "{dir}/snap.tsv"}},
 		{Verb: "diff", Flags: []string{"--from", "{dir}/a.tsv"}},

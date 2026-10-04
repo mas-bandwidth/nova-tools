@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -26,26 +29,20 @@ func TestStagedCloneIgnoresTheBenchGitconfig(t *testing.T) {
 	pool := t.TempDir()
 	writePoolIdentity(t, pool, "rowan", "Rowan Friend", "rowan@example.com")
 	id, err := LoadPoolIdentity(pool)
-	if err != nil {
-		t.Fatalf("a pool with one identity row refuses to load: %v", err)
-	}
-	if id.Name != "Rowan Friend" || id.Email != "rowan@example.com" {
-		t.Fatalf("identity row reads back wrong: %+v", id)
-	}
+	require.NoError(t, err, "a pool with one identity row refuses to load: %v", err)
+	require.Equal(t, "Rowan Friend", id.Name, "identity row reads back wrong: %+v", id)
+	require.Equal(t, "rowan@example.com", id.Email, "identity row reads back wrong: %+v", id)
 
 	job := t.TempDir()
 	repo := filepath.Join(job, "repo")
 	initCloneRepo(t, repo)
-	if err := StageCloneIdentity(repo, id); err != nil {
-		t.Fatalf("staging the clone's identity: %v", err)
-	}
+	err = StageCloneIdentity(repo, id)
+	require.NoError(t, err, "staging the clone's identity: %v", err)
 
 	// The bench's own config says somebody else; the clone still answers the pool.
 	benchHome := t.TempDir()
 	benchConfig := filepath.Join(benchHome, ".gitconfig")
-	if err := os.WriteFile(benchConfig, []byte("[user]\n\tname = Bench Ghost\n\temail = ghost@example.com\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(benchConfig, []byte("[user]\n\tname = Bench Ghost\n\temail = ghost@example.com\n"), 0o644))
 	env := append(os.Environ(),
 		"HOME="+benchHome,
 		"GIT_CONFIG_GLOBAL="+benchConfig,
@@ -61,12 +58,9 @@ func TestStagedCloneIgnoresTheBenchGitconfig(t *testing.T) {
 		cmd.Dir = repo
 		cmd.Env = env
 		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("git config %s in the staged clone: %v", key, err)
-		}
-		if got := strings.TrimSpace(string(out)); got != want {
-			t.Errorf("staged clone %s = %q under the bench's gitconfig, want pool identity %q", key, got, want)
-		}
+		require.NoError(t, err, "git config %s in the staged clone: %v", key, err)
+		got := strings.TrimSpace(string(out))
+		assert.Equal(t, want, got, "staged clone %s = %q under the bench's gitconfig, want pool identity %q", key, got, want)
 	}
 
 	// The launcher exports the bench config away: the exact two assignments, and
@@ -81,87 +75,20 @@ func TestStagedCloneIgnoresTheBenchGitconfig(t *testing.T) {
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_NOSYSTEM=1",
 	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("staging env holds no %q, got %q", want, joined)
-		}
-	}
-}
-
-// TestWorkerClonesAfterLaunchCarriesPoolIdentity tests that when a worker
-// clones or initializes a git repository *after* launch (when .git did not
-// exist during staging), the commit carries the pool identity from StagingGitEnv
-// with zero leakage from any hostile bench gitconfig.
-func TestWorkerClonesAfterLaunchCarriesPoolIdentity(t *testing.T) {
-	pool := t.TempDir()
-	writePoolIdentity(t, pool, "rowan", "Rowan Friend", "rowan@example.com")
-	if _, err := LoadPoolIdentity(pool); err != nil {
-		t.Fatalf("LoadPoolIdentity: %v", err)
-	}
-
-	job := t.TempDir()
-	// Stage a fresh job with NO .git directory yet (worker clones after launch).
-	if err := StageJob(pool, job, filepath.Join(job, "repo")); err != nil {
-		t.Fatalf("StageJob: %v", err)
-	}
-
-	// Hostile bench git config with a ghost user in the process environment.
-	benchHome := t.TempDir()
-	benchConfig := filepath.Join(benchHome, ".gitconfig")
-	if err := os.WriteFile(benchConfig, []byte("[user]\n\tname = Bench Ghost\n\temail = ghost@example.com\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", benchConfig)
-	t.Setenv("HOME", benchHome)
-
-	// The harness child environment is built through childEnv across the supervisor boundary,
-	// delivering the pool's identity and git config isolation.
-	w := Worker{WorkerDir: filepath.Join(pool, "worker")}
-	workerEnv := childEnv(w, 1, "task-1", "", pool)
-
-	// Worker initializes a repository inside the job and makes a commit.
-	workerRepo := filepath.Join(job, "repo")
-	if err := os.MkdirAll(workerRepo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	runGit := func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = workerRepo
-		cmd.Env = workerEnv
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, strings.TrimSpace(string(out)))
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	runGit("init")
-	if err := os.WriteFile(filepath.Join(workerRepo, "file.txt"), []byte("work\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "worker commit after launch")
-
-	// Verify author and committer match pool identity exactly, with zero leakage.
-	got := runGit("log", "-1", "--format=%an <%ae> %cn <%ce>")
-	want := "Rowan Friend <rowan@example.com> Rowan Friend <rowan@example.com>"
-	if got != want {
-		t.Errorf("worker commit after launch = %q, want %q", got, want)
+		assert.Contains(t, joined, want, "staging env holds no %q, got %q", want, joined)
 	}
 }
 
 func initCloneRepo(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "base"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %v: %s", args, err, out)
 	}
 }

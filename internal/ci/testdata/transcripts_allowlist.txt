@@ -35,3 +35,4 @@ nova-redis    # #1722 -- compares through onboarding.Execute, not the shared com
 nova-tokens   # #1722 -- compares the event prefix and the field names, dropping every value
 nova-update   # #1722 -- compares the event prefix and the field names, dropping every value
 nova-version  # #1722 -- compares the event prefix and the field names, dropping every value
+nova-swarm    # #1722 -- compares the event prefix and the field names, dropping every value

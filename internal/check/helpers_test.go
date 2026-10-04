@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -20,16 +23,10 @@ func writeTree(t *testing.T, dir string, files map[string]string) {
 func writeMode(t *testing.T, dir, rel, content string, mode os.FileMode) {
 	t.Helper()
 	path := filepath.Join(dir, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), mode); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), mode))
 	// Ensure the mode sticks regardless of umask.
-	if err := os.Chmod(path, mode); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chmod(path, mode))
 }
 
 // wantFailures asserts that each want substring appears in some failure's
@@ -37,14 +34,10 @@ func writeMode(t *testing.T, dir, rel, content string, mode os.FileMode) {
 func wantFailures(t *testing.T, failures []Failure, want []string) {
 	t.Helper()
 	if len(want) == 0 {
-		if len(failures) != 0 {
-			t.Fatalf("expected no failures, got %v", failures)
-		}
+		require.Empty(t, failures, "expected no failures, got %v", failures)
 		return
 	}
-	if len(failures) == 0 {
-		t.Fatalf("expected failures containing %v, got none", want)
-	}
+	require.NotEmpty(t, failures, "expected failures containing %v, got none", want)
 	for _, w := range want {
 		found := false
 		for _, f := range failures {
@@ -53,9 +46,7 @@ func wantFailures(t *testing.T, failures []Failure, want []string) {
 				break
 			}
 		}
-		if !found {
-			t.Errorf("no failure contains %q; failures: %v", w, failures)
-		}
+		assert.True(t, found, "no failure contains %q; failures: %v", w, failures)
 	}
 }
 

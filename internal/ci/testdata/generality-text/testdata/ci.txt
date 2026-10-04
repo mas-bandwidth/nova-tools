@@ -1,0 +1,6 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 4
+testdata/ci/package-sizes-darwin.tsv:batman 2
+testdata/ci/package-sizes-darwin.tsv:studio 2
+testdata/ci/package-sizes-darwin.tsv:superman 6
+testdata/ci/package-sizes.tsv:hulk 1

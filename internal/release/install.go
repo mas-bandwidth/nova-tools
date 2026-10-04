@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -88,15 +89,15 @@ func VerifyArtifacts(dir string, arts []Artifact) (int, error) {
 // It exists because the shell script this verb replaces kept ~/go/bin in step
 // with ~/.local/bin, and the verb did not: after the first real adoption every
 // bench held 18 stale ~/go/bin/nova-* from a `go install` months ago, which is
-// worse than the old state rather than better, because both directories are on
+// worse rather than better, because both directories are on
 // PATH and which one wins is a fact about the PATH order nobody has read.
 //
 // WHAT IT WILL REMOVE IS NARROW, and every clause is load-bearing. Only a name
 // this very run installed into --bin; only a name beginning `nova-`; only a
 // regular file, so a directory or a symlink is left for a person; and only
 // through safepath.RemoveUnder, which refuses a path that is not strictly below
-// the root, refuses the root itself and refuses a link (Glenn 2026-09-17: "it
-// shouldn't be able to delete arbitrary directories"). --retire naming --bin is
+// the root, refuses the root itself and refuses a link, so it cannot delete an
+// arbitrary directory. --retire naming --bin is
 // refused outright: that is the one argument that would delete the release this
 // verb has just installed.
 func retire(dir, bin, stamp string, arts []Artifact, errs io.Writer) (int, error) {
@@ -115,8 +116,7 @@ func retire(dir, bin, stamp string, arts []Artifact, errs io.Writer) (int, error
 	// AND NEVER THE STAMP. --from's artifact directory is the last-good copy
 	// of this release: it is what a re-install reads, what a rollback reads,
 	// and what `adopt` just verified. Retiring there would delete the evidence
-	// along with the tools and leave the machine with no way back (Johnny,
-	// 2026-09-18).
+	// along with the tools and leave the machine with no way back.
 	stampAbs, err := filepath.Abs(stamp)
 	if err != nil {
 		return 0, fmt.Errorf("cannot resolve --from %s: %w", stamp, err)
@@ -196,6 +196,10 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		versionOf = ExecVersion
 	}
 	installed, skipped := 0, 0
+	// What the bin directory answered BEFORE this install: the versions its
+	// binaries came from, which the prune below never removes, so a bad build
+	// can be put back by re-installing the one it replaced.
+	var before []string
 	for _, a := range arts {
 		// a.Name is the file name the BUILD chose for the target platform --
 		// ToolFile, so `nova-bus.exe` in a windows release -- read back out of
@@ -209,7 +213,19 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		// not of a marker file: a marker says what somebody meant to install,
 		// and the whole point of the version verbs is to say what is actually
 		// there.
-		if line, err := versionOf(ctx, target); err == nil && hasToken(line, o.version) {
+		line, err := versionOf(ctx, target)
+		if err == nil {
+			before = append(before, line)
+		}
+		if err == nil && hasToken(line, o.version) {
+			skipped++
+			continue
+		}
+		// AND WHEN ITS BYTES ARE ALREADY THESE. An --incremental build ships
+		// an unchanged tool as the earlier build's binary, which answers the
+		// earlier version; renaming identical bytes over it would only make
+		// the loop running it drain and restart on a binary nothing changed.
+		if sum, err := fileSum(target); err == nil && sum == a.Sum {
 			skipped++
 			continue
 		}
@@ -227,22 +243,82 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 			return refusal(errs, "INSTALL", err)
 		}
 	}
-	fmt.Fprintf(out, "RELEASE INSTALLED version=%s tools=%d skipped=%d retired=%d bin=%s platform=%s\n",
-		field(o.version), installed, skipped, retired, field(o.bin), field(goos+"-"+goarch))
+	// LAST, and never a reason to fail: the install has succeeded and been
+	// verified, and the version directories under --from that prune.go's rule does not
+	// keep are removed. The one being installed and every one the bin
+	// directory answered before it stay.
+	pruned, pruneFailed := pruneInstalled(o.from, o.bin, func(name string) bool {
+		if name == o.version {
+			return true
+		}
+		for _, line := range before {
+			if hasToken(line, name) {
+				return true
+			}
+		}
+		return false
+	}, errs)
+	fmt.Fprintf(out, "RELEASE INSTALLED version=%s tools=%d skipped=%d retired=%d bin=%s platform=%s pruned=%d prune-failed=%d\n",
+		field(o.version), installed, skipped, retired, field(o.bin), field(goos+"-"+goarch), pruned, pruneFailed)
 	return 0
 }
 
-// hasToken is the same whole-token match .github/scripts/assert-version-stamp.sh
-// makes, and for the same reason: v0.1 must not pass for v0.11, and `=` is a
-// separator so that no tag is matched out of the value half of a version line's
-// `key=value` extra -- the stamp is field two, alone, in every binary (#1297).
-func hasToken(line, version string) bool {
-	for _, f := range strings.Fields(strings.ReplaceAll(line, "=", " ")) {
-		if f == version {
-			return true
+// pruneInstalled also protects the installed binaries' directory, including a
+// bin symlink's target: a version stamp alone does not protect an empty bin
+// installed into an older release directory (SPEC-RELEASE, retention).
+func pruneInstalled(root, bin string, keep func(string) bool, errs io.Writer) (int, int) {
+	binAbs, err := filepath.Abs(bin)
+	if err != nil {
+		progress(errs, "cannot resolve installed bin %s for pruning: %v (nothing removed)", bin, err)
+		return 0, 1
+	}
+	binReal, err := filepath.EvalSymlinks(binAbs)
+	if err != nil {
+		progress(errs, "cannot resolve installed bin %s for pruning: %v (nothing removed)", bin, err)
+		return 0, 1
+	}
+	// Preserve both the route to a bin symlink and its actual target. Identity
+	// handles case and normalization aliases without guessing volume policy.
+	var ancestors []os.FileInfo
+	for _, path := range []string{binAbs, binReal} {
+		for {
+			info, err := os.Stat(path)
+			if err != nil {
+				progress(errs, "cannot identify installed bin ancestor %s: %v (nothing removed)", path, err)
+				return 0, 1
+			}
+			ancestors = append(ancestors, info)
+			parent := filepath.Dir(path)
+			if parent == path {
+				break
+			}
+			path = parent
 		}
 	}
-	return false
+	return pruneDefault(root, func(name string) bool {
+		if keep(name) {
+			return true
+		}
+		info, err := os.Stat(filepath.Join(root, name))
+		if err != nil {
+			progress(errs, "leaving release %s alone: %v", name, err)
+			return true
+		}
+		for _, ancestor := range ancestors {
+			if os.SameFile(info, ancestor) {
+				return true
+			}
+		}
+		return false
+	}, errs)
+}
+
+// hasToken is the same whole-token match tools/ghrelease's stamp verb
+// makes, and for the same reason: v0.1 must not pass for v0.11, and `=` is a
+// separator so that no tag is matched out of the value half of a version line's
+// `key=value` extra -- the stamp is field two, alone, in every binary.
+func hasToken(line, version string) bool {
+	return slices.Contains(strings.Fields(strings.ReplaceAll(line, "=", " ")), version)
 }
 
 // atomicInstall writes beside the target and renames over it. The rename is what
@@ -265,16 +341,16 @@ func atomicInstall(src, dst string) error { return installFile(src, dst, os.Rena
 //
 // Windows DOES allow a running file to be renamed ASIDE: the open handle
 // follows the file rather than the name. So the fallback is that platform's own
-// self-replacement -- move the old one out of the way, then rename the new one
+// self-replacement -- move the existing binary aside, then rename the new one
 // into place -- and it is a FALLBACK, taken only after the ordinary rename has
 // failed, so nothing about the unix path changes. The name it moves aside to is
 // dot-prefixed, which is what keeps it out of `nova-version snapshot` and out of
-// `--retire`, both of which take nova-* only: windows will not let the old image
+// `--retire`, both of which take nova-* only: windows will not let a running image
 // be deleted while it is still running, so that file may survive until the
 // process ends and has to be inert while it does.
 //
 // A rename that fails for a REAL reason -- a full disk, a read-only directory --
-// still fails: the old file is put back, the temporary is removed, and the error
+// still fails: the existing file is put back, the temporary is removed, and the error
 // the caller is given is the one the filesystem gave.
 func installFile(src, dst string, rename func(oldpath, newpath string) error) error {
 	body, err := os.ReadFile(src)
@@ -282,7 +358,7 @@ func installFile(src, dst string, rename func(oldpath, newpath string) error) er
 		return err
 	}
 	tmp := filepath.Join(filepath.Dir(dst), "."+filepath.Base(dst)+".new")
-	if err := os.WriteFile(tmp, body, 0o755); err != nil {
+	if err := writeNoFollow("install", tmp, body, 0o755); err != nil {
 		return err
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {
@@ -304,7 +380,7 @@ func installFile(src, dst string, rename func(oldpath, newpath string) error) er
 		return renameErr
 	}
 	if err := rename(tmp, dst); err != nil {
-		// Put the old binary back under its own name. A bench left with no
+		// Put the replaced binary back under its own name. A bench left with no
 		// nova-bus at all is worse than one left with the previous nova-bus.
 		if back := rename(aside, dst); back != nil {
 			os.Remove(tmp)
@@ -321,7 +397,7 @@ func installFile(src, dst string, rename func(oldpath, newpath string) error) er
 }
 
 // ExecVersion is the production answer to what the binary at path reports: its
-// own `version` verb, which every tool in this repository answers (#121), under
+// own `version` verb, which every tool in this repository answers, under
 // a short deadline because the binary being replaced may be the broken one.
 func ExecVersion(ctx context.Context, path string) (string, error) {
 	if _, err := os.Stat(path); err != nil {

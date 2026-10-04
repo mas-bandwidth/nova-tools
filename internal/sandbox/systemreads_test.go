@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // nova-tools #893, PR 948 re-cut: linuxReadRoots is the ONE system-reads policy. On
@@ -22,9 +24,7 @@ func TestLinuxReadRootsIncludeTheResolverDirectory(t *testing.T) {
 				found = true
 			}
 		}
-		if !found {
-			t.Fatalf("linuxReadRoots %v does not list %s; the resolver and TLS need it", linuxReadRoots, want)
-		}
+		require.True(t, found, "linuxReadRoots %v does not list %s; the resolver and TLS need it", linuxReadRoots, want)
 	}
 }
 
@@ -35,25 +35,17 @@ func TestLinuxReadRootsIncludeTheResolverDirectory(t *testing.T) {
 // TCP by IP still works. The read set the backend applies must follow the resolver's own
 // config through its symlinks and grant the directory it resolves to.
 func TestLinuxWallGrantsTheResolvedResolverConfigDirectory(t *testing.T) {
+	t.Parallel()
+
 	base := t.TempDir()
 	targetDir := filepath.Join(base, "mnt", "wsl")
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(targetDir, 0o755))
 	target := filepath.Join(targetDir, "resolv.conf")
-	if err := os.WriteFile(target, []byte("nameserver 10.255.255.254\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(target, []byte("nameserver 10.255.255.254\n"), 0o644))
 	link := filepath.Join(base, "resolv.conf")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Symlink(target, link))
 
-	saved := resolvConfPath
-	resolvConfPath = link
-	defer func() { resolvConfPath = saved }()
-
-	roots := linuxRoots()
+	roots := linuxRootsAt(link)
 	for _, r := range roots {
 		if r == targetDir {
 			return

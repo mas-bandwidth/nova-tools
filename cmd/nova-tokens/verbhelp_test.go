@@ -23,7 +23,6 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "sources"},
 		{Verb: "profiles"},
 		{Verb: "session"},
-		{Verb: "fold-pool"},
 		{Verb: "version"},
 	})
 	testverbhelp.HelpVerb(t, tokensRun, "nova-tokens", "fold", "sources", "version")

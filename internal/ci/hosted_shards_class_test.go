@@ -2,15 +2,16 @@ package ci
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,10 +33,10 @@ const hostedDealStep = "deal this shard's packages"
 // hostedHeavy are the packages the deal places first, one per shard, before the
 // round-robin: cmd/nova-bus (46.4 s -short on the Studio) and cmd/nova-merge
 // (28.6 s) held shard 3 of 4 together, the ubuntu leg cancelled at 123 s
-// (reader measurement, #4421 round 2). cmd/nova-merge, and cmd/nova-swarm (the reader's
-// other named heavy command), moved to deprecated/ and are in no deal. ci.yml's deal step
-// spells the same list.
-var hostedHeavy = []string{"cmd/nova-bus"}
+// (reader measurement, #4421 round 2); cmd/nova-swarm is the reader's other named heavy
+// command. cmd/nova-merge is deleted and in no deal. ci.yml's deal step spells
+// the same list.
+var hostedHeavy = []string{"cmd/nova-bus", "cmd/nova-swarm"}
 
 type hostedMatrix struct {
 	OS      []string         `yaml:"os"`
@@ -71,9 +72,7 @@ func hostedLegs(t *testing.T, m hostedMatrix) map[string]map[int]int {
 					continue
 				}
 				n, ok := in["shards"].(int)
-				if !ok {
-					t.Fatalf("test-hosted include for %s carries no integer shards: %v", runner, in)
-				}
+				require.True(t, ok, "test-hosted include for %s carries no integer shards: %v", runner, in)
 				shards = n
 			}
 			if out[runner] == nil {
@@ -85,19 +84,10 @@ func hostedLegs(t *testing.T, m hostedMatrix) map[string]map[int]int {
 	return out
 }
 
-// TestHostedShardsUnderTheCap: every ci.yml job declares timeout-minutes 2;
-// test-hosted keeps both hosted OSes; each OS runs exactly shards 1..n with n
-// at least hostedMinShards and every leg carrying that n; the deal step reads
-// matrix.shards, and vet and test both read the deal it writes.
-func TestHostedShardsUnderTheCap(t *testing.T) {
-	t.Parallel()
-
-	for name, job := range ciJobs(t) {
-		if job.TimeoutMinutes != twoMinuteCap {
-			t.Errorf("ci.yml job %s: timeout-minutes %d, want %d", name, job.TimeoutMinutes, twoMinuteCap)
-		}
-	}
-
+// hostedWorkflowLegs reads the actual expanded matrix. The minimum shard counts
+// are lower bounds checked separately, never the counts used to test a deal.
+func hostedWorkflowLegs(t *testing.T) map[string]map[int]int {
+	t.Helper()
 	raw := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	var wf struct {
 		Jobs map[string]struct {
@@ -106,43 +96,44 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 			} `yaml:"strategy"`
 		} `yaml:"jobs"`
 	}
-	if err := yaml.Unmarshal([]byte(raw), &wf); err != nil {
-		t.Fatal(err)
+	err := yaml.Unmarshal([]byte(raw), &wf)
+	require.NoError(t, err)
+	return hostedLegs(t, wf.Jobs["test-hosted"].Strategy.Matrix)
+}
+
+// TestHostedShardsUnderTheCap: every ci.yml job declares timeout-minutes 2;
+// test-hosted keeps both hosted OSes; each OS runs exactly shards 1..n with n
+// at least hostedMinShards and every leg carrying that n; the deal step reads
+// matrix.shards, and vet and test both read the deal it writes.
+func TestHostedShardsUnderTheCap(t *testing.T) {
+	t.Parallel()
+
+	for name, job := range ciJobs(t) {
+		assert.Equal(t, twoMinuteCap, job.TimeoutMinutes, "ci.yml job %s: timeout-minutes %d, want %d", name, job.TimeoutMinutes, twoMinuteCap)
 	}
-	legs := hostedLegs(t, wf.Jobs["test-hosted"].Strategy.Matrix)
+
+	legs := hostedWorkflowLegs(t)
 	for runner, min := range hostedMinShards {
 		shards, ok := legs[runner]
-		if !ok {
-			t.Errorf("test-hosted has no %s legs", runner)
+		if !assert.True(t, ok, "test-hosted has no %s legs", runner) {
 			continue
 		}
 		n := len(shards)
-		if n < min {
-			t.Errorf("test-hosted runs %d %s shards, want at least %d", n, runner, min)
-		}
+		assert.GreaterOrEqual(t, n, min, "test-hosted runs %d %s shards, want at least %d", n, runner, min)
 		for i := 1; i <= n; i++ {
 			got, ok := shards[i]
-			if !ok {
-				t.Errorf("test-hosted %s has no shard %d of %d; its packages would run nowhere", runner, i, n)
+			if !assert.True(t, ok, "test-hosted %s has no shard %d of %d; its packages would run nowhere", runner, i, n) {
 				continue
 			}
-			if got != n {
-				t.Errorf("test-hosted %s shard %d deals over %d shards, but the OS runs %d", runner, i, got, n)
-			}
+			assert.Equal(t, n, got, "test-hosted %s shard %d deals over %d shards, but the OS runs %d", runner, i, got, n)
 		}
 	}
-	if len(legs) != len(hostedMinShards) {
-		t.Errorf("test-hosted runs OSes %v, want exactly %v", legs, hostedMinShards)
-	}
+	assert.Equal(t, len(hostedMinShards), len(legs), "test-hosted runs OSes %v, want exactly %v", legs, hostedMinShards)
 
 	job := ciJobs(t)["test-hosted"]
 	deal := stepIndex(job, hostedDealStep)
-	if deal < 0 {
-		t.Fatalf("test-hosted has no %q step", hostedDealStep)
-	}
-	if !strings.Contains(job.Steps[deal].Run, "n=${{ matrix.shards }}") {
-		t.Errorf("the deal step does not divide by matrix.shards:\n%s", job.Steps[deal].Run)
-	}
+	require.GreaterOrEqual(t, deal, 0, "test-hosted has no %q step", hostedDealStep)
+	assert.Contains(t, job.Steps[deal].Run, ciRunner+" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }}", "the deal step does not deal this shard of matrix.shards through `ci deal`:\n%s", job.Steps[deal].Run)
 	vet, test := -1, -1
 	for i, s := range job.Steps {
 		switch {
@@ -152,55 +143,56 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 			test = i
 		}
 	}
-	if vet < deal || test < deal {
-		t.Fatalf("test-hosted's vet (%d) and test (%d) steps must follow the deal (%d)", vet, test, deal)
-	}
+	require.True(t, vet >= deal && test >= deal, "test-hosted's vet (%d) and test (%d) steps must follow the deal (%d)", vet, test, deal)
 	for _, i := range []int{vet, test} {
-		if !strings.Contains(job.Steps[i].Run, `PKGS="$HOSTED_PKGS"`) {
-			t.Errorf("test-hosted step %q does not read the deal's HOSTED_PKGS", job.Steps[i].Name)
-		}
+		assert.Contains(t, job.Steps[i].Run, `PKGS="$HOSTED_PKGS"`, "test-hosted step %q does not read the deal's HOSTED_PKGS", job.Steps[i].Name)
 	}
 }
 
-// liveScript is the deal step's filter by its real path: runStep runs the step
-// in an empty directory, and the step reads the tree's list through
-// .github/scripts/live-packages.sh (deprecated packages are never dealt).
-func liveScript(t *testing.T) string {
+// dealHeavyRe reads the heavy list the deal step passes.
+var dealHeavyRe = regexp.MustCompile(`--heavy "([^"]*)"`)
+
+// dealHeavy is the heavy packages a workflow's deal step names.
+func dealHeavy(t *testing.T, run string) []string {
 	t.Helper()
-	return filepath.Join(repoRoot(t), ".github", "scripts", "live-packages.sh")
+	m := dealHeavyRe.FindStringSubmatch(run)
+	require.NotNil(t, m, "the deal step names no --heavy list:\n%s", run)
+	return strings.Fields(m[1])
 }
 
-// TestHostedDealPartitionsTheTree runs the deal step itself over a stand-in
-// package list at each OS's shard count: every package lands in exactly one
-// shard, so more shards never drops a package.
+// liveRepoPackages is the repository's own `go list ./...` through the same
+// deprecated filter the deal reads: the live tree.
+func liveRepoPackages(t *testing.T) []string {
+	t.Helper()
+	dep, err := pkgselect.LoadDeprecated(repoRoot(t))
+	require.NoError(t, err)
+	live := dep.Live(strings.Fields(string(repoGoList(t))))
+	require.NotEmpty(t, live, "the live tree is empty")
+	return live
+}
+
+// TestHostedDealPartitionsTheTree deals a stand-in package list with the
+// deal's own function and heavy list at each OS's actual shard count: every
+// package lands in exactly one shard, so more shards never drops a package.
 func TestHostedDealPartitionsTheTree(t *testing.T) {
 	t.Parallel()
 
 	job := ciJobs(t)["test-hosted"]
 	deal := stepIndex(job, hostedDealStep)
-	if deal < 0 {
-		t.Fatalf("test-hosted has no %q step", hostedDealStep)
-	}
+	require.GreaterOrEqual(t, deal, 0, "test-hosted has no %q step", hostedDealStep)
+	heavy := dealHeavy(t, job.Steps[deal].Run)
 	const packages = 23
-	for runner, n := range hostedMinShards {
+	var list []string
+	for j := 1; j <= packages; j++ {
+		list = append(list, fmt.Sprintf("p%02d", j))
+	}
+	for runner, shards := range hostedWorkflowLegs(t) {
+		n := len(shards)
 		seen := make(map[string]int)
 		for i := 1; i <= n; i++ {
-			script := job.Steps[deal].Run
-			script = strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
-			script = strings.ReplaceAll(script, "${{ matrix.shard }}", strconv.Itoa(i))
-			script = strings.ReplaceAll(script, "go list ./...", fmt.Sprintf("seq -f 'p%%02g' 1 %d", packages))
-			script = strings.ReplaceAll(script, ".github/scripts/live-packages.sh", liveScript(t))
-			env := filepath.Join(t.TempDir(), "env")
-			runStep(t, script, "GITHUB_ENV="+env)
-			b, err := os.ReadFile(env)
-			if err != nil {
-				t.Fatal(err)
-			}
-			line := strings.TrimSpace(string(b))
-			if !strings.HasPrefix(line, "HOSTED_PKGS=") || strings.Contains(line, "\n") {
-				t.Fatalf("%s shard %d wrote %q, want one HOSTED_PKGS= line", runner, i, line)
-			}
-			for _, p := range strings.Fields(strings.TrimPrefix(line, "HOSTED_PKGS=")) {
+			mine, err := pkgselect.Deal(list, heavy, n, i)
+			require.NoError(t, err)
+			for _, p := range mine {
 				seen[p]++
 			}
 		}
@@ -212,52 +204,31 @@ func TestHostedDealPartitionsTheTree(t *testing.T) {
 			}
 		}
 		sort.Strings(bad)
-		if len(bad) > 0 || len(seen) != packages {
-			t.Errorf("%s at %d shards: the deal is not a partition: %v (%d distinct)", runner, n, bad, len(seen))
-		}
+		ok := len(bad) == 0 && len(seen) == packages
+		assert.True(t, ok, "%s at %d shards: the deal is not a partition: %v (%d distinct)", runner, n, bad, len(seen))
 	}
 }
 
-// TestHostedDealSplitsTheHeavyPackages runs the deal step over the real
-// `go list ./...` at each OS's shard count (reader repro, #4421 round 2): no two
-// hostedHeavy packages share a shard, every heavy package is in the tree, and
-// the step's heavy list is hostedHeavy.
+// TestHostedDealSplitsTheHeavyPackages deals the real live tree at each OS's
+// actual shard count (reader repro, #4421 round 2): no two hostedHeavy packages
+// share a shard, every heavy package is in the tree, and the step's heavy list is
+// hostedHeavy.
 func TestHostedDealSplitsTheHeavyPackages(t *testing.T) {
 	t.Parallel()
 	job := ciJobs(t)["test-hosted"]
 	deal := stepIndex(job, hostedDealStep)
-	if deal < 0 {
-		t.Fatalf("test-hosted has no %q step", hostedDealStep)
-	}
-	if want := `heavy="` + strings.Join(hostedHeavy, " ") + `"`; !strings.Contains(job.Steps[deal].Run, want) {
-		t.Errorf("the deal step does not spell %s", want)
-	}
-	cmd := exec.Command("go", "list", "./...")
-	cmd.Dir = repoRoot(t)
-	cmd.Env = goenv.Clean(os.Environ())
-	list, err := cmd.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	listFile := filepath.Join(t.TempDir(), "pkgs")
-	if err := os.WriteFile(listFile, list, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for runner, n := range hostedMinShards {
+	require.GreaterOrEqual(t, deal, 0, "test-hosted has no %q step", hostedDealStep)
+	want := `--heavy "` + strings.Join(hostedHeavy, " ") + `"`
+	assert.Contains(t, job.Steps[deal].Run, want, "the deal step does not spell %s", want)
+	heavy := dealHeavy(t, job.Steps[deal].Run)
+	live := liveRepoPackages(t)
+	for runner, shards := range hostedWorkflowLegs(t) {
+		n := len(shards)
 		home := map[string]int{}
 		for i := 1; i <= n; i++ {
-			script := job.Steps[deal].Run
-			script = strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
-			script = strings.ReplaceAll(script, "${{ matrix.shard }}", strconv.Itoa(i))
-			script = strings.ReplaceAll(script, "go list ./...", "cat "+listFile)
-			script = strings.ReplaceAll(script, ".github/scripts/live-packages.sh", liveScript(t))
-			env := filepath.Join(t.TempDir(), "env")
-			runStep(t, script, "GITHUB_ENV="+env)
-			b, err := os.ReadFile(env)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, p := range strings.Fields(strings.TrimPrefix(strings.TrimSpace(string(b)), "HOSTED_PKGS=")) {
+			mine, err := pkgselect.Deal(live, heavy, n, i)
+			require.NoError(t, err)
+			for _, p := range mine {
 				for _, h := range hostedHeavy {
 					if strings.HasSuffix(p, "/"+h) {
 						home[h] = i
@@ -268,13 +239,11 @@ func TestHostedDealSplitsTheHeavyPackages(t *testing.T) {
 		shardOf := map[int]string{}
 		for _, h := range hostedHeavy {
 			i, ok := home[h]
-			if !ok {
-				t.Errorf("%s at %d shards: heavy package %s is dealt to no shard (not in go list?)", runner, n, h)
+			if !assert.True(t, ok, "%s at %d shards: heavy package %s is dealt to no shard (not in go list?)", runner, n, h) {
 				continue
 			}
-			if other, dup := shardOf[i]; dup {
-				t.Errorf("%s at %d shards: %s and %s share shard %d", runner, n, other, h, i)
-			}
+			other, dup := shardOf[i]
+			assert.False(t, dup, "%s at %d shards: %s and %s share shard %d", runner, n, other, h, i)
 			shardOf[i] = h
 		}
 	}

@@ -6,122 +6,59 @@
 package main
 
 import (
-	"bytes"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func runCLI(t *testing.T, stdin string, args ...string) (int, string, string) {
-	t.Helper()
-	var stdout, stderr bytes.Buffer
-	code := run(args, strings.NewReader(stdin), &stdout, &stderr)
-	return code, stdout.String(), stderr.String()
-}
-
-// localize points the documented store at the run's directory, so the
-// transcript a stranger types against ./cairns executes here in a fresh one.
-func localize(store, cmd string) ([]string, error) {
-	fields, err := splitShell(strings.ReplaceAll(cmd, "./cairns", store))
-	if err != nil {
-		return nil, err
-	}
-	return fields, nil
-}
-
-// splitShell splits a documented command line the way a POSIX shell would
-// for the quotes this repo's examples use: double quotes group, backslash
-// escapes the next character inside them. The examples never nest quotes,
-// so anything fancier is a test bug, not a feature.
-func splitShell(cmd string) ([]string, error) {
-	var fields []string
-	var cur strings.Builder
-	inQuote := false
-	escaped := false
-	has := false
-	for _, r := range cmd {
-		switch {
-		case escaped:
-			cur.WriteRune(r)
-			escaped = false
-		case r == '\\' && inQuote:
-			escaped = true
-		case r == '"':
-			inQuote = !inQuote
-			has = true
-		case r == ' ' || r == '\t':
-			if inQuote {
-				cur.WriteRune(r)
-				break
-			}
-			if has {
-				fields = append(fields, cur.String())
-				cur.Reset()
-				has = false
-			}
-		default:
-			cur.WriteRune(r)
-			has = true
-		}
-	}
-	if inQuote || escaped {
-		return nil, errors.New("unterminated quote")
-	}
-	if has {
-		fields = append(fields, cur.String())
-	}
-	return fields, nil
-}
 
 // usageExamples returns the command lines under the banner's `example:`
 // heading. It asks for the banner, because a bare invocation is a refusal
 // and this reads what is behind the door the refusal names.
 func usageExamples(t *testing.T) []string {
 	t.Helper()
-	exit, stdout, stderr := runCLI(t, "", "help")
-	if exit != 0 {
-		t.Fatalf("`nova-cairn help` must be exit 0, got %d; stderr: %s", exit, stderr)
-	}
-	examples, err := onboarding.ExampleLines(stdout, "nova-cairn")
-	if err != nil {
-		t.Fatal(err)
-	}
+	examples, err := onboarding.ExampleLines(cli.OK(t, "help").Stdout, "nova-cairn")
+	require.NoError(t, err)
 	return examples
 }
 
 // The usage banner ends in one example per verb, in the order a first run
-// types them: the append needs the record the open created.
+// types them: the append needs the record the open created. Each runs as
+// printed, in one store, and prints what is written under it here, through
+// the comparator: only the store's directory and the clock's instants belong
+// to the run.
 func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 
+	sitting := []struct {
+		example string
+		want    []string
+	}{
+		{"nova-cairn open --store ./cairns --session s1 --publish manual",
+			[]string{"OPEN OK session=s1 store=./cairns source=- publish=manual stamp=2026-01-01T00:00:00Z"}},
+		{`nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep"`,
+			[]string{"APPEND OK session=s1 entry=e1 source=- persisted=true published=false publish=manual duplicate=false stamp=2026-01-01T00:00:00Z"}},
+		{"nova-cairn index --store ./cairns",
+			[]string{"INDEX OK sessions=1 entries=1", "INDEX ENTRY session=s1 entry=e1 stamp=2026-01-01T00:00:00Z bytes=17 source=-"}},
+		{"nova-cairn receipt --store ./cairns --session s1 --entry e1 --text",
+			[]string{`RECEIPT OK session=s1 entry=e1 stamp=2026-01-01T00:00:00Z bytes=17 source=- persisted=true published=false publish=manual text="the words to keep"`}},
+	}
 	examples := usageExamples(t)
-	if len(examples) != 4 {
-		t.Fatalf("want an open, an append, an index and a receipt example under `example:`, got %d: %q", len(examples), examples)
-	}
-	for i, want := range []string{
-		"nova-cairn open ", "nova-cairn append ", "nova-cairn index ", "nova-cairn receipt ",
-	} {
-		if !strings.HasPrefix(examples[i], want) {
-			t.Errorf("example %d is not %q: %q", i, want, examples[i])
-		}
-	}
+	require.Len(t, examples, len(sitting), "want an open, an append, an index and a receipt example under `example:`, got %q", examples)
 	// One store for the whole first run: the examples are a sitting, not four.
 	store := filepath.Join(t.TempDir(), "cairns")
-	for _, ex := range examples {
-		fields, err := splitShell(strings.ReplaceAll(ex, "./cairns", store))
-		if err != nil {
-			t.Fatalf("cannot split the usage example %q: %v", ex, err)
-		}
-		exit, stdout, stderr := runCLI(t, "", fields[1:]...)
-		if exit != 0 {
-			t.Fatalf("the usage example %q does not run: exit %d, stderr: %s", ex, exit, stderr)
-		}
-		if stdout == "" {
-			t.Errorf("the usage example %q printed nothing", ex)
+	norms := []onboarding.Norm{onboarding.Path("./cairns", store), onboarding.Instant("stamp")}
+	for i, s := range sitting {
+		require.Equal(t, s.example, examples[i], "example %d", i)
+		fields, err := onboarding.SplitShell(strings.ReplaceAll(s.example, "./cairns", store))
+		require.NoError(t, err, "cannot split the usage example %q", s.example)
+		step := onboarding.Step{Line: "$ " + s.example, Want: s.want}
+		for _, p := range onboarding.Compare(step, onboarding.Result(cli.Run(fields[1:]...)), norms) {
+			assert.Fail(t, p.Error())
 		}
 	}
 }
@@ -151,36 +88,26 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 // document promised, which is what the old test's `localize` gave up.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-cairn")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-cairn", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// The sitting is the whole tool: a record opened, a line appended to it,
 	// the index that shows it and the receipt that proves it. A block that has
 	// quietly lost one of the four verbs is short of a first run, and no
 	// per-line comparison would say so -- the lines that remain would match.
-	verbs := map[string]bool{}
+	var verbs []string
 	for _, s := range steps {
-		verbs[s.Args[0]] = true
+		verbs = append(verbs, s.Args[0])
 	}
-	for _, verb := range []string{"open", "append", "index", "receipt"} {
-		if !verbs[verb] {
-			t.Errorf("the `### First run` block never runs `nova-cairn %s`; the first sitting is all four verbs", verb)
-		}
-	}
+	assert.Subset(t, verbs, []string{"open", "append", "index", "receipt"}, "the `### First run` block never runs one of the four verbs; the first sitting is all four")
 
 	// ONE store for the whole sitting: the transcript opens a record and then
 	// appends to it, and a fresh directory per line would unmake that.
 	t.Chdir(t.TempDir())
 	for _, p := range onboarding.Execute(steps, runDocumented) {
-		t.Error(p)
+		assert.Fail(t, p.Error())
 	}
 }
 
@@ -190,9 +117,7 @@ func runDocumented(s onboarding.Step) (onboarding.Result, error) {
 	if s.Stdin != "" {
 		return onboarding.Result{}, errReadsNothing
 	}
-	var out, errb bytes.Buffer
-	code := run(s.Args, strings.NewReader(""), &out, &errb)
-	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+	return onboarding.Result(cli.Run(s.Args...)), nil
 }
 
 type readsNothing struct{}

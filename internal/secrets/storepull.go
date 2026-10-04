@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdh"
 	"crypto/ecdsa"
@@ -15,15 +16,15 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // storepull.go is the one boundary where the store's pull credential is chosen
-// (docs/SPEC-SECRETS.md, "Additions from dogfooding", rule 7). The store is pulled on a bench
+// (docs/SPEC-SECRETS.md). The store is pulled on a bench
 // over the bench's own SSH key, generated on that bench, its public half authorized on the
 // GitHub account the bench acts as; never a person's credential; never present inside the card
 // wall. The rule is held HERE, where the key is handed to ssh, rather than by reading a clone's
@@ -33,7 +34,7 @@ import (
 // binaries; every path is typed by the caller.
 type StorePullOptions struct {
 	StoreDir string   // the store's working copy on this bench
-	Seat     string   // the bench seat pulling, e.g. swarm-studio
+	Seat     string   // the name of the bench seat pulling
 	SeatHome string   // the seat's own home; its key lives in <SeatHome>/.ssh
 	Key      string   // the private half of the seat's SSH key
 	Wall     []string // the card wall's directories (slot, job, work): the key may lie in none
@@ -150,14 +151,12 @@ func PullStore(o StorePullOptions) (string, error) {
 	}
 	env = append(env, "GIT_SSH_COMMAND="+sshCmd, "GIT_TERMINAL_PROMPT=0")
 	run := func(args ...string) (string, error) {
-		cmd := exec.Command(gitBin, append([]string{"-C", o.StoreDir, "-c", "core.sshCommand=" + sshCmd}, args...)...)
-		cmd.Env = env
-		var out, errb bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &errb
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("store pull: git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+		res, err := gitrun.Run(context.Background(), gitrun.Options{Bin: gitBin, C: o.StoreDir, Env: env, OwnRepo: true},
+			append([]string{"-c", "core.sshCommand=" + sshCmd}, args...)...)
+		if err != nil {
+			return "", fmt.Errorf("store pull: git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(res.Stderr)))
 		}
-		return strings.TrimSpace(out.String()), nil
+		return strings.TrimSpace(string(res.Stdout)), nil
 	}
 	if _, err := run("pull", "--ff-only", "-q"); err != nil {
 		return "", err

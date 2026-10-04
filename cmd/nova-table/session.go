@@ -14,6 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/internal/tty"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -25,9 +26,14 @@ type application struct {
 	addr     string
 	defaults ntable.WriteOptions
 	receipts bool
+	// dryRun is the --dry-run default of every write verb: a shell entered
+	// with --dry-run plans each write line and writes nothing.
+	dryRun bool
 	// getenv is the environment the login is read from (login); nil is the
 	// process's. A test hands its own, so it runs in parallel.
 	getenv func(string) string
+	// lookPath finds a program on PATH (firstTry); nil is exec.LookPath.
+	lookPath func(string) (string, error)
 }
 
 // env is the environment the login is read from.
@@ -134,6 +140,7 @@ func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 	defaults, receipts := app.writeFlags(fs)
 	// Receipt IDs are useful when driving a resident process. They can be
 	// disabled for the session or overridden by an individual write.
+	// ignored: Set on a flag writeFlags just defined, with a value its parser accepts
 	_ = fs.Set("receipt", "true")
 	in := app.in
 	if in == nil {
@@ -141,7 +148,7 @@ func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 	}
 	interactive := false
 	if f, ok := in.(*os.File); ok {
-		interactive = shellTerminal(f)
+		interactive = tty.IsTerminal(f)
 	}
 	keepGoing := fs.Bool("keep-going", interactive, "continue after errors; final exit still reports failure (default true on a terminal)")
 	pos, err := parseInterleaved(fs, args)
@@ -168,8 +175,9 @@ func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 	}
 	child := &application{in: in, shared: sharedConnection(nil, func() (*redisconn.Conn, error) {
 		return openShellStore(*addr, getenv)
-	}), addr: *addr, defaults: *defaults, receipts: *receipts, getenv: getenv}
+	}), addr: *addr, defaults: *defaults, receipts: *receipts, dryRun: fs.Lookup("dry-run").Value.String() == "true", getenv: getenv}
 	// prepare may replace the connection, so close the final owner, not the first.
+	// ignored: a deferred close after the session's last answer is printed
 	defer func() { _ = child.shared.Conn.Close() }()
 	return child.readCommands(in, stdout, stderr, *keepGoing, interactive)
 }
@@ -236,9 +244,7 @@ func (app *application) readCommands(in io.Reader, stdout, stderr io.Writer, kee
 				fmt.Fprintf(stderr, "nova-table shell: line %d failed (exit %d)\n", line, code)
 			}
 		}
-		if code > result {
-			result = code
-		}
+		result = max(result, code)
 		if code != 0 && !keepGoing {
 			return result
 		}

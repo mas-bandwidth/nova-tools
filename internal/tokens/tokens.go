@@ -19,7 +19,9 @@ package tokens
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,9 +47,9 @@ const (
 // TypeNames are the five names as a source, a bus line and a day file spell them.
 var TypeNames = [NTypes]string{"input", "output", "cache_write", "cache_read", "reasoning"}
 
-// Dash is the cell of a type the source did not report. It is not a zero, and the
-// difference is the whole of rule 15: a zero is a measurement and a dash is an absence,
-// and a zero that meant "not measured" would sum into a month claiming to be complete.
+// Dash is the cell of a type the source did not report. It is not a zero: a zero is a
+// measurement and a dash is an absence, and a zero that meant "not measured" would sum
+// into a month claiming to be complete.
 const Dash = "-"
 
 // TypeByName resolves one of the five names.
@@ -85,6 +87,18 @@ func (c Counts) Cell(t Type) string {
 }
 
 // Total is the five types summed, for the shares on a day line. A dash adds nothing.
+// Billed is the tokens a cost covers: input, output, cache write and cache read, the
+// four types a provider prices. Reasoning is its own column and in none of them.
+func (c Counts) Billed() int64 {
+	var n int64
+	for _, t := range []Type{Input, Output, CacheWrite, CacheRead} {
+		if v, ok := c.Get(t); ok {
+			n += v
+		}
+	}
+	return n
+}
+
 func (c Counts) Total() int64 {
 	var n int64
 	for t := Type(0); t < NTypes; t++ {
@@ -127,37 +141,37 @@ type Message struct {
 	Basis    string // UTC, or the zone a provider export declares
 	Model    string
 	Repo     string // already attributed by the reader, through repo.go's one function
-	Unit     string // the work-set unit, through units.go's one function; "-" when none
 	Counts   Counts
 	Rough    int    // how many `~` bus lines this message stands for
 	Turn     bool   // counted into turns= (the sources that count messages)
 	Usd      int64  // micro-dollars, from a usage `usd` column or a cost tick; 0 where absent
+	Priced   bool   // a source reported Usd for this message; false is "no cost given", never a zero cost
 	Provider string // the provider prefix for model= on an AVG line; "" where unknown
 }
 
-// Key is exactly (day, model, repo, unit). Nobody's name is in it: the `who` of a bus line
-// and the window-or-child mark of a transcript are not columns, because a model on a repo
-// on a day is one row whoever drove it.
-//
-// The UNIT is in it because the question it answers cannot be asked otherwise: a row that
-// summed two units' spend under one (model, repo) could be split back only by guessing.
-// A fold with no --units puts every message on "-", which is one unit value, so the key is
-// exactly what it was and every existing day file still folds to the same rows.
-type Key struct{ Day, Model, Repo, Unit string }
+// Key is exactly (day, model, repo). Nobody's name is in it: the `who` of a bus line and
+// the window-or-child mark of a transcript are not columns, because a model on a repo on a
+// day is one row whoever drove it.
+type Key struct{ Day, Model, Repo string }
 
 // Row is one line of a day file while it is still being accumulated.
 type Row struct {
 	Key
-	Counts   Counts
-	Rough    int
-	Usd      int64  // micro-dollars summed over the messages that fed the row
-	Provider string // the provider prefix of the messages that fed the row; "" where unknown
-	bases    map[string]bool
-	sources  map[string]bool
+	Counts Counts
+	Rough  int
+	Usd    int64 // micro-dollars summed over the messages that fed the row
+	Priced bool  // some message that fed the row reported a cost; false: Usd is no measurement
+	// PricedTokens is the Billed tokens of the messages that reported a cost: what Usd
+	// covers, and the only tokens a rate over Usd may divide by.
+	PricedTokens int64
+	Provider     string // the provider prefix of the messages that fed the row; "" where unknown
+	bases        map[string]bool
+	sources      map[string]bool
 }
 
 // Bases is the day bases that fed this row, sorted. More than one is a row that is not
-// written (rule 17).
+// written: a row must carry one day basis, and a mixed row is named and left out of the
+// file and the counts.
 func (r *Row) Bases() []string { return sortedKeys(r.bases) }
 
 // Sources is the sorted, comma-joinable labels that fed this row.
@@ -179,13 +193,11 @@ type Folder struct {
 	days  map[string]bool
 
 	// idLabel is which source first fed each message id, and overlaps counts the ids two
-	// sources both fed. SPEC-TOKENS says the fold "deliberately does not check … that two
-	// sources overlap", and the numbers here still do not change: two declarations of one
-	// tree still double the day, exactly as the spec says. What changes is that the run
-	// SAYS SO. (Measured 2026-09-11: ~/.claude/projects/<session>/subagents/agent-*.jsonl
-	// and /private/tmp/.../tasks/*.output were the same 10,281 messages, the fold reported
-	// 2,932,982,350 cache_read against the correct 1,502,293,166, written=true, check OK,
-	// sum OK.)
+	// sources both fed. The fold deliberately does not check whether two sources overlap,
+	// and the numbers still do not change: two declarations of one tree still double the
+	// day. What changes is that the run SAYS SO -- overlaps names every pair of sources
+	// that shared ids -- so a doubled day prints its doubling instead of passing as
+	// green.
 	idLabel  map[string]string
 	overlaps map[[2]string]int
 }
@@ -231,7 +243,7 @@ func (f *Folder) Add(label string, m Message) {
 			f.overlaps[pair]++
 		}
 	}
-	k := Key{Day: m.Day, Model: m.Model, Repo: m.Repo, Unit: orNoUnit(m.Unit)}
+	k := Key{Day: m.Day, Model: m.Model, Repo: m.Repo}
 	r, ok := f.rows[k]
 	if !ok {
 		r = &Row{Key: k, bases: map[string]bool{}, sources: map[string]bool{}}
@@ -240,6 +252,10 @@ func (f *Folder) Add(label string, m Message) {
 	r.Counts.Add(m.Counts)
 	r.Rough += m.Rough
 	r.Usd += m.Usd
+	r.Priced = r.Priced || m.Priced
+	if m.Priced {
+		r.PricedTokens += m.Counts.Billed()
+	}
 	if m.Provider != "" {
 		r.Provider = m.Provider
 	}
@@ -285,10 +301,8 @@ func (f *Folder) DayRows(day string) (rows []*Row, mixed []Mixed) {
 		}
 		rows = append(rows, r)
 	}
-	// Sorted by the WHOLE key, (model, repo, unit). The rows come out of a map, and two
-	// units on one (model, repo) sorted by (model, repo) alone land in map order: the day
-	// file's reader then finds the second one "out of order" and drops its row, so a
-	// unit's spend vanished from `sum --by unit` on roughly one fold in five.
+	// Sorted by the whole key, (model, repo). The rows come out of a map, so the order is
+	// made here and not left to it.
 	sort.Slice(rows, func(i, j int) bool { return keyLess(rows[i].Key, rows[j].Key) })
 	sort.Slice(mixed, func(i, j int) bool { return keyLess(mixed[i].Key, mixed[j].Key) })
 	return rows, mixed
@@ -324,14 +338,12 @@ const (
 
 // applies says which Stat fields a kind can have. The fold prints a dash for the rest.
 var applies = map[string]map[string]bool{
-	// A transcript's and a database's `unparsed` is a DASH, because SPEC-TOKENS says so
-	// in the TOKENS SOURCE paragraph: "a transcript has no unparsed lines ... a dash is
-	// an absence where a zero is a measurement". A line whose stamp this tool cannot
-	// read IS counted and printed -- one TOKENS UNPARSED line naming the label, and the
-	// unparsed= total on TOKENS FAIL (rule 3) -- so nothing is lost by the dash; what the
-	// column would claim is that a clean transcript was MEASURED for unparsed lines, and
-	// the spec reserves the zero for that. The PR proposes striking the spec's clause; if
-	// it is struck, these two become `"unparsed": true` and the column is the measurement.
+	// A transcript's and a database's `unparsed` is a DASH: a transcript has no unparsed
+	// lines, and a dash is an absence where a zero is a measurement. A line whose stamp
+	// this tool cannot read IS counted and printed -- one TOKENS UNPARSED line naming the
+	// label, and the unparsed= total on TOKENS FAIL -- so nothing is lost by the dash;
+	// what the column would claim is that a clean transcript was MEASURED for unparsed
+	// lines, and the zero is reserved for exactly that.
 	KindClaude:   {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "rows": true},
 	KindOpenCode: {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "rows": true},
 	KindSwarm:    {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "nousage": true, "unparsed": true, "rows": true},
@@ -397,12 +409,11 @@ type Source struct {
 
 // AddMessage puts one message into this source's stream, collapsed onto its id.
 //
-// This is rule 4, and it is written ONCE: "A Claude Code transcript repeats a message id
-// on every streamed line; the last line for an id carries the message's final usage, and
-// that is the one counted. Within one source, a second occurrence of an id is dup=<n>,
-// never a second count. A message with no id is counted in noid=<n> and not folded."
-// claude.go and opencode.go each kept their own byID/order/dup loop, and two copies of one
-// rule are two rules (lesson 113).
+// A streamed transcript repeats a message id on every line; the last line for an id
+// carries the message's final usage, and that is the one counted. Within one source, a
+// second occurrence of an id is dup=<n>, never a second count. A message with no id is
+// counted in noid=<n> and not folded. The rule is written ONCE, here, and every reader
+// collapses through it: two copies of one rule are two rules.
 func (s *Source) AddMessage(id string, m Message) {
 	if id == "" {
 		s.Stat.NoID++
@@ -420,17 +431,6 @@ func (s *Source) AddMessage(id string, m Message) {
 	s.byID[id] = m
 }
 
-// markUnit puts one unit on every message added since index first. It is how a unit is
-// attributed per TRANSCRIPT: the reader marks the file's own slice of the stream once the
-// file has said which unit it worked on, rather than deciding message by message.
-func (s *Source) markUnit(first int, unit string) {
-	for _, id := range s.order[first:] {
-		m := s.byID[id]
-		m.Unit = unit
-		s.byID[id] = m
-	}
-}
-
 // Collapse lays the collapsed messages into Stream, in first-seen order, and counts them.
 // Every reader that calls AddMessage ends with it.
 func (s *Source) Collapse() {
@@ -445,9 +445,9 @@ func (s *Source) Collapse() {
 func (s *Source) ReportsList() string {
 	if len(s.Reports) == 0 {
 		// A lane that folded no row reports no type, and the field's value is a dash
-		// like every other absence on this line. It used to render as nothing at all --
-		// `reports= day_basis=utc` -- which is a field with no value in a grammar whose
-		// every field has one.
+		// like every other absence on this line: rendering nothing at all would print
+		// `reports= day_basis=utc`, a field with no value in a grammar whose every
+		// field has one.
 		return Dash
 	}
 	names := make([]string, 0, len(s.Reports))
@@ -500,16 +500,38 @@ var AllTypes = []Type{Input, Output, CacheWrite, CacheRead, Reasoning}
 // ClaudeTypes is what a Claude Code transcript carries: no reasoning count exists in it.
 var ClaudeTypes = []Type{Input, Output, CacheWrite, CacheRead}
 
-// ValidDay reports whether s is a YYYY-MM-DD day ON THE CALENDAR. The shape alone was
-// the whole test, so `--day 2026-13-40` was accepted, wrote 2026-13-40.tsv, passed
-// `check`, and left MissingDays walking from a day that does not exist. time.Parse is the
-// range check, and the round trip refuses what it normalises (2026-02-30 -> 2026-03-02).
+// ValidDay reports whether s is a YYYY-MM-DD day ON THE CALENDAR. The shape alone is not
+// enough: an impossible day that passes the shape check would be written as a day file,
+// pass `check`, and leave MissingDays walking from a day that does not exist. time.Parse
+// is the range check, and the round trip refuses what it normalises
+// (2026-02-30 -> 2026-03-02).
 func ValidDay(s string) bool {
 	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
 		return false
 	}
 	t, err := time.Parse(dayLayout, s)
 	return err == nil && t.Format(dayLayout) == s
+}
+
+// ValidMonth reports whether s is a YYYY-MM calendar month.
+func ValidMonth(s string) bool {
+	if len(s) != 7 || s[4] != '-' {
+		return false
+	}
+	for i, r := range s {
+		if i == 4 {
+			continue
+		}
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	month := s[5:7]
+	if month < "01" || month > "12" {
+		return false
+	}
+	t, err := time.Parse("2006-01", s)
+	return err == nil && t.Format("2006-01") == s
 }
 
 // ValidZone reports whether s is a day_basis a day file may carry: a zone name with no
@@ -521,12 +543,11 @@ func ValidZone(s string) bool {
 	return strings.IndexFunc(s, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }) < 0
 }
 
+// sortedKeys is m's keys, sorted, and never nil: an empty map gives an empty slice, so a
+// row with no source and a day file with no rows encode and compare as before.
 func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
+	out := slices.AppendSeq(make([]string, 0, len(m)), maps.Keys(m))
+	slices.Sort(out)
 	return out
 }
 
@@ -666,17 +687,7 @@ func readSource(path string) ([]byte, error) {
 	return raw, nil
 }
 
-// orNoUnit is the one place an absent unit becomes the dash. A message from a source that
-// knows nothing about units, and every message of a fold run without --units, arrives with
-// an empty Unit, and an empty cell is the thing the day file forbids.
-func orNoUnit(u string) string {
-	if u == "" {
-		return NoUnit
-	}
-	return u
-}
-
-// keyLess orders two keys of one day by (model, repo, unit), the order a day file's rows
+// keyLess orders two keys of one day by (model, repo), the order a day file's rows
 // are written in and the order its reader checks.
 func keyLess(a, b Key) bool {
 	if a.Model != b.Model {
@@ -685,5 +696,5 @@ func keyLess(a, b Key) bool {
 	if a.Repo != b.Repo {
 		return a.Repo < b.Repo
 	}
-	return orNoUnit(a.Unit) < orNoUnit(b.Unit)
+	return false
 }

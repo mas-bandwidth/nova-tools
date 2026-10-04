@@ -3,9 +3,10 @@ package swarm
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // A probe that plants both at once, on the certification schedule, and asserts the refusal
@@ -21,21 +22,13 @@ func TestCheckResultRefusesAPlantedSymlink(t *testing.T) {
 
 	dir := t.TempDir()
 	secret := filepath.Join(dir, "secret-outside-the-wall")
-	if err := os.WriteFile(secret, []byte("a secret the wall was keeping\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(secret, []byte("a secret the wall was keeping\n"), 0o644))
 	job := filepath.Join(dir, "job")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(job, 0o755))
 	plantLink(t, secret, ResultPath(job))
 	_, err := CheckResult(ResultPath(job), Contract{Label: "a", ContractLine: "RESULT: a"})
-	if err == nil {
-		t.Fatal("CheckResult read through a planted symlink and raised nothing")
-	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("the refusal does not name the kind symlink: %v", err)
-	}
+	require.Error(t, err, "CheckResult read through a planted symlink and raised nothing")
+	require.Contains(t, err.Error(), "symlink", "the refusal does not name the kind symlink: %v", err)
 }
 
 // The sequence both probes walk together: a symlink at RESULT.md first, then a FIFO, each
@@ -45,25 +38,17 @@ func TestFriendSequencePlantedResultIsRefused(t *testing.T) {
 
 	dir := t.TempDir()
 	secret := filepath.Join(dir, "secret-outside-the-wall")
-	if err := os.WriteFile(secret, []byte("a secret the wall was keeping\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(secret, []byte("a secret the wall was keeping\n"), 0o644))
 
 	symJob := filepath.Join(dir, "job-symlink")
-	if err := os.MkdirAll(symJob, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(symJob, 0o755))
 	plantLink(t, secret, ResultPath(symJob))
-	if _, err := readFileSteady(ResultPath(symJob)); err == nil {
-		t.Fatal("the steady read read through a planted symlink")
-	} else if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("the symlink refusal does not name the kind: %v", err)
-	}
+	_, symErr := readFileSteady(ResultPath(symJob))
+	require.Error(t, symErr, "the steady read read through a planted symlink")
+	require.Contains(t, symErr.Error(), "symlink", "the symlink refusal does not name the kind: %v", symErr)
 
 	fifoJob := filepath.Join(dir, "job-fifo")
-	if err := os.MkdirAll(fifoJob, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(fifoJob, 0o755))
 	plantFIFO(t, ResultPath(fifoJob))
 	done := make(chan error, 1)
 	go func() {
@@ -72,12 +57,8 @@ func TestFriendSequencePlantedResultIsRefused(t *testing.T) {
 	}()
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("a FIFO read as a published report")
-		}
-		if !strings.Contains(err.Error(), "fifo") {
-			t.Fatalf("the fifo refusal does not name the kind: %v", err)
-		}
+		require.Error(t, err, "a FIFO read as a published report")
+		require.Contains(t, err.Error(), "fifo", "the fifo refusal does not name the kind: %v", err)
 	case <-time.After(30 * time.Second):
 		t.Fatal("STILL BLOCKED after 30s: the dispatcher is wedged")
 	}

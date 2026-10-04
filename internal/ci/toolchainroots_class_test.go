@@ -6,20 +6,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
-// benchStandardScript is the LINUX provisioning standard's one admin entry, and the file
-// that carries that standard's own copy of the toolchain roots. A Mac bench has no script
-// standard (the frozen `nova-pulse fleet standard` table went with nova-pulse), so the
-// darwin side of the agreement is the wall's list alone.
-const benchStandardScript = "tools/bench-standard.sh"
+// benchStandardSource is the file of the LINUX provisioning standard that carries the
+// standard's own copy of the toolchain roots: the Go of the witness, tools/benchstandard.
+// A Mac bench has no witness (the frozen `nova-pulse fleet standard` table went with
+// nova-pulse), so the darwin side of the agreement is the wall's list alone.
+const benchStandardSource = "tools/benchstandard/checks.go"
 
 // toolchainRootsMarker brackets that copy. A marker rather than a grep for the variable
 // name, so the list a reader edits and the list this test reads are the same lines.
 const (
-	toolchainRootsBegin = "# NOVA_TOOLCHAIN_ROOTS BEGIN"
-	toolchainRootsEnd   = "# NOVA_TOOLCHAIN_ROOTS END"
+	toolchainRootsBegin = "// NOVA_TOOLCHAIN_ROOTS BEGIN"
+	toolchainRootsEnd   = "// NOVA_TOOLCHAIN_ROOTS END"
 )
 
 // TestBenchStandardAndTheWallNameTheSameToolchainRoots is the class rule behind the edge
@@ -49,20 +52,17 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 
 	root := repoRoot(t)
 	oses := swarm.ToolchainRootOSes()
-	if len(oses) == 0 {
-		t.Fatal("the wall names no toolchain root on any OS at all: that IS the bug this test exists for")
-	}
+	require.NotEmpty(t, oses, "the wall names no toolchain root on any OS at all: that IS the bug this test exists for")
 	for _, goos := range oses {
 		fromWall := swarm.ToolchainRootNames(goos)
-		if len(fromWall) == 0 {
-			t.Errorf("the wall names no toolchain root for %s at all: that IS the bug this test exists for", goos)
+		if !assert.NotEmptyf(t, fromWall, "the wall names no toolchain root for %s at all: that IS the bug this test exists for", goos) {
 			continue
 		}
 		// THE STANDARD'S SIDE, per OS: the same agreement, read from the place that operating
 		// system's benches are actually provisioned and checked from.
 		fromStandard := standardRoots(t, root, goos)
-		if fromStandard != nil && strings.Join(fromStandard, " ") != strings.Join(fromWall, " ") {
-			t.Errorf("the %s provisioning standard and the wall name different toolchain roots:\n  standard (%s): %v\n  internal/swarm/toolchain.go: %v\nThey are ONE list. Edit both sides together.",
+		if fromStandard != nil {
+			assert.Equalf(t, strings.Join(fromStandard, " "), strings.Join(fromWall, " "), "the %s provisioning standard and the wall name different toolchain roots:\n  standard (%s): %v\n  internal/swarm/toolchain.go: %v\nThey are ONE list. Edit both sides together.",
 				goos, standardSource(goos), fromStandard, fromWall)
 		}
 		// ONE LIST, TWO KINDS, and the kind is the security decision. A `--read` root carries
@@ -71,102 +71,84 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 		// as load-bearing as whether it is granted at all (Johnny's security read of #1364).
 		kind := map[string]bool{} // name -> carries execute
 		for _, r := range swarm.ToolchainRootList(goos) {
-			if _, twice := kind[r.Name]; twice {
-				t.Errorf("%s: the toolchain list names %s twice; one root, one kind", goos, r.Name)
-			}
+			_, twice := kind[r.Name]
+			assert.Falsef(t, twice, "%s: the toolchain list names %s twice; one root, one kind", goos, r.Name)
 			kind[r.Name] = r.Exec
 			// NEVER A BIN DIRECTORY, on any OS: a directory of launchers is writable by the
 			// bench user or by brew, and exec on it hands a card whatever lands there. Every
 			// grant is on a toolchain TREE.
-			if base := strings.TrimSuffix(r.Name, "/"); strings.HasSuffix(base, "/bin") || base == "bin" {
-				t.Errorf("%s: the wall grants the bin directory %s; the grant is on the toolchain tree, never a directory of launchers", goos, r.Name)
-			}
+			base := strings.TrimSuffix(r.Name, "/")
+			assert.Falsef(t, strings.HasSuffix(base, "/bin") || base == "bin", "%s: the wall grants the bin directory %s; the grant is on the toolchain tree, never a directory of launchers", goos, r.Name)
 		}
 		// go/pkg/mod IS granted on every OS and is granted READ WITHOUT EXECUTE. Every
 		// `go mod download` on the bench lands there and the bench user can write to it, so
 		// execute on that tree would let a card run whatever a dependency shipped.
-		if exec, granted := kind["go/pkg/mod"]; !granted {
-			t.Errorf("%s: the wall does not grant the module cache ~/go/pkg/mod at all; it is the read-without-execute kind", goos)
-		} else if exec {
-			t.Errorf("%s: the wall grants the module cache ~/go/pkg/mod EXECUTE: it is the read-without-execute kind (Johnny's security read of #1364)", goos)
+		exec, granted := kind["go/pkg/mod"]
+		assert.Truef(t, granted, "%s: the wall does not grant the module cache ~/go/pkg/mod at all; it is the read-without-execute kind", goos)
+		if granted {
+			assert.Falsef(t, exec, "%s: the wall grants the module cache ~/go/pkg/mod EXECUTE: it is the read-without-execute kind (Johnny's security read of #1364)", goos)
 		}
 		// The sdk tree is the card's own `go` where the standard unpacks one, and it is the
 		// ONE home directory that carries execute.
-		if exec, granted := kind["sdk"]; !granted || !exec {
-			t.Errorf("%s: the wall does not grant ~/sdk execute (granted=%v exec=%v); it is the card's own toolchain", goos, granted, exec)
-		}
+		exec, granted = kind["sdk"]
+		assert.Truef(t, granted && exec, "%s: the wall does not grant ~/sdk execute (granted=%v exec=%v); it is the card's own toolchain", goos, granted, exec)
 		// AND THE ROOT THAT STAYS OUT ENTIRELY, named here so a later widening is a red run
 		// and not a judgement call: ~/go/bin is GOPATH/bin, every `go install` lands there
 		// and the bench user can write to it, so granting it under EITHER kind hands a card
 		// the bench user's own tools. Nothing is lost -- ~/go/bin/go is a symlink into the
 		// sdk tree and the kernel checks the resolved target.
-		if _, granted := kind["go/bin"]; granted {
-			t.Errorf("%s: the wall grants the toolchain root ~/go/bin: it is granted under neither kind (Johnny's security read of #1364)", goos)
+		_, granted = kind["go/bin"]
+		assert.Falsef(t, granted, "%s: the wall grants the toolchain root ~/go/bin: it is granted under neither kind (Johnny's security read of #1364)", goos)
+		// And the roots are documented where a reader of the wall looks for them, under the
+		// spelling the doc uses: `~/name` for a home root, the path itself for a system one.
+		for _, doc := range []string{"docs/SPEC-SWARM.md", "docs/CLI.md"} {
+			body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(doc)))
+			require.NoErrorf(t, err, "reading %s: %v", doc, err)
+			for _, r := range swarm.ToolchainRootList(goos) {
+				spelled := r.Name
+				if r.Home() {
+					spelled = "~/" + r.Name
+				}
+				assert.Containsf(t, string(body), spelled, "%s does not name the %s toolchain root %s the wall grants", doc, goos, spelled)
+			}
 		}
-		// The roots were also held against docs/SPEC-SWARM.md here; that spec moved to
-		// deprecated/docs/ with nova-swarm, and deprecated docs are not tested.
 	}
 	// The LINUX standard must also CHECK its roots, not merely declare them: a bench missing
 	// one has to drift before a card discovers it. (A darwin root is reported and never
 	// drifted on -- a Mac with no .NET is a Mac with no .NET.)
-	if !strings.Contains(string(rawBenchStandard(t, root)), "drift \"toolchain root ") {
-		t.Errorf("%s declares the toolchain roots but never drifts on a missing one", benchStandardScript)
-	}
+	assert.Contains(t, string(rawBenchStandard(t, root)), `w.drift("toolchain root `, benchStandardSource+" declares the toolchain roots but never drifts on a missing one")
 }
 
 // standardSource names the file a reader edits for one OS's side of the agreement.
 func standardSource(goos string) string {
-	return benchStandardScript
+	return benchStandardSource
 }
 
 // standardRoots is the provisioning standard's own list of toolchain roots for one OS, in
-// the order it names them: the marked block of tools/bench-standard.sh on linux, and nil on
-// an OS with no script standard.
+// the order it names them: the marked block of tools/benchstandard on linux, and nil on
+// an OS with no witness.
 func standardRoots(t *testing.T, repo, goos string) []string {
 	t.Helper()
 	if goos != "linux" {
 		return nil
 	}
-	return toolchainRootsInScript(t, string(rawBenchStandard(t, repo)))
+	return toolchainRootsInSource(t, string(rawBenchStandard(t, repo)))
 }
 
-// rawBenchStandard is the linux standard's script.
+// rawBenchStandard is the linux standard's Go.
 func rawBenchStandard(t *testing.T, repo string) []byte {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(benchStandardScript)))
-	if err != nil {
-		t.Fatalf("reading the provisioning standard: %v", err)
-	}
+	raw, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(benchStandardSource)))
+	require.NoErrorf(t, err, "reading the provisioning standard: %v", err)
 	return raw
 }
 
-// toolchainRootsInScript reads the marked block and returns the names it assigns, in order.
-// The block is required: its absence is the standard's copy having been renamed or removed,
-// which is the drift this test is about.
-func toolchainRootsInScript(t *testing.T, body string) []string {
+// toolchainRootsInSource reads the marked block and returns the names its strings hold, in
+// order. The block is required: its absence is the standard's copy having been renamed or
+// removed, which is the drift this test is about.
+func toolchainRootsInSource(t *testing.T, body string) []string {
 	t.Helper()
-	_, after, found := strings.Cut(body, toolchainRootsBegin)
-	if !found {
-		t.Fatalf("%s carries no %s marker", benchStandardScript, toolchainRootsBegin)
-	}
-	block, _, found := strings.Cut(after, toolchainRootsEnd)
-	if !found {
-		t.Fatalf("%s carries no %s marker", benchStandardScript, toolchainRootsEnd)
-	}
-	var names []string
-	for _, line := range strings.Split(block, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		_, value, ok := strings.Cut(line, "=")
-		if !ok {
-			t.Fatalf("the marked block in %s holds a line that is not an assignment: %q", benchStandardScript, line)
-		}
-		names = append(names, strings.Fields(strings.Trim(strings.TrimSpace(value), `"'`))...)
-	}
-	if len(names) == 0 {
-		t.Fatalf("the marked block in %s names no root", benchStandardScript)
-	}
+	names := quotedBetween(t, body, toolchainRootsBegin, toolchainRootsEnd)
+	require.NotEmptyf(t, names, "the marked block in %s names no root", benchStandardSource)
 	return names
 }

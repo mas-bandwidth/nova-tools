@@ -6,14 +6,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/redis/go-redis/v9"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
+	"github.com/stretchr/testify/require"
 )
 
 // tableMainEnv, set to 1, makes TestNovaTableMain be nova-table's main().
@@ -53,7 +53,7 @@ func novaTable(t *testing.T, args ...string) (int, string, string) {
 	case errors.As(err, &exit):
 		return exit.ExitCode(), out.String(), errb.String()
 	}
-	t.Fatalf("nova-table %q: %v", args, err)
+	require.NoError(t, err, "nova-table %q: %v", args, err)
 	return 0, "", ""
 }
 
@@ -71,50 +71,48 @@ func TestFreshStoreFirstVerbLoadsTheLibrary(t *testing.T) {
 	addr := testredis.Start(t)
 	admin := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = admin.Close() })
-	if libs, err := admin.FunctionList(ctx, redis.FunctionListQuery{}).Result(); err != nil || len(libs) != 0 {
-		t.Fatalf("the fresh store holds %v (%v); want no library", libs, err)
+	{
+		libs, err := admin.FunctionList(ctx, redis.FunctionListQuery{}).Result()
+		require.NoError(t, err, "the fresh store holds %v (%v); want no library", libs, err)
+		require.Len(t, libs, 0, "the fresh store holds %v (%v); want no library", libs, err)
 	}
 
 	code, out, errOut := novaTable(t, "create", "demo", "--columns", "ready,working,done", "--redis", addr)
-	if code != 0 || out != "TABLE CREATE table=demo columns=3 trips=4\n" || errOut != "" {
-		t.Fatalf("create on a fresh store: exit %d stdout %q stderr %q; want TABLE CREATE with trips=4", code, out, errOut)
-	}
+	require.EqualValues(t, 0, code, "create on a fresh store: exit %d stdout %q stderr %q; want TABLE CREATE with trips=4", code, out, errOut)
+	require.Equal(t, "TABLE CREATE table=demo columns=3 trips=4\n", out, "create on a fresh store: exit %d stdout %q stderr %q; want TABLE CREATE with trips=4", code, out, errOut)
+	require.Empty(t, errOut, "create on a fresh store: exit %d stdout %q stderr %q; want TABLE CREATE with trips=4", code, out, errOut)
 	libs, err := admin.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: "nova_sprint", WithCode: true}).Result()
-	if err != nil || len(libs) != 1 {
-		t.Fatalf("FUNCTION LIST after the first verb: %v %v", libs, err)
-	}
+	require.NoError(t, err, "FUNCTION LIST after the first verb: %v %v", libs, err)
+	require.Len(t, libs, 1, "FUNCTION LIST after the first verb: %v %v", libs, err)
 	want, err := tableLibrary().Source()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if libs[0].Code != want {
-		t.Fatalf("the store holds %d bytes of nova_sprint; want this build's %d", len(libs[0].Code), len(want))
-	}
+	require.NoError(t, err, "%v", err)
+	require.Equal(t, want, libs[0].Code, "the store holds %d bytes of nova_sprint; want this build's %d", len(libs[0].Code), len(want))
 
 	code, out, errOut = novaTable(t, "row", "add", "demo", "build", "--redis", addr)
-	if code != 0 || out != "TABLE ROW ADD table=demo row=build cols=3 bound=0 trips=1\n" || errOut != "" {
-		t.Fatalf("the next process on the loaded store: exit %d stdout %q stderr %q; want one round trip", code, out, errOut)
-	}
+	require.EqualValues(t, 0, code, "the next process on the loaded store: exit %d stdout %q stderr %q; want one round trip", code, out, errOut)
+	require.Equal(t, "TABLE ROW ADD table=demo row=build cols=3 bound=0 trips=1\n", out, "the next process on the loaded store: exit %d stdout %q stderr %q; want one round trip", code, out, errOut)
+	require.Empty(t, errOut, "the next process on the loaded store: exit %d stdout %q stderr %q; want one round trip", code, out, errOut)
 
 	older := testredis.Start(t)
 	oc := redis.NewClient(&redis.Options{Addr: older})
 	t.Cleanup(func() { _ = oc.Close() })
 	const old = "#!lua name=nova_sprint\nredis.register_function('ns_ping', function() return 'PONG' end)\n"
-	if err := oc.FunctionLoad(ctx, old).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, oc.FunctionLoad(ctx, old).Err())
 	code, out, errOut = novaTable(t, "create", "demo", "--columns", "ready,done", "--redis", older)
-	if code != 1 || out != "" || strings.Count(errOut, "\n") != 1 || strings.Count(errOut, "; run: ") != 1 ||
-		!strings.Contains(errOut, "ERR Function not found: function ns_table_create") ||
-		!strings.Contains(errOut, "older than this nova-table") || !strings.Contains(errOut, "run: nova-redis fn load --addr <host:port>") {
-		t.Fatalf("create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
-	}
+	require.EqualValues(t, 1, code, "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
+	require.Empty(t, out, "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
+	require.EqualValues(t, 1, strings.Count(errOut, "\n"), "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
+	require.EqualValues(t, 1, strings.Count(errOut, "; run: "), "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
+	require.Contains(t, errOut, "ERR Function not found: function ns_table_create", "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
+	require.Contains(t, errOut, "older than this nova-table", "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
+	require.Contains(t, errOut, "run: nova-redis fn load --addr <host:port>", "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
 	code, out, errOut = novaTable(t, "list", "--redis", older)
-	if code != 1 || out != "" || strings.Count(errOut, "; run: ") != 1 || !strings.Contains(errOut, "function ns_table_list") {
-		t.Fatalf("list on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal with one remedy", code, out, errOut)
-	}
+	require.EqualValues(t, 1, code, "list on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal with one remedy", code, out, errOut)
+	require.Empty(t, out, "list on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal with one remedy", code, out, errOut)
+	require.EqualValues(t, 1, strings.Count(errOut, "; run: "), "list on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal with one remedy", code, out, errOut)
+	require.Contains(t, errOut, "function ns_table_list", "list on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal with one remedy", code, out, errOut)
 	libs, err = oc.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: "nova_sprint", WithCode: true}).Result()
-	if err != nil || len(libs) != 1 || libs[0].Code != old {
-		t.Fatalf("the older library after the refusal: %v %v; want it as it was, never replaced", libs, err)
-	}
+	require.NoError(t, err, "the older library after the refusal: %v %v; want it as it was, never replaced", libs, err)
+	require.Len(t, libs, 1, "the older library after the refusal: %v %v; want it as it was, never replaced", libs, err)
+	require.Equal(t, old, libs[0].Code, "the older library after the refusal: %v %v; want it as it was, never replaced", libs, err)
 }

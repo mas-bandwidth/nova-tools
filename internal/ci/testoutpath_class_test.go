@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
@@ -98,9 +101,7 @@ func TestToolRunsInTestsWriteIntoATempDir(t *testing.T) {
 			if src.HasDirNamed("testdata") {
 				continue
 			}
-			if src.ParseErr != nil {
-				t.Fatal(src.ParseErr)
-			}
+			require.NoError(t, src.ParseErr)
 			for _, f := range relativeOutputPathsIn(src.Rel, tree.FSet, src.AST) {
 				key := f.File + ":" + f.Func
 				seen[key] = true
@@ -118,7 +119,7 @@ func TestToolRunsInTestsWriteIntoATempDir(t *testing.T) {
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -131,34 +132,22 @@ func TestRelativeOutputPathScannerReadsTheFixtures(t *testing.T) {
 
 	before := readFile(t, filepath.Join("testdata", "testoutpath", "before.go.txt"))
 	found, err := relativeOutputPaths("cmd/fixture/firstrun_test.go", []byte(before))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(found) != 2 {
-		t.Fatalf("the pre-fix fixture holds two relative output paths, the scanner found %d: %v", len(found), found)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 2, len(found), "the pre-fix fixture holds two relative output paths, the scanner found %d: %v", len(found), found)
 	want := []struct{ fn, flag, value string }{
 		{"TestFirstRunExampleRuns", "--graph", "./deps.json"},
 		{"TestPacketIsWrittenWhereItIsAsked", "--out", "packet.md"},
 	}
 	for i, w := range want {
 		got := found[i]
-		if got.Func != w.fn || got.Flag != w.flag || got.Value != w.value {
-			t.Errorf("finding %d = %s %s %q, want %s %s %q", i, got.Func, got.Flag, got.Value, w.fn, w.flag, w.value)
-		}
-		if got.Line == 0 {
-			t.Errorf("finding %d carries no line; a finding a reader cannot open is half a finding", i)
-		}
+		assert.Truef(t, got.Func == w.fn && got.Flag == w.flag && got.Value == w.value, "finding %d = %s %s %q, want %s %s %q", i, got.Func, got.Flag, got.Value, w.fn, w.flag, w.value)
+		assert.NotZerof(t, got.Line, "finding %d carries no line; a finding a reader cannot open is half a finding", i)
 	}
 
 	after := readFile(t, filepath.Join("testdata", "testoutpath", "after.go.txt"))
 	found, err = relativeOutputPaths("cmd/fixture/firstrun_test.go", []byte(after))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(found) != 0 {
-		t.Errorf("the fixed fixture writes into t.TempDir() and must pass, the scanner found %v", found)
-	}
+	require.NoError(t, err)
+	assert.Emptyf(t, found, "the fixed fixture writes into t.TempDir() and must pass, the scanner found %v", found)
 }
 
 // relativeOutputPaths reads one _test.go and returns every relative output path

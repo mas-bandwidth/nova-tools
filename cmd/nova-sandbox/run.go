@@ -24,6 +24,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -41,6 +42,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // runRemedy is the one remedy line every refusal of this verb carries.
@@ -327,7 +329,9 @@ func parseRun(args []string) runFlags {
 		case "help", "--help", "-h":
 			f.help = true
 		default:
-			add("no_command", oneline.Escape(a)+" is not a flag of the run verb; run: nova-sandbox help")
+			text, took := unknownArg(args, i, "run")
+			add("no_command", text)
+			i += took
 		}
 	}
 	return f
@@ -408,7 +412,8 @@ func readGoEnv() (goDirs, error) {
 	if err != nil {
 		return goDirs{}, err
 	}
-	cmd := exec.Command(bin, "env", "GOROOT", "GOMODCACHE")
+	cmd, cancel := subproc.Command(context.Background(), subproc.Go, bin, "env", "GOROOT", "GOMODCACHE")
+	defer cancel()
 	cmd.Env = goenv.Clean(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
@@ -638,7 +643,7 @@ func validateRun(f *runFlags, goos string) (time.Duration, []sandbox.Refusal) {
 	}
 
 	if !f.sawDashDash {
-		add("no_command", "no --; the command comes after it: "+remedyFor(goos))
+		add("no_command", "no --; the command comes after it, as the run: line below shows")
 	} else if len(f.argv) == 0 {
 		add("no_command", "nothing after --; the run verb wraps one command")
 	}

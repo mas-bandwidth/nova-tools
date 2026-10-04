@@ -3,8 +3,10 @@ package scaffold
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestScaffoldWritesConfinedFiles(t *testing.T) {
@@ -17,28 +19,18 @@ func TestScaffoldWritesConfinedFiles(t *testing.T) {
 	}
 
 	written, err := Write(tree, outs)
-	if err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if len(written) != 2 {
-		t.Fatalf("Write returned %d paths, want 2", len(written))
-	}
+	require.NoError(t, err, "Write: %v", err)
+	require.Len(t, written, 2, "Write returned %d paths, want 2", len(written))
 
 	for _, o := range outs {
 		data, err := os.ReadFile(filepath.Join(tree, filepath.FromSlash(o.Rel)))
-		if err != nil {
-			t.Errorf("read %s: %v", o.Rel, err)
-		}
-		if string(data) != string(o.Data) {
-			t.Errorf("%s = %q, want %q", o.Rel, data, o.Data)
-		}
+		assert.NoError(t, err, "read %s: %v", o.Rel, err)
+		assert.Equal(t, string(o.Data), string(data), "%s = %q, want %q", o.Rel, data, o.Data)
 	}
 
 	// Overwrite refused
 	_, err = Write(tree, outs)
-	if err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Errorf("expected already exists error, got %v", err)
-	}
+	assert.ErrorContains(t, err, "already exists", "expected already exists error, got %v", err)
 }
 
 func TestScaffoldRefusesSymlink(t *testing.T) {
@@ -58,15 +50,11 @@ func TestScaffoldRefusesSymlink(t *testing.T) {
 		{Rel: "evil_link", Data: []byte("overwrite")},
 	}
 	_, err := Write(tree, outs)
-	if err == nil || !strings.Contains(err.Error(), "symlink") {
-		t.Errorf("expected symlink refusal, got %v", err)
-	}
+	assert.ErrorContains(t, err, "symlink", "expected symlink refusal, got %v", err)
 
 	// Verify outside file was untouched
 	data, _ := os.ReadFile(target)
-	if string(data) != "secret" {
-		t.Errorf("outside file was modified: %s", data)
-	}
+	assert.Equal(t, "secret", string(data), "outside file was modified: %s", data)
 }
 
 func TestScaffoldRefusesADanglingFinalSymlink(t *testing.T) {
@@ -82,9 +70,7 @@ func TestScaffoldRefusesADanglingFinalSymlink(t *testing.T) {
 		{Rel: "dangling", Data: []byte("hello")},
 	}
 	_, err := Write(tree, outs)
-	if err == nil || !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("expected symlink refusal for dangling symlink, got %v", err)
-	}
+	require.ErrorContains(t, err, "symlink", "expected symlink refusal for dangling symlink, got %v", err)
 }
 
 func TestScaffoldRefusesASymlinkedParentDirectory(t *testing.T) {
@@ -101,9 +87,7 @@ func TestScaffoldRefusesASymlinkedParentDirectory(t *testing.T) {
 		{Rel: "linked_dir/file.txt", Data: []byte("hello")},
 	}
 	_, err := Write(tree, outs)
-	if err == nil || !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("expected symlink refusal for symlinked parent dir, got %v", err)
-	}
+	require.ErrorContains(t, err, "symlink", "expected symlink refusal for symlinked parent dir, got %v", err)
 }
 
 func TestScaffoldNeverOverwritesACollisionRacedInAfterThePreflight(t *testing.T) {
@@ -118,13 +102,9 @@ func TestScaffoldNeverOverwritesACollisionRacedInAfterThePreflight(t *testing.T)
 	defer func() { BeforeCreate = nil }()
 
 	_, err := Write(tree, outs)
-	if err == nil || !strings.Contains(err.Error(), "appeared while scaffold was writing") {
-		t.Fatalf("expected raced collision refusal, got %v", err)
-	}
+	require.ErrorContains(t, err, "appeared while scaffold was writing", "expected raced collision refusal, got %v", err)
 	data, _ := os.ReadFile(filepath.Join(tree, "pkg", "raced.txt"))
-	if string(data) != "pre-existing content" {
-		t.Fatalf("file overwritten despite race: %s", data)
-	}
+	require.Equal(t, "pre-existing content", string(data), "file overwritten despite race: %s", data)
 }
 
 func TestScaffoldRuleAndVerbBasic(t *testing.T) {
@@ -135,22 +115,18 @@ func TestScaffoldRuleAndVerbBasic(t *testing.T) {
 	writeTool(t, tree, "nova-ci")
 
 	// Rule
-	writtenRule, err := Rule(tree, "sample")
-	if err != nil {
-		t.Fatalf("Rule failed: %v", err)
-	}
-	if len(writtenRule) != 3 {
-		t.Fatalf("Rule wrote %d files, want 3", len(writtenRule))
-	}
+	ruleFiles, err := RuleFiles(tree, "sample")
+	require.NoError(t, err, "Rule failed: %v", err)
+	writtenRule, err := Write(tree, ruleFiles)
+	require.NoError(t, err, "Rule failed: %v", err)
+	require.Len(t, writtenRule, 3, "Rule wrote %d files, want 3", len(writtenRule))
 
 	// Verb
-	writtenVerb, err := Verb(tree, "nova-ci", "sample")
-	if err != nil {
-		t.Fatalf("Verb failed: %v", err)
-	}
-	if len(writtenVerb) != 4 {
-		t.Fatalf("Verb wrote %d files, want 4", len(writtenVerb))
-	}
+	verbFiles, err := VerbFiles(tree, "nova-ci", "sample")
+	require.NoError(t, err, "Verb failed: %v", err)
+	writtenVerb, err := Write(tree, verbFiles)
+	require.NoError(t, err, "Verb failed: %v", err)
+	require.Len(t, writtenVerb, 4, "Verb wrote %d files, want 4", len(writtenVerb))
 }
 
 // writeTool lays down cmd/<tool>/main.go with a func main, the least a tool
@@ -158,12 +134,8 @@ func TestScaffoldRuleAndVerbBasic(t *testing.T) {
 func writeTool(t *testing.T, tree, tool string) {
 	t.Helper()
 	dir := filepath.Join(tree, "cmd", tool)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
 }
 
 // A verb scaffolded into a directory with no func main is a package main with
@@ -187,16 +159,11 @@ func TestVerbRefusesAToolWithNoMain(t *testing.T) {
 				_ = os.MkdirAll(filepath.Join(tree, "cmd", "tool"), 0o755)
 				_ = os.WriteFile(filepath.Join(tree, "cmd", "tool", f), []byte(src), 0o644)
 			}
-			written, err := Verb(tree, "tool", "probe")
-			if err == nil || !strings.Contains(err.Error(), "no func main") {
-				t.Fatalf("Verb into a tool with no func main: err %v, want a no-func-main refusal", err)
-			}
-			if len(written) != 0 {
-				t.Fatalf("Verb wrote %v despite refusing", written)
-			}
-			if _, err := os.Stat(filepath.Join(tree, "cmd", "tool", "probe.go")); err == nil {
-				t.Fatalf("cmd/tool/probe.go was written despite the refusal")
-			}
+			written, err := VerbFiles(tree, "tool", "probe")
+			require.ErrorContains(t, err, "no func main", "Verb into a tool with no func main: err %v, want a no-func-main refusal", err)
+			require.Empty(t, written, "Verb wrote %v despite refusing", written)
+			_, err = os.Stat(filepath.Join(tree, "cmd", "tool", "probe.go"))
+			require.Error(t, err, "cmd/tool/probe.go was written despite the refusal")
 		})
 	}
 }
@@ -208,14 +175,8 @@ func TestDispatchIsTheCaseTheScaffoldedVerbNeeds(t *testing.T) {
 	t.Parallel()
 
 	want := "case \"my-verb\":\n\treturn cmdMyVerb(args[1:], stdout, stderr)"
-	if got := Dispatch("my-verb"); got != want {
-		t.Fatalf("Dispatch(my-verb) =\n%s\nwant\n%s", got, want)
-	}
+	require.Equal(t, want, Dispatch("my-verb"), "Dispatch(my-verb)")
 	src, err := Render(verbTemplates, "templates/verb/verb.go.tmpl", verbData{Tool: "t", Verb: "my-verb", CamelVerb: toCamel("my-verb")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(src), "func cmdMyVerb(args []string, stdout, stderr io.Writer) int") {
-		t.Fatalf("the verb template no longer declares the function the dispatch case calls:\n%s", src)
-	}
+	require.NoError(t, err)
+	require.Contains(t, string(src), "func cmdMyVerb(args []string, stdout, stderr io.Writer) int", "the verb template no longer declares the function the dispatch case calls")
 }

@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // exeSuffix is the extension a built binary carries on Windows. It IS the
@@ -63,7 +64,7 @@ type HelpRunner func(ctx context.Context, bin string) (string, error)
 // telling you its verbs and the parser ignores every line that is not a
 // command anyway.
 func RunHelp(ctx context.Context, bin string) (string, error) {
-	cmd := exec.CommandContext(ctx, bin, "help")
+	cmd := subproc.Context(ctx, bin, "help")
 	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) == 0 {
 		return "", err
@@ -73,13 +74,14 @@ func RunHelp(ctx context.Context, bin string) (string, error) {
 
 // VerbsFromTools asks the binaries themselves what verbs they have.
 //
-// docs/CLI.md is a document somebody keeps up to date; a binary's `help` is
-// what the binary does. The 2026-09-18 dogfood pass ran `nova-work ask` and
-// `nova-work asks` — two verbs the reference's pasted help block does not
-// carry — and both receipts were stranded against a reference that had gone
-// stale. So when `--tools` names a directory of built binaries, they are the
-// authoritative list and the reference is the fallback for tools that are not
-// in it.
+// docs/CLI.md is a maintained reference; a binary's `help` is
+// what the binary does. A discovered help line for a verb the reference has
+// lost is the spelling the binary itself accepts, so the binary's help is
+// authoritative over the reference for verbs the binary actually answers:
+// a receipt against the binary's own spelling would otherwise strand against
+// a reference that has gone stale. When `--tools` names a directory of built
+// binaries, they are the authoritative list and the reference is the fallback
+// for tools that are not in it.
 //
 // Only files named `nova-*` that are regular and executable are run, each under
 // the caller's deadline. A binary that cannot answer is one named failure, not

@@ -9,8 +9,10 @@
 package main
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestPolicyVerbOnLinuxPrintsLandlockRuleset is issue #1469: `policy` answered
@@ -22,23 +24,14 @@ func TestPolicyVerbOnLinuxPrintsLandlockRuleset(t *testing.T) {
 
 	j := newJob(t)
 	code, out, errOut := j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write, "--net-deny")
-	if code != 0 {
-		t.Fatalf("policy exit %d: %s", code, errOut)
-	}
-	if !strings.Contains(errOut, "POLICY OK backend=landlock") {
-		t.Fatalf("the POLICY OK line does not name the landlock backend: %q", errOut)
-	}
-	if strings.Contains(out, "darwin sandbox-exec profile") {
-		t.Fatalf("policy on linux printed the darwin sandbox-exec profile template, which no linux run uses")
-	}
+	require.Equal(t, 0, code, "policy exit %d: %s", code, errOut)
+	require.Contains(t, errOut, "POLICY OK backend=landlock", "the POLICY OK line does not name the landlock backend: %q", errOut)
+	require.NotContains(t, out, "darwin sandbox-exec profile", "policy on linux printed the darwin sandbox-exec profile template, which no linux run uses")
 	// What it prints instead is the ruleset the wall would build: the backend, the
 	// read and write sets, and the net promise.
 	for _, want := range []string{"backend=landlock", "read=", "write=", "net="} {
-		if !strings.Contains(out, want) {
-			t.Errorf("the printed landlock ruleset names no %q::\n%s", want, out)
-		}
+		assert.Contains(t, out, want, "the printed landlock ruleset names no %q::\n%s", want, out)
 	}
-	if !strings.Contains(out, j.read) || !strings.Contains(out, j.write) {
-		t.Errorf("the printed landlock ruleset does not carry the caller's own sets:\n%s", out)
-	}
+	assert.Contains(t, out, j.read, "the printed landlock ruleset does not carry the caller's own sets:\n%s", out)
+	assert.Contains(t, out, j.write, "the printed landlock ruleset does not carry the caller's own sets:\n%s", out)
 }

@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -24,9 +27,7 @@ func TestHarnessConfigsReferenceEnvNames(t *testing.T) {
 	t.Parallel()
 
 	const envName = "DEEPSEEK_API_KEY"
-	if !IsValidEnvVar(envName) {
-		t.Fatalf("fixture name %q is not a valid env var name", envName)
-	}
+	require.True(t, IsValidEnvVar(envName), "fixture name %q is not a valid env var name", envName)
 
 	w := swarm.Worker{
 		Provider: "deepseek",
@@ -36,26 +37,18 @@ func TestHarnessConfigsReferenceEnvNames(t *testing.T) {
 
 	config := w.HarnessConfig()
 	ref := harnessAPIKey(t, config)
-	if !envReferencePattern.MatchString(ref) {
-		t.Errorf("apiKey = %q, want a {env:NAME} reference and never a literal key", ref)
-	}
-	if name := strings.TrimSuffix(strings.TrimPrefix(ref, "{env:"), "}"); name != envName {
-		t.Errorf("apiKey references %q, want %q", name, envName)
-	} else if !IsValidEnvVar(name) {
-		t.Errorf("apiKey references %q, which is not a valid environment variable name", name)
+	assert.True(t, envReferencePattern.MatchString(ref), "apiKey = %q, want a {env:NAME} reference and never a literal key", ref)
+	if name := strings.TrimSuffix(strings.TrimPrefix(ref, "{env:"), "}"); assert.Equal(t, envName, name, "apiKey references %q, want %q", name, envName) {
+		assert.True(t, IsValidEnvVar(name), "apiKey references %q, which is not a valid environment variable name", name)
 	}
 	for _, literal := range []string{"sk-", "ghp_", "xoxb-", "age1"} {
-		if strings.Contains(string(config), literal) {
-			t.Errorf("harness config carries literal key material %q:\n%s", literal, config)
-		}
+		assert.NotContains(t, string(config), literal, "harness config carries literal key material %q:\n%s", literal, config)
 	}
 
 	// The sentence is not vacuous: a config that carries the value instead of
 	// the name is DRIFT, and it is the shape above, not this one, that passes.
 	for _, badKey := range []string{"sk-live-deepseek-key", "ghp_1234567890abcdef", envName} {
-		if envReferencePattern.MatchString(badKey) {
-			t.Errorf("a literal key %q was accepted as an {env:NAME} reference", badKey)
-		}
+		assert.False(t, envReferencePattern.MatchString(badKey), "a literal key %q was accepted as an {env:NAME} reference", badKey)
 	}
 }
 
@@ -72,9 +65,8 @@ func harnessAPIKey(t *testing.T, raw []byte) string {
 			} `json:"options"`
 		} `json:"provider"`
 	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("unmarshal harness config: %v", err)
-	}
+	err := json.Unmarshal(raw, &doc)
+	require.NoError(t, err, "unmarshal harness config: %v", err)
 	for _, p := range doc.Provider {
 		return p.Options.APIKey
 	}

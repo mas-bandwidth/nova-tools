@@ -3,24 +3,25 @@ package swarm
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// SPEC-SWARM.md, issue #856: a card is a pipeline of stateless model calls, not
-// an agent loop. The section is the deliverable, so a rule renamed out of it is
+// SPEC-SWARM.md, "The card is a pipeline, not a loop": a card is a pipeline of
+// stateless model calls, not an agent loop. The section is the deliverable, so
+// a rule renamed out of it is
 // red here before any implementation is trusted. This reads the doc the way
 // internal/decide's doc test reads SPEC-DECIDE.md.
 func TestSpecSwarmNamesTheCardPipeline(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-SWARM.md"))
-	if err != nil {
-		t.Fatalf("SPEC-SWARM.md is missing: %s", err)
-	}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	require.NoError(t, err, "SPEC-SWARM.md is missing: %s", err)
 	doc := string(raw)
 	for _, phrase := range []string{
-		"## The card is a pipeline, not a loop (issue #856)",
+		"## The card is a pipeline, not a loop",
 		"a card is a pipeline of stateless model calls, not an agent loop",
 		"One model call per step, and its input is exactly what the card names",
 		"the harness runs the tools, with no model call",
@@ -34,8 +35,6 @@ func TestSpecSwarmNamesTheCardPipeline(t *testing.T) {
 		"TestExploreOverTurnBudgetIsStoppedWithTheBudgetNamed",
 		"TestTheFixCardRunsInThreeModelCalls",
 	} {
-		if !strings.Contains(doc, phrase) {
-			t.Errorf("SPEC-SWARM.md does not name the card-pipeline rule keyed by %q", phrase)
-		}
+		assert.Contains(t, doc, phrase, "SPEC-SWARM.md does not name the card-pipeline rule keyed by %q", phrase)
 	}
 }

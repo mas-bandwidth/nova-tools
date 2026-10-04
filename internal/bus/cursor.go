@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -97,12 +99,7 @@ func isLaneDoc(name string) bool { return name == LaneDocName }
 const TempSuffix = ".tmp"
 
 func isLaneStateFile(name string) bool {
-	for _, s := range laneStateFiles {
-		if name == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(laneStateFiles, name)
 }
 
 // isLaneStateTemp reports whether a name is a lane state file's stranded temporary. Only
@@ -114,6 +111,10 @@ func isLaneStateFile(name string) bool {
 // temporary `INDEX.tmp` was and the lane walk steps over it exactly as before. The middle
 // is hex from the OS random source and nothing else, so a `notes.x.tmp` is still a stray.
 func isLaneStateTemp(name string) bool {
+	if stem, hexpart, ok := strings.Cut(strings.TrimPrefix(name, "."), TempSuffix+"-"); ok && strings.HasPrefix(name, ".") {
+		// atomicfile's temporary: `.<state file>.tmp-<8 hex>`.
+		return isLaneStateFile(stem) && len(hexpart) == 8 && isHex(hexpart)
+	}
 	base, cut := strings.CutSuffix(name, TempSuffix)
 	if !cut {
 		return false
@@ -431,28 +432,6 @@ func WriteCursor(root, lane, commit string, open int, legacy string, now time.Ti
 		line += " " + cursorLegacyPrefix + legacy
 	}
 	return replaceLaneFile(root, CursorPath(lane), line+"\n")
-}
-
-// WriteBeat writes a lane's BEAT: one line, the RFC 3339 UTC stamp of `now`, the cursor
-// sha the line is standing at (or "-" when it has no cursor yet), and, when `until` is not
-// the zero time, a lease until=<stamp> naming when the beat stops counting as alive. The
-// stamp is full RFC 3339 with nanoseconds so two poll ticks a fraction of a second apart
-// carry different stamps, which is what lets a reader tell the line is alive rather than
-// merely that it polled once; the beat is rewritten, not appended, because only the newest
-// one matters.
-//
-// A beat's sha is the cursor commit and carries no ValidCommitHex guard of its own: the
-// value written here came from ReadCursor, which already checked it, or is "-". It is a
-// presence signal, not a git argument.
-func WriteBeat(root, lane, cursor string, now, until time.Time) error {
-	if cursor == "" {
-		cursor = "-"
-	}
-	line := now.UTC().Format(time.RFC3339Nano) + " " + cursor
-	if !until.IsZero() {
-		line += " until=" + until.UTC().Format(time.RFC3339Nano)
-	}
-	return replaceLaneFile(root, BeatPath(lane), line+"\n")
 }
 
 // ReadBeat reads a lane's BEAT and returns its stamp as a moment, or the zero value and
@@ -867,9 +846,8 @@ func ReadIndex(root string, c *Config) (*Index, error) {
 	return idx, nil
 }
 
-// ByID and ByPath are the two lookups a Re line or a receipt needs.
-func (i *Index) ByID(id string) (*IndexEntry, bool)     { e, ok := i.byID[id]; return e, ok }
-func (i *Index) ByPath(path string) (*IndexEntry, bool) { e, ok := i.byPath[path]; return e, ok }
+// ByID is the lookup a Re line or a receipt needs.
+func (i *Index) ByID(id string) (*IndexEntry, bool) { e, ok := i.byID[id]; return e, ok }
 
 // AppendIndexLine adds one record to a lane's INDEX. Append-only, like RECEIPTS: a sender
 // only ever adds to their own lane, so two DIFFERENT senders writing at once touch
@@ -923,6 +901,13 @@ func AppendIndexLine(root string, e IndexEntry) error {
 // A note with no id contributes no line. A legacy note is addressed by path, everywhere,
 // and putting it in a catalogue keyed on ids would be inventing an id for it.
 func RebuildLaneIndex(root string, c *Config, t *Bus, lane string) (int, error) {
+	n, content := PlanLaneIndex(c, t, lane)
+	return n, replaceLaneFile(root, IndexPath(lane), content)
+}
+
+// PlanLaneIndex is what RebuildLaneIndex writes for one lane, and how many notes it holds,
+// without writing it: the plan `check --rebuild-index --dry-run` prints.
+func PlanLaneIndex(c *Config, t *Bus, lane string) (int, string) {
 	var entries []IndexEntry
 	for i := range t.Notes {
 		n := &t.Notes[i]
@@ -936,7 +921,7 @@ func RebuildLaneIndex(root string, c *Config, t *Bus, lane string) (int, error) 
 	for _, e := range entries {
 		b.WriteString(IndexLine(e) + "\n")
 	}
-	return len(entries), replaceLaneFile(root, IndexPath(lane), b.String())
+	return len(entries), b.String()
 }
 
 // replaceLaneFile writes a lane state file whole, refusing to write outside the bus for
@@ -948,7 +933,7 @@ func RebuildLaneIndex(root string, c *Config, t *Bus, lane string) (int, error) 
 // lane starts in, rather than a second spelling of it that every reader would have to
 // know about.
 //
-// IT WRITES THROUGH A TEMPORARY AND RENAMES, and an earlier version wrote the file in
+// IT WRITES THROUGH A TEMPORARY AND RENAMES (internal/atomicfile), and an earlier version wrote the file in
 // place. Every file that reaches here is a file another run refuses on: a CURSOR whose
 // commit will not read is `INBOX REFUSED`, an OPEN that is half a line is a reader whose
 // next run stops, an INDEX cut in two is a catalogue that resolves a thread to nothing. A
@@ -957,8 +942,9 @@ func RebuildLaneIndex(root string, c *Config, t *Bus, lane string) (int, error) 
 // not the old one and not the new one. A rename is atomic on every filesystem this runs
 // on, so a kill leaves the OLD file, entire, which is a state every reader here already
 // handles. The temporary is in the SAME DIRECTORY, because a rename across filesystems is
-// not a rename, and it is named `<file>.tmp` rather than randomly so that a stranded one
-// is a single predictable name a person can see and the lane walk can step over.
+// not a rename, and atomicfile names it `.<file>.tmp-<8 hex>`, exclusive and unpredictable,
+// so a planted link is never written through and a stranded one is a name the lane walk
+// steps over (isLaneStateTemp).
 func replaceLaneFile(root, path, content string) error {
 	full := filepath.Join(root, filepath.FromSlash(path))
 	if err := insideRoot(root, full); err != nil {
@@ -973,30 +959,13 @@ func replaceLaneFile(root, path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
-	tmp, err := laneTempPath(full)
-	if err != nil {
+	// The whole path from the bus root is checked for a link, then atomicfile
+	// publishes: an unpredictable exclusive temporary, fsync of the file, rename, fsync of
+	// the directory. A kill leaves the old file, entire.
+	if err := refuseLaneLink(root, full); err != nil {
 		return err
 	}
-	f, err := openLaneFile(root, tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(content); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, full); err != nil {
-		// The rename is the commit point. If it fails there is no half-written file to
-		// leave behind, so the temporary goes rather than staying as a stray.
-		os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomicfile.Write(full, []byte(content), 0o644)
 }
 
 // record is one meaningful line of a lane state file, with the 1-based line number it was

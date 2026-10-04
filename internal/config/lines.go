@@ -2,7 +2,8 @@ package config
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -21,14 +22,31 @@ func Value(s string) string {
 	return oneline.Field(s)
 }
 
+// ListNoteRunes is how many characters of a Cut field (a note) a list line
+// prints before "..." marks the cut.
+const ListNoteRunes = 60
+
 // RowLine is a row: `FRIEND name=<n> <field>=<v> ...`, every field of the
-// kind in declaration order.
-func RowLine(k *Kind, row Row) string {
+// kind in declaration order, every value whole.
+func RowLine(k *Kind, row Row) string { return rowLine(k, row, false) }
+
+// ListLine is RowLine for a list: a Cut field longer than ListNoteRunes
+// characters is cut there and ends in "...", so a row is one short line; show
+// and --json print it whole.
+func ListLine(k *Kind, row Row) string { return rowLine(k, row, true) }
+
+func rowLine(k *Kind, row Row, cut bool) string {
 	var b strings.Builder
 	b.WriteString(strings.ToUpper(k.Name))
 	b.WriteString(" name=" + Value(row.Name))
 	for _, f := range k.Fields {
-		b.WriteString(" " + f.Name + "=" + Value(row.Fields[f.Name]))
+		v := row.Fields[f.Name]
+		if cut && f.Cut {
+			if r := []rune(v); len(r) > ListNoteRunes {
+				v = string(r[:ListNoteRunes]) + "..."
+			}
+		}
+		b.WriteString(" " + f.Name + "=" + Value(v))
 	}
 	return b.String()
 }
@@ -43,34 +61,38 @@ func ShowLine(k *Kind, row Row) string {
 // `<field>=<before>><after>`; for an add every field's value; for a remove
 // every field's last value.
 func HistoryLine(c Change) string {
+	return fmt.Sprintf("HISTORY id=%d kind=%s name=%s op=%s actor=%s at=%s", c.ID, Value(c.Kind), Value(c.Name), Value(c.Op), Value(c.Actor), Value(c.At)) + changeFields(c)
+}
+
+// PlanLine is the change a dry run would record (Plan): `CONFIG DRY-RUN
+// op=<add|set|remove> kind=<k> name=<n> actor=<a> wrote=nothing` then the
+// fields as HistoryLine prints them.
+func PlanLine(c Change) string {
+	return "CONFIG DRY-RUN op=" + Value(c.Op) + " kind=" + Value(c.Kind) + " name=" + Value(c.Name) + " actor=" + Value(c.Actor) + " wrote=nothing" + changeFields(c)
+}
+
+// changeFields is a change's fields: every value of an add's after and a
+// remove's before, and `<field>=<before>><after>` for each field a set
+// changes.
+func changeFields(c Change) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "HISTORY id=%d kind=%s name=%s op=%s actor=%s at=%s", c.ID, Value(c.Kind), Value(c.Name), Value(c.Op), Value(c.Actor), Value(c.At))
 	switch c.Op {
 	case OpAdd:
-		for _, f := range sortedKeys(c.After) {
+		for _, f := range slices.Sorted(maps.Keys(c.After)) {
 			b.WriteString(" " + f + "=" + Value(c.After[f]))
 		}
 	case OpRemove:
-		for _, f := range sortedKeys(c.Before) {
+		for _, f := range slices.Sorted(maps.Keys(c.Before)) {
 			b.WriteString(" " + f + "=" + Value(c.Before[f]))
 		}
 	default:
-		for _, f := range sortedKeys(c.After) {
+		for _, f := range slices.Sorted(maps.Keys(c.After)) {
 			if c.Before[f] != c.After[f] {
 				b.WriteString(" " + f + "=" + Value(c.Before[f]) + ">" + Value(c.After[f]))
 			}
 		}
 	}
 	return b.String()
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // OpLine is one line of an apply or a check: `APPLY ADD kind=<k> name=<n>`,

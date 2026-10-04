@@ -15,8 +15,8 @@ import (
 // docs/SPEC-CI.md. It reads every _test.go under a tree as text and refuses a
 // filesystem path concatenated unquoted into a JSON or text/template literal:
 // a backslash in a Windows path begins an escape the literal's grammar does
-// not have, so the file parses on Linux and darwin and fails on Windows
-// (#904, #920). The allowed shape is strconv.Quote(path) -- or oneline.Quote,
+// not have, so the file parses on Linux and darwin and fails on Windows.
+// The allowed shape is strconv.Quote(path) -- or oneline.Quote,
 // its wrapper -- whose escaped output is a string on every platform. It
 // writes nothing. Its only input besides the tree is an allowlist of existing
 // offenders, each with the file, the line, a reason and the date; an entry
@@ -94,6 +94,11 @@ func (r TemplatesResult) ExitCode() int {
 // repository; testdata directories are skipped so the fixtures are never read
 // as offenders.
 func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
+	return checkTemplatesWith(root, allowlistPath, defaultSourceSeams())
+}
+
+// checkTemplatesWith is CheckTemplates reading the tree through seams.
+func checkTemplatesWith(root, allowlistPath string, seams SourceSeams) (TemplatesResult, error) {
 	var res TemplatesResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {
@@ -101,7 +106,7 @@ func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
 	}
 	matched := make([]bool, len(entries))
 
-	err = walkSourceDir(root, func(path string, d os.DirEntry, walkErr error) error {
+	err = seams.walk(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -110,16 +115,12 @@ func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
 			case "testdata", ".git", "vendor":
 				return filepath.SkipDir
 			}
-			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-			if isDeprecatedDir(root, path) {
-				return filepath.SkipDir
-			}
 			return nil
 		}
 		if !strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		raw, readErr := readSourceFile(path)
+		raw, readErr := seams.readFile(path)
 		if readErr != nil {
 			return readErr
 		}
@@ -129,7 +130,7 @@ func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		res.Tests++
-		findings, ok := scanTemplateFile(rel, raw)
+		findings, ok := scanTemplateFileWith(rel, raw, seams)
 		if !ok {
 			return nil
 		}
@@ -173,12 +174,12 @@ func matchTemplateAllow(entries []waitAllow, f TemplateFinding) int {
 	return -1
 }
 
-// scanTemplateFile parses one _test.go and returns its unquoted-path findings.
+// scanTemplateFileWith parses one _test.go and returns its unquoted-path findings.
 // The second result is false when the file does not parse: a file that is not
 // Go cannot carry the shape this check reads, and a fixture deliberately
 // holding a broken literal is not the offender itself.
-func scanTemplateFile(rel string, src []byte) ([]TemplateFinding, bool) {
-	fset, file, err := parseSource(rel, src, 0)
+func scanTemplateFileWith(rel string, src []byte, seams SourceSeams) ([]TemplateFinding, bool) {
+	fset, file, err := seams.parseFile(rel, src, 0)
 	if err != nil {
 		return nil, false
 	}

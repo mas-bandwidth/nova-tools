@@ -6,22 +6,19 @@ location and no environment variable, per this repo's no-guessed-paths rule.
 
 WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
 
- 1. THE READ HAS THREE ANSWERS, NEVER TWO. "no box" is a VERIFIED FACT -- a fuse box
-    that was never created holds no blown fuses. "cannot read the box" is a THIRD
-    answer and it is never the reassuring one. A reader that collapses them (an
-    exists-style probe answers false both when the file is absent AND when the
-    directory above it cannot be stat'd) turns a permissions change into "nothing
-    blown" -- a fail-open in a safety control. os.ReadFile +
-    errors.Is(err, fs.ErrNotExist) tells UNREADABLE apart from NONEXISTENT, which is
-    why the read is written with the stdlib primitive that distinguishes those two
-    rather than the one that does not. What that primitive does NOT distinguish: a
-    missing box file from a missing parent directory -- both come back
-    fs.ErrNotExist, so `--box /no/such/dir/fuses.json` also answers VERIFIED CLEAR.
-    Accepted, deliberately, not overlooked: --box is a locator, the caller's
-    statement of where the box lives, and a caller that names the wrong box gets
-    that box's truth -- here, an empty one. The case is pinned by test
-    (TestCheckIntoANonexistentDirectoryIsAlsoClear in cmd/nova-fuse), so changing
-    this answer is a decision, never a drive-by.
+ 1. THE READ HAS ONE YES AND TWO NOES. A readable box says what it says. "cannot
+    read the box" is CANNOT TELL, and "no box at the path" is CANNOT TELL too: a
+    fuse box that is not where the caller said can prove nothing is blown, and a
+    reader that answered it with an empty box turned a mistyped --box, a box
+    moved or deleted, or a second --box pointing somewhere empty into VERIFIED
+    CLEAR -- a fail-open in a safety control. Both noes are errors, and every
+    caller must treat an error as BLOWN; ErrNoBox tells them apart, so a refusal
+    can name the right remedy (CreateBox for the first, a hand repair for the
+    second). os.ReadFile + errors.Is(err, fs.ErrNotExist) finds the absent case,
+    which is why the read is written with the stdlib primitive that distinguishes
+    absent from unreadable; it does not say which part of the path is missing, and
+    it does not need to, since both answers refuse. A box comes into being by
+    CreateBox, which never replaces one, or by a write verb on a box that was read.
 
  2. MALFORMED IS UNREADABLE. A JSON array, a bare string, a truncated file, a
     lockdown whose value is not an object -- every one fails the unmarshal and comes
@@ -30,7 +27,7 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
 
  3. THE WRITE IS TEMP-FILE + RENAME. The file whose corruption means PERMANENT
     LOCKDOWN must never be left torn: a truncating write can leave half a file if
-    the process dies, and a half file is an unreadable box that only your person can
+    the process dies, and a half file is an unreadable box that only a person can
     clear, by hand, live. Rename within one directory is atomic, so a reader sees
     the old box or the new one and never a fragment. Two copies of the tool blowing
     fuses at once lose one WRITE, but neither can produce a corrupt box.
@@ -56,9 +53,10 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     the file. Echoed raw into a one-line output grammar, a newline forges a SECOND
     event line beneath a real one -- a `FUSE OK lockdown=clear` under a `FUSE
     FAIL`, which a caller scanning the grammar reads as permission -- and an ESC
-    sequence does the same to an operator's terminal. OneLine escapes every
-    control character as the text is printed, which holds for a box this tool
-    never wrote; Fold only tidies what this tool writes itself, and is never a
+    sequence does the same to an operator's terminal. cmd/nova-fuse prints every
+    such string through internal/oneline's Escape, which escapes every control
+    character as the text is printed and so holds for a box this tool never
+    wrote; Fold only tidies what this tool writes itself, and is never a
     refusal, because a fuse you cannot blow is not a fuse. Constraining writes
     alone would defend exactly the case that needs no defending. The escaped set
     is category Cc plus U+2028 and U+2029, which break a line for readers that
@@ -72,13 +70,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // UnreadableSuffix names where the bytes of an unreadable box are kept when a lockdown has
@@ -88,7 +87,7 @@ import (
 const UnreadableSuffix = ".unreadable"
 
 // Fuse is one blown fuse: when, and why. Both are recorded so a fuse found at 2am can be
-// audited without asking anyone, and both are read back defensively because your person
+// audited without asking anyone, and both are read back defensively because a person
 // HAND-EDITS this file -- that is the only lockdown-replacement mechanism there is.
 type Fuse struct {
 	At     string `json:"at"`
@@ -109,22 +108,10 @@ type Box struct {
 // `lift quarantine` remove more of them, because they are one surface in both directions.
 func Surface(s string) string { return strings.ToLower(Fold(s)) }
 
-// OneLine renders free text for an event line. See note 5: the box is hand-editable and
-// world-readable by design, so a reason, a stored surface name or an `at` stamp is
-// authored by whoever can write the file -- and one line per event is a promise this
-// tool makes to every caller scanning the grammar in SPEC.md.
-//
-// The escape itself lives in internal/oneline, because the promise is made by every
-// binary in this repo and has to be met the same way by each: OneLine is oneline.Escape
-// under the name this package has always used, and the table test here pins that the two
-// never drift. See oneline.Escape for the escaped set (category Cc, U+2028 and U+2029,
-// and the bidi controls) and the escape form.
-func OneLine(s string) string { return oneline.Escape(s) }
-
 // Fold tidies text this tool is about to WRITE: every control character becomes a space,
 // then runs of whitespace collapse to a single ASCII space and the ends are trimmed. The
 // collapse is Unicode-aware, so a non-breaking space or a line separator inside the text
-// becomes an ordinary space too. It is not the defense -- OneLine is, because a box
+// becomes an ordinary space too. It is not the defense (oneline.Escape at print time is), because a box
 // written by another hand still arrives holding anything at all (note 5). And it is never
 // a REFUSAL: a fuse you cannot blow is not a fuse, so a reason is accepted whatever it
 // contains and only its spelling in the file is tidied.
@@ -179,7 +166,7 @@ func (b Box) Quarantined(surface string) (string, Fuse, bool) {
 //
 // THE SOFT HALF ONLY. The fuse design separates the powers: quarantine is your own
 // decision in both directions, so this function exists; lockdown is hard -- a blown fuse
-// is not reset, it is REPLACED, and only in a live conversation with your person -- so no
+// is not reset, it is REPLACED, and only in a live conversation with the person you work with -- so no
 // LiftLockdown exists here, and none may be added.
 func (b Box) LiftQuarantine(surface string) map[string]Fuse {
 	removed := map[string]Fuse{}
@@ -200,28 +187,26 @@ func (b Box) LiftQuarantine(surface string) map[string]Fuse {
 // so an unsorted listing would print a different order every run -- and a status output
 // that reorders itself is one a reader stops diffing.
 func (b Box) Surfaces() []string {
-	names := make([]string, 0, len(b.Quarantine))
-	for k := range b.Quarantine {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(b.Quarantine))
 }
+
+// ErrNoBox is ReadBox's answer when nothing is at the path: CANNOT TELL, like an
+// unreadable box, and told apart from it only so a refusal can name its remedy
+// (CreateBox). See note 1.
+var ErrNoBox = errors.New("no box")
 
 // ReadBox returns the fuse box, or the reason it could not be read. See note 1.
 //
-// A nil error with an empty Box means VERIFIED CLEAR. A non-nil error means CANNOT TELL,
-// and the only correct treatment of that is BLOWN.
+// A nil error means the box was read, and an empty Box then means VERIFIED CLEAR. A
+// non-nil error -- ErrNoBox included -- means CANNOT TELL, and the only correct
+// treatment of that is BLOWN.
 func ReadBox(path string) (Box, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			// Nonexistent, verified: the read failed with the one error that means "not
-			// there" rather than "could not look". fs.ErrNotExist cannot say WHICH part of
-			// the path is missing -- the box file or a parent directory -- so a path into a
-			// directory that does not exist also lands here and answers CLEAR. That is
-			// accepted, per note 1 in the package comment, and pinned by test.
-			return Box{Quarantine: map[string]Fuse{}}, nil
+			// Nothing at the path, the box file or a directory above it: no box, so
+			// nothing can be proven clear.
+			return Box{}, fmt.Errorf("%w at %s", ErrNoBox, path)
 		}
 		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
 	}
@@ -235,8 +220,41 @@ func ReadBox(path string) (Box, error) {
 	return b, nil
 }
 
+// CreateBox makes an empty box at path, only where nothing is: it NEVER replaces a
+// box, because replacing one is the lockdown reset this package does not have. The
+// write uses atomicfile.NoReplace for atomic, exclusive creation. A box that
+// appears between the check and publication is kept, and the error is fs.ErrExist.
+// See atomicfile.NoReplace for its publication mechanism and filesystem requirements.
+func CreateBox(path string) error {
+	return writeBox(path, Box{Quarantine: map[string]Fuse{}}, atomicfile.NoReplace())
+}
+
 // WriteBox replaces the fuse box atomically. See note 3.
+// A symlink at the cleaned path is refused and is not followed.
 func WriteBox(path string, b Box) error {
+	return writeBox(path, b)
+}
+
+// PlanCreateBox is CreateBox with nothing written: every check the creation
+// makes (the parent as MkdirAll would make it, no symlink parent, a directory
+// this process can create in, nothing at the path), and the same error.
+func PlanCreateBox(path string) error { return planBox(path, atomicfile.NoReplace()) }
+
+// PlanWriteBox is WriteBox with nothing written, refusing where WriteBox would.
+func PlanWriteBox(path string) error { return planBox(path) }
+
+func planBox(path string, opts ...atomicfile.Option) error {
+	target := path
+	if target != "" {
+		target = filepath.Clean(target)
+	}
+	return atomicfile.CheckAfterMkdirAll(target, 0o644, append(opts, atomicfile.ExactMode())...)
+}
+
+// writeBox shares validation, exact mode and sync ordering between creation and
+// replacement. NoReplace makes creation exclusive even if another caller wins
+// after validation.
+func writeBox(path string, b Box, opts ...atomicfile.Option) error {
 	if b.Quarantine == nil {
 		b.Quarantine = map[string]Fuse{}
 	}
@@ -245,43 +263,14 @@ func WriteBox(path string, b Box) error {
 		return err
 	}
 	data = append(data, '\n')
-
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	target := path
+	if target != "" {
+		target = filepath.Clean(target)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
-
-	// The temp file is created in the SAME directory, because rename is only atomic within
-	// one filesystem and the system temp dir is not guaranteed to be on this one.
-	tmp, err := os.CreateTemp(dir, ".fuses-*.json.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	// Harmless once the rename has taken the file away; the point is the failure paths,
-	// where a litter of .fuses-*.tmp beside the box would be the only trace left.
-	defer func() { _ = os.Remove(name) }()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	// Sync before rename: a rename that lands while the CONTENT is still in the page cache
-	// gives a crash the chance to leave an empty file under the real name, which is the
-	// torn write this whole dance exists to prevent.
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	// CreateTemp makes 0600. The box is not a secret and other tools must be able to read
-	// it; a fuse nobody else can see is a fuse that stops nothing.
-	if err := os.Chmod(name, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return atomicfile.WriteFile(target, data, 0o644, append(opts, atomicfile.ExactMode())...)
 }
 
 // PreserveUnreadable copies an unreadable box aside before it is replaced. It returns the
@@ -293,5 +282,19 @@ func PreserveUnreadable(path string) (string, error) {
 	if err != nil {
 		return dst, err
 	}
-	return dst, os.WriteFile(dst, data, 0o644)
+	cleanDst := dst
+	if cleanDst != "" {
+		cleanDst = filepath.Clean(cleanDst)
+	}
+	mode := os.FileMode(0o644)
+	var opts []atomicfile.Option
+	if fi, err := os.Lstat(cleanDst); err == nil && fi.Mode().IsRegular() {
+		mode = fi.Mode().Perm()
+		opts = append(opts, atomicfile.ExactMode())
+	}
+	// Atomic write per internal/atomicfile model: writes dst atomically, preserving
+	// any existing destination permissions (or defaulting to 0o644 subject to umask)
+	// via temporary file and rename so preserved unreadable box evidence is never
+	// left torn or mode-widened.
+	return dst, atomicfile.WriteFile(cleanDst, data, mode, opts...)
 }

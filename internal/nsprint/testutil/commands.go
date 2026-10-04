@@ -12,7 +12,7 @@ import (
 )
 
 // CommandCounter listens on 127.0.0.1 and counts every command a Redis client
-// sends it, handshake included (#3277). It answers just enough RESP2 for a
+// sends it, handshake included. It answers just enough RESP2 for a
 // go-redis client to finish a command: HELLO is refused so the client falls
 // back to RESP2, PING is PONG and anything else is OK. A test calls a
 // package's Open or Dial against the address and asserts the count is still
@@ -30,9 +30,11 @@ func CommandCounter(t *testing.T) (addr string, count func() int64) {
 	// The cleanup hangs up on every client, so a test that fails before it
 	// closes its own client still ends.
 	t.Cleanup(func() {
+		// ignored: a test fixture's cleanup; the test's own assertions are the report
 		_ = ln.Close()
 		mu.Lock()
 		for _, c := range conns {
+			// ignored: a test fixture's cleanup; the test's own assertions are the report
 			_ = c.Close()
 		}
 		mu.Unlock()
@@ -43,6 +45,7 @@ func CommandCounter(t *testing.T) (addr string, count func() int64) {
 		defer wg.Done()
 		for {
 			c, err := ln.Accept()
+			// ignored: a test fixture's accept loop ends when the cleanup closes the listener
 			if err != nil {
 				return
 			}
@@ -65,6 +68,7 @@ func serveCounted(c net.Conn, n *atomic.Int64) {
 	r := bufio.NewReader(c)
 	for {
 		args, err := readArray(r)
+		// ignored: a test fixture's connection ends when the client hangs up; the test's own assertions are the report
 		if err != nil {
 			return
 		}
@@ -76,6 +80,7 @@ func serveCounted(c net.Conn, n *atomic.Int64) {
 		case "PING":
 			reply = "+PONG\r\n"
 		}
+		// ignored: a test fixture's connection ends when the client hangs up; the test's own assertions are the report
 		if _, err := io.WriteString(c, reply); err != nil {
 			return
 		}

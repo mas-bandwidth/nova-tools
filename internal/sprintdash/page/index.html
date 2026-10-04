@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nova-sprint</title>
+<!--FAVICON-->
+<script>try{var t=localStorage.getItem("sprint-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+<style>
+/* the wordmark's face, served from the binary beside its licence (OFL): the page loads nothing from elsewhere */
+@font-face { font-family: "Nunito"; font-style: normal; font-weight: 800; font-display: swap; src: url("nunito-800.woff2") format("woff2"); }
+/* Dark is the designed-for theme and the default; light is a toggle only.
+   Type is set large (28 px base) to read from across the room; the spacing
+   grid is 16 px. Tables never scroll sideways: a table too wide takes its compact form. */
+:root, :root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d0f12;
+  --surface: #14171b;
+  --border: #23272e;
+  --border-strong: #30353d;
+  --text: #eef0f3;
+  --text-2: #a4aab4;
+  --text-3: #6b727d;
+  --track: #262a31;
+  /* the six card states */
+  --s-waiting: #4a4f58;
+  --s-ready: #7d8490;
+  --s-working: #3987e5;
+  --s-review: #d55181;
+  --s-merging: #c98500;
+  --s-landed: #199e70;
+  /* status, reserved: never a series */
+  --good: #22b35e;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #e05252;
+  --good-tint: rgba(34,179,94,.14);
+  --warning-tint: rgba(250,178,25,.14);
+  --critical-tint: rgba(224,82,82,.14);
+  --neutral-tint: rgba(164,170,180,.12);
+  --cell-h: 1rem;
+  --flash: #7cb4ff;
+  --flash-tint: rgba(57,135,229,.24);
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --border: #e3e5e9;
+  --border-strong: #d2d6dc;
+  --text: #121417;
+  --text-2: #525963;
+  --text-3: #868d97;
+  --track: #e6e8ec;
+  --s-waiting: #c3c7cd;
+  --s-ready: #9aa0a9;
+  --s-working: #2a78d6;
+  --s-review: #e87ba4;
+  --s-merging: #eda100;
+  --s-landed: #1baf7a;
+  --good: #0f8a3c;
+  --warning: #b77900;
+  --serious: #c4552b;
+  --critical: #c93434;
+  --good-tint: rgba(15,138,60,.10);
+  --warning-tint: rgba(232,160,0,.14);
+  --critical-tint: rgba(201,52,52,.10);
+  --neutral-tint: rgba(82,89,99,.08);
+  --flash: #1f62b8;
+  --flash-tint: rgba(42,120,214,.16);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 1.75rem/2.5rem -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+  padding: 2rem 2rem 4rem;
+}
+/* every figure in a monospace face; numeric columns right-aligned, labels left */
+:root { --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace; }
+.num, .mono, .big, .frac, .strip .v { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.num { text-align: right; }
+.frac { text-align: left; white-space: nowrap; }
+.row.head .num { font-family: inherit; text-align: right; }
+.row.head .frac { font-family: inherit; }
+.muted { color: var(--text-2); }
+.faint { color: var(--text-3); }
+
+/* top bar */
+.top { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 2rem; }
+.brand, .meta, .right { display: contents; }
+.brand h1 { margin: 0 1rem 0 0; display: inline-flex; align-items: center; gap: 1rem; font-size: 2.5rem; line-height: 3rem; font-weight: 650; letter-spacing: -.01em; }
+img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
+@media (min-width: 1200px) { img#logo.logo-tile { width: 7.5rem; height: 7.5rem; } .wordmark { font-size: 7rem; line-height: 7.5rem; } }
+/* the lockup: tile, then the wordmark in a heavy rounded face */
+.wordmark { font-family: ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif; font-weight: 800; font-size: 5.5rem; line-height: 6rem; letter-spacing: -.02em; color: var(--text); text-transform: lowercase; }
+.chip { display: inline-flex; align-items: center; gap: 0.75rem; height: 3rem; padding: 0 1rem; border: 1px solid var(--border); border-radius: 0.75rem; color: var(--text-2); font-size: 1.5rem; }
+.chip b { color: var(--text); font-weight: 550; }
+.live { display: inline-flex; align-items: center; gap: 1rem; font-size: 1.625rem; color: var(--text-2); }
+.dot { width: 1rem; height: 1rem; border-radius: 50%; background: var(--text-3); flex: none; }
+.live.ok .dot { background: var(--good); }
+button.toggle { font: inherit; font-size: 1.5rem; height: 3rem; padding: 0 1rem; border-radius: 0.75rem; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; }
+button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
+
+/* hero */
+/* five tiles at full size: one row of five from 2000 px; three and two below that; two per row (the last full width, centred) below 1100 px */
+.hero { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2rem; margin-bottom: 2rem; }
+@media (max-width: 2000px) {
+  .hero { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .hero .tile { grid-column: span 2; }
+  .hero .tile:nth-child(n+4) { grid-column: span 3; }
+}
+@media (max-width: 1100px) {
+  .hero { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hero .tile, .hero .tile:nth-child(n+4) { grid-column: auto; }
+  .hero .tile:last-child { grid-column: 1 / -1; }
+}
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; padding: 2rem; min-width: 0; }
+.label { font-size: 1.5rem; line-height: 2rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
+.big { font-size: 4.5rem; line-height: 1.3; font-weight: 600; margin-top: 0.5rem; white-space: nowrap; }
+.big small { margin-left: 0.5rem; font-size: .5em; font-weight: 500; color: var(--text-2); }
+.sub { font-size: 1.625rem; line-height: 2.25rem; color: var(--text-2); }
+.sub.small { font-size: 1.25rem; line-height: 1.75rem; }
+.progress-card { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; padding: 2rem 3rem; margin-bottom: 3rem; }
+.progress-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 1rem 2rem; margin-bottom: 1.5rem; }
+.legend { display: flex; gap: 0.5rem 2rem; flex-wrap: wrap; font-size: 1.5rem; color: var(--text-2); }
+.legend span { display: inline-flex; align-items: center; gap: 0.75rem; }
+.sw { width: 1rem; height: 1rem; border-radius: 1px; display: inline-block; flex: none; }
+
+/* segmented bars: one cell per unit, 2 px gaps, 1 px radius */
+.cells { display: grid; gap: 0.125rem; grid-auto-rows: var(--cell-h); min-width: 0; }
+.cells.thick { --cell-h: 2rem; }
+.cell { height: 100%; border-radius: 1px; background: var(--track); min-width: 0; }
+/* n / width: the left number right-aligned in a fixed box so every slash lines up */
+.fa { display: inline-block; text-align: right; font-weight: 550; color: var(--text); }
+.fb { display: inline-block; text-align: left; }
+.fs { color: var(--text-3); }
+.fb { color: var(--text-2); }
+.waiting { background: var(--s-waiting); } .ready { background: var(--s-ready); }
+.working { background: var(--s-working); } .review { background: var(--s-review); }
+.merging { background: var(--s-merging); } .landed { background: var(--s-landed); }
+
+/* panels */
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; min-width: 0; overflow: hidden; }
+.panel + .panel { margin-top: 3rem; }
+.panel-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.5rem 2rem; padding: 2rem 3rem 1rem; }
+.panel-head h2 { margin: 0; font-size: 2rem; line-height: 3rem; font-weight: 600; }
+.panel-head .muted { font-size: 1.625rem; }
+.empty { padding: 1rem 3rem 3rem; color: var(--text-2); font-size: 1.625rem; }
+.empty code { font: 1.5rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+
+/* rows: CSS grid tables */
+.rows { padding: 0 0 1rem; }
+.row { display: grid; align-items: center; column-gap: 2rem; padding: 0 3rem; min-height: 5rem; border-bottom: 1px solid var(--border); }
+.row:last-child { border-bottom: 0; }
+.row.head { min-height: 4rem; border-bottom: 1px solid var(--border-strong); font-size: 1.5rem; line-height: 2rem; font-weight: 600; color: var(--text-3); }
+.row.total { border-top: 1px solid var(--border-strong); border-bottom: 0; font-weight: 600; }
+.name { font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zero { color: var(--text-3); }
+/* pills: a dot carries the color, the text stays text */
+.pill { display: inline-flex; align-items: center; gap: 0.75rem; height: 3rem; padding: 0 1rem; border-radius: 1.5rem; font-size: 1.5rem; font-weight: 550; background: var(--neutral-tint); color: var(--text); justify-self: start; white-space: nowrap; }
+.pill .dot { width: 0.75rem; height: 0.75rem; }
+.pill.good { background: var(--good-tint); } .pill.good .dot { background: var(--good); }
+.pill.warning { background: var(--warning-tint); } .pill.warning .dot { background: var(--warning); }
+.pill.critical { background: var(--critical-tint); } .pill.critical .dot { background: var(--critical); }
+.pill.neutral .dot { background: var(--text-3); }
+.pill.done .dot { background: var(--s-landed); }
+.pill.active .dot { background: var(--s-working); }
+
+.tag { font-size: 1.375rem; font-weight: 600; color: var(--warning); margin-left: 1rem; }
+
+/* merge strip */
+.strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr)); border-top: 1px solid var(--border); }
+.strip > div { padding: 2rem 3rem; border-right: 1px solid var(--border); min-width: 0; }
+.strip > div:last-child { border-right: 0; }
+.strip .v { font-size: 3rem; line-height: 4rem; font-weight: 600; margin-top: 1rem; white-space: nowrap; }
+
+footer { margin-top: 3rem; font-size: 1.5rem; line-height: 2.25rem; color: var(--text-3); text-align: left; }
+footer .fname { color: var(--text); font-weight: 700; }
+footer a { color: var(--text-2); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 0.25rem; }
+footer a:hover { color: var(--text); }
+
+/* emphasis on change: blue text and a soft tint, fading back over 1.5 s */
+@keyframes flash { from { color: var(--flash); background-color: var(--flash-tint); } to { } }
+@keyframes flash-cell { from { filter: brightness(1.9); } to { filter: none; } }
+.fv { display: inline-block; padding: 0 0.375rem; margin: 0 -6px; border-radius: 0.25rem; }
+.flash { animation: flash 1.5s ease-out; }
+.cell.flash { animation-name: flash-cell; border-radius: 1px; }
+/* working pulses: one animated property on the root, so every working cell is in phase */
+@property --pulse { syntax: "<number>"; inherits: true; initial-value: 1; }
+@keyframes pulse { 0%, 100% { --pulse: 1; } 50% { --pulse: .55; } }
+:root { animation: pulse 2s ease-in-out infinite; }
+#overall .cell.working { opacity: var(--pulse); }  /* the steady pulse is for the top bar only; table cells flash once on change */
+@media (prefers-reduced-motion: reduce) { .flash, :root { animation: none; } }
+
+
+/* ---------- tables (docs/SPEC-SPRINT-DASHBOARD.md: Work, Fleet, Friends, Responsive) ----------
+   Two forms per table: the full form, and the compact form (the panel gets class
+   "compact" from app.js when the full form's header row would overflow). Never squeezed,
+   never scrolled. Children: Work 1 stream 2 status 3 waiting 4 ready 5 working
+   6 review 7 merging 8 landed / total 9 cost; Fleet 1 name 2 status 3 ready 4 cells
+   5 working / width 6 done 7 ok% 8 load; Friends the same without load. Minimum widths
+   are the measured widest content of each column at the 28 px type. */
+.row > * { min-width: 0; }
+/* One right edge for the status column of Work, Fleet and Friends (docs/SPEC-SPRINT-DASHBOARD.md):
+   every table's status column ends --E from the panel's left edge, whatever its padding,
+   gutter or status width, so the pills line up down the page. The panels are all full width,
+   and 45vw is the same length in each; 28rem keeps Work's name column at its ~220 px cap. */
+.panel { --E: clamp(18.5rem, 45vw, 28rem); }
+/* the name column is at most its cap (Work ~220 px, Fleet and Friends 240 px); the status
+   column (pills right-aligned) takes whatever is left up to the shared edge, never less than --S */
+.panel .row { --name-w: min(var(--name-cap, 13.75rem), calc(var(--E) - var(--pad, 2rem) - var(--gap, 2.5rem) - var(--S, 9.5rem)));
+  --status-w: calc(var(--E) - var(--pad, 2rem) - var(--gap, 2.5rem) - var(--name-w)); }
+.fleet .row, .friends .row { --name-cap: 15rem; }
+.name { overflow: hidden; text-overflow: ellipsis; }
+.alt { display: none; }
+.readers .row { grid-template-columns: minmax(10rem, 1fr) repeat(4, 7.5rem); }
+
+/* Work, full: stream capped at ~220 px; status (pills), the counts, landed and cost share
+   the spare width evenly, every content right-aligned, so the space before each is a gutter
+   plus its share. landed spans a 4rem spacer track plus a share: the spacer is the landed
+   figure's extra width over a count's, so the gap from merging to landed matches the gaps
+   between the counts. 40 px gutters. Rows grouped by status: no rule between rows, a 1 px
+   rule (the panel's border colour) between groups. */
+.streams .row { --pad: 2rem; --gap: 2.5rem; --S: 9.75rem; column-gap: var(--gap); padding: 0 var(--pad);
+  grid-template-columns: var(--name-w) var(--status-w) repeat(5, minmax(5.625rem, 1fr)) 4rem minmax(5.625rem, 1fr) minmax(7.5rem, 1.25fr); }
+.streams .row > :nth-child(8) { grid-column: span 2; justify-self: end; }
+.streams .row.head > :nth-child(8) { text-align: center; }  /* width set by app.js to the n / total cell's */
+.streams .row > :nth-child(2) { justify-self: end; }
+.streams .row:not(.head):not(.total) { border-bottom: 0; }
+.streams .row.group-start { border-top: 1px solid var(--border); }
+.fleet .row > :nth-child(2), .friends .row > :nth-child(2) { justify-self: end; }
+
+/* Fleet and Friends, full: Machine capped; Status and the numeric columns share the spare
+   width (contents right-aligned); 56 px gutters; ~64 px from Ready to the track and from the
+   track to the figure; cells a fixed 27 x 11 px with 4 px gaps */
+.fleet .row, .friends .row { --pad: 2rem; --gap: 3.5rem; --S: 9.5rem; column-gap: var(--gap); padding: 0 var(--pad); }
+.fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + .5rem) 8rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
+.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + .5rem) 8rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr); }
+.fleet .row > :nth-child(4), .friends .row > :nth-child(4) { margin-left: .5rem; }
+.fleet .row > :nth-child(5), .friends .row > :nth-child(5) { padding-left: .5rem; }
+.fleet .cells, .friends .cells { gap: .25rem; grid-auto-rows: .6875rem; }
+
+/* compact forms: Work is stream | status (dot) | landed; Fleet and Friends are
+   Machine | Status (dot only) | Working "n / width" | OK% */
+.panel.compact .row { --pad: 1.5rem; --gap: 1.5rem; --S: 3.5rem; column-gap: var(--gap); padding: 0 var(--pad); }
+.panel.compact .panel-head, .panel.compact .empty { padding-left: 1.5rem; padding-right: 1.5rem; }
+.streams.compact .row { grid-template-columns: var(--name-w) var(--status-w) minmax(10.25rem, 1fr); }
+.streams.compact .row > :nth-child(8) { grid-column: auto; }
+.streams.compact .row > :nth-child(n+3):nth-child(-n+7), .streams.compact .row > :nth-child(9) { display: none; }
+.streams.compact .pill > span:last-child { display: none; }
+.fleet.compact .row, .friends.compact .row { grid-template-columns: var(--name-w) var(--status-w) minmax(7rem, 1fr) minmax(5.375rem, 1fr); }
+.fleet.compact .row > :nth-child(5), .friends.compact .row > :nth-child(5) { padding-left: 0; }
+.fleet.compact .row > :nth-child(3), .fleet.compact .row > :nth-child(4), .fleet.compact .row > :nth-child(6), .fleet.compact .row > :nth-child(8),
+.friends.compact .row > :nth-child(3), .friends.compact .row > :nth-child(4), .friends.compact .row > :nth-child(6) { display: none; }
+.fleet.compact .pill > span:last-child, .friends.compact .pill > span:last-child { display: none; }
+.fleet.compact .row.head .alt, .friends.compact .row.head .alt { display: inline; }
+@media (max-width: 600px) {
+  .panel.compact .row { --pad: 1rem; --gap: 1rem; column-gap: var(--gap); padding: 0 1rem; min-height: 4.5rem; }
+  .panel.compact .panel-head, .panel.compact .empty { padding-left: 1rem; padding-right: 1rem; }
+}
+
+/* ---------- hero, narrow: short one-line subs, the lone last tile centred ---------- */
+.only-narrow { display: none; }
+@media (max-width: 1100px) {
+  .only-wide { display: none; }
+  .only-narrow { display: inline; }
+  .hero .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hero .tile:last-child { text-align: center; }
+}
+
+/* ---------- phone: the whole page scales from the root size; 16 px gutters ---------- */
+@media (max-width: 600px) {
+  html { font-size: 10.5px; }
+  img#logo.logo-tile { width: 64px; height: 64px; }
+  body { padding: 16px 16px 32px; }
+  .hero { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .hero .tile { padding: 16px; }
+  .hero .big { font-size: 2.75rem; }
+}
+@media (max-width: 400px) {
+  html { font-size: 10px; }
+  .progress-card { padding: 16px; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1><!--LOGO--><span class="wordmark">nova-sprint</span></h1>
+    <div class="meta">
+      <span class="chip">coordinator <b id="coord">-</b></span>
+      <span class="chip">epoch <b id="epoch">-</b></span>
+      <span class="chip" id="machine-chip">machine <b id="machine">-</b></span>
+    </div>
+  </div>
+  <div class="right">
+    <span class="live" id="live"><span class="dot"></span><span id="live-text">Connecting</span></span>
+    <button class="toggle" id="theme" type="button" aria-label="Switch theme">Light</button>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="tile">
+    <div class="label">Landed</div>
+    <div class="big"><span id="landed">-</span><small class="only-wide">of <span id="all">-</span></small></div>
+    <div class="sub"><span class="only-narrow">of <span id="all2">-</span> · </span><span id="pct">-</span><span class="only-wide"> complete</span></div>
+  </div>
+  <div class="tile">
+    <div class="label">ETA</div>
+    <div class="big" id="eta">-</div>
+    <div class="sub" id="eta-at">&nbsp;</div>
+  </div>
+  <div class="tile">
+    <div class="label">Cost</div>
+    <div class="big" id="cost">-</div>
+    <div class="sub" id="cost-per">&nbsp;</div>
+  </div>
+  <div class="tile">
+    <div class="label">In flight</div>
+    <div class="big" id="inflight">-</div>
+    <div class="sub" id="inflight-sub">&nbsp;</div>
+  </div>
+  <div class="tile">
+    <div class="label">Throughput</div>
+    <div class="big" id="tput">-</div>
+    <div class="sub">cards / hour</div>
+  </div>
+</section>
+
+<section class="progress-card">
+  <div class="progress-head">
+    <div class="label">All cards by state</div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="cells thick" id="overall"></div>
+</section>
+
+<section class="panel streams">
+  <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span></div>
+  <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
+</section>
+
+<section class="panel fleet">
+  <div class="panel-head"><h2>Fleet</h2><span class="muted" id="fleet-head"></span></div>
+  <div class="scroll"><div class="rows" id="fleet"><div class="row head"><div>machine</div><div>status</div><div class="num">ready</div><div>working</div><div class="frac"><span class="alt">working</span></div><div class="num">done</div><div class="num">ok%</div><div class="num">load</div></div></div></div>
+</section>
+
+<section class="panel friends">
+  <div class="panel-head"><h2>Friends</h2><span class="muted" id="friends-sub"></span></div>
+  <div class="scroll"><div class="rows" id="friends"><div class="row head"><div>friend</div><div>status</div><div class="num">ready</div><div>working</div><div class="frac"><span class="alt">working</span></div><div class="num">done</div><div class="num">ok%</div></div></div></div>
+</section>
+
+<section class="panel readers" id="readers-panel" hidden>
+  <div class="panel-head"><h2>Readers and merge</h2><span class="muted" id="readers-sub"></span></div>
+  <div class="scroll"><div class="rows" id="readers"></div></div>
+  <div class="strip" id="merge"></div>
+</section>
+
+<footer><b class="fname">nova-sprint</b> from <a href="https://github.com/mas-bandwidth/nova-tools">https://github.com/mas-bandwidth/nova-tools</a></footer>
+<script src="app.js"></script>
+</body>
+</html>

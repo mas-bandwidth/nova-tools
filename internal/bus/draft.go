@@ -3,6 +3,7 @@ package bus
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -83,12 +84,9 @@ const (
 
 // ContainsPlaceholderBody reports whether body is empty or contains the template placeholder line.
 func ContainsPlaceholderBody(body string) bool {
-	for _, line := range strings.Split(body, "\n") {
-		if strings.TrimSpace(line) == PlaceholderBody {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(body, "\n"), func(line string) bool {
+		return strings.TrimSpace(line) == PlaceholderBody
+	})
 }
 
 // Skeleton is a draft's header before anybody has written the note: the verb `draft`

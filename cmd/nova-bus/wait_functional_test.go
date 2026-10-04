@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // `wait` is the verb for a harness that does not wake its session: the polling happens
@@ -74,14 +76,13 @@ func TestWaitEndsWithRearmLine(t *testing.T) {
 	onFakeClock(t, checkout)
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "100ms")...).mustCode(t, 0)
-	if after := afterOf(t, r.stdout); after != 100*time.Millisecond {
-		t.Fatalf("the wait says it returned after %s; on the fake clock it is exactly its 100ms deadline:\n%s", after, r.stdout)
+	{
+		after := afterOf(t, r.stdout)
+		require.Falsef(t, after != 100*time.Millisecond, "the wait says it returned after %s; on the fake clock it is exactly its 100ms deadline:\n%s", after, r.stdout)
 	}
 
 	done := "WAIT DONE reason=timeout rearm=required next=nova-bus wait"
-	if !strings.Contains(r.stdout, done) {
-		t.Fatalf("wait return is missing the terminal re-arm line:\n%s", r.stdout)
-	}
+	require.Containsf(t, r.stdout, done, "wait return is missing the terminal re-arm line:\n%s", r.stdout)
 	trimmed := strings.TrimRight(r.stdout, "\n")
 	last := trimmed[strings.LastIndex(trimmed, "\n")+1:]
 	// The expected --bus word is built with the binary's OWN shellQuote, never spelled
@@ -91,9 +92,7 @@ func TestWaitEndsWithRearmLine(t *testing.T) {
 	// RUNNER~1 tilde -- comes back single-quoted and the same line read as "not last".
 	// The line under test is that the re-arm line is LAST; what one argument looks like
 	// quoted is TestRearmCommandQuotesArgumentsWithSpaces's.
-	if !strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait --bus "+shellQuote(checkout)) {
-		t.Fatalf("the re-arm line is not last:\n%s", r.stdout)
-	}
+	require.Truef(t, strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait --bus "+shellQuote(checkout)), "the re-arm line is not last:\n%s", r.stdout)
 }
 
 // THE POINT OF THE VERB: a note pushed by somebody else, mid-call, ends the wait. The
@@ -115,9 +114,7 @@ func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
 	pushed := pushAtSyncPoint(t, checkout, other)
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "30s")...).mustCode(t, 0)
-	if err := <-pushed; err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, <-pushed)
 
 	r.mustContain(t, "stdout", "WAIT as=Ada timeout=30s interval=100ms cursor=").
 		mustContain(t, "stdout", "WAIT OK new=1").
@@ -127,13 +124,12 @@ func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
 	// It returned ON THE NOTE and not on its deadline. `WAIT OK` above and the absence of
 	// `WAIT TIMEOUT` here are the whole of that claim: the tool says which of the two ended
 	// it, so the test does not need to time the call to know.
-	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
-		t.Fatalf("the wait timed out over a note that arrived:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "WAIT TIMEOUT", "the wait timed out over a note that arrived:\n%s", r.stdout)
 	// The polls before the note are silent: a wait that printed a listing per poll would
 	// be a poller with extra steps, and the caller's transcript is what this verb is for.
-	if n := strings.Count(r.stdout, "INBOX SCOPE"); n != 1 {
-		t.Fatalf("the run printed %d listings, want exactly the one it returned on:\n%s", n, r.stdout)
+	{
+		n := strings.Count(r.stdout, "INBOX SCOPE")
+		require.Equalf(t, 1, n, "the run printed %d listings, want exactly the one it returned on:\n%s", n, r.stdout)
 	}
 }
 
@@ -161,11 +157,10 @@ func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
 
 	r.mustContain(t, "stdout", "WAIT as=Ada timeout=300ms interval=100ms cursor=").
 		mustContain(t, "stdout", "WAIT TIMEOUT after=")
-	if strings.Contains(r.stdout, "INBOX ") {
-		t.Fatalf("a wait that found nothing printed a listing:\n%s", r.stdout)
-	}
-	if after := afterOf(t, r.stdout); after < timeout {
-		t.Fatalf("the wait says it returned after %s, before its %s deadline:\n%s", after, timeout, r.stdout)
+	require.NotContainsf(t, r.stdout, "INBOX ", "a wait that found nothing printed a listing:\n%s", r.stdout)
+	{
+		after := afterOf(t, r.stdout)
+		require.Falsef(t, after < timeout, "the wait says it returned after %s, before its %s deadline:\n%s", after, timeout, r.stdout)
 	}
 	// It polled and said how many times: a tool that returns "nothing" without saying it
 	// looked is indistinguishable from one that did not look.
@@ -181,14 +176,16 @@ func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
 	// the run looked, and it said so.
 	line := r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):]
 	polls := field(t, line, "polls=")
-	if n, err := strconv.Atoi(polls); err != nil || n < 1 {
-		t.Fatalf("polls=%q, want at least 1 over %s at 100ms:\n%s", polls, timeout, r.stdout)
+	{
+		n, err := strconv.Atoi(polls)
+		require.Falsef(t, err != nil || n < 1, "polls=%q, want at least 1 over %s at 100ms:\n%s", polls, timeout, r.stdout)
 	}
 	// And it names the cursor it waited from, which is the one it started at: a wait that
 	// found nothing writes nothing.
 	onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR"))
-	if at := field(t, line, "cursor="); len(onLane) == 0 || at != onLane[0] {
-		t.Fatalf("WAIT TIMEOUT cursor=%s is not the cursor on the lane:\n%s", at, read(t, checkout, "from-ada/CURSOR"))
+	{
+		at := field(t, line, "cursor=")
+		require.Falsef(t, len(onLane) == 0 || at != onLane[0], "WAIT TIMEOUT cursor=%s is not the cursor on the lane:\n%s", at, read(t, checkout, "from-ada/CURSOR"))
 	}
 }
 
@@ -201,9 +198,7 @@ func TestWaitRefusesATimeoutLongerThanAToolCall(t *testing.T) {
 	r := invoke(t, "", waitFlags(checkout, "Ada", "61m")...).mustCode(t, 2)
 	r.mustContain(t, "stderr", "--timeout 1h1m0s is longer than 1h0m0s").
 		mustContain(t, "stderr", "ask your harness")
-	if r.stdout != "" {
-		t.Fatalf("a refused invocation printed to stdout:\n%s", r.stdout)
-	}
+	require.Emptyf(t, r.stdout, "a refused invocation printed to stdout:\n%s", r.stdout)
 }
 
 // Every wait has a deadline. One with no deadline is a line that is stuck rather than
@@ -244,9 +239,7 @@ func TestWaitAdvancesTheCursorExactlyAsInboxDoes(t *testing.T) {
 		settled(t, checkout)
 		other := bench(t, bare)
 		note(t, other, "bo-444444444444", "the same note")
-		if err := push(other); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, push(other))
 		var r result
 		switch verb {
 		case "inbox":
@@ -266,9 +259,7 @@ func TestWaitAdvancesTheCursorExactlyAsInboxDoes(t *testing.T) {
 		readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD~1"))
 		cursor := strings.TrimSpace(read(t, checkout, "from-ada/CURSOR"))
 		fields := strings.Fields(cursor)
-		if len(fields) < 3 || fields[0] != readTo {
-			t.Fatalf("%s wrote CURSOR %q, which does not begin at the commit it read to, %s", verb, cursor, readTo)
-		}
+		require.Falsef(t, len(fields) < 3 || fields[0] != readTo, "%s wrote CURSOR %q, which does not begin at the commit it read to, %s", verb, cursor, readTo)
 		// The stamp is the one field that cannot match: it is when the read happened.
 		// Everything else about the cursor is a claim about the BUS and must.
 		rest := strings.Join(fields[2:], " ")
@@ -279,15 +270,9 @@ func TestWaitAdvancesTheCursorExactlyAsInboxDoes(t *testing.T) {
 		}
 		byWait, openByWait = rest, openFile
 	}
-	if byInbox != byWait {
-		t.Fatalf("the cursors differ:\n  inbox: %s\n   wait: %s", byInbox, byWait)
-	}
-	if openByInbox != openByWait {
-		t.Fatalf("the open lists differ:\n  inbox: %q\n   wait: %q", openByInbox, openByWait)
-	}
-	if !strings.Contains(openByWait, "bo-444444444444") {
-		t.Fatalf("neither run put the note on the open list:\n%s", openByWait)
-	}
+	require.Falsef(t, byInbox != byWait, "the cursors differ:\n  inbox: %s\n   wait: %s", byInbox, byWait)
+	require.Falsef(t, openByInbox != openByWait, "the open lists differ:\n  inbox: %q\n   wait: %q", openByInbox, openByWait)
+	require.Containsf(t, openByWait, "bo-444444444444", "neither run put the note on the open list:\n%s", openByWait)
 }
 
 // THE LINE THAT HIDES EVERYTHING. A switch-day line given as a DATE is midnight at that
@@ -313,21 +298,19 @@ func TestWaitReturnsAtOnceWhenTheCursorsLineHidesTheWholeWait(t *testing.T) {
 		mustContain(t, "stdout", "--legacy-now --advance --remote \"origin\" --branch \"main\"").
 		mustContain(t, "stdout", "WAIT OK new=0").
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-10")
-	if strings.Contains(r.stdout, "WAIT NOTE") {
-		t.Fatalf("the wait said the listing's sentence a second time, without the command:\n%s", r.stdout)
-	}
-	if n := strings.Count(r.stdout, "your switch-day line"); n != 1 {
-		t.Fatalf("the line drawn forward was mentioned %d times, want 1:\n%s", n, r.stdout)
+	require.NotContainsf(t, r.stdout, "WAIT NOTE", "the wait said the listing's sentence a second time, without the command:\n%s", r.stdout)
+	{
+		n := strings.Count(r.stdout, "your switch-day line")
+		require.Equalf(t, 1, n, "the line drawn forward was mentioned %d times, want 1:\n%s", n, r.stdout)
 	}
 	// "At once" is `WAIT OK` above and the absence of `WAIT TIMEOUT` here, which together
 	// say the call returned on the first poll and not on its thirty-second deadline. The
 	// ten-second wall clock that used to stand here said the same thing in a way that a
 	// loaded runner could make false.
-	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
-		t.Fatalf("the wait sat out its timeout behind a line that hides everything:\n%s", r.stdout)
-	}
-	if polls := pollsOf(t, r.stdout, "WAIT OK"); polls != 1 {
-		t.Fatalf("the wait polled %d times to say the line hides everything; it is meant to say so on the first:\n%s", polls, r.stdout)
+	require.NotContainsf(t, r.stdout, "WAIT TIMEOUT", "the wait sat out its timeout behind a line that hides everything:\n%s", r.stdout)
+	{
+		polls := pollsOf(t, r.stdout, "WAIT OK")
+		require.Equalf(t, 1, polls, "the wait polled %d times to say the line hides everything; it is meant to say so on the first:\n%s", polls, r.stdout)
 	}
 }
 
@@ -349,12 +332,8 @@ func TestWaitSaysWhyAnInstantDrawnForwardHidesTheWholeWait(t *testing.T) {
 	r.mustContain(t, "stdout", "WAIT NOTE your switch-day line is 2026-09-09T18:07:00Z").
 		mustContain(t, "stdout", "a line drawn today has to be an INSTANT").
 		mustContain(t, "stdout", "WAIT OK new=0")
-	if strings.Contains(r.stdout, "INBOX SWITCH") {
-		t.Fatalf("the listing handed a remedy for a line somebody drew to the second:\n%s", r.stdout)
-	}
-	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
-		t.Fatalf("the wait sat out its timeout behind a line that hides everything:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "INBOX SWITCH", "the listing handed a remedy for a line somebody drew to the second:\n%s", r.stdout)
+	require.NotContainsf(t, r.stdout, "WAIT TIMEOUT", "the wait sat out its timeout behind a line that hides everything:\n%s", r.stdout)
 }
 
 // A WAIT RETURN, WITHOUT --open, OVER A BACKLOG. This is the loop the README now
@@ -381,18 +360,18 @@ func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3",
 	}
 	r := invoke(t, "", args...).mustCode(t, 0)
-	if err := <-pushed; err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, <-pushed)
 	r.mustContain(t, "stdout", "WAIT OK new=1").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-333333333333").
 		mustContain(t, "stdout", "INBOX OPEN carrying=3 heard=0")
 	// ONE note line: the one that woke it. Not the two it was already carrying.
-	if n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT "); n != 1 {
-		t.Fatalf("a wait return without --open printed %d listing lines, want the 1 new note:\n%s", n, r.stdout)
+	{
+		n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT ")
+		require.Equalf(t, 1, n, "a wait return without --open printed %d listing lines, want the 1 new note:\n%s", n, r.stdout)
 	}
-	if n := strings.Count(r.stdout, "INBOX OPEN carrying="); n != 1 {
-		t.Fatalf("a wait return printed %d OPEN carrying lines, want exactly 1:\n%s", n, r.stdout)
+	{
+		n := strings.Count(r.stdout, "INBOX OPEN carrying=")
+		require.Equalf(t, 1, n, "a wait return printed %d OPEN carrying lines, want exactly 1:\n%s", n, r.stdout)
 	}
 }
 
@@ -415,13 +394,12 @@ func TestWaitWithoutAdvanceBlocksWhenCursorIsUnadvanced(t *testing.T) {
 
 	// The tool's own `after=`, not this test's clock: what is under test is that the verb
 	// blocks rather than spinning, and the verb is the thing that knows how long it did.
-	if after := afterOf(t, r.stdout); after < timeout {
-		t.Fatalf("wait says it returned after %s, before its %s deadline, with nothing new:\n%s", after, timeout, r.stdout)
+	{
+		after := afterOf(t, r.stdout)
+		require.Falsef(t, after < timeout, "wait says it returned after %s, before its %s deadline, with nothing new:\n%s", after, timeout, r.stdout)
 	}
 	r.mustContain(t, "stdout", "WAIT TIMEOUT after=")
-	if strings.Contains(r.stdout, "WAIT OK") {
-		t.Fatalf("wait without --advance returned WAIT OK with nothing new:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "WAIT OK", "wait without --advance returned WAIT OK with nothing new:\n%s", r.stdout)
 }
 
 // A note arriving mid-wait wakes a wait that had nothing new, without --advance. The
@@ -444,15 +422,11 @@ func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(
 	// windows-latest leg reported `WAIT TIMEOUT after=8.364s polls=2` -- the sync point
 	// had fired, and the push behind it did not finish inside the deadline.
 	r := invoke(t, "", waitFlags(checkout, "Ada", "30s")...).mustCode(t, 0)
-	if err := <-pushed; err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, <-pushed)
 
 	r.mustContain(t, "stdout", "WAIT OK new=1").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-555555555555")
-	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
-		t.Fatalf("the wait timed out over a note pushed at its own sync point:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "WAIT TIMEOUT", "the wait timed out over a note pushed at its own sync point:\n%s", r.stdout)
 }
 
 // THE SYNC POINT, for every test that needs a note to arrive while a wait is waiting.
@@ -507,9 +481,7 @@ func syncPointBound(t *testing.T) time.Duration {
 	t.Helper()
 	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
 		d, err := time.ParseDuration(v)
-		if err != nil {
-			t.Fatalf("NOVA_TEST_WAIT=%q: %v", v, err)
-		}
+		require.NoErrorf(t, err, "NOVA_TEST_WAIT=%q: %v", v, err)
 		return d
 	}
 	return 30 * time.Second
@@ -519,13 +491,9 @@ func syncPointBound(t *testing.T) time.Duration {
 func pollsOf(t *testing.T, stdout, line string) int {
 	t.Helper()
 	i := strings.Index(stdout, line)
-	if i < 0 {
-		t.Fatalf("no %s line to read polls= from:\n%s", line, stdout)
-	}
+	require.Falsef(t, i < 0, "no %s line to read polls= from:\n%s", line, stdout)
 	n, err := strconv.Atoi(field(t, stdout[i:], "polls="))
-	if err != nil {
-		t.Fatalf("polls= is not a number: %v\n%s", err, stdout)
-	}
+	require.NoErrorf(t, err, "polls= is not a number: %v\n%s", err, stdout)
 	return n
 }
 
@@ -626,9 +594,7 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 
 	other := bench(t, bare)
 	note(t, other, "bo-555555555555", "a note already receipted")
-	if err := push(other); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, push(other))
 	gitIn(t, checkout, "pull", "-q", "--ff-only", "origin", "main")
 	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-555555555555",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
@@ -640,11 +606,10 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 		mustContain(t, "stdout", " to=").
 		mustContain(t, "stdout", " heard=1").
 		mustContain(t, "stdout", "WAIT TIMEOUT after=")
-	if strings.Contains(r.stdout, "WAIT OK new=1") {
-		t.Fatalf("wait --advance returned WAIT OK on a note it had already receipted:\n%s", r.stdout)
-	}
-	if after := afterOf(t, r.stdout); after < timeout {
-		t.Fatalf("wait --advance says it returned after %s, before its %s deadline, over only a heard note:\n%s", after, timeout, r.stdout)
+	require.NotContainsf(t, r.stdout, "WAIT OK new=1", "wait --advance returned WAIT OK on a note it had already receipted:\n%s", r.stdout)
+	{
+		after := afterOf(t, r.stdout)
+		require.Falsef(t, after < timeout, "wait --advance says it returned after %s, before its %s deadline, over only a heard note:\n%s", after, timeout, r.stdout)
 	}
 	// The cursor moved over the heard note: its commit is the one this run read to, which
 	// is the parent of the cursor commit the advance itself made.
@@ -657,8 +622,9 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	// through the file says what this test is about and nothing about what follows it.
 	cursorCommit := strings.TrimSpace(gitIn(t, checkout, "log", "-1", "--format=%H", "--", "from-ada/CURSOR"))
 	readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", cursorCommit+"~1"))
-	if onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR")); len(onLane) == 0 || onLane[0] != readTo {
-		t.Fatalf("the cursor was not advanced to head over the heard note (read to %s):\n%s", readTo, read(t, checkout, "from-ada/CURSOR"))
+	{
+		onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR"))
+		require.Falsef(t, len(onLane) == 0 || onLane[0] != readTo, "the cursor was not advanced to head over the heard note (read to %s):\n%s", readTo, read(t, checkout, "from-ada/CURSOR"))
 	}
 }
 
@@ -683,18 +649,12 @@ func TestRearmCommandQuotesArgumentsWithSpaces(t *testing.T) {
 	trimmed := strings.TrimRight(r.stdout, "\n")
 	line := trimmed[strings.LastIndex(trimmed, "\n")+1:]
 	cmd, ok := strings.CutPrefix(line, "WAIT DONE reason=timeout rearm=required next=")
-	if !ok {
-		t.Fatalf("the re-arm line is missing next=:\n%s", r.stdout)
-	}
+	require.Truef(t, ok, "the re-arm line is missing next=:\n%s", r.stdout)
 	got := splitShellWords(cmd)
 	want := append([]string{"nova-bus", "wait"}, args[1:]...)
-	if len(got) != len(want) {
-		t.Fatalf("re-arm tokenized to %d words, want %d:\nnext=%s\ngot=%q\nwant=%q", len(got), len(want), cmd, got, want)
-	}
+	require.Equalf(t, len(want), len(got), "re-arm tokenized to %d words, want %d:\nnext=%s\ngot=%q\nwant=%q", len(got), len(want), cmd, got, want)
 	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("word %d is %q, want %q:\nnext=%s", i, got[i], want[i], cmd)
-		}
+		require.Falsef(t, got[i] != want[i], "word %d is %q, want %q:\nnext=%s", i, got[i], want[i], cmd)
 	}
 }
 

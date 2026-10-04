@@ -3,8 +3,10 @@ package secrets
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The ten rules from dogfooding in SPEC-SECRETS.md, each carrying the mistake it
@@ -14,13 +16,9 @@ func TestSpecSecretsNamesDogfoodingAdditions(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SECRETS.md"))
-	if err != nil {
-		t.Fatalf("the secrets spec is missing: %s", err)
-	}
+	require.NoError(t, err, "the secrets spec is missing: %s", err)
 	doc := string(raw)
-	if !strings.Contains(doc, "## Rules from dogfooding") {
-		t.Errorf("SPEC-SECRETS.md does not name the dogfooding section")
-	}
+	assert.Contains(t, doc, "## Rules from dogfooding", "SPEC-SECRETS.md does not name the dogfooding section")
 	for _, phrase := range []string{
 		"ingest is rotation",
 		"one seat per OS user, keys for swarms not people",
@@ -34,8 +32,6 @@ func TestSpecSecretsNamesDogfoodingAdditions(t *testing.T) {
 		"seal is one step",
 		"fails loudly on a plaintext key file",
 	} {
-		if !strings.Contains(doc, phrase) {
-			t.Errorf("SPEC-SECRETS.md does not name the rule keyed by %q", phrase)
-		}
+		assert.Contains(t, doc, phrase, "SPEC-SECRETS.md does not name the rule keyed by %q", phrase)
 	}
 }

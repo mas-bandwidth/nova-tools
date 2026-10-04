@@ -25,10 +25,12 @@ func openFileSafe(path string, flag int, perm os.FileMode) (*os.File, error) {
 
 	fi, err := f.Stat()
 	if err != nil {
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 		_ = f.Close()
 		return nil, fmt.Errorf("filelock %q stat: %w", cleanPath, wrapPathError(err))
 	}
 	if !fi.Mode().IsRegular() {
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 		_ = f.Close()
 		if fi.IsDir() {
 			return nil, fmt.Errorf("filelock %q: is a directory", cleanPath)
@@ -72,6 +74,7 @@ func trySharedLock(f *os.File) (bool, error) {
 
 func unlockFile(f *os.File) {
 	if f != nil {
+		// ignored: unlock has no caller to report to; the kernel lock is released when the descriptor closes
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	}
 }
@@ -121,6 +124,7 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 
 		// Refused is not yet held: see takeExclusive (tla/FileLock.tla, Blocked).
 		if err := takeExclusive(f, path); err != nil {
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, err
 		}
@@ -130,31 +134,28 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 		match, err := verifyFn(f, path)
 		if err != nil {
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, err
 		}
 		if !match {
 			// Inode changed under waiter: unlock, close, and retry opening path.
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			continue
-		}
-
-		// Read previous unreleased holder note if present.
-		existing := readExistingStamp(f)
-		var prev *Stamp
-		if !existing.IsZero() {
-			prev = &existing
 		}
 
 		// Truncate file, write own note, fsync.
 		if err := f.Truncate(0); err != nil {
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, fmt.Errorf("filelock %q truncate: %w", cleanPath, wrapPathError(err))
 		}
 		if _, err := f.Seek(0, 0); err != nil {
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, fmt.Errorf("filelock %q seek: %w", cleanPath, wrapPathError(err))
 		}
@@ -167,21 +168,18 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 		}
 		if _, err := f.WriteString(stamp.Format() + "\n"); err != nil {
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, fmt.Errorf("filelock %q write stamp: %w", cleanPath, wrapPathError(err))
 		}
 		if err := syncFn(f); err != nil {
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, fmt.Errorf("filelock %q sync: %w", cleanPath, wrapPathError(err))
 		}
 
-		return &FileLock{
-			path:     path,
-			file:     f,
-			stamp:    stamp,
-			previous: prev,
-		}, nil
+		return &FileLock{file: f}, nil
 	}
 
 	return nil, fmt.Errorf("filelock %q: failed after %d inode collision retries", cleanPath, maxInodeRetries)
@@ -189,39 +187,4 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 
 func lockWithOptions(path string, label string, timeout time.Duration, opts options) (*FileLock, error) {
 	return lockLoop(path, label, timeout, opts, tryLockWithOptions)
-}
-
-func probeWithOptions(path string, opts options) (State, Stamp, error) {
-	f, err := openFileSafe(path, os.O_RDWR, 0)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return StateAbsent, Stamp{}, nil
-		}
-		// If write permission denied, try read-only
-		f, err = openFileSafe(path, os.O_RDONLY, 0)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return StateAbsent, Stamp{}, nil
-			}
-			return "", Stamp{}, err
-		}
-	}
-	defer f.Close()
-
-	// Acquire non-blocking SHARED lock (LOCK_SH|LOCK_NB).
-	// Probe NEVER takes an exclusive lock!
-	ok, lockErr := trySharedLock(f)
-	if lockErr != nil {
-		cleanPath := oneline.Escape(oneline.Cap(path, 1024))
-		return "", Stamp{}, fmt.Errorf("filelock %q probe: %w", cleanPath, wrapPathError(lockErr))
-	}
-	if ok {
-		// Granted shared lock: nobody holds exclusive lock.
-		unlockFile(f)
-		return StateFree, Stamp{}, nil
-	}
-
-	// Refused shared lock: an exclusive holder is present!
-	holder := readExistingStamp(f)
-	return StateHeld, holder, nil
 }

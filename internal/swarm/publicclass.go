@@ -39,11 +39,6 @@ func PublicRefusalLine(repo, workerName string) string {
 	return "CARD REFUSED " + PublicRefusalWhy(repo, workerName)
 }
 
-// IsPublicRefusal reports whether an admission reason came from this gate.
-func IsPublicRefusal(why string) bool {
-	return strings.HasPrefix(why, "reason=private-source")
-}
-
 // githubPathRE matches github.com/<owner>/<repo> in any spelling the card may
 // carry: https://github.com/o/r(.git), git@github.com:o/r(.git) and bare
 // github.com/o/r. Owner and name are github's own characters.

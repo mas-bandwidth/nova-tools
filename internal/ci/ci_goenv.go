@@ -12,14 +12,14 @@ import (
 // ci_goenv.go is the machine behind the `goenv` class test. It reads every .go
 // file under root/internal and root/cmd -- tests included, because a test
 // helper that builds a binary is a tool spawning go exactly like a verb is --
-// and refuses an exec.Command whose argv[0] is the literal "go" unless the
+// and refuses an exec.Command (or subproc.Command, CommandFor, Context, Long) whose argv[0] is the literal "go" unless the
 // function around it builds the child's environment with goenv.Clean.
 //
 // The class is one bug seen once: CI's `make test` exports GOFLAGS=-json, the
 // inner `go test` of `nova-review mutate` inherited it, and the parser counting
 // `--- PASS:` lines saw a JSON stream instead, called the green run red and
 // reported `red=2 green=0` where the range is `red=1 green=1`. Three legs of
-// integration-4 (#1332) failed on a tool that was working. Any tool that reads
+// integration-4 failed on a tool that was working. Any tool that reads
 // the output of a go command it started has the same hole; internal/goenv is
 // the one place that closes it, and this checker is what keeps the next site
 // from opening it again.
@@ -107,6 +107,11 @@ func (r GoEnvResult) ExitCode() int {
 // caller, never from a walk of the repository; testdata directories and
 // internal/goenv itself are skipped.
 func CheckGoEnv(root, allowlistPath string) (GoEnvResult, error) {
+	return checkGoEnvWith(root, allowlistPath, defaultSourceSeams())
+}
+
+// checkGoEnvWith is CheckGoEnv reading the tree through seams.
+func checkGoEnvWith(root, allowlistPath string, seams SourceSeams) (GoEnvResult, error) {
 	var res GoEnvResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {
@@ -114,9 +119,9 @@ func CheckGoEnv(root, allowlistPath string) (GoEnvResult, error) {
 	}
 	matched := make([]bool, len(entries))
 
-	err = walkCIGoFiles(root, func(rel string, raw []byte) error {
+	err = walkCIGoFilesWith(root, seams, func(rel string, raw []byte) error {
 		res.Files++
-		findings, ok := scanGoEnvFile(rel, raw)
+		findings, ok := scanGoEnvFileWith(rel, raw, seams)
 		if ok {
 			res.Findings = append(res.Findings, findings...)
 		}
@@ -152,8 +157,7 @@ func CheckGoEnv(root, allowlistPath string) (GoEnvResult, error) {
 // matchGoEnvAllow returns the index of an unused entry that allows this
 // finding, or -1. A row allows ONE offender of its kind in its file; the line
 // is for a reader and an exact match is only preferred, never required, so a
-// merge that shifts lines does not turn dev red (the lesson the waits list
-// carries from #1073).
+// merge that shifts lines does not turn dev red.
 func matchGoEnvAllow(entries []waitAllow, used []bool, f GoEnvFinding) int {
 	loose := -1
 	for i, e := range entries {
@@ -170,10 +174,10 @@ func matchGoEnvAllow(entries []waitAllow, used []bool, f GoEnvFinding) int {
 	return loose
 }
 
-// walkCIGoFiles hands every .go file under root/internal and root/cmd to fn,
+// walkCIGoFilesWith hands every .go file under root/internal and root/cmd to fn,
 // tests included. testdata, .git and vendor directories are skipped, and so is
 // internal/goenv, which is the rule's own implementation.
-func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
+func walkCIGoFilesWith(root string, seams SourceSeams, fn func(rel string, src []byte) error) error {
 	for _, dir := range checkGoEnvDirs {
 		base := filepath.Join(root, dir)
 		if _, statErr := os.Stat(base); statErr != nil {
@@ -182,7 +186,7 @@ func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
 			}
 			return statErr
 		}
-		err := walkSourceDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		err := seams.walk(base, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -204,7 +208,7 @@ func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
 			if rel == goEnvPkgDir || strings.HasPrefix(rel, goEnvPkgDir+"/") {
 				return nil
 			}
-			raw, readErr := readSourceFile(path)
+			raw, readErr := seams.readFile(path)
 			if readErr != nil {
 				return readErr
 			}
@@ -217,12 +221,12 @@ func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
 	return nil
 }
 
-// scanGoEnvFile returns the go commands in one file whose function does not
+// scanGoEnvFileWith returns the go commands in one file whose function does not
 // build a sanitized environment. A file that does not parse is reported as
 // read-but-clean rather than as an error: the checker refuses environments,
 // never syntax, and the compiler has the better message for a broken file.
-func scanGoEnvFile(rel string, raw []byte) ([]GoEnvFinding, bool) {
-	fset, file, err := parseSource(rel, raw, 0)
+func scanGoEnvFileWith(rel string, raw []byte, seams SourceSeams) ([]GoEnvFinding, bool) {
+	fset, file, err := seams.parseFile(rel, raw, 0)
 	if err != nil {
 		return nil, false
 	}
@@ -257,22 +261,28 @@ func scanGoEnvFile(rel string, raw []byte) ([]GoEnvFinding, bool) {
 	return findings, true
 }
 
-// goCommandArgv0 reports whether call is exec.Command or exec.CommandContext
-// with the literal "go" as argv[0], and where that literal stands.
+// goCommandArgv0 reports whether call is exec.Command, exec.CommandContext or
+// one of internal/subproc's constructors with the literal "go" as argv[0], and where that literal stands.
 func goCommandArgv0(call *ast.CallExpr) (token.Pos, bool) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return 0, false
 	}
 	pkg, ok := sel.X.(*ast.Ident)
-	if !ok || pkg.Name != "exec" {
+	if !ok || (pkg.Name != "exec" && pkg.Name != "subproc") {
 		return 0, false
 	}
 	argv0 := -1
-	switch sel.Sel.Name {
-	case "Command":
+	switch {
+	case pkg.Name == "exec" && sel.Sel.Name == "Command":
 		argv0 = 0
-	case "CommandContext":
+	case pkg.Name == "exec" && sel.Sel.Name == "CommandContext":
+		argv0 = 1
+	// internal/subproc is the door every child goes through: Command and CommandFor
+	// take (ctx, kind-or-budget, name, ...), Context and Long take (ctx, name, ...).
+	case pkg.Name == "subproc" && (sel.Sel.Name == "Command" || sel.Sel.Name == "CommandFor"):
+		argv0 = 2
+	case pkg.Name == "subproc" && (sel.Sel.Name == "Context" || sel.Sel.Name == "Long"):
 		argv0 = 1
 	default:
 		return 0, false

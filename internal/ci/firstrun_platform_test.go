@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A first-run transcript whose expected output carries a platform-specific token
@@ -37,9 +39,7 @@ func TestFirstRunTranscriptsNameTheirPlatform(t *testing.T) {
 	md := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
 
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	found := 0
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -54,13 +54,9 @@ func TestFirstRunTranscriptsNameTheirPlatform(t *testing.T) {
 		if !carriesPlatformToken(section) {
 			continue
 		}
-		if !carriesPlatformLine(section) {
-			t.Errorf("the `## %s` section carries a platform-specific transcript but no platform line; say which platform it was recorded on, in one line the section carries (a line beginning `Platform:`)", tool)
-		}
+		assert.True(t, carriesPlatformLine(section), "the `## %s` section carries a platform-specific transcript but no platform line; say which platform it was recorded on, in one line the section carries (a line beginning `Platform:`)", tool)
 	}
-	if found == 0 {
-		t.Fatal("no `## <tool>` sections found in docs/TESTS.md; this test was looking in the wrong place and would have passed by checking nothing")
-	}
+	require.NotZero(t, found, "no `## <tool>` sections found in docs/TESTS.md; this test was looking in the wrong place and would have passed by checking nothing")
 }
 
 // carriesPlatformToken reports whether the section's transcript carries a

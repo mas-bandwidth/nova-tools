@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -75,51 +76,60 @@ func CheckInvariant1(storeDir string, sopsCfg *SopsConfig, recoveryKey string) [
 			})
 		}
 
-		// Check recipients
-		seenRecipients := make(map[string]bool)
-		for _, rec := range rule.Recipients {
-			if !IsValidAgePublicKey(rec) {
-				failures = append(failures, CheckFailure{
-					Kind:   "rule-shape",
-					File:   ".sops.yaml",
-					Reason: fmt.Sprintf("rule for %s recipient %q is not a valid age public key", label, rec),
-				})
-			}
-			if seenRecipients[rec] {
-				failures = append(failures, CheckFailure{
-					Kind:   "rule-shape",
-					File:   ".sops.yaml",
-					Reason: fmt.Sprintf("rule for %s has duplicate recipient %s", label, rec),
-				})
-			}
-			seenRecipients[rec] = true
-		}
-
-		if len(rule.Recipients) != 2 {
+		if problem := ruleRecipientsProblem(rule.Recipients, recoveryKey); problem != "" {
 			failures = append(failures, CheckFailure{
 				Kind:   "rule-shape",
 				File:   ".sops.yaml",
-				Reason: fmt.Sprintf("rule for %s has %d recipients; expected exactly 2 (one seat key and declared recovery key)", label, len(rule.Recipients)),
+				Reason: fmt.Sprintf("rule for %s %s", label, problem),
 			})
-		} else if recoveryKey != "" {
-			hasRecovery := false
-			for _, rec := range rule.Recipients {
-				if rec == recoveryKey {
-					hasRecovery = true
-					break
-				}
-			}
-			if !hasRecovery {
-				failures = append(failures, CheckFailure{
-					Kind:   "rule-shape",
-					File:   ".sops.yaml",
-					Reason: fmt.Sprintf("rule for %s does not contain declared recovery key %s", label, recoveryKey),
-				})
-			}
 		}
 	}
 
 	return failures
+}
+
+// seatFileRecipientsProblem is the one judgement of a seat file's recipients (its sops
+// metadata) against its rule's in .sops.yaml, made by check (CheckInvariant2), the
+// store's gate (RunGate) and seat inject (seatInjectTarget) alike. The rule is held to
+// ruleRecipientsProblem, and the file must then be exactly the rule: two keys, the
+// rule's two, in either order. A clean rule is two distinct keys, so a file equal to it
+// is clean too, and a file with a duplicate, a missing key or one more differs from it.
+// It returns why not, or "" when the file is its rule.
+func seatFileRecipientsProblem(file, rule []string, recoveryKey string) string {
+	if problem := ruleRecipientsProblem(rule, recoveryKey); problem != "" {
+		return "is under a rule that " + problem
+	}
+	if len(file) != 2 || !slices.Contains(file, rule[0]) || !slices.Contains(file, rule[1]) {
+		return "recipients differ from .sops.yaml"
+	}
+	return ""
+}
+
+// ruleRecipientsProblem is the one judgement of a seat's recipients: exactly two valid
+// age public keys, distinct, one of them the declared recovery key, so the other is the
+// seat's own key.
+// check (CheckInvariant1) and the store's gate (RunGate) hold a creation rule's
+// recipients to it, seat inject (seatInjectTarget) the seat file's own, and seat add
+// (RunSeatAdd) the rule it is about to write. It returns why they are not, worded to
+// follow its subject ("rule ...", "seat file ..."), or "" when they are. An empty
+// recoveryKey is one check could not read (recovery.pub is reported on its own), and
+// the recovery key is then not looked for.
+func ruleRecipientsProblem(recipients []string, recoveryKey string) string {
+	if len(recipients) != 2 {
+		return fmt.Sprintf("has %d recipients; expected exactly 2 (one seat key and declared recovery key)", len(recipients))
+	}
+	for _, r := range recipients {
+		if !IsValidAgePublicKey(r) {
+			return fmt.Sprintf("recipient %q is not a valid age public key", r)
+		}
+	}
+	if recipients[0] == recipients[1] {
+		return fmt.Sprintf("has duplicate recipient %s; a seat is one seat key and the declared recovery key, distinct", recipients[0])
+	}
+	if recoveryKey != "" && !slices.Contains(recipients, recoveryKey) {
+		return fmt.Sprintf("does not contain declared recovery key %s (recovery.pub)", recoveryKey)
+	}
+	return ""
 }
 
 // CheckInvariant2 verifies that each file's sops recipient block matches its creation rule.
@@ -147,32 +157,18 @@ func CheckInvariant2(storeDir string, sopsCfg *SopsConfig, files []string) []Che
 			continue
 		}
 
-		fileSet := make(map[string]bool)
-		for _, r := range fileRecipients {
-			fileSet[r] = true
-		}
-		ruleSet := make(map[string]bool)
-		for _, r := range rule.Recipients {
-			ruleSet[r] = true
-		}
-
-		differ := false
-		if len(fileSet) != len(ruleSet) {
-			differ = true
-		} else {
-			for r := range fileSet {
-				if !ruleSet[r] {
-					differ = true
-					break
-				}
+		// The recovery key itself is invariant 1's to name; here the file is held to its
+		// rule. A file under a bad rule is fixed with the rule (invariant 1 names it), any
+		// other difference by bringing the file to its rule.
+		if problem := seatFileRecipientsProblem(fileRecipients, rule.Recipients, ""); problem != "" {
+			remedy := "run: sops updatekeys " + file
+			if ruleRecipientsProblem(rule.Recipients, "") != "" {
+				remedy = "the rule is fixed first in .sops.yaml, then run: sops updatekeys " + file
 			}
-		}
-
-		if differ {
 			failures = append(failures, CheckFailure{
 				Kind:   "recipients-drift",
 				File:   file,
-				Reason: fmt.Sprintf("recipients differ from .sops.yaml; run: sops updatekeys %s", file),
+				Reason: fmt.Sprintf("%s; %s", problem, remedy),
 			})
 		}
 	}
@@ -229,15 +225,7 @@ func CheckInvariant4(storeDir, sopsPath, keyPath, seatPubKey string, files []str
 			continue
 		}
 
-		isMine := false
-		for _, r := range fileRecipients {
-			if r == seatPubKey {
-				isMine = true
-				break
-			}
-		}
-
-		if isMine {
+		if slices.Contains(fileRecipients, seatPubKey) {
 			mineCount++
 			_, decErr := DecryptFile(sopsPath, keyPath, filePath)
 			if decErr != nil {
@@ -262,16 +250,39 @@ func CheckInvariant4(storeDir, sopsPath, keyPath, seatPubKey string, files []str
 	return failures, mineCount, foreignCount
 }
 
+// resolveLoose is the absolute path of p with symlinks resolved, where p need not exist:
+// the deepest existing ancestor is resolved and the missing tail is appended to it.
+func resolveLoose(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	tail := ""
+	for cur := abs; ; cur = filepath.Dir(cur) {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(real, tail), nil
+		}
+		if filepath.Dir(cur) == cur {
+			return abs, nil
+		}
+		tail = filepath.Join(filepath.Base(cur), tail)
+	}
+}
+
 // CheckInvariant5 verifies that no private key is stored under storeDir.
 func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 	var failures []CheckFailure
 
 	// Check if keyPath is inside storeDir
-	absStore, errStore := filepath.Abs(storeDir)
-	absKey, errKey := filepath.Abs(keyPath)
+	// Both paths are resolved through symlinks first: a key reached through a link, or a
+	// store named through one, is inside the store by where it lands, not by how it is spelled.
+	absStore, errStore := resolveLoose(storeDir)
+	absKey, errKey := resolveLoose(keyPath)
 	if errStore == nil && errKey == nil {
 		rel, err := filepath.Rel(absStore, absKey)
-		if err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
+		// filepath.IsLocal, not a ".." prefix test: a key file under a
+		// directory named "..cache" is inside the store.
+		if err == nil && rel != "." && filepath.IsLocal(rel) {
 			failures = append(failures, CheckFailure{
 				Kind:   "store-private-key",
 				File:   keyPath,
@@ -280,8 +291,12 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 		}
 	}
 
+	// ignored: the callback returns nil for every path, and records what it cannot read as a failure
 	_ = filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// Never silent: a path the walk cannot read was not checked, and a
+			// pass over it would read as "no private key here".
+			failures = append(failures, unreadableFailure("store-private-key", storeDir, path, err))
 			return nil
 		}
 		if d.IsDir() {
@@ -291,7 +306,11 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 			return nil
 		}
 		data, err := os.ReadFile(path)
-		if err == nil && bytes.Contains(data, []byte("AGE-SECRET-KEY-1")) {
+		if err != nil {
+			failures = append(failures, unreadableFailure("store-private-key", storeDir, path, err))
+			return nil
+		}
+		if bytes.Contains(data, []byte("AGE-SECRET-KEY-1")) {
 			rel, _ := filepath.Rel(storeDir, path)
 			failures = append(failures, CheckFailure{
 				Kind:   "store-private-key",
@@ -303,6 +322,20 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 	})
 
 	return failures
+}
+
+// unreadableFailure is a path an invariant could not read, as a failure of that
+// invariant: a check that skipped a file has not cleared it.
+func unreadableFailure(kind, storeDir, path string, err error) CheckFailure {
+	rel, relErr := filepath.Rel(storeDir, path)
+	if relErr != nil {
+		rel = path
+	}
+	return CheckFailure{
+		Kind:   kind,
+		File:   rel,
+		Reason: fmt.Sprintf("could not be read, so it was not checked: %v; fix its permissions and rerun the check", err),
+	}
 }
 
 // CheckInvariant6 verifies that the key file mode is 0600 and directory is 0700.
@@ -332,8 +365,10 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 
 	envLineRegex := regexp.MustCompile(`^[A-Z][A-Z0-9_]*:\s*(.*)$`)
 
+	// ignored: the callback returns nil for every path, and records what it cannot read as a failure
 	_ = filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			failures = append(failures, unreadableFailure("untracked-plaintext", storeDir, path, err))
 			return nil
 		}
 		if d.IsDir() {
@@ -355,6 +390,7 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 
 		f, err := os.Open(path)
 		if err != nil {
+			failures = append(failures, unreadableFailure("untracked-plaintext", storeDir, path, err))
 			return nil
 		}
 		defer f.Close()
@@ -394,73 +430,25 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 	return failures
 }
 
-// CheckInvariant8 inspects .git directly for remote tracking ref sync.
-func CheckInvariant8(storeDir string) (status GitRefStatus, failure *CheckFailure, refusal error) {
-	st, err := CheckGitWorkingCopy(storeDir)
-	if err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "detached HEAD") || strings.Contains(msg, "no upstream") || strings.Contains(msg, "worktree or submodule") || strings.Contains(msg, "is not a git repository") {
-			return st, nil, err
-		}
-		return st, &CheckFailure{
-			Kind:   "stale-working-copy",
-			File:   "working copy",
-			Reason: msg,
-		}, nil
-	}
-	return st, nil, nil
-}
-
 // RunCheck executes the complete verification suite for 'check'.
 func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine string, failLines []string, moreLines []string, summaryLine string, exitCode int, err error) {
 	if maxShown < 0 {
 		return "", nil, nil, "", 2, fmt.Errorf("--max %d is negative; expected non-negative integer", maxShown)
 	}
 
-	// 0. Set RLIMIT_CORE to 0 immediately (M5)
+	// No core file: a crash after a decrypt must not write a value to disk.
 	if err := setRlimitCoreZero(); err != nil {
 		return "", nil, nil, "", 2, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
 	}
 
-	if asName == "" {
-		return "", nil, nil, "", 2, fmt.Errorf("missing --as <name>")
-	}
-	if !IsValidAsName(asName) {
-		return "", nil, nil, "", 2, fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
-	}
-
-	// 1. Refusal checks
-	storeFi, err := os.Stat(storeDir)
-	if err != nil || !storeFi.IsDir() {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s is not a directory", storeDir)
-	}
-
-	gitDir := filepath.Join(storeDir, ".git")
-	gitFi, err := os.Stat(gitDir)
-	if err != nil {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s has no .git directory; run: git clone <url> %s", storeDir, storeDir)
-	}
-	if !gitFi.IsDir() {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s: .git is a file (a worktree or submodule); expected a directory working copy", storeDir)
-	}
-
-	sopsConfigPath := filepath.Join(storeDir, ".sops.yaml")
-	if _, err := os.Stat(sopsConfigPath); err != nil {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s carries no .sops.yaml", storeDir)
+	// 1. Refusal checks: the invocation and the store's shape, every problem at once
+	if err := preflight(storeDir, need{storeDir, "--store <dir>", false}, need{asName, "--as <name>", true}, need{keyPath, "--key <path>", false}, need{sopsPath, "--sops <path>", false}); err != nil {
+		return "", nil, nil, "", 2, err
 	}
 
 	targetFile := filepath.Join(storeDir, asName+".yaml")
 	if _, err := os.Stat(targetFile); err != nil {
-		// List available files in store
-		entries, _ := os.ReadDir(storeDir)
-		var names []string
-		for _, e := range entries {
-			if strings.HasSuffix(e.Name(), ".yaml") && e.Name() != ".sops.yaml" {
-				names = append(names, strings.TrimSuffix(e.Name(), ".yaml"))
-			}
-		}
-		sort.Strings(names)
-		return "", nil, nil, "", 2, fmt.Errorf("seat file %s.yaml is absent in store; available names: %s", asName, strings.Join(names, ", "))
+		return "", nil, nil, "", 2, seatAbsent(storeDir, asName)
 	}
 
 	if err := CheckInvariant6(keyPath); err != nil {
@@ -560,7 +548,7 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 	recipientsCount := len(recipientsSet)
 
 	if len(allFailures) == 0 {
-		okLine = fmt.Sprintf("SECRETS CHECK OK  as=%s recipients=%d files=%d sealed=%d mine=%d foreign=%d clear=%d head=%s",
+		okLine = fmt.Sprintf("SECRETS CHECK OK as=%s recipients=%d files=%d sealed=%d mine=%d foreign=%d clear=%d head=%s",
 			oneline.Field(asName), recipientsCount, len(yamlFiles), sealedCount, mineCount, foreignCount, clearCount, oneline.Field(gitStatus.HeadSHA))
 		return okLine, nil, nil, "", 0, nil
 	}

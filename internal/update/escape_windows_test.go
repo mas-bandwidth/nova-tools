@@ -10,8 +10,12 @@ import (
 // Windows has no process group to escape here; the owed Windows termination
 // validation is named in the pull request and the escaped-pipe witness is
 // skipped there, so this holder only needs to exist to compile.
-func spawnEscapedHolder(d string) error {
-	c := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", "hold", d)
+func spawnEscapedHolder(d string, readyFile ...string) error {
+	args := []string{"-test.run=TestHelperProcess", "--", "hold", d}
+	if len(readyFile) > 0 && readyFile[0] != "" {
+		args = append(args, readyFile[0])
+	}
+	c := exec.Command(os.Args[0], args...)
 	c.Env = append(os.Environ(), "NOVA_UPDATE_HELPER=1")
 	c.Stdout = os.Stdout
 	return c.Start()

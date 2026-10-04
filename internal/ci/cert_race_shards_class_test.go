@@ -1,15 +1,15 @@
 package ci
 
 import (
-	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,22 +21,32 @@ import (
 // 36357522017, 36357749379 and 36360296846 (2026-09-27).
 
 // certRaceMinShards is the shard count floor per hosted OS: at least one shard
-// for each certRaceHeavy package, and eight from the 2026-09-27 measurement.
+// for each certRaceHeavy package, now sixteen after run 37165758129.
 var certRaceMinShards = map[string]int{
-	"ubuntu-latest": 8,
-	"macos-latest":  8,
+	"ubuntu-latest": 16,
+	"macos-latest":  16,
 }
 
 // certRaceHeavy are the packages the race deal places first, one per shard:
 // every live package over 15 s in this job's own hosted legs (the larger of
 // ubuntu-latest and macos-latest, run 36375296705 at 3314df055 plus this
-// change): internal/ci 49.3 s, internal/gh 47.3, cmd/nova-tokens 46.4,
-// cmd/nova-sandbox 34.2, cmd/nova-self-talk 21.3, internal/update 19.1,
-// cmd/nova-secrets 16.7, internal/bus 16.6; the next is internal/merge at 12.4.
+// change): internal/ci 49.3 s, cmd/nova-tokens 46.4, cmd/nova-sandbox 34.2,
+// cmd/nova-self-talk 21.3, internal/update 19.1, cmd/nova-secrets 16.7,
+// internal/bus 16.6. Run 37158353472 also shows cmd/nova-sprint reaching the
+// 75 s test timeout alongside internal/ci on macOS.
+// Run 37159703304 puts internal/sprint/store (65.470 s on Linux) alongside
+// cmd/nova-sandbox on a capped leg, so it also has a separate heavy slot.
+// Run 37165758129 caps Linux shard 1 with internal/ci 67.708 s,
+// internal/sprint/refmodel 60.236, cmd/nova-swarm 44.763 and internal/docs 18.834
+// together. Its completed legs also measure internal/sprint 15.951 s,
+// internal/redisconn 18.169, internal/config 17.741 and internal/secrets 15.577.
 // certification.yml's deal step spells the same list.
 var certRaceHeavy = []string{
-	"internal/ci", "internal/gh", "cmd/nova-tokens", "cmd/nova-sandbox",
-	"cmd/nova-self-talk", "internal/update", "cmd/nova-secrets", "internal/bus",
+	"internal/ci", "cmd/nova-tokens", "cmd/nova-sandbox", "cmd/nova-self-talk",
+	"internal/update", "cmd/nova-secrets", "internal/bus", "cmd/nova-sprint",
+	"internal/sprint/store", "cmd/nova-swarm", "internal/sprint/refmodel",
+	"internal/docs", "internal/sprint", "internal/redisconn", "internal/config",
+	"internal/secrets",
 }
 
 const certRaceDealStep = "deal this shard's packages"
@@ -48,9 +58,7 @@ func certJobs(t *testing.T) (map[string]ciJob, hostedMatrix) {
 	var wf struct {
 		Jobs map[string]ciJob `yaml:"jobs"`
 	}
-	if err := yaml.Unmarshal([]byte(raw), &wf); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, yaml.Unmarshal([]byte(raw), &wf))
 	var mx struct {
 		Jobs map[string]struct {
 			Strategy struct {
@@ -58,9 +66,7 @@ func certJobs(t *testing.T) (map[string]ciJob, hostedMatrix) {
 			} `yaml:"strategy"`
 		} `yaml:"jobs"`
 	}
-	if err := yaml.Unmarshal([]byte(raw), &mx); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, yaml.Unmarshal([]byte(raw), &mx))
 	return wf.Jobs, mx.Jobs["test"].Strategy.Matrix
 }
 
@@ -76,71 +82,44 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 
 	jobs, matrix := certJobs(t)
 	job, ok := jobs["test"]
-	if !ok {
-		t.Fatal("certification.yml has no test job")
-	}
-	if job.TimeoutMinutes != twoMinuteCap {
-		t.Errorf("certification.yml test: timeout-minutes %d, want %d", job.TimeoutMinutes, twoMinuteCap)
-	}
+	require.True(t, ok, "certification.yml has no test job")
+	assert.Equal(t, twoMinuteCap, job.TimeoutMinutes, "certification.yml test: timeout-minutes %d, want %d", job.TimeoutMinutes, twoMinuteCap)
 	legs := hostedLegs(t, matrix)
-	if len(legs) != len(certRaceMinShards) {
-		t.Errorf("certification.yml test runs OSes %v, want exactly %v", legs, certRaceMinShards)
-	}
+	assert.Len(t, legs, len(certRaceMinShards), "certification.yml test runs OSes %v, want exactly %v", legs, certRaceMinShards)
 	for runner, min := range certRaceMinShards {
 		shards := legs[runner]
 		n := len(shards)
-		if n < min {
-			t.Errorf("certification.yml test runs %d %s shards, want at least %d", n, runner, min)
-		}
+		assert.GreaterOrEqual(t, n, min, "certification.yml test runs %d %s shards, want at least %d", n, runner, min)
 		for i := 1; i <= n; i++ {
-			if got, ok := shards[i]; !ok || got != n {
-				t.Errorf("certification.yml test %s shard %d of %d: present=%v, deals over %d", runner, i, n, ok, got)
-			}
+			got, ok := shards[i]
+			assert.True(t, ok && got == n, "certification.yml test %s shard %d of %d: present=%v, deals over %d", runner, i, n, ok, got)
 		}
 	}
 
 	deal := stepIndex(job, certRaceDealStep)
-	if deal < 0 {
-		t.Fatalf("certification.yml test has no %q step", certRaceDealStep)
-	}
+	require.GreaterOrEqual(t, deal, 0, "certification.yml test has no %q step", certRaceDealStep)
 	script := job.Steps[deal].Run
-	if want := `heavy="` + strings.Join(certRaceHeavy, " ") + `"`; !strings.Contains(script, want) {
-		t.Errorf("the deal step does not spell %s", want)
-	}
-	if !strings.Contains(script, "go list ./... | bash .github/scripts/live-packages.sh | awk") || !strings.Contains(script, "n=${{ matrix.shards }}") {
-		t.Fatalf("the deal step does not deal the live list over matrix.shards:\n%s", script)
-	}
+	wantHeavy := `--heavy "` + strings.Join(certRaceHeavy, " ") + `"`
+	assert.Contains(t, script, wantHeavy, "the deal step does not spell %s", wantHeavy)
+	require.Contains(t, script, ciRunner+" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }}", "the deal step does not deal the live list over matrix.shards through `ci deal`:\n%s", script)
+	heavy := dealHeavy(t, script)
 
-	root := repoRoot(t)
-	cmd := exec.Command("go", "list", "./...")
-	cmd.Dir = root
-	cmd.Env = goenv.Clean(os.Environ())
-	list, err := cmd.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	listFile := filepath.Join(t.TempDir(), "pkgs")
-	if err := os.WriteFile(listFile, list, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	live := exec.Command("bash", liveScript(t))
-	live.Stdin = strings.NewReader(string(list))
-	liveOut, err := live.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := strings.Fields(string(liveOut))
-	if len(want) == 0 || len(want) == len(strings.Fields(string(list))) {
-		t.Fatalf("live-packages.sh kept %d of %d packages; the stand-in for deprecated/PACKAGES is not being read", len(want), len(strings.Fields(string(list))))
-	}
+	want := liveRepoPackages(t)
+	// The deal reads pkgselect.DeprecatedFile: a package under its internal/nsprint
+	// prefix that no keep line names is dropped. No such package is in the tree
+	// any more, so the control is one that is not.
+	probe := "github.com/mas-bandwidth/nova-tools/internal/nsprint/deprecatedprobe"
+	dep, err := pkgselect.LoadDeprecated(repoRoot(t))
+	require.NoError(t, err)
+	require.False(t, dep.LivePackage(probe), "the deprecated list kept %s; the stand-in for %s is not being read", probe, pkgselect.DeprecatedFile)
 
 	// One deal per distinct shard count: two OSes at the same n deal the same.
 	// n is the EXPANDED MATRIX's count, never certRaceMinShards: the minimum is
 	// only the floor asserted above. Reversed witness (Stella's read of #4487,
-	// stella-d0fb88089706): with the matrix at shard 1..9, shards: 9, and the
-	// deal's awk printing `if (s == i - 1 && !(n == 9 && s == 8))`, a deal at
-	// the floor of eight passed while the real nine-shard deal lost 13 live
-	// packages; dealing at len(legs[runner]) fails it naming all 13.
+	// stella-d0fb88089706): with the matrix at shard 1..9, shards: 9, and a deal
+	// that dropped the last shard, a deal at the floor of eight passed while the
+	// real nine-shard deal lost 13 live packages; dealing at len(legs[runner])
+	// fails it naming all 13.
 	runners := make([]string, 0, len(certRaceMinShards))
 	for runner := range certRaceMinShards {
 		runners = append(runners, runner)
@@ -155,27 +134,14 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 		seen := map[string]int{}
 		home := map[string]int{}
 		for i := 1; i <= n; i++ {
-			s := strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
-			s = strings.ReplaceAll(s, "${{ matrix.shard }}", strconv.Itoa(i))
-			s = strings.ReplaceAll(s, "go list ./...", "cat "+listFile)
-			s = strings.ReplaceAll(s, ".github/scripts/live-packages.sh", liveScript(t))
-			env := filepath.Join(t.TempDir(), "env")
-			runStep(t, s, "GITHUB_ENV="+env)
-			b, err := os.ReadFile(env)
-			if err != nil {
-				t.Fatal(err)
-			}
-			line := strings.TrimSpace(string(b))
-			if !strings.HasPrefix(line, "HOSTED_PKGS=") || strings.Contains(line, "\n") {
-				t.Fatalf("%s shard %d wrote %q, want one HOSTED_PKGS= line", runner, i, line)
-			}
-			for _, p := range strings.Fields(strings.TrimPrefix(line, "HOSTED_PKGS=")) {
+			mine, err := pkgselect.Deal(want, heavy, n, i)
+			require.NoError(t, err)
+			for _, p := range mine {
 				seen[p]++
 				for _, h := range certRaceHeavy {
 					if strings.HasSuffix(p, "/"+h) {
-						if prev, dup := home[h]; dup {
-							t.Errorf("%s at %d shards: %s dealt twice (shards %d and %d)", runner, n, h, prev, i)
-						}
+						prev, dup := home[h]
+						assert.False(t, dup, "%s at %d shards: %s dealt twice (shards %d and %d)", runner, n, h, prev, i)
 						home[h] = i
 					}
 				}
@@ -192,19 +158,15 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 			bad = append(bad, p+" (not live)")
 		}
 		sort.Strings(bad)
-		if len(bad) > 0 {
-			t.Errorf("%s at %d shards: the deal is not a partition of the %d live packages: %v", runner, n, len(want), bad)
-		}
+		assert.Empty(t, bad, "%s at %d shards: the deal is not a partition of the %d live packages: %v", runner, n, len(want), bad)
 		shardOf := map[int]string{}
 		for _, h := range certRaceHeavy {
 			i, ok := home[h]
-			if !ok {
-				t.Errorf("%s at %d shards: heavy package %s is dealt to no shard (not a live package?)", runner, n, h)
+			if !assert.True(t, ok, "%s at %d shards: heavy package %s is dealt to no shard (not a live package?)", runner, n, h) {
 				continue
 			}
-			if other, dup := shardOf[i]; dup {
-				t.Errorf("%s at %d shards: %s and %s share shard %d", runner, n, other, h, i)
-			}
+			other, dup := shardOf[i]
+			assert.False(t, dup, "%s at %d shards: %s and %s share shard %d", runner, n, other, h, i)
 			shardOf[i] = h
 		}
 	}
@@ -222,22 +184,14 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 			test = i
 		}
 	}
-	if restore < 0 || deps < 0 || save < 0 || test < 0 {
-		t.Fatalf("certification.yml test is missing a step: restore=%d deps=%d save=%d test=%d", restore, deps, save, test)
-	}
-	if !(restore < deps && deps < save && save < test) {
-		t.Errorf("certification.yml test must restore (%d), build the race dependencies (%d), save (%d), then test (%d), in that order", restore, deps, save, test)
-	}
-	if !strings.Contains(job.Steps[deps].Run, "go build -race") {
-		t.Errorf("the dependency build is not -race, so the saved cache would not serve the race tests:\n%s", job.Steps[deps].Run)
-	}
-	if !strings.Contains(job.Steps[save].If, "cache-hit != 'true'") {
-		t.Errorf("the save runs on an exact hit too: if: %q", job.Steps[save].If)
-	}
+	require.False(t, restore < 0 || deps < 0 || save < 0 || test < 0, "certification.yml test is missing a step: restore=%d deps=%d save=%d test=%d", restore, deps, save, test)
+	assert.True(t, restore < deps && deps < save && save < test, "certification.yml test must restore (%d), build the race dependencies (%d), save (%d), then test (%d), in that order", restore, deps, save, test)
+	assert.Contains(t, job.Steps[deps].Run, ciRunner+" race-deps", "the dependency build is not `ci race-deps`:\n%s", job.Steps[deps].Run)
+	verb := readFile(t, filepath.Join(repoRoot(t), "tools", "ci", "sel_racedeps.go"))
+	assert.Contains(t, verb, `"go", "build", "-race"`, "`ci race-deps` does not build under -race, so the saved cache would not serve the race tests")
+	assert.Contains(t, job.Steps[save].If, "cache-hit != 'true'", "the save runs on an exact hit too: if: %q", job.Steps[save].If)
 	run := job.Steps[test].Run
 	for _, w := range []string{"go test -race", "-count=1", "$HOSTED_PKGS"} {
-		if !strings.Contains(run, w) {
-			t.Errorf("the test step does not carry %q: %s", w, run)
-		}
+		assert.Contains(t, run, w, "the test step does not carry %q: %s", w, run)
 	}
 }

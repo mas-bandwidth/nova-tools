@@ -6,7 +6,7 @@ import (
 )
 
 // ResultFormat is the RESULT-FORMAT paragraph a worker's brief carries for a
-// typed card of kind. Since nova-tools#3689 it is the two-line contract: the
+// typed card of kind. It describes the two-line contract: the
 // model writes line 1 (this card's line 1, verbatim) and line 2 (`DONE`,
 // `ABSTAIN <why>` or `BLOCKED <why>`) and an optional note; the card wrapper
 // writes every field it knows or computes (WrapperOwned, the Gates rows) into
@@ -36,6 +36,10 @@ func ResultFormat(kind string) string {
 	b.WriteString("Nothing else: the wrapper writes every other field from the card, the branch, the diff and its own run of the card's TEST line.\n")
 	return b.String()
 }
+
+// WrapperOwned are the typed fields the wrapper writes. A model-written line
+// for one of them is dropped: the wrapper's value is the record.
+var WrapperOwned = []string{"SCHEMA", "KIND", "ATTEMPT", "CHECK", "REPO", "BRANCH", "PATHS", "RED", "GREEN"}
 
 // JudgementFields are what a DONE record of kind needs that the wrapper cannot
 // know: the Contract fields the kind requires that are not WrapperOwned, and

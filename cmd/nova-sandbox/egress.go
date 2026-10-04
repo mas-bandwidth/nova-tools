@@ -22,11 +22,13 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // egressRemedy is the one remedy line every refusal of these verbs carries.
@@ -69,7 +71,9 @@ type sudoCommand struct{}
 func (sudoCommand) Look(name string) (string, error) { return exec.LookPath(name) }
 
 func (sudoCommand) Run(name string, args ...string) (string, error) {
-	out, err := exec.Command("sudo", append([]string{"-n", name}, args...)...).CombinedOutput()
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, "sudo", append([]string{"-n", name}, args...)...)
+	defer cancel()
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
@@ -133,7 +137,9 @@ func parseEgress(args []string) egressFlags {
 		case "--plan":
 			f.plan = want("--plan")
 		default:
-			add("no_command", oneline.Escape(a)+" is not a flag of the egress verbs; run: nova-sandbox help")
+			text, took := unknownArg(args, i, "egress")
+			add("no_command", text)
+			i += took
 		}
 	}
 	return f
@@ -176,7 +182,7 @@ func egressRefuse(stderr io.Writer, bad []sandbox.Refusal) int {
 // It costs 1, and a caller tells the two apart by the number as well as by the line.
 func egressSaidNo(stderr io.Writer, bad []sandbox.Refusal) int {
 	for _, r := range bad {
-		fmt.Fprintf(stderr, "EGRESS REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.Escape(r.Text))
+		fmt.Fprintf(stderr, "EGRESS REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.WithRemedy(oneline.Escape(r.Text), "nova-sandbox egress -h"))
 	}
 	return sandbox.ExitProbeFailed
 }
@@ -229,8 +235,16 @@ func egressPlanVerb(f egressFlags, stderr io.Writer) int {
 	in := sandbox.EgressInput{
 		Run: f.run, PolicyPath: f.policy, Names: names, ModelHost: f.modelHost,
 		Resolver: resolver, BenchCIDRs: cidrs, UID: f.uid, Veth: f.veth,
-		Lookup: egressLookup(resolver),
 	}
+	// Every problem the plan can name without the network is named first, all at once: a
+	// plan refused for its flags never waits on a resolver (a missing --run cost a 30 s
+	// resolver timeout before it was named). Without a Lookup the only resolve_failed is
+	// "no resolver was given", which is this check's own and not the caller's.
+	_, inputBad := sandbox.BuildEgress(in)
+	if inputBad = slices.DeleteFunc(inputBad, func(r sandbox.Refusal) bool { return r.Reason == "resolve_failed" }); len(inputBad) > 0 {
+		return egressRefuse(stderr, inputBad)
+	}
+	in.Lookup = egressLookup(resolver)
 	// The resolution is the one step of this verb that takes real time, so it says so:
 	// a reader staring at a silent terminal cannot tell a slow resolver from a hung one.
 	fmt.Fprintf(stderr, "EGRESS STEP name=resolve state=start\n")
@@ -373,7 +387,7 @@ func egressRun(stderr io.Writer, verb, run, table string, args ...string) int {
 // a message from a program they did not call.
 func needNft(stderr io.Writer) int {
 	if _, err := egressPriv.Look("nft"); err != nil {
-		fmt.Fprintf(stderr, "EGRESS REFUSED reason=no_nft: nft is not on this bench (%s), and this wall is nftables; nothing was applied and nothing was dropped\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "EGRESS REFUSED reason=no_nft: nft is not on this bench (%s), and this wall is nftables; nothing was applied and nothing was dropped; run: nova-sandbox egress -h\n", oneline.Err(err))
 		fmt.Fprintln(stderr, nftRemedy)
 		return sandbox.ExitCannotRun
 	}

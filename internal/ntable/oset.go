@@ -88,7 +88,7 @@ func members(zs []redis.Z) []Member {
 // CountCmd is one queued count of an ordered set: its ZCARD, less one when
 // the excluded member is in it (its ZSCORE rides the same pipeline). It is
 // the one count every reader of a set counts through: the sprint's card
-// count (internal/nsprint/ws.QueueCardCount) leaves the stream's sentinel
+// count leaves the stream's sentinel
 // out this way.
 type CountCmd struct {
 	n    *redis.IntCmd

@@ -27,6 +27,8 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // BinEnv names a directory holding initdb, pg_ctl and postgres, for a
@@ -89,7 +91,7 @@ func Binaries() (string, error) {
 			return dir, nil
 		}
 	}
-	return "", fmt.Errorf("pg_ctl (with initdb and postgres) is not on PATH, not in %s, and not under %s; install postgresql (.github/scripts/install-postgres.sh)", BinEnv, strings.Join(wellKnown, ", "))
+	return "", fmt.Errorf("pg_ctl (with initdb and postgres) is not on PATH, not in %s, and not under %s; install postgresql (go run ./tools/ci install-postgres)", BinEnv, strings.Join(wellKnown, ", "))
 }
 
 // Server is one running throwaway Postgres.
@@ -109,6 +111,10 @@ func (s *Server) DSN(database string) string {
 	return fmt.Sprintf("postgres://%s@127.0.0.1:%s/%s?sslmode=disable", s.User, s.Port, database)
 }
 
+// pgToolBudget is how long one initdb or pg_ctl call may run: pg_ctl start waits up to
+// 60 s for the server itself, and the budget leaves room past that.
+const pgToolBudget = 120 * time.Second
+
 // StartServer runs initdb and pg_ctl start under dir on a free loopback
 // port. The caller stops it with Stop. It is the TestMain form: one server
 // for a package, one database per test through Database.
@@ -120,7 +126,8 @@ func StartServer(dir string) (*Server, error) {
 	data := filepath.Join(dir, "data")
 	logPath := filepath.Join(dir, "postgres.log")
 	s := &Server{Dir: dir, Bin: bin, User: "postgres", log: logPath}
-	initdb := exec.Command(filepath.Join(bin, "initdb"), "-D", data, "-U", s.User, "--auth=trust", "--no-sync", "-E", "UTF8", "--locale=C")
+	initdb, stopInitdb := subproc.CommandFor(context.Background(), pgToolBudget, filepath.Join(bin, "initdb"), "-D", data, "-U", s.User, "--auth=trust", "--no-sync", "-E", "UTF8", "--locale=C")
+	defer stopInitdb()
 	initdb.Env = cleanEnv()
 	if out, err := initdb.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("initdb: %v\n%s", err, out)
@@ -136,12 +143,14 @@ func StartServer(dir string) (*Server, error) {
 			return nil, err
 		}
 		opts := fmt.Sprintf("-p %s -c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c log_min_messages=warning", port)
-		start := exec.Command(filepath.Join(bin, "pg_ctl"), "-D", data, "-l", logPath, "-o", opts, "-w", "-t", "60", "start")
+		start, stopStart := subproc.CommandFor(context.Background(), pgToolBudget, filepath.Join(bin, "pg_ctl"), "-D", data, "-l", logPath, "-o", opts, "-w", "-t", "60", "start")
 		start.Env = cleanEnv()
 		out, err := start.CombinedOutput()
+		stopStart()
 		if err == nil {
 			s.Port = port
 			if err := s.ready(); err != nil {
+				// ignored: a test fixture's cleanup on the failure path; the ready error is the one returned
 				_ = s.Stop()
 				return nil, err
 			}
@@ -179,7 +188,8 @@ func (s *Server) ready() error {
 
 // Stop stops the server (immediate mode: nothing here is kept).
 func (s *Server) Stop() error {
-	stop := exec.Command(filepath.Join(s.Bin, "pg_ctl"), "-D", filepath.Join(s.Dir, "data"), "-m", "immediate", "-w", "stop")
+	stop, stopStop := subproc.CommandFor(context.Background(), pgToolBudget, filepath.Join(s.Bin, "pg_ctl"), "-D", filepath.Join(s.Dir, "data"), "-m", "immediate", "-w", "stop")
+	defer stopStop()
 	stop.Env = cleanEnv()
 	if out, err := stop.CombinedOutput(); err != nil {
 		return fmt.Errorf("pg_ctl stop: %v\n%s", err, out)

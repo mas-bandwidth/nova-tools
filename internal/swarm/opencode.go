@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
 // THE USAGE SOURCE IS THE DATABASE THE HARNESS WRITES (SPEC-SWARM rule 12, rule 13).
@@ -61,12 +62,6 @@ func OpenCodeStoreLocations(dataHome string) []string {
 	}
 }
 
-// UsageRefusalLine is the one line a usage read that did not answer leaves on the record, so
-// that a row of dashes is never silent about the reader it needed.
-func UsageRefusalLine(id string, err error) string {
-	return fmt.Sprintf("%s id=%s", oneline.Escape(redactedReason(err)), oneline.Field(id))
-}
-
 // usageTimeout is how long this tool waits for one query before saying so. It is a property
 // of the tool, like a deadline, and never a fact about anybody's data: the supervisor
 // samples every few seconds and a query that has not answered in this long has failed.
@@ -88,7 +83,9 @@ const messagesSQL = `SELECT ` +
 	`json_extract(data, '$.tokens.output'), ` +
 	`json_extract(data, '$.tokens.cache.write'), ` +
 	`json_extract(data, '$.tokens.cache.read'), ` +
-	`json_extract(data, '$.tokens.reasoning') ` +
+	`json_extract(data, '$.tokens.reasoning'), ` +
+	// the harness's own cost of the message, what a dollar budget is held to (#5094)
+	`json_extract(data, '$.cost') ` +
 	`FROM message WHERE json_extract(data, '$.tokens') IS NOT NULL`
 
 // readOpenCodeUsage reads one job's accounting out of its own database.
@@ -327,8 +324,9 @@ func foldOpenCodeRows(rows [][]string) (ProviderUsage, error) {
 	maxInt := int64(^uint(0) >> 1)
 	var total int64
 	provider, model := "", ""
+	cost, costed := new(big.Rat), false
 	for rowIndex, row := range rows {
-		if len(row) != 2+len(TokenColumns) {
+		if len(row) != 2+len(TokenColumns)+1 {
 			return ProviderUsage{}, fmt.Errorf("opencode usage row %d column count is invalid", rowIndex+1)
 		}
 		if v := strings.TrimSpace(row[0]); v != "" {
@@ -356,6 +354,18 @@ func foldOpenCodeRows(rows [][]string) (ProviderUsage, error) {
 			total += n
 			reported[i] = true
 		}
+		// the message's cost, exactly: a float the store printed, never added as a float
+		if cell := strings.TrimSpace(row[2+len(TokenColumns)]); cell != "" && cell != Dash {
+			r, ok := new(big.Rat).SetString(cell)
+			if !ok || r.Sign() < 0 {
+				return ProviderUsage{}, fmt.Errorf("opencode usage row %d column cost is not a nonnegative number", rowIndex+1)
+			}
+			cost.Add(cost, r)
+			costed = true
+		}
+	}
+	if costed {
+		values["cost"] = cardcost.Text(cost)
 	}
 	for i, c := range TokenColumns {
 		if reported[i] {

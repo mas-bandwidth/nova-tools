@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go/ast"
 	"go/token"
 	"io/fs"
@@ -14,9 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 )
 
 // THE PUBLICATION BOUNDARY, over the whole binary.
@@ -27,29 +27,11 @@ import (
 // what it deliberately does not do, "It does not pull the bus, fetch, push, run git, or
 // talk to a network. It reads a checkout as files."
 //
-// What was enforced was narrower than what was stated, in three places:
-//
-//  1. TestTheOnlySubprocessIsSqlite3AndThereIsNoNetwork reads internal/tokens and nothing
-//     else. cmd/nova-tokens/main.go could import net/http, import os/exec, or name "git",
-//     and every test in this repository stayed green.
-//  2. Its reader and rule 9's skip directory entries, so both stop at a package's top
-//     level. A publisher landing in internal/tokens/publish -- the path the format packet's
-//     `records publish` verb would want -- could import net, run git, and call
-//     os.RemoveAll, and the suite would be green.
-//  3. The no-git BEHAVIOUR was asserted for one verb, `fold --bus`, over a checkout with no
-//     remote. Nothing pinned report, sources, sum, check or version, and nothing pinned a
-//     checkout that HAS a remote, which is the only kind a push could reach.
-//
-// That gap matters more than an ordinary hole, because publication is under review right
-// now: docs/PROPOSAL-TOKENS-FORMAT.md proposes `nova-tokens records publish --batch <dir>
-// --ledger <git-checkout> --remote <name> --branch <name>`, and says of itself "not shipped
-// behavior"; PR #124, which merged it, says "the publication interface remain[s an]
-// explicit spec gate[]". So the next hand in this file may be holding a git publisher, and
-// the tests decide whether v1's read-only promise is a wall or a sentence in a document.
-// These are the wall.
+// These tests hold the whole binary to it: every package the binary reaches and every
+// directory the tool owns (a publisher cannot hide in a subpackage), and every verb, over a
+// checkout that has a remote, with a fake git on PATH that must never run.
 
-// binaryPackages returns every first-party package reachable from cmd/nova-tokens, plus the
-// records core, which nothing imports yet and which is where a publisher would grow.
+// binaryPackages returns every first-party package reachable from cmd/nova-tokens.
 //
 // It walks imports rather than naming directories, so a package added anywhere in the
 // binary's graph is covered the day it is added, with nobody remembering to widen a list.
@@ -75,12 +57,11 @@ func binaryPackages(t *testing.T) []string {
 		}
 	}
 	walk("cmd/nova-tokens")
-	walk("internal/records")
 	// Plus every subpackage under the two this tool owns: a package no import reaches yet
 	// is still source that ships in this repository, and the point of the walk is that a
 	// publisher cannot hide in a directory.
 	root := repoRoot(t)
-	for _, owned := range []string{"internal/tokens", "cmd/nova-tokens", "internal/records"} {
+	for _, owned := range []string{"internal/tokens", "cmd/nova-tokens"} {
 		err := filepath.WalkDir(filepath.Join(root, owned), func(path string, d fs.DirEntry, err error) error {
 			if err != nil || !d.IsDir() {
 				return err
@@ -98,20 +79,16 @@ func binaryPackages(t *testing.T) []string {
 			}
 			return nil
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err, err)
 	}
 	sort.Strings(order)
-	// The floor: the five packages of the binary's own graph plus the records core. Fewer
+	// The floor: the five packages of the binary's own graph. Fewer
 	// than that and the walk found nothing and this test would pass by checking nothing.
 	for _, must := range []string{
 		"cmd/nova-tokens", "internal/tokens", "internal/oneline",
-		"internal/bounded", "internal/buildinfo", "internal/records",
+		"internal/bounded", "internal/buildinfo",
 	} {
-		if !seen[must] {
-			t.Fatalf("the import walk did not reach %s; it was looking in the wrong place and would have passed by checking nothing (found %v)", must, order)
-		}
+		require.True(t, seen[must], "the import walk did not reach %s; it was looking in the wrong place and would have passed by checking nothing (found %v)", must, order)
 	}
 	return order
 }
@@ -119,9 +96,7 @@ func binaryPackages(t *testing.T) []string {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	return root
 }
 
@@ -217,12 +192,8 @@ func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 			checked++
 			for _, imp := range f.Imports {
 				ip := strings.Trim(imp.Path.Value, `"`)
-				if ip == "net" || strings.HasPrefix(ip, "net/") {
-					t.Errorf("%s imports %q; this tool talks to no network, and a publisher is a separate spec gate (rule 16)", path, ip)
-				}
-				if ip == "os/exec" && path != theOneSubprocess {
-					t.Errorf("%s imports os/exec; the one subprocess is sqlite3 and it lives in %s (rule 19)", path, theOneSubprocess)
-				}
+				assert.False(t, ip == "net" || strings.HasPrefix(ip, "net/"), "%s imports %q; this tool talks to no network, and a publisher is a separate spec gate (rule 16)", path, ip)
+				assert.True(t, ip != "os/exec" || path == theOneSubprocess, "%s imports os/exec; the one subprocess is sqlite3 and it lives in %s (rule 19)", path, theOneSubprocess)
 			}
 		}
 		for name, body := range pkgText(t, pkg) {
@@ -231,9 +202,7 @@ func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 				continue
 			}
 			for _, spawn := range spawners {
-				if strings.Contains(body, spawn) {
-					t.Errorf("%s calls %s; this tool starts one subprocess, sqlite3, and it lives in %s (rule 19)", path, spawn, theOneSubprocess)
-				}
+				assert.False(t, strings.Contains(body, spawn), "%s calls %s; this tool starts one subprocess, sqlite3, and it lives in %s (rule 19)", path, spawn, theOneSubprocess)
 			}
 		}
 		// And the literals, in the syntax tree rather than the text, so an import path is an
@@ -254,19 +223,13 @@ func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 				if err != nil {
 					text = lit.Value
 				}
-				if namesGit(text) {
-					t.Errorf("%s spells git in a string literal; the tool runs none -- it reads a checkout as files (rule 16)", path)
-				}
+				assert.False(t, namesGit(text), "%s spells git in a string literal; the tool runs none -- it reads a checkout as files (rule 16)", path)
 				return true
 			})
 		}
 	}
-	if checked < 10 {
-		t.Fatalf("examined %d source files; this tripwire was looking in the wrong place and would have passed by checking almost nothing", checked)
-	}
-	if literals < 50 {
-		t.Fatalf("examined %d string literals; the literal half was looking in the wrong place and would have passed by checking almost nothing", literals)
-	}
+	require.False(t, checked < 10, "examined %d source files; this tripwire was looking in the wrong place and would have passed by checking almost nothing", checked)
+	require.False(t, literals < 50, "examined %d string literals; the literal half was looking in the wrong place and would have passed by checking almost nothing", literals)
 }
 
 // namesGit's own test: the tripwire above is only as good as this function, and the two
@@ -278,9 +241,7 @@ func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 		"git", "GIT", "git.exe", "/usr/bin/git", "git push", `C:\bin\git.exe`,
 		"git -C x push", "/opt/homebrew/bin/git", "  git  ",
 	} {
-		if !namesGit(yes) {
-			t.Errorf("namesGit(%q) is false; that is a program to run", yes)
-		}
+		assert.True(t, namesGit(yes), "namesGit(%q) is false; that is a program to run", yes)
 	}
 	for _, no := range []string{
 		"github.com/mas-bandwidth/nova-tools/internal/oneline",
@@ -293,9 +254,7 @@ func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 		"not the Date, not the filename, not the directory listing, not the git history",
 		"usage:\n  nova-tokens fold --out ./out --repos ./repos.tsv\n\nnot the git history\n",
 	} {
-		if namesGit(no) {
-			t.Errorf("namesGit(%q) is true; a tripwire that cries wolf gets deleted", no)
-		}
+		assert.False(t, namesGit(no), "namesGit(%q) is true; a tripwire that cries wolf gets deleted", no)
 	}
 }
 
@@ -349,90 +308,22 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 	}
 	for _, args := range runs {
 		r := invoke(t, args...)
-		if r.exit > 1 {
-			t.Errorf("%v exits %d; the fixture is meant to be a run the tool can complete\n%s", args, r.exit, r.all())
+		assert.False(t, r.exit > 1, "%v exits %d; the fixture is meant to be a run the tool can complete\n%s", args, r.exit, r.all())
+	}
+
+	{
+		_, err := os.Stat(gitLog)
+		if err == nil {
+			assert.Failf(t, "git was invoked", "git was invoked: %s", read(t, gitLog))
 		}
 	}
-
-	if _, err := os.Stat(gitLog); err == nil {
-		t.Errorf("git was invoked: %s", read(t, gitLog))
+	{
+		after := readTree(t, bare)
+		assert.Equal(t, beforeBare.digest, after.digest, "the remote changed; this tool does not push, fetch or talk to a network (rule 16): diff: %s", diffTrees(beforeBare, after))
 	}
-	if after := readTree(t, bare); after.digest != beforeBare.digest {
-		t.Errorf("the remote changed; this tool does not push, fetch or talk to a network (rule 16): diff: %s", diffTrees(beforeBare, after))
-	}
-	if after := readTree(t, filepath.Join(bus, ".git")); after.digest != beforeGit.digest {
-		t.Errorf("the checkout's .git changed; the bus is read as files and nothing else (rule 16): diff: %s", diffTrees(beforeGit, after))
-	}
-}
-
-// The bare-remote half of rule 16 under contention. receive-pack's automatic `git gc
-// --auto` repacks a bare repository's objects directory after a push; in a detached
-// maintenance process that keeps running once push returns, it mutates the remote
-// asynchronously and a snapshot taken before it settles sees loose objects become a pack
-// file, which is the intermittent "the remote changed" mutation #205 saw in CI. Eight
-// writers push to one bare remote concurrently, and the remote's tree -- per relative path
-// -- must not move once they have all returned. The fixture turns receive.autogc, gc.auto
-// and maintenance.auto off (the repair), and this test pins that: any later change is one
-// this tool may not make.
-func TestConcurrentWritersDoNotMutateTheBareRemote(t *testing.T) {
-	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-
-	realGit, _ := exec.LookPath("git")
-	if realGit == "" || runtime.GOOS == "windows" {
-		t.Skip("the fixture wants a real git to build the checkout")
-	}
-	dir := t.TempDir()
-	bare := filepath.Join(dir, "remote.git")
-	gitRun(t, realGit, dir, "init", "--bare", "-q", bare)
-	gitRun(t, realGit, bare, "config", "receive.autogc", "false")
-	gitRun(t, realGit, bare, "config", "gc.auto", "0")
-	gitRun(t, realGit, bare, "config", "maintenance.auto", "false")
-
-	const writers = 8
-	buses := make([]string, writers)
-	for i := range buses {
-		buses[i] = mkdir(t, filepath.Join(dir, fmt.Sprintf("bus%d", i)))
-	}
-	for i, bus := range buses {
-		gitRun(t, realGit, bus, "init", "-q")
-		write(t, filepath.Join(bus, "note.md"), fmt.Sprintf("writer %d\n", i))
-		gitRun(t, realGit, bus, "add", "-A")
-		gitRun(t, realGit, bus, "commit", "-q", "-m", "writer")
-		gitRun(t, realGit, bus, "remote", "add", "origin", bare)
-	}
-
-	errs := make(chan error, writers)
-	var wg sync.WaitGroup
-	for i, bus := range buses {
-		wg.Add(1)
-		go func(bus string, i int) {
-			defer wg.Done()
-			errs <- gitRunErr(realGit, bus, "push", "-q", "origin", fmt.Sprintf("HEAD:refs/heads/w%d", i))
-		}(bus, i)
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	before := readTree(t, bare)
-	deadline := time.Now().Add(time.Second)
-	for {
-		if after := readTree(t, bare); after.digest != before.digest {
-			t.Errorf("the remote changed under concurrent writers; this tool does not push, fetch or talk to a network (rule 16): diff: %s", diffTrees(before, after))
-			return
-		}
-		if time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	{
+		after := readTree(t, filepath.Join(bus, ".git"))
+		assert.Equal(t, beforeGit.digest, after.digest, "the checkout's .git changed; the bus is read as files and nothing else (rule 16): diff: %s", diffTrees(beforeGit, after))
 	}
 }
 
@@ -460,8 +351,9 @@ func gitRunErr(git, dir string, args ...string) error {
 
 func gitRun(t *testing.T, git, dir string, args ...string) {
 	t.Helper()
-	if err := gitRunErr(git, dir, args...); err != nil {
-		t.Fatal(err)
+	{
+		err := gitRunErr(git, dir, args...)
+		require.NoError(t, err, err)
 	}
 }
 
@@ -488,16 +380,14 @@ func readTree(t *testing.T, root string) treeSnapshot {
 		names = append(names, rel)
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	sort.Strings(names)
 	files := make(map[string]string, len(names))
 	for _, rel := range names {
 		raw, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			// A file git holds open or replaces under us is named, not skipped.
-			t.Fatalf("%s: %v", rel, err)
+			require.FailNowf(t, "unreadable source file", "%s: %v", rel, err)
 		}
 		h := sha256.Sum256(raw)
 		files[rel] = hex.EncodeToString(h[:])
@@ -506,9 +396,7 @@ func readTree(t *testing.T, root string) treeSnapshot {
 		sum.Write(raw)
 		sum.Write([]byte{0})
 	}
-	if len(names) == 0 {
-		t.Fatalf("nothing under %s; this comparison would hold whatever happened", root)
-	}
+	require.False(t, len(names) == 0, "nothing under %s; this comparison would hold whatever happened", root)
 	return treeSnapshot{
 		digest: hex.EncodeToString(sum.Sum(nil)),
 		files:  files,
@@ -536,14 +424,6 @@ func diffTrees(before, after treeSnapshot) string {
 	return strings.Join(diffs, ", ")
 }
 
-// treeDigest is one hash over every file under root: its relative path, its size and its
-// bytes. A changed, added or removed file all move it, so one comparison says whether
-// anything under a directory was touched.
-func treeDigest(t *testing.T, root string) string {
-	t.Helper()
-	return readTree(t, root).digest
-}
-
 func TestDiffTreesReportsDifferences(t *testing.T) {
 	t.Parallel()
 
@@ -565,21 +445,13 @@ func TestDiffTreesReportsDifferences(t *testing.T) {
 	}
 	diff := diffTrees(a, b)
 	want := "added added, modified mod (was 11111111..now 22222222), removed del"
-	if diff != want {
-		t.Errorf("diffTrees = %q; want %q", diff, want)
-	}
+	assert.Equal(t, want, diff, "diffTrees = %q; want %q", diff, want)
 }
 
-// The records namespace is not a verb, and that is the current answer rather than an
-// oversight. docs/PROPOSAL-TOKENS-FORMAT.md proposes `records collect|check|view|publish`
-// and calls itself "not shipped behavior"; PR #124's merge says the publication interface
-// remains an explicit spec gate; SPEC-TOKENS' own verb list has five verbs and none of
-// them writes anywhere but the day file.
-//
-// So this tool refuses it as an unknown subcommand, exit 2, and writes nothing. The test is
-// here so that the day somebody implements it, they change this line deliberately and the
-// spec in the same hand -- rather than discovering afterwards that a verb which pushes to a
-// git remote landed in a tool whose spec says it runs no git.
+// The records namespace is not a verb. SPEC-TOKENS' verb list has none that writes
+// anywhere but the day file, so this tool refuses `records` as an unknown subcommand,
+// exit 2, and writes nothing. A verb that publishes changes this test and the spec in the
+// same hand.
 func TestTheRecordsNamespaceIsNotAVerbUntilItsGateIsDecided(t *testing.T) {
 	t.Parallel()
 
@@ -592,19 +464,13 @@ func TestTheRecordsNamespaceIsNotAVerbUntilItsGateIsDecided(t *testing.T) {
 	} {
 		r := invoke(t, args...)
 		wantExit(t, r, 2)
-		wantContains(t, r.stderr, `unknown subcommand "records"`)
+		wantContains(t, r.stderr, `unknown verb "records"; did you mean report?`)
 		wantContains(t, r.stderr, "run: nova-tokens help")
 	}
 	ents, err := os.ReadDir(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ents) != 0 {
-		t.Errorf("a refused verb wrote %d entries under --out", len(ents))
-	}
+	require.NoError(t, err, err)
+	assert.Equal(t, 0, len(ents), "a refused verb wrote %d entries under --out", len(ents))
 	// And the banner does not advertise it: a usage block naming a verb the tool refuses
 	// is a first run that fails on its own instructions.
-	if strings.Contains(usage, "records") {
-		t.Error("the usage banner names a records verb this tool refuses")
-	}
+	assert.False(t, strings.Contains(usage, "records"), "the usage banner names a records verb this tool refuses")
 }

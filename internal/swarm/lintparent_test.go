@@ -1,6 +1,11 @@
 package swarm
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 // Each case is one line of a card and what the rule must say about it. The `want` cases
 // are the shape practice 25 exists for; the `no` cases are lines measured on real cards
@@ -26,8 +31,8 @@ func TestAWalkedParentPathIsAFinding(t *testing.T) {
 		"run `cd ../..` to get out of the job", // a backtick span does not excuse a walk
 	} {
 		got := CardParentPaths(lines("RESULT: c sha=0", l))
-		if len(got) != 1 || got[0] != 2 {
-			t.Errorf("a walked parent path is a finding on its own line: %q -> %v", l, got)
+		if assert.Len(t, got, 1, "a walked parent path is a finding on its own line: %q -> %v", l, got) {
+			assert.Equal(t, 2, got[0], "a walked parent path is a finding on its own line: %q -> %v", l, got)
 		}
 	}
 }
@@ -47,9 +52,8 @@ func TestAQuotedParentPathIsNotAFinding(t *testing.T) {
 		"see [the ledger](../reports/pitstop.md) for the counts",
 		"| the fix reverted | one `../` dropped again in 08-rate-and-convergence.md:41 | <paste> |",
 	} {
-		if got := CardParentPaths(lines("RESULT: c sha=0", l)); len(got) != 0 {
-			t.Errorf("a quoted parent path is not a path the worker walks: %q -> %v", l, got)
-		}
+		got := CardParentPaths(lines("RESULT: c sha=0", l))
+		assert.Empty(t, got, "a quoted parent path is not a path the worker walks: %q -> %v", l, got)
 	}
 }
 
@@ -67,9 +71,7 @@ func TestAFencedQuotationIsNotAFinding(t *testing.T) {
 		"```",
 		"That is the shape to reproduce.",
 	))
-	if len(got) != 0 {
-		t.Fatalf("a fenced quotation is not an instruction: %v", got)
-	}
+	require.Empty(t, got, "a fenced quotation is not an instruction: %v", got)
 }
 
 // ...but a walk inside a fence is still a walk: a card's commands live in fences, which is
@@ -84,9 +86,8 @@ func TestAWalkInsideAFenceIsStillAFinding(t *testing.T) {
 		"cd ../../elsewhere",
 		"```",
 	))
-	if len(got) != 1 || got[0] != 4 {
-		t.Fatalf("a `cd ..` inside a fenced command block is still the thing the wall refuses: %v", got)
-	}
+	require.Len(t, got, 1, "a `cd ..` inside a fenced command block is still the thing the wall refuses: %v", got)
+	require.Equal(t, 4, got[0], "a `cd ..` inside a fenced command block is still the thing the wall refuses: %v", got)
 }
 
 // An ellipsis is three dots, not a parent path. `ok .../internal/pulse 1.813s` is what
@@ -98,9 +99,8 @@ func TestAnEllipsisIsNotAParentPath(t *testing.T) {
 		"ok .../internal/pulse 1.813s",
 		"run it from .../nova-tools and paste what it printed",
 	} {
-		if got := CardParentPaths(lines("RESULT: c sha=0", l)); len(got) != 0 {
-			t.Errorf("an ellipsis is not a parent path: %q -> %v", l, got)
-		}
+		got := CardParentPaths(lines("RESULT: c sha=0", l))
+		assert.Empty(t, got, "an ellipsis is not a parent path: %q -> %v", l, got)
 	}
 }
 
@@ -115,7 +115,7 @@ func TestFindingsAreOneToALineInOrder(t *testing.T) {
 		"nothing here",
 		"cd ../c",
 	))
-	if len(got) != 2 || got[0] != 2 || got[1] != 4 {
-		t.Fatalf("one finding per line, in line order: %v", got)
-	}
+	require.Len(t, got, 2, "one finding per line, in line order: %v", got)
+	require.Equal(t, 2, got[0], "one finding per line, in line order: %v", got)
+	require.Equal(t, 4, got[1], "one finding per line, in line order: %v", got)
 }

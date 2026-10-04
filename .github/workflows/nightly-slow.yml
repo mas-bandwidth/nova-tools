@@ -85,15 +85,24 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        if: matrix.tag == 'functional'
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: install redis-server
         if: matrix.tag == 'functional'
-        run: bash .github/scripts/install-redis-server.sh
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server
 
       - name: install postgres
         if: matrix.tag == 'functional'
         # nova-config's functional tests spawn a throwaway Postgres
         # (internal/nsprint/testutil/pg); a missing binary fails them.
-        run: bash .github/scripts/install-postgres.sh
+        run: |
+          "$RUNNER_TEMP/ci" install-postgres
 
       - name: tagged suite
         env:
@@ -111,23 +120,47 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
+      # contents: read, because a job-level permissions block replaces the workflow's and
+      # the checkout below needs it; issues: write for the one issue.
+      contents: read
       issues: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: restore the go build and module cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-gotools-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gotools-
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: save the go build and module cache
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
       - name: open or update one "nightly tagged suite red" issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
         run: |
-          set -euo pipefail
-          title="nightly tagged suite red $(date -u +%Y-%m-%d)"
-          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          numbers=$(gh issue list --state open --limit 200 --json number,title \
-            | jq -r --arg t "$title" '.[] | select(.title == $t) | .number')
-          if [ -n "$numbers" ]; then
-            n=$(printf '%s\n' "$numbers" | head -n 1)
-            echo "issue #$n already open for today; adding a comment"
-            gh issue comment "$n" --body "A nightly tagged suite is still red: $run_url"
-          else
-            gh issue create --title "$title" \
-              --body "A leg of the nightly tagged suites failed.\n\nRun: $run_url"
-          fi
+          "$RUNNER_TEMP/ci" nightly-report

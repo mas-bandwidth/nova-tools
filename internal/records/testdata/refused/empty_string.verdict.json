@@ -1,5 +1,0 @@
-{
-  "field": "body.source.session_id",
-  "rule": "empty_string",
-  "verdict": "refused"
-}

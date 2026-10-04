@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The guarantees of Source, Locate and Digest over arbitrary libraries, not
@@ -127,7 +130,7 @@ func propertyCases(t *testing.T, seed uint64, check func(t *testing.T, r *rand.R
 		p := propertyCase(r)
 		check(t, r, p)
 		if t.Failed() {
-			t.Fatalf("seed %d case %d: prelude %q files %q", seed, i, p.prelude, p.texts)
+			require.Failf(t, "", "seed %d case %d: prelude %q files %q", seed, i, p.prelude, p.texts)
 		}
 	}
 }
@@ -141,11 +144,11 @@ func TestPropertyEveryLineOfTheSourceMapsToItsFileAndLine(t *testing.T) {
 		lib := p.library(p.files())
 		source, err := lib.Source()
 		if err != nil {
-			t.Errorf("Source: %v", err)
+			assert.NoError(t, err, "Source: %v", err)
 			return
 		}
 		if !strings.HasSuffix(source, "\n") {
-			t.Errorf("the source does not end with a line break")
+			assert.True(t, strings.HasSuffix(source, "\n"), "the source does not end with a line break")
 			return
 		}
 		got := strings.Split(strings.TrimSuffix(source, "\n"), "\n")
@@ -191,42 +194,42 @@ func TestPropertyEveryLineOfTheSourceMapsToItsFileAndLine(t *testing.T) {
 			// alone after "-- ", as the loader this was lifted from wrote it;
 			// so is the end.
 			if header > len(got) || !strings.HasPrefix(got[header-1], "-- lua/") || strings.Contains(got[header-1], ": its line 1") {
-				t.Errorf("line %d is not the header of %q:\n%s", header, name, source)
+				assert.Failf(t, "", "line %d is not the header of %q:\n%s", header, name, source)
 				return
 			}
 			if end := len(want); end > len(got) || !strings.HasPrefix(got[end-1], "end -- lua/") {
-				t.Errorf("line %d is not the end of %q:\n%s", end, name, source)
+				assert.Failf(t, "", "line %d is not the end of %q:\n%s", end, name, source)
 				return
 			}
 		}
 		if len(got) != len(want) {
-			t.Errorf("the source has %d lines, want %d:\n%s", len(got), len(want), source)
+			assert.Len(t, got, len(want), "the source has %d lines, want %d:\n%s", len(got), len(want), source)
 			return
 		}
 		built, err := lib.build()
 		if err != nil {
-			t.Errorf("build: %v", err)
+			assert.NoError(t, err, "build: %v", err)
 			return
 		}
 		for i, w := range want {
 			origin, ok := built.locate(i + 1)
 			if !ok || origin != w.origin {
-				t.Errorf("line %d comes from %+v (%v), want %+v", i+1, origin, ok, w.origin)
+				assert.Failf(t, "", "line %d comes from %+v (%v), want %+v", i+1, origin, ok, w.origin)
 			}
 			if !w.formed && got[i] != w.text {
-				t.Errorf("line %d is %q, want %q, which is %+v", i+1, got[i], w.text, w.origin)
+				assert.Failf(t, "", "line %d is %q, want %q, which is %+v", i+1, got[i], w.text, w.origin)
 			}
 		}
 		// Locate is the same mapping, asked one line at a time: a line of the
 		// case's own choosing, the first, the last, and the two outside.
 		for _, line := range []int{1 + r.IntN(len(want)), 1, len(want)} {
 			if origin, err := lib.Locate(line); err != nil || origin != want[line-1].origin {
-				t.Errorf("Locate(%d) = %+v %v, want %+v", line, origin, err, want[line-1].origin)
+				assert.Failf(t, "", "Locate(%d) = %+v %v, want %+v", line, origin, err, want[line-1].origin)
 			}
 		}
 		for _, line := range []int{0, len(want) + 1} {
 			if _, err := lib.Locate(line); err == nil {
-				t.Errorf("Locate(%d) found a line outside the source's %d", line, len(want))
+				assert.Error(t, err, "Locate(%d) found a line outside the source's %d", line, len(want))
 			}
 		}
 	})
@@ -253,12 +256,12 @@ func TestPropertyDigestIsAFunctionOfTheContentOnly(t *testing.T) {
 		lib := p.library(p.files())
 		source, err := lib.Source()
 		if err != nil {
-			t.Errorf("Source: %v", err)
+			assert.NoError(t, err, "Source: %v", err)
 			return
 		}
 		digest, err := lib.Digest()
 		if err != nil || digest != DigestOf(source) || len(digest) != DigestLength || strings.Trim(digest, "0123456789abcdef") != "" {
-			t.Errorf("Digest = %q %v, want the %d hex digits of the source's", digest, err, DigestLength)
+			assert.Failf(t, "", "Digest = %q %v, want the %d hex digits of the source's", digest, err, DigestLength)
 		}
 		// The same content in another file system, listed in another order,
 		// with files beside it that the glob does not match.
@@ -269,12 +272,12 @@ func TestPropertyDigestIsAFunctionOfTheContentOnly(t *testing.T) {
 		other.Files = shuffled{again, r}
 		other.Remedy, other.Bound = "another remedy", 1
 		if got, err := other.Source(); err != nil || got != source {
-			t.Errorf("the same content gives another source (%v):\n%s\nwant:\n%s", err, got, source)
+			assert.Failf(t, "", "the same content gives another source (%v):\n%s\nwant:\n%s", err, got, source)
 		}
 		// One digest, one source: over every case of this test no two
 		// sources share a digest.
 		if was, ok := seen[digest]; ok && was != source {
-			t.Errorf("two sources have the digest %s:\n%s\nand:\n%s", digest, was, source)
+			assert.Failf(t, "", "two sources have the digest %s:\n%s\nand:\n%s", digest, was, source)
 		}
 		seen[digest] = source
 		// Any change of the content changes the source: one byte of one file.
@@ -291,7 +294,7 @@ func TestPropertyDigestIsAFunctionOfTheContentOnly(t *testing.T) {
 			return
 		}
 		if mutant == source || DigestOf(mutant) == digest {
-			t.Errorf("a space at byte %d of %q changes nothing: %s", at, name, digest)
+			assert.Failf(t, "", "a space at byte %d of %q changes nothing: %s", at, name, digest)
 		}
 	})
 }

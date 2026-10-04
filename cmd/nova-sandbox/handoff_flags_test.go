@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // handoff_flags_test.go is the part of the handoff's contract that holds on
@@ -40,15 +43,7 @@ func TestRunValidatesTheHandoffFlagsBeforeAnythingIsMade(t *testing.T) {
 			for _, r := range bad {
 				reasons = append(reasons, r.Reason)
 			}
-			found := false
-			for _, r := range reasons {
-				if r == c.want {
-					found = true
-				}
-			}
-			if !found {
-				t.Fatalf("reasons = %v, want one %s", reasons, c.want)
-			}
+			require.Contains(t, reasons, c.want, "reasons = %v, want one %s", reasons, c.want)
 		})
 	}
 }
@@ -59,9 +54,7 @@ func TestRunUsageNamesTheHandoffAndTheBundle(t *testing.T) {
 	t.Parallel()
 
 	for _, want := range []string{"--out <dir>", "--artifact <p>", "--out-max-bytes", "repo.bundle", "git bundle create"} {
-		if !strings.Contains(runUsage, want) {
-			t.Errorf("run --help does not name %q", want)
-		}
+		assert.Contains(t, runUsage, want, "run --help does not name %q", want)
 	}
 }
 
@@ -85,12 +78,11 @@ func TestCopyBoundedWritesNoBytePastTheBudget(t *testing.T) {
 	for _, c := range cases {
 		var dst bytes.Buffer
 		n, over, err := copyBounded(&dst, strings.NewReader(c.src), c.budget)
-		if err != nil {
-			t.Fatalf("src=%d budget=%d: %v", len(c.src), c.budget, err)
-		}
-		if dst.String() != c.want || n != int64(len(c.want)) || over != c.over {
-			t.Errorf("src=%d budget=%d: wrote %d bytes (n=%d) over=%v, want %d bytes over=%v",
-				len(c.src), c.budget, dst.Len(), n, over, len(c.want), c.over)
-		}
+		require.NoError(t, err, "src=%d budget=%d: %v", len(c.src), c.budget, err)
+		msg := []any{"src=%d budget=%d: wrote %d bytes (n=%d) over=%v, want %d bytes over=%v",
+			len(c.src), c.budget, dst.Len(), n, over, len(c.want), c.over}
+		assert.Equal(t, c.want, dst.String(), msg...)
+		assert.Equal(t, int64(len(c.want)), n, msg...)
+		assert.Equal(t, c.over, over, msg...)
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestToolchainVersionDirReadsTheVersionOffTheLauncher is the darwin half of the hurt of
@@ -30,48 +32,33 @@ func TestToolchainVersionDirReadsTheVersionOffTheLauncher(t *testing.T) {
 	}
 	prefix := filepath.Join(t.TempDir(), "Cellar", "go")
 	real := filepath.Join(prefix, "1.27.1", "libexec", "bin")
-	if err := os.MkdirAll(real, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := testbin.WriteExecutable(filepath.Join(real, "go"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(real, 0o755))
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(real, "go"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	// The launcher on PATH is a symlink into the tree, the way brew links one.
 	binDir := t.TempDir()
-	if err := os.Symlink(filepath.Join(real, "go"), filepath.Join(binDir, "go")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Symlink(filepath.Join(real, "go"), filepath.Join(binDir, "go")))
 	t.Setenv("PATH", binDir)
 
 	got, ok := toolchainVersionDir(prefix, "go")
-	if !ok {
-		t.Fatalf("the launcher at %s resolved to no versioned directory under %s", filepath.Join(binDir, "go"), prefix)
-	}
+	require.True(t, ok, "the launcher at %s resolved to no versioned directory under %s", filepath.Join(binDir, "go"), prefix)
 	// The prefix as the resolver reports it: on a Mac a temp dir is under /var, a symlink
 	// to /private/var, and both sides are resolved before they are compared.
 	realPrefix, err := filepath.EvalSymlinks(prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := filepath.Join(realPrefix, "1.27.1"); got != want {
-		t.Errorf("the versioned root is %s, want %s (the version is read off the launcher, never guessed)", got, want)
-	}
+	require.NoError(t, err)
+	want := filepath.Join(realPrefix, "1.27.1")
+	assert.Equal(t, want, got, "the versioned root is %s, want %s (the version is read off the launcher, never guessed)", got, want)
 	// A GO FROM SOMEWHERE ELSE NAMES NOTHING. This entry is brew's copy and only brew's: a
 	// Go unpacked into ~/sdk or the distribution's /usr/bin/go is under another prefix and
 	// must not drag a Cellar path that is not there onto the argv, which rule 5 refuses.
 	other := t.TempDir()
-	if err := testbin.WriteExecutable(filepath.Join(other, "go"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(other, "go"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	t.Setenv("PATH", other)
-	if got, ok := toolchainVersionDir(prefix, "go"); ok {
-		t.Errorf("a go outside the prefix named the root %s; the versioned entry is brew's copy and only brew's", got)
-	}
+	got, ok = toolchainVersionDir(prefix, "go")
+	assert.False(t, ok, "a go outside the prefix named the root %s; the versioned entry is brew's copy and only brew's", got)
 	// AND A TOOL THAT IS NOT INSTALLED AT ALL names nothing, rather than a prefix.
 	t.Setenv("PATH", t.TempDir())
-	if got, ok := toolchainVersionDir(prefix, "dotnet"); ok {
-		t.Errorf("a tool that is not on PATH named the root %s", got)
-	}
+	got, ok = toolchainVersionDir(prefix, "dotnet")
+	assert.False(t, ok, "a tool that is not on PATH named the root %s", got)
 }
 
 // TestToolchainRootsAreOneListPerOS holds the shape the wall depends on, on every platform:
@@ -82,38 +69,26 @@ func TestToolchainRootsAreOneListPerOS(t *testing.T) {
 
 	for _, goos := range ToolchainRootOSes() {
 		names := ToolchainRootNames(goos)
-		if len(names) == 0 {
-			t.Errorf("%s: the one list names no toolchain root at all", goos)
-		}
+		assert.NotEmpty(t, names, "%s: the one list names no toolchain root at all", goos)
 		var home int
 		for _, r := range ToolchainRootList(goos) {
 			if r.Home() {
 				home++
-				if strings.HasPrefix(r.Name, "/") {
-					t.Errorf("%s: %s is a home root and an absolute path at once", goos, r.Name)
-				}
+				assert.False(t, strings.HasPrefix(r.Name, "/"), "%s: %s is a home root and an absolute path at once", goos, r.Name)
 				continue
 			}
-			if !strings.HasPrefix(r.Name, "/") {
-				t.Errorf("%s: the system root %s is not absolute", goos, r.Name)
-			}
+			assert.True(t, strings.HasPrefix(r.Name, "/"), "%s: the system root %s is not absolute", goos, r.Name)
 		}
-		if home == 0 {
-			t.Errorf("%s: no root is under HOME; the module cache always is", goos)
-		}
+		assert.NotZero(t, home, "%s: no root is under HOME; the module cache always is", goos)
 	}
-	if got := ToolchainRootNames("plan9"); len(got) != 0 {
-		t.Errorf("an OS the list does not speak for names %v; it names nothing", got)
-	}
-	if got := ToolchainRoots("plan9", t.TempDir()); len(got) != 0 {
-		t.Errorf("an OS the list does not speak for resolved %v; it names nothing", got)
-	}
+	got := ToolchainRootNames("plan9")
+	assert.Empty(t, got, "an OS the list does not speak for names %v; it names nothing", got)
+	resolved := ToolchainRoots("plan9", t.TempDir())
+	assert.Empty(t, resolved, "an OS the list does not speak for resolved %v; it names nothing", resolved)
 	// AN EMPTY HOME NAMES NO HOME-RELATIVE ROOT: a relative root is a refusal and a root at
 	// the filesystem's top is not a toolchain.
 	for _, r := range ToolchainRoots(ThisOS(), "") {
-		if r.Home() {
-			t.Errorf("an empty home still named the home root %s at %s", r.Name, r.Path)
-		}
+		assert.False(t, r.Home(), "an empty home still named the home root %s at %s", r.Name, r.Path)
 	}
 }
 
@@ -130,12 +105,8 @@ func TestToolchainRootsResolveSymlinks(t *testing.T) {
 	}
 	home := t.TempDir()
 	real := filepath.Join(t.TempDir(), "real-sdk")
-	if err := os.MkdirAll(filepath.Join(real, "go1.26.5", "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(real, filepath.Join(home, "sdk")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(real, "go1.26.5", "bin"), 0o755))
+	require.NoError(t, os.Symlink(real, filepath.Join(home, "sdk")))
 	var found bool
 	for _, r := range ToolchainRoots("linux", home) {
 		if r.Name != "sdk" {
@@ -143,14 +114,75 @@ func TestToolchainRootsResolveSymlinks(t *testing.T) {
 		}
 		found = true
 		want, err := filepath.EvalSymlinks(real)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if r.Path != want {
-			t.Errorf("the symlinked root ~/sdk reached the argv as %s, want the resolved %s", r.Path, want)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, want, r.Path, "the symlinked root ~/sdk reached the argv as %s, want the resolved %s", r.Path, want)
 	}
-	if !found {
-		t.Error("a symlinked ~/sdk was dropped; it is a directory and it is the card's toolchain")
+	assert.True(t, found, "a symlinked ~/sdk was dropped; it is a directory and it is the card's toolchain")
+}
+
+// TestBenchGoBinFindsTheSdkGoTheUnitPathLacks is the mechanical sprint's hurt of 2026-10-02:
+// the loop unit's PATH names no Go, so a card's bare `go` was "command not found" although
+// the wall grants the sdk tree. BenchGoBin searches env.sh's own entries before the
+// caller's PATH and names the directory the found `go` really lives in.
+func TestBenchGoBinFindsTheSdkGoTheUnitPathLacks(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the bench layouts are links into the sdk tree")
+	}
+	exe := []byte("#!/bin/sh\nexit 0\n")
+	// bench lays out a fake home: the sdk Go, and each of links as name -> target, both
+	// home-relative.
+	bench := func(t *testing.T, links map[string]string) string {
+		home := t.TempDir()
+		sdkBin := filepath.Join(home, "sdk", "go1.26.6", "bin")
+		require.NoError(t, os.MkdirAll(sdkBin, 0o755))
+		require.NoError(t, testbin.WriteExecutable(filepath.Join(sdkBin, "go"), exe, 0o755))
+		for name, target := range links {
+			require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(home, name)), 0o755))
+			require.NoError(t, os.Symlink(filepath.Join(home, target), filepath.Join(home, name)))
+		}
+		return home
+	}
+	other := t.TempDir()
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(other, "go"), exe, 0o755))
+	cases := map[string]struct {
+		links map[string]string
+		path  string
+		want  string // home-relative; "other" is the go on the caller's PATH; "" is none
+	}{
+		"a Mac bench: sdk/bin links into the sdk tree": {
+			links: map[string]string{"sdk/bin/go": "sdk/go1.26.6/bin/go"}, path: "/usr/bin:/bin", want: "sdk/go1.26.6/bin"},
+		"a linux bench: go/bin links into the sdk tree": {
+			links: map[string]string{"go/bin/go": "sdk/go1.26.6/bin/go"}, path: "/usr/bin:/bin", want: "sdk/go1.26.6/bin"},
+		"the sdk is searched before the caller's PATH": {
+			links: map[string]string{"sdk/bin/go": "sdk/go1.26.6/bin/go"}, path: other, want: "sdk/go1.26.6/bin"},
+		"no Go in the home: the caller's PATH": {path: other, want: "other"},
+		"no Go anywhere":                       {path: "/nonexistent", want: ""},
+	}
+	// A relative entry names a directory by the working directory, which inside a card is
+	// the card's own: it is never read, though it reaches a Go here.
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	rel, err := filepath.Rel(wd, other)
+	require.NoError(t, err)
+	cases["a relative PATH entry is never read"] = struct {
+		links map[string]string
+		path  string
+		want  string
+	}{path: rel, want: ""}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home := bench(t, c.links)
+			want := ""
+			switch c.want {
+			case "":
+			case "other":
+				want, _ = filepath.EvalSymlinks(other)
+			default:
+				want, _ = filepath.EvalSymlinks(filepath.Join(home, filepath.FromSlash(c.want)))
+			}
+			assert.Equal(t, want, BenchGoBin(home, c.path))
+		})
 	}
 }

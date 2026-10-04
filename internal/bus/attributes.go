@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -71,7 +72,7 @@ func ExpectedMergeAttributes(existing string) (string, bool) {
 		if strings.HasPrefix(line, "#") && existing != "" && strings.Contains(existing, "nova-bus:") {
 			continue
 		}
-		if strings.HasPrefix(line, "#") || contains(missing, line) {
+		if strings.HasPrefix(line, "#") || slices.Contains(missing, line) {
 			b.WriteString(line + "\n")
 		}
 	}
@@ -144,10 +145,7 @@ func EnsureMergeAttributesFrom(root, base string) (bool, error) {
 // its own. It is an equality test and not a substring one: a `from-*/INDEX -merge` would
 // contain the shorter text and mean the opposite.
 func hasAttributeLine(content, want string) bool {
-	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
-		if strings.TrimSpace(line) == want {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n"), func(line string) bool {
+		return strings.TrimSpace(line) == want
+	})
 }

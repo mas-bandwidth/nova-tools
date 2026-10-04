@@ -67,7 +67,7 @@ func resolveVersion(stamped string, info *debug.BuildInfo, ok bool) string {
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	verbflag.HelpIfAsked(args, "version")
 	if len(args) > 0 {
-		fmt.Fprintf(stderr, "nova-tokens version: takes no flags and no arguments, got %d; run: nova-tokens help\n", len(args))
+		writeRefusal(stderr, "VERSION", fmt.Sprintf("takes no flags and no arguments, got %d", len(args)), "nova-tokens help")
 		return 2
 	}
 	fmt.Fprintf(stdout, "nova-tokens %s %s/%s %s\n",

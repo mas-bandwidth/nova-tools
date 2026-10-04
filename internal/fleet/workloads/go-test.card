@@ -4,7 +4,7 @@ wall: yes
 reads: $HOME/sdk, $HOME/go, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew, /Library/Developer/CommandLineTools
 
 # THE CARD THAT DIED ON HULK, as a check. A Go card builds and tests a module inside the
-# wall; hulk could not, because $HOME/sdk was not a readable root and /usr/bin/go is 1.22.
+# wall; a Linux bench could not, because $HOME/sdk was not a readable root and /usr/bin/go is 1.22.
 set -eu
 JOBDIR="$PWD"
 GO=""

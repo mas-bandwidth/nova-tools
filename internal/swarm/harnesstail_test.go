@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/stretchr/testify/require"
 )
 
 // The `log=` tail of a RUN DONE line is the field a reader is told to trust for the one
@@ -20,25 +21,19 @@ func TestHarnessTailCarriesTheLastWordsIntoTheRunDoneLog(t *testing.T) {
 	t.Parallel()
 
 	job := filepath.Join(t.TempDir(), "job")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(job, 0o755))
 
 	var header strings.Builder
 	for i := 0; i < 40; i++ {
 		header.WriteString("SANDBOX OK id=slot-7 status=ready receipt=accepted checksum=0f9e8d7c6b5a49382716\n")
 	}
 	logBody := header.String() + "401 unauthorized: token missing on this key\n"
-	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(logBody), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(job, "harness.log"), []byte(logBody), 0o644))
 
 	tail := HarnessTail(job)
 	said := ""
 	if tail != "" {
 		said = " log=" + oneline.Escape(oneline.Cap(tail, oneline.TailBytes))
 	}
-	if !strings.Contains(said, "unauthorized") {
-		t.Fatalf("the RUN DONE log= field dropped the last words of harness.log:\n%s", said)
-	}
+	require.Contains(t, said, "unauthorized", "the RUN DONE log= field dropped the last words of harness.log:\n%s", said)
 }

@@ -15,6 +15,9 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The package stands on the standard library, on go-redis and on
@@ -24,7 +27,7 @@ func TestThePackageImportsTheStandardLibraryGoRedisAndOnelineOnly(t *testing.T) 
 	t.Parallel()
 	names, err := filepath.Glob("*.go")
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	read := 0
 	for _, name := range names {
@@ -33,23 +36,23 @@ func TestThePackageImportsTheStandardLibraryGoRedisAndOnelineOnly(t *testing.T) 
 		}
 		file, err := parser.ParseFile(gotoken.NewFileSet(), name, nil, parser.ImportsOnly)
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		read++
 		for _, imp := range file.Imports {
 			path, err := strconv.Unquote(imp.Path.Value)
 			if err != nil {
-				t.Fatal(err)
+				require.NoError(t, err, err)
 			}
 			first, _, _ := strings.Cut(path, "/")
 			standard := !strings.Contains(first, ".")
 			if !standard && path != "github.com/redis/go-redis/v9" && path != "github.com/mas-bandwidth/nova-tools/internal/oneline" {
-				t.Errorf("%s imports %s; the package may import the standard library, go-redis and internal/oneline", name, path)
+				assert.Failf(t, "", "%s imports %s; the package may import the standard library, go-redis and internal/oneline", name, path)
 			}
 		}
 	}
 	if read < 3 {
-		t.Fatalf("%d source files of the package were read, of %q; the walk is broken, not the package", read, names)
+		require.GreaterOrEqual(t, read, 3, "%d source files of the package were read, of %q; the walk is broken, not the package", read, names)
 	}
 }
 
@@ -108,10 +111,10 @@ func TestSourceIsEveryMatchedFileInItsOwnBlockInSortedOrder(t *testing.T) {
 	t.Parallel()
 	got, err := two().Source()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if got != twoSource {
-		t.Fatalf("Source:\n%s\nwant:\n%s", got, twoSource)
+		require.Equal(t, twoSource, got, "Source:\n%s\nwant:\n%s", got, twoSource)
 	}
 }
 
@@ -121,11 +124,11 @@ func TestSourceWithoutAPreludeStartsWithTheFirstFile(t *testing.T) {
 	lib.Prelude = ""
 	got, err := lib.Source()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	want := "#!lua name=lib_one\n\n-- lua/a.lua\ndo\n"
 	if !strings.HasPrefix(got, want) {
-		t.Fatalf("Source starts:\n%s\nwant it to start:\n%s", got, want)
+		require.True(t, strings.HasPrefix(got, want), "Source starts:\n%s\nwant it to start:\n%s", got, want)
 	}
 }
 
@@ -137,14 +140,14 @@ func TestSourcePutsThePreludeBeforeEveryBlock(t *testing.T) {
 	lib.Prelude = "local NS = {}\nlocal shared = 1\n"
 	got, err := lib.Source()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	want := "#!lua name=lib_one\nlocal NS = {}\nlocal shared = 1\n\n-- lua/a.lua\ndo\n"
 	if !strings.HasPrefix(got, want) {
-		t.Fatalf("Source starts:\n%s\nwant it to start:\n%s", got, want)
+		require.True(t, strings.HasPrefix(got, want), "Source starts:\n%s\nwant it to start:\n%s", got, want)
 	}
 	if strings.Count(got, "local shared = 1") != 1 {
-		t.Fatalf("the prelude is in the source %d times, want once:\n%s", strings.Count(got, "local shared = 1"), got)
+		require.Equal(t, 1, strings.Count(got, "local shared = 1"), "the prelude is in the source %d times, want once:\n%s", strings.Count(got, "local shared = 1"), got)
 	}
 }
 
@@ -167,14 +170,14 @@ func TestSourceDoesNotFollowTheOrderTheFileSystemListsIn(t *testing.T) {
 	// The control: this file system does hand the files over last first.
 	listed, err := fs.Glob(lib.Files, lib.Glob)
 	if err != nil || !slices.Equal(listed, []string{"lua/b.lua", "lua/a.lua"}) {
-		t.Fatalf("the backwards file system lists %v (%v), want b before a", listed, err)
+		require.Failf(t, "", "the backwards file system lists %v (%v), want b before a", listed, err)
 	}
 	got, err := lib.Source()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if got != twoSource {
-		t.Fatalf("Source over a file system that lists backwards:\n%s\nwant:\n%s", got, twoSource)
+		require.Equal(t, twoSource, got, "Source over a file system that lists backwards:\n%s\nwant:\n%s", got, twoSource)
 	}
 }
 
@@ -183,14 +186,14 @@ func TestDigestIsTheFirstSixteenHexDigitsOfTheSourcesSHA256(t *testing.T) {
 	sum := sha256.Sum256([]byte(twoSource))
 	want := hex.EncodeToString(sum[:])[:16]
 	if got := DigestOf(twoSource); got != want || len(got) != DigestLength {
-		t.Fatalf("DigestOf = %q, want %q (%d characters)", got, want, DigestLength)
+		require.Failf(t, "", "DigestOf = %q, want %q (%d characters)", got, want, DigestLength)
 	}
 	got, err := two().Digest()
 	if err != nil || got != want {
-		t.Fatalf("Digest = %q %v, want %q", got, err, want)
+		require.Failf(t, "", "Digest = %q %v, want %q", got, err, want)
 	}
 	if want != twoDigest {
-		t.Fatalf("the digest of the fixed library is %s and was %s: the form of the source changed, and with it the digest of every library on a store", want, twoDigest)
+		require.Equal(t, twoDigest, want, "the digest of the fixed library is %s and was %s: the form of the source changed, and with it the digest of every library on a store", want, twoDigest)
 	}
 }
 
@@ -204,17 +207,17 @@ func TestDigestChangesWhenAnyByteChanges(t *testing.T) {
 	}
 	base, err := build("lib_one", "a.lua", text, text).Digest()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	seen := map[string]string{base: "the library unchanged"}
 	try := func(what string, lib Library) {
 		t.Helper()
 		got, err := lib.Digest()
 		if err != nil {
-			t.Fatalf("%s: %v", what, err)
+			require.NoError(t, err, "%s: %v", what, err)
 		}
 		if was, ok := seen[got]; ok {
-			t.Fatalf("%s has the digest %s of %s", what, got, was)
+			require.Failf(t, "", "%s has the digest %s of %s", what, got, was)
 		}
 		seen[got] = what
 	}
@@ -244,10 +247,10 @@ func TestDigestIsOfTheContentAndOfNothingElse(t *testing.T) {
 	for name, file := range two().Files.(fstest.MapFS) {
 		path := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		if err := os.WriteFile(path, file.Data, 0o600); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	lib := two()
@@ -256,7 +259,7 @@ func TestDigestIsOfTheContentAndOfNothingElse(t *testing.T) {
 	lib.Bound = 1
 	got, err := lib.Digest()
 	if err != nil || got != twoDigest {
-		t.Fatalf("Digest of the files on disk = %q %v, want %q", got, err, twoDigest)
+		require.Failf(t, "", "Digest of the files on disk = %q %v, want %q", got, err, twoDigest)
 	}
 }
 
@@ -292,11 +295,11 @@ func TestSourceAcceptsWhatOnlyLooksLikeAFault(t *testing.T) {
 		lib := Library{Name: "lib_one", Files: tree(map[string]string{"lua/a.lua": text}), Glob: "lua/*.lua"}
 		source, err := lib.Source()
 		if err != nil {
-			t.Errorf("%s: %v", name, err)
+			assert.NoError(t, err, "%s: %v", name, err)
 			continue
 		}
 		if !strings.Contains(source, "do\n"+text) {
-			t.Errorf("%s: the source does not hold the file as it is:\n%s", name, source)
+			assert.Contains(t, source, "do\n"+text, "%s: the source does not hold the file as it is:\n%s", name, source)
 		}
 	}
 }
@@ -304,18 +307,18 @@ func TestSourceAcceptsWhatOnlyLooksLikeAFault(t *testing.T) {
 func TestFunctionsAreTheNamesTheFilesRegisterSorted(t *testing.T) {
 	t.Parallel()
 	if got, err := two().Functions(); err != nil || !slices.Equal(got, []string{"fa", "fb"}) {
-		t.Fatalf("Functions = %q %v, want fa and fb", got, err)
+		require.Failf(t, "", "Functions = %q %v, want fa and fb", got, err)
 	}
 	lib := Library{Name: "lib_one", Files: tree(map[string]string{
 		"b.lua": fn("zeta") + fn("Alpha") + "redis.register_function{function_name = 'in_a_table', callback = function() end}\n",
 		"a.lua": fn("beta") + "local name = 'comp' .. 'uted'\nredis.register_function(name, function() end)\n-- " + fn("in_a_comment"),
 	}), Glob: "*.lua", Prelude: fn("of_the_prelude")}
 	if got, err := lib.Functions(); err != nil || !slices.Equal(got, []string{"Alpha", "beta", "in_a_table", "of_the_prelude", "zeta"}) {
-		t.Fatalf("Functions = %q %v", got, err)
+		require.Failf(t, "", "Functions = %q %v", got, err)
 	}
 	none := Library{Name: "lib_one", Files: tree(map[string]string{"a.lua": "local x = 1\n"}), Glob: "*.lua"}
 	if got, err := none.Functions(); err != nil || len(got) != 0 {
-		t.Fatalf("Functions of a library that registers nothing = %q %v", got, err)
+		require.Failf(t, "", "Functions of a library that registers nothing = %q %v", got, err)
 	}
 }
 
@@ -456,12 +459,12 @@ func TestTheLocalsBoundIsOnTheMostHeldAtOnce(t *testing.T) {
 	}
 	lib := Library{Name: "lib_one", Files: tree(files), Glob: "*.lua", Prelude: "local NS = {}\n"}
 	if _, err := lib.Source(); err != nil {
-		t.Fatalf("a hundred files of %d locals and a prelude of one: %v", MaxLocals-1, err)
+		require.NoError(t, err, "a hundred files of %d locals and a prelude of one: %v", MaxLocals-1, err)
 	}
 	files["f050.lua"] = "local extra = 1\n" + files["f050.lua"]
 	lib.Files = tree(files)
 	if _, err := lib.Source(); !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "f050.lua holds 180") {
-		t.Fatalf("one file with one local more: %v, want the refusal that names it", err)
+		require.Failf(t, "", "one file with one local more: %v, want the refusal that names it", err)
 	}
 }
 
@@ -470,32 +473,32 @@ func TestALibraryThatCannotBeLoadedIsRefusedWithTheReason(t *testing.T) {
 	for _, c := range refusals {
 		source, err := c.lib.Source()
 		if err == nil || source != "" {
-			t.Errorf("%s: Source = %d bytes and %v, want a refusal and nothing", c.name, len(source), err)
+			assert.Failf(t, "", "%s: Source = %d bytes and %v, want a refusal and nothing", c.name, len(source), err)
 			continue
 		}
 		if !errors.Is(err, ErrRefused) {
-			t.Errorf("%s: the error does not wrap ErrRefused: %v", c.name, err)
+			assert.ErrorIs(t, err, ErrRefused, "%s: the error does not wrap ErrRefused: %v", c.name, err)
 		}
 		line := err.Error()
 		if strings.ContainsAny(line, "\n\r") {
-			t.Errorf("%s: the error is more than one line: %q", c.name, line)
+			assert.False(t, strings.ContainsAny(line, "\n\r"), "%s: the error is more than one line: %q", c.name, line)
 		}
 		if !strings.HasPrefix(line, "redisfn: library ") {
-			t.Errorf("%s: the error does not start with the package and the library: %q", c.name, line)
+			assert.True(t, strings.HasPrefix(line, "redisfn: library "), "%s: the error does not start with the package and the library: %q", c.name, line)
 		}
 		for _, want := range c.want {
 			if !strings.Contains(line, want) {
-				t.Errorf("%s: the error does not say %q: %q", c.name, want, line)
+				assert.Contains(t, line, want, "%s: the error does not say %q: %q", c.name, want, line)
 			}
 		}
 		if digest, derr := c.lib.Digest(); digest != "" || derr == nil || derr.Error() != line {
-			t.Errorf("%s: Digest = %q %v, want Source's refusal", c.name, digest, derr)
+			assert.Failf(t, "", "%s: Digest = %q %v, want Source's refusal", c.name, digest, derr)
 		}
 		if origin, lerr := c.lib.Locate(1); origin != (Origin{}) || lerr == nil || lerr.Error() != line {
-			t.Errorf("%s: Locate = %v %v, want Source's refusal", c.name, origin, lerr)
+			assert.Failf(t, "", "%s: Locate = %v %v, want Source's refusal", c.name, origin, lerr)
 		}
 		if names, ferr := c.lib.Functions(); names != nil || ferr == nil || ferr.Error() != line {
-			t.Errorf("%s: Functions = %q %v, want Source's refusal", c.name, names, ferr)
+			assert.Failf(t, "", "%s: Functions = %q %v, want Source's refusal", c.name, names, ferr)
 		}
 	}
 }
@@ -509,14 +512,14 @@ func TestTheBoundIsOnTheSourcesLength(t *testing.T) {
 	}
 	small, err := with(0).Source()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	room := MaxSourceBytes - len(small)
 	source, err := with(room).Source()
 	if err != nil || len(source) != MaxSourceBytes {
-		t.Fatalf("a source of MaxSourceBytes: %d bytes, %v", len(source), err)
+		require.Failf(t, "", "a source of MaxSourceBytes: %d bytes, %v", len(source), err)
 	}
 	if _, err := with(room + 1).Source(); !errors.Is(err, ErrRefused) {
-		t.Fatalf("a source of MaxSourceBytes and one byte more: %v, want a refusal", err)
+		require.ErrorIs(t, err, ErrRefused, "a source of MaxSourceBytes and one byte more: %v, want a refusal", err)
 	}
 }

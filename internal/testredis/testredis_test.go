@@ -12,6 +12,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The unit tier of the package: what Start decides before it starts anything.
@@ -23,10 +26,10 @@ func TestTheCommandLineIsLoopbackKeepsNothingAndStaysInTheTestsDirectory(t *test
 	got := arguments("the-dir", "50123", []string{"--user", "default", "off"})
 	want := []string{"--bind", "127.0.0.1", "--port", "50123", "--save", "", "--appendonly", "no", "--dir", "the-dir", "--user", "default", "off"}
 	if !slices.Equal(got, want) {
-		t.Fatalf("arguments:\n got %q\nwant %q", got, want)
+		require.Equal(t, want, got, "arguments:\n got %q\nwant %q", got, want)
 	}
 	if got := arguments("d", "1", nil); len(got) != 10 {
-		t.Fatalf("with no extra arguments the command line is the ten fixed words; got %q", got)
+		require.Len(t, got, 10, "with no extra arguments the command line is the ten fixed words; got %q", got)
 	}
 }
 
@@ -56,17 +59,17 @@ func TestStartRefusesTheArgumentsThatAreItsOwn(t *testing.T) {
 		err := check(extra)
 		option := strings.ToLower(strings.Fields(name)[0])
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "--"+option+" is refused") {
-			t.Errorf("%s: check(%q) = %v; want a refusal that names --%s", name, extra, err, option)
+			assert.Failf(t, "", "%s: check(%q) = %v; want a refusal that names --%s", name, extra, err, option)
 		}
 	}
 	for option := range own {
 		if err := check([]string{"--" + option, "x"}); err == nil {
-			t.Errorf("--%s is Start's own and check lets it through", option)
+			assert.Error(t, err, "--%s is Start's own and check lets it through", option)
 		}
 	}
 	for _, extra := range [][]string{{"redis.conf"}, {"-"}, {"yes", "--appendonly"}} {
 		if err := check(extra); err == nil || !strings.Contains(err.Error(), "not an option") {
-			t.Errorf("check(%q) = %v; want a refusal: the extra arguments open with an option", extra, err)
+			assert.Failf(t, "", "check(%q) = %v; want a refusal: the extra arguments open with an option", extra, err)
 		}
 	}
 	accepted := [][]string{
@@ -83,7 +86,7 @@ func TestStartRefusesTheArgumentsThatAreItsOwn(t *testing.T) {
 	}
 	for _, extra := range accepted {
 		if err := check(extra); err != nil {
-			t.Errorf("check(%q) = %v; want it accepted", extra, err)
+			assert.NoError(t, err, "check(%q) = %v; want it accepted", extra, err)
 		}
 	}
 }
@@ -98,10 +101,10 @@ func TestARefusedArgumentFailsTheTestBeforeAnythingStarts(t *testing.T) {
 	l.look = func(string) (string, error) { looked = true; return "redis-server", nil }
 	r := provoke(t, func(tb testing.TB) { l.start(tb, []string{"--bind", "0.0.0.0"}) })
 	if !strings.Contains(r.fatal, "--bind is refused") || !strings.Contains(r.fatal, "127.0.0.1") {
-		t.Fatalf("Start with --bind: failed with %q; want the refusal and what Start listens on", r.fatal)
+		require.Failf(t, "", "Start with --bind: failed with %q; want the refusal and what Start listens on", r.fatal)
 	}
 	if looked {
-		t.Fatal("Start looked for redis-server after it had refused the arguments")
+		require.False(t, looked, "Start looked for redis-server after it had refused the arguments")
 	}
 }
 
@@ -111,10 +114,10 @@ func TestUserIsTheDefaultUserOffAndOneUserWithAPassword(t *testing.T) {
 	got := User("bench", "the-password")
 	want := []string{"--user", "default", "off", "--user", "bench", "on", ">the-password", "~*", "&*", "+@all"}
 	if !slices.Equal(got, want) {
-		t.Fatalf("User:\n got %q\nwant %q", got, want)
+		require.Equal(t, want, got, "User:\n got %q\nwant %q", got, want)
 	}
 	if err := check(got); err != nil {
-		t.Fatalf("Start refuses what User returns: %v", err)
+		require.NoError(t, err, "Start refuses what User returns: %v", err)
 	}
 }
 
@@ -133,13 +136,13 @@ func TestAFailureShowsTheArgumentsAndNoPassword(t *testing.T) {
 		`"***" "***" "***" "--requirepass" "***" "--masterauth" "***" ` +
 		`"--requirepass ***" "--masteruser ***" "--maxmemory" "1mb"`
 	if got != want {
-		t.Fatalf("the arguments of a failure:\n got %s\nwant %s", got, want)
+		require.Equal(t, want, got, "the arguments of a failure:\n got %s\nwant %s", got, want)
 	}
 	if strings.Contains(got, "secret") {
-		t.Fatalf("a password is in the arguments of a failure: %s", got)
+		require.NotContains(t, got, "secret", "a password is in the arguments of a failure: %s", got)
 	}
 	if !slices.Equal(args, before) {
-		t.Fatal("redact changed the arguments it was given")
+		require.Equal(t, before, args, "redact changed the arguments it was given")
 	}
 }
 
@@ -160,45 +163,45 @@ func TestTheOutputIsReadForTheReadyLineAndItsEndIsKept(t *testing.T) {
 	write := func(part string) {
 		t.Helper()
 		if n, err := w.Write([]byte(part)); n != len(part) || err != nil {
-			t.Fatalf("Write = %d, %v", n, err)
+			require.Failf(t, "", "Write = %d, %v", n, err)
 		}
 	}
 	write("1:M * Server initialized\n1:M * Ready to acc")
 	if !open(w) {
-		t.Fatalf("ready before the line was whole; the output so far: %q", w)
+		require.Failf(t, "", "ready before the line was whole; the output so far: %q", w)
 	}
 	write("ept connections tcp\n")
 	if open(w) {
-		t.Fatalf("the ready line is whole and ready is not closed; the output: %q", w)
+		require.Failf(t, "", "the ready line is whole and ready is not closed; the output: %q", w)
 	}
 	write("1:M * Ready to accept connections tcp\n")
 	if open(w) {
-		t.Fatal("ready opened again")
+		require.Fail(t, "ready opened again")
 	}
 	if got, want := w.String(), "1:M * Server initialized\n1:M * Ready to accept connections tcp\n1:M * Ready to accept connections tcp\n"; got != want {
-		t.Fatalf("the output kept:\n got %q\nwant %q", got, want)
+		require.Equal(t, want, got, "the output kept:\n got %q\nwant %q", got, want)
 	}
 
 	// More output than is kept: the end is kept, and a ready line that the
 	// same write carried past the cut was still read.
 	long := &tail{ready: make(chan struct{})}
 	if _, err := long.Write([]byte(readyLine + strings.Repeat("x", tailSize) + "the end")); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if open(long) {
-		t.Fatal("the ready line at the head of a long write was not read")
+		require.Fail(t, "the ready line at the head of a long write was not read")
 	}
 	if got := long.String(); len(got) != tailSize || !strings.HasSuffix(got, "xthe end") || strings.Contains(got, readyLine) {
-		t.Fatalf("kept %d bytes ending %q; want the last %d", len(got), got[len(got)-8:], tailSize)
+		require.Failf(t, "", "kept %d bytes ending %q; want the last %d", len(got), got[len(got)-8:], tailSize)
 	}
 
 	// Output that never says ready.
 	mute := &tail{ready: make(chan struct{})}
 	if _, err := mute.Write([]byte("unit tier: redis-server is functional-only\n")); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if !open(mute) {
-		t.Fatal("ready without the ready line")
+		require.Fail(t, "ready without the ready line")
 	}
 }
 
@@ -218,14 +221,14 @@ func TestAMissingRedisServerSkipsOnALaptopAndFailsUnderCI(t *testing.T) {
 		r := provoke(t, func(tb testing.TB) { absent(tb, cause, env(ci)) })
 		switch {
 		case skips && (r.fatal != "" || !strings.Contains(r.skipped, "redis-server unavailable") || !strings.Contains(r.skipped, cause.Error())):
-			t.Errorf("NOVA_CI=%q: skipped with %q, failed with %q; want a skip that carries the cause", ci, r.skipped, r.fatal)
+			assert.Failf(t, "", "NOVA_CI=%q: skipped with %q, failed with %q; want a skip that carries the cause", ci, r.skipped, r.fatal)
 		case !skips && (r.skipped != "" || !strings.Contains(r.fatal, "redis-server is required under NOVA_CI=1") || !strings.Contains(r.fatal, cause.Error())):
-			t.Errorf("NOVA_CI=%q: skipped with %q, failed with %q; want a failure that carries the cause", ci, r.skipped, r.fatal)
+			assert.Failf(t, "", "NOVA_CI=%q: skipped with %q, failed with %q; want a failure that carries the cause", ci, r.skipped, r.fatal)
 		}
 	}
 	r := provoke(t, func(tb testing.TB) { absent(tb, nil, env("")) })
 	if !strings.Contains(r.fatal, "Absent requires the error") || r.skipped != "" {
-		t.Fatalf("Absent with no cause: skipped with %q, failed with %q; want a failure", r.skipped, r.fatal)
+		require.Failf(t, "", "Absent with no cause: skipped with %q, failed with %q; want a failure", r.skipped, r.fatal)
 	}
 
 	// Program and Start give the same answer, from the same lookup.
@@ -233,7 +236,7 @@ func TestAMissingRedisServerSkipsOnALaptopAndFailsUnderCI(t *testing.T) {
 	l.sentry = standing()
 	l.look = func(file string) (string, error) {
 		if file != "redis-server" {
-			t.Errorf("looked for %q; want redis-server", file)
+			assert.Equal(t, "redis-server", file, "looked for %q; want redis-server", file)
 		}
 		return "", cause
 	}
@@ -243,16 +246,16 @@ func TestAMissingRedisServerSkipsOnALaptopAndFailsUnderCI(t *testing.T) {
 	} {
 		l.getenv = env("")
 		if r := provoke(t, call); r.fatal != "" || !strings.Contains(r.skipped, "redis-server unavailable") {
-			t.Errorf("%s with no redis-server: skipped with %q, failed with %q; want a skip", name, r.skipped, r.fatal)
+			assert.Failf(t, "", "%s with no redis-server: skipped with %q, failed with %q; want a skip", name, r.skipped, r.fatal)
 		}
 		l.getenv = env("1")
 		if r := provoke(t, call); r.skipped != "" || !strings.Contains(r.fatal, "redis-server is required under NOVA_CI=1") {
-			t.Errorf("%s with no redis-server under NOVA_CI=1: skipped with %q, failed with %q; want a failure", name, r.skipped, r.fatal)
+			assert.Failf(t, "", "%s with no redis-server under NOVA_CI=1: skipped with %q, failed with %q; want a failure", name, r.skipped, r.fatal)
 		}
 	}
 	l.look = func(string) (string, error) { return "the-program", nil }
 	if got := l.program(t); got != "the-program" {
-		t.Fatalf("Program = %q; want what the lookup found", got)
+		require.Equal(t, "the-program", got, "Program = %q; want what the lookup found", got)
 	}
 }
 
@@ -263,12 +266,12 @@ func TestAbsentAndProgramAnswerOnThisMachine(t *testing.T) {
 
 	r := provoke(t, func(tb testing.TB) { Absent(tb, errors.New("not found")) })
 	if (r.fatal == "") == (r.skipped == "") {
-		t.Fatalf("Absent skipped with %q and failed with %q; want exactly one", r.skipped, r.fatal)
+		require.Failf(t, "", "Absent skipped with %q and failed with %q; want exactly one", r.skipped, r.fatal)
 	}
 	var bin string
 	r = provoke(t, func(tb testing.TB) { bin = Program(tb) })
 	if found := bin != ""; found == (r.fatal != "" || r.skipped != "") {
-		t.Fatalf("Program = %q, skipped with %q, failed with %q; want a program or one answer", bin, r.skipped, r.fatal)
+		require.Failf(t, "", "Program = %q, skipped with %q, failed with %q; want a program or one answer", bin, r.skipped, r.fatal)
 	}
 }
 
@@ -279,7 +282,7 @@ func TestThePackageRefusesToRunOutsideATestBinary(t *testing.T) {
 	l.inTest = func() bool { return false }
 	l.sentry = standing()
 	l.look = func(string) (string, error) {
-		t.Error("looked for redis-server outside a test binary")
+		assert.Fail(t, "looked for redis-server outside a test binary")
 		return "", errors.New("unreachable")
 	}
 	for name, call := range map[string]func(){
@@ -290,11 +293,11 @@ func TestThePackageRefusesToRunOutsideATestBinary(t *testing.T) {
 	} {
 		said, _ := panics(call).(string)
 		if !strings.Contains(said, "outside a test binary") {
-			t.Errorf("%s outside a test binary panicked with %q; want the refusal", name, said)
+			assert.Contains(t, said, "outside a test binary", "%s outside a test binary panicked with %q; want the refusal", name, said)
 		}
 	}
 	if !real.inTest() {
-		t.Fatal("this is a test binary and the package does not know it")
+		require.Fail(t, "this is a test binary and the package does not know it")
 	}
 }
 
@@ -307,21 +310,21 @@ func TestAFreePortIsALoopbackPortTheKernelChose(t *testing.T) {
 		return net.Listen(network, address)
 	})
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if !slices.Equal(asked, []string{"tcp 127.0.0.1:0"}) {
-		t.Fatalf("the port was asked for as %q; want tcp 127.0.0.1:0, loopback and the kernel's choice", asked)
+		require.Failf(t, "", "the port was asked for as %q; want tcp 127.0.0.1:0, loopback and the kernel's choice", asked)
 	}
 	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
-		t.Fatalf("freePort = %q; want a port", port)
+		require.Failf(t, "", "freePort = %q; want a port", port)
 	}
 	if n, err := strconv.Atoi(FreePort(t)); err != nil || n < 1 || n > 65535 {
-		t.Fatalf("FreePort = %d, %v; want a port", n, err)
+		require.Failf(t, "", "FreePort = %d, %v; want a port", n, err)
 	}
 
 	full := errors.New("no descriptors left")
 	if _, err := freePort(func(string, string) (net.Listener, error) { return nil, full }); !errors.Is(err, full) {
-		t.Fatalf("freePort with no listener = %v; want the cause", err)
+		require.Failf(t, "", "freePort with no listener = %v; want the cause", err)
 	}
 	l := real
 	l.sentry = standing()
@@ -332,7 +335,7 @@ func TestAFreePortIsALoopbackPortTheKernelChose(t *testing.T) {
 		"Start":    func(tb testing.TB) { l.start(tb, nil) },
 	} {
 		if r := provoke(t, call); !strings.Contains(r.fatal, full.Error()) {
-			t.Errorf("%s with no port failed with %q; want the cause", name, r.fatal)
+			assert.Failf(t, "", "%s with no port failed with %q; want the cause", name, r.fatal)
 		}
 	}
 }
@@ -345,11 +348,11 @@ func TestNoServerIsStartedWithoutItsSentry(t *testing.T) {
 	none := &sentry{enlist: func() (*post, error) { asked++; return nil, errors.New("the test binary was not found") }}
 	for i := 0; i < 3; i++ {
 		if _, err := none.group(); err == nil || !strings.Contains(err.Error(), "the test binary was not found") {
-			t.Fatalf("group() with no sentry = %v; want the cause", err)
+			require.Failf(t, "", "group() with no sentry = %v; want the cause", err)
 		}
 	}
 	if asked != 1 {
-		t.Fatalf("the sentry was enlisted %d times; want once", asked)
+		require.EqualValues(t, 1, asked, "the sentry was enlisted %d times; want once", asked)
 	}
 
 	// A sentry that stands: enlisted once, however many tests start at once.
@@ -366,7 +369,7 @@ func TestNoServerIsStartedWithoutItsSentry(t *testing.T) {
 	}
 	wg.Wait()
 	if asked != 1 || slices.ContainsFunc(groups, func(g int) bool { return g != 4242 }) {
-		t.Fatalf("enlisted %d times, groups %v; want once and 4242 for every test", asked, groups)
+		require.Failf(t, "", "enlisted %d times, groups %v; want once and 4242 for every test", asked, groups)
 	}
 
 	// A sentry that has ended since.
@@ -374,7 +377,7 @@ func TestNoServerIsStartedWithoutItsSentry(t *testing.T) {
 	close(gone)
 	ended := &sentry{enlist: func() (*post, error) { return &post{group: 4242, gone: gone}, nil }}
 	if _, err := ended.group(); err == nil || !strings.Contains(err.Error(), "the sentry has ended") {
-		t.Fatalf("group() with a sentry that has ended = %v; want a refusal", err)
+		require.Failf(t, "", "group() with a sentry that has ended = %v; want a refusal", err)
 	}
 
 	// Start says so, and looks up the program first: a machine with no
@@ -383,7 +386,7 @@ func TestNoServerIsStartedWithoutItsSentry(t *testing.T) {
 	l.sentry = ended
 	l.look = func(string) (string, error) { return "redis-server", nil }
 	if r := provoke(t, func(tb testing.TB) { l.start(tb, nil) }); !strings.Contains(r.fatal, "no server is started without its sentry") || !strings.Contains(r.fatal, "the sentry has ended") {
-		t.Fatalf("Start with a sentry that has ended failed with %q; want the refusal", r.fatal)
+		require.Failf(t, "", "Start with a sentry that has ended failed with %q; want the refusal", r.fatal)
 	}
 }
 
@@ -431,28 +434,28 @@ func TestTheSentryKillsWhenItsInputEndsAndNotBefore(t *testing.T) {
 	// The sentry is inside its read: it has said it stands, and the test
 	// binary is alive.
 	if out.String() != sentryStands {
-		t.Fatalf("a sentry that reads has said %q; want %q", out.String(), sentryStands)
+		require.Failf(t, "", "a sentry that reads has said %q; want %q", out.String(), sentryStands)
 	}
 	if n := killed(); n != 0 {
-		t.Fatalf("the sentry killed %d times while its input was open", n)
+		require.Zero(t, n, "the sentry killed %d times while its input was open", n)
 	}
 	close(in.end)
 	if got := <-code; got != 0 || killed() != 1 {
-		t.Fatalf("input ended: stand = %d after %d kills; want 0 after one", got, killed())
+		require.Failf(t, "", "input ended: stand = %d after %d kills; want 0 after one", got, killed())
 	}
 
 	// An input that breaks is an input that ended.
 	kills = 0
 	if got := stand(failing{errors.New("the pipe broke")}, io.Discard, kill); got != 0 || kills != 1 {
-		t.Fatalf("input broke: stand = %d after %d kills; want 0 after one", got, kills)
+		require.Failf(t, "", "input broke: stand = %d after %d kills; want 0 after one", got, kills)
 	}
 	// A kill that fails, and a sentry nobody listens to, are reported.
 	if got := stand(strings.NewReader(""), io.Discard, func() error { return errors.New("not permitted") }); got != 1 {
-		t.Fatalf("the kill failed: stand = %d; want 1", got)
+		require.EqualValues(t, 1, got, "the kill failed: stand = %d; want 1", got)
 	}
 	kills = 0
 	if got := stand(strings.NewReader(""), failing{errors.New("closed")}, kill); got != 1 || kills != 0 {
-		t.Fatalf("nobody reads the sentry: stand = %d after %d kills; want 1 after none", got, kills)
+		require.Failf(t, "", "nobody reads the sentry: stand = %d after %d kills; want 1 after none", got, kills)
 	}
 }
 
@@ -462,7 +465,7 @@ func answering(t *testing.T, reply string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	done := make(chan struct{})
 	t.Cleanup(func() {
@@ -477,7 +480,7 @@ func answering(t *testing.T, reply string) string {
 				return
 			}
 			if line, err := bufio.NewReader(c).ReadString('\n'); err != nil || line != "PING\r\n" {
-				t.Errorf("the client sent %q, %v; want one PING", line, err)
+				assert.Failf(t, "", "the client sent %q, %v; want one PING", line, err)
 			}
 			_, _ = io.WriteString(c, reply)
 			_ = c.Close()
@@ -500,15 +503,15 @@ func TestPingTakesPongAndNoauthForAServer(t *testing.T) {
 		err := ping(answering(t, reply), until)
 		switch {
 		case want == "" && err != nil:
-			t.Errorf("answer %q: ping = %v; want a server", reply, err)
+			assert.Failf(t, "", "answer %q: ping = %v; want a server", reply, err)
 		case want != "" && (err == nil || !strings.Contains(err.Error(), want)):
-			t.Errorf("answer %q: ping = %v; want an error with %q", reply, err, want)
+			assert.Failf(t, "", "answer %q: ping = %v; want an error with %q", reply, err, want)
 		}
 	}
 	// Nothing can listen there: port 0 is no port to connect to, so no
 	// parallel test can take it and answer, as it can a port freed a moment
 	// ago. The dial's own error is ping's.
 	if err := ping("127.0.0.1:0", until); err == nil || !strings.HasPrefix(err.Error(), "dial tcp 127.0.0.1:0: ") {
-		t.Fatalf("ping to port 0 = %v; want the dial's error", err)
+		require.Failf(t, "", "ping to port 0 = %v; want the dial's error", err)
 	}
 }

@@ -1,5 +1,0 @@
-{
-  "field": "body.repository.touched[1]",
-  "rule": "not_sorted",
-  "verdict": "refused"
-}

@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
@@ -40,43 +43,31 @@ func TestEveryToolPrintsTheOneVersionLine(t *testing.T) {
 
 	root := repoRoot(t)
 	tools := novaCommands(t, root)
-	if len(tools) == 0 {
-		t.Fatal("no nova-* command directories found under cmd/; this test was looking in the wrong place and would have passed by checking nothing")
-	}
+	require.NotEmpty(t, tools, "no nova-* command directories found under cmd/; this test was looking in the wrong place and would have passed by checking nothing")
 	bin := buildAllTools(t, root)
 
 	for _, tool := range tools {
 		t.Run(tool, func(t *testing.T) {
 			// Both spellings, because the Conventions promise both and a tool
-			// that answers only one is a tool a reader has to try twice.
+			// answers only one is a tool a reader has to try twice.
 			for _, verb := range []string{"version", "--version"} {
 				exit, stdout, stderr := runBare(t, root, tool, filepath.Join(bin, exeName(tool)), []string{verb})
-				if exit != 0 {
-					t.Errorf("`%s %s` exits %d, want 0; stderr: %s", tool, verb, exit, stderr)
+				if !assert.Equalf(t, 0, exit, "`%s %s` exits %d, want 0; stderr: %s", tool, verb, exit, stderr) {
 					continue
 				}
 				lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
-				if len(lines) != 1 {
-					t.Errorf("`%s %s` printed %d lines, want exactly 1:\n%s", tool, verb, len(lines), stdout)
+				if !assert.Equalf(t, 1, len(lines), "`%s %s` printed %d lines, want exactly 1:\n%s", tool, verb, len(lines), stdout) {
 					continue
 				}
 				f, ok := buildinfo.Parse(stdout)
-				if !ok {
-					t.Errorf("`%s %s` printed a line internal/buildinfo.Parse refuses; the grammar is `<tool> <identity> <goos>/<goarch> <go version>` and then any number of key=value extras:\n%s", tool, verb, stdout)
+				if !assert.Truef(t, ok, "`%s %s` printed a line internal/buildinfo.Parse refuses; the grammar is `<tool> <identity> <goos>/<goarch> <go version>` and then any number of key=value extras:\n%s", tool, verb, stdout) {
 					continue
 				}
-				if f.Tool != tool {
-					t.Errorf("`%s %s` names itself %q in field one; a reader holding two pastes reads the tool out of field one", tool, verb, f.Tool)
-				}
-				if f.Version == "" {
-					t.Errorf("`%s %s` carries an empty identity in field two", tool, verb)
-				}
-				if want := runtime.GOOS + "/" + runtime.GOARCH; f.Platform != want {
-					t.Errorf("`%s %s` reports platform %q, want %q", tool, verb, f.Platform, want)
-				}
-				if !strings.HasPrefix(f.GoVersion, "go") {
-					t.Errorf("`%s %s` reports go version %q, want a go1.x", tool, verb, f.GoVersion)
-				}
+				assert.Equalf(t, tool, f.Tool, "`%s %s` names itself %q in field one; a reader holding two pastes reads the tool out of field one", tool, verb, f.Tool)
+				assert.NotEmptyf(t, f.Version, "`%s %s` carries an empty identity in field two", tool, verb)
+				wantPlatform := runtime.GOOS + "/" + runtime.GOARCH
+				assert.Equalf(t, wantPlatform, f.Platform, "`%s %s` reports platform %q, want %q", tool, verb, f.Platform, wantPlatform)
+				assert.Truef(t, strings.HasPrefix(f.GoVersion, "go"), "`%s %s` reports go version %q, want a go1.x", tool, verb, f.GoVersion)
 			}
 		})
 	}
@@ -86,9 +77,7 @@ func TestEveryToolPrintsTheOneVersionLine(t *testing.T) {
 func novaCommands(t *testing.T, root string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
-	if err != nil {
-		t.Fatalf("reading cmd/: %v", err)
-	}
+	require.NoErrorf(t, err, "reading cmd/: %v", err)
 	var tools []string
 	for _, e := range entries {
 		if e.IsDir() && strings.HasPrefix(e.Name(), "nova-") {
@@ -107,9 +96,8 @@ func buildAllTools(t *testing.T, root string) string {
 	build := exec.Command("go", "build", "-o", dir+string(os.PathSeparator), "./cmd/...")
 	build.Env = goenv.Clean(os.Environ())
 	build.Dir = root
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building ./cmd/...: %v\n%s", err, out)
-	}
+	out, err := build.CombinedOutput()
+	require.NoErrorf(t, err, "building ./cmd/...: %v\n%s", err, out)
 	return dir
 }
 

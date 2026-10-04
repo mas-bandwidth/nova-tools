@@ -1,7 +1,7 @@
 package swarm
 
 // Staging: what the launcher puts in a job directory before the worker starts
-// (docs/SPEC-TOOLWORK.md §3 rules 1-2, issue #1665).
+// (docs/SPEC-TOOLWORK.md §3 rules 1-2).
 //
 //  1. Staging sets the identity; the worker never does. The launcher reads the
 //     pool's identity.tsv (owner, name, email), writes the job clone's LOCAL
@@ -10,16 +10,18 @@ package swarm
 //     GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_NOSYSTEM=1 so a bench's own
 //     config cannot leak in. A pool with no identity row is refused at launch.
 //  2. Staging leaves no way out of the job root. No absolute symlink and no
-//     symlink resolving outside the job root exists in a staged tree (#1557's
-//     repo/dist pointer cost four legs their toolchains); the launcher checks
+//     symlink resolving outside the job root exists in a staged tree: a
+//     pointer escaping the root can cost a worker its toolchain; the launcher checks
 //     this before the first worker starts and refuses by path.
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 )
 
 // StagingIdentity is the pool's one identity row: the name and email every
@@ -30,9 +32,9 @@ type StagingIdentity struct {
 	Email string
 }
 
-// PoolIdentityRemedy is the one remedy every pool identity refusal names
-// (nova-tools #3193). The pool identity is bench configuration: the fleet
-// converge in rowan-tools writes <pool>/identity.tsv (its pool_identity task),
+// PoolIdentityRemedy is the one remedy every pool identity refusal names.
+// The pool identity is bench configuration: the fleet converge writes
+// <pool>/identity.tsv,
 // so a bench refusing for it is an unconverged bench, never a hand-written
 // file. The card wrapper carries the refusal line, this remedy included, onto
 // the card record as its why.
@@ -77,11 +79,28 @@ func LoadPoolIdentity(poolDir string) (StagingIdentity, error) {
 	return id, nil
 }
 
+// ParseIdentity reads a pool identity given on the command line, as a loop's
+// argv in nova-config carries it (`--identity <owner>,<name>,<email>`), so no
+// identity.tsv has to be written into a pool by hand: the owner is the text
+// before the first comma, the email the text after the last, the name what lies
+// between (a name may hold a comma). Each is required, and the email holds an @.
+func ParseIdentity(s string) (StagingIdentity, error) {
+	first, last := strings.Index(s, ","), strings.LastIndex(s, ",")
+	if first < 0 || first == last {
+		return StagingIdentity{}, fmt.Errorf("--identity %q: wants <owner>,<name>,<email>, the three columns of a pool's identity.tsv", s)
+	}
+	id := StagingIdentity{Owner: strings.TrimSpace(s[:first]), Name: strings.TrimSpace(s[first+1 : last]), Email: strings.TrimSpace(s[last+1:])}
+	if id.Owner == "" || id.Name == "" || !strings.Contains(id.Email, "@") {
+		return StagingIdentity{}, fmt.Errorf("--identity %q: owner, name and an email with an @ are all required: <owner>,<name>,<email>", s)
+	}
+	return id, nil
+}
+
 // StagingGitEnv is the environment the launcher exports with every job: the
 // bench's own git config cannot leak into what the worker commits or what the
 // machinery reads, and the pool's identity row is exported as author and
 // committer so a worker cloning after launch commits under the pool's name
-// (SPEC-TOOLWORK §3 rule 1, #1665).
+// (SPEC-TOOLWORK §3 rule 1).
 func StagingGitEnv(id StagingIdentity) []string {
 	var env []string
 	if id.Name != "" {
@@ -111,10 +130,9 @@ func StageCloneIdentity(repoDir string, id StagingIdentity) error {
 		{"commit.gpgsign", "false"},
 		{"core.hooksPath", "/dev/null"},
 	} {
-		cmd := exec.Command("git", "config", "--local", kv[0], kv[1])
-		cmd.Dir = repoDir
-		cmd.Env = append(os.Environ(), StagingGitEnv(id)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := gitrun.Combined(context.Background(), gitrun.Options{Dir: repoDir, Env: append(os.Environ(), StagingGitEnv(id)...)},
+			"config", "--local", "--", kv[0], kv[1])
+		if err != nil {
 			return fmt.Errorf("staging %s local %s: %v: %s", repoDir, kv[0], err, strings.TrimSpace(string(out)))
 		}
 	}

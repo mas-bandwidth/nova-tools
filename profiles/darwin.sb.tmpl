@@ -45,7 +45,7 @@
 ;;                  socket, a sibling job's socket -- is denied. Measured 2026-09-11:
 ;;                  with (allow network*) a connect to a socket one directory outside
 ;;                  the write set succeeds rc=0; with these two clauses it is rc=1
-;;                  inside the wall and rc=0 outside it (profiles/darwin-check.sh,
+;;                  inside the wall and rc=0 outside it (tools/sandboxcheck,
 ;;                  checks unix_socket_outside and unix_socket_outside_control).
 ;;   @@NET@@        (allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))
 ;;                  -- IP only, never (allow network*),
@@ -84,7 +84,7 @@
 ;;   SecurityServer          TLS trust evaluation -- without it curl to an https name fails;
 ;;   system.logger           os_log(3), which libsystem calls on many paths.
 ;; Unqualified (allow mach-lookup) was measured to leave `pbpaste` READING THE CLIPBOARD
-;; inside the wall; with this set pbpaste is rc=1 (darwin-check.sh, clipboard_denied).
+;; inside the wall; with this set pbpaste is rc=1 (tools/sandboxcheck, clipboard_denied).
 ;; ACCEPTED WIDTH, named rather than removed: `launchctl print system` still answers and
 ;; `security list-keychains` still lists the keychain FILE NAMES -- neither reads a
 ;; secret, and both were measured to still answer under this narrowed set. Apple Events

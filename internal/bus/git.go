@@ -10,13 +10,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // gitOutputAtMost is for read paths whose protocol has a concrete response bound.  The
@@ -44,11 +47,9 @@ func gitOutputPrefixAtMost(dir string, limit int, args ...string) (string, bool,
 		return "", false, fmt.Errorf("git output limit must be positive")
 	}
 	full := append([]string{"-C", dir}, args...)
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout())
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", full...)
-	cmd.Env = append(cmd.Environ(), gitEnv...)
-	cmd.WaitDelay = killGrace
+	bounded := gitrun.Prepare(context.Background(), busGit(dir), args...)
+	defer bounded.Cancel()
+	cmd, ctx := bounded.Cmd, bounded.Ctx
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", false, err
@@ -60,7 +61,9 @@ func gitOutputPrefixAtMost(dir string, limit int, args ...string) (string, bool,
 	}
 	out, readErr := io.ReadAll(io.LimitReader(stdout, int64(limit)+1))
 	if len(out) > limit {
+		// ignored: the child is killed for writing past the limit, which is reported as the truncated flag
 		_ = cmd.Process.Kill()
+		// ignored: the child was killed on the line above; its exit status is that kill
 		_ = cmd.Wait()
 		return string(out[:limit]), true, nil
 	}
@@ -83,11 +86,9 @@ func gitOutputPrefixAtMost(dir string, limit int, args ...string) (string, bool,
 // A consumer error stops Git before returning the parser's explicit refusal.
 func gitReadBounded(dir string, consume func(io.Reader) error, args ...string) error {
 	full := append([]string{"-C", dir}, args...)
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout())
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", full...)
-	cmd.Env = append(cmd.Environ(), gitEnv...)
-	cmd.WaitDelay = killGrace
+	bounded := gitrun.Prepare(context.Background(), busGit(dir), args...)
+	defer bounded.Cancel()
+	cmd, ctx := bounded.Cmd, bounded.Ctx
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -99,7 +100,9 @@ func gitReadBounded(dir string, consume func(io.Reader) error, args ...string) e
 	}
 	consumeErr := consume(stdout)
 	if consumeErr != nil {
+		// ignored: the child is killed because the consumer failed; the consume error is the one returned
 		_ = cmd.Process.Kill()
+		// ignored: the child was killed on the line above; its exit status is that kill
 		_ = cmd.Wait()
 		return consumeErr
 	}
@@ -117,10 +120,8 @@ type limitedGitBuffer struct{ bytes.Buffer }
 
 func (b *limitedGitBuffer) Write(p []byte) (int, error) {
 	if b.Len() < gitOutputCap {
-		remain := gitOutputCap - b.Len()
-		if remain > len(p) {
-			remain = len(p)
-		}
+		remain := min(gitOutputCap-b.Len(), len(p))
+		// ignored: a bytes.Buffer write never returns an error
 		_, _ = b.Buffer.Write(p[:remain])
 	}
 	return len(p), nil
@@ -242,31 +243,36 @@ var gitEnv = []string{
 	"GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true",
 }
 
+// busGit is how every git of this tool runs: in dir, bounded by gitTimeout, under the
+// no-prompt environment above -- a push that needs a credential must FAIL rather than
+// block a tool a person is waiting on, and a pager must never open under a tool whose
+// output is a grammar -- and with killGrace as its WaitDelay.
+func busGit(dir string) gitrun.Options {
+	return gitrun.Options{C: dir, Env: append(os.Environ(), gitEnv...), Timeout: gitTimeout(), WaitDelay: killGrace}
+}
+
+// git runs one git for this tool through internal/gitrun: bounded by gitTimeout, under the
+// no-prompt environment above, with WaitDelay (killGrace) so a killed call returns even
+// when git's own child holds the pipe open. The grace is for git's own last words, which
+// are the reason the output is captured at all.
 func git(dir string, args ...string) (string, error) {
-	full := append([]string{"-C", dir}, args...)
 	budget := gitTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", full...)
-	// A push that needs a credential must FAIL rather than block a tool a person is
-	// waiting on, and a pager must never open under a tool whose output is a grammar.
-	cmd.Env = append(cmd.Environ(), gitEnv...)
-	// WaitDelay is what makes the budget real. Killing the process on the deadline is not
-	// enough on its own: CombinedOutput reads the pipe until it CLOSES, and git's own
-	// children -- an ssh, a credential helper, a pager -- inherit that pipe and hold it
-	// open after git is gone, so a killed call still blocked for as long as its child chose
-	// to live. WaitDelay closes the pipes a bounded time after the kill and lets the call
-	// return. The grace is for git's own last words, which are the reason the output is
-	// captured at all.
-	cmd.WaitDelay = killGrace
-	out, err := cmd.CombinedOutput()
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return string(out), fmt.Errorf("git %s did not finish within %s and was killed; nothing was left half-done by this tool, and a longer budget is --git-timeout <seconds>", strings.Join(args, " "), budget)
+	out, err := gitrun.Combined(context.Background(), busGit(dir), args...)
+	return string(out), gitFailure(dir, args, budget, string(out), err)
+}
+
+// gitFailure is what one git call's error says, apart from running it: a call killed on its
+// budget names the call, the budget and the flag that widens it; any other failure is a
+// gitError carrying git's own words; nil stays nil.
+func gitFailure(dir string, args []string, budget time.Duration, out string, err error) error {
+	var timedOut *subproc.TimeoutError
+	if errors.As(err, &timedOut) {
+		return fmt.Errorf("git %s did not finish within %s and was killed; nothing was left half-done by this tool, and a longer budget is --git-timeout <seconds>", strings.Join(args, " "), budget)
 	}
 	if err != nil {
-		return string(out), &gitError{args: full, err: err, output: string(out)}
+		return &gitError{args: append([]string{"-C", dir}, args...), err: err, output: out}
 	}
-	return string(out), nil
+	return nil
 }
 
 // ValidGitArg holds the shape a --remote or --branch may have: letters, digits, "-", "_",
@@ -359,12 +365,9 @@ func WithTrailer(message, what string) string {
 // rather than only the last paragraph, because a rebase, a cherry-pick or a person editing
 // a message can add lines under it, and a commit this tool made does not stop being one.
 func HasTrailer(message string) bool {
-	for _, line := range strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), TrailerKey+":") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n"), func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), TrailerKey+":")
+	})
 }
 
 // HasExactTrailer reports whether a commit message carries the exact trailer key and value.
@@ -778,9 +781,9 @@ func pushBackoff(attempt int) time.Duration {
 	return d
 }
 
-// sleepBetweenAttempts is time.Sleep, named so a test can take the wall clock out of the
-// retry loop and assert on the spacing instead of waiting for it. Nothing but a test ever
-// replaces it, and a test that does must not run in parallel with another that pushes.
+// sleepBetweenAttempts is time.Sleep in production. TestMain replaces it before m.Run so
+// unrelated retry fixtures do not wait on wall time; an individual test that inspects the
+// wait passes its own sleeper to commitAndPushWithSleep without changing shared state.
 var sleepBetweenAttempts = time.Sleep
 
 // CommitAndPush stages the given repo-relative paths, commits them under id, and pushes
@@ -789,6 +792,10 @@ var sleepBetweenAttempts = time.Sleep
 // The commit names its paths explicitly, so anything else that happens to be staged is not
 // swept into a note's commit.
 func CommitAndPush(dir string, id Identity, paths []string, message, remote, branch string, attempts int) (PushResult, error) {
+	return commitAndPushWithSleep(dir, id, paths, message, remote, branch, attempts, sleepBetweenAttempts)
+}
+
+func commitAndPushWithSleep(dir string, id Identity, paths []string, message, remote, branch string, attempts int, sleep func(time.Duration)) (PushResult, error) {
 	var res PushResult
 	if attempts < 1 {
 		return res, fmt.Errorf("attempts must be at least 1, got %d", attempts)
@@ -823,7 +830,7 @@ func CommitAndPush(dir string, id Identity, paths []string, message, remote, bra
 		// the machine can fetch. The wait grows with the attempt so a busy bus backs
 		// off, and the jitter is what actually breaks the step -- two benches that sleep
 		// the same 50ms are still in step.
-		sleepBetweenAttempts(pushBackoff(attempt))
+		sleep(pushBackoff(attempt))
 		// The remote moved. Take what arrived and replay our own commit on top of it.
 		if _, err := git(dir, "fetch", remote, branch); err != nil {
 			return res, fmt.Errorf("the push was refused and the fetch that would explain it failed: %w", err)
@@ -967,12 +974,9 @@ func isAncestorOf(dir, ancestor, descendant string) (bool, error) {
 		}
 	}
 	budget := gitTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "merge-base", "--is-ancestor", ancestor, descendant)
-	cmd.Env = append(cmd.Environ(), gitEnv...)
-	err := cmd.Run()
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	_, err := gitrun.Run(context.Background(), busGit(dir), "merge-base", "--is-ancestor", ancestor, descendant)
+	var timedOut *subproc.TimeoutError
+	if errors.As(err, &timedOut) {
 		return false, fmt.Errorf("git merge-base --is-ancestor did not finish within %s and was killed; a longer budget is --git-timeout <seconds>", budget)
 	}
 	if err != nil {
@@ -1068,25 +1072,9 @@ func commitsSince(dir, from, to string, ceiling int) (int, bool, error) {
 	if _, err := fmt.Sscanf(strings.TrimSpace(out), "%d", &n); err != nil {
 		return 0, false, fmt.Errorf("git rev-list --count did not answer with a number: %w", err)
 	}
-	commitsWalked.Add(int64(n))
 	countersFor(dir).commitsWalked.Add(int64(n))
 	return n, ceiling > 0 && n > ceiling, nil
 }
-
-// commitsWalked counts the commits this process's commit counts have enumerated, and
-// CommitsWalked reads it.
-//
-// It is INSTRUMENTATION, of the same kind and for the same reason as NoteParses in note.go:
-// the property it measures -- a stale cursor costs the BOUND and not the distance -- is a
-// claim about work NOT DONE, and work not done leaves no output to assert on. The honest
-// proof is a count taken where the work happens. Timing two runs instead would be a flake on
-// a shared runner and would prove nothing on a fast enough machine.
-var commitsWalked atomic.Int64
-
-// CommitsWalked is how many commits this process's rev-list counts have enumerated. Tests
-// take it before and after a run and assert on the difference; nothing else reads it and
-// nothing branches on it.
-func CommitsWalked() int64 { return commitsWalked.Load() }
 
 func ChangedSince(dir, commit string) ([]string, error) {
 	if err := ValidCommitHex(commit); err != nil {

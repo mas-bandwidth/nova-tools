@@ -1,23 +1,38 @@
 package dogfood
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// cliExample parses the reference fixture the shape tests share, so one file,
+// one parse and one require stand for all of them.
+func cliExample(t *testing.T) []Verb {
+	t.Helper()
+	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
+	require.NoError(t, err, "ParseCLI: %v", err)
+	return verbs
+}
+
+// verbKeys is the ledger keys of verbs, in the order the document declares them.
+func verbKeys(verbs []Verb) []string {
+	keys := make([]string, 0, len(verbs))
+	for _, v := range verbs {
+		keys = append(keys, v.Key())
+	}
+	return keys
+}
 
 func TestParseCLIReadsTheVerbsAReferenceDeclares(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	if err != nil {
-		t.Fatalf("ParseCLI: %v", err)
-	}
-	got := make([]string, 0, len(verbs))
-	for _, v := range verbs {
-		got = append(got, v.Key())
-	}
+	got := verbKeys(cliExample(t))
 	want := []string{
 		"nova-example quickstart",
 		"nova-example links",
@@ -43,9 +58,7 @@ func TestParseCLIReadsTheVerbsAReferenceDeclares(t *testing.T) {
 		"nova-prose cut",
 		"nova-prose serve",
 	}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("verbs:\n got %q\nwant %q", got, want)
-	}
+	require.Equal(t, strings.Join(want, "|"), strings.Join(got, "|"), "verbs:\n got %q\nwant %q", got, want)
 }
 
 // The document's order is the ledger's order, and the line number is how a
@@ -53,22 +66,15 @@ func TestParseCLIReadsTheVerbsAReferenceDeclares(t *testing.T) {
 func TestParseCLIKeepsTheDocumentsOrderAndTheDeclaringLine(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	if err != nil {
-		t.Fatalf("ParseCLI: %v", err)
-	}
-	if verbs[0].Verb != "quickstart" {
-		t.Fatalf("first verb = %q, want quickstart", verbs[0].Verb)
-	}
+	verbs := cliExample(t)
+	require.Equal(t, "quickstart", verbs[0].Verb, "first verb = %q, want quickstart", verbs[0].Verb)
 	for i := 1; i < len(verbs); i++ {
-		if verbs[i].Line <= 0 {
-			t.Fatalf("%s carries no line number", verbs[i].Key())
-		}
+		require.Greater(t, verbs[i].Line, 0, "%s carries no line number", verbs[i].Key())
 	}
 	// `links` is declared twice; the row is the first declaration.
 	for _, v := range verbs {
-		if v.Key() == "nova-example links" && v.Line != 10 {
-			t.Fatalf("nova-example links declared at line %d, want the FIRST declaration (10)", v.Line)
+		if v.Key() == "nova-example links" {
+			require.Equal(t, 10, v.Line, "nova-example links declared at line %d, want the FIRST declaration (10)", v.Line)
 		}
 	}
 }
@@ -76,22 +82,17 @@ func TestParseCLIKeepsTheDocumentsOrderAndTheDeclaringLine(t *testing.T) {
 func TestParseCLIRefusesTheShapesThatAreNotDeclarations(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	if err != nil {
-		t.Fatalf("ParseCLI: %v", err)
-	}
+	verbs := cliExample(t)
 	for _, v := range verbs {
 		switch v.Key() {
 		case "nova-example ghost":
-			t.Fatal("prose that names a verb declared it")
+			require.Fail(t, "prose that names a verb declared it")
 		case "nova-example version print", "nova-indented version print":
-			t.Fatalf("a pasted help block's description ran into the verb: %q", v.Verb)
+			require.Fail(t, fmt.Sprintf("a pasted help block's description ran into the verb: %q", v.Verb))
 		case "nova-fixture lift lockdown REFUSED", "nova-fixture lift":
-			t.Fatalf("the description after a flagless synopsis leaked into the verb: %q", v.Verb)
+			require.Fail(t, fmt.Sprintf("the description after a flagless synopsis leaked into the verb: %q", v.Verb))
 		}
-		if strings.HasPrefix(v.Verb, "-") || strings.Contains(v.Verb, "<") {
-			t.Fatalf("a flag or a placeholder became a verb: %q", v.Verb)
-		}
+		require.False(t, strings.HasPrefix(v.Verb, "-") || strings.Contains(v.Verb, "<"), "a flag or a placeholder became a verb: %q", v.Verb)
 	}
 }
 
@@ -100,20 +101,16 @@ func TestParseCLIRefusesAReferenceWithNoVerbs(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "empty.md")
-	if err := os.WriteFile(path, []byte("# Command reference\n\nNo verbs here.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ParseCLI(path); err == nil {
-		t.Fatal("a reference declaring no verbs was accepted; a ledger over nothing says OK about nothing")
-	}
+	require.NoError(t, os.WriteFile(path, []byte("# Command reference\n\nNo verbs here.\n"), 0o644))
+	_, err := ParseCLI(path)
+	require.Error(t, err, "a reference declaring no verbs was accepted; a ledger over nothing says OK about nothing")
 }
 
 func TestParseCLIRefusesAMissingReference(t *testing.T) {
 	t.Parallel()
 
-	if _, err := ParseCLI(filepath.Join(t.TempDir(), "nope.md")); err == nil {
-		t.Fatal("a missing reference was accepted")
-	}
+	_, err := ParseCLI(filepath.Join(t.TempDir(), "nope.md"))
+	require.Error(t, err, "a missing reference was accepted")
 }
 
 // The real reference is the one the gate will run on, so the parser is held to
@@ -126,15 +123,12 @@ func TestParseCLIReadsThisRepositorysOwnReference(t *testing.T) {
 		t.Skipf("docs/CLI.md not present: %v", err)
 	}
 	verbs, err := ParseCLI(path)
-	if err != nil {
-		t.Fatalf("ParseCLI(docs/CLI.md): %v", err)
-	}
-	if len(verbs) < 40 {
-		t.Fatalf("docs/CLI.md parsed to %d verbs; the reference declares many more", len(verbs))
-	}
+	require.NoError(t, err, "ParseCLI(docs/CLI.md): %v", err)
+	require.GreaterOrEqual(t, len(verbs), 40, "docs/CLI.md parsed to %d verbs; the reference declares many more", len(verbs))
 	want := map[string]bool{
 		"nova-check links":          false,
 		"nova-check corpus":         false,
+		"nova-swarm native":         false,
 		"nova-bus send":             false,
 		"nova-fuse lift quarantine": false,
 		"nova-version snapshot":     false,
@@ -148,13 +142,9 @@ func TestParseCLIReadsThisRepositorysOwnReference(t *testing.T) {
 		}
 	}
 	for key, found := range want {
-		if !found {
-			t.Errorf("docs/CLI.md declares %q and the parser missed it", key)
-		}
+		assert.True(t, found, "docs/CLI.md declares %q and the parser missed it", key)
 	}
-	if len(tools) < 10 {
-		t.Fatalf("found verbs for %d tools, want at least 10", len(tools))
-	}
+	require.GreaterOrEqual(t, len(tools), 10, "found verbs for %d tools, want at least 10", len(tools))
 }
 
 // The dogfood pass of 2026-09-18, edge 2, and the biggest one: nova-sandbox and
@@ -165,14 +155,7 @@ func TestParseCLIReadsThisRepositorysOwnReference(t *testing.T) {
 func TestParseCLIReadsTheIndentedUsageBlockShape(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	if err != nil {
-		t.Fatalf("ParseCLI: %v", err)
-	}
-	got := map[string]bool{}
-	for _, v := range verbs {
-		got[v.Key()] = true
-	}
+	keys := verbKeys(cliExample(t))
 	for _, want := range []string{
 		"nova-indented session start",
 		"nova-indented session stop",
@@ -180,58 +163,34 @@ func TestParseCLIReadsTheIndentedUsageBlockShape(t *testing.T) {
 		"nova-indented version",
 		"nova-indented help",
 	} {
-		if !got[want] {
-			t.Errorf("an indented usage block declared %q and the parser missed it", want)
-		}
+		assert.Contains(t, keys, want, "an indented usage block declared %q and the parser missed it", want)
 	}
 	// The prose under `wire:` and `flags:` is indented too, and declares nothing.
 	for _, never := range []string{"nova-indented one", "nova-indented the"} {
-		if got[never] {
-			t.Errorf("indented prose declared a verb: %q", never)
-		}
+		assert.NotContains(t, keys, never, "indented prose declared a verb: %q", never)
 	}
 }
 
 func TestParseCLIReadsTheTranscriptOnlyShape(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	if err != nil {
-		t.Fatalf("ParseCLI: %v", err)
-	}
-	got := map[string]bool{}
-	for _, v := range verbs {
-		got[v.Key()] = true
-	}
+	keys := verbKeys(cliExample(t))
 	for _, want := range []string{"nova-transcript check", "nova-transcript probe"} {
-		if !got[want] {
-			t.Errorf("a tool documented only by a transcript declared %q and the parser missed it", want)
-		}
+		assert.Contains(t, keys, want, "a tool documented only by a transcript declared %q and the parser missed it", want)
 	}
 }
 
 func TestParseCLIReadsTheVerbPerHeadingShape(t *testing.T) {
 	t.Parallel()
 
-	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
-	if err != nil {
-		t.Fatalf("ParseCLI: %v", err)
-	}
-	got := map[string]bool{}
-	for _, v := range verbs {
-		got[v.Key()] = true
-	}
+	keys := verbKeys(cliExample(t))
 	for _, want := range []string{"nova-prose cut", "nova-prose serve"} {
-		if !got[want] {
-			t.Errorf("a heading declared %q and the parser missed it", want)
-		}
+		assert.Contains(t, keys, want, "a heading declared %q and the parser missed it", want)
 	}
 	// A heading is a verb only when the heading IS the verb: a sentence that
 	// happens to start in lower case is prose about the tool.
 	for _, never := range []string{"nova-prose native and", "nova-prose native", "nova-prose the"} {
-		if got[never] {
-			t.Errorf("a prose heading declared a verb: %q", never)
-		}
+		assert.NotContains(t, keys, never, "a prose heading declared a verb: %q", never)
 	}
 }
 
@@ -249,9 +208,7 @@ func TestEveryToolSectionOfTheRealReferenceYieldsAVerb(t *testing.T) {
 		t.Skipf("docs/CLI.md not present: %v", err)
 	}
 	verbs, err := ParseCLI(path)
-	if err != nil {
-		t.Fatalf("ParseCLI: %v", err)
-	}
+	require.NoError(t, err, "ParseCLI: %v", err)
 	withVerbs := map[string]bool{}
 	for _, v := range verbs {
 		withVerbs[v.Tool] = true
@@ -264,8 +221,19 @@ func TestEveryToolSectionOfTheRealReferenceYieldsAVerb(t *testing.T) {
 		if _, err := os.Stat(filepath.Join("..", "..", "cmd", tool)); err != nil {
 			continue
 		}
-		if !withVerbs[tool] {
-			t.Errorf("docs/CLI.md gives %s a section and the ledger reads no verb out of it; that tool can never be dogfooded", tool)
-		}
+		assert.True(t, withVerbs[tool], "docs/CLI.md gives %s a section and the ledger reads no verb out of it; that tool can never be dogfooded", tool)
 	}
+}
+
+// TestParseHelpReadsAStageLineAsProse: a skeleton banner's line 2 names the
+// tool and its stage; it is a sentence, not the verb "is", so the verb-help
+// walk and the dogfood ledger never ask `<tool> is -h`.
+func TestParseHelpReadsAStageLineAsProse(t *testing.T) {
+	t.Parallel()
+	help := "nova-work: every issue in one tree file\nnova-work is pre-alpha: not ready for production use.\n\nusage:\n  nova-work import --org <org>\n  nova-work verify --tree <tree.lisp>\n"
+	var keys []string
+	for _, v := range ParseHelp(help) {
+		keys = append(keys, v.Key())
+	}
+	assert.Equal(t, []string{"nova-work import", "nova-work verify"}, keys)
 }

@@ -6,12 +6,17 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // tree_test.go is the shared repository tree the class tests read: ONE walk and
@@ -169,9 +174,7 @@ var (
 func repoTree(t *testing.T) *repoTreeIndex {
 	t.Helper()
 	idx, err := sharedRepoTree()
-	if err != nil {
-		t.Fatalf("loading the shared repository tree at %s: %v", repoRoot(t), err)
-	}
+	require.NoError(t, err, "loading the shared repository tree at %s: %v", repoRoot(t), err)
 	return idx
 }
 
@@ -248,10 +251,6 @@ func loadRepoTree(root string) (*repoTreeIndex, error) {
 			return nil
 		}
 		if d.IsDir() {
-			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-			if isDeprecatedDir(root, path) {
-				return fs.SkipDir
-			}
 			return nil
 		}
 		// Anything that is not a directory is a file the walks this replaces
@@ -453,4 +452,25 @@ type treeParse struct {
 	fset *token.FileSet
 	file *ast.File
 	err  error
+}
+
+var (
+	repoGoListOnce sync.Once
+	repoGoListOut  []byte
+	repoGoListErr  error
+)
+
+// repoGoList runs `go list ./...` over the repository root once per test process
+// and returns its output. The tests in this package are read-only over the tree,
+// so package membership never changes between tests.
+func repoGoList(t *testing.T) []byte {
+	t.Helper()
+	repoGoListOnce.Do(func() {
+		cmd := exec.Command("go", "list", "./...")
+		cmd.Dir = repoRoot(t)
+		cmd.Env = goenv.Clean(os.Environ())
+		repoGoListOut, repoGoListErr = cmd.Output()
+	})
+	require.NoError(t, repoGoListErr)
+	return repoGoListOut
 }

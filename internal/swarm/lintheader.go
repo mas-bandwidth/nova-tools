@@ -4,13 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // THE TYPED CARD HEADER, CHECKED BEFORE ANY SPEND (SPEC-TOOLWORK.md §5 rule 1, #1651).
@@ -64,7 +67,7 @@ import (
 // a second name list here would be the same mistake `validGlobs` just undid.
 
 // CardHeaderFinding is one typed-header defect: the check's token, the 1-based line it
-// sits on and the line's own text. It is the shape `deprecated/cmd/nova-swarm/lint.go` prints on a
+// sits on and the line's own text. It is the shape `cmd/nova-swarm/lint.go` prints on a
 // LINT DRIFT line, remedy and all.
 type CardHeaderFinding struct {
 	Check   string
@@ -76,20 +79,15 @@ type CardHeaderFinding struct {
 // table shape the twelve older tokens use: a check without a remedy costs a card writer
 // a guess per drift (#1464), and `nova-swarm lint --rules` prints these beside them.
 var CardHeaderRemedies = map[string]string{
-	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one `nova-pulse accept --kinds` names; `cut` writes it from the pool row and a model never does (SPEC-TOOLWORK.md §5 rules 1, 3)",
-	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none` (SPEC-TOOLWORK.md §5 rules 1, 2)",
-	"test-named":     "the card carries `TEST: [-tags <tags>] <package> <TestName>` -- the package repository-relative and the name a Go test name -- or `TEST: none <why>` where the kind declares no gate (SPEC-TOOLWORK.md §5 rule 1; the grammar is cardhdr.ParseTest's)",
-	"paused":         "the coordinator paused this kind, so `cut` cuts no card of it and a card launched before the pause is `ACCEPT ABSTAIN reason=paused` at harvest; the remedy is not a rerun but `nova-pulse trust --set trial --queue <dir> --kind <kind> --who <name> --reason <text>` (SPEC-TOOLWORK.md §5 rule 1, eligibility rule 3, §1's abstain list)",
+	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one the pool's kinds list names; the cutter writes it from the pool row and a model never does",
+	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none`",
+	"test-named":     "the card carries `TEST: [-tags <tags>] <package> <TestName>` -- the package repository-relative and the name a Go test name -- or `TEST: none <why>` where the kind declares no gate",
+	"paused":         "the coordinator paused this kind, so `cut` cuts no card of it and a card launched before the pause is `ACCEPT ABSTAIN reason=paused` at harvest; the remedy is not a rerun but `nova-pulse trust --set trial --queue <dir> --kind <kind> --who <name> --reason <text>`",
 }
 
 // CardHeaderChecks is every token this file draws, in one byte-stable order.
 func CardHeaderChecks() []string {
-	out := make([]string, 0, len(CardHeaderRemedies))
-	for name := range CardHeaderRemedies {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(CardHeaderRemedies))
 }
 
 // TrustState is the coordinator's per-kind state, keyed by kind: `trial`, `trusted` or
@@ -119,7 +117,7 @@ type TrustState map[string]string
 //
 // THE KEY NAMES STAY UPPER CASE. Widening what CONTINUES the block is not the same as
 // widening what a typed key IS: docs/SPEC-TOOLWORK.md:700-713 (§5 rule 1) and
-// deprecated/docs/WORKER-CARDS.md:38-51 write `KIND:`, `PATHS:`, `TEST:`, `LEGS:` and `SOURCE:` in
+// WORKER-CARDS.md:38-51 (now in the nova-work-old repository) write `KIND:`, `PATHS:`, `TEST:`, `LEGS:` and `SOURCE:` in
 // upper case and say nothing anywhere about case, so `paths:` is not `PATHS:` here and
 // the card that writes it still draws `paths-declared`. cardTypedKeys is the exact
 // names; the day a spec line rules case-insensitive keys, this is the one place to say
@@ -194,12 +192,32 @@ func cardHeaderBlock(raw []byte) (block map[string]headerField, stranded map[str
 	return block, stranded
 }
 
+// CardHeaderValue is the value of one key of a card's typed header block, read
+// as the lint and the gate read the block (the unbroken run of `KEY: value`
+// lines under the contract line); ok is false when the block has no such line.
+// nova-sprint add reads DEPENDS-ON: and PATHS: through it.
+func CardHeaderValue(raw []byte, key string) (value string, ok bool) {
+	block, _ := cardHeaderBlock(raw)
+	f := block[key]
+	return f.value, f.found
+}
+
+// CardPaths is the typed header's PATHS and NEW globs (docs/SPEC-SPRINT.md,
+// "A card is a tree of steps"). Both name files the card may change; a key
+// in the body or a step grants no scope. PATHS: none names no files.
+func CardPaths(raw []byte) []string {
+	block, _ := cardHeaderBlock(raw)
+	return typedrec.CardPaths(func(key string) (string, bool) {
+		f := block[key]
+		return f.value, f.found
+	})
+}
+
 // cardTypedKeys is the five lines SPEC-TOOLWORK.md §5 rule 1 names, as a set.
 var cardTypedKeys = map[string]bool{"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true}
 
 // ungatedKinds is the set of kinds that may carry TEST: none. It matches the third
-// column of internal/hygiene/kinds.txt (SPEC-TOOLWORK.md §5 rule 2: read, probe, text,
-// tone, report) until internal/pulse/kinds.go lands with the gate table.
+// column of internal/hygiene/kinds.txt (read, probe, text, tone, report).
 var ungatedKinds = map[string]bool{"read": true, "probe": true, "text": true, "tone": true, "report": true}
 
 // cardKeyCheck is the token that answers for each typed key. LEGS: and SOURCE: have no
@@ -214,17 +232,13 @@ var cardKeyCheck = map[string]string{
 }
 
 // validGlobs is the PATHS: rule, and it is `hygiene.ValidatePaths` ITSELF, not a
-// restatement of it (#1853, Emma's item-4 dogfood).
+// restatement of it.
 //
-// This function used to write the rule out a second time, because T02's validator was
-// not on `dev` when the checks were first written, and the comment above said in so many
-// words that it should become a call the day T02 landed. T02 landed, this did not, and
-// the copy drifted in BOTH directions within a day: it let a Windows drive letter
-// (`C:/Windows/system32/evil.go`) through as repo-relative, it had no cap at all where
-// the rule's cap is eight (SPEC-TOOLWORK.md:579-580), and it refused `*.go` and
-// `**/*.go`, which the validator clears. A card writer got a different answer from the
-// lint on the bench and from the gate at `accept`, which is the one thing these checks
-// exist to prevent.
+// A restated PATHS rule drifts from the validator: it lets a Windows drive letter
+// through as repo-relative, it has no cap where the rule caps the globs, and it refuses
+// `*.go` and `**/*.go` that the validator clears. Then the lint on the bench and the
+// gate at `accept` give a card writer different answers, which is the one thing these
+// checks exist to prevent.
 func validGlobs(globs []string) (string, bool) {
 	if err := hygiene.ValidatePaths(globs); err != nil {
 		return err.Error(), false
@@ -246,9 +260,9 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 			typed = true
 		}
 	}
-	// A CARD WITH A TYPED LINE THE GATE CANNOT REACH IS A TYPED CARD (#1854). Without
-	// this it was neither: no header line inside the block, so no typed checks ran, and
-	// the card was called clean all the way to `accept`.
+	// A CARD WITH A TYPED LINE THE GATE CANNOT REACH IS A TYPED CARD. Without
+	// this the card is neither: no header line sits inside the block, so no typed check
+	// runs, and the card reads clean all the way to `accept`.
 	if len(stranded) > 0 {
 		typed = true
 	}
@@ -257,14 +271,12 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	}
 	var out []CardHeaderFinding
 	add := func(check string, line int, excerpt string) {
-		if line < 1 {
-			line = 1
-		}
+		line = max(line, 1)
 		out = append(out, CardHeaderFinding{Check: check, Line: line, Excerpt: excerpt})
 	}
 	// The stranded lines first, in line order, because they are why the rest of this
 	// card's header reads the way it does.
-	for _, k := range sortedKeys(stranded) {
+	for _, k := range slices.Sorted(maps.Keys(stranded)) {
 		add(cardKeyCheck[k], stranded[k], fmt.Sprintf("%s: on line %d is below the header block and the gate will never read it: the typed header is the unbroken run of `KEY: value` lines directly under the contract line", k, stranded[k]))
 	}
 	// A repeated key next: a card with two of one line has no one value for it.
@@ -285,10 +297,10 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	case kind.value == "":
 		add("kind-declared", kind.line, "KIND: with no kind after it")
 	case !hygiene.KindDeclared(kind.value):
-		// AN UNKNOWN KIND IS NOT A KIND (#1853). The line used to need only a
-		// value, so `KIND: completely-unknown-kind` linted clean and died at
-		// accept. The names are hygiene.Kinds(), the same set `nova-check hygiene
-		// --kind` prints when it refuses.
+		// AN UNKNOWN KIND IS NOT A KIND. A KIND: line that names a kind the
+		// toolchain does not declare is a finding, so `KIND: completely-unknown-kind`
+		// is refused here instead of dying at accept. The names are hygiene.Kinds(),
+		// the same set `nova-check hygiene --kind` prints when it refuses.
 		add("kind-declared", kind.line, fmt.Sprintf("KIND: %q is not a kind this toolchain declares; one of: %s", kind.value, strings.Join(hygiene.Kinds(), ", ")))
 	}
 
@@ -301,10 +313,10 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	case paths.value == "":
 		add("paths-declared", paths.line, "PATHS: with no globs after it; a card that changes nothing says `PATHS: none`")
 	case paths.value != "none":
-		// AN EMPTY ENTRY IS NOT A SKIPPABLE ONE. `PATHS: , , ` used to have each empty
-		// entry `continue`d past and the line called fine, which is the worst of the
-		// three answers a reader could get: the line declares no glob and it is not
-		// `none` (#1853, Emma's item-4 dogfood).
+		// AN EMPTY ENTRY IS NOT A SKIPPABLE ONE. In `PATHS: , , ` each empty
+		// entry is a finding, not a value skipped past: the line declares no glob and
+		// it is not `none`, so skipping it would answer a reader with neither a glob
+		// nor a refusal.
 		var globs []string
 		empty := false
 		for _, g := range strings.Split(paths.value, ",") {
@@ -342,7 +354,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		add("test-named", test.line, testWhy)
 	case tl.None:
 		// TEST: none is only a declaration for ungated kinds; gated kinds strictly
-		// require a reproducing test (SPEC-TOOLWORK.md §5 rule 1, rule 2).
+		// require a reproducing test, per the toolwork spec's typed-header rule.
 		if kind.value != "" && !ungatedKinds[kind.value] {
 			add("test-named", test.line, fmt.Sprintf("TEST: none is not allowed for kind %q; gated kinds require `TEST: <package> <TestName>`", kind.value))
 		}
@@ -371,7 +383,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 }
 
 // ReadTrustFixture reads the coordinator's per-kind state from a file in the shape
-// `nova-pulse trust` prints (SPEC-TOOLWORK.md eligibility rule 1):
+// `nova-pulse trust` prints (the toolwork spec's eligibility rule):
 //
 //	TRUST kind=<kind> area=<area> state=<trial|trusted|paused> cards=<n>/<N> ...
 //	TRUST OK kinds=<n> trial=<n> trusted=<n> paused=<n>
@@ -419,18 +431,8 @@ func ReadTrustFixture(path string) (TrustState, error) {
 	return out, nil
 }
 
-// sortedKeys is the keys of a line-number map, in one byte-stable order so two runs of
+// sortedHeaderKeys is the typed keys of the block, in one byte-stable order so two runs of
 // the lint over the same card print the same lines in the same order.
-func sortedKeys(m map[string]int) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// sortedHeaderKeys is the same, for the block itself.
 func sortedHeaderKeys(m map[string]headerField) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

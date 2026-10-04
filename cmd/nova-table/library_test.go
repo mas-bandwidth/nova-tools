@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/redis/go-redis/v9"
 	"strings"
 	"testing"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // reply is an error the store itself replied with.
@@ -89,55 +90,54 @@ func TestFirstContactLoadsOnlyWhenMissingAndOnce(t *testing.T) {
 	present := &fakeStore{holds: true}
 	hook := libraryHook{state: &firstContact{}, load: present.load}
 	for i := 0; i < 3; i++ {
-		if err := hook.ProcessHook(present.next)(ctx, fcall("ns_table_create")); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, hook.ProcessHook(present.next)(ctx, fcall("ns_table_create")))
 	}
-	if present.loads != 0 || present.sends != 3 {
-		t.Fatalf("a store holding the library: %d loads, %d sends; want 0 loads and one send a verb", present.loads, present.sends)
-	}
+	require.EqualValues(t, 0, present.loads, "a store holding the library: %d loads, %d sends; want 0 loads and one send a verb", present.loads, present.sends)
+	require.EqualValues(t, 3, present.sends, "a store holding the library: %d loads, %d sends; want 0 loads and one send a verb", present.loads, present.sends)
 
 	// Not an FCALL, or an FCALL refused for another reason: no load.
 	other := &fakeStore{}
 	hook = libraryHook{state: &firstContact{}, load: other.load}
-	if err := hook.ProcessHook(other.next)(ctx, redis.NewCmd(ctx, "hget", "k", "f")); err != nil || other.loads != 0 {
-		t.Fatalf("hget: err %v, %d loads; want none", err, other.loads)
+	{
+		err := hook.ProcessHook(other.next)(ctx, redis.NewCmd(ctx, "hget", "k", "f"))
+		require.NoError(t, err, "hget: err %v, %d loads; want none", err, other.loads)
+		require.EqualValues(t, 0, other.loads, "hget: err %v, %d loads; want none", err, other.loads)
 	}
 	refusal := reply("ERR stale epoch")
 	stale := func(_ context.Context, cmd redis.Cmder) error { cmd.SetErr(refusal); return refusal }
-	if err := hook.ProcessHook(stale)(ctx, fcall("ns_table_set")); !errors.Is(err, refusal) || other.loads != 0 {
-		t.Fatalf("an FCALL the store refused for its own reason: err %v, %d loads; want the refusal as it is and no load", err, other.loads)
+	{
+		err := hook.ProcessHook(stale)(ctx, fcall("ns_table_set"))
+		require.ErrorIs(t, err, refusal, "an FCALL the store refused for its own reason: err %v, %d loads; want the refusal as it is and no load", err, other.loads)
+		require.EqualValues(t, 0, other.loads, "an FCALL the store refused for its own reason: err %v, %d loads; want the refusal as it is and no load", err, other.loads)
 	}
 
 	fresh := &fakeStore{}
 	state := &firstContact{}
 	hook = libraryHook{state: state, load: fresh.load}
-	if err := hook.ProcessHook(fresh.next)(ctx, fcall("ns_table_create")); err != nil {
-		t.Fatalf("first contact with a store that holds no library: %v", err)
+	{
+		err := hook.ProcessHook(fresh.next)(ctx, fcall("ns_table_create"))
+		require.NoError(t, err, "first contact with a store that holds no library: %v", err)
 	}
-	if fresh.loads != 1 || fresh.sends != 2 {
-		t.Fatalf("first contact: %d loads, %d sends; want one load and the FCALL sent twice", fresh.loads, fresh.sends)
-	}
+	require.EqualValues(t, 1, fresh.loads, "first contact: %d loads, %d sends; want one load and the FCALL sent twice", fresh.loads, fresh.sends)
+	require.EqualValues(t, 2, fresh.sends, "first contact: %d loads, %d sends; want one load and the FCALL sent twice", fresh.loads, fresh.sends)
 	for i := 0; i < 3; i++ {
-		if err := hook.ProcessHook(fresh.next)(ctx, fcall("ns_table_row_add")); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, hook.ProcessHook(fresh.next)(ctx, fcall("ns_table_row_add")))
 	}
-	if fresh.loads != 1 || fresh.sends != 5 || state.loads != 1 {
-		t.Fatalf("after the load: %d loads (%d attempts), %d sends; want 1 load and one send a verb", fresh.loads, state.loads, fresh.sends)
-	}
+	require.EqualValues(t, 1, fresh.loads, "after the load: %d loads (%d attempts), %d sends; want 1 load and one send a verb", fresh.loads, state.loads, fresh.sends)
+	require.EqualValues(t, 5, fresh.sends, "after the load: %d loads (%d attempts), %d sends; want 1 load and one send a verb", fresh.loads, state.loads, fresh.sends)
+	require.EqualValues(t, 1, state.loads, "after the load: %d loads (%d attempts), %d sends; want 1 load and one send a verb", fresh.loads, state.loads, fresh.sends)
 
 	// The library vanishes (another tool deleted it): this process has
 	// loaded once, so it loads nothing more and says so.
 	fresh.holds = false
 	err := hook.ProcessHook(fresh.next)(ctx, fcall("ns_table_drop"))
-	if err == nil || fresh.loads != 1 || !strings.Contains(err.Error(), "ERR Function not found: function ns_table_drop") ||
-		!strings.Contains(err.Error(), "; run: nova-redis fn load --addr <host:port>") || !remedied(err.Error()) {
-		t.Fatalf("a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
-	}
-	if redisconn.Classify(err) != redisconn.Other || lost(err) {
-		t.Fatalf("a miss is the store's refusal (exit 1), got class %s", redisconn.Classify(err))
-	}
+	require.Error(t, err, "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
+	require.EqualValues(t, 1, fresh.loads, "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
+	require.Contains(t, err.Error(), "ERR Function not found: function ns_table_drop", "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
+	require.Contains(t, err.Error(), "; run: nova-redis fn load --addr <host:port>", "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
+	require.True(t, remedied(err.Error()), "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
+	require.Equal(t, redisconn.Other, redisconn.Classify(err), "a miss is the store's refusal (exit 1), got class %s", redisconn.Classify(err))
+	require.False(t, lost(err), "a miss is the store's refusal (exit 1), got class %s", redisconn.Classify(err))
 }
 
 // TestFirstContactOlderLibraryAndSkippedLoad: a store whose library of the
@@ -158,8 +158,11 @@ func TestFirstContactOlderLibraryAndSkippedLoad(t *testing.T) {
 		s := &fakeStore{outcome: c.outcome}
 		hook := libraryHook{state: &firstContact{}, load: s.load}
 		err := hook.ProcessHook(s.next)(ctx, fcall("ns_table_create"))
-		if err == nil || s.loads != 1 || s.sends != c.sends || !strings.Contains(err.Error(), c.words) || !strings.HasSuffix(err.Error(), deployRemedy) {
-			t.Errorf("%s: err %v, %d loads, %d sends; want one load, %d sends and %q", c.outcome, err, s.loads, s.sends, c.sends, c.words)
+		if assert.Error(t, err, "%s: err %v, %d loads, %d sends; want one load, %d sends and %q", c.outcome, err, s.loads, s.sends, c.sends, c.words) {
+			assert.Equal(t, 1, s.loads, "%s: library load count", c.outcome)
+			assert.Equal(t, c.sends, s.sends, "%s: command send count", c.outcome)
+			assert.Contains(t, err.Error(), c.words, "%s: library refusal", c.outcome)
+			assert.True(t, strings.HasSuffix(err.Error(), deployRemedy), "%s: refusal lacks deployment remedy: %v", c.outcome, err)
 		}
 	}
 }
@@ -174,12 +177,16 @@ func TestFirstContactFailedLoadIsTriedAgain(t *testing.T) {
 	state := &firstContact{}
 	hook := libraryHook{state: state, load: s.load}
 	err := hook.ProcessHook(s.next)(ctx, fcall("ns_table_create"))
-	if err == nil || !strings.Contains(err.Error(), "loading it failed") || redisconn.Classify(err) != redisconn.Unreachable || state.done {
-		t.Fatalf("a failed load: err %v class %s done %v; want the load's error, unreachable, not done", err, redisconn.Classify(err), state.done)
-	}
+	require.Error(t, err, "a failed load: err %v class %s done %v; want the load's error, unreachable, not done", err, redisconn.Classify(err), state.done)
+	require.Contains(t, err.Error(), "loading it failed", "a failed load: err %v class %s done %v; want the load's error, unreachable, not done", err, redisconn.Classify(err), state.done)
+	require.Equal(t, redisconn.Unreachable, redisconn.Classify(err), "a failed load: err %v class %s done %v; want the load's error, unreachable, not done", err, redisconn.Classify(err), state.done)
+	require.False(t, state.done, "a failed load: err %v class %s done %v; want the load's error, unreachable, not done", err, redisconn.Classify(err), state.done)
 	s.loadErr = nil
-	if err := hook.ProcessHook(s.next)(ctx, fcall("ns_table_create")); err != nil || s.loads != 2 || !state.done {
-		t.Fatalf("the next verb: err %v, %d loads, done %v; want it loaded and sent", err, s.loads, state.done)
+	{
+		err := hook.ProcessHook(s.next)(ctx, fcall("ns_table_create"))
+		require.NoError(t, err, "the next verb: err %v, %d loads, done %v; want it loaded and sent", err, s.loads, state.done)
+		require.EqualValues(t, 2, s.loads, "the next verb: err %v, %d loads, done %v; want it loaded and sent", err, s.loads, state.done)
+		require.True(t, state.done, "the next verb: err %v, %d loads, done %v; want it loaded and sent", err, s.loads, state.done)
 	}
 }
 
@@ -194,13 +201,14 @@ func TestFirstContactPipelines(t *testing.T) {
 	s := &fakeStore{}
 	hook := libraryHook{state: &firstContact{}, load: s.load}
 	cmds := []redis.Cmder{redis.NewCmd(ctx, "fcall_ro", "ns_table_read", 1, "k"), redis.NewCmd(ctx, "fcall_ro", "ns_table_read", 1, "j")}
-	if err := hook.ProcessPipelineHook(s.pipeline)(ctx, cmds); err != nil || s.loads != 1 || s.sends != 4 {
-		t.Fatalf("all FCALLs missed: err %v, %d loads, %d sends; want one load and the pipeline sent twice", err, s.loads, s.sends)
+	{
+		err := hook.ProcessPipelineHook(s.pipeline)(ctx, cmds)
+		require.NoError(t, err, "all FCALLs missed: err %v, %d loads, %d sends; want one load and the pipeline sent twice", err, s.loads, s.sends)
+		require.EqualValues(t, 1, s.loads, "all FCALLs missed: err %v, %d loads, %d sends; want one load and the pipeline sent twice", err, s.loads, s.sends)
+		require.EqualValues(t, 4, s.sends, "all FCALLs missed: err %v, %d loads, %d sends; want one load and the pipeline sent twice", err, s.loads, s.sends)
 	}
 	for _, cmd := range cmds {
-		if cmd.Err() != nil {
-			t.Fatalf("%v after the load: %v", cmd.Args(), cmd.Err())
-		}
+		require.NoError(t, cmd.Err(), "%v after the load: %v", cmd.Args(), cmd.Err())
 	}
 
 	for _, first := range []string{"multi", "hset"} {
@@ -208,8 +216,10 @@ func TestFirstContactPipelines(t *testing.T) {
 		hook := libraryHook{state: &firstContact{}, load: s.load}
 		cmds := []redis.Cmder{redis.NewCmd(ctx, first), fcall("ns_table_set"), redis.NewCmd(ctx, "exec")}
 		err := hook.ProcessPipelineHook(s.pipeline)(ctx, cmds)
-		if err == nil || s.loads != 1 || s.sends != 3 || !strings.Contains(cmds[1].Err().Error(), deployRemedy) || cmds[0].Err() != nil {
-			t.Fatalf("a pipeline with %s: err %v, %d loads, %d sends, fcall err %v; want the load, one send and the remedy", first, err, s.loads, s.sends, cmds[1].Err())
-		}
+		require.Error(t, err, "a pipeline with %s: err %v, %d loads, %d sends, fcall err %v; want the load, one send and the remedy", first, err, s.loads, s.sends, cmds[1].Err())
+		require.EqualValues(t, 1, s.loads, "a pipeline with %s: err %v, %d loads, %d sends, fcall err %v; want the load, one send and the remedy", first, err, s.loads, s.sends, cmds[1].Err())
+		require.EqualValues(t, 3, s.sends, "a pipeline with %s: err %v, %d loads, %d sends, fcall err %v; want the load, one send and the remedy", first, err, s.loads, s.sends, cmds[1].Err())
+		require.Contains(t, cmds[1].Err().Error(), deployRemedy, "a pipeline with %s: err %v, %d loads, %d sends, fcall err %v; want the load, one send and the remedy", first, err, s.loads, s.sends, cmds[1].Err())
+		require.NoError(t, cmds[0].Err(), "a pipeline with %s: err %v, %d loads, %d sends, fcall err %v; want the load, one send and the remedy", first, err, s.loads, s.sends, cmds[1].Err())
 	}
 }

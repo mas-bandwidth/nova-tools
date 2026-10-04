@@ -8,11 +8,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -21,15 +21,18 @@ import (
 
 // watch: the named tables rendered once per --every, in place on a
 // terminal (the ANSI home-and-clear sequence, then the text: a console tab
-// shows the live table with no shell loop; Glenn 2026-09-27: "create a way
-// to render this table to text, efficiently and mechanically, once
-// per-second in a console window"), or published to --out by atomic rename
-// the way the sprint table is. Efficient and mechanical: exactly one Redis
+// shows the live table with no shell loop, rendering the table to text
+// efficiently and mechanically, once per tick in a console window), or
+// published to --out by atomic rename the way the sprint table is. Efficient
+// and mechanical: exactly one Redis
 // pipeline per tick for every named table, including the first tick.
 // Each read-only snapshot holds the shape and cells; the screen holds the table and nothing
-// else (Glenn: "it should only contain that table data, no bullshit around
-// it") -- no clock, no tick time, no key names; a store that did not answer
-// leaves the last good text standing with ONE line, stale: <n>s, under it.
+// else, only that table's own data with nothing around it --
+// no clock, no tick time, no key names; a store that did not answer
+// leaves the last good text standing with ONE line, store unreachable since
+// <time>, under it, and only while the read fails: no counter ticks while the
+// store answers (owner's finding on the stale counter: "I don't want to see
+// this please. It is not helpful to me.").
 
 // clearScreen is the ANSI home-and-clear sequence.
 const clearScreen = "\033[H\033[2J"
@@ -42,10 +45,11 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
 	every := fs.Duration("every", time.Second, "the tick, a duration (1s)")
-	out := fs.String("out", "", "publish to this file by atomic rename instead of drawing in place")
+	out := fs.String("out", "", "publish to this file by atomic rename instead of drawing in place (the file and its directory must not be symlinks)")
 	title := fs.String("title", "", "a title line above the tables")
 	view := fs.String("view", "", "a stored view: its tables and title, read every frame (view set <name> --tables ...)")
 	once := fs.Bool("once", false, "render once and exit, with no clear")
+	checkFlag := fs.Bool("check", false, "run table check every tick; show a stall row on invariant violation")
 	rf := declareRenderFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -87,9 +91,9 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
-	read := tablesReader(c, names, *title, opts)
+	read := tablesReader(c, names, *title, opts, *checkFlag)
 	if *view != "" {
-		read = viewReader(c, *view, opts)
+		read = viewReader(c, *view, opts, *checkFlag)
 	}
 	if *once {
 		text, err := read(ctx)
@@ -105,24 +109,39 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 
 // tablesReader reads and renders the named tables: one pipeline per tick
 // over every reader, including changed shapes, the renders joined by one
-// blank line, the title first when there is one.
+// blank line, the title first when there is one. When check is true, it audits
+// invariant integrity for each table and appends a stall row on violation.
 // viewReader reads the view first, every frame (one extra trip), then its
 // tables in one trip, so the tables a tab shows change by a verb and never
-// by a restart (Glenn 2026-09-27: "restarting is not cool").
-func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(context.Context) (string, error) {
+// by a restart: changing the tables a tab shows is a verb, never a
+// restart of the process.
+func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts, check bool) func(context.Context) (string, error) {
+	return viewReaderWith(c, name, opts, check, ntable.ViewGet, tableSnapshots, ntable.Check)
+}
+
+func viewReaderWith(
+	c redis.Cmdable,
+	name string,
+	opts ntable.RenderOpts,
+	check bool,
+	viewGet func(context.Context, redis.Cmdable, string) (ntable.View, error),
+	snapshotter func(c redis.Cmdable, names []string) func(context.Context) ([]ntable.Table, error),
+	checker func(context.Context, redis.Cmdable, string) (ntable.CheckReport, error),
+) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
-		v, err := ntable.ViewGet(ctx, c, name)
+		v, err := viewGet(ctx, c, name)
 		if err != nil {
 			return "", err
 		}
 		if len(v.Tables) == 0 {
 			return oneline.Escape(v.Title) + "\n(no tables in view " + oneline.Escape(name) + ")\n", nil
 		}
-		// The view's frame, Glenn's layout (2026-09-27): the time to the
-		// second, a blank line, the title, a blank line, the summary
-		// "x/y z% -> ETA" when the view names a done column, a blank line,
-		// the tables. Nothing else goes in.
-		tables, err := tableSnapshots(c, v.Tables)(ctx)
+		// The view's frame: the time to the second, a blank
+		// line, the title, a blank line, the summary line, a blank line, the
+		// tables. Nothing else goes in. The summary line is the view's state
+		// alone while it has one ("STOPPED", nothing more), else
+		// "x/y z% -> ETA" when the view names a done column.
+		tables, err := snapshotter(c, v.Tables)(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -133,26 +152,84 @@ func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(conte
 			b.WriteString(oneline.Escape(v.Title))
 			b.WriteString("\n\n")
 		}
-		if v.Summary != "" {
-			// Reuse the same snapshot as the table body. Unread input stays
-			// unknown in the summary, including hidden rows and columns.
-			b.WriteString(viewSummary(tables[0], v.Summary))
+		// The summary reuses the same snapshot as the table body.
+		if line := ntable.SummaryLine(v, tables[0]); line != "" {
+			b.WriteString(line)
 			b.WriteString("\n\n")
 		}
-		b.WriteString(renderAll("", tables, opts))
+		b.WriteString(ntable.RenderTables("", tables, opts))
+		if check && checker != nil {
+			var stalls []string
+			for _, t := range tables {
+				if _, err := checker(ctx, c, t.Name); err != nil {
+					stalls = append(stalls, formatStall(t.Name, err))
+				}
+			}
+			return appendStalls(b.String(), stalls), nil
+		}
 		return b.String(), nil
 	}
 }
 
-func tablesReader(c redis.Cmdable, names []string, title string, opts ntable.RenderOpts) func(context.Context) (string, error) {
-	read := tableSnapshots(c, names)
+func tablesReader(c redis.Cmdable, names []string, title string, opts ntable.RenderOpts, check bool) func(context.Context) (string, error) {
+	return tablesReaderWith(c, names, title, opts, check, tableSnapshots(c, names), ntable.Check)
+}
+
+func tablesReaderWith(
+	c redis.Cmdable,
+	names []string,
+	title string,
+	opts ntable.RenderOpts,
+	check bool,
+	snapshots func(context.Context) ([]ntable.Table, error),
+	checker func(context.Context, redis.Cmdable, string) (ntable.CheckReport, error),
+) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
-		tables, err := read(ctx)
+		tables, err := snapshots(ctx)
 		if err != nil {
 			return "", err
 		}
-		return renderAll(title, tables, opts), nil
+		text := renderAll(title, tables, opts)
+		if check && checker != nil {
+			var stalls []string
+			for _, t := range tables {
+				if _, err := checker(ctx, c, t.Name); err != nil {
+					stalls = append(stalls, formatStall(t.Name, err))
+				}
+			}
+			text = appendStalls(text, stalls)
+		}
+		return text, nil
 	}
+}
+
+// formatStall formats a table invariant check failure as a stall row:
+// stall: <table>: <detail>
+// It strips table name prefixes and CLI remedy suffixes, and escapes
+// terminal control bytes through oneline.Escape. Never repairs or mutates.
+func formatStall(tableName string, err error) string {
+	msg := err.Error()
+	prefix := "table " + tableName + ": "
+	if strings.HasPrefix(msg, prefix) {
+		msg = strings.TrimPrefix(msg, prefix)
+	} else if strings.HasPrefix(msg, "table \""+tableName+"\": ") {
+		msg = strings.TrimPrefix(msg, "table \""+tableName+"\": ")
+	}
+	if idx := strings.Index(msg, "; run: "); idx != -1 {
+		msg = msg[:idx]
+	}
+	return fmt.Sprintf("stall: %s: %s", tableName, oneline.Escape(msg))
+}
+
+// appendStalls appends stall rows to rendered table or view text.
+func appendStalls(rendered string, stalls []string) string {
+	if len(stalls) == 0 {
+		return rendered
+	}
+	if rendered != "" && !strings.HasSuffix(rendered, "\n") {
+		rendered += "\n"
+	}
+	return rendered + strings.Join(stalls, "\n") + "\n"
 }
 
 func tableSnapshots(c redis.Cmdable, names []string) func(context.Context) ([]ntable.Table, error) {
@@ -181,73 +258,27 @@ func tableSnapshots(c redis.Cmdable, names []string) func(context.Context) ([]nt
 	}
 }
 
-// viewSummary pools the first table's counts from the displayed snapshot.
-// ETA has no value until change-stream rate sampling is available.
-func viewSummary(t ntable.Table, column string) string {
-	found := false
-	for _, col := range t.Columns {
-		if col.Name == column && col.Projection == ntable.Count {
-			found = true
-		}
-	}
-	if !found {
-		return "?/? ? -> ETA"
-	}
-	var part, total int64
-	for _, r := range t.Rows {
-		for k, col := range t.Columns {
-			if col.Projection != ntable.Count {
-				continue
-			}
-			if k >= len(r.Cells) || r.Cells[k].Unread {
-				return "?/? ? -> ETA"
-			}
-			total += r.Cells[k].Count
-			if col.Name == column {
-				part += r.Cells[k].Count
-			}
-		}
-	}
-	pct := "0.0%" // empty known totals use the same numeric display as other percentages
-	if total > 0 {
-		pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
-	}
-	return fmt.Sprintf("%d/%d %s -> ETA", part, total, pct)
-}
-
 func isReplyError(err error) bool {
 	var re redis.Error
 	return errors.As(err, &re)
 }
 
 // renderAll is the title line, then every table's render, one blank line
-// between two that print; an empty table prints nothing and leaves no gap.
+// between two; an empty table prints its header and footer.
 func renderAll(title string, tables []ntable.Table, opts ntable.RenderOpts) string {
-	var parts []string
-	if title != "" {
-		parts = append(parts, oneline.Escape(title)+"\n")
-	}
-	for _, t := range tables {
-		if t.HiddenTable {
-			continue // set --hidden: kept and read, not drawn (Glenn 2026-09-27: "hide it" / "show it again", no restart)
-		}
-		o := opts
-		o.Title = t.Name // every block says which table it is (Glenn 2026-09-27)
-		if text := ntable.Render(t, o); text != "" {
-			parts = append(parts, text)
-		}
-	}
-	return strings.Join(parts, "\n")
+	return ntable.RenderTables(title, tables, opts)
 }
 
 // watchLoop draws once per tick until ctx ends (a signal: exit 0): in
 // place on w (clearScreen then the text) when out is "", else to out by
 // atomic rename. A tick whose read fails draws the last good text with one
-// stale: line under it, and says why on stderr once, and once more on
-// recovery. The ticks and the clock are handed in so a test injects both.
+// `store unreachable since <time>` line under it (the time of the first
+// failed read, so the line is the same on every failing tick), and says why
+// on stderr once, and once more on recovery. A tick whose read succeeds draws
+// the table and nothing else. The ticks and the clock are handed in so a test injects both.
 func watchLoop(ctx context.Context, w, stderr io.Writer, read func(context.Context) (string, error), ticks <-chan time.Time, now func() time.Time, out string) int {
 	var last string
-	var lastGood time.Time
+	var failedSince time.Time
 	failing := false
 	for {
 		text, err := read(ctx)
@@ -255,29 +286,25 @@ func watchLoop(ctx context.Context, w, stderr io.Writer, read func(context.Conte
 			return 0
 		}
 		if err == nil {
-			last, lastGood = text, now()
+			last = text
 			if failing {
 				fmt.Fprintln(stderr, "nova-table watch: Redis answers again")
 				failing = false
 			}
 		} else {
 			if !failing {
+				failedSince = now()
 				fmt.Fprintf(stderr, "nova-table watch: %s; the last good table stands until it answers\n", oneline.Escape(err.Error()))
 				failing = true
 			}
-			if lastGood.IsZero() {
-				text = "stale: never read\n"
-			} else {
-				text = last + fmt.Sprintf("stale: %ds\n", int64(now().Sub(lastGood).Seconds()))
-			}
+			text = last + "store unreachable since " + failedSince.Format("15:04:05") + "\n"
 		}
 		if out == "" {
 			if _, err := io.WriteString(w, clearScreen+text); err != nil {
-				fmt.Fprintf(stderr, "nova-table watch: stdout: %s\n", oneline.Escape(err.Error()))
-				return 1
+				return watchSinkFailure(stderr, "", err)
 			}
 		} else if err := writeAtomic(out, text); err != nil {
-			fmt.Fprintf(stderr, "nova-table watch: %s\n", oneline.Escape(err.Error()))
+			return watchSinkFailure(stderr, out, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -287,50 +314,42 @@ func watchLoop(ctx context.Context, w, stderr io.Writer, read func(context.Conte
 	}
 }
 
+// watchSinkFailure is terminal for a failed output sink. A store read failure
+// remains recoverable in watchLoop; this helper is only for publishing.
+func watchSinkFailure(stderr io.Writer, out string, err error) int {
+	if out == "" {
+		fmt.Fprintf(stderr, "nova-table watch: stdout: %s; next: repair or replace the stdout consumer, or rerun this watch with --out <file>\n", oneline.Escape(err.Error()))
+	} else {
+		fmt.Fprintf(stderr, "nova-table watch: %s; next: make --out %q writable (and its parent directory present and writable), then rerun this watch\n", oneline.Escape(err.Error()), out)
+	}
+	return 1
+}
+
 // publish prints text, or writes it to out by rename (--once).
 func publish(out, text string, stdout, stderr io.Writer, verb string) int {
 	if out == "" {
 		if _, err := io.WriteString(stdout, text); err != nil {
+			if verb == "watch" {
+				return watchSinkFailure(stderr, "", err)
+			}
 			return refuse(stderr, verb, "stdout: "+err.Error())
 		}
 		return 0
 	}
 	if err := writeAtomic(out, text); err != nil {
+		if verb == "watch" {
+			return watchSinkFailure(stderr, out, err)
+		}
 		return refuse(stderr, verb, err.Error())
 	}
 	return 0
 }
 
 // writeAtomic writes body to <path>.tmp.<pid> in path's own directory,
-// fsyncs it, and renames it over path, the publish the sprint table used
-// (deprecated/cmd/nova-sprint/table_live.go): a reader sees the old text or
+// fsyncs it, and renames it over path: a reader sees the old text or
 // the new one, never half of one.
 func writeAtomic(path, body string) error {
-	dir, base := filepath.Split(path)
-	if dir == "" {
-		dir = "."
-	}
-	tmp := filepath.Join(dir, fmt.Sprintf("%s.tmp.%d", base, os.Getpid()))
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return fmt.Errorf("--out: %w", err)
-	}
-	if _, err := io.WriteString(f, body); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("--out: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("--out: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("--out: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := atomicfile.Write(filepath.Clean(path), []byte(body), 0o644); err != nil {
 		return fmt.Errorf("--out: %w", err)
 	}
 	return nil

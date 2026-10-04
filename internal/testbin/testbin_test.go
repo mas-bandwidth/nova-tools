@@ -7,6 +7,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestMain lets a placed copy of this test binary answer as a trivial program:
@@ -27,25 +30,18 @@ func TestPlaceRunsThePlacedProgram(t *testing.T) {
 	t.Parallel()
 
 	src, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	dst := filepath.Join(t.TempDir(), "placed")
 	if runtime.GOOS == "windows" {
 		dst += ".exe"
 	}
-	if err := Place(src, dst); err != nil {
-		t.Fatalf("Place: %v", err)
-	}
+	err = Place(src, dst)
+	require.NoError(t, err, "Place: %v", err)
 	cmd := exec.Command(dst)
 	cmd.Env = append(os.Environ(), "TESTBIN_CHILD=1")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("running the placed program: %v\n%s", err, out)
-	}
-	if strings.TrimSpace(string(out)) != "placed" {
-		t.Errorf("placed program printed %q, want %q", out, "placed")
-	}
+	require.NoError(t, err, "running the placed program: %v\n%s", err, out)
+	assert.Equal(t, "placed", strings.TrimSpace(string(out)), "placed program printed %q, want %q", out, "placed")
 }
 
 // TestPlaceHardLinksInTheSameDirectory: on a platform with links, a source and
@@ -60,23 +56,13 @@ func TestPlaceHardLinksInTheSameDirectory(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
 	dst := filepath.Join(dir, "dst")
-	if err := os.WriteFile(src, []byte("x"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := Place(src, dst); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(src, []byte("x"), 0o755))
+	require.NoError(t, Place(src, dst))
 	si, err := os.Stat(src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	di, err := os.Stat(dst)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !os.SameFile(si, di) {
-		t.Errorf("Place copied instead of linking: %s and %s are different files", src, dst)
-	}
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(si, di), "Place copied instead of linking: %s and %s are different files", src, dst)
 }
 
 // TestPlaceFallsBackToCopyWhenLinkFails: a destination on another filesystem
@@ -88,41 +74,24 @@ func TestPlaceFallsBackToCopyWhenLinkFails(t *testing.T) {
 	src := filepath.Join(dir, "src")
 	dst := filepath.Join(dir, "dst")
 	raw := []byte("built\n")
-	if err := os.WriteFile(src, raw, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(src, raw, 0o755))
 	orig := link
 	link = func(oldname, newname string) error { return os.ErrInvalid }
 	defer func() { link = orig }()
-	if err := Place(src, dst); err != nil {
-		t.Fatalf("Place with a failing link: %v", err)
-	}
+	err := Place(src, dst)
+	require.NoError(t, err, "Place with a failing link: %v", err)
 	got, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(raw) {
-		t.Errorf("copied content = %q, want %q", got, raw)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, string(raw), string(got), "copied content = %q, want %q", got, raw)
 	if runtime.GOOS != "windows" {
 		info, err := os.Stat(dst)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm()&0o111 == 0 {
-			t.Errorf("the fallback copy mode %v has no execute bit", info.Mode().Perm())
-		}
+		require.NoError(t, err)
+		assert.NotZero(t, info.Mode().Perm()&0o111, "the fallback copy mode %v has no execute bit", info.Mode().Perm())
 		si, err := os.Stat(src)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		di, err := os.Stat(dst)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if os.SameFile(si, di) {
-			t.Errorf("the fallback must copy, not link")
-		}
+		require.NoError(t, err)
+		assert.False(t, os.SameFile(si, di), "the fallback must copy, not link")
 	}
 }
 
@@ -134,20 +103,10 @@ func TestPlaceReplacesAnExistingFile(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
 	dst := filepath.Join(dir, "dst")
-	if err := os.WriteFile(src, []byte("new"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dst, []byte("old"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := Place(src, dst); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(src, []byte("new"), 0o755))
+	require.NoError(t, os.WriteFile(dst, []byte("old"), 0o644))
+	require.NoError(t, Place(src, dst))
 	got, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "new" {
-		t.Errorf("dst = %q, want %q", got, "new")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "new", string(got), "dst = %q, want %q", got, "new")
 }

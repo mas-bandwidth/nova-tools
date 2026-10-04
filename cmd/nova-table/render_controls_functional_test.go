@@ -4,11 +4,12 @@ package main
 
 import (
 	"context"
-	"strings"
+	"github.com/redis/go-redis/v9"
+
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRenderAndWatchEscapeStoredControls(t *testing.T) {
@@ -21,20 +22,25 @@ func TestRenderAndWatchEscapeStoredControls(t *testing.T) {
 		{"row", "set", "t", "r", "note=" + raw},
 		{"view", "set", "v", "--tables", "t", "--title", raw},
 	} {
-		if code, out, errout := runTable(at(addr, args...)...); code != 0 {
-			t.Fatalf("setup %v: %d %s %s", args, code, out, errout)
+		{
+			code, out, errout := runTable(at(addr, args...)...)
+			require.EqualValues(t, 0, code, "setup %v: %d %s %s", args, code, out, errout)
 		}
 	}
 	for _, args := range [][]string{{"render", "t"}, {"render", "--view", "v"}, {"watch", "--view", "v", "--once"}, {"watch", "t", "--title", raw, "--once"}} {
 		code, out, errout := runTable(at(addr, args...)...)
-		if code != 0 || errout != "" || strings.Contains(out, "\x1b") || strings.Contains(out, "after\nsecond") || !strings.Contains(out, `before\x1b[2Jafter\x0asecond`) {
-			t.Fatalf("%v: %d %q %q", args, code, out, errout)
-		}
+		require.EqualValues(t, 0, code, "%v: %d %q %q", args, code, out, errout)
+		require.Empty(t, errout, "%v: %d %q %q", args, code, out, errout)
+		require.NotContains(t, out, "\x1b", "%v: %d %q %q", args, code, out, errout)
+		require.NotContains(t, out, "after\nsecond", "%v: %d %q %q", args, code, out, errout)
+		require.Contains(t, out, `before\x1b[2Jafter\x0asecond`, "%v: %d %q %q", args, code, out, errout)
 	}
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
 	tab, err := ntable.Read(context.Background(), c, "t")
-	if err != nil || tab.Rows[0].Texts["note"] != raw || tab.Rows[0].Label != raw || tab.FooterLabel != raw || tab.Columns[0].Label != raw {
-		t.Fatalf("display changed stored data: %+v %v", tab, err)
-	}
+	require.NoError(t, err, "display changed stored data: %+v %v", tab, err)
+	require.Equal(t, raw, tab.Rows[0].Texts["note"], "display changed stored data: %+v %v", tab, err)
+	require.Equal(t, raw, tab.Rows[0].Label, "display changed stored data: %+v %v", tab, err)
+	require.Equal(t, raw, tab.FooterLabel, "display changed stored data: %+v %v", tab, err)
+	require.Equal(t, raw, tab.Columns[0].Label, "display changed stored data: %+v %v", tab, err)
 }

@@ -1,5 +1,5 @@
 // Command agentsmap regenerates the repository's AGENTS.md map: one root
-// page under 3 KB, plus a page per big tree, each a table of directory →
+// page carrying docs/STANDARD.md whole, plus a page per big tree, each a table of directory →
 // purpose → guarding test → one command. The catalog is internal/docs/catalog.go;
 // the live tree is the other half. go test ./internal/docs fails on drift.
 //

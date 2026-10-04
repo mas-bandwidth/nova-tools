@@ -3,6 +3,9 @@ package secrets
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Glenn ran `keygen` on the Air on 2026-09-18 and read its receipt as a failure
@@ -32,16 +35,10 @@ func TestKeygenEndsWithThePlainClosingLine(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			lines := keygenLines("rowan", "/k/rowan.key", "age1pub", tc.recoveryKey, tc.placeholder)
-			if len(lines) < 2 {
-				t.Fatal("keygen printed fewer than two lines")
-			}
+			require.GreaterOrEqual(t, len(lines), 2, "keygen printed fewer than two lines")
 			last := lines[len(lines)-1]
-			if last != "Next: send this public key to whoever seals your seat: age1pub" {
-				t.Errorf("the last line is not the plain closing line:\n%s", strings.Join(lines, "\n"))
-			}
-			if !strings.HasPrefix(lines[len(lines)-2], "Done. Your new key is at ") {
-				t.Errorf("the second-to-last line does not say it worked and where the key is:\n%s", strings.Join(lines, "\n"))
-			}
+			assert.Equal(t, "Next: send this public key to whoever seals your seat: age1pub", last, "the last line is not the plain closing line:\n%s", strings.Join(lines, "\n"))
+			assert.True(t, strings.HasPrefix(lines[len(lines)-2], "Done. Your new key is at "), "the second-to-last line does not say it worked and where the key is:\n%s", strings.Join(lines, "\n"))
 			// The machine-readable OK line stays for callers that parse it.
 			found := false
 			for _, l := range lines {
@@ -49,12 +46,8 @@ func TestKeygenEndsWithThePlainClosingLine(t *testing.T) {
 					found = true
 				}
 			}
-			if !found {
-				t.Errorf("the machine-readable OK line is gone:\n%s", strings.Join(lines, "\n"))
-			}
-			if !strings.HasPrefix(lines[0], "SECRETS RULE   creation_rules:") {
-				t.Errorf("the rule block does not come first: %q", lines[0])
-			}
+			assert.True(t, found, "the machine-readable OK line is gone:\n%s", strings.Join(lines, "\n"))
+			assert.True(t, strings.HasPrefix(lines[0], "SECRETS RULE   creation_rules:"), "the rule block does not come first: %q", lines[0])
 		})
 	}
 }
@@ -68,9 +61,7 @@ func TestKeygenNextStepSaysItIsANextStep(t *testing.T) {
 	for _, placeholder := range []bool{false, true} {
 		lines := keygenLines("rowan", "/k/rowan.key", "age1pub", "age1recovery", placeholder)
 		joined := strings.Join(lines, "\n")
-		if !strings.Contains(joined, want) {
-			t.Errorf("placeholder=%v: the receipt carries no next-step line\nwant: %s\ngot:\n%s", placeholder, want, joined)
-		}
+		assert.Contains(t, joined, want, "placeholder=%v: the receipt carries no next-step line\nwant: %s\ngot:\n%s", placeholder, want, joined)
 	}
 }
 
@@ -86,19 +77,11 @@ func TestKeygenPlaceholderNoteCannotBeReadAsARefusal(t *testing.T) {
 			found = i
 		}
 	}
-	if found < 0 {
-		t.Fatalf("a run without --store no longer carries the placeholder note:\n%s", strings.Join(lines, "\n"))
-	}
-	if found >= len(lines)-1 {
-		t.Errorf("the placeholder note is the last line again:\n%s", strings.Join(lines, "\n"))
-	}
-	if strings.Contains(lines[found], "unfilled") {
-		t.Errorf("the placeholder note still reads as a failure: %s", lines[found])
-	}
+	require.GreaterOrEqual(t, found, 0, "a run without --store no longer carries the placeholder note:\n%s", strings.Join(lines, "\n"))
+	assert.Less(t, found, len(lines)-1, "the placeholder note is the last line again:\n%s", strings.Join(lines, "\n"))
+	assert.NotContains(t, lines[found], "unfilled", "the placeholder note still reads as a failure: %s", lines[found])
 	// And a run WITH a store never prints it at all.
 	for _, l := range keygenLines("rowan", "/k/rowan.key", "age1pub", "age1recovery", false) {
-		if strings.Contains(l, "placeholder:") {
-			t.Errorf("a run with --store still prints the placeholder note: %s", l)
-		}
+		assert.NotContains(t, l, "placeholder:", "a run with --store still prints the placeholder note: %s", l)
 	}
 }

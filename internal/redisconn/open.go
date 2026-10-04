@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -111,7 +113,7 @@ func open(ctx context.Context, o Options, getenv func(string) string, dial dialF
 		// client is made (go-redis does one to choose an endpoint type).
 		// go-redis v9.22.0 sends CLIENT MAINT_NOTIFICATIONS on every connect
 		// unless told not to: maintnotifications/config.go:138 makes ModeAuto
-		// the default, and with Protocol 3 the command goes out; the old
+		// the default, and with Protocol 3 the command goes out; the
 		// store's options left it on, which was errorstat_ERR:count=1 on a
 		// Redis 8.10.2 that does not know the command.
 		DisableIdentity: true,
@@ -136,6 +138,7 @@ func open(ctx context.Context, o Options, getenv func(string) string, dial dialF
 		// (its pool's conn.go:1114), so the socket is never closed. hangUp
 		// closes it; without hangUp TestOpenReturnsWhatTheStoreSaid fails with
 		// a connection left open by a failed Open.
+		// ignored: a close on the failure path (see the comment above); the store's answer is the one returned
 		_ = c.client.Close()
 		first.hangUp()
 		return nil, explain(l, c.hide, err, true)
@@ -226,6 +229,7 @@ func (d *firstDial) dialer(ctx context.Context, network, addr string) (net.Conn,
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
+		// ignored: a dial that raced the close; net.ErrClosed is the one returned
 		_ = nc.Close()
 		return nil, net.ErrClosed
 	}
@@ -269,14 +273,12 @@ func (d *firstDial) done() {
 func (d *firstDial) hangUp() {
 	d.mu.Lock()
 	d.closed = true
-	var toClose []net.Conn
-	for c := range d.conns {
-		toClose = append(toClose, c)
-	}
+	toClose := slices.Collect(maps.Keys(d.conns))
 	clear(d.conns)
 	d.mu.Unlock()
 
 	for _, c := range toClose {
+		// ignored: a hang-up of connections a failed Open made; the Open error is the one returned
 		_ = c.Close()
 	}
 }

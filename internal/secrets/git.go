@@ -4,15 +4,25 @@ import (
 	"bufio"
 	"bytes"
 	"compress/zlib"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 )
+
+// storeGit is how every git against the store runs: in the store, and never in the
+// repository the caller's environment names (a git that runs a credential helper exports
+// GIT_DIR, and the helper's nova-secrets would otherwise read that repository).
+func storeGit(storeDir string) gitrun.Options {
+	return gitrun.Options{C: storeDir, OwnRepo: true}
+}
 
 // GitRefStatus holds the result of verifying invariant 8 against a git working copy.
 type GitRefStatus struct {
@@ -37,7 +47,7 @@ func CheckGitWorkingCopy(storeDir string) (GitRefStatus, error) {
 		return status, fmt.Errorf("store %s is not a git repository: missing .git directory; clone it: git clone <url> %s", storeDir, storeDir)
 	}
 	if !fi.IsDir() {
-		return status, fmt.Errorf("store %s: .git is a file (a worktree or submodule); expected a directory working copy", storeDir)
+		return status, fmt.Errorf("store %s has %s; %s", storeDir, gitIsAFile, gitFileRemedy(storeDir))
 	}
 
 	headBytes, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
@@ -69,9 +79,9 @@ func CheckGitWorkingCopy(storeDir string) (GitRefStatus, error) {
 		return status, fmt.Errorf("store %s: %w", storeDir, err)
 	}
 	if remote == "" || mergeRef == "" {
-		// nova-tools#3550: the refusal names the prerequisite and the next action,
-		// including a store that has no remote at all, since a first-time caller
-		// meets it here and not in the spec.
+		// The refusal below names the prerequisite and the next action, including a
+		// store that has no remote at all, since a first-time caller meets it here
+		// and not in the spec.
 		return status, fmt.Errorf("store %[1]s: branch %[2]s has no upstream tracking branch configured in .git/config; "+
 			"check and exec compare HEAD with the ref the branch tracks, so a store must be on a named branch with an upstream (see: nova-secrets check --help); "+
 			"next: git -C %[1]s switch <the branch that tracks the store's remote>, or git -C %[1]s branch --set-upstream-to=<remote>/%[2]s when that remote branch exists; "+
@@ -112,13 +122,6 @@ func isValidHexSHA(s string) bool {
 		}
 	}
 	return true
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func resolveRef(gitDir, refPath string) (string, error) {
@@ -229,19 +232,17 @@ func ReadHEADTreeBlobs(storeDir string) (map[string]string, error) {
 	}
 
 	// Fallback to git ls-tree -r if available
-	cmd := exec.Command("git", "-C", storeDir, "ls-tree", "-r", commitSHA)
-	out, kErr := cmd.Output()
+	lsTree, kErr := gitrun.Run(context.Background(), storeGit(storeDir), "ls-tree", "-r", commitSHA)
+	out := lsTree.Stdout
 	if kErr == nil {
 		res := make(map[string]string)
 		scanner := bufio.NewScanner(bytes.NewReader(out))
 		for scanner.Scan() {
 			line := scanner.Text()
-			tabIdx := strings.IndexByte(line, '\t')
-			if tabIdx < 0 {
+			meta, filePath, found := strings.Cut(line, "\t")
+			if !found {
 				continue
 			}
-			filePath := line[tabIdx+1:]
-			meta := line[:tabIdx]
 			fields := strings.Fields(meta)
 			if len(fields) >= 3 && fields[1] == "blob" {
 				res[filepath.Clean(filepath.ToSlash(filePath))] = fields[2]
@@ -250,7 +251,7 @@ func ReadHEADTreeBlobs(storeDir string) (map[string]string, error) {
 		return res, nil
 	}
 
-	return nil, fmt.Errorf("unable to read HEAD tree objects: %w", err)
+	return nil, fmt.Errorf("unable to read HEAD tree objects: %w; git ls-tree: %v", err, kErr)
 }
 
 func readLooseObject(gitDir, sha string) (string, []byte, error) {
@@ -425,13 +426,7 @@ func ValidateAdmissibleStore(storeDir string) (status GitRefStatus, headBlobs ma
 		}
 	}
 
-	var sortedPaths []string
-	for p := range candidates {
-		sortedPaths = append(sortedPaths, p)
-	}
-	sort.Strings(sortedPaths)
-
-	for _, p := range sortedPaths {
+	for _, p := range slices.Sorted(maps.Keys(candidates)) {
 		headSHA, inHead := headBlobs[p]
 		indexEntry, inIndex := indexData.Entries[p]
 		filePath := filepath.Join(storeDir, filepath.FromSlash(p))

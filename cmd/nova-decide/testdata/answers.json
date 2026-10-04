@@ -1,0 +1,4 @@
+{
+  "asks_something": {"noul": 0.94},
+  "kind": {"choice": "request", "p": {"question": 0.08, "report": 0.05, "request": 0.87}}
+}

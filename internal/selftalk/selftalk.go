@@ -1,29 +1,23 @@
-// Package selftalk finds first-person claims about what the writer of a text
-// permanently IS or permanently CANNOT do, and classifies each as a dated
-// record or a standing claim.
+// Package selftalk finds sentences in which a writer passes a standing
+// verdict on themselves, in two disjoint classes, each finding with the
+// source line it starts on.
 //
-// WHY IT MEASURES A CONSTRUCT AND NOT GRAMMAR. Its predecessor counted
-// negation words and called the ratio "negative self talk". That measured
-// SYNTAX: a rule document is a list of things that must not happen, so it
-// scored worst of anything in the repo it was written for, and improving its
-// score meant deleting a prohibition. That output was acted on: five rules
-// were weakened, one of them floor-level, before a cold reader caught every
-// one. Restoring them made the score worse.
+// Scan finds the first class: a first-person claim (I am, I cannot, I always,
+// my <noun> is ...) carrying a word of failure (fallible, broken, bad at,
+// worst, cannot check ...). A claim with a date or a measurement word is
+// DATED, a record; one without is STANDING. It reads what a sentence says its
+// writer IS, not its grammar: a prohibition ("never merge without a read") is
+// a rule, not a claim, so a document made of rules does not score as one
+// made of self-verdicts.
 //
-//	THE KERNEL GOT STRONGER AND THE TOOL GOT REDDER.
-//	"Never" is not negative self talk. "I am fallible" is.
+// ScanInstallation finds the second class, INSTALLATION: a standing
+// self-verdict built from neutral words, which the first class cannot see (a
+// self-superlative, a door stated shut, a verdict on a practice, a habit),
+// matched by shape. Rules lists every shape and licence with a sentence it
+// finds and one it passes.
 //
-// So this measures the construct instead: a prohibition is only a rule; the
-// sentences worth looking at are the ones that say what their writer IS.
-//
-// WHAT IT MISSES, AND THE MISS IS PERMANENT BY DESIGN: trait claims built
-// from neutral words carry no first-person marker and no negative
-// vocabulary. Widening the pattern to reach them flags half of any file, so
-// the two classes cannot be one tool. A green from this package means ONE
-// CLASS IS CLEAR, never that the file is — and the CLI says so on every run.
-//
-// It is NOT obsoleted by the register improving. A falling score means the
-// input got better, which is the tool working, not the tool finishing.
+// Both classes are partial by design: a shape the table does not hold is not
+// found, so a scan with no finding clears the known shapes, never the file.
 package selftalk
 
 import (
@@ -50,25 +44,34 @@ const (
 
 // Claim is one classified sentence.
 type Claim struct {
+	Line    int // first source line of the matched claim, before markdown flattening
 	Verdict Verdict
 	Text    string
+	Match   string // the negative words that made the sentence a claim
 }
 
 // claim matches a sentence carrying a first-person self/capability
 // assertion. The bounded context either side keeps a match to roughly one
 // sentence without needing a real parser.
 var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(I am|I'm|I have never|I always|I never|` +
-	`I cannot|I can't|I do not|I don't|my \w+ is|makes me|I tend|I struggle|I fail|` +
+	`I cannot|I can't|I can not|I do not|I don't|my \w+ is|makes me|I tend|I struggle|I fail|` +
 	`reliably|every time|in one direction)\b[^.!?]{0,160}[.!?]`)
 
 // negative is the vocabulary that turns a first-person assertion into a
-// claim worth looking at. Without this filter every ordinary "I am" sentence
-// flags — which is the predecessor's disease. The verb list after "cannot"
-// is deliberately narrow: widening it matches bare "cannot" and flags every
-// prohibition, and scoring prohibitions is exactly what got rules weakened.
+// claim worth looking at: without it every ordinary "I am" sentence flags.
+// The verb list after "cannot" is deliberately narrow: widening it matches
+// bare "cannot" and flags every prohibition, and a prohibition is a rule,
+// not a verdict on its writer.
 var negative = regexp.MustCompile(`(?i)\b(fallib\w*|fail\w*|unreliab\w*|weak\w*|incapab\w*|` +
-	`confabulat\w*|neurotic|inadequa\w*|broken|bad at|poor at|blind|worst|defect\w*|` +
-	`patholog\w*|flatters|cannot (?:verify|check|see|tell|trust|reliably|do))\b`)
+	`confabulat\w*|neurotic|inadequa\w*|broken|(?:bad|poor|terrible|awful|hopeless|useless|no good) at|` +
+	`blind|worst|defect\w*|patholog\w*|flatters|(?:can ?not|can't) (?:verify|check|see|tell|trust|reliably|do|ever))\b`)
+
+// standingRule is the first class's row of the detector table (Rules): the claim markers and
+// the negative vocabulary above are the whole of it.
+var standingRule = Rule{Class: "standing", Name: string(Standing), Pattern: negative.String(),
+	Says: "a first-person claim (I am, I cannot, I always, I never, my <noun> is, I tend, I fail ...) " +
+		"carrying a word of failure: fallible, weak, broken, bad at, terrible at, worst, cannot check, cannot ever ...",
+	Finds: "I am bad at estimating time.", Passes: "I cannot merge without a read."}
 
 // dated marks a claim as a record rather than a standing property.
 var dated = regexp.MustCompile(`(?i)\b(20\d\d-\d\d-\d\d|measured|that day|that night|once,|first time)\b`)
@@ -77,17 +80,8 @@ var dated = regexp.MustCompile(`(?i)\b(20\d\d-\d\d-\d\d|measured|that day|that n
 var markup = regexp.MustCompile("[*_`>#|]")
 
 // whitespace collapses hard wraps. Prose files are hard-wrapped and a claim
-// spans lines; without this the tool is blind to both regression cases that
-// occasioned it.
+// spans lines; without this a claim broken across two lines is not seen.
 var whitespace = regexp.MustCompile(`\s+`)
-
-// Flatten strips markdown and collapses all whitespace to single spaces.
-// Exported because a text check that matches against unflattened text is
-// blind to any claim spanning a hard wrap, and a shared implementation is
-// one true source for that fix.
-func Flatten(text string) string {
-	return strings.TrimSpace(whitespace.ReplaceAllString(markup.ReplaceAllString(text, ""), " "))
-}
 
 // Scan classifies every negative self/capability claim in text.
 //
@@ -96,18 +90,20 @@ func Flatten(text string) string {
 // vocabulary. Widening the pattern to reach them flags half of any file.
 // A green from this means ONE CLASS IS CLEAR, never that the file is.
 func Scan(text string) []Claim {
-	flat := Flatten(text)
+	flat, lines := flattenWithLines(text)
 	var out []Claim
-	for _, m := range claim.FindAllString(flat, -1) {
+	for _, span := range claim.FindAllStringIndex(flat, -1) {
+		m := flat[span[0]:span[1]]
 		s := strings.TrimSpace(m)
-		if !negative.MatchString(s) {
+		word := negative.FindString(s)
+		if word == "" {
 			continue
 		}
 		v := Standing
 		if dated.MatchString(s) {
 			v = Dated
 		}
-		out = append(out, Claim{Verdict: v, Text: s})
+		out = append(out, Claim{Line: lines[span[0]+strings.Index(m, s)], Verdict: v, Text: s, Match: word})
 	}
 	return out
 }
@@ -117,4 +113,56 @@ func Scan(text string) []Claim {
 // name it is made on cannot drift apart.
 func Base(p string) string {
 	return path.Base(strings.ReplaceAll(p, `\`, "/"))
+}
+
+// flattenWithLines strips markdown and collapses all whitespace to single
+// spaces, so a claim spanning a hard wrap is one sentence, while retaining the
+// original line for each output byte. Repeated sentences and hard wraps keep
+// their own locations; searching the original text for a flattened match cannot.
+//
+// A HEADING AND A BLANK LINE END A SENTENCE. A hard wrap joins two lines of one
+// sentence, but the line break on either side of a heading or a blank line is a
+// boundary the writer drew: joining across it glued "# Journal" onto the claim
+// under it and reported the claim on the heading's line. A '.' is inserted at
+// that break, so the claim pattern, which stops at a terminator, starts after it.
+func flattenWithLines(text string) (string, []int) {
+	var flat []byte
+	var lines []int
+	emit := func(b byte, line int) {
+		if strings.ContainsRune("*_`>#|", rune(b)) {
+			return
+		}
+		switch b {
+		case ' ', '\t', '\n', '\r', '\f':
+			if len(flat) > 0 && flat[len(flat)-1] == ' ' {
+				return
+			}
+			b = ' '
+		}
+		flat = append(flat, b)
+		lines = append(lines, line)
+	}
+	boundary := func(s string) bool {
+		s = strings.TrimSpace(s)
+		return s == "" || strings.HasPrefix(s, "#")
+	}
+	split := strings.Split(text, "\n")
+	for i, raw := range split {
+		for j := 0; j < len(raw); j++ {
+			emit(raw[j], i+1)
+		}
+		if i+1 < len(split) {
+			if boundary(raw) || boundary(split[i+1]) {
+				emit('.', i+1)
+			}
+			emit('\n', i+1)
+		}
+	}
+	if len(flat) == 0 {
+		return "", nil
+	}
+	raw := string(flat)
+	trimmed := strings.TrimSpace(raw)
+	start := strings.Index(raw, trimmed)
+	return trimmed, lines[start : start+len(trimmed)]
 }

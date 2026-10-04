@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // strangers writes n notes that each fail check (a To naming nobody), uncommitted, so a
@@ -27,9 +29,7 @@ var checkCountRe = regexp.MustCompile(`(?m)^BUS CHECK findings=(\d+) fail=(\d+) 
 func checkCounts(t *testing.T, stderr string) (findings, fail, classSum int) {
 	t.Helper()
 	m := checkCountRe.FindAllStringSubmatch(stderr, -1)
-	if len(m) != 1 {
-		t.Fatalf("want exactly one BUS CHECK line on stderr, got %d:\n%s", len(m), stderr)
-	}
+	require.Equalf(t, 1, len(m), "want exactly one BUS CHECK line on stderr, got %d:\n%s", len(m), stderr)
 	findings, _ = strconv.Atoi(m[0][1])
 	fail, _ = strconv.Atoi(m[0][2])
 	for _, kv := range strings.Fields(m[0][4]) {
@@ -53,18 +53,18 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		checkout, _ := busDir(t)
 		strangers(t, checkout, 30)
 		r := invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1)
-		if n := strings.Count(r.stderr, "BUS FAIL "); n != 20 {
-			t.Fatalf("the default cap printed %d BUS FAIL lines, want 20:\n%s", n, r.stderr)
+		{
+			n := strings.Count(r.stderr, "BUS FAILED ")
+			require.Equalf(t, 20, n, "the default cap printed %d BUS FAILED lines, want 20:\n%s", n, r.stderr)
 		}
 		findings, fail, classSum := checkCounts(t, r.stderr)
-		if findings < 30 || fail != findings || classSum != findings {
-			t.Fatalf("BUS CHECK findings=%d fail=%d classes sum to %d over 30 broken notes; want findings>=30 and all three equal:\n%s",
-				findings, fail, classSum, r.stderr)
-		}
-		r.mustContain(t, "stderr", fmt.Sprintf(`BUS MORE shown=20 total=%d remedy="--max 0"`, findings))
+		require.Falsef(t, findings < 30 || fail != findings || classSum != findings, "BUS CHECK findings=%d fail=%d classes sum to %d over 30 broken notes; want findings>=30 and all three equal:\n%s",
+			findings, fail, classSum, r.stderr)
+		r.mustContain(t, "stderr", fmt.Sprintf(`BUS MORE kind=header shown=20 total=%d remedy="--max 0"`, findings))
 		// A failing run's stdout is still only its scope: no count a caller could read as a pass.
-		if got := strings.TrimSpace(r.stdout); got != "BUS SCOPE mode=full cursor=- changed=0" {
-			t.Fatalf("a capped failing check wrote more than its scope to stdout: %q", r.stdout)
+		{
+			got := strings.TrimSpace(r.stdout)
+			require.Equalf(t, "BUS SCOPE mode=full cursor=- changed=0", got, "a capped failing check wrote more than its scope to stdout: %q", r.stdout)
 		}
 	})
 
@@ -73,11 +73,24 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		checkout, _ := busDir(t)
 		strangers(t, checkout, 10)
 		r := invoke(t, "", "check", "--bus", checkout, "--full", "--max", "3").mustCode(t, 1)
-		if n := strings.Count(r.stderr, "BUS FAIL "); n != 3 {
-			t.Fatalf("--max 3 printed %d BUS FAIL lines:\n%s", n, r.stderr)
+		{
+			n := strings.Count(r.stderr, "BUS FAILED ")
+			require.Equalf(t, 3, n, "--max 3 printed %d BUS FAILED lines:\n%s", n, r.stderr)
 		}
 		findings, _, _ := checkCounts(t, r.stderr)
-		r.mustContain(t, "stderr", fmt.Sprintf("BUS MORE shown=3 total=%d ", findings))
+		r.mustContain(t, "stderr", fmt.Sprintf("BUS MORE kind=header shown=3 total=%d ", findings))
+	})
+
+	t.Run("the cap is per class: a loud class does not hide a quiet one", func(t *testing.T) {
+		t.Parallel()
+		checkout, _ := busDir(t)
+		strangers(t, checkout, 10)
+		// one finding of another class, after every header finding in the walk's order
+		writeFile(t, checkout, "from-zed/2026-09-08T0000Z-x-cccccccccccc.md", "From: Ada\nTo: Bo\nSubject: s\n\nbody\n")
+		r := invoke(t, "", "check", "--bus", checkout, "--full", "--max", "3").mustCode(t, 1)
+		r.mustContain(t, "stderr", "BUS FAILED from-zed: no participant in participants.json owns this lane")
+		r.mustContain(t, "stderr", "BUS MORE kind=header shown=3 total=11 ")
+		require.Equal(t, 1, strings.Count(r.stderr, "BUS MORE "), "a class under the cap printed a MORE line:\n%s", r.stderr)
 	})
 
 	t.Run("--max 0 prints every finding and no MORE line", func(t *testing.T) {
@@ -86,12 +99,11 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		strangers(t, checkout, 30)
 		r := invoke(t, "", "check", "--bus", checkout, "--full", "--max", "0").mustCode(t, 1)
 		findings, _, _ := checkCounts(t, r.stderr)
-		if n := strings.Count(r.stderr, "BUS FAIL "); n != findings {
-			t.Fatalf("--max 0 printed %d of %d findings:\n%s", n, findings, r.stderr)
+		{
+			n := strings.Count(r.stderr, "BUS FAILED ")
+			require.Equalf(t, findings, n, "--max 0 printed %d of %d findings:\n%s", n, findings, r.stderr)
 		}
-		if strings.Contains(r.stderr, "BUS MORE") {
-			t.Fatalf("an uncapped run printed a BUS MORE line:\n%s", r.stderr)
-		}
+		require.NotContainsf(t, r.stderr, "BUS MORE", "an uncapped run printed a BUS MORE line:\n%s", r.stderr)
 	})
 
 	t.Run("under the cap there is no MORE line", func(t *testing.T) {
@@ -100,8 +112,9 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		strangers(t, checkout, 2)
 		r := invoke(t, "", "check", "--bus", checkout, "--full", "--max", "100").mustCode(t, 1)
 		findings, _, _ := checkCounts(t, r.stderr)
-		if n := strings.Count(r.stderr, "BUS FAIL "); n != findings || strings.Contains(r.stderr, "BUS MORE") {
-			t.Fatalf("a run under its cap printed %d of %d findings or a MORE line:\n%s", n, findings, r.stderr)
+		{
+			n := strings.Count(r.stderr, "BUS FAILED ")
+			require.Falsef(t, n != findings || strings.Contains(r.stderr, "BUS MORE"), "a run under its cap printed %d of %d findings or a MORE line:\n%s", n, findings, r.stderr)
 		}
 	})
 
@@ -117,9 +130,7 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		checkout, _ := busDir(t)
 		r := invoke(t, "", "check", "--bus", checkout, "--full", "--max", "1").mustCode(t, 0).
 			mustContain(t, "stdout", "BUS OK")
-		if r.stderr != "" {
-			t.Fatalf("a clean check wrote to stderr: %q", r.stderr)
-		}
+		require.Emptyf(t, r.stderr, "a clean check wrote to stderr: %q", r.stderr)
 	})
 
 	t.Run("--since takes a date", func(t *testing.T) {
@@ -131,14 +142,15 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		gitIn(t, checkout, "add", "-A")
 		cmd := exec.Command("git", "-C", checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "dated")
 		cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2099-01-02T00:00:00Z", "GIT_COMMITTER_DATE=2099-01-02T00:00:00Z")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("commit: %v\n%s", err, out)
+		{
+			out, err := cmd.CombinedOutput()
+			require.NoErrorf(t, err, "commit: %v\n%s", err, out)
 		}
 		// Since the day before it: the last commit before that day is the fixture's, so
 		// the change set holds the broken note and the check fails on it.
 		invoke(t, "", "check", "--bus", checkout, "--since", "2099-01-01").mustCode(t, 1).
 			mustContain(t, "stdout", "BUS SCOPE mode=since").
-			mustContain(t, "stderr", "BUS FAIL from-bo/dated-stranger.md")
+			mustContain(t, "stderr", "BUS FAILED from-bo/dated-stranger.md")
 		// Since the day after it: nothing changed.
 		invoke(t, "", "check", "--bus", checkout, "--since", "2099-01-03").mustCode(t, 0).
 			mustContain(t, "stdout", "changed=0")

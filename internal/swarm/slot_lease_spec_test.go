@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // SPEC CARD #880 ITEM 18 (docs/SPEC-SWARM.md, Bench slot leases): the bench
@@ -15,10 +18,8 @@ import (
 func TestBenchSlotLeasesSectionNamesItsRules(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-SWARM.md"))
-	if err != nil {
-		t.Fatalf("the bench slot lease contract is the spec's: %s", err)
-	}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	require.NoError(t, err, "the bench slot lease contract is the spec's: %s", err)
 	spec := string(raw)
 	section := benchSlotLeasesSection(t, spec)
 	for _, want := range []string{
@@ -26,7 +27,7 @@ func TestBenchSlotLeasesSectionNamesItsRules(t *testing.T) {
 		"ONE slot store",
 		"<bench store>/slots",
 		"owner, pid, card label, until=",
-		"takes a lease per card before it runs and releases it after",
+		"`native` takes no bench capacity lease",
 		"nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration>",
 		"<store>/shares.tsv",
 		"refuses with the holder list when the share is spent",
@@ -43,14 +44,11 @@ func TestBenchSlotLeasesSectionNamesItsRules(t *testing.T) {
 		"two owners at their shares cannot exceed capacity",
 		"an expired lease with a dead pid frees its slot",
 		"an expired lease with a live pid is DRIFT and stays",
-		"a launch without a lease is refused by the launcher",
 		"a schema card is refused at take when the remaining share fits only a read",
 		"a live-until lease whose pid is gone is stranded with its label",
 		"Card kinds carry a weight",
 	} {
-		if !strings.Contains(section, want) {
-			t.Errorf("SPEC-SWARM.md Bench slot leases names %q; the section holds:\n%s", want, section)
-		}
+		assert.Contains(t, section, want, "SPEC-SWARM.md Bench slot leases names %q; the section holds:\n%s", want, section)
 	}
 }
 
@@ -61,10 +59,7 @@ func benchSlotLeasesSection(t *testing.T, spec string) string {
 	t.Helper()
 	const header = "## Bench slot leases"
 	start := strings.Index(spec, header)
-	if start < 0 {
-		t.Fatalf("the spec has no %q section", header)
-		return ""
-	}
+	require.GreaterOrEqual(t, start, 0, "the spec has no %q section", header)
 	rest := spec[start+len(header):]
 	for _, line := range strings.SplitAfter(rest, "\n") {
 		_ = line

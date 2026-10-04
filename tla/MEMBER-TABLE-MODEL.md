@@ -24,7 +24,7 @@ Every mutation checks both the active namespace and the caller's observed epoch.
 
 `Advance` increments the active epoch, retaining all historical data, placements and shape. The new active cells start empty; definitions for the finite physical-table universe are abstractly available, while future epochs initially have no rows. `ReadEpoch` refreshes a writer without changing user data. The active-view set contains only current-epoch owned entries. `NoEpochLeak`, `RecordEpochLink` and `OnePlacePerDimension` check that records cannot cross generations or acquire a second placement. The action properties check that stale writes leave user state unchanged, advancing retains history, the new view starts empty, and old generations subsequently remain frozen.
 
-This separates coordinator/sprint epoch clear from ordinary one-table clear. The concrete generic epoch-domain API, physical key encoding, epoch-zero compatibility and fenced migration are implementation choices still to settle with Rowan. The model's first epoch is 1 and its last is 2; this represents two consecutive generations, not a requirement that production start at 1. Member creation and ID reuse are not modeled: members and their immutable epochs are assigned in the finite initial universe. An implementation must define creation atomically and reject accidental reuse of a historical ID.
+This separates coordinator/sprint epoch clear from ordinary one-table clear. The concrete generic epoch-domain API, physical key encoding, epoch-zero compatibility and fenced migration remain implementation choices. The model's first epoch is 1 and its last is 2; this represents two consecutive generations, not a requirement that production start at 1. Member creation and ID reuse are not modeled: members and their immutable epochs are assigned in the finite initial universe. An implementation must define creation atomically and reject accidental reuse of a historical ID.
 
 ## Scope, bounds and execution
 
@@ -44,24 +44,24 @@ The mutation controls must fail with the named property and TLC exit code. Forge
 Run with a locally installed Java and `tla2tools.jar` (validated with release v1.7.4 / TLC 2.19):
 
 ```sh
-python3 tla/check_member.py --jar /absolute/path/to/tla2tools.jar --out /tmp/member-results
+go run ./tools/tlacheck member --jar /absolute/path/to/tla2tools.jar --dir /tmp/member-results
 ```
 
-The runner has a **single 120-second wall-clock budget**, including all selected checks; timeout is exit 124, never green. It defaults to four TLC workers for the positive cases and one for counterexamples. `--suite member`, `--suite epoch` and `--suite small` select diagnostic subsets and retain the same total cap. Deadlock checking is enabled; bounded cases have an explicit terminal stutter. No download, server, production Redis or external account is used.
+The runner has a **single 120-second wall-clock budget**, including all selected checks; a timeout is a failure (exit 1, `verdict=timeout`), never green. It defaults to four TLC workers for the positive cases and one for counterexamples. `--suite member`, `--suite epoch` and `--suite small` select diagnostic subsets and retain the same total cap. Deadlock checking is enabled; bounded cases have an explicit terminal stutter. No download, server, production Redis or external account is used.
 
 ## Implementation acceptance still owed
 
-Keep every baseline Lua witness. Reverse the desired-contract outcomes against the corrected Lua: duplicate add, lossy bind/row-add and owned aliases must refuse without changing any affected key; permitted cross-table placement still succeeds. Add real-Redis record/set checks for all destructive paths, stale callers after epoch advancement, retained historical placements, score preservation, legacy/epoch-zero behavior, and wrong-type/ACL refusal before mutation. The one-exchange tests and existing caller tests remain gates. A green candidate model does not substitute for these implementation tests or Rowan's independent review.
+Keep every baseline Lua witness. Reverse the desired-contract outcomes against the corrected Lua: duplicate add, lossy bind/row-add and owned aliases must refuse without changing any affected key; permitted cross-table placement still succeeds. Add real-Redis record/set checks for all destructive paths, stale callers after epoch advancement, retained historical placements, score preservation, epoch-zero behavior, and wrong-type/ACL refusal before mutation. The one-exchange tests and existing caller tests remain gates. A green candidate model does not substitute for these implementation tests or an independent review.
 
-## Recorded local result (2026-09-27, Studio)
+## Recorded result
 
-The final default suite completed in **83.96 seconds**, all queues exhausted in the positive cases: member large 11,372,299 generated / 372,127 distinct states; member fixed point 15,518 / 263; epoch large 15,971,793 / 198,223; epoch fixed point 3,323,874 / 17,397. All four deliberately broken controls failed for the expected named property. The run used four workers for positive cases, one for controls, Java 27 and tla2tools v1.7.4 (TLC 2.19). Counts are evidence for these exact instances, not a scale-independent proof. Rowan's independent candidate-model read is still pending.
+One recorded run of the default suite completed in **83.96 seconds**, all queues exhausted in the positive cases: member large 11,372,299 generated / 372,127 distinct states; member fixed point 15,518 / 263; epoch large 15,971,793 / 198,223; epoch fixed point 3,323,874 / 17,397. All four deliberately broken controls failed for the expected named property. The run used four workers for the positive cases and one for the controls, on tla2tools v1.7.4 (TLC 2.19). Counts are evidence for these exact instances, not a scale-independent proof.
 
 
 ## Implementation trace check
 
 The implementation in the table member-contract change is exercised by
-`check_member_replay.py`. Its generated harness applies the existing named
+`tlacheck replay`. Its generated harness applies the existing named
 `EpochMemberTable` actions, compares each abstract state to actual Redis
 record/set/shape snapshots, and replays the captured receipts into a fresh
 store. It covers selected accepted, refused and no-op actions in two epochs;

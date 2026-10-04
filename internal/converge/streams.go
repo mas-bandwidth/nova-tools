@@ -6,6 +6,8 @@ package converge
 // one tick can diff it against the next.
 
 import (
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,8 +32,8 @@ type Batch struct {
 	HaveRounds bool
 }
 
-// BatchPrefix is what makes a merged pull request a batch. Glenn, 2026-09-18:
-// integration batches only — nothing else enters the queue.
+// BatchPrefix is what makes a merged pull request a batch: integration batches
+// only — nothing else enters the queue.
 const BatchPrefix = "integration-"
 
 // Batches turns merged pull requests into batches, taking each one's rounds
@@ -254,7 +256,7 @@ func Fleet(rows []VersionRow, certified, total int, haveCerts bool) Stream {
 		counts[r.Stamp]++
 	}
 	best, bestStamp := 0, ""
-	for _, stamp := range sortedKeys(counts) {
+	for _, stamp := range slices.Sorted(maps.Keys(counts)) {
 		if counts[stamp] > best {
 			best, bestStamp = counts[stamp], stamp
 		}
@@ -269,15 +271,6 @@ func Fleet(rows []VersionRow, certified, total int, haveCerts bool) Stream {
 		s = s.With("certified", "-")
 	}
 	return s
-}
-
-func sortedKeys(m map[string]int) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func orDash(s string) string {

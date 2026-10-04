@@ -29,6 +29,7 @@ func platformTransientLockCollision(error) bool { return false }
 func processAlive(pid int) bool { return true }
 
 func unlockFile(f *os.File) {
+	// ignored: unlock has no caller to report to; a leftover sentinel is read and named by the next lock
 	_ = removeLockFile(sentinel(f))
 }
 

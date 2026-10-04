@@ -851,8 +851,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 
 // appendIndexSuffix completes an INDEX whose on-disk bytes are an exact prefix of the
 // expected bytes by appending only the missing tail, instead of rewriting the whole file.
-// Rewriting with truncation can lose the previously committed entries if the recovery is
-// killed mid-write; appending after verifying the committed prefix never rewrites what is
+// Appending after verifying the committed prefix never rewrites what is
 // already there, so a killed recovery leaves the earlier entries intact and the next retry
 // completes the same suffix.
 func appendIndexSuffix(root, path, have, want string) error {

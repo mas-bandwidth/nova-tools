@@ -1,7 +1,7 @@
 //go:build !darwin && !linux
 
 // Every platform whose body is not built yet REFUSES, and this file is that refusal.
-// Rule 1 is "OS-enforced or refused": a stub that proceeded would be the silent sandbox
+// OS-enforced or refused: a stub that proceeded would be the silent sandbox
 // the whole tool exists to prevent, so the windows (AppContainer) body named in
 // docs/SPEC-SANDBOX.md is not stubbed as a pass-through — it is stubbed as NO, and the
 // refusal names the platform so that a reader knows which body is missing rather than
@@ -24,7 +24,8 @@ func ABI() string { return "-" }
 // or older than. Here there is no number, so there is nothing to clamp and no used= field.
 func ClampedABI() (int, bool) { return 0, false }
 
-// Available is rule 1's question, and on a platform with no body the answer is no.
+// Available is whether the OS-enforced sandbox is here, and on a platform with no body
+// the answer is no.
 func Available() (string, bool) { return "", false }
 
 // NetEnforceable: an enforced network denial needs a backend first.

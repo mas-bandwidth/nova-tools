@@ -1,9 +1,8 @@
 roles: bench
 expect: ^GIT IDENTITY OK
 
-# Empty on all four Linux machines on 2026-09-18. A card that commits in a clone with no
-# repo-local config fails at the commit -- after the work is done, which is the most
-# expensive moment to find out.
+# A commit in a clone with no repo-local git config uses the global user.name and
+# user.email; this check fails early if either is unset.
 set -eu
 NAME=$(git config --global --get user.name 2>/dev/null || true)
 EMAIL=$(git config --global --get user.email 2>/dev/null || true)

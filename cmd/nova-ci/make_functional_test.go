@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // make_functional_test.go runs the Makefile's real `test` recipe with this
@@ -55,14 +58,10 @@ func fakeGo(fixture string, args []string) int {
 func makeTest(t *testing.T, fixture string, vars ...string) (int, string) {
 	t.Helper()
 	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "events.jsonl")
-	if err := os.WriteFile(path, []byte(fixture), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(fixture), 0o644))
 	args := append([]string{"-s", "-C", repoRoot(t), "test", "PKGS=./cmd/nova-ci", "GO=" + self}, vars...)
 	cmd := exec.Command("make", args...)
 	cmd.Env = append(os.Environ(), fakeGoEnv+"="+path, "RUNNER_TEMP="+tmp)
@@ -102,20 +101,18 @@ func TestMakeTestExitIsCISleepsOnEveryLegAndCISlowOnlyNightly(t *testing.T) {
 	push := []string{"SLOWTESTS_FLAGS=--budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt", "SLOWTESTS_ENFORCE=0"}
 
 	code, out := makeTest(t, sleeps, push...)
-	if code != 2 || !strings.Contains(out, "CI-SLEEPS test=TestSleepsOffTheLedger package=example.com/m/cmd/a") {
-		t.Errorf("push leg, a SLEEPS skip off the ledger: make exit %d, want 2 with its CI-SLEEPS line:\n%s", code, out)
-	}
+	assert.Equal(t, 2, code, "push leg, a SLEEPS skip off the ledger: make exit %d, want 2 with its CI-SLEEPS line:\n%s", code, out)
+	assert.Contains(t, out, "CI-SLEEPS test=TestSleepsOffTheLedger package=example.com/m/cmd/a", "push leg, a SLEEPS skip off the ledger: make exit %d, want 2 with its CI-SLEEPS line:\n%s", code, out)
 	code, out = makeTest(t, slowPackage, push...)
-	if code != 0 || !strings.Contains(out, "CI-SLOW package=example.com/m/cmd/a seconds=61.5s budget=60s") || !strings.Contains(out, "CI-LOAD load=") {
-		t.Errorf("push leg, a package over 60 s: make exit %d, want 0 with its CI-SLOW and CI-LOAD lines:\n%s", code, out)
-	}
+	assert.Equal(t, 0, code, "push leg, a package over 60 s: make exit %d, want 0 with its CI-SLOW and CI-LOAD lines:\n%s", code, out)
+	assert.Contains(t, out, "CI-SLOW package=example.com/m/cmd/a seconds=61.5s budget=60s", "push leg, a package over 60 s: make exit %d, want 0 with its CI-SLOW and CI-LOAD lines:\n%s", code, out)
+	assert.Contains(t, out, "CI-LOAD load=", "push leg, a package over 60 s: make exit %d, want 0 with its CI-SLOW and CI-LOAD lines:\n%s", code, out)
 	for _, c := range []struct {
 		enforce string
 		code    int
 	}{{"SLOWTESTS_ENFORCE=0", 0}, {"SLOWTESTS_ENFORCE=1", 2}} {
 		code, out = makeTest(t, slowTest, c.enforce)
-		if code != c.code || !strings.Contains(out, "CI-SLOW test=TestTakesOnePointFour package=example.com/m/cmd/a seconds=1.4s budget=1s") {
-			t.Errorf("the Makefile's flags, %s, a 1.4 s test: make exit %d, want %d with its CI-SLOW line:\n%s", c.enforce, code, c.code, out)
-		}
+		assert.Equal(t, c.code, code, "the Makefile's flags, %s, a 1.4 s test: make exit %d, want %d with its CI-SLOW line:\n%s", c.enforce, code, c.code, out)
+		assert.Contains(t, out, "CI-SLOW test=TestTakesOnePointFour package=example.com/m/cmd/a seconds=1.4s budget=1s", "the Makefile's flags, %s, a 1.4 s test: make exit %d, want %d with its CI-SLOW line:\n%s", c.enforce, code, c.code, out)
 	}
 }

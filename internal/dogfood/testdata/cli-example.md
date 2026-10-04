@@ -20,7 +20,7 @@ so it is not a verb.
 
 ```
 $ nova-example quickstart --dir ./self
-QUICKSTART OK dir=./self checks=2
+QUICKSTART RUN dir=./self checks=2
 $ nova-example transcript-only --dir ./self
 ```
 

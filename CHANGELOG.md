@@ -1,0 +1,931 @@
+# nova-tools changelog
+
+## v1.0.0 — 2026-09-28
+
+Cut from 52046bd9a0ebf726b40617a81e678d2855047a60. 663 pull requests since v0.16.0-dev.c839379e.
+
+- #1525 integration-12c: bus budget, pulse triage decide, bus inbox, CI class suite (#1442, #977, #988, #1435)
+  - members: #896
+- #1538 integration-12g: issue-779, no test reaches a host through an unfaked seam (#838, #1409)
+  - members: #779, #1367
+- #1543 integration-12e: the impl-jobs stack and the public-class gate (#1273, #1278, #922)
+  - members: #1207, #1281, #1278, #922
+- #1552 integration-12t1: tools swarm fixes, slice 1 (#1488, #1492, #1521, #1524, #1529, #1532, #1539)
+  - members: #1450, #1422, #1470, #1460, #1467, #1477, #1509
+- #1560 integration-12t2: tools swarm fixes, slice 2, with the OpenCode settle-window fix (#1551, #1200, #1493, #1528, #1533, #1520, #1531, #1535)
+  - members: #1459, #1142, #1200, #1236, #1502, #1471, #1510, #1393, #1548
+- #1569 integration-12t4: tools swarm fixes, final slice, and scratch/ leaves the repository (#1536, #1530, #1523, #1522)
+  - members: #1462, #1503, #1461
+- #1574 integration-12v: the OpenCode settle-window repair and the lisp-kernel class rule (#1551, #1553)
+  - members: #1102, #1560, #1551, #1548
+- #1575 nova-work record and results: card results in Postgres, idempotent on the stream id (#1142)
+- #1579 integration-12x: SPEC-SWARM rule 13d, the native spend cap, text only (#1566)
+  - members: #1566, #1545
+- #1581 integration-12y: TESTS.md names each tool once, three transcript fixes, SPEC-WORK (#1550, #1573, #1576, #1571, #1577)
+  - members: #1535, #1510, #1547, #785, #854, #1563, #1568, #1576, #1506, #1534
+- #1583 integration-12z: the decide ladder tuned from tonight's rows (#1498)
+  - members: #1482, #1477, #1484, #1501
+- #1593 integration-13a: the first-exec toll, the worktree tree walk, and the sandboxed caller (#1555, #1565, #1564)
+  - members: #1554, #1556, #1399
+- #1600 integration-13c: the gate's fixture clones over a transport (#1578), and nova-play's quoted-author round trip (#1596, #1595)
+  - members: #1542, #1544, #1578
+- #1601 integration-13d: nova-swarm native takes, fences and releases its own bench slot lease (#1562)
+  - members: #1546, #1562, #122
+- #1605 integration-14a: #1603 (nova-version snapshot first-exec bound, #890) — gated on hulk, Johnny APPROVE at exact head
+  - members: #890, #1554
+- #1606 integration-14b: #1584 (nova-work #785 slice 1, the v2 stack's bottom) — gated on hulk, Stella's scoped APPROVE at exact head
+  - members: #785, #1576, #1594
+- #1610 integration-15b: #1597 (swarm #1585, the job lease) — gated on hulk, Johnny's APPROVE at exact head
+  - members: #1585, #1562, #1499
+- #1613 integration-15c: #1586, #1602 — gated on hulk, Emma's APPROVE at both exact heads
+  - members: #785, #854, #1576, #1550
+- #1671 nova-work: rule 18 reads an id's LATEST closed-index row
+  - members: #1587
+- #1710 roadmap: per-feature acceptance progress in the parity check, with its class test
+- #1718 nova-work: the resident session answers the request line the CLI sends
+  - members: #1612
+- #1719 integration-16c: #1628, #1608, #1636, #1690, #1706 — gated on hulk, approves at every exact head
+  - members: #1607, #1609, #1463, #640, #1048, #1195
+- #1720 nova-work E03.1: the verifier result a receipt needs, admitted by the one writer
+- #1724 integration-16g: #1691, #1642, #1686, #1697, #1694, #1713 — gated on hulk
+  - members: #1518, #637, #846, #1609, #1628, #1572, #1680, #1463, #1636, #1686, #1512, #1679, #1504, #1626, #1607, #1608, #1466, #1558, #1615, #1635, #1546, #1562, #1601, #1540, #1643
+- #1726 integration-16i: #1627 SPEC-DECIDE amendment — gated on hulk, Johnny's and Stella's APPROVE at the exact head
+  - members: #1616, #1617, #1619, #1572, #1620, #1618, #1621, #1622, #1625, #1644
+- #1735 nova-bus: a bare verb names every missing required flag, in a fixed order (#1496)
+- #1743 nova-check dogfood gate: refuse an empty receipt set unless --allow-empty (#1466)
+- #1747 integration-16l: #1629 transcript harness — gated on hulk, Stella's APPROVE at the exact head
+  - members: #1629
+- #1750 integration-16m: #1637 SPEC-TOOLWORK — gated on hulk; Stella (scoped), Emma and Johnny APPROVE at the exact head
+  - members: #1557, #1465, #1463, #1495, #1469, #1572, #1646, #1668, #1627
+- #1757 integration-16n: #1738, #1742, #1744, #1745 (swarm trials) + #1679 — gated on hulk; coordinator's read + cold reads
+  - members: #1512, #1511, #1504, #1451
+- #1769 integration-16p: SPEC-TOOLWORK enablers T01 #1708 + T02 #1717 — gated on hulk; Emma's read + four cold-read rounds
+  - members: #1646, #1637, #1647, #1708, #1717
+- #1779 integration-16r: #1764 — the CI workspace-cleanup fix for #1751 (gated on hulk)
+  - members: #1751, #1504, #1738
+- #1797 integration-16q: swarm round 4 sets A+B (#1749 #1753 #1754 #1766 #1770 #1772 #1763 #1765 #1768 #1771) + enablers #1731 #1739 #1733 — gated on hulk
+  - members: #1623, #1651, #1721, #1464, #1712, #1741, #1451, #1547, #1654, #1434, #1466
+- #1834 integration-16t: #1786 nova-bus --advance + #1784 launcher in-flight cap — gated on hulk, Emma and Johnny at the exact heads
+  - members: #917, #593
+- #1843 integration-16u: #1748 — batch and land refuse a held member, --lane required (T16) — gated on hulk
+  - members: #1572, #1680, #1551, #1748
+- #1851 integration-16v: #1846 TESTS.md re-capture + nova-work E03/E05 stack (#1715 carrying #1682 #1698 #1709) + the ten-PR transcript stack — gated on hulk
+  - members: #1629, #1631, #1570, #1539, #1639, #1534, #1602, #1549, #1638, #1547, #1632, #1634, #1674, #1677, #1734, #1731
+- #1859 integration-16w: tools12 (#1791 #1793 #1812 #1816 #1817 #1829 #1800 #1801 #1813 #1828) + nova-check stack #1827 + nova-post stack #1778 — gated on hulk
+  - members: #1451, #1483, #1466, #487, #1547, #1434
+- #1877 integration-16x: nova-work #1785 + harden #1711 — gated on hulk (#1707 #1702 #1692 dropped on the .asd line)
+  - members: #1589
+- #1878 integration-16y: CI belt + shard cap #1790, nova-swarm lint --card #1826 — gated on hulk
+  - members: #1651, #1721, #1464, #1741, #1751, #1764, #1700, #1714, #1494, #1527, #1759, #1853, #1854, #1855, #1852
+- #1881 nova-review mutate: the selected --test form, and a typed ABSTAIN for no-change-to-revert
+  - members: #1842, #1849, #1828, #1850, #1648
+- #1882 integration-16aa: #1838 the key shim, the four-site secret scan, the unread-diff refusal — gated on hulk, Johnny at the exact head
+  - members: #1814, #1838
+- #1883 integration-16ac: nova-work E05.5 #1832 at its re-merged head — gated on hulk, Emma's approve carried on a verified-unchanged patch
+- #1455 nova-self-talk: the help examples run as pasted
+- #1455 nova-swarm: the help examples run as pasted
+- #1455 nova-post: the help examples run as pasted
+- #1455 nova-play: the help examples run as pasted
+- #1886 nova-work: five validator refusals and one cascade guard had no witness
+  - members: #1594
+- #1455 nova-secrets: the help examples run as pasted
+- #1891 integration-16af: #1884 manager nova-bus wait argv + #1862 nova-secrets keygen transcript — gated on hulk, Johnny at both exact heads
+  - members: #1654, #1879
+- #1911 nova-work: the fleet's stale-token refusals had no witness; give them one
+- #1929 integration-16ah: docs/CLI.md verb and flag counts, held to the source by two new tests (#1780, #1783)
+  - members: #1547
+- #1940 integration-16ai: five first-run comparators, five help-examples rows, worklang missing-field refusal, two docs/CLI.md flag rows — thirteen members gated on hulk
+  - members: #1547, #1725, #1808, #1455
+- #1944 integration-16aj: #1885, #1684 — gated on hulk
+  - members: #1880, #854, #1885, #1809
+- #1949 integration-16ak: #1830 nova-work client deadline + swarm/pulse red-team repairs #1938, #1932, #1939, #1942 — gated on hulk
+  - members: #854, #1757, #1679, #1921, #1923, #1601, #1562, #1900, #1901, #1585
+- #1982 integration-16al: #1809 nova-pulse launch dogfood F1-F5 + the one branch-prefix guard — gated on hulk, Johnny at the exact head
+  - members: #1760, #1761, #1818, #1825, #1844, #1819, #1820, #1821, #1822, #1823, #1824, #1650, #1809, #1846, #1838, #1814
+- #1985 integration-16am: #1669 node lease, #1842 review/check dogfood fixes, #1856 journal identity, #1969 cut --kind, #1943 live-seat keep — gated on hulk
+  - members: #1601, #1562, #1902, #1587, #1803, #1804, #1805, #1849, #1850, #1847, #1807, #1848, #1648, #1852, #1943
+- #1991 integration-16an: #1972 nova-ci failed --decide + nine docs/help-example rows — gated on hulk (#1831 held out on its own named test)
+  - members: #1455, #1887, #1890, #1621, #1972
+- #1997 integration-16ao: #1670 render --file, #1925 tune, #1871 safepath roots + ten tools18 fixes — thirteen members gated on hulk
+  - members: #1679, #1925, #1868, #1468, #675, #1549, #1624, #1458, #1807, #1787, #1894, #1617, #1871, #1612
+- #2028 integration-16ap: twelve approved swarm fix PRs, gated on hulk
+  - members: #1737, #1810, #1895, #1896, #1486, #1619, #1625, #1282, #632, #1836, #1696, #1897
+- #2060 integration-16aq: four approved PRs, gated on hulk
+  - members: #1666, #1616, #1758, #1775, #1914, #1915, #1945
+- #2061 swarm: failure taxonomy, queue quarantine, and limbo leak fix
+- #2044 feat(roadmap): S-expression criteria parser and query engine
+- #2082 feat(nova-work): implement E09 proving run orchestrator and reconciliation engine
+- #2068 adoption: evidence-based adoption ledger distinguishing RUNNING_SHA from DISK_SHA
+  - members: #1885, #1925
+- #2050 wake: implement slot leasing and daemon argv-only boundary
+- #2016 nova-secrets: restore the store after seal --no-pr
+- #2123 integration-16ar: four approved PRs, gated on hulk
+  - members: #593, #916, #1831, #1950, #1984, #1844, #2043
+- #2016 nova-secrets: refuse a dirty store before seal checkout -f
+- #2024 nova-tokens: pin fold-pool usage in help so reverting 2efa3f52 goes red
+- #2025 memindex: guard the bounded heap top-k selector
+- #2144 integration-16as: five approved PRs, gated on hulk
+  - members: #1894, #1896, #1970, #1898, #2013, #2057
+- #2146 sandbox: C++ compiles inside the darwin wall (#1557)
+  - members: #1557
+- #2403 integration-16at: six approved PRs, gated on hulk
+  - members: #2032, #1907, #2042, #2120, #2117, #1737, #1500
+- #2412 integration-16au: four approved PRs, gated on hulk
+  - members: #2133, #1836, #1853, #2013, #2031
+- #2014 fill: the bench's SEAT comes from the registry, not swarm-<bench>
+  - members: #2029
+- #233 tests: standing probe for planted symlink and FIFO at RESULT.md
+- #233 harvest, native: refuse a planted symlink or FIFO at RESULT.md
+- #2413 integration-16av: four approved PRs (#2103 #2104 #2108 #2118) — gated on hulk
+  - members: #1761, #1899, #1806, #1897
+- #1947 End the shared last line in nova-work.asd; closers on their own line
+- #2451 RESULT fix-nova-tools-2425-r1-8 sha=2345be269527 — fix mas-bandwidth/nova-tools#2425 on the tip with its red test first: dev is RED on the hosted darwin shard since 3842eb26 (16at): cmd/nova-pulse TestFillCountsTheOwnersLiveLeasesAndNobodyElses and TestFillFillsABenchWhoseSlotsListIsEmpty fail on macos-latest; the hulk gate is Linux-only so the batch landed green
+- #2453 integration-16ax: eleven approved PRs (#2004 #2003 #1873 #1858 #2440 #2434 #2430 #2397 #1889 #1965 #1869) — gated on the Studio
+  - members: #1748, #1517, #1716, #1788, #1622, #1875, #1469, #1805
+- #2456 integration-16ay: eleven approved PRs (#2002 #1996 #1973 #1920 #1479 #1446 #1424 #1423 #1420 #2446 #2005) — gated on the Studio
+  - members: #1452, #1455, #1673, #1699, #1682, #1692, #1988, #622, #223
+- #2457 integration-16az: fourteen approved PRs — ten spec census docs plus #2260 #2262 #2423 #1345 — gated stacked on 16ay
+  - members: #1307, #1327, #1452, #1455, #1673, #1699, #1682, #1692, #1988, #622, #223, #2019, #1808, #1451, #1753
+- #2494 integration-16ba: two approved PRs (#1672 #2448) — gated on hulk from live dev (rebuilt)
+  - members: #1612
+- #2466 integration-16bb: #2392 — gated on vision, stacked on 16ba
+  - members: #1612
+- #2467 integration-16bc: five approved PRs (#2443 #2431 #989 #1251 #2435) — gated on space, stacked on 16bb
+  - members: #896, #1142, #1236, #1612
+- #2493 integration-16bd: four approved PRs (#2411 #1995 #1955 #1876) — one friend read at head under the new bar, gated on hulk, stacked on 16bc
+  - members: #896, #1142, #1236, #1748, #1612, #1905, #1989
+- #2526 integration-ls3: 4 approved PRs (#2520 #2518 #2496 #2495) — gated on hulk by land-lane
+- #2527 integration-16be: three approved PRs (#2502 #2524 #2523) — cards-v2, two friend lines each, gated on hulk
+  - members: #2498, #599, #2502, #2499, #2508
+- #2437 pulse: support card depends-on headers and topological queue admission
+- #1455 nova-merge: the help examples run as pasted
+- #1845 nova-merge integrate: the integration batch as one verb
+  - members: #1725
+- #1845 docs: CLI.md and SPEC-MERGE.md gain nova-merge integrate
+- #2598 pulse: stale-base is a false positive when PATHS is space-separated or names a directory (#2547)
+  - members: #2032
+- #2615 merge: a HOLD at a superseded head is released by the same friend's typed verdict at head (#2550)
+  - members: #1551
+- #2638 harvest secret tests: match the git subcommand as a word, not the whole line (#2626)
+- #2637 land-1620: 1 approved PRs (#2625) — gated on hulk by land-lane
+  - members: #2608, #2625
+- #2629 land-1600: 2 approved PRs (#2614 #2607) — gated on hulk by land-lane
+  - members: #2548, #1844, #2588, #2605
+- #2626 nova-merge batch: keep the test step's go test -json stream
+- #2652 land-1640: 1 approved PRs (#2594) — gated on vision by land-lane
+  - members: #2565, #1459, #1488, #1556, #2594
+- #2626 nova-merge batch: reserve the test stream with O_EXCL
+- #2662 tools-20260922T205619Z: 1 approved PRs (#2639) — gated on hulk by land-lane
+  - members: #2636, #132, #139, #138
+- #2667 tools-20260922T210748Z: 1 approved PRs (#2544) — gated on hulk by land-lane
+- #2666 tools-20260922T210800Z: 1 approved PRs (#2544) — gated on vision by land-lane
+- #2672 tools-20260922T212807Zb: 1 approved PRs (#1534) — gated on hulk by land-lane
+  - members: #1506, #1534
+- #2670 diag-vision-20260922T212819Z: 1 approved PRs (#2645) — gated on vision by land-lane
+  - members: #2626
+- #2690 tools-20260922T214541Z: 5 approved PRs (#2651 #2653 #2655 #2642 #2643) — gated on vision by land-lane
+  - members: #2627, #2634, #2636, #2631, #2550
+- #2697 tools-20260922T221740Z: 2 approved PRs (#2587 #2616) — gated on hulk by land-lane
+  - members: #2563, #2546, #2508, #2616
+- #2687 bench rows: landed and useful per bench from cards:done
+- #2709 tools-20260922T223544Z: 2 approved PRs (#2689 #2695) — gated on hulk by land-lane
+  - members: #2634, #2678
+- #2543 secrets: TestHarnessConfigsReferenceEnvNames exercises real Worker.HarnessConfig
+- #2711 tools-20260922T230513Z: 1 approved PRs (#2663) — gated on hulk by land-lane
+  - members: #2522, #2663
+- #1142 feat: nova-merge fold
+- #591 nova-swarm native opens the loopback a keyless provider names for the walled harness, and a harness that exits silently is never scored OK
+- #2715 tools-20260922T231607Zb: 5 approved PRs (#2665 #2649 #2691 #2696 #2698) — gated on vision by land-lane
+  - members: #2393, #2664, #2671, #2685, #2657
+- #2485 docs: correct first-run cut/pool path guidance in TESTS.md
+- #2454 nova-merge: preserve unresolved hold findings in mixed-message comments
+  - members: #2512
+- #2486 testdur: ensure testdur is selected by package selector in CI
+- #2512 review: bound github comment body length during projection
+- #2476 lisp: make macro/function collision guard case-insensitive
+- #2501 swarm: refuse staging when an in-module import does not resolve
+- #2484 pulse: require authoritative DONE in results-store dependency check
+- #2842 nova-sprint ci: a CI pass is a card under the dealer's slot share
+- #2243 Bind collections at harvest and refuse a unit without acceptance at load
+- #2501 swarm: assert a refused sparse stage leaves no destination
+- #2957 tools-20260923T031153Z: 4 approved PRs (#2688 #2702 #2703 #2263) — gated on vision by land-lane
+  - members: #2664, #2544, #2614, #2629, #2645, #2670, #2625, #2688, #2681, #2677
+- #2842 nova-sprint ci: cut the script card and record the verdict
+- #2969 tools-20260923T041858Z: 3 approved PRs (#2954 #2612 #2611) — gated on hulk by land-lane
+  - members: #2549, #2610, #2611, #2612, #2795
+- #2970 tools-20260923T042203Z: 2 approved PRs (#2375 #2475) — gated on vision by land-lane
+- #2972 tools-20260923T043427Z: 2 approved PRs (#2483 #2525) — gated on hulk by land-lane
+  - members: #2499, #2508
+- #2974 tools-20260923T045106Z: 2 approved PRs (#2534 #2717) — gated on hulk by land-lane
+  - members: #2594, #2621
+- #2975 tools-20260923T050721Z: 1 approved PRs (#2421) — gated on vision by land-lane
+  - members: #1665
+- #2977 nx-b16-plan-expand-names-every-missing-field sha=39d1d6a5c918 -- nova-tools #1808 plan expand names every missing field
+- #2978 Reap leftover supervise; end on TERM and gone pool (#1598)
+- #2979 tools-20260923T053212Z: 2 approved PRs (#2275 #2292) — gated on vision by land-lane
+- #2980 tools-20260923T053917Z: 1 approved PRs (#2522) — gated on hulk by land-lane
+  - members: #2498, #2506, #2522
+- #2981 tools-20260923T060117Z: 2 approved PRs (#2143 #2151) — gated on vision by land-lane
+  - members: #1981
+- #2636 pulse: add DEPENDS-ON header key to card cutter
+- #2636 pulse: doc --depends-on and use reserved domain in cut tests
+- #2636 pulse: edit only owned header in ApplyDependsOn and preserve prior card evidence
+- #2636 pulse: gofmt cut_template.go and cut_template_test.go
+- #2636 pulse: reconcile TestCutsContractLineIsOneTheLintAccepts with cut_template
+- #2983 tools-20260923T061014Z: 2 approved PRs (#2138 #2721) — gated on hulk by land-lane
+  - members: #2026, #793
+- #2985 tools-20260923T063605Z: 1 approved PRs (#2724) — gated on vision by land-lane
+  - members: #2573, #2575, #2583, #2724
+- #2986 nova-work: E01-F04 E01-F04-02 — represent-leaf-tasks-separately-from-par
+- #2989 tools-20260923T070025Za: 2 approved PRs (#2692 #2283) — gated on hulk by land-lane
+  - members: #2648, #2598, #2283
+- #2990 native/slots: refuse capacity at admission, before launch (#2033)
+- #2995 fix3-nova-tools-462 -- nova-tools #462 Grok spec pass 2026-09-15: third shape, BEAT vs send, six/five indexes, SPEC-LOCAL paths
+- #2999 tools-20260923T080051Zb: 4 approved PRs (#2876 #2537 #2640 #2819) — gated on vision by land-lane
+  - members: #1760, #2876, #2537
+- #3000 tools-20260923T080541Z: 1 approved PRs (#1759) — gated on hulk by land-lane
+  - members: #1721, #1728, #1741, #1733
+- #3001 tools-20260923T083613Zb: 1 approved PRs (#2754) — gated on vision by land-lane
+- #3002 tools-20260923T083613Za: 3 approved PRs (#2956 #1431 #2141) — gated on hulk by land-lane
+  - members: #1582, #1562, #2141, #141, #1412, #1431
+- #3008 fix3-nova-tools-1624 sha=09fbedc90521 -- nova-tools #1624 decide housekeeping: latency and wall clock in every decision row and on every line
+- #3012 #2994: TestARouteAtItsCapHoldsTheRestBack is deterministic: it synchronises on the three held cards being parked on the cap
+- #3013 tools-20260923T093632Z: 2 approved PRs (#2170 #3003) — gated on hulk by land-lane
+  - members: #2170, #2895, #3003
+- #3014 tools-20260923T094523Z: 1 approved PRs (#3010) — gated on hulk by land-lane
+- #3015 tools-20260923T094705Z: 1 approved PRs (#3004) — gated on vision by land-lane
+  - members: #2948, #2947, #3004
+- #3017 tools-20260923T100024Z: 1 approved PRs (#2976) — gated on hulk by land-lane
+  - members: #2958
+- #3018 #2984: fake-supervisor-never-identifies uses a supervisor that never identifies by construction
+  - members: #2141, #1598
+- #3021 tools-20260923T101207Z: 1 approved PRs (#3019) — gated on hulk by land-lane
+- #3022 tools-20260923T101949Z: 1 approved PRs (#2926) — gated on vision by land-lane
+  - members: #2756, #2926
+- #3023 tools-20260923T102524Z: 1 approved PRs (#3020) — gated on hulk by land-lane
+  - members: #2934
+- #3026 RESULT: fix3-nova-tools-1696 sha=09fbedc90521 -- nova-tools #1696 nova-work: the socket's line wire cannot carry any listing verb — 25 ROW/NOTE/MORE shapes in the gra...
+- #3027 tools-20260923T105715Z: 1 approved PRs (#3024) — gated on vision by land-lane
+- #3028 tools-20260923T111133Z: 2 approved PRs (#2870 #2834) — gated on vision by land-lane
+  - members: #2230, #2870
+- #3031 internal/docs: pin docs/TESTS.md's TestSlowThing
+- #2449 harvest: construct PR bodies from RESULT.md + REPORT + provenance
+- #2449 harvest: rename bench parameter in provenance extraction to satisfy benchname class test
+- #2468 pulse: preserve provenance table when bounding harvest PR body
+- #2487 decide: ignore blank outcomes in ProposeFloors calculations
+- #2489 redisq: preserve raw legacy values in dirq reader
+- #2842 nova-sprint ci: the card id is the repository and the full sha
+- #3062 tools-20260923T123227Z: 4 approved PRs (#2877 #2823 #2902 #2890) — gated on vision by land-lane
+  - members: #2240, #2371, #2255, #2877, #2823
+- #3065 tools-20260923T123714Z: 5 approved PRs (#2661 #2701 #2477 #2881 #2880) — gated on hulk by land-lane
+  - members: #2687, #2680, #2386, #2881, #2636, #1695, #2880, #2971, #2380, #2477
+- #2501 swarm: stage PATHS cards from the pool reference checkout
+- #3078 #2726: reconciler lease with identity and fence (not a pid), 1 s pass loop
+  - members: #2743, #2935
+- #3085 tools-20260923T132214Z: 2 approved PRs (#3072 #3056) — gated on hulk by land-lane
+  - members: #2931, #2928, #3056, #3067
+- #2704 nova-decide review: bounce a red or missing ci-ok at the exact head
+  - members: #2519, #2522
+- #2704 nova-decide review: leave ci off unless checks_enabled names it
+- #2704 nova-decide review: a queued ci-ok rerun is not the older success
+- #3112 tools-20260923T133703Z: 1 approved PRs (#2658) — gated on hulk by land-lane
+  - members: #2632
+- #2129 control: serialize WriteAck check and write per owner
+- #3133 tools-20260923T135116Z: 1 approved PRs (#3025) — gated on hulk by land-lane
+- #2679 sprint status: print kind and depends on verbose rows
+- #1644 nova-bus: inbox --decide runs from the rule table on a private bus
+  - members: #1617
+- #3141 docs/SPEC-WORK: nova-work is the primary source; GitHub is an ingest
+- #3141 docs/SPEC-WORK: fold the index design into the primary-source section
+- #3164 tools-20260923T143356Zb: 2 approved PRs (#3119 #2474) — gated on hulk by land-lane
+  - members: #2419, #3089
+- #3163 tools-20260923T143356Zh: 2 approved PRs (#2468 #3120) — gated on space by land-lane
+  - members: #2449, #2468, #3105, #3006
+- #3166 #3037 nova-sprint census: one pipelined read over a set or key list, replacing redis-pipe
+- #3165 Land tools-20260923T143356Zf: #2861
+  - members: #2861
+- #2682 sprintcol: the queue column is a Redis read, not a GitHub poll
+- #2682 sprintcol: count the live queue, not XLEN of the bulk stream
+- #2682 sprintcol: count open tasks this friend still owns
+- #2686 friendrow: read a friend-row from that friend's beat
+- #2686 friendrow: read queue and done with the beat
+- #2686 friendrow: a whitespace beat is still a presence
+- #2682 #2706: queue column reads the dealer's open index, not the stream history
+- #2675 presence: a friend is present only while the beat key is alive
+- #2062 swarm: multi-tier bounded execution timeouts and two-phase reaping
+- #1615 nova-swarm: gofmt the merge and keep H4's --reason test independent
+- #1615 nova-swarm: refuse a malformed --tokens word, not a numeric prefix
+  - members: #2131, #1635
+- #1893 #2125 rebase onto dev: the idle watch cannot be fed by a log dribble
+- #3211 tools-20260923T163023Zb: 1 approved PRs (#3054) — gated on space by land-lane
+  - members: #2725, #2756, #3054, #3061
+- #3214 tools-20260923T163146Za: 1 approved PRs (#3125) — gated on hulk by land-lane
+  - members: #3106, #1, #3091, #3092, #3125
+- #3212 tools-20260923T163023Za: 2 approved PRs (#3126 #1633) — gated on hulk by land-lane
+  - members: #3098, #1612
+- #2623 retire Postgres: decide_log is kind=decide on cards:done; the writer is deleted
+  - members: #2587
+- #2563 nova-swarm native and harvest --bench emit to ev:cards: the card end, the push and the pull request
+  - members: #2548
+- #1860 decide: mechanical kinds earn a step-up by confirmed failure; RouteCard tests still call
+  - members: #1513
+- #1947 nova-work.asd: discover the tests, keep src explicit
+  - members: #1980, #1669, #1699
+- #3221 nova-swarm: the #1478 gate tests pass --tokens (dev break-fix)
+  - members: #1478, #1545
+- #3204 #3195 nova-sprint store.Open authenticates from the environment (fleet NOAUTH)
+  - members: #3195, #3009, #3011
+- #3005 #2947 nova-sprint preflight: the store checks of #2756 section 7
+  - members: #2947, #2756
+- #3080 #3066: nova-sprint deals a card only when every DEPENDS-ON is merged on its base (stacked on #3075)
+  - members: #3066, #3121, #4
+- #3287 preflight: store.go secs -> wholeSecs (dev build break-fix after #3005)
+  - members: #3005
+- #3307 pulse: every remote script runs under bash -s on stdin, never the bench login shell (harvest refspec eaten by zsh on the Macs, #3291)
+- #3079 nova-swarm: nova-card wrapper (#3059)
+  - members: #3059, #3011, #3056
+- #3288 nova-sprint: sprint open/close/status (#2939)
+- #3052 nova-sprint: ok-to-friend consumer (#2933)
+  - members: #2933, #2756
+- #3055 nova-sprint: card harvest --bench (#2932)
+  - members: #2932, #2928, #3011
+- #3278 merge: a hold is released by the holder's own later typed APPROVE at any head (verdict.go; 5 tests; ruling lander-keys-reads-by-who)
+  - members: #2879, #2619, #2628, #2707, #3080, #2550
+- #3087 nova-sprint: refill duty wired into reconcile (deal on every pass) (#3066)
+  - members: #2935, #2743, #3063, #3066, #3071, #3086
+- #1612 nova-work: make the kernel load without muffling every warning
+- #2350 Test the prompt profile's unique-triple invariant and its versioned edit grammar
+- #2388 bench-standard: add harness canary check inside sandbox wall
+- #2958 internal/merge: TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand deterministic
+- #3383 fix-the-red: internal/merge uncapped-stdout test deterministic under load
+  - members: #2958
+- #2958 internal/swarm: TestIdleWatchCountsHarnessStoreProgress deterministic
+- #3389 recut #2813 bench-standard rows: sbcl pin, pro rung, sqlite3, NOVA_SLOT_SHARE
+  - members: #2813
+- #3388 WHO: any merge: a mentioned friend is not the writer of a HOLD (recut of #2713's 43f1df17; the off-head-pin rule stays superseded by #3278) | STREAM: nova-sprint + merge + bus
+  - members: #2713, #3278
+- #3384 WHO: any tests: one shared redis-server helper and its guard, every test converted (recut of #3138 at the tip) | STREAM: nova-sprint + merge + bus
+  - members: #3138
+- #3386 WHO: any nova-sprint ci: ns_ci_end releases waiting tasks and owns the ci-fail item (#3382; from #3128) | STREAM: nova-sprint + merge + bus
+  - members: #3382, #3128
+- #2058 nova-swarm native: never exit 255; always a verdict
+- #2058 nova-swarm native: pin why=rc on 255; ssh 255 is UNKNOWN
+- #2058 nova-swarm native: printed verdict is not reconciliation
+- #2883 stream/nova-work-w2: fixes for members cut before dev moved: #2094 fixture URLs on forge.test (TestNoRealNetworkHostsOnTheCIPath), gofmt workreconcile/types.go; the verb flags helper and the internal/bounded audit entry #2623 deleted, restored for dogfood (#2762) and visualize
+- #3311 feat: add fenced bench reset verb
+- #3494 Merge dev into build-3139-b6-worker
+- #3649 card lint: a local mirror proves a private repo exists
+- #3650 card push: BENCH: <name> pins a card to one registered bench
+- #3651 card push refuses a KIND outside the RESULT set; KindMap; brief carries RESULT-FORMAT
+- #3615 nova-sprint width --as: print desired slots with ? when there is no fillstate
+- #3276 nova-sprint backpressure check: named keys in one pipeline, no SCAN
+- #3371 nova-sprint pitstop set|clear|status: one Redis key the dealer honours
+- #3620 reconcile: expire duty reads through ns_expire_read (no SORT); verbs never replace the library; timestamped loop log
+- #3372 nova-sprint bench beat: one connection, 3 x interval TTL; stale host rows print stale
+- #3600 SPEC-CI: index TestNoGhInAnyBrief and its control
+  - members: #3594
+- #3689 card: the wrapper fills every RESULT field it knows; the model only does the work
+- #2938 nova-sprint friend serve: the seat loop takes and dispatches at zero tokens
+- #3662 ws index: ns_ws_* functions and internal/nsprint/ws
+- #3662 ws index: every set scored by created_at; fix go vet in ws_test
+- #3662 ws index: a move refuses a broken link before it writes
+- #3662 ws index: ONE PLACE checks all six sets before a move
+- #3681 nova-sprint card run: the bench harness in Go
+- #2932 nova-sprint card harvest: PR record, body with STREAM and DONE-WHEN, head from the record
+- #3711 nova-swarm native: stage the repo from the card's REPO:/BASE:/base-sha: header; refuse a named repo left unstaged
+- #3712 harvest: open the card PR with the typed body from the card record
+- #3713 Merge rowan/deal-retry-cap (#3710) into rowan/deal-parallel-sessions
+  - members: #3710
+- #3665 stream/swarm-cards-0925b: merge rowan/3351-end-base-mismatch-conflicts
+- #3673 stream/swarm-cards-0925b: merge rowan/3255-card-push-leg-batch
+- #3679 stream/swarm-cards-0925b: merge rowan/3194-native-refused-card-end
+- #3690 stream/swarm-cards-0925b: merge rowan/3681-card-run-harness-go
+- #3683 Merge rowan/3255-card-push-leg-batch (#3673) into rowan/2932-harvest-record
+- #3683 stream/swarm-cards-0925b: merge rowan/2932-harvest-record
+- #3712 harvest body: PATHS is the card's declared PATHS, CHANGED the commit range
+- #3688 Merge origin/dev (3bc56873, #3720) into rowan/3322-deal-pass-wedged-sshd
+  - members: #3713, #3710
+- #3722 stream/nova-sprint-0925c: merge dev c88574c7
+- #3726 stream/quack-0925c: merge nova/quack-0925c/s00-0101-quack-batman-flash-a1
+- #3727 stream/quack-0925c: merge nova/quack-0925c/s00-0101-quack-batman-pro-a1
+- #3728 stream/quack-0925c: merge nova/quack-0925c/s00-0203-quack-hetzner-pro-a1
+- #3729 stream/quack-0925c: merge nova/quack-0925c/s00-0204-quack-hetzner-flash-a1
+- #3730 stream/quack-0925c: merge nova/quack-0925c/s00-0403-quack-space-pro-a1
+- #3731 stream/quack-0925c: merge nova/quack-0925c/s00-0404-quack-space-flash-a1
+- #3732 stream/quack-0925c: merge nova/quack-0925c/s00-0601-quack-vision-pro-a1
+- #3733 stream/quack-0925c: merge nova/quack-0925c/s00-0603-quack-vision-flash-a1
+- #3734 stream/quack-0925c: merge nova/quack-0925c/s00-0502-quack-superman-flash-a1
+- #3735 stream/quack-0925c: merge nova/quack-0925c/s00-0503-quack-superman-pro-a1
+- #3736 stream/quack-0925c: merge nova/quack-0925c/s00-0302-quack-hulk-flash-a1
+- #3739 pr-to-read: queue the first friend read when a card PR is opened
+  - members: #3726, #3736
+- #3740 harvest: write the PR record under pr:<name>:<n>, never the owner form
+  - members: #3719
+- #3742 routes: drop dead mimo-v2.6-pro; kimi-k3 takes OpenRouter's pro spread slot
+- #3755 wrapper: a code card that says DONE with NO-COMMIT ends done/fail reason no-commit
+- #3757 pr-to-read: join every open sprint's log each reconciler pass
+- #3761 stream/quack-0925e: merge nova/quack-0925e/s00-0101-quack-batman-flash-a1
+- #3762 stream/quack-0925e: merge nova/quack-0925e/s00-0404-quack-space-flash-a1
+- #3763 stream/quack-0925e: merge nova/quack-0925e/s00-0203-quack-hetzner-pro-a1
+- #3764 stream/quack-0925e: merge nova/quack-0925e/s00-0101-quack-batman-pro-a1
+- #3765 stream/quack-0925e: merge nova/quack-0925e/s00-0601-quack-vision-pro-a1
+- #3766 stream/quack-0925e: merge nova/quack-0925e/s00-0603-quack-vision-flash-a1
+- #3767 stream/quack-0925e: merge nova/quack-0925e/s00-0302-quack-hulk-pro-a1
+- #3768 stream/quack-0925e: merge nova/quack-0925e/s00-0204-quack-hetzner-flash-a1
+- #3769 stream/quack-0925e: merge nova/quack-0925e/s00-0403-quack-space-pro-a1
+- #3770 stream/quack-0925e: merge nova/quack-0925e/s00-0503-quack-superman-pro-a1
+- #3771 stream/quack-0925e: merge nova/quack-0925e/s00-0302-quack-hulk-flash-a1
+- #3773 ns_pr_first_read pushes through the one friend queue push
+- #3776 stream/quack-0925f: merge nova/quack-0925f/s00-0302-quack-hulk-flash-a1
+- #3420 nova-card: a refusal before launched leaves one record
+- #3423 nova-sprint table: the live port's title reads sprint:<S>:pitstop
+- #2389 nova-sprint table: host rows are each bench's own keys, not the bash bench-row hash
+  - members: #3692
+- #3623 nova-sprint card cut: one issue becomes one card record in Redis
+- #3447 presence: read friend:<name> as the friend row (up, at); beat refuses the row and any non-string key
+- #3440 nova-sprint friend row + bench beat host row: Go writers for the sprint-table rows
+  - members: #3692
+- #3612 Go lander read counting: SCORE lines are reads, HOLD lines never; why prints carried_from
+- #3779 the events move the cards: harvest -> merging, lander merge -> landed + CLOSE line + issue close, read post CLOSE -> landed; the table reads the sets
+- #3807 presence: nova-secrets width refusal names the friend row loop; CLI.md says the row is the presence
+  - members: #3447
+- #3798 nova-sprint plan: fix_to and release_reader as a hold policy pair
+- #3808 reconcile: one route consumer per instance, sweep idle ones
+- #3797 nova-sprint friend serve --login: bind aliases through ns_friend_hello on start
+  - members: #3697
+- #3800 nova-sprint land eval --shadow: SHADOW verdicts vs the hand lander's CLOSE, per PR
+  - members: #3485
+- #3804 nova-sprint: ci:nomirror on the host row and in card fsck
+- #3806 pr-to-read: run the read carry on every head change
+- #3781 stream/nova-sprint-0925g: merge rowan/3420-refusal-leaves-a-record
+- #3782 stream/nova-sprint-0925g: merge rowan/3609-oneparser-readcardbase
+- #3784 stream/nova-sprint-0925g: merge rowan/2930-retry-nocommit-sha
+- #3802 expire duty: bench evidence ssh runs in a bounded worker off the pass path
+- #3783 stream/nova-sprint-0925g: merge rowan/3423-live-title-pitstop
+- #3276 nova-sprint: backpressure check replaces SCAN with named key sets
+- #3530 nova-sprint table: ready is its own streams column, every cell one ZCARD
+- #3839 stream/nova-sprint-0925g: #3780 #3781 #3782 #3783 #3784
+  - members: #3780, #3781, #3782, #3783, #3784
+- #3358 nova-sprint stream open|rebase|pr|status|close over the land verbs
+- #3786 stream/nova-sprint-0925i: merge rowan/3613-lander-shadow
+- #3787 stream/nova-sprint-0925i: merge rowan/2389-host-row-bench-own-keys
+- #3788 stream/nova-sprint-0925i: merge rowan/3349-capacity-bench-legs
+- #3790 stream/nova-sprint-0925i: merge rowan/3447-presence-reads-friend-row
+- #3791 stream/nova-sprint-0925i: merge rowan/3440-sprint-row-writers
+- #3792 stream/nova-sprint-0925i: merge rowan/3612-score-lines-count-as-reads
+- #3789 stream/nova-sprint-0925i: merge rowan/3623-sprint-card-cut
+- #3793 stream/nova-sprint-0925i: merge rowan/events-move-cards
+- #3794 stream/nova-sprint-0925i: merge rowan/3139-b8-red-batches
+- #3810 stream/nova-sprint-0925i: merge rowan/2942-land-stream-prs
+- #3811 stream/nova-sprint-0925i: merge rowan/3807-presence-docs-and-refusal-text
+- #3812 stream/nova-sprint-0925i: merge rowan/3798-plan-policy-hold-fields
+- #3815 stream/nova-sprint-0925i: merge rowan/3796-harvest-orphans-flag
+- #3816 stream/nova-sprint-0925i: merge rowan/3808-route-consumer-sweep
+- #3817 stream/nova-sprint-0925i: merge rowan/3797-friend-serve-login
+- #3819 stream/nova-sprint-0925i: merge rowan/3800-land-eval-shadow
+- #3823 stream/nova-sprint-0925i: merge rowan/3803-reconcile-required-timeout
+- #3826 stream/nova-sprint-0925i: merge rowan/3806-read-carry-automatic
+- #3265 nova-sprint: capacity batches per-consumer desired reads
+- #3599 read: a read task's brief carries the mirror diff; read brief --id
+- #2946 lineup 7.20: a probe lands only with ci green and a read at head; a miss names its stage
+- #2937 nova-sprint fn deploy: the deploy path loads nova_sprint with one verb, refusing a digest mismatch
+- #3371 nova-sprint pitstop --scope: a stop holds all streams or named ones; clear --scope narrows it
+- #3838 reconcile: test LEASE-MARGIN skip on renewal failure
+- #3883 nova-sprint table: friend done counts only the current sprint's cards
+- #3872 reconciler: waiting-resolve duty moves waiting tasks whose DEPENDS-ON landed to ready
+- #3865 nova-sprint bus: friends talk to Rowan over Redis streams
+- #3873 nova-sprint reconcile: the friend deal duty fills every open slot from ws ready
+- #3865 bus: the group create moves from ns_bus_post into the post pipeline
+- #3600 friend serve and the card shell put one refusing gh first on the child's PATH
+  - members: #3594
+- #3901 stream/nova-sprint-0925i: eighteen read PRs
+  - members: #3786, #3794, #3810, #3826
+- #3813 nova-sprint: ns_friend_serve_beat is second writer of friend row
+- #3814 nova-sprint: hold route ErrNoPolicy refusal exits 2
+- #3919 card end writes the result onto the record; ABSTAIN done-already closes the card's issue
+- #3825 stream/nova-sprint-0925j: merge rowan/3804-ci-nomirror-on-table
+- #3834 stream/nova-sprint-0925j: merge rowan/3801-nova-pulse-delete
+- #3837 stream/nova-sprint-0925j: merge rowan/3805-bound-remaining-duties
+- #3866 stream/nova-sprint-0925j: merge rowan/3530-ready-column
+- #3867 stream/nova-sprint-0925j: merge rowan/3358-stream-lifecycle
+- #3885 stream/nova-sprint-0925j: merge rowan/2946-probe-stage-red-lines
+- #3904 stream/nova-sprint-0925j: merge rowan/3872-waiting-resolve-duty
+- #3525 nova-swarm worker check --help answers flag: help requested like every other verb
+- #3909 stream/nova-sprint-0925j: merge rowan/3600-no-gh-on-harness-path
+- #3889 stream/nova-sprint-0925j: merge rowan/3371-pitstop-scope
+- #3890 stream/nova-sprint-0925j: merge rowan/3370-spec-mark
+- #3902 stream/nova-sprint-0925j: merge rowan/3883-friend-done-per-sprint
+- #3903 stream/nova-sprint-0925j: merge rowan/2937-fn-deploy
+- #3906 stream/nova-sprint-0925j: merge rowan/3865-bus-redis
+- #3908 stream/nova-sprint-0925j: merge rowan/3873-deal-duty-fills-slots
+- #3910 stream/nova-sprint-0925j: merge emma/build-3813-friend-serve-beat
+- #3914 stream/nova-sprint-0925j: merge emma/build-3814-hold-route-exit2
+- #3921 stream/nova-sprint-0925j: merge nova/swarm-0925a/i018-3604-capacity-friend-must-refuse-a1
+- #3922 stream/nova-sprint-0925j: merge nova/swarm-0925a/i028-3462-nova-tokens-report-redis-a-m-a1
+- #3923 stream/nova-sprint-0925j: merge nova/swarm-0925a/i022-3518-nova-update-report-local-pat-a1
+- #3926 stream/nova-sprint-0925j: merge nova/swarm-0925a/i021-3520-nova-sprint-fleet-redis-auth-a1
+- #3928 stream/nova-sprint-0925j: merge nova/swarm-0925a/i038-3343-nova-sprint-table-out-file-a-a1
+- #3930 stream/nova-sprint-0925j: merge nova/swarm-0925a/i044-3275-friendqueue-read-batch-the-p-a1
+- #3931 stream/nova-sprint-0925j: merge nova/swarm-0925a/i026-3464-nova-tokens-help-the-sum-swa-a1
+- #3935 stream/nova-sprint-0925j: merge rowan/3919-card-end-result-on-record
+- #3442 nova-sprint: control sprint debris in fleet store
+- #3854 stream/nova-sprint-0925j: merge emma/build-3276-backpressure
+- #3949 swarm: drop kimi-k3 from the pro spread, its share to qwen3.6-plus; route report
+- #3887 pitstop: one key, s:<S>:pitstop; the live title reads the verb's hash and the verb repairs a wrong-typed key
+  - members: #3371
+- #3893 nova-sprint table: the wide table renders the fleet; a bound names itself
+- #3899 nova-sprint land: the batch test is the CI request, never a go test on the coordinator seat
+- #3253 table: --check live same-second check and fixture seeding in the library
+- #3045 nova-sprint table: machine, clock, ci and process lines, renderer lease
+  - members: #2756
+- #3191 bench beat names its launcher: nova-sprint card launch on every beat
+- #2924 merge: the lander reads CI from Redis only, never GitHub check-runs
+  - members: #3888
+- #3496 nova-sprint route: ok-to-friend cuts its ci card through StoreCICut
+  - members: #3139
+- #3153 nova-sprint life: friend lifecycle events, classifier and wake-mode receipts
+- #3271 benchcount: batch the per-bench HSETs into one pipeline
+- #3048 nova-sprint friend declare + wake-health: the friend's bus tie is a checked and repaired unit
+- #3550 nova-secrets: check/exec help and the no-upstream refusal name the store prerequisite
+- #3880 nova-update report --store: fleet nova-sprint drift from bench beats
+- #3398 nova-decide classify asks Jev from the CLI
+- #3442 nova-sprint: control teardown through the index sets, no SCAN
+  - members: #3950
+- #3879 nova-redis serve runs the fleet store's rules: --dir, AOF on, no eviction
+- #3877 nova-swarm native takes no file slot lease; bench:<b>:desired is the one ledger
+- #3158 nova-sprint digest: landed, holds and reads in a window from ws:log, land events and pr records
+- #3186 nova-sprint adopt: receipts per verb per POV in Redis, matrix read from them
+- #2621 nova-decide review: tool-PR mode -- score per changed-file group, no tells in docs, prose is no RESULT
+  - members: #2614
+- #3648 nova-sprint quack: the per-bench end-to-end probe with a receipt table
+- #3310 nova-sprint fleet build: the fleet deploy from Redis config
+- #3510 nova-work: every verb --help prints usage and exits 2
+- #3876 nova-wake watch --store: block on ev:github, zero gh and zero git fetch
+- #3948 stream/nova-sprint-0925j: land 24 read PRs
+  - members: #3825, #3834, #3837, #3866, #3867, #3885, #3904, #3909
+- #3510 nova-work: hardcode 51 verbs in TestEveryVerbHelpExits2 and deduplicate s8.go ErrHelp
+- #3404 nova-work set check: shallow clone with a window-aware deepen rule
+- #2618 nova-sprint sprint fold: the end-of-sprint refinement from Redis
+- #3463 nova-tokens --redis: silence the go-redis pool logger
+- #3460 nova-work set check --evaluate: read every PR in one GraphQL call per repo
+- #3623 stream/nova-sprint-0925k: drift allowlist cut.go cutKeys and RenderCut
+  - members: #3995
+- #3459 nova-work verification: re-measure the roadmap sexp at HEAD
+- #3160 nova-sprint verbs unused: verbs with no use or non-author dogfood in the window
+- #3894 nova-sprint table: host done/ok/fail/ok% from bench:<b>:cards:ok|fail
+- #3900 nova-sprint table: merging prints read/unread, one LAND line per open landing
+  - members: #3929
+- #3778 sprint tasks are cards: one record, one where pointer, one move primitive, the table is ZCARDs
+  - members: #3442, #3530, #3866, #3883, #3902, #3873, #3919, #3872
+- #3929 nova-sprint table: a reading column between working and merging
+  - members: #3530, #3866
+- #3925 No ghost cards: sprint close retires every card, leases are reaped, fsck is a duty
+- #3898 landing is a reconciler duty: every read stream lands in one batch each cfg:land tick under lease:land:<repo>
+  - members: #3886, #3899
+- #3202 nova-swarm batch --cards: help names --tokens, CLI prints NoBatchTokensRefusal
+  - members: #1615
+- #3340 nova-work: one writer of the forest; verbs refuse docs/roadmaps/ at exit 3
+- #4079 fenced lander keeps an offered stream PR on its unit record pr:<name>:<n>
+  - members: #2942, #3896
+- #3778 one task store: s:<S>:task:<id> is task:<id>, every sprint-store transition is the one move
+  - members: #3822, #3370
+- #3778 one task store: task list reads task:<id>; dev's list and land-duty tests seed the one store
+  - members: #3898
+- #3254 nova-sprint: every verb's -h prints its usage line and flags, exit 2
+  - members: #3160
+- #4101 card push stores the body the wrapper runs
+- #3441 nova-sprint: sync table layout live with sprint-table-redis
+- #2937 nova-sprint: deploy function library and per-actor ACL users
+- #4164 stream fleet, ci, secrets, jev: #4136 #4019 #3888 #4084 #4099 #3962 #4069 #4070 in work order (2026-09-25)
+  - members: #3631, #4050, #4080, #3041, #3597, #3190, #3645
+- #4169 stream nova sprint migration: #3862 #3905 in work order (2026-09-25)
+  - members: #3599, #3595
+- #4171 stream nova-sprint + merge + bus: #3896 #3932 #4088 #4102 #4123 #4131 #4142 #4159 #4165 in work order (2026-09-25)
+  - members: #3611, #3491, #3424, #3900, #3973, #3599, #4096, #3892, #3595, #3749, #4145, #4095, #3778, #3897
+- #4167 stream redis: store + bus: #3996 #4026 #4104 in work order (2026-09-25)
+  - members: #3461, #4052, #3277
+- #4172 stream swarm: cards: #3991 #4090 #4138 #4031 #4166 in work order (2026-09-25)
+  - members: #3611, #3491, #3424, #3900, #3973, #3929, #3093, #2940, #3488, #3907, #3822, #3530, #3866, #3883, #3902, #3717, #4061, #3894, #3925, #3998, #3991, #3634, #3599, #4096, #3809, #3892, #4054, #3595, #3749, #4145, #4095, #3778, #3897, #3254, #4094, #4097, #4072, #3905
+- #4174 stream swarm: cards (batch 2): #4168 review column and one consumer table, rebased (2026-09-25)
+  - members: #3611, #3491, #3424, #3900, #3973, #3929, #3093, #2940, #3488, #3907, #3822, #3530, #3866, #3883, #3902, #3717, #4061, #3894, #3925, #3998, #3991, #3634, #3599, #4096, #3809, #3892, #4054, #3595, #3749, #4145, #4095, #3778, #3897, #3254, #4094, #4097, #4072, #3905, #4071, #4168, #4166, #4088
+- #4173 stream fleet, ci, secrets, jev (batch 2): #4170 every test parallel, CI under two minutes (2026-09-25)
+  - members: #3611, #3491, #3424, #3900, #3973, #3929, #3093, #2940, #3488, #3907, #3822, #3530, #3866, #3883, #3902, #3717, #4061, #3894, #3925, #3998, #3991, #3634, #3599, #4096, #3809, #3892, #4054, #3595, #3749, #4145, #4095, #3778, #3897, #3254, #22315
+- #4222 stream fleet, ci: 94 wall-clock tests skipped as SLEEPS pending a mocked clock or a functional program (#4221)
+  - members: #3611, #3491, #3424, #3900, #3973, #3929, #3093, #2940, #3488, #3907, #3822, #3530, #3866, #3883, #3902, #3717, #4061, #3894, #3925, #3998, #3991, #3634, #3599, #4096, #3809, #3892, #4054, #3595, #3749, #4145, #4095, #3778, #3897, #3254, #22315
+- #4223 stream fleet, ci: the merge group's gate is our own sharded test legs; the hosted merge leg is gone
+  - members: #3611, #3491, #3424, #3900, #3973, #3929, #3093, #2940, #3488, #3907, #3822, #3530, #3866, #3883, #3902, #3717, #4061, #3894, #3925, #3998, #3991, #3634, #3599, #4096, #3809, #3892, #4054, #3595, #3749, #4145, #4095, #3778, #3897, #3254, #22315
+- #4215 stream swarm: cards (batch 3): #3916 a waiting card is complete, on the copy model (2026-09-25)
+  - members: #3911, #3916, #3778, #4173
+- #4224 stream swarm: cards (batch 4): the deal pass deals only; the ns-bench seat beats and reads the wake registry
+  - members: #4199
+- #4225 stream swarm (batch 5): the reconciler no longer runs the friend-queue deal duty
+  - members: #3873, #4191, #4221
+- #4226 stream swarm (batch 6): the bench beat hands nova-card the bench's card.env
+- #4228 stream swarm (batch 7): a work copy's card is the primary's harness card, issue text included
+  - members: #4227
+- #4230 table: no REVIEW age line under the stream table (Glenn 2026-09-26)
+- #4231 stream swarm (batch 9): one review state; reading and the merging split removed; 25-wide name columns (Glenn 2026-09-26)
+  - members: #4088, #4230
+- #4235 sprint clear verb; load as a percent of cores; done as ok/total; the open sprint's pit stop (Glenn 2026-09-26)
+- #4236 copy model: nova-card copy pushes the branch, opens the PR and ends the work copy itself (#4227)
+  - members: #4227
+- #4239 table: the open sprint's pit stop reads s:<S> status; the bench beat carries ncpu so load prints as a percent
+  - members: #4235
+- #4294 nova-card copy runs the Go harness in-process whatever NOVA_CARD_HARNESS names; a copy crash records the harness exit; the harness's own REFUSED line is refusal evidence (#4234)
+  - members: #3681
+- #4295 beat: the machine's CPU busy percent; the table prints it over the load average
+- #4297 ci: the shards use Go's test cache; -count=1 stays the by-hand default (Glenn 2026-09-26 9:42 AM ET)
+- #4296 swarm read copies: the wrapper ends the copy from the SCORE line; fix copies push the PR's branch; reads honour room; capacity --kinds/--tiers (#4270)
+  - members: #4270
+- #4298 ci: test binaries link without DWARF (no dsymutil per binary on darwin)
+- #4299 ci: a push of the merge queue's own commit skips the shards its merge-group run already proved (Glenn 2026-09-26 9:42 AM ET)
+- #4300 table: worker header; an empty sprint shows the title and the worker table alone
+- #4302 frontier: the third model type; a worker advertises the types it runs (Glenn 2026-09-26 10:03 AM ET)
+- #4303 ci: runner workspaces are cleaned in place, not emptied and re-seeded (Glenn 2026-09-26 10:20 AM ET)
+- #4304 table: the load cell holds the highest value of the last ten seconds (Glenn 2026-09-26 10:52 AM ET)
+- #4305 routes: a dated probe runs every route of a rung for the next quack (all models back on)
+- #4323 worker pause|resume|show and card cancel --each (#4308, #4309)
+- #4325 fleet release <sha> and fleet churn: two hand steps of the morning as verbs (#4306, #4310)
+  - members: #4306, #4310
+- #4329 cmd/nova-merge: the gate test expands Makefile ?= variables; dev red since #4305
+  - members: #4320
+- #4320 dead code 1/4-4/4: fourteen packages, the unreachable functions, the allowlists, one state list
+  - members: #4323
+- #4326 quack cut, quack run and land pr: the morning's hand steps as verbs (#4307, #4311)
+  - members: #4307, #4311
+- #4327 dead code 2-5: friend serve, friend queues, the harvest chain, docs (Glenn: less is more)
+  - members: #4227, #3595, #4320, #4323, #4325, #4329
+- #4347 card push registers its stream in ws:names/ws:order like the task-card path; fsck repairs an unregistered stream and reports orphan sets
+  - members: #4334
+- #4344 nova-sprint, nova-card, reconcile: no silent failure on the copy model's live path (Glenn 2026-09-26 11:30 AM ET)
+  - members: #4326
+- #4346 tests: redis-backed tests behind //go:build functional (#4328)
+- #4353 nova-sprint self update: rebuild this machine's binary with the pinned Go, install by rename (#4337)
+  - members: #4337
+- #4354 nova-sprint acl check: live Redis ACL versus the declared rows (#4333)
+  - members: #4333
+- #4358 card cut --from: many cards from one file, one receipt per row (#4340)
+  - members: #4340
+- #4357 nova-sprint: --seat reads its row in seats.tsv; redis sends one raw command as the seat (#4330)
+  - members: #4330, #4052
+- #4343 nova-sprint: one GitHub client, every call counted, events over polling, one paced writer
+- #4366 ci: allowlist class tests regenerate with NOVA_CI_UPDATE=1 (#4339)
+  - members: #4339
+- #4363 fleet build, card moves: probes never ride the consumer sets; the probe result goes on the bench beat (#4237)
+  - members: #4237, #4346
+- #4343 Merge origin/dev into rowan/gh-client
+  - members: #4340, #4328
+- #4361 reconcile, table: the progress duty measures convergence and asks only when a stream stops converging (#4319)
+  - members: #4319
+- #4367 nova-sprint jev: the Jev decision ledger; every decision a row, Jev's shadow answer, agreement per type (#4316)
+  - members: #4316, #4342, #4318
+- #4343 internal/gh: catalogue the package; spell the REST host in two literals
+- #4372 tests: cmd/nova-sprint, internal/ci and internal/swarm under 2 s in the unit tier (#4328)
+  - members: #4346
+- #4376 ci: one reader of every allowlist; the class test covers the tree (#4339)
+  - members: #4366
+- #4343 Merge origin/dev into rowan/gh-client
+- #4360 nova-ci local: the unit tier CI runs for this diff, at -p 2, with the budgets (#4336)
+  - members: #4336, #4346, #2573, #4345
+- #4355 fleet roll: release, the play through ansible, the beat verify, one verb (#4332)
+  - members: #4332
+- #4380 nova-sprint jev: review rows keyed by the move's own at, asks claimed by SMOVE, the tier that ran, the gate a row (#4316 read 7/10)
+  - members: #4367
+- #4378 acl check: compare effective grants over the server's own ACL CAT; red on hetzner's redis 7.0.15 (#4333)
+  - members: #4333
+- #4381 restore the silent class test that #4346's stale-base squash deleted; every allowlist row justified
+  - members: #4344, #4339, #4328
+- #4370 nova-sprint doctor: one line per check, OK or the exact fix (#4352 L)
+  - members: #4352, #4337
+- #4362 read brief --pr and read post --file: the card, the diff and CI in one screen from Redis (#4335, #4315)
+  - members: #4335, #4315
+- #4379 card cut --from: the cut ledger, one DEPENDS-ON form, CLI.md (#4340, the read of #4358)
+  - members: #4358, #4340, #4352, #3409
+- #4383 fleet release <sha>|dev is the whole roll: build, fn, fn check, the bench play, self update, the beat verify (#4356 A)
+  - members: #4356, #4332
+- #4389 docs/CONTRIBUTING.md defines functional as a test that starts a redis-server, execs a whole program or asserts a real-time bound, and names internal/ci/onboarding_functional_test.go as the walker
+  - members: #4372, #4233
+- #4390 ci: select-packages never silently selects nothing (ci-select-never-silent)
+  - members: #4370
+- #4391 nova-sprint doctor: self counts as registered, ingest age is information, --by never a placeholder, one command per remedy (#4352 L, read of #4370)
+  - members: #4370
+- #4365 CI over work: copies and local test runs at nice 15; bench slots shrink by CI legs (#4293)
+  - members: #4293, #4361, #4376
+- #4382 nova-sprint --seat: every verb with no --redis and no GH_TOKEN export; seats.tsv seventh column (#4330)
+  - members: #4330, #4357, #4370
+- #4394 reconcile: the progress duty's owed work from the cold read of #4361 (#4319)
+  - members: #4361, #4320, #4369
+- #4392 probe guard fixes: comment-blind gate check, one beat TTL, no dead --probe (the read of #4363)
+  - members: #4363
+- #4393 classtests: the merge-parent comparison; a test file or list deleted undeclared is red (the #4346 shape)
+  - members: #4381, #4346
+- #4359 fleet ps: what runs on every bench, top CPU and undeclared units, from the beats (#4338)
+  - members: #4338, #4365, #4330
+- #4364 nova-sprint friend pull | done | beat: a friend works its own copies from its own session (#4233)
+  - members: #4233, #4327, #4270
+- #4343 Merge origin/dev into rowan/gh-client; read brief's REST read and read post --file's poster on the one client
+  - members: #4362, #4330
+- #4343 gh: New opts into the lazy token read; Env seam; gh budget defaults --redis to the seat
+  - members: #4330
+- #4375 ci: the runner reports every run to Redis; land pr merges on it (gh-ci-receipts)
+- #4324 land duty: LAND-SERIAL refusal, step walls, the land watch (LAND-SLOW/LAND-WALL, merge card per stream, cross-stream escalation), MERGE-NOTEs
+  - members: #4342, #4319, #4322
+- #4324 land watch: one writer of task records kept; the merge brief at land:brief:<card>, folded in by card render; no gh token in the merge brief
+- #4324 land duty, cold read 6/10 -> the ten fixes: one writer per stream, ids never repeat, a wall note, land:slow read by the progress duty, LAND-SERIAL after the build with a durable receipt, mocked-clock duty tests, flat pipelines and lines on change, seams filed
+  - members: #4373, #4319, #4387, #4384, #4385, #4386
+- #4374 fleet play: one rowan-tools play through the verb, a receipt per bench and role, behind: <role> on the row (#4356 C)
+  - members: #4356, #4328, #4382
+- #4343 Merge origin/dev into rowan/gh-client
+- #4324 note: --redis defaults through the seat (#4330's class rule, red on run 36257904544: TestNoVerbRefusesAnEmptyRedisUnderASeat); the nova-sprint build output is ignored
+- #4369 nova-sprint: the stream sentinel card, DEPENDS-ON <slug>:sentinel, ws show --order (#4318)
+  - members: #4318, #4342, #4363, #4361, #4394, #4375, #4379
+- #4345 ci: two tiers -- unit tests on every change at two cores, functional tests as streams merge (#4328)
+- #4317 nova-sprint: work as a hierarchy; card cut --parent cuts children and a stitch, the parent's state is derived, stream ls --tree
+  - members: #4379, #4233
+- #4371 nova-sprint: one GitHub client, every call counted, events over polling, one paced writer (#4343)
+  - members: #4343
+- #4388 nova-sprint: work as a hierarchy; card cut --parent cuts children and a stitch, the parent's state is derived, stream ls --tree (#4317)
+  - members: #4317
+- #4322 stream paths disjoint: ws:paths holds each stream's live cards' PATHS, card push and card cut refuse a card overlapping another open stream unless --join names it, ws check names PATHS OVERLAP
+- #4396 card lint: every push path (card push, card cut, card cut --from, task push) refuses a card that is not one invariant, one REFUSED card-lint line per rule
+- #4317 nova-sprint: a stitch that ends done leaves its plan stuck with a remedy, card cut --parent re-cuts it, task land --id <stitch> names the plan it landed
+- #4322 Merge origin/dev; SP.moved reads nothing more for a record with no paths, so a path-less stream of 1,000 lands at dev's speed
+- #4324 Merge origin/dev (dec7b954f: #4369 sentinel, #4345 CI tiers, #4371 gh client) into rowan/land-duty; progress keeps the sentinel-aware counts and the land:slow stalled read, the end-to-end ws:log count is 14
+- #4343 card: the copy-end harvest tests expect the harvest to carry the copy end's Redis, as #4371 made every production client count in its store
+- #4324 land: one atomic claim per stream (land:merge:<stream> owner) taken by the duty before its build, the watch before a cut and nova-sprint land (--card), a serial record that holds its parked members and keeps the open PR, a stuck card escalated once, and a cross-stream end cut as the #4318 sentinel edge
+- #4383 fleet release: the play step reports what ansible said (RECAP rows, BEAT per bench, a typed REFUSED naming ansible's first line, the raw output kept in a log)
+- #4396 merge origin/dev (#4388 card cut --parent) into the one-invariant lint; card_cut_from.go keeps both sides, the stitch row's lint lines read row=stitch
+- #4318 functional tier green on dev: the stream tests and the read event count the sentinel apart, jev sync makes no decision of the sentinel's moves
+- #4396 card lint: KIND plan and stitch exempt (taskcard kinds are cardhdr's), lettered A. lists and 'Build issue #N, as written' refused, card push prints one card-lint line per rule, a new dir counts by shape in tree mode
+- #4324 Merge origin/dev (be3e5f8ef: #4388 hierarchy) into rowan/land-duty; 02_card_move.lua keeps the stitch landing its plan before the sentinel stop, progress keeps the land:slow stalled read, the end-to-end ws:log count stays 14
+- #4324 land: --card takes only the stream's land:merge:<stream> task or escalation (an unrelated open card no longer holds the stream); the real-git serial test moves to the functional tier (CI-SLOW 6.0s over a 1s unit budget)
+- #4383 fleet release: inventory.py --list checked before the play (6-column row, the registry it reads), restart skipped when the play reached none, BEAT prints rc and message, ParseAdhoc rule pinned, exec tests parallel
+- #4318 TestLuaOnRealRedis checks the 3rd ws:log entry is the stop's registration into waiting and the stop stays waiting with the parked member live, as TestSaveBuilt does
+- #4317 nova-sprint: a re-cut stitch files through its own ledger keyed by plan and stitch, the stuck remedy prints card stitch --drop <child>, land merge and a CLOSE line name the plan a stitch landed, task done with no PR prints the stuck plan
+- #4328 ci: unit budgets judge the test, not the load -- CI-LOAD gate over 0.25 a cpu, allowlist rows name their measurement, SLEEPS ledger red at any load, git and staged-kill tests to functional
+- #4396 card lint: lower-case and roman lists, e.g./i.e./vs./etc. end no sentence, KIND stitch linted (only card cut --parent's stitch unlinted), plan exempt from build-list and refused plan-children, card-lint lines on stderr with exit 2 on card cut, cut --from and task push, quack cut and file --push-to linted
+- #4322 stream paths: the gate moves into Lua (SP.gate in the FCALL of every door: card push, task push, card_move, TK.move, unpark), unbuilt ws:paths refuses with the repair remedy, --join only onto an open stream, cut --from --dry-run reports, namedpaths example fixed
+- #4322 stream paths: TestPathsRemedyRunsVerbatim opens with t.Parallel, --redis and --checkpoint per test instead of t.Setenv
+- #4396 card lint: task push with no card keeps the title-and-kind lint on both doors (stitch-writer, plan-children, build-issue title), a sentence ends at a closing quote or bracket, an unclosed backtick hides nothing, DONE-WHEN and INVARIANT read their continuation lines, a BUILD list counts fenced, in any case and on one line
+- #4317 nova-sprint: every writer of a task's pr indexes its PR ref in the same call so a CLOSE after task done --pr or card end --ok --pr lands the stitch and its plan, land merge takes its token per call so its test runs parallel, the doors' origins leave github.com, a filing refusal carries remedy=
+- #4328 ci: a budget verdict is the same on any machine -- no load gate; unit tests may not wait on the wall clock (static, every leg), SLEEPS ledger only shrinks against the merge base, CI-SLOW printed on every leg and enforced only on the nightly space legs, rows measured at run<id> or a bench, one budget
+- #4328 ci: the SLEEPS ledger's git control to the functional tier (seven commits, about a second); the ledger's seed counts 1210 files
+- #4322 stream paths: a move refuses stream_paths and paths fields, ws check --repair is one gated FCALL (ns_ws_paths_repair), adoptions, the reap's and card fsck's relinks are gated, a cut rerun with changed PATHS is a CONFLICT, a store-less dry run says PATHS unchecked, dead TK.place and W.migrate_one removed
+- #4328 nova-bus: TestNovaBusIsNotExemptFromTheOnboardingStandard reads the walk where #4328 moved it (onboarding_functional_test.go); red on dev be3e5f8ef and on this PR's space shard 1/4
+- #4322 stream paths: ws check --repair writes a known overlap and reports it (no unbuilt stream), the gate names every overlapping stream (also=), a card end's paths are recorded as result_paths and never change PATHS
+- #4322 stream paths: a --join target the card overlaps is named with the other overlapping streams (SP.gate and StreamPaths.Gate), so a two-holder refusal suggests scope park and never a --join loop
+- #4416 stream ci: dev green again (#4413 unit budget measured, #4409 the four class tests)
+  - members: #4413, #4409
+- #4423 stream work: cards are specs, stream paths disjoint, one invariant per card (#4401, #4405, #4403)
+  - members: #4401, #4405, #4403
+- #4421 ci: test-hosted meets the two-minute cap by shards (ubuntu-latest 6, macos-latest 8)
+- #4408 ci github test: the CIGH receipt carries records= and failed= since the PR record follows GitHub
+- #4317 stream autonomy: #4404's functional tests on dev 1b32d32b's card shape: plans and rows carry TEST and one invariant (#4396, #4313), the card-end door gates in a checkout (#4401), sd and sm plans on disjoint PATHS (#4322), cardCutFrom's errOut
+- #4425 stream friends: a friend keeps one beat; the PR record follows GitHub (#4402, #4408)
+  - members: #4402, #4408
+- #4422 stream fleet: release reports what ansible said, inventory refusal (#4407)
+  - members: #4407
+- #4424 stream github: copy-end harvest tests expect the copy end's Redis (#4406)
+  - members: #4406
+- #4318 functional tier green on dev: a stream sentinel lands by the coordinator's acceptance alone, jev asks nothing of it, the eight tests assert identities
+- #4426 stream autonomy: a stitch that ends done leaves its plan stuck (#4404)
+  - members: #4404
+- #4420 merge origin/dev into rowan/bus-wait-own-uid
+- #4427 stream landing: land duty, stream order, one dependency rule (#4373, then #4410 and #4414)
+  - members: #4373, #4410, #4414
+- #4420 merge origin/dev into rowan/bus-wait-own-uid
+- #4318 round 2: the reader's sequence probe (rename of an unaccepted stop lands nothing); dev's stitch and land-watch tests land the stop by the coordinator's acceptance
+- #4415 Gate friend copy renewal doors and preserve owner refusal causes
+- #4412 functional tier green again on dev: the sentinel is counted, the ledger's first sync, the read event (red since the afternoon landings, unseen because land pr skips merge_group)
+- #4420 merge origin/dev into rowan/bus-wait-own-uid
+- #2506 ci: #4429 round 2: resultLine returns typedrec.CardLine (ReadCardLine: the scanner's line 1, CR dropped, 64 KiB cap), the scanner taints typedrec-returned values (typed-shadow fixture), typedrec declared the home of every typed line, the reader's parity tests
+- #4429 ci: dev green again: TestOneTypedParser's twelve hits moved onto the typed parser; the double grow cut
+- #4428 stream table: the sprint epoch and one count (#4377, #4411)
+  - members: #4377, #4411
+- #4415 Name copy failures and close legacy renewal paths
+- #4415 Merge dev and fence observed owners against sprint clear
+- #4420 bus wait: the git ownership scan sees only the calling account's gits
+- #4415 Require observed owners before renewing friend copies
+- #4439 nova-config: the permanent configuration store (Postgres), friends and machines, apply into Redis
+- #4440 nova-table: a general Redis-backed table; the sprint's stream block moves onto it
+- #4441 nova-friend: a friend's runtime (here, bye, away, back, pull, done, list, show)
+- #4442 nova-config: the machine kind is the six fields something reads (user, seat, slots, runners, store, coordinator)
+- #4443 nova-sprint and nova-wake: the friend verbs are gone (nova-friend and nova-config own them); bench and fleet verbs kept for nova-fleet
+- #4444 nova-secrets seat inject: re-seal named values into an existing seat from a source seat the coordinator can open
+- #4446 store: the connect is HELLO alone, no CLIENT SETINFO (Glenn 2026-09-27: "You always need to batch redis")
+- #4448 Make every nova-table operation one Redis exchange
+- #4445 capacity: the budget follows who is awake (friends' sum under the ceiling; a bench runs the ceiling less the friends awake)
+- #4438 read gate: a head's CI verdict falls back to the GitHub leg when the store ran no CI of its own (quack)
+  - members: #4443
+- #4449 reconcile: one round trip per duty; the sprint-store duties leave the pass (71 trips a tick to 14)
+- #4453 task move: merging_gen refused DRIFT past fifteen digits, so tonumber never rounds a count (Stella's hardening note on #4449)
+- #4451 tla: the state-machine models and their runners live here
+- #4462 ci: deprecated tools and modules are never tested; nova-sprint, nova-card, nova-friend, nova-play and nova-test are deprecated
+- #4464 swarm test: the check that only the card crosses reads the names, not the test's own directory
+  - members: #4457
+- #4457 Integrate table edits and batches with epoch history and atomic receipts
+  - members: #4450, #4456
+- #4466 nova-board moves to deprecated/: not built, not tested, not shipped; the class tests that walk the tree skip the folder
+  - members: #4462, #4457
+- #4459 oneline: property tests over arbitrary input (foundation under nova-table, layer 1)
+- #4468 verbflag: its first tests, eleven, every statement covered (the foundation under nova-table, layer 3)
+  - members: #4457
+- #4461 bus: remove inbox decisions and keep messages over Git
+  - members: #4460
+- #4463 table: escape terminal controls before rendering stored text
+  - members: #4450, #4456
+- #4465 table: refuse malformed Bind row lists and invalid UTF-8 identities
+  - members: #4450, #4456
+- #4469 textbody: share message filtering without merge dependencies
+- #4475 table: bound staged rank writes for large row orders
+  - members: #4474
+- #4477 test(textbody): pin filter edge cases and post dependency boundary
+- #4476 wake: retire obsolete bus privacy flag checks
+  - members: #4460
+- #4458 nova-table: reuse one connection in a resident shell
+  - members: #4450, #4456
+- #4472 ghevent: separate stream identity from webhook ingestion
+  - members: #4470
+- #4481 nova-card, nova-friend, nova-play and nova-test move to deprecated/; nova-sprint stays (live CI runs it)
+  - members: #4466
+- #4478 wake: restore integration checks in the functional tier
+- #4482 ci: cache the macOS Go build cache where Go keeps it, and save it before the tests
+- #4480 wake: recognize single-dash flags at the daemon boundary
+  - members: #4460
+- #4483 table: make lost-reply test EOF persistent and clarify restart model
+- #4479 wake: isolate command process and socket tests in functional tier
+- #4485 cut the three ways living CI and tests reach cmd/nova-sprint
+  - members: #4458
+- #4489 merge: move the git-lab, process and socket tests into the functional tier
+  - members: #2683
+- #4484 internal/testredis and internal/testpg: the throwaway stores, lifted out of nsprint
+- #4490 wake: make whole-read deadline tests distinguish the timeout paths
+- #4491 nova-bus: drain the unit tier; git-checkout tests to functional, wait on a fake clock
+- #4486 redisfn: build, load and check a Redis function library from embedded Lua (lifted from internal/nsprint/fn)
+  - members: #4484
+- #4471 internal/atomicfile: atomic file write with standard library rename beside target
+- #4496 cardhdr: lift cardhdr out of nsprint into internal/cardhdr
+- #4492 redisconn: the one way a nova tool opens its Redis connection
+  - members: #3520, #4484
+- #4473 filelock: process-exclusive file lock with holder stamps and state probing
+  - members: #4488
+- #4498 nova-work: park it whole under deprecated/, with its Lisp kernel
+- #4495 ci-ok's run receipt moves into nova-ci: one ev:github row, from this tree
+- #4503 nova-ci functional: refuse a pattern matching no package, an unknown flag, -h/--help; never exit in silence
+- #4500 nova-swarm, nova-decide, nova-merge, nova-review and nova-wake move to deprecated/; nova-post stays
+- #4504 nova-redis opens its store through internal/redisconn; the private dial seam is deleted
+- #4514 store: connect is HELLO alone, no CLIENT MAINT_NOTIFICATIONS trip
+- #4508 nova-table: open Redis through internal/redisconn, not nsprint/store
+  - members: #4492
+- #4497 config: drop sprint working-copies guard from friend removal
+- #4501 tests: decouple living test fixtures from deprecated nsprint packages
+- #4502 ci: ratcheted class test forbidding living packages from importing dropped deprecated packages
+  - members: #4497, #4501
+- #4505 docs: CLI-STYLE draft, the one-page command-line contract (for Stella's read)
+- #4525 internal/atomicfile: fsync parent directory on rename and preserve umask
+- #4493 move cmd/nova-sprint under deprecated/cmd/
+  - members: #4498, #4500, #4495, #4503
+- #4521 nova-post moves to deprecated/, PARKED; internal/post and SPEC-OUTBOUND.md with it
+- #4509 cairn: adopt internal/atomicfile and update SPEC-CAIRN temp policy
+- #4529 docs: remove unavailable tools from living CLI references
+- #4530 docs: remove parked integration from table guide
+- #4512 nova-bus: CLI.md First run runs as written; reply and prepare documented
+- #4527 nova-fuse: a flag named twice is refused; a second --box never answers for the first
+- #4524 tokens: validate roots and fail check on stale through day
+- #4494 nova-redis fn load|check through internal/redisconn; nova-table loads the library on first contact
+- #4532 nova-sandbox: run --out reads the volume by checked descriptor; a raced symlink, FIFO or off-volume file is refused (M1)
+- #4523 verb help: `<tool> <verb> -h` prints that verb's help at exit 0, through one seam
+  - members: #4505
+- #4534 docs: parked and deleted tools' docs move under deprecated/docs/ for 1.0
+- #4531 dogfood gate: judge the shipped set only; --closes answers a stranded receipt
+- #4535 nova-sandbox: the handoff writes no byte past the cap; handoff tests split by platform (#4532 follow-up)
+- #4533 nova-secrets gate: --base/--head are resolved commits behind --end-of-options; an option-shaped ref or a repeated flag is refused (M2)
+- #4513 sandbox: reject unknown verbs, validate check arguments, and remove tmp examples
+- #4536 dogfood fixes for 1.0: cairn source, nocode token, bare-form hint, --sums, cached runs
+- #4538 docs: park wording-only specs with their guards; SPEC-TOOLWORK, LESSONS, ROADMAP to the present (1.0 sweep, part 1b)
+- #4540 help and refusals name only living tools for 1.0.0
+- #4541 certification, release: every job under the two-minute cap (build legs per platform, sums on one machine, perf narrowed, race shards re-measured)
+  - members: #4482, #4487, #4489
+- #4542 docs: keep the sandbox spec on current commands and platform limits
+- #4546 docs: move the parked nova-play manual beside its tool
+- #4545 certification green after the 1.0 docs landings: smoke reads nocode's single-token label; a wording test of parked spec sections leaves internal/swarm
+- #4539 docs: living specs describe only the 1.0.0 tools, in present tense (1.0 sweep, part 2)
+- #4552 docs: remove parked command instructions from retained proposals and fixtures
+- #4544 help and refusals: working remedies, no person, date or outside tool (snapshot, bus draft, dogfood note)
+- #4543 docs: 1.0 sweep part 3 — living pages that taught parked verbs describe the present or move to deprecated
+- #4519 docs: describe adoption of the living 1.0 tools
+- #4511 docs: give the fifteen release tools runnable first commands
+- #4526 docs: nova-tools 1.0.0 release notes
+- #4517 config: fix first-run documentation and apply check actor validation
+- #4556 make test runs the living tree: CL_PKGS is select-packages.sh --all
+  - members: #4493
+- #4555 docs: 1.0 sweep part 4 — five rules keep their words and lose their attributions
+- #4557 Park sprint-only functionals and remove their retired import exceptions
+- #4558 Remove retired bus option notice from active spec
+- #4554 ci: the deletion guard recognises a promotion of dev to main
+  - members: #4549
+- #4549 nova-tools 1.0.0: promote dev to main
+- #4559 release: read complete bounded local diff lists
+- #4560 nova-tools 1.0.0: promote dev to main, second promotion
+  - members: #4559
+

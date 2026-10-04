@@ -3,19 +3,19 @@ package swarm
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 )
 
-// A BUDGET NEEDS A SOURCE THE TOOL CAN READ, AND THAT IS CHECKED BEFORE ANYTHING IS MADE
-// (SPEC-SWARM rule 13d, issue #1545).
+// A BUDGET NEEDS A SOURCE THE TOOL CAN READ, AND THAT IS CHECKED BEFORE ANYTHING IS MADE.
 //
-// Rule 13 already refuses, at exit 2 before the first worker, a pool whose description says
-// `usage: none` while a pending task carries a numeric budget, "because a budget nothing can
-// observe is a promise the tool cannot keep". Rule 13d holds the native route to the same
+// The `run` route already refuses, at exit 2 before the first worker, a pool whose description says
+// `usage: none` while a pending task carries a numeric budget, because a budget nothing can
+// observe is a promise the tool cannot keep. The native route holds to the same
 // sentence, and adds the second way a source can be unreadable: a bench with no `sqlite3` on
 // `PATH`, which is how `usage: opencode` is read at all.
 //
-// AND IT ADDS THE CARELESS CALLER (PR #1566 decision 19). A description that sets
+// AND IT ADDS THE CARELESS CALLER. A description that sets
 // `max_cache_read` or `max_turns` is refused under either condition WHATEVER `--tokens`
 // says, `unmetered` included, because the card's own budget is read from the same source --
 // so `--tokens unmetered` beside a `max_turns` on a `usage: none` bench would otherwise be a
@@ -25,7 +25,7 @@ import (
 // NativeUsageSource is the source a native launch reads its budget from: the worker
 // description's `usage` when `--worker` names one, and `opencode` when there is none.
 // It is one function because "and `opencode` when there is no `--worker`" is a sentence of
-// rule 13d's and not a default anybody should retype.
+// the budget-source rule above and not a default anybody should retype.
 func NativeUsageSource(worker *Worker) string {
 	if worker == nil {
 		return UsageOpenCode
@@ -41,21 +41,29 @@ func NativeUsageSource(worker *Worker) string {
 // description set `max_turns` or `max_cache_read`, and `cardBudgetNames` names which, so the
 // refusal tells a caller which field of their description put them here rather than making
 // them guess.
-func NativeBudgetSourceRefusal(source string, tokens int, unmetered bool, worker *Worker) string {
+//
+// `usd` is whether a dollar budget (--usd) was given: it is read from the same source, the
+// harness's own cost beside its tokens (nova-tools #5094).
+func NativeBudgetSourceRefusal(source string, tokens int, unmetered, usd bool, worker *Worker) string {
 	numeric := !unmetered && tokens > 0
 	card := worker != nil && worker.HasCardBudget()
-	if !numeric && !card {
+	if !numeric && !card && !usd {
 		// `--tokens unmetered` with no card budget: there is no number to observe, the
-		// deadline is the only stop, and rule 13d says such a launch runs under both
+		// deadline is the only stop, and such a launch runs under both
 		// conditions.
 		return ""
 	}
-	why := "a numeric --tokens"
-	if !numeric {
-		why = "this worker description's " + cardBudgetFields(worker)
-	} else if card {
-		why = "a numeric --tokens and this worker description's " + cardBudgetFields(worker)
+	var whys []string
+	if numeric {
+		whys = append(whys, "a numeric --tokens")
 	}
+	if usd {
+		whys = append(whys, "a dollar budget --usd")
+	}
+	if card {
+		whys = append(whys, "this worker description's "+cardBudgetFields(worker))
+	}
+	why := strings.Join(whys, " and ")
 	switch source {
 	case UsageNone:
 		return fmt.Sprintf("%s wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read", why)
@@ -86,7 +94,7 @@ func cardBudgetFields(worker *Worker) string {
 }
 
 // SQLiteOnPath says whether the one program a usage source needs can be resolved. It is
-// asked BEFORE a launch by rule 13d's refusal and AFTER one by the final read, and both ask
+// asked BEFORE a launch by the budget-source refusal and AFTER one by the final read, and both ask
 // it the same way.
 func SQLiteOnPath() bool {
 	_, err := exec.LookPath(SQLiteBinary)
@@ -94,12 +102,12 @@ func SQLiteOnPath() bool {
 }
 
 // DefaultUsageInterval is how often a live sample reads the source. It is a tool property,
-// like a timeout, and never a fact about anybody's job. Rule 13 names it for `run` and rule
-// 13d gives `native` the same flag and the same default.
+// like a timeout, and never a fact about anybody's job. The `run` route names its own flag and
+// `native` takes the same flag and the same default.
 const DefaultUsageInterval = 5 * time.Second
 
-// UsageIntervalFloor is the shortest interval `native` accepts. Rule 13d: an interval under
-// one second "could end an honest card on three quick reads" -- three failed reads in a row
+// UsageIntervalFloor is the shortest interval `native` accepts. An interval under
+// one second could end an honest card on three quick reads -- three failed reads in a row
 // end a card `budget-unverifiable`, and at a tenth of a second that is a third of a second
 // of bad luck rather than a source that has really stopped answering.
 const UsageIntervalFloor = time.Second

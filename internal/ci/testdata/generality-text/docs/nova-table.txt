@@ -1,0 +1,7 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 5
+docs/nova-table/README.md:hetzner 2
+docs/nova-table/README.md:rowan 2
+docs/nova-table/README.md:space 1
+docs/nova-table/README.md:stella 2
+docs/nova-table/README.md:studio 2

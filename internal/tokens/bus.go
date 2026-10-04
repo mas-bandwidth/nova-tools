@@ -3,9 +3,11 @@ package tokens
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -97,9 +99,7 @@ func ParseSubject(subject string) (parsedSubject, bool) {
 		return p, true
 	}
 	// The trailer is ONE shape in ONE order: `at=<stamp> build=<id>[ supersedes=<set>]`.
-	// Accepting the keys in any order or position made `tokens <day> build=b at=<stamp>`
-	// and `tokens <day> supersedes=x at=... build=...` tokens notes, though rule 6 names
-	// exactly one arrangement and says any other text after the date is not one.
+	// Accepting keys in any order or position produced invalid tokens notes.
 	toks := strings.Split(trailer, " ")
 	keys := []string{"at", "build", "supersedes"}
 	for i, tok := range toks {
@@ -142,9 +142,7 @@ func ParseSubject(subject string) (parsedSubject, bool) {
 	if p.at == "" || p.build == "" {
 		return parsedSubject{}, false
 	}
-	// Rule 6 names the trailer exactly: `at=<RFC 3339 UTC> build=<id>`. `at=garbage` was
-	// accepted as a tokens note, and the fold's own at= is what a note's Date: is
-	// validated against -- a stamp nobody parsed is not a stamp.
+	// The trailer must match `at=<RFC 3339 UTC> build=<id>`.
 	if t, err := time.Parse(time.RFC3339, p.at); err != nil || !strings.HasSuffix(p.at, "Z") || !t.Equal(t.UTC()) {
 		return parsedSubject{}, false
 	}
@@ -153,9 +151,7 @@ func ParseSubject(subject string) (parsedSubject, bool) {
 
 // nearMissSubject says whether a subject that ParseSubject refused was MEANT as a tokens
 // note, and why it is not one. The test is deliberately narrow: the first word is `tokens`
-// in any case and the second is a day. "Tokens 2026-09-11 (rough)" and
-// "tokens 2026-09-11 at=x" are near misses; "build is red" and "tokens, a question" are
-// ordinary lane traffic and are not this tool's business.
+// in any case and the second is a day.
 func nearMissSubject(subject string) (string, bool) {
 	f := strings.Fields(subject)
 	if len(f) < 2 || !strings.EqualFold(f[0], "tokens") || !ValidDay(f[1]) {
@@ -275,7 +271,7 @@ func laneNames(dir string) ([]string, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf(`participants.json names no lane; it wants {"participants":[{"name":"Emma","lane":"from-emma"}]} -- one entry per friend, each lane "from-<slug>", and every <slug>/*.md whose Subject: is exactly "tokens YYYY-MM-DD" is read`)
+		return nil, fmt.Errorf(`participants.json names no lane; it wants {"participants":[{"name":"Ada","lane":"from-ada"}]} -- one entry per friend, each lane "from-<slug>", and every <slug>/*.md whose Subject: is exactly "tokens YYYY-MM-DD" is read`)
 	}
 	sort.Strings(out)
 	return out, nil
@@ -438,6 +434,7 @@ func parseBody(n *note, label string, body []string, offset int, rules *Rules) {
 			n.redated++
 		}
 		n.zones[basis] = true
+		rules.SetDay(day)
 		m := Message{Day: day, Basis: basis, Model: model, Repo: rules.Attribute([]string{repo}, ""), Rough: rough}
 		m.Counts.Set(t, v)
 		n.msgs = append(n.msgs, m)
@@ -472,9 +469,9 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 		}
 	}
 
-	// Rule 6: "the successor is validated whole -- header, `Date:`, every body line --
-	// before it replaces anything." A note with an unparsed BODY line was not dead, so a
-	// half-read correction replaced its predecessor and the lane-day folded from it.
+	// The successor is validated whole before it replaces anything. A note with
+	// an unparsed body line was not marked dead, so a half-read correction could
+	// replace its predecessor.
 	superseded := map[string]string{}
 	for _, n := range notes {
 		if !n.clean() {
@@ -485,21 +482,15 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 		}
 	}
 
-	// Every basis the lane's LINES carried, utc included. Dropping the utc member here
-	// made a lane of one six-field line (utc, rule 6) and one seven-field line print the
-	// zone rather than `mixed`, which is the one thing this field is for.
+	// Every basis the lane's LINES carried, utc included. Omitting utc would cause
+	// a lane with mixed six-field and seven-field lines to print the zone instead
+	// of `mixed`.
 	laneZones := map[string]bool{}
 	byDay := map[string][]*note{}
 	for _, n := range notes {
 		byDay[n.subject.day] = append(byDay[n.subject.day], n)
 	}
-	days := make([]string, 0, len(byDay))
-	for d := range byDay {
-		days = append(days, d)
-	}
-	sort.Strings(days)
-
-	for _, day := range days {
+	for _, day := range slices.Sorted(maps.Keys(byDay)) {
 		var tips []*note
 		for _, n := range byDay[day] {
 			if n.dead != nil {

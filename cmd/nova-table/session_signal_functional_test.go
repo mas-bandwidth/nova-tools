@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/redis/go-redis/v9"
 	"os"
 	"os/exec"
 	"strings"
@@ -15,7 +16,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/redis/go-redis/v9"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Re-exec only this test binary; the helper receives an explicit disposable
@@ -40,14 +42,13 @@ func TestShellWatchDistinguishesTerminateAndInterrupt(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			for _, args := range [][]string{{"create", "jobs", "--columns", "ready"}, {"row", "add", "jobs", "existing"}} {
-				if code, out, errs := runTable(at(addr, args...)...); code != 0 {
-					t.Fatalf("setup %d %s %s", code, out, errs)
+				{
+					code, out, errs := runTable(at(addr, args...)...)
+					require.EqualValues(t, 0, code, "setup %d %s %s", code, out, errs)
 				}
 			}
 			exe, err := os.Executable()
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err, "%v", err)
 			cmd := exec.CommandContext(ctx, exe, "-test.run=^TestShellSignalHelper$", "--", "--shell-signal-helper", addr)
 			cmd.Dir = t.TempDir()
 			for _, env := range os.Environ() {
@@ -57,45 +58,33 @@ func TestShellWatchDistinguishesTerminateAndInterrupt(t *testing.T) {
 			}
 			cmd.Stdin = strings.NewReader("watch jobs\nrow add jobs after-signal\nquit\n")
 			stdout, err := cmd.StdoutPipe()
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err, "%v", err)
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
-			if err := cmd.Start(); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, cmd.Start())
 			// A rendered frame proves watch installed its handlers and reached Redis.
 			reader := bufio.NewReader(stdout)
-			if _, err := reader.ReadString('\n'); err != nil {
-				t.Fatalf("first frame: %v", err)
+			{
+				_, err := reader.ReadString('\n')
+				require.NoError(t, err, "first frame: %v", err)
 			}
-			if err := cmd.Process.Signal(sig); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, cmd.Process.Signal(sig))
 			err = cmd.Wait()
-			if ctx.Err() != nil {
-				t.Fatalf("session did not finish after %v: %v", sig, ctx.Err())
-			}
+			require.NoError(t, ctx.Err(), "session did not finish after %v: %v", sig, ctx.Err())
 			if sig == syscall.SIGTERM {
 				status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
-				if !ok || status.Signal() != sig {
-					t.Fatalf("SIGTERM: error=%v status=%v stderr=%s", err, cmd.ProcessState, &stderr)
-				}
-			} else if err != nil {
-				t.Fatalf("SIGINT: %v stderr=%s", err, &stderr)
+				require.True(t, ok, "SIGTERM: error=%v status=%v stderr=%s", err, cmd.ProcessState, &stderr)
+				require.Equal(t, sig, status.Signal(), "SIGTERM: error=%v status=%v stderr=%s", err, cmd.ProcessState, &stderr)
+			} else {
+				require.NoError(t, err, "SIGINT: %v stderr=%s", err, &stderr)
 			}
 			tab, err := ntable.Read(ctx, admin, "jobs")
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err, "%v", err)
 			want := 1
 			if sig == syscall.SIGINT {
 				want = 2
 			}
-			if len(tab.Rows) != want {
-				t.Fatalf("%v left %d rows, want %d: %s", sig, len(tab.Rows), want, fmt.Sprint(tab.Rows))
-			}
+			require.Equal(t, want, len(tab.Rows), "%v left %d rows, want %d: %s", sig, len(tab.Rows), want, fmt.Sprint(tab.Rows))
 		})
 	}
 }
@@ -103,13 +92,10 @@ func TestShellWatchDistinguishesTerminateAndInterrupt(t *testing.T) {
 func TestShellDevNullIsNotATerminal(t *testing.T) {
 	t.Parallel()
 	in, err := os.Open(os.DevNull)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	defer in.Close()
 	var out, errs bytes.Buffer
 	code := (&application{in: in}).run([]string{"shell", "--redis", "127.0.0.1:1"}, &out, &errs)
-	if code != 0 || errs.Len() != 0 {
-		t.Fatalf("devnull: %d %s", code, &errs)
-	}
+	require.EqualValues(t, 0, code, "devnull: %d %s", code, &errs)
+	require.EqualValues(t, 0, errs.Len(), "devnull: %d %s", code, &errs)
 }

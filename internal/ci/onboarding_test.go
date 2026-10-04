@@ -8,6 +8,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // docs/ONBOARDING.md, asserted for EVERY directory under cmd/ — by walking it, not
@@ -81,9 +83,7 @@ func TestTESTSmdFirstRunSectionsNameToolsTheFleetBuildInstalls(t *testing.T) {
 
 	installed := map[string]bool{}
 	tools, err := release.Tools(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, tool := range tools {
 		installed[tool] = true
 	}
@@ -93,32 +93,24 @@ func TestTESTSmdFirstRunSectionsNameToolsTheFleetBuildInstalls(t *testing.T) {
 			continue
 		}
 		if issues, open := notYetInTheFleetBuild[tool]; open {
-			if !strings.Contains(body, shipsInNoFleetBuild) {
-				t.Errorf("docs/TESTS.md gives %s a runnable %s transcript, but %s is open design work (%s) and ships in no fleet build; hold the transcript behind a note naming that, or remove the section until it ships", tool, onboarding.FirstRunHeading, tool, issues)
-			}
+			assert.Contains(t, body, shipsInNoFleetBuild, "docs/TESTS.md gives %s a runnable %s transcript, but %s is open design work (%s) and ships in no fleet build; hold the transcript behind a note naming that, or remove the section until it ships", tool, onboarding.FirstRunHeading, tool, issues)
 			continue
 		}
-		if !installed[tool] {
-			t.Errorf("docs/TESTS.md gives %s a runnable %s transcript, but the fleet build installs no %s; remove the section until the tool ships", tool, onboarding.FirstRunHeading, tool)
-		}
+		assert.True(t, installed[tool], "docs/TESTS.md gives %s a runnable %s transcript, but the fleet build installs no %s; remove the section until the tool ships", tool, onboarding.FirstRunHeading, tool)
 	}
 }
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return root
 }
 
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(raw)
 }
 
@@ -140,10 +132,7 @@ func TestNoToolIsWrittenTwiceInTheTranscripts(t *testing.T) {
 
 	path := filepath.Join(repoRoot(t), "docs", "TESTS.md")
 	repeated := onboarding.RepeatedSections(readFile(t, path))
-	if len(repeated) == 0 {
-		return
-	}
-	t.Errorf("docs/TESTS.md heads more than one `## ` section with each of these names: %s\n"+
+	assert.Empty(t, repeated, "docs/TESTS.md heads more than one `## ` section with each of these names: %s\n"+
 		"Only the FIRST is read -- by onboarding.Section, by every firstrun_test.go, and by a\n"+
 		"person looking for the one place to change. Fold each repeat into that tool's one\n"+
 		"section, as `### ` subsections if it has more than one thing to say.", strings.Join(repeated, ", "))

@@ -5,6 +5,9 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The resolution order, one case per rank, stamped and unstamped. An order asserted only
@@ -42,9 +45,8 @@ func TestResolveOrder(t *testing.T) {
 		{"(devel) alone is the floor, not a version", "", built(), true, "devel"},
 	}
 	for _, c := range cases {
-		if got := Resolve(c.stamped, c.info, c.ok); got != c.want {
-			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
-		}
+		got := Resolve(c.stamped, c.info, c.ok)
+		assert.Equal(t, c.want, got, "%s: got %q, want %q", c.name, got, c.want)
 	}
 }
 
@@ -53,9 +55,7 @@ func TestResolveOrder(t *testing.T) {
 // rather than guessing that 0.0.0 means something.
 func TestTheFloorIsAWordAndNotANumber(t *testing.T) {
 	t.Parallel()
-	if strings.ContainsAny(Unknown, "0123456789.") {
-		t.Errorf("the floor reads as a version number: %q", Unknown)
-	}
+	assert.False(t, strings.ContainsAny(Unknown, "0123456789."), "the floor reads as a version number: %q", Unknown)
 }
 
 // The one line, field by field, stamped and unstamped. Asserting only that the output
@@ -68,28 +68,17 @@ func TestLineShape(t *testing.T) {
 		{"unstamped", "", ""},
 	} {
 		line := Line("nova-example", c.stamped)
-		if strings.ContainsAny(line, "\n\r") {
-			t.Fatalf("%s: not one line: %q", c.name, line)
-		}
+		require.False(t, strings.ContainsAny(line, "\n\r"), "%s: not one line: %q", c.name, line)
 		fields := strings.Fields(line)
-		if len(fields) != 4 {
-			t.Fatalf("%s: want 4 fields, got %d: %q", c.name, len(fields), line)
+		require.Len(t, fields, 4, "%s: want 4 fields, got %d: %q", c.name, len(fields), line)
+		assert.Equal(t, "nova-example", fields[0], "%s: field 1 is the binary's name: got %q", c.name, fields[0])
+		if c.wantVersion != "" {
+			assert.Equal(t, c.wantVersion, fields[1], "%s: field 2: got %q, want %q", c.name, fields[1], c.wantVersion)
 		}
-		if fields[0] != "nova-example" {
-			t.Errorf("%s: field 1 is the binary's name: got %q", c.name, fields[0])
-		}
-		if c.wantVersion != "" && fields[1] != c.wantVersion {
-			t.Errorf("%s: field 2: got %q, want %q", c.name, fields[1], c.wantVersion)
-		}
-		if fields[1] == "" {
-			t.Errorf("%s: field 2 is the identity and is never empty: %q", c.name, line)
-		}
-		if want := runtime.GOOS + "/" + runtime.GOARCH; fields[2] != want {
-			t.Errorf("%s: field 3: got %q, want %q", c.name, fields[2], want)
-		}
-		if fields[3] != runtime.Version() {
-			t.Errorf("%s: field 4: got %q, want %q", c.name, fields[3], runtime.Version())
-		}
+		assert.NotEmpty(t, fields[1], "%s: field 2 is the identity and is never empty: %q", c.name, line)
+		want := runtime.GOOS + "/" + runtime.GOARCH
+		assert.Equal(t, want, fields[2], "%s: field 3: got %q, want %q", c.name, fields[2], want)
+		assert.Equal(t, runtime.Version(), fields[3], "%s: field 4: got %q, want %q", c.name, fields[3], runtime.Version())
 	}
 }
 
@@ -100,13 +89,8 @@ func TestLineShape(t *testing.T) {
 func TestLineHoldsWhateverTheStampContains(t *testing.T) {
 	t.Parallel()
 	line := Line("nova-example", "v1.2.3\nnova-example v9.9.9 linux/amd64 go1.0 extra")
-	if strings.ContainsAny(line, "\n\r") {
-		t.Fatalf("a stamped newline broke the line in two: %q", line)
-	}
-	if fields := strings.Fields(line); len(fields) != 4 {
-		t.Fatalf("want 4 fields whatever the stamp holds, got %d: %q", len(fields), line)
-	}
-	if !strings.Contains(line, `v1.2.3\x0a`) {
-		t.Errorf("the stamp is escaped rather than dropped or printed raw: %q", line)
-	}
+	require.False(t, strings.ContainsAny(line, "\n\r"), "a stamped newline broke the line in two: %q", line)
+	fields := strings.Fields(line)
+	require.Len(t, fields, 4, "want 4 fields whatever the stamp holds, got %d: %q", len(fields), line)
+	assert.Contains(t, line, `v1.2.3\x0a`, "the stamp is escaped rather than dropped or printed raw: %q", line)
 }

@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"github.com/redis/go-redis/v9"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // firstrun_test.go pins the onboarding standard for this binary: the
@@ -37,9 +39,7 @@ func firstRunStore(t *testing.T) string {
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
-	if err := fn.Load(context.Background(), c); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, fn.Load(context.Background(), c))
 	return addr
 }
 
@@ -56,9 +56,7 @@ func runDocumented(addr string) onboarding.Runner {
 func readDoc(t *testing.T, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	return string(raw)
 }
 
@@ -67,16 +65,10 @@ func readDoc(t *testing.T, name string) string {
 func executeFirstRun(t *testing.T, doc string) []onboarding.Step {
 	t.Helper()
 	lines, err := onboarding.FirstRun(readDoc(t, doc), "nova-table")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	steps, err := onboarding.Steps("nova-table", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) == 0 {
-		t.Fatalf("the `### First run` block of docs/%s holds no nova-table command; this test would pass by running nothing", doc)
-	}
+	require.NoError(t, err, "%v", err)
+	require.NotEqualValues(t, 0, len(steps), "the `### First run` block of docs/%s holds no nova-table command; this test would pass by running nothing", doc)
 	// the verbs a first run is: a table made, a row in it, members in a
 	// cell, one moved to another, the table shown and rendered; a
 	// transcript that has quietly lost one still matches line for line, so
@@ -91,21 +83,17 @@ func executeFirstRun(t *testing.T, doc string) []onboarding.Step {
 				found = true
 			}
 		}
-		if !found {
-			t.Errorf("the `### First run` block of docs/%s never runs `%s`; the first sitting is every verb of verbsOfTheSitting", doc, verb)
-		}
+		assert.True(t, found, "the `### First run` block of docs/%s never runs `%s`; the first sitting is every verb of verbsOfTheSitting", doc, verb)
 	}
 	run := runDocumented(firstRunStore(t))
 	got := make([]onboarding.Result, 0, len(steps))
 	for _, s := range steps {
 		res, err := run(s)
-		if err != nil {
-			t.Fatalf("the documented command\n  %s\ncould not be run: %v", s.Line, err)
-		}
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
 		got = append(got, res)
 	}
 	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
-		t.Errorf("docs/%s: %s", doc, p)
+		assert.Failf(t, "documented transcript differs", "docs/%s: %s", doc, p)
 	}
 	return steps
 }
@@ -118,21 +106,15 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 	steps := executeFirstRun(t, "TESTS.md")
 	code, banner, stderr := runTable("help")
-	if code != 0 {
-		t.Fatalf("`nova-table help` exits %d, want 0; stderr: %s", code, stderr)
-	}
+	require.EqualValues(t, 0, code, "`nova-table help` exits %d, want 0; stderr: %s", code, stderr)
 	examples, err := onboarding.ExampleLines(banner, "nova-table")
-	if err != nil {
-		t.Fatalf("%v\n\nwhat the banner printed:\n%s", err, banner)
-	}
+	require.NoError(t, err, "%v\n\nwhat the banner printed:\n%s", err, banner)
 	documented := make([]string, 0, len(steps))
 	for _, s := range steps {
 		documented = append(documented, strings.TrimPrefix(s.Line, "$ "))
 	}
-	if strings.Join(examples, "\n") != strings.Join(documented, "\n") {
-		t.Fatalf("the banner's example block is not docs/TESTS.md's first run\nbanner:\n  %s\ntranscript:\n  %s",
-			strings.Join(examples, "\n  "), strings.Join(documented, "\n  "))
-	}
+	require.Equal(t, strings.Join(documented, "\n"), strings.Join(examples, "\n"), "the banner's example block is not docs/TESTS.md's first run\nbanner:\n  %s\ntranscript:\n  %s",
+		strings.Join(examples, "\n  "), strings.Join(documented, "\n  "))
 }
 
 // TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints executes
@@ -155,7 +137,5 @@ func TestTESTSNamesNovaTableOnce(t *testing.T) {
 			sections++
 		}
 	}
-	if sections != 1 {
-		t.Fatalf("docs/TESTS.md heads %d `## nova-table` sections, want exactly 1", sections)
-	}
+	require.EqualValues(t, 1, sections, "docs/TESTS.md heads %d `## nova-table` sections, want exactly 1", sections)
 }

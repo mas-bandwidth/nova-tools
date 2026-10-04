@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"io"
 	"os"
 	"path/filepath"
@@ -42,23 +44,17 @@ func invokeAt(t *testing.T, now time.Time, args ...string) result {
 
 func wantExit(t *testing.T, r result, want int) {
 	t.Helper()
-	if r.exit != want {
-		t.Errorf("exit %d, want %d\nstdout:\n%s\nstderr:\n%s", r.exit, want, r.stdout, r.stderr)
-	}
+	assert.Equal(t, want, r.exit, "exit %d, want %d\nstdout:\n%s\nstderr:\n%s", r.exit, want, r.stdout, r.stderr)
 }
 
 func wantContains(t *testing.T, got, want string) {
 	t.Helper()
-	if !strings.Contains(got, want) {
-		t.Errorf("output does not contain %q:\n%s", want, got)
-	}
+	assert.True(t, strings.Contains(got, want), "output does not contain %q:\n%s", want, got)
 }
 
 func wantNotContains(t *testing.T, got, want string) {
 	t.Helper()
-	if strings.Contains(got, want) {
-		t.Errorf("output contains %q and should not:\n%s", want, got)
-	}
+	assert.False(t, strings.Contains(got, want), "output contains %q and should not:\n%s", want, got)
 }
 
 // lineWith returns the first line of s holding every one of the substrings.
@@ -80,11 +76,13 @@ func lineWith(s string, subs ...string) string {
 
 func write(t *testing.T, path, content string) string {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
+	{
+		err := os.MkdirAll(filepath.Dir(path), 0o755)
+		require.NoError(t, err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(path, []byte(content), 0o644)
+		require.NoError(t, err)
 	}
 	return path
 }
@@ -92,16 +90,15 @@ func write(t *testing.T, path, content string) string {
 func read(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(raw)
 }
 
 func mkdir(t *testing.T, path string) string {
 	t.Helper()
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatal(err)
+	{
+		err := os.MkdirAll(path, 0o755)
+		require.NoError(t, err)
 	}
 	return path
 }
@@ -172,13 +169,6 @@ func fakeSqlite3(t *testing.T, sessions, messages, parts string) (logPath string
 	return filepath.Join(answers, fakeArgvLog)
 }
 
-// fakeSqlite3Sleeping puts a stub sqlite3 on PATH that answers nothing and outlives any
-// timeout a test would set: the subprocess rule 19 is about.
-func fakeSqlite3Sleeping(t *testing.T) {
-	t.Helper()
-	fakeSqlite3OnPath(t, fakeSleepMode)
-}
-
 // The fake sqlite3 is THIS TEST BINARY under another name, re-entered through TestMain.
 //
 // It used to be a /bin/sh script, which Windows has no way to execute and no way to find
@@ -189,10 +179,13 @@ func fakeSqlite3Sleeping(t *testing.T) {
 // Go, rather than twice in two shell dialects.
 const (
 	fakeSqlite3Env = "NOVA_TOKENS_FAKE_SQLITE3"
-	fakeSleepMode  = "sleep"
 	fakeArgvLog    = "argv.log"
-	fakeSleep      = 30 * time.Second
 )
+
+// fakeModes are the fake's modes beyond answering from files, registered by the tier
+// whose tests use them (slow_test.go's sleeping sqlite3), so no unit-tier file holds a
+// wait on the wall clock.
+var fakeModes = map[string]func() int{}
 
 // fakeSqlite3OnPath places the test binary (by link, a copy only where a link is not
 // possible) at <tmp>/bin/sqlite3[.exe], puts that directory
@@ -200,16 +193,15 @@ const (
 func fakeSqlite3OnPath(t *testing.T, mode string) {
 	t.Helper()
 	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	bin := mkdir(t, filepath.Join(t.TempDir(), "bin"))
 	name := "sqlite3"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	if err := testbin.Place(self, filepath.Join(bin, name)); err != nil {
-		t.Fatal(err)
+	{
+		err := testbin.Place(self, filepath.Join(bin, name))
+		require.NoError(t, err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv(fakeSqlite3Env, mode)
@@ -232,9 +224,8 @@ func TestMain(m *testing.M) {
 
 // fakeSqlite3Main records the invocation and answers the last argument, which is the SQL.
 func fakeSqlite3Main(mode string, args []string, stdout io.Writer) int {
-	if mode == fakeSleepMode {
-		time.Sleep(fakeSleep)
-		return 0
+	if m, ok := fakeModes[mode]; ok {
+		return m()
 	}
 	f, err := os.OpenFile(filepath.Join(mode, fakeArgvLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {

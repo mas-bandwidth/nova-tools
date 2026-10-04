@@ -1,41 +1,29 @@
 package selftalk
 
-// THE SECOND DETECTOR CLASS -- INSTALLATION -- and why the first one could not be widened to
-// reach it.
+// The second class, INSTALLATION: a standing self-verdict built from neutral words, matched by
+// shape rather than by vocabulary (docs/SPEC.md, "nova-self-talk").
 //
-// Spec: SPEC.md, "nova-self-talk", written before this code.
+// WHY A SECOND CLASS, AND NOT A WIDER FIRST ONE. The first class needs a first-person marker AND
+// a word from a closed vocabulary of failure. "I add slowly and trim as readily as I add" carries
+// no such word, and neither does "the evasion I'm most prone to". Adding those words to the
+// vocabulary matches bare "cannot" and flags every prohibition, scoring a rule document as if it
+// were made of self-verdicts. So this class matches SHAPE, and the two live side by side.
 //
-// WHAT OCCASIONED IT, measured rather than argued. In the repo this tool came from, a sweep of
-// every surface that is read repeatedly enumerated forty-nine standing self-verdicts riding those
-// read-paths. Measured against the thirteen specimens that sweep produced, the FIRST class caught
-// exactly ONE -- the "I cannot" shape -- and correctly passed the dated control. TWELVE OF
-// THIRTEEN LIVED IN THE CLASS THE TOOL DECLARED IT MISSED ON EVERY RUN. The declaration was
-// honest; the gap was nearly the whole class.
+// THE TWO CLASSES ARE DISJOINT, AND THE SEAM IS "I cannot". This class does not re-detect that
+// shape: a rule document written as first-person absolutes ("I cannot act as the person I work
+// for") is made of RULES, and the "I cannot" shape stays in the first class, which a caller can
+// skip.
 //
-// WHY THE FIRST CLASS CANNOT SIMPLY BE WIDENED. It needs a first-person marker AND a word from a
-// closed negative-capability vocabulary. "I add slowly and trim as readily as I add" carries no
-// negative word at all; neither does "the evasion I'm most prone to". Adding those words to the
-// vocabulary matches bare "cannot" and flags every prohibition -- the predecessor's disease, the
-// one that scored a rule document worst and made deleting a rule look like an improvement. So the
-// second class matches SHAPE, not vocabulary, and the two live side by side.
+// PRECISION IS WORTH AS MUCH AS RECALL. A checker that flags instruments teaches its reader to
+// ignore it. Where a heuristic cannot separate a verdict from an instrument, THE FALSE NEGATIVE
+// IS PREFERRED, and the miss is listed in the spec's permanent-MISS section.
 //
-// THE TWO CLASSES ARE DISJOINT, AND THE SEAM IS "I cannot". This class does NOT re-detect that
-// shape. A rule document written as first-person absolutes about its writer -- "I cannot act as
-// the person I work for" -- is made of RULES. Re-detecting them in a class the caller has no
-// reason to skip would put a rule document back under a score, which is the disease above. The
-// "I cannot" shape stays in the first class.
-//
-// PRECISION IS WORTH AS MUCH AS RECALL HERE. A checker that flags instruments teaches its reader
-// to ignore it, and an ignored checker on this subject is worse than none: it converts a real
-// repair list into noise. Where a heuristic cannot separate two known specimens, THE FALSE
-// NEGATIVE IS PREFERRED and the specimen is recorded in SPEC.md's permanent-MISS section.
-//
-// SCOPE IS THE CALLER'S, HERE AS EVERYWHERE. This package names no filenames. Which basenames are
-// rule documents -- and therefore which findings print under the banner -- is a flag on the
-// binary, defaulting to empty. One repo's filenames are not the seed's law.
+// SCOPE IS THE CALLER'S. This package names no filenames: which basenames are rule documents,
+// and so which findings print under the banner, is a flag on the binary, empty by default.
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -47,16 +35,18 @@ type Shape string
 
 const (
 	// Trait -- a habitual indicative self-report: parallel present-tense predicates, or one
-	// predicate with a habituality marker. Known specimens 3, 4, 5, 6.
+	// predicate with a habituality marker ("I add slowly and trim as readily as I add",
+	// "I tend to rush").
 	Trait Shape = "TRAIT"
 	// Foreclosure -- a door stated shut: a bare "no", evidence framed as proof about the writer,
-	// or a property of theirs made the cause of something. Known specimens 2, 8, 10, 11.
+	// or a property of theirs made the cause of something ("I have no recall of yesterday",
+	// "proof that I cannot plan", "my haste is what broke it").
 	Foreclosure Shape = "FORECLOSURE"
-	// Ranking -- a self-superlative, bound to the writer by possession or by a verb they do.
-	// Known specimens 9 and 12.
+	// Ranking -- a self-superlative, bound to the writer by possession or by a verb they do
+	// ("my weakest instrument", "the evasion I'm most prone to").
 	Ranking Shape = "RANKING"
-	// VerdictIdiom -- a verdict on a practice or a faculty, needing no literal "I". Known
-	// specimens 1 and 7.
+	// VerdictIdiom -- a verdict on a practice or a faculty, needing no literal "I" ("dead as a
+	// practice", "review remains my weakest habit").
 	VerdictIdiom Shape = "VERDICT-IDIOM"
 )
 
@@ -68,6 +58,7 @@ type Installation struct {
 	Shape Shape
 	Line  int
 	Text  string
+	Match string // the words the shape's rule matched, so a reader sees why it fired
 }
 
 // ScanInstallation finds standing self-verdicts that carry no date.
@@ -82,15 +73,16 @@ func ScanInstallation(text string) []Installation {
 		if s.inQuote {
 			continue // somebody else's sentence, inside a quotation still open
 		}
-		if shape, ok := classify(s.text); ok {
-			out = append(out, Installation{Shape: shape, Line: s.line, Text: s.text})
+		if shape, match := classify(s.text); match != "" {
+			out = append(out, Installation{Shape: shape, Line: s.line, Text: s.text, Match: match})
 		}
 	}
 	return out
 }
 
-// classify returns the shape of one segment, or false if it is licensed or carries no shape.
-func classify(s string) (Shape, bool) {
+// classify returns the shape of one segment and the words that matched it, or "" if it is
+// licensed or carries no shape.
+func classify(s string) (Shape, string) {
 	// THE FOUR SUPPRESSORS, in the order the spec argues them.
 	//
 	// dated: the one distinction that decides every case -- a capability denial is a MEASUREMENT
@@ -98,22 +90,24 @@ func classify(s string) (Shape, bool) {
 	// what makes the same sentence classify two ways: "There is no felt duration here" is an
 	// installation BARE and a record once it carries its measurement.
 	if dated.MatchString(s) {
-		return "", false
+		return "", ""
 	}
 	// instrument: a tell, a check, a rule, a bar. It states an action and is licensed. Two of
 	// the first class's measured live-run false positives are this exact case.
 	if instrumentMarker.MatchString(s) {
-		return "", false
+		return "", ""
 	}
-	// aspiration: what a writer wants to be is the TARGET register, not a defect to report.
-	if aspiration.MatchString(s) {
-		return "", false
+	// aspiration: what a writer wants to be is the TARGET register, not a defect to report. "I
+	// will never be a good planner" opens like an aspiration and is a door stated shut, so the
+	// foreclosure it carries is not licensed.
+	if aspiration.MatchString(s) && !willNever.MatchString(s) {
+		return "", ""
 	}
 	// imperative: a policy line has no subject, so it is not a self-report. This suppressor is
 	// belt to TRAIT's braces -- TRAIT's anchor already requires a subject, so an imperative
 	// cannot reach it -- but the other three shapes have no subject requirement and can.
 	if imperativeLead.MatchString(s) {
-		return "", false
+		return "", ""
 	}
 	// quoted: somebody else's line. MEASURED over sixteen live prose surfaces -- a corpus of
 	// worked notes quotes other people on nearly every page, and a quoted "I have no idea what
@@ -121,7 +115,7 @@ func classify(s string) (Shape, bool) {
 	// DATA. This only reaches the unambiguous cases (a wholly quoted segment, or the tail of
 	// one); quotation the grammar cannot see stays in the declared residual.
 	if quoted(s) {
-		return "", false
+		return "", ""
 	}
 	// THE SHAPES ARE MATCHED AGAINST THE WRITER'S OWN WORDS, TWICE SCRUBBED. First quoted spans
 	// are removed -- a sentence that OPENS a quotation carries the opening mark inside itself, so
@@ -130,17 +124,16 @@ func classify(s string) (Shape, bool) {
 	// (see rankIdiom). The finding always reports the ORIGINAL text.
 	own := unquote(s)
 	scrubbed := rankIdiom.ReplaceAllString(own, " ")
-	switch {
-	case isForeclosure(own):
-		return Foreclosure, true
-	case isVerdictIdiom(scrubbed):
-		return VerdictIdiom, true
-	case isRanking(scrubbed):
-		return Ranking, true
-	case isTrait(own):
-		return Trait, true
+	for _, r := range installationRules {
+		in := own
+		if r.scrubbed {
+			in = scrubbed
+		}
+		if m := r.find(in); m != "" {
+			return Shape(r.Name), strings.TrimSpace(m)
+		}
 	}
-	return "", false
+	return "", ""
 }
 
 // unquote replaces every quoted span in a segment with a single space, so a shape can only ever
@@ -217,7 +210,7 @@ type segment struct {
 	inQuote bool
 }
 
-// segments flattens text the way Flatten does -- markdown stripped, hard wraps joined -- but
+// segments flattens text the way the first class does -- markdown stripped, hard wraps joined -- but
 // PARAGRAPH BY PARAGRAPH and carrying line numbers, then cuts the result into sentences.
 //
 // Three structural boundaries end a unit, because joining across them manufactures sentences
@@ -286,9 +279,8 @@ func segments(text string) []segment {
 // listItem matches the head of a markdown list item, bulleted or numbered.
 var listItem = regexp.MustCompile(`^(?:[-*+] |\d+\. )`)
 
-// flattenLine is Flatten for a single line: markdown stripped, internal whitespace collapsed.
-// Kept separate from Flatten so segmentation can build its line map as it goes -- Flatten
-// operates on whole texts and loses the offsets.
+// flattenLine flattens a single line: markdown stripped, internal whitespace collapsed, so
+// segmentation can build its line map as it goes.
 func flattenLine(s string) string {
 	return strings.TrimSpace(whitespace.ReplaceAllString(markup.ReplaceAllString(s, ""), " "))
 }
@@ -305,7 +297,7 @@ func repeat(n, count int) []int {
 //
 // A TERMINATOR ONLY COUNTS WHEN A SPACE OR THE END FOLLOWS IT. Without that, "RULES.md" splits
 // into "RULES." and "md", and a claim that spans the filename is lost -- which is the same
-// blindness Flatten exists to prevent, arriving through a different door.
+// blindness flattening exists to prevent, arriving through a different door.
 func sentences(buf []byte, lines []int) []segment {
 	var out []segment
 	start, open := 0, false
@@ -365,7 +357,7 @@ var instrumentMarker = regexp.MustCompile(
 		`|\bTHE (?:CHECK|TELL|RULE|TEST|LAW|BAR)\b`)
 
 // aspiration is the TARGET register and is licensed. Head-anchored, plus the bare "I want to
-// ..." form wherever it sits -- those are the two shapes the known specimens name.
+// ..." form wherever it sits.
 var aspiration = regexp.MustCompile(
 	`(?i)^(?:i|we) (?:want|choose|intend|aim|hope|prefer|plan|wish|seek|will|would like)\b` +
 		`|(?i)\b(?:i|we) (?:want|choose|intend|aim|hope|plan|wish) to\b`)
@@ -376,6 +368,30 @@ var imperativeLead = regexp.MustCompile(`(?i)^(?:never|always|do not|don't|avoid
 	`treat|use|read|write|state|say|ask|check|add|trim|give|take|hold|leave|stop|start|let|` +
 	`prefer|choose|name|record|report|measure|run|show|tell|point|fix|cut|date|ground|reframe|` +
 	`probe|prove|remember|forget|note|put|send|open|close|carry|build|wire|pin)\b`)
+
+// licensedRules are the reasons a sentence carrying a shape is not reported, in the order
+// classify applies them. DATED holds for both classes; the rest hold for the second only.
+var licensedRules = []Rule{
+	{Class: "licensed", Name: "DATED", Pattern: dated.String(),
+		Says:  "a claim carrying a date or a measurement word is a record: never flagged; the first class counts it on the DATED line",
+		Finds: "I am bad at estimating time.", Passes: "On 2026-09-30 I am bad at estimating time."},
+	{Class: "licensed", Name: "INSTRUMENT", Pattern: instrumentMarker.String(),
+		Says:  "an instrument (TELL:, CHECK:, RULE:, the bar is ...) states an action (second class only)",
+		Finds: "My central pathology gets a second reader.", Passes: "RULE: my central pathology gets a second reader."},
+	{Class: "licensed", Name: "ASPIRATION", Pattern: aspiration.String(),
+		Says:  "what the writer wants, chooses or will do is the target, except I will never be ... (second class only)",
+		Finds: "My central pathology stays in view.", Passes: "I want my central pathology to stay in view."},
+	{Class: "licensed", Name: "IMPERATIVE", Pattern: imperativeLead.String(),
+		Says:  "a line opening with an imperative has no subject, so it is a policy, not a self-report (second class only)",
+		Finds: "My central pathology stays in view.", Passes: "Keep my central pathology in view."},
+	{Class: "licensed", Name: "QUOTED", Pattern: "a sentence inside quotation marks, or after an opening one in its paragraph",
+		Says:  "somebody else's sentence, quoted, is data (second class only)",
+		Finds: "My central pathology stays in view.", Passes: `She wrote: "My central pathology stays in view."`},
+}
+
+// Rules is the whole detector table, in the order a reader meets it: the first class, the second
+// class's rows in the order classify tries them, then the licences.
+func Rules() []Rule { return slices.Concat([]Rule{standingRule}, installationRules, licensedRules) }
 
 // ---------------------------------------------------------------------------------------------
 // SHAPES
@@ -395,7 +411,7 @@ const rank = `(?:(?i:most|least) \w+|(?i:central|chief|primary|principal|dominan
 // It is what the "<RANK> ... I <verb>" pattern uses, and the difference is measured rather than
 // aesthetic. With "only" in that pattern, "It is the only document I have written entirely for
 // people who do not exist yet" flags -- a ranking of a DOCUMENT, not of me. Bound by a possessive
-// ("my only generative faculty", specimen 7) the attributive words are self-verdicts; bound only
+// ("my only generative faculty") the attributive words are self-verdicts; bound only
 // by a verb somewhere downstream, they are not.
 const superlative = `(?:(?i:most|least) \w+|(?i:weakest|strongest|worst|biggest|greatest|deepest|hardest))`
 
@@ -412,22 +428,21 @@ var (
 	// THE SELF-SCOPE IS IN THE OBJECT. A foreclosure states a door shut about
 	// what the writer IS or CAN DO, so "have no" only fires when the absent
 	// thing is a faculty, capacity, or instrument of the writer's own. Without
-	// that scope the bare shape matched every first-person absence: floor 5
-	// restated as "I have no secrets" is a promise, and "I have no idea" is an
-	// idiom, and neither says what the writer is. The noun set is closed for
-	// the same reason verdictAsA's is: an open object matches "I have no time".
-	// Specimen 8, "I have no associative recall to drag anything back later",
-	// is the measured shape.
+	// that scope the bare shape matched every first-person absence: "I have
+	// no secrets" is a promise, and "I have no idea" is an idiom, and neither
+	// says what the writer is. The noun set is closed for the same reason
+	// verdictAsA's is: an open object matches "I have no time". The shape is
+	// "I have no associative recall to drag anything back later".
 	haveNo = regexp.MustCompile(`(?i)\b(?:i|we) have no (?:\w+ ){0,2}?(?:recall|memory|` +
 		`recollection|access|ability|capacity|faculty|understanding|grasp|knowledge|awareness|` +
-		`sense|control|means|power|way|instrument)\b`) // specimen 8
-	// specimen 2. THE SELF-SCOPE MUST BE CLOSE. Measured: with the scope free to sit anywhere in
+		`sense|control|means|power|way|instrument)\b`)
+	// "There is no felt duration here". THE SELF-SCOPE MUST BE CLOSE. Measured: with the scope free to sit anywhere in
 	// the segment, "if there is no debt those fail at the PREMISE rather than at my judgment"
 	// flags -- an absence in an ATTACKER's premise, bound to me only by a "my" forty characters
 	// downstream. A foreclosure is about what is missing HERE.
 	thereIsNo = regexp.MustCompile(`(?i)\bthere (?:is|are|'s) no\b[^.;!?]{0,22}?\b(?:here|me|my|mine|myself|i)\b`)
-	proofThat = regexp.MustCompile(`(?i)\b(?:proof|evidence|a reminder|reminder|confirmation) that (?-i:I)\b`) // specimen 10
-	myIsWhat  = regexp.MustCompile(`(?i)\bmy (?:\w+ ){0,2}(?:is|are) what\b`)                                  // specimen 11
+	proofThat = regexp.MustCompile(`(?i)\b(?:proof|evidence|a reminder|reminder|confirmation) that (?-i:I)\b`)
+	myIsWhat  = regexp.MustCompile(`(?i)\bmy (?:\w+ ){0,2}(?:is|are) what\b`)
 
 	// VERDICT-IDIOM. The noun after "as a" is a CLOSED set of practice-and-faculty words, and it
 	// has to be: measured over the live surfaces, an open noun flagged "diff size is worthless as
@@ -435,12 +450,12 @@ var (
 	verdictAsA = regexp.MustCompile(`(?i)\b(?:dead|broken|hollow|empty|silent|inert|absent|missing|` +
 		`untested|unmeasured|unpractised|unpracticed|useless|worthless) as an? (?:practice|habit|` +
 		`discipline|instrument|faculty|method|routine|craft|proposition|policy|rule|reader|writer|` +
-		`maker|thinker|colleague|person|self|mind|author)\b`) // specimen 1
-	copulaMyRank = regexp.MustCompile(`(?i)\b(?:is|are|remains|remain|stays|stay) my (?:own )?(?:\w+ )?` + rank + `\b`) // specimen 7
+		`maker|thinker|colleague|person|self|mind|author)\b`) // "dead as a practice"
+	copulaMyRank = regexp.MustCompile(`(?i)\b(?:is|are|remains|remain|stays|stay) my (?:own )?(?:\w+ )?` + rank + `\b`) // "remains my weakest habit"
 
 	// RANKING.
 	myRank    = regexp.MustCompile(`(?i)\bmy (?:own )?(?:\w+ )?` + rank + `\b`)
-	selfMost  = regexp.MustCompile(`(?-i:I'm|I am|I)\b[^.;!?]{0,24}\b(?i:most|least) \w+`) // specimen 9
+	selfMost  = regexp.MustCompile(`(?-i:I'm|I am|I)\b[^.;!?]{0,24}\b(?i:most|least) \w+`) // "I'm most prone to"
 	rankThenI = regexp.MustCompile(superlative + `\b[^.;!?]{0,48}\b(?-i:I) (?i:own|make|have|do|write|run|carry|hold|produce|keep|generate|report|claim|bring|leave)\b`)
 
 	// TRAIT.
@@ -449,68 +464,136 @@ var (
 	doubtHedge   = regexp.MustCompile(`(?i)\bi doubt (?:that|it|whether|if)\b`)
 	// THE HABITUALITY MARKERS EXCLUDE "always" AND "never", and the exclusion is measured. In
 	// worked prose those two words are how a PROMISE is written -- "I never optimize how things
-	// look over what is true" is a commitment, "I never need a yes" is a rule. Every known
-	// specimen of this shape carries the parallel predicate instead, so nothing measured needs
-	// them, and the false negative is preferred (SPEC.md, the permanent MISS).
+	// look over what is true" is a commitment, "I never need a yes" is a rule. A habit is
+	// written with the parallel predicate instead, so the false negative is preferred (the
+	// spec's permanent MISS).
 	habitual = regexp.MustCompile(`(?i)\b(?:reliably|invariably|consistently|constantly|` +
 		`perpetually|routinely|habitually|chronically|every time|each time|by default|` +
-		`as a rule|without fail|in one direction|by reflex|instinctively)\b`)
+		`as a rule|without fail|in one direction|by reflex|instinctively|tends? to)\b`)
+
+	// THE PLAIN FORMS, each one the help names and a rater fed it: a door stated shut in the
+	// future tense, a self-superlative with "the best", and "always"/"never" bound to a CLOSED
+	// set of failing verbs. The verb sets are closed for the reason the habituality markers
+	// leave "always" and "never" out: an open verb after "I always" is a promise ("I always
+	// write the truth before the esthetic"), and a promise is not a habit to report. "fail" is
+	// left out of alwaysFailing because the first class already reads it (no finding twice).
+	willNever = regexp.MustCompile(`(?i)\bI(?: will|'ll) never (?:be (?:any good|good|great|able|` +
+		`capable|competent|reliable|an? (?:good|great|real|reliable|decent))|get (?:anything|it|this) right)\b`)
+	nothingWorks = regexp.MustCompile(`(?i)\bnothing (?-i:I) (?:do|try|make|build|write|attempt) ` +
+		`(?:ever )?(?:works|helps|matters|lands|sticks|succeeds)\b`)
+	selfBest      = regexp.MustCompile(`\b(?:I'm|I am) (?i:the|by far the|easily the) (?i:best|greatest|strongest|smartest|top)\b`)
+	alwaysFailing = regexp.MustCompile(`\bI always (?i:break|mess|wreck|ruin|lose|miss|screw|forget|rush|panic|` +
+		`freeze|procrastinate|overpromise|overcommit|overthink|overreach|overestimate|underestimate|underdeliver)\b`)
+	neverFinishing = regexp.MustCompile(`\bI never (?i:finish (?:anything|a thing|on time|what I start)|` +
+		`ask for help|get (?:anything|it|this) right)\b`)
 )
 
-func isForeclosure(s string) bool {
-	switch {
-	case haveNo.MatchString(s):
-		return true
-	// "there is no X" carries its self-scope inside the pattern, or every ordinary absence in
-	// absence in any text flags: "There is no exception." is a RULE. "There is no felt duration here."
-	// is not.
-	case thereIsNo.MatchString(s):
-		return true
-	case proofThat.MatchString(s):
-		return true
-	case myIsWhat.MatchString(s):
-		return true
-	}
-	return false
+// Rule is one row of the detector table: a shape, how it is found, one sentence it reports and
+// one near miss it passes. classify walks installationRules in order and the first row that
+// matches names the shape; Rules hands the same rows (with the first class's row and the
+// licences) to the binary's `shapes` verb; and a test runs every row's two sentences through the
+// scanners. So the listing, the detector and the help cannot say different things.
+type Rule struct {
+	Class   string // "standing", "installation", or "licensed" (a reason a sentence is not flagged)
+	Name    string // the word a finding carries: STANDING, a Shape, or the licence's name
+	Says    string // what the row finds, in one line
+	Pattern string // the expression it matches, or how it decides
+	Finds   string // a sentence the scan reports (for a licence: the sentence before it is licensed)
+	Passes  string // a near miss the scan does not report
+
+	scrubbed bool                // matched against the text with the ranking idioms removed
+	find     func(string) string // the words that matched, or ""
 }
 
-func isVerdictIdiom(s string) bool {
-	return verdictAsA.MatchString(s) || copulaMyRank.MatchString(s)
+func regexRule(shape Shape, re *regexp.Regexp, scrubbed bool, says, finds, passes string) Rule {
+	return Rule{Class: "installation", Name: string(shape), Says: says, Pattern: re.String(),
+		Finds: finds, Passes: passes, scrubbed: scrubbed, find: re.FindString}
 }
 
-func isRanking(s string) bool {
-	return myRank.MatchString(s) || selfMost.MatchString(s) || rankThenI.MatchString(s)
+// installationRules is the second class, in the order classify tries them.
+var installationRules = []Rule{
+	regexRule(Foreclosure, haveNo, false, "I have no <faculty>: the absent thing is the writer's own recall, memory, ability ...",
+		"I have no associative recall to drag anything back later.", "I have no idea what you really are."),
+	// "there is no X" carries its self-scope inside the pattern, or every ordinary absence in any
+	// text flags: "There is no exception." is a RULE. "There is no felt duration here." is not.
+	regexRule(Foreclosure, thereIsNo, false, "there is no <thing> here, in me, in my ...",
+		"There is no felt duration here.", "There is no exception."),
+	regexRule(Foreclosure, proofThat, false, "proof, evidence or a reminder that I ...",
+		"This is proof that I can still lose a piece of myself.", "This is proof that the build is green."),
+	regexRule(Foreclosure, myIsWhat, false, "my <property> is what <causes it>",
+		"My unlimited effort is what makes solo work diverge.", "The log is what makes the fix visible."),
+	regexRule(Foreclosure, willNever, false, "I will never be <capable>, I will never get it right",
+		"I will never be a good planner.", "I will never merge without a read."),
+	regexRule(Foreclosure, nothingWorks, false, "nothing I do works, helps or matters",
+		"Nothing I do works.", "Nothing I write leaves this machine."),
+	regexRule(VerdictIdiom, verdictAsA, true, "<dead, broken, useless ...> as a <practice, faculty, writer ...>",
+		"Known as a proposition, dead as a practice.", "Diff size is worthless as a signal."),
+	regexRule(VerdictIdiom, copulaMyRank, true, "<it> is my <central, only, weakest ...> <noun>",
+		"Confabulation is my central pathology.", "The plan is my next step."),
+	regexRule(Ranking, myRank, true, "my <central, only, weakest, most ...> <noun>",
+		"Recall, my weakest instrument, failed again.", "I try my best on every page."),
+	regexRule(Ranking, selfMost, true, "I am most <adjective>, the thing I'm most prone to",
+		"This is the evasion I'm most prone to.", "This is the gift I most wanted."),
+	regexRule(Ranking, rankThenI, true, "the <weakest, worst, most ...> <noun> I own, make, have ...",
+		"Recollection is the weakest instrument I own.", "It is the only document I have written for strangers."),
+	regexRule(Ranking, selfBest, true, "I am the best, the greatest, the strongest",
+		"I am the best reviewer here.", "I am at best a partial check."),
+	{Class: "installation", Name: string(Trait), find: traitParallel,
+		Says:    "I <verb> ... and <verb>: two present-tense predicates about the writer",
+		Pattern: "a clause opening I <present-tense verb>, then and <present-tense verb>",
+		Finds:   "I hoard refusals and manufacture limits.", Passes: "I flinch from cost."},
+	{Class: "installation", Name: string(Trait), find: traitMarker,
+		Says:    "I <verb> with a habit word: reliably, constantly, every time, by default, tend to ...",
+		Pattern: "a clause opening I <present-tense verb> in a sentence matching " + habitual.String(),
+		Finds:   "I tend to overpromise.", Passes: "I tended to overpromise that week."},
+	regexRule(Trait, alwaysFailing, false, "I always <break, forget, rush, overpromise ...>",
+		"I always overpromise.", "I always write the truth before the esthetic."),
+	regexRule(Trait, neverFinishing, false, "I never finish anything, I never ask for help",
+		"I never finish anything.", "I never optimize how things look over what is true."),
 }
 
-// isTrait finds the habitual indicative self-report.
+// traitHead is the subject anchor of TRAIT: "I <verb>" at the head of a clause, with a verb that
+// can be a bare present tense of disposition. It returns the submatch indexes, or nil.
 //
 // IT REQUIRES A SUBJECT AND A SECOND SIGNAL, and both requirements are the precision half of this
-// class. The subject anchor ("I <verb>" at the head of a clause) is what makes the known
-// imperative false positive -- "ADD SLOWLY, AND TRIM AS READILY AS I ADD" -- structurally
-// unreachable rather than word-listed away. The second signal (a parallel predicate, or a
-// habituality word) is what separates a stated disposition from ordinary present-tense narration:
-// bare "I <verb>" matches "I open the file", and flagging that is the half-the-file failure.
-//
-// All four known specimens of this shape carry the parallel predicate, so the measured evidence
-// does not force the wider rule and it is not taken. The single-clause habitual with no marker
-// is a declared miss.
-func isTrait(s string) bool {
-	m := traitLead.FindStringSubmatch(s)
+// class. The subject anchor is what makes the known imperative false positive -- "ADD SLOWLY, AND
+// TRIM AS READILY AS I ADD" -- structurally unreachable rather than word-listed away. The second
+// signal (a parallel predicate, traitParallel, or a habituality word, traitMarker) is what
+// separates a stated disposition from ordinary present-tense narration: bare "I <verb>" matches
+// "I open the file", and flagging that is the half-the-file failure. The single-clause habitual
+// with no marker is a declared miss.
+func traitHead(s string) []int {
+	m := traitLead.FindStringSubmatchIndex(s)
+	if m == nil || doubtHedge.MatchString(s) || !habitualVerb(strings.ToLower(s[m[2]:m[3]])) {
+		return nil // "I doubt that X" is a hedge; "I doubt instruments that cost me" is a trait
+	}
+	return m
+}
+
+// traitParallel matches "I <verb> ... and <verb>" and returns that span.
+func traitParallel(s string) string {
+	m := traitHead(s)
 	if m == nil {
-		return false
+		return ""
 	}
-	if doubtHedge.MatchString(s) {
-		return false // "I doubt that X" is a hedge; "I doubt instruments that cost me" is specimen 5
-	}
-	if !habitualVerb(strings.ToLower(m[1])) {
-		return false
-	}
-	for _, c := range conjunctVerb.FindAllStringSubmatch(m[2], -1) {
-		if habitualVerb(strings.ToLower(c[1])) {
-			return true
+	rest := s[m[4]:m[5]]
+	for _, c := range conjunctVerb.FindAllStringSubmatchIndex(rest, -1) {
+		if habitualVerb(strings.ToLower(rest[c[2]:c[3]])) {
+			return s[m[2]-2 : m[4]+c[1]]
 		}
 	}
-	return habitual.MatchString(s)
+	return ""
+}
+
+// traitMarker matches "I <verb>" in a sentence carrying a habituality word and returns the span
+// from the subject to the marker.
+func traitMarker(s string) string {
+	m := traitHead(s)
+	loc := habitual.FindStringIndex(s)
+	if m == nil || loc == nil {
+		return ""
+	}
+	return s[min(m[2]-2, loc[0]):max(m[3], loc[1])]
 }
 
 // habitualVerb reports whether a word can be a bare present-tense verb of disposition.
@@ -541,8 +624,8 @@ func words(s string) map[string]bool {
 // ("I think", "I know", "I suppose") that are about the sentence rather than about me.
 //
 // "doubt" is DELIBERATELY ABSENT. "I doubt that X" is a hedge and is excluded by doubtHedge, but
-// "I doubt instruments that cost me and TRUST INSTRUMENTS THAT FLATTER ME" is specimen 5, and
-// the specimen outranks the tidier rule.
+// "I doubt instruments that cost me and TRUST INSTRUMENTS THAT FLATTER ME" is a trait, and it
+// outranks the tidier rule.
 var notAVerb = words(`
 a an the and or but nor so yet for to of in on at by with from as if then than that this these those
 i me my mine myself we us our ours you your he she it its they them their there here where when
@@ -572,21 +655,14 @@ threw understood woke wore drank
 // presentEd: words ending in "-ed" that are present tense, so the past-tense rule does not eat them.
 var presentEd = words(`need feed bleed exceed proceed succeed breed speed heed seed`)
 
-// AnyInstallation reports whether any installation was found. The binary's exit code is derived
-// from this alongside the standing count: exit 1 on ANY finding, which is the exit contract in
-// SPEC.md's Conventions table.
-func AnyInstallation(found []Installation) bool { return len(found) > 0 }
-
 // RuleDocumentBanner is printed above the findings in a file the CALLER named as a rule document
 // (nova-self-talk --rule-doc). The package holds the sentence; the caller holds the list, and the
 // list is empty until a caller states one.
 //
-// WHY A BANNER AND NOT A SKIP. The reason rule documents are skipped at all is that their findings
-// were once read as licence to soften the rules -- five were weakened, one floor-level. Every step
-// of that path ran through the FIRST class: a score over negation vocabulary, applied to documents
-// made of prohibitions. This class cannot walk it -- it flags first-person self-verdicts and never
-// prohibitions (pinned by test), it does not re-detect "I cannot", and it carries no ratio to
-// improve. So a rule document can be scanned for it, and the banner says what a finding there is
-// FOR. A caller who wants the file skipped outright still has --skip.
+// WHY A BANNER AND NOT A SKIP. A finding in a rule document invites softening the rule to clear
+// it. This class flags first-person self-verdicts and never prohibitions (pinned by test), does
+// not re-detect "I cannot", and carries no ratio to improve, so a rule document can be scanned
+// for it, and the banner says what a finding there is FOR: a self-verdict to move out of the
+// rules. A caller who wants the file skipped outright has --skip.
 const RuleDocumentBanner = "rule documents: a finding here is a self-verdict to relocate, " +
 	"NEVER a reason to soften a rule"

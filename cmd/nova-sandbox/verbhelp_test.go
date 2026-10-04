@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
+	"github.com/stretchr/testify/require"
 )
 
 // Every named verb answers -h and --help with its own help on stdout at exit 0,
@@ -36,9 +37,10 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 func TestHelpNeverReachesTheBareWrap(t *testing.T) {
 	t.Parallel()
 	var out, errb strings.Builder
-	if code := sandboxRun([]string{"help", "sh", "-c", "exit 7"}, &out, &errb); code != 0 || !strings.HasPrefix(out.String(), "nova-sandbox:") || errb.Len() != 0 {
-		t.Fatalf("help sh: exit %d stdout %.60q stderr %q", code, out.String(), errb.String())
-	}
+	code := sandboxRun([]string{"help", "sh", "-c", "exit 7"}, &out, &errb)
+	require.Equal(t, 0, code, "help sh: exit %d stdout %.60q stderr %q", code, out.String(), errb.String())
+	require.True(t, strings.HasPrefix(out.String(), "nova-sandbox:"), "help sh: exit %d stdout %.60q stderr %q", code, out.String(), errb.String())
+	require.Zero(t, errb.Len(), "help sh: exit %d stdout %.60q stderr %q", code, out.String(), errb.String())
 }
 
 func sandboxRun(args []string, stdout, stderr io.Writer) int {

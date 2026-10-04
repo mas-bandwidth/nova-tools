@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // local_test.go is the contract of `nova-ci local` (nova-tools#4336). Every
@@ -25,9 +29,12 @@ type localReply struct {
 
 // localFake answers commands from replies and records every command it saw.
 type localFake struct {
-	root    string
-	replies []localReply
-	calls   []localCmd
+	root     string
+	replies  []localReply
+	calls    []localCmd
+	selected []string
+	selErr   error
+	selAsked []string
 }
 
 func (f *localFake) answer(c localCmd) (int, error) {
@@ -63,17 +70,12 @@ func (f *localFake) call(prefix string) *localCmd {
 
 const localMergeBase = "0123456789abcdef0123456789abcdef01234567"
 
-// localCheckout makes a checkout with the select script and a Makefile holding
+// localCheckout makes a checkout with a go.mod and a Makefile holding
 // the given targets; with more than one, the test target takes GOTEST_TAGS.
 func localCheckout(t *testing.T, targets ...string) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".github", "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".github", "scripts", "select-packages.sh"), []byte("#!/usr/bin/env bash\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/m\n\ngo 1.26\n"), 0o644))
 	var mk strings.Builder
 	mk.WriteString("GO ?= go\n")
 	if len(targets) > 1 {
@@ -82,21 +84,20 @@ func localCheckout(t *testing.T, targets ...string) string {
 	for _, target := range targets {
 		mk.WriteString(target + ": PKGS := ./cmd/...\n" + target + ":\n\t@true\n")
 	}
-	if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte(mk.String()), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Makefile"), []byte(mk.String()), 0o644))
 	return root
 }
 
-// localFixture is a fake whose base, status and selection answer green; the
-// caller adds the make replies.
+// localFixture is a fake whose base and status answer green and whose selection
+// is the packages in selected (one per line); the caller adds the make replies.
+// The selection itself is pkgselect's, tested in its own package; the fixture
+// stands in for it (localSelected records what it was asked).
 func localFixture(t *testing.T, selected string, replies ...localReply) *localFake {
 	t.Helper()
-	f := &localFake{root: localCheckout(t, "test", "test-functional")}
+	f := &localFake{root: localCheckout(t, "test", "test-functional"), selected: strings.Fields(selected)}
 	f.replies = append(f.replies,
 		localReply{prefix: "git merge-base", stdout: localMergeBase + "\n"},
 		localReply{prefix: "git status"},
-		localReply{prefix: "nice -n 15 bash .github/scripts/select-packages.sh", stdout: selected},
 	)
 	f.replies = append(f.replies, replies...)
 	return f
@@ -105,8 +106,15 @@ func localFixture(t *testing.T, selected string, replies ...localReply) *localFa
 func runLocal(t *testing.T, f *localFake, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code := cmdLocal(args, &out, &errb, f.answer)
+	code := cmdLocal(args, &out, &errb, f.answer, f.selector)
 	return code, out.String(), errb.String()
+}
+
+// selector is the fake's package selection: the packages the fixture names, or
+// its error.
+func (f *localFake) selector(root, base string) ([]string, error) {
+	f.selAsked = append(f.selAsked, root+" "+base)
+	return f.selected, f.selErr
 }
 
 const localGreenStream = `{"Action":"start","Package":"example.com/m/cmd/a"}
@@ -126,27 +134,20 @@ func TestLocalGreenRunsTheUnitTierAsCIDoes(t *testing.T) {
 	t.Parallel()
 	f := localFixture(t, "./cmd/a\n./internal/ci\n", localReply{prefix: "nice -n 15 make test ", stdout: localGreenStream})
 	code, stdout, stderr := runLocal(t, f)
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
-	if mb := f.call("git merge-base"); mb == nil || strings.Join(mb.Argv, " ") != "git merge-base origin/dev HEAD" || mb.Dir != f.root {
-		t.Fatalf("merge-base call = %+v, want `git merge-base origin/dev HEAD` in the checkout", mb)
-	}
-	sel := f.call("nice -n 15 bash")
-	if sel == nil || strings.Join(sel.Argv, " ") != "nice -n 15 bash .github/scripts/select-packages.sh "+localMergeBase {
-		t.Fatalf("selection call = %+v, want select-packages.sh against the merge base", sel)
-	}
+	require.Equal(t, 0, code, "exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	mb := f.call("git merge-base")
+	require.NotNil(t, mb, "merge-base call = %+v, want `git merge-base origin/dev HEAD` in the checkout", mb)
+	require.Equal(t, "git merge-base origin/dev HEAD", strings.Join(mb.Argv, " "), "merge-base call = %+v, want `git merge-base origin/dev HEAD` in the checkout", mb)
+	require.Equal(t, f.root, mb.Dir, "merge-base call = %+v, want `git merge-base origin/dev HEAD` in the checkout", mb)
+	require.Len(t, f.selAsked, 1, "selection asked = %v, want the checkout against the merge base", f.selAsked)
+	require.Equal(t, f.root+" "+localMergeBase, f.selAsked[0], "selection asked = %v, want the checkout against the merge base", f.selAsked)
 	mk := f.call("nice -n 15 make test ")
-	if mk == nil {
-		t.Fatalf("make test was not run; calls: %+v", f.calls)
-	}
-	if got, want := strings.Join(mk.Argv, "|"), "nice|-n|15|make|test|PKGS=./cmd/a ./internal/ci|GOTEST_P=2|GOTEST_COUNT_FLAG=-count=1|GOTEST_TAGS="; got != want {
-		t.Errorf("make argv = %s, want %s", got, want)
-	}
+	require.NotNil(t, mk, "make test was not run; calls: %+v", f.calls)
+	got, want := strings.Join(mk.Argv, "|"), "nice|-n|15|make|test|PKGS=./cmd/a ./internal/ci|GOTEST_P=2|GOTEST_COUNT_FLAG=-count=1|GOTEST_TAGS="
+	assert.Equal(t, want, got, "make argv = %s, want %s", got, want)
 	env := strings.Join(mk.Env, " ")
-	if !strings.Contains(env, "GOMAXPROCS=2") || !strings.Contains(env, "RUNNER_TEMP=") {
-		t.Errorf("make env = %q, want GOMAXPROCS=2 and a private RUNNER_TEMP", env)
-	}
+	assert.Contains(t, env, "GOMAXPROCS=2", "make env = %q, want GOMAXPROCS=2 and a private RUNNER_TEMP", env)
+	assert.Contains(t, env, "RUNNER_TEMP=", "make env = %q, want GOMAXPROCS=2 and a private RUNNER_TEMP", env)
 	for _, want := range []string{
 		"packages=2 ./cmd/a ./internal/ci",
 		"PKG ok      0.4s example.com/m/cmd/a",
@@ -155,13 +156,22 @@ func TestLocalGreenRunsTheUnitTierAsCIDoes(t *testing.T) {
 		"nova-ci local: packages=2 seconds=2.0s red=0 make-exit=0",
 		"nova-ci local: exit=0",
 	} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("stdout lacks %q:\n%s", want, stdout)
-		}
+		assert.Contains(t, stdout, want, "stdout lacks %q:\n%s", want, stdout)
 	}
-	if strings.Contains(stdout, `"Action"`) {
-		t.Errorf("stdout carries raw TestEvent JSON:\n%s", stdout)
-	}
+	assert.NotContains(t, stdout, `"Action"`, "stdout carries raw TestEvent JSON:\n%s", stdout)
+}
+
+// --dry-run prints the selection and the make line the real run would start,
+// from the same path, and starts no make.
+func TestLocalDryRunShowsTheSelectionAndRunsNothing(t *testing.T) {
+	t.Parallel()
+	f := localFixture(t, "./cmd/a\n./internal/ci\n")
+	code, stdout, stderr := runLocal(t, f, "--dry-run")
+	require.Equal(t, 0, code, "stderr:\n%s", stderr)
+	assert.Nil(t, f.call("nice -n 15 make"), "make ran under --dry-run")
+	assert.Contains(t, stdout, "packages=2 ./cmd/a ./internal/ci")
+	assert.Contains(t, stdout, `nova-ci local: would run nice -n 15 make test "PKGS=./cmd/a ./internal/ci" GOTEST_P=2`)
+	assert.Contains(t, stdout, "nova-ci local: NOTE --dry-run ran no test")
 }
 
 // A red test is named with the tail of its own output, and the verb exits 1.
@@ -174,18 +184,14 @@ func TestLocalRedNamesTheTestWithItsOutput(t *testing.T) {
 `
 	f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: stream, code: 2})
 	code, stdout, _ := runLocal(t, f)
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1\n%s", code, stdout)
-	}
+	require.Equal(t, 1, code, "exit = %d, want 1\n%s", code, stdout)
 	for _, want := range []string{
-		"PKG FAIL    0.2s example.com/m/cmd/a",
+		"PKG FAILED    0.2s example.com/m/cmd/a",
 		"RED package=example.com/m/cmd/a test=TestB",
 		"    b_test.go:9: got 1, want 2",
 		"red=1 make-exit=2",
 	} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("stdout lacks %q:\n%s", want, stdout)
-		}
+		assert.Contains(t, stdout, want, "stdout lacks %q:\n%s", want, stdout)
 	}
 }
 
@@ -198,35 +204,40 @@ func TestLocalBuildFailureIsRed(t *testing.T) {
 `
 	f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: stream, code: 2})
 	code, stdout, _ := runLocal(t, f)
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1\n%s", code, stdout)
-	}
+	require.Equal(t, 1, code, "exit = %d, want 1\n%s", code, stdout)
 	for _, want := range []string{"RED package=example.com/m/cmd/a test=-", "RED build:", "cmd/a/a.go:3:1: syntax error"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("stdout lacks %q:\n%s", want, stdout)
-		}
+		assert.Contains(t, stdout, want, "stdout lacks %q:\n%s", want, stdout)
 	}
 }
 
-// A SLEEPS skip off the ledger fails make test with no red test: the
-// CI-SLEEPS line is printed and the verb exits 2, as slowtests does on every
-// leg. (A CI-SLOW line alone exits make 0 now: it is a measurement.)
-func TestLocalSleepsOffTheLedgerExitsTwo(t *testing.T) {
+// make test failing with no red test is one of two things. A SLEEPS skip off
+// the ledger is a CI-SLEEPS line: the check said no, exit 1, as slowtests says
+// it on every leg. With no CI-SLEEPS line a step could not run: exit 2. (A
+// CI-SLOW line alone exits make 0: it is a measurement.)
+func TestLocalMakeFailureWithNoRedTest(t *testing.T) {
 	t.Parallel()
-	stream := `{"Action":"output","Package":"example.com/m/cmd/a","Test":"TestSleeps","Output":"SLEEPS: waits\n"}
+	sleeps := `{"Action":"output","Package":"example.com/m/cmd/a","Test":"TestSleeps","Output":"SLEEPS: waits\n"}
 {"Action":"skip","Package":"example.com/m/cmd/a","Test":"TestSleeps","Elapsed":0}
 {"Action":"pass","Package":"example.com/m/cmd/a","Elapsed":0.2}
 CI-SLEEPS test=TestSleeps package=example.com/m/cmd/a: skipped for a wall-clock wait and not on internal/ci/sleeps-skips_allowlist.txt; inject a clock or tag it //go:build functional
 `
-	f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: stream, code: 2})
-	code, stdout, _ := runLocal(t, f)
-	if code != 2 {
-		t.Fatalf("exit = %d, want 2\n%s", code, stdout)
-	}
-	for _, want := range []string{"CI-SLEEPS test=TestSleeps", "red=0 make-exit=2", "a SLEEPS skip off the ledger"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("stdout lacks %q:\n%s", want, stdout)
-		}
+	for _, c := range []struct {
+		name, stream string
+		want         int
+		says         []string
+	}{
+		{"a CI-SLEEPS line is a no", sleeps, 1, []string{"CI-SLEEPS test=TestSleeps", "red=0 make-exit=2", "failed on 1 CI-SLEEPS line(s) above: a SLEEPS skip off the ledger"}},
+		{"no CI-SLEEPS line is a step that could not run", "make: *** [test] Error 2\n", 2, []string{"red=0 make-exit=2", "no CI-SLEEPS line: a step could not run"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: c.stream, code: 2})
+			code, stdout, _ := runLocal(t, f)
+			assert.Equal(t, c.want, code, "exit = %d, want %d\n%s", code, c.want, stdout)
+			for _, want := range c.says {
+				assert.Contains(t, stdout, want, "stdout lacks %q:\n%s", want, stdout)
+			}
+		})
 	}
 }
 
@@ -235,18 +246,13 @@ func TestLocalNothingSelectedRunsNothing(t *testing.T) {
 	t.Parallel()
 	f := localFixture(t, "")
 	code, stdout, _ := runLocal(t, f, "--base", "origin/main")
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0\n%s", code, stdout)
+	require.Equal(t, 0, code, "exit = %d, want 0\n%s", code, stdout)
+	assert.Contains(t, stdout, "nothing to test for this change", "stdout lacks CI's words:\n%s", stdout)
+	mb := f.call("git merge-base")
+	if assert.NotNil(t, mb, "--base was not used: %+v", mb) {
+		assert.Equal(t, "git merge-base origin/main HEAD", strings.Join(mb.Argv, " "), "--base was not used: %+v", mb)
 	}
-	if !strings.Contains(stdout, "nothing to test for this change") {
-		t.Errorf("stdout lacks CI's words:\n%s", stdout)
-	}
-	if mb := f.call("git merge-base"); mb == nil || strings.Join(mb.Argv, " ") != "git merge-base origin/main HEAD" {
-		t.Errorf("--base was not used: %+v", mb)
-	}
-	if f.call("nice -n 15 make") != nil {
-		t.Error("make ran for an empty selection")
-	}
+	assert.Nil(t, f.call("nice -n 15 make"), "make ran for an empty selection")
 }
 
 // --functional runs the same make test with the functional build tag, as CI's
@@ -259,17 +265,12 @@ func TestLocalFunctionalAddsTheTag(t *testing.T) {
 `
 	f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: stream, code: 2})
 	code, stdout, _ := runLocal(t, f, "--functional")
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1\n%s", code, stdout)
-	}
+	require.Equal(t, 1, code, "exit = %d, want 1\n%s", code, stdout)
 	mk := f.call("nice -n 15 make test ")
-	if mk == nil || strings.Join(mk.Argv, "|") != "nice|-n|15|make|test|PKGS=./cmd/a|GOTEST_P=2|GOTEST_COUNT_FLAG=-count=1|GOTEST_TAGS=functional" {
-		t.Fatalf("make call = %+v, want the test target with GOTEST_TAGS=functional", mk)
-	}
+	require.NotNil(t, mk, "make call = %+v, want the test target with GOTEST_TAGS=functional", mk)
+	require.Equal(t, "nice|-n|15|make|test|PKGS=./cmd/a|GOTEST_P=2|GOTEST_COUNT_FLAG=-count=1|GOTEST_TAGS=functional", strings.Join(mk.Argv, "|"), "make call = %+v, want the test target with GOTEST_TAGS=functional", mk)
 	for _, want := range []string{"RED package=example.com/m/cmd/a test=TestStore", "redis: connection refused"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("stdout lacks %q:\n%s", want, stdout)
-		}
+		assert.Contains(t, stdout, want, "stdout lacks %q:\n%s", want, stdout)
 	}
 }
 
@@ -279,12 +280,8 @@ func TestLocalNamesUncommittedGoFiles(t *testing.T) {
 	f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: localGreenStream})
 	f.replies = append([]localReply{{prefix: "git status", stdout: " M cmd/a/a.go\n?? cmd/b/b.go\n"}}, f.replies...)
 	code, _, stderr := runLocal(t, f)
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	if !strings.Contains(stderr, "NOTE 2 uncommitted Go file(s)") {
-		t.Errorf("stderr lacks the uncommitted note:\n%s", stderr)
-	}
+	require.Equal(t, 0, code, "exit = %d, want 0", code)
+	assert.Contains(t, stderr, "NOTE 2 uncommitted Go file(s)", "stderr lacks the uncommitted note:\n%s", stderr)
 }
 
 // Every refusal prints one line naming the door and exits 2.
@@ -314,27 +311,22 @@ func TestLocalRefusalsPrint(t *testing.T) {
 			f := plain(t)
 			f.replies = append([]localReply{{prefix: "git merge-base", stderr: "fatal: Not a valid object name origin/dev", code: 128}}, f.replies...)
 			return f
-		}, nil, "no merge base between origin/dev and HEAD"},
+		}, nil, `no merge base between "origin/dev" and HEAD`},
 		{"selection fails", func(t *testing.T) *localFake {
 			f := plain(t)
-			f.replies = append([]localReply{{prefix: "nice -n 15 bash", stderr: "go: go.mod not found", code: 1}}, f.replies...)
+			f.selErr = errors.New("ERROR select-packages: go list failed\ngo: go.mod not found")
 			return f
-		}, nil, "select-packages.sh"},
+		}, nil, "the package selection against " + localMergeBase + " failed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := tc.fake(t)
 			code, stdout, stderr := runLocal(t, f, tc.args...)
-			if code != 2 {
-				t.Fatalf("exit = %d, want 2\nstdout: %s\nstderr: %s", code, stdout, stderr)
-			}
-			if !strings.Contains(stderr, tc.want) || !strings.Contains(stderr, "run: nova-ci help") {
-				t.Errorf("stderr = %q, want it to say %q and name the door", stderr, tc.want)
-			}
-			if f.call("nice -n 15 make") != nil {
-				t.Error("make ran after a refusal")
-			}
+			require.Equal(t, 2, code, "exit = %d, want 2\nstdout: %s\nstderr: %s", code, stdout, stderr)
+			assert.Contains(t, stderr, tc.want, "stderr = %q, want it to say %q and name the door", stderr, tc.want)
+			assert.Contains(t, stderr, "run: nova-ci local -h", "stderr = %q, want it to say %q and name the door", stderr, tc.want)
+			assert.Nil(t, f.call("nice -n 15 make"), "make ran after a refusal")
 		})
 	}
 }
@@ -345,9 +337,7 @@ func TestLocalRefusalsPrint(t *testing.T) {
 func TestMakefileTestTargetTakesGOTEST_P(t *testing.T) {
 	t.Parallel()
 	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var recipe string
 	lines := strings.Split(string(mk), "\n")
 	for i, line := range lines {
@@ -355,10 +345,38 @@ func TestMakefileTestTargetTakesGOTEST_P(t *testing.T) {
 			recipe = lines[i+1]
 		}
 	}
-	if recipe == "" {
-		t.Fatal("the Makefile has no `test:` rule followed by its recipe")
+	require.NotEqual(t, "", recipe, "the Makefile has no `test:` rule followed by its recipe")
+	assert.Contains(t, recipe, "-p $(GOTEST_P)", "make test does not pass -p $(GOTEST_P); nova-ci local's GOTEST_P=%s would be a phantom:\n%s", localCores, recipe)
+}
+
+// The real selection starts pkgselect's git and go commands through the verb's
+// own runner: niced at 15, GOMAXPROCS=2, in the checkout. A go.mod change puts
+// the whole tree in scope, so the diff and one go list answer it.
+func TestLocalSelectionRunsThroughTheNicedRunner(t *testing.T) {
+	t.Parallel()
+	f := &localFake{root: localCheckout(t, "test"), replies: []localReply{
+		{prefix: "nice -n 15 git cat-file -e " + localMergeBase + "^{commit}"},
+		{prefix: "nice -n 15 git diff --name-only " + localMergeBase + " HEAD", stdout: "go.mod\n"},
+		{prefix: "nice -n 15 go list ./cmd/... ./internal/... ./tools/...", stdout: "example.com/m/cmd/a\nexample.com/m/internal/ci\n"},
+	}}
+	pkgs, err := localSelectThrough(f.answer)(f.root, localMergeBase)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"./cmd/a", "./internal/ci"}, pkgs)
+	for _, c := range f.calls {
+		assert.Equal(t, f.root, c.Dir, "call %v", c.Argv)
+		assert.Contains(t, strings.Join(c.Env, " "), "GOMAXPROCS=2", "call %v", c.Argv)
+		assert.Equal(t, "nice -n 15", strings.Join(c.Argv[:3], " "), "call %v", c.Argv)
 	}
-	if !strings.Contains(recipe, "-p $(GOTEST_P)") {
-		t.Errorf("make test does not pass -p $(GOTEST_P); nova-ci local's GOTEST_P=%s would be a phantom:\n%s", localCores, recipe)
-	}
+}
+
+// A selection that fails is refused by name, never an empty run.
+func TestLocalSelectionFailureIsAnError(t *testing.T) {
+	t.Parallel()
+	f := &localFake{root: localCheckout(t, "test"), replies: []localReply{
+		{prefix: "nice -n 15 git diff", stdout: "go.mod\n"},
+		{prefix: "nice -n 15 go list", stderr: "go: cannot find main module", code: 1},
+	}}
+	_, err := localSelectThrough(f.answer)(f.root, localMergeBase)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot find main module")
 }

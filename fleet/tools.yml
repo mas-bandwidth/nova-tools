@@ -1,0 +1,340 @@
+# tools.yml: the build nova_version of the nova-tools checkout nova_source, built
+# once per platform the fleet runs on, in ~/.local/bin on every machine, the
+# machine's nova_build fact (group_vars nova_build_file) set to it, and the
+# function library that build embeds on the store.
+#
+#   ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=<v> -e nova_source=<checkout> --check --diff | cat
+#   ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=<v> -e nova_source=<checkout> | cat
+#
+# The build is one `nova-update release build` on the machine running the play,
+# every platform in one call; each machine installs its platform's directory
+# with that release's own `nova-update release install`, which verifies the
+# SHA256SUMS whole and skips a tool already answering the version or holding
+# its bytes, and every tool nova-tools once shipped and ships no more
+# (fleet/retired-tools.txt, by exact name) is removed from the bin directory;
+# --check lists each as WOULD-REMOVE. A platform already built at the version is not built again.
+# A new version directory on a machine is seeded from the installed build's,
+# on the machine, so the copy sends only the binaries whose checksums differ;
+# `nova-update release cycle` runs this play --check, then for real, with
+# the build --incremental (docs/SPEC-RELEASE.md rule 13).
+# The build and the install each remove, last, the old version directories of
+# their own root (the build's out, the machine's release directory), keeping
+# the version just made, the one installed before it and the 3 newest besides;
+# a removal that fails never fails the play (internal/release/prune.go). The configuration store is
+# migrated to the build's schema (`nova-config migrate`) before the library
+# is loaded by the store_deployer machine (the fleet's coordinator) with
+# `nova-redis fn load`, under the seat that holds the deploy user's password;
+# --check runs `nova-redis fn check` there and builds and installs nothing.
+- name: the platform of every machine
+  hosts: all
+  gather_facts: true
+  gather_subset: [min]
+  tasks:
+    - name: the platform, measured (the beat's os and arch, else the gathered facts)
+      ansible.builtin.set_fact:
+        nova_platform: >-
+          {{ (nova_os ~ '-' ~ nova_arch) if (nova_os is defined and nova_arch is defined)
+             else ((ansible_system | lower) ~ '-' ~ ({'x86_64': 'amd64', 'amd64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64'}[ansible_architecture] | default(ansible_architecture))) }}
+
+- name: the build, once per platform
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tools_platforms: "{{ groups['all'] | map('extract', hostvars, 'nova_platform') | select('defined') | unique | sort | list }}"
+  tasks:
+    - name: the version, the checkout and the dogfood receipts are named
+      ansible.builtin.assert:
+        that: [nova_version is defined, nova_source is defined, "nova_dogfood_receipts is defined or nova_release_gate_args[0] == '--no-dogfood-gate'"]
+        fail_msg: "name the build: -e nova_version=<v> -e nova_source=<a nova-tools checkout at the commit to install> -e nova_dogfood_receipts=<the dogfood receipts directory>"
+        quiet: true
+
+    - name: the platforms already built at this version (a SHA256SUMS each)
+      ansible.builtin.stat: { path: "{{ nova_release_out }}/{{ nova_version }}/{{ item }}/SHA256SUMS" }
+      loop: "{{ tools_platforms }}"
+      register: tools_built
+
+    - name: build the missing platforms in one call, niced, with its own Go cache
+      ansible.builtin.command:
+        argv: "{{ ['nice', '-n', '19', 'nova-update', 'release', 'build', '--version', nova_version, '--out', nova_release_out,
+                   '--source', nova_source, '--platform', tools_missing | join(',')] + nova_release_gate_args + nova_release_build_args }}"
+      environment: { GOMAXPROCS: "4", GOCACHE: "{{ nova_release_gocache }}" }
+      vars:
+        tools_missing: "{{ tools_built.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+      register: tools_build
+      changed_when: "'RELEASE BUILD OK' in tools_build.stdout"
+      when: tools_missing | length > 0
+
+    - name: what the build makes or finds
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'WOULD-BUILD' if ansible_check_mode else 'BUILD' }} version={{ nova_version }} out={{ nova_release_out }}
+          built={{ tools_built.results | selectattr('stat.exists') | map(attribute='item') | join(',') or 'none' }}
+          missing={{ tools_built.results | rejectattr('stat.exists') | map(attribute='item') | join(',') or 'none' }}
+
+    - name: what the build rebuilt and reused, and what its gate said
+      ansible.builtin.debug: { msg: "{{ tools_build.stdout_lines | select('match', '^RELEASE BUILD ') | list }}" }
+      when: tools_build is not skipped
+
+    - name: the tools nova-tools no longer ships (fleet/retired-tools.txt)
+      ansible.builtin.set_fact:
+        tools_retired: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/retired-tools.txt').splitlines() | reject('match', '^\\s*(#|$)') | map('trim') | list }}"
+
+- name: the build in ~/.local/bin on every machine
+  hosts: all
+  gather_facts: false
+  vars:
+    tools_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}"
+    tools_was_version: "{{ tools_was.content | default('') | b64decode | trim }}"
+  tasks:
+    - name: the build installed now (the build fact)
+      ansible.builtin.slurp: { src: "{{ nova_build_file }}" }
+      register: tools_was
+      # ignored: a machine never installed by this play has no fact file; the receipt says was=none
+      failed_when: false
+
+    - name: the build installed now (what --check compares)
+      ansible.builtin.command: "{{ nova_bin_dir }}/nova-update version"
+      register: tools_now
+      changed_when: false
+      # ignored: a machine with no nova-update has no build; the receipt says WOULD-INSTALL
+      failed_when: false
+      check_mode: false
+
+    - name: the release directory
+      ansible.builtin.file: { path: "{{ tools_stage }}", state: directory, mode: "0755" }
+
+    # The stage (tla/BenchStage.tla). A new version's directory starts as a
+    # copy of the installed build's, made on the machine and not verified;
+    # then one listing measures the sha256 of every file in it, and the files
+    # sent are exactly those whose bytes there differ from the release's
+    # SHA256SUMS (absent, changed by the build, or corrupt on the machine),
+    # with the checksum files. So every file in the stage holds the release's
+    # bytes before anything in it runs (ReusedByteIdentical), whether it was
+    # seeded, begun by an earlier run or empty, and `release install` checks
+    # the whole set again before its first rename.
+    - name: the installed build's directory (what the seed copies)
+      ansible.builtin.stat: { path: "{{ nova_release_dir }}/{{ tools_was_version }}/{{ nova_platform }}/SHA256SUMS", get_checksum: false }
+      register: tools_was_dir
+      when: tools_was_version not in ['', nova_version]
+
+    - name: this version's checksum file, if its directory is already begun
+      ansible.builtin.stat: { path: "{{ tools_stage }}/SHA256SUMS", get_checksum: false }
+      register: tools_begun
+
+    - name: the stage seeded from the installed build's directory, on the machine
+      ansible.builtin.copy:
+        src: "{{ nova_release_dir }}/{{ tools_was_version }}/{{ nova_platform }}/"
+        dest: "{{ tools_stage }}/"
+        remote_src: true
+        mode: preserve
+      when: not ansible_check_mode and (tools_was_dir.stat | default({})).exists | default(false) and not tools_begun.stat.exists
+
+    - name: the stage's files and their sha256 (one listing)
+      ansible.builtin.find: { paths: "{{ tools_stage }}", get_checksum: true, checksum_algorithm: sha256, hidden: true }
+      register: tools_staged
+
+    - name: the files to send, whose bytes in the stage differ from the release's SHA256SUMS, and the checksum files
+      ansible.builtin.set_fact:
+        tools_send: >-
+          {{ tools_release_sums | difference(tools_staged_sums) | map('split', '  ') | map('last') | list
+             + ['SHA256SUMS'] + (['SUMS.digest'] if (tools_built_dir ~ '/SUMS.digest') is file else []) }}
+      vars:
+        tools_built_dir: "{{ nova_release_out }}/{{ nova_version }}/{{ nova_platform }}"
+        tools_release_sums: "{{ lookup('ansible.builtin.file', tools_built_dir ~ '/SHA256SUMS').splitlines() }}"
+        tools_staged_sums: >-
+          {{ tools_staged.files | map(attribute='checksum') | zip(tools_staged.files | map(attribute='path') | map('basename'))
+             | map('join', '  ') | list }}
+      when: not ansible_check_mode
+
+    - name: send them
+      ansible.builtin.copy:
+        src: "{{ nova_release_out }}/{{ nova_version }}/{{ nova_platform }}/{{ item }}"
+        dest: "{{ tools_stage }}/{{ item }}"
+        mode: "0755"
+      loop: "{{ tools_send | default([]) }}"
+      when: not ansible_check_mode
+
+    - name: install them into the bin directory (verified whole, a tool at the version skipped)
+      ansible.builtin.command:
+        argv: [ "{{ tools_stage }}/nova-update", release, install, --from, "{{ nova_release_dir }}", --version, "{{ nova_version }}",
+                --bin, "{{ nova_bin_dir }}", --platform, "{{ nova_platform }}" ]
+      register: tools_install
+      changed_when: "tools_install.stdout is search('RELEASE INSTALLED .*tools=[1-9]')"
+
+    - name: the retired tools in the bin directory, by exact name (one listing)
+      ansible.builtin.find: { paths: "{{ nova_bin_dir }}", patterns: "{{ hostvars['localhost'].tools_retired }}", file_type: any, hidden: true }
+      register: tools_present
+
+    - name: the ones present
+      ansible.builtin.set_fact:
+        tools_retire: >-
+          {{ tools_present.files | map(attribute='path') | select('in', hostvars['localhost'].tools_retired
+             | map('regex_replace', '^', nova_bin_dir ~ '/') | list) | list }}
+
+    - name: what --check would remove
+      ansible.builtin.debug: { msg: "WOULD-REMOVE {{ item }} on {{ inventory_hostname }}" }
+      loop: "{{ tools_retire }}"
+      when: ansible_check_mode
+
+    - name: remove them
+      ansible.builtin.file: { path: "{{ item }}", state: absent }
+      loop: "{{ tools_retire }}"
+
+    - name: the build fact's directory
+      ansible.builtin.file: { path: "{{ nova_build_file | dirname }}", state: directory, mode: "0700" }
+
+    - name: the build fact
+      ansible.builtin.copy:
+        content: "{{ nova_version }}\n"
+        dest: "{{ nova_build_file }}"
+        mode: "0644"
+
+    - name: the receipt
+      ansible.builtin.debug:
+        msg: >-
+          TOOLS host={{ inventory_hostname }} platform={{ nova_platform }} version={{ nova_version }}
+          was={{ tools_was_version or 'none' }} removed={{ tools_retire | length }}
+          {{ (('UP-TO-DATE' if nova_version in (tools_now.stdout | default('')).split() or tools_was_version == nova_version else 'WOULD-INSTALL') if ansible_check_mode
+              else (('UP-TO-DATE ' if tools_install.stdout is search('RELEASE INSTALLED .*tools=0 ') else 'INSTALLED ') ~ tools_install.stdout)) }}
+
+- name: the build's schema and function library on the store
+  hosts: store_deployer
+  gather_facts: false
+  vars:
+    tools_seat: >-
+      {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
+          '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops] }}
+  tasks:
+    - name: the fleet declares both store endpoints
+      ansible.builtin.assert:
+        that:
+          - nova_pg_dsn | default('') != ''
+          - nova_redis_port | default(0) | int >= 1
+          - nova_redis_port | default(0) | int <= 65535
+          - nova_redis_addr | default('') == (nova_store | default('')) ~ ':' ~ (nova_redis_port | default('') | string)
+        fail_msg: >-
+          the applied fleet row needs redis_port and pg_dsn; bootstrap once with nova-config migrate
+          --pg postgres://user@localhost:5432/database, then nova-config fleet set
+          --redis_port <port> --pg_dsn postgres://user@localhost:5432/database --as <actor>,
+          then nova-config apply --kind fleet --as <actor>
+        quiet: true
+
+    - name: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)
+      ansible.builtin.stat: { path: "{{ item }}" }
+      loop: "{{ nova_sops_candidates }}"
+      register: tools_sops
+      when: nova_sops is not defined
+
+    - name: the sops the seat is opened with
+      ansible.builtin.set_fact:
+        nova_sops: >-
+          {{ nova_sops if nova_sops is defined else (tools_sops.results | selectattr('stat', 'defined')
+             | selectattr('stat.exists') | map(attribute='item') | first | default('')) }}
+
+    - name: the store_deployer machine has sops
+      ansible.builtin.assert:
+        that: nova_sops != ''
+        fail_msg: "{{ inventory_hostname }} has no sops at any of {{ nova_sops_candidates | join(', ') }}; install it or set nova_sops in host_vars"
+        quiet: true
+
+    - name: nova-config migrate (the schema the build's kinds need)
+      ansible.builtin.command:
+        argv: "{{ tools_seat + ['--only', nova_pg_password_key, '--require=' ~ nova_pg_password_key, '--',
+                                nova_bin_dir ~ '/nova-config', 'migrate', '--pg', nova_pg_dsn] }}"
+      environment: { NOVA_PG_PASSWORD_ENV: "{{ nova_pg_password_key }}" }
+      register: tools_migrate
+      changed_when: tools_migrate.stdout is search('applied=[1-9]|MIGRATE APPLIED')
+
+    - name: what --check would migrate
+      ansible.builtin.debug: { msg: "WOULD-MIGRATE {{ nova_pg_dsn }} with {{ nova_bin_dir }}/nova-config {{ nova_version }}" }
+      when: ansible_check_mode
+
+    - name: fn check (--check) or fn load at the declared Redis port, under the deploy user's seat
+      ansible.builtin.command:
+        argv: "{{ tools_seat + ['--only', nova_redis_deploy_password_key, '--require=' ~ nova_redis_deploy_password_key, '--',
+                   nova_bin_dir ~ '/nova-redis', 'fn', 'check' if ansible_check_mode else 'load', '--addr', nova_redis_addr,
+                   '--user', nova_redis_deploy_user, '--password-env', nova_redis_deploy_password_key] }}"
+      check_mode: false
+      register: tools_fn
+      changed_when: "tools_fn.stdout is search('^(LOADED|REPLACED|STALE|MISSING) ')"
+      failed_when: tools_fn.rc > (1 if ansible_check_mode else 0)
+
+    - name: the library receipt
+      ansible.builtin.debug: { var: tools_fn.stdout_lines }
+
+# The tla play: on every TLC record machine (the inventory's tla group, the
+# machine rows with tla=true), the pinned TLC jar at nova_tla_jar, owned by the
+# login, its SHA-256 the one the repository holds (tla/tla2tools.sha256), and
+# a java that runs. It downloads and copies nothing: a jar that is missing or
+# differs refuses the play with the scp line that places it (tla/README.md,
+# "The record machines"). A record machine is Linux: TLC records are measured
+# there only (internal/tlc/records.go, Platforms). sudo is used only to make
+# the directory, or hand it or the jar to the login, when it is not the
+# login's already; a converged machine changes nothing. Run it alone with
+# --tags tla.
+- name: the tla play, the pinned TLC jar on the record machines
+  hosts: tla
+  gather_facts: true
+  gather_subset: [min]
+  tags: [tla]
+  vars:
+    tla_want: "{{ (lookup('ansible.builtin.file', nova_tla_sha256_file).split() | first | default('')) | lower }}"
+  tasks:
+    - name: a record machine is Linux, and the repository's sum is one SHA-256
+      ansible.builtin.assert:
+        that:
+          - ansible_system == 'Linux'
+          - tla_want is match('^[0-9a-f]{64}$')
+        fail_msg: >-
+          TLA REFUSED host={{ inventory_hostname }}: {{ ('a record machine is Linux (TLC records are measured on Linux only) and this is '
+          ~ ansible_system ~ '; run: nova-config machine set ' ~ inventory_hostname ~ ' --tla false --as <actor>, then nova-config apply')
+          if ansible_system != 'Linux' else (nova_tla_sha256_file ~ ' holds no SHA-256 (64 hex digits) first') }}
+        quiet: true
+
+    - name: the jar's directory
+      ansible.builtin.stat: { path: "{{ nova_tla_dir }}" }
+      register: tla_dir
+
+    - name: the jar's directory, the login's
+      ansible.builtin.file: { path: "{{ nova_tla_dir }}", state: directory, owner: "{{ ansible_facts['user_id'] }}", mode: "0755" }
+      become: "{{ not (tla_dir.stat.exists and tla_dir.stat.pw_name == ansible_facts['user_id']) }}"
+
+    - name: the jar and its SHA-256
+      ansible.builtin.stat: { path: "{{ nova_tla_jar }}", checksum_algorithm: sha256 }
+      register: tla_jar
+
+    - name: the jar is the pinned one (refused when it is missing or its SHA-256 differs)
+      ansible.builtin.assert:
+        that: tla_jar.stat.exists and tla_jar.stat.checksum == tla_want
+        fail_msg: >-
+          TLA REFUSED host={{ inventory_hostname }} jar={{ nova_tla_jar }} want={{ tla_want }}
+          got={{ tla_jar.stat.checksum | default('none') if tla_jar.stat.exists else 'none' }}: the play downloads nothing;
+          scp a tla2tools.jar whose sha256sum is {{ tla_want }} to {{ inventory_hostname }}:{{ nova_tla_jar }}
+          (another record machine holds one), then run the play again
+        quiet: true
+
+    - name: the jar, the login's
+      ansible.builtin.file: { path: "{{ nova_tla_jar }}", owner: "{{ ansible_facts['user_id'] }}", mode: "0644" }
+      become: "{{ tla_jar.stat.pw_name != ansible_facts['user_id'] }}"
+
+    - name: java (the first of nova_tla_java_candidates on the machine)
+      ansible.builtin.stat: { path: "{{ item }}" }
+      loop: "{{ nova_tla_java_candidates }}"
+      register: tla_javas
+
+    - name: the java the record machine runs TLC with
+      ansible.builtin.set_fact:
+        tla_java: "{{ tla_javas.results | selectattr('stat.exists') | map(attribute='item') | first | default('') }}"
+
+    - name: java runs
+      ansible.builtin.command: { argv: ["{{ tla_java }}", -version] }
+      register: tla_java_version
+      changed_when: false
+      check_mode: false
+      failed_when: tla_java == '' or tla_java_version.rc != 0 or not ((tla_java_version.stderr ~ tla_java_version.stdout) is search('version "'))
+
+    - name: the receipt
+      ansible.builtin.debug:
+        msg: >-
+          TLA OK host={{ inventory_hostname }} jar={{ nova_tla_jar }} sha256={{ tla_jar.stat.checksum }} java={{ tla_java }}
+          version={{ (tla_java_version.stderr ~ '\n' ~ tla_java_version.stdout) | regex_search('version "[^"]*"') | replace('version ', '') | replace('"', '') }}

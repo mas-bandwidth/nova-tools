@@ -2,8 +2,9 @@ package ci
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestTheVersionGrammarIsSpelledOutOnceInTheSpec: the grammar a reader enforces
@@ -17,15 +18,11 @@ func TestTheVersionGrammarIsSpelledOutOnceInTheSpec(t *testing.T) {
 		"<tool> <build identity> <goos>/<goarch> <go version>",
 		"key=value",
 	} {
-		if !strings.Contains(spec, want) {
-			t.Errorf("docs/SPEC.md no longer states %q; the grammar every binary obeys is stated there once", want)
-		}
+		assert.Contains(t, spec, want, "docs/SPEC.md no longer states %q; the grammar every binary obeys is stated there once", want)
 	}
 	for _, gone := range []string{
 		"answers with its `SANDBOX VERSION` line",
 	} {
-		if strings.Contains(spec, gone) {
-			t.Errorf("docs/SPEC.md still carves out a second version-line shape (%q); #1297 was that carve-out reaching every reader", gone)
-		}
+		assert.NotContains(t, spec, gone, "docs/SPEC.md still carves out a second version-line shape (%q); #1297 was that carve-out reaching every reader", gone)
 	}
 }

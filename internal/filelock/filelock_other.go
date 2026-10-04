@@ -20,7 +20,3 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 func lockWithOptions(path string, label string, timeout time.Duration, opts options) (*FileLock, error) {
 	return nil, ErrNotSupported
 }
-
-func probeWithOptions(path string, opts options) (State, Stamp, error) {
-	return "", Stamp{}, ErrNotSupported
-}

@@ -1,0 +1,300 @@
+---
+# Rootless, daemonless podman for the runner user, from the distribution's
+# packages, and a probe that proves the limits a functional run relies on.
+# Idempotent. `--check --diff` is meaningful: it names the packages that would
+# be installed and the subuid, subgid, linger and delegation changes that would
+# be made, and touches nothing; the probe runs on a real run only.
+
+- name: the host is Debian family Linux with cgroups v2
+  ansible.builtin.stat:
+    path: /sys/fs/cgroup/cgroup.controllers
+  register: container_runtime_cgroup2
+
+- name: the host can run the runtime
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - ansible_facts["os_family"] == "Debian"
+      - ansible_facts["system"] == "Linux"
+      - container_runtime_cgroup2.stat.exists
+    fail_msg: >-
+      container-runtime role: Debian-family Linux with cgroup v2 only (apt, and
+      the unified hierarchy for the limits); this host is
+      {{ ansible_facts["distribution"] }}, cgroup v2 present:
+      {{ container_runtime_cgroup2.stat.exists }}
+
+- name: the runner user's account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ container_runtime_user }}"
+
+- name: the runner user's uid
+  ansible.builtin.set_fact:
+    container_runtime_uid: "{{ ansible_facts['getent_passwd'][container_runtime_user][1] | int }}"
+
+# The first change this role makes is below this task. The role never acts for
+# root (its default user is the connecting user, and a connection made as root,
+# or `become` set in ansible.cfg so that facts are gathered as root, would name
+# root here) and never for a system account. The guard reads the account's own
+# uid from getent, not container_runtime_uid: an extra variable outranks a fact,
+# so `-e container_runtime_uid=1001 -e container_runtime_user=root` must not
+# get past it, and the last line refuses any uid that is not the account's.
+- name: the runner user is an ordinary user, never root
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - ansible_facts['getent_passwd'][container_runtime_user][1] | int != 0
+      - ansible_facts['getent_passwd'][container_runtime_user][1] | int >= container_runtime_min_uid | int
+      - container_runtime_uid | int == ansible_facts['getent_passwd'][container_runtime_user][1] | int
+    fail_msg: >-
+      container-runtime role: {{ container_runtime_user }} has uid
+      {{ container_runtime_uid }}; rootless podman is for an ordinary user (uid
+      at least {{ container_runtime_min_uid }}, never root). Connect as the
+      runner user or set container_runtime_user; container_runtime_min_uid
+      lowers the floor for a runner that is a system account.
+
+- name: podman and its rootless helpers
+  become: true
+  ansible.builtin.apt:
+    name: "{{ container_runtime_packages }}"
+    state: present
+    install_recommends: "{{ container_runtime_install_recommends }}"
+    update_cache: true
+    cache_valid_time: 3600
+
+# A rootless user namespace maps a range of subordinate ids; without a row the
+# user has none. tasks/subid.yml reads the whole of /etc/subuid and /etc/subgid,
+# allocates a missing row after every range already there, and stops on an
+# existing row that overlaps another user's or is too short.
+- name: subordinate id rows
+  ansible.builtin.include_tasks: subid.yml
+  loop:
+    - subuid
+    - subgid
+  loop_control:
+    loop_var: container_runtime_subid_file
+
+# Linger keeps /run/user/<uid>, the rootless runtime directory, and the user's
+# systemd manager alive with no login session, which a runner started by
+# systemd has none of.
+- name: linger for the user
+  become: true
+  ansible.builtin.command:
+    cmd: "loginctl enable-linger {{ container_runtime_user }}"
+    creates: "/var/lib/systemd/linger/{{ container_runtime_user }}"
+
+# User namespaces are the kernel's setting, not the role's: an unprivileged user
+# needs a nonzero limit. The role reads it and stops with the remedy named.
+- name: the kernel allows user namespaces
+  ansible.builtin.command: sysctl -n user.max_user_namespaces
+  register: container_runtime_userns
+  changed_when: false
+  check_mode: false
+
+- name: user namespaces are enabled
+  ansible.builtin.assert:
+    quiet: true
+    that: container_runtime_userns.stdout | int > 0
+    fail_msg: >-
+      user.max_user_namespaces is {{ container_runtime_userns.stdout }}; set it
+      above zero (sysctl) so an unprivileged user can create a namespace.
+
+# cgroup v2 delegation: the controllers a limit needs must be delegated to the
+# user's systemd manager. Current systemd delegates cpu, memory and pids by
+# default; the drop-in is written only where it does not.
+- name: the controllers delegated to the user's systemd manager
+  ansible.builtin.command: "systemctl show --property=DelegateControllers --value user@{{ container_runtime_uid }}.service"
+  register: container_runtime_delegated
+  changed_when: false
+  check_mode: false
+
+# The drop-in is for this user's manager only (user@<uid>.service.d), never the
+# template of every user's. Its directory is made first: copy does not create
+# parent directories, and the directory is absent until something adds a drop-in.
+- name: the drop-in directory of the user's systemd manager
+  become: true
+  ansible.builtin.file:
+    path: "/etc/systemd/system/user@{{ container_runtime_uid }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: container_runtime_controllers | difference(container_runtime_delegated.stdout.split()) | length > 0
+
+- name: delegation drop-in for the missing controllers
+  become: true
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/user@{{ container_runtime_uid }}.service.d/delegate.conf"
+    content: |
+      [Service]
+      Delegate={{ (container_runtime_delegated.stdout.split() + container_runtime_controllers) | unique | sort | join(' ') }}
+    owner: root
+    group: root
+    mode: "0644"
+  register: container_runtime_delegation
+  when: container_runtime_controllers | difference(container_runtime_delegated.stdout.split()) | length > 0
+
+- name: systemd reads the drop-in
+  become: true
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: container_runtime_delegation is changed
+
+# The drop-in takes effect when the user's manager next starts. Restarting it
+# here would end the user's running containers and sessions, so the play stops
+# and says so.
+- name: the user's manager restarts to take up the delegation
+  ansible.builtin.fail:
+    msg: >-
+      cgroup delegation for {{ container_runtime_controllers | join(', ') }} is
+      configured and takes effect when user@{{ container_runtime_uid }}.service
+      restarts. Restart it (or reboot) while the runner is idle, then run the
+      play again.
+  when: container_runtime_delegation is changed and not ansible_check_mode
+
+# Everything below runs podman as the runner user.
+- name: rootless podman answers
+  become: "{{ container_runtime_user != ansible_facts['user_id'] }}"
+  become_user: "{{ container_runtime_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ container_runtime_uid }}"
+  ansible.builtin.command: podman info --format '{{ '{{' }}.Host.Security.Rootless{{ '}}' }} {{ '{{' }}.Host.CgroupsVersion{{ '}}' }} {{ '{{' }}.Version.Version{{ '}}' }}'
+  register: container_runtime_info
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: podman runs rootless on cgroups v2
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - container_runtime_info.stdout.split()[0] == "true"
+      - container_runtime_info.stdout.split()[1] == "v2"
+    fail_msg: "podman for {{ container_runtime_user }} is not rootless on cgroups v2: {{ container_runtime_info.stdout }}"
+  when: not ansible_check_mode
+
+# THE PROBE. A trivial container with the flags a functional run uses. podman
+# warns and goes on when a limit is unsupported, so the container itself reads
+# the limits back from its own cgroup and the play fails when one is not the
+# value asked for, when the network is not loopback only, when the root
+# filesystem is writable, when /tmp is not, when no-new-privileges is not set,
+# when a capability remains, or when the container may use swap.
+- name: the probe container has the limits the runner will use
+  become: "{{ container_runtime_user != ansible_facts['user_id'] }}"
+  become_user: "{{ container_runtime_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ container_runtime_uid }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --name
+      - "{{ container_runtime_probe_name }}"
+      - --network
+      - none
+      - --ipc
+      - private
+      - --pids-limit
+      - "{{ container_runtime_probe_pids }}"
+      - --memory
+      - "{{ container_runtime_probe_memory_bytes }}"
+      - --memory-swap
+      - "{{ container_runtime_probe_memory_bytes }}"
+      - --cpus
+      - "{{ container_runtime_probe_cpus }}"
+      - --read-only
+      - --security-opt
+      - no-new-privileges
+      - --cap-drop
+      - all
+      - --tmpfs
+      - /tmp:rw,exec,size=16m
+      - --timeout
+      - "{{ container_runtime_probe_timeout }}"
+      - -e
+      - "WANT_PIDS={{ container_runtime_probe_pids }}"
+      - -e
+      - "WANT_MEMORY={{ container_runtime_probe_memory_bytes }}"
+      - -e
+      - "WANT_CPU={{ ((container_runtime_probe_cpus | float) * 100000) | round | int }} 100000"
+      - "{{ container_runtime_probe_image }}"
+      - sh
+      - -c
+      - |
+        set -e
+        test "$(cat /sys/fs/cgroup/pids.max)" = "$WANT_PIDS" || { echo "pids.max is $(cat /sys/fs/cgroup/pids.max), want $WANT_PIDS"; exit 11; }
+        test "$(cat /sys/fs/cgroup/memory.max)" = "$WANT_MEMORY" || { echo "memory.max is $(cat /sys/fs/cgroup/memory.max), want $WANT_MEMORY"; exit 12; }
+        test "$(cat /sys/fs/cgroup/memory.swap.max)" = 0 || { echo "memory.swap.max is $(cat /sys/fs/cgroup/memory.swap.max 2>&1), want 0: swap is not bounded"; exit 19; }
+        test "$(cat /sys/fs/cgroup/cpu.max)" = "$WANT_CPU" || { echo "cpu.max is $(cat /sys/fs/cgroup/cpu.max), want $WANT_CPU"; exit 13; }
+        test "$(ls /sys/class/net)" = lo || { echo "network is not loopback only: $(ls /sys/class/net)"; exit 14; }
+        # The mount itself, and a write to a path (/etc) that is writable to this user without --read-only:
+        # a write to / alone proves nothing, it is refused there whatever the mount is.
+        root_opts="$(awk '$5 == "/" { split($6, o, ","); print o[1] }' /proc/self/mountinfo | tail -n 1)"
+        test "$root_opts" = ro || { echo "the root filesystem is mounted '$root_opts', not ro"; exit 15; }
+        if touch /etc/probe-rootfs 2>/dev/null; then echo "the root filesystem is writable"; exit 15; fi
+        touch /tmp/probe-tmp || { echo "/tmp is not writable"; exit 16; }
+        grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/self/status || { echo "no-new-privileges is not set"; exit 17; }
+        test "$(sed -n 's/^CapBnd:[[:space:]]*//p' /proc/self/status)" = 0000000000000000 || { echo "capabilities remain: $(sed -n 's/^CapBnd:[[:space:]]*//p' /proc/self/status)"; exit 18; }
+        echo "limits ok: pids=$WANT_PIDS memory=$WANT_MEMORY cpu=$WANT_CPU network=lo rootfs=ro tmp=rw nonewprivs=1 caps=none"
+  register: container_runtime_probe
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: what the probe read back
+  ansible.builtin.debug:
+    msg: "{{ container_runtime_probe.stdout_lines }}"
+  when: not ansible_check_mode
+
+# --timeout is the runtime's own bound: it ends the container whatever happens
+# to the client. A container that would sleep a minute is gone within the grace
+# of a three second bound, and nothing of it remains.
+- name: the runtime's own timeout ends a container
+  become: "{{ container_runtime_user != ansible_facts['user_id'] }}"
+  become_user: "{{ container_runtime_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ container_runtime_uid }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --name
+      - "{{ container_runtime_probe_name }}-bound"
+      - --network
+      - none
+      - --timeout
+      - "{{ container_runtime_probe_kill_after }}"
+      - "{{ container_runtime_probe_image }}"
+      - sleep
+      - "60"
+  register: container_runtime_bound
+  changed_when: false
+  failed_when: container_runtime_bound.rc == 0
+  when: not ansible_check_mode
+
+- name: how long the bound took to end the container
+  ansible.builtin.set_fact:
+    container_runtime_bound_seconds: >-
+      {{ (container_runtime_bound.delta.split(':')[0] | int) * 3600
+         + (container_runtime_bound.delta.split(':')[1] | int) * 60
+         + (container_runtime_bound.delta.split(':')[2] | float) }}
+  when: not ansible_check_mode
+
+- name: the bound ended the container within the grace
+  ansible.builtin.assert:
+    quiet: true
+    that: (container_runtime_bound_seconds | float) <= (container_runtime_probe_kill_after | int) + (container_runtime_probe_grace | int)
+    success_msg: "podman run --timeout {{ container_runtime_probe_kill_after }} ended a sleep 60 container after {{ container_runtime_bound_seconds }} s"
+    fail_msg: "podman run --timeout {{ container_runtime_probe_kill_after }} took {{ container_runtime_bound_seconds }} s to end a container; the runtime's own bound does not hold within {{ container_runtime_probe_grace }} s"
+  when: not ansible_check_mode
+
+- name: no probe container is left
+  become: "{{ container_runtime_user != ansible_facts['user_id'] }}"
+  become_user: "{{ container_runtime_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ container_runtime_uid }}"
+  ansible.builtin.command: "podman ps --all --quiet --filter name={{ container_runtime_probe_name }}"
+  register: container_runtime_left
+  changed_when: false
+  failed_when: container_runtime_left.stdout | trim | length > 0
+  when: not ansible_check_mode

@@ -86,6 +86,7 @@ func unlockFile(f *os.File) {
 	// that was just closed can still be in a delete-pending or
 	// sharing-violating state, so the removal is retried rather than dropped on
 	// the floor; otherwise the next run reads a lock this one already let go.
+	// ignored: unlock has no caller to report to; removeLockFile retries (see the comment above), and a leftover is named by the next lock
 	_ = removeLockFile(sentinel(f))
 }
 

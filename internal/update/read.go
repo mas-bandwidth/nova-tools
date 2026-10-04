@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 const ChildCap = 64 * 1024
@@ -84,7 +85,7 @@ func identity(e Entry, raw string, report bool) Read {
 			}
 		}
 		r.Reason = "model_not_found"
-		r.Remedy = "owner: ollama pull " + e.Name + "; nova-local status --list"
+		r.Remedy = "this weight is not on this box: its owner " + e.Owner + " pulls it, ollama pull " + e.Name
 		return r
 	}
 	if report && opaque(r.Raw) {
@@ -123,7 +124,7 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	child, cancel := context.WithCancel(ctx)
 	defer cancel()
 	out, errs := bounded.NewCapture(cap, cancel), bounded.NewCapture(cap, cancel)
-	cmd := exec.CommandContext(child, path, args[1:]...)
+	cmd := subproc.Context(child, path, args[1:]...)
 	cmd.Stdin = input
 	// The pipes are created here rather than handed to os/exec as plain writers,
 	// so this process can close the read ends itself when the deadline passes and
@@ -147,7 +148,9 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 
 	var copyWG sync.WaitGroup
 	copyWG.Add(2)
+	// ignored: a pipe pump; the child's exit, waited on below, is the report
 	go func() { defer copyWG.Done(); _, _ = io.Copy(out, stdoutRead) }()
+	// ignored: a pipe pump; the child's exit, waited on below, is the report
 	go func() { defer copyWG.Done(); _, _ = io.Copy(errs, stderrRead) }()
 
 	if err := cmd.Start(); err != nil {
@@ -180,11 +183,19 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	go func() { copyWG.Wait(); close(done) }()
 	held := false
 	if drain := drainAllowance(ctx); drain > 0 {
-		t := time.NewTimer(drain)
+		var timerChan <-chan time.Time
+		var stopTimer func() bool
+		if seam, ok := ctx.Value(drainTimerKey{}).(func(time.Duration) (<-chan time.Time, func() bool)); ok && seam != nil {
+			timerChan, stopTimer = seam(drain)
+		} else {
+			t := time.NewTimer(drain)
+			timerChan = t.C
+			stopTimer = t.Stop
+		}
 		select {
 		case <-done:
-			t.Stop()
-		case <-t.C:
+			stopTimer()
+		case <-timerChan:
 			held = true
 			stdoutRead.Close()
 			stderrRead.Close()
@@ -223,16 +234,26 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 // budget leaves, floored, so a held pipe is closed promptly rather than kept
 // open by a fixed grace begun at cancellation.
 func drainAllowance(ctx context.Context) time.Duration {
+	return drainAllowanceAt(ctx, time.Now())
+}
+
+// drainAllowanceAt computes the remaining drain budget from the caller's time.
+func drainAllowanceAt(ctx context.Context, now time.Time) time.Duration {
+	if ctx.Err() != nil {
+		return drainFloor
+	}
 	drain := killGrace
 	if deadline, ok := ctx.Deadline(); ok {
-		if remaining := time.Until(deadline); remaining < drain {
-			drain = remaining
-		}
+		drain = min(drain, deadline.Sub(now))
 	}
-	if drain < drainFloor {
-		drain = drainFloor
-	}
-	return drain
+	return max(drain, drainFloor)
+}
+
+type drainTimerKey struct{}
+
+// WithDrainTimer attaches a custom drain timer seam to the context.
+func WithDrainTimer(ctx context.Context, fn func(time.Duration) (<-chan time.Time, func() bool)) context.Context {
+	return context.WithValue(ctx, drainTimerKey{}, fn)
 }
 
 // clip bounds a diagnostic clause. A reason a person cannot read is not a
@@ -249,7 +270,7 @@ func clip(s string, max int) string {
 // path separator. It is what `nova-version snapshot` writes -- a reading taken at a
 // moment -- and it is unambiguous against every argv a manifest can hold: `go version` is
 // two tokens, `nova-bus` carries no dotted number, and a path to a binary carries a
-// separator (#571).
+// separator.
 func recordedVersion(installed []string) (string, bool) {
 	if len(installed) != 1 {
 		return "", false
@@ -276,9 +297,9 @@ func recordedVersion(installed []string) (string, bool) {
 // caller's sentence and is run exactly as written, once: appending to it would run a verb
 // the caller did not ask for.
 //
-// A `tool` row that names nothing but the executable is the other case, and it is the one
-// that cost us #1264. `nova-version snapshot` writes such rows, and so does every friend's
-// hand-written manifest: `nova-swarm  tool  ~/.local/bin/nova-swarm  ...`. Run bare, EVERY
+// A `tool` row that names nothing but the executable is the other case.
+// `nova-version snapshot` writes such rows, and so does every hand-written manifest:
+// `nova-swarm  tool  ~/.local/bin/nova-swarm  ...`. Run bare, EVERY
 // nova tool answers a usage refusal -- the banner is behind `help`, not in front of every
 // mistake -- so the adoption pass read UNKNOWN for every one of our own tools while each
 // of them was perfectly able to say which build it was. They are asked the verb they
@@ -292,7 +313,14 @@ func ladder(e Entry) [][]string {
 	return [][]string{{exe, "version"}, {exe, "--version"}, {exe}}
 }
 
+type processFunc func(context.Context, []string, io.Reader, int) ProcessResult
+
 func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool) Read {
+	return installed(ctx, e, timeout, report, process)
+}
+
+// installed keeps the version decisions independent of the child transport.
+func installed(ctx context.Context, e Entry, timeout time.Duration, report bool, run processFunc) Read {
 	if ctx.Err() != nil {
 		return Read{Reason: "budget", Remedy: "increase --budget"}
 	}
@@ -308,7 +336,7 @@ func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool)
 	defer cancel()
 	var last Read
 	for _, argv := range ladder(e) {
-		p := process(child, argv, nil, ChildCap)
+		p := run(child, argv, nil, ChildCap)
 		last = reading(e, p, report)
 		if last.Known() {
 			break
@@ -414,4 +442,12 @@ func decPatch(v string) string {
 	p.Sub(p, big.NewInt(1))
 	parts[len(parts)-1] = p.String()
 	return strings.Join(parts, ".")
+}
+
+// runProcess uses the supplied transport or the real child adapter.
+func (env Environment) runProcess(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
+	if env.Process != nil {
+		return env.Process(ctx, args, input, cap)
+	}
+	return process(ctx, args, input, cap)
 }

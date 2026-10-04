@@ -1,9 +1,15 @@
 package ntable
 
 import (
+	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
+	"unicode"
 
+	"golang.org/x/text/width"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -16,8 +22,6 @@ type RenderOpts struct {
 	// LabelWidth fixes the row-label column's width the same way (the
 	// sprint's stream block keeps its names 25 wide); 0 fits the labels.
 	LabelWidth int
-	// HideZeroRows hides a row whose count cells are all zero and all read.
-	HideZeroRows bool
 	// Title is the table's name, printed in the top-left cell, the header
 	// of the row-label column (Glenn 2026-09-27: "tables need a title";
 	// "the title goes where 'row' is currently").
@@ -31,11 +35,12 @@ type RenderOpts struct {
 // are separated by " | " and the rule joins dashes with "-+-". A cell whose
 // set did not come back prints "?", and so does a fold over it. The last
 // column is padded only when it is right-aligned, so no line ends in a
-// space. An empty table, and a table with no visible row, renders as the
-// empty string with no newline, title or not (Glenn 2026-09-26 10:00 AM
-// ET: an empty stream table is hidden with no extra newline; 2026-09-27:
-// "When a table has no rows, it should automatically hide. When it has
-// rows again, it should show").
+// space. A table always renders, with its header and its footer, and with no
+// body line when it has no row (Glenn 2026-09-30, the owner's ruling: tables
+// and rows always show, empty or not); with no body line the footer sits under
+// the header's one rule, and the rule above the footer is not drawn (the owner,
+// 2026-10-02: "when the work stream table is empty, please just show the
+// summary row" / "not the extra --------------------+-----------+----------- etc.").
 //
 // The row's label is always the first column (Glenn 2026-09-27, the live
 // session: eight benches rendered as eight anonymous rows of numbers), put
@@ -51,13 +56,10 @@ type RenderOpts struct {
 func Render(t Table, opts RenderOpts) string {
 	rows := make([]Row, 0, len(t.Rows))
 	for _, r := range t.Rows {
-		if r.Hidden || opts.HideZeroRows && allZero(t, r) {
+		if r.Hidden {
 			continue // a hidden row stays in the folds (Glenn 2026-09-27: "hide the rows a-z but keep them there logically")
 		}
 		rows = append(rows, r)
-	}
-	if len(rows) == 0 {
-		return ""
 	}
 	// cols is what is printed; src[j] is the definition's column behind
 	// cols[j], or -1 for the row-label column put in front.
@@ -114,19 +116,19 @@ func Render(t Table, opts RenderOpts) string {
 			w = v
 		}
 		if w == 0 {
-			w = len(header[j])
+			w = cellWidth(header[j])
 			for i := range body {
-				w = max(w, len(body[i][j]))
+				w = max(w, cellWidth(body[i][j]))
 			}
 			if hasFooter {
-				w = max(w, len(footer[j]))
+				w = max(w, cellWidth(footer[j]))
 			}
 		}
 		widths[j] = w
 	}
 	right := make([]bool, n)
 	for j, c := range cols {
-		right[j] = c.Projection == Count
+		right[j] = c.Projection == Count || IsSum(c.Projection) || numericText(c)
 	}
 	var b, l strings.Builder
 	line := func(cells []string, footerRow bool) {
@@ -162,16 +164,36 @@ func Render(t Table, opts RenderOpts) string {
 		line(cells, false)
 	}
 	if hasFooter {
-		rule()
+		if len(body) > 0 {
+			rule()
+		}
 		line(footer, true)
 	}
 	return b.String()
 }
 
+// cellWidth is the width of a cell in terminal columns, so a cell aligns with its
+// neighbours on screen: an East Asian wide or fullwidth rune is 2 columns, a combining
+// mark 0, every other rune 1. A byte or rune count would misalign `日本語`, which is 6
+// columns.
+func cellWidth(s string) int {
+	n := 0
+	for _, r := range s {
+		switch {
+		case unicode.In(r, unicode.Mn, unicode.Me):
+		case width.LookupRune(r).Kind() == width.EastAsianWide || width.LookupRune(r).Kind() == width.EastAsianFullwidth:
+			n += 2
+		default:
+			n++
+		}
+	}
+	return n
+}
+
 // pad writes s in a field of width w, right- or left-aligned; a
 // left-aligned last field is written as it is.
 func pad(b *strings.Builder, s string, w int, right, last bool) {
-	fill := w - len(s)
+	fill := w - cellWidth(s)
 	if fill < 0 {
 		fill = 0
 	}
@@ -187,22 +209,6 @@ func pad(b *strings.Builder, s string, w int, right, last bool) {
 	}
 }
 
-// allZero says every count cell of r is 0 and read; a row with no count
-// cell is never all-zero.
-func allZero(t Table, r Row) bool {
-	counts := 0
-	for j, c := range t.Columns {
-		if c.Projection != Count || j >= len(r.Cells) {
-			continue
-		}
-		counts++
-		if r.Cells[j].Unread || r.Cells[j].Count != 0 {
-			return false
-		}
-	}
-	return counts > 0
-}
-
 // CellText returns a full, unpadded projected cell. Render and machine-readable
 // show use the same value, including text, percentages and unread dependencies.
 func CellText(cols []Column, r Row, j int) string {
@@ -211,7 +217,7 @@ func CellText(cols []Column, r Row, j int) string {
 	}
 	c := cols[j]
 	if IsFormula(c.Projection) {
-		return formulaText(cols, c, r)
+		return formulaText(cols, c, r, j)
 	}
 	return cellText(c, r, j)
 }
@@ -254,25 +260,15 @@ func cellText(c Column, r Row, j int) string {
 	return "?"
 }
 
-// foldText is one footer cell as printed, over every row (hidden rows
-// included: a fold is the column's, not the screen's).
-// formulaValue is a pct(<col>) cell's value over the row: the named count
-// as a share of the row's count cells together; ok is false when the row
-// a cell it needs did not come back. A known empty row is zero percent.
+// formulaValue is a pct cell's value over the row: the numerator as a share
+// of the denominator (the named count columns of pct(<col>/<a>+<b>), or every
+// count column of the row for pct(<col>)); ok is false when a count it reads
+// did not come back, or when a column it names is missing or is no count
+// column. A known zero denominator is zero percent.
 func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
-	arg := FormulaArg(c.Projection)
-	var part, total int64
-	for k, o := range cols {
-		if o.Projection != Count {
-			continue
-		}
-		if k >= len(r.Cells) || r.Cells[k].Unread {
-			return 0, false
-		}
-		total += r.Cells[k].Count
-		if o.Name == arg {
-			part = r.Cells[k].Count
-		}
+	part, total, ok := shareCounts(cols, c, r)
+	if !ok {
+		return 0, false
 	}
 	if total == 0 {
 		return 0, true
@@ -280,14 +276,114 @@ func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
 	return 100 * float64(part) / float64(total), true
 }
 
-// formulaText prints a formula cell: a percentage with one decimal
-// ("33.3%"), "0.0%" when the row has no tasks, "?" when a count it needs did
-// not come back (Stella's read of #4456: an unread dependency propagates).
-func formulaText(cols []Column, c Column, r Row) string {
+// shareCounts is a pct cell's numerator and denominator over one row; ok is
+// false when a named source is no longer a count or a count it reads did not
+// come back.
+func shareCounts(cols []Column, c Column, r Row) (part, total int64, ok bool) {
+	f, err := ParseFormula(c.Projection)
+	if err != nil {
+		return 0, 0, false
+	}
+	if f.Over == nil {
+		part, ok = namedCount(cols, r, f.Part)
+		if !ok {
+			return 0, 0, false
+		}
+		for k, o := range cols {
+			if o.Projection != Count {
+				continue
+			}
+			if k >= len(r.Cells) || r.Cells[k].Unread {
+				return 0, 0, false
+			}
+			total += r.Cells[k].Count
+		}
+		return part, total, true
+	}
+	part, ok = namedCount(cols, r, f.Part)
+	if !ok {
+		return 0, 0, false
+	}
+	for _, name := range f.Over {
+		n, ok := namedCount(cols, r, name)
+		if !ok {
+			return 0, 0, false
+		}
+		total += n
+	}
+	return part, total, true
+}
+
+// namedCount is the row's count in the named count column; ok is false when
+// the table has no such count column or its cell did not come back.
+func namedCount(cols []Column, r Row, name string) (int64, bool) {
 	for k, o := range cols {
-		if o.Projection == Count && (k >= len(r.Cells) || r.Cells[k].Unread) {
+		if o.Name != name {
+			continue
+		}
+		if o.Projection != Count || k >= len(r.Cells) || r.Cells[k].Unread {
+			return 0, false
+		}
+		return r.Cells[k].Count, true
+	}
+	return 0, false
+}
+
+// numericText says c is a text column that folds sum or max: its cells are
+// whole numbers, printed right-aligned like counts.
+func numericText(c Column) bool {
+	return c.Projection == Text && (c.Fold == Sum || c.Fold == Max)
+}
+
+// textNumber is a numeric text cell's value: a blank cell is 0; ok is false
+// for text that is no whole number.
+func textNumber(v string) (int64, bool) {
+	if v == "" {
+		return 0, true
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	return n, err == nil
+}
+
+// countValue is a count cell's value, or a sum(<a>+<b>) cell's (the named
+// counts added); ok is false when a count it reads did not come back.
+func countValue(cols []Column, r Row, j int) (int64, bool) {
+	c := cols[j]
+	if numericText(c) {
+		return textNumber(r.Texts[c.Name])
+	}
+	if !IsSum(c.Projection) {
+		if j >= len(r.Cells) || r.Cells[j].Unread {
+			return 0, false
+		}
+		return r.Cells[j].Count, true
+	}
+	f, err := ParseFormula(c.Projection)
+	if err != nil {
+		return 0, false
+	}
+	var v int64
+	for _, name := range f.Over {
+		n, ok := namedCount(cols, r, name)
+		if !ok {
+			return 0, false
+		}
+		v += n
+	}
+	return v, true
+}
+
+// formulaText prints a formula cell: a sum as a count; a percentage with one
+// decimal ("33.3%"), "0.0%" when its denominator is known to be zero, "?"
+// when a count it reads did not come back (Stella's read of #4456: an unread
+// dependency propagates; pct(<col>) reads every count column of the row).
+func formulaText(cols []Column, c Column, r Row, j int) string {
+	if IsSum(c.Projection) {
+		v, ok := countValue(cols, r, j)
+		if !ok {
 			return "?"
 		}
+		return strconv.FormatInt(v, 10)
 	}
 	v, ok := formulaValue(cols, c, r)
 	if !ok {
@@ -308,23 +404,16 @@ func pctText(v float64) string {
 func foldText(cols []Column, c Column, rows []Row, j int) string {
 	switch c.Fold {
 	case Pooled:
-		// the share over every row together: the named counts summed over
-		// all counts summed, never the mean of the rows' percentages
-		arg := FormulaArg(c.Projection)
+		// the share over every row together: the numerators summed over the
+		// denominators summed, never the mean of the rows' percentages
 		var part, total int64
 		for _, r := range rows {
-			for k, o := range cols {
-				if o.Projection != Count {
-					continue
-				}
-				if k >= len(r.Cells) || r.Cells[k].Unread {
-					return "?"
-				}
-				total += r.Cells[k].Count
-				if o.Name == arg {
-					part += r.Cells[k].Count
-				}
+			p, t, ok := shareCounts(cols, c, r)
+			if !ok {
+				return "?"
 			}
+			part += p
+			total += t
 		}
 		if total == 0 {
 			return pctText(0)
@@ -334,10 +423,11 @@ func foldText(cols []Column, c Column, rows []Row, j int) string {
 		var sum float64
 		n := 0
 		for _, r := range rows {
-			if j >= len(r.Cells) || r.Cells[j].Unread {
+			v, ok := countValue(cols, r, j)
+			if !ok {
 				return "?"
 			}
-			sum += float64(r.Cells[j].Count)
+			sum += float64(v)
 			n++
 		}
 		if n == 0 {
@@ -345,12 +435,15 @@ func foldText(cols []Column, c Column, rows []Row, j int) string {
 		}
 		return strings.TrimSuffix(strconv.FormatFloat(sum/float64(n), 'f', 1, 64), ".0")
 	case Sum, Max:
+		if m, ok := moneyFold(c, rows); ok {
+			return m
+		}
 		var v int64
 		for _, r := range rows {
-			if j >= len(r.Cells) || r.Cells[j].Unread {
+			n, ok := countValue(cols, r, j)
+			if !ok {
 				return "?"
 			}
-			n := r.Cells[j].Count
 			if c.Fold == Sum {
 				v += n
 			} else if n > v {
@@ -378,4 +471,121 @@ func foldText(cols []Column, c Column, rows []Row, j int) string {
 		return strings.Join(names, ",")
 	}
 	return ""
+}
+
+// SummaryLine is a stored view's summary line over its first table's
+// snapshot, "" for no line: the view's state alone while it has one
+// ("STOPPED", nothing more: no counts, no percent, no ETA), else
+// "x/y z% -> ETA" when the view names a done column. The counts pool the first
+// table's count columns; unread input, hidden rows and columns included,
+// leaves them unknown. ETA has no value until change-stream rate sampling is
+// available.
+func SummaryLine(v View, first Table) string {
+	switch {
+	case v.State != "":
+		return oneline.Escape(v.State)
+	case v.Summary != "":
+		return countSummary(first, v.Summary)
+	}
+	return ""
+}
+
+func countSummary(t Table, column string) string {
+	found := false
+	for _, col := range t.Columns {
+		if col.Name == column && col.Projection == Count {
+			found = true
+		}
+	}
+	if !found {
+		return "?/? ? -> ETA"
+	}
+	var part, total int64
+	for _, r := range t.Rows {
+		for k, col := range t.Columns {
+			if col.Projection != Count {
+				continue
+			}
+			if k >= len(r.Cells) || r.Cells[k].Unread {
+				return "?/? ? -> ETA"
+			}
+			total += r.Cells[k].Count
+			if col.Name == column {
+				part += r.Cells[k].Count
+			}
+		}
+	}
+	pct := "0.0%" // empty known totals use the same numeric display as other percentages
+	if total > 0 {
+		pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
+	}
+	return fmt.Sprintf("%d/%d %s -> ETA", part, total, pct)
+}
+
+// RenderTables is the title line, then every table's render, one blank line
+// between two; a table kept and read but not drawn (HiddenTable) prints
+// nothing and leaves no gap. An empty table prints its header and footer.
+func RenderTables(title string, tables []Table, opts RenderOpts) string {
+	var parts []string
+	if title != "" {
+		parts = append(parts, oneline.Escape(title)+"\n")
+	}
+	for _, t := range tables {
+		if t.HiddenTable {
+			continue // set --hidden: kept and read, not drawn, and drawn again by set --visible with no restart
+		}
+		o := opts
+		o.Title = t.Name // every block says which table it is
+		parts = append(parts, Render(t, o))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// moneyFold is the footer of a text column of money amounts (a cost: "$1.24"), or
+// ok false for a column that holds none. A cell is an amount, "$" and a decimal, or
+// "-" or blank for none; a column whose cells are only those, one at least an amount
+// or "-", folds them exactly (math/big, never a float) to dollars and cents (Cents), "-"
+// when no cell is an amount, and "?" when an amount is not a decimal. Any other text
+// in the column leaves it to the whole-number fold.
+func moneyFold(c Column, rows []Row) (string, bool) {
+	if c.Projection != Text {
+		return "", false
+	}
+	var amounts []string
+	marked := false
+	for _, r := range rows {
+		v := r.Texts[c.Name]
+		switch {
+		case v == "":
+		case v == "-":
+			marked = true
+		case strings.HasPrefix(v, "$"):
+			marked = true
+			amounts = append(amounts, v[1:])
+		default:
+			return "", false
+		}
+	}
+	if !marked {
+		return "", false
+	}
+	if len(amounts) == 0 {
+		return "-", true
+	}
+	var acc *big.Rat
+	for _, a := range amounts {
+		x, ok := new(big.Rat).SetString(a)
+		if !ok || strings.ContainsAny(a, "eE/") {
+			return "?", true
+		}
+		switch {
+		case acc == nil:
+			acc = x
+		case c.Fold == Sum:
+			acc.Add(acc, x)
+		case x.Cmp(acc) > 0:
+			acc = x
+		}
+	}
+	return cardcost.Cents(acc), true
 }

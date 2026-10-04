@@ -1,5 +1,0 @@
-{
-  "field": "body.raw_usage.input.reason",
-  "rule": "present_with_reason",
-  "verdict": "refused"
-}

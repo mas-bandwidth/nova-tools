@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -155,7 +158,7 @@ func everythingShown(t *testing.T, password string) []showing {
 	conn, err := open(ctx, Options{Env: GeneralEnv}, env, store.dial)
 	out = append(out, failed("Open", err)...)
 	if err != nil {
-		t.Fatalf("Open with the password %q: %v", password, err)
+		require.NoError(t, err, "Open with the password %q: %v", password, err)
 	}
 	trips := CountTrips(conn.Client())
 	refusal := conn.Client().LPush(WithTripLabel(ctx, "push"), "k", "v").Err()
@@ -191,7 +194,7 @@ func everythingShown(t *testing.T, password string) []showing {
 	store = newFakeStore(t, echoing)
 	_, err = open(ctx, Options{Env: GeneralEnv}, env, store.dial)
 	if err == nil {
-		t.Fatalf("Open to a store that refuses every login, with the password %q: no error", password)
+		require.Error(t, err, "Open to a store that refuses every login, with the password %q: no error", password)
 	}
 	for _, s := range failed("Open, the store writing the login into its refusal", err) {
 		s.varies = true
@@ -203,7 +206,7 @@ func everythingShown(t *testing.T, password string) []showing {
 	})
 	_, err = open(ctx, Options{Env: GeneralEnv}, env, store.dial)
 	if err == nil {
-		t.Fatalf("Open to a store that echoes as malformed handshake, with the password %q: no error", password)
+		require.Error(t, err, "Open to a store that echoes as malformed handshake, with the password %q: no error", password)
 	}
 	for _, s := range failed("Open, the store writing the password into a malformed handshake reply", err) {
 		s.varies = true
@@ -239,11 +242,11 @@ func TestPropertyNoSecretIsEverShown(t *testing.T) {
 	t.Parallel()
 	reference := everythingShown(t, referencePassword)
 	if len(reference) < 150 {
-		t.Fatalf("only %d things gathered; the gathering is broken", len(reference))
+		require.GreaterOrEqual(t, len(reference), 150, "only %d things gathered; the gathering is broken", len(reference))
 	}
 	for _, s := range reference {
 		if strings.Contains(s.text, referencePassword) {
-			t.Fatalf("%s shows the reference password: %q", s.what, s.text)
+			require.NotContains(t, s.text, referencePassword, "%s shows the reference password: %q", s.what, s.text)
 		}
 	}
 
@@ -260,12 +263,12 @@ func TestPropertyNoSecretIsEverShown(t *testing.T) {
 			password := arbitraryPassword(r)
 			shown := everythingShown(t, password)
 			if !envName(password) && len(shown) != len(reference) {
-				t.Fatalf("seed %d case %d password %q: %d things shown, %d under the reference password", seed, i, password, len(shown), len(reference))
+				require.FailNowf(t, "", "seed %d case %d password %q: %d things shown, %d under the reference password", seed, i, password, len(shown), len(reference))
 			}
 			for n, s := range shown {
 				ref := reference[n]
 				if s.what != ref.what {
-					t.Fatalf("seed %d case %d password %q: thing %d is %q, and %q under the reference password", seed, i, password, n, s.what, ref.what)
+					require.EqualValues(t, ref.what, s.what, "seed %d case %d password %q: thing %d is %q, and %q under the reference password", seed, i, password, n, s.what, ref.what)
 				}
 				looked++
 				if strings.Contains(under[s.of], password) {
@@ -280,17 +283,17 @@ func TestPropertyNoSecretIsEverShown(t *testing.T) {
 						continue
 					}
 					if strings.Contains(s.text, spelling) {
-						t.Fatalf("seed %d case %d password %q: %s shows it (as %q):\n%q", seed, i, password, s.what, spelling, s.text)
+						require.NotContains(t, s.text, spelling, "seed %d case %d password %q: %s shows it (as %q):\n%q", seed, i, password, s.what, spelling, s.text)
 					}
 				}
 				if !s.varies && s.text != ref.text {
-					t.Fatalf("seed %d case %d password %q: %s depends on the password:\n%q\nunder the reference password:\n%q", seed, i, password, s.what, s.text, ref.text)
+					require.FailNowf(t, "", "seed %d case %d password %q: %s depends on the password:\n%q\nunder the reference password:\n%q", seed, i, password, s.what, s.text, ref.text)
 				}
 			}
 		}
 	}
 	if held*10 < looked*9 {
-		t.Errorf("only %d of %d things shown were held to the property; it is checking too little", held, looked)
+		assert.GreaterOrEqual(t, held*10, looked*9, "only %d of %d things shown were held to the property; it is checking too little", held, looked)
 	}
 	t.Logf("%d things shown, %d held to the property", looked, held)
 }
@@ -328,19 +331,19 @@ func TestAPasswordThatIsAWordOfTheMessages(t *testing.T) {
 		store := newFakeStore(t, c.reply)
 		_, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": c.password}), store.dial)
 		if err == nil || err.Error() != c.want {
-			t.Errorf("password %q:\n got %v\nwant %s", c.password, err, c.want)
+			assert.Failf(t, "", "password %q:\n got %v\nwant %s", c.password, err, c.want)
 			continue
 		}
 		if got := Classify(err); got != c.class {
-			t.Errorf("password %q: class %v; want %v", c.password, got, c.class)
+			assert.EqualValues(t, c.class, got, "password %q: class %v; want %v", c.password, got, c.class)
 		}
 		cause := errors.Unwrap(err)
 		if cause == nil || (cause.Error() != withheld && cause.Error() != "***") || errors.Unwrap(cause) != nil {
-			t.Errorf("password %q: the error unwraps to %#v; want the withheld text and nothing under it", c.password, cause)
+			assert.Failf(t, "", "password %q: the error unwraps to %#v; want the withheld text and nothing under it", c.password, cause)
 		}
 		for _, shown := range errorsText(err) {
 			if strings.Contains(shown, c.raw) {
-				t.Errorf("password %q: %q shows what came back, %q", c.password, shown, c.raw)
+				assert.NotContains(t, shown, c.raw, "password %q: %q shows what came back, %q", c.password, shown, c.raw)
 			}
 		}
 	}
@@ -356,17 +359,17 @@ func TestPropertyThePasswordReachesTheStoreAndNothingElse(t *testing.T) {
 		store := newFakeStore(t, accepting)
 		conn, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": password}), store.dial)
 		if err != nil {
-			t.Fatalf("case %d password %q: %v", i, password, err)
+			require.NoError(t, err, "case %d password %q: %v", i, password, err)
 		}
 		if err := conn.Client().Set(context.Background(), "k", "v", 0).Err(); err != nil {
-			t.Fatalf("case %d password %q: %v", i, password, err)
+			require.NoError(t, err, "case %d password %q: %v", i, password, err)
 		}
 		got := store.commands()
 		if len(got) != 2 || got[0] != "1: hello 3 auth bench "+password || got[1] != "1: set k v" {
-			t.Fatalf("case %d password %q: the store received %q", i, password, got)
+			require.FailNowf(t, "", "case %d password %q: the store received %q", i, password, got)
 		}
 		if err := conn.Close(); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 }

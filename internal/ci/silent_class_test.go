@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
@@ -21,17 +24,10 @@ const silentAllowlistPath = "testdata/silent_allowlist.txt"
 
 // silentLivePackages are the packages of the copy model's live path (Glenn
 // 2026-09-26 11:30 AM ET: "every verb in nova tools related to current work
-// should not fail silently"): the reconciler and its duties, the table,
-// the wrapper and the copy ledger, the launcher, the function library
-// loader, capacity and the pipeline reader. The nova-sprint verbs were first
-// on this list; they moved to deprecated/cmd/nova-sprint (deprecated, Glenn
-// 2026-09-27) and left it. A new live package is added here, never the other
-// way round.
+// should not fail silently"): the function library loader, the table and its
+// tool. A new live package is added here, never the other way round.
 var silentLivePackages = []string{
-	"internal/nsprint/reconcile", "internal/nsprint/taskcard", "internal/nsprint/table",
-	"internal/nsprint/card", "internal/nsprint/launch", "internal/nsprint/fn",
-	"internal/nsprint/capacity", "internal/nsprint/pipeerr",
-	"internal/ntable", "cmd/nova-table",
+	"internal/nsprint/fn", "internal/ntable", "cmd/nova-table",
 }
 
 // silentErrIdent is an identifier that holds an error by its name: err,
@@ -71,9 +67,7 @@ func TestNoSilentFailureOnTheLivePath(t *testing.T) {
 	}
 
 	for _, src := range tree.GoFilesUnder(false, silentLivePackages...) {
-		if src.ParseErr != nil {
-			t.Fatal(src.ParseErr)
-		}
+		require.NoError(t, src.ParseErr)
 		rel := src.Rel
 		for _, decl := range src.AST.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -113,7 +107,7 @@ func TestNoSilentFailureOnTheLivePath(t *testing.T) {
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -147,9 +141,8 @@ func readSilentAllowlist(t *testing.T) *allowlist.List {
 	t.Helper()
 	allow := loadAllowlist(t, silentAllowlistPath, shrinkOnly)
 	for _, row := range allow.Rows() {
-		if _, reason, _ := strings.Cut(row.Text, " "); strings.TrimSpace(reason) == "" {
-			t.Errorf("%s: %q carries no reason; a row says why the shape is judged not silent", silentAllowlistPath, row.Text)
-		}
+		_, reason, _ := strings.Cut(row.Text, " ")
+		assert.NotEmpty(t, strings.TrimSpace(reason), "%s: %q carries no reason; a row says why the shape is judged not silent", silentAllowlistPath, row.Text)
 	}
 	return allow
 }
@@ -178,9 +171,7 @@ func g() (int, error) { return 0, nil }
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "p.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var discards, literals int
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -195,10 +186,6 @@ func g() (int, error) { return 0, nil }
 		}
 		return true
 	})
-	if discards != 1 {
-		t.Errorf("discards = %d, want 1 (only `_ = err`)", discards)
-	}
-	if literals != 2 {
-		t.Errorf("literals = %d, want 2 (the const and the local string, never the comment)", literals)
-	}
+	assert.Equal(t, 1, discards, "discards = %d, want 1 (only `_ = err`)", discards)
+	assert.Equal(t, 2, literals, "literals = %d, want 2 (the const and the local string, never the comment)", literals)
 }

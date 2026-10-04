@@ -32,8 +32,9 @@ func toCamel(s string) string {
 	return strings.Join(parts, "")
 }
 
-// Rule writes a new class rule skeleton into root.
-func Rule(root, name string) ([]string, error) {
+// RuleFiles renders a new class rule skeleton for root without writing it:
+// what Write lays down, and what Check walks for a dry run.
+func RuleFiles(root, name string) ([]Planned, error) {
 	if !ruleNameRe.MatchString(name) {
 		return nil, fmt.Errorf("rule name %q must start with a lowercase letter and contain only 1-32 lowercase letters, digits, '_' or '-'", name)
 	}
@@ -69,6 +70,5 @@ func Rule(root, name string) ([]string, error) {
 			Data: data,
 		})
 	}
-
-	return Write(root, outs)
+	return outs, nil
 }

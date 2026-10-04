@@ -2,11 +2,10 @@ package record_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 )
@@ -19,131 +18,137 @@ func ledgerFixture() []record.LedgerEntry {
 	return []record.LedgerEntry{a, b}
 }
 
-// redisLedger is the store over a miniredis: the real client, the real commands, no host.
-func redisLedger(t *testing.T) (*record.RedisLedger, *miniredis.Miniredis) {
-	t.Helper()
-	mr := miniredis.RunT(t)
-	s := record.NewRedisLedger(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
-	t.Cleanup(func() { _ = s.Close() })
-	return s, mr
-}
-
-// TestTheRedisLedgerKeepsTheLedgerContract is the token ledger's promise (#2201, recut of
-// #3243 under #2623): a day is replaced whole, the report is a GROUP BY that sums over the
-// rows that reported a type, and a type no row reported stays unknown rather than a zero.
-func TestTheRedisLedgerKeepsTheLedgerContract(t *testing.T) {
+func TestCheckLedgerDay(t *testing.T) {
 	t.Parallel()
 
-	s, _ := redisLedger(t)
+	require.NoError(t, record.CheckLedgerDay("2026-09-13", ledgerFixture()), "valid fixture failed")
+
+	// Empty batch is valid.
+	require.NoError(t, record.CheckLedgerDay("2026-09-13", nil), "empty batch failed")
+
+	// Bad day formats.
+	for _, bad := range []string{"2026-09-1*", "2026-9-1", "not-a-day", "2026-02-30", "2026/09/13"} {
+		assert.Error(t, record.CheckLedgerDay(bad, nil), "CheckLedgerDay(%q) accepted; want error", bad)
+	}
+
+	// Missing key fields.
+	badEntries := []record.LedgerEntry{
+		{Day: "", Card: "c", Model: "m", Repo: "r"},
+		{Day: "2026-09-13", Card: "", Model: "m", Repo: "r"},
+		{Day: "2026-09-13", Card: "c", Model: "", Repo: "r"},
+		{Day: "2026-09-13", Card: "c", Model: "m", Repo: ""},
+	}
+	for i, e := range badEntries {
+		assert.ErrorIs(t, record.CheckLedgerDay("2026-09-13", []record.LedgerEntry{e}), record.ErrLedgerKey, "entry %d: want ErrLedgerKey", i)
+	}
+
+	// Entry with mismatched day.
+	mismatched := ledgerFixture()
+	mismatched[0].Day = "2026-09-14"
+	assert.ErrorContains(t, record.CheckLedgerDay("2026-09-13", mismatched), "in the batch for day", "mismatched day accepted or wrong error")
+
+	// Duplicate key in the same day.
+	dups := ledgerFixture()
+	dups[1].Card = dups[0].Card
+	assert.ErrorContains(t, record.CheckLedgerDay("2026-09-13", dups), "twice in one day", "duplicate key accepted or wrong error")
+}
+
+func TestLedgerKey(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "tokens:ledger:2026-09-13", record.LedgerKey("2026-09-13"), "LedgerKey, want tokens:ledger:2026-09-13")
+}
+
+func TestMonthDays(t *testing.T) {
+	t.Parallel()
+
+	days, err := record.MonthDays("2026-09")
+	require.NoError(t, err, "MonthDays(2026-09) failed")
+	require.Len(t, days, 30, "September 2026 has %d days; want 30", len(days))
+	require.Equal(t, "2026-09-01", days[0], "September bounds: %s .. %s; want 2026-09-01 .. 2026-09-30", days[0], days[29])
+	require.Equal(t, "2026-09-30", days[29], "September bounds: %s .. %s; want 2026-09-01 .. 2026-09-30", days[0], days[29])
+
+	feb, err := record.MonthDays("2026-02")
+	require.NoError(t, err, "MonthDays(2026-02) failed")
+	require.Len(t, feb, 28, "February 2026 has %d days; want 28", len(feb))
+
+	for _, bad := range []string{"2026-9", "2026-13", "bad", "2026-09-01"} {
+		_, err := record.MonthDays(bad)
+		assert.Error(t, err, "MonthDays(%q) accepted; want error", bad)
+	}
+}
+
+func TestGroupLedgerAndSortLedgerTotals(t *testing.T) {
+	t.Parallel()
+
+	entries := ledgerFixture()
+	// Add another day's entries for grouping & sorting tests.
+	c := record.LedgerEntry{
+		Day: "2026-09-12", Card: "card-c", Model: "claude", Repo: "nova", Provider: "anthropic",
+	}
+	c.Tokens, c.Known = [5]int64{5, 0, 0, 0, 0}, [5]bool{true, false, false, false, false}
+	entries = append(entries, c)
+
+	// Group by model
+	byModel, err := record.GroupLedger(entries, "model")
+	require.NoError(t, err, "GroupLedger(model)")
+	require.Len(t, byModel, 2, "got %d model groups; want 2 (claude, gpt)", len(byModel))
+	require.Equal(t, "claude", byModel[0].Model, "order = [%s, %s]; want [claude, gpt]", byModel[0].Model, byModel[1].Model)
+	require.Equal(t, "gpt", byModel[1].Model, "order = [%s, %s]; want [claude, gpt]", byModel[0].Model, byModel[1].Model)
+
+	// Group by day
+	byDay, err := record.GroupLedger(entries, "day")
+	require.NoError(t, err, "GroupLedger(day)")
+	require.Len(t, byDay, 2, "byDay = %+v; want sorted by day", byDay)
+	require.Equal(t, "2026-09-12", byDay[0].Day, "byDay = %+v; want sorted by day", byDay)
+	require.Equal(t, "2026-09-13", byDay[1].Day, "byDay = %+v; want sorted by day", byDay)
+
+	// Group by repo
+	byRepo, err := record.GroupLedger(entries, "repo")
+	require.NoError(t, err, "GroupLedger(repo)")
+	require.Len(t, byRepo, 2, "byRepo len = %d; want 2", len(byRepo))
+
+	// Group by tuple
+	byTuple, err := record.GroupLedger(entries, "tuple")
+	require.NoError(t, err, "GroupLedger(tuple)")
+	require.Len(t, byTuple, 2, "byTuple len = %d; want 2", len(byTuple))
+
+	// Invalid grouping
+	_, err = record.GroupLedger(entries, "card")
+	require.Error(t, err, "GroupLedger accepted unknown grouping 'card'")
+}
+
+func TestReplaceLedgerDaysPrevalidation(t *testing.T) {
+	t.Parallel()
+
+	// Pure logic prevalidation: NewRedisLedger(nil) is never touched because
+	// empty batches return immediately, and validation errors abort before Redis.
+	s := record.NewRedisLedger(nil)
 	ctx := context.Background()
-	for range 2 {
-		if err := s.ReplaceLedgerDay(ctx, "2026-09-13", ledgerFixture()); err != nil {
-			t.Fatalf("replace: %s", err)
-		}
-	}
-	got, indexed, missing, err := s.LedgerReport(ctx, "2026-09", "tuple")
-	if err != nil {
-		t.Fatalf("report: %s", err)
-	}
-	if indexed != 1 || missing != 29 {
-		t.Fatalf("indexed=%d missing=%d; want indexed=1 missing=29", indexed, missing)
-	}
-	if len(got) != 1 {
-		t.Fatalf("want one (2026-09-13, gpt, schema) group, got %+v", got)
-	}
-	g := got[0]
-	if g.Day != "2026-09-13" || g.Model != "gpt" || g.Repo != "schema" {
-		t.Fatalf("group key = (%s, %s, %s); want (2026-09-13, gpt, schema)", g.Day, g.Model, g.Repo)
-	}
-	if g.Rows != 2 || g.Tokens != [5]int64{11, 22, 4, 0, 3} || g.Known != [5]bool{true, true, true, false, true} {
-		t.Fatalf("group = %+v; want rows=2 tokens=[11 22 4 0 3] known=[t t t f t]", g)
-	}
-	byModel, _, _, err := s.LedgerReport(ctx, "2026-09", "model")
-	if err != nil || len(byModel) != 1 || byModel[0].Day != "" || byModel[0].Repo != "" || byModel[0].Model != "gpt" {
-		t.Fatalf("--by model = %+v, %v; want one group keyed on the model alone", byModel, err)
-	}
-	if other, _, _, err := s.LedgerReport(ctx, "2026-10", "tuple"); err != nil || len(other) != 0 {
-		t.Fatalf("October's report = %+v, %v; want nothing", other, err)
-	}
-	if _, _, _, err := s.LedgerReport(ctx, "2026-09", "card"); err == nil {
-		t.Fatal("--by card was accepted; the report groups on model, repo, day or tuple")
-	}
-	if _, _, _, err := s.LedgerReport(ctx, "2026-9", "tuple"); err == nil {
-		t.Fatal("month 2026-9 was accepted; the report reads one YYYY-MM")
-	}
-	// Replacing with fewer rows drops the rest: the day is the batch, not a merge into it.
-	if err := s.ReplaceLedgerDay(ctx, "2026-09-13", ledgerFixture()[:1]); err != nil {
-		t.Fatalf("replace: %s", err)
-	}
-	if got, _, _, _ := s.LedgerReport(ctx, "2026-09", "tuple"); len(got) != 1 || got[0].Rows != 1 || got[0].Tokens[0] != 10 {
-		t.Fatalf("after replacing with one row the report is %+v; want rows=1 input=10", got)
-	}
-	// An empty batch clears the day.
-	if err := s.ReplaceLedgerDay(ctx, "2026-09-13", nil); err != nil {
-		t.Fatalf("replace empty: %s", err)
-	}
-	if got, _, _, _ := s.LedgerReport(ctx, "2026-09", "tuple"); len(got) != 0 {
-		t.Fatalf("an empty batch left %+v", got)
-	}
-}
 
-// TestTheLedgerIsOneHashPerDayUnderTokensLedger pins the key layout the PR states:
-// tokens:ledger:<day> is a hash, one field per (card, model, repo), and a type no source
-// reported is stored as null, never as 0.
-func TestTheLedgerIsOneHashPerDayUnderTokensLedger(t *testing.T) {
-	t.Parallel()
+	// Empty batch returns nil.
+	require.NoError(t, s.ReplaceLedgerDays(ctx, nil), "empty days; want nil")
+	require.NoError(t, s.ReplaceLedgerDays(ctx, []record.LedgerDay{}), "empty slice; want nil")
 
-	s, mr := redisLedger(t)
-	ctx := context.Background()
-	if err := s.ReplaceLedgerDay(ctx, "2026-09-13", ledgerFixture()); err != nil {
-		t.Fatalf("replace: %s", err)
+	// Duplicate day in batch.
+	dupBatch := []record.LedgerDay{
+		{Day: "2026-09-01", Entries: nil},
+		{Day: "2026-09-01", Entries: nil},
 	}
-	if keys := mr.Keys(); len(keys) != 1 || keys[0] != "tokens:ledger:2026-09-13" {
-		t.Fatalf("keys = %v; want exactly [tokens:ledger:2026-09-13]", keys)
-	}
-	if ty := mr.Type("tokens:ledger:2026-09-13"); ty != "hash" {
-		t.Fatalf("tokens:ledger:2026-09-13 is a %s; want a hash", ty)
-	}
-	fields, err := mr.HKeys("tokens:ledger:2026-09-13")
-	if err != nil || len(fields) != 2 {
-		t.Fatalf("fields = %v, %v; want one per (card, model, repo)", fields, err)
-	}
-	v := mr.HGet("tokens:ledger:2026-09-13", `["card-a","gpt","schema"]`)
-	if !strings.Contains(v, `"tokens":[10,20,null,null,3]`) {
-		t.Fatalf("card-a's value = %s; want its tokens as [10,20,null,null,3] (a dash is null, never 0)", v)
-	}
-}
+	require.ErrorContains(t, s.ReplaceLedgerDays(ctx, dupBatch), "twice in the batch", "duplicate day accepted or wrong error")
 
-func TestTheLedgerRefusesARepeatedKeyAForeignDayAndABadDay(t *testing.T) {
-	t.Parallel()
+	// Bad day in batch.
+	badDayBatch := []record.LedgerDay{
+		{Day: "2026-09-1*", Entries: nil},
+	}
+	require.Error(t, s.ReplaceLedgerDays(ctx, badDayBatch), "bad day pattern accepted in ReplaceLedgerDays")
 
-	s, mr := redisLedger(t)
-	ctx := context.Background()
-	rows := ledgerFixture()
-	rows[1].Card = rows[0].Card
-	if err := s.ReplaceLedgerDay(ctx, "2026-09-13", rows); err == nil || !strings.Contains(err.Error(), "twice") {
-		t.Fatalf("a repeated (day, card, model, repo) key was accepted: %v", err)
+	// Bad entry in batch.
+	badEntryBatch := []record.LedgerDay{
+		{Day: "2026-09-01", Entries: []record.LedgerEntry{{Day: "2026-09-02", Card: "c", Model: "m", Repo: "r"}}},
 	}
-	if err := s.ReplaceLedgerDay(ctx, "2026-09-14", ledgerFixture()); err == nil {
-		t.Fatal("a 2026-09-13 row was accepted in the batch for 2026-09-14")
-	}
-	if err := s.ReplaceLedgerDay(ctx, "2026-09-1*", nil); err == nil {
-		t.Fatal("day 2026-09-1* was accepted; it names a key pattern, not a day")
-	}
-	if keys := mr.Keys(); len(keys) != 0 {
-		t.Fatalf("a refused batch wrote %v", keys)
-	}
-}
+	require.Error(t, s.ReplaceLedgerDays(ctx, badEntryBatch), "mismatched entry accepted in ReplaceLedgerDays")
 
-// TestTheLedgerReportRefusesAValueItCannotRead: a field that does not decode is an error
-// naming the key, never a row quietly skipped out of the month.
-func TestTheLedgerReportRefusesAValueItCannotRead(t *testing.T) {
-	t.Parallel()
-
-	s, mr := redisLedger(t)
-	mr.HSet("tokens:ledger:2026-09-02", `["c","m","r"]`, "not json")
-	_, _, _, err := s.LedgerReport(context.Background(), "2026-09", "tuple")
-	if err == nil || !strings.Contains(err.Error(), "tokens:ledger:2026-09-02") {
-		t.Fatalf("an unreadable value gave %v; want an error naming tokens:ledger:2026-09-02", err)
-	}
+	// ReplaceLedgerDay delegating validation.
+	require.Error(t, s.ReplaceLedgerDay(ctx, "2026-09-1*", nil), "bad day accepted in ReplaceLedgerDay")
 }

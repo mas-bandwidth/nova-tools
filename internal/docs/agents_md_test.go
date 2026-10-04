@@ -3,10 +3,12 @@ package docs
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // agents_md_test.go holds AGENTS.md — the ONE page a friend's harness reads
@@ -36,44 +38,44 @@ import (
 // agentsPath is the one page, relative to this package.
 const agentsPath = "../../AGENTS.md"
 
-// contributingPath is where the prose rules live (S11, nova-tools#2498).
-const contributingPath = "../../docs/CONTRIBUTING.md"
+// standardPath is the one standard, which the root AGENTS.md embeds whole, and
+// which carries the ten rules never to break and every class rule by name.
+const standardPath = "../../docs/STANDARD.md"
 
-// agentsLineCap is the ceiling. Every harness pays this at session start.
-const agentsLineCap = 120
+// agentsLineCap is the ceiling. Every harness pays this at session start. It
+// is 150 because the page embeds the one standard (docs/STANDARD.md, one line
+// per paragraph), which carries the ten rules, the five onboarding points and
+// the class rules by name; MaxRootBytes is the cap on what the page costs. It rose
+// from 150 to 170 with the section "Doing it right the first time" (eight
+// paragraphs) and MaxRootBytes's rise to 32 KiB: everything somebody should need
+// to know while building or working on nova-tools goes into AGENTS.md. The page is
+// 161 lines.
+const agentsLineCap = 170
 
 // harnessFiles are the per-harness files a harness would load INSTEAD of
 // AGENTS.md. None of them may stand in this tree. CLAUDE.md is the only one
 // today; a symlink counts, because what a harness opens is the contents.
 var harnessFiles = []string{"CLAUDE.md"}
 
-// classRuleRe reads the rule NAME out of a `### `name` — description` heading
-// in SPEC-CI.md's index.
-var classRuleRe = regexp.MustCompile("(?m)^### `([^`]+)` — ")
-
-// TestContributingPageNamesEveryClassRule holds the contract: CONTRIBUTING.md
-// carries the prose rules moved out of AGENTS.md (nova-tools#2498 S11) and must
-// name every class rule docs/SPEC-CI.md indexes, by rule name.
-func TestContributingPageNamesEveryClassRule(t *testing.T) {
+// TestStandardNamesEveryClassRule holds the contract: docs/STANDARD.md, which
+// the root AGENTS.md embeds whole, names every class rule docs/SPEC-CI.md
+// indexes, by rule name.
+func TestStandardNamesEveryClassRule(t *testing.T) {
 	t.Parallel()
 
-	contributingPageNamesEveryClassRule(t)
+	standardNamesEveryClassRule(t)
 }
 
-// contributingPageNamesEveryClassRule is the body both test names run; a test
-// that calls another Test would call t.Parallel twice.
-func contributingPageNamesEveryClassRule(t *testing.T) {
+// standardNamesEveryClassRule is the body both test names run; a test that
+// calls another Test would call t.Parallel twice.
+func standardNamesEveryClassRule(t *testing.T) {
 	t.Helper()
-	page, err := os.ReadFile(contributingPath)
-	if err != nil {
-		t.Fatalf("%s: %v; docs/CONTRIBUTING.md carries the prose and class rules — it is not optional", contributingPath, err)
-	}
+	page, err := os.ReadFile(standardPath)
+	require.NoError(t, err, "%s: %v; docs/STANDARD.md carries the ten rules and every class rule by name — it is not optional", standardPath, err)
 	body := string(page)
 
 	rules := classRuleNames(t)
-	if len(rules) == 0 {
-		t.Fatalf("%s: the %q section indexes no rule; this test is reading the wrong section", specCIPath, classTestSection)
-	}
+	require.NotEmpty(t, rules, "%s: the %q section indexes no rule; this test is reading the wrong section", specCIPath, classTestSection)
 
 	var missing []string
 	for _, name := range rules {
@@ -83,17 +85,18 @@ func contributingPageNamesEveryClassRule(t *testing.T) {
 	}
 	sort.Strings(missing)
 	for _, name := range missing {
-		t.Errorf("%s does not name the class rule `%s`; a friend meets that rule as a red and reads its name off the refusal, so CONTRIBUTING.md must list it — add it to the ten, or to the by-name index beside them, and keep the full entry in %s",
-			contributingPath, name, specCIPath)
+		t.Errorf("%s does not name the class rule `%s`; a friend meets that rule as a red and reads its name off the refusal, so docs/STANDARD.md must list it — run: make map, and keep the full entry in %s",
+			standardPath, name, specCIPath)
 	}
 }
 
-// TestAgentsPageNamesEveryClassRule preserves the historical test name while
-// asserting the contract in docs/CONTRIBUTING.md.
+// TestAgentsPageNamesEveryClassRule asserts the same contract under the name a
+// red has always carried: AGENTS.md names every class rule because it embeds
+// docs/STANDARD.md whole.
 func TestAgentsPageNamesEveryClassRule(t *testing.T) {
 	t.Parallel()
 
-	contributingPageNamesEveryClassRule(t)
+	standardNamesEveryClassRule(t)
 }
 
 // TestAgentsPageStaysUnderTheLineCap holds the ceiling.
@@ -101,14 +104,10 @@ func TestAgentsPageStaysUnderTheLineCap(t *testing.T) {
 	t.Parallel()
 
 	page, err := os.ReadFile(agentsPath)
-	if err != nil {
-		t.Fatalf("%s: %v", agentsPath, err)
-	}
+	require.NoError(t, err, "%s: %v", agentsPath, err)
 	lines := strings.Count(strings.TrimRight(string(page), "\n"), "\n") + 1
-	if lines > agentsLineCap {
-		t.Errorf("%s is %d lines, over the cap of %d; a harness that reads this page reads it at the start of every session, so the cost is paid on every turn — move the detail into docs/ and leave the rule and the link here",
-			agentsPath, lines, agentsLineCap)
-	}
+	assert.LessOrEqual(t, lines, agentsLineCap, "%s is %d lines, over the cap of %d; a harness that reads this page reads it at the start of every session, so the cost is paid on every turn — move the detail into docs/ and leave the rule and the link here",
+		agentsPath, lines, agentsLineCap)
 }
 
 // TestNoPerHarnessFileStandsBesideAgents holds the ruling: AGENTS.md alone.
@@ -118,9 +117,7 @@ func TestNoPerHarnessFileStandsBesideAgents(t *testing.T) {
 	root := filepath.Join("..", "..")
 	for _, name := range harnessFiles {
 		found, err := findHarnessFiles(root, name)
-		if err != nil {
-			t.Fatalf("walking for %s: %v", name, err)
-		}
+		require.NoError(t, err, "walking for %s: %v", name, err)
 		for _, rel := range found {
 			t.Errorf("%s stands beside AGENTS.md; Glenn, 2026-09-18: AGENTS.md alone — no %s, no pointer file, no symlink. Claude Code reads AGENTS.md exactly when no %s stands, so even a one-line pointer holds every Claude session on a file that says nothing while the other harnesses read the real page — delete it, and move anything it carried into AGENTS.md or under docs/",
 				rel, name, name)
@@ -129,13 +126,13 @@ func TestNoPerHarnessFileStandsBesideAgents(t *testing.T) {
 }
 
 // classRuleNames returns the rule names SPEC-CI.md's index declares, in the
-// order the section prints them.
+// deterministic order used by make map.
 func classRuleNames(t *testing.T) []string {
 	t.Helper()
-	var names []string
-	for _, m := range classRuleRe.FindAllStringSubmatch(classTestsSection(t), -1) {
-		names = append(names, m[1])
-	}
+	spec, err := os.ReadFile(specCIPath)
+	require.NoError(t, err)
+	names, err := classRules(string(spec))
+	require.NoError(t, err)
 	return names
 }
 
@@ -155,10 +152,6 @@ func findHarnessFiles(root, name string) ([]string, error) {
 		if d.IsDir() {
 			base := d.Name()
 			if base == ".git" || base == "testdata" || base == "node_modules" {
-				return filepath.SkipDir
-			}
-			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-			if rel == deprecatedDir {
 				return filepath.SkipDir
 			}
 			return nil

@@ -134,7 +134,7 @@ own checks.
 
 Two tools have a `quickstart` verb — `nova-memory` and `nova-check` — and
 **both still require paths or choices you supply**. `nova-bus`, `nova-tokens`,
-`nova-sandbox`, `nova-self-talk` and `nova-fuse` have none. Each entry below
+`nova-sandbox`, `nova-self-talk`, `nova-fuse` and `nova-cairn` have none. Each entry below
 names what its own first trial needs.
 
 ### nova-bus — a lasting conversation
@@ -214,6 +214,42 @@ warmly it is worded and whoever signs it.
 **It may not help if** you already have a channel everyone actually reads, or you
 are the only one here.
 
+### nova-swarm — more work at once
+
+**Try it when** you have bounded, independent jobs and workers configured to run
+them, and doing them one after another is what is slowing you down.
+
+**What it does.** Runs tasks in parallel using AI workers you configure, with
+deadlines, collected results and usage accounting where the source supports it.
+
+**You need** a card, a job directory under an explicit root, and a working
+harness and provider setup. A batch also needs a TSV naming its cards.
+**Native runs use `nova-sandbox` on every supported platform.** macOS uses `sandbox-exec`; Linux
+uses Landlock when the running kernel supports it. Windows has no containment
+backend yet.
+
+**First trial.** `nova-swarm template --name read-pr` prints the read-pr
+template. `nova-swarm lint --rules` prints the lint rules. Neither starts a
+worker nor spends a token. See the
+[first-run transcript](TESTS.md#nova-swarm) and
+[nova-swarm in the command reference](CLI.md#nova-swarm).
+
+**It worked if** several jobs finished inside their deadlines and you could read
+each result and the evidence behind it.
+
+**Limits and side effects.** It runs other programs, writes job directories, and
+spends real tokens once workers start. A worker exiting `0` means the process
+succeeded, **not** that the requested work is complete — read the evidence. A
+free worker helps only if its capabilities fit the task. The development branch
+adds `nova-sandbox run` on macOS; it is not in `v0.15.2`, and its Linux form
+refuses. On macOS, starting it from inside an existing sandbox may fail while
+creating its APFS volume because the outer wall does not permit the mount. Start
+the disposable volume from outside the existing wall; retrying the same nested
+command does not grant the missing mount access.
+
+**It may not help if** your work is mostly sequential, or you have no worker setup
+to point it at yet.
+
 ### nova-tokens — where the tokens went
 
 **Try it when** you cannot answer "how many tokens did this month use, by model
@@ -242,8 +278,8 @@ missing**, and declaring a copied transcript twice can double-count it. Coverage
 is limited to the sources it supports today. For transcript-backed sources the
 reader scans the supplied transcript tree even when `--day` selects only one
 day's output, so a broad tree can still make a one-day report expensive.
-A reported `usd=0` is not evidence that a request was free when no price is
-available. Token counts cover the sources you explicitly name; they are not a
+A cost no source reported prints `usd=-`, never `usd=0`: a dash is "not
+measured", and a zero is only ever a reported zero. Token counts cover the sources you explicitly name; they are not a
 complete account of work performed elsewhere.
 
 **It may not help if** your harness is not a supported source — in which case it
@@ -331,6 +367,36 @@ rest assert nothing, and its reference says which are which.
 **It may not help if** your record is small enough to just read, or is not
 Markdown.
 
+### nova-cairn — your words kept across a session's end
+
+**Try it when** a session is about to end and you want its words, exactly as
+written, somewhere you can read them back tomorrow, with when each was kept and
+where it came from.
+
+**What it does.** Opens a session record in a directory you name, appends your
+exact words under an entry id with a clock stamp and a source pointer, and reads
+them back as an index and per-entry receipts.
+
+**You need** a directory for the store (`--store`), a session id, and a
+publication policy named once at `open` (`never` for local only).
+
+**First trial.** `nova-cairn help` ends in four lines that are one sitting: an
+`open` that makes `./cairns`, an `append`, an `index` and a `receipt --text`
+that prints the words back. See the [first-run transcript](TESTS.md#nova-cairn)
+and [nova-cairn in the command reference](CLI.md#nova-cairn).
+
+**It worked if** `receipt --text` prints the words you appended, and a retry of
+the same append says `duplicate=true` rather than filing them twice.
+
+**Limits and side effects.** It writes plain files under the store you name and
+nowhere else; `--dry-run` on `open` and `append` writes nothing. The policy is
+recorded, not carried out: there is no transport, and every line says
+`published=false`. It keeps words and does nothing else with them: no
+summarizing, sealing, deleting or consolidating. A store of hand-kept markdown
+files, one per session, is read as it stands.
+
+**It may not help if** your notes already live somewhere you reread reliably.
+
 ### nova-check — a report of concrete problems
 
 **Try it when** you want to know whether your records are intact — broken links,
@@ -351,7 +417,10 @@ runs against this repository's included example. See the
 `OK` summary line per check when a check passes, and names the path and line when
 it does not.
 
-**Limits and side effects.** Read-only over the record it checks. It establishes
+**Limits and side effects.** Most checks only read the record they inspect; three
+verbs write when you ask them to: `dogfood record` appends a receipt to the
+directory you name, `spelling --write` edits the prose files in place, and
+`convergence --state` stores its tick history in the file you name. It establishes
 **only the properties it actually inspects** — a green result is not a general
 certificate. Every check here can say NO, and the test suite proves each one
 saying it.

@@ -12,7 +12,7 @@
 // dependency in the module.
 //
 // NOT MEASURED. Not one line below has run on a Windows machine: the estate has none
-// (2026-09-18). It cross-compiles, it vets, and its caller's sequence is proven against a
+// yet: it cross-compiles, it vets, and its caller's sequence is proven against a
 // fake. The first Windows bench proves the rest, and until it does the wall check at
 // winWallAvailable keeps the verb from claiming containment it has not got.
 package main
@@ -70,7 +70,7 @@ const (
 	startfUseStdHandles = 0x00000100
 
 	// PROC_THREAD_ATTRIBUTE_JOB_LIST (W3) and the slot the WALL fills
-	// (PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, rule 3 of the AppContainer section).
+	// (PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES).
 	// They are on ONE attribute list and therefore one CreateProcessW, which is why there is
 	// no ordering between the wall and the place to get wrong.
 	procThreadAttributeJobList              = 0x0002000D
@@ -183,12 +183,13 @@ type winJobHandle struct {
 	created time.Time
 }
 
-// winWallAvailable is rule 1 on windows, and today it says NO.
+// winWallAvailable is the windows form of "OS-enforced or refused", and today it says NO.
 //
 // The PLACE is this file. The WALL is the AppContainer body of the section above, and it is
 // not built: internal/sandbox/wrap_other.go is what compiles on windows and its Available
 // answers false. A place without a wall is a disposable directory, not containment, and a
-// tool that ran the command anyway would be the silent sandbox rule 1 exists to prevent --
+// tool that ran the command anyway would be the silent sandbox "OS-enforced or refused"
+// exists to prevent --
 // so the verb refuses, and the refusal names the half that is missing rather than saying
 // "the sandbox failed".
 //
@@ -266,6 +267,7 @@ func (winPlace) CreateJob(limits winLimits) (winJob, error) {
 		ext.JobMemoryLimit = uintptr(limits.MemoryBytes)
 	}
 	if err := setJobInfo(job.h, jobObjectExtendedLimitInformation, unsafe.Pointer(&ext), unsafe.Sizeof(ext)); err != nil {
+		// ignored: a close on the failure path; the SetInformationJobObject error is the one returned
 		_ = syscall.CloseHandle(job.h)
 		return nil, fmt.Errorf("SetInformationJobObject(JobObjectExtendedLimitInformation): %w", err)
 	}
@@ -277,6 +279,7 @@ func (winPlace) CreateJob(limits winLimits) (winJob, error) {
 			CPURate: uint32(limits.CPUPercent) * 100,
 		}
 		if err := setJobInfo(job.h, jobObjectCPURateControlInformation, unsafe.Pointer(&rate), unsafe.Sizeof(rate)); err != nil {
+			// ignored: a close on the failure path; the SetInformationJobObject error is the one returned
 			_ = syscall.CloseHandle(job.h)
 			return nil, fmt.Errorf("SetInformationJobObject(JobObjectCpuRateControlInformation): %w", err)
 		}
@@ -362,7 +365,7 @@ func (winPlace) Start(j winJob, spec winStartSpec) (winStarted, error) {
 		uintptr(unsafe.Pointer(cmdLine)),
 		0, // lpProcessAttributes
 		0, // lpThreadAttributes
-		1, // bInheritHandles: rule 12's inherited handle is this and the STARTUPINFOEX handle list, never fd 3
+		1, // bInheritHandles: the exec verb's transparency inherits stdio through this and the STARTUPINFOEX handle list, never fd 3
 		uintptr(extendedStartupInfoPresent|createUnicodeEnvironment|createNoWindow|createSuspended),
 		uintptr(unsafe.Pointer(&envBlock[0])),
 		uintptr(unsafe.Pointer(cwd)),
@@ -383,24 +386,33 @@ func (winPlace) Start(j winJob, spec winStartSpec) (winStarted, error) {
 	// worth making -- ask before the first instruction, and there is no window in which the
 	// answer could have been arranged.
 	if err := assertInJob(pi.Process, job.h); err != nil {
+		// ignored: the process never ran an instruction; the job assertion error is the one returned
 		_ = syscall.TerminateProcess(pi.Process, 1)
+		// ignored: a close on the failure path; the job assertion error is the one returned
 		_ = syscall.CloseHandle(pi.Thread)
+		// ignored: a close on the failure path; the job assertion error is the one returned
 		_ = syscall.CloseHandle(pi.Process)
 		return winStarted{}, sandbox.Refusal{Reason: "sandbox_failed", Text: err.Error()}
 	}
 	if _, err := resumeThread(pi.Thread); err != nil {
+		// ignored: the process never ran an instruction; the ResumeThread error is the one returned
 		_ = syscall.TerminateProcess(pi.Process, 1)
+		// ignored: a close on the failure path; the ResumeThread error is the one returned
 		_ = syscall.CloseHandle(pi.Thread)
+		// ignored: a close on the failure path; the ResumeThread error is the one returned
 		_ = syscall.CloseHandle(pi.Process)
 		return winStarted{}, fmt.Errorf("ResumeThread: %w", err)
 	}
+	// ignored: the thread handle is not needed once it runs; the process handle is the one waited on
 	_ = syscall.CloseHandle(pi.Thread)
 
 	done := make(chan int, 1)
 	go func() {
 		defer syscall.CloseHandle(pi.Process)
+		// ignored: an INFINITE wait on a handle this process owns; GetExitCodeProcess below reports what went wrong
 		_, _ = syscall.WaitForSingleObject(pi.Process, syscall.INFINITE)
 		var code uint32
+		// ignored: the child's end is reported as ExitNotExecuted on the channel, which the caller prints
 		if err := syscall.GetExitCodeProcess(pi.Process, &code); err != nil {
 			done <- sandbox.ExitNotExecuted
 			return
@@ -476,8 +488,8 @@ func (winPlace) Used(dir string) (int64, error) {
 // image cannot be removed: a rename over a running .exe raises ERROR_SHARING_VIOLATION and
 // unix's replace-the-inode trick has no equivalent on NTFS.
 // The removal itself is safepath.RemoveUnder(root, dir) and never a bare os.RemoveAll:
-// deletion in this repository is a verb over a path VALIDATED BELOW A ROOT (Glenn,
-// 2026-09-17, "it is just one mistake away from deleting the whole disk"), and the class test
+// deletion in this repository is a verb over a path VALIDATED BELOW A ROOT, because an
+// unvalidated deletion is one mistaken path away from deleting the whole disk, and the class test
 // in internal/ci refuses every other spelling. The root is the caller's --scratch, so a
 // --name that somehow escaped okName still cannot reach a directory outside the place the
 // caller named.
@@ -617,7 +629,9 @@ func (winPlace) StartWSB(file, xml string) error {
 	if r == 0 {
 		return fmt.Errorf("CreateProcessW(%s): %w", exe, errno)
 	}
+	// ignored: the sandbox runs on its own; these handles are not needed after CreateProcessW
 	_ = syscall.CloseHandle(pi.Thread)
+	// ignored: the sandbox runs on its own; these handles are not needed after CreateProcessW
 	_ = syscall.CloseHandle(pi.Process)
 	return nil
 }
@@ -627,6 +641,7 @@ func (winPlace) StartWSB(file, xml string) error {
 // the documented one, and the first call is EXPECTED to fail with ERROR_INSUFFICIENT_BUFFER.
 func newAttributeList(n int) (*byte, func(), error) {
 	var size uintptr
+	// ignored: the sizing call is documented to fail with ERROR_INSUFFICIENT_BUFFER; size is checked on the next line
 	_, _, _ = procInitializeProcThreadAttrList.Call(0, uintptr(n), 0, uintptr(unsafe.Pointer(&size)))
 	if size == 0 {
 		return nil, nil, fmt.Errorf("InitializeProcThreadAttributeList named no size for %d attributes", n)
@@ -639,6 +654,7 @@ func newAttributeList(n int) (*byte, func(), error) {
 	}
 	list := &buf[0]
 	return list, func() {
+		// ignored: a release of the attribute list after CreateProcessW has read it; nothing is left to report to
 		_, _, _ = procDeleteProcThreadAttributeList.Call(uintptr(unsafe.Pointer(list)))
 		// The list holds pointers INTO this allocation until CreateProcessW has read it, and
 		// the only thing referring to the allocation by then is this closure. Without the
@@ -665,6 +681,7 @@ func stdioHandles(spec winStartSpec) (in, out, errh syscall.Handle, closeAll fun
 	var toClose []*os.File
 	closeAll = func() {
 		for _, f := range toClose {
+			// ignored: a close of the child's inherited copies after it started; the child holds its own
 			_ = f.Close()
 		}
 	}
@@ -712,6 +729,7 @@ func readerHandle(r io.Reader) (syscall.Handle, *os.File, error) {
 	}
 	go func() {
 		defer pw.Close()
+		// ignored: a pipe pump; the child sees EOF when it ends, and its exit code is the report
 		_, _ = io.Copy(pw, r)
 	}()
 	h := syscall.Handle(pr.Fd())
@@ -733,6 +751,7 @@ func writerHandle(w io.Writer) (syscall.Handle, *os.File, error) {
 	}
 	go func() {
 		defer pr.Close()
+		// ignored: a pipe pump; the child's exit code is the report
 		_, _ = io.Copy(w, pr)
 	}()
 	h := syscall.Handle(pw.Fd())

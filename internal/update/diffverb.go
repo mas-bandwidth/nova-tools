@@ -1,15 +1,14 @@
 package update
 
 import (
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-
 	"bufio"
-	"flag"
 	"fmt"
-	"io"
+	"maps"
 	"os"
-	"sort"
+	"slices"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // readSnapshotFile reads the TSV `snapshot` writes. A missing or wrong header,
@@ -23,7 +22,7 @@ func readSnapshotFile(path string) (map[string]snapRow, error) {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 4096), 1024*1024)
 	if !sc.Scan() || sc.Text() != snapshotHeader {
-		return nil, fmt.Errorf("its header is not %q", snapshotHeader)
+		return nil, fmt.Errorf("its header is not %s", tabbed(snapshotHeader))
 	}
 	rows := map[string]snapRow{}
 	for sc.Scan() {
@@ -43,38 +42,26 @@ func readSnapshotFile(path string) (map[string]snapRow, error) {
 	return rows, nil
 }
 
-// diffVerb compares two snapshots and prints one line per changed binary. The
-// closing DIFF OK counts the state -- every name on either side -- not the
-// output.
-func diffVerb(name string, args []string, out, errs io.Writer) int {
-	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var from, to string
-	fs.StringVar(&from, "from", "", "snapshot to compare from")
-	fs.StringVar(&to, "to", "", "snapshot to compare to")
-	if err := verbflag.Parse(fs, interspersed(fs, args)); err != nil {
-		return refusal(errs, "DIFF", fmt.Errorf("%s (run %s help)", err, name))
-	}
-	var missing []string
-	if from == "" {
-		missing = append(missing, "--from")
-	}
-	if to == "" {
-		missing = append(missing, "--to")
-	}
-	if len(missing) > 0 {
-		return refusal(errs, "DIFF", fmt.Errorf("missing %s; refusing to guess (supply each named flag; run: %s help)", strings.Join(missing, ", "), name))
-	}
-	if len(fs.Args()) != 0 {
-		return refusal(errs, "DIFF", fmt.Errorf("diff takes no positional arguments (run %s help)", name))
-	}
-	before, err := readSnapshotFile(from)
-	if err != nil {
-		return refusal(errs, "DIFF", fmt.Errorf("cannot read %s as a snapshot (%s) (write one with nova-version snapshot --bin <dir> --out <file.tsv>)", from, err))
-	}
-	after, err := readSnapshotFile(to)
-	if err != nil {
-		return refusal(errs, "DIFF", fmt.Errorf("cannot read %s as a snapshot (%s) (write one with nova-version snapshot --bin <dir> --out <file.tsv>)", to, err))
+// diffVerb compares two snapshots: one item per changed binary, and a DIFF OK
+// line that counts the state -- every name on either side -- not the output.
+func diffVerb(c *tool.Call) *tool.Out {
+	from, to := c.Str("from"), c.Str("to")
+	// Both files are read before either is refused, so one run names both.
+	before, errFrom := readSnapshotFile(from)
+	after, errTo := readSnapshotFile(to)
+	if errFrom != nil || errTo != nil {
+		var why []string
+		for _, f := range []struct {
+			path string
+			err  error
+		}{{from, errFrom}, {to, errTo}} {
+			if f.err != nil {
+				why = append(why, fmt.Sprintf("cannot read %s as a snapshot (%s)", f.path, f.err))
+			}
+		}
+		o := tool.Refuse(strings.Join(why, "; ") + " (write one with nova-version snapshot --bin <dir> --out <file.tsv>)")
+		o.Remedy = "nova-version snapshot -h"
+		return o
 	}
 	names := map[string]bool{}
 	for n := range before {
@@ -83,27 +70,26 @@ func diffVerb(name string, args []string, out, errs io.Writer) int {
 	for n := range after {
 		names[n] = true
 	}
-	ordered := make([]string, 0, len(names))
-	for n := range names {
-		ordered = append(ordered, n)
-	}
-	sort.Strings(ordered)
+	ordered := slices.Sorted(maps.Keys(names))
+	o := tool.Done().Fact("from", from).Fact("to", to).Fact("tools", len(ordered))
 	changed := 0
 	for _, n := range ordered {
 		a, inA := before[n]
 		b, inB := after[n]
-		switch {
-		case inA && inB && a == b:
+		if inA && inB && a == b {
 			continue
-		case !inA:
-			fmt.Fprintf(out, "DIFF CHANGED name=%s from=- to=%s\n", field(n), field(b.stamp))
-		case !inB:
-			fmt.Fprintf(out, "DIFF CHANGED name=%s from=%s to=-\n", field(n), field(a.stamp))
-		default:
-			fmt.Fprintf(out, "DIFF CHANGED name=%s from=%s to=%s\n", field(n), field(a.stamp), field(b.stamp))
 		}
+		o.Item("changed", "name", n, "from", stampOrDash(a.stamp, inA), "to", stampOrDash(b.stamp, inB))
 		changed++
 	}
-	fmt.Fprintf(out, "DIFF OK from=%s to=%s tools=%d changed=%d\n", field(from), field(to), len(ordered), changed)
-	return 0
+	return o.Fact("changed", changed)
+}
+
+// stampOrDash is a snapshot row's stamp, or "-" for a name absent on that side:
+// the same value in the lines and in the JSON.
+func stampOrDash(stamp string, present bool) string {
+	if !present {
+		return "-"
+	}
+	return stamp
 }

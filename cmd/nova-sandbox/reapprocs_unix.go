@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // procQueryBound is how long lsof or ps may take. A reap that hangs on a wedged
@@ -32,9 +34,9 @@ func processesUnder(mount string) ([]int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), procQueryBound)
 	defer cancel()
 	// -t is pids and nothing else; -w drops the warnings a mount in flux produces.
-	cmd := exec.CommandContext(ctx, "/usr/sbin/lsof", "-t", "-w", "--", mount)
+	cmd := subproc.Context(ctx, "/usr/sbin/lsof", "-t", "-w", "--", mount)
 	if found, err := exec.LookPath("lsof"); err == nil {
-		cmd = exec.CommandContext(ctx, found, "-t", "-w", "--", mount)
+		cmd = subproc.Context(ctx, found, "-t", "-w", "--", mount)
 	}
 	out, err := cmd.Output()
 	if err != nil && ctx.Err() != nil {
@@ -93,7 +95,7 @@ func processStart(pid int) (string, error) {
 	if found, err := exec.LookPath("ps"); err == nil {
 		bin = found
 	}
-	out, err := exec.CommandContext(ctx, bin, "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	out, err := subproc.Context(ctx, bin, "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return "", err
 	}

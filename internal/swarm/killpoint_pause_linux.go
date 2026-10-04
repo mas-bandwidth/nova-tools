@@ -19,8 +19,10 @@ func CheckPausePoint(point string) {
 			waitForOrphan(injectedWait)
 		}
 		if mark := os.Getenv("NOVA_SWARM_PAUSE_MARK"); mark != "" {
+			// ignored: a test-only kill point; the mark is a hint for the test harness, which times out without it
 			_ = os.WriteFile(mark, []byte("about to stop\n"), 0o644)
 		}
+		// ignored: a test-only kill point stopping itself; a failed stop leaves the run going, which the test reads
 		_ = syscall.Tgkill(os.Getpid(), syscall.Gettid(), syscall.SIGSTOP)
 	}
 }

@@ -3,13 +3,15 @@ package secrets
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
-	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -28,14 +30,9 @@ type GateInput struct {
 // "GATE REFUSE rule=<n> file=<f>: <why>" at exit 2.
 func RunGate(in GateInput) (string, int) {
 	storeDir, base, head := in.StoreDir, in.Base, in.Head
-	if storeDir == "" {
-		return "SECRETS REFUSED: missing --store <dir>", 2
-	}
-	if base == "" {
-		return "SECRETS REFUSED: missing --base <git ref>", 2
-	}
-	if head == "" {
-		return "SECRETS REFUSED: missing --head <git ref>", 2
+	// The flags only: the gate judges any working copy, a store with no seat yet included.
+	if err := preflight("", need{storeDir, "--store <dir>", false}, need{base, "--base <git ref>", false}, need{head, "--head <git ref>", false}); err != nil {
+		return "SECRETS GATE REFUSED: " + oneline.WithRemedy(err.Error(), "nova-secrets gate -h"), 2
 	}
 	// The two refs become commits before anything reads them. A ref is handed to git as an
 	// argument, and one beginning with "-" is read by git as an OPTION: --head=--diff-filter=U
@@ -45,7 +42,7 @@ func RunGate(in GateInput) (string, int) {
 	// resolved SHA, again behind --end-of-options.
 	for _, r := range []struct{ flag, ref string }{{"--base", base}, {"--head", head}} {
 		if strings.HasPrefix(r.ref, "-") {
-			return fmt.Sprintf("SECRETS REFUSED: %s %s begins with \"-\", the shape of an option, not a git ref", r.flag, oneline.Field(r.ref)), 2
+			return fmt.Sprintf("SECRETS GATE REFUSED: %s %s begins with \"-\", the shape of an option, not a git ref; pass a branch, tag or commit; run: nova-secrets gate -h", r.flag, oneline.Field(r.ref)), 2
 		}
 	}
 	base, err := gateResolveCommit(storeDir, "--base", base)
@@ -108,7 +105,7 @@ func RunGate(in GateInput) (string, int) {
 
 	// 1. Every changed .sops.yaml rule: exactly two age recipients, one the
 	// declared recovery key, and a path_regex naming exactly one seat file.
-	if containsString(changed, ".sops.yaml") {
+	if slices.Contains(changed, ".sops.yaml") {
 		// The recipients the store already had. A key here is not a grant this pull request
 		// makes, so resealing a seat or editing its rule asks the registry nothing.
 		baseKeys, err := gateRecipientsAt(storeDir, base)
@@ -118,11 +115,8 @@ func RunGate(in GateInput) (string, int) {
 		for i := range cfg.CreationRules {
 			rule := cfg.CreationRules[i]
 			ruleNum := i + 1
-			if len(rule.Recipients) != 2 {
-				return gateRefuse(ruleNum, ".sops.yaml", fmt.Sprintf("rule has %d age recipients; expected exactly two", len(rule.Recipients))), 2
-			}
-			if !containsString(rule.Recipients, recoveryKey) {
-				return gateRefuse(ruleNum, ".sops.yaml", "rule recipients do not include the key recovery.pub declares"), 2
+			if problem := ruleRecipientsProblem(rule.Recipients, recoveryKey); problem != "" {
+				return gateRefuse(ruleNum, ".sops.yaml", "rule "+problem), 2
 			}
 			re, err := regexp.Compile(rule.PathRegex)
 			if err != nil {
@@ -139,12 +133,13 @@ func RunGate(in GateInput) (string, int) {
 				return gateRefuse(ruleNum, ".sops.yaml", fmt.Sprintf("path_regex names %d seat files; expected exactly one", named)), 2
 			}
 
-			// 4. A recipient key this pull request introduces is a GRANT, and the review that
-			// used to catch it is gone (Glenn 2026-09-18: a seat is set up with no second
-			// human). The fleet's machines registry stands in its place: the new key is
-			// permitted only when a machine in the registry carries this file's seat, so the
-			// question "whose key is this, and does that machine exist?" has a mechanical
-			// answer. With no --machines the rule is dormant and the APPROVE line says so.
+			// 4. A recipient key this pull request introduces is a GRANT, and a seat can
+			// be brought up with no second human on the bench. The fleet's machines
+			// registry is the only mechanical check that stands in for a human review:
+			// the new key is permitted only when a machine in the registry carries this
+			// file's seat, so the question "whose key is this, and does that machine
+			// exist?" has a mechanical answer. With no --machines the rule is dormant
+			// and the APPROVE line says so.
 			if fleetSeats != nil {
 				seat := strings.TrimSuffix(seatFile, ".yaml")
 				for _, key := range rule.Recipients {
@@ -169,7 +164,7 @@ func RunGate(in GateInput) (string, int) {
 		return gateRefuse(0, "", "unable to list the base tree: "+oneline.Escape(err.Error())), 2
 	}
 	for _, bf := range baseFiles {
-		if isSeatYAML(bf) && !containsString(headFiles, bf) {
+		if isSeatYAML(bf) && !slices.Contains(headFiles, bf) {
 			return gateRefuse(0, bf, "the seat file is in the store at the base and gone at the head; a seat is never removed here"), 2
 		}
 	}
@@ -190,6 +185,13 @@ func RunGate(in GateInput) (string, int) {
 		}
 		if !bytes.Contains(data, []byte("sops:")) {
 			return gateRefuse(ruleNum, f, "file is not encrypted (missing sops metadata)"), 2
+		}
+		_, recipients, _, err := parseStoreFile(bytes.NewReader(data))
+		if err != nil {
+			return gateRefuse(ruleNum, f, "unreadable sops metadata: "+oneline.Escape(err.Error())), 2
+		}
+		if problem := seatFileRecipientsProblem(recipients, cfg.CreationRules[ruleIdx].Recipients, recoveryKey); problem != "" {
+			return gateRefuse(ruleNum, f, problem), 2
 		}
 		if key, plain := firstPlainValue(data, cfg.CreationRules[ruleIdx].UnencryptedRegex); plain {
 			return gateRefuse(ruleNum, f, fmt.Sprintf("key %s is a plain value, not encrypted", oneline.Field(key))), 2
@@ -260,15 +262,6 @@ func isSeatYAML(path string) bool {
 	return strings.HasSuffix(path, ".yaml") && path != ".sops.yaml"
 }
 
-func containsString(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
-}
-
 // matchingRuleIndex returns the index of the creation rule whose path_regex
 // matches relPath, or -1 when none does.
 func matchingRuleIndex(cfg *SopsConfig, relPath string) int {
@@ -305,12 +298,11 @@ func firstPlainValue(data []byte, unencryptedRegex string) (string, bool) {
 		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "#") {
 			continue
 		}
-		idx := strings.Index(line, ":")
-		if idx < 0 {
+		key, val, found := strings.Cut(line, ":")
+		if !found {
 			continue
 		}
-		key := strings.TrimSpace(line[:idx])
-		val := strings.TrimSpace(line[idx+1:])
+		key, val = strings.TrimSpace(key), strings.TrimSpace(val)
 		if key == "" || val == "" || key == "sops" {
 			continue
 		}
@@ -334,8 +326,8 @@ func gateResolveCommit(storeDir, flagName, ref string) (string, error) {
 	if strings.HasPrefix(ref, "-") {
 		return "", fmt.Errorf("%s %s begins with \"-\", the shape of an option, not a git ref", flagName, oneline.Field(ref))
 	}
-	out, err := exec.Command("git", "-C", storeDir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}").Output()
-	sha := strings.TrimSpace(string(out))
+	res, err := gitrun.Run(context.Background(), storeGit(storeDir), "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
+	sha := strings.TrimSpace(string(res.Stdout))
 	if err != nil || sha == "" || strings.HasPrefix(sha, "-") {
 		return "", fmt.Errorf("%s %s does not name a commit in the store %s", flagName, oneline.Field(ref), oneline.Field(storeDir))
 	}
@@ -344,27 +336,28 @@ func gateResolveCommit(storeDir, flagName, ref string) (string, error) {
 
 // gitChangedFiles lists the files that differ between base and head.
 func gitChangedFiles(storeDir, base, head string) ([]string, error) {
-	out, err := exec.Command("git", "-C", storeDir, "diff", "--name-only", "--end-of-options", base, head, "--").Output()
+	res, err := gitrun.Run(context.Background(), storeGit(storeDir), "diff", "--name-only", "--end-of-options", base, head, "--")
 	if err != nil {
 		return nil, fmt.Errorf("git diff %s %s failed: %v", base, head, err)
 	}
-	return splitLines(out), nil
+	return splitLines(res.Stdout), nil
 }
 
 // gitTreeFiles lists every path in the tree at ref.
 func gitTreeFiles(storeDir, ref string) ([]string, error) {
-	out, err := exec.Command("git", "-C", storeDir, "ls-tree", "-r", "--name-only", "--end-of-options", ref).Output()
+	res, err := gitrun.Run(context.Background(), storeGit(storeDir), "ls-tree", "-r", "--name-only", "--end-of-options", ref)
 	if err != nil {
 		return nil, err
 	}
-	files := splitLines(out)
+	files := splitLines(res.Stdout)
 	sort.Strings(files)
 	return files, nil
 }
 
 // gitShowFile reads one file's bytes out of the tree at ref.
 func gitShowFile(storeDir, ref, path string) ([]byte, error) {
-	return exec.Command("git", "-C", storeDir, "show", "--end-of-options", ref+":"+path).Output()
+	res, err := gitrun.Run(context.Background(), storeGit(storeDir), "show", "--end-of-options", ref+":"+path)
+	return res.Stdout, err
 }
 
 func splitLines(out []byte) []string {

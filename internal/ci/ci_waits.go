@@ -99,13 +99,13 @@ func (r WaitsResult) ExitCode() int {
 // and cmd/.
 var checkWaitsDirs = []string{"internal", "cmd"}
 
-// walkCITestFiles reads every _test.go under root/internal and root/cmd -- the
+// walkCITestFilesWith reads every _test.go under root/internal and root/cmd -- the
 // two trees checkWaitsDirs names -- and calls fn with the repo-relative slash
 // path and the file's bytes. testdata, .git and vendor are skipped so the
 // fixtures the checkers are tested with are never read as offenders. A tree
 // that is not there is not an error: a checkout without cmd/ is still checked
 // for the part it has.
-func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
+func walkCITestFilesWith(root string, seams SourceSeams, fn func(rel string, src []byte) error) error {
 	for _, dir := range checkWaitsDirs {
 		base := filepath.Join(root, dir)
 		if _, statErr := os.Stat(base); statErr != nil {
@@ -114,7 +114,7 @@ func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
 			}
 			return statErr
 		}
-		err := walkSourceDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		err := seams.walk(base, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -128,7 +128,7 @@ func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
 			if !strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			raw, readErr := readSourceFile(path)
+			raw, readErr := seams.readFile(path)
 			if readErr != nil {
 				return readErr
 			}
@@ -151,6 +151,11 @@ func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
 // repository; testdata directories are skipped so the fixtures are never read
 // as offenders.
 func CheckWaits(root, allowlistPath string) (WaitsResult, error) {
+	return checkWaitsWith(root, allowlistPath, defaultSourceSeams())
+}
+
+// checkWaitsWith is CheckWaits reading the tree through seams.
+func checkWaitsWith(root, allowlistPath string, seams SourceSeams) (WaitsResult, error) {
 	var res WaitsResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {
@@ -158,9 +163,9 @@ func CheckWaits(root, allowlistPath string) (WaitsResult, error) {
 	}
 	matched := make([]bool, len(entries))
 
-	err = walkCITestFiles(root, func(rel string, raw []byte) error {
+	err = walkCITestFilesWith(root, seams, func(rel string, raw []byte) error {
 		res.Tests++
-		findings, ok := scanWaitFile(rel, raw)
+		findings, ok := scanWaitFileWith(rel, raw, seams)
 		if ok {
 			res.Findings = append(res.Findings, findings...)
 		}
@@ -206,7 +211,7 @@ type waitAllow struct {
 // (waits, net, goenv, testbins, templates) and of the `file spell date reason`
 // card template list: a row is keyed by its first two fields, every list only
 // shrinks, and a missing file is an empty list -- a tree with nothing parked in
-// it is the goal (nova-tools#4339).
+// it is the goal.
 var FileLineListOptions = allowlist.Options{Key: allowlist.Fields(2), Ceiling: true, MissingIsEmpty: true}
 
 // FileLineKey is a finding's key in those lists, the first two fields of the row
@@ -261,9 +266,8 @@ func readWaitAllowlist(path string) ([]waitAllow, error) {
 //
 // A row allows ONE offender of its kind in its file. The line in the row is where the
 // offender stood when the row was written, for a reader; it is not matched on. Matching
-// on the line turned dev red the moment any merge shifted lines in a listed file
-// (2026-09-17: #1073 moved deprecated/cmd/nova-swarm/native_test.go and every group after it
-// failed). The count per file and kind is what the list holds still: a new fixed wait
+// on the line turned dev red the moment any merge shifted lines in a listed file.
+// The count per file and kind is what the list holds still: a new fixed wait
 // in a listed file exceeds its rows and is refused, a fixed one leaves a row unused
 // and the stale rule makes the list shrink. An exact line match is preferred so the
 // stale row reported is the one a reader expects.
@@ -283,12 +287,12 @@ func matchWaitAllow(entries []waitAllow, used []bool, f WaitFinding) int {
 	return loose
 }
 
-// scanWaitFile parses one _test.go and returns its fixed-wait findings. The
+// scanWaitFileWith parses one _test.go and returns its fixed-wait findings. The
 // second result is false when the file does not parse: a file that is not Go
 // cannot carry the shapes this check reads, and a fixture deliberately holding
 // a broken literal is not the offender itself.
-func scanWaitFile(rel string, src []byte) ([]WaitFinding, bool) {
-	fset, file, err := parseSource(rel, src, 0)
+func scanWaitFileWith(rel string, src []byte, seams SourceSeams) ([]WaitFinding, bool) {
+	fset, file, err := seams.parseFile(rel, src, 0)
 	if err != nil {
 		return nil, false
 	}

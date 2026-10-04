@@ -7,6 +7,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // nightlytags_class_test.go is the class test behind the rule that a test moved
@@ -137,9 +140,7 @@ func tagsNamedBySchedules(t *testing.T, root string) map[string][]string {
 	t.Helper()
 	dir := filepath.Join(root, ".github", "workflows")
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	literal := regexp.MustCompile(`-tags[ =]+'?"?([A-Za-z0-9_,]+)`)
 	matrixTag := regexp.MustCompile(`^-?\s*tag:\s*'?"?([A-Za-z0-9_]+)`)
 
@@ -226,9 +227,7 @@ func TestEveryTestBuildTagIsRunBySomeScheduledJob(t *testing.T) {
 	used := buildTagsInTestFiles(t)
 	named := tagsNamedBySchedules(t, root)
 
-	if len(used) == 0 {
-		t.Fatal("no opt-in build tag found in any _test.go; the walk is broken, not the tree")
-	}
+	require.NotEmpty(t, used, "no opt-in build tag found in any _test.go; the walk is broken, not the tree")
 
 	tags := make([]string, 0, len(used))
 	for tag := range used {
@@ -242,7 +241,7 @@ func TestEveryTestBuildTagIsRunBySomeScheduledJob(t *testing.T) {
 		}
 		files := append([]string(nil), used[tag]...)
 		sort.Strings(files)
-		t.Errorf("build tag %q hides %d test file(s) and NO scheduled job runs it: %s\n"+
+		assert.Failf(t, tag, "build tag %q hides %d test file(s) and NO scheduled job runs it: %s\n"+
 			"\tremedy: add a `tag: %s` leg to nightly-slow.yml's matrix (or `go test -tags %s` to another scheduled workflow), "+
 			"or drop the tag from those files",
 			tag, len(files), strings.Join(files, ", "), tag, tag)
@@ -259,10 +258,8 @@ func TestTheNetworkExemptTagsHaveAHomeInTheSchedule(t *testing.T) {
 	root := repoRoot(t)
 	named := tagsNamedBySchedules(t, root)
 	for _, tag := range []string{"nightly", "soak"} {
-		if len(named[tag]) == 0 {
-			t.Errorf("CheckNet exempts //go:build %s, but no scheduled job runs `go test -tags %s`: "+
-				"a real-network test could be written and never run once", tag, tag)
-		}
+		assert.NotEmpty(t, named[tag], "CheckNet exempts //go:build %s, but no scheduled job runs `go test -tags %s`: "+
+			"a real-network test could be written and never run once", tag, tag)
 	}
 }
 
@@ -275,9 +272,7 @@ func TestSomeScheduledJobRunsTheRaceDetector(t *testing.T) {
 	root := repoRoot(t)
 	dir := filepath.Join(root, ".github", "workflows")
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yml") {
 			continue
@@ -292,6 +287,90 @@ func TestSomeScheduledJobRunsTheRaceDetector(t *testing.T) {
 			}
 		}
 	}
-	t.Error("no scheduled workflow runs `go test -race`, so //go:build race and //go:build !race " +
+	assert.Fail(t, "no scheduled workflow runs `go test -race`, so //go:build race and //go:build !race "+
 		"files are no longer both covered")
+}
+
+// vetTagsByCIVetSteps reads the build tags the CI vet steps pass to `go vet
+// -tags`: the Makefile's `vet*` targets' recipes and every `go vet` line under
+// .github/workflows. `go vet` without `-tags` sees only the untagged tree, so a
+// tag that hides a test file from it is compiled on no pull request.
+func vetTagsByCIVetSteps(t *testing.T, root string) map[string][]string {
+	t.Helper()
+	tags := map[string][]string{}
+
+	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
+	var names []string
+	for name := range mk.recipes {
+		if strings.HasPrefix(name, "vet") {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		for _, recipe := range mk.recipeFor(name) {
+			for _, m := range vetTagRe.FindAllStringSubmatch(recipe, -1) {
+				for _, tag := range strings.Split(m[1], ",") {
+					tags[tag] = appendOnce(tags[tag], "Makefile "+name)
+				}
+			}
+		}
+	}
+
+	dir := filepath.Join(root, ".github", "workflows")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		if e.IsDir() || (!strings.HasSuffix(e.Name(), ".yml") && !strings.HasSuffix(e.Name(), ".yaml")) {
+			continue
+		}
+		for _, line := range noComments(readFile(t, filepath.Join(dir, e.Name()))) {
+			if !strings.Contains(line, "go vet") {
+				continue
+			}
+			for _, m := range vetTagRe.FindAllStringSubmatch(line, -1) {
+				for _, tag := range strings.Split(m[1], ",") {
+					tags[tag] = appendOnce(tags[tag], e.Name())
+				}
+			}
+		}
+	}
+	return tags
+}
+
+// vetTagRe matches the `-tags` a vet step passes to `go vet`. The workflow
+// syntax is `-tags X` or `-tags=X`; `${{ matrix.tag }}` is not a literal and is
+// deliberately not matched, so a matrix-expanded tag names no vet step.
+var vetTagRe = regexp.MustCompile(`-tags[ =]+'?"?([A-Za-z0-9_,]+)`)
+
+// THE CLASS TEST. Every opt-in build tag in a test file is passed to `go vet
+// -tags` by a CI vet step, so a file behind a tag is type-checked on every pull
+// request and a tag-only build break is red at the PR rather than the night
+// after.
+func TestEveryTestBuildTagIsVettedByCIVetSteps(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	used := buildTagsInTestFiles(t)
+	vetted := vetTagsByCIVetSteps(t, root)
+
+	require.NotEmpty(t, used, "no opt-in build tag found in any _test.go; the walk is broken, not the tree")
+
+	tags := make([]string, 0, len(used))
+	for tag := range used {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+
+	for _, tag := range tags {
+		if len(vetted[tag]) > 0 {
+			continue
+		}
+		files := append([]string(nil), used[tag]...)
+		sort.Strings(files)
+		assert.Failf(t, tag, "build tag %q hides %d test file(s) and no CI vet step passes `-tags %s`: %s\n"+
+			"\tremedy: add a `vet-%s` target to the Makefile and a `make vet-%s` step to ci.yml's lint job, "+
+			"or drop the tag from those files",
+			tag, len(files), tag, strings.Join(files, ", "), tag, tag)
+	}
 }

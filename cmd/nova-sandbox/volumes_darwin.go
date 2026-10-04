@@ -8,8 +8,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +19,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // diskutilPath is where macOS ships the tool. It is looked up on the PATH first so a
@@ -48,7 +52,8 @@ func runDiskutil(args ...string) (string, error) {
 	if found, err := exec.LookPath("diskutil"); err == nil {
 		bin = found
 	}
-	cmd := exec.Command(bin, args...)
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, bin, args...)
+	defer cancel()
 	var out, errb strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
@@ -137,7 +142,7 @@ func (diskutilVolumes) Exists(name string) (bool, error) {
 }
 
 // volumeCreateAttempts is how many volumes Create will make and throw away before it
-// refuses. Measured on the Studio: a contended addVolume produced an unusable root every
+// refuses. Measured: a contended addVolume produced an unusable root every
 // time and an uncontended one never did, so under the lock the first attempt is the
 // answer — the retries are for the machine that is contended by something that is not
 // this tool, and three is enough to say so without grinding.
@@ -151,11 +156,11 @@ const volumeCreateAttempts = 3
 //
 // Two processes may not be in here at once. `diskutil apfs addVolume` run concurrently
 // leaves the new volume's root `root:wheel drwxr-xr-x` rather than the caller's, and it
-// never settles — measured in a 20-run soak, 2026-09-18, where three of four concurrent
+// never settles — measured in a 20-run soak where three of four concurrent
 // runs died at `mkdir /Volumes/nova-conc-N/work: permission denied` before their card ran.
 // The same four runs staggered twelve seconds apart all passed with their EXECUTION
 // overlapping, so it is creation alone that cannot be shared. There is no repair to apply
-// after the fact: `chown` on someone else's directory needs root, which rule 2 does not
+// after the fact: `chown` on someone else's directory needs root, which an unprivileged tool does not
 // have. So the lock, and then the question.
 func (d diskutilVolumes) Create(container, name, size string) (diskVolume, error) {
 	unlock, err := lockVolumeCreate()
@@ -197,11 +202,13 @@ func (d diskutilVolumes) createOnce(container, name, size string) (diskVolume, e
 	}
 	info, err := diskutilRun("info", disk)
 	if err != nil {
+		// ignored: a best-effort delete of the volume just made; the info error is the one returned
 		_ = d.Delete(disk)
 		return diskVolume{}, err
 	}
 	mount := field(info, "Mount Point")
 	if mount == "" || !strings.HasPrefix(mount, volumesRoot+"/") {
+		// ignored: a best-effort delete of the volume just made; the mount refusal below is the one returned
 		_ = d.Delete(disk)
 		// The volume EXISTS at this point, and the mount is what did not happen, so the
 		// error says which of the two it is: a reader told the create failed goes to
@@ -214,7 +221,7 @@ func (d diskutilVolumes) createOnce(container, name, size string) (diskVolume, e
 	return diskVolume{Name: name, Disk: disk, Mount: mount}, nil
 }
 
-// rootOwnedAndWritable is the question the old Create assumed the answer to: a mount
+// rootOwnedAndWritable is the question a mounted root would assume the answer to: a mount
 // point is not the same thing as a place this user may work. It is asked twice, because
 // the two answers differ — the OWNER is what went wrong (root:wheel instead of the
 // caller), and a WRITE is what the run needs — and a check that only stats can be
@@ -236,6 +243,7 @@ func rootOwnedAndWritable(mount string) error {
 		return fmt.Errorf("the root of %s is owned by this user and still not writable: %w", mount, err)
 	}
 	path := probe.Name()
+	// ignored: an empty probe file; its removal below is checked
 	_ = probe.Close()
 	// Removed through safepath, under the mount it was made in, like every other
 	// deletion this repository performs.
@@ -243,52 +251,53 @@ func rootOwnedAndWritable(mount string) error {
 }
 
 // lockVolumeCreate takes the one lock that makes a concurrent `nova-sandbox run` safe:
-// an exclusive `flock` on a file under the CALLER's cache directory. Not /tmp and not
-// /var: a lock at a path any process can write is a lock any process can take, and the
-// contained command of a run is exactly a process this tool does not trust.
+// internal/filelock's kernel lock (tla/FileLock.tla) on a file under the CALLER's cache
+// directory. Not /tmp and not /var: a lock at a path any process can write is a lock any
+// process can take, and the contained command of a run is exactly a process this tool
+// does not trust.
 //
-// It polls rather than blocking, because a wait with no deadline is how a fleet ends up
-// with idle lines holding a file (**wait loops need a deadline**). The bound is generous
-// on purpose — a real addVolume is seconds and a queue of them is minutes — and it is
+// The wait has a deadline, because a wait with no deadline is how a fleet ends up with
+// idle lines holding a file (**wait loops need a deadline**). The bound is generous on
+// purpose — a real addVolume is seconds and a queue of them is minutes — and it is
 // production code's own wait, never a test's.
 func lockVolumeCreate() (func(), error) {
 	path, err := volumeLockPath()
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("the volume-creation lock at %s could not be opened: %w", path, err)
-	}
-	fd := int(f.Fd())
-	deadline := time.Now().Add(volumeLockWait)
-	for {
-		err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			return func() {
-				_ = syscall.Flock(fd, syscall.LOCK_UN)
-				_ = f.Close()
-			}, nil
-		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) {
-			_ = f.Close()
-			return nil, fmt.Errorf("the volume-creation lock at %s could not be taken: %w", path, err)
-		}
-		if time.Now().After(deadline) {
-			_ = f.Close()
-			return nil, fmt.Errorf("another nova-sandbox held the volume-creation lock at %s for %s; concurrent `diskutil apfs addVolume` is what this lock prevents, so this run waits rather than making a volume it could not write",
-				path, volumeLockWait)
-		}
-		time.Sleep(volumeLockPoll)
-	}
+	return lockVolumeCreateAt(path)
 }
 
-// volumeLockWait is how long a run waits for its turn to create, and volumeLockPoll how
-// often it asks. Production's own numbers.
-const (
-	volumeLockWait = 15 * time.Minute
-	volumeLockPoll = 50 * time.Millisecond
-)
+// lockVolumeCreateAt is lockVolumeCreate on a named file, so a test takes it on a file of
+// its own without swapping volumeLockPath.
+//
+// A FRESH lock file is made 0600, as this tool always made it: filelock creates 0666 less
+// the umask, so the file is created here first, exclusively, and filelock then opens the
+// existing file and leaves its mode alone. O_EXCL makes the create refuse whatever is
+// already at the path (a symlink included); an existing file is filelock's to open and
+// check.
+func lockVolumeCreateAt(path string) (func(), error) {
+	fresh, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err == nil {
+		// ignored: an empty file closed at once; filelock reopens it, and its open reports any fault
+		_ = fresh.Close()
+	} else if !errors.Is(err, fs.ErrExist) {
+		return nil, fmt.Errorf("the volume-creation lock at %s could not be opened: %w", path, err)
+	}
+	l, err := filelock.Lock(path, "nova-sandbox run: diskutil apfs addVolume", volumeLockWait)
+	if errors.Is(err, filelock.ErrHeld) || errors.Is(err, filelock.ErrBusy) {
+		return nil, fmt.Errorf("another nova-sandbox held the volume-creation lock at %s for %s; concurrent `diskutil apfs addVolume` is what this lock prevents, so this run waits rather than making a volume it could not write",
+			path, volumeLockWait)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("the volume-creation lock at %s could not be taken: %w", path, err)
+	}
+	// ignored: release has no caller to report to; the kernel lock goes with the descriptor either way
+	return func() { _ = l.Unlock() }, nil
+}
+
+// volumeLockWait is how long a run waits for its turn to create. Production's own number.
+const volumeLockWait = 15 * time.Minute
 
 // volumeLockPath is where the lock lives, as a seam so a test locks a file of its own.
 var volumeLockPath = defaultVolumeLockPath
@@ -324,7 +333,7 @@ func defaultVolumeLockPath() (string, error) {
 // trimmed to `> Volume disk3s7`, nothing ever opened a record, and `reap` answered
 // `SANDBOX REAP OK volumes=0` on a machine that was holding one. A reaper that reports a
 // dirty machine clean is worse than no reaper — so the fixture this is tested against is
-// the real `diskutil apfs list`, copied off the Studio, and never a shape assumed here.
+// the real `diskutil apfs list`, copied verbatim from real output, and never a shape assumed here.
 const treeChars = "|+-<> "
 
 func (diskutilVolumes) List() ([]diskVolume, error) {

@@ -1,5 +1,0 @@
-{
-  "field": "body.raw_usage.input.reason",
-  "rule": "unknown_reason_code",
-  "verdict": "refused"
-}

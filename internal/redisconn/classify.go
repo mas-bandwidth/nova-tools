@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -98,21 +99,11 @@ func Classify(err error) Class {
 }
 
 func startsWithAny(s string, prefixes ...string) bool {
-	for _, p := range prefixes {
-		if strings.HasPrefix(s, p) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(s, p) })
 }
 
 func containsAny(s string, marks ...string) bool {
-	for _, m := range marks {
-		if strings.Contains(s, m) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(marks, func(m string) bool { return strings.Contains(s, m) })
 }
 
 // failure is the error of this package: a class, and one line that names
@@ -156,7 +147,7 @@ func explain(l login, hide func(string) string, cause error, opening bool) *fail
 		f.next = "check that " + l.PasswordEnv + " holds the password of " + l.User + " and that the store has that user switched on"
 	case f.class == AuthRefused && l.PasswordEnv != "":
 		// A password and no user: the store's default user is off, or the
-		// password is another user's. The old store's #3520 hint, in the
+		// password is another user's. The store's hint helps identify the user, in the
 		// caller's own names.
 		f.next = "name the user" + inVar(l.Env.User) + ", or check that " + l.PasswordEnv + " holds the password of the default user"
 	case f.class == AuthRefused:

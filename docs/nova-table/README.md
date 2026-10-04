@@ -1,6 +1,6 @@
 # nova-table: work tables and live views over Redis
 
-## The design, in Glenn's words (2026-09-27)
+## The design, in the owner's words
 
 "at an even simpler level, I think there should be a concept of ordered
 sets." / "The work stream table is really just a series of ordered sets,
@@ -23,12 +23,13 @@ data, no bullshit around it. don't let extra stuff creep in."
 and an example, use `nova-table help row set` or `nova-table row set --help`.
 Requested help exits 0 on stdout and needs no store.
 
-Install `nova-table` and Redis 7 or later. Every table verb calls the
-`nova_sprint` function library (`internal/nsprint/fn`), which `nova-table`
+Install `nova-table` and Redis 7 or later. The image the functional tier runs in
+(`make test-functional-container`) builds Redis 8.10.2. Every table verb calls
+the `nova_sprint` function library (`internal/nsprint/fn`), which `nova-table`
 carries. On first contact with a store that holds no library, `nova-table`
 loads its own: the first verb the store answers `Function not found` loads the
-library once per process, never replacing one the store holds, and runs
-again; that verb's `trips=` counts the load. An empty Redis is enough.
+library once per process, never replacing one the store holds, and runs again;
+that verb's `trips=` counts the load. An empty Redis is enough.
 `nova-redis fn load` is the explicit load and upgrade, for the one place that
 deploys, and `nova-redis fn check` says whether a store holds this build's
 library. From a source checkout, build the client:
@@ -96,13 +97,14 @@ kinds of cell:
   a label, default its key), in front of every declared column. Labels, not
   sets.
 - **Body cells.** A set cell is printed by its column's
-  *projection*: `count` (the set's size, Glenn's |s|; the default),
+  *projection*: `count` (the set's size, |s|; the default),
   `members` (the members in score order, comma-joined), `first` and `last`
   (the lowest and highest scored member), or `text` (a value per row, set
-  by `row set`, blank when none; no set). `pct(<count-column>)` is a formula
-  over count cells, with no set of its own.
+  by `row set`, blank when none; no set). `pct(<count-column>)`,
+  `pct(<count-column>/<a>+<b>)` and `sum(<a>+<b>)` are formulas over count
+  cells, with no set of their own.
 - **Footer cells.** One per column, the column's *fold* over the body:
-  `sum` (the default for a count), `max` or `avg` of the counts, `union` of the
+  `sum` (the default for a count and a `sum(...)`), `max` or `avg` of the counts, `union` of the
   members, `pooled` for percentages, or `none` (blank). The footer row carries the table's footer
   label (blank by default; use `--footer total` to name it). A table whose columns all fold `none` prints no
   footer row.
@@ -139,7 +141,7 @@ record. A removed record may be placed again in its original epoch.
 Records default to `table::member:<id>`, with immutable `epoch` and a
 `place:<table>` field holding `row:column`. A definition's `--member-prefix`
 can select an existing namespace, such as `task:`. Existing unrelated hash
-fields survive; absent epoch on a legacy record means zero. Generic task
+fields survive; absent epoch on a record means zero. Generic task
 create/move fields cannot write `place:*`. Other record owners must likewise
 reserve those fields and preserve identity. Table operations do not implement
 the task/card lifecycle or protect against out-of-band raw Redis writes.
@@ -163,11 +165,22 @@ cells belong to one epoch. Advancing the domain exposes that template with
 empty rows while preserving historical data and member links. `clear` empties
 only the active epoch. `drop` removes its active rows and owned cells but keeps
 the saved column definition, which is reused in later epochs. `drop --definition`
-also removes that saved definition. Snapshots from earlier epochs remain, and
-`show`/`render --at-epoch <n>` (module
-`ReadAt`) can inspect its history. A permanent identity hash retains the epoch
-domain and member prefix, preventing template recreation from silently
-reassigning old records to a different namespace. `show` reports epoch and
+also removes that saved definition, the identity hash and the rows of every
+epoch (with their owned cells and properties, the members' places unset), in the
+same call, and is refused beyond 1000 epochs. The definition snapshots of
+earlier epochs remain, and `show`/`render --at-epoch <n>` (module `ReadAt`)
+read them, with no rows. While the table exists, an identity hash retains the
+epoch domain and member prefix, preventing template recreation from silently
+reassigning old records to a different namespace. A table created again after
+`drop --definition` has its own configuration and no rows, and its revision
+counter and change log continue from the dropped table's (the change log is
+untrimmed, so a reader chains across the drop). A `create` refuses, naming the
+keys, when the rows or properties of an earlier table are left at the epoch it
+opens at. A store that holds the identity hash of a table that is gone (an
+earlier build's `drop --definition` kept it) says so on every verb, `show`
+included, and a `create` with another configuration says so too; the line
+carries `nova-table drop <table> --definition`, with `--epoch <n>` at the epoch
+the store is at, and that removes it. `show` reports epoch and
 revision; `render` and `watch` retain their plain table display.
 
 `check` verifies both directions of record/set membership, duplicate places,
@@ -216,7 +229,7 @@ table:<t>:row:<r>          HASH  label, exclude, owner, key:<col> (a bound
 table:<t>:cell:<r>:<c>     ZSET  an owned cell (epoch zero)
 table:<t>:<e>:rows/row:/cell:     the same epoch-local keys for e > 0
 table:<t>[:<e>]:definition HASH  retained definition, _present, _revision
-table:<t>:identity         HASH  immutable epoch_key, epoch_field, member_prefix
+table:<t>:identity         HASH  epoch_key, epoch_field, member_prefix; fixed while the table exists, removed by drop --definition
 table:<t>:revision         HASH  n (revision, retained across epochs/drop)
 table:<t>:changes        STREAM  untrimmed committed change receipts
 table::member:<id>         HASH  epoch, place:<table> and caller-owned metadata
@@ -270,22 +283,24 @@ nova-table cell move <table> <row> <from-col> <to-col> <member>...
 nova-table cell members <table> <row> <col>
 nova-table member create <table> <id>
 nova-table member find <table> <id>
+nova-table member read <table> <id>... | <table> --cell <row:col>
 nova-table check <table>
 nova-table clear <table>
 nova-table show <table> [--at-epoch <n>]
-nova-table render <table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
-nova-table render --view <name> [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
+nova-table render <table> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]
+nova-table render --view <name> [--width <col=n,...>] [--label-width <n>]
 nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+nova-table view state <name> (<text> | --clear)
 nova-table view show <name>
 nova-table view list
 nova-table view del <name>
-nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--once]
+nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--once]
 ```
 
 | verb | prints |
 | --- | --- |
 | `create` | `TABLE CREATE table=<t> columns=<n>`; an existing table with the same definition is left; another definition is refused |
-| `drop` | `TABLE DROP table=<t> rows=<n>`; active rows and owned cells go; the saved column definition stays unless `--definition`; earlier epoch snapshots and external bound sets stay |
+| `drop` | `TABLE DROP table=<t> rows=<n>`; active rows and owned cells go; the saved column definition and the identity hash stay unless `--definition`, which removes both, the rows of every epoch and the operation records; the revision counter, the change log, the definition snapshots of earlier epochs and external bound sets stay |
 | `list` | `TABLE LIST tables=<n>`, then `TABLE table=<t> columns=<n> rows=<n>` per table |
 | `row add` | `TABLE ROW ADD table=<t> row=<r> cols=<n> bound=<n>`; a row already there keeps its place and its cells; a binding wants `--owner` |
 | `row del` | `TABLE ROW DEL table=<t> row=<r> existed=<0\|1>`; its owned cells go with it; a missing row succeeds with `existed=0` and a no-op receipt |
@@ -293,7 +308,7 @@ nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--ou
 | `row order` | `TABLE ROW ORDER table=<t> first=<r,r,...>`; the named rows first, in the order named; the rest follow in theirs |
 | `row sort` | `TABLE ROW SORT table=<t> by=<key> desc=<bool> keep=<bool>`, or `manual=true` |
 | `col add` | `TABLE COL ADD table=<t> col=<c> place=<...>`; last unless a place is named |
-| `col del` | `TABLE COL DEL table=<t> col=<c>`; refused while the column holds a member or a text value, or a percentage reads it |
+| `col del` | `TABLE COL DEL table=<t> col=<c>`; refused while the column holds a member or a text value, or a formula reads it |
 | `col move` | `TABLE COL MOVE table=<t> col=<c> place=<...>`; the other columns keep their order |
 | `cell add`, `cell remove` | `TABLE CELL table=<t> row=<r> col=<c> n=<count after>`; `--score` is the member's place (the unix ms when omitted) |
 | `cell move` | `TABLE MOVE table=<t> row=<r> member=<m> from=<c> to=<c> n=<count of to>`; one call, the score kept; `NOTMEMBER` refused |
@@ -310,10 +325,14 @@ inputs. It is an unpadded record of every row and column.
 
 `member find` answers where an identity is placed in this table, with
 `state=placed row=<r> col=<c>`, `state=unplaced`, or `state=missing`. All three are
-successful reads (exit 0), with epoch, revision and `trips=1`. The read checks
+successful reads (exit 0), with epoch, `table_revision` and `trips=1`. The read checks
 that a reported placement is present in its owned set; disagreement refuses as
 drift. It does not search bound external sets. An identity from another epoch
 refuses with the two epochs. Use `check` for a full audit of all record/set links.
+
+`member read` reads members in one exchange: their place, score, member revision and
+fields, the members that do not exist, and the table's revision and epoch (see
+`docs/CLI.md`, Reading members).
 A custom member prefix needs read access to that namespace.
 
 `view list` lists stored view names in lexical order. `view show` prints the
@@ -324,6 +343,18 @@ and their receipts remain. Dropping or renaming a table does not rewrite a view;
 edit or delete the reference explicitly. A view summary names a **count** column
 in its first table, such as `done`, not a `pct(done)` formula.
 
+`view set` replaces title and summary together, so one left out is cleared.
+Every table of a view is drawn, and every row of it, empty or not.
+
+`view state <name> <text>` gives a view a state: while it has one, the summary
+line is that text alone, in place of the counts, the percent and the ETA, and
+`--clear` removes it so the counts show again. A state is one line of at most
+64 bytes. `view set` leaves a view's state as it is; `view show` prints it. A
+tool that fills a view writes its state with its own record in one
+transaction (`ntable.QueueViewState`), so the two never disagree:
+`nova-sprint` writes `STOPPED` with the machine's state record on `stop`,
+`clear` and `init`, and clears it on `start`.
+
 ## Editing, batches and rename
 
 `set` validates the entire definition edit before writing. Removing a nonempty
@@ -331,8 +362,12 @@ owned set, changing it to text or a formula, or removing nonempty text is refuse
 move/remove members or clear text first. Bound external sets remain untouched.
 `row set` writes text values stored by column; later row metadata or binding
 edits retain those text values and row visibility. `pct(<count-column>)` computes
-the named count divided by all count columns in the row. Its default footer is
-`pooled`: sum the counts first, then divide. A percentage cannot fold `avg`.
+the named count divided by all count columns in the row; `pct(<count-column>/<a>+<b>)`
+the named count divided by the named count columns `a`, `b` of the row, for example
+`okpct:pct(ok/ok+failed):pooled:ok%`; `sum(<a>+<b>)` the named count columns of the
+row added, for example `done:sum(ok+failed)`. Every column a formula names is a
+count column of the table, hidden or not. A percentage's default footer is
+`pooled`: sum the numerators and the denominators first, then divide. A percentage cannot fold `avg`.
 A stored definition with the former `pct:avg` rule can be repaired using
 `set --columns`; replacement columns are validated under the current rules.
 
@@ -356,7 +391,7 @@ member's `place:<table>` field. A destination with any existing table namespace
 keys, including old history, is refused. The final receipt is written at the
 new name and records all physical key moves in `renamed_keys`; prior stream
 events remain byte-for-byte the same. Consumers must switch to the new name.
-Rename does not create an alias or rewrite stored views referencing the old name.
+Rename does not create an alias or rewrite stored views referencing the former name.
 
 The raw function wire ends every table write with the JSON options object.
 `set` takes `name, editJSON, optionsJSON`; `row_set` takes
@@ -373,7 +408,8 @@ Stored views are presentation configuration, separate from table epoch receipts.
 A view write validates all references and command permissions before either its
 hash or registry is changed. `watch --view` reloads the view each frame and reads
 its tables in one pipeline: two application exchanges, including a summary.
-The timestamp, title, pooled summary and tables form the frame. The summary uses
+The timestamp, title, summary line and tables form the frame. The summary line is
+the view's state alone while it has one, and otherwise the pooled summary, which uses
 the same table snapshot as the body; unread inputs print `?`. ETA has no value
 until change-stream rate sampling is implemented. Edit a view to change its
 tables or title without restarting watch.
@@ -472,7 +508,7 @@ While a sort stands, `row move` and `row order` are refused and name
 `row sort <table> --manual`. `col del` refuses a column that holds members
 (naming all blocking rows and members, with one batch `cell remove` command per
 occupied cell), a text column with a value (clear
-it with `row set <table> <row> <col>=`), a column a `pct(...)` column reads
+it with `row set <table> <row> <col>=`), a column a `pct(...)` or `sum(...)` column reads
 (remove that one first) and the last column. Quote a column spec that has
 parentheses: the shell reads `pct(busy)` unquoted as a pattern.
 
@@ -496,25 +532,28 @@ characters as literal escapes (for example, newline as `\x0a` and ESC as `\x1b`)
 Widths are measured after escaping. Stored values remain unchanged; text cannot
 add a row or execute a terminal control sequence.
 Known-empty percentages, including pooled footers, print `0.0%`. A cell whose set did not come back prints `?`,
-never a false 0, and so does the fold over it. `--hide-zero-rows` hides a
-row whose count cells are all zero and all read; the fold is still the
-column's, hidden rows included.
+never a false 0, and so does the fold over it. A row hidden with `set --hide`
+stays in the fold.
 
-**The empty rule.** An empty table, and a table with no visible row, renders
-as the empty string, including its title: no placeholder and no gap.
+**The empty rule.** A table always renders: an empty table prints its title
+header, its rule and its footer, with no body line, no placeholder and no second
+rule above the footer. A row with all
+zero counts prints like any other.
 
 ## Watching
 
 `watch` renders the named tables once per `--every` (1s), one blank line
-between two that print, `--title` first. With no `--out` it draws in place
+between two, `--title` first. With no `--out` it draws in place
 on the terminal: the ANSI home-and-clear sequence, then the text, so a
 console tab shows the live table with no shell loop. `--out <file>`
 publishes each tick by writing a temp file beside it and renaming it over,
 so a reader sees one whole table. `--once` renders
 once and exits, with no clear. With explicit table names, every tick is exactly one Redis pipeline of read-only snapshots, including cold and changed shapes. A stored view adds one exchange to reload its configuration. An explicit table watch holds the tables; a stored view also has its timestamp,
 title and optional summary. In either mode, a tick whose read fails leaves the last good text standing with one
-`stale: <n>s` line under it, and stderr says why once. A signal ends it,
-exit 0.
+`store unreachable since <time>` line under it, and stderr says why once. While
+the store answers the frame is the table and nothing else: no age, no counter. A signal ends it,
+exit 0. If continuous watch cannot write stdout or publish to `--out`, it stops
+immediately at exit 1 and names the output destination to repair on stderr.
 
 ## Module integration and deployment
 
@@ -535,7 +574,7 @@ the store owner. Writers need `FCALL` grants for `ns_table_create`, `drop`,
 `ns_table_read`, `ns_table_list`, and `ns_table_members`, plus the underlying
 commands and authorized key patterns. Writers also need `HDEL`, `TYPE`,
 `XINFO STREAM` and `XADD` for records and receipt preflight; revision counters
-use the existing `HGET`/`HSET` grants. Rename additionally needs `SCAN` and `RENAME`. Stored views need `ns_view_set`/`ns_view_get` and grants for `view:*` and `views`. The explicit maintenance check needs
+use the existing `HGET`/`HSET` grants. Rename additionally needs `SCAN` and `RENAME`. Stored views need `ns_view_set`/`ns_view_get` (and `ns_view_state` to set a state) and grants for `view:*` and `views`. The explicit maintenance check needs
 `FCALL_RO ns_table_check` and `SCAN`; these are not added to the display-only
 reader role. Custom epoch/record namespaces require their own key grants. The standalone ordered-set move retains
 `ns_oset_move`. `SCARD` and `SISMEMBER` preflight the registry type before

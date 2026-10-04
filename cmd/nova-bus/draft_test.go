@@ -1,8 +1,9 @@
 package main
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestDraftUsageShowsRedirectSynopsis holds the synopsis promise: the draft line of
@@ -12,7 +13,5 @@ import (
 func TestDraftUsageShowsRedirectSynopsis(t *testing.T) {
 	t.Parallel()
 	r := invoke(t, "", "help").mustCode(t, 0)
-	if !strings.Contains(r.stdout, "> <file>") {
-		t.Fatalf("draft synopsis does not show the redirect `> <file>`:\n%s", r.stdout)
-	}
+	require.Containsf(t, r.stdout, "> <file>", "draft synopsis does not show the redirect `> <file>`:\n%s", r.stdout)
 }

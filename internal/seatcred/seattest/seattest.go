@@ -6,14 +6,16 @@
 package seattest
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // Home returns a new HOME holding <home>/nova-bench/secrets (the store, with
@@ -43,18 +45,14 @@ func Home(t *testing.T, seat string, values map[string]string) string {
 	write(t, filepath.Join(store, "recovery.pub"), recPub+"\n")
 	write(t, filepath.Join(store, ".sops.yaml"), "creation_rules:\n  - path_regex: ^"+seat+"\\.yaml$\n    age: "+seatPub+","+recPub+"\n")
 
-	names := make([]string, 0, len(values))
-	for k := range values {
-		names = append(names, k)
-	}
-	sort.Strings(names)
 	var plain strings.Builder
-	for _, k := range names {
+	for _, k := range slices.Sorted(maps.Keys(values)) {
 		plain.WriteString(k + ": " + values[k] + "\n")
 	}
 	file := filepath.Join(store, seat+".yaml")
 	write(t, file, plain.String())
-	cmd := exec.Command(sops, "-e", "--age", seatPub+","+recPub, file)
+	cmd, cancel := subproc.Command(t.Context(), subproc.Tool, sops, "-e", "--age", seatPub+","+recPub, file)
+	defer cancel()
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	sealed, err := cmd.Output()
 	if err != nil {
@@ -65,21 +63,6 @@ func Home(t *testing.T, seat string, values map[string]string) string {
 	run(t, store, "git", "commit", "-q", "-m", "seat")
 	run(t, store, "git", "push", "-q", "-u", "origin", "main")
 	return home
-}
-
-// Env points every variable seatcred reads at home and clears the ones that
-// would otherwise steer a resolution (store, key, sops, user, seat) for the
-// rest of the test. The discovered sops path is then pinned for decryption.
-func Env(t *testing.T, home string) {
-	t.Helper()
-	t.Setenv("HOME", home)
-	for _, k := range []string{seatcred.SeatEnv, seatcred.StoreEnv, seatcred.KeyEnv, seatcred.SopsEnv, seatcred.UserEnv} {
-		t.Setenv(k, "")
-	}
-	// Home may find sops outside PATH (for example the macOS runner).
-	// Read the fixture with the same discovery rule used to encrypt it.
-	t.Setenv(seatcred.SopsEnv, Sops(t))
-	t.Cleanup(func() { seatcred.Select("") })
 }
 
 // Sops is the sops Home seals with: the one on PATH, else Homebrew's, else the
@@ -107,7 +90,8 @@ func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 func genKey(t *testing.T, ageKeygen, path string) string {
 	t.Helper()
-	cmd := exec.Command(ageKeygen, "-o", path)
+	cmd, cancel := subproc.Command(t.Context(), subproc.Tool, ageKeygen, "-o", path)
+	defer cancel()
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("age-keygen: %v: %s", err, out)
@@ -130,7 +114,8 @@ func genKey(t *testing.T, ageKeygen, path string) string {
 
 func run(t *testing.T, dir, name string, args ...string) {
 	t.Helper()
-	cmd := exec.Command(name, args...)
+	cmd, cancel := subproc.CommandFor(t.Context(), subproc.BudgetOf(name, args), name, args...)
+	defer cancel()
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%s %v: %v: %s", name, args, err, out)

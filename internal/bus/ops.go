@@ -30,15 +30,6 @@ type Prepared struct {
 	Notices []string
 }
 
-// Prepare validates a draft, assigns its id and date, and works out where it goes. It
-// writes nothing: every refusal here happens before the bus is touched.
-//
-// It is PrepareDraft with nobody named by --as, which is what a caller with a draft that
-// already carries its own From line has.
-func Prepare(t *Bus, text string, now time.Time, slugOverride string) (Prepared, error) {
-	return PrepareWith(t, text, now, SendOptions{Slug: slugOverride})
-}
-
 // SendOptions is what the command line adds to a draft. It is a struct rather than more
 // positional strings because the next one would be the sixth, and a call reading
 // `("", "", "air")` says nothing about which is which.
@@ -81,12 +72,15 @@ func PrepareWith(t *Bus, text string, now time.Time, opts SendOptions) (Prepared
 	tol := tolerate(c, text, as)
 	n, parseProblems := parseLines("", tol.lines, tol.at, 0)
 	problems := append(tol.problems, parseProblems...)
-	// A header that would not PARSE has no From, To or Subject to check, and a run that
-	// went on to check them would report a missing To line to somebody whose To line is
-	// there and misspelled. The line-level findings are all reported; the rest waits for a
-	// header.
+	// A header that would not PARSE may be missing a line only because an unknown key is
+	// that line misspelled, so an ABSENT From, To or Subject is not reported beside it. What
+	// the lines that did parse say IS reported, in the same run: a To naming nobody and a Re
+	// naming nothing beside the unknown key, so one run names every problem it can see.
 	if len(parseProblems) > 0 {
-		return p, problemsOf(problems)
+		problems = append(problems, n.Header.problems(c, false)...)
+		sender, _ := c.ResolveOne(n.Header.From)
+		_, reProblems := resolveReSubjects(t, sender, &n.Header)
+		return p, problemsOf(append(problems, reProblems...))
 	}
 	if n.Header.ID != "" {
 		problems = append(problems, fmt.Errorf("this draft already carries an %s line (%q); send assigns the id, and a note is sent once", KeyID, n.Header.ID))
@@ -212,8 +206,8 @@ func ValidSlug(slug string) error {
 	return nil
 }
 
-// HostMax is how long a Host value may be. A host is a machine's short name -- `air`,
-// `studio`, `hulk` -- and it is printed on an inbox line beside the sender, so it is
+// HostMax is how long a Host value may be. A host is a machine's short name -- one
+// segment without spaces -- and it is printed on an inbox line beside the sender, so it is
 // bounded rather than left to whatever a defaults file holds.
 const HostMax = 40
 
@@ -224,7 +218,7 @@ const HostMax = 40
 // defaults file and read back by a program.
 func ValidHost(host string) error {
 	if host == "" {
-		return errors.New("--host: empty; a host is the machine's short name, such as `air` or `studio`")
+		return errors.New("--host: empty; a host is the machine's short name, such as `bench-a` or `laptop`")
 	}
 	if len(host) > HostMax {
 		return fmt.Errorf("--host %q: longer than %d characters", truncate(host, HostMax), HostMax)
@@ -296,7 +290,7 @@ type ReceiptPlan struct {
 // PlanReceipts resolves the targets a caller wants to mark heard.
 //
 // A receipt records the note's ID when it has one and its PATH when it does not, so a
-// receipt for a legacy note is as good a receipt as any other. A note already answered by
+// receipt for a legacy note, which is a current input format without an id, is as good a receipt as any other. A note already answered by
 // a reply is still receivable -- the two are different records and the answered rule
 // accepts either -- but a target already in this lane's RECEIPTS is reported and not
 // written twice.
@@ -384,20 +378,9 @@ func (plan ReceiptPlan) Message(me Participant) string {
 // the INBOX OPEN line's large-list remedy names beside the normal reply-or-receipt path,
 // but as a real hand rather than the cursor advance that leaves the notes carried.
 //
-// IT WAS ONE FILE PER CLOSED NOTE UNTIL #1540, and that is what broke it. Every receipt in
-// a run carries the same subject -- the stamp -- so every one got the same slug and the
-// same minute, leaving the id as the only thing telling two filenames apart; and the id is
-// a hash over (from, date, to, cc, re, subject, kind, body), so two open notes sharing a
-// TARGET ID produced the same id, the same path, and `file exists` at the second Save. A
-// hand-made id reused by a sender is enough, and one was: on the coordinator's lane
-//
-//	$ nova-bus close --before 2026-09-18T12:00:00Z --dry-run
-//	CLOSE OK closed=2964 kept=184 commit=-
-//	$ nova-bus close --before 2026-09-18T12:00:00Z --remote origin --branch main
-//	CLOSE FAIL from-rowan/...-42cb99b820c2.md: open ...: file exists
-//
-// -- no commit, the cursor untouched, thousands of receipts unwritten, and the remedy the
-// tool's own INBOX WALK line prescribes unusable on the lane that needed it most.
+// A close run writes one receipt per sender lane. Each receipt carries every target from
+// that lane, so duplicate targets are removed before writing and identical filenames cannot
+// arise from notes that share a target id.
 //
 // One receipt per lane removes the collision by construction rather than by retrying
 // against it: two receipts in a run differ in To AND in Re AND in body, so they cannot hash
@@ -447,7 +430,7 @@ func PlanClose(t *Bus, me Participant, before time.Time, now time.Time) (ClosePl
 			senders = append(senders, item.From)
 		}
 		// A target named twice -- two notes sharing a hand-made id -- is closed once. It
-		// used to be receipted twice, into one filename.
+		// is recorded once: the seen key keeps the first occurrence and drops every later one.
 		if key := item.From + "\x00" + target; !seen[key] {
 			seen[key] = true
 			targets[item.From] = append(targets[item.From], target)

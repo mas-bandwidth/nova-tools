@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // flagValue is the value after --name in args, "" when absent.
@@ -58,11 +60,8 @@ func TestProblemsCatchesEveryWayToBreakTheRule(t *testing.T) {
 		}, "exited 1"},
 	} {
 		problems := Problems(c.run, Case{Verb: "send", Flags: []string{"--dir", "{dir}", "--addr", "{addr}"}}, "-h", t.TempDir())
-		if !strings.Contains(strings.Join(problems, "\n"), c.want) {
-			t.Errorf("%s: problems %q, want one saying %q", c.name, problems, c.want)
-		}
+		assert.Contains(t, strings.Join(problems, "\n"), c.want, "%s: problems %q, want one saying %q", c.name, problems, c.want)
 	}
-	if p := Problems(good, Case{Verb: "send", Flags: []string{"--dir", "{dir}"}}, "--help", t.TempDir()); len(p) != 0 {
-		t.Errorf("a tool that answers help: %q", p)
-	}
+	p := Problems(good, Case{Verb: "send", Flags: []string{"--dir", "{dir}"}}, "--help", t.TempDir())
+	assert.Empty(t, p, "a tool that answers help: %q", p)
 }

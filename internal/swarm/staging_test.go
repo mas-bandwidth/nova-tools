@@ -9,21 +9,18 @@ package swarm
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // writePoolIdentity writes a pool's identity.tsv: header owner/name/email plus
 // the pool's one identity row.
 func writePoolIdentity(t *testing.T, poolDir, owner, name, email string) {
 	t.Helper()
-	if err := os.MkdirAll(poolDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
 	body := "owner\tname\temail\n" + owner + "\t" + name + "\t" + email + "\n"
-	if err := os.WriteFile(filepath.Join(poolDir, "identity.tsv"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "identity.tsv"), []byte(body), 0o644))
 }
 
 // TestLaunchRefusesAPoolWithNoIdentity is red row
@@ -34,27 +31,18 @@ func TestLaunchRefusesAPoolWithNoIdentity(t *testing.T) {
 
 	pool := t.TempDir()
 	job := filepath.Join(t.TempDir(), "job")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadPoolIdentity(pool); err == nil {
-		t.Fatal("a pool with no identity.tsv loads an identity, want a refusal")
-	} else if !strings.Contains(err.Error(), "identity") {
-		t.Fatalf("refusal names the pool's identity, got %q", err)
-	}
-	if err := StageJob(pool, job, ""); err == nil {
-		t.Fatal("launch over a pool with no identity row staged a job, want a refusal")
-	} else if !strings.Contains(err.Error(), "identity") {
-		t.Fatalf("launch refusal names the pool's identity, got %q", err)
-	}
+	require.NoError(t, os.MkdirAll(job, 0o755))
+	_, err := LoadPoolIdentity(pool)
+	require.Error(t, err, "a pool with no identity.tsv loads an identity, want a refusal")
+	require.Contains(t, err.Error(), "identity", "refusal names the pool's identity, got %q", err)
+	err = StageJob(pool, job, "")
+	require.Error(t, err, "launch over a pool with no identity row staged a job, want a refusal")
+	require.Contains(t, err.Error(), "identity", "launch refusal names the pool's identity, got %q", err)
 
 	// A header with no row is no identity either.
-	if err := os.WriteFile(filepath.Join(pool, "identity.tsv"), []byte("owner\tname\temail\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := StageJob(pool, job, ""); err == nil {
-		t.Fatal("launch over a header-only identity.tsv staged a job, want a refusal")
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "identity.tsv"), []byte("owner\tname\temail\n"), 0o644))
+	err = StageJob(pool, job, "")
+	require.Error(t, err, "launch over a header-only identity.tsv staged a job, want a refusal")
 }
 
 // TestStageRefusesASymlinkOutOfTheJob is red row
@@ -67,40 +55,25 @@ func TestStageRefusesASymlinkOutOfTheJob(t *testing.T) {
 	writePoolIdentity(t, pool, "rowan", "Rowan Friend", "rowan@example.com")
 
 	job := t.TempDir()
-	if err := os.WriteFile(filepath.Join(job, "WORK.md"), []byte("work\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(job, "WORK.md"), []byte("work\n"), 0o644))
 	// An inside link is fine: staging keeps it.
-	if err := os.Symlink("WORK.md", filepath.Join(job, "ok-link")); err != nil {
-		t.Fatal(err)
-	}
-	if err := StageJob(pool, job, ""); err != nil {
-		t.Fatalf("a tree with only an inside link is refused: %v", err)
-	}
+	require.NoError(t, os.Symlink("WORK.md", filepath.Join(job, "ok-link")))
+	err := StageJob(pool, job, "")
+	require.NoError(t, err, "a tree with only an inside link is refused: %v", err)
 
 	// An absolute link is refused, by path.
 	abs := filepath.Join(job, "abs-link")
-	if err := os.Symlink("/etc/hostname", abs); err != nil {
-		t.Fatal(err)
-	}
-	if err := StageJob(pool, job, ""); err == nil {
-		t.Fatal("an absolute symlink in the staged tree staged clean, want a refusal")
-	} else if !strings.Contains(err.Error(), "abs-link") {
-		t.Fatalf("symlink refusal names the path, got %q", err)
-	}
-	if err := os.Remove(abs); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Symlink("/etc/hostname", abs))
+	err = StageJob(pool, job, "")
+	require.Error(t, err, "an absolute symlink in the staged tree staged clean, want a refusal")
+	require.Contains(t, err.Error(), "abs-link", "symlink refusal names the path, got %q", err)
+	require.NoError(t, os.Remove(abs))
 
 	// A relative link resolving outside the root is refused too (#1557's
 	// repo/dist shape), by path.
 	rel := filepath.Join(job, "up-link")
-	if err := os.Symlink("../outside", rel); err != nil {
-		t.Fatal(err)
-	}
-	if err := CheckStagedTree(job); err == nil {
-		t.Fatal("a symlink resolving outside the job root staged clean, want a refusal")
-	} else if !strings.Contains(err.Error(), "up-link") {
-		t.Fatalf("symlink refusal names the path, got %q", err)
-	}
+	require.NoError(t, os.Symlink("../outside", rel))
+	err = CheckStagedTree(job)
+	require.Error(t, err, "a symlink resolving outside the job root staged clean, want a refusal")
+	require.Contains(t, err.Error(), "up-link", "symlink refusal names the path, got %q", err)
 }

@@ -30,10 +30,22 @@
 // NOVA_CI=1, which the CI workflows set: a skip there would let a green run be
 // a run that never executed the store. A redis-server that is found and does
 // not come up fails the test anywhere.
+//
+// THE IMAGE OF A STORE. Image reads every key under a prefix, with its type
+// and a sum of its content and expiry time, by SCAN and pipelines, from any
+// server; Diff names the keys added, removed and changed between two images,
+// in key order. A test that must show a step wrote nothing takes an image
+// before the step and one after it and expects an empty Diff: see image.go.
+//
+// A STORE AT A DISTANCE. Far puts a proxy in front of a store a test owns,
+// listening on the loopback, that holds each write of the client back by a
+// delay before it forwards it, so a limit is judged at the distance the real
+// store stands at and not at the loopback's. It stops with the test.
 package testredis
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -45,6 +57,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // CIEnv is set to "1" by the CI workflows. A missing redis-server fails the
@@ -146,6 +160,7 @@ func (s *Server) Stop() {
 	s.stop.Do(func() {
 		// An error here is a process that has already ended, which is the
 		// state Stop is asked for; the wait below is the proof either way.
+		// ignored: a process that has already ended is the state Stop is asked for (see the comment above); the wait is the proof
 		_ = s.cmd.Process.Kill()
 	})
 	<-s.exited
@@ -253,10 +268,13 @@ func (l launch) start(t testing.TB, extra []string) *Server {
 func (l launch) run(t testing.TB, bin, dir, port string, extra []string, group int) (*Server, bool) {
 	t.Helper()
 	args := arguments(dir, port, extra)
+	// A long-lived child: a cancellable context and no deadline, released when the wait
+	// returns; Stop is what ends it.
+	ctx, release := context.WithCancel(context.Background())
 	s := &Server{
 		addr:   net.JoinHostPort("127.0.0.1", port),
 		dir:    dir,
-		cmd:    exec.Command(bin, args...),
+		cmd:    subproc.Long(ctx, bin, args...),
 		out:    &tail{ready: make(chan struct{})},
 		exited: make(chan struct{}),
 	}
@@ -266,10 +284,12 @@ func (l launch) run(t testing.TB, bin, dir, port string, extra []string, group i
 	join(s.cmd, group)
 	until := time.Now().Add(l.wait)
 	if err := s.cmd.Start(); err != nil {
+		release()
 		t.Fatalf("testredis: %s did not start: %v\narguments: %s", bin, err, commandLine(redact(args)))
 	}
 	go func() {
 		s.ended = s.cmd.Wait()
+		release()
 		close(s.exited)
 	}()
 	t.Cleanup(s.Stop)

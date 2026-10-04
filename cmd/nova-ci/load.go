@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // hostLoad reads this host's load average for the CI-LOAD line slowtests
@@ -30,7 +30,7 @@ func readLoadAvg(goos string) (string, error) {
 	case "darwin":
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, "sysctl", "-n", "vm.loadavg").Output()
+		out, err := subproc.Context(ctx, "sysctl", "-n", "vm.loadavg").Output()
 		if err != nil {
 			return "", fmt.Errorf("sysctl -n vm.loadavg: %w", err)
 		}

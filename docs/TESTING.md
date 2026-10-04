@@ -3,7 +3,10 @@
 The class tests in `internal/ci` (indexed in [SPEC-CI.md](SPEC-CI.md), under
 "The class tests") keep their exceptions in lists under `internal/ci/testdata/`.
 Every list only shrinks, and every one is read and written by the one helper,
-`internal/ci/allowlist` (`allowlist.Load` and `allowlist.Check`, nova-tools#4339).
+`internal/ci/allowlist` (`allowlist.Load` and `allowlist.Check`).
+
+How to run each tier and use the store helpers of `internal/testredis` in a test:
+[FOUNDATION-TESTING.md](FOUNDATION-TESTING.md).
 
 ## The two tiers
 
@@ -31,7 +34,39 @@ the real thing (a redis-server, a built binary, a child process) lives in a
 only those tests, and ci.yml's `functional` job runs it in the merge queue (a
 whole work stream merging into dev), nightly and by hand, never on a pull
 request. Keep them few and cheap: one server per package (`TestMain`) rather
-than one per test, and the same two-minute cap as every job.
+than one per test, and the same two-minute cap as every job. On a working machine
+they run inside one container per run, `make test-functional-container
+PKGS=<packages>` ([TESTING.md](../TESTING.md)), never bare.
+
+### Vetting the build-tagged test files
+
+A test file behind an opt-in build tag is compiled by no plain `go vet ./...`,
+so the vet targets compile each tag on every change: the lint job runs `make
+vet-functional`, `make vet-slow`, `make vet-shippedsmoke` and `make vet-novadisk`
+(and certification vets `perf` with `go vet -tags perf`).
+`internal/ci`'s `TestEveryTestBuildTagIsVettedByCIVetSteps` reads the vet
+targets and refuses a tag no vet step passes, so a tag that hides a test file is
+type-checked on a pull request rather than only when its nightly job runs.
+
+### Table epoch actions and receipt replay
+
+`TestTableEpochActionsAndReceiptReplay` in `internal/ntable` runs eight fixed
+seeds against an owned source/replay Redis pair, reset between seeds. Each seed
+has three generations, 24 random actions per generation, and stale-writer probes
+for every modeled write at each advance. Every action checks placement, score
+order, immutable member epochs, unchanged history, and refusal without writes.
+Accepted receipt arguments and member deltas must match the independent state
+model; the replay store executes those receipts and must reach the same state.
+Both stores compare complete key snapshots before and after accepted writes;
+added, changed or deleted keys outside the model transition's allowed set fail.
+Catalog membership and the complete template and immutable identity hashes must
+also equal the model after every action, including their initial registration.
+Failure output includes the seed and complete action trace. A `-run` selection
+ending in `/seed_1$` reproduces just that seed in the functional test.
+
+Action names correspond to `EpochMemberTable.tla`; this is bounded execution
+coverage, not exhaustive model checking or a concurrent-writer test. External
+bindings, batches, definition edits and row sorting have separate tests.
 
 ## `NOVA_CI_UPDATE=1`
 
@@ -68,7 +103,7 @@ the lists now match the tree.
 |---|---|
 | `bench-runners.allow` | `TestCIOneBenchRunner` |
 | `cardtemplate_allowlist.txt` | `TestNoCardTemplateCarriesAnOSSpecificCommand` |
-| `compared_examples.txt`, `unexecuted_examples.txt` | `TestIssue2218` |
+| `compared_examples.txt`, `unexecuted_examples.txt` | `TestPlatformsMatchCILegsAndUnexecutedExamplesOnlyShrink` |
 | `fieldsindex_allowlist.txt` | `TestNoUncheckedFieldsIndex` |
 | `fixed-testbins-allowlist.txt` | `TestNoCopiedTestBinariesOnTheCIPath` |
 | `fixed-waits-allowlist.txt` | `TestNoFixedWaitsOnTheCIPath` |

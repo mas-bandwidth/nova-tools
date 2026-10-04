@@ -8,7 +8,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -18,6 +17,7 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // CILegsFromYAML reads the ci.yml workflow text and returns the GOOS values
@@ -27,7 +27,7 @@ import (
 // expression. The labels are self-hosted linux -> "linux", self-hosted macOS
 // -> "darwin", and the GitHub-hosted ubuntu-latest -> "linux" and
 // macos-latest -> "darwin". A comment never declares a leg. There is no
-// native Windows leg since 2026-09-18.
+// native Windows leg.
 func CILegsFromYAML(yaml string) map[string]bool {
 	legs := make(map[string]bool)
 	for _, line := range strings.Split(yaml, "\n") {
@@ -109,12 +109,13 @@ func goosValues(line string) []string {
 	return vals
 }
 
-// PastedDocs are the documents a stranger pastes from, per SPEC-TOOLWORK.md
-// documents rule 6, relative to the repo root.
+// PastedDocs are the documents a stranger pastes from, the set SPEC-TOOLWORK.md
+// counts, relative to the repo root.
 var PastedDocs = []string{
 	"README.md",
 	filepath.Join("docs", "USAGE.md"),
 	filepath.Join("docs", "CLI.md"),
+	filepath.Join("docs", "nova-swarm-quickstart.md"),
 }
 
 // DocExample is one pasted example and the doc it is pasted in.
@@ -268,8 +269,8 @@ func BannerExampleLines(banner string) ([]string, error) {
 
 // HelpBannerExamples returns every `example:` line of every `help` banner a
 // tool under root/cmd carries, keyed "example: <line>" and mapped to the
-// source file that carries it, per SPEC-TOOLWORK.md documents rule 6 ("every `example:`
-// line of every `help`"). A banner is a string literal (or a `+` chain of
+// source file that carries it, per SPEC-TOOLWORK.md, which counts every
+// `example:` line of every `help`. A banner is a string literal (or a `+` chain of
 // them) in a non-test .go file of cmd/<tool>/ holding the `\nexample:\n`
 // heading; its lines are read through BannerExampleLines, every line of the
 // block whatever tool leads it. A literal that is only the heading (a splice
@@ -277,6 +278,11 @@ func BannerExampleLines(banner string) ([]string, error) {
 // whose example block holds no command is an error naming its file, so a
 // banner is never silently left out of the count.
 func HelpBannerExamples(root string) (map[string]string, error) {
+	return helpBannerExamplesWith(root, defaultSourceSeams())
+}
+
+// helpBannerExamplesWith is HelpBannerExamples reading the tree through seams.
+func helpBannerExamplesWith(root string, seams SourceSeams) (map[string]string, error) {
 	dirs, err := os.ReadDir(filepath.Join(root, "cmd"))
 	if err != nil {
 		return nil, fmt.Errorf("help banners: %w", err)
@@ -297,11 +303,11 @@ func HelpBannerExamples(root string) (map[string]string, error) {
 				continue
 			}
 			rel := filepath.ToSlash(strings.TrimPrefix(f, root+string(filepath.Separator)))
-			src, err := readSourceFile(f)
+			src, err := seams.readFile(f)
 			if err != nil {
 				return nil, fmt.Errorf("help banners: %w", err)
 			}
-			_, file, err := parseSource(f, src, parser.SkipObjectResolution)
+			_, file, err := seams.parseFile(f, src, parser.SkipObjectResolution)
 			if err != nil {
 				return nil, fmt.Errorf("help banners: %w", err)
 			}
@@ -320,9 +326,41 @@ func HelpBannerExamples(root string) (map[string]string, error) {
 					}
 				}
 			}
+			// A tool on internal/tool writes its banner from its verbs: each
+			// verb's Example is its example lines, after the tool's name.
+			for _, ex := range exampleFields(file) {
+				for _, l := range strings.Split(ex, "\n") {
+					if l = strings.Join(strings.Fields(l), " "); l != "" {
+						if _, dup := out["example: "+tool+" "+l]; !dup {
+							out["example: "+tool+" "+l] = rel
+						}
+					}
+				}
+			}
 		}
 	}
 	return out, nil
+}
+
+// exampleFields returns the string literal of every `Example:` field of a
+// composite literal: an internal/tool Verb's example lines.
+func exampleFields(file *ast.File) []string {
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		key, ok := kv.Key.(*ast.Ident)
+		lit, isLit := kv.Value.(*ast.BasicLit)
+		if ok && isLit && key.Name == "Example" && lit.Kind == token.STRING {
+			if s, err := strconv.Unquote(lit.Value); err == nil {
+				out = append(out, s)
+			}
+		}
+		return true
+	})
+	return out
 }
 
 // stringConstants returns every string literal of a file and every `+` chain
@@ -384,8 +422,8 @@ func ListRows(list string) []string {
 
 // AddedListRows returns the rows of head that base does not carry: for a
 // shrink-only list, every one is a row the change adds, and each fails the
-// class test (SPEC-TOOLWORK.md documents rule 6, "a new unexecuted example fails the
-// class test on the change that adds it").
+// class test, as SPEC-TOOLWORK.md holds: a new unexecuted example fails the
+// class test on the change that adds it.
 func AddedListRows(base, head string) []string {
 	had := make(map[string]bool)
 	for _, r := range ListRows(base) {
@@ -480,7 +518,7 @@ func ListAtCommit(root, commit, rel string) (string, bool, error) {
 func gitOut(root string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	cmd := subproc.Context(ctx, "git", append([]string{"-C", root}, args...)...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -559,10 +597,10 @@ func reachOf(pkgDir, test string) (testReach, bool, error) {
 				}
 				switch sel.Sel.Name {
 				case "CompareTranscript", "Compare", "Execute", "ExecuteWith":
-					// CompareTranscript is THE comparator (SPEC-TOOLWORK.md
-					// documents rule 2); a test the transcripts rule holds to it is a
+					// CompareTranscript is THE comparator, the one comparison SPEC-TOOLWORK.md
+					// allows; a test the transcripts rule holds to it is a
 					// comparator test here too, or no new tool could ever
-					// cover its examples (nova-config, 2026-09-27).
+					// cover its examples.
 					r.comparator = true
 				case "FirstRun", "Transcript":
 					if len(x.Args) < 2 {
@@ -627,6 +665,15 @@ func ComparedEntryProblem(root string, c ComparedEntry, docs []string) string {
 		return fmt.Sprintf("%q names no command", c.Ex)
 	}
 	tool := fields[0]
+	// Shell setup and assignment prefixes belong to the tool section whose
+	// comparator executes them. Require the WHOLE command literal below.
+	shellExample := tool == "mkdir" || strings.HasPrefix(tool, "HOME=")
+	if shellExample {
+		tool = path.Base(path.Dir(c.File))
+		if !strings.HasPrefix(tool, "nova-") {
+			return "shell example comparator must belong to a nova tool package"
+		}
+	}
 	if dir := "cmd/" + tool + "/"; !strings.HasPrefix(c.File, dir) || strings.Contains(strings.TrimPrefix(c.File, dir), "/") {
 		return fmt.Sprintf("%q runs %s, but %s is not in %s, so %s cannot be the test that executes it", c.Ex, tool, c.File, dir, c.Test)
 	}
@@ -663,7 +710,10 @@ func ComparedEntryProblem(root string, c ComparedEntry, docs []string) string {
 	for _, l := range reach.literals {
 		name := commandText(strings.TrimSpace(l))
 		nf := strings.Fields(name)
-		if len(nf) >= 2 && nf[0] == tool && (cmdText == name || strings.HasPrefix(cmdText, name+" ")) {
+		if shellExample && name == cmdText {
+			return ""
+		}
+		if !shellExample && len(nf) >= 2 && nf[0] == tool && (cmdText == name || strings.HasPrefix(cmdText, name+" ")) {
 			return ""
 		}
 	}

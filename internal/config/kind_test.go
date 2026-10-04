@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEveryKindHasATableAndUniqueFields(t *testing.T) {
@@ -11,99 +14,209 @@ func TestEveryKindHasATableAndUniqueFields(t *testing.T) {
 
 	seen := map[string]bool{}
 	for _, k := range Kinds {
-		if k.Name == "" || k.Table == "" || k.Doc == "" {
-			t.Errorf("kind %+v: name, table and doc are required", k)
-		}
-		if seen[k.Name] {
-			t.Errorf("kind %s is declared twice", k.Name)
-		}
+		assertionMsg17 := []any{"kind %+v: name, table and doc are required", k}
+		func() {
+			if !assert.NotEqual(t, "", k.Name, assertionMsg17...) {
+				return
+			}
+			if !assert.NotEqual(t, "", k.Table, assertionMsg17...) {
+				return
+			}
+			assert.NotEqual(t, "", k.Doc, assertionMsg17...)
+		}()
+		assert.False(t, seen[k.Name], "kind %s is declared twice", k.Name)
 		seen[k.Name] = true
 		fields := map[string]bool{}
 		for _, f := range k.Fields {
-			if f.Name == "name" || fields[f.Name] {
-				t.Errorf("kind %s: field %q is the row key or repeated", k.Name, f.Name)
-			}
+			assertionMsg22 := []any{"kind %s: field %q is the row key or repeated", k.Name, f.Name}
+			func() {
+				if !assert.NotEqual(t, "name", f.Name, assertionMsg22...) {
+					return
+				}
+				assert.False(t, fields[f.Name], assertionMsg22...)
+			}()
 			fields[f.Name] = true
-			if f.Help == "" {
-				t.Errorf("kind %s: field %s has no help line", k.Name, f.Name)
-			}
-			if (f.Type == TypeEnum || f.Type == TypeList) && len(f.Enum) == 0 {
-				t.Errorf("kind %s: field %s is an enum with no words", k.Name, f.Name)
+			assert.NotEqual(t, "", f.Help, "kind %s: field %s has no help line", k.Name, f.Name)
+			if f.Type == TypeEnum || f.Type == TypeList {
+				assert.NotEmpty(t, f.Enum, "kind %s: field %s is an enum with no words", k.Name, f.Name)
 			}
 			if f.Type == TypeRef {
-				if _, ok := Lookup(f.Ref); !ok {
-					t.Errorf("kind %s: field %s refers to unknown kind %q", k.Name, f.Name, f.Ref)
-				}
+				_, scopedOk42 := Lookup(f.Ref)
+				assert.True(t, scopedOk42, "kind %s: field %s refers to unknown kind %q", k.Name, f.Name, f.Ref)
 			}
 		}
 	}
-	if _, ok := Lookup("nothing"); ok {
-		t.Error("Lookup found a kind that is not declared")
-	}
+	_, scopedOk49 := Lookup("nothing")
+	assert.False(t, scopedOk49, "Lookup found a kind that is not declared")
 }
 
 func TestKindsApplyInDependencyOrder(t *testing.T) {
 	t.Parallel()
 
 	names := KindNames()
-	if strings.Join(names, ",") != "machine,fleet,friend,sprint" {
-		t.Fatalf("kinds %v: machines first (ceilings), the fleet next (a friend's slots are charged to its coordinator machine when her beat names none), friends, the sprint row last (it names a friend)", names)
-	}
+	require.Equal(t, "machine,fleet,friend,sprint,loop,route,tier", strings.Join(names, ","), "kinds %v: machines first (ceilings), the fleet next (a friend's slots are charged to its coordinator machine when her beat names none), friends, the sprint row (it names a friend), loops (each names a machine), routes, tiers last (each names routes)", names)
 }
 
 // TestTheMachineRowIsTheDeclaredFactsSomethingReads: Glenn 2026-09-27, "I
 // only want the fleet to have actual defined useful things associated with
-// each machine, not invented rando stuff". Four declared fields, no address
-// (the name is the tailnet host), no measured fact, no note.
+// each machine, not invented rando stuff". Six declared fields and the note
+// (Glenn 2026-10-02: "these should be saved somewhere permanent with notes
+// (ideally, nova-config)"), no address (the name is the tailnet host), no
+// measured fact. width is the
+// sprint member's width, set directly (the owner, 2026-10-01: "we should just
+// be able to set width specifically in nova-config and it just works"). tla
+// marks a TLC record machine, read by the tools play and tlacheck run --bench.
 func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 	t.Parallel()
 
 	machine, _ := Lookup(KindMachine)
-	if got := strings.Join(machine.FieldNames(), ","); got != "user,seat,slots,runners" {
-		t.Fatalf("machine fields %s, want user,seat,slots,runners", got)
-	}
+	scopedGot70 := strings.Join(machine.FieldNames(), ",")
+	require.Equal(t, "user,seat,slots,runners,width,tla,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,width,tla,note", scopedGot70)
 	for _, f := range machine.Fields {
-		if want := f.Name != "runners"; f.Required != want {
-			t.Errorf("--%s required=%v, want %v (runners defaults to 0; the rest are typed on add)", f.Name, f.Required, want)
-		}
+		scopedWant75 := f.Name != "runners" && f.Name != "width" && f.Name != "tla" && f.Name != "note"
+		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0, tla to false and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
 	}
-	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "note", "store", "coordinator", "machine", "harness", "logins", "wake"} {
-		if _, ok := machine.Field(invented); ok {
-			t.Errorf("machine has a field %s: an address is the name, a measured fact comes live from the beat, a fleet fact is the fleet's, a note is history", invented)
-		}
+	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "store", "coordinator", "machine", "harness", "logins", "wake"} {
+		_, scopedOk81 := machine.Field(invented)
+		assert.False(t, scopedOk81, "machine has a field %s: an address is the name, a measured fact comes live from the beat, a fleet fact is the fleet's", invented)
 	}
-	if machine.Singleton {
-		t.Error("machine is many rows")
-	}
+	assert.False(t, machine.Singleton, "machine is many rows")
 }
 
 // TestTheFriendRowIsWhatSomeoneDecidesForHer: Glenn 2026-09-27, "anything
-// that a friend would just know, is runtime redis data". Three fields:
-// slots, tiers, roles; no machine, harness, logins, wake or note; and no
-// coordinator role, which is the sprint row's.
+// that a friend would just know, is runtime redis data". Four fields:
+// slots, tiers, roles and width (2026-10-02, the jobs she works at once); no
+// machine, harness, logins, wake or note; and no coordinator role, which is
+// the sprint row's.
 func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 	t.Parallel()
 
 	friend, _ := Lookup(KindFriend)
-	if got := strings.Join(friend.FieldNames(), ","); got != "slots,tiers,roles" {
-		t.Fatalf("friend fields %s, want slots,tiers,roles", got)
-	}
+	scopedGot97 := strings.Join(friend.FieldNames(), ",")
+	require.Equal(t, "slots,tiers,roles,width", scopedGot97, "friend fields %s, want slots,tiers,roles,width", scopedGot97)
 	for _, f := range friend.Fields {
-		if want := f.Name != "roles"; f.Required != want {
-			t.Errorf("--%s required=%v, want %v", f.Name, f.Required, want)
-		}
+		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
+		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
 	}
 	for _, invented := range []string{"machine", "harness", "logins", "wake", "note", "coordinator"} {
-		if _, ok := friend.Field(invented); ok {
-			t.Errorf("friend has a field %s: what she would just know is runtime data, who coordinates is the sprint's", invented)
+		_, scopedOk108 := friend.Field(invented)
+		assert.False(t, scopedOk108, "friend has a field %s: what she would just know is runtime data, who coordinates is the sprint's", invented)
+	}
+	assertionMsg98 := []any{"roles %v tiers %v", FriendRoles, Tiers}
+	func() {
+		if !assert.Equal(t, "builder,may-hold,reader", strings.Join(FriendRoles, ","), assertionMsg98...) {
+			return
+		}
+		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
+	}()
+	sprint, _ := Lookup(KindSprint)
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars, the landed score's bar, layer 2's three, the gate decision's two, the judgment bar and the brief bar", sprint}
+	require.True(t, sprint.Singleton, assertionMsg100...)
+	require.Len(t, sprint.Fields, 11, assertionMsg100...)
+	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
+	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
+	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
+	require.False(t, sprint.Fields[0].Required, assertionMsg100...)
+}
+
+// The sprint row holds the two bars a flash card's decide read is routed by
+// (docs/SPEC-SPRINT.md section 6), the calibration's by default (0.5 and 0.3), so the
+// owner sets them in nova-config and no number is in the code: both are probabilities,
+// the review bar at most the bounce bar, and both empty turns the read off.
+func TestTheSprintRowHoldsTheDecideBarsTogether(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	bounce, _ := sprint.Field(FieldDecideBounce)
+	review, _ := sprint.Field(FieldDecideReview)
+	assert.Equal(t, []string{"0.5", "0.3"}, []string{bounce.Default, review.Default})
+	assert.Equal(t, TypeDecimal, bounce.Type)
+	for _, tc := range []struct {
+		bounce, review, says string
+	}{
+		{"0.5", "0.3", ""},
+		{"0.4", "0.4", ""},
+		{"", "", ""},
+		{"0.3", "0.5", "decide_review 0.5 is above decide_bounce 0.3"},
+		{"1.5", "0.3", "decide_bounce 1.5 is not a probability"},
+		{"0.5", "", "decide_review \"\" is not a decimal"},
+	} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: tc.bounce, FieldDecideReview: tc.review}})
+		if tc.says == "" {
+			assert.NoError(t, err, "%+v", tc)
+		} else {
+			assert.ErrorContains(t, err, tc.says, "%+v", tc)
 		}
 	}
-	if strings.Join(FriendRoles, ",") != "builder,may-hold,reader" || strings.Join(Tiers, ",") != "flash,frontier,pro" {
-		t.Errorf("roles %v tiers %v", FriendRoles, Tiers)
-	}
+}
+
+// The sprint row holds the landed score's bar (docs/SPEC-SPRINT.md section 7, the landed
+// score): a decimal, a probability or empty, and empty by default (no judgment).
+func TestTheSprintRowHoldsTheLandedScoreBar(t *testing.T) {
+	t.Parallel()
 	sprint, _ := Lookup(KindSprint)
-	if !sprint.Singleton || len(sprint.Fields) != 1 || sprint.Fields[0].Name != "coordinator" || sprint.Fields[0].Type != TypeRef || sprint.Fields[0].Ref != KindFriend || sprint.Fields[0].Required {
-		t.Fatalf("sprint %+v: one row, one optional ref to a friend", sprint)
+	bar, ok := sprint.Field(FieldDecideScoreBar)
+	require.True(t, ok)
+	assert.Equal(t, "", bar.Default, "report only until a review round labels cards independently")
+	assert.Equal(t, TypeDecimal, bar.Type)
+	for raw, says := range map[string]string{"0.5": "", "0": "", "1": "", "": "", "1.5": "decide_score_bar \"1.5\" is not a probability", "x": "decide_score_bar \"x\" is not a probability"} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideScoreBar: raw}})
+		if says == "" {
+			assert.NoError(t, err, "%q", raw)
+		} else {
+			assert.ErrorContains(t, err, says, "%q", raw)
+		}
+	}
+}
+
+// The sprint row holds layer 2's three bars (docs/SPEC-SPRINT.md sections 2 and 5): the
+// attempt decision's no-result and nothing-to-do bars, each its own named field, and the
+// grade's, all empty by default (nothing routes on a decision until a review round labels
+// cards independently); each a probability or empty, every problem named at once.
+func TestTheSprintRowHoldsTheAttemptAndGradeBars(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	noResult, _ := sprint.Field(FieldDecideAttemptNoResult)
+	nothing, _ := sprint.Field(FieldDecideAttemptNothingToDo)
+	grade, _ := sprint.Field(FieldDecideGrade)
+	assert.Equal(t, []string{"", "", ""}, []string{noResult.Default, nothing.Default, grade.Default})
+	assert.Equal(t, []Type{TypeDecimal, TypeDecimal, TypeDecimal}, []Type{noResult.Type, nothing.Type, grade.Type})
+	for _, tc := range []struct {
+		noResult, nothing, grade, says string
+	}{
+		{"0.7", "", "", ""},
+		{"", "", "", ""},
+		{"0.7", "0.8", "0.8", ""},
+		{"1.2", "", "", "decide_attempt_no_result 1.2 is not a probability"},
+		{"", "-1", "", "decide_attempt_nothing_to_do -1 is not a probability"},
+		{"x", "", "2", `decide_attempt_no_result "x" is not a decimal; decide_grade 2 is not a probability`},
+	} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: "0.5", FieldDecideReview: "0.3",
+			FieldDecideAttemptNoResult: tc.noResult, FieldDecideAttemptNothingToDo: tc.nothing, FieldDecideGrade: tc.grade}})
+		if tc.says == "" {
+			assert.NoError(t, err, "%+v", tc)
+		} else {
+			assert.ErrorContains(t, err, tc.says, "%+v", tc)
+		}
+	}
+}
+
+// The sprint row holds the bar a card's brief is added at (docs/SPEC-NOVA-DECIDE.md
+// section 14): empty by default, which asks the brief decision and reports only, else a
+// probability nova-sprint add refuses a card under.
+func TestTheSprintRowHoldsTheBriefBar(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	bar, ok := sprint.Field(FieldDecideBriefBar)
+	require.True(t, ok)
+	assert.Equal(t, "", bar.Default)
+	assert.Equal(t, TypeDecimal, bar.Type)
+	for raw, says := range map[string]string{"": "", "0.6": "", "1.5": "decide_brief_bar \"1.5\" is not a probability in [0, 1]"} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBriefBar: raw}})
+		if says == "" {
+			assert.NoError(t, err, raw)
+		} else {
+			assert.ErrorContains(t, err, says, raw)
+		}
 	}
 }
 
@@ -118,9 +231,7 @@ func TestDeriveGivesTheSprintCoordinatorTheRole(t *testing.T) {
 	friend, _ := Lookup(KindFriend)
 	rows, _ := st.List(ctx, KindFriend)
 	derived, err := friend.Derive(ctx, st, rows)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	byName := func(rs []Row, n string) string {
 		for _, r := range rs {
 			if r.Name == n {
@@ -129,49 +240,93 @@ func TestDeriveGivesTheSprintCoordinatorTheRole(t *testing.T) {
 		}
 		return "?"
 	}
-	if byName(derived, "rowan") != "builder,coordinator" || byName(derived, "stella") != "builder,reader" {
-		t.Fatalf("derived roles rowan=%s stella=%s", byName(derived, "rowan"), byName(derived, "stella"))
-	}
-	if byName(rows, "rowan") != "builder" {
-		t.Fatal("Derive changed its input")
-	}
-	if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": ""}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	require.Equal(t, "builder,coordinator", byName(derived, "rowan"), "derived rowan roles")
+	require.Equal(t, "builder,reader", byName(derived, "stella"), "derived stella roles")
+	require.Equal(t, "builder", byName(rows, "rowan"), "Derive changed its input")
+	_, _, setupErr5775 := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": ""}, "rowan")
+	require.NoError(t, setupErr5775)
 	derived, _ = friend.Derive(ctx, st, rows)
-	if byName(derived, "rowan") != "builder" {
-		t.Fatalf("no coordinator named and rowan still derives %s", byName(derived, "rowan"))
-	}
+	require.Equal(t, "builder", byName(derived, "rowan"), "no coordinator is named")
 }
 
-// TestTheFleetIsOneRowOfTwoMachineRefs: Glenn 2026-09-27, "in the fleet
-// there is only one coordinator at a time": the store and the coordinator
-// are fleet facts, one value each, each a machine row or empty.
-func TestTheFleetIsOneRowOfTwoMachineRefs(t *testing.T) {
+// TestTheFleetIsOneRowOfEndpointsAndMachineRefs: the two machine names and
+// both store endpoints are fleet-wide facts. Both stay unset until
+// explicitly declared; Postgres never holds a
+// password.
+func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	t.Parallel()
 
 	fleet, _ := Lookup(KindFleet)
-	if !fleet.Singleton || fleet.Table != "fleet" {
-		t.Fatalf("fleet %+v: one row in config.fleet", fleet)
-	}
-	if got := strings.Join(fleet.FieldNames(), ","); got != "store,coordinator" {
-		t.Fatalf("fleet fields %s, want store,coordinator", got)
-	}
-	for _, f := range fleet.Fields {
-		if f.Type != TypeRef || f.Ref != KindMachine || f.Required {
-			t.Errorf("--%s %+v: an optional ref to a machine row", f.Name, f)
-		}
+	assertionMsg144 := []any{"fleet %+v: one row in config.fleet", fleet}
+	require.True(t, fleet.Singleton, assertionMsg144...)
+	require.Equal(t, "fleet", fleet.Table, assertionMsg144...)
+	scopedGot169 := strings.Join(fleet.FieldNames(), ",")
+	require.Equal(t, "store,coordinator,redis_port,pg_dsn", scopedGot169, "fleet fields %s", scopedGot169)
+	for _, name := range []string{"store", "coordinator"} {
+		f, ok := fleet.Field(name)
+		require.True(t, ok)
+		assertionMsg158 := []any{"--%s %+v: an optional ref to a machine row", f.Name, f}
+		func() {
+			if !assert.Equal(t, TypeRef, f.Type, assertionMsg158...) {
+				return
+			}
+			if !assert.Equal(t, KindMachine, f.Ref, assertionMsg158...) {
+				return
+			}
+			assert.False(t, f.Required, assertionMsg158...)
+		}()
 	}
 	row, err := fleet.NewRow(KindFleet, map[string]string{"store": "hulk"})
-	if err != nil || row.Fields["store"] != "hulk" || row.Fields["coordinator"] != "" {
-		t.Fatalf("fleet row %+v %v", row.Fields, err)
+	assertionMsg153 := []any{"fleet row %+v %v", row.Fields, err}
+	require.NoError(t, err, assertionMsg153...)
+	require.Equal(t, "hulk", row.Fields["store"], assertionMsg153...)
+	require.Equal(t, "", row.Fields["coordinator"], assertionMsg153...)
+	require.Empty(t, row.Fields["redis_port"], assertionMsg153...)
+	require.Equal(t, "", row.Fields["pg_dsn"], assertionMsg153...)
+	{
+		_, err := fleet.NewRow(KindFleet, map[string]string{"store": "Hulk"})
+		assertionMsg156 := []any{"a ref that is not a name: %v", err}
+		require.Error(t, err, assertionMsg156...)
+		require.ErrorContains(t, err, "--store: name \"Hulk\": want lower-case", assertionMsg156...)
 	}
-	if _, err := fleet.NewRow(KindFleet, map[string]string{"store": "Hulk"}); err == nil || !strings.Contains(err.Error(), "--store: name \"Hulk\": want lower-case") {
-		t.Fatalf("a ref that is not a name: %v", err)
+	{
+		got, err := fleet.Changes(map[string]string{"coordinator": ""})
+		assertionMsg160 := []any{"clearing a fleet field: %v %v", got, err}
+		require.NoError(t, err, assertionMsg160...)
+		require.Equal(t, "", got["coordinator"], assertionMsg160...)
 	}
-	if got, err := fleet.Changes(map[string]string{"coordinator": ""}); err != nil || got["coordinator"] != "" {
-		t.Fatalf("clearing a fleet field: %v %v", got, err)
+	for _, tc := range []struct {
+		name string
+		raw  map[string]string
+		want string
+	}{
+		{"zero port", map[string]string{"redis_port": "0"}, "1 through 65535"},
+		{"empty port", map[string]string{"redis_port": ""}, "non-negative integer"},
+		{"large port", map[string]string{"redis_port": "65536"}, "1 through 65535"},
+		{"malformed dsn", map[string]string{"pg_dsn": "not a URI"}, "password-free postgres://"},
+		{"password in userinfo", map[string]string{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova"}, "carries a password"},
+		{"password in query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print"}, "carries a password"},
+		{"encoded mixed-case password key", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?%70aSsWoRd=do-not-print"}, "carries a password"},
+		{"semicolon query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print;sslmode=disable"}, "valid URI query"},
+		{"invalid query escape", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print%zz"}, "valid URI query"},
+		{"zero Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:0/nova"}, "TCP port from 1 through 65535"},
+		{"large Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:65536/nova"}, "TCP port from 1 through 65535"},
+		{"empty Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:/nova"}, "TCP port from 1 through 65535"},
+		{"nonnumeric Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:do-not-print/nova"}, "password-free postgres://"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := fleet.NewRow(KindFleet, tc.raw)
+			require.ErrorContains(t, err, tc.want)
+			assert.NotContains(t, err.Error(), "do-not-print")
+		})
 	}
+	row, err = fleet.NewRow(KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"})
+	require.NoError(t, err)
+	assert.Equal(t, "6380", row.Fields["redis_port"])
+	assert.Equal(t, "postgres://user@localhost:5432/nova", row.Fields["pg_dsn"])
+	_, err = fleet.NewRow(KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost/nova?sslmode=require&application_name=nova%3Bconfig"})
+	assert.NoError(t, err, "an omitted port and a percent-encoded query value are valid")
 }
 
 func TestCanonicalValidatesEveryType(t *testing.T) {
@@ -183,9 +338,7 @@ func TestCanonicalValidatesEveryType(t *testing.T) {
 	sprint, _ := Lookup(KindSprint)
 	field := func(k *Kind, name string) Field {
 		f, ok := k.Field(name)
-		if !ok {
-			t.Fatalf("%s has no field %s", k.Name, name)
-		}
+		require.True(t, ok, "%s has no field %s", k.Name, name)
 		return f
 	}
 	cases := []struct {
@@ -220,18 +373,15 @@ func TestCanonicalValidatesEveryType(t *testing.T) {
 	}
 	for _, c := range cases {
 		got, err := c.f.Canonical(c.raw)
-		switch {
-		case c.refused == "" && err != nil:
-			t.Errorf("--%s %q: refused %v, want %q", c.f.Name, c.raw, err, c.want)
-		case c.refused == "" && got != c.want:
-			t.Errorf("--%s %q: canonical %q, want %q", c.f.Name, c.raw, got, c.want)
-		case c.refused != "" && err == nil:
-			t.Errorf("--%s %q: accepted as %q, want a refusal saying %q", c.f.Name, c.raw, got, c.refused)
-		case c.refused != "" && !strings.Contains(err.Error(), c.refused):
-			t.Errorf("--%s %q: refusal %q does not say %q", c.f.Name, c.raw, err, c.refused)
+		if c.refused == "" {
+			if assert.NoError(t, err, "--%s %q: want %q", c.f.Name, c.raw, c.want) {
+				assert.Equal(t, c.want, got, "--%s %q", c.f.Name, c.raw)
+			}
+		} else if assert.Error(t, err, "--%s %q: accepted as %q, want a refusal saying %q", c.f.Name, c.raw, got, c.refused) {
+			assert.Contains(t, err.Error(), c.refused, "--%s %q", c.f.Name, c.raw)
 		}
-		if c.refused != "" && err != nil && !strings.HasPrefix(err.Error(), "--"+c.f.Name) {
-			t.Errorf("--%s: refusal %q does not name the flag first", c.f.Name, err)
+		if c.refused != "" && err != nil {
+			assert.True(t, strings.HasPrefix(err.Error(), "--"+c.f.Name), "--%s: refusal %q does not name the flag first", c.f.Name, err)
 		}
 	}
 }
@@ -241,52 +391,69 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	_, err := friend.NewRow("Rowan", map[string]string{"slots": "x", "roles": "king", "colour": "red"})
-	if err == nil {
-		t.Fatal("a row with four problems was accepted")
-	}
+	require.Error(t, err, "a row with four problems was accepted")
 	for _, want := range []string{"lower-case", "--tiers is required", "--slots \"x\"", "--roles \"king\"", "--colour is not a friend field"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not name %q:\n%s", want, err)
-		}
+		assert.ErrorContains(t, err, want, "the refusal does not name %q:\n%s", want, err)
 	}
 	machine, _ := Lookup(KindMachine)
 	_, err = machine.NewRow("hulk", map[string]string{"slots": "40", "ssh": "hulk", "os_arch": "linux/x64"})
-	if err == nil {
-		t.Fatal("a machine row with no user, no seat and two invented fields was accepted")
-	}
+	require.Error(t, err, "a machine row with no user, no seat and two invented fields was accepted")
 	for _, want := range []string{"--user is required", "--seat is required", "--ssh is not a machine field; the fields are user, seat, slots, runners", "--os_arch is not a machine field"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the machine refusal does not name %q:\n%s", want, err)
-		}
+		assert.ErrorContains(t, err, want, "the machine refusal does not name %q:\n%s", want, err)
 	}
 	row, err := friend.NewRow("rowan", map[string]string{"tiers": "frontier", "slots": "64"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, f := range friend.Fields {
-		if _, ok := row.Fields[f.Name]; !ok {
-			t.Errorf("a new row lacks field %s; every field is present, empty when not given", f.Name)
+		_, scopedOk277 := row.Fields[f.Name]
+		assert.True(t, scopedOk277, "a new row lacks field %s; every field is present, empty when not given", f.Name)
+	}
+	assertionMsg257 := []any{"row %+v", row.Fields}
+	func() {
+		if !assert.Equal(t, "", row.Fields["roles"], assertionMsg257...) {
+			return
 		}
-	}
-	if row.Fields["roles"] != "" || row.Fields["slots"] != "64" || row.Int("slots") != 64 {
-		t.Errorf("row %+v", row.Fields)
-	}
+		if !assert.Equal(t, "64", row.Fields["slots"], assertionMsg257...) {
+			return
+		}
+		assert.Equal(t, 64, row.Int("slots"), assertionMsg257...)
+	}()
 }
 
 func TestChangesRefusesNoFieldAndUnknownField(t *testing.T) {
 	t.Parallel()
 
 	friend, _ := Lookup(KindFriend)
-	if _, err := friend.Changes(map[string]string{}); err == nil || !strings.Contains(err.Error(), "names no field") {
-		t.Errorf("set with no field: %v", err)
+	{
+		_, err := friend.Changes(map[string]string{})
+		assertionMsg266 := []any{"set with no field: %v", err}
+		func() {
+			if !assert.Error(t, err, assertionMsg266...) {
+				return
+			}
+			assert.ErrorContains(t, err, "names no field", assertionMsg266...)
+		}()
 	}
-	if _, err := friend.Changes(map[string]string{"colour": "red"}); err == nil || !strings.Contains(err.Error(), "--colour is not a friend field") {
-		t.Errorf("set with an unknown field: %v", err)
+	{
+		_, err := friend.Changes(map[string]string{"colour": "red"})
+		assertionMsg270 := []any{"set with an unknown field: %v", err}
+		func() {
+			if !assert.Error(t, err, assertionMsg270...) {
+				return
+			}
+			assert.ErrorContains(t, err, "--colour is not a friend field", assertionMsg270...)
+		}()
 	}
 	got, err := friend.Changes(map[string]string{"roles": "reader,builder", "tiers": ""})
-	if err != nil || got["roles"] != "builder,reader" || got["tiers"] != "" {
-		t.Errorf("changes %v %v", got, err)
-	}
+	assertionMsg273 := []any{"changes %v %v", got, err}
+	func() {
+		if !assert.NoError(t, err, assertionMsg273...) {
+			return
+		}
+		if !assert.Equal(t, "builder,reader", got["roles"], assertionMsg273...) {
+			return
+		}
+		assert.Equal(t, "", got["tiers"], assertionMsg273...)
+	}()
 }
 
 func TestSortedPutsTheCoordinatorFirst(t *testing.T) {
@@ -302,10 +469,81 @@ func TestSortedPutsTheCoordinatorFirst(t *testing.T) {
 	for _, r := range friend.Sorted(rows) {
 		got = append(got, r.Name)
 	}
-	if want := "rowan,emma,stella"; strings.Join(got, ",") != want {
-		t.Fatalf("apply order %v, want %s (coordinator first, then by name)", got, want)
+	scopedWant344 := "rowan,emma,stella"
+	require.Equal(t, scopedWant344, strings.Join(got, ","), "apply order %v, want %s (coordinator first, then by name)", got, scopedWant344)
+	require.Equal(t, "stella", rows[0].Name, "Sorted reordered its input")
+}
+
+// A friend's width is the jobs she works at once (the owner, 2026-10-02: "6/1
+// seems a bit wrong -- need to setup width for friends? Start at 8 for
+// each?"): add stores DefaultFriendWidth when it is not given, FriendWidth
+// reads a row without the field as the default, and a width below 1 is
+// refused by the kind's Check in one line naming the flag.
+func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
+	t.Parallel()
+
+	friend, _ := Lookup(KindFriend)
+	row, err := friend.NewRow("amy", map[string]string{"slots": "2", "tiers": "flash"})
+	require.NoError(t, err)
+	assert.Equal(t, "8", row.Fields["width"], "add stores the default width")
+	assert.Equal(t, DefaultFriendWidth, FriendWidth(row))
+	assert.Equal(t, 8, FriendWidth(Row{Name: "amy", Fields: map[string]string{"slots": "2"}}), "a row without the field reads as the default")
+	assert.Equal(t, 3, FriendWidth(Row{Name: "amy", Fields: map[string]string{"width": "3"}}))
+
+	_, err = friend.NewRow("amy", map[string]string{"slots": "2", "tiers": "flash", "width": "0"})
+	require.Error(t, err)
+	assert.Equal(t, "friend amy has width 0; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", err.Error(), "one refusal")
+	assert.NoError(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "1"}}))
+	assert.Error(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "0"}}))
+}
+
+// The sprint row holds the two bars a failed gate's decisions are routed by
+// (docs/SPEC-SPRINT.md section 5, the gate verdict), empty by default: the decisions are
+// recorded and nothing is routed until the owner sets one. Each is a probability or empty;
+// two set ones sum above 1, so no failure meets both; a problem of each pair is named in one
+// error.
+func TestTheSprintRowHoldsTheGateBarsTogether(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	flaky, _ := sprint.Field(FieldDecideGateFlaky)
+	pre, _ := sprint.Field(FieldDecideGatePreexisting)
+	assert.Equal(t, []string{"", ""}, []string{flaky.Default, pre.Default})
+	assert.Equal(t, TypeDecimal, flaky.Type)
+	for _, tc := range []struct {
+		flaky, pre, says string
+	}{
+		{"0.8", "0.8", ""},
+		{"0.6", "0.5", ""},
+		{"", "", ""},
+		{"0.5", "0.5", "decide_gate_flaky 0.5 and decide_gate_preexisting 0.5 sum to at most 1"},
+		{"1.5", "0.8", "decide_gate_flaky 1.5 is not a probability"},
+		{"0.8", "", ""},
+		{"", "0.8", ""},
+		{"x", "", "decide_gate_flaky \"x\" is not a decimal; set each gate bar (--decide_gate_flaky, --decide_gate_preexisting) to a probability, or empty to record the decisions and route none"},
+	} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideGateFlaky: tc.flaky, FieldDecideGatePreexisting: tc.pre}})
+		if tc.says == "" {
+			assert.NoError(t, err, "%+v", tc)
+		} else {
+			assert.ErrorContains(t, err, tc.says, "%+v", tc)
+		}
 	}
-	if rows[0].Name != "stella" {
-		t.Fatal("Sorted reordered its input")
-	}
+	err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: "0.3", FieldDecideReview: "0.5", FieldDecideGateFlaky: "0.4", FieldDecideGatePreexisting: "0.4"}})
+	assert.ErrorContains(t, err, "decide_review 0.5 is above decide_bounce 0.3", "both pairs' problems in one error")
+	assert.ErrorContains(t, err, "sum to at most 1")
+}
+
+// The sprint row holds the bar a judgment decision is applied at (nova-sprint answer
+// --decide), empty by default (nothing is applied until the coordinator sets it); a value
+// that is no probability is refused, naming the flag.
+func TestTheSprintRowHoldsTheJudgmentBar(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	bar, ok := sprint.Field(FieldDecideJudgment)
+	require.True(t, ok)
+	assert.Empty(t, bar.Default)
+	assert.NoError(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: ""}}), "empty is no bar")
+	assert.Equal(t, TypeDecimal, bar.Type)
+	assert.NoError(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "0.9"}}))
+	assert.ErrorContains(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "1.5"}}), "want --decide_judgment_bar <p>, a probability")
 }

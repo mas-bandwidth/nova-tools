@@ -8,3 +8,12 @@
 # THIS repo's own files. Handling a CRLF file supplied by a USER is the tool's
 # job, and is covered by a unit test rather than by a checkout setting.
 * text=auto eol=lf
+
+# The deleted-tests log is an unordered set of one-line rows that every change
+# deleting a test file appends to, so two such changes touch the same place. A
+# union merge keeps both sides' rows; the class test reads the rows as a set
+# (a repeated row is one row), so a line in either order or twice is the same
+# declaration. Only this ledger has that shape: the counted allowlists carry a
+# `# ceiling:` line and rows an update removes, which a union merge would
+# resurrect or duplicate.
+internal/ci/testdata/deleted-tests.txt merge=union

@@ -361,6 +361,7 @@ func (p *ProviderProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	out, err := http.NewRequestWithContext(traced, r.Method, target.String(), r.Body)
+	// ignored: the client is answered 502 on the line above; the proxy has no other reader
 	if err != nil {
 		http.Error(w, "upstream", http.StatusBadGateway)
 		return

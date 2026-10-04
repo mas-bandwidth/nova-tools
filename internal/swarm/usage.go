@@ -2,41 +2,21 @@ package swarm
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 )
 
-// USAGE OUTLIVES THE JOB (rule 12).
-//
-// DeepSeek's usage for two batches on 2026-09-11 lived in per-worker data directories that
-// were reclaimed with the jobs, and nothing survived. So the usage file is written OUTSIDE
-// the reclaimable subtree, by finalize, BEFORE anything else happens to the job, and
-// reclaim refuses without it.
-//
 // A field the provider did not report is the literal "-", never 0: a zero is a
 // measurement and a dash is an absence, and nova-tokens reads this file and reads "-" as
 // unknown (SPEC-TOKENS rule 14).
 
-// UsageColumns are the sixteen columns, in this order. The order is the contract.
-var UsageColumns = []string{
-	"job", "attempt", "from", "started", "ended", "end", "rc", "provider", "model", "repo",
-	"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd",
-}
-
 // The ways a job ends, as the `end` column spells them.
 const (
 	EndDone         = "done"
-	EndKilled       = "killed"
 	EndBudget       = "budget"
 	EndUnverifiable = "budget-unverifiable"
-	EndViolation    = "violation"
 	EndFailed       = "failed"
 	EndUnknown      = "unknown"
-	EndLaunchFailed = "launch-failed"
-	EndInputLimit   = "input-limit"
 	// EndProvider is a launch that did not take: the harness died inside the launch
 	// grace with a provider server error in its tail. It is retried with backoff and,
 	// after the third fast failure, is filed with the provider's own ref (issue #900).
@@ -53,121 +33,6 @@ const Dash = "-"
 
 // UsageRow is one job's row.
 type UsageRow map[string]string
-
-// UsagePath is <pool>/usage/<job>.tsv, one per job id, outside everything reclaim removes.
-func (p *Pool) UsagePath(id string) string { return p.Path(Usage, id+".tsv") }
-
-// WriteUsage writes a job's usage file, once and never again: a job's second attempt is a
-// new job id with its own file, so cost sums each attempt once and a retry never
-// double-counts. It reports whether the file already existed.
-func (p *Pool) WriteUsage(id string, row UsageRow) (string, bool, error) {
-	path := p.UsagePath(id)
-	if _, err := os.Stat(path); err == nil {
-		return path, true, nil
-	}
-	var head, values []string
-	for _, c := range UsageColumns {
-		v := strings.TrimSpace(row[c])
-		if v == "" {
-			v = Dash
-		}
-		// A tab or a newline in a value would make one row read as two fields or two rows;
-		// the file is tab-separated and this is where that is kept true.
-		v = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(v)
-		head = append(head, c)
-		values = append(values, v)
-	}
-	body := strings.Join(head, "\t") + "\n" + strings.Join(values, "\t") + "\n"
-	return path, false, writeAtomic(path, []byte(body), 0o644)
-}
-
-// ReadUsage reads every usage row in the pool, in job-id order, which is time order.
-func (p *Pool) ReadUsage() ([]UsageRow, error) {
-	entries, err := os.ReadDir(p.Path(Usage))
-	if err != nil {
-		return nil, err
-	}
-	var out []UsageRow
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tsv") {
-			continue
-		}
-		row, err := readUsageFile(filepath.Join(p.Path(Usage), e.Name()))
-		if err != nil {
-			continue
-		}
-		out = append(out, row)
-	}
-	return out, nil
-}
-
-func readUsageFile(path string) (UsageRow, error) {
-	// The usage row is written by writeAtomic (WriteUsage) and read back by `report` and
-	// `reclaim` while a run is still finalizing other jobs: same rename, same collision.
-	raw, err := readFileSteady(path)
-	if err != nil {
-		return nil, err
-	}
-	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-	if len(lines) < 2 {
-		return nil, fmt.Errorf("%s holds no row", path)
-	}
-	head := strings.Split(lines[0], "\t")
-	// ONE FILE, ONE ROW is the pool's shape; ONE FILE, MANY ROWS is a retried native card
-	// (issue #900), where each launch appended its own row. The last row names the card; the
-	// numeric columns are summed across every row, and a column any attempt left a dash
-	// stays a dash rather than becoming a zero. A single-row file reads exactly as before.
-	if len(lines) > 2 {
-		return foldUsageRows(head, lines[1:]), nil
-	}
-	values := strings.Split(lines[1], "\t")
-	row := UsageRow{}
-	for i, name := range head {
-		if i < len(values) {
-			row[name] = values[i]
-		}
-	}
-	return row, nil
-}
-
-// foldUsageRows sums the numeric columns of a multi-row usage file and keeps the last row's
-// naming columns. A dash in any attempt for a column keeps that column a dash: a sum that
-// counted a missing attempt as zero would be a measurement the provider never made.
-func foldUsageRows(head []string, lines []string) UsageRow {
-	split := func(line string) map[string]string {
-		out := map[string]string{}
-		values := strings.Split(line, "\t")
-		for i, name := range head {
-			if i < len(values) {
-				out[name] = values[i]
-			}
-		}
-		return out
-	}
-	row := split(lines[len(lines)-1])
-	numeric := append(append([]string{}, TokenColumns...), "usd")
-	for _, name := range numeric {
-		sum := 0.0
-		complete := true
-		for _, line := range lines {
-			f, err := strconv.ParseFloat(strings.TrimSpace(split(line)[name]), 64)
-			if err != nil {
-				complete = false
-				break
-			}
-			sum += f
-		}
-		switch {
-		case !complete:
-			row[name] = Dash
-		case name == "usd":
-			row[name] = strconv.FormatFloat(sum, 'f', 4, 64)
-		default:
-			row[name] = strconv.FormatInt(int64(sum), 10)
-		}
-	}
-	return row
-}
 
 // Int reads a numeric column, reporting whether it is a number at all -- a dash is not.
 func (r UsageRow) Int(name string) (int, bool) {
@@ -268,6 +133,3 @@ func ReadProviderUsage(source, dataHome string) (ProviderUsage, error) {
 		return ProviderUsage{}, fmt.Errorf("the usage source %q is not one this tool reads; it wants `%s` or `%s`", source, UsageOpenCode, UsageNone)
 	}
 }
-
-// Stamp is the one time format this tool writes: a UTC instant, seconds resolution.
-func Stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }

@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // caseFoldingDir is a directory plus the filesystem's own answer about whether two spellings of
@@ -18,9 +21,7 @@ func caseFoldingDir(t *testing.T) (string, bool) {
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
-	if err := os.WriteFile(filepath.Join(dir, "CaseProbe"), []byte("x\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "CaseProbe"), []byte("x\n"), 0o600))
 	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
 	return dir, err == nil
 }
@@ -41,30 +42,18 @@ func TestInsideAsksTheFilesystemNotAStringPrefix(t *testing.T) {
 		t.Skipf("the filesystem under %s is case-SENSITIVE: caseprobe is not CaseProbe, so %s/Read and %s/read are two directories here and the fold this test is about cannot happen", dir, dir, dir)
 	}
 	read := filepath.Join(dir, "read")
-	if err := os.MkdirAll(filepath.Join(read, "sub"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(read, "sub"), 0o755))
 	// The write itself goes through the fold: there is no `<dir>/Read`, only `<dir>/read`,
 	// so the file this path names IS the file inside the read set.
 	secret := filepath.Join(dir, "Read", "env")
-	if err := os.WriteFile(secret, []byte("not-a-real-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if !Inside(secret, read) {
-		t.Errorf("a secret at %s is reported outside %s, which is the same directory on this filesystem", secret, read)
-	}
-	if !Inside(filepath.Join(dir, "READ", "sub", "deeper", "env"), read) {
-		t.Error("a path several levels inside a folded spelling is reported outside")
-	}
+	require.NoError(t, os.WriteFile(secret, []byte("not-a-real-key\n"), 0o600))
+	assert.True(t, Inside(secret, read), "a secret at %s is reported outside %s, which is the same directory on this filesystem", secret, read)
+	assert.True(t, Inside(filepath.Join(dir, "READ", "sub", "deeper", "env"), read), "a path several levels inside a folded spelling is reported outside")
 	// `Inside` deliberately answers true for the directory ITSELF, and that holds for a
 	// spelling of it the filesystem folds: rule 9 asks this of HOME, and a HOME that IS a
 	// --write spelled another way is inside the write set, not `home_outside`.
-	if !Inside(filepath.Join(dir, "Read"), read) {
-		t.Error("the directory itself, spelled in another case, is reported outside itself")
-	}
-	if !Inside(read, read) {
-		t.Error("the directory itself is reported outside itself")
-	}
+	assert.True(t, Inside(filepath.Join(dir, "Read"), read), "the directory itself, spelled in another case, is reported outside itself")
+	assert.True(t, Inside(read, read), "the directory itself is reported outside itself")
 	// AND THE FOLD DOES NOT MAKE A NEIGHBOUR INSIDE. A sibling whose name merely starts the
 	// same way is outside, in every spelling: the repair is `os.SameFile`, not a lowercased
 	// prefix, and a lowercased prefix would answer this one wrong.
@@ -74,15 +63,9 @@ func TestInsideAsksTheFilesystemNotAStringPrefix(t *testing.T) {
 		filepath.Join(dir, "read2", "env"),
 		filepath.Join(dir, "env"),
 	} {
-		if err := os.MkdirAll(filepath.Dir(outside), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(outside, []byte("x\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if Inside(outside, read) {
-			t.Errorf("%s is reported inside %s", outside, read)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(outside), 0o755))
+		require.NoError(t, os.WriteFile(outside, []byte("x\n"), 0o600))
+		assert.False(t, Inside(outside, read), "%s is reported inside %s", outside, read)
 	}
 }
 
@@ -95,27 +78,18 @@ func TestInsideFallsBackToTheFoldedPrefixForADirectoryThatIsNotThere(t *testing.
 
 	dir, folds := caseFoldingDir(t)
 	absent := filepath.Join(dir, "gone")
-	if got := Inside(filepath.Join(dir, "Gone", "env"), absent); got != folds {
-		t.Errorf("a path inside an absent directory spelled in another case = %v, the filesystem folds = %v", got, folds)
-	}
-	if !Inside(filepath.Join(absent, "env"), absent) {
-		t.Error("a path inside an absent directory, spelled the same way, is reported outside it")
-	}
-	if Inside(filepath.Join(dir, "gonebeyond", "env"), absent) {
-		t.Error("a neighbour of an absent directory is reported inside it")
-	}
-	if got := dirFoldsCase(dir); got != folds {
-		t.Errorf("dirFoldsCase = %v, the filesystem folds = %v", got, folds)
-	}
+	got := Inside(filepath.Join(dir, "Gone", "env"), absent)
+	assert.Equal(t, folds, got, "a path inside an absent directory spelled in another case = %v, the filesystem folds = %v", got, folds)
+	assert.True(t, Inside(filepath.Join(absent, "env"), absent), "a path inside an absent directory, spelled the same way, is reported outside it")
+	assert.False(t, Inside(filepath.Join(dir, "gonebeyond", "env"), absent), "a neighbour of an absent directory is reported inside it")
+	got = dirFoldsCase(dir)
+	assert.Equal(t, folds, got, "dirFoldsCase = %v, the filesystem folds = %v", got, folds)
 	// A name with no letter to re-case is answered by the written probe rather than by a
 	// read-only look at its own spelling.
 	numeric := filepath.Join(dir, "123")
-	if err := os.MkdirAll(numeric, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if got := dirFoldsCase(numeric); got != folds {
-		t.Errorf("dirFoldsCase of a numeric name = %v, the filesystem folds = %v", got, folds)
-	}
+	require.NoError(t, os.MkdirAll(numeric, 0o755))
+	got = dirFoldsCase(numeric)
+	assert.Equal(t, folds, got, "dirFoldsCase of a numeric name = %v, the filesystem folds = %v", got, folds)
 }
 
 // insideAny is what rules 9 and 13 ask of HOME and --cwd, so the fold reaches those two
@@ -133,54 +107,34 @@ func TestRulesNineAndThirteenAskTheFilesystemToo(t *testing.T) {
 	home := filepath.Join(write, "home")
 	read := filepath.Join(dir, "r")
 	for _, d := range []string{home, read} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
-	if !insideAny(filepath.Join(dir, "W", "home"), []string{read, write}) {
-		t.Error("insideAny says a folded spelling of a path inside the write set is inside none of it")
-	}
+	assert.True(t, insideAny(filepath.Join(dir, "W", "home"), []string{read, write}), "insideAny says a folded spelling of a path inside the write set is inside none of it")
 	// Rule 9, through Build: HOME is the job's data home inside a --write, spelled in
 	// another case. It is the same directory, so there is nothing to refuse.
 	folded := filepath.Join(dir, "W", "home")
 	p, bad := Build(Input{Reads: []string{read}, Writes: []string{write}, Home: folded, Argv: []string{anExecutable(t)}})
-	if len(bad) > 0 {
-		t.Fatalf("a HOME inside the write set spelled in another case was refused: %v", bad)
-	}
-	if p.Home == "" {
-		t.Error("the policy carries no HOME")
-	}
+	require.Empty(t, bad, "a HOME inside the write set spelled in another case was refused: %v", bad)
+	assert.NotEmpty(t, p.Home, "the policy carries no HOME")
 	// Rule 13, the same question about --cwd.
 	cwd := filepath.Join(dir, "W", "cwd")
-	if err := os.MkdirAll(cwd, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
 	p, bad = Build(Input{Reads: []string{read}, Writes: []string{write}, Home: home, Cwd: cwd, Argv: []string{anExecutable(t)}})
-	if len(bad) > 0 {
-		t.Fatalf("a --cwd inside the write set spelled in another case was refused: %v", bad)
-	}
-	if p.Cwd == "" {
-		t.Error("the policy carries no cwd")
-	}
+	require.Empty(t, bad, "a --cwd inside the write set spelled in another case was refused: %v", bad)
+	assert.NotEmpty(t, p.Cwd, "the policy carries no cwd")
 	// And a HOME that is genuinely outside every --write is still `home_outside`: the
 	// repair widens no list.
 	outside := filepath.Join(dir, "elsewhere")
-	if err := os.MkdirAll(outside, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(outside, 0o755))
 	_, bad = Build(Input{Reads: []string{read}, Writes: []string{write}, Home: outside, Argv: []string{anExecutable(t)}})
-	if len(bad) == 0 {
-		t.Fatal("a HOME outside every --write was built")
-	}
+	require.NotEmpty(t, bad, "a HOME outside every --write was built")
 	var said bool
 	for _, r := range bad {
 		if r.Reason == "home_outside" && strings.Contains(r.Text, "outside every --write") {
 			said = true
 		}
 	}
-	if !said {
-		t.Fatalf("a HOME outside every --write is not home_outside: %v", bad)
-	}
+	require.True(t, said, "a HOME outside every --write is not home_outside: %v", bad)
 }
 
 // measuredFold is the GROUND TRUTH about one directory: a file written INSIDE it and asked for
@@ -259,14 +213,12 @@ func TestTheFoldIsMeasuredInsideTheDirectoryNotInItsParent(t *testing.T) {
 	if !found {
 		t.Skip("no case-sensitivity boundary is reachable from this machine's temp directory: every directory on that path answers the same inside as its own name does in its parent, so the inference this test is about cannot be observed here. Run with TMPDIR inside a case-sensitive image mounted under a folding parent")
 	}
-	if got := dirFoldsCase(boundary); got != folds {
-		t.Errorf("dirFoldsCase(%s) = %v, but a file written INSIDE it says %v: the answer is being inferred from the directory's own name in its parent, which is a different filesystem here", boundary, got, folds)
-	}
+	got := dirFoldsCase(boundary)
+	assert.Equal(t, folds, got, "dirFoldsCase(%s) = %v, but a file written INSIDE it says %v: the answer is being inferred from the directory's own name in its parent, which is a different filesystem here", boundary, got, folds)
 	// The reachable path: a directory that is not there, judged at that boundary. The climb
 	// answers from the boundary itself, so the folded prefix must follow what the boundary
 	// measured and not what its mountpoint name does in /Volumes.
 	absent := filepath.Join(boundary, "novagone")
-	if got := Inside(filepath.Join(boundary, "NovaGone", "env"), absent); got != folds {
-		t.Errorf("Inside(%s/NovaGone/env, %s) = %v, the boundary folds = %v", boundary, absent, got, folds)
-	}
+	got = Inside(filepath.Join(boundary, "NovaGone", "env"), absent)
+	assert.Equal(t, folds, got, "Inside(%s/NovaGone/env, %s) = %v, the boundary folds = %v", boundary, absent, got, folds)
 }

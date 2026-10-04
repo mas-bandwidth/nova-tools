@@ -5,15 +5,16 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // ParseAuthors reads a verb→author mapping. One verb per line:
 //
-//	nova-check links = Rowan
-//	nova-fuse lift quarantine = Stella
+//	<tool> <verb> = <author>
+//	<tool> <verb> = <author>
 //	# blank lines and # comments are ignored
 //
 // The left of the `=` is the verb exactly as docs/CLI.md spells it, tool
@@ -64,7 +65,7 @@ type Runner func(ctx context.Context, dir string, args ...string) (string, error
 
 // GitRunner runs git in a directory, with the context's deadline.
 func GitRunner(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := subproc.Context(ctx, "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -125,7 +126,7 @@ func AuthorsFromGit(ctx context.Context, repo string, verbs []Verb, run Runner, 
 // under cmd/<tool>. A bare key (the tool's own invocation, `verb=-`) has no
 // word to search for, so it is placed by the commit that first added a file
 // under cmd/<tool>: the commit that introduced the tool, and with it the bare
-// invocation (nova-tools #3160).
+// invocation, which nothing before that commit could have established.
 func authorArgs(v Verb) []string {
 	words := strings.Fields(v.Verb)
 	if len(words) == 0 {

@@ -5,7 +5,7 @@ package main
 // first one with "ERR Function not found". nova-table puts the library on
 // such a store itself, on first contact, with redisfn's LoadMissing: the
 // load of every caller that is not the deployer, which never replaces a
-// library of the name, whatever its code (nova-tools #3620). Upgrading a
+// library of the name, whatever its code. Upgrading a
 // store's library is the deployer's, with nova-redis fn load.
 //
 // The load costs nothing on a store that holds the library: no FUNCTION
@@ -26,6 +26,7 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 
@@ -178,12 +179,7 @@ func (h libraryHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.P
 }
 
 func anyMissing(cmds []redis.Cmder) bool {
-	for _, cmd := range cmds {
-		if missing(cmd, cmd.Err()) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(cmds, func(cmd redis.Cmder) bool { return missing(cmd, cmd.Err()) })
 }
 
 func allMissing(cmds []redis.Cmder) bool {

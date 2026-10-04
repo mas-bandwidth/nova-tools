@@ -3,15 +3,15 @@ package bus
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestClearStaleIndexLockAgeBoundary pins the age rule and nothing else. The clock is
@@ -25,16 +25,10 @@ func TestClearStaleIndexLockAgeBoundary(t *testing.T) {
 	hermetic(t)
 	dir := cloneBus(t, bareBus(t))
 	lock, err := indexLockPath(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lock, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(lock, nil, 0o644))
 	fi, err := os.Lstat(lock)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	scans := 0
 	noGit := func() ([]gitProc, error) {
 		scans++
@@ -42,250 +36,48 @@ func TestClearStaleIndexLockAgeBoundary(t *testing.T) {
 	}
 	for _, young := range []time.Duration{0, staleIndexLockAge - time.Nanosecond, staleIndexLockAge} {
 		cleared, err := clearStaleIndexLock(dir, fi.ModTime().Add(young), noGit)
-		if err != nil || cleared {
-			t.Fatalf("a lock aged %v: cleared=%v err=%v, want left alone", young, cleared, err)
-		}
-		if _, err := os.Lstat(lock); err != nil {
-			t.Fatalf("the lock was removed at %v, not older than %v: %v", young, staleIndexLockAge, err)
+		require.True(t, err == nil && !cleared, "a lock aged %v: cleared=%v err=%v, want left alone", young, cleared, err)
+		{
+			_, err := os.Lstat(lock)
+			require.NoError(t, err, "the lock was removed at %v, not older than %v: %v", young, staleIndexLockAge, err)
 		}
 	}
-	if scans != 0 {
-		t.Fatalf("a lock not older than %v was put to the process scan %d times; age must decide first", staleIndexLockAge, scans)
-	}
+	require.Equal(t, 0, scans, "a lock not older than %v was put to the process scan %d times; age must decide first", staleIndexLockAge, scans)
 	cleared, err := clearStaleIndexLock(dir, fi.ModTime().Add(staleIndexLockAge+time.Nanosecond), noGit)
-	if err != nil || !cleared {
-		t.Fatalf("a lock older than 60s: cleared=%v err=%v, want removed", cleared, err)
+	require.True(t, err == nil && cleared, "a lock older than 60s: cleared=%v err=%v, want removed", cleared, err)
+	{
+		_, err := os.Lstat(lock)
+		require.True(t, os.IsNotExist(err), "the stale lock is still there: %v", err)
 	}
-	if _, err := os.Lstat(lock); !os.IsNotExist(err) {
-		t.Fatalf("the stale lock is still there: %v", err)
-	}
-	if scans != 1 {
-		t.Fatalf("a stale lock was removed after %d process scans, want exactly 1", scans)
-	}
-}
-
-func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
-	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-	hermetic(t)
-	dir := cloneBus(t, bareBus(t))
-	lock, err := indexLockPath(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lock, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	old := time.Now().Add(-2 * time.Minute)
-	if err := os.Chtimes(lock, old, old); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("git", "-C", dir, "cat-file", "--batch")
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = stdin.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}
-	})
-	deadline := time.Now().Add(testWaitBound())
-	for {
-		owns, oerr := gitOwnsCheckout(dir)
-		if oerr != nil && !scanUnknownElsewhere(t, oerr, lock) {
-			t.Fatal(oerr)
-		}
-		if owns {
-			break
-		}
-		if time.Now().After(deadline) {
-			procs, _ := gitProcesses()
-			t.Fatalf("the live git never showed as owning %s; last err=%v procs=%+v", dir, oerr, procs)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	rep, err := ClearStaleIndexLock(dir, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rep.Cleared {
-		t.Fatal("removed a stale index.lock while a git process still owned the checkout")
-	}
-	if _, err := os.Lstat(lock); err != nil {
-		t.Fatalf("the lock is gone while git is alive: %v", err)
-	}
-	_ = stdin.Close()
-	_ = cmd.Process.Kill()
-	_, _ = cmd.Process.Wait()
-	deadline = time.Now().Add(testWaitBound())
-	for {
-		owns, oerr := gitOwnsCheckout(dir)
-		if oerr != nil && !scanUnknownElsewhere(t, oerr, lock) {
-			t.Fatal(oerr)
-		}
-		if oerr == nil && !owns {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("git still looked like it owned the checkout after it was killed: owns=%v err=%v", owns, oerr)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	// The first scan answers "cannot tell", as a stranger's exiting git makes the real one
-	// answer on a busy bench; later scans are the real host scan. The lock must survive the
-	// unknown answer and go on the next known one.
-	unknownOnce := true
-	scan := func() ([]gitProc, error) {
-		if unknownOnce {
-			unknownOnce = false
-			return nil, ownershipUnknownErr("cmdline empty")
-		}
-		return gitProcesses()
-	}
-	deadline = time.Now().Add(testWaitBound())
-	for {
-		cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
-		if err != nil && !scanUnknownElsewhere(t, err, lock) {
-			t.Fatalf("stale lock with no git: cleared=%v err=%v", cleared, err)
-		}
-		if err == nil {
-			if !cleared {
-				t.Fatalf("stale lock with no git: cleared=%v err=%v", cleared, err)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("stale lock with no git: the scan stayed unknown for %v: %v", testWaitBound(), err)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if _, err := os.Lstat(lock); !os.IsNotExist(err) {
-		t.Fatal("the lock is still there after the git exited")
-	}
-}
-
-// scanUnknownElsewhere reports whether err is the host-wide process scan answering
-// "cannot tell" (#2958). The scan reads every git on the machine; on a gate bench another
-// lane's git caught mid-exit (empty cmdline, not yet a zombie) makes it unknown for a
-// moment, and that is not this checkout's answer. An unknown scan must never remove the
-// lock, so it is asserted here, and the caller polls again until testWaitBound instead of
-// failing on a process it does not own. Any other error is the caller's to fail on.
-func scanUnknownElsewhere(t *testing.T, err error, lock string) bool {
-	t.Helper()
-	if err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) {
-		return false
-	}
-	if _, lerr := os.Lstat(lock); lerr != nil {
-		t.Fatalf("the lock is gone although the scan was unknown (%v): %v", err, lerr)
-	}
-	return true
+	require.Equal(t, 1, scans, "a stale lock was removed after %d process scans, want exactly 1", scans)
 }
 
 // oldIndexLock is a checkout whose index.lock is already past the 60s bound.
 // Age alone must not be why a later assertion keeps or removes it.
 func oldIndexLock(t *testing.T) (dir, lock string) {
 	t.Helper()
-	dir = cloneBus(t, bareBus(t))
+	dir = t.TempDir()
+	if _, err := git(dir, "init", "-q"); err != nil {
+		require.NoError(t, err)
+	}
 	var err error
 	lock, err = indexLockPath(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lock, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(lock, nil, 0o644))
 	when := time.Now().Add(-2 * time.Minute)
-	if err := os.Chtimes(lock, when, when); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chtimes(lock, when, when))
 	return dir, lock
 }
 
 func assertLockKept(t *testing.T, lock string, cleared bool, err error) {
 	t.Helper()
-	if cleared {
-		t.Fatal("the old lock was removed")
+	require.False(t, cleared, "the old lock was removed")
+	{
+		_, statErr := os.Lstat(lock)
+		require.Equal(t, nil, statErr, "the old lock is gone: %v", statErr)
 	}
-	if _, statErr := os.Lstat(lock); statErr != nil {
-		t.Fatalf("the old lock is gone: %v", statErr)
-	}
-	if err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) {
-		t.Fatalf("diagnostic = %v, want a %q reason", err, ownershipUnknown)
-	}
-	if strings.Contains(err.Error(), "\n") || len(err.Error()) > ownershipDiagCap {
-		t.Fatalf("diagnostic is not bounded: %q", err)
-	}
-}
-
-// A git started inside the checkout, with no -C, is visible only by its cwd.
-// The old lock stays. A scan that claims to have looked and did not see it is a failure.
-func TestStaleLockStaysForCwdGitWithoutDashC(t *testing.T) {
-	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-	hermetic(t)
-	dir, lock := oldIndexLock(t)
-	cmd := exec.Command("git", "cat-file", "--batch")
-	cmd.Dir = dir
-	if strings.Contains(strings.Join(cmd.Args, " "), "-C") {
-		t.Fatalf("the fixture git carries -C: %q", cmd.Args)
-	}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = stdin.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}
-	})
-	deadline := time.Now().Add(testWaitBound())
-	saw := false
-	for {
-		owns, oerr := gitOwnsCheckout(dir)
-		if oerr != nil {
-			t.Fatalf("a live cwd git with no -C was an incomplete scan, not an owner: %v", oerr)
-		}
-		if owns {
-			saw = true
-			break
-		}
-		if time.Now().After(deadline) {
-			procs, _ := gitProcesses()
-			t.Fatalf("cwd git with no -C was invisible; procs=%+v", procs)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if !saw {
-		t.Fatal("cwd git with no -C was not recorded as an owner")
-	}
-	rep, err := ClearStaleIndexLock(dir, time.Now())
-	if err != nil || rep.Cleared {
-		t.Fatalf("cleared=%v err=%v, want the lock left because the cwd git owns the checkout", rep.Cleared, err)
-	}
-	if _, statErr := os.Lstat(lock); statErr != nil {
-		t.Fatalf("the old lock is gone: %v", statErr)
-	}
+	require.False(t, err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown), "diagnostic = %v, want a %q reason", err, ownershipUnknown)
+	require.False(t, strings.Contains(err.Error(), "\n") || len(err.Error()) > ownershipDiagCap, "diagnostic is not bounded: %q", err)
 }
 
 // The scan saw a live git with no -C and could not read its cwd. That is not "no owner".
@@ -306,13 +98,9 @@ func TestStaleLockStaysWhenProcessInspectionIsDenied(t *testing.T) {
 	hermetic(t)
 	dir, lock := oldIndexLock(t)
 	_, skip, verr := gitProcFromView(procView{commErr: os.ErrNotExist})
-	if verr != nil || !skip {
-		t.Fatalf("a vanished process: skip=%v err=%v, want skipped and no error", skip, verr)
-	}
+	require.True(t, verr == nil && skip, "a vanished process: skip=%v err=%v, want skipped and no error", skip, verr)
 	_, _, perr := gitProcFromView(procView{comm: "git\n", cmdErr: os.ErrPermission})
-	if perr == nil {
-		t.Fatal("permission denied on cmdline was treated as a vanished process")
-	}
+	require.False(t, perr == nil, "permission denied on cmdline was treated as a vanished process")
 	cleared, err := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
 		return nil, perr
 	})
@@ -326,20 +114,21 @@ func TestStaleLockStaysWhenProcessInspectionIsDenied(t *testing.T) {
 func TestEmptyCmdlineDeadProcessDoesNotBlockLockCleanup(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
-	if dead, ok := procStatDead("12 (git) Z 1 1"); !ok || !dead {
-		t.Fatalf("zombie stat: dead=%v ok=%v", dead, ok)
+	{
+		dead, ok := procStatDead("12 (git) Z 1 1")
+		require.True(t, ok && dead, "zombie stat: dead=%v ok=%v", dead, ok)
 	}
-	if dead, ok := procStatDead("12 (git defunct) X 1"); !ok || !dead {
-		t.Fatalf("dead stat: dead=%v ok=%v", dead, ok)
+	{
+		dead, ok := procStatDead("12 (git defunct) X 1")
+		require.True(t, ok && dead, "dead stat: dead=%v ok=%v", dead, ok)
 	}
-	if dead, ok := procStatDead("12 (git) S 1 1"); !ok || dead {
-		t.Fatalf("sleeping stat was dead: dead=%v ok=%v", dead, ok)
+	{
+		dead, ok := procStatDead("12 (git) S 1 1")
+		require.True(t, ok && !dead, "sleeping stat was dead: dead=%v ok=%v", dead, ok)
 	}
 
 	_, skip, err := gitProcFromView(procView{comm: "git\n", dead: true})
-	if err != nil || !skip {
-		t.Fatalf("dead empty cmdline: skip=%v err=%v, want skipped and no error", skip, err)
-	}
+	require.True(t, err == nil && skip, "dead empty cmdline: skip=%v err=%v, want skipped and no error", skip, err)
 
 	dir, lock := oldIndexLock(t)
 	ownerCmd := []byte("git\x00-C\x00" + dir + "\x00status")
@@ -347,45 +136,37 @@ func TestEmptyCmdlineDeadProcessDoesNotBlockLockCleanup(t *testing.T) {
 		{comm: "git\n"},
 		{comm: "git\n", cmdline: ownerCmd, cwd: dir},
 	}, 501)
-	if len(placed(procs)) != 1 {
-		t.Fatalf("empty cmdline hid the later owner: procs=%+v err=%v", procs, err)
-	}
+	require.Equal(t, 1, len(placed(procs)), "empty cmdline hid the later owner: procs=%+v err=%v", procs, err)
 	found, oerr := gitOwnsCheckoutScan(dir, func() ([]gitProc, error) {
 		return procs, err
 	})
-	if oerr != nil || found.Owner != 1 || found.Unknown != 1 {
-		t.Fatalf("known owner was not recognized behind an empty cmdline: found=%+v err=%v", found, oerr)
-	}
+	require.NoError(t, oerr, "known owner was not recognized behind an empty cmdline: found=%+v err=%v", found, oerr)
+	require.Equal(t, 1, found.Owner, "known owner was not recognized behind an empty cmdline: found=%+v err=%v", found, oerr)
+	require.Equal(t, 1, found.Unknown, "known owner was not recognized behind an empty cmdline: found=%+v err=%v", found, oerr)
 	kept, kerr := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
 		return procs, err
 	})
-	if kerr != nil || kept {
-		t.Fatalf("owner's lock: cleared=%v err=%v, want kept", kept, kerr)
-	}
-	if _, statErr := os.Lstat(lock); statErr != nil {
-		t.Fatalf("owner's lock is gone: %v", statErr)
+	require.True(t, kerr == nil && !kept, "owner's lock: cleared=%v err=%v, want kept", kept, kerr)
+	{
+		_, statErr := os.Lstat(lock)
+		require.Equal(t, nil, statErr, "owner's lock is gone: %v", statErr)
 	}
 
 	unused, unusedLock := oldIndexLock(t)
 	deadProcs, deadErr := classifyViews([]procView{{comm: "git\n", dead: true}}, 501)
-	if deadErr != nil || len(deadProcs) != 0 {
-		t.Fatalf("dead cmdline stayed in the scan: procs=%+v err=%v", deadProcs, deadErr)
-	}
+	require.True(t, deadErr == nil && len(deadProcs) == 0, "dead cmdline stayed in the scan: procs=%+v err=%v", deadProcs, deadErr)
 	cleared, cerr := clearStaleIndexLock(unused, time.Now(), func() ([]gitProc, error) {
 		return deadProcs, deadErr
 	})
-	if cerr != nil || !cleared {
-		t.Fatalf("unused lock blocked by a dead cmdline: cleared=%v err=%v", cleared, cerr)
-	}
-	if _, statErr := os.Lstat(unusedLock); !os.IsNotExist(statErr) {
-		t.Fatalf("unused lock still present: %v", statErr)
+	require.True(t, cerr == nil && cleared, "unused lock blocked by a dead cmdline: cleared=%v err=%v", cleared, cerr)
+	{
+		_, statErr := os.Lstat(unusedLock)
+		require.True(t, os.IsNotExist(statErr), "unused lock still present: %v", statErr)
 	}
 
 	live, liveLock := oldIndexLock(t)
 	_, liveErr := classifyViews([]procView{{comm: "git\n"}}, 501)
-	if liveErr == nil || strings.Contains(liveErr.Error(), "\n") || len(liveErr.Error()) > ownershipDiagCap || !strings.HasPrefix(liveErr.Error(), ownershipUnknown) {
-		t.Fatalf("live empty cmdline diagnostic is not bounded: %q", liveErr)
-	}
+	require.False(t, liveErr == nil || strings.Contains(liveErr.Error(), "\n") || len(liveErr.Error()) > ownershipDiagCap || !strings.HasPrefix(liveErr.Error(), ownershipUnknown), "live empty cmdline diagnostic is not bounded: %q", liveErr)
 	cleared, cerr = clearStaleIndexLock(live, time.Now(), func() ([]gitProc, error) {
 		return nil, liveErr
 	})
@@ -396,21 +177,11 @@ func TestProcOwnsRequiresAPathBoundary(t *testing.T) {
 	t.Parallel()
 
 	names := []string{"/bus"}
-	if !procOwns(names, gitProc{command: "git -C /bus status"}) {
-		t.Fatal("git -C /bus should own /bus")
-	}
-	if procOwns(names, gitProc{command: "git -C /bus2 status"}) {
-		t.Fatal("/bus2 must not count as owning /bus")
-	}
-	if !procOwns(names, gitProc{command: "git -C /bus/lane status"}) {
-		t.Fatal("a git inside the checkout should count as owning it")
-	}
-	if !procOwns(names, gitProc{cwd: "/bus", command: "git status"}) {
-		t.Fatal("a git whose cwd is the checkout should own it")
-	}
-	if procOwns(names, gitProc{cwd: "/bus2", command: "git status"}) {
-		t.Fatal("a git in /bus2 must not own /bus")
-	}
+	require.True(t, procOwns(names, gitProc{command: "git -C /bus status"}), "git -C /bus should own /bus")
+	require.False(t, procOwns(names, gitProc{command: "git -C /bus2 status"}), "/bus2 must not count as owning /bus")
+	require.True(t, procOwns(names, gitProc{command: "git -C /bus/lane status"}), "a git inside the checkout should count as owning it")
+	require.True(t, procOwns(names, gitProc{cwd: "/bus", command: "git status"}), "a git whose cwd is the checkout should own it")
+	require.False(t, procOwns(names, gitProc{cwd: "/bus2", command: "git status"}), "a git in /bus2 must not own /bus")
 }
 
 func TestDiscardPathRemovesASymlinkedBeatWithoutFollowingIt(t *testing.T) {
@@ -421,12 +192,11 @@ func TestDiscardPathRemovesASymlinkedBeatWithoutFollowingIt(t *testing.T) {
 	link := filepath.Join(root, "from-ada", BeatName)
 	plant(t, v, link)
 	discarded, err := DiscardPath(root, "from-ada/"+BeatName)
-	if err != nil || !discarded {
-		t.Fatalf("discarded=%v err=%v, want the symlink removed", discarded, err)
-	}
+	require.True(t, err == nil && discarded, "discarded=%v err=%v, want the symlink removed", discarded, err)
 	unchanged(t, v)
-	if _, err := os.Lstat(link); !os.IsNotExist(err) {
-		t.Fatalf("the symlink is still there: %v", err)
+	{
+		_, err := os.Lstat(link)
+		require.True(t, os.IsNotExist(err), "the symlink is still there: %v", err)
 	}
 }
 
@@ -438,39 +208,27 @@ func TestRecoverWaitFastForwardLeavesADirtyCursor(t *testing.T) {
 	writer := cloneBus(t, bare)
 	write(t, reader, "from-ada/CURSOR", "BASE\n")
 	if _, err := CommitAndPush(reader, testIdentity["Ada"], []string{"from-ada/CURSOR"}, "cursor", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	if _, err := FetchAndFastForward(writer, "origin", "main"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	write(t, writer, "from-ada/CURSOR", "UPSTREAM\n")
 	if _, err := CommitAndPush(writer, testIdentity["Ada"], []string{"from-ada/CURSOR"}, "cursor moved", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	const sentinel = "SENTINEL-LOCAL do not touch\n"
 	write(t, reader, "from-ada/CURSOR", sentinel)
 	before, err := HeadCommit(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	_, err = RecoverWaitFastForward(reader, "origin", "main", []string{"from-ada/BEAT"}, time.Now())
-	if err == nil || !strings.Contains(err.Error(), "from-ada/CURSOR") || !strings.Contains(err.Error(), "not this tool's to discard") {
-		t.Fatalf("want a plain refusal naming CURSOR, got %v", err)
-	}
+	require.False(t, err == nil || !strings.Contains(err.Error(), "from-ada/CURSOR") || !strings.Contains(err.Error(), "not this tool's to discard"), "want a plain refusal naming CURSOR, got %v", err)
 	got, err := os.ReadFile(filepath.Join(reader, "from-ada", "CURSOR"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != sentinel {
-		t.Fatalf("CURSOR was touched: %q", got)
-	}
+	require.NoError(t, err)
+	require.Equal(t, sentinel, string(got), "CURSOR was touched: %q", got)
 	after, err := HeadCommit(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after != before {
-		t.Fatalf("HEAD moved over a dirty CURSOR: %s -> %s", before, after)
-	}
+	require.NoError(t, err)
+	require.Equal(t, before, after, "HEAD moved over a dirty CURSOR: %s -> %s", before, after)
 }
 
 // #3029: a gate batch went red on TestWaitRepairStaleLockAndDirtyBeat with
@@ -494,8 +252,9 @@ func TestVanishingProcessESRCHDoesNotBlockLockCleanup(t *testing.T) {
 		{comm: "git\n", cmdErr: esrch("cmdline")},
 		{comm: "git\n", cmdline: []byte("git\x00status"), cwdErr: esrch("cwd")},
 	} {
-		if _, skip, err := gitProcFromView(v); err != nil || !skip {
-			t.Fatalf("a process gone mid-read (%+v): skip=%v err=%v, want skipped and no error", v, skip, err)
+		{
+			_, skip, err := gitProcFromView(v)
+			require.True(t, err == nil && skip, "a process gone mid-read (%+v): skip=%v err=%v, want skipped and no error", v, skip, err)
 		}
 	}
 
@@ -504,11 +263,10 @@ func TestVanishingProcessESRCHDoesNotBlockLockCleanup(t *testing.T) {
 		return classifyViews([]procView{{commErr: esrch("comm")}, {comm: "bash\n"}}, 501)
 	}
 	cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
-	if err != nil || !cleared {
-		t.Fatalf("a stale lock with only a vanishing process in the scan: cleared=%v err=%v, want removed", cleared, err)
-	}
-	if _, statErr := os.Lstat(lock); !os.IsNotExist(statErr) {
-		t.Fatalf("stale index.lock still present: %v", statErr)
+	require.True(t, err == nil && cleared, "a stale lock with only a vanishing process in the scan: cleared=%v err=%v, want removed", cleared, err)
+	{
+		_, statErr := os.Lstat(lock)
+		require.False(t, !os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
 	}
 
 	// ESRCH is not a licence for every errno: a live process that denies the read
@@ -531,16 +289,16 @@ func TestGitScanSkipsAnotherAccountsGitLinux(t *testing.T) {
 	foreign := procView{comm: "git\n", cmdline: []byte("git\x00status"), cwdErr: denied, owner: 502, ownerKnown: true, account: 502, accountKnown: true}
 	own := procView{comm: "git\n", cmdline: []byte("git\x00fetch"), cwd: "/home/nova/bus", owner: 501, ownerKnown: true, account: 501, accountKnown: true}
 	procs, err := classifyViews([]procView{foreign, own}, 501)
-	if err != nil || len(placed(procs)) != 1 || placed(procs)[0].cwd != "/home/nova/bus" || len(procs) != 2 || !procs[0].foreign {
-		t.Fatalf("another account's git beside our own: procs=%+v err=%v, want our one placed, theirs flagged foreign, and no error", procs, err)
-	}
-	if _, err := classifyViews([]procView{foreign}, 502); err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) {
-		t.Fatalf("our own git with an unreadable cwd: err=%v, want %q", err, ownershipUnknown)
+	require.True(t, err == nil && len(placed(procs)) == 1 && placed(procs)[0].cwd == "/home/nova/bus" && len(procs) == 2 && procs[0].foreign, "another account's git beside our own: procs=%+v err=%v, want our one placed, theirs flagged foreign, and no error", procs, err)
+	{
+		_, err := classifyViews([]procView{foreign}, 502)
+		require.False(t, err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown), "our own git with an unreadable cwd: err=%v, want %q", err, ownershipUnknown)
 	}
 	unowned := foreign
 	unowned.ownerKnown, unowned.accountKnown = false, false
-	if procs, err := classifyViews([]procView{unowned}, 501); err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) || len(procs) != 1 || !procs[0].unknown {
-		t.Fatalf("a git whose account could not be read: procs=%+v err=%v, want one unknown and %q", procs, err, ownershipUnknown)
+	{
+		procs, err := classifyViews([]procView{unowned}, 501)
+		require.True(t, err != nil && strings.HasPrefix(err.Error(), ownershipUnknown) && len(procs) == 1 && procs[0].unknown, "a git whose account could not be read: procs=%+v err=%v, want one unknown and %q", procs, err, ownershipUnknown)
 	}
 }
 
@@ -590,32 +348,44 @@ func TestReadProcViewRecordsTheOwner(t *testing.T) {
 	}
 
 	v := readProcView("18772", fake(502, true, nil, "git\x00status", denied))
-	if !v.ownerKnown || v.owner != 502 || !v.accountKnown || v.account != 502 || strings.TrimSpace(v.comm) != "git" || v.cwdErr == nil {
-		t.Fatalf("another account's entry: %+v, want owner and account 502 and comm, cmdline and cwd read", v)
-	}
-	if procs, err := classifyViews([]procView{v}, 501); err != nil || len(procs) != 1 || !procs[0].foreign {
-		t.Fatalf("another account's unplaced git: procs=%+v err=%v, want one flagged foreign and no error", procs, err)
+	require.True(t, v.ownerKnown && v.owner == 502 && v.accountKnown && v.account == 502 && strings.TrimSpace(v.comm) == "git" && v.cwdErr != nil, "another account's entry: %+v, want owner and account 502 and comm, cmdline and cwd read", v)
+	{
+		procs, err := classifyViews([]procView{v}, 501)
+		require.True(t, err == nil && len(procs) == 1 && procs[0].foreign, "another account's unplaced git: procs=%+v err=%v, want one flagged foreign and no error", procs, err)
 	}
 
 	v = readProcView("18773", fake(502, true, nil, "git\x00-C\x00/home/glenn/bus\x00commit", denied))
-	if procs, err := classifyViews([]procView{v}, 501); err != nil || len(procs) != 1 || procs[0].command != "git -C /home/glenn/bus commit" || procs[0].foreign {
-		t.Fatalf("another account's git naming a checkout with -C: procs=%+v err=%v, want it placed", procs, err)
+	{
+		procs, err := classifyViews([]procView{v}, 501)
+		require.NoError(t, err, "another account's git naming a checkout with -C: procs=%+v err=%v, want it placed", procs, err)
+		require.Equal(t, 1, len(procs), "another account's git naming a checkout with -C: procs=%+v err=%v, want it placed", procs, err)
+		require.Equal(t, "git -C /home/glenn/bus commit", procs[0].command, "another account's git naming a checkout with -C: procs=%+v err=%v, want it placed", procs, err)
+		require.False(t, procs[0].foreign, "another account's git naming a checkout with -C: procs=%+v err=%v, want it placed", procs, err)
 	}
 
 	v = readProcView("77", fake(501, true, nil, "git\x00status", nil))
-	if !v.ownerKnown || v.owner != 501 || !v.accountKnown || v.account != 501 || v.cwd != "/home/nova/bus" {
-		t.Fatalf("our own entry: %+v, want owner and account 501 and cwd read", v)
-	}
+	require.True(t, v.ownerKnown, "our own entry: %+v, want owner and account 501 and cwd read", v)
+	require.True(t, v.owner == 501, "our own entry: %+v, want owner and account 501 and cwd read", v)
+	require.True(t, v.accountKnown, "our own entry: %+v, want owner and account 501 and cwd read", v)
+	require.True(t, v.account == 501, "our own entry: %+v, want owner and account 501 and cwd read", v)
+	require.Equal(t, "/home/nova/bus", v.cwd, "our own entry: %+v, want owner and account 501 and cwd read", v)
 
 	gone := &fs.PathError{Op: "stat", Path: "/proc/19050", Err: syscall.ENOENT}
 	v = readProcView("19050", fake(0, false, gone, "git\x00status", nil))
-	if _, skip, err := gitProcFromView(v); err != nil || !skip {
-		t.Fatalf("a pid gone at the owner stat: skip=%v err=%v, want skipped", skip, err)
+	{
+		_, skip, err := gitProcFromView(v)
+		require.True(t, err == nil && skip, "a pid gone at the owner stat: skip=%v err=%v, want skipped", skip, err)
 	}
 
 	v = readProcView("19051", fake(0, false, nil, "git\x00status", denied))
-	if procs, err := classifyViews([]procView{v}, 501); v.ownerKnown || v.accountKnown || v.accountErr == nil || err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) || len(procs) != 1 || !procs[0].unknown {
-		t.Fatalf("an owner stat with no uid and an unreadable status: view=%+v procs=%+v err=%v, want account unknown and the scan unknown", v, procs, err)
+	{
+		procs, err := classifyViews([]procView{v}, 501)
+		require.True(t, err != nil && strings.HasPrefix(err.Error(), ownershipUnknown), "an owner stat with no uid and an unreadable status: view=%+v procs=%+v err=%v, want account unknown and the scan unknown", v, procs, err)
+		require.Equal(t, 1, len(procs), "an owner stat with no uid and an unreadable status: view=%+v procs=%+v err=%v, want account unknown and the scan unknown", v, procs, err)
+		require.False(t, v.ownerKnown, "an owner stat with no uid and an unreadable status: view=%+v procs=%+v err=%v, want account unknown and the scan unknown", v, procs, err)
+		require.False(t, v.accountKnown, "an owner stat with no uid and an unreadable status: view=%+v procs=%+v err=%v, want account unknown and the scan unknown", v, procs, err)
+		require.NotNil(t, v.accountErr, "an owner stat with no uid and an unreadable status: view=%+v procs=%+v err=%v, want account unknown and the scan unknown", v, procs, err)
+		require.True(t, procs[0].unknown, "an owner stat with no uid and an unreadable status: view=%+v procs=%+v err=%v, want account unknown and the scan unknown", v, procs, err)
 	}
 }
 
@@ -629,9 +399,7 @@ func TestForeignGitDirKeepsItsLock(t *testing.T) {
 	for _, form := range []string{"split", "joined"} {
 		dir, lock := oldIndexLock(t)
 		gd, err := GitDir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		args := []string{"git", "--git-dir", gd, "fetch"}
 		if form == "joined" {
 			args = []string{"git", "--git-dir=" + gd, "fetch"}
@@ -639,11 +407,11 @@ func TestForeignGitDirKeepsItsLock(t *testing.T) {
 		cleared, cerr := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
 			return classifyViews([]procView{{owner: 502, ownerKnown: true, comm: "git\n", cmdline: []byte(strings.Join(args, "\x00")), cwdErr: denied}}, 501)
 		})
-		if cleared || cerr != nil {
-			t.Fatalf("%s --git-dir of another account: cleared=%v err=%v, want the lock kept as owned", form, cleared, cerr)
-		}
-		if _, statErr := os.Lstat(lock); statErr != nil {
-			t.Fatalf("%s --git-dir: lock lost: %v", form, statErr)
+		require.False(t, cleared, "%s --git-dir of another account: cleared=%v err=%v, want the lock kept as owned", form, cleared, cerr)
+		require.NoError(t, cerr, "%s --git-dir of another account: cleared=%v err=%v, want the lock kept as owned", form, cleared, cerr)
+		{
+			_, statErr := os.Lstat(lock)
+			require.Equal(t, nil, statErr, "%s --git-dir: lock lost: %v", form, statErr)
 		}
 	}
 
@@ -654,11 +422,10 @@ func TestForeignGitDirKeepsItsLock(t *testing.T) {
 			{owner: 502, ownerKnown: true, account: 502, accountKnown: true, comm: "bash\n"},
 		}, 501)
 	})
-	if cerr != nil || !cleared {
-		t.Fatalf("unrelated processes of another account beside a private checkout: cleared=%v err=%v, want removed", cleared, cerr)
-	}
-	if _, statErr := os.Lstat(privateLock); !os.IsNotExist(statErr) {
-		t.Fatalf("stale index.lock still present: %v", statErr)
+	require.True(t, cerr == nil && cleared, "unrelated processes of another account beside a private checkout: cleared=%v err=%v, want removed", cleared, cerr)
+	{
+		_, statErr := os.Lstat(privateLock)
+		require.False(t, !os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
 	}
 }
 
@@ -683,26 +450,26 @@ func TestIndexLockAgeThenOwnerThenScan(t *testing.T) {
 
 	dir, lock := oldIndexLock(t)
 	fi, err := os.Lstat(lock)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fresh := fi.ModTime().Add(staleIndexLockAge - time.Second)
 	for _, o := range []struct {
 		uid uint32
 		ok  bool
 	}{{502, true}, {0, false}} {
 		cleared, err := clearStaleIndexLockAs(dir, fresh, func() ([]gitProc, error) {
-			t.Fatal("(a0) the scan ran for a fresh lock")
+			require.FailNow(t, "(a0) the scan ran for a fresh lock")
 			return nil, nil
 		}, func(os.FileInfo) (uint32, bool) {
-			t.Fatal("(a0) the owner was read for a fresh lock")
+			require.FailNow(t, "(a0) the owner was read for a fresh lock")
 			return o.uid, o.ok
 		}, 501)
 		if cleared || err != nil {
-			t.Fatalf("(a0) fresh lock, owner %d ok=%v: cleared=%v err=%v, want left alone and no error", o.uid, o.ok, cleared, err)
+			require.False(t, cleared, "(a0) fresh lock, owner %d ok=%v: cleared=%v err=%v, want left alone and no error", o.uid, o.ok, cleared, err)
+			require.NoError(t, err, "(a0) fresh lock, owner %d ok=%v: cleared=%v err=%v, want left alone and no error", o.uid, o.ok, cleared, err)
 		}
-		if _, statErr := os.Lstat(lock); statErr != nil {
-			t.Fatalf("(a0) lock lost: %v", statErr)
+		{
+			_, statErr := os.Lstat(lock)
+			require.Equal(t, nil, statErr, "(a0) lock lost: %v", statErr)
 		}
 	}
 
@@ -712,21 +479,22 @@ func TestIndexLockAgeThenOwnerThenScan(t *testing.T) {
 		return classifyViews([]procView{unplaced}, 501)
 	}, owner(502, true), 501)
 	const foreign = "index.lock is owned by uid 502, not this account; ask its owner or the bench admin"
-	if cleared || err == nil || err.Error() != foreign || asked {
-		t.Fatalf("(a) another account's stale lock: cleared=%v err=%v scanned=%v, want refused with %q and no scan", cleared, err, asked, foreign)
-	}
-	if _, statErr := os.Lstat(lock); statErr != nil {
-		t.Fatalf("(a) lock lost: %v", statErr)
+	require.False(t, cleared, "(a) another account's stale lock: cleared=%v err=%v scanned=%v, want refused with %q and no scan", cleared, err, asked, foreign)
+	require.Error(t, err, "(a) another account's stale lock: cleared=%v err=%v scanned=%v, want refused with %q and no scan", cleared, err, asked, foreign)
+	require.Equal(t, foreign, err.Error(), "(a) another account's stale lock: cleared=%v err=%v scanned=%v, want refused with %q and no scan", cleared, err, asked, foreign)
+	require.False(t, asked, "(a) another account's stale lock: cleared=%v err=%v scanned=%v, want refused with %q and no scan", cleared, err, asked, foreign)
+	{
+		_, statErr := os.Lstat(lock)
+		require.Equal(t, nil, statErr, "(a) lock lost: %v", statErr)
 	}
 
 	cleared, err = clearStaleIndexLockAs(dir, time.Now(), func() ([]gitProc, error) {
 		return classifyViews([]procView{unplaced}, 501)
 	}, owner(501, true), 501)
-	if err != nil || !cleared {
-		t.Fatalf("(b) our own lock beside another account's unplaced git: cleared=%v err=%v, want removed", cleared, err)
-	}
-	if _, statErr := os.Lstat(lock); !os.IsNotExist(statErr) {
-		t.Fatalf("(b) stale index.lock still present: %v", statErr)
+	require.True(t, err == nil && cleared, "(b) our own lock beside another account's unplaced git: cleared=%v err=%v, want removed", cleared, err)
+	{
+		_, statErr := os.Lstat(lock)
+		require.True(t, os.IsNotExist(statErr), "(b) stale index.lock still present: %v", statErr)
 	}
 
 	named, namedLock := oldIndexLock(t)
@@ -735,22 +503,21 @@ func TestIndexLockAgeThenOwnerThenScan(t *testing.T) {
 	cleared, err = clearStaleIndexLockAs(named, time.Now(), func() ([]gitProc, error) {
 		return classifyViews([]procView{withC}, 501)
 	}, owner(501, true), 501)
-	if cleared || err != nil {
-		t.Fatalf("(c) our own lock, another account's git naming it with -C: cleared=%v err=%v, want kept as owned", cleared, err)
-	}
-	if _, statErr := os.Lstat(namedLock); statErr != nil {
-		t.Fatalf("(c) lock lost: %v", statErr)
+	require.False(t, cleared, "(c) our own lock, another account's git naming it with -C: cleared=%v err=%v, want kept as owned", cleared, err)
+	require.NoError(t, err, "(c) our own lock, another account's git naming it with -C: cleared=%v err=%v, want kept as owned", cleared, err)
+	{
+		_, statErr := os.Lstat(namedLock)
+		require.Equal(t, nil, statErr, "(c) lock lost: %v", statErr)
 	}
 
 	cleared, err = clearStaleIndexLockAs(named, time.Now(), func() ([]gitProc, error) {
-		t.Fatal("(d) the scan ran for a lock whose owner could not be read")
+		require.FailNow(t, "(d) the scan ran for a lock whose owner could not be read")
 		return nil, nil
 	}, owner(0, false), 501)
-	if cleared || err == nil || !strings.HasPrefix(err.Error(), "index.lock owner cannot be read") || !strings.HasSuffix(err.Error(), "ask its owner or the bench admin") {
-		t.Fatalf("(d) stale lock, owner unreadable: cleared=%v err=%v, want refused", cleared, err)
-	}
-	if _, statErr := os.Lstat(namedLock); statErr != nil {
-		t.Fatalf("(d) lock lost: %v", statErr)
+	require.False(t, cleared || err == nil || !strings.HasPrefix(err.Error(), "index.lock owner cannot be read") || !strings.HasSuffix(err.Error(), "ask its owner or the bench admin"), "(d) stale lock, owner unreadable: cleared=%v err=%v, want refused", cleared, err)
+	{
+		_, statErr := os.Lstat(namedLock)
+		require.Equal(t, nil, statErr, "(d) lock lost: %v", statErr)
 	}
 }
 
@@ -761,12 +528,10 @@ func TestIndexLockOwnerIsTheWriter(t *testing.T) {
 	hermetic(t)
 	_, lock := oldIndexLock(t)
 	fi, err := os.Lstat(lock)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	uid, ok := lockFileOwner(fi)
 	if !ok || uid != effectiveUID() {
-		t.Fatalf("lock owner: uid=%d ok=%v, want %d", uid, ok, effectiveUID())
+		require.True(t, ok && uid == effectiveUID(), "lock owner: uid=%d ok=%v, want %d", uid, ok, effectiveUID())
 	}
 }
 
@@ -793,29 +558,23 @@ func TestIndexLockRevalidatedBeforeRemove(t *testing.T) {
 	check := func(name string, dir, lock string, scan func() ([]gitProc, error), lockOwner func(os.FileInfo) (uint32, bool), keep []byte) {
 		t.Helper()
 		cleared, err := clearStaleIndexLockAs(dir, time.Now(), scan, lockOwner, self)
-		if cleared || !errors.Is(err, ErrIndexLockChanged) || err.Error() != want {
-			t.Fatalf("%s: cleared=%v err=%v, want %q", name, cleared, err, want)
-		}
+		require.False(t, cleared, "%s: cleared=%v err=%v, want %q", name, cleared, err, want)
+		require.True(t, errors.Is(err, ErrIndexLockChanged), "%s: cleared=%v err=%v, want %q", name, cleared, err, want)
+		require.Equal(t, want, err.Error(), "%s: cleared=%v err=%v, want %q", name, cleared, err, want)
 		got, readErr := os.ReadFile(lock)
-		if readErr != nil || string(got) != string(keep) {
-			t.Fatalf("%s: lock at the path lost: %v %q", name, readErr, got)
-		}
+		require.False(t, readErr != nil || string(got) != string(keep), "%s: lock at the path lost: %v %q", name, readErr, got)
 	}
 
 	dir, lock := oldIndexLock(t)
 	check("(1) replaced", dir, lock, func() ([]gitProc, error) {
-		if err := os.Rename(lock, lock+".old"); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Rename(lock, lock+".old"))
 		return nil, os.WriteFile(lock, []byte("new"), 0o600)
 	}, lockFileOwner, []byte("new"))
 
 	dir, lock = oldIndexLock(t)
 	check("(2) touched", dir, lock, func() ([]gitProc, error) {
 		fi, err := os.Lstat(lock)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		later := fi.ModTime().Add(time.Second)
 		return nil, os.Chtimes(lock, later, later)
 	}, lockFileOwner, nil)
@@ -827,16 +586,13 @@ func TestIndexLockRevalidatedBeforeRemove(t *testing.T) {
 	cleared, err := clearStaleIndexLockAs(dir, time.Now(), func() ([]gitProc, error) {
 		return nil, os.Remove(lock)
 	}, lockFileOwner, self)
-	if cleared || err != nil {
-		t.Fatalf("(4) gone during the scan: cleared=%v err=%v, want not cleared and no error", cleared, err)
-	}
+	require.False(t, cleared || err != nil, "(4) gone during the scan: cleared=%v err=%v, want not cleared and no error", cleared, err)
 
 	dir, lock = oldIndexLock(t)
 	cleared, err = clearStaleIndexLockAs(dir, time.Now(), func() ([]gitProc, error) { return nil, nil }, lockFileOwner, self)
-	if err != nil || !cleared {
-		t.Fatalf("(5) unchanged: cleared=%v err=%v, want removed", cleared, err)
-	}
-	if _, statErr := os.Lstat(lock); !os.IsNotExist(statErr) {
-		t.Fatalf("(5) lock still present: %v", statErr)
+	require.False(t, err != nil || !cleared, "(5) unchanged: cleared=%v err=%v, want removed", cleared, err)
+	{
+		_, statErr := os.Lstat(lock)
+		require.False(t, !os.IsNotExist(statErr), "(5) lock still present: %v", statErr)
 	}
 }

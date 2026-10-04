@@ -2,8 +2,10 @@ package secrets
 
 import (
 	"os"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestRunExecRefusalNamesEveryMissingRequiredFlagTogether pins 6dbfe26e (#1477):
@@ -14,19 +16,12 @@ func TestRunExecRefusalNamesEveryMissingRequiredFlagTogether(t *testing.T) {
 	t.Parallel()
 
 	code, err := RunExec("", "", "", "", "", nil, []string{os.Args[0]})
-	if code != 125 {
-		t.Fatalf("expected exit 125, got %d err=%v", code, err)
-	}
-	if err == nil {
-		t.Fatal("expected a refusal, got nil")
-	}
+	require.Equal(t, 125, code, "expected exit 125, got %d err=%v", code, err)
+	require.Error(t, err, "expected a refusal, got nil")
 	msg := err.Error()
 	for _, flag := range []string{"--store", "--as", "--key", "--sops", "--only"} {
-		if !strings.Contains(msg, flag) {
-			t.Errorf("refusal must name %s together, got: %s", flag, msg)
-		}
+		assert.Contains(t, msg, flag, "refusal must name %s together, got: %s", flag, msg)
 	}
-	if !strings.Contains(msg, "example:") || !strings.Contains(msg, "nova-secrets exec") {
-		t.Errorf("refusal must carry a pasteable example invocation, got: %s", msg)
-	}
+	assert.Contains(t, msg, "example:", "refusal must carry a pasteable example invocation, got: %s", msg)
+	assert.Contains(t, msg, "nova-secrets exec", "refusal must carry a pasteable example invocation, got: %s", msg)
 }

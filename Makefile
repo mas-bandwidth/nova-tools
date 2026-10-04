@@ -11,13 +11,14 @@
 GO ?= go
 PKGS ?= ./...
 # CL_PKGS IS THE LIVING TREE, read the way ci.yml's test-packages job reads it:
-# `select-packages.sh --all` lists every package under cmd/, internal/ and
-# tools/ and drops the ones deprecated/PACKAGES names (a deprecated package is
-# never tested), or fails loudly when `go list` fails; it never selects nothing
-# in silence. Recursive (`=`), and the `test` and `test-functional` lines that
-# take it are recursive too, so the go list runs when one of those targets
-# runs and not on every make call; `make test PKGS=<shard>` never runs it.
-CL_PKGS = $(shell bash .github/scripts/select-packages.sh --all)
+# `go run ./tools/ci select-packages --all` lists every package under cmd/,
+# internal/ and tools/ and drops the ones internal/pkgselect/DEPRECATED names (a
+# deprecated package is never tested), or fails loudly when `go list` fails; it
+# never selects nothing in silence. Recursive (`=`), and the `test` and
+# `test-functional` lines that take it are recursive too, so the go list runs
+# when one of those targets runs and not on every make call; `make test
+# PKGS=<shard>` never runs it.
+CL_PKGS = $(shell $(GO) run ./tools/ci select-packages --all)
 
 # THE HOST GUARD, on for every target. internal/testguard makes every ssh, scp
 # and rsync seam in this tree panic with its command line when this is 1, so a
@@ -30,20 +31,18 @@ CL_PKGS = $(shell bash .github/scripts/select-packages.sh --all)
 # honest is TestNoTestReachesAHostThroughAnUnfakedSeam in internal/ci.
 export NOVA_TEST_NO_HOST := 1
 
-# WINDOWS_TIMEOUT LIVED HERE, and it is gone with the legs it bounded (Glenn
-# 2026-09-18: "drop the native windows CI runners. WSL only from now on."). It
-# was the per-package ceiling on the hosted Windows PR leg and the merge group's
-# windows leg, 300 s, measured rather than carried over — the number and the
-# measurements behind it (testdata/ci/package-sizes-windows.tsv, #1332,
-# integration-4, run 35354900090) are in git at dev 65e86175 if a Windows leg
+# WINDOWS_TIMEOUT is gone with the legs it bounded. It was the per-package
+# ceiling on the hosted Windows PR leg and the merge group's windows leg,
+# 300 s, measured rather than carried over — the number and the measurements
+# behind it (testdata/ci/package-sizes-windows.tsv, integration-4, run
+# 35354900090) are in git at dev 65e86175 if a Windows leg
 # ever comes back. What stays is `vet-windows` below: a cross-vet that needs no
 # Windows machine and no ceiling at all.
 #
 # DARWIN_TIMEOUT is the per-package ceiling on the merge group's darwin leg, and
-# it is a MEASUREMENT and not a convention carried over from
-# another platform. That leg used the linux 100 s until 2026-09-18, when
-# merge-group run 35369433950 (batch 7, PR #1360) had its darwin shards 0 and 1
-# CANCELLED at the five-minute leg cap on superman.
+# it is a MEASUREMENT and not a convention carried over from another platform.
+# That leg used the linux 100 s until merge-group run 35369433950 (batch 7) had
+# its darwin shards 0 and 1 CANCELLED at the five-minute leg cap on a macOS runner.
 #
 # READ THAT RUN BEFORE BELIEVING THE OBVIOUS STORY, because the ceiling is not
 # what killed it: no package came near 100 s, and what ran out was the SHARD'S SUM
@@ -52,7 +51,7 @@ export NOVA_TEST_NO_HOST := 1
 # companion to it — the bound on ONE `go test`, which is a shard's share of a
 # dealt package or the WHOLE of a package when the group opened a single slot. The
 # whole of the largest package on a loaded host is therefore the case it covers:
-# cmd/nova-wake measures 120.3 s on a quiet superman, and 300 s is that with the
+# cmd/nova-wake measures 120.3 s on a quiet macOS runner; 300 s is that with the
 # stated margin and a little over. The leg's ten-minute job cap still fires above
 # it, so a real hang is named by Go rather than by the runner killing the job.
 #
@@ -63,7 +62,7 @@ export NOVA_TEST_NO_HOST := 1
 # number rather than the machine's. The measurement is therefore a FLOOR, and this
 # ceiling is that floor times a STATED MARGIN of two. The margin is measured on
 # the same host both ways, not chosen: cmd/nova-merge is 68.8 s whole on a quiet
-# superman and about 147 s on the loaded superman of that run, which is 2.1x, and
+# macOS runner and about 147 s on the loaded one of that run, which is 2.1x, and
 # the same factor covers the unevenness of dealing tests by NAME instead of time. Neither number is a
 # guess and neither is hidden inside the other; internal/ci's darwin class tests
 # hold both.
@@ -76,28 +75,36 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
 
 help:
+	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
+	@echo "make tlc-full    manual Linux TLC experiment (also explicit TLC_BUDGET; forbidden in CI)"
+	@echo "make tlc-groups  JSON list of required model groups"
+	@echo "make tlc-test    the runner and checker tests: no Java, no Redis, no network"
 	@echo "make help        this list"
 	@echo "make build       go build ./..."
 	@echo "make fmt         report files that are not gofmt-clean"
 	@echo "make vet         go vet PKGS (default ./...)"
 	@echo "make vet-functional go vet -tags functional PKGS (the redis-backed test files compiled too)"
+	@echo "make vet-slow go vet -tags slow PKGS (the nightly tier's test files compiled on every change)"
+	@echo "make vet-shippedsmoke go vet -tags shippedsmoke ./internal/shippedsmoke (the shipped binary's smoke tests compiled on every change)"
+	@echo "make vet-novadisk GOOS=darwin go vet -tags novadisk ./cmd/nova-sandbox (the one real-disk e2e test compiled on every change)"
 	@echo "make vet-laws    build tools/analyzers/cmd/vetlaw and vet ./cmd/... with it"
 	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
 	@echo "make lint        fmt and vet"
 	@echo "make preflight   gofmt, go vet, and go test -count=1 (PKGS)"
 	@echo "make test        the unit tier: go test -p GOTEST_P PKGS plus the 2 s package / 1 s test slowtests budgets"
 	@echo "make test-functional the functional tier: only the tests behind //go:build functional in PKGS, -p GOTEST_P"
+	@echo "make test-functional-container the functional tier of PKGS inside one container (tools/functionalrun; TESTING.md)"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
-	@echo "make test-short  go test -short -count=1 -timeout 12m PKGS"
+	@echo "make test-short  go test -short -count=1 -timeout SHORT_TIMEOUT PKGS"
 	@echo "make test-slow   go test -count=1 -tags slow ./... (the nightly tier: the tests too slow for a commit)"
 	@echo "make test-merge  go test -count=1 -timeout MERGE_TIMEOUT -run RUN PKGS"
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
 	@echo "make test-prewarm-done run the exact #2498 S3 test manifest"
-	@echo "make test-lisp   sh tools/ci/lisp-test.sh (nothing to test: nova-work, the one Lisp system, is parked under deprecated/)"
+	@echo "make test-lisp   go run ./tools/ci lisp-test (nothing to test while the live tree has no Lisp system)"
 	@echo "make compile-lisp nothing to compile while lisp/ holds no system; refuses if one appears"
 	@echo "make check       build, lint, test, test-e2e and test-lisp (CI's gates; the stream lander's batch test)"
 	@echo "make clean       remove ./bin and ./scratch"
@@ -107,6 +114,28 @@ help:
 
 map:
 	$(GO) run ./tools/agentsmap
+
+# TLC runs on Linux benches with an explicit installed jar and owned output path.
+TLC_JAR ?=
+TLC_OUT ?=
+TLC_GROUP ?=
+TLC_BUDGET ?= 110
+.PHONY: tlc tlc-full tlc-groups tlc-test
+tlc:
+	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc: set TLC_JAR, TLC_OUT and TLC_GROUP' >&2; exit 2; }
+	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s"
+
+tlc-full:
+	@test "$(origin TLC_BUDGET)" != "file" || { echo 'make tlc-full: supply TLC_BUDGET explicitly' >&2; exit 2; }
+	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc-full: set TLC_JAR, TLC_OUT, TLC_GROUP and an explicit TLC_BUDGET' >&2; exit 2; }
+	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s" --manual
+
+tlc-test:
+	$(GO) test -count=1 ./internal/tlc ./internal/tablemodel ./tools/tlacheck
+
+tlc-groups:
+	@$(GO) run ./tools/tlacheck groups --root .
+
 
 new-rule:
 	$(GO) run ./tools/newrule $(ARGS)
@@ -118,27 +147,39 @@ new-verb:
 build:
 	$(GO) build ./...
 
-# deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
 fmt:
-	@unformatted="$$(gofmt -l . | grep -v '^deprecated/' || true)"; \
-	if [ -n "$$unformatted" ]; then \
-		echo "not gofmt-clean:"; \
-		echo "$$unformatted"; \
-		exit 1; \
-	fi
+	@$(GO) run ./tools/ci gofmt
 
 vet:
 	$(GO) vet $(PKGS)
 
-# THE FUNCTIONAL TIER (nova-tools #4328, Glenn 2026-09-26 11:20 AM ET: "we
-# should run functional tests, not on every small PR being merged or worked on,
-# but only as we merge whole work streams"). Every test that starts a
+# THE FUNCTIONAL TIER is the redis-backed tests. Every test that starts a
 # redis-server is behind `//go:build functional`, so `vet` and `test` above do
 # not compile it. vet-functional compiles those files on every change, so a PR
 # that breaks one is red at once even though it does not run it;
 # internal/ci's TestRedisBackedTestsCarryTheFunctionalTag keeps the tag on.
 vet-functional:
 	$(GO) vet -tags functional $(PKGS)
+
+# THE SLOW TIER, the mirror of vet-functional: a test behind `//go:build
+# slow` is compiled by no plain `go vet` and runs only in the nightly job, so a
+# PR that breaks one stayed green until the morning. vet-slow compiles them on
+# every change; internal/ci's TestEveryTestBuildTagIsVettedByCIVetSteps keeps
+# the tag on.
+vet-slow:
+	$(GO) vet -tags slow $(PKGS)
+
+# The shippedsmoke and novadisk tags are the two opt-in tags left, both compiled
+# only by a scheduled job: shippedsmoke by certification.yml, novadisk (a darwin
+# file, `//go:build darwin && novadisk`) by nightly-slow.yml on a mac. vet-shippedsmoke
+# compiles the one package on every change; vet-novadisk is a GOOS=darwin cross-vet
+# like vet-windows, because the file it guards is darwin-only and the lint job is
+# linux.
+vet-shippedsmoke:
+	$(GO) vet -tags shippedsmoke ./internal/shippedsmoke
+
+vet-novadisk:
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) vet -tags novadisk ./cmd/nova-sandbox
 
 # THE VERB-LAW GUARD, its own target rather than folded into `vet` because
 # `vet` is also the SHARDED per-package leg (ci.yml's test-packages job calls
@@ -154,9 +195,8 @@ vet-laws:
 	$(GO) build -o bin/vetlaw ./tools/analyzers/cmd/vetlaw
 	$(GO) vet -vettool=$(CURDIR)/bin/vetlaw ./cmd/...
 
-# THE ONE WINDOWS GUARD ON THE CL PATH, since the native windows runners were
-# dropped (Glenn 2026-09-18: "drop the native windows CI runners. WSL only from
-# now on."). `GOOS=windows go vet ./...` builds the Windows standard library
+# THE ONE WINDOWS GUARD ON THE CL PATH is a cross-vet, not a Windows leg.
+# `GOOS=windows go vet ./...` builds the Windows standard library
 # into the cache and then type-checks every package AND every _test.go for
 # Windows — which is what catches the class a cross-platform Go tree actually
 # breaks: a *_windows.go that stopped compiling, a syscall used without a build
@@ -174,16 +214,18 @@ vet-laws:
 vet-windows:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) vet ./...
 
-lint: fmt vet vet-functional vet-laws
+lint: fmt vet vet-functional vet-slow vet-laws
 
-# preflight is the standard check for swarm cards and developers (#2498 S4):
-# gofmt + go vet + go test -count=1
+# preflight is the standard check for swarm cards and developers:
+# gofmt + go vet + go test -count=1, run by tools/preflight. The tool is built into
+# this checkout's bin/ and exec'd, so make's own signal and the tool's exit code are
+# the ones the caller sees.
 # No `preflight: PKGS ?= ...` line: under GNU make 3.81 (macOS /usr/bin/make) a
 # target-specific `?=` on PKGS made `test: PKGS :=` beat the command line, so
-# every studio shard of dev push run 35999520176 ran the whole tree instead of
-# its PKGS; with PKGS ?= ./... above, that line was a no-op everywhere else.
+# every macOS shard of dev push run 35999520176 ran the whole tree instead of its
+# PKGS; with PKGS ?= ./... above, that line was a no-op everywhere else.
 preflight:
-	./tools/preflight.sh $(if $(RUN),-run "$(RUN)",) $(PKGS)
+	$(GO) build -o bin/preflight ./tools/preflight && exec ./bin/preflight $(if $(RUN),-run "$(RUN)",) $(PKGS)
 
 # The fast tier. The package set is CL_PKGS, the living tree exactly as
 # ci.yml's test-packages job selects it with --all; a caller that wants a shard
@@ -196,9 +238,7 @@ preflight:
 # though slowtests runs after it — a failing go test stops the verdict before
 # slowtests, exactly as the workflow did when this lived inline in ci.yml.
 #
-# THE UNIT TIER'S BUDGETS (Glenn 2026-09-26 11:20 AM ET, nova-tools#4328: "unit
-# tests be < 2s (ideally <1) but also they must not be so aggressive that they
-# fill a whole machine cores"): a package over 2 s or a top-level test over 1 s
+# THE UNIT TIER'S BUDGETS: a package over 2 s or a top-level test over 1 s
 # is a CI-SLOW line unless internal/ci/slow-tests_allowlist.txt names a higher
 # budget for exactly that row, and every row there names the time it was
 # measured at and where, `<seconds>s@run<id>` or `@<bench>` (internal/ci:
@@ -208,7 +248,8 @@ preflight:
 # 2026-09-26). What is ENFORCED on every leg is static: no unit test waits on
 # the wall clock (internal/ci: TestNoUnitTestWaitsOnTheWallClock), and a test
 # skipped with the SLEEPS marker that internal/ci/sleeps-skips_allowlist.txt does
-# not name is a CI-SLEEPS line and exit 2 here, whatever SLOWTESTS_ENFORCE says.
+# not name is a CI-SLEEPS line (slowtests exits 1) and fails the target here,
+# whatever SLOWTESTS_ENFORCE says.
 # The wall times are MEASUREMENTS: slowtests prints every CI-SLOW line and a
 # CI-LOAD line (the host's load, never read by the verdict) and exits 0 on
 # them, unless SLOWTESTS_ENFORCE=1 passes --enforce, which one caller does: the
@@ -261,17 +302,40 @@ test:
 # `nova-ci functional` picks, among PKGS, the packages holding such files and a
 # -run pattern naming exactly their tests, so the unit tests of those packages
 # are not run a second time; PKGS with no functional file run nothing,
-# and say so on one `CI FUNCTIONAL OK packages=0 reason=<why>` line.
+# and say so on one `CI FUNCTIONAL OK packages=0 reason=<why>` line. The
+# selection and the `go test` that follows it are `tools/ci functional-run`.
 FUNCTIONAL_TIMEOUT ?= 100s
 test-functional: PKGS = $(CL_PKGS)
 test-functional:
-	@bash -o pipefail -c 'sel=$$($(GO) run ./cmd/nova-ci functional $(PKGS)) || exit 2; case "$$sel" in "CI FUNCTIONAL OK "*) echo "functional: $$sel"; exit 0;; "") echo "functional: nova-ci functional printed nothing; refusing to run nothing in silence" >&2; exit 2;; esac; pkgs=$$(printf "%s\n" "$$sel" | sed -n 1p); run=$$(printf "%s\n" "$$sel" | sed -n 2p); echo "functional: $$pkgs"; $(GO) test -tags functional -p $(GOTEST_P) -count=1 -timeout $(FUNCTIONAL_TIMEOUT) -run "$$run" $$pkgs'
+	@$(GO) run ./tools/ci functional-run --go $(GO) --p $(GOTEST_P) --timeout $(FUNCTIONAL_TIMEOUT) $(PKGS)
+
+# THE FUNCTIONAL TIER IN A CONTAINER. test-functional-container runs the target
+# above inside one container per run (tools/functionalrun, TESTING.md): the
+# image built from FUNCTIONAL_CONTEXT or reused, the tree mounted read-only,
+# tmpfs scratch, this user's own Go cache volumes, no network, and
+# FUNCTIONAL_DEADLINE enforced from outside the container by the runtime. The
+# container is removed whatever happens, and every container of an earlier run
+# past its deadline is reaped first. The tool is built into this checkout's bin/
+# and exec'd, never `go run`, so a signal to make reaches the tool itself and
+# the tool's exit code is make's to report (make reports any failure as 2).
+FUNCTIONAL_DEADLINE ?= 10m
+FUNCTIONAL_CONTEXT ?= infra/functional-image
+# FUNCTIONAL_FLAGS: more flags for the tool, such as --fresh-gocache.
+FUNCTIONAL_FLAGS ?=
+test-functional-container: PKGS = $(CL_PKGS)
+test-functional-container:
+	$(GO) build -o bin/functionalrun ./tools/functionalrun && exec ./bin/functionalrun run --deadline $(FUNCTIONAL_DEADLINE) --context $(FUNCTIONAL_CONTEXT) $(FUNCTIONAL_FLAGS) $(PKGS)
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
 
+# SHORT_TIMEOUT is test-short's `go test -timeout`, per test binary. The hosted
+# legs spend 55-75 s on setup before their test step (run 36367639661), and the
+# slowest hosted package runs 24 s (cmd/nova-review on macos-latest), so 50 s
+# fires before the two-minute job cap kills the leg without a stack.
+SHORT_TIMEOUT ?= 50s
 test-short:
-	$(GO) test -short -count=1 -timeout 12m $(PKGS)
+	$(GO) test -short -count=1 -timeout $(SHORT_TIMEOUT) $(PKGS)
 
 # The nightly tier (go-test-slow): every test behind `//go:build slow`, with the
 # whole tree around it. A test lands there when the per-commit run cannot pay it
@@ -310,18 +374,18 @@ test-prewarm-done:
 	$(GO) test -count=1 ./tools/testmanifest
 	$(GO) run ./tools/testmanifest --go "$(GO)" --package ./internal/swarm -- TestASDFMappingReusesCompiledOutputAcrossFreshJobClone TestPrewarmFailedRerunInvalidatesPriorReceipt TestPrewarmGitChildrenDropSecrets
 
-# The Lisp tier. nova-work, the one Lisp system, is PARKED under
-# deprecated/lisp/nova-work (Glenn 2026-09-27: deprecated code is not tested, not
-# built and never blocks CI), so lisp/ holds no system: test-lisp runs CI's
-# script, which prints "nothing to test" and exits 0, and compile-lisp (the
-# swarm prewarm's lisp phase) prints "nothing to compile". verify-roadmap and
-# measure-roadmap ran cmd/nova-work's verification verb and went with it.
+# The Lisp tier. The old nova-work's Lisp kernel, the one Lisp system, lives in
+# the repository nova-work-old, for reference only (the deprecated/
+# folder that parked it was removed on 2026-10-01), so lisp/ holds no system: test-lisp runs CI's
+# verb (tools/ci lisp-test), which prints "nothing to test" and exits 0, and
+# compile-lisp (the swarm prewarm's lisp phase) prints "nothing to compile".
+# verify-roadmap and measure-roadmap ran cmd/nova-work's verification verb and went with it.
 test-lisp:
-	sh tools/ci/lisp-test.sh
+	$(GO) run ./tools/ci lisp-test
 
 compile-lisp:
 	@if [ -e lisp ]; then echo "compile-lisp: lisp/ exists and no compile step names it; write one" >&2; exit 1; fi
-	@echo "compile-lisp: nothing to compile: lisp/ holds no system (nova-work is parked under deprecated/lisp/nova-work)"
+	@echo "compile-lisp: nothing to compile: lisp/ holds no system (the old nova-work kernel lives in the nova-work-old repository)"
 
 # What CI runs on a pull request: the self-hosted lint job, the sharded test
 # job, the friend sequences and the lisp tier (test-lisp; nothing to test while

@@ -27,7 +27,7 @@ source.
   contract; the label is optional. ([SPEC-UPDATE.md](SPEC-UPDATE.md))
 - **friend** — a named participant you exchange notes with, the coordinator
   included; the role is ownership, never an exemption. Her configuration is a
-  `nova-config` friend row (slots, tiers, roles); what she would just know is
+  `nova-config` friend row (slots, tiers, roles, width); what she would just know is
   runtime data she reports herself. ([SPEC-CONFIG.md](SPEC-CONFIG.md))
 - **OK** — the verdict a successful verb line carries as its second token:
   `<TOKEN> OK`, on stdout. A count stands where a list would be.

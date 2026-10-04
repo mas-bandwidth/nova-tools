@@ -25,8 +25,9 @@ type verbData struct {
 	CamelVerb string
 }
 
-// Verb writes a new CLI verb skeleton into root.
-func Verb(root, tool, verb string) ([]string, error) {
+// VerbFiles renders a new CLI verb skeleton for root without writing it: what
+// Write lays down, and what Check walks for a dry run.
+func VerbFiles(root, tool, verb string) ([]Planned, error) {
 	if !verbNameRe.MatchString(tool) {
 		return nil, fmt.Errorf("tool name %q must start with a lowercase letter and contain only 1-32 lowercase letters, digits, '_' or '-'", tool)
 	}
@@ -75,8 +76,7 @@ func Verb(root, tool, verb string) ([]string, error) {
 			Data: data,
 		})
 	}
-
-	return Write(root, outs)
+	return outs, nil
 }
 
 // hasMain reports whether dir holds a non-test Go file of package main that
@@ -112,7 +112,7 @@ func hasMain(dir string) (bool, error) {
 
 // Dispatch is the case a scaffolded verb needs in its tool's dispatch switch,
 // calling the function verb.go.tmpl declares. new-verb prints it and never
-// edits the switch itself (rowan hold 6 on #3616, item 4).
+// edits the switch itself.
 func Dispatch(verb string) string {
 	return fmt.Sprintf("case %q:\n\treturn cmd%s(args[1:], stdout, stderr)", verb, toCamel(verb))
 }

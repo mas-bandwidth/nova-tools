@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestNetAllowGrantsExactlyTheNamedLoopbackPort pins issue #591's --net-allow on the ONE
@@ -41,9 +43,7 @@ func TestNetAllowGrantsExactlyTheNamedLoopbackPort(t *testing.T) {
 
 	write := t.TempDir()
 	home := filepath.Join(write, "home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(home, 0o755))
 	env := ChildEnv(append(os.Environ(), "HOME="+home), filepath.Join(write, tmpDirName))
 
 	connect := func(port int) (int, string) {
@@ -51,38 +51,30 @@ func TestNetAllowGrantsExactlyTheNamedLoopbackPort(t *testing.T) {
 		iv.NetDeny = true // the exception is --net-allow's alone; nothing else opens it
 		iv.NetAllow = []string{"127.0.0.1:" + strconv.Itoa(allowedPort)}
 		p, bad := Build(iv)
-		if len(bad) > 0 {
-			t.Fatalf("refused at build: %v", bad)
-		}
+		require.Empty(t, bad, "refused at build: %v", bad)
 		var out, errb bytes.Buffer
 		code, err := Run(p, env, strings.NewReader(""), &out, &errb, nil)
-		if err != nil {
-			t.Fatalf("run port %d: %v (%s)", port, err, errb.String())
-		}
+		require.NoError(t, err, "run port %d: %v (%s)", port, err, errb.String())
 		return code, errb.String()
 	}
 
 	// THE POSITIVE CONTROL: the port --net-allow names, reachable. If the SBPL form
 	// DarwinProfile emits does not compile, sandbox-exec exits 65 here and this fails --
 	// which is exactly the failure #599's own profile-text-only tests could not produce.
-	if code, errb := connect(allowedPort); code != 0 {
-		t.Fatalf("connect to the ALLOWED loopback port %d: exit %d, stderr %q", allowedPort, code, errb)
-	}
+	code, errb := connect(allowedPort)
+	require.Equal(t, 0, code, "connect to the ALLOWED loopback port %d: exit %d, stderr %q", allowedPort, code, errb)
 
 	// THE NEGATIVE CONTROL: a different loopback port, under the same --net-deny, must
 	// still be refused -- --net-allow opens the one port named, never the loopback at
 	// large. `nc -z` exits nonzero on a refused connect.
-	if code, _ := connect(deniedPort); code == 0 {
-		t.Fatalf("connect to the DENIED loopback port %d succeeded; --net-allow %d opened more than its own port", deniedPort, allowedPort)
-	}
+	code, _ = connect(deniedPort)
+	require.NotEqual(t, 0, code, "connect to the DENIED loopback port %d succeeded; --net-allow %d opened more than its own port", deniedPort, allowedPort)
 }
 
 func loopbackListener(t *testing.T) net.Listener {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("loopback listen: %v", err)
-	}
+	require.NoError(t, err, "loopback listen: %v", err)
 	go func() {
 		for {
 			c, err := ln.Accept()

@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // safepath's contract, in the order the danger arrives: an empty path, the root itself, a
@@ -16,26 +19,18 @@ func TestRemoveUnderRefusesUnsafePaths(t *testing.T) {
 
 	root := t.TempDir()
 	inside := filepath.Join(root, "inside")
-	if err := os.MkdirAll(inside, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(inside, 0o755))
 
 	outside := t.TempDir()
 	link := filepath.Join(root, "link")
-	if err := os.Symlink(outside, link); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Symlink(outside, link))
 	// A path that only LOOKS like it is under the root: the symlink in the middle of it
 	// resolves to another tree, so EvalSymlinks on both must catch it.
 	escaped := filepath.Join(link, "escaped")
-	if err := os.MkdirAll(escaped, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(escaped, 0o755))
 
 	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("this machine has no home directory to test the refusal against: %v", err)
-	}
+	require.NoError(t, err, "this machine has no home directory to test the refusal against: %v", err)
 
 	cases := []struct {
 		name string
@@ -53,15 +48,12 @@ func TestRemoveUnderRefusesUnsafePaths(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if err := RemoveUnder(c.root, c.path); err == nil {
-				t.Fatalf("RemoveUnder(%q, %q) returned nil; it must refuse", c.root, c.path)
-			}
+			require.Error(t, RemoveUnder(c.root, c.path), "RemoveUnder(%q, %q) returned nil; it must refuse", c.root, c.path)
 			// Nothing under the temp root may have moved, and the symlink target must
 			// still be there: a refusal is not a partial removal.
 			for _, p := range []string{inside, link, outside} {
-				if _, err := os.Lstat(p); err != nil {
-					t.Errorf("the refusal removed %s: %v", p, err)
-				}
+				_, err := os.Lstat(p)
+				assert.NoError(t, err, "the refusal removed %s: %v", p, err)
 			}
 		})
 	}
@@ -73,19 +65,12 @@ func TestRemoveUnderRemovesBelowRoot(t *testing.T) {
 
 	root := t.TempDir()
 	sub := filepath.Join(root, "sub")
-	if err := os.MkdirAll(filepath.Join(sub, "deep", "deeper"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sub, "file"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := RemoveUnder(root, sub); err != nil {
-		t.Fatalf("RemoveUnder removed nothing: %v", err)
-	}
-	if _, err := os.Lstat(sub); !os.IsNotExist(err) {
-		t.Fatalf("the directory below the root is still there: %v", err)
-	}
-	if _, err := os.Lstat(root); err != nil {
-		t.Fatalf("the root itself was removed: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(sub, "deep", "deeper"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sub, "file"), []byte("x"), 0o644))
+	err := RemoveUnder(root, sub)
+	require.NoError(t, err, "RemoveUnder removed nothing: %v", err)
+	_, err = os.Lstat(sub)
+	require.True(t, os.IsNotExist(err), "the directory below the root is still there: %v", err)
+	_, err = os.Lstat(root)
+	require.NoError(t, err, "the root itself was removed: %v", err)
 }

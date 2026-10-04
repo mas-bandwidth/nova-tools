@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // advance is the flags that move a reader's cursor, since every test below does it.
@@ -39,9 +41,7 @@ func advance(checkout, who string, extra ...string) []string {
 func read(t *testing.T, checkout, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(checkout, filepath.FromSlash(path)))
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
+	require.NoErrorf(t, err, "reading %s: %v", path, err)
 	return string(raw)
 }
 
@@ -94,8 +94,9 @@ func bulkHistory(t *testing.T, checkout string, history, carried int) {
 
 	cmd := exec.Command("git", "-C", checkout, "fast-import", "--quiet")
 	cmd.Stdin = strings.NewReader(b.String())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git fast-import %d notes: %v\n%s", history, err, out)
+	{
+		out, err := cmd.CombinedOutput()
+		require.NoErrorf(t, err, "git fast-import %d notes: %v\n%s", history, err, out)
 	}
 	// fast-import moved the branch under the working tree; this is what puts the notes in
 	// it. --hard against the branch it just wrote, so the tree, the index and HEAD agree
@@ -118,9 +119,7 @@ func commitAs(t *testing.T, checkout, who, message string) {
 func field(t *testing.T, out, key string) string {
 	t.Helper()
 	i := strings.Index(out, key)
-	if i < 0 {
-		t.Fatalf("no %s in %q", key, out)
-	}
+	require.Falsef(t, i < 0, "no %s in %q", key, out)
 	rest := out[i+len(key):]
 	if j := strings.IndexAny(rest, " \n"); j >= 0 {
 		return rest[:j]
@@ -131,18 +130,13 @@ func field(t *testing.T, out, key string) string {
 func appendFile(t *testing.T, root, path, content string) {
 	t.Helper()
 	full := filepath.Join(root, filepath.FromSlash(path))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
 	f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer f.Close()
-	if _, err := f.WriteString(content); err != nil {
-		t.Fatal(err)
+	{
+		_, err := f.WriteString(content)
+		require.NoError(t, err)
 	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, f.Close())
 }

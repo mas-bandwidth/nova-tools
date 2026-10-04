@@ -1,14 +1,15 @@
 // Package sandbox is the wall of docs/SPEC-SANDBOX.md: one command run with its
 // filesystem reach cut down by the operating system. This file is the
-// platform-independent half — the Policy, the path resolution and refusal of rule 5,
-// the per-platform root tables as data, and the temp directory of rule 8. The three
+// platform-independent half: the Policy, path resolution and refusal of invalid paths,
+// per-platform root tables as data, and the temporary directory. The three
 // bodies that apply a policy live behind build tags beside it, and on a platform whose
-// backend is not built the body REFUSES (rule 1): there is no fallback, no degraded
+// backend is not built the body refuses: there is no fallback, no degraded
 // mode, and no partial wall.
 package sandbox
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -36,7 +38,7 @@ const (
 	profileFilePrefx = ".nova-sandbox-"
 )
 
-// Refusal is one independent problem, named by the flag it is about. Rule 16: a refusal
+// Refusal is one independent problem, named by the flag it is about. A refusal
 // says what the input wants and every independent problem is reported at once, so the
 // callers below collect these rather than returning the first.
 type Refusal struct {
@@ -68,41 +70,50 @@ type Input struct {
 	// EXECUTE|READ_FILE|READ_DIR and the darwin profile grants process-exec* globally --
 	// so naming a directory the job's own user can write to (a GOPATH/bin, a
 	// node_modules/.bin, a pip --user bin) lets the job RUN whatever is in it. A cache or
-	// a data tree wants reading, and this is the form that says so (Johnny's security
-	// read of #1364, where the module cache was about to be granted exec).
+	// a data tree wants reading without execution, and this form makes that distinction
+	// explicit so a cache cannot become executable merely because it is readable.
 	ReadsNoExec []string
 	Writes      []string
-	Cwd         string // empty: the first --write (rule 13)
-	Tmp         string // empty: <first --write>/.nova-sandbox-tmp (rule 8)
+	Cwd         string // empty: the first --write supplies the working directory
+	Tmp         string // empty: <first --write>/.nova-sandbox-tmp
 	Name        string // windows container name; accepted and ignored elsewhere
 	NetDeny     bool
 	NetListen   bool
-	NetAllow    []string // host:port the profile opens back up by name (issue #591)
-	GPU         string   // --gpu none|metal; empty means none (issue #230)
+	NetAllow    []string // host:port the profile opens back up by name
+	GPU         string   // --gpu none|metal; empty means none
 	Argv        []string // the command and its arguments, everything after --
-	Home        string   // the caller's HOME as the child will see it (rule 9)
+	Home        string   // the HOME value the child receives
 	LookAt      string   // PATH to resolve the command on; empty means the process's own
+	CallerHomes []string // homes to check against; empty uses callerHomes()
 }
 
 // Policy is one run's wall: resolved, absolute, existing paths and nothing guessed. The
-// two named exceptions to "never guessed" are rule 4's, and both are recorded here as
+// two named exceptions to "never guessed" are the Cwd and the Tmp, and both are recorded here as
 // the caller's own first --write.
 type Policy struct {
 	Reads       []string // resolved, read-only, recursive; carries EXECUTE
 	ReadsNoExec []string // resolved, read-only, recursive, and NOT executable
 	Writes      []string // resolved, read+write, recursive; the first is load-bearing
 	OptRoots    []string // the platform's optional roots that EXIST on this machine
-	PathDirs    []string // existing directories from PATH granted file-read-metadata (issue #3501)
+	PathDirs    []string // existing directories from PATH granted file-read-metadata
 	Cwd         string
 	Tmp         string
 	Home        string
 	Name        string
 	NetDeny     bool
 	NetListen   bool
-	NetAllow    []string // host:port the profile opens back up by name (issue #591)
+	NetAllow    []string // host:port the profile opens back up by name
 	GPUMode     GPUMode
 	Command     string   // the resolved absolute path of the executable
 	Argv        []string // Command followed by its arguments, verbatim
+
+	// Available is an optional seam for tests checking refusal when the backend is absent.
+	// When nil, package Available() is called.
+	Available func() (string, bool)
+
+	// LandlockABI is an optional seam for tests checking Linux Landlock ABI behavior.
+	// When nil, package landlockABI is called.
+	LandlockABI func() (int, bool)
 
 	// Extra is the file descriptors the child gets ABOVE stdin/stdout/stderr, in order,
 	// starting at fd 3. It is never built from caller input: Build leaves it nil and the
@@ -113,7 +124,7 @@ type Policy struct {
 	Extra []*os.File
 }
 
-// Net is the word rule 7 puts on the SANDBOX OK line. There is no net=unenforced: a
+// Net is the value put on the SANDBOX OK line. There is no net=unenforced: a
 // denial that cannot be enforced is a refusal, not a word in a line.
 func (p *Policy) Net() string {
 	if p.NetDeny {
@@ -130,7 +141,7 @@ func (p *Policy) CmdName() string { return filepath.Base(p.Command) }
 // file-read-metadata on: every --read and --write, the --cwd, the temp directory — and
 // every OPTIONAL ROOT.
 //
-// The optional roots were missing, and the cost was measured on 2026-09-18 dogfooding
+// A missing optional root was measured dogfooding
 // `nova-sandbox run` on a real card step: a `go build` inside the wall died with Go's own
 // message and nothing else — `go: cannot find GOROOT directory: 'go' binary is trimmed and
 // GOROOT is not set`. The profile granted `(allow file-read* (subpath "/opt/homebrew"))`,
@@ -163,12 +174,12 @@ func (p *Policy) AncestorCount() int {
 
 // darwinOptRoots is the per-platform optional root table, as DATA and in one place
 // (spec: "they are data, not code"). The fixed darwin roots — /, /etc, /tmp, /var as
-// literals on the symlinks, the xcode_select_link literals (#1557), /System, /usr,
+// literals on the symlinks, the xcode_select_link literals, /System, /usr,
 // /bin, /sbin, /Library, /private/etc, /private/var/select, /dev, and write on
 // /dev/null and /dev/tty — are in profiles/darwin.sb.tmpl verbatim, because two
 // copies of a profile is one copy too many. What varies per machine is here. A
-// root is SKIPPED if it is absent; only a caller's path is refused for absence
-// (rule 5). The directory /var/db/xcode_select_link points at is discovered
+// root is SKIPPED if it is absent; only a caller's path is refused for absence.
+// The directory /var/db/xcode_select_link points at is discovered
 // below, not listed here: CommandLineTools is already under /Library, and
 // Xcode.app/Contents is not (Contents, not Developer: the shims read
 // Info.plist and SharedFrameworks next to Developer).
@@ -186,7 +197,7 @@ var fixedDarwinPrefixes = []string{"/usr", "/bin", "/sbin", "/System", "/Library
 // OptionalRoots is the machine's answer to the table above plus the directory of the
 // resolved command, which is a root for exactly this run (the spec's roots table names
 // it on all three platforms), plus the directory /var/db/xcode_select_link points at
-// when that directory is not already a fixed root (#1557).
+// when that directory is not already a fixed root.
 func OptionalRoots(command string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -213,16 +224,13 @@ func OptionalRoots(command string) []string {
 
 // underAny reports whether path is one of the prefixes or lies beneath one.
 func underAny(path string, prefixes []string) bool {
-	for _, p := range prefixes {
-		if path == p || strings.HasPrefix(path, p+string(os.PathSeparator)) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(prefixes, func(p string) bool {
+		return path == p || strings.HasPrefix(path, p+string(os.PathSeparator))
+	})
 }
 
 // xcodeSelectDeveloperDirs is the directory /var/db/xcode_select_link points at,
-// asked of the host the way --go asks go env and never guessed (#1557). Both
+// asked of the host the way --go asks go env and never guessed. Both
 // spellings of the link are read because /var is a symlink to /private/var.
 // An absent link is skip-if-absent, like /opt/local. The target is not yet
 // filtered against fixedDarwinPrefixes; OptionalRoots drops one that already
@@ -259,9 +267,10 @@ func xcodeSelectDeveloperDirs() []string {
 }
 
 // callerHomes is every directory that is a HOME of the person running the tool: the
-// passwd home and $HOME as THIS PROCESS inherited it. It is a var so that a test can
-// stand a temporary home in front of it without touching the machine's.
-var callerHomes = defaultCallerHomes
+// passwd home and $HOME as THIS PROCESS inherited it.
+func callerHomes() []string {
+	return defaultCallerHomes()
+}
 
 func defaultCallerHomes() []string {
 	var out []string
@@ -299,10 +308,10 @@ func defaultCallerHomes() []string {
 //
 // The roots section says "The home directory is never a root", so the guard is a refusal
 // rather than a silent drop: dropping it would leave a command that cannot be read and a
-// run that dies at exec with no reason given. Rule 3's "a caller that adds one back has
-// done so in its own argv" is the one exemption, so a directory the caller already named
-// in --read or --write is not refused: nothing new is granted there.
-func commandDirRefusal(command string, named []string) *Refusal {
+// run that dies at exec with no reason given. A directory the caller already named in
+// --read or --write is not refused: the caller has explicitly granted it, so nothing new
+// is granted there.
+func commandDirRefusal(command string, named []string, homes []string) *Refusal {
 	dir := filepath.Dir(command)
 	if got, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = got
@@ -310,9 +319,9 @@ func commandDirRefusal(command string, named []string) *Refusal {
 	if insideAny(dir, named) {
 		return nil
 	}
-	for _, home := range callerHomes() {
+	for _, home := range homes {
 		// A home the caller pointed INTO the job is not the home this guard is about:
-		// rule 9 makes the tool's own $HOME the job's data home, which is inside a
+		// The tool's own $HOME is the job's data home, which is inside a
 		// --write by construction, so guarding it would refuse every command installed
 		// anywhere above the job directory — the tool's own binary included. Measured
 		// while writing this: `nova-sandbox probe --write <job>` refused itself.
@@ -332,10 +341,10 @@ func commandDirRefusal(command string, named []string) *Refusal {
 
 // Inside reports whether path is dir or lies beneath it. Both are expected resolved.
 //
-// AND "BENEATH" IS A QUESTION FOR THE FILESYSTEM, NOT FOR A STRING PREFIX (#145). This was
+// AND "BENEATH" IS A QUESTION FOR THE FILESYSTEM, NOT FOR A STRING PREFIX. This was
 // `strings.HasPrefix`, a case-SENSITIVE comparison, and APFS is case-INsensitive by default
 // (NTFS too): a `--secret` spelled in another case than the `--read` it actually sits inside
-// passed rule 6's own `secret_inside_allow` check and the probe reported a pass, and a `HOME`
+// passed the secret-inside-allow check and the probe reported a pass, and a `HOME`
 // inside a `--write` under a spelling the filesystem folds was refused `home_outside` -- the
 // same fold, read the other way about, refusing a configuration that is sound.
 // `filepath.EvalSymlinks` does not fold case on darwin, so a resolved path does not close it,
@@ -354,7 +363,7 @@ func commandDirRefusal(command string, named []string) *Refusal {
 //     whole answer: an ancestor of path at dir's own depth either is dir or is not;
 //   - where dir is NOT there, nothing has an inode and the name is all there is: the prefix
 //     again, case-insensitively, and only where the filesystem is MEASURED to fold
-//     (dirFoldsCase, never runtime.GOOS). Every caller path of this package exists by rule 5,
+//     (dirFoldsCase, not a platform assumption). Every caller path of this package exists,
 //     so this last answer is defence in depth.
 //
 // This runs while the policy is built, never per operation inside the wall.
@@ -383,12 +392,7 @@ func Inside(path, dir string) bool {
 
 // insideAny is Inside over a list, and it is what rules 9 and 13 ask of HOME and --cwd.
 func insideAny(path string, dirs []string) bool {
-	for _, d := range dirs {
-		if Inside(path, d) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(dirs, func(d string) bool { return Inside(path, d) })
 }
 
 // sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
@@ -401,7 +405,7 @@ const sbplMetacharacters = "\"\\()"
 
 // loopbackHostText reports whether host names the machine's own loopback: the literal
 // "localhost" (case-insensitively) or a numeric address in 127.0.0.0/8 or ::1. It is
-// deliberately narrower than "resolves to loopback" (issue #591): --net-allow opens a
+// deliberately narrower than "resolves to loopback": --net-allow opens a
 // single named port back up for a local-model provider, never a promise a DNS answer
 // could widen.
 func loopbackHostText(host string) bool {
@@ -437,7 +441,7 @@ func badPathTextFor(goos, path string) string {
 	return ""
 }
 
-// resolvePath is rule 5 for one caller path: absolute, existing, symlinks resolved. A
+// resolvePath validates one caller path as absolute and existing, with symlinks resolved. A
 // relative path is refused with the absolute form it WOULD have taken, so the refusal is
 // a line the caller can edit rather than a complaint.
 func resolvePath(reason, flag, raw string) (string, *Refusal) {
@@ -479,7 +483,7 @@ func resolvePath(reason, flag, raw string) (string, *Refusal) {
 	return resolved, nil
 }
 
-// ResolveCallerFile is rule 5 for a caller path that names a FILE rather than a
+// ResolveCallerFile validates a caller path that names a FILE rather than a
 // directory: --secret is the only one, and before this it was the one caller path the
 // tool never resolved and never metacharacter-checked. It is absolute, it exists, it is
 // not a directory, its symlinks are followed, and it carries nothing the generated policy
@@ -525,12 +529,16 @@ func ResolveCallerFile(flag, raw string) (string, *Refusal) {
 }
 
 // Build turns an Input into a Policy, or into every independent refusal it holds. It
-// creates exactly one directory, rule 8's, and only when the rest of the input is sound.
+// creates exactly one directory, and only when the rest of the input is sound.
 func Build(in Input) (*Policy, []Refusal) {
+	return build(in, callerHomes)
+}
+
+func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	var bad []Refusal
 	p := &Policy{NetDeny: in.NetDeny, NetListen: in.NetListen, Name: in.Name}
 
-	// Issue #230: the local GPU capability is explicit and bounded. The default
+	// The local GPU capability is explicit and bounded. The default
 	// is none; metal records intent without widening mach-lookup or granting
 	// blanket device access, whose minimum mechanisms are still unmeasured.
 	if mode, r := ParseGPUMode(in.GPU); r != nil {
@@ -545,7 +553,7 @@ func Build(in Input) (*Policy, []Refusal) {
 		bad = append(bad, refuse("bad_net", "--net-deny and --net-listen together: one asks for an enforced denial and the other for an inbound grant; pass at most one"))
 	}
 
-	// --net-allow names one host:port the wall opens back up (issue #591): a keyless
+	// --net-allow names one host:port the wall opens back up: a keyless
 	// local-model provider on its own loopback port, never a wider promise. An entry that
 	// does not split into host and port, or whose host is not the machine's own loopback,
 	// is refused rather than carried into a profile that would grant more than a loopback
@@ -603,7 +611,7 @@ func Build(in Input) (*Policy, []Refusal) {
 		p.Writes = append(p.Writes, got)
 	}
 	// A path given to both lists is a refusal naming both flags, never a silent merge
-	// (rule 4): the caller asked for two different things about one directory.
+	// The caller asked for two different things about one directory.
 	for _, r := range p.Reads {
 		for _, w := range p.Writes {
 			if r == w {
@@ -633,7 +641,7 @@ func Build(in Input) (*Policy, []Refusal) {
 	}
 	first := p.Writes[0]
 
-	// rule 13: the cwd defaults to the first --write and must resolve inside the write set.
+	// The cwd defaults to the first --write and must resolve inside the write set.
 	p.Cwd = first
 	if in.Cwd != "" {
 		got, r := resolvePath("bad_cwd", "--cwd", in.Cwd)
@@ -647,7 +655,7 @@ func Build(in Input) (*Policy, []Refusal) {
 		}
 	}
 
-	// rule 8: temp is inside the wall, and this is the one directory the tool creates.
+	// Temp is inside the wall, and this is the one directory the tool creates.
 	if in.Tmp != "" {
 		got, r := resolvePath("bad_write", "--tmp", in.Tmp)
 		switch {
@@ -666,9 +674,9 @@ func Build(in Input) (*Policy, []Refusal) {
 	// directory it never ran in. A refusal makes nothing.
 	makeTmp := in.Tmp == ""
 
-	// rule 9: the caller points the child's HOME into the write set, and a HOME outside
-	// every --write is a refusal BEFORE the command runs — a wall that lets the job start
-	// and kills its first git command is the silent sandbox rule 1 exists to prevent.
+	// The caller points the child's HOME into the write set, and a HOME outside
+	// every --write is a refusal BEFORE the command runs. A wall that lets the job start
+	// and then kills its first git command is the silent sandbox this refusal exists to prevent.
 	home := in.Home
 	if strings.TrimSpace(home) == "" {
 		bad = append(bad, refuse("home_outside", "HOME is unset; rule 9 wants HOME set to a data home inside a --write, because almost every tool a worker runs derives a path from it"))
@@ -685,7 +693,12 @@ func Build(in Input) (*Policy, []Refusal) {
 		}
 	}
 
-	// rule 5: the command is resolved on the CALLER's PATH, here, outside the wall.
+	homes := in.CallerHomes
+	if len(homes) == 0 && homesFn != nil {
+		homes = homesFn()
+	}
+
+	// The command is resolved on the caller's PATH, outside the wall.
 	if len(in.Argv) > 0 {
 		cmd, r := resolveCommand(in.Argv[0], in.LookAt)
 		if r != nil {
@@ -693,7 +706,7 @@ func Build(in Input) (*Policy, []Refusal) {
 		} else {
 			p.Command = cmd
 			p.Argv = append([]string{cmd}, in.Argv[1:]...)
-			if hr := commandDirRefusal(cmd, append(append([]string{}, p.Reads...), p.Writes...)); hr != nil {
+			if hr := commandDirRefusal(cmd, append(append([]string{}, p.Reads...), p.Writes...), homes); hr != nil {
 				bad = append(bad, *hr)
 			}
 		}
@@ -701,11 +714,11 @@ func Build(in Input) (*Policy, []Refusal) {
 	if len(bad) > 0 {
 		return nil, bad
 	}
-	// Issue #893, PR 948 re-cut: the linux system read roots are not a field here and
+	// The linux system read roots are not a field here and
 	// not a caller switch. The linux backend's linuxReadRoots is the one policy, applied
-	// by addRules (rule 3): a harness that cannot resolve a name inside the sandbox is a
+	// by addRules: a harness that cannot resolve a name inside the sandbox is a
 	// sandbox bug, not a network one.
-	// rule 8, and the one directory this tool creates: everything above passed.
+	// After all policy checks pass, the tool creates only the child temporary directory.
 	if makeTmp {
 		tmp := filepath.Join(first, tmpDirName)
 		if err := os.MkdirAll(tmp, 0o700); err != nil {
@@ -722,16 +735,17 @@ func Build(in Input) (*Policy, []Refusal) {
 	if lookIn == "" {
 		lookIn = os.Getenv("PATH")
 	}
-	p.PathDirs = PathDirectories(lookIn, p.Reads, p.Writes, p.OptRoots)
+	p.PathDirs = PathDirectoriesWith(lookIn, p.Reads, p.Writes, p.OptRoots, homes)
 	return p, nil
 }
 
-// PathDirectories extracts existing directories from lookIn (PATH) that are not already
-// covered by fixed prefixes, optional roots, or the caller's reads/writes.
+// PathDirectoriesWith extracts existing directories from lookIn (PATH) that are not already
+// covered by fixed prefixes, optional roots, or the caller's reads/writes, skipping the
+// given homes.
 // On darwin, these directories receive file-read-metadata so that commands installed
 // on PATH (e.g. ~/.local/bin) can be resolved and executed by name, while keeping
-// their file contents uninspectable (issue #3501).
-func PathDirectories(lookIn string, reads, writes, optRoots []string) []string {
+// their file contents unreadable.
+func PathDirectoriesWith(lookIn string, reads, writes, optRoots, homes []string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, raw := range filepath.SplitList(lookIn) {
@@ -753,7 +767,7 @@ func PathDirectories(lookIn string, reads, writes, optRoots []string) []string {
 		}
 		// Skip if it is a caller home directory itself
 		isHome := false
-		for _, h := range callerHomes() {
+		for _, h := range homes {
 			if resolved == h || abs == h {
 				isHome = true
 				break
@@ -840,8 +854,8 @@ func lookPathIn(name, path string) (string, error) {
 	return "", fmt.Errorf("%s: not found in %s", name, path)
 }
 
-// ChildEnv is rule 9's environment: the caller's, unchanged, minus the temp
-// variables the tool sets to rule 8's directory — and minus the agent sockets. TMPPREFIX
+// ChildEnv keeps the caller's environment unchanged except for the temporary-directory
+// variables it sets to the sandbox path and the agent socket variables it removes. TMPPREFIX
 // is zsh's independent temporary-file prefix on macOS, so it must be inside the same wall
 // even though other shells ignore it. It is not
 // a secrets tool: the credential the caller deliberately passed by environment must
@@ -874,11 +888,11 @@ func ChildEnv(env []string, tmp string) []string {
 	return append(out, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp, "TMPPREFIX="+path.Join(tmp, "zsh"))
 }
 
-// isAgentVar is rule 9's scrub, and it is by EXCLUSION on the name. Revision 7 states the
+// isAgentVar excludes agent-related variables by exact name, so unrelated variables pass; it uses the
 // set exactly: SSH_AUTH_SOCK, SSH_AGENT_*, GPG_AGENT_INFO and any *_AGENT_PID/INFO/SOCK. The wall denies the agent's
 // socket and the scrub removes its address; a command that would otherwise sign a push
 // with a key it cannot read has neither half. Everything else passes through untouched,
-// because rule 6's credential must still arrive.
+// because the caller's credential still needs to reach the child.
 //
 // The previous "name contains AGENT" width dropped AI_AGENT and CLAUDE_AGENT_SDK_VERSION,
 // which are names that say what is RUNNING the job and address nothing. Under the set
@@ -951,10 +965,5 @@ func ancestors(dir func(string) string, paths ...string) []string {
 			seen[d] = true
 		}
 	}
-	out := make([]string, 0, len(seen))
-	for d := range seen {
-		out = append(out, d)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(seen))
 }

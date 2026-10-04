@@ -10,8 +10,7 @@ import (
 
 // The process table on a system whose standard library will not hand it over.
 //
-// kern.proc.all is an array of kinfo_proc, the same call internal/wake reads for its procs=
-// count. Two fields of each record are read here and no other: the pid, and the parent pid.
+// kern.proc.all is an array of kinfo_proc, the call ps makes. Two fields of each record are read here and no other: the pid, and the parent pid.
 // The CPU time is NOT in that record -- the kernel leaves p_cpticks, p_uticks and p_pctcpu
 // zero on this system, which a probe against a spinning child and a sleeping one shows at
 // once -- so the time itself comes from proc_info(PROC_PIDTASKINFO), the call libproc makes,

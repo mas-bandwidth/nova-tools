@@ -1,24 +1,40 @@
 package main
 
 import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
 // ledgerRedis is the Redis the ledger/report verbs are pointed at for the test: a miniredis
-// on loopback, reached through the real client and the real --redis flag, no seam.
+// on loopback, reached through the real client and the real --redis flag.
 func ledgerRedis(t *testing.T) (string, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
+	mr.Server().SetPreHook(ledgerFixtureACL)
 	return mr.Addr(), mr
+}
+
+// Miniredis lacks acl_check_cmd. These unrestricted fixtures permit the two
+// ledger write commands; denied permissions are covered by real-Redis functional
+// tests in internal/record. Production never substitutes this implementation.
+func ledgerFixtureACL(_ *server.Peer, cmd string, args ...string) bool {
+	if cmd == "EVAL" && len(args) > 0 {
+		args[0] = "redis.acl_check_cmd = function(command) return command == 'DEL' or command == 'HSET' end\n" + args[0]
+	}
+	return false
 }
 
 // foldedTuples is the monthly report computed from the day TSVs alone: every row of every
@@ -28,9 +44,7 @@ func ledgerRedis(t *testing.T) (string, *miniredis.Miniredis) {
 func foldedTuples(t *testing.T, out, month string) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(out, month+"-*"+tokens.FileSuffix))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	type acc struct {
 		rows int
 		c    tokens.Counts
@@ -38,9 +52,7 @@ func foldedTuples(t *testing.T, out, month string) []string {
 	sums := map[[3]string]*acc{}
 	for _, p := range paths {
 		d, findings, err := tokens.ReadDayFile(p)
-		if err != nil || len(findings) > 0 {
-			t.Fatalf("day file %s: %v %v", p, err, findings)
-		}
+		require.True(t, err == nil && len(findings) == 0, "day file %s: %v %v", p, err, findings)
 		for _, r := range d.Rows {
 			k := [3]string{r.Date, r.Model, r.Repo}
 			a := sums[k]
@@ -79,9 +91,7 @@ func snapshotDir(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	got := map[string]string{}
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	for _, e := range entries {
 		got[e.Name()] = read(t, filepath.Join(dir, e.Name()))
 	}
@@ -113,9 +123,8 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 	for _, day := range []string{"2026-09-11", "2026-09-12"} {
 		wantExit(t, invoke(t, "fold", "--out", out, "--day", day, "--repos", repos, "--claude", "bench="+tr), 0)
 	}
-	// A third day carries two cards on one (day, model, repo), with reasoning measured on
-	// one and a dash on the other: the store is keyed (day, card, model, repo), the report
-	// sums the cards, and a dash is not a zero.
+	// A third day carries two repos on one (day, model), with reasoning measured on one and
+	// a dash on the other: the report sums the model's rows, and a dash is not a zero.
 	var c1, c2 tokens.Counts
 	c1.Set(tokens.Input, 10)
 	c1.Set(tokens.Output, 20)
@@ -125,11 +134,12 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 	c2.Set(tokens.CacheWrite, 4)
 	third := tokens.DayFile{Day: "2026-09-13", At: "2026-09-14T00:00:00Z", Build: "test", Turns: "2",
 		Sources: []string{"openai:o"}, Rows: []tokens.DayRow{
-			{Date: "2026-09-13", Model: "gpt", Repo: "schema", Unit: "card-a", Counts: c1, Basis: "utc", Sources: []string{"openai:o"}},
-			{Date: "2026-09-13", Model: "gpt", Repo: "schema", Unit: "card-b", Counts: c2, Basis: "utc", Sources: []string{"openai:o"}},
+			{Date: "2026-09-13", Model: "gpt", Repo: "schema", Counts: c1, Basis: "utc", Sources: []string{"openai:o"}},
+			{Date: "2026-09-13", Model: "gpt", Repo: "serialize", Counts: c2, Basis: "utc", Sources: []string{"openai:o"}},
 		}}
-	if err := third.Save(out); err != nil {
-		t.Fatal(err)
+	{
+		err := third.Save(out)
+		require.NoError(t, err, err)
 	}
 	before := snapshotDir(t, out)
 
@@ -137,29 +147,25 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 	wantExit(t, idx, 0)
 	wantContains(t, idx.stdout, "LEDGER OK month=2026-09 days=3")
 	// The key layout: one hash per day under tokens:ledger:<day>, nothing else written.
-	if keys := mr.Keys(); strings.Join(keys, " ") != "tokens:ledger:2026-09-11 tokens:ledger:2026-09-12 tokens:ledger:2026-09-13" {
-		t.Fatalf("the ledger wrote keys %v; want one tokens:ledger:<day> per folded day", keys)
+	{
+		keys := mr.Keys()
+		require.Equal(t, "tokens:ledger:2026-09-11 tokens:ledger:2026-09-12 tokens:ledger:2026-09-13", strings.Join(keys, " "), "the ledger wrote keys %v; want one tokens:ledger:<day> per folded day", keys)
 	}
 
 	rep := invoke(t, "report", "--redis", dsn, "--month", "2026-09", "--by", "tuple")
 	wantExit(t, rep, 0)
 	want := foldedTuples(t, out, "2026-09")
 	got := reportTuples(rep.stdout)
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("the store report is not the folded TSV to the token\nstore:\n%s\nfolded:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
-	if len(want) != 4 {
-		t.Fatalf("want 4 (day, model, repo) tuples from the fixture, the folded side has %d:\n%s", len(want), strings.Join(want, "\n"))
-	}
-	wantContains(t, rep.stdout, "REPORT day=2026-09-13 model=gpt repo=schema rows=2 input=11 output=22 cache_write=4 cache_read=- reasoning=3")
-	wantContains(t, rep.stdout, "REPORT OK month=2026-09 source=redis groups=4 rows=5 indexed=3 missing=27")
+	require.Equal(t, strings.Join(want, "\n"), strings.Join(got, "\n"), "the store report is not the folded TSV to the token\nstore:\n%s\nfolded:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	require.Equal(t, 5, len(want), "want 5 (day, model, repo) tuples from the fixture, the folded side has %d:\n%s", len(want), strings.Join(want, "\n"))
+	wantContains(t, rep.stdout, "REPORT day=2026-09-13 model=gpt repo=schema rows=1 input=10 output=20 cache_write=- cache_read=- reasoning=3")
+	wantContains(t, rep.stdout, "REPORT day=2026-09-13 model=gpt repo=serialize rows=1 input=1 output=2 cache_write=4 cache_read=- reasoning=-")
+	wantContains(t, rep.stdout, "REPORT OK month=2026-09 source=redis groups=5 rows=5 indexed=3 missing=27")
 
 	// Re-indexing a day replaces it: the table is the day files' index, not an append log.
 	wantExit(t, invoke(t, "ledger", "--out", out, "--day", "2026-09-13", "--redis", dsn), 0)
 	again := invoke(t, "report", "--redis", dsn, "--month", "2026-09", "--by", "tuple")
-	if strings.Join(reportTuples(again.stdout), "\n") != strings.Join(want, "\n") {
-		t.Fatalf("re-indexing a day changed the report:\n%s", again.stdout)
-	}
+	require.Equal(t, strings.Join(want, "\n"), strings.Join(reportTuples(again.stdout), "\n"), "re-indexing a day changed the report:\n%s", again.stdout)
 
 	// The per-model group carries cache_write and reasoning too.
 	byModel := invoke(t, "report", "--redis", dsn, "--month", "2026-09")
@@ -168,13 +174,9 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 
 	// The fold's day files are untouched by the index and the report.
 	after := snapshotDir(t, out)
-	if len(after) != len(before) {
-		t.Fatalf("the day directory changed: %d files before, %d after", len(before), len(after))
-	}
+	require.Equal(t, len(before), len(after), "the day directory changed: %d files before, %d after", len(before), len(after))
 	for name, body := range before {
-		if after[name] != body {
-			t.Errorf("day file %s changed under ledger/report", name)
-		}
+		assert.Equal(t, body, after[name], "day file %s changed under ledger/report", name)
 	}
 }
 
@@ -190,9 +192,6 @@ func TestReportRedisRefusesWithoutMonth(t *testing.T) {
 	r = invoke(t, "report", "--redis", dsn, "--month", "2026-09", "--by", "card")
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "--by is model, repo, day or tuple")
-	r = invoke(t, "report", "--redis", dsn, "--ledger", "x.tsv", "--month", "2026-09")
-	wantExit(t, r, 2)
-	wantContains(t, r.stderr, "--redis and --ledger are two sources for one report")
 }
 
 // TestLedgerRefusesWithoutRedisAndNamesAMissingDay: `ledger` wants its store named, and a
@@ -209,8 +208,9 @@ func TestLedgerRefusesWithoutRedisAndNamesAMissingDay(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stdout, "LEDGER BAD day=2026-09-11 why=no day file; fold --day 2026-09-11 first")
 	wantContains(t, r.stdout, "LEDGER NO day=2026-09-11 days=0 rows=0 bad=1")
-	if keys := mr.Keys(); len(keys) != 0 {
-		t.Fatalf("a missing day wrote %v", keys)
+	{
+		keys := mr.Keys()
+		require.Equal(t, 0, len(keys), "a missing day wrote %v", keys)
 	}
 }
 
@@ -272,10 +272,11 @@ func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
 	c.Set(tokens.Output, 20)
 	day := tokens.DayFile{Day: "2026-09-11", At: "2026-09-12T00:00:00Z", Build: "test", Turns: "1",
 		Sources: []string{"openai:o"}, Rows: []tokens.DayRow{
-			{Date: "2026-09-11", Model: "gpt", Repo: "schema", Unit: "card-a", Counts: c, Basis: "utc", Sources: []string{"openai:o"}},
+			{Date: "2026-09-11", Model: "gpt", Repo: "schema", Counts: c, Basis: "utc", Sources: []string{"openai:o"}},
 		}}
-	if err := day.Save(out); err != nil {
-		t.Fatal(err)
+	{
+		err := day.Save(out)
+		require.NoError(t, err, err)
 	}
 
 	r := invoke(t, "report", "--redis", addr, "--month", "2026-09", "--password-env", "LEDGER_TEST_PW")
@@ -300,7 +301,101 @@ func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
 	r = invoke(t, "report", "--redis", addr, "--month", "2026-09", "--user", "bench", "--password-env", "LEDGER_EMPTY_PW")
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "--user bench but LEDGER_EMPTY_PW is empty; run under nova-secrets exec --only LEDGER_EMPTY_PW")
-	if strings.Contains(r.stderr+r.stdout, "sesame") {
-		t.Fatal("a refusal printed the password")
+	require.False(t, strings.Contains(r.stderr+r.stdout, "sesame"), "a refusal printed the password")
+}
+
+// TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing pins rowan-7fbdefecf56e:
+// `ledger --month` pipelines day hash writes in one round trip and openLedger drops
+// the superfluous PING that report --redis and ledger --day previously paid.
+func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
+	t.Parallel()
+
+	addr, mr := ledgerRedis(t)
+	var mu sync.Mutex
+	var seenCmds []string
+	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
+		mu.Lock()
+		seenCmds = append(seenCmds, strings.ToUpper(cmd))
+		mu.Unlock()
+		return ledgerFixtureACL(peer, cmd, args...)
+	})
+
+	out := t.TempDir()
+	for i := 1; i <= 3; i++ {
+		dayStr := fmt.Sprintf("2026-09-%02d", i)
+		var c tokens.Counts
+		c.Set(tokens.Input, int64(10*i))
+		c.Set(tokens.Output, int64(20*i))
+		day := tokens.DayFile{
+			Day: dayStr, At: "2026-09-12T00:00:00Z", Build: "test", Turns: "1",
+			Sources: []string{"openai:o"},
+			Rows: []tokens.DayRow{
+				{Date: dayStr, Model: "gpt", Repo: "schema", Counts: c, Basis: "utc", Sources: []string{"openai:o"}},
+			},
+		}
+		{
+			err := day.Save(out)
+			require.NoError(t, err, err)
+		}
 	}
+
+	// 1. Indexing month writes all 3 days in one pipeline and sends no PING.
+	// Before rowan-7fbdefecf56e, openLedger sent a superfluous PING
+	// and ran a transaction per day in a loop (24 trips for 23 days).
+	r := invoke(t, "ledger", "--out", out, "--month", "2026-09", "--redis", addr)
+	wantExit(t, r, 0)
+	wantContains(t, r.stdout, "LEDGER OK month=2026-09 days=3 rows=3 bad=0")
+
+	// Verify all 3 days are stored.
+	{
+		keys := mr.Keys()
+		require.Equal(t, 3, len(keys), "expected 3 keys in ledger, got %v", keys)
+	}
+
+	mu.Lock()
+	cmds := append([]string(nil), seenCmds...)
+	seenCmds = nil
+	mu.Unlock()
+
+	sawEval := false
+	for _, cmd := range cmds {
+		require.False(t, cmd == "PING", "ledger --month sent superfluous PING: saw %v", cmds)
+		if cmd == "EVAL" {
+			sawEval = true
+		}
+	}
+	require.True(t, sawEval, "ledger --month did not use EVAL: saw %v", cmds)
+
+	// 2. report --redis sends no PING.
+	rep := invoke(t, "report", "--redis", addr, "--month", "2026-09", "--by", "day")
+	wantExit(t, rep, 0)
+	wantContains(t, rep.stdout, "REPORT OK month=2026-09 source=redis groups=3 rows=3 indexed=3 missing=27")
+
+	mu.Lock()
+	cmds = append([]string(nil), seenCmds...)
+	seenCmds = nil
+	mu.Unlock()
+
+	for _, cmd := range cmds {
+		require.False(t, cmd == "PING", "report --redis sent superfluous PING: saw %v", cmds)
+	}
+
+	// 3. ledger --day sends no PING.
+	rDay := invoke(t, "ledger", "--out", out, "--day", "2026-09-01", "--redis", addr)
+	wantExit(t, rDay, 0)
+	wantContains(t, rDay.stdout, "LEDGER OK day=2026-09-01 days=1 rows=1 bad=0")
+
+	mu.Lock()
+	cmds = append([]string(nil), seenCmds...)
+	seenCmds = nil
+	mu.Unlock()
+
+	sawEval = false
+	for _, cmd := range cmds {
+		require.False(t, cmd == "PING", "ledger --day sent superfluous PING: saw %v", cmds)
+		if cmd == "EVAL" {
+			sawEval = true
+		}
+	}
+	require.True(t, sawEval, "ledger --day did not use EVAL: saw %v", cmds)
 }
