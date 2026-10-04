@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+// maxNumber is the largest integer a workfile number field may hold. Decode
+// refuses any integer above 1<<31, so Encode refuses it too: a tree Encode
+// accepts must be one its own bytes read back unchanged.
+const maxNumber = 1 << 31
+
 // Encode writes the tree in its canonical form: repositories sorted by name,
 // issues by number, labels and assignees sorted, every key of every record
 // always written in one order, so one tree has exactly one file. It refuses
@@ -45,8 +50,8 @@ func encodeRepo(b *bytes.Buffer, r Repo) error {
 	b.WriteString("   :archived " + boolean(r.Archived) + "\n")
 	b.WriteString("   :issues\n   (")
 	for i, is := range r.Issues {
-		if is.Number <= 0 {
-			return fmt.Errorf("workfile: %s: issue number %d is not positive", r.Name, is.Number)
+		if is.Number <= 0 || is.Number > maxNumber {
+			return fmt.Errorf("workfile: %s: issue number %d is not positive and at most %d", r.Name, is.Number, maxNumber)
 		}
 		if i > 0 {
 			if is.Number <= r.Issues[i-1].Number {
@@ -113,6 +118,9 @@ func encodeIssue(b *bytes.Buffer, repo string, is Issue) error {
 	if is.Milestone == nil {
 		p("milestone", "()")
 	} else {
+		if is.Milestone.Number > maxNumber {
+			return fmt.Errorf("workfile: %s: milestone number %d is above the bound %d", at, is.Milestone.Number, maxNumber)
+		}
 		p("milestone", "(:number "+strconv.Itoa(is.Milestone.Number)+" :title "+quote(is.Milestone.Title)+")")
 	}
 	p("body", quote(is.Body))
@@ -137,7 +145,7 @@ func encodeIssue(b *bytes.Buffer, repo string, is Issue) error {
 	b.WriteString(")")
 	b.WriteString("\n      :references (")
 	for i, r := range is.References {
-		if (r.Kind == "") != (r.Number == 0) || r.Number < 0 || r.Kind == "" && (r.Repo != "" || r.URL != "") {
+		if (r.Kind == "") != (r.Number == 0) || r.Number < 0 || r.Number > maxNumber || r.Kind == "" && (r.Repo != "" || r.URL != "") {
 			return fmt.Errorf("workfile: %s/references: a reference has a source (a kind and a positive number) or none (no kind, number 0, no repo or url); got kind %q number %d", at, r.Kind, r.Number)
 		}
 		if i > 0 {
@@ -155,6 +163,9 @@ func encodeIssue(b *bytes.Buffer, repo string, is Issue) error {
 		}
 		if i > 0 {
 			b.WriteString("\n        ")
+		}
+		if l.Number > maxNumber {
+			return fmt.Errorf("workfile: %s: linked PR number %d is above the bound %d", at, l.Number, maxNumber)
 		}
 		b.WriteString("(pr :repo " + quote(l.Repo) + " :number " + strconv.Itoa(l.Number) + " :url " + quote(l.URL) + " :state " + s + ")")
 	}

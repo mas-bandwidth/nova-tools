@@ -3,6 +3,7 @@ package workfile_test
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -292,4 +293,40 @@ func TestOriginOf(t *testing.T) {
 	require.Equal(t, "internal", workfile.OriginOf("COLLABORATOR"), "origin")
 	require.Equal(t, "external", workfile.OriginOf("CONTRIBUTOR"), "origin")
 	require.Equal(t, "external", workfile.OriginOf(""), "origin")
+}
+
+// TestEncodeRefusesANumberDecodeWouldRefuse pins security#82 finding 3:
+// Decode refuses integer fields above 1<<31, so Encode must refuse them too
+// rather than accept a tree its own bytes would not read back.
+func TestEncodeRefusesANumberDecodeWouldRefuse(t *testing.T) {
+	t.Parallel()
+	const bound = 1 << 31
+	t.Run("issue number at the bound round-trips", func(t *testing.T) {
+		t.Parallel()
+		tree := hard()
+		tree.Repos[1].Issues[1].Number = bound
+		tree.Repos[1].Issues[1].URL = workfile.Web + "o/b/issues/" + strconv.Itoa(bound)
+		data, err := workfile.Encode(tree)
+		require.NoError(t, err)
+		back, err := workfile.Decode("bound", data, workfile.Limits(len(data)))
+		require.NoError(t, err)
+		assert.Equal(t, bound, back.Repos[1].Issues[1].Number)
+	})
+	t.Run("issue number above the bound refuses", func(t *testing.T) {
+		t.Parallel()
+		tree := hard()
+		tree.Repos[1].Issues[1].Number = bound + 1
+		tree.Repos[1].Issues[1].URL = workfile.Web + "o/b/issues/" + strconv.Itoa(bound+1)
+		_, err := workfile.Encode(tree)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "2147483649")
+	})
+	t.Run("linked PR number above the bound refuses", func(t *testing.T) {
+		t.Parallel()
+		tree := hard()
+		tree.Repos[1].Issues[0].LinkedPRs[0].Number = bound + 1
+		_, err := workfile.Encode(tree)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "2147483649")
+	})
 }

@@ -61,7 +61,7 @@ invariant), and the unit tests below are green.
       :linked-prs ((pr :repo "<org>/<repo>" :number 9 :url "..." :state :merged)))))))
 ```
 
-The file is **canonical**: repositories sorted by name, issues by number, labels and assignees
+Every number field in the tree (issue, milestone, reference and linked-PR number) is positive and at most 1<<31 (2147483648); a tree with a larger number is refused by Encode, matching Decode. The file is **canonical**: repositories sorted by name, issues by number, labels and assignees
 sorted, comments in creation order, references in timeline order, and every key of every record
 written every time in the order above. One tree has exactly one file, so the file's SHA-256 names
 the tree.
