@@ -33,5 +33,5 @@ func TestPlaceSSHSeamPanicsUnderTheGuard(t *testing.T) {
 			assert.Contains(t, msg, want, "the panic must name %q so the reader sees the command and the remedy; got %q", want, msg)
 		}
 	}()
-	_ = sshPlaceSecret("ssh", "bench.invalid", "/tmp/secret", "value")
+	_ = sshPlaceSecret(nil, "ssh", "bench.invalid", "/tmp/secret", "value")
 }
