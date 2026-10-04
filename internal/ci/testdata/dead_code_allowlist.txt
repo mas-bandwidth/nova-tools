@@ -23,7 +23,6 @@ internal/nsprint/fn 5
 internal/nsprint/store 3
 internal/ntable 17
 internal/pkgselect 22
-internal/redisconn 1
 internal/redisfn 9
 internal/release 1
 internal/sandbox 1
