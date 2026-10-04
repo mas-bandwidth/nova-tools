@@ -70,7 +70,7 @@ func TestAnUnusableHostIsRefusedByName(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).
 		mustContain(t, "stderr", "SEND REFUSED: --host").
-		mustContain(t, "stderr", "one space-separated")
+		mustContain(t, "stderr", "one whitespace-separated")
 
 	writeBusFile(t, checkout, ".nova-bus/defaults", "host=The Air\n")
 	invoke(t, "", "send", "--bus", checkout, "--file", draft,

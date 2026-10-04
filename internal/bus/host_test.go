@@ -83,9 +83,9 @@ func TestAHostThatIsNotOneWordIsRefused(t *testing.T) {
 	cases := []struct {
 		name, host, want string
 	}{
-		{"a space", "the air", "one space-separated"},
+		{"a space", "the air", "one whitespace-separated"},
 		{"upper case", "Air", "lower-case"},
-		{"a tab", "air\tbud", "one space-separated"},
+		{"a tab", "air\tbud", "one whitespace-separated"},
 		{"too long", strings.Repeat("a", HostMax+1), "longer than"},
 	}
 	for _, c := range cases {
