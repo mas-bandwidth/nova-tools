@@ -2612,7 +2612,7 @@ func unlinkAuthCopy(path string) string {
 // A REFUSAL LEAVES NO COPY. Once dataHome/auth.json is written, every later refusal --
 // the mode it ended with, a dataHome/opencode that could not be made, a second copy that
 // could not be written -- unlinks what was written before it returns, so a plaintext key
-// never outlives the run whose defer (nativeRun) would have removed it (#E56).
+// never outlives the run whose defer (nativeRun) would have removed it.
 func copyAuth(src, provider, dataHome string) string {
 	st, err := os.Stat(src)
 	if err != nil {
