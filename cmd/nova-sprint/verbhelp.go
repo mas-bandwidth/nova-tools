@@ -129,7 +129,7 @@ func verbProse(name string) string {
 		return inboxExample
 	case "release":
 		return releaseHoldWords
-	case "friend beat", "friend down", "friend up", "friend health":
+	case "friend beat", "friend down", "friend up", "friend health", "friend take":
 		return friendVerbWords(name)
 	default:
 		return ""

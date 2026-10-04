@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // The friends table (docs/SPEC-SPRINT.md section 1; the owner, 2026-10-02: "add a
@@ -84,7 +85,7 @@ other verdict finish the card failed too, each with the report's first
 paragraph. card prints who=; where counts it on her friends row.`) + "\n"
 }
 
-// friendVerbWords is what friend beat, friend down, and friend up say on -h.
+// friendVerbWords is what friend beat, friend down, friend up, friend health and friend take say on -h.
 // The friends section (friendWords) stays on nova-sprint help friend. A name
 // the table lacks is refused and names friend sync; friend sync exits 3 when
 // the config cannot be read or holds no friend row (docs/SPEC-SPRINT.md section 1).
@@ -100,6 +101,8 @@ func friendVerbWords(name string) string {
 		return "friend up releases a hold that friend down set. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. " + sync + "\n"
 	case "friend health":
 		return "friend health is the coordinator's observation of the friend, written by the coordinator's daemon from its keepalive with hers: --state up (her session answered), asleep (her daemon answered, her session did not) or down; --seen, when the proof was seen; --generation, the seat's generation the daemon read with nova-sprint seat. The seat's holder alone writes it, at the seat's generation now: an observation from a seat that moved is refused, as is a proof not newer than the row holds, and nothing is written; the same observation again is answered as recorded (replayed=true). Once observed, the friend is up while the observation says up, under the seat's generation now, with its proof under " + sprint.FriendObservedDownAfter.String() + " old, and down otherwise (asleep is the daemon's word, kept on her row and shown as down; the table's words are up, held and down), with --reason and --until shown on her row; her own beat never makes her up again, and no observation holds her: held is the coordinator's friend down alone. " + sync + "\n"
+	case "friend take":
+		return "friend take takes cards dealt to the named friend, ready or working on her row and not started, back for the tick to deal again: each card's work card is retired and its primary goes working -> ready, one note on its story per take, and the next tick deals it as its next attempt (a card naming her goes to her again once she is up with room, so hold her first with friend down). A card is named by its work card (s1-4.w1) or its primary (s1-4). Not started means origin holds no push on the card's branch: the tip is read once per card, as friend sync reads a LAND's Head, and a card with a push is refused by name (it is her work, and her report finishes it), as is one whose tip cannot be read; one refusal refuses every card named, nothing written. --reason says why, on each card's story. " + sync + "\n"
 	default:
 		return ""
 	}
@@ -359,4 +362,60 @@ func (a *app) cmdFriendHealth(args []string, stdout, stderr io.Writer) int {
 	sayOK(stdout, c.json, name, line, map[string]any{"friend": friend, "state": h.State, "seen": h.Seen, "generation": h.Generation,
 		"queue": h.Queue, "working": h.Working, "width": h.Width, "status": status, "replayed": replayed})
 	return 0
+}
+
+// cmdFriendTake is the coordinator taking a friend's dealt, unstarted cards back for the
+// tick to deal again (docs/SPEC-SPRINT.md section 1, a friend's card taken back): each
+// card named, ready or working on her row, has origin's tip of its branch read once (the
+// tip friend sync reads a LAND's Head at), and the step (sprint.FriendTake) refuses by
+// name a card with a push there, or one whose tip could not be read; one refusal
+// refuses the step, nothing written.
+func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
+	const name = "friend take"
+	fs, c := a.verbSetup(name)
+	reason := fs.String("reason", "", "why the cards are taken back, on each card's story (she stalled)")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	if len(pos) < 2 {
+		return refuse(stderr, name, "wants a friend, a friend row of nova-config, and one or more of her cards, a work card (s1-4.w1) or its primary (s1-4)")
+	}
+	friend, ids := pos[0], pos[1:]
+	if !sprint.ValidID(friend) {
+		return refuse(stderr, name, "a friend name wants letters, digits, _ and -: "+friend)
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	ctx := context.Background()
+	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(friend), sprint.Working, sprint.Ready)
+	if err != nil {
+		return a.readFailed(name, err, stderr)
+	}
+	packets, err := st.Packets(ctx, cards)
+	if err != nil {
+		return a.readFailed(name, err, stderr)
+	}
+	r := sprint.FriendTakeReq{Friend: friend, IDs: ids, Gens: map[string]int{}, Pushed: map[string]string{}, Unread: map[string]string{}, Reason: strings.TrimSpace(*reason), Who: c.actor}
+	for _, p := range packets {
+		if !slices.Contains(ids, p.Card) && !slices.Contains(ids, p.Primary) {
+			continue
+		}
+		r.Gens[p.Card] = p.Gen
+		repo := swarm.ReadCardBase([]byte(p.Brief)).Repo
+		if repo == "" {
+			r.Unread[p.Card] = "the card names no REPO: line"
+			continue
+		}
+		switch at, err := a.tip(ctx, repo, p.Branch); {
+		case err != nil:
+			r.Unread[p.Card] = oneline.Escape(err.Error())
+		case at != "":
+			r.Pushed[p.Card] = at
+		}
+	}
+	return a.runStep(name, *c, st, store.Step{Named: true, Args: store.ArgsOf(r), Verb: name, Load: []string{sprint.Fleet, sprint.Work}, Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendTake(s, r) }}, stdout, stderr)
 }

@@ -232,11 +232,36 @@ carries them; its primary moves ready -> working. The fleet's members are its
 rows but the friends' (`Snapshot.Members`): presence, the rebalance, the
 level, `fleet sync`, the machines' deal and the shape a clear keeps never
 touch a friend's row, so a friend who goes quiet or is held keeps her card
-(no take-back), the no-stall rule holds it as hers whatever her status, and
+(no take-back but the coordinator's `friend take`, below), the no-stall rule holds it as hers whatever her status, and
 the deadline rule (not finished 2 hours from its deal) judges it as it judges
 any work card. The machines' `deal` verb refuses a friend's card, and
 `rework` of one sends its primary ready with the fix, for the tick to deal to
 a friend.
+
+**A friend's card taken back** (2026-10-04: a friend who stalls keeps her cards, and
+nothing withdraws them; the owner: "Are they actually doing the work that is shown in
+the friend table? Really?"). `friend take <friend> <card>... [--reason <text>]` is the
+coordinator's: each card named, by its work card (`s1-4.w1`) or its primary (`s1-4`),
+ready or working on her row and not started, is taken off her row (its work card retired,
+its record kept, `retired_by` `friend take`) and its primary moves working -> ready (the
+lifecycle's working -> ready, as a withdrawal moves it; on a RUNNING machine the work
+table's move is the next pump's), one happened note on its story per take, `a friend's
+card was taken back`, with the reason; the tick's deal then deals it as its next attempt
+(`sprint.FriendDeal`: a new job and a new branch, so nothing she holds is reused). A
+working card taken frees her lane, and her oldest ready card not taken moves into working
+in the same step, as her finish takes her next. Not started means origin holds no push on
+the card's branch: the verb reads origin's tip of that branch once per card, as friend
+sync reads a LAND's Head (one bounded `git ls-remote` in the card's `REPO:` repository),
+and the step (`sprint.FriendTake`) refuses by name a card with a push (`<card> has a push
+on its branch at <sha>: it is <friend>'s work, and her report finishes it`), a card whose
+tip cannot be read or that names no `REPO:` line, a card not ready or working on her row,
+and one whose generation moved since it was read; one refusal refuses every card named,
+nothing written (exit 1). A card naming her goes back to her once she is up with room, so
+the coordinator holds her first (`friend down`); a card for any friend goes to the friend
+up with the most room. The tip is read before the step: a push that lands between the
+read and the step is not seen, and her report on that branch is then refused by friend
+sync's tip check, the card no longer on her row. `TestFriendTakeReturnsAnUnstartedCardToReadyAndRefusesAPushedOne`,
+`TestFriendTakeFreesHerLaneAndTheDealCutsTheNextAttempt`.
 
 `friend sync`, run by the coordinator's own loop where the directories are
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
@@ -2258,7 +2283,7 @@ default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, fleet
-up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, friend health, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
+up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, friend health, friend take, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it (the seat
@@ -2323,6 +2348,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | friend beat | a friend's beat, `friend beat <friend>`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and nothing more |
 | friend down, friend up | hold a friend (status `held`, whatever she beats or the coordinator observes; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (not a beat: `down` until she beats or is observed up) |
 | friend health | the coordinator's observation of a friend, `friend health <friend> --state up\|asleep\|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>]`, written by the coordinator's daemon from its keepalive (section 1, a friend's health): the seat's holder alone, at the seat's generation now, with a proof newer than the row's; refused otherwise with nothing written; the same observation again is the recorded answer |
+| friend take | the coordinator takes a friend's dealt, unstarted cards back, `friend take <friend> <card>... [--reason <text>]` (section 1, a friend's card taken back): each work card retired, its primary ready for the tick to deal as its next attempt; a card with a push on its branch, or not ready or working on her row, is refused by name, nothing written |
 | seat | the seat as the daemons read it every second: `SEAT holder= epoch= generation=`, `--json`; three keys, no table (section 1, a friend's health) |
 | reader add | declares readers |
 | reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
