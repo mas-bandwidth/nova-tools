@@ -550,9 +550,9 @@ func wsbDocument(in wsbInput) string {
 // maps a <MappedFolder> by its host base name, and the status file is written there so the
 // HOST can read it through the same folder.
 //
-// The command is one STRING, so the arguments go through winCommandLine: a path with a
-// space in it joined on a bare space reaches the child as two arguments, and
-// C:\Program Files is the ordinary path on windows, not an unusual one.
+// The command is one STRING, so the arguments go through winCommandLine: an argument
+// made of several words joined raw reaches the child as two, and winCommandLine quotes
+// each argument the way the child's argv parse reverses.
 func wsbLogonCommand(in wsbInput) string {
 	guest := `C:\Users\WDAGUtilityAccount\Desktop\` + filepath.Base(in.Scratch)
 	var cmd strings.Builder

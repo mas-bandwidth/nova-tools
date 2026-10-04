@@ -765,11 +765,11 @@ func TestTheWSBLogonCommandWritesTheStatusWhateverHappened(t *testing.T) {
 	require.Contains(t, cmd, "%ERRORLEVEL%", "the logon command does not write the command's own status: %s", cmd)
 	require.Contains(t, cmd, wsbExitFile, "the logon command does not name the status file: %s", cmd)
 	assert.NotContains(t, cmd, "&& echo", "the status is written only when the command SUCCEEDS: %s. An absent file is 124 and a failing command is not a timeout", cmd)
-	// An argument carrying a space arrives as ONE argument: the logon command is one
-	// string, and winCommandLine quotes each argument the way the child's argv parse
-	// reverses.
+	// An argument made of several words arrives as ONE argument: the logon command is
+	// one string, and winCommandLine quotes each argument the way the child's argv
+	// parse reverses.
 	cmd = wsbLogonCommand(wsbInput{Scratch: `C:\nova\nova-j1`, Argv: []string{`C:\Program Files\Go\bin\go.exe`, "build"}})
-	assert.Contains(t, cmd, `"C:\Program Files\Go\bin\go.exe" build`, "an argument with a space in it was not quoted, so the guest's child reads it as two arguments: %s", cmd)
+	assert.Contains(t, cmd, `"C:\Program Files\Go\bin\go.exe" build`, "an argument made of several words was not quoted, so the guest's child reads it as two arguments: %s", cmd)
 }
 
 // ---------------------------------------------------------------------------------------
