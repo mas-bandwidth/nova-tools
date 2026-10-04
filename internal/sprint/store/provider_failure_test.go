@@ -143,7 +143,7 @@ func TestAFailedFinishWithoutTheProviderKindStaysFailedWork(t *testing.T) {
 		h.addReady("s1", 1, briefOf("flash", ""))
 		h.must(DealStep(sprint.DealReq{}))
 		h.failTake("s1-1.w1", report)
-		assert.Equal(t, sprint.DoneFailed, h.snap().Fleet.Card("s1-1.w1").Col, report)
+		assert.Equal(t, sprint.Finished, h.snap().Fleet.Card("s1-1.w1").Col, report)
 		assert.Equal(t, sprint.Review, h.snap().Work.Card("s1-1").Col, report)
 		assert.Equal(t, 1, h.notesOf(sprint.NWorkFailed), report)
 	}
@@ -266,7 +266,7 @@ func TestARunItsBudgetEndedWithNoResultStaysFailedWork(t *testing.T) {
 		h.addReady("s1", 1, briefOf("flash", ""))
 		h.must(DealStep(sprint.DealReq{}))
 		h.failTake("s1-1.w1", report)
-		assert.Equal(t, sprint.DoneFailed, h.snap().Fleet.Card("s1-1.w1").Col, report)
+		assert.Equal(t, sprint.Finished, h.snap().Fleet.Card("s1-1.w1").Col, report)
 		assert.Equal(t, 1, h.notesOf(sprint.NWorkFailed), report)
 	}
 }

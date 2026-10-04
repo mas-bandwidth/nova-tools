@@ -47,7 +47,7 @@ func (h *harness) addReady(stream string, n int, brief string) {
 // workCards is the fleet table's work cards, by id.
 func (h *harness) workCards() map[string]*sprint.Card {
 	out := map[string]*sprint.Card{}
-	for _, c := range h.snap().Fleet.Column(sprint.Ready, sprint.Working, sprint.DoneOK, sprint.DoneFailed, sprint.Withdrawn) {
+	for _, c := range h.snap().Fleet.Column(sprint.Ready, sprint.Working, sprint.Finished, sprint.DoneOK, sprint.DoneFailed, sprint.Withdrawn) {
 		out[c.ID] = c
 	}
 	return out

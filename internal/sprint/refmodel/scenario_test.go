@@ -24,7 +24,7 @@ const (
 func scenarios() []sample {
 	var out []sample
 	for seed := uint64(0); seed < scenarioSeeds; seed++ {
-		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, aLateCardRedealt} {
+		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, aLateCardRedealt, aFriendsLateCard} {
 			out = append(out, run(newWalk(scenarioBase+seed))...)
 		}
 	}
@@ -139,4 +139,21 @@ func aLateCardRedealt(k *walk) []sample {
 		}
 	}
 	return out
+}
+
+// aFriendsLateCard deals a friend's card to her and lets it go unfinished past its
+// deadline: the tick has it to redeal (sprint.TickFriendRedeal).
+func aFriendsLateCard(k *walk) []sample {
+	id := fmt.Sprintf("p%d", k.next)
+	k.next++
+	if !k.try(sprint.Add(k.s, sprint.AddReq{Brief: "tier: pro\nWHO: friend amy\n\nThe task.", Stream: k.streams[0], IDs: []string{id}, Who: coordinator})) {
+		return nil
+	}
+	plan, _ := sprint.TickDeal(k.s, sprint.TickReq{Who: sprint.MachineActor, Friends: []sprint.FriendSeat{{Name: "amy", Width: 1, Status: sprint.Up}}})
+	if !k.try(plan) {
+		return nil
+	}
+	k.now = k.now.Add(sprint.DeadlineUnfinished + time.Duration(1+k.pick(20))*time.Minute)
+	k.beatAll()
+	return []sample{k.sample()}
 }

@@ -162,6 +162,7 @@ func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
 	h := newHarness(t)
 	h.setup(3)
 	h.through("s1-1", "s1-2", "s1-3")
+	h.must(TickPartStep("verdicts", sprint.TickVerdicts, sprint.TickReq{}, nil, nil, nil)) // the readers' verdicts are the ok%
 	h.clean("accepted")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 2}))
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 2}))
@@ -436,7 +437,7 @@ func TestD3ARetriedFinishReturnsTheOriginal(t *testing.T) {
 	if !again.Replay || len(again.Moved) != len(first.Moved) || again.Op != first.Op {
 		require.Fail(t, fmt.Sprintf("retry: %+v, first %+v", again, first))
 	}
-	n := h.snap().Fleet.Count(m, sprint.DoneFailed)
+	n := h.snap().Fleet.Count(m, sprint.Finished)
 	require.Equal(t, 1, n, "failed counted %d times", n)
 	open, _ := h.m.OpenNotes(h.ctx)
 	require.Len(t, open, 1, "notified %d times", len(open))

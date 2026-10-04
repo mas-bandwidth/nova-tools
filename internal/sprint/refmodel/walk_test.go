@@ -336,10 +336,11 @@ func (k *walk) tick() bool {
 	}
 	// the done part is drawn by the whole tick only: it writes a note and
 	// no card, and the draw of one part keeps the walks the parts before it
-	// gave
+	// gave; the verdicts and the friend redeal, added later, are drawn by the
+	// whole tick only too, so the walks keep the draws they had
 	var parts []sprint.TickPartFn
 	for _, p := range sprint.TickParts {
-		if p.Name != sprint.PartDone {
+		if p.Name != sprint.PartDone && p.Name != refmodel.DutyVerdicts && p.Name != refmodel.DutyRedeal {
 			parts = append(parts, p.Fn)
 		}
 	}
