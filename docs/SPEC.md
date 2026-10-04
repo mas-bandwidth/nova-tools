@@ -2096,7 +2096,7 @@ each: whitespace and `=` inside a stored key or a hand-written stamp print as
 `\x20` and `\x3d`. A stored key of `x lockdown=clear quarantines=0` therefore
 prints as `STATUS OK quarantine=x\x20lockdown\x3dclear\x20quarantines\x3d0
 since=t: r`, and a grep for `lockdown=clear` matches only the lockdown field.
-A surface name holding a blank, which is legal, prints the same way. The
+A surface name holding whitespace, which is legal, prints the same way. The
 `<reason>` after `: ` is the free-text tail and keeps its spaces; so does the
 remedy inside a `FUSE FAIL quarantine=` parenthetical. That remedy is a
 POSIX-shell command: the box path and normalized surface are quoted, and `--` precedes
@@ -3230,7 +3230,7 @@ order:
 4. drop a leading `for `;
 5. drop trailing parentheticals, repeatedly;
 6. what remains must **equal** a known name, alias or group, case-insensitively,
-   or **begin with one followed by a blank** — the instance qualifier, so `Ada
+   or **begin with one followed by whitespace** — the instance qualifier, so `Ada
    a1b2c3d4` and `Ada Vale` are both Ada. The longest known name wins,
    and the prefix rule **refuses** rather than resolves when what follows the
    known name is itself a known name;
@@ -3278,7 +3278,7 @@ was accepted has no thread. `Re` may repeat; nothing else may. `Kind` is
 `receipt` or `note` and is the only override of the receipt heuristic.
 
 **`Host` is which MACHINE posted, and it is optional.** One name can post from
-two places — the keeper on a bench and the bud on the Air both post as
+two places — the keeper on a bench and the bud on a laptop both post as
 `worker` — and without this line they would be told apart in the subject,
 which spends the subject on routing. `send --host <name>` and
 `reply --host <name>` write it; `<bus>/.nova-bus/defaults` may carry a
@@ -3334,7 +3334,7 @@ own repair:
 | a key nobody knows — `Branch: main` | unknown header key, **and the nine keys there are** |
 | a body sentence where the header goes, with a colon somewhere in it or none at all | the header ends at the first blank line; put a blank line after the last header |
 
-A key is taken for a sentence when it holds a blank or runs past twenty
+A key is taken for a sentence when it holds whitespace or runs past twenty
 characters, which is not a guess about what the writer meant but about what they
 cannot have meant: the longest key here is `Subject`. These refusals decide
 nothing about which files fail; they carry the fix.
@@ -4114,7 +4114,7 @@ change.
 Every part of that git command line is load-bearing. `--diff-filter=AM` because a deleted note is not a new note.
 `--no-renames` because git's rename detection is on by default and reports a
 renamed note as `R`, which `AM` excludes — so a note that merely moved would go
-unread. `-z` because `--name-only` quotes a path holding a blank, and a quoted
+unread. `-z` because `--name-only` quotes a path holding whitespace, and a quoted
 path matches no file. And `:(glob)` because without it git matches a pathspec
 with fnmatch, where `*` also matches `/`: a plain `from-*` catches a top-level
 `from-notes.txt`, and `from-*/` — the spelling that reads like a directory —
@@ -4363,7 +4363,7 @@ read.
 
 It is one line, like every other event this tool prints. The paths and names in
 the command it hands back are **quoted** rather than field-escaped, because that
-half of the sentence is meant to be PASTED: a bus directory holding a blank is
+half of the sentence is meant to be PASTED: a bus directory holding whitespace is
 `--bus "/a bus/here"` and not `--bus /a\x20bus/here`. See **`NAMES` quotes rather
 than field-escapes** in the output grammar, which is the same reason.
 
@@ -5164,7 +5164,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 37. `repo-a-37` `TestStatusReportsAndNeverGates` — `nova-fuse status` exits 0 even when a fuse is blown, because answering is `status`'s whole job and `check` is the gate.
 38. `repo-a-38` `TestSkipReportsAndDoesNotAffectExit` / `TestRuleDocIsScannedAndBannered` / `TestNotePrintedOnEveryRun` — `nova-self-talk`'s four informational second tokens (`DATED`, `SKIP`, `RULEDOC`, `NOTE`) all print on stdout.
 39. `repo-a-39` — the soft hyphen (U+00AD) and the byte order mark (U+FEFF) pass through unescaped, because they do not reorder what an operator sees.
-40. `TestNoCallerPathCanForgeALine` — every `<path>/<file>/<target>/<reason>` a line carries renders through `internal/oneline`; a field is one token even when it holds a blank (`\x20`), and no caller path can forge a line.
+40. `TestNoCallerPathCanForgeALine` — every `<path>/<file>/<target>/<reason>` a line carries renders through `internal/oneline`; a field is one token even when it holds whitespace (`\x20`), and no caller path can forge a line.
 41. `TestFailMaxWidensAndZeroPrintsAll` — every listing takes `--fail-max` (default 20, `0` = all) and prints its count line on both success and failure.
 42. `TestAFlagTypoIsOneLine` — an unknown flag after a verb is the one-line refusal `nova-check <verb>: …; run: nova-check help`, exit 2.
 43. `TestVersionLineShape` — `nova-check version` prints the Conventions build line, exit 0.
