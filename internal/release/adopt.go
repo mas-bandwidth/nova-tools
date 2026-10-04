@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"golang.org/x/mod/semver"
 )
 
 // machineName is what may be handed to ssh as a destination. It is deliberately
@@ -242,12 +244,12 @@ func inferVersion(root, goos, goarch string, errs io.Writer) (string, error) {
 // release it has been asked to fan out. It answers false for anything it cannot
 // read -- an unstamped dev binary, a string that is not a version -- because a
 // gate that refuses on a value it does not understand is a gate that stops the
-// work it exists to protect.
+// work it exists to protect. (STANDARD §7: library first.)
 func olderThan(self, release string) bool {
-	if ValidVersion(self) != nil || ValidVersion(release) != nil {
+	if !semver.IsValid(self) || !semver.IsValid(release) {
 		return false
 	}
-	return lessVersion(versionParts(self), versionParts(release))
+	return semver.Compare(self, release) < 0
 }
 
 func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
