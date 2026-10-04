@@ -2204,6 +2204,7 @@ the tick would make, no other open judgment on it).
 | repair skipped changes the store refused as recorded | card (look), return, drop, rework, ack | yes |
 | an operation was stuck | check, ack | yes |
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
+| timer (the seat's holder's own timer fired: `timer <id> for <actor> (set by <setter>): <note>; due <time>, fired <time>, <lateness> late`; open until the timer is seen or expires, section 15, Timers) | remind --ack <id>, ack | yes |
 | cannot ask (enough readers are up, and a primary has fewer readers with no read card at its attempt, placed or retired, than its tier needs: one for a flash card, two for a pro card; one judgment per tick, `no eligible reader for <ids>`, every such primary a subject of it) | reader add, rework (a new attempt every reader may read), drop, wait | no |
 | fewer than two readers up | reader up, reader add, wait | no |
 | no fleet member is up (when every member that beats is held, it says so and offers only fleet up and wait) | fleet beat (on a machine), fleet up (releases a hold), wait | no |
@@ -3272,6 +3273,37 @@ one current reminder. A route that fails is one judgment, "a reminder could not
 be delivered", closed when a later delivery arrives. `goal show` shows each
 person's last push (`where --json` carries it). The people and their goals are the sprint's, not the
 epoch's: a clear keeps them and resets their pushes.
+
+### Timers
+
+A timer is a note for an actor at a time (`remind --in <duration> | --at <time>
+--note <text> [--for <actor>] [--within <duration>]`; `--at` takes RFC3339 or a
+clock time, 7:30pm or 19:30, the next one in the machine's zone). The actor is the
+seat's holder or a friend of the sprint (default: the caller); a timer for anyone else
+is refused. The verbs write one record (`timers`: each timer, and when it was
+cancelled or acknowledged); the tick alone writes the other (`timer-ends`: when each
+fired, was seen or expired, and why), so a verb and a tick never overwrite each other,
+and both are in the store, so a restart of the server loses none.
+
+Every tick, RUNNING or STOPPED, takes one pass over the timers (`sprint.Advance`, one
+due-check, `sprint.Reached`, which a wait operand `after <time>` can share). A pending
+timer fires on the first tick at or after its due time while its window (the due time
+plus `--within`, default one hour) is open: to the seat's holder as the judgment
+`timer`, to a friend as a note addressed to her (inbox `--push seat` writes it to her
+inbox), and its setter, when another, gets a note that it fired; its lateness (the fire
+less the due time) is in each. It never fires early and fires once: the ends are
+written before the notes they owe, and a timer that fired is never fired again. Each
+timer ends one way: seen (`remind --ack <id>`, or its judgment answered with `ack`),
+expired (its window closed with it unfired, because no tick ran in it or its actor left
+the sprint, or fired and unseen; its setter gets the note `timer expired` with the
+reason), or cancelled (`remind --cancel <id>`, pending only). `remind --list` shows each
+timer's state (pending, fired, seen, expired, cancelled), when it fired and how late;
+`--missed` shows the fired and unseen and the expired not acknowledged, and `view
+coordinator` leads with the holder's, so a session back after a gap reads "timer
+<id> (<note>) fired 60m ago, unseen" first; `remind --ack` takes an expired one off
+the list. A set, `--cancel` and `--ack` take `--dry-run`. tla/Timers.tla is the model.
+A crash between the ends and the notes they owe writes those notes again on the next
+tick: a note is written at least once, and a fire and its judgment at most once.
 
 ## 16. Sentinel cards
 

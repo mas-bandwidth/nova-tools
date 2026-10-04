@@ -303,7 +303,7 @@ func silenceRefusal(s *Snapshot, u Unit, pr string) string {
 // its condition holds and closes it when the condition clears.
 func TickKept(typ string) bool {
 	_, ok := TickDecisions[typ]
-	return ok || typ == NRemindFailed
+	return ok || typ == NRemindFailed || typ == NTimer
 }
 
 // notAckable is why ack is refused for a judgment whose decisions do not list

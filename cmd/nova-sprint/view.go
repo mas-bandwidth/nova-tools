@@ -77,11 +77,12 @@ const (
 	itemSentinel = "s" // a sentinel whose needs have landed, no judgment open on it
 	itemFriend   = "f" // a friend whose row needs a look
 	itemMachine  = "m" // a machine whose row needs a look
+	itemTimer    = "t" // a timer of the seat's holder fired and unseen, or expired: always first
 )
 
 // itemRank orders items of equal weight: judgments first, then what the seat is asked, the
 // alarms, the sentinels, the friends and the machines.
-var itemRank = map[string]int{itemJudgment: 0, itemRequest: 1, itemAlarm: 2, itemSentinel: 3, itemFriend: 4, itemMachine: 5}
+var itemRank = map[string]int{itemTimer: -1, itemJudgment: 0, itemRequest: 1, itemAlarm: 2, itemSentinel: 3, itemFriend: 4, itemMachine: 5}
 
 // viewItem is one thing that needs the seat now.
 type viewItem struct {
@@ -338,6 +339,9 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			for _, m := range g.Members {
 				behindOf[m] = true
 			}
+			if g.Type == sprint.NTimer {
+				continue // its item is the missed timer's, first
+			}
 			v.Items = append(v.Items, judgmentItem(g, now))
 		case g.To != "":
 			// one item a type of note, however many streams it came from: a count where a
@@ -523,6 +527,8 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	slices.SortStableFunc(v.Items, func(x, y viewItem) int {
 		return cmp.Or(cmp.Compare(y.B, x.B), cmp.Compare(itemRank[x.T], itemRank[y.T]), cmp.Compare(y.age, x.age), cmp.Compare(x.K, y.K))
 	})
+	// the missed timers lead: a session back after a gap reads them first (remind.go)
+	v.Items = append(a.missedItems(ctx, st, v.Seat), v.Items...)
 	v.Cursor = cursorOf(itemDigests(v.Items), rowDigests(v.Rows))
 	v.Sum = coordinatorSum(v, merr == nil, machine)
 	return v, nil

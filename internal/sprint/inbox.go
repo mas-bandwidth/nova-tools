@@ -550,6 +550,8 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, "nova-config loop show "+strings.TrimPrefix(d, "restart ")+"  # restart this loop's unit on its machine: it reads its machine row's width at start")
 		case strings.HasPrefix(d, "funded "):
 			add(d, cmd+d+" --reason '<the payment made>'")
+		case strings.HasPrefix(d, "remind --ack "):
+			add(d, cmd+d) // a timer seen (timer.go)
 		case d == "ack":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)
 		case d == "resume" && s != "":
