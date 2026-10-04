@@ -109,3 +109,43 @@ func TestTheLevelMovesReadsOffAReaderOverItsWidth(t *testing.T) {
 		}
 	}
 }
+
+// A pro card needs two different readers with room, not two free lanes: with
+// all the free room on one reader (m1 width 2 and idle, m2 width 1 and full)
+// the tick does not ask it, and it waits, due, with no judgment; the ask's
+// refusal (NCannotAsk) is for a card no readers could ever read, never for
+// want of room. When m2's lane frees, the card is asked of both.
+func TestAProCardWaitsForTwoReadersWithRoom(t *testing.T) {
+	t.Parallel()
+	w := widthWorld(t, 2, 1, 2)
+	w.s.Work.Card("p2").Fields["brief"] = proBrief
+	w.s.Readers.Put(&Card{ID: ReadCardID("p1", 1, "reader-m2"), Row: "reader-m2", Col: Asked, Rev: 1,
+		Fields: map[string]string{"kind": "read", "primary": "p1", "stream": "s1", "attempt": "1", "reader": "reader-m2", "head": "h1"}})
+	p, due := TickAsk(w.s, TickReq{})
+	assert.Empty(t, p.Units, "one reader with room: the pro card is not asked")
+	assert.Empty(t, p.Notes, "waiting for a second reader with room is no judgment")
+	assert.Equal(t, 1, due, "the pro card is due")
+	w.s.Readers.Card(ReadCardID("p1", 1, "reader-m2")).Col = OK
+	w.s.Readers.cells = nil
+	w.part(TickAsk, TickReq{})
+	assert.Len(t, readsAt(w.s, w.s.Work.Card("p2"), 1), 2, "m2's lane freed: asked of both readers")
+}
+
+// A read its reader returned is asked again in place when no other reader has
+// room: the room it takes is the room its reader already holds for it, so the
+// tick asks it and waits for nothing.
+func TestAReturnedReadIsAskedAgainInPlaceWithNoRoomElsewhere(t *testing.T) {
+	t.Parallel()
+	w := widthWorld(t, 1, 1, 2)
+	w.part(TickAsk, TickReq{})
+	require.Equal(t, 2, w.s.readerLoad("reader-m1")+w.s.readerLoad("reader-m2"), "both readers at width")
+	rc := readsAt(w.s, w.s.Work.Card("p1"), 1)[0]
+	rc.Fields[FieldReturned] = stamp(w.s.Now)
+	p, due := TickAsk(w.s, TickReq{})
+	w.must(p)
+	assert.Equal(t, 0, due, "the returned read is asked again in place: nothing waits")
+	assert.Empty(t, p.Notes)
+	rc = readsAt(w.s, w.s.Work.Card("p1"), 1)[0]
+	assert.Empty(t, rc.F(FieldReturned), "asked again")
+	assert.Equal(t, 1, w.s.readerLoad(rc.Row), "its reader holds it once")
+}

@@ -145,7 +145,6 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	}
 	for _, c := range chosen {
 		attempt := c.Int("attempt")
-		have := map[string]bool{}
 		var all []string
 		var takenBack []Change
 		var away []string
@@ -169,18 +168,10 @@ func Ask(s *Snapshot, r AskReq) Plan {
 				returned = append(returned, rc)
 				continue
 			}
-			have[rc.F("reader")] = true
 			all = append(all, rc.F("reader"))
 			kept = append(kept, rc)
 		}
-		var free []string
-		for _, rd := range s.Readers.Rows() {
-			// a reader with a card at this attempt, even retired, has read it
-			// and a reader not up is not asked (reader away, reader up)
-			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil && s.ReaderIsUp(rd) {
-				free = append(free, rd)
-			}
-		}
+		free := s.freeReaders(c, attempt)
 		want := max(0, ReadsNeeded(c)-len(all)) // a read taken back from a reader away leaves one to ask
 		if another {
 			want = 1

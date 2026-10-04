@@ -185,6 +185,33 @@ func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
+// returnedReadsAt is the primary's read cards at an attempt handed back with
+// no verdict by readers up (returnedRead): the ask places each again, on a
+// free reader with room, or in place on its own reader, whose room already
+// holds it (readerLoad counts it).
+func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
+	var out []*Card
+	for _, rc := range readsAt(s, pr, attempt) {
+		if !awayRead(s, rc) && returnedRead(rc) {
+			out = append(out, rc)
+		}
+	}
+	return out
+}
+
+// freeReaders is the readers the ask may ask the primary's attempt of: up,
+// with no read card of it at the attempt, placed or retired (a reader with
+// one, even retired, has read it).
+func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
+	var out []string
+	for _, rd := range s.Readers.Rows() {
+		if s.ReaderIsUp(rd) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
+			out = append(out, rd)
+		}
+	}
+	return out
+}
+
 // sweepReads is the readers' rebalance safety: every read asked or reading of a
 // reader that is not up is taken back, retired as the ask takes back a read
 // asked of a reader away

@@ -1409,13 +1409,16 @@ id (`--op`) returns the original result, with no second counter or notification.
   and 24 with ten reads: the 24 takes eight) that has free room and no read
   card at the attempt, placed or retired, ties the next round the readers from
   the readers' `ask_index`; the reads one ask places come off the room as it
-  goes. A reader at width is given nothing, and a primary the readers up have
-  no room for waits for the next tick, due, with no judgment. One read card
-  per reader. Reworked work is asked by the same rotation: a read is a
-  fresh child on a freshly drawn route, so the readers of an earlier attempt
-  are not preferred, and a busy reader is not asked again only to have the
-  next tick's level move the read (the owner, 2026-10-01, deleting the
-  preference for the readers kept on the primary: "yes on the decision.").
+  goes. A reader at width is given nothing, and a primary that lacks as many
+  DIFFERENT readers with room as it needs (a pro card with all the free room
+  on one reader) waits for the next tick, due, with no judgment; the ask's
+  `cannot ask` judgment is for a primary no readers could read whatever
+  their room. One read card per reader. Reworked work is asked by the same
+  rotation: a read is a fresh child on a freshly drawn route, so the readers
+  of an earlier attempt are not preferred, and a busy reader is not asked
+  again only to have the next tick's level move the read (the owner,
+  2026-10-01, deleting the preference for the readers kept on the primary:
+  "yes on the decision.").
   A reader away or down is never asked. A read asked, and not begun, of a
   reader that is not up is taken back by the next ask (the tick's, in the same
   step that asks the primary again): its read card is retired (by `away`), the
@@ -1429,7 +1432,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   reason, no finding counts against the work and no bound of the primary is
   spent, and the next tick asks it of another reader up that has no read card
   at the attempt (the returned card retired, by `returned`), or, when none is
-  free, of the same reader again, in place; either way on a route drawn
+  free with room, of the same reader again, in place, which takes no room (its
+  reader holds the card already); either way on a route drawn
   afresh as a new read's is, leaving out the route it returned on while the
   tier has another, and drawn only when the ask is not refused, so a reader
   whose launches failed
