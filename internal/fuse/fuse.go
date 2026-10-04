@@ -22,7 +22,11 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
 
  2. MALFORMED IS UNREADABLE. A JSON array, a bare string, a truncated file, a
     lockdown whose value is not an object -- every one fails the unmarshal and comes
-    back as CANNOT TELL, which every caller must treat as BLOWN. Reaching the
+    back as CANNOT TELL, which every caller must treat as BLOWN. A bare JSON null
+    fails no unmarshal -- a struct ignores it with no error -- so the read
+    unmarshals through a pointer and refuses the nil it leaves behind: a
+    wrong-shaped value is CANNOT TELL, never the VERIFIED CLEAR a normalised
+    empty map would make of it. Reaching the
     fail-closed answer by a crash deep inside a caller is not a design; this is.
 
  3. THE WRITE IS TEMP-FILE + RENAME. The file whose corruption means PERMANENT
@@ -222,14 +226,20 @@ func ReadBox(path string) (Box, error) {
 		}
 		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
 	}
-	var b Box
+	var b *Box
 	if err := json.Unmarshal(data, &b); err != nil {
 		return Box{}, fmt.Errorf("%s is not readable JSON: %w", path, err)
+	}
+	if b == nil {
+		// A bare JSON null unmarshals into the pointer with no error, but note 2
+		// says a shape that is not an object is unreadable; answered as the zero
+		// box it would read as VERIFIED CLEAR once the map below is normalised.
+		return Box{}, fmt.Errorf("%s is a JSON null, not a fuse box object", path)
 	}
 	if b.Quarantine == nil {
 		b.Quarantine = map[string]Fuse{}
 	}
-	return b, nil
+	return *b, nil
 }
 
 // CreateBox makes an empty box at path, only where nothing is: it NEVER replaces a
