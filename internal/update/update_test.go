@@ -438,12 +438,12 @@ func TestFourReadConcurrencyLimit(t *testing.T) {
 func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	s := filepath.Join(t.TempDir(), "snapshot.json")
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	c, o, e := run(t, Environment{}, "report", "--file", p, "--snapshot", s)
+	c, o, e := run(t, Environment{}, "report", "--file", p, "--state", s)
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
 	need(t, o, "changed=yes")
-	c, o, e = run(t, Environment{}, "report", "--file", p, "--snapshot", s)
+	c, o, e = run(t, Environment{}, "report", "--file", p, "--state", s)
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
@@ -468,6 +468,38 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 		require.NoError(t, err, err)
 	} else {
 		release()
+	}
+}
+
+// The state-file flag is --state; --snapshot is its one-release alias. Both name
+// the same file, and the alias prints its NOTE on stderr.
+func TestReportStateFlagAndItsAlias(t *testing.T) {
+	t.Parallel()
+
+	p := manifest(t, row("x", "tool", "v1.2.3", "npm:unused", "none"))
+	for _, tc := range []struct {
+		name  string
+		flag  string
+		alias bool
+	}{
+		{"state", "--state", false},
+		{"snapshot alias", "--snapshot", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "s.json")
+			c, out, errs := run(t, Environment{}, "report", "--file", p, tc.flag, path)
+			require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
+			state, err := readSnapshot(path)
+			require.NoError(t, err, err)
+			require.Len(t, state.Observed, 1)
+			need(t, out, "state="+path)
+			if tc.alias {
+				require.Contains(t, errs, "NOTE --snapshot is --state")
+			} else {
+				require.NotContains(t, errs, "NOTE --snapshot is --state")
+			}
+		})
 	}
 }
 func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
