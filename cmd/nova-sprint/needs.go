@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -165,6 +166,10 @@ func sprintNeeds(s *sprint.Snapshot, only string, rootsOnly bool) needsView {
 		st := &v.Streams[i]
 		st.Total++
 		card := needsCard{ID: c.ID, Stream: c.Row, Depth: depth[c.ID]}
+		// orphan is whether this card's needs name a dropped or absent id:
+		// the closing count counts cards, one card once however many of its
+		// needs name one (docs/SPEC-SPRINT.md section 11).
+		orphan := false
 		for _, n := range needs[c.ID] {
 			word := needWord(n.State)
 			if n.Waived || word == sprint.Landed {
@@ -172,8 +177,11 @@ func sprintNeeds(s *sprint.Snapshot, only string, rootsOnly bool) needsView {
 			}
 			card.Needs = append(card.Needs, needLine{ID: n.ID, State: word})
 			if word == droppedWord || word == absentWord {
-				st.Orphans++
+				orphan = true
 			}
+		}
+		if orphan {
+			st.Orphans++
 		}
 		card.Root = !cycle[c.ID] && card.Depth == 0
 		if !rootsOnly || card.Root {
@@ -182,6 +190,13 @@ func sprintNeeds(s *sprint.Snapshot, only string, rootsOnly bool) needsView {
 	}
 	for i := range v.Streams {
 		st := &v.Streams[i]
+		// Chain order: a card after every card it needs. A card's depth is one
+		// more than its deepest waiting need's, so every card sorts after the
+		// cards it waits on; the work order is kept within a depth, where no
+		// card waits on another (docs/SPEC-SPRINT.md section 11).
+		sort.SliceStable(st.Cards, func(i, j int) bool {
+			return st.Cards[i].Depth < st.Cards[j].Depth
+		})
 		st.Widths = needsWidths(waiting, depth, st.Stream)
 		for _, c := range waiting {
 			if c.Row == st.Stream && cycle[c.ID] {
@@ -228,19 +243,38 @@ const (
 	absentWord  = "absent"
 )
 
-// needWord is a need's state as this verb prints it: a column name, dropped for
-// a kept record whose outcome is dropped, or absent for no record at all
-// (sprint.NeedsOf reads the record; sprint.StateOf and Card.Placed tell the
-// three apart; docs/SPEC-SPRINT.md section 11).
+// needWord is a need's state as this verb prints it: a column name, dropped
+// for a kept record whose outcome is dropped, that outcome for a record kept
+// with any other outcome, or absent for no record at all (sprint.NeedsOf
+// reads the record; sprint.StateOf and Card.Placed tell the three apart;
+// docs/SPEC-SPRINT.md section 11).
 func needWord(state string) string {
 	switch state {
 	case "not on the table":
 		return absentWord
 	}
-	if strings.HasPrefix(state, "off the table (") {
-		return droppedWord
+	if out, ok := offOutcome(state); ok {
+		if out == "dropped" {
+			return droppedWord
+		}
+		return out
 	}
 	return state
+}
+
+// offOutcome is the outcome a kept record's state names: NeedsOf writes the
+// state "off the table (<outcome>)" (internal/sprint/steps_work.go), false
+// for a placed card's state, which is a column name.
+func offOutcome(state string) (string, bool) {
+	rest, ok := strings.CutPrefix(state, "off the table (")
+	if !ok {
+		return "", false
+	}
+	out, ok := strings.CutSuffix(rest, ")")
+	if !ok {
+		return "", false
+	}
+	return out, true
 }
 
 // needsText is the graph in lines: one line a card (name, depth, ROOT, its
