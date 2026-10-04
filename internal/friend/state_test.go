@@ -97,6 +97,30 @@ func TestSessionStateRefusesMalformedAndFailedWrites(t *testing.T) {
 	assert.Equal(t, SessionState{}, got, "failed writes do not return uncommitted state")
 }
 
+func TestNoOpSessionUpdateDoesNotCreateStateFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	got, err := UpdateSessionState(dir, func(*SessionState) error { return nil })
+	require.NoError(t, err)
+	assert.Equal(t, SessionState{}, got)
+	_, err = os.Stat(sessionPath(dir))
+	assert.ErrorIs(t, err, os.ErrNotExist, "an unchanged state must not be rewritten")
+}
+
+func TestNoOpSessionUpdatePreservesExistingFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	_, err := UpdateSessionState(dir, func(s *SessionState) error { s.Coordinator = "coordinator"; return nil })
+	require.NoError(t, err)
+	before, err := os.Stat(sessionPath(dir))
+	require.NoError(t, err)
+	_, err = UpdateSessionState(dir, func(*SessionState) error { return nil })
+	require.NoError(t, err)
+	after, err := os.Stat(sessionPath(dir))
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(before, after), "an unchanged state must retain the atomically replaced file")
+}
+
 func TestSessionStateUpdatesAreSerializedAndDaemonIsSingleton(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

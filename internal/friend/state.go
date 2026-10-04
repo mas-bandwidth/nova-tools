@@ -138,11 +138,12 @@ func WithSessionState(stateDir string, fn func(SessionState) error) error {
 func UpdateSessionState(stateDir string, update func(*SessionState) error) (SessionState, error) {
 	var out SessionState
 	err := sessionState(stateDir, func(s *SessionState) (bool, error) {
+		before := *s
 		if err := update(s); err != nil {
 			return false, err
 		}
 		out = *s
-		return true, nil
+		return *s != before, nil
 	})
 	if err != nil {
 		return SessionState{}, err
