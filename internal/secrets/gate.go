@@ -193,7 +193,11 @@ func RunGate(in GateInput) (string, int) {
 		if problem := seatFileRecipientsProblem(recipients, cfg.CreationRules[ruleIdx].Recipients, recoveryKey); problem != "" {
 			return gateRefuse(ruleNum, f, problem), 2
 		}
-		if key, plain := firstPlainValue(data, cfg.CreationRules[ruleIdx].UnencryptedRegex); plain {
+		key, plain, err := firstPlainValue(data, cfg.CreationRules[ruleIdx].UnencryptedRegex)
+		if err != nil {
+			return gateRefuse(ruleNum, f, fmt.Sprintf("unencrypted_regex %q is not a valid regular expression", cfg.CreationRules[ruleIdx].UnencryptedRegex)), 2
+		}
+		if plain {
 			return gateRefuse(ruleNum, f, fmt.Sprintf("key %s is a plain value, not encrypted", oneline.Field(key))), 2
 		}
 	}
@@ -285,11 +289,18 @@ func matchingRuleIndex(cfg *SopsConfig, relPath string) int {
 func filepathSlash(p string) string { return strings.ReplaceAll(p, "\\", "/") }
 
 // firstPlainValue returns the first root-level key whose value is not encrypted
-// and not permitted in the clear by unencryptedRegex.
-func firstPlainValue(data []byte, unencryptedRegex string) (string, bool) {
+// and not permitted in the clear by unencryptedRegex. An unencryptedRegex that does
+// not compile is the rule's own defect: it is returned as an error, and nothing is
+// judged against a regex that does not compile, so the gate refuses on the real cause
+// instead of reporting a permitted key as a plain value.
+func firstPlainValue(data []byte, unencryptedRegex string) (string, bool, error) {
 	var unencRe *regexp.Regexp
 	if unencryptedRegex != "" {
-		unencRe, _ = regexp.Compile(unencryptedRegex)
+		var err error
+		unencRe, err = regexp.Compile(unencryptedRegex)
+		if err != nil {
+			return "", false, err
+		}
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -312,9 +323,9 @@ func firstPlainValue(data []byte, unencryptedRegex string) (string, bool) {
 		if unencRe != nil && unencRe.MatchString(key) {
 			continue
 		}
-		return key, true
+		return key, true, nil
 	}
-	return "", false
+	return "", false, nil
 }
 
 // gateResolveCommit turns one ref into the SHA of the commit it names in the store, or
