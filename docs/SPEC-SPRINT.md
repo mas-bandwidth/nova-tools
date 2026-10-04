@@ -2483,6 +2483,16 @@ the brief's in `~/nova-sprint/decide/brief.jsonl`), and answer makes that direct
 0700, or tightens it to 0700 when it was made before, as the records hold the sprint's
 state.
 
+#### decision-record.w1: the coordinator's answers are recorded
+
+With `run --decide <dir>`, the verbs that answer a judgment (accept, rework, return, drop and
+ask with `--answers`, and `ack` and `wait`) append one `judgment-answer` record per judgment
+and card to `<dir>/judgment-answer.jsonl` as the verb succeeds, whoever answers (the
+coordinator or its inbox agent); the decide lane attaches the outcome when the card lands,
+leaves the table or is bounced again (its next read broken, its next finish failed). A record
+that cannot be written is a NOTE under the verb's summary line, never its failure
+(docs/SPEC-NOVA-DECIDE.md section 13, the coordinator's own answers).
+
 ### Answered by rule
 
 The machine answers the mechanical judgments itself, by rule, without the coordinator (the

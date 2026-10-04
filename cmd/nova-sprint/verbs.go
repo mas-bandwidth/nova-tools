@@ -1856,7 +1856,11 @@ func (a *app) setVerb(verbName string, args []string, stdout, stderr io.Writer, 
 			return refuse(stderr, verbName, why)
 		}
 	}
+	before := a.judgedBefore(context.Background(), st, answers(flagValue(fs, "answers")))
 	stp := step(ids, &s, c) // first: a step may set what the verb does after it (c.after)
+	if len(before) > 0 {
+		c.after = a.afterAnswering(verbName, before, flagValue(fs, "reason"), flagValue(fs, "fix"), c.actor, c.after)
+	}
 	return a.runStep(verbName, *c, st, stp, stdout, stderr)
 }
 
@@ -2808,6 +2812,7 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	if pos, err = unalias(context.Background(), st, pos); err != nil {
 		return refuse(stderr, "wait", err.Error())
 	}
+	before := a.judgedBefore(context.Background(), st, pos[:1])
 	res, held, err := st.Wait(context.Background(), pos[0], at)
 	if err == nil && len(res.Refused) > 0 {
 		err = fmt.Errorf("%s", res.Refused[0].Why)
@@ -2815,6 +2820,9 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "%s wait: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
+	}
+	for _, say := range a.recordAnswers(context.Background(), st, "wait", before, store.Result{Moved: []string{pos[0]}}, "until "+at.UTC().Format(time.RFC3339), "", c.actor) {
+		fmt.Fprintf(stdout, "NOTE %s\n", say)
 	}
 	if _, stale := sprint.StaleStream(pos[0]); stale {
 		fmt.Fprintf(stdout, "WAIT OK note=%s quiet until=%s: the inbox shows the stream stale again then if it still has not moved\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
@@ -2859,6 +2867,9 @@ func (a *app) cmdAck(args []string, stdout, stderr io.Writer) int {
 	}
 	if notes, err = unalias(context.Background(), st, notes); err != nil {
 		return refuse(stderr, "ack", err.Error())
+	}
+	if before := a.judgedBefore(context.Background(), st, notes); len(before) > 0 {
+		c.after = a.afterAnswering("ack", before, *reason, "", c.actor, c.after)
 	}
 	return a.runStep("ack", *c, st, store.AckStep(sprint.AckReq{Notes: notes, Reason: *reason, Who: c.actor}), stdout, stderr)
 }
@@ -3029,4 +3040,16 @@ func (a *app) cmdReaderRetire(args []string, stdout, stderr io.Writer) int {
 	}
 	sayOK(stdout, c.json, "reader retire", "READER-RETIRE OK readers="+strings.Join(names, ","), map[string]any{"readers": names})
 	return 0
+}
+
+// afterAnswering is a verb's after hook with the judgment-answer record added (recordAnswers):
+// the verb's own hook runs first, and each record that failed is one more NOTE.
+func (a *app) afterAnswering(verb string, before []sprint.Open, reason, fix, actor string, prev func(context.Context, *store.Store, store.Result) []string) func(context.Context, *store.Store, store.Result) []string {
+	return func(ctx context.Context, st *store.Store, res store.Result) []string {
+		var said []string
+		if prev != nil {
+			said = prev(ctx, st, res)
+		}
+		return append(said, a.recordAnswers(ctx, st, verb, before, res, reason, fix, actor)...)
+	}
 }

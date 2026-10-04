@@ -589,6 +589,31 @@ was chosen on these same 100 judgments, against the coordinator's own verbs (the
 runaway reworks among them), so it is a starting point and not an independent
 calibration; the bar ships empty until independent labels calibrate it.
 
+### decision-record.w1: the coordinator's own answers
+
+Every judgment answered with a verb that takes `--answers` (accept, rework, return, drop,
+ask, and an accept over a reader's verdict), or with `ack` or `wait`, appends one record of
+decision kind `judgment-answer` to `<decide dir>/judgment-answer.jsonl`, the file the
+server's `run --decide` dir holds, by the verb that gave it, one record per judgment and
+card (a group answered at once is one record each). The record is the existing record
+format (section 4): `state` is the judgment's state as the judgment decision is asked it
+(`JudgmentState`), the answer `verb` is the verb given with probability 1, the backend is
+`coordinator:<actor>`, and the inputs are `card`, `note`, `kind` (the judgment's type),
+`verb`, `reason` (the `--reason` text, or a wait's time), `fix` (the `--fix` text), `actor`,
+`evidence` (the paths the judgment text names, one a line) and `broken_reads` and `failed`,
+the card's counters when it was answered. The id is `<card>@answer.<note>.<12 hex of the
+state, verb, reason and fix>`, so the same answer given again is the same record.
+
+The outcome is attached by the server's decide lane, once, as `nova-decide outcome` does:
+`landed` when the card lands, `dropped` when it leaves the table, `bounced` when more reads
+have found it broken or more finishes have failed than its counters at the answer (the next
+read broken, the next finish failed). A card still standing with nothing new has none yet,
+and the lane watches its card, placed or not, until it does. A record write that fails
+never fails the verb: it is a NOTE line. Nothing is recorded when the verb moved nothing,
+for a card the step refused, or when no decide lane keeps a record (a verb run with no
+server). The record is the label set `nova-decide` evaluates, shadows and trains the
+judgment decision on; it duplicates no verb of `nova-decide`.
+
 ## 14. The brief decision: card quality before add
 
 **Uncalibrated.** p(converges) is a rank, not a probability, and on the only labels
