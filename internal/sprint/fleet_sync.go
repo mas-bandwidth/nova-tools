@@ -162,7 +162,7 @@ func FleetDrift(s *Snapshot, want []SyncMember, machines []string) []Drift {
 // the table is its history only, which the card's record keeps.
 func memberKeeps(s *Snapshot, member string) int {
 	n := s.Fleet.Count(member, Withdrawn)
-	for _, wc := range append(append([]*Card{}, s.Fleet.Cell(member, DoneOK)...), s.Fleet.Cell(member, DoneFailed)...) {
+	for _, wc := range append(append(append([]*Card{}, s.Fleet.Cell(member, Finished)...), s.Fleet.Cell(member, DoneOK)...), s.Fleet.Cell(member, DoneFailed)...) {
 		if pr := s.Work.Placed(wc.F(PrimaryField)); pr != nil && pr.Col != Landed && pr.F("work") == wc.ID {
 			n++
 		}

@@ -138,7 +138,13 @@ func renderWork(l Line, fromRow, fromCol, toRow, toCol string, moved bool, by st
 		return fmt.Sprintf("attempt %s taken back from %s %s", a, fromRow, whyOf(l))
 	case toCol == string(Working):
 		return fmt.Sprintf("%s took attempt %s", toRow, a)
-	case toCol == DoneOK:
+	case (toCol == DoneOK || toCol == DoneFailed) && fromCol == Finished:
+		return fmt.Sprintf("attempt %s by %s read %s: the readers' verdict", a, fromRow, map[string]string{DoneOK: "ok", DoneFailed: "broken"}[toCol])
+	case toCol == Redealt:
+		return fmt.Sprintf("attempt %s taken back from %s past its deadline, to be dealt again", a, fromRow)
+	case toCol == DoneFailed, toCol == Finished && l.Set["ok"] == "no":
+		return fmt.Sprintf("%s finished attempt %s: FAILED", fromRow, a)
+	case toCol == DoneOK, toCol == Finished:
 		s := fmt.Sprintf("%s finished attempt %s: ok", fromRow, a)
 		if h := l.Set["head"]; h != "" {
 			s += ", head " + h
@@ -147,8 +153,6 @@ func renderWork(l Line, fromRow, fromCol, toRow, toCol string, moved bool, by st
 			s += " on " + b
 		}
 		return s
-	case toCol == DoneFailed:
-		return fmt.Sprintf("%s finished attempt %s: FAILED", fromRow, a)
 	case toCol == string(Ready) && fromCol == Withdrawn:
 		return fmt.Sprintf("attempt %s redealt to %s (generation %d%s)", a, toRow, l.Gen, redealOf(l))
 	case toCol == string(Ready) && fromRow != toRow && strings.Contains(l.Verb, "level"):

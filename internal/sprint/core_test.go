@@ -72,7 +72,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	require.Len(t, w.notesOf(NWorkOK), 3, "notes: %d ok, %d failed", len(w.notesOf(NWorkOK)), len(w.notesOf(NWorkFailed)))
 	require.Len(t, w.notesOf(NWorkFailed), 1, "notes: %d ok, %d failed", len(w.notesOf(NWorkOK)), len(w.notesOf(NWorkFailed)))
 	require.Len(t, w.openOn("s1-4"), 1, "failed work is not an open judgment: %v", w.s.Open)
-	assert.Equal(t, 1, w.s.Fleet.Count("m1", DoneFailed)+w.s.Fleet.Count("m2", DoneFailed), "the failed work card is not in a member's failed cell")
+	assert.Equal(t, 4, w.s.Fleet.Count("m1", Finished)+w.s.Fleet.Count("m2", Finished), "the finished work cards, ok and failed, are not in their members' finished cells: a worker's word is no verdict")
 
 	ask := w.must(Ask(w.s, AskReq{}))
 	require.Len(t, ask.Units, 3, "ask dealt %d primaries, want the 3 that came back ok (failed work is not read)", len(ask.Units))

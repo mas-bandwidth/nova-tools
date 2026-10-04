@@ -134,8 +134,8 @@ func TestARedealThenBothFinishes(t *testing.T) {
 	if len(res.Moved) != 1 || p.card(sprint.Work, "s1-1").F("head") != "second-head" {
 		assert.Fail(t, fmt.Sprintf("the live finish: %+v head=%s", res, p.card(sprint.Work, "s1-1").F("head")))
 	}
-	if s := p.snap(); s.Fleet.Count(first, sprint.DoneOK)+s.Fleet.Count(first, sprint.DoneFailed) != 0 || s.Fleet.Count(second, sprint.DoneOK) != 1 {
-		assert.Fail(t, fmt.Sprintf("the first member was credited: first %d ok, second %d ok", s.Fleet.Count(first, sprint.DoneOK), s.Fleet.Count(second, sprint.DoneOK)))
+	if s := p.snap(); s.Fleet.Count(first, sprint.Finished) != 0 || s.Fleet.Count(second, sprint.Finished) != 1 {
+		assert.Fail(t, fmt.Sprintf("the first member was credited: first %d finished, second %d finished", s.Fleet.Count(first, sprint.Finished), s.Fleet.Count(second, sprint.Finished)))
 	}
 }
 

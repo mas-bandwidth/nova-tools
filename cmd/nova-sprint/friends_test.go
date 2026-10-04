@@ -28,9 +28,9 @@ import (
 
 // emptyFriends is the friends table with no friend: its header, one rule and
 // the footer, as every empty table is.
-const emptyFriends = "friends | ready | working | width | done | ok%  | status\n" +
-	"--------+-------+---------+-------+------+------+-------\n" +
-	"        |     0 |       0 |     0 |    0 | 0.0% |"
+const emptyFriends = "friends | ready | working | width | done | ok%  | redealt | status\n" +
+	"--------+-------+---------+-------+------+------+---------+-------\n" +
+	"        |     0 |       0 |     0 |    0 | 0.0% |       0 |"
 
 // friendApp is a test app with an initialised sprint whose friend sync reads the
 // friend rows of nova-config's in-memory store, each named in friends.
@@ -79,12 +79,15 @@ func jobs(t *testing.T, root, friend string, inbox []string, working []string, d
 
 // The friends table has the fleet table's columns but load, from the friend's
 // sprint cards: a card dealt to her fleet row friend.<name> is working; a LAND
-// report finishes it done ok, a HOLD (or FAIL) report done failed, and a
-// REPORT.md with no verdict word is finished failed too, never ok; ready is
+// report finishes it ok, a HOLD (or FAIL) report failed, and a REPORT.md
+// with no verdict word is finished failed too, never ok; each waits in finished
+// and counts in no ok% until the readers give their verdict (docs/SPEC-SPRINT.md
+// section 1, TestOkPercentCountsReaderVerdictsOnlyAndADeadlineIsARedeal); ready is
 // never a friend's card's state (the tick deals a card straight into working),
 // and a hand-written inbox job that is no card is shown nowhere. Width is the
 // friend row's (8 when it names none; TestFriendSyncWritesTheConfiguredWidth);
-// done and ok% are the formulas over ok and failed, and the footer sums and
+// done and ok% are the formulas over ok and failed, redealt counts her cards
+// taken back past their deadline, and the footer sums and
 // pools them. A friend with no card shows zeros. The same cells are in where
 // --json, under the column names.
 func TestTheFriendsTableCountsTheFriendsSprintCards(t *testing.T) {
@@ -112,22 +115,23 @@ func TestTheFriendsTableCountsTheFriendsSprintCards(t *testing.T) {
 		ta.json("where", &w)
 		return w.Tables[sprint.Friends]["amy"]
 	}
-	assert.Equal(t, map[string]string{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "ok": "0", "failed": "0"}, amy(), "two cards dealt, both working; the hand job is nowhere")
+	assert.Equal(t, map[string]string{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "redealt": "0", "status": "up", "ok": "0", "failed": "0"}, amy(), "two cards dealt, both working; the hand job is nowhere")
 
-	// amy finishes s1-1 with a LAND: done ok
+	// amy finishes s1-1 with a LAND: her own word, finished, which counts in no ok% until
+	// the readers give their verdict (docs/SPEC-SPRINT.md section 1)
 	outboxReport(t, root, "amy", "s1-1.w1", "# s1-1\n\n**Verdict:** LAND\nHead: "+landHead+"\n\nThe change is pushed.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]string{"ready": "0", "working": "1", "width": "8", "done": "1", "okpct": "100.0%", "status": "up", "ok": "1", "failed": "0"}, amy(), "s1-1 done ok, s1-2 still working")
+	assert.Equal(t, map[string]string{"ready": "0", "working": "1", "width": "8", "done": "0", "okpct": "0.0%", "redealt": "0", "status": "up", "ok": "0", "failed": "0"}, amy(), "s1-1 finished with no verdict yet, s1-2 still working")
 
-	// amy reports s1-2 with no verdict word: finished failed, never ok
+	// amy reports s1-2 with no verdict word: finished failed, never ok, and no reader reads it
 	outboxReport(t, root, "amy", "s1-2.w1", "# s1-2\n\nAll green, nothing more.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]string{"ready": "0", "working": "0", "width": "8", "done": "2", "okpct": "50.0%", "status": "up", "ok": "1", "failed": "1"}, amy(), "s1-2 done failed (no verdict), s1-1 done ok")
+	assert.Equal(t, map[string]string{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "redealt": "0", "status": "up", "ok": "0", "failed": "0"}, amy(), "both finished, neither read: her word alone counts nothing")
 
 	var w whereView
 	ta.json("where", &w)
-	assert.Equal(t, map[string]string{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["bob"], "bob has no card")
-	assert.Equal(t, map[string]string{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["cat"], "cat has no card")
+	assert.Equal(t, map[string]string{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "redealt": "0", "status": "up", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["bob"], "bob has no card")
+	assert.Equal(t, map[string]string{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "redealt": "0", "status": "up", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["cat"], "cat has no card")
 }
 
 // A friend's width is her friend row's (the owner, 2026-10-02: "6/1 seems a bit
@@ -249,12 +253,12 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 		{name: "the empty store", want: emptyFriends},
 		{name: "two friends, one up and one held", friends: []string{"friend-a", "friend-b"},
 			lines: []string{"friend sync", "friend beat friend-b", "friend down friend-a"},
-			want: "friends  | ready | working | width | done | ok%  | status\n" +
-				"---------+-------+---------+-------+------+------+-------\n" +
-				"friend-b |     0 |       0 |     8 |    0 | 0.0% | up\n" +
-				"friend-a |     0 |       0 |     8 |    0 | 0.0% | held\n" +
-				"---------+-------+---------+-------+------+------+-------\n" +
-				"         |     0 |       0 |    16 |    0 | 0.0% |"},
+			want: "friends  | ready | working | width | done | ok%  | redealt | status\n" +
+				"---------+-------+---------+-------+------+------+---------+-------\n" +
+				"friend-b |     0 |       0 |     8 |    0 | 0.0% |       0 | up\n" +
+				"friend-a |     0 |       0 |     8 |    0 | 0.0% |       0 | held\n" +
+				"---------+-------+---------+-------+------+------+---------+-------\n" +
+				"         |     0 |       0 |    16 |    0 | 0.0% |       0 |"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -444,7 +448,7 @@ func TestAFriendBeatsThroughTheServer(t *testing.T) {
 	res := r.one("friend", "beat", "amy")
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.Contains(t, res.Stdout, "FRIEND-BEAT OK amy")
-	assert.Contains(t, r.boss("nova-sprint where"), "amy     |     0 |       0 |     8 |    0 | 0.0% | up")
+	assert.Contains(t, r.boss("nova-sprint where"), "amy     |     0 |       0 |     8 |    0 | 0.0% |       0 | up")
 	for name, argv := range map[string][]string{
 		"no friend":       {"friend", "beat"},
 		"another actor":   {"friend", "beat", "amy", "--actor", "boss"},

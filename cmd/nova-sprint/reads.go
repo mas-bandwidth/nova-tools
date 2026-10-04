@@ -748,13 +748,14 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	}
 	for i, f := range friends {
 		// the counts are the friend's sprint cards on her fleet row, and nothing
-		// else: ready, working, done ok and failed, all from the fleet table
+		// else: ready, working, done ok and failed, and redealt, all from the fleet table
 		// (splitFriendRows), with width and status from the roster (store.FriendRows)
 		c := friendCards[f.Name]
 		friends[i].Ready = c.Ready
 		friends[i].Working = c.Working
 		friends[i].OK = c.OK
 		friends[i].Failed = c.Failed
+		friends[i].Redealt = c.Redealt
 		if f.Status == sprint.Down {
 			friends[i].Working = 0 // down, she works nothing
 		}
@@ -793,7 +794,8 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 }
 
 // splitFriendRows is the fleet table without the friends' rows (sprint.FriendRow), and
-// each friend's sprint cards counted off her row: ready, working, and done ok and failed.
+// each friend's sprint cards counted off her row: ready, working, done ok and failed
+// (the readers' verdicts), and redealt (sprint.TickFriendRedeal).
 func splitFriendRows(t ntable.Table) (ntable.Table, map[string]store.FriendRow) {
 	at := map[string]int{}
 	for j, c := range t.Columns {
@@ -815,7 +817,7 @@ func splitFriendRows(t ntable.Table) (ntable.Table, map[string]store.FriendRow) 
 			continue
 		}
 		out[name] = store.FriendRow{Name: name, Ready: count(r, string(sprint.Ready)), Working: count(r, string(sprint.Working)),
-			OK: count(r, sprint.DoneOK), Failed: count(r, sprint.DoneFailed)}
+			OK: count(r, sprint.DoneOK), Failed: count(r, sprint.DoneFailed), Redealt: count(r, sprint.Redealt)}
 	}
 	return machines, out
 }
@@ -836,7 +838,8 @@ func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, 
 
 // friendsTable is the friends table (sprint.FriendsDef) with a row per friend
 // in the order given: her sprint cards' counts in ready, working and the
-// hidden ok and failed, her width and her status as text; done and ok% are the
+// hidden ok and failed (the readers' verdicts, docs/SPEC-SPRINT.md section 1), her
+// redealt cards, her width and her status as text; done and ok% are the
 // table's own formulas over the counts (ntable.CellText), as the fleet
 // table's are.
 func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Table {
@@ -851,6 +854,7 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[string(sprint.Working)]].Count = int64(f.Working)
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
+		cells[at[sprint.Redealt]].Count = int64(f.Redealt)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
 			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now)}})
 	}

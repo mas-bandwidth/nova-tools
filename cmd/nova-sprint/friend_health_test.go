@@ -61,7 +61,7 @@ func TestFriendHealthIsTheSeatsAndFencedByItsGeneration(t *testing.T) {
 	seen := ta.now.UTC().Format(time.RFC3339)
 	out := ta.ok("friend health amy --state up --seen " + seen + " --generation 1")
 	assert.Equal(t, "FRIEND-HEALTH OK amy state=up seen="+seen+" generation=1 status=up\n", out)
-	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "amy     |     0 |       0 |     8 |    0 | 0.0% | up")
+	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "amy     |     0 |       0 |     8 |    0 | 0.0% |       0 | up")
 
 	out = ta.ok("friend health amy --state up --seen " + seen + " --generation 1")
 	assert.Contains(t, out, "replayed=true", "the same proof again is answered as recorded")

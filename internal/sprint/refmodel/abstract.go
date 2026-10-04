@@ -84,7 +84,7 @@ func Abstract(o Observed) State {
 			continue
 		}
 		c := s.Fleet.Card(WC(id, p.Attempt))
-		if c != nil && c.Placed() && (c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed) {
+		if c != nil && c.Placed() && (c.Col == sprint.Finished || c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed || c.Col == sprint.Redealt) {
 			p.Attempt++
 			a.Primaries[id] = p
 		}
@@ -98,8 +98,8 @@ func Abstract(o Observed) State {
 			Redeals: c.Int("redeals"), TakeEnded: c.F(sprint.FieldTakeEnded) != "", Refusers: sprint.StagingRefusers(c)}
 		if c.Placed() {
 			w.Place, w.Member = c.Col, c.Row
-			if c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed {
-				w.Place = sprint.Done // the member's ok and failed cells are the done column's parts
+			if c.Col == sprint.Finished || c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed || c.Col == sprint.Redealt {
+				w.Place = sprint.Done // the member's finished, ok, failed and redealt cells are the done column's parts
 			}
 		}
 		switch c.F("ok") {

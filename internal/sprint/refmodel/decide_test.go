@@ -583,7 +583,7 @@ func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
 		assert.True(t, names[p.Name], "the tick's part %s is no duty: Decide would leave it out", p.Name)
 	}
 	want := []string{refmodel.DutyLevel, refmodel.DutyLevelReads, refmodel.DutyResolve, refmodel.DutyDeal, refmodel.DutyAccept, refmodel.DutyAsk, refmodel.DutyResume,
-		refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
+		refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyVerdicts, refmodel.DutyRedeal, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
 	var got []string
 	for _, d := range refmodel.Duties {
 		got = append(got, d.Name)

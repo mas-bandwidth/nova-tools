@@ -78,8 +78,8 @@ func tell(run []sprint.Line) []storyLine {
 	for _, l := range run {
 		if l.Note == nil {
 			moved = true
-			if l.Table == sprint.Fleet && (strings.HasSuffix(l.To, ":"+sprint.DoneOK) || strings.HasSuffix(l.To, ":"+sprint.DoneFailed)) {
-				finished = true
+			if sprint.FinishedAs(l) != "" {
+				finished = true // the worker's finish, ok or failed (docs/SPEC-SPRINT.md section 1)
 			}
 		}
 		if l.Note != nil && l.Note.Type == sprint.NBatchLanded {
@@ -242,6 +242,9 @@ func texts(a *app, about []sprint.Line) []storyText {
 			case sprint.Fleet:
 				who, _, _ = strings.Cut(l.From, ":")
 				verdict = col
+				if w := sprint.FinishedAs(l); w != "" {
+					verdict = w // the worker's own word, ok or failed, not the cell it waits in
+				}
 			case sprint.Readers:
 				who, _, _ = strings.Cut(l.To, ":")
 				verdict = col
@@ -369,7 +372,7 @@ func (a *app) printStory(w io.Writer, v store.CardInfo, events []storyLine, text
 func outcome(l sprint.Line) string {
 	a := attemptOf(l)
 	switch {
-	case l.Note == nil && l.Table == sprint.Fleet && strings.HasSuffix(l.To, ":"+sprint.DoneFailed):
+	case sprint.FinishedAs(l) == sprint.DoneFailed:
 		return "attempt " + a + " failed"
 	case l.Note == nil && l.Table == sprint.Readers && strings.HasSuffix(l.To, ":"+sprint.Broken):
 		reader, _, _ := strings.Cut(l.To, ":")

@@ -17,8 +17,8 @@ SPRINT TABLE
 work  | waiting | ready | working | review | merging | landed | cost
 readers | asked | reading | ok | broken
 merge | queued | merged | stuck | ci | state
-friends | ready | working | width | done | ok% | status
-fleet | ready | working | width | done | ok% | status | load
+friends | ready | working | width | done | ok% | redealt | status
+fleet | ready | working | width | done | ok% | redealt | status | load
 ```
 
 | table | rows | members | bookkeeping for |
@@ -66,9 +66,11 @@ refused (exit 3) and changes nothing.
 A friend's counts are her sprint cards' (a friend's card, below), read by
 `where` from her fleet row `friend.<name>`, never from her working directory: a
 card dealt to her is `working`; a `Verdict: LAND` report (with its `Head:` the
-tip) finishes it done ok, a `Verdict: HOLD` or `FAIL` (or `FAILED`, `BROKEN`)
-report done failed, and a report with no verdict word is done failed too,
-never ok. `ready` is never a friend's card's state: the tick deals a card
+tip) finishes it ok, a `Verdict: HOLD` or `FAIL` (or `FAILED`, `BROKEN`)
+report failed, and a report with no verdict word is failed too, never ok;
+either way her word moves the card to her hidden `finished` cell and counts in
+no `done` and no `ok%`: the readers' verdict does (the fleet's ok and failed,
+below). `ready` is never a friend's card's state: the tick deals a card
 straight into `working` (`sprint.FriendDeal`). A hand-written inbox job that is
 no card (an `inbox/<job>/` directory named for no card of the sprint) is
 outside the sprint and is shown nowhere in the table; the coordinator's NOW.md
@@ -78,9 +80,10 @@ is her width, the jobs she works at once: her nova-config friend row's `width`
 owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends?
 Start at 8 for each?"), which friend sync writes to her row each pass (a row
 whose width is below 1 is refused, exit 1, nothing written), summed in the
-footer; `ok` and `failed` count her cards done; `done` is `sum(ok+failed)` and
-`ok%` is `pct(ok/ok+failed)`, pooled over the friends in the footer, the fleet
-table's own formulas.
+footer; `ok` and `failed` count her cards the readers read ok and broken; `done`
+is `sum(ok+failed)` and `ok%` is `pct(ok/ok+failed)`, pooled over the friends in
+the footer, the fleet table's own formulas; `redealt` counts her cards taken back
+past their deadline (below), summed in the footer.
 
 A friend says she is there with `friend beat <friend>`, which her own machinery
 runs every second (`FriendBeatEvery`) beside her harness (it writes
@@ -117,7 +120,14 @@ after 15 sec. asleep. better."; the word was `asleep` until the owner,
 `BeatDeadline`, down past 45 s, section 5) is separate and stays longer: a
 machine down has its cards taken back; a friend holds the cards dealt to
 her row (a friend's card, below) and keeps them when she goes down, the
-deadline judging them. The
+deadline judging them: a friend's card past its deadline unfinished (`WorkDeadline`,
+ready or working) is redealt, never failed and never a late judgment
+(`sprint.TickFriendRedeal`, a part of the fleet's update after `presence` and
+`verdicts`; the owner, 2026-10-04: "Are they actually doing the work that is shown
+in the friend table? Really?"): its work card goes to her `redealt` cell at its
+next generation, so her late report finishes nothing, its primary goes back to
+ready with a happened note "a friend's card past its deadline was redealt", and
+the next deal deals its next attempt to a friend up with room. The
 rows are in the fleet table's order (`FleetOrder`): up, then held, then down,
 each by name. The table is drawn by `where` from those records when it draws
 the frame, never stored as a table: no tick, step, epoch or clear touches it,
@@ -522,13 +532,26 @@ where each stream's control card holds the stream's state, cause, ci and
 show it. The fleet table has a hidden `ctl` column where each member's control
 card holds its status, a hidden `withdrawn`
 column where a work card withdrawn because no member was up is kept (the table
-layer never places a removed member again), and hidden `ok` and `failed`
-columns that hold a member's finished work cards, finished ok and finished
-failed. `done` and `ok%` are the table's own formulas over those two cells,
+layer never places a removed member again), a hidden `finished` column where a
+work card its worker finished, ok or failed, waits for the readers' verdict, and
+hidden `ok` and `failed` columns that hold a member's work cards the readers read
+ok (as many different readers as the primary needs, `ReadsNeeded`) and broken
+(a reader read the attempt broken) (the owner, 2026-10-04: "trust but VERIFY";
+"I want to trust the ok%"). The fleet's update moves each finished card on once
+its verdict is in (`sprint.TickVerdicts`, after `presence`, at most
+`TickMaxMoves` a tick, the rest due), and a rework, which retires the attempt's
+read cards, moves it in the same step; work no reader reads (a failed finish)
+stays finished and counts nowhere. `redealt` (shown, summed) counts a friend's
+cards taken back past their deadline (a friend's card, above); a machine's row
+shows 0. A live store made before `finished` and `redealt` takes them, on a stopped
+machine before a build that writes them is installed, from
+`internal/sprint/store/migrations/0001_fleet_finished_redealt.sh`, whose result
+`TestTheMigrationGivesTheFleetTableItsLockedShape` checks; cells already in `ok`
+and `failed` keep the worker's word they were placed with until a clear. `done` and `ok%` are the table's own formulas over the ok and failed cells,
 computed at render and never written: `done:sum(ok+failed)` and
 `okpct:pct(ok/ok+failed):pooled:ok%` (the column `okpct`, labelled `ok%`). A
-member with no finished card shows `0` and `0.0%`; the footer pools ok% over
-the members (every ok over every finished card, never a mean of the members'
+member with no verdict shows `0` and `0.0%`; the footer pools ok% over
+the members (every ok over every card with a verdict, never a mean of the members'
 percentages). The text cells (ci, state, since, status, load) are display
 copies of the control cards, written after each step; the control cards are
 written with the moves. A step whose write committed and whose display copies

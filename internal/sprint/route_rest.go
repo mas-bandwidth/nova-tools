@@ -304,7 +304,7 @@ type routeEnd struct {
 // A take that ended with its member down keeps no record and is not counted.
 func routeEnds(fleet *Table) map[string][]routeEnd {
 	out := map[string][]routeEnd{}
-	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, Withdrawn) {
+	for _, c := range fleet.Column(Ready, Working, Finished, DoneOK, DoneFailed, Withdrawn) {
 		takes, numbers := ProviderTakes(c)
 		for i, t := range takes {
 			at, err := time.Parse(time.RFC3339, t.Finished)
@@ -314,7 +314,7 @@ func routeEnds(fleet *Table) map[string][]routeEnd {
 			taken, _ := time.Parse(time.RFC3339, t.Taken)
 			out[t.Route] = append(out[t.Route], routeEnd{card: c.ID, take: numbers[i], at: at, taken: taken, noResult: IsNoResult(t.Error), refused: refusal(t.Error)})
 		}
-		if c.Col != DoneOK && c.Col != DoneFailed {
+		if c.Col != Finished && c.Col != DoneOK && c.Col != DoneFailed {
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, c.F("finished"))
