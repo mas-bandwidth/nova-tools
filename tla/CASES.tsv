@@ -320,3 +320,8 @@ MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	
 MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-
+MCServerLanes.cfg	MCServerLanes.tla	pass	-	ignore-terminal	serverlanes	required	-
+MCServerLanesLive.cfg	MCServerLanes.tla	pass	-	ignore-terminal	serverlanes	required	-
+MCServerLanesBrokenBeatOnLine.cfg	MCServerLanes.tla	invariant	BeatNeverWaitsForTheLine|LanesHoldNoLine	ignore-terminal	serverlanes	required	-
+MCServerLanesBrokenReadOnLine.cfg	MCServerLanes.tla	invariant	ReadWaitsOnlyForReads|LanesHoldNoLine	ignore-terminal	serverlanes	required	-
+MCServerLanesBrokenRunGone.cfg	MCServerLanes.tla	invariant	GoneNeverRuns	ignore-terminal	serverlanes	required	-

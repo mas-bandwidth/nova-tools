@@ -226,12 +226,19 @@ func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	b, err := st.FriendBeat(context.Background(), friend)
+	return friendBeatOn(context.Background(), st, friend, c.json, stdout, stderr)
+}
+
+// friendBeatOn is one beat of the friend on the store, and what friend beat prints of it:
+// the verb's, and the server's beat lane's (servelanes.go), which answer alike.
+func friendBeatOn(ctx context.Context, st *store.Store, friend string, asJSON bool, stdout, stderr io.Writer) int {
+	const name = "friend beat"
+	b, err := st.FriendBeat(ctx, friend)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
-	sayOK(stdout, c.json, name, "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At})
+	sayOK(stdout, asJSON, name, "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At})
 	return 0
 }
 
