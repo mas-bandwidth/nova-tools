@@ -425,8 +425,8 @@ func TestNoExportedFieldOfATableGivesItsCardsOrRows(t *testing.T) {
 	t.Parallel()
 	typ := reflect.TypeFor[Table]()
 	var exported []string
-	for i := 0; i < typ.NumField(); i++ {
-		if f := typ.Field(i); f.IsExported() {
+	for f := range typ.Fields() {
+		if f := f; f.IsExported() {
 			exported = append(exported, f.Name)
 		}
 	}

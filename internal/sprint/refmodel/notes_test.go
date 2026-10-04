@@ -64,8 +64,8 @@ func TestEveryFieldOfANoteIsCarriedOrLeftOutInWords(t *testing.T) {
 	t.Parallel()
 	typ := reflect.TypeFor[sprint.Note]()
 	seen := map[string]bool{}
-	for i := range typ.NumField() {
-		name := typ.Field(i).Name
+	for field := range typ.Fields() {
+		name := field.Name
 		seen[name] = true
 		c, ok := noteCarry[name]
 		switch {
@@ -73,7 +73,7 @@ func TestEveryFieldOfANoteIsCarriedOrLeftOutInWords(t *testing.T) {
 			assert.Failf(t, "assertion failed", "the note has a field %s that no test says a move carries or leaves out", name)
 		case c.as == "left out" && c.why == "":
 			assert.Failf(t, "assertion failed", "the field %s is left out of a move and says no why", name)
-		case c.as == "attr" && strings.Contains(typ.Field(i).Tag.Get("json"), "-"):
+		case c.as == "attr" && strings.Contains(field.Tag.Get("json"), "-"):
 			assert.Failf(t, "assertion failed", "the field %s is an attr but has no name in the note's JSON", name)
 		}
 	}
