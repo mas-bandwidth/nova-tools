@@ -548,7 +548,7 @@ func (w world) sleepFriend(c *tool.Call) *tool.Out {
 			return fmt.Errorf("sleep needs a coordinator; pass --coordinator <name> or save one with nova-friend run")
 		}
 		if !validCoordinator(s.Coordinator) {
-			return fmt.Errorf("saved coordinator %q is not a valid name; pass a valid --coordinator")
+			return fmt.Errorf("saved coordinator %q is not a valid name; pass a valid --coordinator", s.Coordinator)
 		}
 		s.Asleep = true
 		return nil
