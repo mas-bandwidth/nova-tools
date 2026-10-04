@@ -7,6 +7,7 @@ README: 8/10
 
 ## Reasons
 
+The source under review is exactly 0c5803c2de406c1b0b2b0841f579c9bf73406b1c.
 The README's table row for this tool is honest and lands a stranger in the
 right place: one sentence ("run a local Redis store, and keep short-lived named
 values in it") and a first command that writes an expiring value,
