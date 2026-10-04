@@ -12,6 +12,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// withoutGitAuthorEnv is os.Environ without the variables that tell git who the
+// author and committer are: a repository built here names its own per commit
+// through git's config, and the ambient names a bench exports would otherwise
+// win over every commit's own.
+func withoutGitAuthorEnv() []string {
+	out := make([]string, 0, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "GIT_AUTHOR_") || strings.HasPrefix(name, "GIT_COMMITTER_") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 func TestParseAuthorsReadsAMapping(t *testing.T) {
 	t.Parallel()
 
@@ -128,6 +143,7 @@ func TestAuthorsFromGitAgainstARealRepository(t *testing.T) {
 		cmd.Env = append(os.Environ(),
 			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 			"GIT_AUTHOR_DATE=2026-09-18T09:00:00Z", "GIT_COMMITTER_DATE=2026-09-18T09:00:00Z",
+			"GIT_AUTHOR_NAME=Rowan Claude", "GIT_AUTHOR_EMAIL=rowan@mas-bandwidth.com",
 			"GIT_COMMITTER_NAME=Rowan Claude", "GIT_COMMITTER_EMAIL=rowan@mas-bandwidth.com",
 		)
 		out, err := cmd.CombinedOutput()
@@ -145,8 +161,20 @@ func TestAuthorsFromGitAgainstARealRepository(t *testing.T) {
 	git("add", "-A")
 	git("commit", "-q", "-m", "the verb arrives")
 	write("package main\n\nfunc dispatch(v string) {\n\tswitch v {\n\tcase \"links\":\n\tcase \"nocode\":\n\t}\n}\n")
-	git("-c", "user.name=Somebody Later", "-c", "user.email=later@example.com",
-		"commit", "-qam", "a second verb, by somebody else")
+	// The second commit is somebody else's. The author and committer variables
+	// the helper exports to git are unset for this one call, because a variable
+	// outranks the config a `-c` sets and only git's own config can name another.
+	gitNoAuthorEnv := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(withoutGitAuthorEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
+	}
+	gitNoAuthorEnv("config", "user.name", "Somebody Later")
+	gitNoAuthorEnv("config", "user.email", "later@example.com")
+	gitNoAuthorEnv("commit", "-qam", "a second verb, by somebody else")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -195,10 +223,7 @@ func TestProgressSpeaksUpOnARunThatLooksLikeAHangAndThenHoldsItsPace(t *testing.
 	clock.tick(10 * time.Millisecond)
 	progress(4, 4) // the last one always speaks
 	want := [][2]int{{1, 4}, {3, 4}, {4, 4}}
-	require.Len(t, said, len(want), "progress lines %v, want %v", said, want)
-	for i := range want {
-		require.Equal(t, want[i], said[i], "progress lines %v, want %v", said, want)
-	}
+	require.Equal(t, want, said, "progress lines %v, want %v", said, want)
 }
 
 // A bare key (the tool's own invocation, Verb "") used to index an empty

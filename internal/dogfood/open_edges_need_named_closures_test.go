@@ -25,18 +25,13 @@ func edgeReceipt(key, by, at, notes string) Receipt {
 	return Receipt{Tool: tool, Verb: verb, By: by, At: at, OK: false, Notes: notes}
 }
 
-func cleanReceipt(key, by, at string) Receipt {
-	tool, verb, _ := strings.Cut(key, " ")
-	return Receipt{Tool: tool, Verb: verb, By: by, At: at, OK: true, Notes: "real work"}
-}
-
 // THE EDGE ITSELF. Stella finds something; Johnny runs the same verb an hour later and it
 // works for him. Johnny's pass is not a fix, and it is not an answer to Stella.
 func TestAnUnrelatedPassDoesNotCloseSomebodyElsesEdge(t *testing.T) {
 	t.Parallel()
 
 	stella := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "the verb refused a relative path")
-	johnny := cleanReceipt("nova-check links", "johnny", "2026-09-18T10:00:00Z")
+	johnny := receipt("nova-check links", "johnny", "2026-09-18T10:00:00Z", true, 0)
 
 	rows, summary := Ledger(verbs("nova-check links"), []Receipt{stella, johnny}, nil)
 	require.Equal(t, 1, summary.OpenEdges, "open-edges=%d; johnny's pass closed stella's edge, which nobody read\n%s", summary.OpenEdges, summary.Line())
@@ -60,7 +55,7 @@ func TestTheDogfooderWhoFoundItClosesItByRunningItAgain(t *testing.T) {
 	t.Parallel()
 
 	stella := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "the verb refused a relative path")
-	again := cleanReceipt("nova-check links", "stella", "2026-09-18T12:00:00Z")
+	again := receipt("nova-check links", "stella", "2026-09-18T12:00:00Z", true, 0)
 
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{stella, again}, nil)
 	require.Equal(t, 0, summary.OpenEdges, "open-edges=%d; the dogfooder who found it ran it again and found nothing\n%s", summary.OpenEdges, summary.Line())
@@ -72,7 +67,7 @@ func TestAReceiptThatNamesTheEdgeClosesIt(t *testing.T) {
 	t.Parallel()
 
 	stella := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "the verb refused a relative path")
-	fixer := cleanReceipt("nova-check links", "rowan", "2026-09-18T11:00:00Z")
+	fixer := receipt("nova-check links", "rowan", "2026-09-18T11:00:00Z", true, 0)
 	fixer.Closes = stella.ID()
 
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{stella, fixer}, nil)
@@ -87,7 +82,7 @@ func TestAClosesThatNamesNothingClosesNothing(t *testing.T) {
 	t.Parallel()
 
 	stella := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "the verb refused a relative path")
-	fixer := cleanReceipt("nova-check links", "rowan", "2026-09-18T11:00:00Z")
+	fixer := receipt("nova-check links", "rowan", "2026-09-18T11:00:00Z", true, 0)
 	fixer.Closes = "deadbeef"
 
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{stella, fixer}, nil)
@@ -100,7 +95,7 @@ func TestEachEdgeIsClosedOnItsOwn(t *testing.T) {
 
 	stella := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "the verb refused a relative path")
 	johnny := edgeReceipt("nova-check links", "johnny", "2026-09-18T09:30:00Z", "the line named no remedy")
-	fixer := cleanReceipt("nova-check links", "rowan", "2026-09-18T11:00:00Z")
+	fixer := receipt("nova-check links", "rowan", "2026-09-18T11:00:00Z", true, 0)
 	fixer.Closes = stella.ID()
 
 	rows, summary := Ledger(verbs("nova-check links"), []Receipt{stella, johnny, fixer}, nil)

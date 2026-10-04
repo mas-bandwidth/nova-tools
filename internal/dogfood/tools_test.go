@@ -67,10 +67,7 @@ func TestVerbsFromToolsAsksEachBinaryForItsOwnVerbs(t *testing.T) {
 	require.NoError(t, err, "VerbsFromTools: %v", err)
 	require.Empty(t, failures, "failures %+v", failures)
 	require.Equal(t, binName("nova-fake"), strings.Join(asked, ","), "ran %v; only executable nova-* files are run", asked)
-	var got []string
-	for _, v := range verbs {
-		got = append(got, v.Key())
-	}
+	got := verbKeys(verbs)
 	want := "nova-fake session start|nova-fake ask|nova-fake asks|nova-fake help"
 	require.Equal(t, want, strings.Join(got, "|"), "verbs %q, want %q", strings.Join(got, "|"), want)
 }
@@ -125,10 +122,7 @@ func TestMergeVerbsLetsTheBinariesWinAndTheReferenceFillIn(t *testing.T) {
 	fromTools := verbs("nova-work ask", "nova-work asks")
 	fromCLI := verbs("nova-work session start", "nova-check links")
 	got := MergeVerbs(fromTools, fromCLI)
-	var keys []string
-	for _, v := range got {
-		keys = append(keys, v.Key())
-	}
+	keys := verbKeys(got)
 	want := "nova-work ask|nova-work asks|nova-check links"
 	require.Equal(t, want, strings.Join(keys, "|"), "merged %q, want %q: a tool that answered for itself is complete", strings.Join(keys, "|"), want)
 }
