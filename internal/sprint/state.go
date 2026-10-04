@@ -311,10 +311,6 @@ type Snapshot struct {
 	// tier, read with the routes; a tier with none deals from its enabled routes
 	// in name order (tierArray).
 	Tiers map[string][]string
-	// Lanes is each fleet machine's local lanes as nova-config applied them (the machine row's
-	// local_lanes), read with the routes: how many cards the local routes served on it take at
-	// once (route.go, the lanes); a machine it does not name serves none.
-	Lanes map[string]int
 	// DecideBounce and DecideReview are the sprint row's bars on a decide read's
 	// p(defect) as nova-config applied them (sprint:decide_bounce,
 	// sprint:decide_review), read with the routes; both "" is no decide read
@@ -348,9 +344,9 @@ type Snapshot struct {
 	// rests is the routes resting at Now, settled once by a step that deals
 	// (withRests, route_rest.go); nil is not yet settled.
 	rests map[string]RouteRest
-	// lanesBusy is each serving machine's cards in flight on its local routes, counted once
-	// by the first draw that reads it and moved by every draw after (route.go, laneOpen).
-	lanesBusy map[string]int
+	// routeBusy is each route's cards in flight, counted once by the first draw that reads
+	// it and moved by every capped draw after (route.go, routeOpen).
+	routeBusy map[string]int
 	// restScans, when set, counts withRests' scans of the fleet table: the tick's
 	// cost gate (TestTheTicksCheckSettlesTheRestsOnceAtScale) holds them to one a part.
 	restScans *int

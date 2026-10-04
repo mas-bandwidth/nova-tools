@@ -174,13 +174,14 @@ const (
 	KindTier    = "tier"
 )
 
-// The local tier in a fleet (docs/SPEC-LOCAL.md, "Fleet"): a machine row's local_lanes is how many
-// cards its local routes take at once, and a route of provider local names the machine it
-// is served on. The sprint reads both (internal/sprint/route.go, the lanes).
+// The local tier in a fleet (docs/SPEC-LOCAL.md, "Fleet"): a route of provider local names the
+// endpoint a local engine serves its model at, and any route may carry a concurrency, the
+// most cards that may use it at once. The sprint reads both (internal/sprint/route.go, the
+// route's cap).
 const (
-	FieldLocalLanes   = "local_lanes"
-	FieldRouteMachine = "machine"
-	ProviderLocal     = "local"
+	FieldRouteEndpoint    = "endpoint"
+	FieldRouteConcurrency = "concurrency"
+	ProviderLocal         = "local"
 )
 
 // FriendRoles are the roles someone decides for a friend. The coordinator
@@ -327,7 +328,7 @@ const CoordinatorRole = "coordinator"
 // (it names machines, and a friend's desired slots are charged to the
 // fleet's coordinator machine when her beat names none), friends, the
 // sprint row (it names a friend), loops (each names a machine), routes
-// (a local one names the machine it is served on), and tiers last (each names routes).
+// (each names no row), and tiers last (each names routes).
 //
 // A machine's record is exactly the declared facts something reads, one
 // reader each, and nothing invented. Its name is the tailnet host: `ssh <name>`
@@ -347,7 +348,6 @@ var Kinds = []*Kind{
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
-			{Name: FieldLocalLanes, Type: TypeInt, Help: "the local model lanes it serves over the tailnet (nova-local, docs/SPEC-LOCAL.md \"Fleet\"): how many cards its local routes take at once, all of them together; 0 (the default) serves none. independent of --width (the cards its member works); either may be 0"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
 	},
@@ -441,7 +441,8 @@ var Kinds = []*Kind{
 			{Name: "tier", Type: TypeEnum, Enum: RouteTiers, Required: true, Help: "the tier it serves: one of " + strings.Join(RouteTiers, ", ") + " (frontier cards are never drawn from routes, they escalate to the coordinator)"},
 			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
-			{Name: FieldRouteMachine, Type: TypeRef, Ref: KindMachine, Help: "the machine a local route is served on (provider local, docs/SPEC-LOCAL.md \"Fleet\"): a machine row whose --local_lanes is above 0; empty for every other provider"},
+			{Name: FieldRouteEndpoint, Type: TypeText, Help: "the endpoint a local route's model is served at (provider local, nova-local, docs/SPEC-LOCAL.md \"Fleet\"): an http URL such as http://<host>:11434/v1; required for provider local and refused for any other"},
+			{Name: FieldRouteConcurrency, Type: TypeInt, Help: "the most cards that may use the route at once, a cap the deal holds the route to; 0 (the default) is no cap, and a local route wants one: the endpoint's max concurrent requests. N instances of a model are N routes of one concurrency each, or one route of concurrency N"},
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
 			{Name: "usd", Type: TypeDecimal, Help: "the dollar budget per card, a decimal like 0.50: the harness's reported cost at which the card is stopped, beside the token budget; empty (the default) is none"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
@@ -556,15 +557,23 @@ func checkRoute(r Row) error {
 	if _, ok := r.Fields["deadline"]; ok && r.Int("deadline") <= 0 {
 		problems = append(problems, fmt.Sprintf("route %s has --deadline 0; want the seconds a card on it may run, above 0", r.Name))
 	}
-	// a local route names the machine it is served on, and only a local route names one
-	// (docs/SPEC-LOCAL.md, "Fleet")
+	// a local route names the endpoint that serves it and a concurrency, and only a local
+	// route names an endpoint (docs/SPEC-LOCAL.md, "Fleet")
 	if p, ok := r.Fields["provider"]; ok {
-		m := r.Fields[FieldRouteMachine]
+		e := r.Fields[FieldRouteEndpoint]
 		switch {
-		case p == ProviderLocal && m == "":
-			problems = append(problems, fmt.Sprintf("route %s is provider local and names no --machine; want the machine row that serves it (its --local_lanes above 0)", r.Name))
-		case p != ProviderLocal && m != "":
-			problems = append(problems, fmt.Sprintf("route %s names --machine %s and is provider %s; only a local route is served on a fleet machine, so want --machine \"\" or --provider local", r.Name, m, p))
+		case p == ProviderLocal && e == "":
+			problems = append(problems, fmt.Sprintf("route %s is provider local and names no --endpoint; want the http URL its engine serves it at, such as http://<host>:11434/v1", r.Name))
+		case p != ProviderLocal && e != "":
+			problems = append(problems, fmt.Sprintf("route %s names --endpoint %s and is provider %s; only a local route is served at an endpoint, so want --endpoint \"\" or --provider local", r.Name, e, p))
+		}
+		if _, has := r.Fields[FieldRouteConcurrency]; has && p == ProviderLocal && r.Int(FieldRouteConcurrency) <= 0 {
+			problems = append(problems, fmt.Sprintf("route %s is provider local and has --concurrency 0; want the endpoint's max concurrent requests, above 0", r.Name))
+		}
+	}
+	if e := r.Fields[FieldRouteEndpoint]; e != "" {
+		if u, err := url.Parse(e); err != nil || u.Scheme != "http" || u.Hostname() == "" {
+			problems = append(problems, fmt.Sprintf("route %s has --endpoint %q; want an http URL such as http://<host>:11434/v1", r.Name, e))
 		}
 	}
 	// a dollar budget is above 0: empty is no cap, and a 0 would be dealt onto every card

@@ -61,10 +61,10 @@ func TestCauseFromTextNamesTheHarnessCatalog(t *testing.T) {
 	assert.Equal(t, "provider: class=unknown-model status=- msg=model not found in the harness catalog: openrouter/x-ai/grok-4.7", c.Reason())
 }
 
-// A local route's provider is declared at its serving machine's endpoint with no key, a
+// A local route's provider is declared at its endpoint with no key, a
 // model declared under it before is kept, and a config that is no JSON object is unchanged
 // (docs/SPEC-LOCAL.md, "Fleet").
-func TestDeclareLocalProviderPointsTheHarnessAtTheServingMachine(t *testing.T) {
+func TestDeclareLocalProviderPointsTheHarnessAtTheEndpoint(t *testing.T) {
 	t.Parallel()
 	in := []byte(`{"provider":{"local":{"models":{"gemma4-32k":{}}},"openrouter":{"options":{"apiKey":"{env:K}"}}}}`)
 	out, ok := DeclareLocalProvider(in, "http://g1.test:11434/v1")

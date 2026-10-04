@@ -64,7 +64,7 @@ func DeclareRouteModel(body []byte, provider, model string) ([]byte, bool) {
 const LocalProvider = "local"
 
 // DeclareLocalProvider declares the provider local in the job's harness config at base,
-// the OpenAI-compatible endpoint of the fleet machine that serves the route's model
+// the OpenAI-compatible endpoint that serves the route's model
 // (`provider.local: {npm, name, options.baseURL}`), keeping any models already declared
 // under it. It carries no key: a local engine wants none, and the harness reaches a
 // keyless provider through its baseURL alone. ok is false when the config is not a JSON

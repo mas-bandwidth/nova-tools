@@ -665,7 +665,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		cfg.netAllow = providerLoopback(cfg.configFile, provider)
 	}
 	if u, err := url.Parse(cfg.localBase); cfg.localBase != "" && err == nil && loopbackHost(u.Hostname()) && u.Port() != "" {
-		cfg.netAllow = net.JoinHostPort(u.Hostname(), u.Port()) // a local route served on this machine
+		cfg.netAllow = net.JoinHostPort(u.Hostname(), u.Port()) // a local route served at a loopback endpoint
 	}
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
@@ -2728,7 +2728,7 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		raw = body
 	}
 	body, merged := swarm.MergeFencePermission(raw, jobDir, reads)
-	// a local route's provider is declared at its serving machine (docs/SPEC-LOCAL.md, "Fleet"),
+	// a local route's provider is declared at its endpoint (docs/SPEC-LOCAL.md, "Fleet"),
 	// before its model is, so the model lands under it
 	if merged && cfg.localBase != "" {
 		if declared, ok := swarm.DeclareLocalProvider(body, cfg.localBase); ok {

@@ -139,7 +139,6 @@ nothing invented.
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
-| `local_lanes` | int | (0) | the deal: how many cards the local routes served on it take at once, all of them together; 0 serves none; independent of `width` (the cards its member works): `--width 0 --local_lanes <n>` is no member and n lanes, `--width <w> --local_lanes 0` the reverse (docs/SPEC-LOCAL.md, "Fleet"; migration 0028) | `machine:<m>` |
 | `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are
@@ -284,7 +283,8 @@ row: the code names no provider or model.
 | `tier` | enum `flash`, `pro` | yes | the deal: the cards of this tier are dealt on it | `route:<r>` |
 | `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
-| `machine` | ref machine | (empty) | the deal: the fleet machine a local route (`--provider local`) is served on, whose `local_lanes` bound its cards in flight; required for provider local and refused for any other (docs/SPEC-LOCAL.md, "Fleet"; migration 0028) | `route:<r>` |
+| `endpoint` | text | (empty) | the deal: the http URL a local route's model is served at (`--provider local`, nova-local, docs/SPEC-LOCAL.md, "Fleet"), such as `http://<host>:11434/v1`; required for provider local and refused for any other; the member points the harness at it | `route:<r>` |
+| `concurrency` | int | (0) | the deal: the most cards that may use the route at once; 0 is no cap, and a local route wants one (the endpoint's max concurrent requests; migration 0028); a machine's lanes are its `width`, and the cap belongs to the route, never to a machine row | `route:<r>` |
 | `tokens` | int | (0) | the deal: the token budget per card; 0 is unmetered and the deadline is the only stop | `route:<r>` |
 | `usd` | decimal | (empty) | the deal: the dollar budget per card, the harness's reported cost at which native stops the card (`stopped=usd`), beside the token budget; above 0 when set (a 0 is refused at `add` and `set`), empty is no cap | `route:<r>` |
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
@@ -313,7 +313,7 @@ no exponent, kept as text in its one spelling (`internal/cardcost`,
 The kind's `Check`: `provider` is one word with no slash or blank, `model`
 is not empty and has no blank, and `deadline` is above 0; `long_context`
 above 0 comes with both long prices, and a long price with a threshold;
-`price_as_of` is a date; `usd`, when set, is above 0; a route that is disabled has a note; a route of provider `local` names its `machine` and no other route names one. A route names no row of another kind but the machine a local route is served on.
+`price_as_of` is a date; `usd`, when set, is above 0; a route that is disabled has a note; a route of provider `local` names its `endpoint` and a `concurrency` above 0, and no other route names an endpoint. A route names no row of another kind.
 
 ### The note
 

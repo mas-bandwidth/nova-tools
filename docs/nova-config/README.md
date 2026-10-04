@@ -134,8 +134,8 @@ CONFIG ADD kind=machine name=m2 rev=1
 nova-config machine add m1 --user nova --seat m1 --slots 64 --runners 1 --width 16 --tla true --as f1
 CONFIG ADD kind=machine name=m1 rev=2
 nova-config machine list
-MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true local_lanes=0 note=-
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 tla=false local_lanes=0 note=-
+MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=-
+MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 tla=false note=-
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -157,8 +157,8 @@ beat does not carry yet and `beat=none` for a machine that has never beaten:
 
 ```
 nova-config machine list --redis db1:6380
-MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true local_lanes=0 note=- beat=none
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 tla=false local_lanes=0 note=- os=- arch=- cores=64 memory_gb=- beat=<t>
+MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=- beat=none
+MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 tla=false note=- os=- arch=- cores=64 memory_gb=- beat=<t>
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -286,7 +286,7 @@ CONFIG LIST kind=loop rows=2
 nova-config loop set reader-m1 --argv '["/opt/bin/nova-swarm","member","--as","reader-m1","--reader","--width","16"]' --as a1
 nova-config loop set REFUSED: loop reader-m1: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's, read from the fleet row every tick; drop --width from the argv and set the machine's: machine set <m> --width <n>; run: nova-config loop show reader-m1
 nova-config machine show m1
-MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 width=4 tla=false local_lanes=0 note=- created=<t> updated=<t> loops=reader-m1,refresh-m1
+MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 width=4 tla=false note=- created=<t> updated=<t> loops=reader-m1,refresh-m1
 ```
 
 `--every <seconds>` runs it periodically and `--keepalive true` keeps a

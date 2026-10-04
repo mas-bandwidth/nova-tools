@@ -57,7 +57,7 @@ func localTool(w world) *tool.Tool {
 		How: `an engine (ollama) serves models from the shared store, <ai-root>/shared/models.
 status reads each engine and the box; serve makes <name>-<ctx>k, the context baked in, and loads it;
 worker writes the one JSON file nova-swarm reads. --base is loopback or a tailnet address only.
-In a fleet, local is a provider per machine: a route local-<model>-<machine> of provider local.
+In a fleet a route of provider local names its endpoint and its concurrency.
 It never fetches weights, never runs a prompt and never judges a model.`,
 		ExitTable: "0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).",
 		Verbs: []tool.Verb{
@@ -79,7 +79,7 @@ the AI root's shared/models (NOVA_AI_ROOT, else ~/ai). --list adds one MODEL lin
 			},
 			{
 				Name: "serve",
-				Usage: `serve --engine <name> --model <ref> --num-ctx <n> [--base <url>] [--keep-alive <d>] [--seed <n>] [--expect-digest <sha256:...>] [--max-load <f>] [--min-free <size>] [--require-shared-store] [--dry-run]
+				Usage: `serve --engine <name> --model <ref> --num-ctx <n> [--base <url>] [--keep-alive <d>] [--seed <n>] [--concurrency <n>] [--expect-digest <sha256:...>] [--max-load <f>] [--min-free <size>] [--require-shared-store] [--dry-run]
 serve --stop --engine <name> --model <tag> [--base <url>]`,
 				Example: "serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7",
 				Effect:  tool.Delivery + "; it asks the engine to create the derived tag and load it (--stop unloads it); nothing is written on this machine",
@@ -94,6 +94,7 @@ The box's load1 and mem_free are read first and printed; --max-load and --min-fr
 					f.Int("num-ctx", 0, "the context in tokens, a multiple of 1024 (required to serve; ollama's own default silently truncates)")
 					f.String("keep-alive", "30m", "how long the engine keeps the model loaded after a request")
 					f.String("seed", "", "the seed baked into the tag, a whole number; empty bakes none")
+					f.Int("concurrency", 1, "the most requests the endpoint takes at once (ollama's own OLLAMA_NUM_PARALLEL), at least 1; only the route line serve prints carries it")
 					f.String("expect-digest", "", "the digest the model must have (sha256:...); differing is exit 1")
 					f.String("max-load", "", "refuse when the one-minute load average is above this number")
 					f.String("min-free", "", "refuse when free memory is below this size (16G, 512M)")
@@ -105,6 +106,9 @@ The box's load1 and mem_free are read first and printed; --max-load and --min-fr
 						}
 						if p := local.ContextProblem(c.Int("num-ctx")); p != "" {
 							c.Problem(p)
+						}
+						if c.Int("concurrency") < 1 {
+							c.Problem(fmt.Sprintf("--concurrency wants at least 1 (got %d)", c.Int("concurrency")))
 						}
 						if s := c.Str("seed"); s != "" {
 							if _, err := strconv.Atoi(s); err != nil {
@@ -443,9 +447,9 @@ func (w world) serve(c *tool.Call) *tool.Out {
 		o.Note("shared=" + shared + ": " + why)
 	}
 	if host := hostOf(cl.Base); host != "" {
-		// served over the tailnet: the fleet's route row for it (docs/SPEC-LOCAL.md, Fleet)
-		o.Note(fmt.Sprintf("the fleet's route: nova-config route add %s --tier flash --provider %s --model %s --machine %s --deadline 1800 --price_input 0 --price_output 0",
-			local.RouteName(s.ServeAs, host), local.Provider, s.ServeAs, host))
+		// served over the tailnet: the fleet's route row for its endpoint (docs/SPEC-LOCAL.md, Fleet)
+		o.Note(fmt.Sprintf("the fleet's route: nova-config route add %s --tier flash --provider %s --model %s --endpoint %s --concurrency %d --deadline 1800 --price_input 0 --price_output 0",
+			local.RouteName(s.ServeAs, host), local.Provider, s.ServeAs, cl.Base, c.Int("concurrency")))
 	}
 	return o
 }

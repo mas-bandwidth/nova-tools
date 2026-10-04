@@ -42,10 +42,13 @@ type Route struct {
 	Tier     string `json:"tier"`
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
-	// Machine is the fleet machine a local route (provider local) is served on, "" for every
-	// other route (docs/SPEC-LOCAL.md, "Fleet"; the lanes below).
-	Machine string `json:"machine,omitempty"`
-	Tokens  int    `json:"tokens"` // 0 is unmetered
+	// Endpoint is the http URL a local route (provider local) is served at, "" for every
+	// other route (docs/SPEC-LOCAL.md, "Fleet").
+	Endpoint string `json:"endpoint,omitempty"`
+	// Concurrency is the most cards that may use the route at once, 0 for no cap: a local
+	// endpoint's max concurrent requests, which a draw holds the route to (the cap below).
+	Concurrency int `json:"concurrency,omitempty"`
+	Tokens      int `json:"tokens"` // 0 is unmetered
 	// USD is the route's dollar budget per card, a canonical decimal ("0.5"), "" for none:
 	// the harness's reported cost at which native stops the card (nova-tools #5094).
 	USD      string `json:"usd,omitempty"`
@@ -79,8 +82,8 @@ const (
 	// flash first on every card, then the tier the machine escalated it to (NextTier);
 	// the tier its brief's line 1 names is its ceiling.
 	FieldTierNow = "tier_now"
-	// FieldServe is a work or read card's serving machine: written by a draw on a local route,
-	// empty on every other; the member points the harness at it and the lanes count it.
+	// FieldServe is a work or read card's serving endpoint: written by a draw on a local route,
+	// empty on every other; the member points the harness at it.
 	FieldServe = "serve"
 )
 
@@ -183,17 +186,17 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	var rested []string
 	var full []string
 	for _, r := range s.Routes {
-		if r.Tier != tier || !r.Enabled || !s.laneServed(r) {
+		if r.Tier != tier || !r.Enabled {
 			continue
 		}
 		if rest, ok := s.resting(r.Name); ok {
 			rested = append(rested, r.Name+" until "+rest.UntilSaid()+": "+rest.Said())
 			continue
 		}
-		// a local route whose machine's lanes are all taken is skipped by a draw, never by
-		// the judgment's read (ri nil): it serves the tier, and the card waits for a lane
-		if ri != nil && !s.laneOpen(r) {
-			full = append(full, r.Name+" on "+r.Machine)
+		// a route at its concurrency is skipped by a draw, never by the judgment's read
+		// (ri nil): it serves the tier, and the card waits for a free slot on it
+		if ri != nil && !s.routeOpen(r) {
+			full = append(full, r.Name+" at "+strconv.Itoa(r.Concurrency))
 			continue
 		}
 		served[r.Name] = r
@@ -225,17 +228,17 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		if ri != nil {
 			ri[tier].r.count += i + 1
 			ri[tier].moves[c.ID] = strconv.FormatUint(i+1, 10)
-			s.takeLane(r)
+			s.takeRoute(r)
 		}
 		set := map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
-			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldServe: r.Machine, FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}
+			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldServe: r.Endpoint, FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}
 		if !pinnedTier(c, m) {
 			set[FieldTierNow] = tier // the primary is on the tier drawn (cardTier)
 		}
 		return set, tier, ""
 	}
 	if len(full) > 0 {
-		return nil, tier, "every local route of tier " + tier + " it may draw has its machine's lanes taken (" + strings.Join(full, "; ") + "): the card waits for a lane"
+		return nil, tier, "every route of tier " + tier + " it may draw is at its concurrency (" + strings.Join(full, "; ") + "): the card waits for a free slot"
 	}
 	if len(rested) > 0 {
 		return nil, tier, "every enabled route of tier " + tier + " in its array rests (" + strings.Join(rested, "; ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
@@ -364,7 +367,7 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 	}
 	served := map[string]Route{}
 	for _, r := range s.Routes {
-		if r.Tier == tier && r.Enabled && s.laneServed(r) && s.laneOpen(r) {
+		if r.Tier == tier && r.Enabled && s.routeOpen(r) {
 			served[r.Name] = r
 		}
 	}
@@ -384,9 +387,9 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 		ri[tier].r.count += i + 1
 		was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
 		ri[tier].moves[key] = strconv.FormatUint(was+i+1, 10)
-		s.takeLane(r)
+		s.takeRoute(r)
 		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
-			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldServe: r.Machine}
+			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldServe: r.Endpoint}
 	}
 	return map[string]string{FieldTier: tier}
 }
@@ -567,8 +570,8 @@ type RouteStat struct {
 	RestedFor string `json:"rested_for,omitempty"`
 	Balance   string `json:"balance,omitempty"`
 	BalanceAt string `json:"balance_at,omitempty"`
-	// Lanes is a local route's machine's lanes in use over its lanes, "<busy>/<lanes>" (the lanes);
-	// "" for every other route; `routes` fills it.
+	// Lanes is a capped route's cards in use over its concurrency, "<busy>/<cap>" (the cap);
+	// "" for a route with none; `routes` fills it.
 	Lanes string `json:"lanes,omitempty"`
 }
 
@@ -652,53 +655,46 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 	return out
 }
 
-// The lanes (docs/SPEC-LOCAL.md, "Fleet"): a local route is served on one fleet machine
-// (Route.Machine; nova-config holds a machine on every local route and on no other), and
-// that machine's local_lanes (Snapshot.Lanes) is how many cards the local routes served on
-// it take at once: the work cards ready or working, and the read cards asked or reading,
-// whose FieldServe names it. A draw skips a local route whose machine's lanes are all
-// taken, as it skips a resting one, and the card waits for a lane at a later tick: a full
-// lane is no judgment, since the route serves the tier. A machine with no lanes serves
-// none, and a tier whose only routes are on such machines is judged unserved.
+// The route's cap (docs/SPEC-LOCAL.md, "Fleet"): a route may carry a concurrency, the most
+// cards that may use it at once: a local endpoint's max concurrent requests, or a metered
+// provider's. A machine's width is its lanes; which model serves a lane's calls is the
+// route's, so the cap is the route's and no machine row holds one. The cards using a route
+// are the work cards ready or working, and the read cards asked or reading, that name it.
+// A draw skips a route at its cap, as it skips a resting one, and the card waits for a free
+// slot at a later tick: a full route is no judgment, since the route serves the tier.
 
-// laneServed says the route can serve at all: every route but a local one on a machine
-// with no lanes.
-func (s *Snapshot) laneServed(r Route) bool { return r.Machine == "" || s.Lanes[r.Machine] > 0 }
-
-// laneOpen says the route can take one more card now: every route but a local one whose
-// machine's lanes are all taken.
-func (s *Snapshot) laneOpen(r Route) bool {
-	return r.Machine == "" || s.LanesBusy()[r.Machine] < s.Lanes[r.Machine]
+// routeOpen says the route can take one more card now: every route but one at its cap.
+func (s *Snapshot) routeOpen(r Route) bool {
+	return r.Concurrency <= 0 || s.RouteBusy()[r.Name] < r.Concurrency
 }
 
-// takeLane counts one more card in flight on the route's machine, when it is a local one.
-func (s *Snapshot) takeLane(r Route) {
-	if r.Machine != "" {
-		s.LanesBusy()[r.Machine]++
+// takeRoute counts one more card in flight on the route, when it is a capped one.
+func (s *Snapshot) takeRoute(r Route) {
+	if r.Concurrency > 0 {
+		s.RouteBusy()[r.Name]++
 	}
 }
 
-// LanesBusy is each serving machine's cards in flight on its local routes, counted once a
-// snapshot, by the first draw that asks, and moved by every draw after (takeLane); `routes`
-// shows it beside the machine's lanes.
-func (s *Snapshot) LanesBusy() map[string]int {
-	if s.lanesBusy != nil {
-		return s.lanesBusy
+// RouteBusy is each route's cards in flight, counted once a snapshot, by the first draw that
+// asks, and moved by every capped draw after (takeRoute); `routes` shows it beside the cap.
+func (s *Snapshot) RouteBusy() map[string]int {
+	if s.routeBusy != nil {
+		return s.routeBusy
 	}
-	s.lanesBusy = map[string]int{}
+	s.routeBusy = map[string]int{}
 	if s.Fleet != nil {
 		for _, c := range s.Fleet.Column(Ready, Working) {
-			if m := c.F(FieldServe); m != "" {
-				s.lanesBusy[m]++
+			if n := c.F(FieldRoute); n != "" {
+				s.routeBusy[n]++
 			}
 		}
 	}
 	if s.Readers != nil {
 		for _, c := range s.Readers.Column(Asked, Reading) {
-			if m := c.F(FieldServe); m != "" {
-				s.lanesBusy[m]++
+			if n := c.F(FieldRoute); n != "" {
+				s.routeBusy[n]++
 			}
 		}
 	}
-	return s.lanesBusy
+	return s.routeBusy
 }

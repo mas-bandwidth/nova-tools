@@ -25,7 +25,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/gocache"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
-	"github.com/mas-bandwidth/nova-tools/internal/local"
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -527,8 +526,8 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		args = append(args, "--usd", p.USD)
 	}
 	if p.Serve != "" {
-		// a local route: the harness calls the serving machine's endpoint (docs/SPEC-LOCAL.md, Fleet)
-		args = append(args, "--local-base", local.BaseURL(p.Serve))
+		// a local route: the harness calls the route's endpoint (docs/SPEC-LOCAL.md, Fleet)
+		args = append(args, "--local-base", p.Serve)
 	}
 	if r.auth != "" {
 		args = append(args, "--auth", r.auth)

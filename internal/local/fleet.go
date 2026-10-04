@@ -9,12 +9,12 @@ import (
 	"strings"
 )
 
-// The fleet (docs/SPEC-LOCAL.md, "Fleet"): "local" is a provider per fleet machine. A
-// machine that serves local models serves them over the tailnet; each model it serves is
-// one route row, local-<model>-<machine>, of provider local, naming the machine, price 0,
-// and the machine's lane count (its nova-config row's local_lanes) is how many cards its
-// local routes take at once. A route of provider local resolves to the serving address:
-// the OpenAI-compatible endpoint the machine's ollama serves, on its tailnet name.
+// The fleet (docs/SPEC-LOCAL.md, "Fleet"): "local" is a provider like any other. A host that
+// serves local models serves them over the tailnet; each model it serves is one route row,
+// local-<model>-<host>, of provider local, naming its endpoint and its concurrency (the
+// most cards that may use it at once), price 0. A machine's lanes are its width, and the
+// route says which model serves them. A route of provider local resolves to its endpoint:
+// the OpenAI-compatible URL the host's ollama serves, on its tailnet name.
 
 // Provider is the provider word of every local route.
 const Provider = "local"

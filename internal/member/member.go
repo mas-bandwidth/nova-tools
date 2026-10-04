@@ -270,7 +270,7 @@ type Packet struct {
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
 	USD      string `json:"usd,omitempty"`   // the dollar budget per card, a decimal; "" for none (#5094)
-	Serve    string `json:"serve,omitempty"` // a local route's serving machine (docs/SPEC-LOCAL.md, "Fleet"); "" for any other
+	Serve    string `json:"serve,omitempty"` // a local route's serving endpoint (docs/SPEC-LOCAL.md, "Fleet"); "" for any other
 	Deadline int    `json:"deadline,omitempty"`
 	// Tier is the tier the route was drawn from when the sprint decided it (a read's
 	// read tier, a rework's --tier); empty when the brief's line 1 names it.

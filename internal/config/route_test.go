@@ -24,10 +24,10 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "routes", k.Table)
 	assert.False(t, k.Singleton)
-	assert.Equal(t, "tier,provider,model,machine,tokens,usd,deadline,enabled,"+
+	assert.Equal(t, "tier,provider,model,endpoint,concurrency,tokens,usd,deadline,enabled,"+
 		"price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of,note",
 		strings.Join(k.FieldNames(), ","), "the deal reads exactly these names, the card's cost the price sheet after them, and the note last")
-	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "machine": TypeRef, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool,
+	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "endpoint": TypeText, "concurrency": TypeInt, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool,
 		"price_input": TypeDecimal, "price_cache_read": TypeDecimal, "price_cache_write": TypeDecimal, "price_output": TypeDecimal, "reasoning_as_output": TypeBool,
 		"long_context": TypeInt, "price_input_long": TypeDecimal, "price_output_long": TypeDecimal, "price_request": TypeDecimal, "billing": TypeEnum,
 		"gateway_percent": TypeDecimal, "price_source": TypeText, "price_as_of": TypeText, "note": TypeText}
@@ -338,30 +338,46 @@ func TestARouteATierNamesIsHeld(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// A local route names the machine it is served on, only a local route names one, and a
-// machine's lanes are zero or more (docs/SPEC-LOCAL.md, "Fleet").
-func TestALocalRouteNamesItsServingMachine(t *testing.T) {
+// A local route names the endpoint it is served at and a concurrency, only a local route
+// names an endpoint, any route may carry a concurrency, and a machine row holds neither
+// (docs/SPEC-LOCAL.md, "Fleet").
+func TestALocalRouteNamesItsEndpointAndConcurrency(t *testing.T) {
 	t.Parallel()
 	k, _ := Lookup(KindRoute)
 	local := map[string]string{"tier": "flash", "provider": ProviderLocal, "model": "gemma4-32k", "deadline": "1800", "price_input": "0", "price_output": "0"}
 	_, err := k.NewRow("local-gemma4-32k-m1", local)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "route local-gemma4-32k-m1 is provider local and names no --machine")
-	local[FieldRouteMachine] = "m1"
+	assert.Contains(t, err.Error(), "route local-gemma4-32k-m1 is provider local and names no --endpoint")
+	local[FieldRouteEndpoint] = "http://m1.test:11434/v1"
+	_, err = k.NewRow("local-gemma4-32k-m1", local)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "route local-gemma4-32k-m1 is provider local and has --concurrency 0")
+	local[FieldRouteConcurrency] = "2"
 	row, err := k.NewRow("local-gemma4-32k-m1", local)
 	require.NoError(t, err)
-	assert.Equal(t, "m1", row.Fields[FieldRouteMachine])
+	assert.Equal(t, "http://m1.test:11434/v1", row.Fields[FieldRouteEndpoint])
+	assert.Equal(t, "2", row.Fields[FieldRouteConcurrency])
+	local[FieldRouteEndpoint] = "m1:11434"
+	_, err = k.NewRow("local-gemma4-32k-m1", local)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "want an http URL")
+
 	api := proRoute("opencode")
-	api[FieldRouteMachine] = "m1"
+	api[FieldRouteEndpoint] = "http://m1.test:11434/v1"
 	_, err = k.NewRow("r1", api)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "only a local route is served on a fleet machine")
+	assert.Contains(t, err.Error(), "only a local route is served at an endpoint")
+	api = proRoute("opencode")
+	api[FieldRouteConcurrency] = "4"
+	row, err = k.NewRow("r1", api)
+	require.NoError(t, err, "a metered route may carry a cap too")
+	assert.Equal(t, "4", row.Fields[FieldRouteConcurrency])
+	api[FieldRouteConcurrency] = "-1"
+	_, err = k.NewRow("r1", api)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--concurrency \"-1\": want a non-negative integer")
 
 	m, _ := Lookup(KindMachine)
-	_, err = m.NewRow("m1", map[string]string{"user": "u", "seat": "s", "slots": "8", FieldLocalLanes: "-1"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--local_lanes \"-1\": want a non-negative integer")
-	row, err = m.NewRow("m1", map[string]string{"user": "u", "seat": "s", "slots": "8", "width": "0", FieldLocalLanes: "2"})
-	require.NoError(t, err, "width 0 and local_lanes 2: no member, two lanes")
-	assert.Equal(t, "2", row.Fields[FieldLocalLanes])
+	_, ok := m.Field("local_lanes")
+	assert.False(t, ok, "a machine's width is its lanes; a machine row holds no second count")
 }

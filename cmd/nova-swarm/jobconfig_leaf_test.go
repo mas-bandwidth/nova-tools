@@ -86,17 +86,17 @@ func TestAJobConfigWriteFailureNamesTheFile(t *testing.T) {
 	}
 }
 
-// A local route's job config declares the provider local at the serving machine's
+// A local route's job config declares the provider local at the route's
 // endpoint, its model under it, and no key; the read-deadline proxy stands in front of it
 // as of any provider with an http baseURL (docs/SPEC-LOCAL.md, "Fleet").
-func TestAJobOnALocalRouteDeclaresTheProviderAtItsServingMachine(t *testing.T) {
+func TestAJobOnALocalRouteDeclaresTheProviderAtItsEndpoint(t *testing.T) {
 	t.Parallel()
 	dataHome := t.TempDir()
 	var notes bytes.Buffer
 	sha, reason, proxy := writeJobConfig(nativeRunConfig{model: "local/gemma4-32k", localBase: "http://g1.test:11434/v1"}, "local", dataHome, t.TempDir(), nil, &notes)
 	require.Empty(t, reason)
 	require.NotEmpty(t, sha)
-	require.NotNil(t, proxy, "the read-deadline proxy stands in front of the serving machine")
+	require.NotNil(t, proxy, "the read-deadline proxy stands in front of the endpoint")
 	t.Cleanup(func() { _ = proxy.Close() }) // ignored: the test's own proxy, closed at its end
 	raw, err := os.ReadFile(filepath.Join(dataHome, ".config", "opencode", "opencode.json"))
 	require.NoError(t, err)

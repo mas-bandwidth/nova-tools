@@ -308,5 +308,5 @@ func TestOnlyThreeVerbs(t *testing.T) {
 func TestServeOverTheTailnetNamesTheFleetRoute(t *testing.T) {
 	t.Parallel()
 	r := rig(newFake("/ai/shared/models/ollama"), "/ai").OK(t, append(args(serveGemma), "--base", "http://gpu-box.test:11434/v1")...)
-	assert.Contains(t, r.Stdout, "SERVE NOTE the fleet's route: nova-config route add local-gemma4-32k-gpu-box-test --tier flash --provider local --model gemma4-32k --machine gpu-box.test")
+	assert.Contains(t, r.Stdout, "SERVE NOTE the fleet's route: nova-config route add local-gemma4-32k-gpu-box-test --tier flash --provider local --model gemma4-32k --endpoint http://gpu-box.test:11434/v1 --concurrency 1 --deadline")
 }

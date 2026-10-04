@@ -2326,9 +2326,9 @@ wrong:
 
 Run local models: what an engine has, one model served at a chosen context,
 and a worker description nova-swarm accepts. It runs no inference, fetches no
-weights and judges no model. In a fleet, local is a provider per machine: a
-machine serves its models over the tailnet, and each is one route row of
-provider local. See [SPEC-LOCAL.md](SPEC-LOCAL.md).
+weights and judges no model. In a fleet, a route of provider local names the endpoint
+its model is served at and the most cards that may use it at once.
+See [SPEC-LOCAL.md](SPEC-LOCAL.md).
 
 ### First run
 

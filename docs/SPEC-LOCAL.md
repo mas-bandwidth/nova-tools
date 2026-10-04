@@ -230,40 +230,41 @@ because the caller can retry it: a `--model` the engine does not serve, remedy
 
 ## Fleet
 
-The owner's design, 2026-10-04: a local model is a provider like any other, one per
-fleet machine that serves models, and the sprint deals to it as it deals to any route.
+The owner's design, 2026-10-04: a local model is a provider like any other, and the
+sprint deals to it as it deals to any route. Whether a lane's calls go to a local model or
+to a remote one is route configuration, never a second count on the machine: a machine's
+lanes are its `width`, and a route says what serves them.
 
 - **The store.** Every machine keeps its weights under the shared directory of its AI
   root, `<ai-root>/shared/models/<engine>` (rule 15), never per account.
-- **The serving machine.** A machine that serves local models serves them over the
-  tailnet: its ollama listens on its tailnet address, and every caller reaches it there
-  or on loopback (rule 3). The endpoint of a model served on machine `m` is
-  `http://m:11434/v1` (`local.BaseURL`).
-- **The provider.** `local` is a provider per fleet machine: one route row per serving
-  machine and model, named `local-<model>-<machine>` (`local.RouteName`), of
-  `--provider local`, `--model` the served tag, and `--machine` the serving machine
-  (nova-config's route field `machine`, a machine row; only a local route names one).
-  Its prices are 0 (`--price_input 0 --price_output 0`): its cost is $0 and its tokens
-  are recorded as any route's. `serve --base http://<machine>:11434/v1` prints the
-  row's `nova-config route add` line.
-- **The lanes.** A machine's load is the limit, set as a lane count: nova-config's
-  machine field `local_lanes` (migration 0028), the cards its local routes take at once,
-  all of them together; 0, the default, serves none. A machine has two independent
-  numbers: its member `width` (the cards its sprint member works, by routes) and its
-  `local_lanes` (the cards its own model serves for the members' cards); either may be 0,
-  so `--width 0 --local_lanes <n>` is a machine with no member and n lanes, and any other
-  pair is as valid. A lane change reaches the deal at the next `nova-config apply` of the
-  machines (the routes read the lanes from `machine:<m>`).
-- **The deal** (`internal/sprint/route.go`, the lanes). A local route is in its tier's
+- **The endpoint.** An engine serves a model at an endpoint: a host, a port, the model's
+  served tag, and the most requests it takes at once. Over the tailnet its ollama listens
+  on its tailnet address, and every caller reaches it there or on loopback (rule 3). The
+  endpoint of a model served on host `h` is `http://h:11434/v1`.
+- **The route.** A route of `--provider local` names its endpoint and a concurrency
+  (nova-config's route fields `endpoint` and `concurrency`; only a local route names an
+  endpoint, and a local route wants a concurrency above 0), `--model` the served tag. Its
+  prices are 0 (`--price_input 0 --price_output 0`): its cost is $0 and its tokens are
+  recorded as any route's. `serve --base http://<host>:11434/v1 --concurrency <n>` prints
+  the row's `nova-config route add` line; its name is `local-<model>-<host>`
+  (`local.RouteName`).
+- **The concurrency.** The cap on how many lanes may use a route at once is the
+  endpoint's, so it is the route's: nova-config's route field `concurrency` (migration
+  0028), the cards using the route at once; 0, the default, is no cap, and any route may
+  carry one (a metered provider's limit is the same field). A host running N instances of
+  a model is N routes of the instances' concurrency each, or one route of concurrency N;
+  both are only configuration. A machine row holds no second count: `width` is its lanes,
+  and `--width 0` is a machine that runs no member, whatever its endpoints serve. A change
+  reaches the deal at the next `nova-config apply` of the routes.
+- **The deal** (`internal/sprint/route.go`, the cap). A local route is in its tier's
   route set and is drawn like any route. A work card ready or working, or a read card
-  asked or reading, whose `serve` names a machine holds one of its lanes; a draw skips a
-  local route whose machine's lanes are all taken, as it skips a resting route, and the
-  card waits for a lane with no judgment, since the route serves the tier. A machine with
-  no lanes serves nothing, and a tier only such a machine would serve is judged unserved.
-  The draw writes the machine on the work card (`serve`), the packet hands it to the
-  member, and `nova-sprint routes` shows `serve=<machine> lanes=<busy>/<lanes>`.
-- **The launch.** The member passes `--local-base http://<machine>:11434/v1` to
-  `nova-swarm native` for a card whose packet names a machine; native declares the
+  asked or reading, whose `route` names a capped route holds one of its slots; a draw
+  skips a route whose slots are all taken, as it skips a resting route, and the card
+  waits for a slot with no judgment, since the route serves the tier. The draw writes the
+  route's endpoint on the work card (`serve`), the packet hands it to the member, and
+  `nova-sprint routes` shows `endpoint=<url> concurrency=<busy>/<cap>`.
+- **The launch.** The member passes `--local-base <endpoint>` to
+  `nova-swarm native` for a card whose packet names an endpoint; native declares the
   provider `local` at that endpoint in the job's harness config (OpenCode's
   OpenAI-compatible provider, no key), the route's model under it, and stands its
   read-deadline proxy in front of it; on loopback the wall opens that one port.
@@ -301,7 +302,7 @@ Each runs against a fake engine through the injected transport (`cmd/nova-local`
 | 13 | `TestStatusListingIsBounded`, `TestStatusWithNothingAnsweringIsOneRemedyLine` |
 | 14 | `TestWorkerRefusesEveryProblemAtOnce` |
 | 15 | `TestTheSharedStore`, `TestSharedAndResolve` |
-| Fleet | `TestALocalRouteNamesItsServingMachine` (config), `TestALocalRouteTakesOneCardPerLaneAndRecordsItsUsageAtNoCost` and `TestAFullLaneDrawsTheNextRouteAndNoLaneServesNone` (the sprint's twin), `TestRoutesAndWhereShowALocalRoute`, `TestAMemberLaunchesALocalRoutesCardAtItsServingMachine`, `TestNativeTakesALocalBaseOnlyWithALocalModel`, `TestAJobOnALocalRouteDeclaresTheProviderAtItsServingMachine`, `TestDeclareLocalProviderPointsTheHarnessAtTheServingMachine` |
+| Fleet | `TestALocalRouteNamesItsEndpointAndConcurrency` (config), `TestALocalRouteTakesItsConcurrencyOfCardsAndRecordsItsUsageAtNoCost` and `TestARouteAtItsConcurrencyDrawsTheNextRoute` (the sprint's twin), `TestRoutesAndWhereShowALocalRoute`, `TestAMemberLaunchesALocalRoutesCardAtItsEndpoint`, `TestNativeTakesALocalBaseOnlyWithALocalModel`, `TestAJobOnALocalRouteDeclaresTheProviderAtItsEndpoint`, `TestDeclareLocalProviderPointsTheHarnessAtTheEndpoint`, `TestServeOverTheTailnetNamesTheFleetRoute` |
 
 The first run (`docs/TESTS.md`) is executed by `TestTESTSFirstRunIsWhatTheToolPrints`,
 and the banner's examples by `TestUsageBannerExamplesRun`. The functional tier's
