@@ -37,10 +37,12 @@ var verbExit = map[string]string{
 // verbEffect is a verb's effect line, the last line of its -h, where the verb
 // states one (docs/STANDARD.md: `effect: inspection|local write|delivery`).
 var verbEffect = map[string]string{
-	"handover":    "inspection: reads the store, writes nothing",
-	"dashboard":   "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
-	"coordinator": "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
-	"answer":      "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
+	"handover":       "inspection: reads the store, writes nothing",
+	"seat install":   "local write: writes the push loop's unit (inbox --wait --push seat) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run prints it and writes nothing",
+	"seat uninstall": "local write: unloads the push loop's unit and removes its file from --dir",
+	"dashboard":      "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
+	"coordinator":    "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
+	"answer":         "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
 }
 
 // commonExit is the codes of every other verb.
