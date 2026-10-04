@@ -26,6 +26,13 @@ internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS e
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
+
+# The three process verbs are nova-dev's, so their files are under cmd/nova-dev; a rating is a
+# dated read of the tool at its own build, and it cites the tree as that build held it.
+cmd/nova-check/dogfood.go now cmd/nova-dev/dogfood.go; a dated rating of nova-check cites the tree at the build it read
+cmd/nova-check/hygiene.go now cmd/nova-dev/hygiene.go; a dated rating of nova-check cites the tree at the build it read
+cmd/nova-check/hygiene_test.go now cmd/nova-dev/hygiene_test.go; a dated rating of nova-check cites the tree at the build it read
+
 # internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, the owner: "Yes it's dead. remove."); the specs cite its files at named commits as history.
 internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cardheader.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit

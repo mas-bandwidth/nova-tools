@@ -10,7 +10,7 @@ import (
 )
 
 // Defect #1451, Rowan's standing door rule of 2026-09-19: an exit-1 line -- the verb
-// RAN and answered NO -- never carries the door `; run: nova-check help`. Only an
+// RAN and answered NO -- never carries the door `; run: nova-dev help`. Only an
 // exit-2 line -- the tool could not run, or the invocation was wrong -- carries it.
 // The door exists to tell a reader who mis-invoked the tool where the usage is; a
 // verdict is not a mis-invocation.
@@ -32,9 +32,9 @@ func TestAnExitOneVerdictCarriesNoDoor(t *testing.T) {
 	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
 	require.EqualValues(t, 1, code, "empty receipts: exit %d, want exactly 1; stderr: %s", code, stderr)
 	require.Contains(t, stderr, "--allow-empty", "the exit-1 verdict lost its own remedy:\n%s", stderr)
-	require.NotContains(t, stderr, "run: nova-check help", "an exit-1 verdict carries the exit-2 door:\n%s", stderr)
+	require.NotContains(t, stderr, "run: nova-dev help", "an exit-1 verdict carries the exit-2 door:\n%s", stderr)
 
 	code, _, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--no-such-flag")
 	require.EqualValues(t, 2, code, "unknown flag: exit %d, want exactly 2; stderr: %s", code, stderr)
-	require.True(t, strings.HasSuffix(strings.TrimRight(stderr, "\n"), "run: nova-check help"), "an exit-2 invocation refusal lost the door:\n%s", stderr)
+	require.True(t, strings.HasSuffix(strings.TrimRight(stderr, "\n"), "run: nova-dev help"), "an exit-2 invocation refusal lost the door:\n%s", stderr)
 }

@@ -82,7 +82,7 @@ func hermetic(t *testing.T) {
 		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT",
 		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
 	} {
-		require.False(t, os.Getenv(key) == "", "%s is not set: the hermetic git environment is TestMain's, in this package, and it sets eight", key)
+		require.NotEmpty(t, os.Getenv(key), "%s is not set: the hermetic git environment is TestMain's, in this package, and it sets eight", key)
 	}
 }
 
@@ -442,8 +442,8 @@ func TestAConflictOnANoteIsRefusedAndTheAbortIsClean(t *testing.T) {
 	if strings.Contains(err.Error(), "\n") {
 		require.NotContains(t, err.Error(), "\n", "the refusal is more than one line: %q", err.Error())
 	}
-	require.False(t, Transcript(err) == "", "the refusal carries no transcript, so a person has git's own words nowhere")
-	require.False(t, res.Commit == "", "the refusal names no commit, so a person has nothing to look at")
+	require.NotEmpty(t, Transcript(err), "the refusal carries no transcript, so a person has git's own words nowhere")
+	require.NotEmpty(t, res.Commit, "the refusal names no commit, so a person has nothing to look at")
 	{
 		_, cerr := git(b, "cat-file", "-e", res.Commit+"^{commit}")
 		require.Equal(t, nil, cerr, "the commit named in the refusal is not on the branch: %v", cerr)
@@ -657,7 +657,7 @@ func TestSendRefusesABranchAheadOfTheRemoteWithSomebodyElsesWork(t *testing.T) {
 	}
 	{
 		out, perr := git(clone, "push", "origin", "HEAD:refs/heads/main")
-		require.False(t, perr == nil, "the fixture is not the state the advice is about: a bare push succeeded\n%s", out)
+		require.Error(t, perr, "the fixture is not the state the advice is about: a bare push succeeded\n%s", out)
 	}
 	{
 		out, rerr := git(clone, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "pull", "--rebase", "origin", "main")
@@ -696,7 +696,7 @@ func TestAnUnpushedCommitOfOurOwnIsCarriedRatherThanRefused(t *testing.T) {
 		WithTrailer("ada: mine", TrailerSend+" ada-aaaaaaaaaaaa"), "origin", "main", 1)
 	require.Error(t, err, "the fixture did not lose its push")
 	require.True(t, strings.Contains(err.Error(), "git pull --rebase && git push"), "the refusal offers no recovery that works: %v", err)
-	require.False(t, lost.Commit == "", "the lost push named no commit")
+	require.NotEmpty(t, lost.Commit, "the lost push named no commit")
 
 	// The next run. This is where the tool used to refuse to run at all.
 	{
@@ -924,7 +924,7 @@ func TestPushBackoffGrowsIsJitteredAndIsCapped(t *testing.T) {
 		seen[pushBackoff(1)] = true
 	}
 	if len(seen) < 2 {
-		require.False(t, len(seen) < 2, "fifty draws gave %d distinct waits; a fixed delay leaves two benches that collided colliding again", len(seen))
+		require.GreaterOrEqual(t, len(seen), 2, "fifty draws gave %d distinct waits; a fixed delay leaves two benches that collided colliding again", len(seen))
 	}
 }
 

@@ -21,7 +21,7 @@ const (
 	// Unknown is the state when there is no answer: the store could not be
 	// read, or the library was refused. It comes with the error that says why.
 	Unknown State = iota
-	// Same: the store holds a library of this name whose code is Source,
+	// Same: the store holds a library of this name whose code is the source,
 	// byte for byte.
 	Same
 	// Different: the store holds a library of this name with other code.
@@ -29,19 +29,6 @@ const (
 	// Absent: the store holds no library of this name.
 	Absent
 )
-
-// String is the state in one lower-case word: unknown, same, different, absent.
-func (s State) String() string {
-	switch s {
-	case Same:
-		return "same"
-	case Different:
-		return "different"
-	case Absent:
-		return "absent"
-	}
-	return "unknown"
-}
 
 // MismatchError is Check's error for Different and Absent: the store does not
 // hold the library this binary was built with.
@@ -69,7 +56,7 @@ type Held struct {
 	Holder   string // the library on the store that registers it; "" when none was found
 }
 
-// CollisionError is Load's error when the store refused the library because
+// CollisionError is the load's error when the store refused the library because
 // another library on it registers one of this library's function names. A
 // function name belongs to one library, compared without case, so while two
 // libraries carry the same function one of them cannot be loaded.
@@ -172,30 +159,19 @@ func (r Receipt) String() string {
 	return line
 }
 
-// Query is the FUNCTION LIST that reads this library's code, for a caller
-// that sends it in a pipeline of its own and hands the reply to Judge. The
-// store matches the name as a pattern and without case, so the reply may hold
-// other libraries as well; Judge takes this one by its exact name.
+// Query is the FUNCTION LIST that reads this library's code, the command
+// Check and Ensure send. The store matches the name as a pattern and without
+// case, so the reply may hold other libraries as well; judge takes this one
+// by its exact name.
 func (l Library) Query() redis.FunctionListQuery {
 	return redis.FunctionListQuery{LibraryNamePattern: l.Name, WithCode: true}
 }
 
-// Judge is Check's verdict on the reply to Query, with no round trip. The
-// state is Same only when the reply holds a library of exactly this name
-// whose code is Source byte for byte; the digests are for the error's line
-// and decide nothing. The error is nil for Same, a *MismatchError for
-// Different and Absent, and the refusal when Source refuses the library
-// (Unknown).
-func (l Library) Judge(reply []redis.Library) (State, error) {
-	b, err := l.build()
-	if err != nil {
-		return Unknown, err
-	}
-	state, _, err := b.judge(reply)
-	return state, err
-}
-
-// judge is Judge, and the digest of the code the store holds ("" for none).
+// judge is the verdict on a FUNCTION LIST reply, and the digest of the code
+// the store holds ("" for none). The state is Same only when the reply holds a
+// library of exactly this name whose code is this binary's source byte for
+// byte; the digests are for the error's line and decide nothing. The error is
+// nil for Same, a *MismatchError for Different and Absent.
 func (b *built) judge(reply []redis.Library) (State, string, error) {
 	for _, lib := range reply {
 		if lib.Name != b.name {
@@ -207,23 +183,23 @@ func (b *built) judge(reply []redis.Library) (State, string, error) {
 		loaded := DigestOf(lib.Code)
 		remedy := b.remedy
 		if remedy == "" {
-			remedy = "load this binary's library over it (Load), or run the binary the store's library came from"
+			remedy = "load this binary's library over it (Ensure), or run the binary the store's library came from"
 		}
 		return Different, loaded, &MismatchError{Library: b.name, Want: b.digest, Loaded: loaded, Remedy: remedy}
 	}
 	remedy := b.remedy
 	if remedy == "" {
-		remedy = "load this binary's library (Load)"
+		remedy = "load this binary's library (Ensure)"
 	}
 	return Absent, "", &MismatchError{Library: b.name, Want: b.digest, Remedy: remedy}
 }
 
 // Check answers whether the library on the store is the one this binary was
 // built with, and changes nothing. It sends one FUNCTION LIST (Query) and
-// judges the reply (Judge): Same with a nil error, Different or Absent with a
+// judges the reply (judge): Same with a nil error, Different or Absent with a
 // *MismatchError whose one line names the library, both digests and the
 // remedy, Unknown with the error of a store that could not be read or of a
-// library that Source refuses.
+// library that the source refuses.
 //
 // The identity it reads is the library's code as the store holds it. The
 // store keeps that code with the functions it compiled from it, and changes
@@ -249,57 +225,35 @@ func (l Library) Check(ctx context.Context, client redis.UniversalClient) (State
 	return state, err
 }
 
-// Load puts the library on the store, in place of any library of its name,
-// with one FUNCTION LOAD REPLACE, and returns the library's digest.
-//
-// The store never holds half of the library, and that is Redis's doing, not
-// this package's: there is nothing here to undo. FUNCTION LOAD REPLACE is one
-// command, Redis runs one command at a time, and inside that one command it
-// makes the new library of the whole text and, when anything fails (a syntax
-// error, a Lua error when the library's own text runs, a function name
-// another library holds, a library that registers nothing), has the library
-// it held before in place again when it replies. No other client's command
-// runs in between, so no client sees a store between the two. After Load,
-// error or not, the store holds the whole library it held before or the
-// whole of this one (the functional tests hold each of those refusals
-// against a redis-server; tla/RedisFn.tla, NoGap, shows what FUNCTION DELETE
-// followed by FUNCTION LOAD would lose).
-//
-// A nil error says the store answered the load with this library's name.
-// An error in which the store itself replied (errors.As finds a redis.Error)
-// says the store holds what it held before. Any other error, a lost
-// connection or the Bound passing, says neither: the command may have run,
-// whole, after the caller stopped waiting, and Check says which.
-//
-// When the store refuses the library because another library registers one
-// of its function names, the error is a *CollisionError that names the
-// function and the library that holds it. An error whose text names a line of
-// the library carries the line's file as Explain writes it.
-//
-// It returns within the Bound, whatever the client's own timeouts are, and a
-// context that has ended already sends nothing.
-func (l Library) Load(ctx context.Context, client redis.UniversalClient) (string, error) {
-	b, err := l.ready(client)
-	if err != nil {
-		return "", err
-	}
-	_, err = within(ctx, l.Bound, func(ctx context.Context) (struct{}, error) {
-		return struct{}{}, b.load(ctx, client)
-	})
-	if err != nil {
-		return "", b.failed("load", err)
-	}
-	return b.digest, nil
-}
-
 // Ensure is the deployer's load: it puts this library on the store unless
 // the store holds exactly this code, replacing other code under the name. It
 // reads the store as Check does, and when the state is Absent or Different it
-// loads as Load does. The receipt says which happened: Unchanged (the store
-// held this code; nothing was written), Loaded (the name was free) or
-// Replaced (other code was under the name, whose digest is Was). Beside an
-// error the outcome is Failed, and the error is Check's for the read or
-// Load's for the load.
+// loads with one FUNCTION LOAD REPLACE. The receipt says which happened:
+// Unchanged (the store held this code; nothing was written), Loaded (the name
+// was free) or Replaced (other code was under the name, whose digest is Was).
+// Beside an error the outcome is Failed, and the error is Check's for the
+// read or the load's for the load.
+//
+// The load is one command, FUNCTION LOAD REPLACE, and the store never holds
+// half of the library, which is Redis's doing, not this package's: inside
+// that one command it makes the new library of the whole text and, when
+// anything fails (a syntax error, a Lua error when the library's own text
+// runs, a function name another library holds, a library that registers
+// nothing), has the library it held before in place again when it replies. No
+// other client's command runs in between, so no client sees a store between
+// the two; after a load, error or not, the store holds the whole library it
+// held before or the whole of this one (the functional tests hold each of
+// those refusals against a redis-server; tla/RedisFn.tla, NoGap, shows what
+// FUNCTION DELETE followed by FUNCTION LOAD would lose). A nil outcome says
+// the store answered the load with this library's name; a reply of the store
+// itself (errors.As finds a redis.Error) says the store holds what it held
+// before; any other error, a lost connection or the Bound passing, says
+// neither: the command may have run, whole, after the caller stopped waiting,
+// and Check says which. When the store refuses the library because another
+// library registers one of its function names, the error is a
+// *CollisionError that names the function and the library that holds it, and
+// an error whose text names a line of the library carries the line's file in
+// the note after it.
 //
 // The read and the load are two commands, and another loader may act between
 // them; the load replaces whatever is there by then, so a receipt that says

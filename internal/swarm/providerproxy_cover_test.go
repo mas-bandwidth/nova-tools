@@ -135,7 +135,7 @@ func TestProviderproxyCoverHeaderWaitExpiredNeedsASentTimeout(t *testing.T) {
 	t.Parallel()
 
 	live := context.Background()
-	cancelled, cancel := context.WithCancel(context.Background())
+	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	timeout := &coverTimeoutError{timeout: true}

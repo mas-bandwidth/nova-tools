@@ -108,7 +108,7 @@ func TestPreflightComparesTheStampOfABinaryThatPrintsThenHangs(t *testing.T) {
 		if p != pathBin {
 			return readDefault(p)
 		}
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		mu.Lock()
 		cancels = append(cancels, cancel)

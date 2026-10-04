@@ -193,12 +193,11 @@ type Folder struct {
 	turns map[string]int
 	days  map[string]bool
 
-	// idLabel is which source first fed each message id, and overlaps counts the ids two
-	// sources both fed. The fold deliberately does not check whether two sources overlap,
-	// and the numbers still do not change: two declarations of one tree still double the
-	// day. What changes is that the run SAYS SO -- overlaps names every pair of sources
-	// that shared ids -- so a doubled day prints its doubling instead of passing as
-	// green.
+	// idLabel is which source first fed each message id, scoped to that source's
+	// provider, and overlaps counts the ids two sources of one provider both fed.
+	// TokenFold invariant OverlapRefusedBeforeWrite: a detected overlap refuses the
+	// write. TokenFold invariant UnscopedIDNotDeduped: an id that is not scoped to
+	// one provider is not a duplicate and is not dropped, so both messages stay.
 	idLabel  map[string]string
 	overlaps map[[2]string]int
 }
@@ -209,12 +208,17 @@ func NewFolder() *Folder {
 		idLabel: map[string]string{}, overlaps: map[[2]string]int{}}
 }
 
-// Overlap is two declared sources that fed the same message ids: not an error, and not a
-// change to any number, but the one thing a green day file cannot say for itself.
+// Overlap is two declared sources of one provider that fed the same message ids.
+// TokenFold invariant OverlapRefusedBeforeWrite: it is a refusal before any day
+// file is written, not a drop of either message.
 type Overlap struct {
 	A, B string
 	IDs  int
 }
+
+// RefuseWrite reports a detected overlap. TokenFold invariant
+// OverlapRefusedBeforeWrite: the fold is refused before any day file is written.
+func (f *Folder) RefuseWrite() bool { return len(f.overlaps) > 0 }
 
 // Overlaps is every pair of sources that shared an id, sorted, so the remedy can name one.
 func (f *Folder) Overlaps() []Overlap {
@@ -231,11 +235,26 @@ func (f *Folder) Overlaps() []Overlap {
 	return out
 }
 
-// Add folds one message from the source named by label.
+// providerScope is the source kind an id is comparable within. TokenFold
+// invariant UnscopedIDNotDeduped: an id that is not scoped to one provider is
+// not a duplicate and is not dropped.
+func providerScope(label string) string {
+	kind, _, ok := strings.Cut(label, ":")
+	if !ok {
+		return label
+	}
+	return kind
+}
+
+// Add folds one message from the source named by label. A repeated id from
+// another source of the same provider is recorded and kept: the write is refused
+// later, the message is not dropped (TokenFold, OverlapRefusedBeforeWrite and
+// UnscopedIDNotDeduped).
 func (f *Folder) Add(label string, m Message) {
 	if m.ID != "" {
-		if first, seen := f.idLabel[m.ID]; !seen {
-			f.idLabel[m.ID] = label
+		key := providerScope(label) + "\x00" + m.ID
+		if first, seen := f.idLabel[key]; !seen {
+			f.idLabel[key] = label
 		} else if first != label {
 			pair := [2]string{first, label}
 			if pair[0] > pair[1] {

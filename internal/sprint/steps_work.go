@@ -209,6 +209,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		needs  []string
 		brief  string
 		rules  string // FieldRules
+		bench  string // FieldBench: the members its brief's BENCH line names (bench_deal.go)
 		behind string // the sentinel it waits behind by position
 		gate   bool   // a stop of --sentinel-every
 		sent   bool   // a stop: --sentinel or a many-brief card marked one
@@ -225,6 +226,13 @@ func Add(s *Snapshot, r AddReq) Plan {
 			if s.Work.Card(n) == nil && !adding[n] {
 				missing = append(missing, n)
 			}
+		}
+		// bench is the members its brief's BENCH line names: every placement of its work
+		// cards deals it only to them, and a name that is no fleet member is refused with
+		// the members there are (bench_deal.go)
+		bench, benchWhy := BenchOfBrief(briefOf(i))
+		if unknown := BenchKnown(s, bench); len(unknown) > 0 {
+			bench, benchWhy = nil, BenchRefused(s, bench, unknown)
 		}
 		switch {
 		case seen[id]:
@@ -243,9 +251,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 				p.refuse(id, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
 			}
 			continue
+		case benchWhy != "":
+			p.refuse(id, benchWhy)
+			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), rules: rulesOf(i), gate: r.IsGate(id), sent: isSent(i)}
+		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), rules: rulesOf(i), bench: strings.Join(bench, ","), gate: r.IsGate(id), sent: isSent(i)}
 		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !a.sent {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
@@ -361,6 +372,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 			}
 			if who := WhoOfBrief(a.brief); who != "" {
 				fields[FieldWho] = who // a friend's card: the tick deals it to a friend (friend_deal.go)
+			}
+			if a.bench != "" {
+				fields[FieldBench] = a.bench // its bench: dealt only to the members it names (bench_deal.go)
 			}
 			if op := r.BriefOps[a.id]; op != "" {
 				fields[FieldBriefOp], fields[FieldBriefRecord] = op, r.BriefRecord
@@ -773,8 +787,20 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		return p, moves
 	}
 	q, widths := memberLoads(s, up), memberWidths(s, up)
-	next := func() string { return rr.next(up, q, widths, "") }
 	for _, c := range chosen {
+		// its bench: the members its brief's BENCH line names, and the deal deals it to
+		// none other; with no member of it up it waits ready (bench_deal.go)
+		bench := Bench(c)
+		members := onlyBench(up, bench)
+		if len(members) == 0 {
+			p.refuse(c.ID, benchRefusal(bench))
+			continue
+		}
+		next := func() string { return rr.next(members, q, widths, "") }
+		roomWhy := noRoomWhy
+		if len(bench) > 0 {
+			roomWhy = benchRoom(bench)
+		}
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
 				tier := s.NextTier(c)
@@ -789,7 +815,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 				// below its ceiling: the machine escalates it, a new attempt on the next tier
 				m := next()
 				if m == "" {
-					p.refuse(c.ID, noRoomWhy)
+					p.refuse(c.ID, roomWhy)
 					continue
 				}
 				on, _ := CardTiers(c)
@@ -815,7 +841,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			// a member that refused it at staging is not dealt it again (StagingRefusers)
 			m := next()
 			if refused := StagingRefusers(wc); len(refused) > 0 {
-				others := without(up, refused)
+				others := without(members, refused)
 				if len(others) == 0 {
 					p.refuse(c.ID, fmt.Sprintf("%s was refused at staging by every member up (%s): rework it with a fix, or drop it", wc.ID, strings.Join(refused, ", ")))
 					continue
@@ -823,7 +849,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 				m = rr.next(others, q, widths, "")
 			}
 			if m == "" {
-				p.refuse(c.ID, noRoomWhy)
+				p.refuse(c.ID, roomWhy)
 				continue
 			}
 			u, why := redeal(s, c, wc, m, q, ri)
@@ -842,7 +868,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		}
 		m := next()
 		if m == "" {
-			p.refuse(c.ID, noRoomWhy)
+			p.refuse(c.ID, roomWhy)
 			continue
 		}
 		u, why := deal(s, c, c.F("fix"), m, q, ri, nil, map[string]string{"finding": c.F("finding"), "why": c.F("why")})
@@ -1726,7 +1752,9 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 			// index moved past it; with none below its width the card is
 			// withdrawn, and the next deal places it where there is room: a
 			// member at its width takes no more.
-			if m := rr.next(without(up, StagingRefusers(c)), q, widths, ""); m != "" {
+			// a bench card goes to a member of its bench alone: with none of it up it is
+			// withdrawn, and waits ready for its bench (bench_deal.go)
+			if m := rr.next(onlyBench(without(up, StagingRefusers(c)), benchOfWork(s, c)), q, widths, ""); m != "" {
 				rr.moved(m)
 				moves[c.ID] = m
 				q[m]++
@@ -1875,7 +1903,9 @@ func levelWith(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, h
 		q := queues[long]
 		i, to := len(q)-1, ""
 		for ; i >= 0 && to == ""; i-- {
-			to = target(rr, up, n, held, widths, long, StagingRefusers(q[i]))
+			// a bench card is never moved off its bench: the members its BENCH line does not
+			// name are avoided as a member that refused it at staging is (bench_deal.go)
+			to = target(rr, up, n, held, widths, long, append(StagingRefusers(q[i]), notBench(up, benchOfWork(s, q[i]))...))
 		}
 		if to == "" {
 			return
