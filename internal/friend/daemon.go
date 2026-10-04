@@ -208,7 +208,11 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 	}
 	handle := func(e bus2.Entry, now time.Time) error {
 		msg := e.Message()
-		if d.StateDir != "" {
+		state, err = d.sessionState()
+		if err != nil {
+			return err
+		}
+		if d.StateDir != "" && state.Coordinator != "" && msg.From == state.Coordinator {
 			s, err := UpdateSessionState(d.StateDir, func(s *SessionState) error {
 				if s.Asleep && s.Coordinator != "" && s.Coordinator == msg.From && e.Entry != s.WakeBarrier {
 					s.Asleep = false
@@ -248,9 +252,16 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 	// consumer's current entries. Empty recovery also validates the group.
 	for cursor := ""; !passive; {
 		entries, next, err := bus.PendingPage(ctx, d.Friend, DaemonConsumer, cursor, DaemonReadBatch)
-		if err != nil {
-			return err
+		if ctx.Err() != nil {
+			return nil
 		}
+		if err != nil {
+			d.status.StoreError = err.Error()
+			d.flush(d.Now())
+			d.Pause(ctx, BeatEvery)
+			continue
+		}
+		d.status.StoreError = ""
 		for _, e := range entries {
 			if err := handle(e, d.Now()); err != nil {
 				return err
@@ -448,7 +459,7 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 						return queue[i].entry == state.WakeBarrier
 					}
 					if queue[i].entry == "" || queue[j].entry == "" {
-						return queue[i].entry != "" && queue[j].entry == ""
+						return queue[i].entry == "" && queue[j].entry != ""
 					}
 					return entryBefore(queue[i].entry, queue[j].entry)
 				})

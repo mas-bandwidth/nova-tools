@@ -298,32 +298,36 @@ func TestNoPingForAWindowTellsTheSessionOnceAndAPingTellsItBack(t *testing.T) {
 
 func TestAPingDuringALongTurnIsStillAnsweredAtOnceByTheDaemon(t *testing.T) {
 	t.Parallel()
-	r := newRig(t)
-	// the turn runs longer than a window; the coordinator pings twice while it does
-	window := int(Window / BeatEvery)
-	r.hold, r.releaseAt = make(chan struct{}), window+20
-	r.send(t, "ada", "long", "a long task")
-	ctx, cancel := context.WithCancel(context.Background())
-	r.cancel = cancel
-	r.at[2] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) } // the turn is under way; a ping lands
-	var midTurn Status
-	r.at[100] = func() {
-		midTurn = r.last()
-		r.send(t, "ada", "PING n2", PingText("ada", t0, "n2"))
-	}
-	r.stopAfter = window + 40
-	require.NoError(t, r.d.Run(ctx))
-	assert.Equal(t, []string{"daemon-pong: daemon-pong n1", "daemon-pong: daemon-pong n2"}, r.adaGot(t), "answered from a peek while the turn ran, and once only")
-	assert.True(t, midTurn.LastPing.After(t0.Add(BeatEvery)) && midTurn.LastPing.Before(t0.Add(10*BeatEvery)), "the machine saw the ping when the daemon did, mid-turn: %s", midTurn.LastPing)
-	assert.Equal(t, Challenged, midTurn.Challenge)
-	require.Len(t, r.delivered, 3, "the long task, then the pings as turns once the session was free: %v", r.delivered)
-	assert.Contains(t, r.delivered[1], "PING n1")
-	assert.Contains(t, r.delivered[2], "PING n2")
-	assert.Equal(t, Connected, r.last().Connection, "pings peeked during a long turn keep the connection: no false silence")
-	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
-	require.NoError(t, err)
-	assert.Empty(t, pending)
-	assert.Empty(t, fresh)
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		pause := r.d.Pause
+		r.d.Pause = func(ctx context.Context, d time.Duration) { pause(ctx, d); synctest.Wait() }
+		// the turn runs longer than a window; the coordinator pings twice while it does
+		window := int(Window / BeatEvery)
+		r.hold, r.releaseAt = make(chan struct{}), window+20
+		r.send(t, "ada", "long", "a long task")
+		ctx, cancel := context.WithCancel(context.Background())
+		r.cancel = cancel
+		r.at[2] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) } // the turn is under way; a ping lands
+		var midTurn Status
+		r.at[100] = func() {
+			midTurn = r.last()
+			r.send(t, "ada", "PING n2", PingText("ada", t0, "n2"))
+		}
+		r.stopAfter = window + 40
+		require.NoError(t, r.d.Run(ctx))
+		assert.Equal(t, []string{"daemon-pong: daemon-pong n1", "daemon-pong: daemon-pong n2"}, r.adaGot(t), "answered from a peek while the turn ran, and once only")
+		assert.True(t, midTurn.LastPing.After(t0.Add(BeatEvery)) && midTurn.LastPing.Before(t0.Add(10*BeatEvery)), "the machine saw the ping when the daemon did, mid-turn: %s", midTurn.LastPing)
+		assert.Equal(t, Challenged, midTurn.Challenge)
+		require.Len(t, r.delivered, 3, "the long task, then the pings as turns once the session was free: %v", r.delivered)
+		assert.Contains(t, r.delivered[1], "PING n1")
+		assert.Contains(t, r.delivered[2], "PING n2")
+		assert.Equal(t, Connected, r.last().Connection, "pings peeked during a long turn keep the connection: no false silence")
+		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Empty(t, pending)
+		assert.Empty(t, fresh)
+	})
 }
 
 func TestAStoreThatDoesNotAnswerStopsTheBeat(t *testing.T) {
