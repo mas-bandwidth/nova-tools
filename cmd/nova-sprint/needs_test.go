@@ -30,19 +30,23 @@ func TestTheReadsShowTheNeeds(t *testing.T) {
 	ta.clean()
 }
 
-// card shows each waived need, by whom and when it was waived.
+// Drop refuses a card a waiting card still needs (docs/SPEC-SPRINT.md section
+// 11): the refusal names the card and its dependants, nothing is written, and
+// the need stays on the table. The waiver of a dropped need is pinned at the
+// store, where a stored dropped record still opens the blocked judgment (store
+// TestAddOnDroppedNeedAndWaive); the verbs refuse to make that state.
 func TestCardShowsTheWaivedNeeds(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 1")
 	ta.ok("add --stream s2 b --needs s1-1")
-	ta.ok("drop s1-1 --reason obsolete")
-	g := ta.group(sprint.NBlocked, "s2")
-	ta.ok("ack " + g.Notes[0] + " --reason fine")
-	out := ta.ok("card --fields b")
-	require.Contains(t, out, "NEEDS s1-1 off the table (dropped) waived by ", "card b")
-	require.Contains(t, out, " at 20", "card b")
+	before := ta.applies()
+	code, out, errs := ta.do("drop s1-1 --reason obsolete")
+	require.Equal(t, 1, code, "drop of a needed card: %s%s", out, errs)
+	require.Contains(t, errs, "s1-1 is needed by b; drop them too with --cascade", "drop of a needed card: %s", errs)
+	require.Equal(t, before, ta.applies(), "a refused drop wrote")
+	require.Contains(t, ta.ok("card --fields s1-1"), "place=s1:ready", "a refused drop moved s1-1")
 	ta.clean()
 }
 
@@ -71,8 +75,11 @@ func TestTheCardSaysWhatHoldsIt(t *testing.T) {
 	require.Contains(t, ta.ok("card b --json"), `"held":{"id":"b","by":"d"`, "card b --json")
 }
 
-// inbox --open lists the whole needs of a blocked judgment, one per line, as
-// card --fields does; the judgment's own line previews them.
+// Drop refuses every card a waiting card still needs (docs/SPEC-SPRINT.md
+// section 11): dropping the twelve needs of b names each one with its
+// dependant, writes nothing, and opens no blocked judgment for the inbox.
+// The inbox listing of every dropped need of one judgment is pinned at the
+// store, where a stored dropped record still opens it.
 func TestInboxOpenListsEveryDroppedNeed(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -83,22 +90,16 @@ func TestInboxOpenListsEveryDroppedNeed(t *testing.T) {
 		ids = append(ids, "s1-"+strconv.Itoa(i))
 	}
 	ta.ok("add --stream s2 b --needs " + strings.Join(ids, ","))
-	ta.ok("drop " + strings.Join(ids, " ") + " --reason obsolete")
-	g := ta.group(sprint.NBlocked, "s2")
-	list := ta.ok("inbox --open " + g.ID)
+	before := ta.applies()
+	code, out, errs := ta.do("drop " + strings.Join(ids, " ") + " --reason obsolete")
+	require.Equal(t, 1, code, "drop of needed cards: %s%s", out, errs)
 	for _, id := range ids {
-		assert.Contains(t, list, "\n  NEEDS "+id+"\n", "inbox --open %s does not list the need %s", g.ID, id)
+		assert.Contains(t, errs, id, "the refusal names %s: %s", id, errs)
 	}
-	assert.Contains(t, list, "... and 4 more", "the judgment's line no longer previews the needs")
-	assert.NotContains(t, ta.ok("inbox"), "NEEDS ", "inbox without --open lists needs")
-	var open struct {
-		Needs []string `json:"needs"`
-	}
-	ta.json("inbox --open "+g.ID, &open)
-	assert.Len(t, open.Needs, 12, "inbox --open --json needs: %v", open.Needs)
-	card := ta.ok("card --fields b")
-	for _, id := range ids {
-		assert.Contains(t, card, "NEEDS "+id+" ", "card --fields b lacks %s", id)
+	assert.Contains(t, errs, "--cascade", "the refusal names the remedy: %s", errs)
+	require.Equal(t, before, ta.applies(), "a refused drop wrote")
+	for _, g := range ta.inboxGroups() {
+		assert.False(t, g.Kind == sprint.Judgment && g.Type == sprint.NBlocked, "a refused drop opened a blocked judgment: %+v", g)
 	}
 	ta.clean()
 }

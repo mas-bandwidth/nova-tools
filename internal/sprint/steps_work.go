@@ -218,12 +218,22 @@ func Add(s *Snapshot, r AddReq) Plan {
 	seen := map[string]bool{}
 	for i, id := range ids {
 		needs := append([]string(nil), needsOf(i)...)
-		// missing is the needs that name no primary they may name: one on the
-		// table or one of this add (a cycle is refused below).
-		var missing []string
+		// A need names a primary that can still land: one on the table
+		// (waiting, ready, working, review, merging or landed), a sentinel, or
+		// one of this add. missing is the needs that name no record at all;
+		// off is the needs that name a kept record off the table (a dropped
+		// card), whose outcome the refusal names.
+		var missing, off []string
 		for _, n := range needs {
-			if s.Work.Card(n) == nil && !adding[n] {
+			if adding[n] {
+				continue
+			}
+			c := s.Work.Card(n)
+			switch {
+			case c == nil:
 				missing = append(missing, n)
+			case !c.Placed() && !IsSentinel(c):
+				off = append(off, n)
 			}
 		}
 		switch {
@@ -236,12 +246,19 @@ func Add(s *Snapshot, r AddReq) Plan {
 		case s.Work.Card(id) != nil:
 			p.refuse(id, "exists already ("+placeWord(s.Work.Card(id))+")")
 			continue
-		case len(missing) > 0:
-			if len(r.Cards) > 0 {
-				p.refuse(id, fmt.Sprintf("%s: needs %s, which is no primary on the table or in this add", r.Cards[i].File, strings.Join(missing, ",")))
-			} else {
-				p.refuse(id, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
+		case len(missing) > 0 || len(off) > 0:
+			var why []string
+			if len(missing) > 0 {
+				why = append(why, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
 			}
+			for _, n := range off {
+				why = append(why, "needs "+n+", which was "+orDash(s.Work.Card(n).F("outcome")))
+			}
+			msg := strings.Join(why, "; ")
+			if len(r.Cards) > 0 {
+				msg = r.Cards[i].File + ": " + msg
+			}
+			p.refuse(id, msg)
 			continue
 		}
 		seen[id] = true
