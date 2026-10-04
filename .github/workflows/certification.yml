@@ -720,6 +720,8 @@ jobs:
           key: ${{ steps.gocache.outputs.cache-primary-key }}
 
       - name: install redis-server
+        # NOVA_CI fails a control that wants redis-server and cannot find it. The binary is
+        # not the fleet store.
         run: |
           "$RUNNER_TEMP/ci" install-redis-server
 
@@ -791,8 +793,8 @@ jobs:
         run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
 
       - name: install redis-server
-        # The drive spawns a throwaway redis-server on loopback; it does not dial the fleet
-        # store.
+        # The drive spawns a throwaway redis-server on loopback; it does not dial the
+        # fleet store.
         run: '"$RUNNER_TEMP/ci" install-redis-server'
 
       - name: the tick gate, against the bench's store

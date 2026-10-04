@@ -40,9 +40,10 @@ the same questions.
 
 A backend's answers are held to the schema (`Schema.Check`): one answer per
 question, of its type, a choice's value one of its options and given a
-probability, a choice's probabilities only for its options, a noul's
-probability of yes and nothing else, every probability in [0, 1], and nothing
-that was not asked. An answer that does not fit is a failure, never repaired.
+probability or a confidence kept apart from one, a choice's probabilities only
+for its options, a noul's probability of yes and nothing else, every
+probability in [0, 1], and nothing that was not asked. An answer that does not
+fit is a failure, never repaired.
 
 ## 3. Backends
 
@@ -52,8 +53,10 @@ A backend is `Name()` and `Ask(ctx, schema, state) (answers, usage, error)`.
   `{"state", "model", "questions"}` to `https://api.typesafe.ai/v1/systemone`
   with the key as a bearer token; the response is
   `{"answers": {<name>: {"type": "choice", "choice", "probabilities", "confidence"} | {"type": "noul", "noul"}},
-  "usage": {"input_tokens", "output_tokens"}}`. A choice with no probabilities
-  carries its confidence as the chosen option's probability. An answer with no
+  "usage": {"input_tokens", "output_tokens"}}`. A choice with probabilities is
+  unchanged. A choice with only a confidence records the choice, that
+  confidence, and method wire, and leaves the probabilities empty; neither is
+  promoted into a probability of correctness. An answer with no
   probability at all (a noul with no `noul`, a choice with neither
   `probabilities` nor `confidence`) is a failure naming the question: a missing
   number is never read as 0, which would be a confident "no". The HTTP client is
@@ -154,7 +157,8 @@ prints it): a reworded question or rule changes the hash, the test names the
 stale fixture, and the fixture is regenerated in the same change. Old records
 keep their old hash, and calibrate never pools the two.
 
-The read line carries the verdict and its probability; a gate decides on
+The read line carries the verdict and its probability, or `p=-` when the
+choice has none; a gate decides on
 `defect` or `verdict` at the bar `calibrate` reads from the read's record.
 
 ## 7. Output, refusals and exits
@@ -162,7 +166,10 @@ The read line carries the verdict and its probability; a gate decides on
 Every verb prints one result through internal/tool: the typed line
 (`READ OK id=... verdict=... p=...`, `ATTEMPT OK ... class=... p=...`,
 `GRADE OK ... grade=... p=...`, one `<VERB> ANSWER` item per question) or,
-with `--json`, the same value as one JSON object. A refusal is one line,
+with `--json`, the same value as one JSON object. A choice with an empty
+probability map prints `p=-`, and a wire confidence adds `confidence=<x>
+method=wire` on the headline and the answer row; neither is a probability.
+A refusal is one line,
 `<VERB> REFUSED: <every problem, each with what it wants>; run: <remedy>`, at
 exit 2, and writes nothing. A backend that fails (no answer, an HTTP status, an
 answer outside the schema) is `<VERB> FAIL id=... backend=...: <why>; run:

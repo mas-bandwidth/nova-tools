@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,17 +167,75 @@ const FinishName = ".sprint/finish.md"
 // member counts the child's commits from.
 const StagedName = "staged"
 
+// maxRecord is the ceiling a job file read whole into memory carries, the same ceiling
+// readRegular gives internal/swarm's dispatcher files: a finish and a push record are a few
+// lines, and a planted file at their names must not set the member's memory.
+const maxRecord = 16 * 1024 * 1024
+
+// readRecord is os.ReadFile for a job file the walled child can rewrite (security#66
+// finding 1): FinishName and PushedName live in the job directory, the child's first
+// --write, and the member reads them outside the wall into the card's result and the pull
+// request body. A SYMLINK there would have the member read past the wall what the wall
+// exists to keep from it, and a FIFO would park the read with no deadline, so the posture is
+// internal/swarm's readRegular, copied small because swarm imports this package: a path that
+// is not a regular file is no record at all, the outcome an absent file already has. The
+// Lstat refuses the link and the pipe, the open runs through an os.Root, which follows no
+// component however freshly planted, so a link swapped in after the Lstat is refused too,
+// the fstat asks the open file the same question, and the size caps the read. The O_NONBLOCK
+// readRegular also carries has no portable spelling in this one file; a FIFO that slips in
+// between the Lstat and the open could still park it, and the reads happen at the finish,
+// when the launch has ended.
+func readRecord(job, name string) ([]byte, error) {
+	root, err := os.OpenRoot(job)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	notRegular := func(fi fs.FileInfo) error {
+		return fmt.Errorf("%s: not a regular file (%s): %w", name, fi.Mode().Type().String(), fs.ErrInvalid)
+	}
+	fi, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, notRegular(fi)
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if fi, err = f.Stat(); err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, notRegular(fi)
+	}
+	if fi.Size() > maxRecord {
+		return nil, fmt.Errorf("%s: %d bytes passes the %d a job record carries: %w", name, fi.Size(), maxRecord, fs.ErrInvalid)
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, maxRecord+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > maxRecord {
+		return nil, fmt.Errorf("%s: %d bytes passes the %d a job record carries: %w", name, int64(len(raw)), maxRecord, fs.ErrInvalid)
+	}
+	return raw, nil
+}
+
 // IsFinish is whether raw is the finish the gh shim recorded in the job, byte for byte:
 // native publishes that record as the card's result when the child wrote no RESULT.md.
 func IsFinish(job string, raw []byte) bool {
-	b, err := os.ReadFile(filepath.Join(job, FinishName))
+	b, err := readRecord(job, FinishName)
 	return err == nil && string(b) == string(raw)
 }
 
 // ReadFinish is the finish the gh shim recorded in the job directory, and whether
 // there is one (an empty file is none).
 func ReadFinish(job string) (typedrec.CardResult, bool) {
-	b, err := os.ReadFile(filepath.Join(job, FinishName))
+	b, err := readRecord(job, FinishName)
 	if err != nil || len(strings.TrimSpace(string(b))) == 0 {
 		return typedrec.CardResult{}, false
 	}
@@ -254,7 +313,7 @@ func Prompt(job, card string) string {
 
 // LastPushed is the last head the git shim recorded in the job directory, "" when none.
 func LastPushed(job string) (branch, head string) {
-	b, err := os.ReadFile(filepath.Join(job, PushedName))
+	b, err := readRecord(job, PushedName)
 	if err != nil {
 		return "", ""
 	}

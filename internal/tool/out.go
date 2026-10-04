@@ -177,6 +177,19 @@ func (o *Out) Cap(max int) *Out {
 	return o
 }
 
+// lookedAtNothing reports whether o carries the fact that counts what the
+// verb read (Verb.Looks) at 0: a check that looked at nothing is not green
+// (STANDARD §2, exit codes tell the truth). A fact that is absent is no
+// count of 0; it is left to the verb's own tests.
+func (o *Out) lookedAtNothing(fact string) bool {
+	for _, f := range o.Facts {
+		if f.K == fact {
+			return fmt.Sprint(f.V) == "0"
+		}
+	}
+	return false
+}
+
 // Render writes o as typed lines, or as one JSON object when json is set, and
 // returns the exit that stands: o.Exit, or 1 when o is no JSON (a NaN or an
 // infinite float, a value of the verb's own that JSON cannot carry), which is
@@ -187,6 +200,11 @@ func (o *Out) Render(w io.Writer, asJSON bool) int { return o.render(w, w, w, as
 // render is Render with the lines of the finding kinds (Findings) on found,
 // and the FAILED line of a result that is no JSON on failed.
 func (o *Out) render(w, found, failed io.Writer, asJSON bool) int {
+	if k := o.duplicateKey(); k != "" {
+		f := Fail("the key " + k + " is printed twice on one line")
+		f.Verb, f.token = o.Verb, o.token
+		return f.render(failed, failed, failed, false)
+	}
 	if asJSON {
 		raw, err := marshal(o)
 		if err != nil {
@@ -246,22 +264,55 @@ func (o *Out) render(w, found, failed io.Writer, asJSON bool) int {
 // text is the fields of one line: the typed ones in order, each one token
 // (oneline.Field), then the Text ones, the line's prose tail, each quoted
 // (oneline.Quote) so it keeps its spaces and a reader sees where it ends.
+// One way to print a value: a value that is one safe token prints bare, and
+// anything else -- whitespace, a control character, an "=" -- prints as
+// strconv.Quote gives it, so no line holds `\x20` (skeleton contract 1.14,
+// STANDARD §2).
 func (fs Fields) text() string {
 	var typed, prose strings.Builder
 	for _, f := range fs {
 		v := fmt.Sprint(f.V)
 		b := &typed
-		switch _, text := f.V.(Text); {
+		if _, text := f.V.(Text); text {
+			b = &prose
+		}
+		switch {
 		case v == "":
 			v = "-"
-		case text:
-			v, b = oneline.Quote(v), &prose
-		default:
-			v = oneline.Field(v)
+		case oneline.Field(v) != v:
+			v = oneline.Quote(v)
 		}
 		b.WriteString(" " + oneline.Field(f.K) + "=" + v)
 	}
 	return typed.String() + prose.String()
+}
+
+// duplicateKey is the first key fs prints twice, or "" when each key is
+// printed once: a line names one key once, and a repeat is a tool bug
+// (skeleton contract 1.14, STANDARD §2, one output structure).
+func (fs Fields) duplicateKey() string {
+	seen := make(map[string]bool, len(fs))
+	for _, f := range fs {
+		if seen[f.K] {
+			return f.K
+		}
+		seen[f.K] = true
+	}
+	return ""
+}
+
+// duplicateKey is the first key one line of o prints twice, the first line's
+// facts or one item's fields, or "" when every key is printed once on its line.
+func (o *Out) duplicateKey() string {
+	if k := o.Facts.duplicateKey(); k != "" {
+		return k
+	}
+	for _, it := range o.Items {
+		if k := it.Fields.duplicateKey(); k != "" {
+			return k
+		}
+	}
+	return ""
 }
 
 // marshal is json.Marshal without the HTML escape (`<` stays `<`): the

@@ -208,6 +208,24 @@ func TestALandWhoseHeadIsNotOriginsTipIsRefused(t *testing.T) {
 	}
 }
 
+// A friend's Head line may spell the sha in upper or mixed case: a sha is
+// case-insensitive hex, so the head word friendReportOf returns is lower cased, an
+// upper-case full sha takes the LAND branch, the tip is read and compared, and the
+// card lands at origin's tip in origin's spelling (docs/SPEC-SPRINT.md section 1,
+// friend sync: Head is origin's tip of her branch).
+func TestAnUpperCaseHeadStillMatchesTheTip(t *testing.T) {
+	t.Parallel()
+	upper := strings.ToUpper(landHead)
+	r, err := friendFinish(context.Background(), "amy",
+		sprint.Packet{Card: "c.w1", Gen: 1, Branch: "sprint/c.w1.g1.e0",
+			Brief: "c.w1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy"},
+		"Verdict: LAND\nHead: "+upper+"\n\nDone.\n",
+		tipIs(t, landHead))
+	require.NoError(t, err)
+	assert.False(t, r.Failed, "an upper-case Head is a full sha: the LAND branch reads the tip")
+	assert.Equal(t, landHead, r.Head, "the card lands at origin's tip, in origin's spelling")
+}
+
 // friend sync writes only inside the friend's working directory: a card id that is not
 // one, or an inbox/<job> that is a symlink, is refused and nothing is written.
 func TestTheInboxRefusesABadCardIDAndASymlinkedJob(t *testing.T) {
@@ -228,6 +246,44 @@ func TestTheInboxRefusesABadCardIDAndASymlinkedJob(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, why)
 	assert.Equal(t, filepath.Join(dir, "inbox", "s1-2.w1~3"), in)
+}
+
+// A friend's outbox/<job>/REPORT.md that is a symlink, a non-regular file, or larger
+// than the read cap is not read: os.ReadFile follows the link, so the file could
+// be outside her working directory, and a large report is held in memory whole.
+// The card is left working and one FRIEND-CARD line names the path and the
+// reason, and the next sync reads it again. friend clean already treats a
+// non-regular report as not done (friendclean.go, the Lstat and Mode().IsRegular()
+// check near line 217); sync does the same before its read (docs/FRIENDS.md, the
+// inbox/outbox standard; docs/SPEC-SPRINT.md section 1, friend sync).
+func TestASymlinkedReportIsNotRead(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root) // delivers the brief, the card is working
+
+	// the LAND report the friend would write lives outside her working directory
+	outside := t.TempDir()
+	target := filepath.Join(outside, "REPORT.md")
+	require.NoError(t, os.WriteFile(target, []byte("Verdict: LAND\nHead: "+landHead+"\n\nThe gate is green.\n"), 0o644))
+
+	// outbox/<job>/REPORT.md is a symlink to that outside report: a bare
+	// os.ReadFile would follow it and finish the card from a file outside the
+	// working directory
+	dir := filepath.Join(root, "amy-working", "outbox", "s1-1.w1")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.Symlink(target, filepath.Join(dir, "REPORT.md")))
+
+	out := ta.ok("friend sync --root " + root)
+	assert.Contains(t, out, "FRIEND-CARD", "a line names the path and the reason")
+	assert.Contains(t, out, "symlink", "the reason names the symlink")
+	assert.NotContains(t, out, "FRIEND-CARD FINISHED", "the symlinked report is not read, the card is not finished")
+
+	var c cardView
+	ta.json("card s1-1", &c)
+	assert.Equal(t, sprint.Working, c.Primary.Col, "the card stays working")
+	assert.Empty(t, c.Primary.F("result"), "the card is not finished")
+	ta.clean()
 }
 
 // A twin's verbs beat its machines, never a friend's row: a twin holding a friend's card
@@ -312,13 +368,28 @@ func TestAFriendsReworkStartsFromTheTipOfItsBase(t *testing.T) {
 	text := friendBrief("amy", p)
 	assert.Contains(t, text, "This attempt starts from the current tip of sprint/s1 on origin, never from an older base: fetch it and start your branch there. "+
 		"Carry the work of attempt 2 onto it yourself: its head, "+landHead+", is the last pushed by any attempt before this one (`git diff origin/sprint/s1..."+landHead+"` shows that work); where it does not apply cleanly, redo it. "+
-		"The Head you report must be on that tip: a commit that descends from origin's sprint/s1 as you fetched it.\nThe coordinator asks: assert the bound\n")
+		"The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\nThe coordinator asks: assert the bound\n")
 	assert.NotContains(t, text, "start from it.", "never the old head")
 
 	p.BaseHead, p.BaseAttempt = "", 0
 	p.Brief = "s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n\nThe task."
-	assert.Contains(t, friendBrief("amy", p), "the current tip of the repository's default branch on origin, never from an older base: fetch it and start your branch there. No attempt before this one pushed work to carry. The Head you report must be on that tip: a commit that descends from origin's default branch as you fetched it.\n")
+	assert.Contains(t, friendBrief("amy", p), "the current tip of the repository's default branch on origin, never from an older base: fetch it and start your branch there. No attempt before this one pushed work to carry. The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\n")
 
 	p.Attempt = 1
 	assert.NotContains(t, friendBrief("amy", p), "This attempt starts")
+}
+
+// The brief a friend receives for a later attempt says what friendFinish actually checks,
+// in the present tense: a LAND's Head must be origin's tip of her branch when sync reads it
+// (one git ls-remote), and the attempt is expected to start from the tip named above. A
+// friend has no staged commit, so the brief claims no descent check and never says descends
+// (docs/SPEC-CARD-CONTRACT.md, where a rework starts; nova-tools#5215).
+func TestTheFriendBriefSaysWhatSyncChecks(t *testing.T) {
+	t.Parallel()
+	p := sprint.Packet{Card: "s1-1.w3", Epoch: 0, Attempt: 3, Branch: "sprint/s1-1.w3.g1.e0", BaseHead: landHead, BaseAttempt: 2,
+		Brief: "s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s1\nWHO: friend amy\n\nThe task."}
+	text := friendBrief("amy", p)
+	assert.Contains(t, text, "The Head you report must be origin's tip of your branch when sync reads it", "the brief names the tip-equality rule friendFinish checks")
+	assert.Contains(t, text, "the attempt is expected to start from the tip named above", "the brief says where the attempt starts")
+	assert.NotContains(t, text, "descend", "the brief claims no descent check, for friendFinish makes none")
 }

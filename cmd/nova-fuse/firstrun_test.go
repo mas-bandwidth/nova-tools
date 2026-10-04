@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -297,10 +298,14 @@ func TestTheBannerSittingThroughTheComparator(t *testing.T) {
 	}
 	exs := examples(t)
 	require.Len(t, exs, len(sitting))
-	box := filepath.Join(t.TempDir(), "fuse-box.json")
-	path, err := onboarding.Elide("the fresh box path", regexp.QuoteMeta(box), "./fuse-box.json")
+	// Exercise both representations of a path with spaces: the box= field
+	// escapes them, while the remedy preserves them inside shell quotes.
+	box := filepath.Join(t.TempDir(), "fuse box.json")
+	path, err := onboarding.Elide("the fresh box field", regexp.QuoteMeta("box="+oneline.Field(box)+": "), "box=./fuse-box.json: ")
 	require.NoError(t, err)
-	norms := []onboarding.Norm{path}
+	remedy, err := onboarding.Elide("the fresh box in the lift remedy", regexp.QuoteMeta("--box "+oneline.Escape(liftShellWord(box))+" -- "), "--box './fuse-box.json' -- ")
+	require.NoError(t, err)
+	norms := []onboarding.Norm{path, remedy}
 	for i, s := range sitting {
 		require.Equal(t, s.example, exs[i], "example %d", i)
 		exit, stdout, stderr := runFuse(t, localize(fields(s.example), box)...)

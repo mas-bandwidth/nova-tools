@@ -25,12 +25,12 @@ func TestHoldReportsMeasurementFailures(t *testing.T) {
 	base := Bounds{Limit: 10 << 10, Slack: 2 << 10, Remove: 1000}
 
 	cases := []struct {
-		name        string
-		dry         bool
-		malformed   int
-		clean       bool
-		wantFailed  int
-		wantSize    int64
+		name       string
+		dry        bool
+		malformed  int
+		clean      bool
+		wantFailed int
+		wantSize   int64
 	}{
 		{name: "one malformed shard dry", dry: true, malformed: 1, wantFailed: 1},
 		{name: "one malformed shard", dry: false, malformed: 1, wantFailed: 1},

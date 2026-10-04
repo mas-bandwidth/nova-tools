@@ -130,21 +130,18 @@ type realLockClock struct{}
 func (realLockClock) Now() time.Time        { return time.Now() }
 func (realLockClock) Sleep(d time.Duration) { time.Sleep(d) }
 
-// LockFile takes an exclusive advisory lock on path, waiting up to wait for it, and returns the
-// release function. The release is safe to call more than once.
+// lockFile is the lock take every caller goes through: an exclusive advisory lock on
+// path, waiting up to wait for it, and returning the release function. The release is
+// safe to call more than once.
 //
 // On Unix this is an flock (advisory lock) that dies with the process.
 // On Windows this is an O_EXCL sentinel file (.held).
 //
-// When the lock is taken, LockFile stamps the current process PID into the file so
+// When the lock is taken, lockFile stamps the current process PID into the file so
 // waiters and refusals can name the holder.
-// If wait is 0, LockFile attempts to acquire the lock once without waiting.
-// If wait > 0, LockFile polls every 25ms until the deadline.
+// If wait is 0, lockFile attempts to acquire the lock once without waiting.
+// If wait > 0, lockFile polls every 25ms until the deadline.
 // If the lock cannot be acquired within wait, it returns an error wrapping ErrLockHeld.
-func LockFile(path string, wait time.Duration) (func(), error) {
-	return lockFile(path, wait, tryLockFile, nil)
-}
-
 func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, retryable bool, err error), clk lockClock) (func(), error) {
 	if clk == nil {
 		clk = realLockClock{}

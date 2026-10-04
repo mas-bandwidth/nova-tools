@@ -15,7 +15,6 @@ package dogfood
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 )
 
@@ -309,15 +308,4 @@ func isBareWord(s string) bool {
 		}
 	}
 	return true
-}
-
-// Keys returns the verb keys, sorted: useful to a caller that wants the set
-// rather than the document's order.
-func Keys(verbs []Verb) []string {
-	keys := make([]string, 0, len(verbs))
-	for _, v := range verbs {
-		keys = append(keys, v.Key())
-	}
-	sort.Strings(keys)
-	return keys
 }

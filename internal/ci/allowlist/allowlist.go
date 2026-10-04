@@ -95,7 +95,7 @@ func FirstField(row string) string {
 	return ""
 }
 
-// Fields returns a key of the row's first n fields joined by one space, for a list
+// Fields returns a key of the row's first n fields joined by one blank, for a list
 // whose identity is more than one field (`file:line kind`, `file spell`).
 func Fields(n int) func(string) string {
 	return func(row string) string {
@@ -290,7 +290,7 @@ func CheckMode(r Reporter, l *List, measured map[string]bool, update bool) Resul
 	if out == l.Text() {
 		return res
 	}
-	if err := WriteAtomic(l.Path, out); err != nil {
+	if err := atomicfile.Write(filepath.Clean(l.Path), []byte(out), 0o644, atomicfile.ExactMode()); err != nil {
 		r.Errorf("%s: the update could not write the list: %v", l.Path, err)
 		return res
 	}
@@ -358,7 +358,7 @@ func CheckCountedMode(r Reporter, l *List, measured map[string]int, update bool)
 	if out == l.Text() {
 		return res
 	}
-	if err := WriteAtomic(l.Path, out); err != nil {
+	if err := atomicfile.Write(filepath.Clean(l.Path), []byte(out), 0o644, atomicfile.ExactMode()); err != nil {
 		r.Errorf("%s: the update could not write the list: %v", l.Path, err)
 		return res
 	}
@@ -410,10 +410,4 @@ func (l *List) render(drop map[int]bool, lower map[int]int, grow []string, kept 
 		out = append(out, row)
 	}
 	return strings.Join(out, "\n") + "\n"
-}
-
-// WriteAtomic replaces path through a temp file in its own directory, so a reader
-// never sees half a list.
-func WriteAtomic(path, text string) error {
-	return atomicfile.Write(filepath.Clean(path), []byte(text), 0o644, atomicfile.ExactMode())
 }

@@ -222,7 +222,8 @@ func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
 	owe("| c | three | TODO |\n")
 	exit, stdout, _ := f.run(t, "--state", state, "--now", "2026-09-18T13:00:00Z")
 	require.EqualValues(t, 0, exit, "one widening tick exited %d, want 0 with a WARN:\n%s", exit, stdout)
-	require.True(t, strings.Contains(stdout, "CONVERGENCE WARN") && strings.Contains(stdout, "widening=LEDGER"), "one widening tick did not warn:\n%s", stdout)
+	require.True(t, strings.Contains(stdout, "CONVERGENCE WARN"), "one widening tick did not warn:\n%s", stdout)
+	require.True(t, strings.Contains(stdout, "widening=LEDGER"), "one widening tick did not warn:\n%s", stdout)
 	// And another: the same stream widening twice running is the red.
 	owe("| d | four | TODO |\n")
 	exit, stdout, _ = f.run(t, "--state", state, "--now", "2026-09-18T14:00:00Z")
@@ -285,7 +286,7 @@ func TestConvergenceRefusesAForgeThatWillNotAnswer(t *testing.T) {
 	exit, stdout, stderr := f.run(t, "--gh", bad)
 	require.EqualValues(t, 2, exit, "a forge that refused exited %d, want 2", exit)
 	assert.NotContains(t, stdout, "CONVERGENCE", "a partial reading was printed:\n%s", stdout)
-	assert.True(t, strings.Contains(stderr, "nova-check convergence REFUSED:") && strings.Contains(stderr, "gh pr list"), "the refusal does not name the child: %q", stderr)
+	assert.False(t, !strings.Contains(stderr, "nova-check convergence REFUSED:") || !strings.Contains(stderr, "gh pr list"), "the refusal does not name the child: %q", stderr)
 }
 
 // A --timeout of zero or less is a wait with no end.

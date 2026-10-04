@@ -461,7 +461,7 @@ func (winPlace) CloseJob(j winJob) error {
 }
 
 // Used is `freed=`, and it WALKS -- there is no statfs for a directory on NTFS, and the
-// volume's free space is the volume's, not this run's.
+// volume's free capacity is the volume's, not this run's.
 func (winPlace) Used(dir string) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {

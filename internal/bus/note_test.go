@@ -251,7 +251,7 @@ func TestFileNameCarriesTheMinuteTheSlugAndTheIDsHashHalf(t *testing.T) {
 	// The failure this closes: one sender writing twice inside one minute collided on the
 	// filename and overwrote their own note.
 	other := FileName(at("2026-09-09T12:34:59Z"), "cold-read", "ada-ba9876543210")
-	require.False(t, got == other, "two notes in one minute produced one filename")
+	require.NotEqual(t, other, got, "two notes in one minute produced one filename")
 }
 
 func TestSlugify(t *testing.T) {
@@ -412,13 +412,14 @@ func TestAProseFirstLineFailsWithAShortQuotedKey(t *testing.T) {
 	require.Error(t, err, "a note whose first line is prose parsed")
 	require.Contains(t, err.Error(), "not a header key", "the refusal does not say what is wrong: %v", err)
 	if len(err.Error()) > 200 {
-		require.False(t, len(err.Error()) > 200, "the refusal is %d characters; it pastes the paragraph back:\n%v", len(err.Error()), err)
+		require.LessOrEqual(t, len(err.Error()), 200, "the refusal is %d characters; it pastes the paragraph back:\n%v", len(err.Error()), err)
 	}
 	require.Contains(t, err.Error(), "...", "the refusal does not mark that it shortened the key: %v", err)
 	require.NotContains(t, err.Error(), "138,751", "the whole paragraph is in the refusal: %v", err)
 	// A key short enough to read is quoted whole, so the common case is unchanged.
 	_, err = ParseNote("from-bo/x.md", "From: Ada\nSbuject: s\n\nbody\n")
-	require.False(t, err == nil || !strings.Contains(err.Error(), `unknown header key "Sbuject"`), "a short key was not quoted whole: %v", err)
+	require.False(t, err == nil, "a short key was not quoted whole: %v", err)
+	require.False(t, !strings.Contains(err.Error(), `unknown header key "Sbuject"`), "a short key was not quoted whole: %v", err)
 }
 
 // THE THREE SHAPES A READ OF THE REAL BUS FOUND, and what each refusal now has to say.
@@ -465,5 +466,6 @@ func TestAnUnreadableNoteSaysWhatToDoAboutIt(t *testing.T) {
 	// And the tolerances are untouched: a bullet in front of a bold key is still read as a
 	// bullet, so the refusal is about the bold and not about the bullet.
 	_, err := ParseNote("from-bo/x.md", "- From: Bo\n- **To**: Ada\n- Subject: s\n\nbody\n")
-	require.False(t, err == nil || !strings.Contains(err.Error(), "not markdown bold"), "a bulleted bold key: %v", err)
+	require.False(t, err == nil, "a bulleted bold key: %v", err)
+	require.False(t, !strings.Contains(err.Error(), "not markdown bold"), "a bulleted bold key: %v", err)
 }

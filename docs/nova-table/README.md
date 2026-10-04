@@ -474,12 +474,12 @@ leaves a `noop` receipt.
 $ nova-table render crew
 crew    | busy | idle | note
 --------+------+------+-----
-studio  |    1 |    0 |
-hetzner |    0 |    0 |
-stella  |    0 |    0 |
-rowan   |    0 |    0 | here
-$ nova-table row order crew rowan stella        # friends on top, machines keep their order below
-$ nova-table row move crew hetzner --before studio
+bench-a |    1 |    0 |
+bench-b |    0 |    0 |
+ada     |    0 |    0 |
+bob     |    0 |    0 | here
+$ nova-table row order crew bob ada        # friends on top, machines keep their order below
+$ nova-table row move crew bench-b --before bench-a
 $ nova-table col move crew note --first
 $ nova-table col add crew 'share:pct(busy)' --after busy
 ```
@@ -519,7 +519,7 @@ Cells are separated by ` | ` and the rule joins dashes with `-+-`. A column
 is as wide as its widest cell (the footer counts) unless its width is fixed
 in the definition (`create --width`) or for one render (`render --width`);
 a wider cell is not cut. A last column is padded only when right-aligned,
-so no line ends in a space. `--label-width <n>` sets the separate row-label
+so no line ends in whitespace. `--label-width <n>` sets the separate row-label
 column width. Labels, text, member names, footers and view titles display control
 characters as literal escapes (for example, newline as `\x0a` and ESC as `\x1b`).
 Widths are measured after escaping. Stored values remain unchanged; text cannot

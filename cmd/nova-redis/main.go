@@ -39,8 +39,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/redis/go-redis/v9"
@@ -99,15 +101,10 @@ func realDeps() deps {
 	}
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, realDeps())) }
+func main() { os.Exit(redisTool(realDeps()).Main()) }
 
 // usage is the banner, for the tests that read it directly.
 var usage = redisTool(deps{}).Banner()
-
-// run is the test seam: the tool built over d, run in process.
-func run(args []string, stdout, stderr io.Writer, d deps) int {
-	return redisTool(d).Run(args, os.Stdin, stdout, stderr)
-}
 
 // redisTool is nova-redis on internal/tool. The verbs' bodies live in their
 // own files; here is the one Tool and the shared login.
@@ -119,7 +116,7 @@ func redisTool(d deps) *tool.Tool {
 		How: `serve runs redis-server on loopback or tailnet addresses only, with its data in --dir.
 spill writes a value under <owner>:<name> with a required expiry; recall reads it back.
 fn load and fn check install and verify the functions nova-table and nova-sprint call.
-Passwords come from an environment variable, never from an argument.
+The password is read from the variable NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD.
 first run: the --dry-run line needs no store; spill and recall need a Redis at 127.0.0.1:6379.`,
 		ExitTable: "0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).",
 		Words:     []string{"UNCONFIRMED", "MISSING", "EXPIRED", "UNBOUNDED"},
@@ -162,6 +159,9 @@ func spillVerb(d deps) tool.Verb {
 					if !(err != nil && e == errNoTTL) {
 						c.Problem(e.Error())
 					}
+				}
+				if err := storeFamilyError(c.Str("owner")); err != nil {
+					c.Problem(err.Error())
 				}
 			})
 		},
@@ -356,8 +356,13 @@ func (l login) check(d deps) error {
 // password is a store that asks for none (redisconn refuses a password
 // variable that is named and empty, and check has refused a named user
 // without one). Env is left zero, so redisconn reads no variable of its own.
+// Addr is the dialled shape: redisconn keys a Unix socket off its leading
+// slash and takes a path as given, so the unix: prefix is stripped here.
 func (l login) options(d deps) redisconn.Options {
 	o := redisconn.Options{Addr: *l.addr, User: *l.user}
+	if socket, isSocket := unixSocketPath(*l.addr); isSocket {
+		o.Addr = socket
+	}
 	if d.getenv(*l.passwordEnv) != "" {
 		o.PasswordEnv = *l.passwordEnv
 	}
@@ -369,15 +374,15 @@ func (l login) options(d deps) redisconn.Options {
 // were given on the line, even empty or equal to the default (an explicit
 // flag overrides the environment, and a remedy that dropped it would log in
 // as the environment says), and when the environment set them to other than
-// the default. Every value is one POSIX shell word (shellWord). It is called
-// after check.
+// the default. Every value is one POSIX shell word (oneline.ShellWord). It is
+// called after check.
 func (l login) flags() string {
-	line := "--addr " + shellWord(*l.addr)
+	line := "--addr " + oneline.ShellWord(*l.addr)
 	if *l.user != "" || l.given("user") {
-		line += " --user " + shellWord(*l.user)
+		line += " --user " + oneline.ShellWord(*l.user)
 	}
 	if *l.passwordEnv != PasswordEnv || l.given("password-env") {
-		line += " --password-env " + shellWord(*l.passwordEnv)
+		line += " --password-env " + oneline.ShellWord(*l.passwordEnv)
 	}
 	return line
 }
@@ -385,10 +390,19 @@ func (l login) flags() string {
 // validAddr refuses an address the tool would have to guess at. The Redis
 // client fills an empty address in as localhost:6379 and an empty host as the
 // local machine, so an address that is empty, blank, or lacks a host or a
-// numeric port is refused before anything is dialled.
+// numeric port is refused before anything is dialled. A Unix socket names no
+// host and no port: the absolute path is the whole address, given bare or with
+// redis-cli's unix: prefix, and is accepted as the address (connect) dials —
+// it is the shape nova-table's first-run recipe makes.
 func validAddr(addr string) error {
 	if strings.TrimSpace(addr) == "" {
 		return errors.New("--addr is empty; give the instance as <host:port>, refusing to guess localhost")
+	}
+	if _, ok := unixSocketPath(addr); ok {
+		return nil
+	}
+	if _, prefixed := strings.CutPrefix(addr, "unix:"); prefixed {
+		return fmt.Errorf("--addr %q is not <host:port>; after unix: give the absolute path of a Unix socket, refusing to guess", addr)
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -403,6 +417,21 @@ func validAddr(addr string) error {
 	return nil
 }
 
+// unixSocketPath is the socket path addr names: an absolute path with no
+// control character, given bare or after redis-cli's unix: prefix; ok is
+// false when addr names no Unix socket. The path may hold spaces, which a
+// file name may hold.
+func unixSocketPath(addr string) (path string, ok bool) {
+	path, _ = strings.CutPrefix(addr, "unix:")
+	if path == "" {
+		path = addr
+	}
+	if !strings.HasPrefix(path, "/") || strings.ContainsFunc(path, unicode.IsControl) {
+		return "", false
+	}
+	return path, true
+}
+
 // connect opens the store for the login check accepted through
 // redisconn.Open, the one way a nova tool opens its Redis connection, with
 // the environment d.getenv reads and nothing else.
@@ -412,9 +441,12 @@ func connect(ctx context.Context, store login, d deps) (*redisconn.Conn, error) 
 
 // failed is a verb's one line for err, which is redisconn's (an Open
 // failure, or a command's error through Conn.Explain), so it names the
-// store, the login, what came back and the next step. A store that could not
-// be reached and a login it refused could not run at all: the line leads
-// with REFUSED at exit 2, the pairing internal/tool's Status states for a
+// store, the login, what came back and the next step. That text is the
+// line's reason, after the key and the class, printed as prose a person can
+// read (`: redis at <addr> as <user>: unreachable: <cause>; next: <step>`),
+// never as a typed field, which would hex-escape every blank in it. A store
+// that could not be reached and a login it refused could not run at all: the
+// line leads with REFUSED at exit 2, the pairing internal/tool's Status states for a
 // verb that could not run (STANDARD §2's exit table), and the fix is the
 // caller's. The store may still have taken the write: redisconn classes a
 // connection that dropped, or a reply that never came, as unreachable too,
@@ -426,7 +458,7 @@ func connect(ctx context.Context, store login, d deps) (*redisconn.Conn, error) 
 // the caller named none, and the operator needs to know which one to set.
 func failed(verb, key string, err error, store login, d deps) *tool.Out {
 	class := redisconn.Classify(err)
-	o := tool.Fail().Fact("key", key).Fact("class", fmt.Sprint(class)).Fact("err", oneline.Err(err))
+	o := tool.Fail(err.Error()).Fact("key", key).Fact("class", fmt.Sprint(class))
 	if class == redisconn.AuthRefused && d.getenv(*store.passwordEnv) == "" {
 		o.Fact("remedy", tool.Text("nova-redis reads the store's password from "+*store.passwordEnv+", which is not set: export it, holding the password of the default user"))
 	}
@@ -453,34 +485,50 @@ func unconfirmed(conn *redisconn.Conn, store login, owner, name string, err erro
 	if inner := errors.Unwrap(err); inner != nil {
 		cause = inner
 	}
-	recall := "nova-redis recall " + store.flags() + " --owner " + shellWord(owner) + " --name " + shellWord(name)
+	recall := "nova-redis recall " + store.flags() + " --owner " + oneline.ShellWord(owner) + " --name " + oneline.ShellWord(name)
 	return tool.Fail().As("UNCONFIRMED").Fact("key", owner+":"+name).
 		Fact("err", oneline.Escape(conn.String()+": the transaction was sent and its reply was lost: "+cause.Error())).
 		Fact("remedy", tool.Text("confirmation was lost after the transaction was sent, so the write may have committed; read it back with the same login before spilling again: "+recall))
 }
 
-// shellWord is s as one POSIX shell word: as it is when it holds only
-// characters no shell treats specially, and otherwise in single quotes, each
-// single quote in it closing the quotes, written as a backslash and a quote,
-// and opening them again. The empty string is two single quotes.
-func shellWord(s string) string {
-	plain := s != ""
-	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_-.,:/@%+=", r)) {
-			plain = false
-			break
-		}
+// validKey is the one gate every write passes: an owner outside the store's
+// families, a name and a TTL above zero, or nothing is written. It names every
+// one that is wrong.
+func validKey(owner, name string, ttl time.Duration) error {
+	errs := keyErrors(owner, name, ttl)
+	if err := storeFamilyError(owner); err != nil {
+		errs = append(errs, err)
 	}
-	if plain {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return errors.Join(errs...)
 }
 
-// validKey is the one gate every write passes: an owner, a name and a TTL
-// above zero, or nothing is written. It names every one that is wrong.
-func validKey(owner, name string, ttl time.Duration) error {
-	return errors.Join(keyErrors(owner, name, ttl)...)
+// storeFamily is the store key family an owner would write into: the first
+// family in redisacl.Families whose key pattern reaches <owner>: before its
+// wildcard, so some name under the owner is a store key and not scratch.
+// Scratch lives outside the store's families (SPEC-REDIS rule 2).
+func storeFamily(owner string) (redisacl.Family, bool) {
+	prefix := owner + ":"
+	for _, f := range redisacl.Families {
+		for _, p := range f.Patterns {
+			if lit, _, _ := strings.Cut(p, "*"); strings.HasPrefix(lit, prefix) {
+				return f, true
+			}
+		}
+	}
+	return redisacl.Family{}, false
+}
+
+// storeFamilyError refuses an owner that would write into a store family. The
+// key is <owner>:<name> and the name may hold colons, so an owner is refused
+// when any name could put the key in a family: the family's pattern reaches
+// <owner>:. It names the family and that scratch lives outside the store's
+// families; nil when the owner is scratch's own.
+func storeFamilyError(owner string) error {
+	f, ok := storeFamily(owner)
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf("--owner %q is the %s store family (%s); scratch lives outside the store's families, so pick an owner no family claims", owner, f.Name, strings.Join(f.Patterns, ", "))
 }
 
 func keyErrors(owner, name string, ttl time.Duration) []error {

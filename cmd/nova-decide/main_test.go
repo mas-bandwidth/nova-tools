@@ -189,7 +189,7 @@ func TestAnOpIDUnderAnotherSchemaIsRefused(t *testing.T) {
 	ask(other).Refused("the op id x is recorded for another decision, schema or state")
 }
 
-// A backend that fails is FAIL at exit 2 with nothing recorded; a backend
+// A backend that fails is FAILED at exit 2 with nothing recorded; a backend
 // that answers outside the schema is the same.
 func TestABackendFailureRecordsNothing(t *testing.T) {
 	t.Parallel()
@@ -206,7 +206,7 @@ func TestABackendFailureRecordsNothing(t *testing.T) {
 			m := testkit.Main(decideTool(testWorld("k", new(atomic.Int32), tc.reply)).Run)
 			r := m.Do(t, "read", "--card", td+"card.md", "--diff", td+"card.diff", "--backend", "jev", "--record", rec)
 			r.Exit(2)
-			assert.Contains(t, r.Stderr, "READ FAIL")
+			assert.Contains(t, r.Stderr, "READ FAILED ")
 			assert.Contains(t, r.Stderr, tc.says)
 			assert.NoFileExists(t, rec)
 		})
@@ -470,7 +470,7 @@ func TestBriefAsksEveryCardOfADirectoryOnce(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a3.md"), []byte("the backend is down for this one\n"), 0o600))
 	r := jev.Do(t, brief...)
 	r.Exit(2)
-	assert.Contains(t, r.Stdout+r.Stderr, "BRIEF FAIL")
+	assert.Contains(t, r.Stdout+r.Stderr, "BRIEF FAILED ")
 	assert.Contains(t, r.Stdout+r.Stderr, "the backend answered 2 of 3 cards")
 	assert.Contains(t, r.Stdout+r.Stderr, `BRIEF CARD id=a3 op=a3@brief-`)
 	assert.Contains(t, r.Stdout+r.Stderr, `error="the backend answered HTTP 503"`)

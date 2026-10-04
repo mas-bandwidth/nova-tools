@@ -114,6 +114,65 @@ func TestResolveDSNRefusesAFlagPasswordBesideAControlByte(t *testing.T) {
 	}
 }
 
+// TestResolveDSNEnvParseErrorNeverEchoesTheDSN pins the environment path's
+// parse refusal (docs/nova-config/README.md, "Connecting"): with an empty
+// flag and a NOVA_PG_DSN the pgconn parser cannot read, the error names the
+// variable and the wanted shape and quotes neither the DSN nor its password.
+// pgconn's own error text runs the raw connection string through a
+// best-effort redactor that malformed input defeats, so a DSN that is not on
+// a command line still must not have its text echoed back.
+func TestResolveDSNEnvParseErrorNeverEchoesTheDSN(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		dsn  string
+	}{
+		{name: "uri with a non-numeric port", dsn: "postgres://store:synthetic-secret@db.invalid:notaport/nova"},
+		{name: "keyword with spaces around the equals and an unclosed quote", dsn: "password = 'synthetic-secret"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ResolveDSN("", envOf(map[string]string{EnvPG: tc.dsn}))
+			require.Error(t, err, "an unparsable environment DSN is refused")
+			assert.Contains(t, err.Error(), EnvPG, "the refusal names the variable it could not read")
+			assert.Contains(t, err.Error(), "postgres://user@host:5432/nova", "the refusal carries the wanted shape")
+			assert.NotContains(t, err.Error(), "synthetic-secret", "the refusal never echoes the password")
+			assert.NotContains(t, err.Error(), tc.dsn, "the refusal never echoes the DSN text")
+		})
+	}
+}
+
+// TestResolveDSNRefusesAFlagSSLPassword pins the boundary the store's
+// connecting contract promises (docs/nova-config/README.md, "Connecting"):
+// sslpassword is the passphrase for the SSL client key, a secret the pgconn
+// parser reads from the flag, so a --pg flag that carries one in either
+// spelling the parser accepts is refused with refuseFlagPassword's own text,
+// which quotes neither the flag nor its secret.
+func TestResolveDSNRefusesAFlagSSLPassword(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		flag string
+	}{
+		{name: "url query sslpassword", flag: "postgres://store@db.invalid:5432/nova?sslpassword=synthetic-secret"},
+		{name: "keyword sslpassword", flag: "sslpassword=synthetic-secret host=db.invalid"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ResolveDSN(tc.flag, envOf(nil))
+			require.Error(t, err, "a flag DSN carrying an sslpassword is refused")
+			assert.Equal(t, refuseFlagPassword().Error(), err.Error(), "the refusal is refuseFlagPassword's own text")
+			assert.NotContains(t, err.Error(), "synthetic-secret", "the refusal never echoes the secret")
+			assert.NotContains(t, err.Error(), tc.flag, "the refusal never echoes the DSN")
+			assert.Empty(t, got, "nothing resolves when the flag is refused")
+		})
+	}
+}
+
 // envOf is the getenv ResolveDSN reads: one lookup into the case's
 // variables, so a test never touches the process environment.
 func envOf(env map[string]string) func(string) string {

@@ -22,21 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// loginFromFlags reads the login flags from a flag set, for the unit tests
-// that hold the login logic directly.
-func loginFromFlags(fs *flag.FlagSet) login {
-	return login{
-		addr:        fs.String("addr", "", "the store's address as <host:port>, such as 127.0.0.1:6379 (no default)"),
-		user:        fs.String("user", "", "the ACL user to log in as (default $"+UserEnv+"; with neither, the store's default user)"),
-		passwordEnv: fs.String("password-env", "", "the NAME of the variable that holds the password, never the password itself (default: the variable $"+PasswordEnvEnv+" names, else "+PasswordEnv+")"),
-		givenFn: func(name string) bool {
-			on := false
-			fs.Visit(func(f *flag.Flag) { on = on || f.Name == name })
-			return on
-		},
-	}
-}
-
 // fnStore is a store that keeps the function libraries it holds, by name,
 // loads as Redis does, and records the commands it was sent (without the
 // code). A method the fn verbs are not meant to call panics on the nil
@@ -533,7 +518,7 @@ func TestLoginFlagsEchoWhatWasGiven(t *testing.T) {
 		{[]string{"--addr", "127.0.0.1:6379"}, nil, "--addr 127.0.0.1:6379"},
 		{[]string{"--addr", "127.0.0.1:6379", "--user", ""}, map[string]string{UserEnv: "wronguser"}, "--addr 127.0.0.1:6379 --user ''"},
 		{[]string{"--addr", "127.0.0.1:6379", "--password-env", PasswordEnv}, map[string]string{PasswordEnvEnv: "OTHER_PW"}, "--addr 127.0.0.1:6379 --password-env NOVA_REDIS_PASSWORD"},
-		{[]string{"--addr", "127.0.0.1:6379", "--user", "fn'user"}, nil, `--addr 127.0.0.1:6379 --user 'fn'\''user'`},
+		{[]string{"--addr", "127.0.0.1:6379", "--user", "fn'user"}, nil, `--addr 127.0.0.1:6379 --user 'fn'"'"'user'`},
 		{[]string{"--addr", "127.0.0.1:6379"}, map[string]string{UserEnv: "coordinator", PasswordEnvEnv: "SEAT_PW"}, "--addr 127.0.0.1:6379 --user coordinator --password-env SEAT_PW"},
 		{[]string{"--addr", "[::1]:6379"}, nil, "--addr '[::1]:6379'"},
 	}

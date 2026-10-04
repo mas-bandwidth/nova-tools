@@ -128,17 +128,17 @@ SEND FAIL <path or (stdin)>: <reason>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> ...
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n>
-BUS FAIL <path, path:line, or lane>: <reason>
+BUS FAILED <path, path:line, or lane>: <reason>
 <TOKEN> MORE kind=<kind> shown=<n> total=<t> <remedy>
 ```
 
-`OK` lines go to stdout; `FAIL` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
+`OK` lines go to stdout; `FAIL` and `FAILED` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
 
 **One value, two renderings.** A tool built on `internal/tool` returns one result
 per verb and prints it as lines or, with `--json` (every verb takes it), as one
 JSON object on stdout holding the same value:
 `{"result":{"verb","status":"ok|failed|refused","exit","remedy","why"},"facts":{},"items":[{"kind","fields"}],"more":[{"kind","shown","total","remedy"}],"notes":[]}`.
-The lines are `<TOKEN> OK|FAIL|REFUSED k=v ...` first, then `<TOKEN> <KIND> k=v ...`
+The lines are `<TOKEN> OK|FAILED|REFUSED k=v ...` first, then `<TOKEN> <KIND> k=v ...`
 per item, the MORE line per capped kind, and `<TOKEN> NOTE <text>`; a refusal names
 every problem of the invocation at once, one line each,
 `<TOKEN> REFUSED: <what>; run: <remedy>`. The status follows the exit: ok 0,
@@ -347,7 +347,7 @@ refusal or a note, renders through `internal/oneline`; `ledger=` on
 `CORPUS OK` is a field and prints as one token; `deny-list=` names one of
 three constants from the deny-list machinery, so it is not caller text — and
 it is a field, so it is one token whoever wrote it. Each label is spelled as
-one token, with no space and no `=`: `floor-list`, `--deny-ext` and
+one token, with no whitespace and no `=`: `floor-list`, `--deny-ext` and
 `floor-list+--deny-ext-add`. They go through `oneline.Field` like every other
 field, which leaves them unchanged, and a finding's reason spells them the same
 way, so a reader who has seen `floor-list` in a finding reads the same token on
@@ -1826,7 +1826,7 @@ filter of the first class is deliberately narrow: widening it to match bare
 "cannot" would flag every prohibition, which is the negation-count failure
 (below). The second class adds sentence segmentation, which the first does not
 have: paragraphs, headings, table rows and list items are separate units, a
-terminator only ends a sentence when a space or the end follows it (so
+terminator only ends a sentence when whitespace or the end follows it (so
 `RULES.md` is not two sentences), **each finding carries the source line it
 starts on**, and quotation state is tracked through a paragraph so that the
 second and later sentences of a quoted block — which carry no quote mark of
@@ -2096,7 +2096,7 @@ each: whitespace and `=` inside a stored key or a hand-written stamp print as
 `\x20` and `\x3d`. A stored key of `x lockdown=clear quarantines=0` therefore
 prints as `STATUS OK quarantine=x\x20lockdown\x3dclear\x20quarantines\x3d0
 since=t: r`, and a grep for `lockdown=clear` matches only the lockdown field.
-A surface name holding a space, which is legal, prints the same way. The
+A surface name holding whitespace, which is legal, prints the same way. The
 `<reason>` after `: ` is the free-text tail and keeps its spaces; so does the
 remedy inside a `FUSE FAIL quarantine=` parenthetical. That remedy is a
 POSIX-shell command: the box path and normalized surface are quoted, and `--` precedes
@@ -2117,12 +2117,12 @@ where it is reachable.)
 
 **This tool's own writes are folded first, and folding is never a refusal.**
 `lockdown` and `quarantine` turn every control character in a reason into a
-space, collapse runs of whitespace — Unicode spaces included, so a non-breaking
-space becomes an ordinary one — and trim the ends. Surface names are folded by
+blank, collapse runs of whitespace — Unicode spaces included, so a non-breaking
+blank becomes an ordinary one — and trim the ends. Surface names are folded by
 the same normalization that lower-cases them, which means `check` and `lift
 quarantine` fold too, on **both sides of every match**. Each control character
-becomes a SPACE rather than vanishing, so `dis\x01cord` is stored and matched as
-`dis cord`; they disappear only at the ends, where the trim takes the space with
+becomes a BLANK rather than vanishing, so `dis\x01cord` is stored and matched as
+`dis cord`; they disappear only at the ends, where the trim takes the blank with
 them, which is why `\x01real` stores as `real`. A reason made ENTIRELY of NON-WHITESPACE control
 characters is kept instead as its visible escapes, rather than refused, because a
 fuse you cannot blow is not a fuse. The whitespace half of that category is not
@@ -2984,8 +2984,8 @@ CLOSE REFUSED: <reason>
 BUS SCOPE mode=<full|since> cursor=<sha|-> changed=<n>
 BUS INDEX lane=<lane> notes=<n>[ dry_run=true]
 BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n> warn=<n>
-BUS WARN <path, path:line, or lane>: <reason>
-BUS FAIL <path, path:line, or lane>: <reason>
+BUS NOTE <path, path:line, or lane>: <reason>
+BUS FAILED <path, path:line, or lane>: <reason>
 BUS REFUSED: <reason>
 NAMES NAME name="<x>" lane=<lane|-> aliases="<a>";"<b>"
 NAMES GROUP name="<x>" members="<a>";"<b>"
@@ -3142,7 +3142,7 @@ per-file lines instead.
 `INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
 above.
 
-`BUS WARN` is a finding inside the legacy tolerance: reported, and not a failure.
+`BUS NOTE` is a finding inside the legacy tolerance: reported, and not a failure.
 It goes to **stdout**, with the rest of the informational lines, per the rule
 below: anything reading the two streams apart — which is what CI does — would
 otherwise see every clean-but-forgiving run as a failing one.
@@ -3230,13 +3230,13 @@ order:
 4. drop a leading `for `;
 5. drop trailing parentheticals, repeatedly;
 6. what remains must **equal** a known name, alias or group, case-insensitively,
-   or **begin with one followed by a space** — the instance qualifier, so `Ada
+   or **begin with one followed by whitespace** — the instance qualifier, so `Ada
    a1b2c3d4` and `Ada Vale` are both Ada. The longest known name wins,
    and the prefix rule **refuses** rather than resolves when what follows the
    known name is itself a known name;
 7. a group expands to its members.
 
-Anything else is unresolved: **refused at send**, `BUS FAIL` at check, with the
+Anything else is unresolved: **refused at send**, `BUS FAILED` at check, with the
 token quoted. A misspelling silently reaching the wrong reader is the failure
 this exists to stop, so the list above is the whole of the tolerance and every
 item in it is pinned by a test.
@@ -3278,13 +3278,13 @@ was accepted has no thread. `Re` may repeat; nothing else may. `Kind` is
 `receipt` or `note` and is the only override of the receipt heuristic.
 
 **`Host` is which MACHINE posted, and it is optional.** One name can post from
-two places — the keeper on the Studio and the bud on the Air both post as
-`Rowan` — and without this line they would be told apart in the subject,
+two places — the keeper on a bench and the bud on a laptop both post as
+`worker` — and without this line they would be told apart in the subject,
 which spends the subject on routing. `send --host <name>` and
 `reply --host <name>` write it; `<bus>/.nova-bus/defaults` may carry a
 `host=<name>` line, read when the flag is absent, so a bench sets it once. A
 host is one word of lower-case letters, digits, `-`, `.` and `_`, at most 40
-characters, because it is printed as one space-separated `host=` field on an
+characters, because it is printed as one whitespace-separated `host=` field on an
 inbox line. A draft that carries its own `Host:` line keeps it; a `--host` that
 names a DIFFERENT machine is a refusal, the same shape as `--as` against a
 `From` line that names somebody else.
@@ -3334,7 +3334,7 @@ own repair:
 | a key nobody knows — `Branch: main` | unknown header key, **and the nine keys there are** |
 | a body sentence where the header goes, with a colon somewhere in it or none at all | the header ends at the first blank line; put a blank line after the last header |
 
-A key is taken for a sentence when it holds a space or runs past twenty
+A key is taken for a sentence when it holds whitespace or runs past twenty
 characters, which is not a guess about what the writer meant but about what they
 cannot have meant: the longest key here is `Subject`. These refusals decide
 nothing about which files fail; they carry the fix.
@@ -3612,15 +3612,17 @@ whole walk, exactly as an uncapped run would say them. A run with no findings
 prints neither line.
 
 ```
-BUS FAIL <path>: <reason>                       (a gating finding, stderr)
-BUS WARN <path>: <reason>                       (a tolerated finding, stdout)
+BUS FAILED <path>: <reason>                       (a gating finding, stderr)
+BUS NOTE <path>: <reason>                       (a tolerated finding, stdout)
 BUS MORE kind=<class> shown=<n> total=<t> remedy="--max 0"   (stderr, one per class the cap held some of back)
 BUS CHECK findings=<t> fail=<x> warn=<w> <class>=<n> ...   (stderr, whenever there is a finding)
 ```
 
-`BUS MORE` and `BUS CHECK` go where the `BUS FAIL` lines go, on stderr, so a
+`BUS MORE` and `BUS CHECK` go where the `BUS FAILED` lines go, on stderr, so a
 count a caller could read as a pass never enters the stdout of a failing run.
 A capped `check` has no continuation token: `--max 0` prints every finding.
+`--fail-max <n>` is a compatibility alias of `--max <n>` for one release;
+using it prints `NOTE --fail-max is --max` on stderr.
 
 #### Replays
 
@@ -3654,9 +3656,9 @@ the roster does not hold, and a lane no participant owns:
 ```
 $ nova-bus check --bus ./bus --full --max 2
 BUS SCOPE mode=full cursor=- changed=0
-BUS FAIL from-ada/2026-09-01T1000Z-note-1.md: no Subject line, or an empty one
-BUS FAIL from-ada/2026-09-02T1000Z-note-2.md: no Subject line, or an empty one
-BUS FAIL from-zed: no participant in participants.json owns this lane
+BUS FAILED from-ada/2026-09-01T1000Z-note-1.md: no Subject line, or an empty one
+BUS FAILED from-ada/2026-09-02T1000Z-note-2.md: no Subject line, or an empty one
+BUS FAILED from-zed: no participant in participants.json owns this lane
 BUS MORE kind=header shown=2 total=5 remedy="--max 0"
 BUS CHECK findings=6 fail=6 warn=0 header=5 lane=1
 ```
@@ -4019,7 +4021,7 @@ and carry forever. The cursor cannot catch that: a v1 `OPEN` beside a counted
 cursor is exactly the state a healthy v2 reader is in. So the file says its own
 version, and an `OPEN` without it is `INBOX REFUSED`, exit 1, **naming
 `--full --advance`** — the same repair, and the same words, as an `OPEN` that
-went missing. `check` reports it as a `BUS FAIL` on the same file, so a bus
+went missing. `check` reports it as a `BUS FAILED` on the same file, so a bus
 carrying one is not a silence only its own reader ever meets. The **cursor**
 format is untouched: a two-token cursor still reads, and this version writes no
 token an older one would refuse.
@@ -4112,7 +4114,7 @@ change.
 Every part of that git command line is load-bearing. `--diff-filter=AM` because a deleted note is not a new note.
 `--no-renames` because git's rename detection is on by default and reports a
 renamed note as `R`, which `AM` excludes — so a note that merely moved would go
-unread. `-z` because `--name-only` quotes a path holding a space, and a quoted
+unread. `-z` because `--name-only` quotes a path holding whitespace, and a quoted
 path matches no file. And `:(glob)` because without it git matches a pathspec
 with fnmatch, where `*` also matches `/`: a plain `from-*` catches a top-level
 `from-notes.txt`, and `from-*/` — the spelling that reads like a directory —
@@ -4144,7 +4146,7 @@ being asked twice about a note somebody edited after I had answered it. The
 second is smaller than the first, and only the first grows.
 
 The catalogue is what `check --since` resolves a thread through, and
-`check --full` reports every note with no `INDEX` line as a `BUS WARN`,
+`check --full` reports every note with no `INDEX` line as a `BUS NOTE`,
 saying what a missing line costs, with `--rebuild-index` as the repair.
 
 **An open note whose FILE was deleted stays on the list**, printed from the
@@ -4361,7 +4363,7 @@ read.
 
 It is one line, like every other event this tool prints. The paths and names in
 the command it hands back are **quoted** rather than field-escaped, because that
-half of the sentence is meant to be PASTED: a bus directory holding a space is
+half of the sentence is meant to be PASTED: a bus directory holding whitespace is
 `--bus "/a bus/here"` and not `--bus /a\x20bus/here`. See **`NAMES` quotes rather
 than field-escapes** in the output grammar, which is the same reason.
 
@@ -4757,8 +4759,8 @@ rule.
 
 Under `--full` it also holds the catalogue to the notes, in both directions. An
 `INDEX` line naming a note that is not there, or giving it an id the note does
-not carry, is a `BUS FAIL`: that one could resolve a thread to the wrong note. A
-note with an id and **no** `INDEX` line is a `BUS WARN`, at any date — the notes
+not carry, is a `BUS FAILED`: that one could resolve a thread to the wrong note. A
+note with an id and **no** `INDEX` line is a `BUS NOTE`, at any date — the notes
 are the record and the catalogue is a cache, and somebody who wrote a note by
 hand in a browser, which this bus's whole form exists to allow, has not broken
 anything. The warning says what it **costs**, because the cost is not the same
@@ -4785,9 +4787,9 @@ there are two honest ways in, and a bus must pick one:
   or an RFC 3339 UTC instant like `2026-09-09T18:07:00Z`, compared by instant. A
   finding about the HEADER of a note dated before it — it will not parse; its `From`, `To` or `Cc` names
   somebody the roster does not know; it has no `Subject`; its `Kind` is neither
-  word; its `Re:` names nothing — is reported as `BUS WARN` and does **not** fail
+  word; its `Re:` names nothing — is reported as `BUS NOTE` and does **not** fail
   the run. Everything on or after that date, and every finding that is not about
-  a header at any date, still `BUS FAIL`s. Without the flag there is no
+  a header at any date, still `BUS FAILED`s. Without the flag there is no
   tolerance: every finding fails, which is what CI on a bus only this tool has
   written should use.
 - **A one-time sweep**: fix the notes by hand and adopt the check with no
@@ -4798,7 +4800,7 @@ the thing being drawn really is a day — usually one months back — so the sha
 that goes quiet on `inbox` does not arise here.
 
 Either way, run `check --full --rebuild-index` once at adoption. Every note on
-the bus that has an id gets a catalogue line, the `BUS WARN`s about missing
+the bus that has an id gets a catalogue line, the `BUS NOTE`s about missing
 `INDEX` lines go, and the first `inbox --advance` for each reader gives them a
 cursor. From then on both verbs read the change and not the record.
 
@@ -5055,23 +5057,23 @@ This section is the part of the efficiency-card set that binds `nova-bus`.
 ### REPEATS: a git fetch per poll, and a whole-history walk on `check --full`
 
 `wait` polls on its own clock and **every poll is a git fetch** — the comment on
-`minWaitInterval` says so (`cmd/nova-bus/main.go:2423`), and the measured fetch
+`minWaitInterval` says so (`cmd/nova-bus/wait.go`, `minWaitInterval`), and the measured fetch
 was **0.98 s**:
 
 ```
 $ git -C <bus> fetch origin main     0.98 s
 ```
 
-At `defaultWaitInterval = 10 * time.Second` (`cmd/nova-bus/main.go:2404`) a
+At `defaultWaitInterval = 10 * time.Second` (`cmd/nova-bus/wait.go`, `defaultWaitInterval`) a
 60-minute wait is **360 fetches**, about **5m 53s** of the hour spent inside
-git. The same clock lives in `waitLoop` (`cmd/nova-bus/main.go:2443`).
+git. The same clock lives in `waitLoop` (`cmd/nova-bus/wait.go`, `waitLoop`).
 
 `check --full` re-walks everything every time it is run; `check --as` reads from
 the cursor and pays only for what changed:
 
 ```
 $ nova-bus check --bus . --full      342 lines  76,616 B  0.15 s  rc=1
-$ nova-bus check --bus . --as Rowan    2 lines     135 B  0.09 s  rc=0
+$ nova-bus check --bus . --as worker   2 lines     135 B  0.09 s  rc=0
 ```
 
 `check --full` is the whole-history walk and no cursor bounds it; `check --as
@@ -5082,8 +5084,8 @@ this card prices.
 
 ```
 $ nova-bus names --bus .                                          8 lines     693 B
-$ nova-bus inbox --bus . --as Rowan --receipt-max-words 20         5 lines     509 B   (carrying=986)
-$ nova-bus inbox --bus . --as Rowan --receipt-max-words 20 --full 63 lines  12,035 B
+$ nova-bus inbox --bus . --as worker --receipt-max-words 20        5 lines     509 B   (carrying=986)
+$ nova-bus inbox --bus . --as worker --receipt-max-words 20 --full 63 lines  12,035 B
 $ nova-bus check --bus . --full                                 342 lines  76,616 B
 ```
 
@@ -5094,7 +5096,7 @@ on the bench: the carried list is behind `--full` and `--open`, not printed on
 every read.
 
 The `check --full` row is a historical measurement, taken before `check` had
-`--max`: 342 of 342 lines printed, 340 of them `BUS WARN` about one class of
+`--max`: 342 of 342 lines printed, 340 of them `BUS NOTE` about one class of
 missing `INDEX` entry, each carrying the same 220-byte remedy sentence. `check`
 now takes `--max <n>` (default 20, `0` for all) and prints at most that many
 findings of each class, then one `BUS MORE` line per capped class and one `BUS CHECK` count line by class
@@ -5162,7 +5164,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 37. `repo-a-37` `TestStatusReportsAndNeverGates` — `nova-fuse status` exits 0 even when a fuse is blown, because answering is `status`'s whole job and `check` is the gate.
 38. `repo-a-38` `TestSkipReportsAndDoesNotAffectExit` / `TestRuleDocIsScannedAndBannered` / `TestNotePrintedOnEveryRun` — `nova-self-talk`'s four informational second tokens (`DATED`, `SKIP`, `RULEDOC`, `NOTE`) all print on stdout.
 39. `repo-a-39` — the soft hyphen (U+00AD) and the byte order mark (U+FEFF) pass through unescaped, because they do not reorder what an operator sees.
-40. `TestNoCallerPathCanForgeALine` — every `<path>/<file>/<target>/<reason>` a line carries renders through `internal/oneline`; a field is one token even when it holds a space (`\x20`), and no caller path can forge a line.
+40. `TestNoCallerPathCanForgeALine` — every `<path>/<file>/<target>/<reason>` a line carries renders through `internal/oneline`; a field is one token even when it holds whitespace (`\x20`), and no caller path can forge a line.
 41. `TestFailMaxWidensAndZeroPrintsAll` — every listing takes `--fail-max` (default 20, `0` = all) and prints its count line on both success and failure.
 42. `TestAFlagTypoIsOneLine` — an unknown flag after a verb is the one-line refusal `nova-check <verb>: …; run: nova-check help`, exit 2.
 43. `TestVersionLineShape` — `nova-check version` prints the Conventions build line, exit 0.
@@ -5259,7 +5261,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 134. `TestInstallationCarriesTheSourceLine` — each finding carries the source line it starts on (line 1733).
 135. `TestInstallationCarriesTheSourceLine` / `TestInstallationSurvivesWrappingAndMarkup` — paragraphs, headings and table rows are separate sentence units (line 1731).
 136. — — list items (bulleted or numbered) are separate sentence units (line 1731).
-137. — — a terminator only ends a sentence when a space or the end follows it, so `RULES.md` is not two sentences (lines 1731-1733).
+137. — — a terminator only ends a sentence when whitespace or the end follows it, so `RULES.md` is not two sentences (lines 1731-1733).
 138. `TestQuotedSentencesAreNotTheWritersClaims` — quotation state is tracked through a paragraph, so later quoted sentences are not read as the writer's claims (line 1734).
 139. `TestSkipReportsAndDoesNotAffectExit` / `TestSkipRepeatableAndMatchesBasename` / `TestSkipRefusesPaths` — `--skip` is repeatable, takes a basename, refuses a path separator, and a skipped file is reported, not read, and contributes nothing to the exit code (line 1749).
 140. `TestNothingIsSkippedByDefault` — nothing is skipped by default; each named rule-document basename is pinned scanned (line 1749).
@@ -5281,7 +5283,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 156. `TestUnreadableBoxIsTreatedAsBlownNeverClear` / `TestAnUnreadableFileTypeIsNotClear` — an unreadable box (permissions, torn write, malformed JSON, wrong-shaped value) is CANNOT TELL, treated as BLOWN, exit 2.
 157. `TestWriteLeavesNoLitter` / `TestWriteLeavesNoTempLitter` — the write is temp-file + fsync + rename in the box's own directory; a crash leaves the old box or the new, never a fragment.
 158. `TestWrittenBoxIsWorldReadable` — the box is written world-readable (exactly 0644, independent of umask).
-159. `TestSurfaceMatchingIgnoresCaseAndSpace` — surface names are matched case- and whitespace-insensitively; equivalent spellings are ONE surface.
+159. `TestSurfaceMatchingIgnoresCaseAndWhitespace` — surface names are matched case- and whitespace-insensitively; equivalent spellings are ONE surface.
 160. `TestStatusSurvivesAHandEditedBox` — `at`/`reason` are read back defensively; a missing key prints `since=unrecorded` / `NO REASON RECORDED`, never a crash or an invented value.
 161. `TestExitCodes` — exit 0 = clear or done and verified; 1 = blown or could not do/verify; 2 = could not run.
 162. `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` / `TestNoOtherWriterOrShadowCanBypassTheEscape` — OK lines go to stdout, FAIL lines/refusals/notes to stderr; the tool is the only writer and the flag parser is given no stream.
@@ -5297,7 +5299,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 172. (A) `path` echoes its argument unescaped: `path --box "FUSE OK lockdown=clear"` prints exactly that at exit 0 (the exemption, pinned positively).
 173. `TestOneLineEscapesEveryControlCharacter` — a byte that is not valid UTF-8 is escaped in the same `\xNN` form.
 174. `TestFoldCollapsesControlCharactersToSpaces` / `TestLockdownTakesANewlineInItsReasonAndStoresItFolded` — this tool's own writes are folded first, and folding is never a refusal.
-175. (A) folding collapses Unicode whitespace so a non-breaking space becomes an ordinary one, and a reason of only newlines/tabs/CR/VT/FF/U+0085 trims to empty.
+175. (A) folding collapses Unicode whitespace so a non-breaking blank becomes an ordinary one, and a reason of only newlines/tabs/CR/VT/FF/U+0085 trims to empty.
 176. `TestAReasonOfNothingButControlCharactersStillBlowsTheFuse` — a reason made entirely of non-whitespace control characters is kept as its visible escapes, not refused.
 177. `TestAReasonOfNothingButControlCharactersStillBlowsTheFuse` — only a genuinely empty or all-whitespace reason is refused.
 178. `TestLiftRemovesEveryFoldEquivalentSpelling` / `TestLiftQuarantineRemovesEveryNormalizedMatch` — matching is widened in both directions; `lift quarantine` removes every spelling and prints one `LIFT OK` per removal under the stored spelling.
@@ -5414,7 +5416,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 289. `TestARefusalNamesEveryProblemOnItsOwnLine` — a refusal prints EVERY problem in the draft, one line per reason.
 290. `TestNamesPrintsSomethingASendWillAccept` — `NAMES` quotes rather than field-escapes, so a printed name is one `send` accepts.
 291. `TestSendRefusesASlugThatIsNotASlug` — a lane slug is lower-case letters, digits and hyphens, checked because it is the first half of every id.
-292. `TestResolveListToleratesTheShapesTheBusActuallyWrites` — a `To:`/`Cc:` line resolves against the roster through the enumerated tolerances (split on `;`,`,`, dashes, `and`, drop `for `, drop parentheticals, prefix-instance), unresolved refused at send / `BUS FAIL` at check.
+292. `TestResolveListToleratesTheShapesTheBusActuallyWrites` — a `To:`/`Cc:` line resolves against the roster through the enumerated tolerances (split on `;`,`,`, dashes, `and`, drop `for `, drop parentheticals, prefix-instance), unresolved refused at send / `BUS FAILED` at check.
 293. `TestAndIsASeparatorNotAQualifier` — `To: Ada and Bo` reaches both readers; a word separator is a separator.
 294. `TestAKnownNameFollowedByAKnownNameIsRefused` — a qualifier that is itself a known name is refused, not delivered to the first.
 295. `TestLongestKnownNameWins` — the longest known name wins the instance-qualifier prefix.
@@ -5468,8 +5470,8 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 343. `TestCheckRefusesToGuessItsBaseline` — `check` with none of `--full`/`--as`/`--since` is exit 2 `refusing to guess`; `TestCheckSinceChecksOnlyWhatChanged` — `--as`/`--since` check only the changed lane files, `Re:` and id from the catalogue.
 344. `TestCheckPassesACleanBus` / `TestCheckReportsEveryFailureNotTheFirst` — `check` asserts parse, header, lane, id well-formedness/uniqueness, `Re:` resolution, receipt lines, lane ownership, state-file parses, and lane contents, reporting every finding in one run.
 345. `TestALanesReadmeIsNotANote` — a lane may hold exactly one non-note file, `README.md`; dotfiles are tolerated; any other stray (a `NOTES.md`) is a finding.
-346. `TestCheckFullAgainstTheIndex` — under `--full` the catalogue is held to the notes in both directions: a forged/dangling `INDEX` line is `BUS FAIL`, a note with no `INDEX` line is `BUS WARN`; `TestRebuildLaneIndexFromTheNotes` — `--rebuild-index` rewrites every lane's catalogue.
-347. `TestLegacyBeforeWarnsOnOldNotesAndStillFailsOnNew` — `check --legacy-before` forgives a header finding dated before the line as `BUS WARN` and still fails everything on/after it; `TestTheHeaderFindingsAreInsideTheLegacyTolerance` — the tolerance covers a note's HEADER; `TestTheLegacyToleranceStillFailsOnWhatIsNotAHeader` — wrong lane, malformed/duplicate id, broken receipt, unowned lane and strays fail at any date.
+346. `TestCheckFullAgainstTheIndex` — under `--full` the catalogue is held to the notes in both directions: a forged/dangling `INDEX` line is `BUS FAILED`, a note with no `INDEX` line is `BUS NOTE`; `TestRebuildLaneIndexFromTheNotes` — `--rebuild-index` rewrites every lane's catalogue.
+347. `TestLegacyBeforeWarnsOnOldNotesAndStillFailsOnNew` — `check --legacy-before` forgives a header finding dated before the line as `BUS NOTE` and still fails everything on/after it; `TestTheHeaderFindingsAreInsideTheLegacyTolerance` — the tolerance covers a note's HEADER; `TestTheLegacyToleranceStillFailsOnWhatIsNotAHeader` — wrong lane, malformed/duplicate id, broken receipt, unowned lane and strays fail at any date.
 348. `TestLegacyToleranceNeedsADateItCanRead` — a note whose date cannot be read at all is never tolerated; `TestTheLegacyLineReadsTheDayAtTheFrontOfAFilename` — the wider `YYYY-MM-DD`-at-front read is used by the tolerance and the open list only.
 349. `TestANoteWithAnIDIsStillAnswerableByPath` — a note without an `Id:` is addressed by path everywhere, and a note WITH an id is still answerable by its path.
 350. `TestSendRefusesAWrongBranchOrADirtyCheckout` — `send` refuses a wrong branch or a dirty checkout (write drafts elsewhere); the `.nova-bus/` per-clone state is not such a change.

@@ -37,27 +37,38 @@ type LinksResult struct {
 	Broken   []BrokenLink
 }
 
-// LinksExcluding is the links walk with an explicit set of path prefixes to leave
-// unscanned: a file under an excluded prefix is not opened, and a link that
-// resolves into an excluded prefix is skipped rather than checked or reported.
-// The Excluded count is the number of .md files under those prefixes.
-func LinksExcluding(dir string, exclude []string) (res LinksResult, err error) {
-	// Resolve the root before walking. os.Stat FOLLOWS a symlink, so a --dir
-	// naming a link to the repo passed the directory check and then handed
-	// WalkDir a root it saw as a single non-directory entry — a clean pass
-	// over a tree never opened. On this platform /var is such a link.
+// resolveRoot resolves a --dir argument to a real directory before a walk.
+//
+// Resolve the root before walking. os.Stat FOLLOWS a symlink, so a --dir
+// naming a link to the repo passed the directory check and then handed
+// WalkDir a root it saw as a single non-directory entry — a clean pass
+// over a tree never opened. On this platform /var is such a link.
+func resolveRoot(dir string) (string, error) {
 	root, statErr := filepath.EvalSymlinks(dir)
 	if statErr != nil {
-		return res, fmt.Errorf("dir %q: %w", dir, statErr)
+		return "", fmt.Errorf("dir %q: %w", dir, statErr)
 	}
 	info, statErr := os.Stat(root)
 	if statErr != nil {
-		return res, fmt.Errorf("dir %q: %w", dir, statErr)
+		return "", fmt.Errorf("dir %q: %w", dir, statErr)
 	}
 	if !info.IsDir() {
-		return res, fmt.Errorf("dir %q is not a directory", dir)
+		return "", fmt.Errorf("dir %q is not a directory", dir)
 	}
-	dir = root
+	return root, nil
+}
+
+// LinksExcluding walks dir for .md files (skipping .git) and verifies that
+// every relative inline link target resolves to an existing file or directory
+// inside the tree, with an explicit set of path prefixes to leave unscanned:
+// a file under an excluded prefix is not opened, and a link that resolves
+// into an excluded prefix is skipped rather than checked or reported. The
+// Excluded count is the number of .md files under those prefixes.
+func LinksExcluding(dir string, exclude []string) (res LinksResult, err error) {
+	dir, err = resolveRoot(dir)
+	if err != nil {
+		return res, err
+	}
 
 	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -92,25 +103,17 @@ func LinksExcluding(dir string, exclude []string) (res LinksResult, err error) {
 	return res, nil
 }
 
-// LinksFiles is the single-/few-file form of Links: it checks exactly the
+// LinksFiles is the single-/few-file form of the walk: it checks exactly the
 // listed markdown files and nothing else, so a two-file review does not
 // expand to the whole tree. dir is still the resolution root — root-relative
 // targets and the "escapes the tree" judgement resolve against it — and the
 // reported paths stay repo-relative, exactly as the full walk reports them. A
 // relative path is joined to dir; an absolute one is used as-is.
 func LinksFiles(dir string, files []string, exclude []string) (res LinksResult, err error) {
-	root, statErr := filepath.EvalSymlinks(dir)
-	if statErr != nil {
-		return res, fmt.Errorf("dir %q: %w", dir, statErr)
+	dir, err = resolveRoot(dir)
+	if err != nil {
+		return res, err
 	}
-	info, statErr := os.Stat(root)
-	if statErr != nil {
-		return res, fmt.Errorf("dir %q: %w", dir, statErr)
-	}
-	if !info.IsDir() {
-		return res, fmt.Errorf("dir %q is not a directory", dir)
-	}
-	dir = root
 
 	for _, f := range files {
 		mdPath := f

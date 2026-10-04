@@ -64,7 +64,7 @@ first run: gh logged in (gh auth status); export ORG and REPO, a repository you 
 		Verbs: []tool.Verb{
 			{
 				Name: "import",
-				Usage: "import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] " +
+				Usage: "import --org <org> (--out <tree.lisp> [--replace] | --dry-run) [--repo <owner/name>]... [--max-calls <n>] " +
 					"[--page-size <n>] [--gh <path>] [--timeout <d>]",
 				Example: `import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
 import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp`,
@@ -75,7 +75,8 @@ import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp`,
 				DryRun:    true,
 				Flags: func(f *tool.Flags) {
 					f.Required("org", "the organization whose repositories are read, as GitHub spells it")
-					f.String("out", "", "the tree `file` to write, created or replaced; its directory must exist; required unless --dry-run")
+					f.String("out", "", "the tree `file` to write, created, or replaced with --replace; its directory must exist; required unless --dry-run")
+					f.Bool("replace", false, "replace an existing --out file instead of refusing")
 					sourceFlags(f)
 					f.Check(checkImport)
 				},
@@ -235,6 +236,14 @@ func sum(b []byte) string {
 func dirExists(path string) bool {
 	fi, err := os.Stat(filepath.Dir(path))
 	return err == nil && fi.IsDir()
+}
+
+// fileExists reports whether path names a regular file already on disk, so
+// import can refuse to replace it without --replace (docs/SPEC-WORK-V1.md
+// section 1.6, the write through a temporary file and a rename).
+func fileExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // writeFile writes data to path through a temporary file in the same

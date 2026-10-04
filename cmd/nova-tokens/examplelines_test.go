@@ -23,7 +23,7 @@ import (
 // running `help`, because the lines under test are the ones a reader pastes; the binary is built
 // only so the lines can be RUN, with that binary on PATH and stdin closed, exactly as a stranger
 // would. The block reads ./repos.tsv, ./transcripts, ./session.jsonl and ./out, so the setup
-// line creates its inputs directly in an otherwise empty temporary directory.
+// block creates its inputs directly in an otherwise empty temporary directory.
 //
 // No example line here pushes, publishes, contacts a forge, acts on a machine or needs a key:
 // fold, check, sum, sources, report and session read files and write one day file, so no line is
@@ -32,18 +32,21 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	t.Parallel()
 
 	lines := exampleBlockLines(usage)
-	require.False(t, len(lines) == 0, "the usage banner's `example:` blocks hold no line; this test would pass by running nothing")
+	require.NotEmpty(t, lines, "the usage banner's `example:` blocks hold no line; this test would pass by running nothing")
 
-	setup := fixtureSetupLine(usage)
-	require.False(t, setup == "", "the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
+	setupLines := fixtureSetupLines(usage)
+	require.NotEmpty(t, setupLines, "the usage banner has no fixture setup block above the block, so a stranger pasting it names\n"+
 		"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
-		"The missing line is:\n  %s", wantFixtureSetup)
-	assert.NotContains(t, setup, "cmd/nova-tokens/testdata", "the setup still depends on a source checkout")
+		"The missing block opens with:\n  %s", wantFixtureSetup)
+	assert.Equal(t, wantFixtureSetup, setupLines[0], "the setup block does not open with the line that makes the transcript directory")
+	for _, setup := range setupLines {
+		assert.NotContains(t, setup, "cmd/nova-tokens/testdata", "the setup still depends on a source checkout")
+	}
 
 	bin := buildExampleBinary(t)
 
 	root := t.TempDir()
-	{
+	for _, setup := range setupLines {
 		exit, out := runExampleLine(t, root, filepath.Dir(bin), setup)
 		require.Equal(t, 0, exit, "the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
 			exit, setup, exampleFirstLine(out))
@@ -53,11 +56,39 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 		exit, out := runExampleLine(t, root, filepath.Dir(bin), line)
 		assert.Equal(t, 0, exit, "the example `%s` exits %d, want 0 -- a line a stranger pastes must run as printed:\nfirst output line: %s",
 			line, exit, exampleFirstLine(out))
+		// The setup block writes ./repos.tsv and a transcript carrying a tool_use whose
+		// file_path the block's own `schema` rule matches, so the first run shows a rules
+		// file attributing: a fold that booked the day as unknown would mean the pasted
+		// rule matches nothing (docs/SPEC-TOKENS.md: the first match on a session's path
+		// wins, and what matched nothing is other=<pct>%).
+		if strings.HasPrefix(line, "nova-tokens fold ") {
+			assert.Contains(t, out, "unknown=0.0%", "the fold the block's own ./repos.tsv should attribute printed:\n%s", out)
+		}
 	}
 }
 
-// wantFixtureSetup is the standalone shell setup expected above the example block.
-const wantFixtureSetup = "mkdir -p ./transcripts"
+// wantFixtureSetup is the first line of the standalone shell setup expected above the
+// example block: the directories the pasted lines write into.
+const wantFixtureSetup = "mkdir -p ./transcripts ./out"
+
+// fixtureSetupLines returns the lines under the banner's `setup:` heading, in banner
+// order, left-trimmed: the shell a stranger runs before the `example:` block, in the
+// shape nova-memory's setup: uses (docs/STANDARD.md section 3, ONBOARDING point 6). The
+// block ends at the first line the heading's own indent does not carry.
+func fixtureSetupLines(usage string) []string {
+	_, block, found := strings.Cut(usage, "\nsetup:\n")
+	if !found {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(block, "\n") {
+		if !strings.HasPrefix(line, "  ") {
+			break
+		}
+		out = append(out, strings.TrimSpace(line))
+	}
+	return out
+}
 
 // exampleBlockLines returns every command under an `example:` heading in a usage banner, in
 // banner order, across every block. A line beginning with the tool's name under the heading is
@@ -83,18 +114,6 @@ func exampleBlockLines(usage string) []string {
 		}
 	}
 	return out
-}
-
-// fixtureSetupLine returns the fixture setup line the block reads, or "" when the banner loses
-// one. It matches the shape the fix gives the line rather than its exact prose, so the printed
-// line is the source of truth and this test runs what the banner carries.
-func fixtureSetupLine(usage string) string {
-	for _, line := range strings.Split(usage, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, wantFixtureSetup) {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 // buildExampleBinary builds this command into a temp dir and returns its path. It builds rather

@@ -354,12 +354,35 @@ func (st *Store) fencedRead(ctx context.Context, tables []string, extras func(*s
 	return nil, 0, Fence{}, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))
 }
 
+// callerOpWord holds a caller's --op to one word: letters, digits, '_' and
+// '-', with a '.' too, but no '/' and no '..' (security#68 finding 1), the
+// shape sprint.ValidID gives every other identity. The word becomes the
+// operation's id family (sprint.OpFamily), and a judgment id built on it
+// becomes a file name (nova-sprint inbox --wait --push writes id+".md"), so
+// a '/' or a '..' in it would name a note outside the push directory.
+func callerOpWord(op string) bool {
+	if op == "" || strings.Contains(op, "..") {
+		return false
+	}
+	for _, r := range op {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // Run plans and applies a step as one operation.
 func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	ctx = withBudget(ctx)
 	res := Result{Verb: step.Verb, Args: step.Args}
 	if strings.Contains(step.CallerOp, "~") {
 		return res, fmt.Errorf("operation id %s holds '~', which marks the epoch in the sprint's ids; nothing was done; give the step an --op without '~'", step.CallerOp)
+	}
+	if step.CallerOp != "" && !callerOpWord(step.CallerOp) {
+		return res, fmt.Errorf("operation id %s is not one word of letters, digits, '_' and '-' (a '.' too, but no '/' and no '..'), the shape every identity in the sprint is held to; nothing was done; give the step an --op of that shape", step.CallerOp)
 	}
 	st, err := st.pin(ctx)
 	if err != nil {

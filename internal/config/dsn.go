@@ -35,23 +35,28 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 		return "", fmt.Errorf("--pg is required: postgres://user@host:5432/nova (or %s)", EnvPG)
 	}
 	// The boundary is the flag's own text, judged before any parse: the
-	// refusal quotes nothing, while a parse error quotes the DSN it could
-	// not read, so a flag that carries a password must never reach one. A
-	// flag whose text cannot be parsed at all is refused without echo too,
-	// because the raw text may carry a credential in a spelling
+	// flag's refusal quotes nothing, while a parse error quotes the DSN it
+	// could not read, so a flag that carries a password must never reach
+	// one. A flag whose text cannot be parsed at all is refused without echo
+	// too, because the raw text may carry a credential in a spelling
 	// flagCarriesPassword did not anticipate. A DSN from the environment is
-	// not on a command line and is never refused for its password, and a
-	// password pgconn takes from the process environment is never mistaken
-	// for one on the line.
+	// not on a command line and is never refused for its password; when the
+	// parser cannot read it the refusal names the variable and the wanted
+	// shape and the pgconn error's kind, never its text: pgconn's own text
+	// runs the raw connection string through a best-effort redactor that
+	// malformed input defeats (a non-numeric port, spaces around a keyword's
+	// '=', an unclosed quote) and leaves the password in the open. A password
+	// pgconn takes from the process environment is never mistaken for one on
+	// the line.
 	if flagValue != "" && flagCarriesPassword(flagValue) {
 		return "", refuseFlagPassword()
 	}
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		if flagValue != "" {
-			return "", refuseFlagPassword()
+			return "", fmt.Errorf("--pg: cannot be read, so it is refused as a flag that carries a password; want postgres://user@host:5432/nova with no password, and export it as the variable %s names", EnvPGPassEnv)
 		}
-		return "", fmt.Errorf("--pg: %v; want postgres://user@host:5432/nova", err)
+		return "", fmt.Errorf("%s could not be parsed; want postgres://user@host:5432/nova (%T)", EnvPG, err)
 	}
 	// The parsed config is the second look, after any parse: the lexical
 	// check judges the flag's text, but net/url refuses a control byte the
@@ -91,11 +96,12 @@ func refuseFlagPassword() error {
 
 // flagCarriesPassword reports whether the flag's DSN text names a password
 // itself, in either spelling the pgconn parser accepts: a URI userinfo or
-// query parameter, or the keyword form's password key. The same refusal
-// holds the fleet kind's stored pg_dsn (checkFleet), whose query keys it
-// matches case-insensitively; a password pgconn takes from the process
-// environment is never seen here, so it is never mistaken for one on the
-// line.
+// query parameter, or the keyword form's password key. sslpassword, the
+// passphrase for the SSL client key, is a secret the parser reads the same
+// way and meets the same refusal. The same refusal holds the fleet kind's
+// stored pg_dsn (checkFleet), whose query keys it matches case-insensitively;
+// a password pgconn takes from the process environment is never seen here, so
+// it is never mistaken for one on the line.
 func flagCarriesPassword(dsn string) bool {
 	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
 		// The pgconn URI reader takes the userinfo from the text before the
@@ -122,7 +128,7 @@ func flagCarriesPassword(dsn string) bool {
 			// The pgconn URI reader trims the keyword whitespace around a
 			// query key before it reads it, so a padded key is the same
 			// password field.
-			if strings.EqualFold(strings.Trim(key, kwSpaces), "password") {
+			if isPasswordKey(strings.Trim(key, kwSpaces)) {
 				return true
 			}
 		}
@@ -134,6 +140,14 @@ func flagCarriesPassword(dsn string) bool {
 // kwSpaces is the whitespace the keyword/value grammar knows, the set the
 // pgconn parser trims and breaks values on.
 const kwSpaces = " \t\n\r\v\f"
+
+// isPasswordKey reports whether a connection key names a secret the pgconn
+// parser reads from the flag: password, or sslpassword, the passphrase for
+// the SSL client key. Both are on the command line where a ps reads them, so
+// both meet the one refusal (docs/nova-config/README.md, "Connecting").
+func isPasswordKey(key string) bool {
+	return strings.EqualFold(key, "password") || strings.EqualFold(key, "sslpassword")
+}
 
 // keywordCarriesPassword walks the keyword/value DSN the way the pgconn
 // parser walks it (the same whitespace set, quotes and backslash escapes),
@@ -153,7 +167,7 @@ func keywordCarriesPassword(dsn string) bool {
 		if strings.ContainsAny(key, kwSpaces) {
 			return false // a keyword with whitespace in it: the pgconn parser refuses the DSN
 		}
-		if strings.EqualFold(key, "password") {
+		if isPasswordKey(key) {
 			return true
 		}
 		s = strings.TrimLeft(s[eqIdx+1:], kwSpaces)

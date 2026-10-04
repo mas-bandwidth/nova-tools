@@ -85,6 +85,8 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"land":          "land --dry-run",
 		"fleet up":      "fleet up m3",
 		"fleet down":    "fleet down m1",
+		"hold":          "hold m2 --reason r",
+		"unhold":        "unhold m2",
 		"fleet level":   "fleet level",
 		"fleet sync":    "fleet sync",
 		"friend sync":   "friend sync",

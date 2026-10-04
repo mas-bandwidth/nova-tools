@@ -32,7 +32,7 @@ import (
 //  4. A leading "for " is dropped ("for Bo when they arrive").
 //  5. A trailing parenthetical is dropped, repeatedly ("Ada (day shift, the west host)").
 //  6. What remains must EQUAL a known name, alias or group, case-insensitively, or BEGIN
-//     with one followed by a space -- the instance qualifier, so that "Ada a1b2c3d4"
+//     with one followed by whitespace -- the instance qualifier, so that "Ada a1b2c3d4"
 //     and "Ada Vale" are both Ada. The longest known name that matches wins, so a
 //     roster holding both "Bo" and "Bo Quill" resolves "Bo Quill Two" to
 //     Bo Quill rather than to Bo. The prefix rule REFUSES rather than resolves
@@ -255,7 +255,7 @@ func (c *Config) knows(tok string) bool {
 // wordSeparators are tolerance 3: the separators a person writes as words rather than as
 // punctuation. They carry their surrounding spaces, so "Alexander and Sons" -- a single
 // name with "and" inside it -- would still be one token if a roster held it, and only a
-// space-delimited "and" splits.
+// whitespace-delimited "and" splits.
 var wordSeparators = []string{" and ", " & "}
 
 // splitAddresses applies tolerances 1 to 5 and returns the cleaned pieces.

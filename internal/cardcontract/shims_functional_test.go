@@ -53,10 +53,8 @@ func newRig(t *testing.T, family, kind string) *rig {
 	git(t, r.repo, "push", "-q", "origin", "main")
 	git(t, r.repo, "switch", "-q", "-c", "sprint/c1")
 	r.base = git(t, r.repo, "rev-parse", "HEAD")
-	realGit, err := exec.LookPath("git")
-	require.NoError(t, err)
 	r.frame = Frame{Kind: kind, Card: "c1", Attempt: 1, Model: "test/model", Repo: cardURL, BaseRef: "main", Branch: "sprint/c1", ReviewBase: "main"}
-	r.staged = Staged{Job: r.job, Repo: r.repo, Head: r.base, Git: realGit}
+	r.staged = Staged{Job: r.job, Repo: r.repo, Head: r.base, Git: realGit(t)}
 	require.NoError(t, Install(For(family), r.frame, r.staged, r.shims))
 	return r
 }
@@ -372,6 +370,38 @@ func TestAPushRefusesAbbreviatedFlags(t *testing.T) {
 		require.Equal(t, 0, code, "%s: %s", line, errb)
 		_, got := LastPushed(r.job)
 		assert.Equal(t, head, got, line)
+	}
+}
+
+// A push to a local-path remote (an absolute path, a ./ or ../ path, or a file://
+// URL) goes through to the real git unchanged, as typed, and records nothing in
+// the job (docs/SPEC-CARD-CONTRACT.md, the push): a test or tool inside a card
+// that pushes to a bare repository it made under its own temp directory needs
+// the push to land, and a form refused for a push to origin reaches git there,
+// since it touches nothing but the child's own machine.
+func TestAPushToALocalPathRemoteReachesGit(t *testing.T) {
+	t.Parallel()
+	for _, family := range []string{"claude", "plain"} {
+		r := newRig(t, family, "work")
+		head := r.commit(r.repo, "w")
+		git(t, r.repo, "init", "-q", "--bare", filepath.Join(r.repo, "inside.git"))
+		git(t, r.job, "init", "-q", "--bare", filepath.Join(r.job, "peer.git"))
+		for _, tc := range []struct{ line, bare, ref string }{
+			{"git push " + r.origin + " HEAD:refs/heads/a", r.origin, "refs/heads/a"},
+			{"git push ./inside.git HEAD:refs/heads/b", filepath.Join(r.repo, "inside.git"), "refs/heads/b"},
+			{"git push ../peer.git HEAD:refs/heads/c", filepath.Join(r.job, "peer.git"), "refs/heads/c"},
+			{"git push file://" + r.origin + " HEAD:refs/heads/d", r.origin, "refs/heads/d"},
+		} {
+			code, _, errb := r.sh(r.repo, tc.line)
+			require.Equal(t, 0, code, "%s %s: %s", family, tc.line, errb)
+			assert.NotContains(t, errb, "pushed by the sprint", "%s %s: the push is not answered by the shim", family, tc.line)
+			assert.Equal(t, head, git(t, tc.bare, "rev-parse", tc.ref), "%s %s: the bare repository holds the commit", family, tc.line)
+		}
+		_, err := os.Stat(filepath.Join(r.job, PushedName))
+		assert.True(t, os.IsNotExist(err), "%s: a push to a local-path remote records nothing", family)
+		code, _, errb := r.sh(r.repo, "git push --delete "+r.origin+" refs/heads/a")
+		require.Equal(t, 0, code, "%s: %s", family, errb)
+		assert.Equal(t, "refs/heads/d", strings.TrimSpace(git(t, r.origin, "for-each-ref", "--format=%(refname)", "refs/heads")), "%s: a delete to a local-path remote reaches git", family)
 	}
 }
 

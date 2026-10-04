@@ -1,0 +1,4 @@
+# The staticcheck findings in this package when the rule landed, one row per check; shrink-only (docs/SPEC-CI.md, staticcheck).
+# ceiling: 2
+internal/redisconn:S1012 3 measured when the rule landed; a fixed finding lowers the count
+internal/redisconn:S1025 1 measured when the rule landed; a fixed finding lowers the count
