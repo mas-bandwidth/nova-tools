@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -74,7 +74,9 @@ func realWorld() world {
 			return signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		},
 		launchctl: func(ctx context.Context, args ...string) (string, error) {
-			out, err := exec.CommandContext(ctx, "launchctl", args...).CombinedOutput()
+			cmd, cancel := subproc.Command(ctx, subproc.Tool, "launchctl", args...)
+			defer cancel()
+			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},
 		beat: func(ctx context.Context, server, name string) error {

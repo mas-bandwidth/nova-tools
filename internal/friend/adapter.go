@@ -57,7 +57,8 @@ func realExec(ctx context.Context, budget, killDelay time.Duration, dir, name st
 	var out strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
-	ownGroup(cmd, killDelay)
+	ownGroup(cmd)
+	cmd.WaitDelay = killDelay // the pipes close this long after the group is signalled
 	err := cmd.Run()
 	if ctx.Err() != nil && cmd.Process != nil {
 		killGroup(cmd.Process.Pid) // the leader is dead by now; what it forked is not
