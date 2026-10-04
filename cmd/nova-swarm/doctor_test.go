@@ -418,7 +418,7 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 
 			// The doctor verb says the same as a finding, and exits non-zero.
 			assert.Equal(t, c.wantExit, dcode, "doctor exit %d, want %d\nstdout: %s\nstderr: %s", dcode, c.wantExit, out.String(), derr.String())
-			assert.False(t, c.wantExit != 0 && (out.Len() != 0 || derr.String() != got), "doctor's finding differs from the preflight's\nstdout: %q\nstderr: %q\nwant stderr: %q", out.String(), derr.String(), got)
+			assert.True(t, c.wantExit == 0 || (out.Len() == 0 && derr.String() == got), "doctor's finding differs from the preflight's\nstdout: %q\nstderr: %q\nwant stderr: %q", out.String(), derr.String(), got)
 			assert.False(t, c.wantExit == 0 && !strings.HasPrefix(out.String(), "DOCTOR OK stamp="), "doctor: not the OK line: %q", out.String())
 		})
 	}
@@ -572,8 +572,8 @@ func TestPreflightReadsArgumentsAfterTheGlobalFlagsAreStripped(t *testing.T) {
 		var errOut bytes.Buffer
 		code, stop := env.preflight(c.args, &errOut)
 		assert.Equal(t, c.stop, stop, "%s: preflight(%v) = (exit=%d, stop=%v), want stop=%v\n%s", c.name, c.args, code, stop, c.stop, errOut.String())
-		assert.False(t, stop && code != 2, "%s: preflight(%v) = (exit=%d, stop=%v), want stop=%v\n%s", c.name, c.args, code, stop, c.stop, errOut.String())
-		assert.False(t, !stop && code != 0, "%s: preflight(%v) = (exit=%d, stop=%v), want stop=%v\n%s", c.name, c.args, code, stop, c.stop, errOut.String())
+		assert.True(t, !stop || code == 2, "%s: preflight(%v) = (exit=%d, stop=%v), want stop=%v\n%s", c.name, c.args, code, stop, c.stop, errOut.String())
+		assert.True(t, stop || code == 0, "%s: preflight(%v) = (exit=%d, stop=%v), want stop=%v\n%s", c.name, c.args, code, stop, c.stop, errOut.String())
 	}
 }
 

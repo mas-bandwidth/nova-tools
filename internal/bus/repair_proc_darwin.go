@@ -139,7 +139,7 @@ func darwinGitCwd() (map[string]string, error) {
 }
 
 // lsofCwds reads one lsof run. lsof exits 1 with nothing on either stream when no process
-// matched -c git: no git was running at the moment it looked (#3029). That is a complete
+// matched -c git: no git is running at the moment it looks. That is a complete
 // scan with no cwds, and every ps-listed git missing from it is re-checked by pid. Exit 1
 // with anything said, any other failure, or output on a failed run is "lsof failed".
 func lsofCwds(stdout, stderr string, code int, runErr error) (map[string]string, error) {
@@ -169,7 +169,7 @@ func lsofCwds(stdout, stderr string, code int, runErr error) (map[string]string,
 
 // darwinPIDAlive reports whether pid is still a live process. ps exiting 1 is the
 // verified-vanished answer. A zombie is not live: it has exited and only waits for its
-// parent to reap it, and lsof has no cwd for it (#3029). Any other failure is an
+// parent to reap it, and lsof has no cwd for it. Any other failure is an
 // inspection error.
 func darwinPIDAlive(pid string) (bool, error) {
 	ps, stopPS := subproc.Command(context.Background(), subproc.Tool, "ps", "-p", pid, "-o", "stat=")

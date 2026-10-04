@@ -223,8 +223,7 @@ type sealCarry struct {
 
 // carry writes the ciphertext into place on a fresh branch and carries it to
 // the store. It returns the pull request number ("" under noPR) and whether the
-// request merged. On every path out the store is back on the branch it was on
-// (#2016); the commit stays on c.branch.
+// request merged. On every path out the store is back on the branch it was on; the commit stays on c.branch.
 func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err error) {
 	say := c.say
 	if say == nil {
@@ -239,7 +238,7 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 	if err := sealGit(c.run, c.storeDir, c.gitPath, "checkout", "-b", c.branch); err != nil {
 		return "", false, err
 	}
-	// #2016: restore the starting branch on every path; the commit stays on c.branch.
+	// Restore the starting branch on every path; the commit stays on c.branch.
 	restored := false
 	restore := func() error {
 		if restored {
@@ -477,7 +476,7 @@ func readSealValue(opts SealOptions) (string, error) {
 }
 
 // readSealFromTTY opens /dev/tty twice -- one handle to write the prompt, one to read the
-// value -- because a single read-write open did not work on the Stella bench.
+// value -- because a single read-write open of /dev/tty does not work on the bench.
 func readSealFromTTY() (string, error) {
 	w, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
 	if err != nil {

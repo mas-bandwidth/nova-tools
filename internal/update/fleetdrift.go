@@ -1,6 +1,6 @@
 package update
 
-// `nova-update report --store <host:port>` (#3880): the fleet's nova-sprint
+// `nova-update report --store <host:port>`: the fleet's nova-sprint
 // versions read from the bench beats, not from ssh or a bus note. Every bench
 // already stamps its beat: ns_bench_beat writes bench:<b>:beat build = the
 // nova-sprint version line (buildinfo.Line). This reads the benches registry

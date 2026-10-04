@@ -142,7 +142,7 @@ func TestFnVerbsLogInAsTheACLUser(t *testing.T) {
 	{
 		code, _, errOut = fnRun("fn", "check", "--addr", addr)
 		require.Equal(t, 2, code, "fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login and one remedy", code, errOut)
-		require.False(t, !strings.Contains(errOut, "NOAUTH") && !strings.Contains(errOut, "WRONGPASS"), "fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login and one remedy", code, errOut)
+		require.True(t, strings.Contains(errOut, "NOAUTH") || strings.Contains(errOut, "WRONGPASS"), "fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login and one remedy", code, errOut)
 		require.Contains(t, errOut, `remedy="log in as a user that may run FUNCTION LIST`, "fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login and one remedy", code, errOut)
 		require.NotContains(t, errOut, "; next:", "fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login and one remedy", code, errOut)
 	}

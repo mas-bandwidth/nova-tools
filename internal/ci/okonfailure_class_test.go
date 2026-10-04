@@ -20,8 +20,10 @@ const okOnFailureAllowlistPath = "testdata/okonfailure"
 
 // okWordRe is the OK word of an event line: a line that starts with OK or with
 // upper-case tokens and then OK (`<TOKEN> OK key=value`, docs/CLI-STYLE.md (e)),
-// or a line that ends with OK. failWordRe is the same for FAIL and REFUSED. A
-// help text that mentions the words in prose is neither.
+// or a line that ends with OK. failWordRe is the same for FAILED, FAIL and REFUSED.
+// The skeleton's failure word is FAILED (STANDARD §2); failWordRe keeps accepting
+// FAIL while other tools transition. A help text that mentions the words in prose
+// is neither.
 var (
 	okWordRe   = regexp.MustCompile(`(?m)^([A-Z][A-Z0-9_-]* )*OK(\s|:|$)|\sOK$`)
 	failWordRe = regexp.MustCompile(`(?m)^([A-Z][A-Z0-9_-]* )*(FAIL|FAILED|REFUSED)(\s|:|=|$)|\s(FAIL|FAILED|REFUSED)$`)

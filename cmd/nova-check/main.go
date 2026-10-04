@@ -534,8 +534,8 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	}
 	// The file and the budget are independent, so both are judged before
 	// either sends the caller away: `nova-check kernel` with nothing at all
-	// used to name --file and stop, and the second run then learned about the
-	// budget. One run, every problem it can find.
+	// names --file and the budget together, rather than naming --file, stopping,
+	// and leaving the budget for a second run. One run, every problem it can find.
 	ok := requireFlags(fs, stderr, map[string]*string{"file": file})
 	// Which budget was GIVEN, not which value survived: --max-bytes 0 is a
 	// stated (and refused) budget, not an absent one.

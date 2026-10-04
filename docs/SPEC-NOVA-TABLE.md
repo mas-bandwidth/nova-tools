@@ -386,7 +386,7 @@ but not the changed count. All references, including guard-only dependencies, ar
 explicit. An existing unplaced member may receive field-only set/unset changes,
 but cannot be moved into a cell.
 
-The member `revision` is a table-owned counter. A legacy existing member with no
+The member `revision` is a table-owned counter. An existing member with no
 record revision reads as zero. A newly created member starts at one; any accepted
 change to its placement, score or application fields increments it once,
 irrespective of how many fields changed. A move with no score preserves the current score; an
@@ -564,7 +564,7 @@ characters). Records do not expire, so a record holds that much for as long as t
 table exists. One key keeps the
 work of removing them bounded. `drop <table>` and `drop <table> --definition` treat
 them alike: each removes the whole hash in the same atomic call as the drop, so no
-operation of the old table replays against a table created again under the name; the
+operation of the dropped table replays against a table created again under the name; the
 two verbs differ in what else they remove: `--definition` takes the saved column
 definition, the identity hash and the rows of every epoch too, and the revision
 counter and the change log continue across a drop and a create. `clear <table>` removes no record and does not itself

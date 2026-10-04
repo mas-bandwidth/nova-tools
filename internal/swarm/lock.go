@@ -7,22 +7,11 @@ import (
 	"time"
 )
 
-// takeFileLock is the body of the bench slot store's lock: a kernel lock on a named file,
-// waited for until wait runs out, released by a function that is safe to call twice. It is
-// a kernel lock rather than a file whose existence means "held" for rule 17's reason --
-// the kernel drops it when the holder dies however it dies. On unix it is
-// internal/filelock's (tla/FileLock.tla), the same flock on the same file the earlier
-// binaries took, so an old and a new nova-swarm still exclude each other during an
-// upgrade (lock_compat_unix_test.go); elsewhere it is still lock_other.go's.
+// takeFileLock uses a kernel lock on a named file, waits up to the supplied bound, and
+// returns an idempotent release function. The kernel releases the lock when its holder exits.
 //
-// The kernel lock is not a queue. A waiter that lost slept for its poll, and the
-// goroutine that had just released the file took it again before the sleeper woke. On a
-// busy bench that is not a stuck holder -- eight takes in one process, each critical
-// section slow enough that a sleeper never landed in the gap -- and the sleeper still
-// waited out the whole bound (studio shard, TestConcurrentTakesKeepEveryTake: "waited
-// 10s"). Same-process callers therefore take a turn first. The turn is a queue; the
-// file lock is still what keeps another process out, and still what the kernel drops
-// when the holder dies.
+// The kernel lock does not provide a fair queue, so same-process callers take turns through
+// lockTurn. The file lock still excludes other processes while the critical section runs.
 func takeFileLock(path string, wait time.Duration) (func(), error) {
 	turn := lockTurnFor(path)
 	deadline := time.Now().Add(wait)

@@ -3,7 +3,7 @@
 The class tests in `internal/ci` (indexed in [SPEC-CI.md](SPEC-CI.md), under
 "The class tests") keep their exceptions in lists under `internal/ci/testdata/`.
 Every list only shrinks, and every one is read and written by the one helper,
-`internal/ci/allowlist` (`allowlist.Load` and `allowlist.Check`, nova-tools#4339).
+`internal/ci/allowlist` (`allowlist.Load` and `allowlist.Check`).
 
 How to run each tier and use the store helpers of `internal/testredis` in a test:
 [FOUNDATION-TESTING.md](FOUNDATION-TESTING.md).
@@ -103,7 +103,7 @@ the lists now match the tree.
 |---|---|
 | `bench-runners.allow` | `TestCIOneBenchRunner` |
 | `cardtemplate_allowlist.txt` | `TestNoCardTemplateCarriesAnOSSpecificCommand` |
-| `compared_examples.txt`, `unexecuted_examples.txt` | `TestIssue2218` |
+| `compared_examples.txt`, `unexecuted_examples.txt` | `TestPlatformsMatchCILegsAndUnexecutedExamplesOnlyShrink` |
 | `fieldsindex_allowlist.txt` | `TestNoUncheckedFieldsIndex` |
 | `fixed-testbins-allowlist.txt` | `TestNoCopiedTestBinariesOnTheCIPath` |
 | `fixed-waits-allowlist.txt` | `TestNoFixedWaitsOnTheCIPath` |

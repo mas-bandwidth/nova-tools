@@ -63,7 +63,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	plan, err := bus.PlanReceipts(t, me, notes, now)
 	if err != nil {
-		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
+		fmt.Fprintf(stderr, "RECEIPT FAILED %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
 		return 1
 	}
 	for _, already := range plan.Already {
@@ -77,7 +77,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// machinery and not a change that is "not this receipt".
 	beat := bus.BeatPath(me.Lane)
 	if err := checkoutReady(*busDir, *branch, []string{plan.Path, beat}); err != nil {
-		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "RECEIPT FAILED %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
 	// Everything above is read-only and the dry run's; everything below writes.
@@ -93,19 +93,19 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 1
 	}
 	if err := plan.Append(*busDir); err != nil {
-		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "RECEIPT FAILED %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
 	paths, err := bus.StagePaths(*busDir, []string{plan.Path, beat})
 	if err != nil {
-		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "RECEIPT FAILED %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
 	res, err := commit(*busDir, me, paths,
 		bus.WithTrailer(plan.Message(me), bus.TrailerReceipt),
 		*remote, *branch, *attempts, *noPush)
 	if err != nil {
-		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "RECEIPT FAILED %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		printTranscript(stderr, err)
 		return 1
 	}

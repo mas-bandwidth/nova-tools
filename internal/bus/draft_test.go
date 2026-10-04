@@ -99,7 +99,7 @@ func TestSendTolerancesStoreTheNoteAndSayWhatTheyDid(t *testing.T) {
 			notices := strings.Join(p.Notices, "\n")
 			require.Contains(t, notices, tc.wantNotice, "no notice said %q; the run said:\n%s", tc.wantNotice, notices)
 			if tc.wantNoNotice != "" && strings.Contains(notices, tc.wantNoNotice) {
-				require.False(t, tc.wantNoNotice != "" && strings.Contains(notices, tc.wantNoNotice), "a notice said %q, which is not what happened:\n%s", tc.wantNoNotice, notices)
+				require.True(t, tc.wantNoNotice == "" || !strings.Contains(notices, tc.wantNoNotice), "a notice said %q, which is not what happened:\n%s", tc.wantNoNotice, notices)
 			}
 		})
 	}
@@ -117,7 +117,9 @@ func TestAToleratedNoteParsesStrictly(t *testing.T) {
 		require.NoError(t, err, "the note send stored will not parse: %v\n%s", err, p.Note.Render())
 	}
 	if n.Header.Subject != "The subject" || n.Header.From != "Ada" || n.Header.To != "Bo" {
-		require.False(t, n.Header.Subject != "The subject" || n.Header.From != "Ada" || n.Header.To != "Bo", "read back as From=%q To=%q Subject=%q", n.Header.From, n.Header.To, n.Header.Subject)
+		require.Equal(t, "The subject", n.Header.Subject, "read back as From=%q To=%q Subject=%q", n.Header.From, n.Header.To, n.Header.Subject)
+		require.Equal(t, "Ada", n.Header.From, "read back as From=%q To=%q Subject=%q", n.Header.From, n.Header.To, n.Header.Subject)
+		require.Equal(t, "Bo", n.Header.To, "read back as From=%q To=%q Subject=%q", n.Header.From, n.Header.To, n.Header.Subject)
 	}
 	require.False(t, n.Header.Date == "whenever", "the author's Date line survived; send writes the date")
 }
@@ -189,14 +191,18 @@ func TestTheSkeletonIsADraftThisToolSends(t *testing.T) {
 	n, err := ParseNote("", s)
 	require.NoError(t, err, "the skeleton does not parse: %v\n%s", err, s)
 	if n.Header.From != "Ada" || n.Header.To != "Bo" || n.Header.Cc != "Dana" || n.Header.Subject != "The gate" {
-		require.False(t, n.Header.From != "Ada" || n.Header.To != "Bo" || n.Header.Cc != "Dana" || n.Header.Subject != "The gate", "read back wrong: %+v", n.Header)
+		require.Equal(t, "Ada", n.Header.From, "read back wrong: %+v", n.Header)
+		require.Equal(t, "Bo", n.Header.To, "read back wrong: %+v", n.Header)
+		require.Equal(t, "Dana", n.Header.Cc, "read back wrong: %+v", n.Header)
+		require.Equal(t, "The gate", n.Header.Subject, "read back wrong: %+v", n.Header)
 	}
 	if len(n.Header.Re) != 1 || n.Header.Re[0] != "bo-abcdef012345" {
-		require.False(t, len(n.Header.Re) != 1 || n.Header.Re[0] != "bo-abcdef012345", "Re read back as %v", n.Header.Re)
+		require.True(t, len(n.Header.Re) == 1 && n.Header.Re[0] == "bo-abcdef012345", "Re read back as %v", n.Header.Re)
 	}
-	require.False(t, n.Header.Date != "" || n.Header.ID != "", "the skeleton carries a Date or an Id; those are the tool's to write")
+	require.Equal(t, "", n.Header.Date, "the skeleton carries a Date or an Id; those are the tool's to write")
+	require.Equal(t, "", n.Header.ID, "the skeleton carries a Date or an Id; those are the tool's to write")
 	if strings.TrimSpace(n.Body) != PlaceholderBody {
-		require.False(t, strings.TrimSpace(n.Body) != PlaceholderBody, "body = %q, want the placeholder", n.Body)
+		require.Equal(t, PlaceholderBody, strings.TrimSpace(n.Body), "body = %q, want the placeholder", n.Body)
 	}
 	tab := loadBus(t, writeBus(t, fixture()))
 	{

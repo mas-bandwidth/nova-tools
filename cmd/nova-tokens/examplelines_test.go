@@ -45,13 +45,13 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	root := t.TempDir()
 	{
 		exit, out := runExampleLine(t, root, filepath.Dir(bin), setup)
-		require.False(t, exit != 0, "the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
+		require.Equal(t, 0, exit, "the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
 			exit, setup, exampleFirstLine(out))
 	}
 
 	for _, line := range lines {
 		exit, out := runExampleLine(t, root, filepath.Dir(bin), line)
-		assert.False(t, exit != 0, "the example `%s` exits %d, want 0 -- a line a stranger pastes must run as printed:\nfirst output line: %s",
+		assert.Equal(t, 0, exit, "the example `%s` exits %d, want 0 -- a line a stranger pastes must run as printed:\nfirst output line: %s",
 			line, exit, exampleFirstLine(out))
 	}
 }
@@ -112,7 +112,7 @@ func buildExampleBinary(t *testing.T) string {
 	cmd.Dir = "."
 	{
 		out, err := cmd.CombinedOutput()
-		require.False(t, err != nil, "building nova-tokens: %v\n%s", err, out)
+		require.NoError(t, err, "building nova-tokens: %v\n%s", err, out)
 	}
 	return bin
 }
@@ -161,7 +161,7 @@ func copyExampleTree(t *testing.T, src, dst string) {
 		}
 		return os.WriteFile(target, raw, 0o644)
 	})
-	require.False(t, err != nil, "copying the fixture %s: %v", src, err)
+	require.NoError(t, err, "copying the fixture %s: %v", src, err)
 }
 
 // exampleFirstLine is the first line of an output, which is where a refusal says what was wrong.

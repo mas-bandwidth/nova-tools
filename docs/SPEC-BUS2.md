@@ -61,7 +61,7 @@ takes `--json`; `log` takes `--max`.
   line, the body) and exits 0, or `RECV NONE` at exit 1 when nothing waits.
   `--exec` runs the command with that same text on its stdin (the body ending
   in a newline) and acks the message when it exits 0; a non-zero exit leaves it
-  pending and is `RECV FAIL` at exit 1. `--forever` loops, waiting for
+  pending and is `RECV FAILED` at exit 1. `--forever` loops, waiting for
   messages, needs `--exec`, and stops on SIGINT or SIGTERM (a message being
   delivered stays pending) or at the first command that fails. The push into a
   harness is `nova-bus2 recv --as <me> --forever --exec '<deliver-into-session>'`

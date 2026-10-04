@@ -33,7 +33,7 @@ func TestCallerOpOfAnEarlierEpochIsRefused(t *testing.T) {
 			require.Contains(t, why, "operation caller-1 belongs to epoch 0", "the refusal: %s", why)
 		}
 		c := h.snap().Work.Card("late")
-		require.False(t, c != nil && c.Placed(), "the operation of epoch 0 ran again at epoch 1")
+		require.True(t, c == nil || !c.Placed(), "the operation of epoch 0 ran again at epoch 1")
 		got := h.image()
 		require.Equal(t, img, got, "the refused operation changed the store:\n%s\nwas\n%s", got, img)
 	}

@@ -29,47 +29,33 @@ func TestPreserveUnreadablePreservesModeUnderUmask(t *testing.T) {
 		}
 		dir := t.TempDir()
 		path := filepath.Join(dir, "fuses.json")
-		{
-			err := os.WriteFile(path, []byte(`{"lockdown":{"corrupt":`), 0o644)
-			require.NoError(t, err, "write box: %v", err)
-		}
+		err := os.WriteFile(path, []byte(`{"lockdown":{"corrupt":`), 0o644)
+		require.NoError(t, err, "write box: %v", err)
 
 		dst := path + UnreadableSuffix
-		{
-			err := os.WriteFile(dst, []byte("existing backup\n"), 0o600)
-			require.NoError(t, err, "write dst: %v", err)
-		}
-		{
-			err := os.Chmod(dst, wantExisting)
-			require.NoError(t, err, "chmod dst: %v", err)
-		}
+		err = os.WriteFile(dst, []byte("existing backup\n"), 0o600)
+		require.NoError(t, err, "write dst: %v", err)
+		err = os.Chmod(dst, wantExisting)
+		require.NoError(t, err, "chmod dst: %v", err)
 
-		{
-			_, err := PreserveUnreadable(path)
-			require.NoError(t, err, "PreserveUnreadable: %v", err)
-		}
+		_, err = PreserveUnreadable(path)
+		require.NoError(t, err, "PreserveUnreadable: %v", err)
 
 		fi, err := os.Stat(dst)
 		require.NoError(t, err, "stat dst: %v", err)
-		{
-			perm := fi.Mode().Perm()
-			require.Equal(t, wantExisting, perm, "destination mode under umask %s = %04o, want %04o", mask, perm, wantExisting)
-		}
+		perm := fi.Mode().Perm()
+		require.Equal(t, wantExisting, perm, "destination mode under umask %s = %04o, want %04o", mask, perm, wantExisting)
 
 		// A newly created destination still honors the current umask.
 		path2 := filepath.Join(dir, "fuses2.json")
-		{
-			err := os.WriteFile(path2, []byte(`{"lockdown":{"corrupt2":`), 0o644)
-			require.NoError(t, err, "write box2: %v", err)
-		}
+		err = os.WriteFile(path2, []byte(`{"lockdown":{"corrupt2":`), 0o644)
+		require.NoError(t, err, "write box2: %v", err)
 		dst2, err := PreserveUnreadable(path2)
 		require.NoError(t, err, "PreserveUnreadable 2: %v", err)
 		fi2, err := os.Stat(dst2)
 		require.NoError(t, err, "stat dst2: %v", err)
-		{
-			perm := fi2.Mode().Perm()
-			require.Equal(t, wantNew, perm, "new destination mode under umask %s = %04o, want %04o", mask, perm, wantNew)
-		}
+		perm = fi2.Mode().Perm()
+		require.Equal(t, wantNew, perm, "new destination mode under umask %s = %04o, want %04o", mask, perm, wantNew)
 		return
 	}
 
@@ -93,17 +79,13 @@ func TestWriteBoxUnderUmask077Is0644(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "fuses.json")
 
-		{
-			err := WriteBox(path, Box{})
-			require.NoError(t, err, "WriteBox failed: %v", err)
-		}
+		err := WriteBox(path, Box{})
+		require.NoError(t, err, "WriteBox failed: %v", err)
 
 		fi, err := os.Stat(path)
 		require.NoError(t, err, "stat box: %v", err)
-		{
-			perm := fi.Mode().Perm()
-			require.Equal(t, os.FileMode(0o644), perm, "box perm with umask 077 = %04o, want 0644", perm)
-		}
+		perm := fi.Mode().Perm()
+		require.Equal(t, os.FileMode(0o644), perm, "box perm with umask 077 = %04o, want 0644", perm)
 		return
 	}
 

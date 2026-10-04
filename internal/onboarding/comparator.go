@@ -8,7 +8,7 @@ import (
 )
 
 // CompareTranscript is the ONE comparison a firstrun_test.go may make
-// (docs/SPEC-TOOLWORK.md documents rule 2).
+// (docs/SPEC-TOOLWORK.md documents the rule).
 //
 // Before it there were three comparisons in this repository and they were worth
 // three different things. A `printed map[string]bool` asked whether each
@@ -130,7 +130,7 @@ type VolatileField struct {
 // green" means the same in every binary. Growing it is a reading, not a call
 // site's decision -- which is what the refusal below is for.
 //
-// The seven entries are the ones docs/SPEC-TOOLWORK.md documents rule 2 names:
+// The seven entries are the ones docs/SPEC-TOOLWORK.md names:
 // `at=`, `took=`, `created=`, a temporary directory, a fresh sha, a name a
 // recorded fixture carries, and the stamp on a `branch=` nova-secrets seals on.
 //
@@ -138,10 +138,8 @@ type VolatileField struct {
 // that names a field replaces only a whitespace-delimited token spelled
 // `<field>=<value>` in full (Norm.apply, transcript.go): a pattern that ran over
 // the whole line would let an entry declared for one field swallow a
-// neighbour's value, which is exactly #1629's ROW 1 defect, repaired at
-// 4f2d552b and reintroduced here in the first cut of this table --
-// `Field{Name:"sha"}` also normalised `base_sha=`, `took` also normalised
-// `last_took=`, and no test said so. TestAVolatileEntryNeverSwallows-
+// neighbour's value -- `Field{Name:"sha"}` would also normalise `base_sha=`,
+// and `took` would also normalise `last_took=`. TestAVolatileEntryNeverSwallows-
 // ANeighbouringFieldsValue now holds every entry to it, by the shape of the
 // mistake rather than by the entry, so a sixth entry that forgets is one row of
 // a table away from being caught.

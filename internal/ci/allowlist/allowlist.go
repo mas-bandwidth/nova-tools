@@ -1,5 +1,5 @@
 // Package allowlist is the one reader and the one writer of the exception lists the
-// class tests in internal/ci keep under internal/ci/testdata (nova-tools#4339).
+// class tests in internal/ci keep under internal/ci/testdata.
 //
 // A list is a text file: `#` comment lines, blank lines, and rows. Each row has a key
 // (by default its first field) and whatever reason follows it for a reader. A class

@@ -9,7 +9,7 @@ import (
 // CardResult is a sprint card's RESULT.md in the card contract's shape
 // (docs/SPEC-CARD-CONTRACT.md section 3): six `key: value` lines, an optional
 // pull request title, and the text under `## Body`. It lives here with the
-// other typed records (the one-typed-parser rule, #2506).
+// other typed records, giving each record shape one parser.
 type CardResult struct {
 	Shaped  bool // the six keys are present and head, verdict and report read
 	Head    string

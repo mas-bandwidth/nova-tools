@@ -497,7 +497,7 @@ func TestASourceLineFieldIsADashWhereItIsNotAMeasurement(t *testing.T) {
 	// decision, and the PR body carries it as one; this assertion moves with the spec.
 	assert.EqualValues(t, Dash, s.StatField("unparsed"), "the spec says a transcript has no unparsed lines, so the column is a dash")
 	b := &Source{Kind: KindBus}
-	assert.False(t, b.StatField("dup") != Dash || b.StatField("comments") != "0", "a bus lane has no duplicate ids and does have comments")
+	assert.True(t, b.StatField("dup") == Dash && b.StatField("comments") == "0", "a bus lane has no duplicate ids and does have comments")
 }
 
 // L10a: readSource is the one whole-file read, and it had no ceiling, so one oversized

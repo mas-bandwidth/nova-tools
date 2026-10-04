@@ -1,7 +1,7 @@
 // Package testguard refuses to let a unit test reach a real host.
 //
-// THE HURT (2026-09-18). A unit test in the certify verb's first cut ran the
-// REAL workloads on hulk and reached redis on space, because the local-runner
+// THE HURT. A unit test in the certify verb's first cut ran the REAL workloads
+// on a bench and reached a real store, because the local-runner
 // seam defaulted to the real thing when nothing injected a fake. Nobody wrote
 // a hostname in the test: the test constructed production code, production
 // code constructed its own default, and the default was an

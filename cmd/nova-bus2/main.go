@@ -172,7 +172,7 @@ NONE at exit 1 when nothing waits. You are the login user, as in send. The oldes
 reader lost (delivered, not acked, idle a minute) comes first, else the oldest new one; the reader
 keeps it for a minute. --exec '<command>' runs the command with that same text on its stdin and
 acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
-it pending and is RECV FAIL at exit 1. --forever loops, waiting for messages, and needs --exec; it
+it pending and is RECV FAILED at exit 1. --forever loops, waiting for messages, and needs --exec; it
 stops on SIGINT or SIGTERM, or at the first command that fails.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")

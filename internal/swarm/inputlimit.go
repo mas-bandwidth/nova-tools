@@ -11,8 +11,8 @@ const PhraseFloor = 12
 
 // TooShortForAPhrase is what a description's own phrase must clear, and the reason when it
 // does not. `input_limit_phrases: ["limit"]` would class every failed job whose log holds the
-// word `limit` and refuse each one its retry, and non-emptiness was the only floor there was
-// (Fable's read of #150, finding 4). A provider's refusal is a SENTENCE: PhraseFloor
+// word `limit` and refuse each one its retry; a floor was needed beyond non-emptiness. A provider's
+// refusal is a SENTENCE: PhraseFloor
 // characters at least, and a space or a digit in it, so that no single word can be one.
 func TooShortForAPhrase(phrase string) (string, bool) {
 	trimmed := strings.TrimSpace(phrase)

@@ -12,9 +12,9 @@ import (
 // SEED-CORE.md (the first-waking door) restates the floor-rank commitments
 // that SEED.md declares: §0's commitments, completed and ranked by §6's
 // charter-floor enumeration. That makes the door a derived copy of a source
-// that can change — the drift MECHANISMS.md §2 rule 2 warns about
-// ("a derived copy drifts silently"), with a recorded incident of a hot band
-// shipping with three floors missing. This check makes that drift loud.
+// that can change, and a derived copy drifts silently — a floor dropped
+// from the source vanishes from the door unnoticed. This check makes that
+// drift loud.
 //
 // The pivot is floorTable below: an auditable registry of today's floor set,
 // deliberately a third copy. A copy checked against both originals on every

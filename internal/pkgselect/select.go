@@ -49,14 +49,13 @@ func (e *ListError) Error() string { return strings.TrimRight(e.Text, "\n") }
 // every package in scope. A changed file that is not Go selects the packages
 // whose tests or testdata name it (keyedPackages). Deprecated packages are never selected (Live).
 //
-// NEVER SILENTLY NOTHING. On PR #4370's final head the shards reported
-// `test (nothing)` because `go list` failed on a runner (a shared GOCACHE race:
-// "open .../go-build/...: no such file or directory") and the selection printed
-// an empty list, so the caller said "0 package(s) touched: none" and a green run
-// tested nothing. Every `go list` here goes through goList: a non-zero exit, or
-// "cannot" or "no such file" on its stderr, is a failure, and so is a selection
-// of zero packages from a diff that touches Go files. What a failure does is the
-// caller's choice (Options.WholeTreeOnError). internal/ci's
+// NEVER SILENTLY NOTHING. A `go list` that fails on a runner must not read as
+// "nothing to test": the selection would print an empty list, the caller would
+// report no packages touched, and a green run would test nothing. Every
+// `go list` here goes through goList: a non-zero exit, or "cannot" or "no such
+// file" on its stderr, is a failure, and so is a selection of zero packages from
+// a diff that touches Go files. What a failure does is the caller's choice
+// (Options.WholeTreeOnError). internal/ci's
 // TestSelectPackagesNeverSilentlySelectsNothing holds both.
 func Select(run Runner, o Options) (Outcome, error) {
 	dep, err := LoadDeprecated(o.Root)
@@ -320,7 +319,7 @@ func (s *selector) selectChange() (Outcome, error) {
 
 	// ZERO PACKAGES FROM A GO DIFF IS AN ERROR, not "nothing to test": a change
 	// that moved a .go file under cmd/, internal/ or tools/ and selected nothing
-	// means the selection broke, the #4370 shape.
+	// means the selection broke.
 	if len(selected) == 0 && len(goChanged) > 0 {
 		return s.failed(fmt.Sprintf("select-packages: the diff touches Go files (%s) but selected zero packages\n", goChanged[0]))
 	}
