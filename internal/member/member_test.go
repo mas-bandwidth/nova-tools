@@ -772,10 +772,12 @@ func TestAMovedClaimIsReapedNotReported(t *testing.T) {
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
 		_, err := g.tick(t)
 		require.NoError(t, err)
-		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "done"})
 		moved := pk("c1")
 		moved.Gen = 2
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &moved)))
+		_, err = g.tick(t)
+		require.NoError(t, err)
+		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "done"})
 		g.s.reset()
 		acted, err := g.tick(t)
 		require.NoError(t, err)
@@ -797,10 +799,12 @@ func TestAMovedClaimIsReapedNotReported(t *testing.T) {
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
 		_, err := g.tick(t)
 		require.NoError(t, err)
-		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "done"})
 		moved := pk("c1")
 		moved.Epoch = 8
 		g.s.set("queue", 0, queueJSON(t, 8, working("c1", 1, &moved)))
+		_, err = g.tick(t)
+		require.NoError(t, err)
+		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "done"})
 		g.s.reset()
 		acted, err := g.tick(t)
 		require.NoError(t, err)
@@ -822,10 +826,12 @@ func TestAMovedClaimIsReapedNotReported(t *testing.T) {
 		g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &old)))
 		_, err := g.tick(t)
 		require.NoError(t, err)
-		g.r.child("r1").end(Result{Ran: true, Verdict: "ok", Report: "clean"})
 		moved := old
 		moved.Attempt = 2
 		g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &moved)))
+		_, err = g.tick(t)
+		require.NoError(t, err)
+		g.r.child("r1").end(Result{Ran: true, Verdict: "ok", Report: "clean"})
 		g.s.reset()
 		_, err = g.tick(t)
 		require.NoError(t, err)
@@ -1135,10 +1141,12 @@ func TestAnEndedLaunchWhoseCardCameBackReadyIsReapedAndTheWidthFreed(t *testing.
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
 		_, err := g.tick(t)
 		require.NoError(t, err)
-		g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "h", Report: "done"})
 		again := pk("c1")
 		again.Gen = 3
 		g.s.set("queue", 0, queueJSON(t, 7, queueCard{ID: "c1", Col: "ready", Gen: 3, Packet: &again}))
+		_, err = g.tick(t)
+		require.NoError(t, err)
+		g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "h", Report: "done"})
 		g.s.set("take", 0, takeJSON(t, again))
 		g.s.reset()
 		acted, err := g.tick(t)
@@ -1158,10 +1166,12 @@ func TestAnEndedLaunchWhoseCardCameBackReadyIsReapedAndTheWidthFreed(t *testing.
 		g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &old)))
 		_, err := g.tick(t)
 		require.NoError(t, err)
-		g.r.child("r1").end(Result{Ran: true, Verdict: "ok", Report: "clean"})
 		again := old
 		again.Attempt = 2
 		g.s.set("queue", 0, queueJSON(t, 7, asked("r1", &again)))
+		_, err = g.tick(t)
+		require.NoError(t, err)
+		g.r.child("r1").end(Result{Ran: true, Verdict: "ok", Report: "clean"})
 		g.s.reset()
 		_, err = g.tick(t)
 		require.NoError(t, err)
@@ -1659,4 +1669,59 @@ func TestALaneThatFinishesIsRefilledInTheSamePass(t *testing.T) {
 	assert.Equal(t, []string{"c1", "c2"}, g.r.started(), "the ready card is started in the same pass")
 	assert.Equal(t, 1, g.m.Running(), "the member runs at most its width")
 	assert.Equal(t, 2, acted, "one report and one start")
+}
+
+// TestPassReportsCompletedChildWhenQueueReadFails pins that a completed child
+// is collected, pushed, reported, and cleaned up even while the queue read blocks or
+// fails, and that no new child is launched from an unknown queue state
+// (docs/SPEC-SWARM.md, member; docs/SPEC-SPRINT.md, the fleet).
+func TestPassReportsCompletedChildWhenQueueReadFails(t *testing.T) {
+	t.Parallel()
+	bs := &blockingSprint{scriptSprint: newScript(), entered: make(chan struct{}), released: make(chan struct{})}
+	r := newRunner()
+	pusher := &fakePusher{def: Push{Sha: fullSha}}
+	out := &bytes.Buffer{}
+	m := New(Config{As: "m", Width: 2}, bs, r, pusher, out)
+	p := pk("c1")
+	p.Gen = 3
+	bs.set("queue", 0, queueJSON(t, 7, working("c1", 3, &p)))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	require.Equal(t, 1, m.Running())
+
+	r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "abc123", Report: "# Result\n\ndone"})
+
+	bs.reset()
+	bs.verb = "queue"
+	bs.set("queue", 2, "timeout: context deadline exceeded")
+	bs.set("take", 0, takeJSON(t, pk("c2")))
+
+	done := make(chan struct{})
+	var acted int
+	var tickErr error
+	go func() {
+		defer close(done)
+		acted, tickErr = m.Tick(time.Unix(0, 0))
+	}()
+
+	var once sync.Once
+	release := func() { once.Do(func() { close(bs.released) }) }
+	t.Cleanup(func() { release(); <-done })
+
+	<-bs.entered
+	assert.Equal(t, []string{"c1"}, pusher.cards(), "the finished child is pushed before queue read returns")
+	assert.Len(t, bs.lines("finish"), 1, "the finished child is reported before queue read returns")
+	assert.Equal(t, 0, m.Running(), "the completed child is cleaned up while queue is blocked")
+	assert.Empty(t, bs.lines("take"), "no take is issued while queue is blocked")
+	assert.Equal(t, []string{"c1"}, r.started(), "no new child starts while queue is blocked")
+
+	release()
+	<-done
+
+	require.ErrorContains(t, tickErr, "queue: exit 2")
+	require.Equal(t, 1, acted, "acted=%d, want 1 for the finished child", acted)
+	require.Equal(t, 0, m.Running(), "the completed child is cleaned up")
+	require.Len(t, bs.lines("finish"), 1, "the finished child is reported")
+	require.Empty(t, bs.lines("take"), "no take is issued when queue read fails")
+	require.Equal(t, []string{"c1"}, r.started(), "no new child starts from an unknown queue")
 }
