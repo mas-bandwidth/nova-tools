@@ -810,22 +810,24 @@ func TestFetchAncestryReadsStoredParentHeaders(t *testing.T) {
 }
 
 // The promotion branch is optional: dev is the integration branch, and
-// sprint/foundation exists only while a promotion is in flight. A --promotion
-// fetch of a branch origin does not have says so and exits 0 (nothing to
-// read); the classtests rule then excuses nothing, which is the safe side.
-// Any other ls-remote failure, and a plain (non-promotion) fetch of a missing
-// branch, stay red.
-func TestFetchAncestryPromotionSaysSoWhenTheBranchIsAbsent(t *testing.T) {
+// sprint/foundation exists only while a promotion is in flight. An absent
+// promotion branch is refused with exit 2, and any stale local ref deleted,
+// rather than falling back to excuse deletions (issue 5161).
+func TestFetchAncestryPromotionRefusesWhenTheBranchIsAbsent(t *testing.T) {
 	t.Parallel()
 	f := newSelFake(map[string]selReply{
-		ancestryParents:   {out: "tree abc123\nparent def456\nparent fed789\n\nsubject\n"},
-		ancestryLsRemote:  {code: 2},
+		ancestryParents:  {out: "tree abc123\nparent def456\nparent fed789\n\nsubject\n"},
+		ancestryLsRemote: {code: 2},
+		"git update-ref -d refs/remotes/origin/sprint/foundation": {},
 		ancestryShallow:   {out: "true\n"},
 		ancestryFetchUnsh: {err: ancestryAbsentErr, code: 128},
 	})
-	code, out, errb := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "push"}, "--promotion", "sprint/foundation")
-	if code != 0 || out != "origin has no branch sprint/foundation: no promotion to read\n" || errb != "" || f.called("git fetch") {
-		t.Errorf("absent branch: exit %d, stdout %q, stderr %q, calls %v; want 0, the saying, and no fetch", code, out, errb, f.calls)
+	code, _, errb := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "push"}, "--promotion", "sprint/foundation")
+	if code != 2 || !strings.Contains(errb, "promotion branch sprint/foundation not found on origin; run: git fetch origin sprint/foundation") || f.called("git fetch") {
+		t.Errorf("absent branch: exit %d, stderr %q, calls %v; want 2, the refusal, and no fetch", code, errb, f.calls)
+	}
+	if !f.called("git update-ref") {
+		t.Errorf("absent branch: git update-ref not called to clean stale ref, calls %v", f.calls)
 	}
 	// ls-remote failing for another reason (the network) is not "absent".
 	f = newSelFake(map[string]selReply{ancestryParents: {out: "tree abc123\nparent def456\nparent fed789\n\nsubject\n"}, ancestryLsRemote: {err: "fatal: unable to access\n", code: 128}})
@@ -837,6 +839,33 @@ func TestFetchAncestryPromotionSaysSoWhenTheBranchIsAbsent(t *testing.T) {
 	if code, _, _ := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", nil, "dev"); code != 1 {
 		t.Errorf("plain fetch of a missing branch: exit %d; want 1", code)
 	}
+}
+
+func TestResolvePromotionBranchRefusesAbsentBranch(t *testing.T) {
+	t.Parallel()
+	f := newSelFake(map[string]selReply{
+		ancestryLsRemote: {code: 2},
+		"git update-ref -d refs/remotes/origin/sprint/foundation": {},
+	})
+	_, err := resolvePromotionBranch(".", "sprint/foundation", f.host())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "promotion branch sprint/foundation not found on origin; run: git fetch origin sprint/foundation")
+	assert.True(t, f.called("git update-ref"))
+}
+
+func TestResolvePromotionBranchSuccess(t *testing.T) {
+	t.Parallel()
+	f := newSelFake(map[string]selReply{
+		ancestryLsRemote: {out: "abc123456\trefs/heads/sprint/foundation\n"},
+		"git rev-parse --verify -q refs/remotes/origin/sprint/foundation^{commit}": {out: "abc123456\n"},
+	})
+	ref, err := resolvePromotionBranch(".", "sprint/foundation", f.host())
+	require.NoError(t, err)
+	assert.Equal(t, "refs/remotes/origin/sprint/foundation", ref)
+
+	tip, err := promotionTip(".", "sprint/foundation", f.host())
+	require.NoError(t, err)
+	assert.Equal(t, "abc123456", tip)
 }
 
 func TestFetchAncestryFailures(t *testing.T) {
