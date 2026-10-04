@@ -178,7 +178,7 @@ var subidAssertPins = map[string]string{
 	"every row is name:start:count":                    `item is match('^[^:]+:[0-9]+:[0-9]+$')`,
 	"the user's existing rows overlap no other user's": `container_runtime_subid.clash | length == 0`,
 	"an existing subordinate id range is large enough": `container_runtime_subid.mine | length == 0 or container_runtime_subid.longest | int >= container_runtime_subid_count | int`,
-	"a new range fits in the 32-bit id range":          `container_runtime_subid_new_start | int + container_runtime_subid_count | int < 4294967296`,
+	"a new range fits in the 32-bit id space":          `container_runtime_subid_new_start | int + container_runtime_subid_count | int < 4294967296`,
 }
 
 func fold(s string) string { return strings.Join(strings.Fields(s), " ") }
@@ -234,7 +234,7 @@ var subidTasks = [][3]string{
 	{"the user's existing rows overlap no other user's", "assert", ""},
 	{"an existing subordinate id range is large enough", "assert", ""},
 	{"the start of the range a missing row gets", "set_fact", "container_runtime_subid.mine | length == 0"},
-	{"a new range fits in the 32-bit id range", "assert", "container_runtime_subid.mine | length == 0"},
+	{"a new range fits in the 32-bit id space", "assert", "container_runtime_subid.mine | length == 0"},
 	{"a row for the user in /etc/{{ container_runtime_subid_file }}", "lineinfile", "container_runtime_subid.mine | length == 0"},
 }
 
