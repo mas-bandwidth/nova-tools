@@ -1,7 +1,6 @@
 package update
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -1059,9 +1058,4 @@ func safeRevision(rev string) string {
 		return s
 	}
 	return "revision"
-}
-
-// Kept as a narrow seam for command tests and bus delivery; no shell is involved.
-func captureRun(ctx context.Context, args []string, input []byte, cap int) ProcessResult {
-	return process(ctx, args, bytes.NewReader(input), cap)
 }
