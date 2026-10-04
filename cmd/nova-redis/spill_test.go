@@ -333,3 +333,63 @@ func tripProxy(t *testing.T, target string) (addr string, trips func() int64) {
 	}()
 	return ln.Addr().String(), n.Load
 }
+
+// TestSpillRefusesAStoreFamilyKey: an owner whose <owner>: prefix reaches a
+// store key family (redisacl.Families) is refused at exit 2 before the store is
+// dialled, and writes nothing. Without it --owner sprint --name epoch writes
+// sprint:epoch, a sprint-family key, and --owner bench --name MACHINE:beat
+// writes a machine's beat key; the HSET clobbers the key's type and the
+// PEXPIRE puts a TTL on a store key, which SPEC-REDIS rule 2 forbids, so fleet
+// state ages out (security#65 finding 2). The refusal names the family; scratch
+// lives outside the store's families. recall is unchanged: it reads such a key
+// back and refuses it as UNBOUNDED, guarding the boundary from the other side.
+func TestSpillRefusesAStoreFamilyKey(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	cases := []struct {
+		owner, name, family string
+	}{
+		{"sprint", "epoch", "sprint"},
+		{"bench", "MACHINE:beat", "beats"},
+		{"machine", "m", "machines"},
+		{"table", "work", "tables"},
+		{"view", "sprint", "views"},
+		{"friend", "f:beat", "friends"},
+		{"fleet", "store", "fleet"},
+		{"loop", "member-a", "loops"},
+		{"route", "pro-a", "routes"},
+		{"config", "decl", "config"},
+		{"tokens", "ledger:2026-09-30", "tokens"},
+		{"ev", "github", "events"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.owner, func(t *testing.T) {
+			code, stdout, stderr := h.run("spill", "--owner", tc.owner, "--name", tc.name, "--ttl", "1h", "--value", "hi")
+			assert.Equal(t, 2, code, "spill --owner %s exits %d, want 2; stdout=%q stderr=%q", tc.owner, code, stdout, stderr)
+			assert.Contains(t, stderr, tc.family, "the refusal for --owner %s must name the %s store family; stderr=%q", tc.owner, tc.family, stderr)
+			assert.Contains(t, stderr, "scratch lives outside the store's families", "the refusal for --owner %s must say scratch lives outside the store's families; stderr=%q", tc.owner, stderr)
+		})
+	}
+	{
+		keys := h.mr.Keys()
+		assert.Len(t, keys, 0, "a refused spill stored %v; a refusal writes nothing", keys)
+	}
+
+	// An owner no family claims is still scratch.
+	code, stdout, stderr := h.run("spill", "--owner", "rowan", "--name", "note", "--ttl", "1h", "--value", "hi")
+	require.Zero(t, code, "spill --owner rowan exits %d; stdout=%q stderr=%q", code, stdout, stderr)
+	assert.Contains(t, h.mr.Keys(), "rowan:note", "a scratch owner must still spill: %v", h.mr.Keys())
+
+	// The package seam below the CLI refuses too, so a caller that skips the
+	// flag parser cannot write a store-family key.
+	ctx := context.Background()
+	conn, err := redisconn.Open(ctx, redisconn.Options{Addr: h.mr.Addr()}, nil)
+	require.NoError(t, err, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	s := &scratch{rdb: conn.Client(), now: h.clock.now}
+	{
+		_, err := s.spill(ctx, "sprint", "epoch", "hi", time.Hour)
+		assert.Error(t, err, "scratch.spill wrote a store-family key")
+	}
+}

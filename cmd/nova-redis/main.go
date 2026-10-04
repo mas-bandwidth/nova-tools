@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/redis/go-redis/v9"
@@ -157,6 +158,9 @@ func spillVerb(d deps) tool.Verb {
 					if !(err != nil && e == errNoTTL) {
 						c.Problem(e.Error())
 					}
+				}
+				if err := storeFamilyError(c.Str("owner")); err != nil {
+					c.Problem(err.Error())
 				}
 			})
 		},
@@ -475,10 +479,44 @@ func shellWord(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// validKey is the one gate every write passes: an owner, a name and a TTL
-// above zero, or nothing is written. It names every one that is wrong.
+// validKey is the one gate every write passes: an owner outside the store's
+// families, a name and a TTL above zero, or nothing is written. It names every
+// one that is wrong.
 func validKey(owner, name string, ttl time.Duration) error {
-	return errors.Join(keyErrors(owner, name, ttl)...)
+	errs := keyErrors(owner, name, ttl)
+	if err := storeFamilyError(owner); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// storeFamily is the store key family an owner would write into: the first
+// family in redisacl.Families whose key pattern reaches <owner>: before its
+// wildcard, so some name under the owner is a store key and not scratch.
+// Scratch lives outside the store's families (SPEC-REDIS rule 2).
+func storeFamily(owner string) (redisacl.Family, bool) {
+	prefix := owner + ":"
+	for _, f := range redisacl.Families {
+		for _, p := range f.Patterns {
+			if lit, _, _ := strings.Cut(p, "*"); strings.HasPrefix(lit, prefix) {
+				return f, true
+			}
+		}
+	}
+	return redisacl.Family{}, false
+}
+
+// storeFamilyError refuses an owner that would write into a store family. The
+// key is <owner>:<name> and the name may hold colons, so an owner is refused
+// when any name could put the key in a family: the family's pattern reaches
+// <owner>:. It names the family and that scratch lives outside the store's
+// families; nil when the owner is scratch's own.
+func storeFamilyError(owner string) error {
+	f, ok := storeFamily(owner)
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf("--owner %q is the %s store family (%s); scratch lives outside the store's families, so pick an owner no family claims", owner, f.Name, strings.Join(f.Patterns, ", "))
 }
 
 func keyErrors(owner, name string, ttl time.Duration) []error {
