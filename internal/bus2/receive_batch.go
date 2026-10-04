@@ -14,7 +14,7 @@ const MaxReceiveBatch = 1000
 func receiveBounds(consumer, after string, count int) error {
 	var problems []string
 	if consumer == "" || len(consumer) > 128 || strings.ContainsAny(consumer, " \t\r\n\x00") {
-		problems = append(problems, "consumer wants 1..128 non-space bytes")
+		problems = append(problems, "consumer wants 1..128 bytes without whitespace")
 	}
 	if count < 1 || count > MaxReceiveBatch {
 		problems = append(problems, "count wants 1..1000")
