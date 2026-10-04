@@ -61,7 +61,9 @@ minutes, one number on both sides); `silent` after a window without one, said
 to the session as a turn exactly once per outage, and `coordinator back` once
 when pings resume, naming the seat. The challenge: `quiet`; `challenged` from a
 ping until the session's pong with that nonce; `deaf` after a window challenged
-with no pong, until a pong. Only the current nonce answers: a stale or replayed
+with no pong, until a pong. A repeated current nonce refreshes the connection
+but neither restarts the challenge deadline nor reopens an answered challenge.
+Only the current nonce answers: a stale or replayed
 pong changes nothing. Up is `quiet` with at least one pong; the daemon's beat
 never makes a friend up.
 

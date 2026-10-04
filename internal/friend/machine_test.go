@@ -69,6 +69,31 @@ func TestOnlyTheCurrentNonceAnswersAndAWindowUnansweredIsDeaf(t *testing.T) {
 	assert.Equal(t, 2, m.Pongs)
 }
 
+func TestRepeatedCurrentNonceKeepsTheOriginalChallengeAndPong(t *testing.T) {
+	t.Parallel()
+	m := Start(t0)
+	asked := t0.Add(time.Second)
+	m.Ping(asked, "ada", t0, "n1")
+	duplicate := asked.Add(Window - time.Second)
+	m.Ping(duplicate, "ada", t0, "n1")
+	assert.Equal(t, duplicate, m.LastPing, "a repeated ping still refreshes the connection")
+	assert.Equal(t, asked, m.Asked, "it does not postpone the challenge deadline")
+	m.Tick(asked.Add(Window))
+	assert.Equal(t, Deaf, m.Challenge)
+	require.True(t, m.Pong(asked.Add(Window), "n1"))
+	m.Ping(asked.Add(Window+time.Second), "ada", t0, "n1")
+	assert.Equal(t, Quiet, m.Challenge, "an answered nonce is not a new challenge")
+	assert.Equal(t, asked, m.Asked)
+	assert.False(t, m.Pong(asked.Add(Window+2*time.Second), "n1"))
+	assert.Equal(t, 1, m.Pongs)
+	next := asked.Add(Window + 3*time.Second)
+	m.Ping(next, "ada", t0, "n2")
+	assert.Equal(t, Challenged, m.Challenge)
+	assert.Equal(t, next, m.Asked)
+	require.True(t, m.Pong(next, "n2"))
+	assert.Equal(t, 2, m.Pongs)
+}
+
 func TestPingAndPongLinesRoundTrip(t *testing.T) {
 	t.Parallel()
 	text := PingText("ada", t0, "abc123")

@@ -213,6 +213,50 @@ func TestAPingIsAnsweredAtOnceByTheDaemonAndPushedInAndThePongEndsTheChallenge(t
 	assert.Equal(t, "n2", r.last().Nonce)
 }
 
+func TestDistinctEntriesWithTheSameNonceDoNotCountTheStoredPongTwice(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	first := r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+	var asked time.Time
+	r.at[4] = func() {
+		asked = r.d.m.Asked
+		r.mu.Lock()
+		r.pong, r.pongSet = Pong{Nonce: "n1", At: r.now, To: "ada"}, true
+		r.mu.Unlock()
+	}
+	r.at[6] = func() {
+		second := r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+		require.NotEqual(t, first.ID, second.ID)
+	}
+	r.run(t, 10)
+	assert.Equal(t, asked, r.d.m.Asked)
+	assert.Equal(t, 1, r.last().Pongs)
+	assert.Equal(t, Quiet, r.last().Challenge)
+	require.Len(t, r.delivered, 2, "both transport messages still reach the session")
+	assert.Len(t, r.adaGot(t), 2, "each entry still gets its transport reply")
+}
+
+func TestPeekedPingThenPongThenReceiveDoesNotReopenTheChallenge(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.hold, r.releaseAt = make(chan struct{}), 8
+	r.send(t, "ada", "long", "a long task")
+	r.at[2] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) }
+	var asked time.Time
+	r.at[4] = func() {
+		asked = r.d.m.Asked
+		r.mu.Lock()
+		r.pong, r.pongSet = Pong{Nonce: "n1", At: r.now, To: "ada"}, true
+		r.mu.Unlock()
+	}
+	r.run(t, 15)
+	assert.Equal(t, asked, r.d.m.Asked)
+	assert.Equal(t, 1, r.last().Pongs)
+	assert.Equal(t, Quiet, r.last().Challenge)
+	require.Len(t, r.delivered, 2, "the peeked entry is eventually received and delivered")
+	assert.Len(t, r.adaGot(t), 1, "peek and receive share the existing entry reply guard")
+}
+
 func TestNoPingForAWindowTellsTheSessionOnceAndAPingTellsItBack(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)

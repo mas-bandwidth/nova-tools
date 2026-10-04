@@ -8,7 +8,8 @@
 \*
 \* The state the code owns: conn, lastPing, silentFrom; chal, nonce, asked,
 \* pongs. The clock is now, one unit a tick, Window units a window. The
-\* outside: the coordinator pinging (Ping, each ping a fresh nonce, the
+\* outside: the coordinator pinging (Ping with a fresh nonce, RepeatPing
+\* with the current nonce, the
 \* session having seen every nonce pushed to it: seen), and the session
 \* answering (Pong, with any nonce it has seen, so a stale or replayed pong
 \* is possible). The pushes the session is owed are counted: silentSaid
@@ -88,6 +89,13 @@ Ping ==
   /\ seen' = seen \cup {nonce'}
   /\ UNCHANGED <<now, silentFrom, pongs, silentSaid, outages, answered>>
 
+\* Repeating the current nonce refreshes the connection only: the original
+\* deadline and any accepted pong survive both peek/receive and new entries.
+RepeatPing ==
+  /\ nonce # NoNonce
+  /\ conn' = "connected" /\ lastPing' = now
+  /\ UNCHANGED <<now, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered>>
+
 \* The session answers with a nonce it has seen (machine.go Pong): the
 \* current one ends the challenge; any other changes nothing. The witness
 \* takes any seen nonce; answered records which one did.
@@ -101,6 +109,7 @@ Pong(n) ==
 Next ==
   \/ Tick
   \/ Ping
+  \/ RepeatPing
   \/ \E n \in 1..MaxPings : Pong(n)
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)

@@ -70,7 +70,9 @@ func Start(now time.Time) *Machine {
 // Ping is a ping arriving at now from seat (held since since) with nonce:
 // the connection is back if it was silent (the session is told once), and
 // the session is challenged with this nonce, whatever it was before, so
-// only the newest nonce counts (tla/Friend.tla: Ping). The ping itself
+// only the newest nonce counts (tla/Friend.tla: Ping). Repeating the current
+// nonce refreshes the connection but preserves its challenge and deadline
+// (RepeatPing), so an answered nonce cannot count again. The ping itself
 // goes into the session as the message it arrived in; the daemon delivers
 // that, so the pushes here are only the daemon's own words.
 func (m *Machine) Ping(now time.Time, seat string, since time.Time, nonce string) []Push {
@@ -79,6 +81,9 @@ func (m *Machine) Ping(now time.Time, seat string, since time.Time, nonce string
 		out = append(out, Push{"coordinator back", fmt.Sprintf("coordinator back: %s has the seat (since %s); silent from %s to %s", seat, since.UTC().Format(time.RFC3339), m.SilentFrom.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))})
 	}
 	m.Connection, m.LastPing, m.Seat, m.SeatSince = Connected, now, seat, since
+	if nonce == m.Nonce {
+		return out
+	}
 	if m.Challenge != Deaf {
 		m.Challenge = Challenged
 	}
