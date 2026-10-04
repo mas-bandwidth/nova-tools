@@ -66,6 +66,10 @@ func SelftestLand(ctx context.Context, opts ...SelftestLandOption) error {
 		}
 		scratch = tmp
 		cleanScratch = true
+	} else {
+		if err := os.MkdirAll(scratch, 0o755); err != nil {
+			return fmt.Errorf("selftest land: cannot create scratch directory: %w", err)
+		}
 	}
 	if cleanScratch {
 		defer func() {
@@ -174,14 +178,21 @@ func SelftestLand(ctx context.Context, opts ...SelftestLandOption) error {
 			return strings.TrimSpace(string(out)), err
 		}
 
+		briefPath := filepath.Join(scratch, "canned-brief.md")
+		cannedBrief := "tier: flash\nPATHS: canned.txt\n\nCanned card for selftest land.\n\nRULES.\nWork only in the job directory this card names.\nNever force-push or rebase a shared branch.\nNever kill a process you did not start.\nNever start a server on this machine.\nNo `rm -rf` outside the job directory.\nReport what was not done.\n"
+		if err := os.WriteFile(briefPath, []byte(cannedBrief), 0o644); err != nil {
+			return fmt.Errorf("selftest land: write canned-brief.md failed: %w", err)
+		}
+
 		// Run through standard coordinator/worker lifecycle to queue canned card in merge
 		commands := [][]string{
 			{"init", "--readers", "reader-a", "--members", "m1:1", "--redis", redisAddr, "--actor", "boss"},
-			{"add", "--stream", "selftest", "--count", "1", "--redis", redisAddr, "--actor", "boss"},
+			{"add", "--stream", "selftest", "--count", "1", "--brief-file", briefPath, "--redis", redisAddr, "--actor", "boss"},
 			{"start", "--redis", redisAddr, "--actor", "boss"},
 			{"tick", "--redis", redisAddr, "--actor", "boss"},
+			{"tick", "--redis", redisAddr, "--actor", "boss"},
 			{"take", "--as", "m1", "--epoch", "0", "--redis", redisAddr, "--actor", "m1"},
-			{"finish", "--as", "m1", "selftest-1.w1@1", "--epoch", "0", "--head", headSha, "--report", "canned done", "--redis", redisAddr, "--actor", "m1"},
+			{"finish", "--as", "m1", "selftest-1.w1@1", "--epoch", "0", "--head", headSha, "--branch", cardBranch, "--report", "canned done", "--redis", redisAddr, "--actor", "m1"},
 			{"tick", "--redis", redisAddr, "--actor", "boss"},
 			{"read", "--as", "reader-a", "--begin", "--epoch", "0", "--redis", redisAddr, "--actor", "reader-a"},
 			{"read", "--as", "reader-a", "--ok", "--epoch", "0", "--redis", redisAddr, "--actor", "reader-a"},
