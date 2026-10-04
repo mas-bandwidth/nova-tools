@@ -212,7 +212,7 @@ func ValidSlug(slug string) error {
 const HostMax = 40
 
 // ValidHost checks a Host value. A host is ONE WORD: it is printed as `host=<name>` on a
-// line whose fields are separated by spaces, so a host with a space in it would read as
+// line whose fields are separated by spaces, so a host with a blank in it would read as
 // two fields to every line parser on this bus. The alphabet is the slug's -- lower-case
 // letters, digits, `-`, `.` and `_` -- because a machine name is written by a person in a
 // defaults file and read back by a program.
@@ -228,7 +228,7 @@ func ValidHost(host string) error {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 		case r == '-' || r == '.' || r == '_':
 		default:
-			return fmt.Errorf("--host %q: a host is lower-case letters, digits, `-`, `.` and `_`, and is printed as one space-separated `host=` field, so %q is refused", truncate(host, HostMax), string(r))
+			return fmt.Errorf("--host %q: a host is lower-case letters, digits, `-`, `.` and `_`, and is printed as one blank-separated `host=` field, so %q is refused", truncate(host, HostMax), string(r))
 		}
 	}
 	return nil
