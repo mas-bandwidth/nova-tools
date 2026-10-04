@@ -152,6 +152,8 @@ func stLine(t *testing.T, stream, prefix string) string {
 // every behaviour the issue names. The six bodies also stand as the six
 // top-level tests below, under the issue's own names.
 func TestIssue2296(t *testing.T) {
+	t.Parallel()
+
 	t.Run("TestNoCodeStagedClassifiesTheIndex", noCodeStagedClassifiesTheIndex)
 	t.Run("TestNoCodeStagedRequiresDir", noCodeStagedRequiresDir)
 	t.Run("TestNoCodeStagedNothingToSay", noCodeStagedNothingToSay)
@@ -311,7 +313,11 @@ func noCodeStagedSaysNo(t *testing.T) {
 	}
 }
 
-func TestNoCodeStagedRefusals(t *testing.T) { noCodeStagedRefusals(t) }
+func TestNoCodeStagedRefusals(t *testing.T) {
+	t.Parallel()
+
+	noCodeStagedRefusals(t)
+}
 
 // The refusals are exit 2 (SPEC.md:1015-1021): a --dir that is not the root
 // of a git repository, a diff-index that itself fails, unmerged entries, an
@@ -383,10 +389,11 @@ func noCodeStagedRefusals(t *testing.T) {
 	// Real git emits neither through this command -- the branches exist for a
 	// git that one day will, and a switch with no default must refuse rather
 	// than skip -- so a fake git stands in front of the real one and crafts
-	// the one record. Everything else the tool asks git reaches the real
-	// binary behind it, over a real repository with a real staged record, so
-	// a fake that failed to take would classify prose and the case would go
-	// green over the refusal it came to pin.
+	// the one record, reached through the invocation's own program lookup.
+	// Everything else the tool asks git reaches the real binary behind it,
+	// over a real repository with a real staged record, so a fake that failed
+	// to take would classify prose and the case would go green over the
+	// refusal it came to pin.
 	for _, tc := range []struct{ name, record, want string }{
 		{
 			"an unrecognised status letter",
@@ -421,10 +428,17 @@ func noCodeStagedRefusals(t *testing.T) {
     ;;
 esac
 `, tc.record, real))
-			orig := os.Getenv("PATH")
-			require.NoError(t, os.Setenv("PATH", bin+string(os.PathListSeparator)+orig))
-			exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
-			require.NoError(t, os.Setenv("PATH", orig))
+			// The fake reaches the invocation through the lookup the invocation
+			// was handed, not through the process's PATH: every other test runs
+			// beside this one (docs/STANDARD.md section 8, no os.Setenv).
+			e := newEnv()
+			e.lookPath = func(name string) (string, error) {
+				if name == "git" {
+					return filepath.Join(bin, "git"), nil
+				}
+				return exec.LookPath(name)
+			}
+			exit, stdout, stderr := runCheckIn(t, e, "nocode", "--staged", "--dir", dir)
 			refused(t, tc.name, exit, stderr, tc.want)
 			assert.EqualValues(t, "", stdout, "%s printed to stdout: %q", tc.name, stdout)
 		})
