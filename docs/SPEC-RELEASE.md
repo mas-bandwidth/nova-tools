@@ -1,6 +1,6 @@
 # The release gates — specification
 
-`nova-update release` is specified in [SPEC-UPDATE.md](SPEC-UPDATE.md), under **The release verb**: what
+`nova-release` is specified in [SPEC-UPDATE.md](SPEC-UPDATE.md), under **The release tool, nova-release**: what
 `cut`, `build`, `install`, `adopt` and `pull` do, where `adopt` runs from, and the list of things `adopt`
 will never do. This file is the part of it a person must be able to read **without reading Go**: the gates.
 
@@ -119,7 +119,7 @@ A tag with no annotation, or an annotation with no `sums=` line, is said plainly
 artifacts have to go — here and on every machine that holds them — and the record has to stay.
 
 ```
-nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
 ```
 
 - **The tag stays.** A tag that vanishes is a history that cannot be read, and `pull` never moves or deletes
@@ -192,7 +192,7 @@ forge. Two flags, and the important one is that **the tool produces the list**:
 A path list this verb wrote opens with
 
 ```
-# nova-update release cut --local-diff <base>...<head>
+# nova-release cut --local-diff <base>...<head>
 ```
 
 and a file without that line, or with a different range on it, is **refused**. A classification gate
@@ -272,7 +272,7 @@ decision), then `--expect-sums-from`, then `--repo`.
 
 ## 8. Install on the coordinator first, then adopt
 
-`adopt` is not a courier. It is **this host's** `nova-update` reading a release, verifying it, and
+`adopt` is not a courier. It is **this host's** `nova-release` reading a release, verifying it, and
 running **that release's** install on every machine. So a coordinator that is not yet on the release
 cannot adopt the fleet onto it — the flags it needs may ship inside the release it has not installed.
 The order is:
@@ -303,8 +303,8 @@ in the spec.
 The five verbs that put binaries on every bench in the fleet are declared in this spec, in
 SPEC-UPDATE, in the help string — and in the command reference. `docs/CLI.md` is what the dogfood
 ledger reads, so a verb missing from it would be a verb nothing asks to have been run by a
-non-author. `### The release verb` under `## nova-update` is that section, and a test holds it
-against `internal/release.Verbs` so a sixth release verb fails on the day it is added.
+non-author. `## nova-release` in docs/CLI.md is that section, and a test holds it
+against `internal/release.Verbs` so a seventh verb fails on the day it is added.
 
 *Tests: `TestTheCommandReferenceDeclaresEveryReleaseVerb`,
 `TestTheFourthDogfoodsLessonsAreInTheReleaseSpec`.*
@@ -313,7 +313,7 @@ against `internal/release.Verbs` so a sixth release verb fails on the day it is 
 
 A Windows bench (its standard is [BENCH-WINDOWS.md](BENCH-WINDOWS.md)) takes releases the same way
 every other bench does, and everything about releasing to it is a **decision** rather than a default,
-so that `nova-update release build --platform windows-amd64` and the fan-out behind it work without a
+so that `nova-release build --platform windows-amd64` and the fan-out behind it work without a
 special case. Five of them.
 
 **The shell on the far side is POSIX.** BENCH-WINDOWS.md names the bench's ssh shell as Git Bash
@@ -338,11 +338,11 @@ is allowed there whatever the target is.
 **Every artifact is named for the target, and so is every name derived from one.** `release.ToolFile`
 is the only place a tool name becomes a file name: a windows release is a directory of `.exe` files
 whoever built it, `SHA256SUMS` lists those names and nothing else, `install` reads the names out of
-that file rather than rebuilding them, `adopt` sends and runs `nova-update.exe`, `pull` removes
+that file rather than rebuilding them, `adopt` sends and runs `nova-release.exe`, `pull` removes
 `.exe` files, and `nova-version snapshot` records the name the file actually has, suffix and all.
 
 **There is no self-verify of a cross-built artifact, and the build says so rather than faking one.** A
-`release build --platform windows-amd64` on a non-windows host produces a `nova-update.exe` this host
+`release build --platform windows-amd64` on a non-windows host produces a `nova-release.exe` this host
 cannot execute, so the build cannot ask it whether it answers `version`. What the build promises is
 the checksum round trip — written, read back, verified, `verified=<n>` on the receipt — and nothing
 more; the receipt carries no claim about anything having been run. The version stamp is asserted where
@@ -352,8 +352,8 @@ through its own `version` verb. On a non-windows host, CI's cross-vet (`make vet
 a host can say about windows code.
 
 **And one thing the bench's own filesystem decides.** Windows will not replace a file that is open for
-execution, and the file being replaced is frequently `nova-update.exe` replacing itself — `adopt` runs
-the release's own `nova-update.exe` there and that process holds its own image open. It *will* let a
+execution, and the file being replaced is frequently `nova-release.exe` replacing itself — `adopt` runs
+the release's own `nova-release.exe` there and that process holds its own image open. It *will* let a
 running file be renamed aside, so `install` falls back to moving the existing one out of the way and
 renaming the new one into place. The name it moves aside to is dot-prefixed, which keeps it out of
 `nova-version snapshot` and out of `--retire`, both of which take `nova-*` only; the existing image may
@@ -556,7 +556,7 @@ One numbered line per test; where one test holds several behaviours, they share 
 41. `TestTheMachineColumnsTakeAWindowsPath` — the `--machines` columns take the drive form and are normalised the same way.
 42. `TestTheWindowsSumsFileNamesOnlyExeFiles` — `release.ToolFile` is the only place a tool name becomes a file name; a windows release's `SHA256SUMS` lists `.exe` names and nothing else.
 43. `TestInstallOnAWindowsArtifactDirectoryUsesExeNamesThroughout` — `install` reads names out of `SHA256SUMS` rather than rebuilding them, using `.exe` throughout on windows.
-44. `TestAdoptDryRunProbesTheExeOnAWindowsBench` — `adopt` sends/runs `nova-update.exe` (and `pull` removes `.exe`, `snapshot` records the suffix).
+44. `TestAdoptDryRunProbesTheExeOnAWindowsBench` — `adopt` sends/runs `nova-release.exe` (and `pull` removes `.exe`, `snapshot` records the suffix).
 45. `TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts` — a cross-built windows artifact is not self-verified; the build claims only the checksum round trip.
 46. `TestInstallMovesARunningFileAsideWhenTheRenameIsRefused` — `install` moves a running binary aside (dot-prefixed) when its rename is refused, and restores the existing binary if the fallback also fails.
 47. `TestTheWindowsBenchIsInTheReleaseSpec` — the windows bench is in the release spec.

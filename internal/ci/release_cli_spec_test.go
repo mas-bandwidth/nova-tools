@@ -19,8 +19,8 @@ import (
 // what the dogfood ledger reads, so a verb missing from it is a verb nothing
 // asks to have been run by a non-author.
 //
-// The five are held against internal/release.Verbs rather than against a list
-// written here, so a sixth release verb is a test failure on the day it is
+// The six are held against internal/release.Verbs rather than against a list
+// written here, so a seventh verb is a test failure on the day it is
 // added rather than on the day somebody notices the reference is short.
 func TestTheCommandReferenceDeclaresEveryReleaseVerb(t *testing.T) {
 	t.Parallel()
