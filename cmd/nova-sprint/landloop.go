@@ -26,7 +26,19 @@ const LandEvery = 2 * time.Second
 // landLoop runs landRound every LandEvery until ctx ends.
 func (a *app) landLoop(ctx context.Context, addr string, stdout io.Writer) {
 	fmt.Fprintf(stdout, "LANDING every %s: land runs here for every stream with cards queued to merge, one landing at a time\n", LandEvery)
+	waiting := ""
 	for ctx.Err() == nil {
+		// one lander at a time (landlock.go): the loop holds the land root's lock for as
+		// long as it runs, and waits, landing nothing, while another lander holds it
+		if held, why := a.holdLanderLock(); !held {
+			if why != waiting {
+				fmt.Fprintf(stdout, "%s LAND WAITING %s; nothing is landed until it lets go\n", oneline.Field(a.now().Format("15:04:05")), oneline.Escape(why))
+				waiting = why
+			}
+			a.sleep(LandEvery)
+			continue
+		}
+		waiting = ""
 		a.landRound(ctx, addr, a.landArgs, stdout)
 		a.sleep(LandEvery)
 	}

@@ -47,6 +47,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -81,7 +82,10 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     tip's side; their tests' update run (NOVA_CI_UPDATE=1) makes them once for
     the batch, at its tip, to a fixed point; any other conflict stops
     the stream, and after resume land merges the head again. The clone is --repo-dir,
-    else the dir= each line names; git uses the caller's environment. After
+    else the dir= each line names; git uses the caller's environment. One
+    lander at a time: a land holds the land root and each clone it uses, and a
+    land by hand refuses at once while the server's lander (run --land) or
+    another land holds them, naming the holder. After
     the whole pass each landed merge diff is scored (nova-decide's score
     decision, with the key JEV_API_KEY holds, a minute for the pass; recorded in
     decide/score.jsonl under the land root): a batch whose cards' top class meets
@@ -260,10 +264,13 @@ type lander struct {
 	deferred *ledgerDefer
 	// batchMax is the most cards a batch holds (--batch-max; 0: no cap; batchCut).
 	batchMax int
-	out      []landBatch
-	epoch    uint64            // the epoch land read: every report is fenced to it
-	diffs    map[string]string // each card's merge diff, as checkCard read it, for its score
-	toScore  []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
+	// locks is the clones this land holds, each from its first use to the land's end
+	// (landlock.go).
+	locks   map[string]*filelock.FileLock
+	out     []landBatch
+	epoch   uint64            // the epoch land read: every report is fenced to it
+	diffs   map[string]string // each card's merge diff, as checkCard read it, for its score
+	toScore []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
 	// ledgerLog is the land log's lines for the shrink-only ledgers the batch's merges
 	// resolved (ledgerunion.go), reported with the batch (NOTE) and then cleared.
 	ledgerLog []string
@@ -313,6 +320,16 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if len(bad) > 0 {
 		return refuse(stderr, "land", strings.Join(bad, "; "))
 	}
+	// one lander at a time (landlock.go): a land by hand holds the land root's lock for its
+	// whole run, and refuses at once, nothing read, while the server's lander holds it
+	if !a.landLazy && !*dry {
+		lk, why := a.takeLanderLock("nova-sprint land by " + dashed(c.actor) + " (pid " + strconv.Itoa(os.Getpid()) + ")")
+		if why != "" {
+			fmt.Fprintf(stderr, "%s land REFUSED: %s\n", prog, oneline.Escape(why+"; nothing was read, fetched, pushed or reported; let it land, or stop it first (the server's lander: nova-sprint run --land); run: nova-sprint where"))
+			return 1
+		}
+		defer func() { _ = lk.Unlock() }() // ignored: the kernel lets go of it when the process ends anyway
+	}
 	// land's reads and its report are steps of the sprint: each takes the server's one
 	// line of control (a.serial) when this process is the server (run --land), so none
 	// runs during a tick or a worker's batch; its git runs outside it, for as long as
@@ -336,6 +353,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		a.baseGateFails = map[string]*baseGateFail{}
 	}
 	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, batchMax: *batchMax, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
+	defer l.unlockClones()
 	if *check != "" && !*dry {
 		a.serial.Lock()
 		l.gate, l.gateNote = a.landGate(context.Background(), st)
@@ -1222,6 +1240,9 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 		if l.dry {
 			return l.repoDir, ""
 		}
+		if why := l.lockClone(l.repoDir); why != "" {
+			return l.repoDir, why
+		}
 		return l.repoDir, l.originIs(ctx, l.repoDir, repo)
 	}
 	if l.root == "" {
@@ -1236,6 +1257,9 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 		return dir, ""
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		if why := l.lockClone(dir); why != "" {
+			return dir, why
+		}
 		return dir, l.originIs(ctx, dir, repo)
 	}
 	if err := os.MkdirAll(l.root, 0o755); err != nil {
@@ -1246,7 +1270,7 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 	if _, err := l.git(ctx, "", "clone", "--no-tags", "--single-branch", "--", repo, dir); err != nil {
 		return "", "the clone of " + repo + " into " + dir + " failed: " + firstLine("", err)
 	}
-	return dir, ""
+	return dir, l.lockClone(dir)
 }
 
 // originIs is why the clone's origin is not where the batch belongs, ""

@@ -1991,6 +1991,22 @@ command on top, once a batch, as before. A batch's line says each step's seconds
 merges, the checks by script, the ledgers' regeneration, the tree gate with how
 many gates it ran).
 
+**One lander at a time.** A land's clone is one checkout, its HEAD, index and
+batch branches shared by whoever runs git in it; on 2026-10-04 a land by hand and
+the server's lander ran in one clone at once, one stream's merge was committed on
+another's batch branch and gated on its tree, and a batch whose branch the other
+lander had reset pushed a commit the base already held and reported its card
+landed with its merge on no branch of origin. So the server's lander holds the
+land root's lock (`lander.lock` under the land root) for as long as its loop runs
+(waiting, `LAND WAITING`, landing nothing, while another holds it), and a land by
+hand takes the same lock for its whole run: while it is held a land by hand
+refuses at once, exit 1, nothing read, fetched, pushed or reported, the holder
+named (its pid, host, start and label). Every land also holds each clone it uses
+(`nova-sprint-land.lock` in the clone's `.git`) from its first use to its end: a
+clone another lander holds refuses the batch, the holder named, nothing fetched,
+pushed or reported. The locks are `internal/filelock`'s: flock, let go by the
+kernel when the holder ends.
+
 **The generated ledgers.** A card's change to a generated ledger is not merged:
 the lander makes the ledger itself, once a batch. The generated ledgers are the
 class ledgers the checks above name (a `.txt` shard of a counted-ledger directory
