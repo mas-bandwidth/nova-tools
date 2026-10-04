@@ -149,7 +149,6 @@ internal/nsprint/testutil/github_test.go:TestGitHubStubInterceptsHTTPCalls seria
 internal/nsprint/testutil/github_test.go:TestGitHubStubStartsCleanly serial: t.Setenv
 internal/release/certify_test.go:TestScriptRemoteOverTheRealSSHIsStillRefusedUnderTheHostGuard serial: t.Setenv
 internal/release/certify_test.go:TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard serial: t.Setenv
-internal/scaffold/scaffold_test.go:TestScaffoldNeverOverwritesACollisionRacedInAfterThePreflight serial: swaps package var scaffold.BeforeCreate
 internal/secrets/place_test.go:TestPlaceSSHSeamPanicsUnderTheGuard serial: os.Unsetenv, t.Setenv
 internal/secrets/storepull_test.go:TestStorePullUsesBenchOwnedKey serial: t.Setenv
 internal/swarm/hostguard_test.go:TestHostGuardCleanupRestoresCachedState serial: t.Setenv
