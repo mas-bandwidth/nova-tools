@@ -1512,7 +1512,10 @@ func (m *Member) endEndedLocal() {
 				m.post(id, post{res: &r})
 				return
 			}
-			r = treeFinish(p, r)
+			// This path runs before the queue read, so it is the finish a pass
+			// actually makes. A step commit is resolved on the branch the same
+			// way as endEnded (docs/SPEC-SPRINT.md, the verdict per step).
+			r = treeFinishWith(p, r, m.stepResolve(p))
 			var pu Push
 			switch {
 			case r.Head == "":
