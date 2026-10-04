@@ -186,6 +186,20 @@ var Volatile = []VolatileField{
 		norm: func(f Field) Norm { return Path(f.Doc, f.Run) },
 	},
 	{
+		Name: "id",
+		What: "id= (a ULID this run made)",
+		// Anchored and named, as sha is: a message id is 26 Crockford base32
+		// characters; anything else stays on the line.
+		norm: func(Field) Norm {
+			return Norm{
+				Name:  "id= (a ULID this run made)",
+				Re:    regexp.MustCompile(`^id=[0-9A-HJKMNP-TV-Z]{26}$`),
+				As:    "id=<a ULID this run made>",
+				field: "id",
+			}
+		},
+	},
+	{
 		Name: "sha",
 		What: "sha= (a sha this run made)",
 		// Anchored at both ends AND named, so `base_sha=` is another token and
