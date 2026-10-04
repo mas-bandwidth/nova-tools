@@ -29,6 +29,10 @@ func TestMemberUnitsStopByDraining(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, yaml.Unmarshal(b, &vars))
 	assert.Equal(t, int((member.DrainMost + time.Minute).Seconds()), vars["nova_member_stop_timeout"])
+	// A member that drains does no new work, so its stop is bounded well under an
+	// hour: the timeout stays at most 300 s, and a restart never holds a machine
+	// for a drain of hours.
+	assert.LessOrEqual(t, vars["nova_member_stop_timeout"], 300)
 
 	read := func(name string) string {
 		b, err := os.ReadFile(filepath.Join(root, "fleet", "templates", name))
