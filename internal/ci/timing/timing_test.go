@@ -47,7 +47,7 @@ func TestTimingTableReproduces(t *testing.T) {
 func TestTimingRefusesABadHarvest(t *testing.T) {
 	t.Parallel()
 
-	good := `{"repo":"mas-bandwidth/nova-tools","pr":1404,"job":"test (1/3)","opened":"2026-09-01T08:00:00Z","queued":"2026-09-01T08:01:30Z","started":"2026-09-01T08:02:15Z","setup_done":"2026-09-01T08:04:15Z","done":"2026-09-01T08:24:15Z","green":true}`
+	good := `{"repo":"example/nova-tools","pr":1404,"job":"test (1/3)","opened":"2026-09-01T08:00:00Z","queued":"2026-09-01T08:01:30Z","started":"2026-09-01T08:02:15Z","setup_done":"2026-09-01T08:04:15Z","done":"2026-09-01T08:24:15Z","green":true}`
 	for _, tc := range []struct {
 		name, line, want string
 	}{
@@ -58,7 +58,7 @@ func TestTimingRefusesABadHarvest(t *testing.T) {
 		},
 		{
 			name: "repo not owner/name",
-			line: strings.Replace(good, `"repo":"mas-bandwidth/nova-tools"`, `"repo":"nova-tools"`, 1),
+			line: strings.Replace(good, `"repo":"example/nova-tools"`, `"repo":"nova-tools"`, 1),
 			want: `line 1: repo wants the repository as <owner>/<name> (got "nova-tools")`,
 		},
 		{
@@ -112,12 +112,12 @@ func TestTimingSelectAndRender(t *testing.T) {
 			Started: started, SetupDone: setup, Done: done, Green: greenPtr(green)}
 	}
 	events := []Event{
-		job("mas-bandwidth/schema", 700, "test", "2026-08-01T05:00:00Z", "2026-08-01T05:01:00Z", "2026-08-01T05:02:00Z", "2026-08-01T05:03:00Z", "2026-08-01T05:23:00Z", true),
-		job("mas-bandwidth/schema", 699, "check", "2026-08-01T04:00:00Z", "2026-08-01T04:01:00Z", "2026-08-01T04:02:00Z", "2026-08-01T04:03:00Z", "2026-08-01T04:13:00Z", true),
-		job("mas-bandwidth/schema", 699, "test", "2026-08-01T04:00:00Z", "2026-08-01T04:01:00Z", "2026-08-01T04:02:00Z", "2026-08-01T04:03:00Z", "2026-08-01T04:43:00Z", false),
-		job("mas-bandwidth/nova-tools", 1404, "test (2/3)", "2026-08-01T06:00:00Z", "2026-08-01T06:01:00Z", "2026-08-01T06:03:00Z", "2026-08-01T06:05:30Z", "2026-08-01T06:35:30Z", true),
-		job("mas-bandwidth/nova-tools", 1404, "test (1/3)", "2026-08-01T06:00:00Z", "2026-08-01T06:01:00Z", "2026-08-01T06:02:00Z", "2026-08-01T06:04:00Z", "2026-08-01T06:24:00Z", true),
-		job("mas-bandwidth/other", 1, "test", "2026-08-01T07:00:00Z", "2026-08-01T07:01:00Z", "2026-08-01T07:02:00Z", "2026-08-01T07:03:00Z", "2026-08-01T07:13:00Z", true),
+		job("example/schema", 700, "test", "2026-08-01T05:00:00Z", "2026-08-01T05:01:00Z", "2026-08-01T05:02:00Z", "2026-08-01T05:03:00Z", "2026-08-01T05:23:00Z", true),
+		job("example/schema", 699, "check", "2026-08-01T04:00:00Z", "2026-08-01T04:01:00Z", "2026-08-01T04:02:00Z", "2026-08-01T04:03:00Z", "2026-08-01T04:13:00Z", true),
+		job("example/schema", 699, "test", "2026-08-01T04:00:00Z", "2026-08-01T04:01:00Z", "2026-08-01T04:02:00Z", "2026-08-01T04:03:00Z", "2026-08-01T04:43:00Z", false),
+		job("example/nova-tools", 1404, "test (2/3)", "2026-08-01T06:00:00Z", "2026-08-01T06:01:00Z", "2026-08-01T06:03:00Z", "2026-08-01T06:05:30Z", "2026-08-01T06:35:30Z", true),
+		job("example/nova-tools", 1404, "test (1/3)", "2026-08-01T06:00:00Z", "2026-08-01T06:01:00Z", "2026-08-01T06:02:00Z", "2026-08-01T06:04:00Z", "2026-08-01T06:24:00Z", true),
+		job("example/other", 1, "test", "2026-08-01T07:00:00Z", "2026-08-01T07:01:00Z", "2026-08-01T07:02:00Z", "2026-08-01T07:03:00Z", "2026-08-01T07:13:00Z", true),
 	}
 	t.Run("a PR is selected whole", func(t *testing.T) {
 		kept := Select(events, DefaultRepos, 1)
@@ -131,10 +131,10 @@ func TestTimingSelectAndRender(t *testing.T) {
 	})
 	t.Run("PR numbers with gaps still select the last N", func(t *testing.T) {
 		gap := []Event{
-			job("mas-bandwidth/nova-tools", 100, "test", "2026-08-01T06:00:00Z", "2026-08-01T06:01:00Z", "2026-08-01T06:02:00Z", "2026-08-01T06:04:00Z", "2026-08-01T06:24:00Z", true),
-			job("mas-bandwidth/nova-tools", 98, "test", "2026-08-01T05:00:00Z", "2026-08-01T05:01:00Z", "2026-08-01T05:02:00Z", "2026-08-01T05:04:00Z", "2026-08-01T05:24:00Z", true),
-			job("mas-bandwidth/nova-tools", 98, "check", "2026-08-01T05:00:00Z", "2026-08-01T05:01:00Z", "2026-08-01T05:02:00Z", "2026-08-01T05:04:00Z", "2026-08-01T05:14:00Z", true),
-			job("mas-bandwidth/nova-tools", 90, "test", "2026-08-01T04:00:00Z", "2026-08-01T04:01:00Z", "2026-08-01T04:02:00Z", "2026-08-01T04:04:00Z", "2026-08-01T04:24:00Z", true),
+			job("example/nova-tools", 100, "test", "2026-08-01T06:00:00Z", "2026-08-01T06:01:00Z", "2026-08-01T06:02:00Z", "2026-08-01T06:04:00Z", "2026-08-01T06:24:00Z", true),
+			job("example/nova-tools", 98, "test", "2026-08-01T05:00:00Z", "2026-08-01T05:01:00Z", "2026-08-01T05:02:00Z", "2026-08-01T05:04:00Z", "2026-08-01T05:24:00Z", true),
+			job("example/nova-tools", 98, "check", "2026-08-01T05:00:00Z", "2026-08-01T05:01:00Z", "2026-08-01T05:02:00Z", "2026-08-01T05:04:00Z", "2026-08-01T05:14:00Z", true),
+			job("example/nova-tools", 90, "test", "2026-08-01T04:00:00Z", "2026-08-01T04:01:00Z", "2026-08-01T04:02:00Z", "2026-08-01T04:04:00Z", "2026-08-01T04:24:00Z", true),
 		}
 		kept := Select(gap, DefaultRepos, 2)
 		got := map[int]int{}
@@ -154,16 +154,16 @@ func TestTimingSelectAndRender(t *testing.T) {
 		rows, err := Rows(Select(events, DefaultRepos, 0))
 		require.NoError(t, err)
 		want := "repo\tpr\tjob\topened\tqueue_s\tsetup_s\ttest_s\tpr_open_to_green_s\n" +
-			"mas-bandwidth/nova-tools\t1404\ttest (1/3)\t2026-08-01T06:00:00Z\t60\t120\t1200\t2130\n" +
-			"mas-bandwidth/nova-tools\t1404\ttest (2/3)\t2026-08-01T06:00:00Z\t120\t150\t1800\t2130\n" +
-			"mas-bandwidth/schema\t699\tcheck\t2026-08-01T04:00:00Z\t60\t60\t600\t-\n" +
-			"mas-bandwidth/schema\t699\ttest\t2026-08-01T04:00:00Z\t60\t60\t2400\t-\n" +
-			"mas-bandwidth/schema\t700\ttest\t2026-08-01T05:00:00Z\t60\t60\t1200\t1380\n"
+			"example/nova-tools\t1404\ttest (1/3)\t2026-08-01T06:00:00Z\t60\t120\t1200\t2130\n" +
+			"example/nova-tools\t1404\ttest (2/3)\t2026-08-01T06:00:00Z\t120\t150\t1800\t2130\n" +
+			"example/schema\t699\tcheck\t2026-08-01T04:00:00Z\t60\t60\t600\t-\n" +
+			"example/schema\t699\ttest\t2026-08-01T04:00:00Z\t60\t60\t2400\t-\n" +
+			"example/schema\t700\ttest\t2026-08-01T05:00:00Z\t60\t60\t1200\t1380\n"
 		got := Render(rows)
 		assert.Equal(t, want, got, "Render printed:\n%s\nwant:\n%s", got, want)
 	})
 	t.Run("an event that does not say green", func(t *testing.T) {
-		bad := job("mas-bandwidth/nova-tools", 1, "test", "2026-08-01T06:00:00Z", "2026-08-01T06:01:00Z", "2026-08-01T06:02:00Z", "2026-08-01T06:04:00Z", "2026-08-01T06:24:00Z", true)
+		bad := job("example/nova-tools", 1, "test", "2026-08-01T06:00:00Z", "2026-08-01T06:01:00Z", "2026-08-01T06:02:00Z", "2026-08-01T06:04:00Z", "2026-08-01T06:24:00Z", true)
 		bad.Green = nil
 		_, err := Rows([]Event{bad})
 		require.Error(t, err, "Rows took an event that does not say whether it was green, want a refusal")
