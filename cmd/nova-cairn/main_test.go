@@ -11,16 +11,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// cli is the tool's entry point in process, an app naming no working
-// directory: every store these tests pass is absolute (t.TempDir), and a
-// relative path would resolve against the process's directory as typed.
-var cli = testkit.Main(cairnTool(app{}).Run)
+// cli is the tool's entry point in process.
+var cli = testkit.Main(runCairn)
 
 // rig is one store under test: a fresh directory and the tool pointed at it.
 type rig struct {
@@ -186,6 +183,68 @@ func TestConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 	require.Contains(t, out, "INDEX ENTRY session=alpha entry=e", "per-session index printed %q", out)
 }
 
+// TestIndexSessionCountsOnlyTheSelection pins the --session coverage fix:
+// index --session reports the count the selection covers, not the whole store,
+// and prints an INDEX SESSION line for every session in the selection, entries
+// or none, so an empty session is found.
+func TestIndexSessionCountsOnlyTheSelection(t *testing.T) {
+	t.Parallel()
+
+	c := newRig(t)
+	c.ok("open", "--session", "s1", "--publish", "manual")
+	c.ok("append", "--session", "s1", "--entry", "e1", "--text", "words of s1", "--publish", "manual")
+	c.ok("open", "--session", "s2", "--publish", "manual")
+
+	// An empty session is counted and named: sessions= is the selection's count,
+	// not the store's, and INDEX SESSION lists it with entries=0.
+	out := c.ok("index", "--session", "s2")
+	printed(t, out, "INDEX SESSION session=s2 entries=0", "INDEX OK sessions=1 entries=0")
+	require.NotContains(t, out, "sessions=2", "sessions= counted the whole store, not the selection: %s", out)
+
+	// The full index names every session, empty or not.
+	out = c.ok("index")
+	printed(t, out, "INDEX SESSION session=s1 entries=1", "INDEX SESSION session=s2 entries=0",
+		"INDEX OK sessions=2 entries=1")
+}
+
+// TestHelpWithMoreThanOneWordRefusesAsHelp pins the second half of the finding:
+// `help` with more than one word is one HELP REFUSED, naming the single verb
+// name it wants, before the named verb runs its flag checks. `nova-cairn help
+// open append` once dispatched as `open` with a stray positional and printed
+// three missing-flag OPEN REFUSED lines instead.
+func TestHelpWithMoreThanOneWordRefusesAsHelp(t *testing.T) {
+	t.Parallel()
+
+	r := cli.Run("help", "open", "append")
+	require.Equal(t, 2, r.Code, "want exit 2: %+v", r)
+	require.Empty(t, r.Stdout, "a refusal prints no banner: %q", r.Stdout)
+	require.Contains(t, r.Stderr, "HELP REFUSED: help takes one verb name", "stderr: %q", r.Stderr)
+	require.NotContains(t, r.Stderr, "OPEN REFUSED", "help ran open's flag checks: %q", r.Stderr)
+	require.NotContains(t, r.Stderr, "positional", "help carried the stray word into a verb: %q", r.Stderr)
+
+	// A flag between help, the verb and the stray word is no verb dispatch
+	// either: `help open --json append` and `help open -- append` refuse as
+	// help before open runs its flag checks.
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"flag before the stray word", []string{"help", "open", "--json", "append"}},
+		{"-- before the stray word", []string{"help", "open", "--", "append"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := cli.Run(tc.args...)
+			require.Equal(t, 2, r.Code, "want exit 2: %+v", r)
+			got := r.Stdout + r.Stderr
+			require.Contains(t, got, "help takes one verb name", "help refused as the wrong verb: %q", got)
+			require.NotContains(t, got, "OPEN REFUSED", "help ran open's flag checks: %q", got)
+			require.NotContains(t, got, "positional", "help carried the stray word into a verb: %q", got)
+			require.NotContains(t, got, "store is required", "help ran open's flag checks: %q", got)
+		})
+	}
+}
+
 func TestLifecycleVerbsStayRefused(t *testing.T) {
 	t.Parallel()
 
@@ -229,10 +288,7 @@ func TestSourcePointerIsRecordedNeverOpened(t *testing.T) {
 
 	c := newRig(t)
 	ptr := c.path("no such transcript", "session.jsonl")
-	// One way to print a value (skeleton contract 1.14, STANDARD section 2):
-	// a pointer that is not one safe token prints as oneline.Quote gives it,
-	// one field with its spaces kept.
-	field := oneline.Quote(ptr)
+	field := strings.ReplaceAll(ptr, " ", `\x20`)
 	out := c.ok("open", "--session", "s1", "--source", ptr, "--publish", "manual")
 	require.Contains(t, out, " source="+field+" ", "open printed %q, want source=%s", out, field)
 	out = c.ok("append", "--session", "s1", "--entry", "inherits", "--text", "words with no pointer of their own", "--publish", "manual")
@@ -377,45 +433,5 @@ func TestEveryProblemIsNamedAtOnce(t *testing.T) {
 // by construction: every verb's effect, and a how text of five short lines.
 func TestCairnToolMeetsTheStandard(t *testing.T) {
 	t.Parallel()
-	assert.Empty(t, cairnTool(app{}).Problems())
-}
-
-// The seam the parallel first run stands on: the working directory is a field
-// of the instance the caller builds, never the process's (docs/STANDARD.md
-// section 8: the working directory is injected through the code's config,
-// never set with a Chdir). A relative store resolves under the directory the
-// instance names; an absolute store passes through; an instance naming no
-// directory leaves every path as typed, for the OS to resolve against the
-// process's directory as before the seam.
-func TestAStoreResolvesUnderTheInstancesWorkingDir(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name  string
-		store string
-		want  string // where sessions/s.md lands, relative to the working directory
-	}{
-		{"relative joins under the instance's dir", "./cairns", filepath.Join("cairns", "sessions", "s.md")},
-		{"a bare name joins too", "cairns", filepath.Join("cairns", "sessions", "s.md")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			wd := t.TempDir()
-			sit := testkit.Main(cairnTool(app{workingDir: wd}).Run)
-			sit.OK(t, "open", "--store", tc.store, "--session", "s", "--publish", "manual")
-			require.FileExists(t, filepath.Join(wd, tc.want), "the store did not land under the instance's working directory")
-		})
-	}
-	t.Run("absolute passes through", func(t *testing.T) {
-		t.Parallel()
-		wd, store := t.TempDir(), t.TempDir()
-		sit := testkit.Main(cairnTool(app{workingDir: wd}).Run)
-		sit.OK(t, "open", "--store", store, "--session", "s", "--publish", "manual")
-		require.FileExists(t, filepath.Join(store, "sessions", "s.md"), "an absolute store moved under the working directory")
-	})
-	t.Run("a path passes through as typed when no directory is named", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, "./cairns", app{}.resolve("./cairns"), "the zero value must leave the path to the OS, as before the seam")
-		assert.Equal(t, "/wd/cairns", app{workingDir: "/wd"}.resolve("/wd/cairns"), "an absolute path must pass through")
-		assert.Equal(t, "", app{workingDir: "/wd"}.resolve(""), "an empty path must stay empty: cairn's own refusal names the missing store")
-	})
+	assert.Empty(t, cairnTool().Problems())
 }

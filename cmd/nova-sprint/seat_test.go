@@ -53,10 +53,10 @@ func TestTheHolderGivesTheSeat(t *testing.T) {
 	log := ta.ok("log")
 	assert.Contains(t, log, "seat: coordinator -> rowan: stella holds the merges; rowan is back, by coordinator\n", log)
 
-	code, _, errs := ta.do("add --stream s2 --count 1")
+	code, _, errs := ta.do("add --stream s2 --count 1 --one")
 	assert.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, "the coordinator's alone: rowan, not coordinator", errs)
-	ta.ok("add --stream s2 --count 1 --actor rowan")
+	ta.ok("add --stream s2 --count 1 --one --actor rowan")
 	code, _, errs = ta.do("inbox --read")
 	assert.Equal(t, 2, code, "the old holder moves no cursor: %s", errs)
 	ta.ok("inbox --read --actor rowan")
@@ -184,12 +184,12 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1,m2 --owner glenn")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.ok("add --stream s1 --sentinel s1-stop")
 	ta.ok("add --stream s1 --count 2")
-	ta.ok("add --stream s2 --count 1")
+	ta.ok("add --stream s2 --count 1 --one")
 	ta.ok("drop s2-1 --reason 'obsolete: the tool went away'")
-	ta.ok("add --stream s3 b --needs s2-1")
+	ta.ok("add --stream s3 b --one --needs s2-1")
 	ta.ok("fleet down m2")
 	blocked := ta.group(sprint.NBlocked, "s3")
 
@@ -203,7 +203,8 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 		"MEMBER m2 held by coordinator\n",
 		"DECISION ",
 		" drop s2-1 by coordinator: obsolete: the tool went away\n",
-		" hold member m2 by coordinator: --return: its work begun is handed back now\n",
+		" fleet down m2 by coordinator\n",
+		"RULE Cards are admitted and released in waves of at least the fleet's width: add takes a directory, release names a wave, rework and drop answer a group; a single-card verb outside a judgment is the sign of doing it wrong.\n",
 		"FIRST nova-sprint where\n",
 		"FIRST nova-sprint inbox --wait --push seat\n",
 		"FIRST read docs/SPEC-SPRINT.md, \"Handing over the seat\"\n",

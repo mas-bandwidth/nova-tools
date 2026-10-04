@@ -61,7 +61,7 @@ words:
   drain        the tick's first update of the work table: every change steps queued since the last
                tick; MEMBER DRAIN is a member whose binary was replaced, taking no new card
   tier         a card's class of model: flash first on every card; line 1 of its brief (tier:
-               flash|pro|frontier, none is flash) is its ceiling; at its bound below it the machine
+               flash|pro|heavy|frontier, none is flash) is its ceiling; at its bound below it the machine
                escalates it a tier (tier_now); rework --tier pins it; frontier is never dealt
   route        a nova-config route row: tier, provider/model, token budget, deadline; the deal draws
                one of the tier the card is on for each work card, the ask one for each read

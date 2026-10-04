@@ -114,8 +114,21 @@ func (d *DayFile) Render() string {
 
 // Save writes the file whole atomically via internal/atomicfile (exclusive
 // temporary file beside target, explicit mode, fsync to media, atomic rename).
-// Nothing is appended and nothing is edited in place.
+// Nothing is appended and nothing is edited in place. It refuses to write a file
+// whose rendered count cell is neither a non-negative integer nor "-" (security#75 finding 1).
 func (d *DayFile) Save(out string) error {
+	for _, r := range d.Rows {
+		for t := Type(0); t < NTypes; t++ {
+			cell := r.Counts.Cell(t)
+			if cell == Dash {
+				continue
+			}
+			v, err := strconv.ParseInt(cell, 10, 64)
+			if err != nil || v < 0 {
+				return fmt.Errorf("day %s: count cell %q is neither a non-negative integer nor %q", d.Day, cell, Dash)
+			}
+		}
+	}
 	if err := checkOutputDirectory(out); err != nil {
 		return err
 	}

@@ -44,7 +44,7 @@ func TestDashboardServesThePageOnEveryListener(t *testing.T) {
 	ta.ok("add --stream s1 --count 3")
 	want := ta.ok("where --json")
 	ta.a.now, ta.a.sleep = time.Now, time.Sleep // real sockets, real time
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(context.Background())
 	ta.a.notify = func(context.Context) (context.Context, context.CancelFunc) { return ctx, func() {} }
 
 	var out, errb syncBuffer

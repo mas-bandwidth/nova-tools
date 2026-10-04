@@ -25,10 +25,10 @@ func TestRouteCoverTierRoutes(t *testing.T) {
 			{Name: "pro-a", Tier: cardhdr.RoutePro, Enabled: true},
 			{Name: "pro-b", Tier: cardhdr.RoutePro, Enabled: true},
 			{Name: "pro-off", Tier: cardhdr.RoutePro, Enabled: false},
-		}, "flash=1 pro=2"},
+		}, "flash=1 pro=2 heavy=0"},
 		{"a tier with no route counts zero", []Route{
 			{Name: "pro-a", Tier: cardhdr.RoutePro, Enabled: true},
-		}, "flash=0 pro=1"},
+		}, "flash=0 pro=1 heavy=0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -251,6 +251,39 @@ func TestRouteCoverRouteStats(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, RouteStats(tc.routes, tc.fleet))
+		})
+	}
+}
+
+// The tier a card's reads are asked at is never weaker than the writer's (nova-tools#5096
+// item 27): a heavy card is read on heavy, a frontier card, which no route serves, on
+// heavy as well and never on pro, and a read tier set for the stream or the sprint raises a
+// flash or pro card's reads and lowers none.
+func TestReadTierOfIsNeverWeakerThanTheWriter(t *testing.T) {
+	t.Parallel()
+	card := func(brief string) *Card {
+		return &Card{ID: "s1-1", Row: "s1", Fields: map[string]string{"kind": "primary", "brief": brief}}
+	}
+	for _, tc := range []struct {
+		name, brief, sprintSet, want string
+	}{
+		{"a flash card", "", "", "flash"},
+		{"a pro card", "tier: pro", "", "pro"},
+		{"a heavy card", "tier: heavy", "", "heavy"},
+		{"a heavy card, a flash setting does not lower it", "tier: heavy", "flash", "heavy"},
+		{"a heavy card, a pro setting does not lower it", "tier: heavy", "pro", "heavy"},
+		{"a frontier card, never on pro", "tier: frontier", "", "heavy"},
+		{"a frontier card, a lower setting does not lower it", "tier: frontier", "flash", "heavy"},
+		{"a pro card raised by the sprint", "tier: pro", "heavy", "heavy"},
+		{"a flash card raised by the sprint", "", "pro", "pro"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := &Snapshot{Work: NewTable(Work), Merge: NewTable(Merge)}
+			if tc.sprintSet != "" {
+				s.Work.SetProps(map[string]string{PropReadTier: tc.sprintSet})
+			}
+			assert.Equal(t, tc.want, s.readTierOf(card(tc.brief)))
 		})
 	}
 }

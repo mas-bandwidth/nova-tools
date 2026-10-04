@@ -136,8 +136,8 @@ func TestWhereShowsHeldCardsApart(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1 --coordinator lead")
 	ta.ok("add --stream w --sentinel gate --held --actor lead")
 	ta.ok("add --stream w a b --actor lead")
-	ta.ok("add --stream v c --actor lead")
-	ta.ok("add --stream v d --needs a --actor lead")
+	ta.ok("add --stream v c --one --actor lead")
+	ta.ok("add --stream v d --one --needs a --actor lead")
 	ta.ok("start --actor lead") // a STOPPED machine's header is STOPPED alone
 	assert.Contains(t, ta.ok("where"), "0/5 0.0% held=4 -> ETA -", "where's header")
 	var w whereView
@@ -276,7 +276,7 @@ func TestWhereKeepsTheWholeSprintAverageWhenTheLandedStampsFailToRead(t *testing
 	ta.now = ta.now.Add(2 * time.Hour) // every landing is over an hour old: the average either way
 	ta.mu.Unlock()
 	ta.ok("stop")
-	ta.ok("add --stream s2 --count 1") // the table moves; no tick counts it
+	ta.ok("add --stream s2 --count 1 --one") // the table moves; no tick counts it
 	ta.json("where", &w)
 	require.Zero(t, w.Held, "nothing waits: %s", w.Summary)
 	healthy := w.Summary

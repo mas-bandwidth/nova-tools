@@ -57,6 +57,9 @@ type Plan struct {
 	Notes []Note
 	// Closes are open judgments the step answers as a whole (--answers).
 	Closes []Open
+	// Said is what the step tells the coordinator beside its moves (a NOTE line
+	// each): an --answers id the machine answered already.
+	Said []string
 	// Updates are open judgments the step rewrites in place with the latest
 	// facts (a lateness while its attempt lives): same id, new text, each a
 	// line of the log.
@@ -70,6 +73,9 @@ type Plan struct {
 	// Seat is the seat's change (MoveSeat): the step's commit writes the
 	// coordinator and the seat's record with its note.
 	Seat *SeatChange
+	// Health is a friend's health observed (ObserveFriend): the step's commit
+	// writes it as her record.
+	Health *FriendHealthWrite
 	// Stop is the cause the binding stops the machine with as the step commits: the
 	// tick's deal when every provider is out of credit (FundsCause words); "" is none.
 	Stop string
@@ -267,6 +273,11 @@ func answered(p *Plan, s *Snapshot, ids []string, who string) {
 			resolved = resolved || n.Kind == Decided && n.Answers == id
 		}
 		switch {
+		case !known && s.Answered[id] == MachineActor:
+			// stale: the machine answered it since the inbox was read (the comfort
+			// list of 2026-10-03, item 11): a note, never a refusal of the step;
+			// one another verb answered is refused as unknown, as before
+			p.Said = append(p.Said, "--answers "+id+": the machine answered it already; nothing more to answer")
 		case !known:
 			bad = append(bad, Refusal{Key: id, Why: noJudgment(s, id) + "; the whole step is refused and nothing was changed"})
 		case !resolved:

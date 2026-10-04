@@ -122,7 +122,7 @@ func (e *caseEnv) sprintRunUntil(t *testing.T, harness, model string, bound time
 	defer cancel()
 	d := &memberDrive{t: t, addr: "mem:" + filepath.Join(e.dir, "sprint.twin"), bin: bin}
 	d.must("init", "--members", "m1:1")
-	d.must("add", "--stream", "a", "--count", "1", "--brief", e.brief())
+	d.must("add", "--stream", "a", "--one", "--count", "1", "--brief", e.brief())
 	d.must("start")
 	e.member(t)
 	rn := e.runner(harness, model)
@@ -461,7 +461,7 @@ func TestAClaudeReadersReviewAloneIsItsVerdict(t *testing.T) {
 			bin := builtSprint(t)
 			d := &memberDrive{t: t, addr: "mem:" + filepath.Join(e.dir, "sprint.twin"), bin: bin}
 			d.must("init", "--members", "m1:1", "--readers", "reader-a,reader-b") // a flash card is read once, by reader-a, the first round the readers
-			d.must("add", "--stream", "a", "--count", "1", "--brief", e.brief())
+			d.must("add", "--stream", "a", "--one", "--count", "1", "--brief", e.brief())
 			d.must("start")
 			e.member(t)
 			work := e.script(t, `set -e

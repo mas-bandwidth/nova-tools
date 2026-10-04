@@ -126,7 +126,7 @@ func TestMainCoverOpenConnRefusesAStoreThatIsNotThereAndResolvesTheLogin(t *test
 			"SPRINT_PW":                      "s3cr3t",
 		}
 		a := &app{getenv: func(k string) string { return env[k] }}
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		conn, err := a.openConn(ctx, absent)
 		require.Error(t, err)
@@ -135,7 +135,7 @@ func TestMainCoverOpenConnRefusesAStoreThatIsNotThereAndResolvesTheLogin(t *test
 	})
 	t.Run("no user and no password variable: the default login, then the dial is refused", func(t *testing.T) {
 		a := &app{getenv: func(string) string { return "" }}
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		conn, err := a.openConn(ctx, absent)
 		require.Error(t, err)

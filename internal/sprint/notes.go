@@ -44,10 +44,6 @@ const (
 	NUnknownMachine = "an unknown machine is beating"
 	NStagingRefused = "a member refused a card at staging"    // dealt to another member
 	NRestWithdrawn  = "a card withdrawn from a resting route" // dealt again on one that serves
-	// The coordinator held a fleet member, a reader, a friend or a stream, or released
-	// its hold (hold, unhold: hold.go), the reason in the note.
-	NHeld   = "held by the coordinator"
-	NUnheld = "released from a hold"
 
 	// The tick's own failure, noted once for each distinct error text it
 	// keeps failing with, and its recovery, noted once with the count of
@@ -69,18 +65,21 @@ const (
 	// The coordinator's seat moved (docs/SPEC-SPRINT.md, "Handing over the
 	// seat"): given by its holder or the owner, or taken with the owner's name,
 	// which is addressed to the holder it was taken from.
-	NSeat      = "seat"
-	NSeatTaken = "seat TAKEN"
+	NSeat           = "seat"
+	NFriendNotWoken = "a friend was not told of her card" // friend sync delivered it, and the bus message to her failed
+	NSeatTaken      = "seat TAKEN"
 
 	NReadyToAccept   = "ready to accept"    // the readers it needs said ok at its head (ReadsNeeded)
 	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
 	NWorkFailed      = "work came back failed"
 	NReadBroken      = "a reader found it broken"
-	NReadReturned    = "a reader returned a read" // no verdict, not a read: asked again
+	NBriefWrong      = "a card has reached its bound: the brief is wrong, not the worker" // brief_bound.go
+	NReadReturned    = "a reader returned a read"                                         // no verdict, not a read: asked again
 	NConflict        = "stream stopped: conflict on a card"
 	NRed             = "stream stopped: stream branch red"
 	NCross           = "stream stopped: needs a card of another stream first"
 	NRejected        = "stream stopped: the merge queue rejected"
+	NBaseRed         = "stream stopped: the base fails its tree gate" // the base-gate rule's third failure (rules.go)
 	NBlocked         = "a primary is blocked on something dropped"
 	NMissingNeed     = "a primary is blocked on something missing"
 	NCIRed           = "ci red"
@@ -101,10 +100,12 @@ var Decisions = map[string][]string{
 	NReturned:        {"rework", "accept", "drop"}, // accept only while its reads stand at its head
 	NWorkFailed:      {"rework with a fix", "drop"},
 	NReadBroken:      {"rework with the finding", "ask another reader", "drop"},
+	NBriefWrong:      {"brief", "drop"}, // never rework: a --fix changes the brief not at all (brief_bound.go)
 	NConflict:        {"resolve and resume", "rework", "drop"},
 	NRed:             {"take the suspect off and resume", "rework the suspect"},
 	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
 	NRejected:        {"resume", "return", "drop"},
+	NBaseRed:         {"resume", "wait"},
 	NBlocked:         {"drop", "ack"},
 	NMissingNeed:     {"drop", "ack"},
 	NCIRed:           {"rework with a fix", "return", "drop", "look", "ack"},
@@ -145,7 +146,11 @@ func Preview(items []string, sep string) string {
 
 // Note is one notification.
 type Note struct {
-	ID        string    `json:"id"`
+	ID string `json:"id"`
+	// Alias is a judgment's or an acknowledgement's alias, j<n>, its place among
+	// the epoch's in the order written: the store's commit numbers it (inbox.go,
+	// Alias); "" on a happened or decided note.
+	Alias     string    `json:"alias,omitempty"`
 	Kind      string    `json:"kind"`
 	Type      string    `json:"type"`
 	Stream    string    `json:"stream,omitempty"`

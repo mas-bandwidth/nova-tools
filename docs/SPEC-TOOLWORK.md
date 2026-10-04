@@ -9,14 +9,14 @@ person and no model standing between a change and the answer:
 
 ## Hygiene
 
-`nova-dev hygiene --repo <dir> --base <ref> --head <ref> --identity "Name <email>[,…]" [--paths <glob>[,…]] [--kind <kind>]`
+`nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "Name <email>[,…]" [--paths <glob>[,…]] [--kind <kind>]`
 checks `<base>..<head>` and prints one `HYGIENE FINDING reason=<token> at=<where>: <why>`
 line per finding, then `HYGIENE OK` or `HYGIENE NO` with the base, head, paths and
 finding count. It exits 0 clean, 1 with findings, 2 when it could not run. It decides
 nothing.
 
 1. **One package, one entry point.** The checks are `internal/hygiene.Check`, and
-   `nova-dev hygiene` is its command. A second copy of these rules would be a second
+   `nova-check hygiene` is its command. A second copy of these rules would be a second
    definition of clean. A check that could not run is exit 2, never a clean answer.
 2. **`identity`.** Every commit in the range has author **and** committer in the
    identity set, and none is a merge commit; anything else is reason `identity` at the commit's sha12.
@@ -45,7 +45,7 @@ nothing.
    list; there is no default kind. A kind unlocks only the stray exceptions that name
    it, and nothing a branch contains widens it.
 
-**Tests:** `internal/hygiene` and `cmd/nova-dev` hold each check red on a fixture
+**Tests:** `internal/hygiene` and `cmd/nova-check` hold each check red on a fixture
 repository: a foreign committer, a merge commit, a rename on both sides, `RESULT.md`
 in the diff, a conflict marker, mode `100600`, a file over one mebibyte, a symlink and
 a submodule, a secret shape whose text never appears in the output, a `--paths` list
@@ -64,8 +64,8 @@ Every command carries a `### First run` transcript in its `## <tool>` section of
 2. **One comparator, in one place.** `onboarding.CompareTranscript(doc, got, volatile)`
    is the only comparison a `firstrun_test.go` makes. Values are compared **as
    written**; the only values matched by shape are the run-owned fields of one shared
-   table, `onboarding.Volatile` (`at=`, `took=`, `created=`, a temporary path, a fresh
-   sha, a name a recorded fixture carries that the document writes as the reader's
+   table, `onboarding.Volatile` (`at=`, `took=`, `created=`, a temporary path, a message's
+   `id=`, a fresh sha, a name a recorded fixture carries that the document writes as the reader's
    variable, and the stamp on the `branch=` a nova-secrets seal or seat inject commits on).
    A test may name a field from that table and may not invent one.
 3. **The class test asserts execution, not existence.**

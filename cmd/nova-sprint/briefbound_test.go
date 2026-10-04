@@ -48,7 +48,7 @@ func TestAddTakesABriefUpToTheBriefBound(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	for i, n := range []int{12000, store.MaxBriefBytes} {
-		ta.ok(fmt.Sprintf("add --stream s%d --count 1 --brief-file %s", i+1, briefOfSize(t, n)))
+		ta.ok(fmt.Sprintf("add --stream s%d --count 1 --one --brief-file %s", i+1, briefOfSize(t, n)))
 	}
 	ta.deal(2)
 	var q struct{ Cards []queueCard }
@@ -63,7 +63,7 @@ func TestAddTakesABriefUpToTheBriefBound(t *testing.T) {
 
 	before := ta.applies()
 	for _, n := range []int{store.MaxBriefBytes + 1, 20000} {
-		code, out, errs := ta.do("add --stream s3 --count 1 --brief-file " + briefOfSize(t, n))
+		code, out, errs := ta.do("add --stream s3 --count 1 --one --brief-file " + briefOfSize(t, n))
 		require.Equal(t, 1, code, "out %q err %q", out, errs)
 		for _, want := range []string{
 			fmt.Sprintf("field brief is %d bytes, over the bound of 16384 bytes", n),
@@ -77,7 +77,7 @@ func TestAddTakesABriefUpToTheBriefBound(t *testing.T) {
 	require.Equal(t, before, ta.applies(), "a refused add wrote")
 
 	// --brief over the flag takes the same bound
-	code, _, errs := ta.do("add --stream s3 --count 1 --brief '" + strings.ReplaceAll(passingBrief(strings.Repeat("y", store.MaxBriefBytes)), "'", "") + "'")
+	code, _, errs := ta.do("add --stream s3 --count 1 --one --brief '" + strings.ReplaceAll(passingBrief(strings.Repeat("y", store.MaxBriefBytes)), "'", "") + "'")
 	require.Equal(t, 1, code)
 	require.Contains(t, errs, "over the bound of 16384 bytes")
 }
@@ -101,10 +101,10 @@ func TestEveryVerbThatPrintsFailExitsNonZero(t *testing.T) {
 	require.NoError(t, os.WriteFile(rules, []byte("Be careful.\n"), 0o600))
 	require.NoError(t, os.WriteFile(over, []byte("Be careful.\n"+strings.Repeat("x", store.MaxBriefBytes)), 0o600))
 	for _, c := range []struct{ line, token string }{
-		{"add --stream s1 --count 1 --rules " + rules + " --brief-file " + over, "ADD"},
-		{"add --stream s1 --count 1 --json --rules " + rules + " --brief-file " + over, ""},
-		{"add --stream s1 s1-1", "ADD"},
-		{"add --stream s1 --count 1 --needs nope", "ADD"},
+		{"add --stream s1 --count 1 --one --rules " + rules + " --brief-file " + over, "ADD"},
+		{"add --stream s1 --count 1 --one --json --rules " + rules + " --brief-file " + over, ""},
+		{"add --stream s1 s1-1 --one", "ADD"},
+		{"add --stream s1 --count 1 --one --needs nope", "ADD"},
 		{"release s1-nope --reason x", "RELEASE"},
 		{"resolve s1-nope", "RESOLVE"},
 		{"take --as m1 s1-nope.w1@1", "TAKE-BY-ID"},
@@ -153,7 +153,7 @@ func TestAFileOverTheReadCapIsRefusedWithItsTrueSize(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	before := ta.applies()
-	code, _, errs := ta.do("add --stream s1 --count 1 --brief-file " + write("brief.txt", briefReadCap+350))
+	code, _, errs := ta.do("add --stream s1 --count 1 --one --brief-file " + write("brief.txt", briefReadCap+350))
 	require.Equal(t, 2, code, errs)
 	require.Contains(t, errs, fmt.Sprintf("the file is %d bytes, over the %d bytes", briefReadCap+350, briefReadCap))
 	require.Equal(t, before, ta.applies())
@@ -191,7 +191,7 @@ func TestCheckRepairTickAndGroupFailsExitNonZero(t *testing.T) {
 		t.Parallel()
 		ta := newTestApp(t)
 		ta.ok("init --readers reader-a,reader-b --members m1")
-		ta.ok("add --stream s1 --count 1")
+		ta.ok("add --stream s1 --count 1 --one")
 		ta.deal(1)
 		// an outside writer moves a fleet card: a move no log line records (rule 13)
 		st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
@@ -214,7 +214,7 @@ func TestCheckRepairTickAndGroupFailsExitNonZero(t *testing.T) {
 		t.Parallel()
 		ta := newTestApp(t)
 		ta.ok("init --readers reader-a,reader-b --members m1")
-		ta.ok("add --stream s1 --count 1")
+		ta.ok("add --stream s1 --count 1 --one")
 		ta.deal(1)
 		ta.ok("take --as m1 s1-1.w1@1")
 		// a finish cut after its first manifest applied leaves its operation open; the
@@ -246,7 +246,7 @@ func TestCheckRepairTickAndGroupFailsExitNonZero(t *testing.T) {
 		t.Parallel()
 		ta := newTestApp(t)
 		ta.ok("init --readers reader-a,reader-b --members m1")
-		ta.ok("add --stream s1 --count 1")
+		ta.ok("add --stream s1 --count 1 --one")
 		ta.ok("start")
 		ta.m.Fail = func(p string) error { return errors.New("the store went away") }
 		code, out, errs := ta.bare("tick")

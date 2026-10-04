@@ -279,35 +279,60 @@ func toolchainVersionDir(prefix, tool string) (string, bool) {
 	return filepath.Join(filepath.FromSlash(base), version), true
 }
 
-// THE BENCH'S GO ON THE CHILD'S PATH (the mechanical sprint, 2026-10-02). Granting the sdk
-// tree made the bench's Go EXECUTABLE inside the wall; nothing made it FINDABLE. A loop unit
-// starts the member with the PATH fleet/loops.yml writes (~/.local/bin, /opt/homebrew/bin,
-// /usr/local/bin, /usr/bin, /bin), the child inherits it, and the provisioning standard's own
-// PATH entries live in ~/sdk/env.sh, which only an interactive shell of the bench user reads.
-// So a card's bare `go` and `gofmt` were "command not found" on every bench whose Go is not
-// on the unit's PATH: a worker on one bench reported it, and one on another downloaded a Go
-// tarball into its job to get past it.
+// THE BENCH'S TOOLCHAIN ON THE CHILD'S PATH (the mechanical sprint, 2026-10-02; the fleet
+// tooling probe, 2026-10-04). Granting the sdk tree made the bench's toolchain EXECUTABLE
+// inside the wall; nothing made it FINDABLE. A loop unit starts the member with the PATH
+// fleet/loops.yml writes (~/.local/bin, /opt/homebrew/bin, /usr/local/bin, /usr/bin, /bin),
+// the child inherits it, and the provisioning standard's own PATH entries live in
+// ~/sdk/env.sh, which only an interactive shell of the bench user reads. So a card's bare
+// `go` and `gofmt` were "command not found" on every bench whose Go is not on the unit's
+// PATH: a worker on one bench reported it, and one on another downloaded a Go tarball into
+// its job to get past it. Putting GOROOT/bin alone on the child's PATH closed that for Go and
+// nothing else: the probe of 2026-10-04 found every up member's `~/sdk/bin` (go, dotnet,
+// cargo, java, node, dart, elixir, bats) still off the child's PATH, and a card on a bench
+// whose /usr/local/bin held a stale Go found that one, which go.mod refused.
 //
-// benchGoEntries are env.sh's own PATH entries, home-relative and in its order: `sdk/bin`
-// (a Mac bench's links to every sdk tool) before `go/bin` (GOPATH/bin, whose `go` the
-// standard makes a link into the sdk tree). BenchGoBin searches them and then the
-// caller's PATH, and names the directory the found `go` REALLY lives in -- GOROOT/bin,
-// holding `go` and `gofmt` and nothing else -- rather than the directory it was found in,
-// because GOPATH/bin holds every `go install` on the bench and is no directory to put on a
-// card's PATH (the go/bin note above). A `go` that resolves outside every root the wall
-// executes is the standard's drift to report (tools/benchstandard, the wall check), not a
-// root to widen here.
-var benchGoEntries = []string{"sdk/bin", "go/bin"}
+// So the child's PATH carries, ahead of the member's own, the `bin` of every home root the
+// wall EXECUTES and then the bench's GOROOT/bin: BenchPath. The directories are read off
+// toolchainRoots, the one list the wall builds its argv from, so a tree the wall grants and a
+// directory the child searches cannot drift apart -- a second literal is how the sdk came to
+// be executable and unfindable at once. GOPATH/bin is searched for the Go (on a linux bench
+// ~/go/bin/go is the standard's link into the sdk tree) and never put on the PATH: it holds
+// every `go install` on the bench (the go/bin note above).
+
+// goPathBin is GOPATH/bin, home-relative: searched for the bench's `go`, never a PATH entry.
+const goPathBin = "go/bin"
+
+// BenchToolBins is the `bin` of each home root the wall grants EXECUTE on, under home and in
+// the list's order, skipped if absent: on a provisioned bench `~/sdk/bin`, the standard's
+// links to every sdk tool. It reads the filesystem only and runs nothing.
+func BenchToolBins(goos, home string) []string {
+	var out []string
+	if home == "" {
+		return nil
+	}
+	for _, r := range toolchainRoots[goos] {
+		if !r.Exec || !r.Home() {
+			continue
+		}
+		dir := filepath.Join(home, filepath.FromSlash(r.Name), "bin")
+		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
 
 // BenchGoBin is the directory of the Go the bench's card environment runs: the first `go`
-// in benchGoEntries under home and then in pathEnv, resolved through its symlinks, or ""
-// when the bench has none. It reads the filesystem only and runs nothing.
-func BenchGoBin(home, pathEnv string) string {
-	var dirs []string
+// in BenchToolBins, then GOPATH/bin under home, then pathEnv, resolved through its symlinks
+// to the directory it REALLY lives in -- GOROOT/bin, holding `go` and `gofmt` and nothing
+// else -- or "" when the bench has none. A `go` that resolves outside every root the wall
+// executes is the standard's drift to report (tools/benchstandard, the wall check), not a
+// root to widen here. It reads the filesystem only and runs nothing.
+func BenchGoBin(goos, home, pathEnv string) string {
+	dirs := BenchToolBins(goos, home)
 	if home != "" {
-		for _, e := range benchGoEntries {
-			dirs = append(dirs, filepath.Join(home, filepath.FromSlash(e)))
-		}
+		dirs = append(dirs, filepath.Join(home, filepath.FromSlash(goPathBin)))
 	}
 	dirs = append(dirs, filepath.SplitList(pathEnv)...)
 	name := "go"
@@ -329,6 +354,18 @@ func BenchGoBin(home, pathEnv string) string {
 		return filepath.Dir(real)
 	}
 	return ""
+}
+
+// BenchPath is what native puts on a card's PATH ahead of the member's own, in order:
+// BenchToolBins, then BenchGoBin when the bench has a Go (`gofmt` lives beside `go` in
+// GOROOT/bin, and `~/sdk/bin` may link `go` alone). Empty names nothing and leaves the
+// child's PATH as it was.
+func BenchPath(goos, home, pathEnv string) []string {
+	out := BenchToolBins(goos, home)
+	if goBin := BenchGoBin(goos, home, pathEnv); goBin != "" {
+		out = append(out, goBin)
+	}
+	return out
 }
 
 // ThisOS is the operating system whose list the wall is built from: this process's own,

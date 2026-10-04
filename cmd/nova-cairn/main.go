@@ -16,45 +16,70 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cairn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 var version string
 
-func main() { os.Exit(cairnTool(app{}).Main()) }
+func main() { os.Exit(runCairn(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
-// app is the tool's environment: the working directory a relative path
-// resolves under. In production the zero value delegates to the process's own
-// directory -- a relative path reaches the OS as typed and resolves against
-// it, as before this seam. A test hands the tool a directory of its own
-// (docs/STANDARD.md section 8: the environment and working directory are
-// injected through the code's config, never set with t.Setenv or a Chdir),
-// the rule cmd/nova-bus's runEnv set.
-type app struct {
-	workingDir string
+// runCairn runs one invocation. `help` with more than one word refuses as help
+// before any verb runs its flag checks, so `nova-cairn help open append` is
+// one HELP REFUSED naming the single verb name it wants, not a verb dispatch
+// carrying a stray positional. main and the in-process tests both go through
+// it, so the refusal is exercised by the tests rather than owned by main alone.
+func runCairn(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	t := cairnTool()
+	if len(args) > 1 && args[0] == "help" && args[1] != "help" &&
+		!verbflag.IsHelp(args[1]) && helpNameWords(args[1:]) > 1 {
+		o := tool.Refuse("help takes one verb name; the verbs are " + verbflag.List(verbNames(t)))
+		o.Verb = "help"
+		o.Remedy = t.Name + " help"
+		asJSON := verbflag.BoolAsked(args, "json")
+		w := stderr
+		if asJSON {
+			w = stdout
+		}
+		return o.Render(w, asJSON)
+	}
+	return t.Run(args, stdin, stdout, stderr)
 }
 
-// resolve is a caller's path against the app's working directory (section 8's
-// injected environment): a relative path joins under the directory the
-// instance names; an absolute path, an empty one and an instance naming no
-// directory pass through as typed, and the OS resolves them against the
-// process's directory.
-func (a app) resolve(path string) string {
-	if path != "" && !filepath.IsAbs(path) && a.workingDir != "" {
-		return filepath.Join(a.workingDir, path)
+// helpNameWords counts the verb-name words after help: every argument that is
+// a word, not a flag (one beginning with -). `help open --json append` and
+// `help open -- append` each count two and refuse as help, while `help open
+// --json` counts one and forwards to open's own help, so a flag sitting between
+// help, the verb and a stray word cannot smuggle the call into the verb.
+func helpNameWords(args []string) int {
+	words := 0
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			words++
+		}
 	}
-	return path
+	return words
+}
+
+// verbNames returns the tool's verb names, including the implicit version verb
+// the framework adds.
+func verbNames(t *tool.Tool) []string {
+	names := make([]string, 0, len(t.Verbs)+1)
+	for _, v := range t.Verbs {
+		names = append(names, v.Name)
+	}
+	names = append(names, "version")
+	return names
 }
 
 var publishes = strings.Join(cairn.Policies, ", ")
 
-// cairnTool is the tool's definition with its verbs bound to one app, so every
-// path a verb touches resolves under the app's working directory.
-func cairnTool(a app) *tool.Tool {
+func cairnTool() *tool.Tool {
 	return &tool.Tool{
 		Name:  "nova-cairn",
 		What:  "a session's words, kept durably as plain files you can come back to",
@@ -89,7 +114,7 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 					now(f)
 					checkPublish(f)
 				},
-				Run: a.open,
+				Run: open,
 			},
 			{
 				Name:    "append",
@@ -120,7 +145,7 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 						}
 					})
 				},
-				Run: a.appendEntry,
+				Run: appendEntry,
 			},
 			{
 				Name:    "index",
@@ -133,7 +158,7 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 					checkID(f, "session")
 					f.Max()
 				},
-				Run: a.index,
+				Run: index,
 			},
 			{
 				Name:    "receipt",
@@ -146,7 +171,7 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 					checkID(f, "entry")
 					f.Bool("text", false, "include the entry's stored words as a quoted text fact")
 				},
-				Run: a.receipt,
+				Run: receipt,
 			},
 		},
 	}
@@ -230,15 +255,14 @@ func refusal(err error) *tool.Out {
 	return tool.Refuse(err.Error())
 }
 
-func (a app) open(c *tool.Call) *tool.Out {
+func open(c *tool.Call) *tool.Out {
 	store, session, publish, stamp := c.Str("store"), c.Str("session"), c.Str("publish"), clock(c)
-	at := a.resolve(store)
 	var rec cairn.OpenRecord
 	var err error
 	if c.DryRun() {
-		rec, err = cairn.PlanOpen(at, session, c.Str("source"), stamp, publish)
-	} else if err = cairn.Open(at, session, c.Str("source"), stamp, publish); err == nil {
-		rec, err = cairn.ReadOpen(at, session)
+		rec, err = cairn.PlanOpen(store, session, c.Str("source"), stamp, publish)
+	} else if err = cairn.Open(store, session, c.Str("source"), stamp, publish); err == nil {
+		rec, err = cairn.ReadOpen(store, session)
 	}
 	if err != nil {
 		return refusal(err)
@@ -247,11 +271,11 @@ func (a app) open(c *tool.Call) *tool.Out {
 		Fact("publish", publish).Fact("stamp", stampOf(stamp))
 }
 
-func (a app) appendEntry(c *tool.Call) *tool.Out {
+func appendEntry(c *tool.Call) *tool.Out {
 	store, session, entry := c.Str("store"), c.Str("session"), c.Str("entry")
 	words := c.Str("text")
 	if c.Given("file") {
-		raw, err := a.readWords(c.Str("file"), c.Stdin)
+		raw, err := readWords(c.Str("file"), c.Stdin)
 		if err != nil {
 			return tool.Refuse(err.Error())
 		}
@@ -261,7 +285,7 @@ func (a app) appendEntry(c *tool.Call) *tool.Out {
 	if c.DryRun() {
 		write = cairn.PlanAppend
 	}
-	res, err := write(a.resolve(store), session, entry, words, c.Str("source"), clock(c), c.Str("publish"))
+	res, err := write(store, session, entry, words, c.Str("source"), clock(c), c.Str("publish"))
 	if err != nil {
 		o := refusal(err)
 		if o.Status == tool.Failed { // a conflict names what it is about
@@ -276,32 +300,71 @@ func (a app) appendEntry(c *tool.Call) *tool.Out {
 
 // readWords reads the exact words from a file, or from stdin when the path
 // is -. The bytes are never trimmed: trimming would file other words than
-// the caller chose. A file path resolves under the app's working directory.
-func (a app) readWords(name string, stdin io.Reader) ([]byte, error) {
+// the caller chose.
+func readWords(name string, stdin io.Reader) ([]byte, error) {
 	if name == "-" {
 		return io.ReadAll(stdin)
 	}
-	return os.ReadFile(a.resolve(name))
+	return os.ReadFile(name)
 }
 
-// index lists every entry; the coverage counts on its first line are never
-// capped, so the total is carried whether or not --max elides entries.
-func (a app) index(c *tool.Call) *tool.Out {
-	store := a.resolve(c.Str("store"))
-	all, total, err := cairn.Index(store, c.Str("session"), 0)
+// sessions lists the session ids a store holds, from sessions/<id>.md and a flat
+// <store>/<id>.md, in the rule Coverage applies them: so an empty session is
+// found and named by index.
+func sessions(store string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, dir := range [2]string{filepath.Join(store, "sessions"), store} {
+		if files, err := os.ReadDir(dir); err == nil {
+			for _, f := range files {
+				if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+					continue
+				}
+				if id := strings.TrimSuffix(f.Name(), ".md"); cairn.ValidID(id) && !seen[id] {
+					seen[id] = true
+					out = append(out, id)
+				}
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// index lists every entry; the coverage counts on its first line are the
+// selection's, so --session counts one session and the full index counts all.
+// An INDEX SESSION line is printed for every session in the selection, entries
+// or none, so an empty session is found.
+func index(c *tool.Call) *tool.Out {
+	store := c.Str("store")
+	session := c.Str("session")
+	all, total, err := cairn.Index(store, session, 0)
 	if err != nil {
 		return refusal(err)
 	}
-	o := tool.Done().Fact("sessions", cairn.Coverage(store).Sessions).Fact("entries", total)
+	perSession := map[string]int{}
+	for _, r := range all {
+		perSession[r.Session]++
+	}
+	var names []string
+	if session != "" {
+		names = []string{session}
+	} else {
+		names = sessions(store)
+	}
+	o := tool.Done()
+	for _, s := range names {
+		o.Item("session", "session", s, "entries", perSession[s])
+	}
+	o.Fact("sessions", len(names)).Fact("entries", total)
 	for _, r := range all {
 		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", sourceOf(r.Source))
 	}
 	return o
 }
 
-func (a app) receipt(c *tool.Call) *tool.Out {
-	store := a.resolve(c.Str("store"))
-	rc, err := cairn.Receipt(store, c.Str("session"), c.Str("entry"))
+func receipt(c *tool.Call) *tool.Out {
+	rc, err := cairn.Receipt(c.Str("store"), c.Str("session"), c.Str("entry"))
 	if err != nil {
 		return refusal(err)
 	}
@@ -309,7 +372,7 @@ func (a app) receipt(c *tool.Call) *tool.Out {
 		Fact("bytes", rc.Bytes).Fact("source", sourceOf(rc.Source)).Fact("persisted", true).
 		Fact("published", false).Fact("publish", rc.Policy)
 	if c.Bool("text") {
-		text, err := cairn.EntryText(store, c.Str("session"), c.Str("entry"))
+		text, err := cairn.EntryText(c.Str("store"), c.Str("session"), c.Str("entry"))
 		if err != nil {
 			return refusal(err)
 		}

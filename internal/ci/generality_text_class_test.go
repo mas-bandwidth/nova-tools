@@ -41,9 +41,9 @@ import (
 //
 // What is scanned. Every file the shared walk finds whose name is
 // Makefile or Containerfile or ends in one of textScanSuffixes (.lua .tsv .yml .yaml
-// .j2 .md .sh .json .txt .html .js .css, the workflows under .github/ among them, and
-// the rest of the text formats the repository ships). .go files are the other test's;
-// .git is never read.
+// .j2 .md .sh .json .txt, the workflows under .github/ among them, and the rest of the
+// text formats the repository ships). .go files are the other test's; .git is never
+// read.
 //
 // Two lists, both shrink-only:
 //   - generality_text_fixtures_allowlist.txt: `path reason`. A whole file whose names
@@ -62,7 +62,7 @@ const (
 var textScanSuffixes = []string{
 	".lua", ".tsv", ".yml", ".yaml", ".j2", ".md", ".sh", ".json", ".txt",
 	".ini", ".tmpl", ".tla", ".lisp", ".sexp", ".cfg", ".card", ".sql", ".py", ".ps1",
-	".jsonl", ".log", ".notes", ".html", ".js", ".css",
+	".jsonl", ".log", ".notes",
 }
 
 // textScanNames are the file names read whatever their suffix.
@@ -466,6 +466,8 @@ func TestGeneralityTextFindings(t *testing.T) {
 		{"mail ada@mas-bandwidth.com", []string{"mas-bandwidth"}},
 		{"in a namespace, on miniredis, in whitespace", nil},
 		{"the swarm-hulk seat", []string{"hulk"}},
+		{"leave space for the footer", nil},
+		{"free space on the bench named space", []string{"space"}},
 	}
 	for _, tc := range cases {
 		got := generalityTextFindings("docs/x.md", tc.line)
@@ -517,9 +519,6 @@ func TestGeneralityTextScope(t *testing.T) {
 		"assets/logo.png":                               false,
 		"go.sum":                                        false,
 		"fleet/inventory.container-runtime.example.ini": true,
-		"web/index.html":                                true,
-		"web/app.js":                                    true,
-		"web/style.css":                                 true,
 	} {
 		assert.Equal(t, want, isTextScanned(rel), "isTextScanned(%q) = %v, want %v", rel, isTextScanned(rel), want)
 	}
@@ -549,7 +548,7 @@ func TestGeneralityTextWitness(t *testing.T) {
 		}
 	})
 	t.Run("new-finding-in-a-tsv-and-a-template-fails", func(t *testing.T) {
-		for _, rel := range []string{"fleet/m.tsv", "fleet/t/x.j2", "docs/A.md", "x.lua", "x.sh", "Makefile", ".github/workflows/w.yml", "web/page.html", "web/app.js", "web/style.css"} {
+		for _, rel := range []string{"fleet/m.tsv", "fleet/t/x.j2", "docs/A.md", "x.lua", "x.sh", "Makefile", ".github/workflows/w.yml"} {
 			v := checkTextGenerality(file(rel, "host\tstudio\n"), noFixtures, empty)
 			assert.NotEmpty(t, v, "%s passed", rel)
 		}

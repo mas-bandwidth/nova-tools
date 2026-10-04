@@ -270,7 +270,7 @@ func (d *Driver) Loop() (string, error) {
 	if !d.read(&first, "where") {
 		return "", fmt.Errorf("the view could not be read: run: %s", commandLine(append([]string{"where"}, d.Base...)))
 	}
-	if !strings.HasPrefix(first.Machine, "machine: running") { // a late tick is running too (docs/SPEC-SPRINT.md section 14)
+	if first.Machine != "machine: running" {
 		return "", fmt.Errorf("no machine is running (%s): the driver plays only the outside actors; run: nova-sprint start, and nova-sprint run", orDash(first.Machine))
 	}
 	d.held = first.Epoch
@@ -487,6 +487,12 @@ func (d *Driver) tick(tick int, c Config, w where) {
 				if good, finding := d.Facts.Read(card.ID); good {
 					ok = append(ok, card.ID)
 				} else {
+					// one finding per attempt: a card found broken again at its next attempt is
+					// found broken another way, as readers find it (the same finding twice is
+					// the brief's bound, sprint.AtBriefBound), and this tick's broken reads of one
+					// attempt number still go in one batch (the read card's id carries the
+					// attempt: <primary>.r<attempt>.<reader>)
+					finding = fmt.Sprintf("%s (attempt %s)", finding, readAttempt(card.ID))
 					broken[finding] = append(broken[finding], card.ID)
 				}
 			}
@@ -599,4 +605,15 @@ func (d *Driver) waits() {
 	if len(parts) > 0 {
 		fmt.Fprintf(d.Out, "  waits for the coordinator: %s\n", strings.Join(parts, "; "))
 	}
+}
+
+// readAttempt is the attempt number in a read card's id (<primary>.r<attempt>.<reader>,
+// sprint.ReadCardID), "" when the id has no such part.
+func readAttempt(id string) string {
+	i := strings.LastIndex(id, ".r")
+	if i < 0 {
+		return ""
+	}
+	n, _, _ := strings.Cut(id[i+2:], ".")
+	return n
 }

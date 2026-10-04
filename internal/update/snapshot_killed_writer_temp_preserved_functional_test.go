@@ -28,7 +28,7 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 	t.Setenv("NOVA_UPDATE_HELPER", "1")
 	runReport := func(m, snap string) {
 		t.Helper()
-		if out, err := exec.Command(bin, "report", "--file", m, "--state", snap).CombinedOutput(); err != nil {
+		if out, err := exec.Command(bin, "report", "--file", m, "--snapshot", snap).CombinedOutput(); err != nil {
 			require.NoErrorf(t, err, "%v\n%s", err, out)
 		}
 	}
@@ -42,7 +42,7 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 	surviving := false
 	for attempt := 0; attempt < 12 && !surviving; attempt++ {
 		p := manifest(t, row("x", "tool", printer(t, fmt.Sprintf("v3.%d.0", attempt)), "npm:unused", "none"))
-		c := exec.Command(bin, "report", "--file", p, "--state", snapA)
+		c := exec.Command(bin, "report", "--file", p, "--snapshot", snapA)
 		setGroup(c)
 		if err := c.Start(); err != nil {
 			require.NoError(t, err, err)

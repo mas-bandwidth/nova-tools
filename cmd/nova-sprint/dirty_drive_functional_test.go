@@ -89,7 +89,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
-	ctx, stop := context.WithTimeout(t.Context(), 12*time.Minute)
+	ctx, stop := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer stop()
 	err := fn.Load(ctx, c)
 	require.NoError(t, err)
@@ -134,15 +134,32 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	require.NotNil(t, st, "run: %d", code)
 
 	// the coordinator: once for each tick that addressed them, the inbox is
-	// read and its cursor moved; a judgment is not expected, none is open to
-	// answer, and any that comes is recorded
+	// read and its cursor moved; ready to accept is accepted and dev is behind is
+	// promoted, mechanically, and any other judgment that comes is recorded
 	var (
 		mu                     sync.Mutex
 		notesSeen              = map[string]int{}
 		judgments              []string
 		coordReads             int
 		accepts, acceptRefused int
+		promotions             int
 	)
+	// decide runs the group's command for the decision as the inbox gives it, its merge sha
+	// placeholder filled with sha: the exit code, and false when the group offers none
+	decide := func(g sprint.Group, decision, sha string) (int, bool) {
+		for _, cmd := range g.Commands {
+			if cmd.Decision != decision || len(cmd.Lines) == 0 {
+				continue
+			}
+			words := strings.Fields(strings.Replace(cmd.Lines[0], "'<merge sha>'", sha, 1))
+			if len(words) < 2 {
+				continue
+			}
+			var o, e bytes.Buffer
+			return coord.run(words[1:], &o, &e), true
+		}
+		return 0, false
+	}
 	wake := make(chan struct{}, 1)
 	coordDone := make(chan struct{})
 	go func() {
@@ -188,32 +205,31 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 					// machines up: the judgment closes itself when they are
 				case sprint.NReadyToAccept:
 					// accepted mechanically, with the command the inbox gives
-					accepted := false
-					for _, cmd := range g.Commands {
-						if cmd.Decision != "accept" || len(cmd.Lines) == 0 {
-							continue
-						}
-						words := strings.Fields(cmd.Lines[0])
-						if len(words) < 2 {
-							continue
-						}
-						var o, e bytes.Buffer
-						code := coord.run(words[1:], &o, &e)
-						mu.Lock()
-						if code == 0 {
-							accepts++
-						} else {
-							acceptRefused++
-						}
-						mu.Unlock()
-						accepted = true
-						break
-					}
-					if !accepted {
-						mu.Lock()
+					code, offered := decide(g, "accept", "")
+					mu.Lock()
+					switch {
+					case !offered:
 						judgments = append(judgments, fmt.Sprintf("%s (%s) offers no accept", g.Type, g.Stream))
-						mu.Unlock()
+					case code == 0:
+						accepts++
+					default:
+						acceptRefused++
 					}
+					mu.Unlock()
+				case sprint.NDevBehind:
+					// a true judgment: the drive lands thousands and nothing promotes them;
+					// promoted as a coordinator does, with the command the inbox gives
+					code, offered := decide(g, "promoted", "0123abc")
+					mu.Lock()
+					switch {
+					case !offered:
+						judgments = append(judgments, fmt.Sprintf("%s offers no promoted", g.Type))
+					case code == 0:
+						promotions++
+					default:
+						judgments = append(judgments, fmt.Sprintf("%s: promoted refused (%d)", g.Type, code))
+					}
+					mu.Unlock()
 				default:
 					mu.Lock()
 					judgments = append(judgments, fmt.Sprintf("%s (%s) on %v", g.Type, g.Stream, g.Primaries))
@@ -512,7 +528,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	}
 	assert.Equal(t, wroteNote, tickEnds, "%d tick-end notes on the inbox and %d ticks that addressed the coordinator: want one each", tickEnds, wroteNote)
 	mu.Lock()
-	reads, judged, accepted, refused := coordReads, append([]string(nil), judgments...), accepts, acceptRefused
+	reads, judged, accepted, refused, promoted := coordReads, append([]string(nil), judgments...), accepts, acceptRefused, promotions
 	var seen []string
 	for k, n := range notesSeen {
 		seen = append(seen, fmt.Sprintf("%s x%d", k, n))
@@ -520,6 +536,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	mu.Unlock()
 	sort.Strings(seen)
 	assert.Empty(t, judged, "the coordinator met %d judgments in a sprint with no gates, needs or chances: %v", len(judged), judged)
+	assert.Positive(t, promoted, "the drive lands %d cards: dev is behind, and the coordinator promotes", total)
 
 	// THE GATE: every tick under MaxTickWall; after the first tick the loop
 	// reads no table whole (its twin catches up from the change streams), and
