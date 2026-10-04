@@ -626,6 +626,11 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		since(&b.Times.Push, start)
 		if err == nil {
 			b.Tip = tip
+			// the tip pushed passed the tree gate (gateBatch) and is the base's tip now: the
+			// next batch on this base does not gate it again (treeGateBase's cache)
+			if l.baseGateCache != nil {
+				l.baseGateCache[tip] = ""
+			}
 			if !l.landed(b, stream, cards[:len(merged)]) {
 				return false, false
 			}

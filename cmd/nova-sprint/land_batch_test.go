@@ -222,3 +222,22 @@ func TestLandGoRunsUseTheLandersOwnCache(t *testing.T) {
 	require.NoError(t, err, out)
 	assert.NotEqual(t, filepath.Join(root, ".gocache"), strings.TrimSpace(out))
 }
+
+// A tip land pushed passed the tree gate, and is the base's tip once pushed: the next
+// batch on that base takes it as gated green, not gating it again (a land of two batches
+// gates the base once, then each batch's tip once).
+func TestLandTakesAPushedTipAsAGreenBase(t *testing.T) {
+	t.Parallel()
+	r, _ := gateRig(t, 4, 0)
+	out := r.ok("land --repo-dir " + r.clone + " --base main --batch-max 2")
+	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
+	assert.Contains(t, out, "LAND DONE batches=2 cards=4 refused=0")
+	first := r.git(r.remote, "rev-parse", "main~2") // the first batch's tip: two merges below main
+	assert.Equal(t, "land s1-2 (sprint stream s1)", r.git(r.remote, "log", "-1", "--format=%s", first))
+	why, cached := r.a.baseGateCache[first]
+	assert.True(t, cached, "the first batch's pushed tip is a gated green base")
+	assert.Equal(t, "", why)
+	_, cached = r.a.baseGateCache[r.git(r.remote, "rev-parse", "main")]
+	assert.True(t, cached, "and so is the second's")
+	r.clean()
+}
