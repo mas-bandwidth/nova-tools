@@ -12,8 +12,12 @@ import (
 // within a depth), each card with its unmet needs and their states, the roots
 // marked, each card's depth, the width at each depth, and a closing count of
 // the cards whose needs name a dropped or absent id (one card once, however
-// many of its needs name one). A card whose need is off the table (dropped)
-// is a root at depth 0 with no tick run.
+// many of its needs name one). A card with no waiting need is a root at depth
+// 0. A need naming a dropped card or no record at all never reaches this
+// verb: add refuses it and drop refuses the needed card without --cascade
+// (docs/SPEC-SPRINT.md section 11), so the dropped-or-absent count of a
+// sprint the verbs built is zero; the words for those states are pinned at
+// the store, where a stored record still carries them.
 func TestNeedsPrintsRootsDepthAndWidthOfAWaitingChain(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -29,25 +33,22 @@ func TestNeedsPrintsRootsDepthAndWidthOfAWaitingChain(t *testing.T) {
 	ta.ok("add --stream s1 x")
 	ta.ok("add --stream s1 y")
 	ta.ok("add --stream s1 m --needs x,y")
-	ta.ok("drop s1-1 --reason obsolete")
-	ta.ok("drop x --reason obsolete")
-	ta.ok("drop y --reason obsolete")
 
 	out := ta.ok("needs --stream s2")
-	rootAt := strings.Index(out, "depth=0 ROOT a needs s1-1 dropped")
+	rootAt := strings.Index(out, "depth=0 ROOT a needs s1-1 ready")
 	bAt := strings.Index(out, "depth=1 b needs a waiting")
 	cAt := strings.Index(out, "depth=2 c needs b waiting")
 	dAt := strings.Index(out, "depth=3 d needs c waiting")
-	require.Greater(t, rootAt, -1, "a is the root at depth 0, on the dropped need")
+	require.Greater(t, rootAt, -1, "a is the root at depth 0, on the live need")
 	require.Greater(t, bAt, rootAt, "b needs the waiting a, at depth 1, after it in chain order")
 	require.Greater(t, cAt, bAt, "c at depth 2, after b in chain order")
 	require.Greater(t, dAt, cAt, "d at depth 3, after c in chain order")
 	require.Contains(t, out, "depth 0: 1, depth 1: 1, depth 2: 1, depth 3: 1", "the width at each depth")
-	require.Contains(t, out, "NEEDS stream=s2 cards=4 dropped-or-absent=1", "a's one dropped need counts a once")
+	require.Contains(t, out, "NEEDS stream=s2 cards=4 dropped-or-absent=0", "no need names a dropped or absent id")
 
 	s1 := ta.ok("needs --stream s1")
-	require.Contains(t, s1, "depth=0 ROOT m needs x dropped, y dropped", "m names both its dropped needs")
-	require.Contains(t, s1, "NEEDS stream=s1 cards=1 dropped-or-absent=1", "m's two dropped needs count the one card once")
+	require.Contains(t, s1, "depth=0 ROOT m needs x ready, y ready", "m names both its live needs")
+	require.Contains(t, s1, "NEEDS stream=s1 cards=1 dropped-or-absent=0", "m's two live needs count no orphan")
 
 	roots := ta.ok("needs --stream s2 --roots")
 	require.Contains(t, roots, "depth=0 ROOT a", "--roots keeps the roots")
@@ -76,7 +77,7 @@ func TestNeedsPrintsRootsDepthAndWidthOfAWaitingChain(t *testing.T) {
 	}
 	require.True(t, v.Streams[0].Cards[0].Root, "a is a root")
 	require.False(t, v.Streams[0].Cards[1].Root, "b waits on the root, no root itself")
-	require.Equal(t, 1, v.Orphans, "s2's dropped-or-absent count: a's card once")
+	require.Equal(t, 0, v.Orphans, "s2's dropped-or-absent count: every need is on the table")
 
 	var w struct {
 		Streams []struct {
@@ -88,8 +89,8 @@ func TestNeedsPrintsRootsDepthAndWidthOfAWaitingChain(t *testing.T) {
 	}
 	ta.json("needs", &w)
 	require.Len(t, w.Streams, 2, "both streams' waiting cards in the whole view")
-	require.Equal(t, 1, w.Streams[1].Orphans, "s1's count: m's two dropped needs are one card")
+	require.Equal(t, 0, w.Streams[1].Orphans, "s1's count: m's two live needs are no orphan")
 	require.Equal(t, 5, w.Cards, "every waiting card of the sprint")
-	require.Equal(t, 2, w.Orphans, "the sprint's count of the cards on a dropped or absent need: a and m")
+	require.Equal(t, 0, w.Orphans, "the sprint's count of the cards on a dropped or absent need: none")
 	ta.clean()
 }
