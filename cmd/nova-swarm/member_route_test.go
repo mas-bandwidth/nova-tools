@@ -96,13 +96,14 @@ func TestAMemberLaunchesACardWithItsRoutesDollarBudget(t *testing.T) {
 // carries one (docs/SPEC-LOCAL.md, "Fleet").
 func TestAMemberLaunchesALocalRoutesCardAtItsServingMachine(t *testing.T) {
 	t.Parallel()
+	localSeconds := 600
 	r := argsRunner(t, "override/model", "999", 9*time.Second)
 	args, _ := launched(t, r, member.Packet{Card: "l1", Kind: "work", Attempt: 1, Gen: 1, Branch: "work/l1",
-		Route: "local-gemma4-32k-g1", Model: "local/gemma4-32k", Tokens: "unmetered", Serve: "g1", Deadline: 600})
+		Route: "local-gemma4-32k-g1", Model: "local/gemma4-32k", Tokens: "unmetered", Serve: "g1.test", Deadline: localSeconds})
 	assert.Equal(t, "local/gemma4-32k", args["--model"])
-	assert.Equal(t, "http://g1:11434/v1", args["--local-base"])
+	assert.Equal(t, "http://g1.test:11434/v1", args["--local-base"])
 	args, _ = launched(t, r, member.Packet{Card: "u2", Kind: "work", Attempt: 1, Gen: 1, Branch: "work/u2",
-		Route: "flash-m", Model: "inception/mercury-2.5", Tokens: "2000000", Deadline: 600})
+		Route: "flash-m", Model: "inception/mercury-2.5", Tokens: "2000000", Deadline: localSeconds})
 	_, has := args["--local-base"]
 	assert.False(t, has, "a metered route names no serving machine")
 }
@@ -253,7 +254,7 @@ func TestNativeTakesALocalBaseOnlyWithALocalModel(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ model, base, want string }{
 		{"local/gemma4-32k", "", "--local-base goes with a --model local/<model> and only with one"},
-		{"openrouter/x", "http://g1:11434/v1", "--local-base goes with a --model local/<model> and only with one"},
+		{"openrouter/x", "http://g1.test:11434/v1", "--local-base goes with a --model local/<model> and only with one"},
 		{"local/gemma4-32k", "g1:11434", "--local-base wants an http URL"},
 	} {
 		var stdout, stderr bytes.Buffer

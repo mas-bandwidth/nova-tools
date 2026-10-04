@@ -93,7 +93,7 @@ func TestAJobOnALocalRouteDeclaresTheProviderAtItsServingMachine(t *testing.T) {
 	t.Parallel()
 	dataHome := t.TempDir()
 	var notes bytes.Buffer
-	sha, reason, proxy := writeJobConfig(nativeRunConfig{model: "local/gemma4-32k", localBase: "http://g1:11434/v1"}, "local", dataHome, t.TempDir(), nil, &notes)
+	sha, reason, proxy := writeJobConfig(nativeRunConfig{model: "local/gemma4-32k", localBase: "http://g1.test:11434/v1"}, "local", dataHome, t.TempDir(), nil, &notes)
 	require.Empty(t, reason)
 	require.NotEmpty(t, sha)
 	require.NotNil(t, proxy, "the read-deadline proxy stands in front of the serving machine")

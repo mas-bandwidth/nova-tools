@@ -102,3 +102,6 @@ cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example:
 cmd/nova-check/answers_test.go:TestTheBannerQuickstartAndKernelExamplesMatchOutput example: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 cmd/nova-check/answers_test.go:TestTheBannerQuickstartAndKernelExamplesMatchOutput example: nova-check quickstart --dir ./self
 cmd/nova-decide/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
+cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local status
+cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
+cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m

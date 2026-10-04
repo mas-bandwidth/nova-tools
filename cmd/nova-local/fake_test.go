@@ -73,7 +73,7 @@ func (f *fakeOllama) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var in map[string]any
 	if r.Body != nil {
-		raw, _ := io.ReadAll(r.Body)
+		raw, _ := io.ReadAll(r.Body) // ignored: the recorder's body is in memory
 		_ = json.Unmarshal(raw, &in) // ignored: a GET has no body
 	}
 	reply := func(v any) { _ = json.NewEncoder(w).Encode(v) } // ignored: the recorder takes every write
@@ -125,7 +125,7 @@ func (f *fakeOllama) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.loaded[tag] = 2048 // ollama's own default, for a tag made by hand
 			for _, line := range strings.Split(f.shows[tag].Parameters, "\n") {
 				if w := strings.Fields(line); len(w) == 2 && w[0] == "num_ctx" {
-					f.loaded[tag], _ = strconv.Atoi(w[1])
+					f.loaded[tag], _ = strconv.Atoi(w[1]) // ignored: the fake wrote the number itself
 				}
 			}
 		}
@@ -164,9 +164,9 @@ func fakeBox() local.Box {
 // fakeLookup resolves the fleet's names: a tailnet machine and one that is not.
 func fakeLookup(host string) ([]string, error) {
 	switch host {
-	case "gpu-box":
+	case "gpu-box.test":
 		return []string{"100.101.102.103"}, nil
-	case "elsewhere":
+	case "elsewhere.test":
 		return []string{"10.0.0.5"}, nil
 	}
 	return nil, fmt.Errorf("no such host %s", host)

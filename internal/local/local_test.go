@@ -58,7 +58,7 @@ func TestTheFleetsServingAddress(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "local-gemma4-32k-gpu-box", RouteName("gemma4-32k", "gpu-box"))
 	assert.Equal(t, "local-qwen3-coder-30b-m1", RouteName("qwen3-coder:30b", "M1"))
-	assert.Equal(t, "http://gpu-box:11434/v1", BaseURL("gpu-box"))
+	assert.Equal(t, "http://g1.test:11434/v1", BaseURL("g1.test"))
 	lookup := func(h string) ([]string, error) {
 		switch h {
 		case "tail":

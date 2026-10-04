@@ -234,7 +234,7 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 	}
 	set.Lanes = map[string]int{}
 	for m, v := range lanes {
-		if n, _ := strconv.Atoi(v.Val()); n > 0 {
+		if n, _ := strconv.Atoi(v.Val()); n > 0 { // ignored: a lane count unset or unreadable is none, as RouteOf reads a field
 			set.Lanes[m] = n
 		}
 	}

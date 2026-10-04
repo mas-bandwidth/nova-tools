@@ -184,7 +184,7 @@ func (o Ollama) Serve(ctx context.Context, c Client, req ServeRequest, now func(
 	if !exists {
 		params := map[string]any{"num_ctx": req.NumCtx, "temperature": 0}
 		if req.Seed != "" {
-			n, _ := strconv.Atoi(req.Seed)
+			n, _ := strconv.Atoi(req.Seed) // ignored: serve's Check refused a seed that is no whole number
 			params["seed"] = n
 		}
 		if _, err := c.call(ctx, http.MethodPost, "/api/create", map[string]any{"model": tag, "from": req.Model, "parameters": params, "stream": false}, nil); err != nil {

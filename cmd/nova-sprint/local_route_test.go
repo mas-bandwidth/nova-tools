@@ -15,11 +15,12 @@ import (
 // provider beside the metered ones.
 func TestRoutesAndWhereShowALocalRoute(t *testing.T) {
 	t.Parallel()
+	routesSeconds := 600
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1")
 	ta.m.SetRoutes([]sprint.Route{
-		{Name: "local-gemma4-32k-g1", Tier: "flash", Provider: "local", Model: "gemma4-32k", Machine: "g1", Deadline: 600, Enabled: true},
-		{Name: "flash-or", Tier: "flash", Provider: "openrouter", Model: "m", Deadline: 600, Enabled: true},
+		{Name: "local-gemma4-32k-g1", Tier: "flash", Provider: "local", Model: "gemma4-32k", Machine: "g1", Deadline: routesSeconds, Enabled: true},
+		{Name: "flash-or", Tier: "flash", Provider: "openrouter", Model: "m", Deadline: routesSeconds, Enabled: true},
 	})
 	ta.m.SetLanes(map[string]int{"g1": 2})
 	routes := ta.ok("routes")

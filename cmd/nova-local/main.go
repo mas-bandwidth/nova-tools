@@ -385,8 +385,8 @@ func (w world) serve(c *tool.Call) *tool.Out {
 			answering++
 		}
 	}
-	maxLoad, _ := parseLoad(c.Str("max-load"))
-	minFree, _ := parseSize(c.Str("min-free"))
+	maxLoad, _ := parseLoad(c.Str("max-load")) // ignored: the verb's Check refused a bad value before it ran
+	minFree, _ := parseSize(c.Str("min-free")) // ignored: the verb's Check refused a bad value before it ran
 	var past []string
 	if maxLoad != nil && load1 > *maxLoad {
 		past = append(past, fmt.Sprintf("load1 is %.2f and --max-load asks at most %s", load1, c.Str("max-load")))

@@ -225,6 +225,10 @@ var swarmAudit = audit.Config{
 		// hostload (member.go) samples the machine's CPU percent once a second into a
 		// ring the member's beat reads; it returns numbers and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/hostload"`,
+		// local (member.go) builds a local route's endpoint URL from the machine its packet
+		// names and returns the string; it holds no writer and prints nothing, and the URL
+		// reaches native only as an argument, never a stream.
+		`"github.com/mas-bandwidth/nova-tools/internal/local"`,
 		// yield (native.go, member.go) calls setpriority on this process and returns an error,
 		// or is a constant (Supported); it holds no writer and prints nothing. Its error
 		// reaches a stream only through refuseNative, which escapes it.

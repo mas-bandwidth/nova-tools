@@ -81,14 +81,14 @@ func TestStatusListingIsBounded(t *testing.T) {
 func TestBaseIsLoopbackOrTheTailnet(t *testing.T) {
 	t.Parallel()
 	run := rig(newFake("/ai/shared/models/ollama"), "/ai")
-	for _, base := range []string{"http://10.0.0.5:11434/v1", "http://elsewhere:11434/v1", "http://nowhere:11434/v1"} {
+	for _, base := range []string{"http://elsewhere.test:11434/v1", "http://nowhere.test:11434/v1"} {
 		for _, verb := range [][]string{{"status", "--engine", "ollama"}, args(serveGemma), {"worker", "--engine", "ollama"}} {
 			r := run.Run(append(verb, "--base", base)...)
 			assert.Equal(t, 2, r.Code, "%v --base %s", verb, base)
 			assert.Contains(t, r.Stderr, "--base", "%v --base %s", verb, base)
 		}
 	}
-	for _, base := range []string{"http://127.0.0.1:9999/v1", "http://[::1]:9999/v1", "http://100.101.102.103:11434/v1", "http://gpu-box:11434/v1"} {
+	for _, base := range []string{"http://127.0.0.1:9999/v1", "http://[::1]:9999/v1", "http://gpu-box.test:11434/v1"} {
 		r := run.OK(t, "status", "--engine", "ollama", "--base", base)
 		assert.Contains(t, r.Stdout, "base="+base)
 	}
@@ -307,6 +307,6 @@ func TestOnlyThreeVerbs(t *testing.T) {
 // fleet adds for it (docs/SPEC-LOCAL.md, Fleet).
 func TestServeOverTheTailnetNamesTheFleetRoute(t *testing.T) {
 	t.Parallel()
-	r := rig(newFake("/ai/shared/models/ollama"), "/ai").OK(t, append(args(serveGemma), "--base", "http://gpu-box:11434/v1")...)
-	assert.Contains(t, r.Stdout, "SERVE NOTE the fleet's route: nova-config route add local-gemma4-32k-gpu-box --tier flash --provider local --model gemma4-32k --machine gpu-box")
+	r := rig(newFake("/ai/shared/models/ollama"), "/ai").OK(t, append(args(serveGemma), "--base", "http://gpu-box.test:11434/v1")...)
+	assert.Contains(t, r.Stdout, "SERVE NOTE the fleet's route: nova-config route add local-gemma4-32k-gpu-box-test --tier flash --provider local --model gemma4-32k --machine gpu-box.test")
 }

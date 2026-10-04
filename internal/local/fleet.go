@@ -19,7 +19,7 @@ import (
 // Provider is the provider word of every local route.
 const Provider = "local"
 
-// tailnet is the address range a tailnet hands its machines (RFC 6598's shared space).
+// tailnet is the address range a tailnet hands its machines (RFC 6598's shared range).
 var tailnet = netip.MustParsePrefix("100.64.0.0/10")
 
 // BaseURL is the endpoint a local route on machine resolves to: ollama's /v1 there.
