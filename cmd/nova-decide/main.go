@@ -271,17 +271,25 @@ An id comes from the source path and content, so a second import adds nothing. P
 			},
 			{
 				Name:    "findings",
-				Usage:   "findings --record <file> [--since <time>] [--bar <p>]",
+				Usage:   "findings --record <file> [--since <time>] [--bar <p>] [--shadow <file> --real <file>]",
 				Example: "findings --record " + fixture + "record.jsonl --since 2026-10-01",
 				Effect:  tool.Inspection,
 				Detail: `Clusters the score decisions made since --since by every class each gives a p at or above
 --bar: one FINDING line per class (count, cards), most cards first; unnamed is p(defect) at or
-above the bar with no class there. A class that keeps coming back is a finder rule or class test owed.`,
+above the bar with no class there. A class that keeps coming back is a finder rule or class test owed. With --shadow (the
+judgment-shadow record) and --real (the judgment-answer record) it also joins each shadow answer
+to the real one by note and card and prints one SHADOW line per judgment kind: pairs, agreement
+percent, and agreement at p 0.95 and above.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("record", "the record file")
 					f.String("since", "", "the window's start, RFC 3339 or a date (2006-01-02, UTC); default: seven days before now")
 					f.String("bar", "0.5", "the p at or above which a class counts, a probability")
+					f.String("shadow", "", "the judgment-shadow record, to score Jev's shadow answers per judgment kind")
+					f.String("real", "", "the judgment-answer record the shadow answers are joined to")
 					f.Check(func(c *tool.Call) {
+						if (c.Str("shadow") == "") != (c.Str("real") == "") {
+							c.Problem("--shadow and --real go together: a shadow answer is scored against the real one")
+						}
 						if _, err := since(c.Str("since"), time.Time{}); err != nil {
 							c.Problem(err.Error())
 						}
@@ -413,6 +421,21 @@ func (w world) findings(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("scored", scored).Fact("classes", len(clusters)).Fact("bar", round(bar)).Fact("since", from.Format(time.RFC3339))
 	for _, cl := range clusters {
 		o.Item("finding", "class", cl.Class, "count", cl.Count, "cards", strings.Join(cl.Cards, ","))
+	}
+	if c.Str("shadow") == "" {
+		return o
+	}
+	shadows, err := decide.Load(c.Str("shadow"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	real, err := decide.Load(c.Str("real"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	o.Fact("shadow_pending", decide.ShadowPending(shadows, real))
+	for _, a := range decide.ShadowAgreement(shadows, real) {
+		o.Item("shadow", "kind", a.Kind, "count", a.Count, "agree_pct", a.Pct, "high_count", a.HighCount, "high_agree_pct", a.HighPct)
 	}
 	return o
 }
