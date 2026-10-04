@@ -106,47 +106,70 @@ func TestMachineCoverTick(t *testing.T) {
 		return s
 	}
 	for name, tc := range map[string]struct {
-		s       State
-		ch      TickChoices
-		wantErr bool
-		cell    string // p1's cell after the tick
-		machine string
-		dealt   bool // a work card was dealt to m1
+		s         State
+		ch        TickChoices
+		wantErr   bool
+		errWant   string
+		errChoice bool
+		cell      string // p1's cell after the tick
+		machine   string
+		dealt     bool // a work card was dealt to m1
 	}{
 		"a running machine deals its ready card": {
 			s: sprint1(), cell: Working, machine: Running, dealt: true,
 		},
 		"the deal's named choice places it": {
-			s: func() State { s := sprint1(); s.Members["m2"] = Up; return s }(),
-			ch: TickChoices{Deal: map[string]string{"p1": "m1"}},
+			s:    func() State { s := sprint1(); s.Members["m2"] = Up; return s }(),
+			ch:   TickChoices{Deal: map[string]string{"p1": "m1"}},
 			cell: Working, machine: Running, dealt: true,
 		},
 		"a stopped machine moves nothing": {
-			s: func() State { s := sprint1(); s.Machine = Stopped; return s }(),
+			s:    func() State { s := sprint1(); s.Machine = Stopped; return s }(),
 			cell: Ready, machine: Stopped,
 		},
 		"a pending operation is refused": {
-			s: func() State { s := sprint1(); s.Pending = "take"; return s }(),
-			wantErr: true, cell: Ready, machine: Running,
+			s:       func() State { s := sprint1(); s.Pending = "take"; return s }(),
+			wantErr: true, errWant: "operation take is pending",
+			cell: Ready, machine: Running,
+		},
+		"level moves that are not the round are refused": {
+			s: sprint1(), ch: TickChoices{Level: map[string]string{"x.w1": "m2"}},
+			wantErr: true, errWant: "not round the fleet", errChoice: true,
+			cell: Ready, machine: Running,
+		},
+		"the deal's bad choice is refused by the tick": {
+			s:       func() State { s := sprint1(); s.Members["m2"] = Up; return s }(),
+			ch:      TickChoices{Deal: map[string]string{"p1": "m2"}},
+			wantErr: true, errWant: "not the next member round the fleet", errChoice: true,
+			cell: Ready, machine: Running,
+		},
+		"the ask's bad pair is refused by the tick": {
+			s:       func() State { s := mcWorked(mcSprint(), "p1"); s.Machine = Running; return s }(),
+			ch:      TickChoices{Ask: map[string][]string{"p1": {"r1", "r1"}}},
+			wantErr: true, errWant: "not two different readers", errChoice: true,
+			cell: Review, machine: Running,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			got, err := Tick(tc.s, tc.ch)
 			if tc.wantErr {
-				assert.ErrorContains(t, err, "operation take is pending")
-				assert.ErrorAs(t, err, new(*Refusal))
-				assert.Equal(t, tc.s, got, "a refused tick returns the state untouched")
-				return
+				assert.ErrorContains(t, err, tc.errWant)
+				if tc.errChoice {
+					assert.ErrorAs(t, err, new(*ChoiceError))
+				} else {
+					assert.ErrorAs(t, err, new(*Refusal))
+				}
+			} else {
+				assert.NoError(t, err)
 			}
-			assert.NoError(t, err)
 			assert.Equal(t, tc.cell, got.Primaries["p1"].State)
 			assert.Equal(t, tc.machine, got.Machine)
 			if tc.dealt {
 				w := got.Work[WC("p1", 1)]
 				assert.Equal(t, "m1", w.Member)
 				assert.Equal(t, FReady, w.Place)
-			} else {
+			} else if !tc.wantErr {
 				assert.Empty(t, got.Work, "no work card was dealt")
 			}
 		})
@@ -181,11 +204,11 @@ func TestMachineCoverTickDone(t *testing.T) {
 			want: Running,
 		},
 		"an empty sprint is not done": {
-			s: func() State { s := mcSprint(); s.Machine = Running; return s }(),
+			s:    func() State { s := mcSprint(); s.Machine = Running; return s }(),
 			want: Running,
 		},
 		"a stopped machine does not tick": {
-			s: mcCard(mcSprint(), "s1", "p1", Landed, 1),
+			s:    mcCard(mcSprint(), "s1", "p1", Landed, 1),
 			want: Stopped,
 		},
 	} {
@@ -238,11 +261,13 @@ func TestMachineCoverTickResolve(t *testing.T) {
 			s: func() State {
 				s := mcCard(mcSprint(), "s1", "d1", Off, 1)
 				s = mcCard(s, "s1", "p1", Waiting, 2, "d1")
+				s = mcCard(s, "s1", "d2", Off, 3)
+				s = mcCard(s, "s1", "p4", Waiting, 4, "d2")
 				s.Open[Judgment{JBlocked, "p1"}] = true
 				return s
 			}(),
-			cells: map[string]string{"p1": Waiting},
-			open:  []Judgment{{JBlocked, "p1"}},
+			cells: map[string]string{"p1": Waiting, "p4": Waiting},
+			open:  []Judgment{{JBlocked, "p1"}, {JBlocked, "p4"}},
 		},
 		"a card out of waiting is not resolved": {
 			s:     mcCard(mcSprint(), "s1", "p1", Review, 1),
@@ -301,11 +326,11 @@ func TestMachineCoverTickResume(t *testing.T) {
 			s: stuck(CRed, "a1", Landed), wantCell: SStopped, wantPlace: Stuck, wantOpen: true,
 		},
 		"a stop with nothing stuck is passed over": {
-			s: func() State { s := stuck(CCross, "a1", Landed); delete(s.Merge, "b1"); return s }(),
+			s:        func() State { s := stuck(CCross, "a1", Landed); delete(s.Merge, "b1"); return s }(),
 			wantCell: SStopped, wantPlace: Gone, wantOpen: true,
 		},
 		"a stream not stopped is passed over": {
-			s: func() State { s := stuck(CCross, "a1", Landed); s.Streams["b"] = Stream{State: SMerging}; return s }(),
+			s:        func() State { s := stuck(CCross, "a1", Landed); s.Streams["b"] = Stream{State: SMerging}; return s }(),
 			wantCell: SMerging, wantPlace: Stuck, wantOpen: true,
 		},
 	} {
@@ -325,9 +350,9 @@ func TestMachineCoverTickResume(t *testing.T) {
 // places it when it is the round's; the refusals are a choice out of the
 // round, which the deal answers with a *ChoiceError. The fleet's own guards
 // are the no-member judgment, open while ready cards wait with no member up
-// and cleared when one is, the bound card passed over and judged once and
-// not opened when acknowledged, and a member full to its Room holding
-// nothing more.
+// and cleared when one is, the bound card passed over and judged once, not
+// opened when acknowledged, its ack dropped and its note closed when the
+// bound clears, and a member full to its Room holding nothing more.
 func TestMachineCoverTickDeal(t *testing.T) {
 	t.Parallel()
 	bound := func(atBound bool) State {
@@ -358,6 +383,7 @@ func TestMachineCoverTickDeal(t *testing.T) {
 		choiceErr bool
 		cell      string
 		on        string // the member the card is dealt to, "" for none
+		ackClosed []Judgment
 		open      []Judgment
 		closed    []Judgment
 	}{
@@ -374,14 +400,14 @@ func TestMachineCoverTickDeal(t *testing.T) {
 			s: mcCard(mcNoUpSprint(), "s1", "p1", Ready, 1), cell: Ready, open: []Judgment{{JNoMember, "fleet"}},
 		},
 		"a member up clears the fleet's judgment": {
-			s: mcCard(mcSprint(), "s1", "p1", Ready, 1),
+			s:    mcCard(mcSprint(), "s1", "p1", Ready, 1),
 			cell: Working, on: "m1", closed: []Judgment{{JNoMember, "fleet"}},
 		},
 		"a bound card is passed over and judged": {
 			s: bound(true), cell: Ready, open: []Judgment{{JBound, "p1"}},
 		},
 		"an acknowledged bound opens nothing": {
-			s: func() State { s := bound(true); s.Acked[Judgment{JBound, "p1"}] = true; return s }(),
+			s:    func() State { s := bound(true); s.Acked[Judgment{JBound, "p1"}] = true; return s }(),
 			cell: Ready, closed: []Judgment{{JBound, "p1"}},
 		},
 		"a bound that clears closes its judgment": {
@@ -391,6 +417,14 @@ func TestMachineCoverTickDeal(t *testing.T) {
 				return s
 			}(),
 			cell: Working, on: "m1", closed: []Judgment{{JBound, "p1"}},
+		},
+		"a bound acked that clears drops the ack": {
+			s: func() State {
+				s := bound(false)
+				s.Acked[Judgment{JBound, "p1"}] = true
+				return s
+			}(),
+			cell: Working, on: "m1", ackClosed: []Judgment{{JBound, "p1"}},
 		},
 		"a member full to its Room holds the deal": {
 			s: full(), cell: Ready,
@@ -418,6 +452,9 @@ func TestMachineCoverTickDeal(t *testing.T) {
 			}
 			for _, j := range tc.closed {
 				assert.False(t, n.Open[j], "closed %s", j)
+			}
+			for _, j := range tc.ackClosed {
+				assert.False(t, n.Acked[j], "ack dropped %s", j)
 			}
 		})
 	}
@@ -539,7 +576,7 @@ func TestMachineCoverTickAccept(t *testing.T) {
 			s: acceptable(), wantCell: Merging, queued: true,
 		},
 		"a returned merge record does not hold it": {
-			s: func() State { s := acceptable(); s.Merge["p1"] = MergeCard{Place: Returned}; return s }(),
+			s:        func() State { s := acceptable(); s.Merge["p1"] = MergeCard{Place: Returned}; return s }(),
 			wantCell: Merging, queued: true,
 		},
 		"ci red at its head is held": {
@@ -555,7 +592,7 @@ func TestMachineCoverTickAccept(t *testing.T) {
 			s: queued(), wantCell: Review, queued: true,
 		},
 		"a pending operation is refused": {
-			s: func() State { s := acceptable(); s.Pending = "merge"; return s }(),
+			s:        func() State { s := acceptable(); s.Pending = "merge"; return s }(),
 			wantCell: Review, wantErr: true,
 		},
 	} {
@@ -643,7 +680,7 @@ func TestMachineCoverRelease(t *testing.T) {
 			ids: []string{"e1"}, who: "coord", wantErr: "not a reached sentinel",
 		},
 		"a pending operation is refused": {
-			s: func() State { s := reached(); s.Pending = "add"; return s }(),
+			s:   func() State { s := reached(); s.Pending = "add"; return s }(),
 			ids: []string{"e1"}, who: "coord", wantErr: "operation add is pending",
 		},
 	} {
@@ -690,8 +727,8 @@ func TestMachineCoverClear(t *testing.T) {
 		return s
 	}
 	for name, tc := range map[string]struct {
-		s        State
-		wantEpo  uint64
+		s           State
+		wantEpo     uint64
 		wantStreams map[string]Stream
 	}{
 		"a full sprint clears to the next epoch": {
