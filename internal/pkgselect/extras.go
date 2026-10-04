@@ -91,16 +91,43 @@ func PerfRuns(run Runner, root string) (runs []PerfRun, notes []string, err erro
 	}
 	for _, l := range lines(res.Stdout) {
 		pkg, dir, _ := strings.Cut(strings.TrimSpace(l), " ")
-		if pkg == "" || !holdsPerfBuildLine(dir) || !dep.LivePackage(pkg) {
+		if pkg == "" || !dep.LivePackage(pkg) {
 			continue
 		}
-		base, err := testNames(run, root, "go", "test", "-list", ".", pkg)
-		if err != nil {
-			return nil, nil, err
+		files, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+		holds := false
+		for _, f := range files {
+			if b, err := os.ReadFile(f); err == nil && perfBuildLine.Match(b) {
+				holds = true
+				break
+			}
 		}
-		tagged, err := testNames(run, root, "go", "test", "-tags", "perf", "-list", ".", pkg)
-		if err != nil {
-			return nil, nil, err
+		if !holds {
+			continue
+		}
+		var base, tagged map[string]bool
+		for _, argv := range [][]string{
+			{"go", "test", "-list", ".", pkg},
+			{"go", "test", "-tags", "perf", "-list", ".", pkg},
+		} {
+			res, err := run(root, nil, argv...)
+			if err != nil {
+				return nil, nil, err
+			}
+			if res.Code != 0 {
+				return nil, nil, fmt.Errorf("%s exited %d: %s", strings.Join(argv, " "), res.Code, strings.TrimSpace(res.Stderr))
+			}
+			names := map[string]bool{}
+			for _, l := range lines(res.Stdout) {
+				if testNameLine.MatchString(l) {
+					names[l] = true
+				}
+			}
+			if argv[2] == "-tags" {
+				tagged = names
+			} else {
+				base = names
+			}
 		}
 		var extra []string
 		for n := range tagged {
@@ -117,36 +144,4 @@ func PerfRuns(run Runner, root string) (runs []PerfRun, notes []string, err erro
 		runs = append(runs, PerfRun{Package: pkg, Run: "^(" + strings.Join(extra, "|") + ")$"})
 	}
 	return runs, notes, nil
-}
-
-// holdsPerfBuildLine reports whether a .go file in dir has a //go:build line
-// that names the perf tag.
-func holdsPerfBuildLine(dir string) bool {
-	files, _ := filepath.Glob(filepath.Join(dir, "*.go"))
-	for _, f := range files {
-		if b, err := os.ReadFile(f); err == nil && perfBuildLine.Match(b) {
-			return true
-		}
-	}
-	return false
-}
-
-// testNames is the set of test, benchmark, example and fuzz names `go test
-// -list` printed. A failed listing refuses discovery: an unbuildable package
-// must not disappear from the scheduled tests or the packages vetted.
-func testNames(run Runner, root string, argv ...string) (map[string]bool, error) {
-	res, err := run(root, nil, argv...)
-	if err != nil {
-		return nil, err
-	}
-	if res.Code != 0 {
-		return nil, fmt.Errorf("%s exited %d: %s", strings.Join(argv, " "), res.Code, strings.TrimSpace(res.Stderr))
-	}
-	names := map[string]bool{}
-	for _, l := range lines(res.Stdout) {
-		if testNameLine.MatchString(l) {
-			names[l] = true
-		}
-	}
-	return names, nil
 }
