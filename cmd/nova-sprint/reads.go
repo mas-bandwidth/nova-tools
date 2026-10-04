@@ -716,6 +716,10 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 			// machine of the fleet table (sprint.FriendRow)
 			t, friendCards = splitFriendRows(t)
 		}
+		if logical == sprint.Readers {
+			// each reader's width beside reading, derived from its fleet row
+			t = readersWidths(t, shapes[slices.Index(sprint.ViewOrder, sprint.Fleet)])
+		}
 		rows := map[string]map[string]string{}
 		for _, r := range t.Rows {
 			cells := map[string]string{}
@@ -869,7 +873,62 @@ const allRow = ""
 // reader progress overall. A cell some reader's
 // set did not come back for prints "?", as the footer's sum did. Display only:
 // the stored table, its rows and where --json are as they were.
-func readersAll(t ntable.Table) ntable.Table { return allOf(t, nil) }
+func readersAll(t ntable.Table) ntable.Table {
+	// the width cell sums the readers that have one (readersWidths), as the
+	// fleet's footer sums its members'; "-" when none has
+	total, any := 0, false
+	for _, r := range t.Rows {
+		if n, err := strconv.Atoi(r.Texts[sprint.FieldWidth]); err == nil {
+			total, any = total+n, true
+		}
+	}
+	width := "-"
+	if any {
+		width = strconv.Itoa(total)
+	}
+	return allOf(t, map[string]string{sprint.FieldWidth: width})
+}
+
+// readersWidths is the readers table with a width column beside reading, each
+// reader's the width of its fleet row (sprint.ReaderWidth: reader-<m> runs at
+// m's width, the fleet table's width cell), "-" for a reader named for no
+// fleet row. Display only: the readers table holds no width column; the width
+// is derived, and where --json carries it on each reader's row.
+func readersWidths(t ntable.Table, fleet ntable.Table) ntable.Table {
+	widths := map[string]string{}
+	for _, r := range fleet.Rows {
+		widths[r.Key] = r.Texts[sprint.FieldWidth]
+	}
+	at := slices.Index(columnNames(t.Columns), sprint.Reading) + 1
+	cols := slices.Clone(t.Columns)
+	cols = slices.Insert(cols, at, ntable.Column{Name: sprint.FieldWidth, Projection: ntable.Text, Fold: ntable.None})
+	rows := make([]ntable.Row, len(t.Rows))
+	for i, r := range t.Rows {
+		row := r
+		row.Cells = slices.Insert(slices.Clone(r.Cells), min(at, len(r.Cells)), ntable.Cell{})
+		row.Texts = maps.Clone(r.Texts)
+		if row.Texts == nil {
+			row.Texts = map[string]string{}
+		}
+		width := "-"
+		if m, ok := sprint.ReaderMachine(r.Key); ok && widths[m] != "" {
+			width = widths[m]
+		}
+		row.Texts[sprint.FieldWidth] = width
+		rows[i] = row
+	}
+	t.Columns, t.Rows = cols, rows
+	return t
+}
+
+// columnNames is the columns' names in order.
+func columnNames(cols []ntable.Column) []string {
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		out[i] = c.Name
+	}
+	return out
+}
 
 // mergeAll is the merge table as the view's text draws it, the same way as
 // readers, one summed row:
