@@ -1683,13 +1683,14 @@ func oneCardWhy(stream string) string {
 
 // oneOfAGroupWhy is the refusal of rework or drop naming one card while the inbox holds a
 // judgment group of several that names it: the group is answered whole (the owner,
-// 2026-10-03, "BATCH EVERYTHING"), and --one says the one card is meant.
+// 2026-10-03, "BATCH EVERYTHING"), and --one says the one card is meant. It reads the open
+// notes alone (store.OpenGroups), never the whole inbox.
 func oneOfAGroupWhy(ctx context.Context, verbName string, st *store.Store, id string) (string, error) {
-	v, err := st.Inbox(ctx, defaultDeadline, defaultStale, 10000)
+	groups, err := st.OpenGroups(ctx)
 	if err != nil {
 		return "", err
 	}
-	for _, g := range v.Groups {
+	for _, g := range groups {
 		if g.Kind == sprint.Judgment && len(g.Members) > 1 && slices.Contains(g.Members, id) {
 			return fmt.Sprintf("the inbox holds a group of %d for this card; answer the group; run: nova-sprint %s --group %s --expect %d; or say --one", len(g.Members), verbName, g.ID, len(g.Members)), nil
 		}
