@@ -28,7 +28,9 @@ import (
 // seal's --stdin path (a harness has no terminal), and no usage or flag line
 // past 100 columns. Each is asserted here, and the --stdin line is run as
 // printed against a store with that seat (nova-secrets help; the J05 cold
-// rating's one fix).
+// rating's one fix). A wrapped line of the usage or flag table aligns with
+// the column its table's entries start at, so the wrap reads as one entry
+// (docs/CLI-STYLE.md rule (b), Help; the width matches nova-ci's tables).
 func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
 	inProcess := func(args []string, stdout, stderr io.Writer) int {
@@ -70,6 +72,31 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 			break
 		}
 		assert.LessOrEqualf(t, len([]rune(line)), 100, "help line %d is %d columns: %q", i+1, len([]rune(line)), line)
+	}
+
+	// Every continuation line of the usage and flag tables starts at the
+	// column its table's entries start at: 22 spaces in the usage block, 23
+	// in the flag table (docs/CLI-STYLE.md rule (b), Help; the width matches
+	// nova-ci's tables). The 100-column bound above cannot see an indent one
+	// column right of the table's own.
+	for _, table := range []struct {
+		name string
+		want int
+	}{{"usage", 22}, {"flags", 23}} {
+		_, tail, found := strings.Cut(help, "\n"+table.name+":\n")
+		require.Truef(t, found, "the banner has no %s block", table.name)
+		body, _, _ := strings.Cut(tail, "\n\n")
+		for j, line := range strings.Split(body, "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			spaces := len(line) - len(strings.TrimLeft(line, " "))
+			if spaces == 2 {
+				continue // an entry line of the table, not a continuation
+			}
+			assert.Equalf(t, table.want, spaces, "%s continuation line %d is indented %d spaces, want %d: %q",
+				table.name, j+1, spaces, table.want, line)
+		}
 	}
 
 	// The first value: line runs as printed, against a store holding that seat.

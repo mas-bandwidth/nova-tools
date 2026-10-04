@@ -88,9 +88,9 @@ flags:
                        decrypt the seat file the real run reads first (place: --as's, to find
                        --secret; seal: the existing <as>.yaml, to say add or replace; seat inject:
                        --from's, to find the names), so --key must open it; seal reads no new value.
-                        seal and seat inject read the store at HEAD, so their store must be
-                        committed; a store with no commit yet is refused with the commit
-                        that starts it
+                       seal and seat inject read the store at HEAD, so their store must be
+                       committed; a store with no commit yet is refused with the commit
+                       that starts it
   --gh <path>          path to the gh executable (seal, seat inject; default: gh)
   --git <path>         path to the git executable (seal, seat inject; default: git)
 
