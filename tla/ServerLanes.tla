@@ -74,50 +74,50 @@ Init ==
 \* a caller sends its batch
 Send(r) == /\ pc[r] = "idle"
            /\ pc' = [pc EXCEPT ![r] = "waiting"]
-           /\ UNCHANGED <<line, rline, gone, goneWait, ran, ticks>>
+           /\ UNCHANGED <<lphase, line, rline, gone, goneWait, ran, ticks>>
 
 \* the run loop takes the line for a tick, and gives it back
 TickBegin == /\ line = "none" /\ ticks < MaxTicks
              /\ line' = "tick" /\ ticks' = ticks + 1
-             /\ UNCHANGED <<rline, pc, gone, goneWait, ran>>
+             /\ UNCHANGED <<lphase, rline, pc, gone, goneWait, ran>>
 TickEnd == /\ line = "tick" /\ line' = "none"
-           /\ UNCHANGED <<rline, pc, gone, goneWait, ran, ticks>>
+           /\ UNCHANGED <<lphase, rline, pc, gone, goneWait, ran, ticks>>
 
 \* a caller's client gives up (its deadline): it is gone, whatever its verb is doing
 GiveUp(r) == /\ pc[r] \in {"waiting", "running"} /\ ~gone[r]
              /\ gone' = [gone EXCEPT ![r] = TRUE]
              /\ goneWait' = [goneWait EXCEPT ![r] = (pc[r] = "waiting")]
-             /\ UNCHANGED <<line, rline, pc, ran, ticks>>
+             /\ UNCHANGED <<lphase, line, rline, pc, ran, ticks>>
 
 \* a verb on the line takes it (serialLock.LockCtx); the design never for a caller gone
 TakeLine(r) == /\ pc[r] = "waiting" /\ OnLine(r) /\ line = "none"
                /\ (~gone[r] \/ "rungone" \in Broken)
                /\ line' = r /\ pc' = [pc EXCEPT ![r] = "running"]
-               /\ UNCHANGED <<rline, gone, goneWait, ran, ticks>>
+               /\ UNCHANGED <<lphase, rline, gone, goneWait, ran, ticks>>
 
 \* a caller gone while it waited for the line is dropped: its verbs answered not run
 Drop(r) == /\ pc[r] = "waiting" /\ OnLine(r) /\ gone[r] /\ "rungone" \notin Broken
            /\ pc' = [pc EXCEPT ![r] = "dropped"]
-           /\ UNCHANGED <<line, rline, gone, goneWait, ran, ticks>>
+           /\ UNCHANGED <<lphase, line, rline, gone, goneWait, ran, ticks>>
 
 \* a beat starts on the beat lane: no line, no other beat waited for
 BeatStart(r) == /\ pc[r] = "waiting" /\ KindOf[r] = "beat" /\ ~OnLine(r) /\ ~gone[r]
                 /\ pc' = [pc EXCEPT ![r] = "running"]
-                /\ UNCHANGED <<line, rline, gone, goneWait, ran, ticks>>
+                /\ UNCHANGED <<lphase, line, rline, gone, goneWait, ran, ticks>>
 
 BeatDrop(r) == /\ pc[r] = "waiting" /\ KindOf[r] = "beat" /\ ~OnLine(r) /\ gone[r]
                 /\ pc' = [pc EXCEPT ![r] = "dropped"]
-                /\ UNCHANGED <<line, rline, gone, goneWait, ran, ticks>>
+                /\ UNCHANGED <<lphase, line, rline, gone, goneWait, ran, ticks>>
 
 \* a read starts on the read lane: it waits for a read ahead of it alone, and is
 \* dropped as a write is when its caller has gone first
 ReadStart(r) == /\ pc[r] = "waiting" /\ KindOf[r] = "read" /\ ~OnLine(r) /\ rline = "none"
                 /\ ~gone[r]
                 /\ rline' = r /\ pc' = [pc EXCEPT ![r] = "running"]
-                /\ UNCHANGED <<line, gone, goneWait, ran, ticks>>
+                /\ UNCHANGED <<lphase, line, gone, goneWait, ran, ticks>>
 ReadDrop(r) == /\ pc[r] = "waiting" /\ KindOf[r] = "read" /\ ~OnLine(r) /\ gone[r]
                /\ pc' = [pc EXCEPT ![r] = "dropped"]
-               /\ UNCHANGED <<line, rline, gone, goneWait, ran, ticks>>
+               /\ UNCHANGED <<lphase, line, rline, gone, goneWait, ran, ticks>>
 
 \* the verb runs and is answered; what it held is given back
 Finish(r) == /\ pc[r] = "running"
@@ -125,7 +125,7 @@ Finish(r) == /\ pc[r] = "running"
              /\ pc' = [pc EXCEPT ![r] = "answered"]
              /\ line' = IF line = r THEN "none" ELSE line
              /\ rline' = IF rline = r THEN "none" ELSE rline
-             /\ UNCHANGED <<gone, goneWait, ticks>>
+             /\ UNCHANGED <<lphase, gone, goneWait, ticks>>
 
 \* the land lane: the line for the read of the queue, none for git and the gate, the
 \* line again for the report; landgate keeps it throughout
@@ -145,11 +145,9 @@ LandReport == /\ lphase = "report" /\ line = "land"
 Land == LandRead \/ LandGit \/ LandGitDone \/ LandReport
 
 Next ==
-  \/ Land
-  \/ /\ UNCHANGED lphase
-     /\ \/ TickBegin \/ TickEnd
-        \/ \E r \in Callers : Send(r) \/ GiveUp(r) \/ TakeLine(r) \/ Drop(r)
-                              \/ BeatStart(r) \/ BeatDrop(r) \/ ReadStart(r) \/ ReadDrop(r) \/ Finish(r)
+  \/ Land \/ TickBegin \/ TickEnd
+  \/ \E r \in Callers : Send(r) \/ GiveUp(r) \/ TakeLine(r) \/ Drop(r)
+                        \/ BeatStart(r) \/ BeatDrop(r) \/ ReadStart(r) \/ ReadDrop(r) \/ Finish(r)
 
 Fairness ==
   /\ WF_vars(TickEnd)
