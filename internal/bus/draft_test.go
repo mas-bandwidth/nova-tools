@@ -197,7 +197,8 @@ func TestTheSkeletonIsADraftThisToolSends(t *testing.T) {
 		require.Equal(t, "The gate", n.Header.Subject, "read back wrong: %+v", n.Header)
 	}
 	if len(n.Header.Re) != 1 || n.Header.Re[0] != "bo-abcdef012345" {
-		require.True(t, len(n.Header.Re) == 1 && n.Header.Re[0] == "bo-abcdef012345", "Re read back as %v", n.Header.Re)
+		require.True(t, len(n.Header.Re) == 1, "Re read back as %v", n.Header.Re)
+		require.True(t, n.Header.Re[0] == "bo-abcdef012345", "Re read back as %v", n.Header.Re)
 	}
 	require.Equal(t, "", n.Header.Date, "the skeleton carries a Date or an Id; those are the tool's to write")
 	require.Equal(t, "", n.Header.ID, "the skeleton carries a Date or an Id; those are the tool's to write")

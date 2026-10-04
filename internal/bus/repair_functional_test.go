@@ -175,7 +175,8 @@ func TestStaleLockStaysForCwdGitWithoutDashC(t *testing.T) {
 	require.True(t, saw, "cwd git with no -C was not recorded as an owner")
 	rep, err := ClearStaleIndexLock(dir, time.Now())
 	if err != nil || rep.Cleared {
-		require.True(t, err == nil && !rep.Cleared, "cleared=%v err=%v, want the lock left because the cwd git owns the checkout", rep.Cleared, err)
+		require.True(t, err == nil, "cleared=%v err=%v, want the lock left because the cwd git owns the checkout", rep.Cleared, err)
+		require.True(t, !rep.Cleared, "cleared=%v err=%v, want the lock left because the cwd git owns the checkout", rep.Cleared, err)
 	}
 	{
 		_, statErr := os.Lstat(lock)

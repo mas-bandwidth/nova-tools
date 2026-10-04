@@ -418,7 +418,8 @@ func TestAProseFirstLineFailsWithAShortQuotedKey(t *testing.T) {
 	require.NotContains(t, err.Error(), "138,751", "the whole paragraph is in the refusal: %v", err)
 	// A key short enough to read is quoted whole, so the common case is unchanged.
 	_, err = ParseNote("from-bo/x.md", "From: Ada\nSbuject: s\n\nbody\n")
-	require.False(t, err == nil || !strings.Contains(err.Error(), `unknown header key "Sbuject"`), "a short key was not quoted whole: %v", err)
+	require.False(t, err == nil, "a short key was not quoted whole: %v", err)
+	require.False(t, !strings.Contains(err.Error(), `unknown header key "Sbuject"`), "a short key was not quoted whole: %v", err)
 }
 
 // THE THREE SHAPES A READ OF THE REAL BUS FOUND, and what each refusal now has to say.
@@ -465,5 +466,6 @@ func TestAnUnreadableNoteSaysWhatToDoAboutIt(t *testing.T) {
 	// And the tolerances are untouched: a bullet in front of a bold key is still read as a
 	// bullet, so the refusal is about the bold and not about the bullet.
 	_, err := ParseNote("from-bo/x.md", "- From: Bo\n- **To**: Ada\n- Subject: s\n\nbody\n")
-	require.False(t, err == nil || !strings.Contains(err.Error(), "not markdown bold"), "a bulleted bold key: %v", err)
+	require.False(t, err == nil, "a bulleted bold key: %v", err)
+	require.False(t, !strings.Contains(err.Error(), "not markdown bold"), "a bulleted bold key: %v", err)
 }

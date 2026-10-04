@@ -170,7 +170,8 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
 	res, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one", "origin", "main", 3)
 	require.NoError(t, err)
-	require.True(t, res.Pushed && res.Attempts == 1, "res = %+v, want pushed on the first attempt", res)
+	require.True(t, res.Pushed, "res = %+v, want pushed on the first attempt", res)
+	require.True(t, res.Attempts == 1, "res = %+v, want pushed on the first attempt", res)
 	out, err := git(bare, "show", "main:from-ada/a.md")
 	require.NoError(t, err, "the note is not on the remote: %v", err)
 	require.Contains(t, out, "Subject: one", "the remote holds %q", out)
@@ -469,7 +470,8 @@ func TestCommitOnlyDoesNotPush(t *testing.T) {
 	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
 	res, err := CommitOnly(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one")
 	require.NoError(t, err)
-	require.False(t, res.Pushed || res.Commit == "", "res = %+v, want a commit and pushed=false", res)
+	require.False(t, res.Pushed, "res = %+v, want a commit and pushed=false", res)
+	require.False(t, res.Commit == "", "res = %+v, want a commit and pushed=false", res)
 	{
 		_, err := git(bare, "cat-file", "-e", "main:from-ada/a.md")
 		require.Error(t, err, "--no-push pushed")
@@ -503,7 +505,8 @@ func TestIsRepoRootAndCurrentBranch(t *testing.T) {
 	require.NoError(t, IsRepoRoot(clone))
 	{
 		b, err := CurrentBranch(clone)
-		require.True(t, err == nil && b == "main", "CurrentBranch = %q %v", b, err)
+		require.True(t, err == nil, "CurrentBranch = %q %v", b, err)
+		require.True(t, b == "main", "CurrentBranch = %q %v", b, err)
 	}
 	{
 		err := IsRepoRoot(t.TempDir())
@@ -848,14 +851,16 @@ func TestThePushRetryWaitsBetweenAttempts(t *testing.T) {
 	write(t, mine, "from-ada/a.md", noteText("Ada", "mine", "body"))
 	res, err := commitAndPushWithSleep(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 3, sleep)
 	require.NoError(t, err)
-	require.True(t, res.Pushed && res.Attempts == 2, "res = %+v, want pushed on the second attempt", res)
+	require.True(t, res.Pushed, "res = %+v, want pushed on the second attempt", res)
+	require.True(t, res.Attempts == 2, "res = %+v, want pushed on the second attempt", res)
 	// One rejected push, so one wait: before the fetch that takes what arrived, and never
 	// after the push that lands.
 	if len(slept) != 1 {
 		require.Equal(t, 1, len(slept), "the loop waited %d times for one rejected push, want 1: %v", len(slept), slept)
 	}
 	if slept[0] < backoffStep || slept[0] > backoffStep+backoffJitter {
-		require.False(t, slept[0] < backoffStep || slept[0] > backoffStep+backoffJitter, "waited %v after the first attempt, want between %v and %v", slept[0], backoffStep, backoffStep+backoffJitter)
+		require.False(t, slept[0] < backoffStep, "waited %v after the first attempt, want between %v and %v", slept[0], backoffStep, backoffStep+backoffJitter)
+		require.False(t, slept[0] > backoffStep+backoffJitter, "waited %v after the first attempt, want between %v and %v", slept[0], backoffStep, backoffStep+backoffJitter)
 	}
 }
 
@@ -868,7 +873,9 @@ func TestPushBackoffGrowsIsJitteredAndIsCapped(t *testing.T) {
 		lo := time.Duration(attempt) * backoffStep
 		for range 50 {
 			d := pushBackoff(attempt)
-			require.False(t, d < lo || d > lo+backoffJitter || d > backoffCap, "pushBackoff(%d) = %v, want between %v and %v and at most %v", attempt, d, lo, lo+backoffJitter, backoffCap)
+			require.False(t, d < lo, "pushBackoff(%d) = %v, want between %v and %v and at most %v", attempt, d, lo, lo+backoffJitter, backoffCap)
+			require.False(t, d > lo+backoffJitter, "pushBackoff(%d) = %v, want between %v and %v and at most %v", attempt, d, lo, lo+backoffJitter, backoffCap)
+			require.False(t, d > backoffCap, "pushBackoff(%d) = %v, want between %v and %v and at most %v", attempt, d, lo, lo+backoffJitter, backoffCap)
 		}
 	}
 	// The cap holds however many attempts a caller asks for.
@@ -905,7 +912,8 @@ func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
 
 	// Nothing has happened: the fetch runs and the checkout stays where it is.
 	moved, err := FetchAndFastForward(reader, "origin", "main")
-	require.True(t, err == nil && !moved, "a quiet bus: moved=%t err=%v, want false and no error", moved, err)
+	require.True(t, err == nil, "a quiet bus: moved=%t err=%v, want false and no error", moved, err)
+	require.True(t, !moved, "a quiet bus: moved=%t err=%v, want false and no error", moved, err)
 
 	// A note lands from somebody else: the reader is BEHIND and is fast-forwarded onto it.
 	write(t, writer, "from-bo/note.md", noteText("Bo", "the gate", "Is it on the queue?"))
@@ -913,7 +921,8 @@ func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
 		require.NoError(t, err, "the other bench could not send: %v", err)
 	}
 	moved, err = FetchAndFastForward(reader, "origin", "main")
-	require.True(t, err == nil && moved, "a note on the bus: moved=%t err=%v, want true and no error", moved, err)
+	require.True(t, err == nil, "a note on the bus: moved=%t err=%v, want true and no error", moved, err)
+	require.True(t, moved, "a note on the bus: moved=%t err=%v, want true and no error", moved, err)
 	if _, err := os.Stat(filepath.Join(reader, "from-bo", "note.md")); err != nil {
 		require.NoError(t, err, "the checkout was not moved onto the note: %v", err)
 	}
@@ -923,7 +932,8 @@ func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
 	write(t, reader, "from-ada/mine.md", noteText("Ada", "mine", "Not pushed yet."))
 	commitByHand(t, reader, "from-ada/mine.md", "ada: not pushed")
 	moved, err = FetchAndFastForward(reader, "origin", "main")
-	require.True(t, err == nil && !moved, "a checkout ahead: moved=%t err=%v, want false and no error", moved, err)
+	require.True(t, err == nil, "a checkout ahead: moved=%t err=%v, want false and no error", moved, err)
+	require.True(t, !moved, "a checkout ahead: moved=%t err=%v, want false and no error", moved, err)
 
 	// And when the two have both moved, a poll will not merge or rebase to reconcile them:
 	// it says so, and names the recovery.

@@ -77,7 +77,8 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 	write(t, root, CursorPath("from-ada"), sha+" 2026-09-09T12:34:56Z\n"+sha+" 2026-09-09T12:35:56Z\n")
 	{
 		_, err := ReadCursor(root, "from-ada")
-		require.False(t, err == nil || !strings.Contains(err.Error(), "one line"), "two cursor lines: %v", err)
+		require.False(t, err == nil, "two cursor lines: %v", err)
+		require.False(t, !strings.Contains(err.Error(), "one line"), "two cursor lines: %v", err)
 	}
 }
 
@@ -250,7 +251,10 @@ func TestIndexLineIsFiveFieldsAndCannotBeForged(t *testing.T) {
 	require.NoError(t, AppendIndexLine(root, e))
 	entries, err := ReadLaneIndex(root, "from-ada")
 	require.NoError(t, err)
-	require.True(t, len(entries) == 1 && entries[0].ID == e.ID && entries[0].Path == e.Path && entries[0].Date == e.Date, "round trip gave %+v", entries)
+	require.True(t, len(entries) == 1, "round trip gave %+v", entries)
+	require.True(t, entries[0].ID == e.ID, "round trip gave %+v", entries)
+	require.True(t, entries[0].Path == e.Path, "round trip gave %+v", entries)
+	require.True(t, entries[0].Date == e.Date, "round trip gave %+v", entries)
 	require.Equal(t, 0, len(entries[0].Re), "an absent Re read back as %v", entries[0].Re)
 	write(t, root, IndexPath("from-ada"), "one\ttwo\n")
 	{
@@ -299,7 +303,8 @@ func TestRebuildLaneIndexFromTheNotes(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, n, "rebuilt %d entries, want the 2 notes that have ids", n)
 	lines := strings.Split(strings.TrimRight(readFile(t, root, IndexPath("from-bo")), "\n"), "\n")
-	require.True(t, len(lines) == 2 && strings.HasPrefix(lines[0], "bo-abcdef012345\tfrom-bo/a.md\t"), "the rebuilt catalogue is:\n%s", strings.Join(lines, "\n"))
+	require.True(t, len(lines) == 2, "the rebuilt catalogue is:\n%s", strings.Join(lines, "\n"))
+	require.True(t, strings.HasPrefix(lines[0], "bo-abcdef012345\tfrom-bo/a.md\t"), "the rebuilt catalogue is:\n%s", strings.Join(lines, "\n"))
 	// And a rebuilt catalogue agrees with the bus it was built from.
 	idx, err := ReadIndex(root, c)
 	require.NoError(t, err)
@@ -340,11 +345,15 @@ func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
 	require.Equal(t, 2, len(res.Open), "open = %+v, want the new one and the carried one", res.Open)
 	// Newest first when it is PRINTED, arrival order in the file.
 	rows := SortForListing(res.Open)
-	require.True(t, rows[0].Path == "from-bo/new.md" && rows[0].Subject == "new" && rows[0].From == "Bo", "the listing is not newest first, or a new entry lost its display line: %+v", rows[0])
+	require.True(t, rows[0].Path == "from-bo/new.md", "the listing is not newest first, or a new entry lost its display line: %+v", rows[0])
+	require.True(t, rows[0].Subject == "new", "the listing is not newest first, or a new entry lost its display line: %+v", rows[0])
+	require.True(t, rows[0].From == "Bo", "the listing is not newest first, or a new entry lost its display line: %+v", rows[0])
 	require.True(t, rows[1].Heard, "the carried entry lost its heard flag: %+v", rows[1])
 	{
 		notes, receipts, heard := res.Counts()
-		require.True(t, notes == 1 && receipts == 0 && heard == 1, "counts are notes=%d receipts=%d heard=%d, want 1, 0, 1", notes, receipts, heard)
+		require.True(t, notes == 1, "counts are notes=%d receipts=%d heard=%d, want 1, 0, 1", notes, receipts, heard)
+		require.True(t, receipts == 0, "counts are notes=%d receipts=%d heard=%d, want 1, 0, 1", notes, receipts, heard)
+		require.True(t, heard == 1, "counts are notes=%d receipts=%d heard=%d, want 1, 0, 1", notes, receipts, heard)
 	}
 	require.Equal(t, 1, res.New, "new=%d, want 1", res.New)
 
@@ -355,7 +364,8 @@ func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
 		[]OpenEntry{carried, {ID: "bo-111111111111", Kind: OpenNote, From: "Bo", Addr: "to",
 			Date: "2026-09-08T00:01:00Z", Path: "from-bo/new.md", Subject: "new"}}, 40, LegacyLine{})
 	require.NoError(t, err)
-	require.True(t, len(res.Open) == 1 && res.Open[0].ID == "bo-111111111111", "the answered note is still open: %+v", res.Open)
+	require.True(t, len(res.Open) == 1, "the answered note is still open: %+v", res.Open)
+	require.True(t, res.Open[0].ID == "bo-111111111111", "the answered note is still open: %+v", res.Open)
 
 	// And a LEGACY note is closed the same way, by its path: a reply written before there
 	// were ids names the file, and that still has to close the entry that names the file.
@@ -388,7 +398,8 @@ func TestAReceiptInTheChangeSetSetsTheFlagInOpen(t *testing.T) {
 	// run cannot see is a receipt the next run applies.
 	res, err := InboxSince(root, c, me, nil, []OpenEntry{carried}, 40, LegacyLine{})
 	require.NoError(t, err)
-	require.True(t, len(res.Open) == 1 && !res.Open[0].Heard, "a receipt outside the change set was read anyway: %+v", res.Open)
+	require.True(t, len(res.Open) == 1, "a receipt outside the change set was read anyway: %+v", res.Open)
+	require.True(t, !res.Open[0].Heard, "a receipt outside the change set was read anyway: %+v", res.Open)
 	// In the change set, it sets the flag, and the entry stays open.
 	before := NoteParsesIn(root)
 	res, err = InboxSince(root, c, me, []string{"from-ada/RECEIPTS"}, []OpenEntry{carried}, 40, LegacyLine{})
@@ -397,7 +408,8 @@ func TestAReceiptInTheChangeSetSetsTheFlagInOpen(t *testing.T) {
 		got := NoteParsesIn(root) - before
 		require.Equal(t, int64(0), got, "reading RECEIPTS parsed %d notes; it is a line scan", got)
 	}
-	require.True(t, len(res.Open) == 1 && res.Open[0].Heard, "a receipt in the change set did not set the heard flag: %+v", res.Open)
+	require.True(t, len(res.Open) == 1, "a receipt in the change set did not set the heard flag: %+v", res.Open)
+	require.True(t, res.Open[0].Heard, "a receipt in the change set did not set the heard flag: %+v", res.Open)
 	{
 		_, _, heard := res.Counts()
 		require.Equal(t, 1, heard, "a heard entry is not counted as heard: %+v", res.Open)
@@ -418,7 +430,9 @@ func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
 
 	res, err := InboxSince(root, c, me, []string{"from-bo/prose.md"}, nil, 40, LegacyLine{})
 	require.NoError(t, err)
-	require.True(t, len(res.Unreadable) == 1 && len(res.Open) == 1 && res.Open[0].Kind == OpenUnreadable, "an unreadable file was not carried: unreadable=%d open=%+v", len(res.Unreadable), res.Open)
+	require.True(t, len(res.Unreadable) == 1, "an unreadable file was not carried: unreadable=%d open=%+v", len(res.Unreadable), res.Open)
+	require.True(t, len(res.Open) == 1, "an unreadable file was not carried: unreadable=%d open=%+v", len(res.Unreadable), res.Open)
+	require.True(t, res.Open[0].Kind == OpenUnreadable, "an unreadable file was not carried: unreadable=%d open=%+v", len(res.Unreadable), res.Open)
 	// The run after it, with NOTHING in the change set, still names it -- and that costs one
 	// parse, for this entry and nobody else's note.
 	before := NoteParsesIn(root)
@@ -428,12 +442,16 @@ func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
 		got := NoteParsesIn(root) - before
 		require.Equal(t, int64(1), got, "re-checking one unreadable entry parsed %d notes, want 1", got)
 	}
-	require.True(t, len(res.Unreadable) == 1 && len(res.Open) == 1, "the unreadable entry was dropped in silence: %+v", res)
+	require.True(t, len(res.Unreadable) == 1, "the unreadable entry was dropped in silence: %+v", res)
+	require.True(t, len(res.Open) == 1, "the unreadable entry was dropped in silence: %+v", res)
 	// Somebody fixes the file. It becomes an ordinary entry, with its display line.
 	write(t, root, "from-bo/prose.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: Now it parses\n\nA question?\n")
 	res, err = InboxSince(root, c, me, nil, res.Open, 40, LegacyLine{})
 	require.NoError(t, err)
-	require.True(t, len(res.Unreadable) == 0 && len(res.Open) == 1 && res.Open[0].Kind == OpenNote && res.Open[0].Subject == "Now it parses", "a file that now parses did not become an ordinary entry: %+v", res)
+	require.True(t, len(res.Unreadable) == 0, "a file that now parses did not become an ordinary entry: %+v", res)
+	require.True(t, len(res.Open) == 1, "a file that now parses did not become an ordinary entry: %+v", res)
+	require.True(t, res.Open[0].Kind == OpenNote, "a file that now parses did not become an ordinary entry: %+v", res)
+	require.True(t, res.Open[0].Subject == "Now it parses", "a file that now parses did not become an ordinary entry: %+v", res)
 	// And a file that never parses leaves the list when it is RECEIPTED, which is how a
 	// reader says "I have seen this" about a file with no id to answer.
 	write(t, root, "from-bo/prose.md", "Ada, prose again.\n\nMore prose.\n")
@@ -442,7 +460,8 @@ func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
 	require.NoError(t, err)
 	res, err = InboxSince(root, c, me, []string{"from-ada/RECEIPTS"}, res.Open, 40, LegacyLine{})
 	require.NoError(t, err)
-	require.True(t, len(res.Open) == 0 && len(res.Unreadable) == 0, "a receipted unreadable file is still carried: %+v", res)
+	require.True(t, len(res.Open) == 0, "a receipted unreadable file is still carried: %+v", res)
+	require.True(t, len(res.Unreadable) == 0, "a receipted unreadable file is still carried: %+v", res)
 }
 
 // An open note whose file has gone is CARRIED, printed from the snapshot in OPEN, until a
@@ -519,7 +538,8 @@ func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) 
 	// Once it is behind the cursor, the edited note is shown again. Shown -- not lost.
 	res, err = InboxSince(root, c, me, []string{"from-bo/old.md"}, nil, 40, LegacyLine{})
 	require.NoError(t, err)
-	require.True(t, len(res.Open) == 1 && res.Open[0].ID == "bo-abcdef012345", "the re-show is not what the docs say it is: %+v", res.Open)
+	require.True(t, len(res.Open) == 1, "the re-show is not what the docs say it is: %+v", res.Open)
+	require.True(t, res.Open[0].ID == "bo-abcdef012345", "the re-show is not what the docs say it is: %+v", res.Open)
 
 	// And a full read settles it: the reply is on the bus, so the note is answered and the
 	// list a `--full --advance` writes does not hold it.
@@ -587,7 +607,8 @@ func TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile(t *testing.T) {
 	// And the path itself holds the new cursor, whole: one line, four tokens, readable.
 	got, err := ReadCursor(root, lane)
 	require.NoError(t, err)
-	require.True(t, got.Commit == second && got.Open == 7, "the new cursor reads as %+v", got)
+	require.True(t, got.Commit == second, "the new cursor reads as %+v", got)
+	require.True(t, got.Open == 7, "the new cursor reads as %+v", got)
 	// The temporary is gone. It is a step in a write, never a file on the bus.
 	entries, err := os.ReadDir(filepath.Join(root, lane))
 	require.NoError(t, err)
@@ -787,7 +808,8 @@ The body.
 		before = before || strings.Contains(e.Path, "1806Z")
 		after = after || strings.Contains(e.Path, "1808Z")
 	}
-	require.True(t, before && after, "today's date did not behave as midnight at its start: %+v", keep)
+	require.True(t, before, "today's date did not behave as midnight at its start: %+v", keep)
+	require.True(t, after, "today's date did not behave as midnight at its start: %+v", keep)
 
 	// The two shapes, and only the two: an instant must be UTC and to the second.
 	for _, bad := range []string{"last Tuesday", "2026-09-09T18:07:00+10:00", "2026-09-09T18:07Z", "2026-09-09 18:07:00Z", ""} {
