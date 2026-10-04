@@ -133,7 +133,8 @@ func TestLastCommitBefore(t *testing.T) {
 		}
 	}
 	_, err := LastCommitBefore(dir, at("2026-08-01T00:00:00Z"))
-	require.False(t, err == nil || !strings.Contains(err.Error(), "no commit in this checkout is dated before 2026-08-01T00:00:00Z"), "a date before every commit was not refused by name: %v", err)
+	require.False(t, err == nil, "a date before every commit was not refused by name: %v", err)
+	require.False(t, !strings.Contains(err.Error(), "no commit in this checkout is dated before 2026-08-01T00:00:00Z"), "a date before every commit was not refused by name: %v", err)
 }
 
 // ResolveSinceCommit: a revision wins, even one spelled like a date; a date or instant
@@ -181,7 +182,8 @@ func TestResolveSinceCommit(t *testing.T) {
 	// refusal, unchanged.
 	{
 		_, err := ResolveSinceCommit(dir, "2020-01-01")
-		require.False(t, err == nil || !strings.Contains(err.Error(), "no commit in this checkout is dated before"), "a date before every commit: %v", err)
+		require.False(t, err == nil, "a date before every commit: %v", err)
+		require.False(t, !strings.Contains(err.Error(), "no commit in this checkout is dated before"), "a date before every commit: %v", err)
 	}
 	_, err := ResolveSinceCommit(dir, "nosuchref")
 	_, revErr := ResolveCommit(dir, "nosuchref")

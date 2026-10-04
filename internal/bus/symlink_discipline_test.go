@@ -175,7 +175,8 @@ func TestReplaceLaneFileDoesNotWriteThroughAPlantedTemp(t *testing.T) {
 	unchanged(t, v)
 	raw, err := os.ReadFile(filepath.Join(root, "from-x", IndexName))
 	if err != nil || string(raw) != "a line\n" {
-		require.True(t, err == nil && string(raw) == "a line\n", "the lane file did not get its content: %q %v", string(raw), err)
+		require.True(t, err == nil, "the lane file did not get its content: %q %v", string(raw), err)
+		require.True(t, string(raw) == "a line\n", "the lane file did not get its content: %q %v", string(raw), err)
 	}
 }
 
@@ -187,8 +188,11 @@ func TestAStrandedUniqueTempIsStillALaneStateTemp(t *testing.T) {
 	require.True(t, isLaneStateTemp(IndexName+TempSuffix), "the fixed temp name stopped being recognised")
 	require.True(t, isLaneStateTemp(IndexName+".ab12cd34ef56"+TempSuffix), "a unique temp name for a lane state file is not recognised as one")
 	require.True(t, isLaneStateTemp("."+IndexName+".tmp-0a1b2c3d"), "atomicfile's temporary for a lane state file is not recognised as one")
-	require.False(t, isLaneStateTemp(".notes.tmp-0a1b2c3d") || isLaneStateTemp("."+IndexName+".tmp-xyz") || isLaneStateTemp("."+IndexName+".tmp-0a1b"), "a stray dot-temporary became a lane state temp")
-	require.False(t, isLaneStateTemp("notes"+TempSuffix) || isLaneStateTemp("notes.ab12"+TempSuffix), "a stray temporary became a lane state temp")
+	require.False(t, isLaneStateTemp(".notes.tmp-0a1b2c3d"), "a stray dot-temporary became a lane state temp")
+	require.False(t, isLaneStateTemp("."+IndexName+".tmp-xyz"), "a stray dot-temporary became a lane state temp")
+	require.False(t, isLaneStateTemp("."+IndexName+".tmp-0a1b"), "a stray dot-temporary became a lane state temp")
+	require.False(t, isLaneStateTemp("notes"+TempSuffix), "a stray temporary became a lane state temp")
+	require.False(t, isLaneStateTemp("notes.ab12"+TempSuffix), "a stray temporary became a lane state temp")
 	require.True(t, strings.HasSuffix(IndexName+".ab12"+TempSuffix, TempSuffix), "a unique temp no longer ends in the reserved suffix")
 }
 
