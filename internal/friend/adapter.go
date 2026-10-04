@@ -82,7 +82,9 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	switch harness {
 	case "opencode":
 		return &OpenCode{Dir: dir, Session: session, Run: run, Out: out}, nil
-	case "codex", "claude", "antigravity", "dsh":
+	case "antigravity":
+		return &Antigravity{Dir: dir, Session: session, Run: run, Out: out}, nil
+	case "codex", "claude", "dsh":
 		return Stub{Harness: harness}, nil
 	}
 	return nil, fmt.Errorf("%q is no harness; the harnesses are %s", harness, strings.Join(Harnesses, ", "))
