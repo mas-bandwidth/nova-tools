@@ -76,11 +76,15 @@ func FriendCard(c *Card) (name string, ok bool) {
 const friendCardWhy = "a friend's card (its brief says WHO: friend): the tick deals it to a friend up with room, never to a machine"
 
 // FriendSeat is one friend as the tick deals to her: her name, her width (the jobs she
-// works at once, her friends row's) and her status (FriendStatus: up, held or down).
+// works at once, her friends row's), her status (FriendStatus: up, held or down), and
+// her tiers (config.friends tiers: flash, frontier, pro). FriendDeal does not read
+// Tiers. A frontier read does (friend_read.go): only a friend whose tiers include
+// frontier is asked one.
 type FriendSeat struct {
 	Name   string
 	Width  int
 	Status string
+	Tiers  []string
 }
 
 // Members is the fleet's machines: its rows but the friends' (FriendRow), in row order.

@@ -296,7 +296,14 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			if err := os.MkdirAll(in, 0o755); err != nil {
 				return delivered, finished, err
 			}
-			switch err := atomicfile.WriteFile(brief, []byte(friendBrief(name, p)), 0o644, atomicfile.NoReplace()); {
+			text := friendBrief(name, p)
+			if p.Kind == "read" {
+				// a frontier read's brief is the read, not a work card's STATUS
+				// (internal/sprint/friend_read.go). The ask writes it; sync writes
+				// it only when the ask has not.
+				text = sprint.FriendReadBrief(name, p.Primary, p.Brief, p.WorkBranch, p.Head, p.Attempt, time.Time{})
+			}
+			switch err := atomicfile.WriteFile(brief, []byte(text), 0o644, atomicfile.NoReplace()); {
 			case err == nil:
 				delivered++
 				say(fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch))
@@ -314,6 +321,19 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			if why != "" {
 				say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is left working, and the next sync reads it again", name, oneline.Field(p.Card), oneline.Escape(why)))
 			}
+			continue
+		}
+		if p.Kind == "read" {
+			// the close is FriendReadClose (the read card on her fleet row). A
+			// work finish would land or fail the primary. The store step that
+			// applies the close is outside this card's paths, so sync says the
+			// verdict and leaves the card for that step.
+			verdict, finding, why := sprint.ParseFriendReadReport(report)
+			if why != "" {
+				say(fmt.Sprintf("FRIEND-READ REFUSED friend=%s card=%s: %s", name, oneline.Field(p.Card), oneline.Escape(why)))
+				continue
+			}
+			say(fmt.Sprintf("FRIEND-READ friend=%s card=%s verdict=%s finding=%s", name, oneline.Field(p.Card), verdict, oneline.Escape(oneline.Cap(finding, 200))))
 			continue
 		}
 		r, err := friendFinish(ctx, name, p, report, a.tip)

@@ -148,6 +148,21 @@ any work card. The machines' `deal` verb refuses a friend's card, and
 `rework` of one sends its primary ready with the fix, for the tick to deal to
 a friend.
 
+A frontier card (its tier is frontier, the tier above heavy, which no route
+serves) is read by a friend of frontier class, not by a reader machine
+(`sprint.FriendReadAsk`, `sprint.FriendReadClose`). The friend is up, below
+her width, and her tiers include frontier: the one with the most free width,
+the first by name among equals, the same chooser as a friend's card. The ask
+writes `inbox/<read-card>/BRIEF.md` in her working directory: the primary's
+`AS A READ` section, the attempt's branch and its start commit (`head`),
+`WHO: friend <name>`, and a deadline of two hours on the sprint's clock (no
+wall clock). `Verdict: LAND` closes that read ok. `Verdict: HOLD` with a
+finding that names a file, a line or a rule closes it broken (the same
+finding rule as a reader's broken read). With no such friend up with room
+the read is not asked and the ask raises the judgment a read with no reader
+up already raises (`fewer than two readers up`). The readers table gains no
+friend row: the read card sits on her fleet row.
+
 `friend sync`, run by the coordinator's own loop where the directories are
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
 a friend's card across the inbox/outbox standard
