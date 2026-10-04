@@ -15,10 +15,9 @@ import (
 )
 
 // The dogfood verb answers the one question a tool's own tests cannot: has
-// somebody outside its authoring process run it? A tool is not
-// finished until it is tested, dogfooded by a non-author on real work with the
-// edges filed, the feedback applied, documented and released. Nothing tracked
-// that, so the claim was whatever the last person said it was.
+// somebody who did not write it run it, on real work, with the edges filed? A
+// tool is not finished until that is so, and without a record the claim is
+// whatever the last person said.
 //
 // Three sub-verbs, and they are deliberately small: `ledger` reads the verb
 // list against a directory of receipts and prints one row per verb; `record`
@@ -27,12 +26,10 @@ import (
 // record, and every path comes from a flag.
 //
 // The verb list comes from the binaries when `--tools` names them, and from the
-// command reference otherwise. Both are here because this verb's own first
-// dogfood pass finds the failure only a second
-// source closes: a tool documented in a shape the reader did not read
-// contributed zero rows and could never be gated on, and two verbs that exist
-// in the binary but not in the reference stranded their receipts against a
-// document that had gone stale.
+// command reference otherwise. Both are here because each closes a failure the
+// other has: a tool documented in a shape the reader does not read contributes
+// no rows and can never be gated on, and a verb that exists in the binary but
+// not in the reference strands its receipts against a stale document.
 const (
 	cliHint      = `--cli <file> is the command reference the verbs are read from, usually docs/CLI.md; it is the list this ledger is about, so it is never guessed from the working directory`
 	toolsHint    = `--tools <dir> is a directory of built nova-* binaries, each asked for its own help: the authoritative verb list, with --cli as the fallback for the tools it does not hold`
@@ -109,7 +106,7 @@ func addDogfoodSourceFlags(fs *flag.FlagSet) *dogfoodSources {
 // win and the reference fills in the tools they do not cover; a binary that
 // cannot answer is one NOTE and its tool falls back to the reference, because a
 // half-built directory should cost that tool's rows and not the whole ledger.
-func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([]dogfood.Verb, int) {
+func (s *dogfoodSources) verbList(verb string, maxFlag int, stderr io.Writer) ([]dogfood.Verb, int) {
 	if s.cli == "" && s.tools == "" {
 		refuse(stderr, " dogfood "+verb, sourceRemedy)
 		fmt.Fprintf(stderr, "  %s\n  %s\n", cliHint, toolsHint)
@@ -132,7 +129,7 @@ func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([
 		if err != nil {
 			return nil, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
-		list := bounded.Capped(stderr, failMax, "DOGFOOD", "binary", failMaxRemedy)
+		list := bounded.Capped(stderr, maxFlag, "DOGFOOD", "binary", maxRemedy)
 		for _, f := range failures {
 			list.Line(fmt.Sprintf("DOGFOOD NOTE %s: %s",
 				oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
@@ -167,10 +164,10 @@ type dogfoodRead struct {
 	authors  dogfood.Authors
 }
 
-func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, repo string, gitTimeout, failMax int, stderr io.Writer) (dogfoodRead, int) {
+func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, repo string, gitTimeout, maxFlag int, stderr io.Writer) (dogfoodRead, int) {
 	var read dogfoodRead
 
-	verbs, code := src.verbList(verb, failMax, stderr)
+	verbs, code := src.verbList(verb, maxFlag, stderr)
 	if code != 0 {
 		return read, code
 	}
@@ -181,13 +178,13 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 		return read, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 	}
 	if len(failures) > 0 {
-		list := bounded.Capped(stderr, failMax, "DOGFOOD", "record", failMaxRemedy)
+		list := bounded.Capped(stderr, maxFlag, "DOGFOOD", "record", maxRemedy)
 		for _, f := range failures {
-			list.Line(fmt.Sprintf("DOGFOOD FAIL %s: %s",
+			list.Line(fmt.Sprintf("DOGFOOD FAILED %s: %s",
 				oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
 		}
 		list.More()
-		fmt.Fprintf(stderr, "DOGFOOD FAIL records=%d shown=%d receipts=%s\n",
+		fmt.Fprintf(stderr, "DOGFOOD FAILED records=%d shown=%d receipts=%s\n",
 			list.Total(), list.Shown(), oneline.Field(receiptsDir))
 		return read, 1
 	}
@@ -229,14 +226,14 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 
 // reportStranded names every receipt that matched no verb: the file, what it
 // claimed, and the verb it was probably meant to be. Both `ledger` and `gate`
-// call it, so a lane cannot pass or fail without learning that the evidence
-// it read was thrown away.
-func reportStranded(read dogfoodRead, failMax int, stderr io.Writer) {
+// call it, on every outcome: a lane must not pass or fail without learning
+// that evidence it read was thrown away, and which, and how to spell it.
+func reportStranded(read dogfoodRead, maxFlag int, stderr io.Writer) {
 	strands := dogfood.Stranded(read.verbs, read.receipts)
 	if len(strands) == 0 {
 		return
 	}
-	list := bounded.Capped(stderr, failMax, "DOGFOOD", "receipt", failMaxRemedy)
+	list := bounded.Capped(stderr, maxFlag, "DOGFOOD", "receipt", maxRemedy)
 	for _, s := range strands {
 		list.Line(oneline.Escape(oneline.Cap(s.Line(), oneline.TailBytes)))
 	}
@@ -257,14 +254,14 @@ func cmdDogfoodLedger(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("dogfood ledger", flag.ContinueOnError)
 	src := addDogfoodSourceFlags(fs)
 	receipts, authors, repo, gitTimeout := addDogfoodReadFlags(fs)
-	failMax := addFailMax(fs)
+	maxFlag := addMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{"receipts": receipts}) {
 		return 2
 	}
-	if !checkFailMax(fs, *failMax, stderr) {
+	if !checkMax(fs, *maxFlag, stderr) {
 		return 2
 	}
-	read, code := dogfoodGather("ledger", src, *receipts, *authors, *repo, *gitTimeout, *failMax, stderr)
+	read, code := dogfoodGather("ledger", src, *receipts, *authors, *repo, *gitTimeout, *maxFlag, stderr)
 	if code != 0 {
 		return code
 	}
@@ -276,7 +273,7 @@ func cmdDogfoodLedger(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, oneline.Escape(row.Line()))
 	}
 	fmt.Fprintln(stdout, oneline.Escape(summary.Line()))
-	reportStranded(read, *failMax, stderr)
+	reportStranded(read, *maxFlag, stderr)
 	return 0
 }
 
@@ -287,14 +284,14 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	requireAll := fs.Bool("require-all", false, "every verb in the list must have been run by a non-author, not only the ones with receipts")
 	allowEmpty := fs.Bool("allow-empty", false, "pass on an empty receipt set; without it, no receipts is a refusal and not a green line")
 	shippedDir := fs.String("shipped", "", "a checkout's cmd/ directory: the gate judges only the tools under it, the set a release ships")
-	failMax := addFailMax(fs)
+	maxFlag := addMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{"receipts": receipts}) {
 		return 2
 	}
-	if !checkFailMax(fs, *failMax, stderr) {
+	if !checkMax(fs, *maxFlag, stderr) {
 		return 2
 	}
-	read, code := dogfoodGather("gate", src, *receipts, *authors, *repo, *gitTimeout, *failMax, stderr)
+	read, code := dogfoodGather("gate", src, *receipts, *authors, *repo, *gitTimeout, *maxFlag, stderr)
 	if code != 0 {
 		return code
 	}
@@ -320,7 +317,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 		return refuseRan(stderr, " dogfood gate", fmt.Sprintf("no receipts were read from %s, so the gate has nothing to pass on; add receipts, or pass --allow-empty to say that is deliberate", oneline.Escape(*receipts)))
 	}
 	// The discarded receipts are said FIRST, and on every outcome.
-	reportStranded(read, *failMax, stderr)
+	reportStranded(read, *maxFlag, stderr)
 	findings, summary := dogfood.Gate(read.verbs, read.receipts, read.authors, *requireAll)
 	if len(findings) == 0 {
 		fmt.Fprintln(stdout, oneline.Escape(summary.GateLine(*requireAll)))
@@ -329,7 +326,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	// The token is one word: bounded escapes what it is given, and a token with
 	// a space in it came back as `DOGFOOD\x20GATE MORE` the first time this verb
 	// was run against this repository's own reference.
-	list := bounded.Capped(stderr, *failMax, "DOGFOOD", "verb", failMaxRemedy)
+	list := bounded.Capped(stderr, *maxFlag, "DOGFOOD", "verb", maxRemedy)
 	for _, f := range findings {
 		list.Line(oneline.Escape(oneline.Cap(f.Line(), oneline.TailBytes)))
 	}
@@ -351,7 +348,7 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 	issue := fs.Int("issue", 0, "the issue number of the edge filed, when there is one")
 	closes := fs.String("closes", "", "the id of the finding this run answers, as the gate prints it")
 	dryRun := fs.Bool("dry-run", false, "make every check and print the receipt; write nothing")
-	failMax := addFailMax(fs)
+	maxFlag := addMax(fs)
 	if !parseFlags(fs, args, stderr) {
 		return 2
 	}
@@ -373,11 +370,9 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	// The spelling is checked against the same list the ledger will read it
-	// against. A receipt for a verb spelled differently is refused here, where
-	// the run can say which verb was meant; accepted in silence, it would only
-	// surface later as a note that names no verb, and the bench would read as
-	// having dogfooded nothing at all.
-	verbs, code := src.verbList("record", *failMax, stderr)
+	// against, so a receipt for a verb spelled differently is refused now
+	// rather than stranded, unread, later.
+	verbs, code := src.verbList("record", *maxFlag, stderr)
 	if code != 0 {
 		return code
 	}

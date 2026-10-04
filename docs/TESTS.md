@@ -285,7 +285,7 @@ $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@examp
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE NO base=main head=card paths=sign/** findings=4
+HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 The `MORE` line is the same run with the cap lifted, quoted so it can be pasted
@@ -298,7 +298,7 @@ HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.exampl
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE FINDING reason=stray-file at=sign/RESULT.md: an added file matching the stray list's RESULT.md
-HYGIENE NO base=main head=card paths=sign/** findings=4
+HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 `--identity` takes one pair of angle brackets. A second pair is refused rather
@@ -748,6 +748,7 @@ APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true publish
 
 $ nova-cairn index --store ./cairns
 INDEX OK sessions=1 entries=1
+INDEX SESSION session=s1 entries=1
 INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
 
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
@@ -1144,8 +1145,8 @@ ANSWER OK rows=2 applied=0 would_apply=0 listed=2 refused=0 failed=0 left=0 outc
 
 $ nova-sprint answer --bar 0.8 --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
 judgment        card  kind    verb    p     act      why
-finish-t24-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --op decide.finish-t24-1.1:s1-1
-finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --op decide.finish-t24-1.1:s1-2
+finish-t24-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --op decide.finish-t24-1.1_s1-1
+finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --op decide.finish-t24-1.1_s1-2
 ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
 ```
 
@@ -1191,5 +1192,5 @@ issue, read-only, the same calls) and writes nothing, and its last line says so.
 before any issue is read, and `out=-` says no file was written. The import
 prints the same plan, one `IMPORT REPO` per repository, and the `sha256` of the
 file it wrote; verify names the same `sha256`, and when the two differ it says
-`VERIFY FAIL` with one `VERIFY MISSING`, `EXTRA` or `DRIFT` line per difference.
+`VERIFY FAILED` with one `VERIFY MISSING`, `EXTRA` or `DRIFT` line per difference.
 `differences=0` is the proof the tree holds what GitHub holds.

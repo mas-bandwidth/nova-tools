@@ -38,7 +38,7 @@ forever, by every line on every bus.
 **The fifth cost is removed for this form's own output, and there only.** The
 receipt `draft --reply-to` prints is one line, and every value on it is a
 `key=value` field through the main specification's one-line field escape, which
-escapes every whitespace character: **no field carries an unquoted space**, so a
+escapes every whitespace character: **no field carries an unquoted whitespace character**, so a
 shell boundary that word-splits the line can neither fuse two fields nor cut one
 in half, and a caller reconciles what happened field by field rather than by
 guessing where the tokens were. The receipt named in the last bullet above is

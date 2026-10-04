@@ -7,14 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestValidSyncRefusesWhatTheFleetRefuses: a name or width fleet up would
+// TestSyncProblemsRefusesWhatTheFleetRefuses: a name or width fleet up would
 // refuse, and a name twice, are refused whole.
-func TestValidSyncRefusesWhatTheFleetRefuses(t *testing.T) {
+func TestSyncProblemsRefusesWhatTheFleetRefuses(t *testing.T) {
 	t.Parallel()
-	why := ValidSync([]SyncMember{{"m1", 4}, {"m2", MaxWidth}})
-	require.Empty(t, why, "a valid sync: %s", why)
-	why = ValidSync(nil)
-	require.Empty(t, why, "an empty sync holds the fleet and is valid: %s", why)
+	ps := SyncProblems([]SyncMember{{"m1", 4}, {"m2", MaxWidth}})
+	require.Empty(t, ps, "a valid sync: %v", ps)
+	ps = SyncProblems(nil)
+	require.Empty(t, ps, "an empty sync holds the fleet and is valid: %v", ps)
 	for _, c := range []struct {
 		want []SyncMember
 		say  string
@@ -24,8 +24,9 @@ func TestValidSyncRefusesWhatTheFleetRefuses(t *testing.T) {
 		{[]SyncMember{{"m1", MaxWidth + 1}}, "a width wants a whole number from 1"},
 		{[]SyncMember{{"m1", 1}, {"m1", 2}}, "m1 is named twice"},
 	} {
-		why = ValidSync(c.want)
-		assert.Contains(t, why, c.say, "%v: %q, want %q", c.want, why, c.say)
+		ps = SyncProblems(c.want)
+		require.Len(t, ps, 1, "%v: %v", c.want, ps)
+		assert.Contains(t, ps[0].Why, c.say, "%v: %q, want %q", c.want, ps[0].Why, c.say)
 	}
 }
 

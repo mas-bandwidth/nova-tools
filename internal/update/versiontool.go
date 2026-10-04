@@ -72,7 +72,12 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 					f.String("file", "", "manifest of adopted tools: count how many answer")
 					f.String("bin", "", "directory holding the binaries")
 					f.String("out", "", "TSV snapshot to write")
-					f.Duration("timeout", snapshotChildTimeout, "one binary's read deadline")
+					// The two shapes carry two real defaults: --bin reads one
+					// binary under snapshotChildTimeout (SPEC-VERSION rule 11)
+					// and --file probes one adopted tool under
+					// snapshotAdoptedTimeout (SPEC-UPDATE) unless --timeout is
+					// given, so the help names both rather than one.
+					f.Duration("timeout", snapshotChildTimeout, "one binary's read deadline: 30s with --bin, 5s with --file unless --timeout is given")
 					f.Duration("budget", snapshotBudget, "whole run deadline")
 					f.Bool("dry-run", false, "read every binary and list the rows; write no --out")
 					// Neither path is guessed: both are the caller's to name

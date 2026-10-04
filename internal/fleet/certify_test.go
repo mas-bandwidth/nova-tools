@@ -211,7 +211,8 @@ func TestAWorkloadIsAFileWithFrontMatter(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, "tiny.card"), strings.Join([]string{
+	path := filepath.Join(dir, "tiny.card")
+	mustWrite(t, path, strings.Join([]string{
 		"roles: bench,services",
 		"expect: ^TINY OK",
 		"wall: yes",
@@ -219,10 +220,10 @@ func TestAWorkloadIsAFileWithFrontMatter(t *testing.T) {
 		"",
 		"echo TINY OK",
 	}, "\n")+"\n")
-	loads, err := ReadWorkloads(dir)
+	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.Len(t, loads, 1, "read %d workloads, want 1", len(loads))
-	w := loads[0]
+	w, err := ParseWorkload(path, raw)
+	require.NoError(t, err)
 	assert.Equal(t, "tiny", w.Class, "class = %q, want tiny (the class is the file name)", w.Class)
 	assert.True(t, w.AppliesTo(RoleBench), "roles = %v", w.Roles)
 	assert.True(t, w.AppliesTo(RoleServices), "roles = %v", w.Roles)
@@ -246,9 +247,7 @@ func TestAWorkloadWithoutARoleOrAnExpectIsRefused(t *testing.T) {
 		{"no body", "roles: bench\nexpect: ^OK\n\n\n", "body"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			mustWrite(t, filepath.Join(dir, "broken.card"), tc.body)
-			_, err := ReadWorkloads(dir)
+			_, err := ParseWorkload("broken.card", []byte(tc.body))
 			require.Error(t, err, "a broken workload was read without a refusal")
 			assert.Contains(t, err.Error(), tc.want, "refusal %q does not name %q", err, tc.want)
 		})

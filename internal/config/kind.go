@@ -936,7 +936,7 @@ func Argv(canonical string) []string {
 	return words
 }
 
-// splitList splits a comma (or space) list into sorted, deduplicated words.
+// splitList splits a comma (or whitespace) list into sorted, deduplicated words.
 func splitList(raw string) ([]string, error) {
 	seen := map[string]bool{}
 	var words []string

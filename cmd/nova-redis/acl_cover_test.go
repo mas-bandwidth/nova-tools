@@ -240,7 +240,7 @@ func TestAclCoverStoreSave(t *testing.T) {
 	}{
 		{"the store writes its ACL file", "OK", nil, true, ""},
 		{"the store keeps no ACL file", "",
-			storeReply("ERR This Redis instance has no ACL file set. Please use CONFIG SET aclfile"),
+			storeReply("ERR This Redis instance is not configured to use an ACL file. You may want to specify users via the ACL SETUSER command and then issue a CONFIG REWRITE (assuming you have a Redis configuration file set) in order to store users in the Redis configuration."),
 			false, ""},
 		{"the store fails", "", storeReply("ERR Saving the ACL to disk failed"), false, "Saving the ACL to disk failed"},
 	}

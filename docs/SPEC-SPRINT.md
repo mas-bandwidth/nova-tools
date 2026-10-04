@@ -2261,6 +2261,27 @@ epoch, and with no `--epoch` runs at the epoch that read finds (a clear between
 the read and the write is read again), so they need none; the coordinator
 given `--epoch` is held to it like any other actor.
 
+### preflight
+
+`nova-sprint preflight --brief-dir <dir> [--json] [--repo-dir <dir>]` reads a
+batch of briefs together, before any of them is added, and writes nothing: no
+card, no field, no store key changes. One brief is each `*.md` file in the
+directory in byte order of file name, its card id the file's base name without
+`.md`, read as `add --brief-dir` reads it (`decide.CardFilePaths`).
+
+A brief is held to the same card lint `add` holds it to (the same
+`lintBriefReads`: the rules of the sprint's recorded `--rules` file, else the
+built-in general rules). Every `DEPENDS-ON` id is a primary of the work table or
+a card of the directory, and none of them is dropped. No `PATHS` glob of a brief
+overlaps a `PATHS` glob of a ready, working or review card or of another brief
+of the batch, as `hygiene.MatchGlob` matches one glob against a path, so a broad
+`docs/*.md` overlaps a file below it that the glob matches. `TEST` names a test
+`git grep` finds at `BASE` in `--repo-dir`, and `BASE` exists there; with no
+`--repo-dir` both are unchecked. It prints one `PREFLIGHT <id> FAIL <check>:
+<why>` line per defect, `PREFLIGHT <id> OK` for a clean brief, and a last line
+`PREFLIGHT OK briefs=<n>` or `PREFLIGHT FAIL briefs=<n> failed=<m>`, exit 0 when
+every brief is clean and 1 otherwise. `--json` prints one object.
+
 ### Handing over the seat
 
 The holder (or the owner, `init --owner`, else NOVA_SPRINT_OWNER) gives the seat: `coordinator <name> --reason <text>`; with the holder away, `<name>` takes it with the owner's name, `coordinator <name> --take --approved-by <owner> --reason <text>`, refused without that name or with another (the owner, 2026-10-02: "you can be given coordinator status, or you can take it (with my permission only)").
