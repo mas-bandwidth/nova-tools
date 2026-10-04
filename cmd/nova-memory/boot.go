@@ -144,7 +144,8 @@ func readPin(name string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	// ignored: a file opened only for reading
+	defer func() { _ = f.Close() }()
 	var out []string
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
