@@ -21,7 +21,8 @@ import (
 // The read paths of where, card and the tick on a 2,000-card sprint, with the
 // server's own CPU seconds per operation (INFO cpu): what a verb costs the
 // store, not only the caller. Run with
-//   go test -tags functional -run XXX -bench ReadCost -benchtime 5x ./internal/sprint/store/
+//
+//	go test -tags functional -run XXX -bench ReadCost -benchtime 5x ./internal/sprint/store/
 func liveStoreB(b *testing.B) (*Store, *redis.Client) {
 	b.Helper()
 	addr := testredis.Start(b)
