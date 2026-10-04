@@ -42,12 +42,11 @@ func (f *fakeWake) send(at time.Time, from, subject, kind string) {
 
 // wakeRig is a fake world, a clock that moves only when the verb sleeps, and one state file.
 type wakeRig struct {
-	t     *testing.T
-	now   time.Time
-	f     *fakeWake
-	path  string
-	cfg   wakeCfg
-	polls int
+	t    *testing.T
+	now  time.Time
+	f    *fakeWake
+	path string
+	cfg  wakeCfg
 }
 
 func newWakeRig(t *testing.T) *wakeRig {
