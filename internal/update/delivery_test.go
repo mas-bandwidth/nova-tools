@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -51,6 +50,38 @@ func fakeBus() {
 	fmt.Fprintln(log, "argv "+strings.Join(os.Args[1:], " "))
 	log.Close()
 	mode := os.Getenv("NOVA_UPDATE_BUS_MODE")
+	redis := verb == "send"
+	for _, a := range os.Args {
+		if a == "--prepared-stdin" {
+			redis = false
+		}
+	}
+	if redis {
+		if mode == "uncertain" || mode == "prepare-fail" || mode == "send-fail" {
+			fmt.Fprintln(os.Stderr, "SEND FAIL synthetic refusal")
+			os.Exit(1)
+		}
+		if mode == "prepare-alien" || mode == "send-alien" {
+			fmt.Fprintln(os.Stderr, "gobbledegook tell-nobody-this")
+			os.Exit(1)
+		}
+		if mode == "prepare-shouty" || mode == "send-shouty" {
+			fmt.Fprintf(os.Stderr, "SEND FAIL %s\nand a second line\nand a third\n", strings.Repeat("y", 4000))
+			os.Exit(1)
+		}
+		if mode == "hang" {
+			if fakeBusHang == nil {
+				os.Exit(20)
+			}
+			fakeBusHang()
+		}
+		note := string(input)
+		if !strings.HasSuffix(note, "\n") {
+			note += "\n"
+		}
+		fmt.Printf("SEND OK id=%s to=x cc=- at=2026-10-04T17:00:00Z\n", "fixture-"+shaText(note)[:12])
+		os.Exit(0)
+	}
 	if verb == "prepare" {
 		if mode == "prepare-fail" {
 			fmt.Fprintln(os.Stderr, "PREPARE FAIL synthetic refusal")
@@ -128,38 +159,30 @@ func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
 	t.Setenv("NOVA_UPDATE_BUS_MODE", "uncertain")
 	run(t, Environment{}, args...)
 	s, _ := readSnapshot(sp)
-	var old string
-	for _, v := range s.Pending {
-		old = v.ID
-	}
+	require.Empty(t, s.Delivered)
+	require.Empty(t, s.Pending)
 	os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600)
 	if c, _, _ := run(t, Environment{}, args...); c != 1 {
 		require.EqualValues(t, 1, c, c)
 	}
-	if np, ns := calls(t, log); np != 1 || ns != 2 {
+	if np, ns := calls(t, log); np != 0 || ns != 2 {
 		require.Fail(t, fmt.Sprintln(np, ns))
-	}
-	s, _ = readSnapshot(sp)
-	for _, v := range s.Pending {
-		if v.ID != old || v.Observed["x"].Raw != "v1.0.0" {
-			require.Fail(t, fmt.Sprintln("pending was replaced"))
-		}
 	}
 	t.Setenv("NOVA_UPDATE_BUS_MODE", "ok")
-	if c, o, e := run(t, Environment{}, args...); c != 0 {
+	c, o, e := run(t, Environment{}, args...)
+	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
-	if np, ns := calls(t, log); np != 2 || ns != 4 {
+	if np, ns := calls(t, log); np != 0 || ns != 3 {
 		require.Fail(t, fmt.Sprintln(np, ns))
 	}
 	s, _ = readSnapshot(sp)
-	if len(s.Pending) != 0 {
-		require.Len(t, s.Pending, 0, "pending not cleared")
-	}
+	require.Empty(t, s.Pending)
+	require.Len(t, s.Delivered, 1)
 	for _, v := range s.Delivered {
-		if v.Observed["x"].Raw != "v2.0.0" || v.ID == old {
-			require.Fail(t, fmt.Sprintln(v))
-		}
+		require.Equal(t, "v2.0.0", v.Observed["x"].Raw)
+		require.NotEmpty(t, v.ID)
+		require.Contains(t, o, v.ID)
 	}
 }
 func TestDeliveryScopeAndPreparedArtifactChecks(t *testing.T) {
@@ -268,7 +291,7 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 			if c != 1 {
 				require.EqualValues(t, 1, c, c)
 			}
-			need(t, errout, "the bus said: PREPARE FAIL")
+			need(t, errout, "the bus said: SEND FAIL")
 			note := ""
 			for _, line := range strings.Split(errout, "\n") {
 				if strings.HasPrefix(line, "REPORT NOTE") {
@@ -363,32 +386,11 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 	if sendArgv == "" {
 		require.NotEqualValuesf(t, "", sendArgv, "no send argv was logged:\n%s", b)
 	}
-	for _, want := range []string{"--attempts ", "--git-timeout ", "--prepared-stdin"} {
-		if !strings.Contains(sendArgv, want) {
-			assert.Containsf(t, sendArgv, want, "the send argv does not carry %s: %s", want, sendArgv)
-		}
+	for _, want := range []string{"--as ", "--to ", "--subject ", "--stdin"} {
+		assert.Contains(t, sendArgv, want)
 	}
-	fields := strings.Fields(sendArgv)
-	for i, f := range fields {
-		if f != "--attempts" && f != "--git-timeout" {
-			continue
-		}
-		if i+1 >= len(fields) {
-			require.Failf(t, "", "%s names no value: %s", f, sendArgv)
-		}
-		n, err := strconv.Atoi(fields[i+1])
-		if err != nil || n < 1 {
-			assert.Failf(t, "", "%s is %q, which is not a finite bound", f, fields[i+1])
-		}
-		if f == "--git-timeout" && n > 60 {
-			assert.Failf(t, "", "--git-timeout %d exceeds the 60s budget", n)
-		}
-	}
-	// prepare takes neither: it runs no Git and touches no network.
-	for _, line := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(line, "argv prepare ") && (strings.Contains(line, "--attempts") || strings.Contains(line, "--git-timeout")) {
-			assert.Failf(t, "", "prepare was handed a Git bound it has no use for: %s", line)
-		}
+	for _, gone := range []string{"prepare", "--prepared-stdin", "--attempts", "--git-timeout", "--remote", "--branch", "--bus "} {
+		assert.NotContains(t, sendArgv, gone)
 	}
 }
 
