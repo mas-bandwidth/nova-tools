@@ -6,6 +6,7 @@ Score: 7.5/10
 README: 8.5/10
 
 ## Reasons
+The source under review is exactly 0c5803c2de406c1b0b2b0841f579c9bf73406b1c; the reading and every file:line below describe that snapshot.
 Reading order was README.md top to bottom, then AGENTS.md, then the nova-ci
 section of docs/CLI.md and its spec docs/SPEC-CI.md, then cmd/nova-ci from
 main.go into the internal packages it leans on (internal/ci/slowtests,
