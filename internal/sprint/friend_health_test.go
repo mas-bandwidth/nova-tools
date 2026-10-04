@@ -19,12 +19,13 @@ func obs(state string, seen time.Time, gen uint64) FriendHealth {
 }
 
 // NotHealth refuses in order: a friend not on the table, no seat, the wrong
-// sender, a stale generation, a proof not newer than the row's; and accepts
-// the rest. Nothing is read: it is the fence the step applies on its own
-// snapshot.
+// sender, a stale generation, a proof dated after the server's clock, a proof
+// not newer than the row's; and accepts the rest. Nothing is read: it is the
+// fence the step applies on its own snapshot, its clock passed in.
 func TestNotHealthFencesSenderGenerationAndOrder(t *testing.T) {
 	t.Parallel()
 	prev := obs(Up, h0, 2)
+	now := h0.Add(time.Minute) // the server's clock
 	tests := []struct {
 		name   string
 		holder string
@@ -38,12 +39,13 @@ func TestNotHealthFencesSenderGenerationAndOrder(t *testing.T) {
 		{"stale generation", "rowan", 3, HealthReq{Friend: "amy", Who: "rowan", Known: true, Obs: obs(Up, h0, 2)}, "the seat is rowan's at generation 3, and this observation names generation 2"},
 		{"older proof", "rowan", 2, HealthReq{Friend: "amy", Who: "rowan", Known: true, Prev: prev, Obs: obs(Up, h0.Add(-time.Second), 2)}, "the row holds a proof seen at 2026-10-04T15:00:00Z, and this one's is not newer"},
 		{"the same proof", "rowan", 2, HealthReq{Friend: "amy", Who: "rowan", Known: true, Prev: prev, Obs: obs(Down, h0, 2)}, "is not newer"},
+		{"a proof dated after the server's clock", "rowan", 2, HealthReq{Friend: "amy", Who: "rowan", Known: true, Prev: prev, Obs: obs(Up, now.Add(time.Second), 2)}, "the proof is dated 2026-10-04T15:01:01Z, after the server's clock, 2026-10-04T15:01:00Z"},
 		{"a newer proof", "rowan", 2, HealthReq{Friend: "amy", Who: "rowan", Known: true, Prev: prev, Obs: obs(Up, h0.Add(time.Second), 2)}, ""},
 		{"the first proof", "rowan", 1, HealthReq{Friend: "amy", Who: "rowan", Known: true, Obs: obs(Up, h0, 1)}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			why := NotHealth(tt.holder, tt.gen, tt.r)
+			why := NotHealth(tt.holder, tt.gen, now, tt.r)
 			if tt.want == "" {
 				assert.Empty(t, why)
 				return
@@ -80,6 +82,12 @@ func TestObserveFriendPlansTheRecordOrRefuses(t *testing.T) {
 		assert.Equal(t, "amy", p.Refused[0].Key)
 		assert.Contains(t, p.Refused[0].Why, "generation 1")
 	}
+	// the snapshot's clock is the server's: a proof dated after it is refused
+	p = ObserveFriend(s, HealthReq{Friend: "amy", Who: "rowan", Known: true, Obs: obs(Up, h0.Add(time.Second), 2)})
+	assert.Nil(t, p.Health)
+	if assert.Len(t, p.Refused, 1) {
+		assert.Contains(t, p.Refused[0].Why, "after the server's clock")
+	}
 }
 
 // The derived word: up only for an up observation under the current seat with
@@ -94,6 +102,7 @@ func TestObservedStatusIsUpOrDown(t *testing.T) {
 	assert.Equal(t, Up, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter-time.Second)))
 	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter)), "exactly ten seconds is down")
 	assert.Equal(t, Down, ObservedStatus(up, 3, h0), "an old seat's proof never looks up under a new seat")
+	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(-time.Second)), "a proof dated after now is no proof: a negative age is not under ten seconds")
 	assert.Equal(t, Down, ObservedStatus(obs(Asleep, h0, 2), 2, h0), "asleep shows as down")
 	assert.Equal(t, Down, ObservedStatus(obs(Down, h0, 2), 2, h0))
 }

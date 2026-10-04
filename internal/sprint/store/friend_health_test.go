@@ -112,6 +112,32 @@ func TestFirstProofIsUpAndTenSecondsWithoutOneIsDown(t *testing.T) {
 	assert.Equal(t, sprint.Up, h.friendStatus("amy"))
 }
 
+// A proof dated after the server's clock is refused and writes nothing (Stella's
+// review of PR 5305: a --seen ahead held a friend up until it plus ten seconds,
+// and the order then refused every real observation before it); one at the
+// server's clock is accepted, and a later real one after it.
+func TestAProofDatedAfterTheServersClockIsRefused(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2}})
+	require.NoError(t, err)
+	_, _, _, err = h.health("amy", "tester", sprint.Up, h.now.Add(time.Hour), 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "after the server's clock")
+	assert.Equal(t, sprint.Down, h.friendStatus("amy"), "a refusal writes nothing")
+	_, ok, err := h.m.GetKey(h.ctx, friendHealthKey("amy"))
+	require.NoError(t, err)
+	assert.False(t, ok, "no record")
+
+	_, status, _, err := h.health("amy", "tester", sprint.Up, h.now, 1)
+	require.NoError(t, err, "a proof at the server's clock")
+	assert.Equal(t, sprint.Up, status)
+	h.tick(time.Second)
+	_, status, _, err = h.health("amy", "tester", sprint.Up, h.now, 1)
+	require.NoError(t, err, "the next real proof is newer, never refused by a future one")
+	assert.Equal(t, sprint.Up, status)
+}
+
 // The same observation again is answered as recorded and writes nothing; an
 // older or equal proof with another word is refused and writes nothing; a
 // fresh raw beat never overrides an observed down; the coordinator's hold

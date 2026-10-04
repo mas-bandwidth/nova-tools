@@ -334,3 +334,4 @@ MCSeatHealthBrokenOlderProof.cfg	MCSeatHealth.tla	action	ProofNeverGoesBack	igno
 MCSeatHealthBrokenBeatWins.cfg	MCSeatHealth.tla	invariant	ObservedNeverUpByBeat	ignore-terminal	seathealth	required	-
 MCSeatHealthBrokenNoExpiry.cfg	MCSeatHealth.tla	invariant	UpOnlyOnFreshProof	ignore-terminal	seathealth	required	-
 MCSeatHealthBrokenSameGen.cfg	MCSeatHealth.tla	action	GenerationStepsWithTheSeat	ignore-terminal	seathealth	required	-
+MCSeatHealthBrokenFuture.cfg	MCSeatHealth.tla	invariant	ProofNeverAhead	ignore-terminal	seathealth	required	-

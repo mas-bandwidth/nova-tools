@@ -312,7 +312,7 @@ func (a *app) cmdFriendHealth(args []string, stdout, stderr io.Writer) int {
 	const name = "friend health"
 	fs, c := a.verbSetup(name)
 	state := fs.String("state", "", "what the keepalive saw: up (her session answered), asleep (her daemon answered, her session did not) or down")
-	seen := fs.String("seen", "", "when the proof this rests on was seen, RFC3339 (a session pong for up, a daemon pong for asleep, the judgment for down); a proof not newer than the row's is refused")
+	seen := fs.String("seen", "", "when the proof this rests on was seen, RFC3339 (a session pong for up, a daemon pong for asleep, the judgment for down); a proof not newer than the row's, or dated after the server's clock, is refused")
 	generation := fs.Uint64("generation", 0, "the seat's generation the daemon read (nova-sprint seat); any other than the seat's now is refused")
 	queue := fs.Int("queue", 0, "what her pong said she has queued")
 	working := fs.Int("working", 0, "what her pong said she is working")

@@ -72,13 +72,17 @@ func TestFriendHealthIsTheSeatsAndFencedByItsGeneration(t *testing.T) {
 
 	ta.ok("coordinator stella --reason 'handing over'")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "an old seat's proof never looks up under a new seat")
-	later := ta.now.Add(time.Second).UTC().Format(time.RFC3339)
+	ta.a.sleep(time.Second)
+	later := ta.now.UTC().Format(time.RFC3339)
 	code, _, errs = ta.do("friend health amy --state up --seen " + later + " --generation 1 --actor stella")
 	assert.Equal(t, 1, code, errs)
 	assert.Contains(t, errs, "the seat is stella's at generation 2, and this observation names generation 1: read the seat again (nova-sprint seat); nothing was changed")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "a refusal writes nothing")
 	ta.ok("friend health amy --state up --seen " + later + " --generation 2 --actor stella")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| up")
+	code, _, errs = ta.do("friend health amy --state up --seen " + ta.now.Add(time.Hour).UTC().Format(time.RFC3339) + " --generation 2 --actor stella")
+	assert.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "after the server's clock", "a proof dated after the server's clock is refused")
 
 	ta.a.sleep(sprint.FriendObservedDownAfter + time.Second)
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "ten seconds without a newer proof")
@@ -114,7 +118,8 @@ func TestTheFriendsTableShowsUpHeldOrDownWithTheReason(t *testing.T) {
 	ta.json("where", &w)
 	assert.Equal(t, sprint.Down, w.Tables[sprint.Friends]["amy"]["status"])
 
-	later := ta.now.Add(time.Second).UTC().Format(time.RFC3339)
+	ta.a.sleep(time.Second)
+	later := ta.now.UTC().Format(time.RFC3339)
 	back := ta.now.Add(2 * time.Hour)
 	ta.ok("friend health amy --state down --seen " + later + " --generation 1 --reason 'opus rate limited' --until " + back.UTC().Format(time.RFC3339))
 	frame = tableOf(ta.frame(), sprint.Friends)
@@ -127,7 +132,8 @@ func TestTheFriendsTableShowsUpHeldOrDownWithTheReason(t *testing.T) {
 	assert.True(t, strings.HasPrefix(w.Tables[sprint.Friends]["amy"]["status"], sprint.Held+" ("), "where --json carries the cell as printed")
 	ta.ok("friend up amy")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "the hold lifted, the observation (down) stands")
-	ta.ok("friend health amy --state up --seen " + ta.now.Add(2*time.Second).UTC().Format(time.RFC3339) + " --generation 1")
+	ta.a.sleep(time.Second)
+	ta.ok("friend health amy --state up --seen " + ta.now.UTC().Format(time.RFC3339) + " --generation 1")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| up")
 }
 
