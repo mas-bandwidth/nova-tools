@@ -28,7 +28,8 @@ func TestGitHubStubInterceptsHTTPCalls(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, "get: %v", err)
 	}
-	defer resp.Body.Close()
+	// ignored: a close after the read that already succeeded
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusForbidden {

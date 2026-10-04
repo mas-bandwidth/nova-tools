@@ -55,7 +55,8 @@ func CommandCounter(t *testing.T) (addr string, count func() int64) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				defer c.Close()
+				// ignored: a test fixture's connection; the test's own assertions are the report
+				defer func() { _ = c.Close() }()
 				serveCounted(c, &n)
 			}()
 		}
