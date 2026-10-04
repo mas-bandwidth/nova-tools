@@ -92,9 +92,10 @@ func (r *landRig) card(id string, files map[string]string) string {
 }
 
 // Two cards that each delete a debt row and move the shared ceiling line conflict line
-// by line in the generated ledger; land takes the tip's side, regenerates the ledger at
-// the merged tree with its tests' update run, commits the merge naming the card and the
-// ledger, and lands both, the resolution on the card's timeline. Anything else is
+// by line in the generated ledger; land takes the tip's side and commits the merge naming
+// the card and the ledger, then regenerates the ledger once at the batch's tip with its
+// tests' update run, one commit, and lands both, the resolution on the card's timeline.
+// A regeneration that fails blames the card whose merge deferred it. Anything else is
 // refused as a conflict as before, the merge aborted and the card stuck: a conflict
 // outside the generated ledgers (a prose file, beside a ledger or alone, a Go file in a
 // ledger's directory), an update run that fails, one that writes a tracked file or a new
@@ -170,14 +171,16 @@ func TestLandResolvesAConflictOnlyInGeneratedLedgers(t *testing.T) {
 			assert.Equal(t, 0, code, out+errs)
 			assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
 			assert.NotEqual(t, before, r.git(r.remote, "rev-parse", "main"))
-			assert.Equal(t, []string{"land s1-2 (sprint stream s1)", "land s1-1 (sprint stream s1)", "the debt", "base"}, r.mainLog())
+			assert.Equal(t, []string{"land: the generated ledgers regenerated (sprint stream s1)", "land s1-2 (sprint stream s1)", "land s1-1 (sprint stream s1)", "the debt", "base"}, r.mainLog())
 			assert.Equal(t, "# ceiling: 0", r.git(r.remote, "show", "main:"+fakeLedger), "the ledger is the merged tree's, regenerated")
 			assert.Equal(t, "one", r.git(r.remote, "show", "main:notes.tsv"))
 			body := r.git(r.remote, "log", "-1", "--format=%b", "main")
-			assert.Contains(t, body, "The generated ledgers "+fakeLedger+" conflicted. The tip's side was taken and TestFakeLedger regenerated them at the merged tree (NOVA_CI_UPDATE=1).")
+			assert.Contains(t, body, "The generated ledgers "+fakeLedger+" conflicted at the merges of s1-2. The tip's side was taken at each merge and TestFakeLedger regenerated them once at the batch's tip (NOVA_CI_UPDATE=1).")
+			merge := r.git(r.remote, "log", "-1", "--format=%b", "main~1")
+			assert.Contains(t, merge, "The generated ledgers "+fakeLedger+" conflicted. The tip's side was taken; TestFakeLedger regenerate them once at the batch's tip (NOVA_CI_UPDATE=1), in the commit after the batch's merges.")
 			assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
 			story := r.ok("card s1-2")
-			assert.Contains(t, story, "merged into s1 and landed by coordinator in a batch of 2 (with s1-1), ci green; the generated ledgers "+fakeLedger+" conflicted and were regenerated at the merge by TestFakeLedger (NOVA_CI_UPDATE=1)")
+			assert.Contains(t, story, "merged into s1 and landed by coordinator in a batch of 2 (with s1-1), ci green; the generated ledgers "+fakeLedger+" conflicted; the tip's side was taken at the merge and TestFakeLedger regenerated them once at the batch's tip (NOVA_CI_UPDATE=1)")
 			assert.NotContains(t, r.ok("card s1-1"), "regenerated", "a card that merged plainly says nothing more")
 			r.clean()
 		})

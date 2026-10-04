@@ -8,14 +8,17 @@ package main
 // changed go.mod"), and a module that needs them changed fails the run, which is the
 // card's finding.
 //
-// The tree gate is what every tip of the batch branch passes before the next head is
-// merged: the module builds and vets (`go build ./...`, `go vet ./...`), and when a
-// head changes a Go file, a document, or testdata (.go, .md, testdata/), the packages
-// that test the tree itself (treeTests, where the clone has them) pass. The base's tip
-// is gated once a batch before any head is merged, so a base that is red refuses the
-// batch and blames no card. A head whose merged tree is red is taken off the batch branch
-// and ends the batch as a head that does not merge does, the gate's run and output its
-// finding. A clone with no go.mod has no module and no gate.
+// The tree gate is what the tip of the batch branch passes before it is pushed: the
+// module builds and vets (`go build ./...`, `go vet ./...`), and when the batch changes a
+// Go file, a document, or testdata (.go, .md, testdata/), the packages that test the tree
+// itself (treeTests, where the clone has them) pass. The base's tip is gated once before
+// any head is merged, so a base that is red refuses the batch and blames no card. Every
+// head is merged and checked by script first; the gate runs once, on the batch's tip
+// (gateBatch). A red tip is bisected (greenPrefix): the first head whose prefix is red
+// ends the batch as a head that does not merge does, the gate's run and output its
+// finding, and the green prefix before it lands. Every go run uses the lander's own
+// GOCACHE when it has one (app.landGoCache). A clone with no go.mod has no module and no
+// gate.
 
 import (
 	"context"
@@ -42,7 +45,11 @@ var treeTests = []string{"internal/docs", "internal/ci"}
 // goRun runs one go command (run) in the clone, in the lander's environment with
 // GOFLAGS=-mod=readonly (caller flags preserved) and set (NAME=value each); its combined output.
 func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...string) (string, error) {
-	b := subproc.Prepare(ctx, landGoBudget, run[0], run[1:]...)
+	name := run[0]
+	if name == "go" && l.a != nil && l.a.landGo != "" {
+		name = l.a.landGo
+	}
+	b := subproc.Prepare(ctx, landGoBudget, name, run[1:]...)
 	defer b.Cancel()
 	var env []string
 	if l.a != nil {
@@ -50,6 +57,11 @@ func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...str
 	}
 	if env == nil {
 		env = os.Environ()
+	}
+	if l.goCache != "" {
+		// the lander's own build cache, warm across its batches and its runs, which no
+		// other build evicts (cmdLand, app.landGoCache)
+		set = append([]string{"GOCACHE=" + l.goCache}, set...)
 	}
 	b.Cmd.Dir, b.Cmd.Env = dir, withEnv(env, append([]string{readonlyGoFlags(env)}, set...)...)
 	out, err := b.Cmd.CombinedOutput()
@@ -245,26 +257,128 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	return ""
 }
 
-// gateCard is the tree gate on one card merged onto the batch branch at before: red, the
-// card is taken off the batch branch (reset to before) and ends the batch as a head that
-// does not merge does, the finding its reason; card and env are mergeHead's. A merge that
-// made no commit (the head is in the base already) is not gated: it changes nothing the
-// base does not hold.
-func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before string) (card, env string) {
-	after, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil || after == before {
-		return "", ""
+// landProbe is one tree gate of a prefix of the batch: the tip gated (the prefix's last
+// merge, or the commit regenerating the generated ledgers on it), the finding ("" green),
+// whether the finding is the regeneration's, and whether the tree tests ran.
+type landProbe struct {
+	tip, why      string
+	ledger, tests bool
+}
+
+// greenPrefix is the longest prefix of n merged heads the gate passes, asking red(k) of
+// the prefix of k heads: the whole batch first, the one gate a green batch costs; on red,
+// a bisection between the base (gated green before any merge: k = 0) and the shortest
+// prefix known red, so a red batch of n costs about log2(n) more gates. The head after the
+// prefix is the one that turns it red (red(k+1)); when the gate is not monotone the prefix
+// found is still one the gate passed.
+func greenPrefix(n int, red func(k int) bool) int {
+	if n == 0 || !red(n) {
+		return n
 	}
-	changed, err := l.git(ctx, dir, "diff", "--name-only", "-M", before, after)
+	lo, hi := 0, n
+	for hi-lo > 1 {
+		mid := lo + (hi-lo)/2
+		if red(mid) {
+			hi = mid
+		} else {
+			lo = mid
+		}
+	}
+	return lo
+}
+
+// gateBatch gates the merged batch once (docs/SPEC-SPRINT.md section 7, the tree gate):
+// the generated ledgers the merges deferred regenerated at its tip and committed, then the
+// tree gate on that tip. Red, it bisects (greenPrefix) to the first head that turns the
+// batch red and leaves the batch branch at the green prefix before it (its ledgers
+// regenerated there): green is how many cards land, failed the card blamed, with the
+// finding. env is git failing for a cause that is no card's. tips are each merge's commit.
+func (l *lander) gateBatch(ctx context.Context, dir, stream, baseSha string, cards []landCard, tips []string, t *landTimes) (green int, failed conflictCard, env string) {
+	probes := map[int]landProbe{}
+	green = greenPrefix(len(cards), func(k int) bool {
+		if env != "" {
+			return true // stop asking: the batch is refused whatever the answer
+		}
+		p, penv := l.probe(ctx, dir, stream, baseSha, cards[:k], tips[k-1], t)
+		if penv != "" {
+			env = penv
+			return true
+		}
+		probes[k] = p
+		return p.why != ""
+	})
+	if env != "" {
+		return 0, failed, env
+	}
+	at := baseSha
+	l.greenTip = ""
+	if green > 0 {
+		p := probes[green]
+		at = p.tip
+		if p.tests {
+			l.greenTip = at
+		}
+	}
+	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", at); err != nil {
+		return 0, failed, "the batch branch could not be reset to its green prefix: " + firstLine("", err)
+	}
+	if green < len(cards) {
+		failed = blamed(cards[green], probes[green+1])
+	}
+	return green, failed, ""
+}
+
+// blamed is the card a red probe blames, as the conflict fact names it: a regeneration
+// that failed on a card that deferred its ledgers is its merge that does not merge, as
+// before the regeneration moved to the batch's tip; one that failed on any other card, the
+// regeneration's; a red gate, the tree gate's finding.
+func blamed(c landCard, p landProbe) conflictCard {
+	why := "the head " + c.head + " of " + c.id + " fails the tree gate: " + p.why
+	switch {
+	case p.ledger && len(c.regen) > 0:
+		why = "the head " + c.head + " of " + c.id + " does not merge: " + c.mergeWhy + "; " + p.why
+	case p.ledger:
+		why = "the head " + c.head + " of " + c.id + " fails the generated ledgers' regeneration at the batch's tip: " + p.why
+	}
+	return conflictCard{landCard: c, why: why, kind: c.mergeKind, paths: c.mergePaths}
+}
+
+// probe gates the prefix of the batch whose last merge is tip: the batch branch reset
+// there, the generated ledgers any of its merges deferred regenerated (regenBatch), then
+// the tree gate, the tree tests too when the prefix changes a file they read (treeTested).
+// env is git failing for a cause that is no card's.
+func (l *lander) probe(ctx context.Context, dir, stream, baseSha string, cards []landCard, tip string, t *landTimes) (landProbe, string) {
+	p := landProbe{tip: tip}
+	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", tip); err != nil {
+		return p, "the batch branch could not be reset to " + tip + " for the tree gate: " + firstLine("", err)
+	}
+	if deferredLedgers(cards) {
+		start := time.Now()
+		why, env := l.regenBatch(ctx, dir, stream, cards)
+		since(&t.Ledger, start)
+		if env != "" {
+			return p, env
+		}
+		if why != "" {
+			p.why, p.ledger = why, true
+			return p, ""
+		}
+		at, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return p, "the batch branch has no tip after the ledgers' regeneration: " + firstLine("", err)
+		}
+		p.tip = at
+	}
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
+		return p, "" // no module, no gate (treeGate)
+	}
+	changed, err := l.git(ctx, dir, "diff", "--name-only", "-M", baseSha, p.tip)
 	if err != nil {
-		return "", "the files the merge of " + c.id + " changed could not be listed: " + firstLine("", err)
+		return p, "the files the batch changed could not be listed: " + firstLine("", err)
 	}
-	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
-	if why == "" {
-		return "", ""
-	}
-	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
-		return "", "the batch branch could not be reset after " + c.id + " failed the tree gate: " + firstLine("", err)
-	}
-	return "the head " + c.head + " of " + c.id + " fails the tree gate: " + why, ""
+	p.tests = slices.ContainsFunc(strings.Split(changed, "\n"), treeTested)
+	start := time.Now()
+	p.why = l.treeGate(ctx, dir, p.tests)
+	since(&t.Gate, start)
+	return p, ""
 }

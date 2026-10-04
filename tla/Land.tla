@@ -18,11 +18,15 @@
 \*   epoch     the store's epoch (a clear moves it and empties the tables)
 \*   base      the heads the remote base holds
 \*   tip       the remote base's tip, a counter: every change to the base moves it
-\*   lphase    the lander's step: idle, read, built, checked, pushed
-\*             (reportfirst: idle, read, built, reported)
+\*   lphase    the lander's step: idle, read, merged, built, checked, pushed
+\*             (reportfirst: idle, read, merged, built, reported)
 \*   lq        the queue as the lander read it, as heads (pinned)
-\*   lbatch    the batch it built: a prefix of lq (a card that stops the batch,
-\*             a conflict or a missing head, ends it, so any non-empty prefix)
+\*   lmerged   the heads it merged, each --no-ff with its scripted checks: a
+\*             prefix of lq (a card that stops the merges, a conflict, a missing
+\*             head or a failed check, ends it, so any non-empty prefix)
+\*   lbatch    the batch the tree gate passed: the longest prefix of lmerged
+\*             holding no red head (the gate runs once on the merged tip and, red,
+\*             bisects to the first red head), possibly empty
 \*   lep       the epoch the lander holds (the caller's --epoch, else the one read)
 \*   lrep      the store's epoch when the lander read it
 \*   ltip      the base's tip the batch was built on
@@ -34,6 +38,9 @@
 \*             lander holds (a clear between the check and the push)
 \*   stalerec  a ghost: a report recorded a landing at an epoch other than
 \*             the one the lander holds
+\*   redpush   a ghost: a push held a red head (one in Bad)
+\*   bisected  a ghost: a push of a non-empty green prefix shorter than the
+\*             merged run, after the gate found it red
 \*   lpushed   a ghost: the heads this lander itself pushed for the store's
 \*             epoch (a clear empties it, and a push made for an epoch the
 \*             store has left adds nothing), so the stranded witness names the
@@ -42,7 +49,10 @@
 \*
 \* THE ACTIONS. The lander's, each a call in land.go: Read (the queue with its
 \* heads, the epoch and the tip; a caller's epoch the store is not at is
-\* refused here, before any git: cmdLand), Build, Check (the queue's heads and
+\* refused here, before any git: cmdLand), Build (the merges: build), Gate (the
+\* tree gate once on the merged tip, the generated ledgers regenerated there
+\* first, and on red the bisection to the green prefix: gateBatch; it touches
+\* only the clone, so it is one step), Check (the queue's heads and
 \* the epoch read again just before the push: queueHead), Push (git push: a
 \* moved tip is rejected and the batch rebuilt and checked again once, then
 \* given up), Report (one store step, lander.step, fenced to the epoch held,
@@ -63,6 +73,11 @@
 \*     the store was not at when the lander read it.
 \*   ReportHoldsTheEpoch: no report records a landing at an epoch the lander
 \*     does not hold.
+\*   GatedPush: no push holds a red head. A RED HEAD is a constant set, Bad:
+\*     the first attempt of each card in BadCards, so a rework (attempt 2)
+\*     mends it; a tree is red exactly when it holds a red head (the gate is
+\*     monotone in the heads merged, which the bisection assumes; when it is
+\*     not, the prefix landed is still one the gate passed).
 \*   Recovers: a batch pushed and not reported (a crash, or a report the guard
 \*     refused) is recorded by running the lander again: under fairness, once
 \*     the outside is quiet, no queued card's current head stays in the base.
@@ -75,7 +90,9 @@
 \* lets a rework replace a card's head after the check: the report's guard,
 \* which compares heads and not ids, refuses it.
 \* Reversed witnesses: ReachStranded (the lander's own push left unreported,
-\* so Recovers is not vacuous) and ReachStalePush.
+\* so Recovers is not vacuous), ReachStalePush, and ReachGreenPrefix (a red
+\* merged run bisected and its green prefix pushed, so GatedPush is not kept
+\* by never pushing).
 \*
 \* WHAT RECOVERS DOES NOT COVER. It is proved once the outside goes quiet
 \* (the instance caps outside events at MaxEvents), so it says nothing of an
@@ -100,27 +117,41 @@
 \*   "noepoch" reports with the heads guarded and no fence on the epoch
 \*     (ReportHoldsTheEpoch fails: a push, a clear, the same head accepted
 \*     again in the new epoch, and the old run's report records it there).
+\*   "nogate" pushes the whole merged run with no tree gate (GatedPush fails:
+\*     a red head merged is pushed).
 \*
 \* WHAT IS NOT MODELLED. The check (--check), the facts that stop a stream
 \* (conflict, red, rejected) and resume: a refusal is the lander going idle
 \* with the store unchanged. A card's attempts are counted across a clear, so
-\* a head is never reused by another card. One stream, one base.
+\* a head is never reused by another card. One stream, one base. The cap on a
+\* batch (--batch-max) is a shorter Build; the generated ledgers regenerated at
+\* the merged tip are part of the tree the gate passes or fails.
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Cards, MaxAttempts, MaxEpoch, MaxEvents, Broken
+CONSTANTS Cards, MaxAttempts, MaxEpoch, MaxEvents, Broken, BadCards
 
 VARIABLES queue, att, landed, epoch, base, tip,
-          lphase, lq, lbatch, lep, lrep, ltip, tries,
-          events, badcaller, stalepush, stalerec, lpushed
+          lphase, lq, lmerged, lbatch, lep, lrep, ltip, tries,
+          events, badcaller, stalepush, stalerec, lpushed, redpush, bisected
 
 store == <<queue, att, landed, epoch>>
 remote == <<base, tip>>
-lander == <<lphase, lq, lbatch, lep, lrep, ltip, tries>>
-ghosts == <<badcaller, stalepush, stalerec, lpushed>>
-vars == <<queue, att, landed, epoch, base, tip, lphase, lq, lbatch, lep, lrep, ltip, tries,
-          events, badcaller, stalepush, stalerec, lpushed>>
+lander == <<lphase, lq, lmerged, lbatch, lep, lrep, ltip, tries>>
+ghosts == <<badcaller, stalepush, stalerec, lpushed, redpush, bisected>>
+vars == <<queue, att, landed, epoch, base, tip, lphase, lq, lmerged, lbatch, lep, lrep, ltip, tries,
+          events, badcaller, stalepush, stalerec, lpushed, redpush, bisected>>
 
 Heads == Cards \X (1..MaxAttempts)
+
+\* The red heads: the first attempt of each card in BadCards.
+Bad == BadCards \X {1}
+
+\* The index of the first red head of s, Len(s) + 1 when none; the gate's
+\* bisection finds it, and the batch is the prefix before it.
+FirstRed(s) == IF \E i \in 1..Len(s) : s[i] \in Bad
+               THEN CHOOSE i \in 1..Len(s) : s[i] \in Bad /\ \A j \in 1..(i - 1) : s[j] \notin Bad
+               ELSE Len(s) + 1
+GreenPrefix(s) == SubSeq(s, 1, FirstRed(s) - 1)
 
 Range(s) == {s[i] : i \in 1..Len(s)}
 
@@ -157,7 +188,7 @@ TypeOK ==
   /\ epoch \in 0..MaxEpoch
   /\ base \subseteq Heads
   /\ tip \in Nat
-  /\ lphase \in {"idle", "read", "built", "checked", "pushed", "reported"}
+  /\ lphase \in {"idle", "read", "merged", "built", "checked", "pushed", "reported"}
   /\ lep \in 0..MaxEpoch
   /\ lrep \in 0..MaxEpoch
   /\ tries \in 0..1
@@ -166,12 +197,15 @@ TypeOK ==
   /\ stalepush \in BOOLEAN
   /\ stalerec \in BOOLEAN
   /\ lpushed \subseteq Heads
+  /\ redpush \in BOOLEAN
+  /\ bisected \in BOOLEAN
 
 Init ==
   /\ queue = <<>> /\ att = [c \in Cards |-> 1] /\ landed = {} /\ epoch = 0
   /\ base = {} /\ tip = 0
-  /\ lphase = "idle" /\ lq = <<>> /\ lbatch = <<>> /\ lep = 0 /\ lrep = 0 /\ ltip = 0 /\ tries = 0
+  /\ lphase = "idle" /\ lq = <<>> /\ lmerged = <<>> /\ lbatch = <<>> /\ lep = 0 /\ lrep = 0 /\ ltip = 0 /\ tries = 0
   /\ events = 0 /\ badcaller = FALSE /\ stalepush = FALSE /\ stalerec = FALSE /\ lpushed = {}
+  /\ redpush = FALSE /\ bisected = FALSE
 
 \* ---- the lander (land.go) ----
 
@@ -183,16 +217,27 @@ Read ==
     /\ lphase = "idle" /\ Len(queue) > 0
     /\ Broken = "latepoch" \/ cep = epoch
     /\ lphase' = "read" /\ lq' = QHeads /\ lep' = cep /\ lrep' = epoch /\ ltip' = tip /\ tries' = 0
-    /\ UNCHANGED store /\ UNCHANGED remote /\ UNCHANGED lbatch
+    /\ UNCHANGED store /\ UNCHANGED remote /\ UNCHANGED <<lmerged, lbatch>>
     /\ UNCHANGED events /\ UNCHANGED ghosts
 
-\* Build: the pinned heads merged in queue order, ended by the first card
-\* that stops it.
+\* Build: the pinned heads merged in queue order, each --no-ff with its
+\* scripted checks, ended by the first card that stops the merges.
 Build ==
   /\ lphase = "read"
-  /\ \E n \in 1..Len(lq) : lbatch' = SubSeq(lq, 1, n)
-  /\ lphase' = "built"
-  /\ UNCHANGED store /\ UNCHANGED remote /\ UNCHANGED <<lq, lep, lrep, ltip, tries>>
+  /\ \E n \in 1..Len(lq) : lmerged' = SubSeq(lq, 1, n)
+  /\ lphase' = "merged"
+  /\ UNCHANGED store /\ UNCHANGED remote /\ UNCHANGED <<lq, lbatch, lep, lrep, ltip, tries>>
+  /\ UNCHANGED events /\ UNCHANGED ghosts
+
+\* Gate: the tree gate once on the merged tip; red, the bisection to the first
+\* red head, and the batch is the green prefix before it (empty: the lander
+\* goes idle, the red head reported as a conflict, which is not modelled).
+\* nogate takes the whole merged run.
+Gate ==
+  /\ lphase = "merged"
+  /\ lbatch' = IF Broken = "nogate" THEN lmerged ELSE GreenPrefix(lmerged)
+  /\ lphase' = IF Len(lbatch') = 0 THEN "idle" ELSE "built"
+  /\ UNCHANGED store /\ UNCHANGED remote /\ UNCHANGED <<lq, lmerged, lep, lrep, ltip, tries>>
   /\ UNCHANGED events /\ UNCHANGED ghosts
 
 \* Check: the queue's heads and the epoch read again just before the push
@@ -201,7 +246,7 @@ Build ==
 Check ==
   /\ lphase = "built" /\ Broken # "reportfirst"
   /\ lphase' = IF Broken = "latepoch" \/ Guard(lbatch) THEN "checked" ELSE "idle"
-  /\ UNCHANGED store /\ UNCHANGED remote /\ UNCHANGED <<lq, lbatch, lep, lrep, ltip, tries>>
+  /\ UNCHANGED store /\ UNCHANGED remote /\ UNCHANGED <<lq, lmerged, lbatch, lep, lrep, ltip, tries>>
   /\ UNCHANGED events /\ UNCHANGED ghosts
 
 \* Push: git push, which the store cannot fence. A moved tip is rejected and
@@ -210,19 +255,21 @@ Check ==
 \* the base holds already is a push of nothing).
 Push ==
   /\ lphase = PushFrom
-  /\ UNCHANGED store /\ UNCHANGED <<lq, lep, lrep, lbatch>> /\ UNCHANGED events /\ UNCHANGED stalerec
+  /\ UNCHANGED store /\ UNCHANGED <<lq, lmerged, lep, lrep, lbatch>> /\ UNCHANGED events /\ UNCHANGED stalerec
   /\ IF ltip # tip
      THEN IF tries < 1
           THEN /\ ltip' = tip /\ tries' = tries + 1 /\ lphase' = RebuildTo
-               /\ UNCHANGED remote /\ UNCHANGED <<badcaller, stalepush, lpushed>>
+               /\ UNCHANGED remote /\ UNCHANGED <<badcaller, stalepush, lpushed, redpush, bisected>>
           ELSE /\ lphase' = "idle"
-               /\ UNCHANGED remote /\ UNCHANGED <<ltip, tries, badcaller, stalepush, lpushed>>
+               /\ UNCHANGED remote /\ UNCHANGED <<ltip, tries, badcaller, stalepush, lpushed, redpush, bisected>>
      ELSE /\ base' = base \cup Range(lbatch)
           /\ tip' = IF Range(lbatch) \subseteq base THEN tip ELSE tip + 1
           /\ ltip' = tip'
           /\ badcaller' = (badcaller \/ lep # lrep)
           /\ stalepush' = (stalepush \/ lep # epoch)
           /\ lpushed' = IF lep = epoch THEN lpushed \cup Range(lbatch) ELSE lpushed
+          /\ redpush' = (redpush \/ Range(lbatch) \cap Bad # {})
+          /\ bisected' = (bisected \/ (Len(lbatch) < Len(lmerged) /\ Range(lmerged) \cap Bad # {}))
           /\ lphase' = PushTo
           /\ UNCHANGED tries
 
@@ -244,10 +291,10 @@ Report ==
                 /\ stalerec' = (stalerec \/ epoch # lep)
            ELSE UNCHANGED <<queue, landed, stalerec>>
   /\ lphase' = ReportTo
-  /\ UNCHANGED <<att, epoch>> /\ UNCHANGED remote /\ UNCHANGED <<lq, lbatch, lep, lrep, ltip, tries>>
-  /\ UNCHANGED events /\ UNCHANGED <<badcaller, stalepush, lpushed>>
+  /\ UNCHANGED <<att, epoch>> /\ UNCHANGED remote /\ UNCHANGED <<lq, lmerged, lbatch, lep, lrep, ltip, tries>>
+  /\ UNCHANGED events /\ UNCHANGED <<badcaller, stalepush, lpushed, redpush, bisected>>
 
-Land == Read \/ Build \/ Check \/ Push \/ Report
+Land == Read \/ Build \/ Gate \/ Check \/ Push \/ Report
 
 \* ---- the outside, each event counted ----
 
@@ -286,12 +333,12 @@ MoveBase ==
 Crash ==
   /\ lphase # "idle"
   /\ lphase' = "idle" /\ tries' = 0
-  /\ UNCHANGED store /\ UNCHANGED remote /\ UNCHANGED <<lq, lbatch, lep, lrep, ltip>>
+  /\ UNCHANGED store /\ UNCHANGED remote /\ UNCHANGED <<lq, lmerged, lbatch, lep, lrep, ltip>>
 
 Outside ==
   /\ events < MaxEvents
   /\ events' = events + 1
-  /\ UNCHANGED <<badcaller, stalepush, stalerec>>
+  /\ UNCHANGED <<badcaller, stalepush, stalerec, redpush, bisected>>
   /\ (Accept \/ Return \/ Rework \/ OtherLand \/ Clear \/ MoveBase \/ Crash)
   /\ lpushed' = IF epoch' # epoch THEN {} ELSE lpushed
 
@@ -316,6 +363,8 @@ CallerEpochCheckedBeforePush == ~badcaller
 
 ReportHoldsTheEpoch == ~stalerec
 
+GatedPush == ~redpush
+
 Recovers == <>[](\A c \in Range(queue) : Current(c) \notin base)
 
 \* Reachability (reversed witnesses, written to be false where the design
@@ -328,4 +377,9 @@ ReachStranded == ~(lphase = "idle" /\ \E c \in Range(queue) : Current(c) \in lpu
 \* A push made after the store left the epoch the lander holds: a clear between
 \* the check and the push. Shortest: Accept, Read, Build, Check, Clear, Push.
 ReachStalePush == ~stalepush
+
+\* A red merged run bisected and its green prefix pushed: the gate cuts a batch
+\* and lands what it passed. Shortest: Accept, Accept, Read, Build, Gate, Check,
+\* Push, with the second card red.
+ReachGreenPrefix == ~bisected
 =============================================================================

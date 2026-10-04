@@ -105,6 +105,12 @@ type app struct {
 	// landRoot is the directory land keeps its clones under when it is given
 	// no --repo-dir (land.go): os.UserCacheDir's nova-sprint/land.
 	landRoot func() (string, error)
+	// landGoCache is the lander's own GOCACHE for its go runs (landgo.go): os.UserCacheDir's
+	// nova-sprint/land/go-build; nil (a test) leaves the caller's.
+	landGoCache func() (string, error)
+	// landGo, when set (a test), is the go program the lander's gate and update runs use
+	// (landgo.go, goRun); "" is go.
+	landGo string
 	// scoreBackend, when set (a test), is the backend land scores landed diffs through
 	// (landscore.go); nil is Jev with the key JEV_API_KEY holds.
 	scoreBackend decide.Backend
@@ -197,6 +203,7 @@ func newApp(getenv func(string) string) *app {
 	a.tip = a.branchTip
 	a.bus = a.sendBus
 	a.landRoot = defaultLandRoot
+	a.landGoCache = defaultLandGoCache
 	a.home = os.UserHomeDir
 	a.decideBackend = func(key string) decide.Backend { return decide.JevHTTP(key, decide.JevTimeout) }
 	a.briefBar = a.readBriefBar

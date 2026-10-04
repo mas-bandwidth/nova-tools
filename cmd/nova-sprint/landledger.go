@@ -4,11 +4,13 @@ package main
 // (docs/SPEC-SPRINT.md section 7, the generated ledgers). A merge whose every unmerged
 // path is a generated ledger (landLedgers: the class ledgers diffcheck.Ledger names,
 // narrowed to a family owned by named tests) is resolved, not refused: the tip's side of
-// each conflicted file is taken, the owning tests' update mode (NOVA_CI_UPDATE=1) runs on
-// the merged tree until it changes nothing, and the merge is committed with a message
-// naming the card and the ledgers. A shrink-only ledger is a function of the tree, so two
-// cards that both delete rows and both move the ceiling line conflict line by line and
-// regenerate to one answer. A conflict in any other file is refused as before.
+// each conflicted file is taken and the merge committed with a message naming the card
+// and the ledgers (deferLedgers); once a batch, not once a head, the owning tests' update
+// mode (NOVA_CI_UPDATE=1) runs on the batch's tip until it changes nothing, and what it
+// wrote is one commit naming the cards (regenBatch, run by the batch's gate). A
+// shrink-only ledger is a function of the tree, so two cards that both delete rows and
+// both move the ceiling line conflict line by line and regenerate to one answer. A
+// conflict in any other file is refused as before.
 //
 // After a conflict a resume puts the card back at its head, and the next land merges that
 // head again: a merge of a shrink-only ledger is the same whoever makes it, so a
@@ -177,36 +179,166 @@ func testsOf(owners []landLedger) string {
 	return strings.Join(t, ", ")
 }
 
-// ledgerNote is the card's note for a resolved merge, on its timeline: the ledgers and
-// the tests that regenerated them.
+// ledgerNote is the card's note for a merge whose generated ledgers conflicted, on its
+// timeline: the ledgers, and the tests that regenerated them at the batch's tip.
 func ledgerNote(paths []string, tests string) string {
-	return "the generated ledgers " + sprint.Preview(paths, ", ") + " conflicted and were regenerated at the merge by " + tests + " (" + diffcheck.UpdateEnv + "=1)"
+	return "the generated ledgers " + sprint.Preview(paths, ", ") + " conflicted; the tip's side was taken at the merge and " + tests +
+		" regenerated them once at the batch's tip (" + diffcheck.UpdateEnv + "=1)"
 }
 
-// ledgerMessage is the merge commit of a resolved merge: the landing's own subject, and
-// a body naming the ledgers and how they were made.
+// ledgerMessage is the merge commit of a merge whose generated ledgers conflicted: the
+// landing's own subject, and a body naming the ledgers and how they are made.
 func ledgerMessage(id, stream string, paths []string, tests string) []string {
 	return []string{"land " + id + " (sprint stream " + stream + ")",
-		"The generated ledgers " + strings.Join(paths, ", ") + " conflicted. The tip's side was taken and " + tests +
-			" regenerated them at the merged tree (" + diffcheck.UpdateEnv + "=1)."}
+		"The generated ledgers " + strings.Join(paths, ", ") + " conflicted. The tip's side was taken; " + tests +
+			" regenerate them once at the batch's tip (" + diffcheck.UpdateEnv + "=1), in the commit after the batch's merges."}
 }
 
-// resolveLedgers resolves a merge stopped on unmerged paths that are all generated
-// ledgers (paths, with ours the ones the tip holds): the tip's side of each taken, the
-// owners' update run to a fixed point, the merge committed. note is the card's note
-// when it is resolved; card is why it is not, env a git failure that is not the card's;
-// either way the merge is ended and the clone restored (restore).
-func (l *lander) resolveLedgers(ctx context.Context, dir, stream string, c landCard, paths []string, ours map[string]bool, owners []landLedger) (note, card, env string) {
-	before, err := l.git(ctx, dir, "ls-files", "--others", "--exclude-standard", "-z")
-	if err != nil {
-		return "", "", l.restore(ctx, dir, nil, "the clone's untracked files could not be listed: "+firstLine("", err))
-	}
-	known := strings.Split(before, "\x00")
-	note, card, env = l.resolve(ctx, dir, stream, c, paths, ours, owners)
+// regenMessage is the commit that regenerates the generated ledgers at the batch's tip:
+// the ledgers, the cards whose merges conflicted on them, and the tests.
+func regenMessage(stream string, ids, paths []string, tests string) []string {
+	return []string{"land: the generated ledgers regenerated (sprint stream " + stream + ")",
+		"The generated ledgers " + strings.Join(paths, ", ") + " conflicted at the merges of " + strings.Join(ids, ", ") +
+			". The tip's side was taken at each merge and " + tests + " regenerated them once at the batch's tip (" + diffcheck.UpdateEnv + "=1)."}
+}
+
+// deferLedgers commits a merge stopped on unmerged paths that are all generated ledgers
+// (paths, with ours the ones the tip holds) with the tip's side of each, their
+// regeneration left to the batch's tip (regenBatch, once a batch, not once a head). note
+// is the card's note when it is committed; card is why it is not (a symlink an update
+// would write through), env a git failure that is not the card's; either way the merge
+// is ended and the clone restored (restore).
+func (l *lander) deferLedgers(ctx context.Context, dir, stream string, c landCard, paths []string, ours map[string]bool, owners []landLedger) (note, card, env string) {
+	note, card, env = l.takeTips(ctx, dir, stream, c, paths, ours, owners)
 	if note == "" {
-		env = l.restore(ctx, dir, known, env)
+		env = l.restore(ctx, dir, nil, env)
 	}
 	return note, card, env
+}
+
+// takeTips is deferLedgers before the restore.
+func (l *lander) takeTips(ctx context.Context, dir, stream string, c landCard, paths []string, ours map[string]bool, owners []landLedger) (note, card, env string) {
+	tests := testsOf(owners)
+	for _, p := range paths {
+		args := []string{"rm", "-q", "--", p} // the tip deleted it: it stays deleted
+		if ours[p] {
+			args = []string{"checkout", "--ours", "--", p}
+		}
+		if _, err := l.git(ctx, dir, args...); err != nil {
+			return "", "", "the tip's side of " + p + " could not be taken: " + firstLine("", err)
+		}
+	}
+	// at the merge, before any update run: no link in the tree or on disk anywhere the
+	// update writes (regenBatch holds it again at the batch's tip)
+	if card, env := l.familyLinkWhy(ctx, dir, owners); card != "" || env != "" {
+		return "", card, env
+	}
+	if _, err := l.git(ctx, dir, append([]string{"add", "-A", "--"}, paths...)...); err != nil {
+		return "", "", "the ledgers could not be staged: " + firstLine("", err)
+	}
+	msg := ledgerMessage(c.id, stream, paths, tests)
+	if _, err := l.git(ctx, dir, "commit", "-q", "-m", msg[0], "-m", msg[1]); err != nil {
+		return "", "", "the merge of " + c.id + " could not be committed with the tip's ledgers: " + firstLine("", err)
+	}
+	return ledgerNote(paths, tests), "", ""
+}
+
+// familyLinkWhy is why an update of the owners' ledgers would write through a symlink, in
+// the tree (git ls-files -s) or on disk, "" when none would; env a git failure.
+func (l *lander) familyLinkWhy(ctx context.Context, dir string, owners []landLedger) (card, env string) {
+	files, err := l.git(ctx, dir, "ls-files", "-s")
+	if err != nil {
+		return "", "the clone's files could not be listed: " + firstLine("", err)
+	}
+	if p := cmp.Or(familyLink(files, owners), onDiskLink(dir, familyPaths(files, owners))); p != "" {
+		return "its generated ledgers conflict and " + p + " is a symlink, which an update would write through", ""
+	}
+	return "", ""
+}
+
+// deferredLedgers says a card of the prefix deferred its generated ledgers to the batch's
+// regeneration.
+func deferredLedgers(cards []landCard) bool {
+	return slices.ContainsFunc(cards, func(c landCard) bool { return len(c.regen) > 0 })
+}
+
+// regenBatch regenerates, at the batch branch's tip, the generated ledgers the cards'
+// merges deferred: the owners' update run to a fixed point, then one commit (none when the
+// tip's side was already the answer). why is why it failed (the update run failed, never
+// settled, wrote a file that is no ledger of its tests, or would write through a link),
+// env a git failure that is no card's; either way the clone is restored to the tip.
+func (l *lander) regenBatch(ctx context.Context, dir, stream string, cards []landCard) (why, env string) {
+	var ids, paths []string
+	for _, c := range cards {
+		if len(c.regen) == 0 {
+			continue
+		}
+		ids = append(ids, c.id)
+		for _, p := range c.regen {
+			if !slices.Contains(paths, p) {
+				paths = append(paths, p)
+			}
+		}
+	}
+	owners, _ := ledgerOwners(paths, l.ledgers())
+	before, err := l.git(ctx, dir, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return "", "the clone's untracked files could not be listed: " + firstLine("", err)
+	}
+	why, env = l.regenerate(ctx, dir, stream, ids, paths, owners)
+	if why != "" || env != "" {
+		env = l.restore(ctx, dir, strings.Split(before, "\x00"), env)
+	}
+	return why, env
+}
+
+// regenerate is regenBatch before the restore.
+func (l *lander) regenerate(ctx context.Context, dir, stream string, ids, paths []string, owners []landLedger) (why, env string) {
+	tests := testsOf(owners)
+	if card, env := l.familyLinkWhy(ctx, dir, owners); card != "" || env != "" {
+		return card, env
+	}
+	for runs := 0; ; {
+		again := false
+		for _, o := range owners {
+			out, err := l.regen(ctx, dir, o.run)
+			runs++
+			done, more := regenDone(err, out)
+			switch {
+			case more:
+				again = true
+			case !done:
+				return "its generated ledgers conflict and " + o.tests + " did not regenerate them: " + oneline.Err(err) + checkTail(out), ""
+			}
+		}
+		if !again {
+			break
+		}
+		if runs >= landRegenPasses {
+			return "its generated ledgers conflict and " + tests + " still rewrote them after " + strconv.Itoa(runs) + " update runs", ""
+		}
+	}
+	status, err := l.git(ctx, dir, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return "", "what the update runs changed could not be listed: " + firstLine("", err)
+	}
+	written := updateWrote(status)
+	for _, p := range written {
+		if !owned(p, owners) {
+			return "its generated ledgers conflict and the update run changed " + p + ", which is no ledger of " + tests, ""
+		}
+	}
+	if len(written) == 0 {
+		return "", "" // the tip's side is the regenerated answer: nothing to commit
+	}
+	if _, err := l.git(ctx, dir, append([]string{"add", "-A", "--"}, written...)...); err != nil {
+		return "", "the regenerated ledgers could not be staged: " + firstLine("", err)
+	}
+	msg := regenMessage(stream, ids, paths, tests)
+	if _, err := l.git(ctx, dir, "commit", "-q", "-m", msg[0], "-m", msg[1]); err != nil {
+		return "", "the regenerated ledgers could not be committed: " + firstLine("", err)
+	}
+	return "", ""
 }
 
 // restore ends a merge whose resolution failed and takes back what the update runs
@@ -235,71 +367,6 @@ func (l *lander) restore(ctx context.Context, dir string, known []string, env st
 		}
 	}
 	return env
-}
-
-// resolve is resolveLedgers before the restore.
-func (l *lander) resolve(ctx context.Context, dir, stream string, c landCard, paths []string, ours map[string]bool, owners []landLedger) (note, card, env string) {
-	tests := testsOf(owners)
-	for _, p := range paths {
-		args := []string{"rm", "-q", "--", p} // the tip deleted it: it stays deleted
-		if ours[p] {
-			args = []string{"checkout", "--ours", "--", p}
-		}
-		if _, err := l.git(ctx, dir, args...); err != nil {
-			return "", "", "the tip's side of " + p + " could not be taken: " + firstLine("", err)
-		}
-	}
-	files, err := l.git(ctx, dir, "ls-files", "-s")
-	if err != nil {
-		return "", "", "the clone's files could not be listed: " + firstLine("", err)
-	}
-	// before any update run: no link in the tree or on disk anywhere the update writes
-	if p := cmp.Or(familyLink(files, owners), onDiskLink(dir, familyPaths(files, owners))); p != "" {
-		return "", "its generated ledgers conflict and " + p + " is a symlink, which an update would write through", ""
-	}
-	if _, err := l.git(ctx, dir, append([]string{"add", "-A", "--"}, paths...)...); err != nil {
-		return "", "", "the ledgers could not be staged: " + firstLine("", err)
-	}
-	for runs := 0; ; {
-		again := false
-		for _, o := range owners {
-			out, err := l.regen(ctx, dir, o.run)
-			runs++
-			done, more := regenDone(err, out)
-			switch {
-			case more:
-				again = true
-			case !done:
-				return "", "its generated ledgers conflict and " + o.tests + " did not regenerate them: " + oneline.Err(err) + checkTail(out), ""
-			}
-		}
-		if !again {
-			break
-		}
-		if runs >= landRegenPasses {
-			return "", "its generated ledgers conflict and " + tests + " still rewrote them after " + strconv.Itoa(runs) + " update runs", ""
-		}
-	}
-	status, err := l.git(ctx, dir, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	if err != nil {
-		return "", "", "what the update runs changed could not be listed: " + firstLine("", err)
-	}
-	written := updateWrote(status)
-	for _, p := range written {
-		if !owned(p, owners) {
-			return "", "its generated ledgers conflict and the update run changed " + p + ", which is no ledger of " + tests, ""
-		}
-	}
-	if len(written) > 0 {
-		if _, err := l.git(ctx, dir, append([]string{"add", "-A", "--"}, written...)...); err != nil {
-			return "", "", "the regenerated ledgers could not be staged: " + firstLine("", err)
-		}
-	}
-	msg := ledgerMessage(c.id, stream, paths, tests)
-	if _, err := l.git(ctx, dir, "commit", "-q", "-m", msg[0], "-m", msg[1]); err != nil {
-		return "", "", "the resolved merge of " + c.id + " could not be committed: " + firstLine("", err)
-	}
-	return ledgerNote(paths, tests), "", ""
 }
 
 // onDiskLink is a path, or a directory on the way to it, that is a symlink on disk

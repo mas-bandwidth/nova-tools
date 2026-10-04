@@ -46,14 +46,15 @@ func TestLandFetchIsTheBaseAndTheHeadsByIDInOneCommand(t *testing.T) {
 	assert.Equal(t, []string{"--no-tags origin +refs/heads/main:refs/remotes/origin/main " + heads["s1-1"] + " " + heads["s1-2"]}, fetches)
 }
 
-// A landed batch's line and its --json item carry each step's seconds: the fetch, the
-// merges, the check, the queue read again, the push and the report.
+// A landed batch's line and its --json item carry each phase's seconds: the fetch, the
+// merges, the per-head checks, the ledgers' regeneration, the tree gate, the check, the
+// queue read again, the push and the report.
 func TestLandSaysHowLongEachStepOfALandedBatchTook(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	landTwo(r)
 	out := r.ok("land --repo-dir " + r.clone + " --base main --check true")
-	assert.Regexp(t, regexp.MustCompile(`LAND OK stream=s1 cards=2 base=main .* fetch=\d+\.\ds merge=\d+\.\ds check=\d+\.\ds queue=\d+\.\ds push=\d+\.\ds report=\d+\.\ds`), out)
+	assert.Regexp(t, regexp.MustCompile(`LAND OK stream=s1 cards=2 base=main .* fetch=\d+\.\ds merge=\d+\.\ds checks=\d+\.\ds ledger=\d+\.\ds gate=\d+\.\ds check=\d+\.\ds queue=\d+\.\ds push=\d+\.\ds report=\d+\.\ds`), out)
 
 	r = newLandRig(t)
 	landTwo(r)

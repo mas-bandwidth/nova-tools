@@ -66,7 +66,11 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
   nova-sprint land --stream s1 --check 'make test'
     merges each queued card's head (--no-ff) in queue order onto a branch cut
     from origin's base, one batch per run of cards naming one REPO: and BASE:
-    (--base for a card naming none); runs --check once per batch; pushes, never
+    (--base for a card naming none), at most --batch-max cards (32); gates the
+    batch's tip once (go build, go vet, and the tree's tests when it changes a
+    .go, a .md or testdata), and on red bisects it: the green prefix lands and
+    the first head that turns it red is reported as merge --conflict; runs
+    --check once per batch; pushes, never
     forced, rebuilding once on a moved base; then reports the batch as merge
     --stream s1 --batch <n> does. A head missing or in conflict ends the batch
     before it and is reported as merge --conflict, a red check as --red, a
@@ -74,9 +78,12 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     script and no model: a head whose diff changes a file outside its brief's
     PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
     prose, ends the batch as a head in conflict does. A conflict only in the
-    generated ledgers lands: the tip's side, then their tests' update run
-    (NOVA_CI_UPDATE=1) to a fixed point, one commit; any other conflict stops
-    the stream, and after resume land merges the head again. The clone is --repo-dir,
+    generated ledgers lands: the tip's side at the merge, then once a batch,
+    at its tip, their tests' update run (NOVA_CI_UPDATE=1) to a fixed point,
+    one commit; any other conflict stops
+    the stream, and after resume land merges the head again. Each batch's
+    line says each phase's seconds: fetch, merge, checks, ledger, gate, check,
+    queue, push and report. The clone is --repo-dir,
     else the dir= each line names; git uses the caller's environment. After
     the whole pass each landed merge diff is scored (nova-decide's score
     decision, with the key JEV_API_KEY holds, a minute for the pass; recorded in
@@ -140,11 +147,17 @@ type landBatch struct {
 }
 
 // landTimes is a batch's steps, in seconds: the fetch, the merges (with any head
-// fetched at its merge), the check, the queue read again before the push, the push and
-// the report. A rebuild on a moved base adds its fetch, merges, check and push.
+// fetched at its merge, and the cut of the batch branch), the per-head scripted checks,
+// the generated ledgers' regeneration, the tree gate (the base's, the batch's and any
+// bisection's), the --check, the queue read again before the push, the push and the
+// report. A rebuild on a moved base adds its fetch, merges, checks, ledger, gate, check
+// and push.
 type landTimes struct {
 	Fetch  float64 `json:"fetch"`
 	Merge  float64 `json:"merge"`
+	Checks float64 `json:"checks"`
+	Ledger float64 `json:"ledger"`
+	Gate   float64 `json:"gate"`
 	Check  float64 `json:"check"`
 	Queue  float64 `json:"queue"`
 	Push   float64 `json:"push"`
@@ -169,7 +182,8 @@ func (b landBatch) line() string {
 		l += " dir=" + oneline.Field(b.Dir)
 	}
 	if t := b.Times; t != nil {
-		l += fmt.Sprintf(" fetch=%.1fs merge=%.1fs check=%.1fs queue=%.1fs push=%.1fs report=%.1fs", t.Fetch, t.Merge, t.Check, t.Queue, t.Push, t.Report)
+		l += fmt.Sprintf(" fetch=%.1fs merge=%.1fs checks=%.1fs ledger=%.1fs gate=%.1fs check=%.1fs queue=%.1fs push=%.1fs report=%.1fs",
+			t.Fetch, t.Merge, t.Checks, t.Ledger, t.Gate, t.Check, t.Queue, t.Push, t.Report)
 	}
 	if p := b.Prune; p != nil {
 		switch {
@@ -226,6 +240,12 @@ type landCard struct {
 	// generated ledgers regenerated, landledger.go): set by each build, reported with the
 	// batch
 	resolved string
+	// regen is the generated ledgers its merge took the tip's side of, regenerated once at
+	// the batch's tip (gateBatch), nil for none; mergeWhy is that merge's words, and
+	// mergeKind and mergePaths its conflict's, for a regeneration or a gate that blames it
+	regen               []string
+	mergeWhy, mergeKind string
+	mergePaths          []string
 }
 
 // pin is the card as the report's guard and the operation's arguments name
@@ -240,9 +260,12 @@ type lander struct {
 	repoDir, base, check, root string
 	dry, twin                  bool // twin: a mem twin, which has no git
 	// conflictKind and conflictPaths are what the last merge that stopped on unmerged paths
-	// left (mergeHead): the conflict fact carries them (conflictCard).
+	// left (mergeHead): the conflict fact carries them (conflictCard). deferred and deferWhy
+	// are the generated ledgers that merge left to the batch's regeneration, and its words.
 	conflictKind  string
 	conflictPaths []string
+	deferred      []string
+	deferWhy      string
 	out           []landBatch
 	epoch         uint64            // the epoch land read: every report is fenced to it
 	diffs         map[string]string // each card's merge diff, as checkCard read it, for its score
@@ -263,6 +286,13 @@ type lander struct {
 	baseStop      bool
 	now           func() time.Time
 	rulesOff      []string
+
+	// batchMax is the most cards one batch lands (--batch-max); goCache is the lander's own
+	// GOCACHE for its go runs ("" the caller's); greenTip is the last batch tip the tree
+	// gate passed with the tree tests, cached as a green base once it is pushed.
+	batchMax int
+	goCache  string
+	greenTip string
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -273,6 +303,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	base := fs.String("base", "", "the base branch of a card whose brief names no BASE: line")
 	check := fs.String("check", "", "a command run once per batch, by sh -c in the clone on the batch branch, before the push (bounded to 30m); non-zero reports the batch red and pushes nothing")
 	dry := fs.Bool("dry-run", false, "print the batches it would land and change nothing: reads the store only (no git, no push, no report)")
+	batchMax := fs.Int("batch-max", landBatchMaxDefault(a.getenv), "the most cards one batch lands: a stream with more queued lands them in batches of at most this many, each gated once (default "+strconv.Itoa(landBatchMax)+", or "+landBatchMaxEnv+")")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "land", err.Error())
@@ -283,6 +314,9 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(*base, "-") {
 		bad = append(bad, "--base wants a branch name, not "+*base)
+	}
+	if *batchMax < 1 {
+		bad = append(bad, "--batch-max wants a count of at least 1, not "+strconv.Itoa(*batchMax))
 	}
 	if *repoDir != "" {
 		if fi, err := os.Stat(*repoDir); err != nil || !fi.IsDir() {
@@ -315,6 +349,13 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		a.baseGateFails = map[string]*baseGateFail{}
 	}
 	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
+	l.batchMax = *batchMax
+	if a.landGoCache != nil && !*dry {
+		// the lander's own build cache, kept warm across its runs (landgo.go, goRun)
+		if dir, err := a.landGoCache(); err == nil && os.MkdirAll(dir, 0o755) == nil {
+			l.goCache = dir
+		}
+	}
 	if *check != "" && !*dry {
 		a.serial.Lock()
 		l.gate, l.gateNote = a.landGate(context.Background(), st)
@@ -498,10 +539,7 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		cards = append(cards, lc)
 	}
 	for len(cards) > 0 {
-		n := 1
-		for n < len(cards) && cards[n].repo == cards[0].repo && cards[n].base == cards[0].base {
-			n++
-		}
+		n := batchLen(cards, l.batchMax)
 		landed, ok := l.batch(ctx, stream, cards[:n])
 		if !ok {
 			return false
@@ -512,6 +550,35 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		cards = cards[n:]
 	}
 	return true
+}
+
+// landBatchMax is the most cards one batch lands when neither --batch-max nor
+// landBatchMaxEnv says: a stream with more queued lands them in batches of at most this
+// many, each merged head by head and gated once, so a long queue lands in large batches
+// and a red one bisects in at most five more gates.
+const landBatchMax = 32
+
+// landBatchMaxEnv is the environment variable that sets --batch-max's default, for the
+// land loop, which passes land no flags (landloop.go).
+const landBatchMaxEnv = "NOVA_SPRINT_LAND_BATCH_MAX"
+
+// landBatchMaxDefault is --batch-max's default: landBatchMaxEnv's count when it holds one
+// of at least 1, else landBatchMax.
+func landBatchMaxDefault(getenv func(string) string) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(getenv(landBatchMaxEnv))); err == nil && n >= 1 {
+		return n
+	}
+	return landBatchMax
+}
+
+// batchLen is how many of cards the next batch takes: the run of consecutive cards naming
+// the first one's repository and base, at most max of them (at least one).
+func batchLen(cards []landCard, max int) int {
+	n := 1
+	for n < len(cards) && n < max && cards[n].repo == cards[0].repo && cards[n].base == cards[0].base {
+		n++
+	}
+	return n
 }
 
 // shaRE is a commit id as a head names it: hex, abbreviated or whole.
@@ -590,6 +657,11 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		since(&b.Times.Push, start)
 		if err == nil {
 			b.Tip = tip
+			if tip == l.greenTip && l.baseGateCache != nil {
+				// pushed, the base's next tip is this one, gated with the tree tests: the next
+				// batch of the stream does not gate it again (treeGateBase)
+				l.baseGateCache[tip] = ""
+			}
 			if !l.landed(b, stream, cards[:len(merged)]) {
 				return false, false
 			}
@@ -903,13 +975,16 @@ func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 	return ""
 }
 
-// build cuts the batch branch from origin's base and merges the cards' heads
-// in order, stopping at the first the card itself stops (a head that is not
-// a commit on origin, or a merge that left unmerged paths): merged is the
-// cards merged, failed the card that ended the batch, why a refusal of the
-// whole batch that blames no card (git's own failure: the fetch, the cut, an
-// identity, a hook, the disk), nothing to report. The fetch's seconds and the
-// merges' are added to t.
+// build cuts the batch branch from origin's base, merges the cards' heads in order, each
+// --no-ff and checked by script as it is merged (checkCard), stopping at the first the
+// card itself stops (a head that is not a commit on origin, a merge that left unmerged
+// paths, a head that fails the lander's checks), then gates the batch once (gateBatch): the
+// generated ledgers a merge deferred regenerated at the tip, then the tree gate; on red it
+// bisects to the first head that turns the batch red, and the branch is left at the green
+// prefix before it. merged is the cards merged and gated green, failed the card that ended
+// the batch (the one the gate blamed, before any card that stopped the merges), why a
+// refusal of the whole batch that blames no card (git's own failure: the fetch, the cut,
+// an identity, a hook, the disk), nothing to report. Each phase's seconds are added to t.
 func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard, t *landTimes) (merged []string, failed conflictCard, why string) {
 	base := cards[0].base
 	// THE FETCH BRINGS WHAT THE BATCH NEEDS AND NOTHING ELSE: the base, and the cards'
@@ -937,41 +1012,68 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
 	}
 	start = time.Now()
-	defer since(&t.Merge, start)
 	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
 	}
 	baseSha, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	since(&t.Merge, start)
 	if err != nil {
 		return nil, failed, "the base " + base + " has no tip in " + dir + ": " + firstLine("", err)
 	}
 	l.baseStop = false
-	if why, stop := l.treeGateBase(ctx, dir, baseSha); why != "" {
+	start = time.Now()
+	bwhy, stop := l.treeGateBase(ctx, dir, baseSha)
+	since(&t.Gate, start)
+	if bwhy != "" {
 		l.baseStop = stop
-		return nil, failed, "the base " + base + " fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: " + why
+		return nil, failed, "the base " + base + " fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: " + bwhy
 	}
+	// the merges, each head --no-ff with its scripted checks; the tree gate waits for the batch
+	var tips []string
 	for i := range cards {
 		c := &cards[i]
+		start = time.Now()
 		before, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 		if err != nil {
 			return nil, failed, "the batch branch has no tip before the merge of " + c.id + ": " + firstLine("", err) + "; no card is blamed and nothing was pushed or reported"
 		}
 		var card, env string
-		l.conflictKind, l.conflictPaths = "", nil // the merge below says, when it stops on unmerged paths
+		// the merge below says, when it stops on unmerged paths, and when it deferred the
+		// generated ledgers to the batch's regeneration (landledger.go)
+		l.conflictKind, l.conflictPaths, l.deferred, l.deferWhy = "", nil, nil, ""
 		card, env, c.resolved = l.mergeHead(ctx, dir, stream, *c)
+		c.regen, c.mergeWhy, c.mergeKind, c.mergePaths = l.deferred, l.deferWhy, l.conflictKind, l.conflictPaths
+		since(&t.Merge, start)
 		if card == "" && env == "" {
+			start = time.Now()
 			card, env = l.checkCard(ctx, dir, *c, before)
+			since(&t.Checks, start)
 		}
-		if card == "" && env == "" {
-			card, env = l.gateCard(ctx, dir, *c, before)
-		}
-		switch {
-		case env != "":
+		if env != "" {
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
-		case card != "":
-			return merged, conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths}, ""
 		}
+		if card != "" {
+			failed = conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths}
+			break
+		}
+		tip, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return nil, failed, "the batch branch has no tip after the merge of " + c.id + ": " + firstLine("", err) + "; no card is blamed and nothing was pushed or reported"
+		}
+		tips = append(tips, tip)
 		merged = append(merged, c.id)
+	}
+	if len(merged) == 0 {
+		return nil, failed, ""
+	}
+	green, blamed, env := l.gateBatch(ctx, dir, stream, baseSha, cards[:len(merged)], tips, t)
+	if env != "" {
+		return nil, conflictCard{}, env + "; no card is blamed and nothing was pushed or reported"
+	}
+	if green < len(merged) {
+		// the card the gate blames ends the batch; one that stopped the merges after it
+		// stays queued, unreported, as it would behind any card that ends a batch
+		return merged[:green], blamed, ""
 	}
 	return merged, failed, ""
 }
@@ -985,8 +1087,9 @@ var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such r
 // git failed for any other reason, which is not the card's (an identity, a
 // hook, the disk, the network), with any merge in progress aborted; both ""
 // when it merged. A head the clone lacks is fetched from origin by its id once.
-// A merge stopped only on generated ledgers is resolved (landledger.go,
-// resolveLedgers), a shrink-only ledger as the union of both sides' removals
+// A merge stopped only on generated ledgers is committed with the tip's side of each,
+// their regeneration deferred to the batch's tip (landledger.go, deferLedgers; l.deferred
+// says which), a shrink-only ledger resolved as the union of both sides' removals
 // (ledgerunion.go, unionLedgers), and note is what the card's timeline says of it.
 func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env, note string) {
 	if why := headNotCommit(stream, c); why != "" {
@@ -1054,7 +1157,10 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 		default:
 			if owners, outside := ledgerOwners(rest, l.ledgers()); len(outside) == 0 {
 				var renv string
-				if note, why, renv = l.resolveLedgers(ctx, dir, stream, c, rest, ours, owners); note != "" {
+				if note, why, renv = l.deferLedgers(ctx, dir, stream, c, rest, ours, owners); note != "" {
+					// regenerated once at the batch's tip (gateBatch), the merge's words kept
+					// for a regeneration that fails there
+					l.deferred, l.deferWhy = rest, firstLine("", err)
 					l.ledgerLog = append(l.ledgerLog, lines...)
 					if len(union) > 0 {
 						note = unionNote(union) + "; " + note
@@ -1226,6 +1332,16 @@ func defaultLandRoot() (string, error) {
 		return "", err
 	}
 	return filepath.Join(cache, "nova-sprint", "land"), nil
+}
+
+// defaultLandGoCache is the lander's own GOCACHE: go-build under the directory it keeps
+// its clones in (a clone's directory name always ends in a hash, so none is named so).
+func defaultLandGoCache() (string, error) {
+	root, err := defaultLandRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "go-build"), nil
 }
 
 // repoDirName is a repository's clone directory name: its URL or path with

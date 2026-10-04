@@ -43,6 +43,7 @@ func newLandRig(t *testing.T) *landRig {
 	r.git("", "clone", "-q", r.remote, r.clone)
 	r.a.gitEnv = r.env
 	r.a.landRoot = func() (string, error) { return filepath.Join(r.dir, "land"), nil }
+	r.a.landGoCache = nil // the go runs use the test's own GOCACHE, warm, never the user's cache directory
 	r.ok("init --readers reader-a,reader-b --members m1")
 	return r
 }
