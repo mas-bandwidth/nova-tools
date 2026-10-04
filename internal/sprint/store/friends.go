@@ -79,6 +79,9 @@ type FriendRow struct {
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
 	Report *sprint.FriendReport `json:"report,omitempty"`
+	// Beat is when her last beat came, zero when she has never beaten: how stale her
+	// report is (view coordinator).
+	Beat time.Time `json:"beat,omitzero"`
 	// Health is the coordinator's last accepted observation of her (friend
 	// health), absent until the first.
 	Health *sprint.FriendHealth `json:"health,omitempty"`
@@ -279,7 +282,7 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 				_ = json.Unmarshal([]byte(vals[2*i+1]), &h)
 			}
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Load: b.Load, Report: b.Friend}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Load: b.Load, Report: b.Friend, Beat: b.At}
 		if h.Observed() {
 			row.Health = &h
 		}

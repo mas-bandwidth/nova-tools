@@ -960,6 +960,8 @@ nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC333
 nova-sprint check
 nova-sprint repair
 nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
+nova-sprint view coordinator [--all] [--since <cursor>] [--json]
+nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint seat
 nova-sprint routes
@@ -984,6 +986,31 @@ ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
+
+### Role views: what a model reads instead of the dashboard
+
+The owner, 2026-10-04: "i'd rather you hit this vs. hitting my dashboard which is for human
+eyes". `nova-sprint view coordinator` is everything that needs the seat now, ranked by the
+cards behind each item: open judgments, notes addressed to the coordinator, alarms (the
+machine stopped, the fleet idle, nothing ready, a review or merge backlog, a stream stopped),
+sentinels reached, and friends and machines that need a look, each with `next`, the exact
+command that acts on it. `nova-sprint view worker --as <member|friend>` is one worker's cards
+in order (brief, BASE, PATHS, deadline, attempt), its next step and its results not landed.
+Both are reads, `--json` (schema 1), compact for the tokens a model pays: only what needs
+action (`--all` adds every machine's and friend's row), a summary line first, and a `cursor`
+that `--since <cursor>` takes to leave out what the last read showed unchanged:
+
+```sh
+nova-sprint view coordinator                 # the summary and up to 19 items, then cursor=
+nova-sprint view coordinator --json --since <the cursor the last read printed>
+nova-sprint view worker --as m1 --json
+curl -s --compressed http://<tailnet address>:<port>/api/view/coordinator
+curl -s --compressed 'http://<tailnet address>:<port>/api/view/worker?as=stella'
+```
+
+The sprint's server (`run --listen`) serves them read-only at `/api/view/coordinator` and
+`/api/view/worker?as=<name>`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
+"Role views".
 
 ### A worker's own view: the dashboard's pull routes
 

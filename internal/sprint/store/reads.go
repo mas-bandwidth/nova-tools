@@ -248,10 +248,16 @@ func (st *Store) Records(ctx context.Context, logical string, ids []string) ([]*
 }
 
 func (st *Store) records(ctx context.Context, logical string, ids []string) ([]*sprint.Card, error) {
+	return st.storedRecords(ctx, logical, st.sids(ids))
+}
+
+// storedRecords is records by stored id (sprint.StoredID), as a cell read gives them: an id
+// already bound to its epoch is never bound to it again.
+func (st *Store) storedRecords(ctx context.Context, logical string, ids []string) ([]*sprint.Card, error) {
 	var out []*sprint.Card
 	for start := 0; start < len(ids); start += ntable.LimitReadSetMembers {
 		end := min(start+ntable.LimitReadSetMembers, len(ids))
-		rs, err := st.readSet(ctx, st.Names.Table(logical), st.sids(ids[start:end]))
+		rs, err := st.readSet(ctx, st.Names.Table(logical), ids[start:end])
 		if err != nil {
 			return nil, err
 		}
@@ -300,7 +306,9 @@ func (st *Store) Dealt(ctx context.Context) (Dealt, error) {
 	if err != nil {
 		return d, err
 	}
-	cards, err := st.records(ctx, sprint.Fleet, ids[shapes[1].Name])
+	// the cell read gives stored ids: read as they are, never bound to the epoch a second
+	// time, which found no card at any epoch after the first (the live store's epoch 15)
+	cards, err := st.storedRecords(ctx, sprint.Fleet, ids[shapes[1].Name])
 	if err != nil {
 		return d, err
 	}
