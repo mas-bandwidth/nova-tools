@@ -257,6 +257,10 @@ func ParseStoreFileWithoutDecrypting(filePath string) (keys []StoreFileKey, reci
 // or a blob git shows at a commit.
 func parseStoreFile(f io.Reader) (keys []StoreFileKey, recipients []string, hasSops bool, err error) {
 	scanner := bufio.NewScanner(f)
+	// A single line may reach 1MB: the limit the sibling parser ParseDecryptedSecrets
+	// lifts its scanner to, so the two parsers agree on what a readable file is.
+	const maxLineLen = 1024 * 1024 // 1MB buffer
+	scanner.Buffer(make([]byte, 64*1024), maxLineLen)
 	inSops := false
 	inAge := false
 
