@@ -270,3 +270,26 @@ func (h *harness) judgmentsOf(typ string) []sprint.Open {
 	}
 	return out
 }
+
+// A failure many cards share is the fleet's, not the card's: the failed rule leaves it to a
+// mind rather than climb the ladder with every card (a toolchain the machine cannot run,
+// "Permission denied", came back on six cards at once on 2026-10-04).
+func TestTheSameFailureOnManyCardsIsLeftToAMind(t *testing.T) {
+	t.Parallel()
+	h := ruled(t)
+	h.addReady("s1", sprint.RuleSameFailureCards, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	for i := 1; i <= sprint.RuleSameFailureCards; i++ {
+		h.failTake(fmt.Sprintf("s1-%d.w1", i), "step 2 broken: post: exit0 go vet ./...: exit status 126; exec: go: Permission denied")
+	}
+	h.machine()
+	assert.Len(t, h.judgmentsOf(sprint.NWorkFailed), sprint.RuleSameFailureCards, "left: the fleet's failure")
+	for _, a := range sprint.RuleAnswers(h.snap(), sprint.TickReq{AnswerRules: true}) {
+		if a.Type == sprint.NWorkFailed {
+			assert.Equal(t, sprint.ActLeft, a.Act)
+			assert.Contains(t, a.Why, "the same failure on")
+		}
+	}
+	assert.Equal(t, 1, h.snap().Work.Card("s1-1").Int("attempt"))
+}

@@ -70,6 +70,10 @@ const (
 	RuleProgressWindow = 10 * time.Minute
 	// RuleLateWait is the late rule's one wait.
 	RuleLateWait = 30 * time.Minute
+	// RuleSameFailureCards is how many cards failing the same way (their failure's class)
+	// make the failure the fleet's, not the card's: the failed and bound rules leave each to a
+	// mind rather than climb the ladder with every card (sameFailure).
+	RuleSameFailureCards = 3
 )
 
 // RuleConflictFix is the conflict rule's fix: the attempt's change made again where the
@@ -226,6 +230,10 @@ func ruleFailed(s *Snapshot, a *RuleAnswer) {
 		left(a, bb.String())
 		return
 	}
+	if why := sameFailure(s, pr.F(FieldFailure)); why != "" {
+		left(a, why)
+		return
+	}
 	a.Card = pr.ID
 	tier := cardTierOf(pr)
 	fails := 1
@@ -269,6 +277,14 @@ func ruleBound(s *Snapshot, a *RuleAnswer) {
 		} else {
 			left(a, "not at a bound now")
 		}
+		return
+	}
+	class := BoundClass(wc)
+	if pr.Col == Review {
+		class = pr.F(FieldFailure)
+	}
+	if why := sameFailure(s, class); why != "" {
+		left(a, why)
 		return
 	}
 	a.Card = pr.ID
@@ -552,3 +568,29 @@ func TickRuleBrief(s *Snapshot, r TickReq) (Plan, int) {
 // fails its tree gate at its tip is gated again after the first, and again after the second;
 // the failure after them is its third, and stops the stream (MergeReq.BaseRed, NBaseRed).
 var BaseGateRetries = []time.Duration{2 * time.Minute, 5 * time.Minute}
+
+// sameFailure is why a failure is the fleet's and not the card's: RuleSameFailureCards or
+// more cards hold it now (in review with their work failed that way, or ready at their
+// redeal bound with that class), "" when fewer do or the class is unknown. A toolchain a
+// machine cannot run, a provider down: the ladder would raise every card a tier for a
+// failure no tier changes, so a mind looks first.
+func sameFailure(s *Snapshot, class string) string {
+	if class == "" {
+		return ""
+	}
+	n := 0
+	for _, c := range s.Work.Column(Review) {
+		if c.F("result") == "failed" && c.F(FieldFailure) == class {
+			n++
+		}
+	}
+	for _, c := range s.Work.Column(Ready) {
+		if wc := AtRedealBound(s, c); wc != nil && BoundClass(wc) == class {
+			n++
+		}
+	}
+	if n < RuleSameFailureCards {
+		return ""
+	}
+	return fmt.Sprintf("the same failure on %d cards (%s): the fleet's, not the card's; a mind's", n, cutText(class, 120))
+}

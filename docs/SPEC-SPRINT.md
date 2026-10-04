@@ -2417,7 +2417,12 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
 | `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
 
-A reader found it broken stays a judgment: a finding needs a mind (the same finding on the
+A failure many cards share is the fleet's, not the card's: when `RuleSameFailureCards` (3) or
+more cards hold the same failure class now (in review with their work failed that way, or
+ready at their redeal bound with that class), `failed` and `bound` leave each to a mind
+(`the same failure on <n> cards (<class>): the fleet's, not the card's`) rather than raise
+every card a tier for a failure no tier changes, a toolchain a machine cannot run or a
+provider down (`TestTheSameFailureOnManyCardsIsLeftToAMind`). A reader found it broken stays a judgment: a finding needs a mind (the same finding on the
 same card twice is a brief defect, above). So does every other type. `run` and `tick` answer
 by rule unless `--answer-rules=false` (a `tick` by hand only with `--answer-rules`); nova-config's sprint row `answer_rules_off` (a list of
 `base-gate, bound, brief-defect, conflict, failed, late`, applied to
