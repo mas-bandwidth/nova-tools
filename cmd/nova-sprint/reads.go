@@ -1044,6 +1044,13 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "inbox", err.Error())
 	}
 	ctx := context.Background()
+	if sprint.IsAlias(*open) {
+		full, err := unalias(ctx, st, []string{*open})
+		if err != nil {
+			return refuse(stderr, "inbox", "--open: "+err.Error())
+		}
+		*open = full[0]
+	}
 	if *read {
 		// the cursor is the coordinator's: anyone reads the inbox, and only
 		// the coordinator moves what it shows
@@ -1161,7 +1168,8 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 // the cards it is about, and each decision open to the coordinator as the
 // exact command lines that make it (the ones inbox prints), in order.
 type inboxJudgment struct {
-	ID        string        `json:"id"` // what --group takes
+	ID        string        `json:"id"`              // what --group takes
+	Alias     string        `json:"alias,omitempty"` // j<n>, what --group and --answers take in its place
 	Kind      string        `json:"kind"`
 	Type      string        `json:"type"`
 	What      string        `json:"what"`
@@ -1209,7 +1217,7 @@ func inboxActs(groups []sprint.Group, now time.Time) ([]inboxJudgment, []inboxHa
 				Cards: cards, Notes: nonNil(g.Notes), To: g.To, Hint: g.Hint})
 			continue
 		}
-		j := inboxJudgment{ID: g.ID, Kind: g.Kind, Type: g.Type, What: g.What, Stream: g.Stream, Size: g.Size, Cards: cards, Notes: nonNil(g.Notes),
+		j := inboxJudgment{ID: g.ID, Alias: g.Alias, Kind: g.Kind, Type: g.Type, What: g.What, Stream: g.Stream, Size: g.Size, Cards: cards, Notes: nonNil(g.Notes),
 			Marked: g.Marked, Overdue: g.Overdue, Waited: now.Sub(g.Oldest).Round(time.Second).String(), Answers: []inboxAnswer{}, Decisions: nonNil(g.Decisions)}
 		if !g.Due.IsZero() {
 			due := g.Due
@@ -1241,6 +1249,9 @@ func groupLine(g sprint.Group, now time.Time) string {
 	}
 	kind := strings.ToUpper(g.Kind)
 	l := fmt.Sprintf("%s %s %s %s", kind, g.ID, mark, g.Type)
+	if g.Alias != "" {
+		l += "  alias=" + g.Alias
+	}
 	if g.Stream != "" {
 		l += "  stream=" + g.Stream
 	}

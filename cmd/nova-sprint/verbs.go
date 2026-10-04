@@ -1662,7 +1662,7 @@ func lintBrief(verbName, brief string, rs ruleSet, max int, stderr io.Writer) in
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("release")
 	reason := fs.String("reason", "", "what you looked at and found: recorded on the sentinel or held card, and in a sentinel's notification")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+	ans := fs.String("answers", "", answersWords)
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "release", err.Error())
@@ -1673,6 +1673,9 @@ func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "release", err.Error())
+	}
+	if err := unaliasFlag(context.Background(), st, fs, "answers"); err != nil {
+		return refuse(stderr, "release", "--answers: "+err.Error())
 	}
 	coordinator, err := st.B.Coordinator(context.Background())
 	if err != nil {
@@ -1760,6 +1763,17 @@ func (a *app) setVerb(verbName string, args []string, stdout, stderr io.Writer, 
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, verbName, err.Error())
+	}
+	// a judgment's alias stands for its id in --answers and --group (alias.go)
+	if err := unaliasFlag(context.Background(), st, fs, "answers"); err != nil {
+		return refuse(stderr, verbName, "--answers: "+err.Error())
+	}
+	if sprint.IsAlias(s.group) {
+		full, err := unalias(context.Background(), st, []string{s.group})
+		if err != nil {
+			return refuse(stderr, verbName, "--group: "+err.Error())
+		}
+		s.group = full[0]
 	}
 	ids, code := a.withGroup(verbName, fs, c, st, &s, ids, stdout, stderr)
 	if code != 0 {
@@ -1957,7 +1971,7 @@ func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 	var ans, instead *string
 	return a.setVerb("ask", args, stdout, stderr, false, func(fs flagSet) {
 		another = fs.Bool("another", false, "one more reader for a primary already asked")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+		ans = fs.String("answers", "", answersWords)
 		instead = fs.String("instead", "", "take back this reader's read (asked or reading) of the one primary named and ask one other reader, as --another chooses")
 	}, func(ids []string, s *sel) string {
 		if *instead != "" && s.group != "" {
@@ -2054,7 +2068,7 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 	var ans *string
 	return a.setVerb("accept", args, stdout, stderr, false, func(fs flagSet) {
 		readOK = fs.Bool("read-ok", false, "every primary in review with the ok reads it needs (one reader's for a flash card, two different readers' for a pro card); moves eligible primaries into the merge queue")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+		ans = fs.String("answers", "", answersWords)
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" && !*readOK && s.limit == 0 {
 			return "wants ids, --stream <s>, --read-ok or --group <id>"
@@ -2073,7 +2087,7 @@ func (a *app) cmdRework(args []string, stdout, stderr io.Writer) int {
 	var fix, ans, tier *string
 	return a.setVerb("rework", args, stdout, stderr, false, func(fs flagSet) {
 		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work; the next attempt is staged at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, and where it does not the child is told that work must be redone")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+		ans = fs.String("answers", "", answersWords)
 		tier = fs.String("tier", "", "the tier ("+cardhdr.RouteList+") this attempt and every later deal of the card draws its route from, over its brief's line 1, kept on the card: it pins the card, never escalated past it (flash first); a card whose brief pins a model is refused; at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, frontier) or the provider its takes failed on is back, which lifts it once per tier per card")
 	}, func(ids []string, s *sel) string {
 		var why []string
@@ -2093,7 +2107,7 @@ func (a *app) cmdReturn(args []string, stdout, stderr io.Writer) int {
 	var reason, ans *string
 	return a.setVerb("return", args, stdout, stderr, false, func(fs flagSet) {
 		reason = fs.String("reason", "", "why it goes back to review")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+		ans = fs.String("answers", "", answersWords)
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" {
 			return "wants ids, --stream <s> or --group <id>"
@@ -2108,7 +2122,7 @@ func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	var reason, ans *string
 	return a.setVerb("drop", args, stdout, stderr, true, func(fs flagSet) {
 		reason = fs.String("reason", "", "why it leaves the table; kept with its record")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+		ans = fs.String("answers", "", answersWords)
 	}, func(ids []string, s *sel) string {
 		if *reason == "" || len(ids) == 0 && s.stream == "" && s.col == "" {
 			return "wants ids (or --stream/--col, --group) and --reason <text>"
@@ -2201,7 +2215,7 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 	score := fs.String("score", "", "the new score of the first id; the rest follow it")
 	first := fs.Bool("first", false, "ahead of every primary")
 	before := fs.String("before", "", "in line in front of this primary of the cards' own stream, in the order named, placed as add --before places cards (the line is never renumbered)")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+	ans := fs.String("answers", "", answersWords)
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "rank", err.Error())
@@ -2226,6 +2240,9 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "rank", err.Error())
+	}
+	if err := unaliasFlag(context.Background(), st, fs, "answers"); err != nil {
+		return refuse(stderr, "rank", "--answers: "+err.Error())
 	}
 	return a.runStep("rank", *c, st, store.RankStep(r), stdout, stderr)
 }
@@ -2272,7 +2289,7 @@ func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("resume")
 	stream := fs.String("stream", "", "the stopped stream")
 	did := fs.String("did", "", "what the coordinator did about the cause; required after a red branch")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+	ans := fs.String("answers", "", answersWords)
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "resume", err.Error())
@@ -2283,6 +2300,9 @@ func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "resume", err.Error())
+	}
+	if err := unaliasFlag(context.Background(), st, fs, "answers"); err != nil {
+		return refuse(stderr, "resume", "--answers: "+err.Error())
 	}
 	return a.runStep("resume", *c, st, store.ResumeStep(sprint.ResumeReq{Stream: *stream, Did: *did, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
 }
@@ -2627,6 +2647,9 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "wait", err.Error())
 	}
+	if pos, err = unalias(context.Background(), st, pos); err != nil {
+		return refuse(stderr, "wait", err.Error())
+	}
 	res, held, err := st.Wait(context.Background(), pos[0], at)
 	if err == nil && len(res.Refused) > 0 {
 		err = fmt.Errorf("%s", res.Refused[0].Why)
@@ -2674,6 +2697,9 @@ func (a *app) cmdAck(args []string, stdout, stderr io.Writer) int {
 	}
 	st, err := a.store(*c)
 	if err != nil {
+		return refuse(stderr, "ack", err.Error())
+	}
+	if notes, err = unalias(context.Background(), st, notes); err != nil {
 		return refuse(stderr, "ack", err.Error())
 	}
 	return a.runStep("ack", *c, st, store.AckStep(sprint.AckReq{Notes: notes, Reason: *reason, Who: c.actor}), stdout, stderr)

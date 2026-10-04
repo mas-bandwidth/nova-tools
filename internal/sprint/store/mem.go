@@ -74,6 +74,7 @@ type memLog struct {
 	inbox    []memNote
 	lines    []memLine // the log
 	notes    map[string]sprint.Note
+	aliases  map[string]string // alias (j<n>) -> note id (sprint.Alias)
 	open     map[string]string
 	cursor   string
 	queue    []sprint.QueuedChange // the work table's queue, oldest first
@@ -176,7 +177,7 @@ func (m *Mem) log() *memLog {
 	m.touch(m.epoch)
 	l := m.logs[m.epoch]
 	if l == nil {
-		l = &memLog{done: map[string]string{}, progress: map[string]time.Time{}, notes: map[string]sprint.Note{}, open: map[string]string{}}
+		l = &memLog{done: map[string]string{}, progress: map[string]time.Time{}, notes: map[string]sprint.Note{}, aliases: map[string]string{}, open: map[string]string{}}
 		m.logs[m.epoch] = l
 	}
 	return l
@@ -972,6 +973,14 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 			// every subject stays open; only the note's listing is bounded
 			subjects := n.Subjects()
 			n = n.Bound()
+			if n.Kind == sprint.Judgment || n.Kind == sprint.Acknowledged {
+				// the note's alias: its place among the epoch's, under the fence (sprint.Alias)
+				if l.aliases == nil {
+					l.aliases = map[string]string{} // a log loaded from a file written before aliases
+				}
+				n.Alias = sprint.Alias(len(l.aliases) + 1)
+				l.aliases[n.Alias] = n.ID
+			}
 			m.seq++
 			l.lines = append(l.lines, memLine{fmt.Sprintf("%d-0", m.seq), sprint.NoteLine(n, op.ID)})
 			m.seq++
@@ -1081,6 +1090,19 @@ func (m *Mem) Pending() *OpRecord {
 	defer m.mu.Unlock()
 	l := m.log()
 	return l.fence
+}
+
+func (m *Mem) Aliases(_ context.Context, aliases []string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.count("aliases")
+	out := make(map[string]string, len(aliases))
+	for _, a := range aliases {
+		if id, ok := m.log().aliases[a]; ok {
+			out[a] = id
+		}
+	}
+	return out, nil
 }
 
 func (m *Mem) OpenNotes(context.Context) ([]sprint.Open, error) {

@@ -24,7 +24,7 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 	out := ta.ok("log --card s1-1")
 	for _, want := range []string{
 		"03:04:05  s1-1 added to s1 by coordinator (in a set of 2)", // a set move as the card's own line (log_card_test.go)
-		" bytes, shown by nova-sprint card s1-1", // a brief is said, not printed (log_brief_test.go)
+		" bytes, shown by nova-sprint card s1-1",                    // a brief is said, not printed (log_brief_test.go)
 		"attempt 1 dealt to m1",
 		"m1 took attempt 1",
 		"m1 finished attempt 1: FAILED",

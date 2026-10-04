@@ -110,6 +110,10 @@ type Backend interface {
 	Progress(ctx context.Context) (map[string]time.Time, error)
 	// OpenNotes is every open judgment, one per subject.
 	OpenNotes(ctx context.Context) ([]sprint.Open, error)
+	// Aliases is the note id each alias names (sprint.Alias; "" for one that
+	// names none): the epoch's judgments and acknowledgements, open or answered,
+	// as the commit numbered them.
+	Aliases(ctx context.Context, aliases []string) (map[string]string, error)
 	// NotesSince is the notifications after the stream id (all when empty),
 	// at most max, oldest first, with each one's stream id.
 	NotesSince(ctx context.Context, after string, max int) ([]sprint.Note, []string, error)

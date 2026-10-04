@@ -24,9 +24,9 @@ func TestRankBeforePlacesCardsInFrontOfAPrimary(t *testing.T) {
 	assert.True(t, s1 < s4 && s4 < s3 && s3 < s2, "the line: a-1 %v, a-4 %v, a-3 %v, a-2 %v", s1, s4, s3, s2)
 
 	for line, want := range map[string]string{
-		"rank b-1 --before a-2":        "b-1 is of stream b and a-2 of stream a: --before orders the cards of one stream",
-		"rank a-2 --before a-2":        "a-2 is the card --before names",
-		"rank a-1 --before a-9":        "--before a-9 is no primary on the table",
+		"rank b-1 --before a-2":         "b-1 is of stream b and a-2 of stream a: --before orders the cards of one stream",
+		"rank a-2 --before a-2":         "a-2 is the card --before names",
+		"rank a-1 --before a-9":         "--before a-9 is no primary on the table",
 		"rank a-1 --before a-2 --first": "wants ids and one of --score <n>, --first, --before <id>",
 	} {
 		code, _, errs := ta.do(line)

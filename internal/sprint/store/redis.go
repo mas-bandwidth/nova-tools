@@ -408,6 +408,7 @@ const (
 	keyInbox    = "inbox"    // STREAM of notifications, field "note"
 	keyLog      = "log"      // STREAM of the log's lines, field "line"
 	keyNotes    = "notes"    // HASH note id -> judgment note
+	keyAliases  = "aliases"  // HASH alias (j<n>) -> note id, and its field "n", the count (sprint.Alias)
 	keyOpen     = "open"     // HASH <note id>|<subject> -> note id, one per open subject
 	keyCursor   = "cursor"   // STRING, the coordinator's last read stream id
 	keyProgress = "progress" // HASH stream -> RFC3339 time of its last progress
@@ -606,7 +607,31 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		}
 		p.XAdd(ctx, &redis.XAddArgs{Stream: r.key(keyLog), Values: []any{"line", string(body)}})
 	}
-	for _, n := range append(append([]sprint.Note{}, op.Notes...), op.Decided...) {
+	notes := append(append([]sprint.Note{}, op.Notes...), op.Decided...)
+	// each judgment's and acknowledgement's alias is its place among the epoch's
+	// (sprint.Alias): the count is read here, under the fence this commit holds, and
+	// written back with the notes; one read, only when the commit writes one
+	counted := 0
+	for _, n := range notes {
+		if n.Kind == sprint.Judgment || n.Kind == sprint.Acknowledged {
+			counted++
+		}
+	}
+	if counted > 0 {
+		n, err := r.C.HGet(ctx, r.key(keyAliases), "n").Int()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return err
+		}
+		for i := range notes {
+			if notes[i].Kind == sprint.Judgment || notes[i].Kind == sprint.Acknowledged {
+				n++
+				notes[i].Alias = sprint.Alias(n)
+				p.HSet(ctx, r.key(keyAliases), notes[i].Alias, notes[i].ID)
+			}
+		}
+		p.HSet(ctx, r.key(keyAliases), "n", n)
+	}
+	for _, n := range notes {
 		body, err := json.Marshal(n.Bound())
 		if err != nil {
 			return err
@@ -734,6 +759,23 @@ func (r *Redis) Progress(ctx context.Context) (map[string]time.Time, error) {
 	out := map[string]time.Time{}
 	for k, v := range h {
 		out[k], _ = time.Parse(time.RFC3339, v)
+	}
+	return out, nil
+}
+
+func (r *Redis) Aliases(ctx context.Context, aliases []string) (map[string]string, error) {
+	out := make(map[string]string, len(aliases))
+	if len(aliases) == 0 {
+		return out, nil
+	}
+	vals, err := r.C.HMGet(ctx, r.key(keyAliases), aliases...).Result()
+	if err != nil {
+		return nil, err
+	}
+	for i, v := range vals {
+		if s, ok := v.(string); ok {
+			out[aliases[i]] = s
+		}
 	}
 	return out, nil
 }
