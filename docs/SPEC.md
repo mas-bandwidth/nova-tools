@@ -132,7 +132,7 @@ BUS FAILED <path, path:line, or lane>: <reason>
 <TOKEN> MORE kind=<kind> shown=<n> total=<t> <remedy>
 ```
 
-`OK` lines go to stdout; `FAIL` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
+`OK` lines go to stdout; `FAIL` and `FAILED` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
 
 **One value, two renderings.** A tool built on `internal/tool` returns one result
 per verb and prints it as lines or, with `--json` (every verb takes it), as one

@@ -33,7 +33,7 @@ concurrency:
 
 jobs:
   race-cache:
-    # PRIMES THE RACE CACHE ONCE PER OS, before the sixteen test legs start. Every test leg
+    # PRIMES THE RACE CACHE ONCE PER OS, before the test legs start. Every test leg
     # restores the `<os>-gorace-` entry, and on a miss every leg builds the same race
     # dependencies itself: 31-54 s each on ubuntu-latest in run 36377073595, which put two
     # cold legs over the cap. This job asks for the exact entry without downloading it
@@ -130,8 +130,12 @@ jobs:
     # cmd/nova-sandbox 34.2, cmd/nova-self-talk 21.3, internal/update 19.1, cmd/nova-secrets 16.7,
     # internal/bus 16.6. Run 37158353472 also shows cmd/nova-sprint reaching the 75 s test
     # timeout alongside internal/ci on macOS. Run 37159703304 puts internal/sprint/store
-    # (65.470 s on Linux) alongside cmd/nova-sandbox on a capped leg. Nine heavy packages,
-    # nine shards: each has its own shard, with the other live packages dealt round-robin.
+    # (65.470 s on Linux) alongside cmd/nova-sandbox on a capped leg. Run 37165758129
+    # caps Linux shard 1 with internal/ci 67.708 s, internal/sprint/refmodel 60.236,
+    # cmd/nova-swarm 44.763 and internal/docs 18.834 together. Its completed legs also
+    # measure internal/sprint 15.951 s, internal/redisconn 18.169, internal/config 17.741
+    # and internal/secrets 15.577. Sixteen measured heavy packages each have a shard;
+    # the other live packages are dealt round-robin.
     #
     # BUILD AND VET ARE NOT HERE ANY MORE. They are ci.yml's: its lint job runs `make build` and
     # `make vet` on every event (Linux), and its test-hosted legs run `make build` and
@@ -155,12 +159,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         include:
           - os: ubuntu-latest
-            shards: 9
+            shards: 16
           - os: macos-latest
-            shards: 9
+            shards: 16
     runs-on: ${{ matrix.os }}
     timeout-minutes: 2
     steps:
@@ -227,7 +231,7 @@ jobs:
         # internal/ci: TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets internal/bus cmd/nova-sprint internal/sprint/store"
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets internal/bus cmd/nova-sprint internal/sprint/store cmd/nova-swarm internal/sprint/refmodel internal/docs internal/sprint internal/redisconn internal/config internal/secrets"
 
       - name: fetch origin/dev for the deprecated-imports ratchet
         # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
