@@ -29,7 +29,7 @@ import (
 )
 
 // CycleNote is the verb said where a person meets it.
-const CycleNote = "cycle is the fix-land-install cycle from the coordinator in one command: the tools play (<--source>/fleet/tools.yml) with --check, then the play itself, limited to --benches and localhost. " +
+const CycleNote = "cycle is the fix-land-install cycle from the coordinator in one command: the tools play (<--source>/fleet/tools.yml) with --check, then the play itself, limited to --benches, localhost and the store_deployer group, and the build's schema and function library on the store runs on every cycle. " +
 	"The play builds every missing platform with `release build --incremental --gate report --reason <why>`, copies only the binaries a bench does not already hold, and installs; " +
 	"one CYCLE BENCH line per bench names the version it now runs, and both plays' output is kept under <--out>/<version>/cycle-check.log and cycle-apply.log. " +
 	"--dry-run runs the check alone. It needs the inventory's environment (the store, the seat) exactly as the play does. A release cut keeps the refusing gate: cycle is for a machinery install during a sprint."
@@ -143,7 +143,7 @@ func cycle(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	argv := []string{"-i", o.inventory, play,
 		"-e", "nova_version=" + o.version, "-e", "nova_source=" + o.source, "-e", "nova_release_out=" + o.out,
 		"-e", "nova_dogfood_receipts=" + receipts, "-e", string(buildArgs),
-		"--limit", strings.Join(append(append([]string(nil), benches...), "localhost"), ",")}
+		"--limit", strings.Join(append(append([]string(nil), benches...), "localhost", "store_deployer"), ",")}
 	logs := filepath.Join(o.out, o.version)
 	if err := os.MkdirAll(logs, 0o755); err != nil {
 		return refusal(errs, "CYCLE", fmt.Errorf("cannot create %s: %w (name a writable --out)", logs, err))
