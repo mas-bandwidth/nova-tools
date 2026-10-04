@@ -303,16 +303,14 @@ func TestTheAgentSocketIsUnreachable(t *testing.T) {
 	// path of a t.TempDir() is longer, so an absolute bind fails silently and the one
 	// test this build's network fix exists for would pass for the wrong reason.
 	lines := startUnixListener(t, j.outside, "agent.sock")
+	// The reads are received directly, with no wall-clock bound: a listener that
+	// stops answers ok=false (the channel closes), and one that answers nothing
+	// hangs until the package test's own -timeout.
 	next := func(what string) string {
 		t.Helper()
-		select {
-		case l, ok := <-lines:
-			require.True(t, ok, "control: the listener exited before %s", what)
-			return l
-		case <-time.After(60 * time.Second):
-			t.Fatalf("control: no %s from the listener in 60 s", what)
-		}
-		return ""
+		l, ok := <-lines
+		require.True(t, ok, "control: the listener exited before %s", what)
+		return l
 	}
 	l := next("READY")
 	require.Equal(t, "READY", l, "control: no listener could be bound outside the wall: %s", l)
