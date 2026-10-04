@@ -205,6 +205,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.Equal(t, "", row.Fields["coordinator"], assertionMsg159...)
 		require.Empty(t, row.Fields["redis_port"], assertionMsg159...)
 		require.Equal(t, "", row.Fields["pg_dsn"], assertionMsg159...)
+		require.Equal(t, "~/nova-bench/loops", row.Fields["loops_dir"], assertionMsg159...)
 		require.NotEqual(t, "", row.CreatedAt, assertionMsg159...)
 		{
 			hist, err := st.History(ctx, KindFleet, KindFleet)
@@ -247,7 +248,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		rev, err := st.Rev(ctx, KindFleet)
 		require.NoError(t, err)
 		require.Zero(t, rev, "a refused endpoint update wrote history")
-		after, id, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space", "coordinator": "studio"}, "rowan")
+		after, id, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space", "coordinator": "studio", "loops_dir": "~/nova-bench/loops"}, "rowan")
 		assertionMsg182 := []any{"set the fleet: %+v id %d err %v", after.Fields, id, err}
 		require.NoError(t, err, assertionMsg182...)
 		require.Equal(t, int64(3), id, assertionMsg182...)
