@@ -91,6 +91,18 @@ func Brief(s *Snapshot, r BriefReq) Plan {
 	} else {
 		unset = append(unset, FieldWho)
 	}
+	// the new brief's BENCH line names its bench (bench_deal.go): a brief step reads no
+	// fleet table, so the members it names are add's to hold
+	bench, benchWhy := BenchOfBrief(r.Brief)
+	if benchWhy != "" {
+		p.refuse(r.ID, benchWhy)
+		return p
+	}
+	if len(bench) > 0 {
+		set[FieldBench] = strings.Join(bench, ",")
+	} else {
+		unset = append(unset, FieldBench)
+	}
 	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
 		Moved: fmt.Sprintf("%s brief replaced (%d bytes) stream=%s %s", c.ID, len(r.Brief), c.Row, c.Col)})
 	return p

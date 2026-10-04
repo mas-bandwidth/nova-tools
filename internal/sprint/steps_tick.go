@@ -582,6 +582,11 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			whyOf[tier] = why
 			continue
 		}
+		if b := Bench(c); len(b) > 0 && len(onlyBench(up, b)) == 0 {
+			// its bench is down or held: it waits ready for a member of it, and is dealt to
+			// no other (bench_deal.go); the no-stall rule says why (held.go)
+			continue
+		}
 		ready = append(ready, c)
 	}
 	// a primary whose attempt failed the way the attempt before did (rule 2): the bound's
