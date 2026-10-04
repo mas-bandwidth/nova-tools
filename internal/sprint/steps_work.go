@@ -1310,9 +1310,29 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if j, ok := reviewJudgment(s, inReview(pr, set), reviewStep{moved: asked, writes: u.Notes, who: who}); ok {
 			u.Notes = append(u.Notes, j)
 		}
+		friendNext(s, c, &u)
 		p.Units = append(p.Units, u)
 	}
 	return p
+}
+
+// friendNext is a friend's own take: her finish moves the oldest ready card on her row
+// (the deal dealt it ready behind her working cards: FriendDeal) into working in the
+// same step, taken now, so she never waits for a tick between one card and the next
+// (the owner, 2026-10-04: "just like the fleet"). A machine's finish does nothing of the
+// kind: the member takes.
+func friendNext(s *Snapshot, c *Card, u *Unit) {
+	if !IsFriendRow(c.Row) {
+		return
+	}
+	ready := append([]*Card(nil), s.Fleet.Cell(c.Row, Ready)...)
+	if len(ready) == 0 {
+		return
+	}
+	SortCards(ready)
+	next := ready[0]
+	u.Changes = append(u.Changes, change(Fleet, moveEntry(next, c.Row, Working, takenStamps(next, s.Now), "untaken_since")))
+	u.Moved += fmt.Sprintf("; %s ready -> working (her next, taken now)", next.ID)
 }
 
 // FieldPassedHead is the head of the attempt a rework sent back when a reader had passed
