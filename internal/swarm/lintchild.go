@@ -82,6 +82,7 @@ var DefaultChildRules = []ChildRule{
 	{"no-server", "Never start a server on this machine.", DefaultRulesSource},
 	{"no-rm-rf", "No `rm -rf` outside the job directory.", DefaultRulesSource},
 	{"report-not-done", "Report what was not done.", DefaultRulesSource},
+	{"honest-attribution", "name the actual model and never claim one you are not", DefaultRulesSource},
 }
 
 // LibrariesConsideredName is the name of the rule that switches the lint's libraries check
@@ -188,6 +189,9 @@ var childScans = []childScan{
 		RE:     childCmd(`go[ \t]+test\b`),
 		Remedy: "every `go test` carries `-timeout 600s` on the same command, so a hung test ends at ten minutes and not at the card's deadline",
 		Allow:  childHasTimeout},
+	{Check: "step-hide-model",
+		RE:     regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_./-])((?:never\s+claim\s+(?:claude|opus|sonnet|anthropic|the\s+model))|(hide|deny|don't\s+mention|do\s+not\s+mention|omit|misstate).{0,50}(?:model|harness|claude|anthropic))`),
+		Remedy: "a brief must never tell a worker to hide or misstate its model or harness; say to name the actual model and never claim one the worker is not running"},
 }
 
 var (

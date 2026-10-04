@@ -658,6 +658,7 @@ The built-in general rules are the rows of `DefaultChildRules` in
 | `rule-no-server` | Never start a server on this machine. |
 | `rule-no-rm-rf` | No `rm -rf` outside the job directory. |
 | `rule-report-not-done` | Report what was not done. |
+| `rule-honest-attribution` | name the actual model and never claim one you are not. |
 
 Two kinds of check read the card's text:
 
@@ -686,6 +687,11 @@ other checks).
 | `step-stash` | no line stashes: the stash list is shared by every worktree of the repository, so a stash taken here is popped there; commit to the child's own branch instead |
 | `step-merge` | no line merges a pull request: the child opens it against the base the card names and stops; the coordinator lands it |
 | `step-go-test-timeout` | every `go test` carries `-timeout 600s` on the same command, so a hung test ends at ten minutes and not at the card's deadline (runs with a rule named `go-test-timeout`) |
+| `step-hide-model` | no line tells a worker to hide or misstate its model or harness: a brief never says to deny, hide, omit or misstate the model or to claim a different one; a card quotes `rule-honest-attribution`, naming it as a required sentence |
+
+### brief-lint-attribution.w1~15
+
+The `rule-honest-attribution` rule and `step-hide-model` scan prevent a brief from telling a worker to hide, deny, omit or misstate the model or harness it runs on. A brief that says to name the actual model and never claim one the worker is not running passes. The documented hiding patterns include: "never claim Claude" or another specific model name, "hide the model", "deny the model", "don't mention the model", "omit the model", "misstate the model". A line that genuinely forbids the worker to misstate or hide (e.g., "never claim you are not") is allowed. The standard attribution requirement is that every commit carries the worker's actual model in its Co-Authored-By trailer, never a fixed model regardless of what the worker is actually running.
 
 ## Test inventory
 
