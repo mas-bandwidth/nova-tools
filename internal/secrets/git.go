@@ -142,7 +142,8 @@ func resolveRef(gitDir, refPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ref %s not found in loose files or packed-refs", refPath)
 	}
-	defer f.Close()
+	// ignored: the packed-refs handle was opened only for reading
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -168,7 +169,8 @@ func readBranchConfig(gitDir, branch string) (remote, merge string, err error) {
 	if err != nil {
 		return "", "", fmt.Errorf("unable to read .git/config: %w", err)
 	}
-	defer f.Close()
+	// ignored: the config handle was opened only for reading
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	inBranchSection := false
@@ -263,13 +265,15 @@ func readLooseObject(gitDir, sha string) (string, []byte, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	defer f.Close()
+	// ignored: the loose-object handle was opened only for reading
+	defer func() { _ = f.Close() }()
 
 	zr, err := zlib.NewReader(f)
 	if err != nil {
 		return "", nil, err
 	}
-	defer zr.Close()
+	// ignored: the zlib reader wraps a file opened only for reading
+	defer func() { _ = zr.Close() }()
 
 	data, err := io.ReadAll(zr)
 	if err != nil {

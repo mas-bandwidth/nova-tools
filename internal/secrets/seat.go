@@ -57,7 +57,8 @@ type SeatAddOptions struct {
 
 func (o SeatAddOptions) say(format string, a ...interface{}) {
 	if o.Progress != nil {
-		fmt.Fprintf(o.Progress, "seat add: "+format+"\n", a...)
+		// ignored: the progress line is best effort; the verb's result still carries the outcome
+		_, _ = fmt.Fprintf(o.Progress, "seat add: "+format+"\n", a...)
 	}
 }
 
