@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -70,6 +71,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
 	stageWall := newSecondsFlag(fs, "stage-wall", swarm.DefaultStageTimeout, "the bound on staging each card's checkout, a `duration` or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)")
 	diskFloor := fs.Int("disk-floor", 10, "the free `GiB` the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)")
+	maxLoad := fs.Float64("max-load", 0, "the maximum one-minute host `load` at which a local child starts (default 0: no load gate)")
+	warnLoad := fs.Float64("warn-load", 0, "the one-minute host `load` at which a local child start warns, at or below --max-load (default 0: no warning)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
 	if !f.parse(args, stderr) {
@@ -126,6 +129,15 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	if *diskFloor < 0 {
 		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 10)")
+	}
+	if math.IsNaN(*maxLoad) || math.IsInf(*maxLoad, 0) || *maxLoad < 0 {
+		f.add("--max-load is the finite maximum one-minute host load at which a local child starts: 0 or more (0 checks nothing)")
+	}
+	if math.IsNaN(*warnLoad) || math.IsInf(*warnLoad, 0) || *warnLoad < 0 {
+		f.add("--warn-load is the finite one-minute host load at which a local child start warns: 0 or more (0 disables the warning)")
+	}
+	if *warnLoad > 0 && (*maxLoad == 0 || *warnLoad > *maxLoad) {
+		f.add("--warn-load requires --max-load and is at or below it")
 	}
 	// the pool identity every child commits under, from the loop's argv in nova-config;
 	// without it native reads the pool's identity.tsv
@@ -187,6 +199,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, identity: *identity,
+		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
@@ -420,6 +433,8 @@ type nativeRunner struct {
 	stderr                                         io.Writer
 	env                                            []string // added to this process's environment: none in production, a test's
 	pass                                           []string // the secret names handed to native (--pass, the worker's secret)
+	load                                           hostload.Source
+	maxLoad, warnLoad                              float64
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -494,6 +509,18 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		}()
 		r.started(name)
 		return c, nil
+	}
+	// SPEC-FRIEND "The local child load gate": the configured raw one-minute load
+	// decides admission immediately before a new local child is created.
+	if r.maxLoad > 0 && r.load.Load1 != nil {
+		if load, ok := r.load.Load1(); ok {
+			if load > r.maxLoad {
+				return nil, fmt.Errorf("local child refused: one-minute load %.2f is above configured bound %.2f", load, r.maxLoad)
+			}
+			if r.warnLoad > 0 && load >= r.warnLoad && r.stderr != nil {
+				fmt.Fprintf(r.stderr, "nova-swarm member: WARNING local child %s starts at one-minute load %.2f, near configured bound %.2f\n", oneline.Field(p.Card), load, r.maxLoad)
+			}
+		}
 	}
 	if err := safepath.RemoveUnder(r.slots, slot); err != nil && !os.IsNotExist(err) {
 		return nil, err
