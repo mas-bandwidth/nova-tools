@@ -10,6 +10,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -124,10 +126,12 @@ first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); user N
 		Verbs: []tool.Verb{
 			{
 				Name:    "send",
-				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--redis <addr>]",
+				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --file <path> | --stdin) [--re <id>] [--redis <addr>]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
-				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> at=<RFC3339>; the id is the message's for ever.
+				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> at=<RFC3339> bytes=<n> sha256=<hex>; the id is the
+message's for ever, and the byte count and digest are the body's as the store holds it, so a sender
+can check a --file, --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline).
 You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
 are, and the line says login=none.`,
@@ -136,13 +140,20 @@ are, and the line says login=none.`,
 					f.Required("to", "the recipients, comma-separated names")
 					f.String("cc", "", "more recipients, comma-separated names; each gets the message as well")
 					f.Required("subject", "one line saying what the message is")
-					f.String("body", "", "the message's text (or --stdin; at most 1 MiB)")
+					f.String("body", "", "the message's text (or --file, or --stdin; at most 1 MiB)")
+					f.String("file", "", "a file holding the message's text")
 					f.Bool("stdin", false, "read the message's text from stdin")
 					f.String("re", "", "the id of the message this one answers")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
 					f.Check(func(c *tool.Call) {
-						if c.Given("body") == c.Given("stdin") {
-							c.Problem("the body comes from exactly one of --body <text> or --stdin")
+						n := 0
+						for _, k := range []string{"body", "file", "stdin"} {
+							if c.Given(k) {
+								n++
+							}
+						}
+						if n != 1 {
+							c.Problem("the body comes from exactly one of --body <text>, --file <path> or --stdin")
 						}
 					})
 				},
@@ -297,7 +308,17 @@ func names(csv string) []string {
 
 func (w world) send(c *tool.Call) *tool.Out {
 	body := c.Str("body")
-	if c.Bool("stdin") {
+	switch {
+	case c.Given("file"):
+		raw, err := os.ReadFile(c.Str("file"))
+		if err != nil {
+			return tool.Refuse("--file: " + err.Error())
+		}
+		if len(raw) > bus2.MaxBody {
+			return tool.Refuse(fmt.Sprintf("the body in --file is over 1 MiB; at most %d bytes", bus2.MaxBody))
+		}
+		body = string(raw)
+	case c.Bool("stdin"):
 		raw, err := io.ReadAll(io.LimitReader(c.Stdin, bus2.MaxBody+1))
 		if err != nil {
 			return tool.Refuse("--stdin: " + err.Error())
@@ -323,7 +344,9 @@ func (w world) send(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	return loginFact(tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ",")).Fact("at", m.At.Format(time.RFC3339)), login)
+	sum := sha256.Sum256([]byte(m.Body))
+	return loginFact(tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ",")).Fact("at", m.At.Format(time.RFC3339)).
+		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
 }
 
 // message is a received message as one Out: the header line's facts and the

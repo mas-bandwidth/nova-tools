@@ -2,7 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -133,7 +138,7 @@ func TestTheLoopSendPeekRecvAckLog(t *testing.T) {
 	cli := r.cli()
 
 	sent := cli.OK(t, "send", "--as", "ada", "--to", "bob", "--cc", "ada", "--subject", "hello there", "--body", "line one\nline two\n")
-	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=ada at=2026-10-03T12:00:01Z login=none\n$`, sent.Stdout)
+	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=ada at=2026-10-03T12:00:01Z bytes=18 sha256=[0-9a-f]{64} login=none\n$`, sent.Stdout)
 	mid := id(t, sent.Stdout)
 
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=1", "PEEK MESSAGE state=new id="+mid+" from=ada at=2026-10-03T12:00:01Z subject=\"hello there\"")
@@ -250,7 +255,7 @@ func TestTheIdentityIsTheLoginUser(t *testing.T) {
 	r.login = "ada"
 	cli := r.cli()
 	sent := cli.OK(t, "send", "--to", "bob", "--subject", "s", "--body", "x")
-	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=- at=2026-10-03T12:00:01Z\n$`, sent.Stdout, "no login=none with a login")
+	assert.Regexp(t, `^SEND OK id=[0-9A-Z]{26} to=bob cc=- at=2026-10-03T12:00:01Z bytes=1 sha256=[0-9a-f]{64}\n$`, sent.Stdout, "no login=none with a login")
 	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x")
 	cli.Do(t, "log").Exit(0).Out("LOG OK total=2", "from=ada")
 	for _, verb := range [][]string{
@@ -270,4 +275,31 @@ func TestTheIdentityIsTheLoginUser(t *testing.T) {
 	bob.login = "bob"
 	bob.cli().Do(t, "recv").Exit(1).Err("nothing for bob")
 	bob.cli().Do(t, "recv", "--as", "ada").Exit(2).Err("--as ada is not the login user bob")
+}
+
+func TestSendOKCarriesTheByteCountAndTheDigest(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+
+	// 1. Send via --body
+	const body = "are you there?"
+	sum := sha256.Sum256([]byte(body))
+	digest := hex.EncodeToString(sum[:])
+	sent := cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "hello", "--body", body)
+	assert.Contains(t, sent.Stdout, fmt.Sprintf("bytes=%d sha256=%s", len(body), digest))
+
+	// 2. Send via --file
+	filePath := filepath.Join(t.TempDir(), "message.txt")
+	fileBody := "message from a file\nwith multiple lines\n"
+	require.NoError(t, os.WriteFile(filePath, []byte(fileBody), 0o600))
+	fileSum := sha256.Sum256([]byte(fileBody))
+	fileDigest := hex.EncodeToString(fileSum[:])
+	sentFile := cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "from file", "--file", filePath)
+	assert.Contains(t, sentFile.Stdout, fmt.Sprintf("bytes=%d sha256=%s", len(fileBody), fileDigest))
+
+	// 3. Send with --json
+	sentJSON := cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "json check", "--body", body, "--json")
+	assert.Contains(t, sentJSON.Stdout, fmt.Sprintf(`"bytes":%d`, len(body)))
+	assert.Contains(t, sentJSON.Stdout, fmt.Sprintf(`"sha256":"%s"`, digest))
 }
