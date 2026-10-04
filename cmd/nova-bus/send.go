@@ -13,8 +13,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("prepare")
+func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time, e runEnv) int {
+	f := newFlagsWith("prepare", e.getenv)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	file := f.fs.String("file", "", "the draft to prepare")
@@ -72,8 +72,8 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 	return 0
 }
 
-func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("send")
+func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time, e runEnv) int {
+	f := newFlagsWith("send", e.getenv)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	file := f.fs.String("file", "", "the draft to send")
 	useStdin := f.fs.Bool("stdin", false, "read the draft from standard input instead of --file")
@@ -167,7 +167,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 			}
 			return 1
 		}
-		release, err := bus.LockCheckout(*busDir, checkoutLockWait)
+		release, err := bus.LockCheckout(*busDir, e.lockWait())
 		if err != nil {
 			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
 			return 1
@@ -222,7 +222,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		return 2
 	}
 	if !*dryRun { // the lock is a file in .git; a dry run writes nothing
-		release, err := bus.LockCheckout(*busDir, checkoutLockWait)
+		release, err := bus.LockCheckout(*busDir, e.lockWait())
 		if err != nil {
 			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
 			return 1
@@ -360,7 +360,7 @@ func isBusID(tok string) bool {
 		return false
 	}
 	for _, r := range tok[i+1:] {
-		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return false
 		}
 	}

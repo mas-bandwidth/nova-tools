@@ -228,8 +228,8 @@ func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 			})
 		}
 	}
-	require.False(t, checked < 10, "examined %d source files; this tripwire was looking in the wrong place and would have passed by checking almost nothing", checked)
-	require.False(t, literals < 50, "examined %d string literals; the literal half was looking in the wrong place and would have passed by checking almost nothing", literals)
+	require.GreaterOrEqual(t, checked, 10, "examined %d source files; this tripwire was looking in the wrong place and would have passed by checking almost nothing", checked)
+	require.GreaterOrEqual(t, literals, 50, "examined %d string literals; the literal half was looking in the wrong place and would have passed by checking almost nothing", literals)
 }
 
 // namesGit's own test: the tripwire above is only as good as this function, and the two
@@ -308,7 +308,7 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 	}
 	for _, args := range runs {
 		r := invoke(t, args...)
-		assert.False(t, r.exit > 1, "%v exits %d; the fixture is meant to be a run the tool can complete\n%s", args, r.exit, r.all())
+		assert.LessOrEqual(t, r.exit, 1, "%v exits %d; the fixture is meant to be a run the tool can complete\n%s", args, r.exit, r.all())
 	}
 
 	{
@@ -396,7 +396,7 @@ func readTree(t *testing.T, root string) treeSnapshot {
 		sum.Write(raw)
 		sum.Write([]byte{0})
 	}
-	require.False(t, len(names) == 0, "nothing under %s; this comparison would hold whatever happened", root)
+	require.NotEmpty(t, names, "nothing under %s; this comparison would hold whatever happened", root)
 	return treeSnapshot{
 		digest: hex.EncodeToString(sum.Sum(nil)),
 		files:  files,

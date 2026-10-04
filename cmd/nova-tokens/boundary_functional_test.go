@@ -66,7 +66,7 @@ func TestConcurrentWritersDoNotMutateTheBareRemote(t *testing.T) {
 	wg.Wait()
 	close(errs)
 	for err := range errs {
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 
 	before := readTree(t, bare)

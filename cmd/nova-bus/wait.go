@@ -57,8 +57,8 @@ func rearmCommand(args []string) string {
 	return "nova-bus wait " + strings.Join(quoted, " ")
 }
 
-func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("wait")
+func cmdWait(args []string, stdout, stderr io.Writer, now time.Time, e runEnv) int {
+	f := newFlagsWith("wait", e.getenv)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	maxWords := f.fs.Int("receipt-max-words", 0, "a body under this many words may be a receipt (required, at least 1)")
@@ -98,7 +98,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// what its checkout already held would wait out its whole timeout beside a bus full of
 	// notes, and this tool does not guess a remote.
 	f.alsoRefuse = func() string {
-		if _, ok := resolveReceiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir); !ok {
+		if _, ok := f.resolveReceiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir); !ok {
 			return receiptMaxWordsRefusal(f.verb, *maxWords)
 		}
 		return ""
@@ -285,10 +285,11 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
 		me: me, noBeat: *noBeat,
-		diagnostics: *diagnostics,
-		quietBeats:  *quietBeats,
-		maxCommits:  *maxCommits,
-		onNote:      *onNote,
+		diagnostics:      *diagnostics,
+		quietBeats:       *quietBeats,
+		maxCommits:       *maxCommits,
+		onNote:           *onNote,
+		checkoutLockWait: e.checkoutLockWait,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
@@ -671,7 +672,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 //
 // The lock is taken and released here rather than around the loop; see lockCheckout.
 func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bool, stdout, stderr io.Writer, repairs *repairLog) (int, inboxReading, string, bool) {
-	release, code := lockCheckout("WAIT", o.busDir, stderr)
+	release, code := runEnv{checkoutLockWait: o.checkoutLockWait}.lockCheckout("WAIT", o.busDir, stderr)
 	if code != 0 {
 		repairs.flush(stdout)
 		return code, inboxReading{}, "", false

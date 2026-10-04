@@ -16,8 +16,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("inbox")
+func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time, e runEnv) int {
+	f := newFlagsWith("inbox", e.getenv)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	maxWords := f.fs.Int("receipt-max-words", 0, "a body under this many words may be a receipt (required, at least 1)")
@@ -42,7 +42,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
 	f.alsoRefuse = func() string {
-		if _, ok := resolveReceiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir); !ok {
+		if _, ok := f.resolveReceiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir); !ok {
 			return receiptMaxWordsRefusal(f.verb, *maxWords)
 		}
 		return ""
@@ -132,7 +132,8 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
 		maxCommits: *maxCommits, walkProgress: true,
-		diagnostics: *diagnostics,
+		diagnostics:      *diagnostics,
+		checkoutLockWait: e.checkoutLockWait,
 	}
 	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --bus at a
 	// subdirectory of a bigger repository and the run refused with "participants.json: no
@@ -149,7 +150,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		// writes nothing. It reads without the exclusion, so a run writing at the same
 		// moment can make its plan stale; the plan is still one the real run would make.
 		if !o.dryRun {
-			release, code := lockCheckout("INBOX", o.busDir, stderr)
+			release, code := runEnv{checkoutLockWait: o.checkoutLockWait}.lockCheckout("INBOX", o.busDir, stderr)
 			if code != 0 {
 				return code
 			}
@@ -225,6 +226,8 @@ type inboxOpts struct {
 	// tick print WAIT TIMEOUT and the rearm line so the harness can re-arm. Prints no
 	// INBOX OPEN frame. `inbox` leaves it false.
 	onNote bool
+	// checkoutLockWait is the timeout for taking the checkout lock; if 0, defaults to checkoutLockWait.
+	checkoutLockWait time.Duration
 }
 
 // inboxReading is what one listing found, for the caller that has to act on it: `inbox`

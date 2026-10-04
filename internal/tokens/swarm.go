@@ -2,7 +2,7 @@ package tokens
 
 import (
 	"bufio"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -36,12 +36,14 @@ var swarmTypes = map[string]Type{
 	"cache_write": CacheWrite, "cache_read": CacheRead, "reasoning": Reasoning,
 }
 
-// ReadSwarm reads every <pool>/usage/*.tsv and nothing else.
-func ReadSwarm(label, pool string, rules *Rules) *Source {
+// ReadSwarm reads every <pool>/usage/*.tsv and nothing else. The pool is read through the
+// caller's fs.FS, rooted at pool (os.DirFS(pool) in main, fstest.MapFS in a test), and
+// pool is the path the report names.
+func ReadSwarm(label, pool string, fsys fs.FS, rules *Rules) *Source {
 	s := &Source{Label: Label(KindSwarm, label), Kind: KindSwarm, Path: pool, Reports: AllTypes, Basis: UTC}
 
 	usageDir := filepath.Join(pool, "usage")
-	ents, err := os.ReadDir(usageDir)
+	ents, err := fs.ReadDir(fsys, "usage")
 	if err != nil {
 		s.unreadable(usageDir, err.Error())
 	}
@@ -51,15 +53,16 @@ func ReadSwarm(label, pool string, rules *Rules) *Source {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), FileSuffix) {
 			continue
 		}
-		files = append(files, filepath.Join(usageDir, e.Name()))
+		files = append(files, filepath.Join("usage", e.Name()))
 		have[strings.TrimSuffix(e.Name(), FileSuffix)] = true
 	}
 	sort.Strings(files)
 
 	seen := map[string]bool{}
-	for _, path := range files {
+	for _, name := range files {
+		path := filepath.Join(pool, name)
 		s.Stat.Files++
-		f, err := openSource(path)
+		f, err := openSourceFS(fsys, name)
 		if err != nil {
 			s.unreadable(path, err.Error())
 			continue
@@ -160,7 +163,7 @@ func ReadSwarm(label, pool string, rules *Rules) *Source {
 	// nousage: a job directory under done/ or failed/ with no usage file beside it.
 	// Counted by NAME; nothing under those directories is opened for anything.
 	for _, sub := range []string{"done", "failed"} {
-		ents, err := os.ReadDir(filepath.Join(pool, sub))
+		ents, err := fs.ReadDir(fsys, sub)
 		if err != nil {
 			continue
 		}

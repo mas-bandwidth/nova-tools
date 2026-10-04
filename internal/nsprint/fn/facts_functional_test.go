@@ -18,79 +18,64 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// startStore starts a throwaway store, opens one client with the read timeout
+// the test needs and logs the server version; the client closes at test end.
+func startStore(t *testing.T, readTimeout time.Duration) (addr string, c *redis.Client, ctx context.Context) {
+	t.Helper()
+	addr = testredis.Start(t)
+	c = redis.NewClient(&redis.Options{Addr: addr, ReadTimeout: readTimeout})
+	t.Cleanup(func() { _ = c.Close() })
+	logRedisVersion(t, c)
+	return addr, c, context.Background()
+}
+
+// loadReplace loads code with FUNCTION LOAD REPLACE and fails on a refusal.
+func loadReplace(t *testing.T, ctx context.Context, c *redis.Client, code string) {
+	t.Helper()
+	require.NoError(t, c.FunctionLoadReplace(ctx, code).Err(), "load the library")
+}
+
 // TestFactF1NoRollback verifies that a function that errors keeps its earlier writes.
 // Redis functions do not roll back; writes executed before an error persist.
 func TestFactF1NoRollback(t *testing.T) {
 	t.Parallel()
-	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
-	logRedisVersion(t, c)
-
-	ctx := context.Background()
+	_, c, ctx := startStore(t, 0)
 
 	code := `#!lua name=facts_test
 redis.register_function('fct_f1_seterr', function(keys, args)
     redis.call('SET', keys[1], args[1])
     error('deliberate error after SET')
 end)`
-	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		require.NoError(t, err, "load: %v", err)
-	}
+	loadReplace(t, ctx, c, code)
 
 	key := "dev-facts-f1"
 	err := c.FCall(ctx, "fct_f1_seterr", []string{key}, "1").Err()
-	if err == nil || !strings.Contains(err.Error(), "deliberate error after SET") {
-		require.Failf(t, "assertion failed", "expected deliberate error from fct_f1_seterr, got: %v", err)
-	}
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "deliberate error after SET")
 
 	val, err := c.Get(ctx, key).Result()
-	if err != nil {
-		require.NoError(t, err, "get %s: %v", key, err)
-	}
-	if val != "1" {
-		require.Equal(t, "1", val, "expected write to persist with value '1', got %q", val)
-	}
+	require.NoError(t, err, "get %s", key)
+	require.Equal(t, "1", val, "the write before the error persists")
 }
 
 // TestFactF2KillOnlyBeforeWrite verifies that FUNCTION KILL stops only a function
 // that has not executed write commands once busy-reply-threshold is exceeded.
 func TestFactF2KillOnlyBeforeWrite(t *testing.T) {
 	t.Parallel()
-	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{
-		Addr:        addr,
-		ReadTimeout: 30 * time.Second,
-	})
-	t.Cleanup(func() { _ = c.Close() })
-	logRedisVersion(t, c)
-
-	ctx := context.Background()
+	addr, c, ctx := startStore(t, 30*time.Second)
 
 	// Verify default busy-reply-threshold is 5000 ms
 	cfg, err := c.ConfigGet(ctx, "busy-reply-threshold").Result()
-	if err != nil {
-		require.NoError(t, err, "config get busy-reply-threshold: %v", err)
-	}
-	if cfg["busy-reply-threshold"] != "5000" {
-		require.Equal(t, "5000", cfg["busy-reply-threshold"], "expected default busy-reply-threshold 5000, got %s", cfg["busy-reply-threshold"])
-	}
+	require.NoError(t, err, "config get busy-reply-threshold")
+	require.Equal(t, "5000", cfg["busy-reply-threshold"], "default busy-reply-threshold")
 
 	// Lower threshold to 1000 ms for test execution
-	if err := c.ConfigSet(ctx, "busy-reply-threshold", "1000").Err(); err != nil {
-		require.NoError(t, err, "config set busy-reply-threshold 1000: %v", err)
-	}
+	require.NoError(t, c.ConfigSet(ctx, "busy-reply-threshold", "1000").Err(), "config set busy-reply-threshold 1000")
 	t.Cleanup(func() {
-		if err := c.ConfigSet(ctx, "busy-reply-threshold", "5000").Err(); err != nil {
-			require.NoError(t, err, "config set busy-reply-threshold 5000: %v", err)
-		}
+		require.NoError(t, c.ConfigSet(ctx, "busy-reply-threshold", "5000").Err(), "config set busy-reply-threshold 5000")
 		cfgRestored, err := c.ConfigGet(ctx, "busy-reply-threshold").Result()
-		if err != nil {
-			require.NoError(t, err, "config get busy-reply-threshold: %v", err)
-		}
-		if cfgRestored["busy-reply-threshold"] != "5000" {
-			require.Equal(t, "5000", cfgRestored["busy-reply-threshold"], "expected restored busy-reply-threshold 5000, got %s", cfgRestored["busy-reply-threshold"])
-		}
+		require.NoError(t, err, "config get busy-reply-threshold")
+		require.Equal(t, "5000", cfgRestored["busy-reply-threshold"], "restored busy-reply-threshold")
 	})
 
 	code := `#!lua name=facts_test
@@ -107,9 +92,7 @@ redis.register_function('fct_f2_readloop', function(keys, args)
     end
     return 'done'
 end)`
-	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		require.NoError(t, err, "load: %v", err)
-	}
+	loadReplace(t, ctx, c, code)
 
 	// Case 1: Writing function -> FUNCTION KILL answers UNKILLABLE
 	{
@@ -144,17 +127,12 @@ end)`
 			break
 		}
 
-		if killErr == nil || !strings.Contains(killErr.Error(), "UNKILLABLE") {
-			require.Failf(t, "assertion failed", "expected UNKILLABLE for writing function, got: %v", killErr)
-		}
+		require.Error(t, killErr)
+		require.Contains(t, killErr.Error(), "UNKILLABLE", "a writing function is unkillable")
 
 		wg.Wait()
-		if runnerErr != nil {
-			require.NoError(t, runnerErr, "writing function should run to end, but failed: %v", runnerErr)
-		}
-		if runnerRes != "done" {
-			require.Equal(t, "done", runnerRes, "expected 'done', got %q", runnerRes)
-		}
+		require.NoError(t, runnerErr, "writing function should run to end")
+		require.Equal(t, "done", runnerRes)
 	}
 
 	// Case 2: No-writes function -> FUNCTION KILL answers OK
@@ -190,26 +168,18 @@ end)`
 			break
 		}
 
-		if killErr != nil {
-			require.NoError(t, killErr, "expected OK (nil error) for killing no-write function, got: %v", killErr)
-		}
+		require.NoError(t, killErr, "a no-writes function is killable")
 
 		wg.Wait()
-		if runnerErr == nil || !strings.Contains(runnerErr.Error(), "Script killed by user") {
-			require.Failf(t, "assertion failed", "expected 'Script killed by user' error, got res=%q err=%v", runnerRes, runnerErr)
-		}
+		require.Error(t, runnerErr)
+		require.Contains(t, runnerErr.Error(), "Script killed by user", "res=%q", runnerRes)
 	}
 }
 
 // TestFactF3UnpackLimit verifies the exact unpack bound: 7,999 values works and 8,000 fails.
 func TestFactF3UnpackLimit(t *testing.T) {
 	t.Parallel()
-	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
-	logRedisVersion(t, c)
-
-	ctx := context.Background()
+	_, c, ctx := startStore(t, 0)
 
 	code := `#!lua name=facts_test
 redis.register_function('fct_f3_unpack', function(keys, args)
@@ -223,43 +193,24 @@ redis.register_function('fct_f3_unpack', function(keys, args)
     end
     return sink(unpack(t))
 end)`
-	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		require.NoError(t, err, "load: %v", err)
-	}
+	loadReplace(t, ctx, c, code)
 
-	// unpack of 7,999 values works
 	res, err := c.FCall(ctx, "fct_f3_unpack", nil, 7999).Int()
-	if err != nil {
-		require.NoError(t, err, "unpack of 7,999 values failed: %v", err)
-	}
-	if res != 7999 {
-		require.Equal(t, 7999, res, "expected 7999, got %d", res)
-	}
+	require.NoError(t, err, "unpack of 7,999 values")
+	require.Equal(t, 7999, res)
 
-	// unpack of 8,000 values fails
 	err = c.FCall(ctx, "fct_f3_unpack", nil, 8000).Err()
-	if err == nil {
-		require.Error(t, err, "unpack of 8,000 values unexpectedly succeeded")
-	}
-	if !strings.Contains(err.Error(), "too many results to unpack") {
-		require.Contains(t, err.Error(), "too many results to unpack", "expected 'too many results to unpack', got: %v", err)
-	}
+	require.Error(t, err, "unpack of 8,000 values unexpectedly succeeded")
+	require.Contains(t, err.Error(), "too many results to unpack")
 }
 
 // TestFactF4OOMInsideStartedFunction verifies that commands inside a started function
 // do not fail on OOM, but the next write starting over maxmemory is refused.
 func TestFactF4OOMInsideStartedFunction(t *testing.T) {
 	t.Parallel()
-	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	t.Cleanup(func() { _ = c.Close() })
-	logRedisVersion(t, c)
+	_, c, ctx := startStore(t, 0)
 
-	ctx := context.Background()
-
-	if err := c.ConfigSet(ctx, "maxmemory-policy", "noeviction").Err(); err != nil {
-		require.NoError(t, err, "config set maxmemory-policy noeviction: %v", err)
-	}
+	require.NoError(t, c.ConfigSet(ctx, "maxmemory-policy", "noeviction").Err(), "config set maxmemory-policy noeviction")
 
 	code := `#!lua name=facts_test
 redis.register_function('fct_f4_write', function(keys, args)
@@ -278,190 +229,122 @@ redis.register_function{
         return redis.call('GET', keys[1])
     end
 }`
-	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		require.NoError(t, err, "load: %v", err)
-	}
+	loadReplace(t, ctx, c, code)
 
 	info, err := c.Info(ctx, "memory").Result()
-	if err != nil {
-		require.NoError(t, err, "info memory: %v", err)
-	}
+	require.NoError(t, err, "info memory")
 	used := parseUsedMemory(info)
-	if used == 0 {
-		require.NotZero(t, used, "could not parse used_memory from info:\n%s", info)
-	}
+	require.NotZero(t, used, "could not parse used_memory from info:\n%s", info)
 
-	// Set maxmemory to used + 300 KiB.
-	// The function will write 2,000 records of 1 KiB (~2 MB+ of data), crossing maxmemory.
+	// Set maxmemory to used + 300 KiB: the function writes 2,000 records of
+	// 1 KiB (~2 MB+), crossing maxmemory.
 	maxMem := used + 300*1024
-	if err := c.ConfigSet(ctx, "maxmemory", strconv.FormatInt(maxMem, 10)).Err(); err != nil {
-		require.NoError(t, err, "config set maxmemory: %v", err)
-	}
+	require.NoError(t, c.ConfigSet(ctx, "maxmemory", strconv.FormatInt(maxMem, 10)).Err(), "config set maxmemory")
 	t.Cleanup(func() {
-		if err := c.ConfigSet(ctx, "maxmemory", "0").Err(); err != nil {
-			require.NoError(t, err, "config set maxmemory 0: %v", err)
-		}
+		require.NoError(t, c.ConfigSet(ctx, "maxmemory", "0").Err(), "config set maxmemory 0")
 		cfg, err := c.ConfigGet(ctx, "maxmemory").Result()
-		if err != nil {
-			require.NoError(t, err, "config get maxmemory: %v", err)
-		}
-		if cfg["maxmemory"] != "0" {
-			require.Equal(t, "0", cfg["maxmemory"], "expected restored maxmemory 0, got %s", cfg["maxmemory"])
-		}
+		require.NoError(t, err, "config get maxmemory")
+		require.Equal(t, "0", cfg["maxmemory"], "restored maxmemory")
 	})
 
 	// Started function runs to end and writes everything
 	res, err := c.FCall(ctx, "fct_f4_write", []string{"dev-facts-f4"}, 2000).Int()
-	if err != nil {
-		require.NoError(t, err, "fct_f4_write failed: %v", err)
-	}
-	if res != 2000 {
-		require.Equal(t, 2000, res, "expected 2000, got %d", res)
-	}
+	require.NoError(t, err, "fct_f4_write")
+	require.Equal(t, 2000, res)
 
 	infoAfter, err := c.Info(ctx, "memory").Result()
-	if err != nil {
-		require.NoError(t, err, "info memory after: %v", err)
-	}
+	require.NoError(t, err, "info memory after")
 	usedAfter := parseUsedMemory(infoAfter)
-	if usedAfter <= maxMem {
-		require.Greater(t, usedAfter, maxMem, "expected used_memory (%d) > maxmemory (%d)", usedAfter, maxMem)
-	}
+	require.Greater(t, usedAfter, maxMem, "used_memory (%d) over maxmemory (%d)", usedAfter, maxMem)
 
 	// Next write over maxmemory is refused at start with raw OOM error
 	oomErr := c.FCall(ctx, "fct_f4_write", []string{"dev-facts-f4-next"}, 1).Err()
-	if oomErr == nil || !strings.Contains(oomErr.Error(), "OOM command not allowed") {
-		require.Failf(t, "assertion failed", "expected OOM error at start of next write, got: %v", oomErr)
-	}
+	require.Error(t, oomErr)
+	require.Contains(t, oomErr.Error(), "OOM command not allowed", "OOM at start of next write")
 
 	// Read (FCALL_RO) still works while over maxmemory
 	val, err := c.FCallRO(ctx, "fct_f4_read", []string{"dev-facts-f4:1"}).Text()
-	if err != nil {
-		require.NoError(t, err, "fct_f4_read failed while over maxmemory: %v", err)
-	}
-	if len(val) != 1024 {
-		require.Equal(t, 1024, len(val), "expected 1024 bytes, got %d", len(val))
-	}
+	require.NoError(t, err, "fct_f4_read over maxmemory")
+	require.Len(t, val, 1024)
 }
 
 // TestFactF5GlobalNamesAndReplaceWhole verifies that function names are global across
 // libraries and that a library is replaced whole on FUNCTION LOAD REPLACE.
 func TestFactF5GlobalNamesAndReplaceWhole(t *testing.T) {
 	t.Parallel()
-	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
-	logRedisVersion(t, c)
-
-	ctx := context.Background()
+	_, c, ctx := startStore(t, 0)
 
 	// 1. Function names are global across libraries
 	code1 := `#!lua name=facts_test
 redis.register_function('fct_f5_step', function() return 1 end)`
-	if err := c.FunctionLoad(ctx, code1).Err(); err != nil {
-		require.NoError(t, err, "load facts_test: %v", err)
-	}
+	require.NoError(t, c.FunctionLoad(ctx, code1).Err(), "load facts_test")
 
 	codeProbe := `#!lua name=facts_test_probe
 redis.register_function('fct_f5_step', function() return 2 end)`
 	err := c.FunctionLoad(ctx, codeProbe).Err()
-	if err == nil || !strings.Contains(err.Error(), "already exists") {
-		require.Failf(t, "assertion failed", "expected 'already exists' for duplicate function name across libraries, got: %v", err)
-	}
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "already exists", "a function name is global across libraries")
 
-	// 2. A library is replaced whole: functions from previous version not in new version disappear
+	// 2. A library is replaced whole: functions from the old version disappear
 	codeReplace1 := `#!lua name=facts_test_replace
 redis.register_function('fct_f5_only', function() return 'first' end)`
-	if err := c.FunctionLoad(ctx, codeReplace1).Err(); err != nil {
-		require.NoError(t, err, "load facts_test_replace: %v", err)
-	}
+	require.NoError(t, c.FunctionLoad(ctx, codeReplace1).Err(), "load facts_test_replace")
 
 	res1, err := c.FCall(ctx, "fct_f5_only", nil).Text()
-	if err != nil || res1 != "first" {
-		require.Failf(t, "assertion failed", "fct_f5_only: res=%s err=%v", res1, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "first", res1)
 
 	codeReplace2 := `#!lua name=facts_test_replace
 redis.register_function('fct_f5_other', function() return 'second' end)`
-	if err := c.FunctionLoadReplace(ctx, codeReplace2).Err(); err != nil {
-		require.NoError(t, err, "load replace facts_test_replace: %v", err)
-	}
+	require.NoError(t, c.FunctionLoadReplace(ctx, codeReplace2).Err(), "replace facts_test_replace")
 
-	// fct_f5_only should no longer exist
 	err = c.FCall(ctx, "fct_f5_only", nil).Err()
-	if err == nil || !strings.Contains(err.Error(), "Function not found") {
-		require.Failf(t, "assertion failed", "expected 'Function not found' for old function after library replacement, got: %v", err)
-	}
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Function not found", "the old function is gone after the replace")
 
-	// fct_f5_other should exist
 	res2, err := c.FCall(ctx, "fct_f5_other", nil).Text()
-	if err != nil || res2 != "second" {
-		require.Failf(t, "assertion failed", "fct_f5_other: res=%s err=%v", res2, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "second", res2)
 
-	// Clean up replace library
-	if err := c.FunctionDelete(ctx, "facts_test_replace").Err(); err != nil {
-		require.NoError(t, err, "function delete: %v", err)
-	}
+	require.NoError(t, c.FunctionDelete(ctx, "facts_test_replace").Err(), "function delete")
 }
 
 // TestFactF6UndeclaredKeys verifies that undeclared keys work on a standalone server.
 func TestFactF6UndeclaredKeys(t *testing.T) {
 	t.Parallel()
-	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
-	logRedisVersion(t, c)
+	_, c, ctx := startStore(t, 0)
 
-	ctx := context.Background()
-
-	// Verify standalone server (cluster_enabled:0)
 	clusterInfo, err := c.Info(ctx, "cluster").Result()
-	if err != nil {
-		require.NoError(t, err, "info cluster: %v", err)
-	}
-	if !strings.Contains(clusterInfo, "cluster_enabled:0") {
-		require.Contains(t, clusterInfo, "cluster_enabled:0", "expected cluster_enabled:0, got:\n%s", clusterInfo)
-	}
+	require.NoError(t, err, "info cluster")
+	require.Contains(t, clusterInfo, "cluster_enabled:0", "a standalone server")
 
 	code := `#!lua name=facts_test
 redis.register_function('fct_f6_undeclared', function(keys, args)
     redis.call('SET', 'dev-facts-f6', 'x')
     return redis.call('GET', 'dev-facts-f6')
 end)`
-	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		require.NoError(t, err, "load: %v", err)
-	}
+	loadReplace(t, ctx, c, code)
 
-	// Call with 0 KEYS
 	res, err := c.FCall(ctx, "fct_f6_undeclared", nil).Text()
-	if err != nil {
-		require.NoError(t, err, "fct_f6_undeclared: %v", err)
-	}
-	if res != "x" {
-		require.Equal(t, "x", res, "expected 'x', got %q", res)
-	}
+	require.NoError(t, err, "fct_f6_undeclared with 0 KEYS")
+	require.Equal(t, "x", res)
 
 	val, err := c.Get(ctx, "dev-facts-f6").Result()
-	if err != nil {
-		require.NoError(t, err, "get: %v", err)
-	}
-	if val != "x" {
-		require.Equal(t, "x", val, "expected 'x', got %q", val)
-	}
+	require.NoError(t, err, "get")
+	require.Equal(t, "x", val)
 }
 
 // TestFactF7StreamIDsAndReset verifies explicit stream id constraints, trimming,
 // and that sequence resets only upon key deletion.
 func TestFactF7StreamIDsAndReset(t *testing.T) {
 	t.Parallel()
-	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
-	logRedisVersion(t, c)
+	_, c, ctx := startStore(t, 0)
 
-	ctx := context.Background()
 	streamKey := "dev-facts-f7"
+	xadd := func(id string) error {
+		return c.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, ID: id, Values: []string{"field", "val"}}).Err()
+	}
+	topItem := "equal or smaller than the target stream top item"
 
 	// 1. XADD 5-0 works
 	id, err := c.XAdd(ctx, &redis.XAddArgs{
@@ -469,69 +352,33 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 		ID:     "5-0",
 		Values: []string{"field", "val"},
 	}).Result()
-	if err != nil {
-		require.NoError(t, err, "xadd 5-0: %v", err)
-	}
-	if id != "5-0" {
-		require.Equal(t, "5-0", id, "expected 5-0, got %s", id)
-	}
+	require.NoError(t, err, "xadd 5-0")
+	require.Equal(t, "5-0", id)
 
-	// 2. 5-0 again and 4-0 are refused "equal or smaller than the target stream top item"
-	err = c.XAdd(ctx, &redis.XAddArgs{
-		Stream: streamKey,
-		ID:     "5-0",
-		Values: []string{"field", "val"},
-	}).Err()
-	if err == nil || !strings.Contains(err.Error(), "equal or smaller than the target stream top item") {
-		require.Failf(t, "assertion failed", "expected 'equal or smaller than the target stream top item', got: %v", err)
-	}
-
-	err = c.XAdd(ctx, &redis.XAddArgs{
-		Stream: streamKey,
-		ID:     "4-0",
-		Values: []string{"field", "val"},
-	}).Err()
-	if err == nil || !strings.Contains(err.Error(), "equal or smaller than the target stream top item") {
-		require.Failf(t, "assertion failed", "expected 'equal or smaller than the target stream top item', got: %v", err)
+	// 2. 5-0 again and 4-0 are refused
+	for _, id := range []string{"5-0", "4-0"} {
+		err = xadd(id)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), topItem, "xadd %s", id)
 	}
 
 	// 3. 0-0 is refused "must be greater than 0-0"
-	err = c.XAdd(ctx, &redis.XAddArgs{
-		Stream: streamKey,
-		ID:     "0-0",
-		Values: []string{"field", "val"},
-	}).Err()
-	if err == nil || !strings.Contains(err.Error(), "must be greater than 0-0") {
-		require.Failf(t, "assertion failed", "expected 'must be greater than 0-0', got: %v", err)
-	}
+	err = xadd("0-0")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "must be greater than 0-0")
 
-	// 4. After XTRIM MAXLEN 0, XINFO shows last-generated-id 5-0 and entries-added 1, and XADD 5-0 is still refused
-	if err := c.XTrimMaxLen(ctx, streamKey, 0).Err(); err != nil {
-		require.NoError(t, err, "xtrim: %v", err)
-	}
+	// 4. After XTRIM MAXLEN 0, XINFO shows last-generated-id 5-0 and entries-added 1
+	require.NoError(t, c.XTrimMaxLen(ctx, streamKey, 0).Err(), "xtrim")
 
 	info, err := c.XInfoStream(ctx, streamKey).Result()
-	if err != nil {
-		require.NoError(t, err, "xinfo: %v", err)
-	}
-	if info.LastGeneratedID != "5-0" {
-		require.Equal(t, "5-0", info.LastGeneratedID, "expected last-generated-id 5-0, got %s", info.LastGeneratedID)
-	}
-	if info.EntriesAdded != 1 {
-		require.Equal(t, int64(1), info.EntriesAdded, "expected entries-added 1, got %d", info.EntriesAdded)
-	}
-	if info.Length != 0 {
-		require.Equal(t, int64(0), info.Length, "expected length 0, got %d", info.Length)
-	}
+	require.NoError(t, err, "xinfo")
+	require.Equal(t, "5-0", info.LastGeneratedID)
+	require.Equal(t, int64(1), info.EntriesAdded)
+	require.Equal(t, int64(0), info.Length)
 
-	err = c.XAdd(ctx, &redis.XAddArgs{
-		Stream: streamKey,
-		ID:     "5-0",
-		Values: []string{"field", "val"},
-	}).Err()
-	if err == nil || !strings.Contains(err.Error(), "equal or smaller than the target stream top item") {
-		require.Failf(t, "assertion failed", "expected XADD 5-0 refused after XTRIM, got: %v", err)
-	}
+	err = xadd("5-0")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), topItem, "XADD 5-0 refused after XTRIM")
 
 	// 5. After XDEL 6-0, XADD 6-0 is refused
 	id6, err := c.XAdd(ctx, &redis.XAddArgs{
@@ -539,52 +386,34 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 		ID:     "6-0",
 		Values: []string{"field", "val"},
 	}).Result()
-	if err != nil || id6 != "6-0" {
-		require.Failf(t, "assertion failed", "xadd 6-0: id=%s err=%v", id6, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "6-0", id6)
 
 	delCount, err := c.XDel(ctx, streamKey, "6-0").Result()
-	if err != nil || delCount != 1 {
-		require.Failf(t, "assertion failed", "xdel 6-0: count=%d err=%v", delCount, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, int64(1), delCount)
 
-	err = c.XAdd(ctx, &redis.XAddArgs{
-		Stream: streamKey,
-		ID:     "6-0",
-		Values: []string{"field", "val"},
-	}).Err()
-	if err == nil || !strings.Contains(err.Error(), "equal or smaller than the target stream top item") {
-		require.Failf(t, "assertion failed", "expected XADD 6-0 refused after XDEL, got: %v", err)
-	}
+	err = xadd("6-0")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), topItem, "XADD 6-0 refused after XDEL")
 
 	// 6. After DEL of the stream, XADD 1-0 works: deleting the key resets the seq
-	if err := c.Del(ctx, streamKey).Err(); err != nil {
-		require.NoError(t, err, "del: %v", err)
-	}
+	require.NoError(t, c.Del(ctx, streamKey).Err(), "del")
 
 	id1, err := c.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamKey,
 		ID:     "1-0",
 		Values: []string{"field", "val"},
 	}).Result()
-	if err != nil {
-		require.NoError(t, err, "xadd 1-0 after DEL failed: %v", err)
-	}
-	if id1 != "1-0" {
-		require.Equal(t, "1-0", id1, "expected 1-0, got %s", id1)
-	}
+	require.NoError(t, err, "xadd 1-0 after DEL")
+	require.Equal(t, "1-0", id1)
 }
 
 // TestFactF8TimeFrozenInFunction verifies that TIME is frozen for the duration
 // of a function call, in both writing and no-writes functions.
 func TestFactF8TimeFrozenInFunction(t *testing.T) {
 	t.Parallel()
-	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
-	logRedisVersion(t, c)
-
-	ctx := context.Background()
+	_, c, ctx := startStore(t, 0)
 
 	code := `#!lua name=facts_test
 redis.register_function('fct_f8_time', function(keys, args)
@@ -607,36 +436,22 @@ redis.register_function{
         return {t1[1], t1[2], t2[1], t2[2]}
     end
 }`
-	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		require.NoError(t, err, "load: %v", err)
-	}
+	loadReplace(t, ctx, c, code)
 
-	// 1. Plain / writing function
-	res, err := c.FCall(ctx, "fct_f8_time", nil).Slice()
-	if err != nil {
-		require.NoError(t, err, "fct_f8_time: %v", err)
-	}
-	if len(res) != 4 {
-		require.Equal(t, 4, len(res), "expected 4 elements, got %v", res)
-	}
-	sec1, usec1 := res[0], res[1]
-	sec2, usec2 := res[2], res[3]
-	if sec1 != sec2 || usec1 != usec2 {
-		require.Failf(t, "assertion failed", "time was not frozen in fct_f8_time: start=%v.%v end=%v.%v", sec1, usec1, sec2, usec2)
-	}
-
-	// 2. Read-only / no-writes function
-	resRo, err := c.FCallRO(ctx, "fct_f8_time_ro", nil).Slice()
-	if err != nil {
-		require.NoError(t, err, "fct_f8_time_ro: %v", err)
-	}
-	if len(resRo) != 4 {
-		require.Equal(t, 4, len(resRo), "expected 4 elements, got %v", resRo)
-	}
-	secRo1, usecRo1 := resRo[0], resRo[1]
-	secRo2, usecRo2 := resRo[2], resRo[3]
-	if secRo1 != secRo2 || usecRo1 != usecRo2 {
-		require.Failf(t, "assertion failed", "time was not frozen in fct_f8_time_ro: start=%v.%v end=%v.%v", secRo1, usecRo1, secRo2, usecRo2)
+	for _, tt := range []struct {
+		name string
+		call func() *redis.Cmd
+	}{
+		{"a writing function", func() *redis.Cmd { return c.FCall(ctx, "fct_f8_time", nil) }},
+		{"a no-writes function", func() *redis.Cmd { return c.FCallRO(ctx, "fct_f8_time_ro", nil) }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := tt.call().Slice()
+			require.NoError(t, err)
+			require.Len(t, res, 4)
+			require.Equal(t, res[0], res[2], "TIME seconds frozen in %s", tt.name)
+			require.Equal(t, res[1], res[3], "TIME microseconds frozen in %s", tt.name)
+		})
 	}
 }
 
@@ -644,19 +459,9 @@ redis.register_function{
 // and that XINFO STREAM latency is O(1) in stream length.
 func TestFactF9ZMSCOREAndXINFO(t *testing.T) {
 	t.Parallel()
-	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{
-		Addr:        addr,
-		ReadTimeout: 60 * time.Second,
-	})
-	defer c.Close()
-	logRedisVersion(t, c)
+	_, c, ctx := startStore(t, 60*time.Second)
 
-	ctx := context.Background()
-
-	if err := c.ConfigSet(ctx, "slowlog-log-slower-than", "0").Err(); err != nil {
-		require.NoError(t, err, "config set slowlog-log-slower-than 0: %v", err)
-	}
+	require.NoError(t, c.ConfigSet(ctx, "slowlog-log-slower-than", "0").Err(), "config set slowlog-log-slower-than 0")
 
 	code := `#!lua name=facts_test
 redis.register_function('fct_f9_zadd', function(keys, args)
@@ -679,60 +484,39 @@ redis.register_function('fct_f9_fill', function(keys, args)
     end
     return n
 end)`
-	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		require.NoError(t, err, "load: %v", err)
-	}
+	loadReplace(t, ctx, c, code)
 
 	// Part 1: ZMSCORE of 2,000 members inside a function
 	zsetKey := "dev-facts-f9-zset"
 	const numMembers = 2000
 	added, err := c.FCall(ctx, "fct_f9_zadd", []string{zsetKey}, numMembers).Int()
-	if err != nil || added != numMembers {
-		require.Failf(t, "assertion failed", "fct_f9_zadd: added=%d err=%v", added, err)
-	}
+	require.NoError(t, err, "fct_f9_zadd")
+	require.Equal(t, numMembers, added)
 
-	var memberArgs []any
-	for i := 1; i <= numMembers; i++ {
-		memberArgs = append(memberArgs, fmt.Sprintf("m:%d", i))
+	memberArgs := make([]any, numMembers)
+	for i := range memberArgs {
+		memberArgs[i] = fmt.Sprintf("m:%d", i+1)
 	}
 	scores, err := c.FCall(ctx, "fct_f9_zmscore", []string{zsetKey}, memberArgs...).Slice()
-	if err != nil {
-		require.NoError(t, err, "fct_f9_zmscore: %v", err)
-	}
-	if len(scores) != numMembers {
-		require.Equal(t, numMembers, len(scores), "expected %d scores, got %d", numMembers, len(scores))
-	}
-	for i := 0; i < numMembers; i++ {
-		wantScore := fmt.Sprintf("%d", i+1)
-		gotScore, ok := scores[i].(string)
-		if !ok || gotScore != wantScore {
-			require.Failf(t, "assertion failed", "score[%d]: got %v, want %s", i, scores[i], wantScore)
-		}
+	require.NoError(t, err, "fct_f9_zmscore")
+	require.Len(t, scores, numMembers)
+	for i, got := range scores {
+		require.Equal(t, fmt.Sprintf("%d", i+1), got, "score[%d]", i)
 	}
 
 	// Part 2: XINFO STREAM O(1) time
 	streamKey := "dev-facts-f9-stream"
-	// 10 entries
-	if _, err := c.FCall(ctx, "fct_f9_fill", []string{streamKey}, 10).Result(); err != nil {
-		require.Failf(t, "assertion failed", "fill 10: %v", err)
-	}
+	require.NoError(t, c.FCall(ctx, "fct_f9_fill", []string{streamKey}, 10).Err(), "fill 10")
 
 	sampleXInfo := func(samples int) time.Duration {
 		var durations []time.Duration
 		for i := 0; i < samples; i++ {
-			if err := c.SlowLogReset(ctx).Err(); err != nil {
-				require.NoError(t, err, "slowlog reset: %v", err)
-			}
-			if _, err := c.XInfoStream(ctx, streamKey).Result(); err != nil {
-				require.NoError(t, err, "xinfo: %v", err)
-			}
+			require.NoError(t, c.SlowLogReset(ctx).Err(), "slowlog reset")
+			_, err := c.XInfoStream(ctx, streamKey).Result()
+			require.NoError(t, err, "xinfo")
 			entries, err := c.SlowLogGet(ctx, 1).Result()
-			if err != nil {
-				require.NoError(t, err, "slowlog get: %v", err)
-			}
-			if len(entries) == 0 {
-				require.NotEqual(t, 0, len(entries), "slowlog empty")
-			}
+			require.NoError(t, err, "slowlog get")
+			require.NotEmpty(t, entries, "slowlog empty")
 			durations = append(durations, entries[0].Duration)
 		}
 		slices.Sort(durations)
@@ -746,19 +530,13 @@ end)`
 	fillStart := time.Now()
 	res, err := c.FCall(ctx, "fct_f9_fill", []string{streamKey}, largeSize).Int()
 	elapsedSec := float64(time.Now().Sub(fillStart).Milliseconds()) / 1000.0
-	if err != nil || res != largeSize {
-		require.Failf(t, "assertion failed", "fill %d failed in %.3fs: res=%d err=%v", largeSize, elapsedSec, res, err)
-	}
-	if elapsedSec > 20.0 {
-		require.LessOrEqual(t, elapsedSec, 20.0, "fill %d took %.3fs (> 20s bound)", largeSize, elapsedSec)
-	}
+	require.NoError(t, err, "fill %d failed in %.3fs", largeSize, elapsedSec)
+	require.Equal(t, largeSize, res)
+	require.LessOrEqual(t, elapsedSec, 20.0, "fill %d took %.3fs (> 20s bound)", largeSize, elapsedSec)
 
 	medLarge := sampleXInfo(20)
 
-	// Assert XINFO STREAM time does not grow by more than ten times
-	if medLarge > 10*med10 {
-		require.LessOrEqual(t, medLarge, 10*med10, "XINFO STREAM time scaled with stream size: 10 entries=%v, 5000000 entries=%v (> 10x)", med10, medLarge)
-	}
+	require.LessOrEqual(t, medLarge, 10*med10, "XINFO STREAM time scaled with stream size: 10 entries=%v, 5000000 entries=%v (> 10x)", med10, medLarge)
 	t.Logf("XINFO STREAM SLOWLOG: 10 entries=%v, 5000000 entries=%v", med10, medLarge)
 }
 
@@ -766,12 +544,7 @@ end)`
 // in INFO commandstats.
 func TestFactF10Commandstats(t *testing.T) {
 	t.Parallel()
-	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
-	logRedisVersion(t, c)
-
-	ctx := context.Background()
+	_, c, ctx := startStore(t, 0)
 
 	code := `#!lua name=facts_test
 redis.register_function('fct_f10_cmds', function(keys, args)
@@ -784,42 +557,25 @@ redis.register_function('fct_f10_cmds', function(keys, args)
     redis.call('RPOP', k .. ':list')
     return 1
 end)`
-	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		require.NoError(t, err, "load: %v", err)
-	}
+	loadReplace(t, ctx, c, code)
 
-	if err := c.ConfigResetStat(ctx).Err(); err != nil {
-		require.NoError(t, err, "config resetstat: %v", err)
-	}
+	require.NoError(t, c.ConfigResetStat(ctx).Err(), "config resetstat")
 
 	res, err := c.FCall(ctx, "fct_f10_cmds", []string{"dev-facts-f10"}).Int()
-	if err != nil {
-		require.NoError(t, err, "fcall: %v", err)
-	}
-	if res != 1 {
-		require.Equal(t, 1, res, "expected 1, got %d", res)
-	}
+	require.NoError(t, err, "fcall")
+	require.Equal(t, 1, res)
 
 	info, err := c.Info(ctx, "commandstats").Result()
-	if err != nil {
-		require.NoError(t, err, "info commandstats: %v", err)
-	}
+	require.NoError(t, err, "info commandstats")
 	stats := parseCommandStats(info)
 
-	if stats["set"] != 100 {
-		require.Equal(t, 100, stats["set"], "expected 100 SET calls, got %d (info: %s)", stats["set"], info)
-	}
-	if stats["get"] != 100 {
-		require.Equal(t, 100, stats["get"], "expected 100 GET calls, got %d (info: %s)", stats["get"], info)
-	}
-	if stats["lpush"] != 1 {
-		require.Equal(t, 1, stats["lpush"], "expected 1 LPUSH call, got %d", stats["lpush"])
-	}
-	if stats["rpop"] != 1 {
-		require.Equal(t, 1, stats["rpop"], "expected 1 RPOP call, got %d", stats["rpop"])
-	}
-	if stats["fcall"] != 1 {
-		require.Equal(t, 1, stats["fcall"], "expected 1 FCALL call, got %d", stats["fcall"])
+	for _, tt := range []struct {
+		cmd  string
+		want int64
+	}{
+		{"set", 100}, {"get", 100}, {"lpush", 1}, {"rpop", 1}, {"fcall", 1},
+	} {
+		require.Equal(t, tt.want, stats[tt.cmd], "%s calls (info: %s)", tt.cmd, info)
 	}
 }
 
@@ -829,12 +585,7 @@ end)`
 // naming the missing global, and is not left in FUNCTION LIST.
 func TestFactF12LoadTimeSandboxHasNoSetmetatable(t *testing.T) {
 	t.Parallel()
-	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
-	logRedisVersion(t, c)
-
-	ctx := context.Background()
+	_, c, ctx := startStore(t, 0)
 
 	for _, tc := range []struct{ global, call string }{
 		{"setmetatable", "setmetatable({}, {})"},
@@ -846,18 +597,13 @@ func TestFactF12LoadTimeSandboxHasNoSetmetatable(t *testing.T) {
 	} {
 		code := "#!lua name=f12probe\n" + tc.call
 		err := c.FunctionLoadReplace(ctx, code).Err()
-		if err == nil || !strings.Contains(err.Error(), tc.global) {
-			require.Failf(t, "assertion failed", "expected FUNCTION LOAD of a library calling %s at load to be refused naming %q, got: %v", tc.call, tc.global, err)
-		}
+		require.Error(t, err)
+		require.Contains(t, err.Error(), tc.global, "FUNCTION LOAD calling %s at load", tc.call)
 		t.Logf("%s at load: %v", tc.global, err)
 
 		libs, err := c.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: "f12probe"}).Result()
-		if err != nil {
-			require.NoError(t, err, "function list: %v", err)
-		}
-		if len(libs) != 0 {
-			require.Equal(t, 0, len(libs), "expected no f12probe library after the refused load of %s, got %+v", tc.call, libs)
-		}
+		require.NoError(t, err, "function list")
+		require.Empty(t, libs, "no f12probe library after a refused load of %s", tc.call)
 	}
 }
 
@@ -900,9 +646,7 @@ func parseCommandStats(info string) map[string]int64 {
 func logRedisVersion(t *testing.T, c *redis.Client) {
 	t.Helper()
 	info, err := c.Info(context.Background(), "server").Result()
-	if err != nil {
-		require.NoError(t, err, "info server: %v", err)
-	}
+	require.NoError(t, err, "info server")
 	scanner := bufio.NewScanner(strings.NewReader(info))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())

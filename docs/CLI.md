@@ -791,6 +791,7 @@ usage:
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
   nova-swarm slots list --store <dir>
+  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
@@ -1546,7 +1547,7 @@ same file again is left unchanged, and a file holding anything else is never
 overwritten. The executable transcript is in [TESTS.md](TESTS.md#nova-update).
 The report reads only installed identities. UNKNOWN means a partial inventory; it
 never means zero or current. Replace the example with your own six-column manifest
-for your bench; it and any snapshot path belong to the caller.
+for your bench; it and any state path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported
@@ -1555,8 +1556,8 @@ UNKNOWN. A row holding a whole argv (`go version`) is run as written.
 Use `nova-update help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. Updates require an explicit `nova-update apply --file ... name`;
 models are listed for the owner to evaluate and pull themselves. No timer is installed.
-For recovery across process death, name `--snapshot`; retries retain the prepared
-note. Version statuses should go to your chosen integrator, with optional Cc;
+For recovery across process death, name `--state`; retries retain the prepared note.
+Version statuses should go to your chosen integrator, with optional Cc;
 participation and updates remain voluntary.
 
 `status` is `check` with every entry's line shown, the current ones too, exit 0 when
@@ -1575,7 +1576,7 @@ nova-update apply --file versions.tsv go --dry-run
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
 `--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
-`--remote` and `--branch`. A busy snapshot wants the current writer to finish
+`--remote` and `--branch`. A busy state file wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
 
 ### The release verb
@@ -1722,7 +1723,7 @@ and a file holding anything else is never overwritten. The executable transcript
 in [TESTS.md](TESTS.md#nova-version).
 The report reads only installed identities. UNKNOWN means a partial inventory; it
 never means zero or current. Replace the example with your own six-column manifest
-for your bench; it and any snapshot path belong to the caller.
+for your bench; it and any state path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported
@@ -1764,10 +1765,6 @@ refused healthy binaries and named a build repair that would have found nothing
 `diff` reads two such files and reports changed, added or removed entries without
 executing the binaries.
 
-This four-column inventory is **not** the six-column manifest accepted by
-`report --file`; the `--bin/--out` shape has no `--owner` flag. The report's
-`--snapshot` option below is a separate delivery-recovery file.
-
 `snapshot`'s `--file` shape instead reads the six-column manifest the caller has
 already adopted and counts how many of its tools answer, printing one
 `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line and one
@@ -1782,13 +1779,13 @@ Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
 `platform=`, are accepted as metadata. A binary that prints no version line is
 refused by name; a partial inventory is not reported as complete. For recovery
-across process death, name `--snapshot`; retries retain the prepared note.
+across process death, name `--state`; retries retain the prepared note.
 Version reports can be sent to the recipient you select, with optional Cc.
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
 `--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
-`--remote` and `--branch`. A busy snapshot wants the current writer to finish
+`--remote` and `--branch`. A busy state file wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
 
 

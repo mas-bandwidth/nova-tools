@@ -70,14 +70,14 @@ func TestTheExampleLinesRun(t *testing.T) {
 	}
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-tokens")
 	require.NoError(t, err, err)
-	require.False(t, len(examples) == 0, "the example: block holds no line")
+	require.NotEmpty(t, examples, "the example: block holds no line")
 	for _, line := range examples {
 		args := strings.Fields(line)[1:]
 		var out, errb bytes.Buffer
 		exit := run(args, &out, &errb, firstRunStamp)
 		// A line that RUNS answers 0 or 1. Exit 2 is "could not run", and an example
 		// exiting 2 is a broken example.
-		assert.False(t, exit == 2, "the example `%s` could not run (exit 2):\n%s", line, errb.String())
+		assert.NotEqual(t, 2, exit, "the example `%s` could not run (exit 2):\n%s", line, errb.String())
 	}
 }
 
@@ -166,9 +166,9 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 		}
 	}
 	flush()
-	require.False(t, len(want) == 0, "the transcript holds no event line")
+	require.NotEmpty(t, want, "the transcript holds no event line")
 	for i, w := range want {
-		require.False(t, i >= len(got), "the transcript has a line the tool does not print: %q", w)
+		require.Less(t, i, len(got), "the transcript has a line the tool does not print: %q", w)
 		assert.Equal(t, w, got[i], "line %d of the transcript is\n  %s\nand the tool prints\n  %s", i+1, w, got[i])
 	}
 	if len(got) > len(want) {
@@ -201,7 +201,7 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	require.NoError(t, err, err)
 	steps, err := onboarding.Steps("nova-tokens", lines)
 	require.NoError(t, err, err)
-	require.False(t, len(steps) == 0, "the `### First run` block holds no nova-tokens command; this test would pass by running nothing")
+	require.NotEmpty(t, steps, "the `### First run` block holds no nova-tokens command; this test would pass by running nothing")
 	// A first run is three commands: fold writes the day, check reads it back,
 	// sum reads it a month at a time. A transcript that lost one still matches
 	// line for line and is still short of the run a reader is promised.
