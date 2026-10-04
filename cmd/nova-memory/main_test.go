@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
 	"github.com/stretchr/testify/assert"
@@ -118,10 +121,25 @@ func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 // did not mean, and answering "you already know this" about someone else's
 // memory is the worst possible way to be wrong.
 func TestRootIsNeverTakenFromTheEnvironment(t *testing.T) {
-	t.Setenv("NOVA_MEMORY_ROOT", corpus)
-	exit, stdout, stderr := runCLI(t, "", "stats")
-	require.Equalf(t, 2, exit, "exit = %d, want 2 — an environment variable must not supply the root; stdout: %s", exit, stdout)
-	assert.Containsf(t, stderr, "--root is required", "stderr = %q, want the refusal to name --root", stderr)
+	t.Parallel()
+
+	// The variable is set in a child of this binary, never in this process: the
+	// child is the seam for the process-wide environment a t.Setenv would change.
+	// A tool that resolved the root from the environment would exit 0 in the
+	// child, so the parent's require.NoError on the child would fail.
+	if os.Getenv("NOVA_MEMORY_ROOT_CHILD") == "1" {
+		exit, stdout, stderr := runCLI(t, "", "stats")
+		require.Equalf(t, 2, exit, "exit = %d, want 2 — an environment variable must not supply the root; stdout: %s", exit, stdout)
+		assert.Containsf(t, stderr, "--root is required", "stderr = %q, want the refusal to name --root", stderr)
+		return
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRootIsNeverTakenFromTheEnvironment$", "-test.count=1")
+	child.Env = append(os.Environ(), "NOVA_MEMORY_ROOT_CHILD=1", "NOVA_MEMORY_ROOT="+corpus)
+	child.WaitDelay = 2 * time.Second
+	out, err := child.CombinedOutput()
+	require.NoErrorf(t, err, "the isolated environment test failed:\n%s", out)
 }
 
 func TestRefusesAnUnusableRoot(t *testing.T) {

@@ -295,7 +295,7 @@ func dispatch(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	case "boot":
 		return cmdBoot(args, stdout, stderr)
 	case "version", "--version":
-		return cmdVersion(args, stdout, stderr)
+		return cmdVersion(args, version, stdout, stderr)
 	}
 	near := ""
 	if n := verbflag.Nearest(verb, verbs); n != "" {

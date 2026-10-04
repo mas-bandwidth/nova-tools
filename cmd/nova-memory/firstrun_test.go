@@ -1,13 +1,15 @@
 package main
 
 import (
-	"bytes"
-	"io"
+	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/stretchr/testify/assert"
@@ -684,10 +686,12 @@ func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
 // the scores, the snippets, the ids -- reproduces and is compared as written.
 // The second block declares no norm at all.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
-	// Resolve the document and the checkout root from the package directory,
-	// before the sitting moves this test somewhere else: the document is a
-	// fixed file, while the commands run where `./corpus` and `draft.md`
-	// resolve as written.
+	t.Parallel()
+
+	// The document and the checkout root are resolved from the package
+	// directory, which this test no longer leaves: the commands run in a child
+	// whose own working directory is the sitting, so `./corpus` and `draft.md`
+	// resolve as written without a process-wide chdir.
 	blocks := readmeFirstRun(t)
 	root := repoRoot(t)
 
@@ -732,12 +736,12 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	require.Truef(t, strings.HasPrefix(blocks[0][0], "$ nova-memory quickstart "), "the first `### First run` block does not open on the quickstart command: %q", blocks[0][0])
 
 	// The transcript WRITES a draft beside the corpus, so it runs against a
-	// copy of the fixture in t.TempDir(), never against what ships. Standing in
-	// the copy is also what makes the documented paths (`--root ./corpus`,
-	// `draft.md`) resolve as written, so no path norm is declared.
+	// copy of the fixture in t.TempDir(), never against what ships. The copy is
+	// the child's working directory, which is what makes the documented paths
+	// (`--root ./corpus`, `draft.md`) resolve as written, so no path norm is
+	// declared.
 	sit := firstRunSitting(t)
-	t.Chdir(sit)
-	run := runDocumented(t)
+	run := runDocumented(t, sit)
 	norms := []onboarding.Norm{buildTimeNorm(t)}
 
 	var problems []onboarding.Problem
@@ -804,22 +808,90 @@ func firstRunSitting(t *testing.T) string {
 	return sit
 }
 
-func runDocumented(t *testing.T) onboarding.Runner {
+// runDocumented returns a Runner that runs each documented command as a child of
+// this test binary, with the sitting as the child's working directory. The child
+// process is the seam for the process-wide working directory this test used to
+// change: `--root ./corpus` and `draft.md` resolve in the sitting, and this
+// process's directory is never touched, so the test runs beside every other test.
+func runDocumented(t *testing.T, sit string) onboarding.Runner {
 	t.Helper()
 	return func(s onboarding.Step) (onboarding.Result, error) {
-		stdin := io.Reader(strings.NewReader(""))
+		dir := t.TempDir()
+		argsFile := filepath.Join(dir, "args")
+		outFile := filepath.Join(dir, "stdout")
+		errFile := filepath.Join(dir, "stderr")
+		if err := os.WriteFile(argsFile, []byte(strings.Join(s.Args, "\n")), 0o600); err != nil {
+			return onboarding.Result{}, err
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+		defer cancel()
+		child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDocumentedChild$", "-test.count=1")
+		child.Dir = sit
+		child.Env = append(os.Environ(),
+			"NOVA_MEMORY_DOCUMENTED_CHILD=1",
+			"NOVA_MEMORY_CHILD_ARGS="+argsFile,
+			"NOVA_MEMORY_CHILD_STDOUT="+outFile,
+			"NOVA_MEMORY_CHILD_STDERR="+errFile,
+		)
+		child.WaitDelay = 2 * time.Second
 		if s.Stdin != "" {
-			f, err := os.Open(s.Stdin)
+			f, err := os.Open(filepath.Join(sit, s.Stdin))
 			if err != nil {
 				return onboarding.Result{}, err
 			}
 			defer f.Close()
-			stdin = f
+			child.Stdin = f
 		}
-		var out, errb bytes.Buffer
-		code := run(s.Args, stdin, &out, &errb)
-		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+		err := child.Run()
+		code := 0
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			code = exitErr.ExitCode()
+		} else if err != nil {
+			return onboarding.Result{}, err
+		}
+		stdout, err := os.ReadFile(outFile)
+		if err != nil {
+			return onboarding.Result{}, err
+		}
+		stderr, err := os.ReadFile(errFile)
+		if err != nil {
+			return onboarding.Result{}, err
+		}
+		return onboarding.Result{Code: code, Stdout: string(stdout), Stderr: string(stderr)}, nil
 	}
+}
+
+// TestDocumentedChild is the child half of runDocumented: the parent re-executes
+// this binary with the sitting as the working directory, and this test runs one
+// documented command there, writing the tool's two streams to the files the parent
+// named. In an ordinary run the marker is absent and it does nothing.
+func TestDocumentedChild(t *testing.T) {
+	t.Parallel()
+	if os.Getenv("NOVA_MEMORY_DOCUMENTED_CHILD") != "1" {
+		return
+	}
+	raw, err := os.ReadFile(os.Getenv("NOVA_MEMORY_CHILD_ARGS"))
+	if err != nil {
+		os.Exit(2)
+	}
+	var args []string
+	if len(raw) > 0 {
+		args = strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	}
+	out, err := os.Create(os.Getenv("NOVA_MEMORY_CHILD_STDOUT"))
+	if err != nil {
+		os.Exit(2)
+	}
+	errOut, err := os.Create(os.Getenv("NOVA_MEMORY_CHILD_STDERR"))
+	if err != nil {
+		out.Close()
+		os.Exit(2)
+	}
+	code := run(args, os.Stdin, out, errOut)
+	out.Close()
+	errOut.Close()
+	os.Exit(code)
 }
 
 func repoRoot(t *testing.T) string {

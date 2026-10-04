@@ -40,10 +40,6 @@ cmd/nova-fuse/main_test.go:TestEnvironmentCannotRedirectOrLiftAnything serial: t
 cmd/nova-fuse/main_test.go:TestNoDefaultBoxRefusesToGuess serial: t.Setenv
 cmd/nova-fuse/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
 cmd/nova-fuse/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
-cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
-cmd/nova-memory/main_test.go:TestRootIsNeverTakenFromTheEnvironment serial: t.Setenv
-cmd/nova-memory/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
-cmd/nova-memory/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-sandbox/denied_test.go:TestTheDenialReaderUsesPosixPathsOnEveryPlatform serial: swaps package var main.denialStat
 cmd/nova-sandbox/denied_test.go:TestTheDeniedLineNamesThePathTheOpAndTheRemedy serial: swaps package var main.denialStat
 cmd/nova-sandbox/egress_test.go:TestEgressApplyAndDropRefuseOffLinux serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv

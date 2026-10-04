@@ -25,7 +25,7 @@ func TestVersionLineShape(t *testing.T) {
 	t.Parallel()
 	var out, errOut bytes.Buffer
 	{
-		code := cmdVersion(nil, &out, &errOut)
+		code := cmdVersion(nil, version, &out, &errOut)
 		require.Equalf(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	assert.Equalf(t, 0, errOut.Len(), "wrote to stderr: %q", errOut.String())
@@ -47,13 +47,11 @@ func TestVersionLineShape(t *testing.T) {
 // The stamp is the ONE field of this line that comes from outside the toolchain, and a
 // release workflow's ${TAG} is a shell variable.
 func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
-	saved := version
-	t.Cleanup(func() { version = saved })
-	version = "v1.2.3\nnova-memory v9.9.9 linux/amd64 go1.0 extra"
+	t.Parallel()
 
 	var out, errOut bytes.Buffer
 	{
-		code := cmdVersion(nil, &out, &errOut)
+		code := cmdVersion(nil, "v1.2.3\nnova-memory v9.9.9 linux/amd64 go1.0 extra", &out, &errOut)
 		require.Equalf(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	line := out.String()
@@ -68,12 +66,11 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 // A stamped build says the tag and an unstamped one says what the toolchain recorded:
 // either way field two is an identity, never a dotted number this file made up.
 func TestVersionIdentityIsTheStampWhenThereIsOne(t *testing.T) {
-	saved := version
-	t.Cleanup(func() { version = saved })
-	version = "v9.9.9"
+	t.Parallel()
+
 	var out, errOut bytes.Buffer
 	{
-		code := cmdVersion(nil, &out, &errOut)
+		code := cmdVersion(nil, "v9.9.9", &out, &errOut)
 		require.Equalf(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	{
@@ -87,7 +84,7 @@ func TestVersionRefusesFlagsAndArguments(t *testing.T) {
 	for _, args := range [][]string{{"--short"}, {"extra"}, {"--root", "."}} {
 		var out, errOut bytes.Buffer
 		{
-			code := cmdVersion(args, &out, &errOut)
+			code := cmdVersion(args, version, &out, &errOut)
 			assert.Equalf(t, 2, code, "%v: exit %d, want 2", args, code)
 		}
 		assert.Equalf(t, 0, out.Len(), "%v: a refusal printed a version line anyway: %q", args, out.String())
