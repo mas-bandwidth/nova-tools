@@ -94,3 +94,47 @@ func TestWriteBoxUnderUmask077Is0644(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "subprocess failed: %v\n%s", err, string(out))
 }
+
+// TestWriteBoxRefusesASymlinkAncestorOwnedByAnotherThanRoot pins security
+// finding 74.6: a user-owned symlink cannot redirect replacement or creation
+// of the safety-control file into its target.
+func TestWriteBoxRefusesASymlinkAncestorOwnedByAnotherThanRoot(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("the test needs a symlink owned by an identity other than root")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	require.NoError(t, os.MkdirAll(filepath.Join(target, "realdir"), 0o755))
+	link := filepath.Join(dir, "linkdir")
+	require.NoError(t, os.Symlink(target, link))
+
+	existing := filepath.Join(target, "realdir", "box.json")
+	require.NoError(t, os.WriteFile(existing, []byte("original\n"), 0o600))
+	redirectedExisting := filepath.Join(link, "realdir", "box.json")
+	require.Error(t, PlanWriteBox(redirectedExisting), "the write plan must refuse the same user-owned symlink ancestor")
+	err := WriteBox(redirectedExisting, Box{})
+	require.Error(t, err, "a user-owned symlink ancestor must be refused before replacing the box")
+	got, readErr := os.ReadFile(existing)
+	require.NoError(t, readErr)
+	require.Equal(t, "original\n", string(got), "the target box changed through the symlink ancestor")
+
+	redirectedNew := filepath.Join(link, "newdir", "box.json")
+	require.Error(t, PlanCreateBox(redirectedNew), "the create plan must refuse before it predicts MkdirAll")
+	err = CreateBox(redirectedNew)
+	require.Error(t, err, "a user-owned symlink ancestor must be refused before creating directories or the box")
+	_, statErr := os.Lstat(filepath.Join(target, "newdir"))
+	require.True(t, os.IsNotExist(statErr), "CreateBox made a directory through the symlink ancestor: %v", statErr)
+}
+
+// TestWriteBoxAllowsOrdinaryPathAndRootOwnedAncestors pins the other side of
+// the boundary: platform-owned path aliases (including macOS /var) do not
+// prevent normal box creation under the test temporary directory.
+func TestWriteBoxAllowsOrdinaryPathAndRootOwnedAncestors(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "nested", "box.json")
+	require.NoError(t, PlanCreateBox(path))
+	require.NoError(t, CreateBox(path))
+	_, err := os.Stat(path)
+	require.NoError(t, err)
+}
