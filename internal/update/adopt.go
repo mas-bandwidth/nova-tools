@@ -170,7 +170,7 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 	if refused > 0 {
 		code = 1
 	}
-	if o.bus != "" {
+	if o.to != "" {
 		var body bytes.Buffer
 		fmt.Fprintf(&body, "From: %s\nTo: %s\nSubject: adoption on %s at %s\n\n", o.as, o.to, dash(o.host), started.UTC().Format("2006-01-02T15:04:05Z"))
 		body.Write(okBuf.Bytes())
@@ -187,7 +187,7 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 }
 
 // postAdoptReceipt publishes the adoption receipt on the Redis bus.
-// SPEC-UPDATE.md rule 27: with a bus named, the pass posts the receipt as its own.
+// SPEC-UPDATE.md rule 27: with --as and --to, the pass posts the receipt as its own.
 // nova-bus reads the store from NOVA_BUS_REDIS; the confirmation is SEND OK id=.
 func postAdoptReceipt(ctx context.Context, o options, body []byte, env Environment) (string, error) {
 	_, line, _, err := redisSend(ctx, env, o.as, o.to, noteSubject(body), body, "retry watch with the same --adopt")
@@ -214,8 +214,7 @@ func watchMain(name string, args []string, out, errs io.Writer, env Environment)
 	f := flag.NewFlagSet("watch", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	f.StringVar(&o.adopt, "adopt", "", "the checks file (required): a header line check<TAB>command<TAB>owner, then one check per line, its command run as written")
-	f.StringVar(&o.bus, "bus", "", "post the receipt through nova-bus; nova-bus reads the store from NOVA_BUS_REDIS; with it, --as and --to are required")
-	f.StringVar(&o.as, "as", "", "the sender the receipt is from")
+	f.StringVar(&o.as, "as", "", "the sender the receipt is from; with --to, the pass posts the receipt through nova-bus send (nova-bus reads its store from NOVA_BUS_REDIS)")
 	f.StringVar(&o.to, "to", "", "the receipt's recipients, comma-separated (those who answer a refused check)")
 	f.StringVar(&o.host, "host", "", "a label for the machine the pass ran on, carried in the receipt's subject")
 	f.DurationVar(&o.timeout, "timeout", o.timeout, "one check's deadline, such as 5s")
@@ -230,8 +229,8 @@ func watchMain(name string, args []string, out, errs io.Writer, env Environment)
 		missing = append(missing, "--adopt")
 	}
 	// A delivery needs the sender and the recipients; nova-bus reads the store itself.
-	if o.bus != "" || o.as != "" || o.to != "" {
-		for _, x := range []struct{ n, v string }{{"bus", o.bus}, {"as", o.as}, {"to", o.to}} {
+	if o.as != "" || o.to != "" {
+		for _, x := range []struct{ n, v string }{{"as", o.as}, {"to", o.to}} {
 			if x.v == "" {
 				missing = append(missing, "--"+x.n)
 			}

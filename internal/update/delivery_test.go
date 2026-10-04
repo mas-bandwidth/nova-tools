@@ -1,8 +1,6 @@
 package update
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -17,10 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This fake checks the caller's persisted state machine only. Actual bare-Git
-// publication, content equality and crash recovery are separate integration gates.
-var joinMain func()
-var joinCleanup func()
+// This fake is nova-bus send on the Redis bus as the caller sees it: one child, the note on
+// stdin, SEND OK id= on stdout. testCleanup, when set, runs once every test has (the
+// functional tier's tree binaries).
+var testCleanup func()
 var fakeBusHang func()
 
 func TestMain(m *testing.M) {
@@ -28,15 +26,9 @@ func TestMain(m *testing.M) {
 		fakeBus()
 		return
 	}
-	if os.Getenv("NOVA_UPDATE_JOIN_REAL") != "" && strings.HasPrefix(filepath.Base(os.Args[0]), "nova-bus") {
-		if joinMain != nil {
-			joinMain()
-		}
-		return
-	}
 	code := m.Run()
-	if joinCleanup != nil {
-		joinCleanup()
+	if testCleanup != nil {
+		testCleanup()
 	}
 	os.Exit(code)
 }
@@ -50,75 +42,33 @@ func fakeBus() {
 	fmt.Fprintln(log, "argv "+strings.Join(os.Args[1:], " "))
 	log.Close()
 	mode := os.Getenv("NOVA_UPDATE_BUS_MODE")
-	redis := verb == "send"
-	for _, a := range os.Args {
-		if a == "--prepared-stdin" {
-			redis = false
-		}
+	if verb != "send" {
+		fmt.Fprintf(os.Stderr, "BUS REFUSED: unknown verb %q\n", verb)
+		os.Exit(2)
 	}
-	if redis {
-		if mode == "uncertain" || mode == "prepare-fail" || mode == "send-fail" {
-			fmt.Fprintln(os.Stderr, "SEND FAIL synthetic refusal")
-			os.Exit(1)
-		}
-		if mode == "prepare-alien" || mode == "send-alien" {
-			fmt.Fprintln(os.Stderr, "gobbledegook tell-nobody-this")
-			os.Exit(1)
-		}
-		if mode == "prepare-shouty" || mode == "send-shouty" {
-			fmt.Fprintf(os.Stderr, "SEND FAIL %s\nand a second line\nand a third\n", strings.Repeat("y", 4000))
-			os.Exit(1)
-		}
-		if mode == "hang" {
-			if fakeBusHang == nil {
-				os.Exit(20)
-			}
-			fakeBusHang()
-		}
-		note := string(input)
-		if !strings.HasSuffix(note, "\n") {
-			note += "\n"
-		}
-		fmt.Printf("SEND OK id=%s to=x cc=- at=2026-10-04T17:00:00Z\n", "fixture-"+shaText(note)[:12])
-		os.Exit(0)
+	if mode == "uncertain" || mode == "send-fail" {
+		fmt.Fprintln(os.Stderr, "SEND FAIL synthetic refusal")
+		os.Exit(1)
 	}
-	if verb == "prepare" {
-		if mode == "prepare-fail" {
-			fmt.Fprintln(os.Stderr, "PREPARE FAIL synthetic refusal")
-			os.Exit(1)
-		}
-		if mode == "prepare-alien" {
-			// A binary that answers in no grammar this tool knows. It must not
-			// get to put its words on the caller's event line.
-			fmt.Fprintln(os.Stderr, "gobbledegook tell-nobody-this")
-			os.Exit(1)
-		}
-		if mode == "prepare-shouty" {
-			// A binary on PATH that answers with many lines and a very long one.
-			// The caller's grammar must survive it.
-			fmt.Fprintf(os.Stderr, "PREPARE FAIL %s\nand a second line\nand a third\n", strings.Repeat("y", 4000))
-			os.Exit(1)
-		}
-		note := string(input)
-		if !strings.HasSuffix(note, "\n") {
-			note += "\n"
-		}
-		id := "fixture-" + shaText(note)[:12]
-		json.NewEncoder(os.Stdout).Encode(map[string]string{"schema": "nova.bus.prepared/1", "id": id, "path": "from-fixture/fixture.md", "note": note, "sha256": shaText(note)})
-		os.Exit(0)
+	if mode == "send-alien" {
+		fmt.Fprintln(os.Stderr, "gobbledegook tell-nobody-this")
+		os.Exit(1)
 	}
-	var a map[string]string
-	json.Unmarshal(input, &a)
+	if mode == "send-shouty" {
+		fmt.Fprintf(os.Stderr, "SEND FAIL %s\nand a second line\nand a third\n", strings.Repeat("y", 4000))
+		os.Exit(1)
+	}
 	if mode == "hang" {
 		if fakeBusHang == nil {
 			os.Exit(20)
 		}
 		fakeBusHang()
 	}
-	if mode == "uncertain" {
-		os.Exit(1)
+	note := string(input)
+	if !strings.HasSuffix(note, "\n") {
+		note += "\n"
 	}
-	fmt.Printf("SEND OK id=%s path=from-fixture/fixture.md commit=synthetic pushed=true attempts=0 state=already-published\n", a["id"])
+	fmt.Printf("SEND OK id=%s to=x cc=- at=2026-10-04T17:00:00Z\n", "fixture-"+shaText(note)[:12])
 	os.Exit(0)
 }
 func fakeBusPath(t *testing.T) string {
@@ -142,42 +92,39 @@ func fakeBusPath(t *testing.T) string {
 	t.Setenv("NOVA_UPDATE_BUS_CALLS", log)
 	return log
 }
-func calls(t *testing.T, p string) (int, int) {
+func calls(t *testing.T, p string) int {
 	t.Helper()
 	b, e := os.ReadFile(p)
 	if e != nil {
 		require.NoError(t, e, e)
 	}
 	s := string(b)
-	return strings.Count(s, "prepare\n"), strings.Count(s, "send\n")
+	return strings.Count(s, "send\n")
 }
-func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
+
+// A send the bus did not confirm records no delivery, so the next --send sends again, the
+// newer observation included, and a confirmed one records the id it was given.
+func TestAnUnconfirmedSendRecordsNothingAndTheNextSendSends(t *testing.T) {
 	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
 	sp := filepath.Join(t.TempDir(), "s.json")
-	args := []string{"report", "--file", p, "--send", "--snapshot", sp, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main"}
+	args := []string{"report", "--file", p, "--send", "--snapshot", sp, "--as", "fixture", "--to", "integrator"}
 	t.Setenv("NOVA_UPDATE_BUS_MODE", "uncertain")
 	run(t, Environment{}, args...)
 	s, _ := readSnapshot(sp)
 	require.Empty(t, s.Delivered)
-	require.Empty(t, s.Pending)
 	os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600)
 	if c, _, _ := run(t, Environment{}, args...); c != 1 {
 		require.EqualValues(t, 1, c, c)
 	}
-	if np, ns := calls(t, log); np != 0 || ns != 2 {
-		require.Fail(t, fmt.Sprintln(np, ns))
-	}
+	require.Equal(t, 2, calls(t, log))
 	t.Setenv("NOVA_UPDATE_BUS_MODE", "ok")
 	c, o, e := run(t, Environment{}, args...)
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
-	if np, ns := calls(t, log); np != 0 || ns != 3 {
-		require.Fail(t, fmt.Sprintln(np, ns))
-	}
+	require.Equal(t, 3, calls(t, log))
 	s, _ = readSnapshot(sp)
-	require.Empty(t, s.Pending)
 	require.Len(t, s.Delivered, 1)
 	for _, v := range s.Delivered {
 		require.Equal(t, "v2.0.0", v.Observed["x"].Raw)
@@ -185,10 +132,10 @@ func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
 		require.Contains(t, o, v.ID)
 	}
 }
-func TestDeliveryScopeAndPreparedArtifactChecks(t *testing.T) {
+func TestDeliveryScopeIsTheSenderTheRecipientsAndTheBench(t *testing.T) {
 	t.Parallel()
 
-	o := options{as: "a", to: "c,b", bus: ".", remote: "origin", branch: "main", host: "studio"}
+	o := options{as: "a", to: "c,b", host: "studio"}
 	same := o
 	same.to = "b,c"
 	if snapshotScope(o) != snapshotScope(same) {
@@ -199,55 +146,18 @@ func TestDeliveryScopeAndPreparedArtifactChecks(t *testing.T) {
 	if snapshotScope(o) == snapshotScope(other) {
 		require.Fail(t, fmt.Sprintln("bench silently shared delivery state"))
 	}
-	good := map[string]string{"schema": "nova.bus.prepared/1", "id": "fixture-123", "path": "from-fixture/note.md", "note": "synthetic\n", "sha256": shaText("synthetic\n")}
-	b, _ := json.Marshal(good)
-	if _, e := validatePrepared(b); e != nil {
-		require.NoError(t, e, e)
-	}
-	if _, e := validatePrepared(append(b, []byte("{}")...)); e == nil {
-		require.Error(t, e, "trailing artifact accepted")
-	}
-	bad := bytes.Replace(b, []byte("synthetic\\n"), []byte("changed\\n"), 1)
-	if _, e := validatePrepared(bad); e == nil {
-		require.Error(t, e, "wrong digest accepted")
-	}
 }
 
-// A second value for one field of a prepared artifact or a snapshot is an
-// ambiguous identity. Both readers must refuse it, and must do so without
-// quoting the offending key or any of the note back into the diagnostic.
+// A second value for one field of a snapshot is an ambiguous identity. The
+// reader must refuse it, and must do so without quoting the offending key or
+// any of its content back into the diagnostic.
 func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 	t.Parallel()
 
-	note := "a note\n"
-	sum := shaText(note)
-	good := fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":%q,"sha256":%q}`, note, sum)
-	if id, err := validatePrepared([]byte(good)); err != nil || id != "fixture-1" {
-		require.Failf(t, "", "valid artifact refused: %v %q", err, id)
-	}
 	secret := "tell-nobody"
-	bad := map[string]string{
-		"duplicate id":         fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","id":"fixture-2","path":"from-fixture/f.md","note":%q,"sha256":%q}`, note, sum),
-		"duplicate note":       fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":%q,"note":%q,"sha256":%q}`, note, secret+"\n", sum),
-		"unknown field":        fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":%q,"sha256":%q,"extra":%q}`, note, sum, secret),
-		"wrong type":           fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":7,"path":"from-fixture/f.md","note":%q,"sha256":%q}`, note, sum),
-		"trailing data":        good + `{"schema":"nova.bus.prepared/1"}`,
-		"digest mismatch":      fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":%q,"sha256":%q}`, note, shaText(secret)),
-		"note without newline": fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":"no lf","sha256":%q}`, shaText("no lf")),
-		"too deeply nested":    `{"schema":` + strings.Repeat("[", 40) + strings.Repeat("]", 40) + "}",
-	}
-	for name, raw := range bad {
-		id, err := validatePrepared([]byte(raw))
-		if err == nil {
-			require.Errorf(t, err, "%s accepted, id=%q", name, id)
-		}
-		if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "a note") {
-			require.Failf(t, "", "%s diagnostic echoed content: %v", name, err)
-		}
-	}
 	dir := t.TempDir()
 	dup := filepath.Join(dir, "dup.json")
-	if e := os.WriteFile(dup, []byte(`{"observed":{},"observed":{"x":{"raw":"`+secret+`","status":"tool","at":"t"}},"delivered":{},"pending":{}}`), 0600); e != nil {
+	if e := os.WriteFile(dup, []byte(`{"observed":{},"observed":{"x":{"raw":"`+secret+`","status":"tool","at":"t"}},"delivered":{}}`), 0600); e != nil {
 		require.NoError(t, e, e)
 	}
 	s, err := readSnapshot(dup)
@@ -280,14 +190,13 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL " + strings.Repeat("x", 500)}); len(got) != 203 || !strings.HasSuffix(got, "...") {
 		require.Failf(t, "", "unbounded: %d bytes: %q", len(got), got)
 	}
-	for _, mode := range []string{"prepare-fail", "prepare-shouty"} {
+	for _, mode := range []string{"send-fail", "send-shouty"} {
 		t.Run(mode, func(t *testing.T) {
 			fakeBusPath(t)
 			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
 			c, _, errout := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
-				filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
-				"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
+				filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator")
 			if c != 1 {
 				require.EqualValues(t, 1, c, c)
 			}
@@ -318,33 +227,11 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
 	t.Parallel()
 
-	note := "a note\n"
-	sum := shaText(note)
-	artifact := func(pairs string) string {
-		return `{"schema":"nova.bus.prepared/1",` + pairs + `,"path":"from-fixture/f.md","note":` +
-			fmt.Sprintf("%q", note) + `,"sha256":` + fmt.Sprintf("%q", sum) + `}`
-	}
-	for name, raw := range map[string]string{
-		"id and ID":         artifact(`"id":"fixture-1","ID":"fixture-2"`),
-		"id and Id":         artifact(`"id":"fixture-1","Id":"fixture-2"`),
-		"ID alone":          artifact(`"ID":"fixture-2"`),
-		"long s in a key":   `{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":` + fmt.Sprintf("%q", note) + `,"ſha256":` + fmt.Sprintf("%q", sum) + `}`,
-		"a key short":       `{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":` + fmt.Sprintf("%q", note) + `}`,
-		"kelvin in a key":   `{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":` + fmt.Sprintf("%q", note) + `,"sha256":` + fmt.Sprintf("%q", sum) + `,"K":"x"}`,
-		"schema and Schema": `{"schema":"nova.bus.prepared/1","Schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":` + fmt.Sprintf("%q", note) + `,"sha256":` + fmt.Sprintf("%q", sum) + `}`,
-	} {
-		if id, err := validatePrepared([]byte(raw)); err == nil {
-			assert.Errorf(t, err, "%s accepted, id=%q", name, id)
-		}
-	}
-	if id, err := validatePrepared([]byte(artifact(`"id":"fixture-1"`))); err != nil || id != "fixture-1" {
-		require.Failf(t, "", "the exact artifact was refused: %v %q", err, id)
-	}
 	dir := t.TempDir()
 	for name, body := range map[string]string{
-		"observed and Observed":   `{"observed":{"x":{"raw":"one","status":"tool","at":"t"}},"Observed":{"x":{"raw":"tell-nobody","status":"tool","at":"t"}},"delivered":{},"pending":{}}`,
-		"nested raw and Raw":      `{"observed":{"x":{"raw":"one","Raw":"tell-nobody","status":"tool","at":"t"}},"delivered":{},"pending":{}}`,
-		"delivered and DELIVERED": `{"observed":{},"delivered":{},"DELIVERED":{},"pending":{}}`,
+		"observed and Observed":   `{"observed":{"x":{"raw":"one","status":"tool","at":"t"}},"Observed":{"x":{"raw":"tell-nobody","status":"tool","at":"t"}},"delivered":{}}`,
+		"nested raw and Raw":      `{"observed":{"x":{"raw":"one","Raw":"tell-nobody","status":"tool","at":"t"}},"delivered":{}}`,
+		"delivered and DELIVERED": `{"observed":{},"delivered":{},"DELIVERED":{}}`,
 	} {
 		p := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".json")
 		if err := os.WriteFile(p, []byte(body), 0600); err != nil {
@@ -368,8 +255,7 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
-		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
-		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--budget", "60s")
+		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator", "--budget", "60s")
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
 	}
@@ -410,10 +296,9 @@ func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
 	}
 	fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "prepare-alien")
+	t.Setenv("NOVA_UPDATE_BUS_MODE", "send-alien")
 	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
-		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
-		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
+		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator")
 	if c != 1 {
 		require.EqualValues(t, 1, c, c)
 	}

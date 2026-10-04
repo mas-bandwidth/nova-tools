@@ -112,7 +112,7 @@ func dash(s string) string {
 
 // busRefusals are the openings of nova-bus's own refusal grammar. A line is
 // relayed only if it begins with one of them.
-var busRefusals = []string{"SEND FAIL ", "SEND REFUSED: ", "SEND OK ", "PREPARE FAIL ", "PREPARE REFUSED: "}
+var busRefusals = []string{"SEND FAIL ", "SEND REFUSED: ", "SEND OK "}
 
 // busSaid carries the bus's OWN first line into the caller's diagnostic. Without
 // it an operator reading a failed delivery is told "exit 1" and nothing else,
@@ -150,7 +150,7 @@ func busSaid(r ProcessResult) string {
 }
 
 // deliveryAllowance is what is left of the budget. A delivery that cannot start
-// inside it is a pending gate, not a kill.
+// inside it is refused, not killed.
 func deliveryAllowance(ctx context.Context, now time.Time) time.Duration {
 	deadline, ok := ctx.Deadline()
 	if !ok {
@@ -229,7 +229,6 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 		return "uncertain", err
 	}
 	s.Delivered[scope] = delivery{cloneObserved(seen), id, env.Now().UTC().Format(time.RFC3339)}
-	delete(s.Pending, scope)
 	if err = save(); err != nil {
 		return "uncertain", err
 	}

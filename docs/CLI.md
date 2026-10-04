@@ -1526,11 +1526,11 @@ UNKNOWN. A row holding a whole argv (`go version`) is run as written.
 Use `nova-update help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. Updates require an explicit `nova-update apply --file ... name`;
 models are listed for the owner to evaluate and pull themselves. No timer is installed.
-For recovery across process death, name `--snapshot`; an unchanged observation
-sends nothing. `--send` delivers one note through nova-bus on the Redis bus:
+Name `--snapshot` to quiet repeats: a report unchanged since it was confirmed sent to
+the same recipients sends nothing. `--send` delivers one note through nova-bus on the Redis bus:
 `nova-bus send --as <sender> --to <recipients> --subject <one line> --stdin`.
 nova-bus reads the store from `NOVA_BUS_REDIS`. A confirmed `SEND OK id=<id>`
-line is what the receipt records. `watch --adopt` with `--bus`, `--as` and `--to`
+line is what the receipt records. `watch --adopt` with `--as` and `--to`
 posts the adoption receipt the same way. Version statuses should go to your chosen
 integrator, with optional Cc; participation and updates remain voluntary.
 
@@ -1551,9 +1551,8 @@ First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
 `--draft` needs `--as` and `--to` and sends nothing. `--send` delivers through
 nova-bus on the Redis bus; nova-bus reads the store from `NOVA_BUS_REDIS`.
-`watch` posts its receipt when `--bus`, `--as` and `--to` are set, by the same
-`nova-bus send --as --to --subject --stdin`, and does not take `--remote` or
-`--branch`. A busy snapshot wants the current writer to finish or a larger
+`watch` posts its receipt when `--as` and `--to` are set, by the same
+`nova-bus send --as --to --subject --stdin`. A busy snapshot wants the current writer to finish or a larger
 `--budget`; never remove a lock file to break a live lock.
 
 ### The release verb
@@ -1686,7 +1685,7 @@ alone. It runs in the inventory's environment, as the play does.
 
 ## nova-version
 
-`nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional prepared bus delivery. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
+`nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional delivery through `nova-bus send`. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
 ### First run
 
@@ -1760,8 +1759,8 @@ without running a process; it exits 1 when any adopted tool does not answer
 Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
 `platform=`, are accepted as metadata. A binary that prints no version line is
-refused by name; a partial inventory is not reported as complete. For recovery
-across process death, name `--snapshot`; an unchanged observation sends nothing.
+refused by name; a partial inventory is not reported as complete. Name
+`--snapshot` to quiet repeats: an unchanged observation sends nothing.
 `--send` delivers one note through nova-bus on the Redis bus:
 `nova-bus send --as <sender> --to <recipients> --subject <one line> --stdin`.
 nova-bus reads the store from `NOVA_BUS_REDIS`. A confirmed `SEND OK id=<id>`

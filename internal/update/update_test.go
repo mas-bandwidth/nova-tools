@@ -449,7 +449,7 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	}
 	need(t, o, "changed=no")
 	state, err := readSnapshot(s)
-	if err != nil || len(state.Delivered) != 0 || len(state.Pending) != 0 {
+	if err != nil || len(state.Delivered) != 0 {
 		require.Fail(t, fmt.Sprintln(state, err))
 	}
 	ctx := context.Background()

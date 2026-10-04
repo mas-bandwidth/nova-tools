@@ -49,15 +49,14 @@ func TestReportSendUsesTheRedisBus(t *testing.T) {
 		assert.Contains(t, out+errs, "01ABC")
 	}
 
-	code, out, errs := run(t, env, "report", "--file", manifest, "--send", "--as", "me", "--to", "x",
-		"--bus", dir, "--remote", "origin", "--branch", "main")
+	code, out, errs := run(t, env, "report", "--file", manifest, "--send", "--as", "me", "--to", "x")
 	require.Equal(t, 0, code, "%s%s", out, errs)
 	assertRedisSend(t, out, errs)
 
 	mu.Lock()
 	argv = nil
 	mu.Unlock()
-	code, out, errs = run(t, env, "watch", "--adopt", checks, "--bus", dir, "--as", "me", "--to", "x")
+	code, out, errs = run(t, env, "watch", "--adopt", checks, "--as", "me", "--to", "x")
 	require.NotEqual(t, 2, code, "%s%s", out, errs)
 	assertRedisSend(t, out, errs)
 }

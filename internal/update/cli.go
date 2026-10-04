@@ -36,11 +36,11 @@ type Environment struct {
 	DrainTimer  func(time.Duration) (<-chan time.Time, func() bool)
 }
 type options struct {
-	file, host, snapshot, as, to, bus, remote, branch, target, adopt, store string
-	max                                                                     int
-	timeout, budget                                                         time.Duration
-	kinds                                                                   kindFlags
-	draft, send, dryRun                                                     bool
+	file, host, snapshot, as, to, target, adopt, store string
+	max                                                int
+	timeout, budget                                    time.Duration
+	kinds                                              kindFlags
+	draft, send, dryRun                                bool
 }
 type kindFlags []string
 
@@ -116,11 +116,11 @@ const updateVerbs = `usage:
   nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
   nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
   nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to
-    <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>]
+    <who,who> | --send --as <friend> --to <who,who>]
     [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
   nova-update report --store <host:port> [--timeout <d>]
-  nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to
-    <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
+  nova-update watch --adopt <checks.tsv> [--as <friend> --to <who,who>] [--host <label>]
+    [--timeout <d>] [--budget <d>]
   nova-update adoption --file <path> [--as <friend>] [--max <n>]
   nova-update release <cut|build|install|adopt|pull> ...
     nova-tools' own release pipeline: nova-update help release prints its usage lines
@@ -164,13 +164,12 @@ func help(name string, w io.Writer) {
 	fmt.Fprintln(w, updateVerbs)
 	// The notes are one short paragraph per subject (a cold rating named the
 	// wall of text): the defaults, the --json rendering, the verbs' shape,
-	// then report's send recovery, where pending and artifact are each named
-	// in one clause, and the snapshot's lock (SPEC-UPDATE rule 25).
+	// then report's delivery and the snapshot's lock (SPEC-UPDATE rule 25).
 	fmt.Fprintf(w, "  %s version (or --version)\n", name)
 	fmt.Fprintf(w, "\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n")
 	fmt.Fprintf(w, "\nEvery verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n")
 	fmt.Fprintf(w, "\nReport needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing.\n")
-	fmt.Fprintf(w, "\nCross-process delivery recovery needs --snapshot: the snapshot saves the artifact (the note nova-bus prepared) before each send, and a note still pending (prepared, not yet confirmed sent) is retried by the same --send, never prepared again.\n")
+	fmt.Fprintf(w, "\nA delivery is one nova-bus send on the Redis bus (nova-bus reads its store from NOVA_BUS_REDIS); with --snapshot, a report unchanged since it was confirmed sent to the same recipients is not sent again.\n")
 	fmt.Fprintf(w, "\nA snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running.\n")
 	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
 	fmt.Fprint(w, twoBinaries())
@@ -219,7 +218,7 @@ func verbDetail(name, verb string) string {
 		"status":   "inspection: the reads of check; writes nothing",
 		"apply":    "local write: runs the named entry's apply command, which installs; --dry-run starts no process and writes nothing",
 		"report":   "inspection: reads each installed version, no latest, no network; --snapshot writes its state file (local write); --send delivers the note through nova-bus (delivery); --store reads the fleet's Redis",
-		"watch":    "inspection: runs each check's command; with --bus and its four companions, delivery: the receipt goes out through nova-bus",
+		"watch":    "inspection: runs each check's command; with --as and --to, delivery: the receipt goes out through nova-bus send",
 		"adoption": "inspection: reads the ledger, writes nothing",
 		"example":  "inspection: prints the example manifest; with --out, local write: writes it, never over another file",
 		"version":  "inspection: prints this binary's version line",
@@ -378,7 +377,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	}
 	if verb == "report" {
 		reportDeliveryFlags(f, &o)
-		f.BoolVar(&o.send, "send", false, "deliver the note through nova-bus (needs --as, --to, --bus, --remote, --branch)")
+		f.BoolVar(&o.send, "send", false, "deliver the note through nova-bus (needs --as, --to)")
 		f.StringVar(&o.store, "store", "", "a fleet Redis host:port: report every bench's nova-sprint build from its beat, instead of --file")
 	}
 	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
@@ -397,13 +396,10 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 // a draft to read, or (with --send, or nova-version's send) a delivery.
 func reportDeliveryFlags(f *flag.FlagSet, o *options) {
 	f.StringVar(&o.host, "host", "", "a label for the machine the report ran on, carried in the note's subject")
-	f.StringVar(&o.snapshot, "snapshot", "", "a state file that carries a prepared note across processes: retry the saved note, never prepare again while one is pending")
+	f.StringVar(&o.snapshot, "snapshot", "", "a state file that records what was observed and what each recipient was confirmed sent: an unchanged report is not sent again")
 	f.BoolVar(&o.draft, "draft", false, "print the note that --send would deliver, and deliver nothing (needs --as, --to)")
 	f.StringVar(&o.as, "as", "", "the sender the note is from")
 	f.StringVar(&o.to, "to", "", "the recipients, comma-separated")
-	f.StringVar(&o.bus, "bus", "", "the bus checkout that delivers the note")
-	f.StringVar(&o.remote, "remote", "", "the bus remote")
-	f.StringVar(&o.branch, "branch", "", "the bus branch")
 }
 
 // storeReport is `report --store`: every bench's nova-sprint build from
@@ -433,13 +429,6 @@ func checked(name, verb string, o options, positional []string, env Environment)
 	}
 	if o.draft || o.send {
 		for _, x := range []struct{ n, v string }{{"as", o.as}, {"to", o.to}} {
-			if x.v == "" {
-				missing = append(missing, "--"+x.n)
-			}
-		}
-	}
-	if o.send {
-		for _, x := range []struct{ n, v string }{{"bus", o.bus}, {"remote", o.remote}, {"branch", o.branch}} {
 			if x.v == "" {
 				missing = append(missing, "--"+x.n)
 			}

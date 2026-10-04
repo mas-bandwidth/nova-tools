@@ -90,7 +90,7 @@ func TestReportStoreRefusesANote(t *testing.T) {
 	t.Parallel()
 
 	for _, args := range [][]string{
-		{"report", "--store", "127.0.0.1:1", "--send", "--as", "a", "--to", "b", "--bus", "x", "--remote", "r", "--branch", "b"},
+		{"report", "--store", "127.0.0.1:1", "--send", "--as", "a", "--to", "b"},
 		{"report", "--store", "127.0.0.1:1", "--draft", "--as", "a", "--to", "b"},
 		{"report", "--store", "127.0.0.1:1", "--file", "m.tsv"},
 	} {
