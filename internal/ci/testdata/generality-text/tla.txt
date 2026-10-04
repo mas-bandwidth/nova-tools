@@ -1,12 +1,7 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 12
+# ceiling: 7
 tla/CardMachine.tla:glenn 1
 tla/README-SprintEvents.md:space 2
-tla/README.md:glenn 1
-tla/README.md:rowan 2
-tla/README.md:space 5
-tla/README.md:stella 6
-tla/README.md:studio 1
 tla/RedisFn.tla:glenn 1
 tla/TableEdit.tla:stella 4
 tla/TableOrder.tla:glenn 1
