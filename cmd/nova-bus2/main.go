@@ -119,7 +119,7 @@ recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, 
 ack --as <me> --id <id> acks by hand after a plain recv; names: nova-config friend and machine rows.
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); user NOVA_SPRINT_REDIS_USER.`,
-		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed), 2 could not run (a flag, an input, a store that did not answer).",
+		ExitTable: "0 done, 1 the verb ran and said no (exit 1 with NONE is the empty wait; recv --exec: the command failed), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"NONE"},
 		Verbs: []tool.Verb{
 			{
@@ -163,25 +163,33 @@ at=<RFC3339> subject=<s> line per message: pending is delivered and not acked, n
 			},
 			{
 				Name:    "recv",
-				Usage:   "recv [--as <me>] [--forever --exec <command>] [--exec <command>] [--redis <addr>]",
+				Usage:   "recv [--as <me>] [--block <d>] [--forever --exec <command>] [--exec <command>] [--redis <addr>]",
 				Example: "recv --as bob --exec true",
 				Effect:  tool.Delivery + ": moves one message to pending; with --exec it runs the command and acks on exit 0",
 				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> at=<RFC3339>
 subject=<s> (login=none when the connection has no login user), a blank line, the body; or RECV
-NONE at exit 1 when nothing waits. You are the login user, as in send. The oldest message a
+NONE at exit 1 when nothing waits: exit 1 with NONE is the empty wait. You are the login user, as in send. The oldest message a
 reader lost (delivered, not acked, idle a minute) comes first, else the oldest new one; the reader
-keeps it for a minute. --exec '<command>' runs the command with that same text on its stdin and
+keeps it for a minute. --block <d> is how long that one read waits (a Go duration); with no --block a single recv answers at once.
+--exec '<command>' runs the command with that same text on its stdin and
 acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
 it pending and is RECV FAILED at exit 1. --forever loops, waiting for messages, and needs --exec; it
-stops on SIGINT or SIGTERM, or at the first command that fails.`,
+stops on SIGINT or SIGTERM, or at the first command that fails. --forever looks for --block (30s when it is left out).`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
+					f.Duration("block", ForeverBlock, "how long one read waits for a message, a Go duration (30s); a single recv with no --block answers at once, and --forever looks again after this. 0 answers at once")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+")")
 					f.Check(func(c *tool.Call) {
 						if c.Bool("forever") && c.Str("exec") == "" {
 							c.Problem("--forever wants --exec <command>: a loop that acks nothing would hand out the same message for ever")
+						}
+						if c.Given("block") && c.Dur("block") < 0 {
+							c.Problem("--block wants a Go duration of zero or more, like 30s; 0 answers at once")
+						}
+						if c.Bool("forever") && c.Dur("block") <= 0 {
+							c.Problem("--block wants a Go duration above zero when --forever waits, like 30s")
 						}
 					})
 				},
@@ -360,6 +368,12 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		return refused
 	}
 	command := c.Str("exec")
+	// A plain recv answers at once; --block names the wait, and --forever
+	// looks for ForeverBlock when --block was left out (SPEC-BUS2.md, the verbs).
+	block := time.Duration(0)
+	if c.Bool("forever") || c.Given("block") {
+		block = c.Dur("block")
+	}
 	ctx, stop := w.signals(context.Background())
 	defer stop()
 	stopped := tool.Done().Note("stopped by a signal; a message being delivered stays pending")
@@ -373,7 +387,13 @@ func (w world) recv(c *tool.Call) *tool.Out {
 			return answer(err), false
 		}
 		if !ok {
-			return tool.Fail("nothing for " + as).As("NONE"), false
+			// SPEC-BUS2.md, the verbs: RECV NONE at exit 1 when nothing
+			// waits. Fail records status failed for that exit; an empty
+			// wait is status none, the word NONE, the same exit. A store
+			// that did not answer stays answer's refusal.
+			o := tool.Fail("nothing for " + as).As("NONE")
+			o.Status = "none"
+			return o, false
 		}
 		m := e.Message()
 		o := message(m, login)
@@ -398,13 +418,13 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		return o.Fact("acked", acked).Fact("exec_exit", 0), true
 	}
 	if !c.Bool("forever") {
-		o, _ := one(0)
+		o, _ := one(block)
 		return o
 	}
 	// the loop: every message in turn, each a line of its own, until a signal
 	// or a command that fails; a NONE is a wait that ran out, not a line
 	for {
-		res, ok := one(ForeverBlock)
+		res, ok := one(block)
 		switch {
 		case ok:
 			res.Render(c.Stdout, c.Bool("json"))
