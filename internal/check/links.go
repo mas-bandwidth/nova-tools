@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/readregular"
 )
 
 // BrokenLink is one relative markdown link that does not resolve — or, when
@@ -92,6 +94,13 @@ func LinksExcluding(dir string, exclude []string) (res LinksResult, err error) {
 			return nil
 		}
 		res.MDFiles++
+		if !d.Type().IsRegular() {
+			res.Broken = append(res.Broken, BrokenLink{
+				File:   filepath.ToSlash(rel),
+				Reason: "not a regular file",
+			})
+			return nil
+		}
 		n, b := checkFileLinks(dir, path, exclude)
 		res.Checked += n
 		res.Broken = append(res.Broken, b...)
@@ -177,7 +186,7 @@ func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken 
 	// one, so it is forward-slashed but not repo-relative; that branch is
 	// unreachable in practice and the value is print-only, never re-joined.
 	relFile = filepath.ToSlash(relFile)
-	data, err := os.ReadFile(mdPath)
+	data, err := readregular.Read(mdPath, readregular.DefaultMax)
 	if err != nil {
 		return 0, []BrokenLink{{File: relFile, Reason: fmt.Sprintf("unreadable (%v)", readCause(err))}}
 	}

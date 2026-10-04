@@ -391,8 +391,8 @@ func TestLinksUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
 	assert.Len(t, res.Broken, 1, "Broken = %v, want the finding found before the stop: the accounting travels with the error for the caller to discard", res.Broken)
 }
 
-// A dangling .md symlink is the second face of the same case: the walk sees a
-// file, the read fails. Named failure, walk continues, findings kept, exit 1.
+// A dangling .md symlink is a named failure: the walk sees an irregular entry
+// and reports it promptly as "not a regular file" without attempting to read it.
 func TestLinksDanglingSymlinkMdIsNamedFailure(t *testing.T) {
 	t.Parallel()
 
@@ -409,28 +409,28 @@ func TestLinksDanglingSymlinkMdIsNamedFailure(t *testing.T) {
 	for _, b := range res.Broken {
 		asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
 	}
-	wantFailures(t, asFailures, []string{"dangling.md", "unreadable"})
+	wantFailures(t, asFailures, []string{"dangling.md", "not a regular file"})
 }
 
 // SPEC (links): existence is checked with os.Stat, which FOLLOWS symlinks —
 // "a target that is a symlink counts as resolving exactly when the symlink
 // does. Links asserts navigability, not provenance — that stricter posture
 // belongs to attest" (which refuses symlinks outright). Pin the deliberate
-// contrast: a relative link that resolves THROUGH a .md symlink is LINKS OK,
+// contrast: a relative link that resolves THROUGH a symlink is LINKS OK,
 // and a change that Lstat's the target here is a change of posture, not a fix.
 func TestLinksTargetResolvingThroughSymlinkIsOK(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writeTree(t, dir, map[string]string{"a.md": "[via](alias.md)", "real.md": "x"})
-	if err := os.Symlink(filepath.Join(dir, "real.md"), filepath.Join(dir, "alias.md")); err != nil {
+	writeTree(t, dir, map[string]string{"a.md": "[via](alias.txt)", "real.txt": "x"})
+	if err := os.Symlink(filepath.Join(dir, "real.txt"), filepath.Join(dir, "alias.txt")); err != nil {
 		t.Skipf("cannot create symlink: %v", err)
 	}
 	res, err := LinksExcluding(dir, nil)
 	require.NoError(t, err)
 	assert.Empty(t, res.Broken, "a target that is a symlink resolves exactly when the symlink does; got %v", res.Broken)
 	assert.Equal(t, 1, res.Checked, "checked = %d, want 1", res.Checked)
-	assert.Equal(t, 3, res.MDFiles, "mdFiles = %d, want 3: the symlinked .md is walked and read through the link", res.MDFiles)
+	assert.Equal(t, 1, res.MDFiles, "mdFiles = %d, want 1", res.MDFiles)
 }
 
 func TestLinksRefusesBadDir(t *testing.T) {
@@ -518,4 +518,81 @@ func TestLinksSeedFixturesCarryNoTargets(t *testing.T) {
 	res, err := LinksExcluding("testdata", nil)
 	require.NoError(t, err)
 	assert.Empty(t, res.Broken, "testdata carries %d broken link(s); a pinned fixture must not point outside the repo: %v", len(res.Broken), res.Broken)
+}
+
+// A FIFO named x.md blocks links (and quickstart, which runs links first)
+// forever; a symlinked .md pointing outside the tree is read. Both are irregular
+// entries that must be reported promptly as "not a regular file" without being opened.
+func TestLinksNamesAFifoAndASymlinkedMarkdownFileInsteadOfReadingThem(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: named pipes are not posix fifos")
+	}
+
+	dir := t.TempDir()
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "outside.md")
+	require.NoError(t, os.WriteFile(outsideFile, []byte("prose\n"), 0o644))
+
+	symlinkPath := filepath.Join(dir, "symlink.md")
+	if err := os.Symlink(outsideFile, symlinkPath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	fifoPath := filepath.Join(dir, "fifo.md")
+	if err := syscallMkfifo(fifoPath); err != nil {
+		t.Skipf("fifo unavailable: %v", err)
+	}
+
+	res, err := LinksExcluding(dir, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.MDFiles, "MDFiles = %d, want 2 (symlink.md and fifo.md)", res.MDFiles)
+	assert.Equal(t, 0, res.Checked, "Checked = %d, want 0", res.Checked)
+	require.Len(t, res.Broken, 2, "broken = %v, want 2 broken links for non-regular files", res.Broken)
+
+	var asFailures []Failure
+	for _, b := range res.Broken {
+		assert.Zero(t, b.Line, "Line = %d, want 0 for whole-file broken link", b.Line)
+		assert.Empty(t, b.Target, "Target = %q, want empty for whole-file broken link", b.Target)
+		assert.Equal(t, "not a regular file", b.Reason)
+		asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
+	}
+	wantFailures(t, asFailures, []string{"symlink.md", "not a regular file", "fifo.md", "not a regular file"})
+}
+
+// LinksFiles (--file) naming a symlink to a regular file still works, but
+// naming a FIFO or an irregular file returns a named failure rather than hanging.
+func TestLinksFilesSymlinkToRegularFileWorksAndFifoIsNamedFailure(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: named pipes and symlinks are platform-specific")
+	}
+
+	dir := t.TempDir()
+	realFile := filepath.Join(dir, "real.md")
+	targetFile := filepath.Join(dir, "target.md")
+	require.NoError(t, os.WriteFile(targetFile, []byte("target\n"), 0o644))
+	require.NoError(t, os.WriteFile(realFile, []byte("link to [target](target.md)\n"), 0o644))
+
+	linkFile := filepath.Join(dir, "link.md")
+	if err := os.Symlink(realFile, linkFile); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	fifoFile := filepath.Join(dir, "pipe.md")
+	if err := syscallMkfifo(fifoFile); err != nil {
+		t.Skipf("fifo unavailable: %v", err)
+	}
+
+	res, err := LinksFiles(dir, []string{"link.md", "pipe.md"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.MDFiles, "MDFiles = %d, want 2", res.MDFiles)
+	assert.Equal(t, 1, res.Checked, "Checked = %d, want 1 (link.md's link was checked)", res.Checked)
+	require.Len(t, res.Broken, 1, "Broken = %v, want 1 (pipe.md is broken)", res.Broken)
+	assert.Equal(t, "pipe.md", res.Broken[0].File)
+	assert.Zero(t, res.Broken[0].Line)
+	assert.Empty(t, res.Broken[0].Target)
+	assert.Contains(t, res.Broken[0].Reason, "not a regular file")
 }
