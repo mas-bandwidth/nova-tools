@@ -1,6 +1,9 @@
 package config
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -177,4 +180,107 @@ func TestResolveDSNRefusesAFlagSSLPassword(t *testing.T) {
 // variables, so a test never touches the process environment.
 func envOf(env map[string]string) func(string) string {
 	return func(name string) string { return env[name] }
+}
+
+// TestTheDSNRefusalNamesNoUnclassifiedByte pins the rule every refusal in
+// dsn.go keeps (docs/nova-config/README.md, "Connecting"): a message may name
+// the key, the position and the class of defect, never a substring of the
+// input outside an allowlisted class. A DSN may carry a password that neither
+// net/url nor the keyword parser could split, so the boundary is judged on the
+// error text alone: for every password spelling (control bytes, spaces, '@',
+// '/', quotes, percent escapes, invalid UTF-8) in every DSN shape, through the
+// flag entry, the environment entry and the injected-password entry, and
+// through Redact, no 3-byte substring of the password appears in the text,
+// raw or in its quoted spelling. The values are made up for this test.
+func TestTheDSNRefusalNamesNoUnclassifiedByte(t *testing.T) {
+	t.Parallel()
+
+	secrets := []string{
+		"zq7Kp9 wv\x01@/'\"%41%zzmn\xff\xfeend",
+		"Hj4x\x7f\tRt2/Lm8@Bn6'Vc3",
+		"Qa5 \"Ws8\\Ed1%2fRf4%Tg7",
+		"Yh6\n@Uj9 /Ik2'Ol5\x00",
+		"P%zz%Q@/ X'y \"Zk3",
+	}
+	shapes := []struct {
+		name, tmpl string
+		// secret is true where the DSN names a password or sslpassword, so a
+		// flag that resolves without a refusal has put the secret on the line.
+		secret bool
+	}{
+		{"uri userinfo", "postgres://store:%s@db.invalid:5432/nova", true},
+		{"uri userinfo, non-numeric port", "postgres://store:%s@db.invalid:notaport/nova", true},
+		{"uri userinfo, no host", "postgres://store:%s@", true},
+		{"uri query password", "postgres://store@db.invalid:5432/nova?password=%s", true},
+		{"uri query sslpassword", "postgres://store@db.invalid:5432/nova?sslpassword=%s", true},
+		{"uri query sslpassword beside a control byte", "postgres://store@db.invalid:5432/nova?sslpassword=%s&application_name=a\tb", true},
+		{"uri query sslpassword and a bad escape", "postgres://store@db.invalid:5432/nova?sslpassword=%s&application_name=%zz", true},
+		{"keyword password", "host=db.invalid user=store password=%s dbname=nova", true},
+		{"keyword quoted password", "host=db.invalid password='%s' dbname=nova", true},
+		{"keyword unterminated quote", "host=db.invalid password='%s", true},
+		{"keyword spaced equals", "host=db.invalid password = %s", true},
+		{"keyword sslpassword", "host=db.invalid sslpassword=%s port=5432", true},
+		{"keyword sslpassword, bad port", "host=db.invalid sslpassword='%s' port=notaport", true},
+		{"keyword unknown key", "host=db.invalid %s=x", false},
+	}
+
+	// leaks names the first 3-byte substring of secret found in text, in
+	// its raw spelling or in the quoted spelling an error built with %q uses.
+	leaks := func(text, secret string) (string, bool) {
+		quoted := strconv.Quote(secret)
+		quoted = quoted[1 : len(quoted)-1]
+		for _, form := range []string{secret, quoted} {
+			for i := 0; i+3 <= len(form); i++ {
+				if strings.Contains(text, form[i:i+3]) {
+					return strconv.Quote(form[i : i+3]), true
+				}
+			}
+		}
+		return "", false
+	}
+
+	const injected = "Vb3Nm8!Xq9"
+	entries := []struct {
+		name string
+		run  func(dsn string) (string, error)
+		// refuses is true where a DSN that names a secret must be refused.
+		refuses bool
+	}{
+		{"flag", func(dsn string) (string, error) { return ResolveDSN(dsn, envOf(nil)) }, true},
+		{"environment", func(dsn string) (string, error) {
+			return ResolveDSN("", envOf(map[string]string{EnvPG: dsn}))
+		}, false},
+		{"environment with an injected password", func(dsn string) (string, error) {
+			return ResolveDSN("", envOf(map[string]string{EnvPG: dsn, DefaultPassEnv: injected}))
+		}, false},
+		{"redact", func(dsn string) (string, error) { return Redact(dsn), nil }, false},
+	}
+
+	for _, shape := range shapes {
+		for si, secret := range secrets {
+			dsn := strings.Replace(shape.tmpl, "%s", secret, 1)
+			for _, entry := range entries {
+				t.Run(fmt.Sprintf("%s/secret %d/%s", shape.name, si, entry.name), func(t *testing.T) {
+					t.Parallel()
+					got, err := entry.run(dsn)
+					text := got
+					if err != nil {
+						text = err.Error()
+					} else if entry.name != "redact" {
+						// A resolved DSN is the caller's own text, not a message.
+						text = ""
+						if entry.refuses && shape.secret {
+							t.Errorf("the %s entry resolved a DSN that names a password or sslpassword", entry.name)
+						}
+					}
+					if bad, found := leaks(text, secret); found {
+						t.Errorf("the %s entry echoed %s of the password in %q", entry.name, bad, text)
+					}
+					if bad, found := leaks(text, injected); found {
+						t.Errorf("the %s entry echoed %s of the injected password in %q", entry.name, bad, text)
+					}
+				})
+			}
+		}
+	}
 }
