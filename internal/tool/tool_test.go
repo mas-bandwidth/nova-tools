@@ -872,6 +872,77 @@ func TestHelpRefusedAnswersDashH(t *testing.T) {
 	}
 }
 
+// hiddenTool is a tool with one shown verb and one hidden one (Verb.Hidden):
+// a probe step verb a user never types.
+func hiddenTool() *Tool {
+	return &Tool{
+		Name: "nova-hide", What: "a tool with a hidden verb", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{
+			{Name: "scan", Usage: "scan", Example: "scan", Effect: Inspection,
+				Run: func(*Call) *Out { return Done() }},
+			{Name: "probe-step", Usage: "probe-step <nonce>", Example: "probe-step <nonce>", Effect: Inspection, Hidden: true,
+				Run: func(*Call) *Out { return Done().Fact("probed", true) }},
+		},
+	}
+}
+
+// TestAHiddenVerbRunsAndNoListShowsIt pins Verb.Hidden: the hidden verb runs
+// and answers `-h` and `help <it>` at exit 0, while the banner, the usage
+// block and the verb list of every refusal leave it out (STANDARD §2: an
+// unknown name is answered with the names there are for the reader; §3: help
+// is never a refusal).
+func TestAHiddenVerbRunsAndNoListShowsIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		args        []string
+		code        int
+		stdout      []string // substrings, in order
+		stderr      []string
+		absent      []string // in neither stream
+		emptyStderr bool
+	}{
+		{name: "the hidden verb runs", args: []string{"probe-step"}, code: 0, emptyStderr: true,
+			stdout: []string{"PROBE-STEP OK probed=true\n"}},
+		{name: "the banner's usage and example blocks do not show it", args: []string{"help"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage:\n  nova-hide scan\n", "\nexample:\n  nova-hide scan\n"}, absent: []string{"probe-step"}},
+		{name: "a bare command's verb list does not name it", args: nil, code: 2,
+			stderr: []string{"HIDE REFUSED: no verb given; the verbs are scan, version; run: nova-hide help\n"},
+			absent: []string{"probe-step"}},
+		{name: "an unknown verb is not answered with it", args: []string{"probe"}, code: 2,
+			stderr: []string{`HIDE REFUSED: unknown verb "probe"; the verbs are scan, version; run: nova-hide help` + "\n"},
+			absent: []string{"probe-step", "did you mean"}},
+		{name: "help of it still prints its help", args: []string{"help", "probe-step"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage: nova-hide probe-step [flags]", "exit codes: 0 done, 1 said no, 2 could not run.", "effect: inspection"}},
+		{name: "its -h still answers", args: []string{"probe-step", "-h"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage: nova-hide probe-step [flags]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(hiddenTool().Run).Run(tc.args...)
+			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			check := func(name, got string, want []string) {
+				rest := got
+				for _, s := range want {
+					i := strings.Index(rest, s)
+					if !assert.GreaterOrEqual(t, i, 0, "%s lacks %q:\n%s", name, s, got) {
+						break
+					}
+					rest = rest[i+len(s):]
+				}
+			}
+			check("stdout", r.Stdout, tc.stdout)
+			check("stderr", r.Stderr, tc.stderr)
+			if tc.emptyStderr {
+				assert.Empty(t, r.Stderr)
+			}
+			for _, s := range tc.absent {
+				assert.NotContains(t, r.Stdout+r.Stderr, s)
+			}
+		})
+	}
+}
+
 // TestAStageLineIsWhereEveryReaderMeetsTheTool: a tool's Stage is the
 // banner's line 2, the second line of every verb's -h, and an indented NOTE
 // line under a bare command's one-line refusal (STANDARD section 3 point 1); a tool without one prints none.
@@ -908,6 +979,67 @@ func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
 			}
 			assert.True(t, strings.HasPrefix(got, tc.want), "want the stream to open %q:\n%s", tc.want, got)
 			assert.Equal(t, 1, strings.Count(got, stage), "the stage appears more than once:\n%s", got)
+		})
+	}
+}
+
+// looksTool is a tool whose one verb declares Looks: "files", the fact that
+// counts what the verb reads.
+func looksTool() *Tool {
+	return &Tool{
+		Name: "nova-look", What: "counts what it reads", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{
+			{Name: "scan", Usage: "scan [--files <n>]", Effect: Inspection, Looks: "files",
+				Flags: func(f *Flags) { f.Int("files", 0, "how many files the verb reads") },
+				Run:   func(c *Call) *Out { return Done().Fact("files", c.Int("files")) }},
+		},
+	}
+}
+
+// TestNoGreenOverNothing pins Verb.Looks: a verb that returns OK with the
+// fact that counts what it read at 0 is turned into FAILED at exit 1 naming
+// the count, with the same command and the --allow-empty the skeleton adds
+// to a verb that declares Looks as the remedy; with --allow-empty the OK
+// stands, and the JSON is the same value (STANDARD §2: exit codes tell the
+// truth, one result value, two renderings).
+func TestNoGreenOverNothing(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		code     int
+		stdout   string   // the whole stream, exact; "" asserts only what contains does
+		stderr   string   // the whole stream, exact
+		contains []string // substrings of stdout
+	}{
+		{name: "a count above zero stays OK", args: []string{"scan", "--files", "3"}, code: 0,
+			stdout: "SCAN OK files=3\n"},
+		{name: "a count of zero is FAILED at exit 1", args: []string{"scan", "--files", "0"}, code: 1,
+			stderr: "SCAN FAILED files=0: looked at nothing: files=0; run: nova-look scan --files 0 --allow-empty if nothing is the answer\n"},
+		{name: "--allow-empty keeps the OK over nothing", args: []string{"scan", "--files", "0", "--allow-empty"}, code: 0,
+			stdout: "SCAN OK files=0\n"},
+		{name: "the same FAILED is one JSON object", args: []string{"scan", "--files", "0", "--json"}, code: 1,
+			contains: []string{`{"result":{"verb":"scan","status":"failed","exit":1,` +
+				`"remedy":"nova-look scan --files 0 --json --allow-empty if nothing is the answer",` +
+				`"why":["looked at nothing: files=0"]},"facts":{"files":0}}`}},
+		{name: "the skeleton's flag is in the verb's -h", args: []string{"scan", "-h"}, code: 0,
+			contains: []string{"usage: nova-look scan [flags]", "--allow-empty", "exit codes: 0 done"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(looksTool().Run).Run(tc.args...)
+			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			if tc.stdout != "" {
+				assert.Equal(t, tc.stdout, r.Stdout)
+				assert.Empty(t, r.Stderr)
+			}
+			if tc.stderr != "" {
+				assert.Equal(t, tc.stderr, r.Stderr)
+				assert.Empty(t, r.Stdout)
+			}
+			for _, s := range tc.contains {
+				assert.Contains(t, r.Stdout, s)
+			}
 		})
 	}
 }
