@@ -23,7 +23,8 @@ On the coordinator machine, 2026-10-04: every `com.nova.*` unit in `~/Library/La
 `launchctl list` shows loaded, every running process started from `<seat-bin>` or `<workshop-bin>`, every
 tool those name in turn, and every tool named by SPRINT-COORDINATOR.md, SPRINT-COORDINATOR-SEAT.md and the
 role prompts of the coordinator's tool repository. The `.before`, `.bak`, `.orig`, `.prev` and dated copies
-were skipped. Each tool below was read whole.
+were skipped. Each unit's ProgramArguments were read, and each script below in its header and the lines that
+act; the longer ones (the dashboard server, mirror-refresh, nova-loop) not line by line.
 
 ## The tools in use
 
