@@ -166,21 +166,35 @@ func TestOpenFileRefusesARowNameTheKindRefusesToAdd(t *testing.T) {
 	_, found, err := ok.Get(ctx, KindFriend, "ada")
 	require.NoError(t, err)
 	assert.True(t, found, "a valid row name still opens")
-	// a hand edit renames the row to one the kind refuses to add
-	raw, err := os.ReadFile(path)
+	// the store as the tool itself writes it, for each hand edit to start from
+	valid, err := os.ReadFile(path)
 	require.NoError(t, err)
-	var st fileState
-	require.NoError(t, json.Unmarshal(raw, &st))
-	renamed := st.Rows[KindFriend]["ada"]
-	renamed.Name = "../escape"
-	st.Rows[KindFriend]["../escape"] = renamed
-	delete(st.Rows[KindFriend], "ada")
-	edited, err := json.MarshalIndent(st, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, edited, 0o600))
-	_, err = OpenFile(path)
-	assert.ErrorContains(t, err, "../escape")
-	assert.ErrorContains(t, err, "which is not a row name")
+	// a hand edit renames the row to one the kind refuses to add, in either
+	// half of its name: the map key it is filed under, or the row's own
+	// Name, the half list, apply and the Redis keys read
+	for _, tc := range []struct {
+		name, key, rowName string
+	}{
+		{"the map key", "../escape", "../escape"},
+		{"the row's own Name under a valid key", "ada", "../escape"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var st fileState
+			require.NoError(t, json.Unmarshal(valid, &st))
+			renamed := st.Rows[KindFriend]["ada"]
+			renamed.Name = tc.rowName
+			delete(st.Rows[KindFriend], "ada")
+			st.Rows[KindFriend][tc.key] = renamed
+			edited, err := json.MarshalIndent(st, "", "  ")
+			require.NoError(t, err)
+			editedPath := filepath.Join(t.TempDir(), "edited.json")
+			require.NoError(t, os.WriteFile(editedPath, edited, 0o600))
+			_, err = OpenFile(editedPath)
+			assert.ErrorContains(t, err, "../escape")
+			assert.ErrorContains(t, err, "which is not a row name")
+		})
+	}
 }
 
 // The final newline counts toward the read bound. A write crossing it
