@@ -39,8 +39,8 @@ var digit = regexp.MustCompile(`[0-9]`)
 var bareCommit = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
 // dottedRelease is a plain numeric release tag, `1.2` or `1.2.3`. It is named for
-// what it matches rather than for the concept, because the package now also
-// carries the `release` VERB and one name for two things is one too few.
+// what it matches rather than for the concept, because one name for two things
+// is one too few.
 var dottedRelease = regexp.MustCompile(`^[0-9]+(\.[0-9]+)+$`)
 var digest = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 var pseudo = regexp.MustCompile(`^([0-9]+\.[0-9]+\.[0-9]+)-0\.[0-9]+-([0-9a-f]{7,40})(\+.*)?$`)

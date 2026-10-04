@@ -1382,7 +1382,8 @@ command refuses in ONE line naming that door, and `docs/TESTS.md` carries a
 `### First run` transcript inside that tool's `## <tool>` section.
 **The mistake it prevents.** The walk exists for the binary nobody has written
 yet — a new command joins the standard on the day it appears, not the day
-somebody remembers a table. The skip map `notYetOnTheStandard` is EMPTY and that
+somebody remembers a table; nova-release, the release pipeline's own binary,
+joined it that way. The skip map `notYetOnTheStandard` is EMPTY and that
 is the point: a skip that outlives the branch it names excuses a tool from the
 standard for good. The same lesson from the other side: a tool whose `CLI.md`
 section is prose-shaped contributes ZERO rows to `nova-check dogfood`.

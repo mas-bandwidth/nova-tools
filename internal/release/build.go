@@ -260,7 +260,7 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// LAST, and never a reason to fail: every platform is built and verified,
 	// and the version directories under --out that prune.go's rule does not keep are
 	// removed. The version just built stays, and so does the version of the
-	// nova-update running this build, which is what this machine has installed.
+	// nova-release running this build, which is what this machine has installed.
 	self := ""
 	if deps.Self != nil {
 		self = deps.Self()

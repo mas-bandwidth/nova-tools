@@ -28,11 +28,6 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "report", Flags: append(file, "--snapshot", "{dir}/snap", "--store", "{addr}")},
 		{Verb: "watch", Flags: []string{"--adopt", "{dir}/checks.tsv"}},
 		{Verb: "adoption", Flags: file},
-		{Verb: "release cut"},
-		{Verb: "release build"},
-		{Verb: "release install"},
-		{Verb: "release adopt"},
-		{Verb: "release pull"},
 		{Verb: "version"},
 	})
 	testverbhelp.HelpVerb(t, updateRun, "nova-update", "check", "status", "adoption", "version")

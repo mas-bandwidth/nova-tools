@@ -1510,7 +1510,7 @@ no user, no variable is read unless `--password-env` names it.
 
 ## nova-update
 
-`nova-update` checks declared versions and applies one chosen update: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
+`nova-update` compares installed tools with their latest releases, and updates one when asked: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
 ### First run
 
@@ -1542,7 +1542,7 @@ participation and updates remain voluntary.
 every entry is equal and 1 when any differs; it writes nothing. `apply --dry-run`
 prints the plan and writes nothing: `APPLY OK ... dry_run=true from=<installed>
 to=<target>`, the entry's line against the target, and `APPLY PLAN` with the command
-the real run would start. Every verb but `watch` and `release` takes `--json`: the same
+the real run would start. Every verb but `watch` takes `--json`: the same
 result as one JSON object on stdout, refusals included. The first line of every result
 is the verb, its status word (`OK`, `FAIL`, `REFUSED`) and the run's counts.
 
@@ -1557,15 +1557,15 @@ and explicit argv; paths or arguments containing spaces belong in a wrapper scri
 `--remote` and `--branch`. A busy snapshot wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
 
-### The release verb
+## nova-release
 
-`nova-update release` is the last mile: a green commit becomes a version, a set of stamped binaries,
+The release pipeline is its own binary now; `nova-update` lost the verb and answers `UPDATE REFUSED: release moved to nova-release`. `nova-release` is the last mile: a green commit becomes a version, a set of stamped binaries,
 and the same binaries answering for themselves on every bench in the fleet. Six verbs, each of which
 can refuse. The gates are in [docs/SPEC-RELEASE.md](SPEC-RELEASE.md) and the verbs in
 [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
 ```sh
-nova-update release cut --repo mas-bandwidth/nova-tools --from main --version v0.17.0 --changelog ./CHANGELOG.md --sums ./release/v0.17.0/linux-amd64/SHA256SUMS
+nova-release cut --repo example/project --from main --version v0.17.0 --changelog ./CHANGELOG.md --sums ./release/v0.17.0/linux-amd64/SHA256SUMS
 ```
 
 `cut` refuses a commit whose checks are not green, refuses a version that is already a tag, writes the
@@ -1598,7 +1598,7 @@ tested, dogfooded by a non-author on real work, and the feedback is applied — 
 [SPEC-RELEASE.md](SPEC-RELEASE.md) lesson 12.
 
 ```sh
-nova-update release build --version v0.17.0 --out ./release --source . --platform linux-amd64 --platform darwin-arm64,darwin-amd64
+nova-release build --version v0.17.0 --out ./release --source . --platform linux-amd64 --platform darwin-arm64,darwin-amd64
 ```
 
 `build` compiles every `cmd/nova-*` for every platform named — `--platform` is repeatable **and**
@@ -1618,23 +1618,23 @@ prints its open edges and builds (`dogfood=report`); `cut` has no such flag. See
 Retention, after a successful `build` (in `--out`) and a successful `install` (in `--from`): a
 directory directly under that root whose name is a version (`release.ValidVersion`) is removed unless
 it is the version just built or installed, the version the machine had installed before it (`build`:
-the running nova-update's stamp; `install`: every version the bin directory's binaries answered
+the running nova-release's stamp; `install`: every version the bin directory's binaries answered
 before the install), or one of the 3 newest of the rest by modification time
 (`release.KeepBesides`). Anything else in the root is left alone, and a removal that fails is said
 on stderr and counted in `prune-failed=`; it never fails the build or the install.
 
 ```sh
-nova-update release install --from ./release --version v0.17.0 --bin ~/.local/bin --retire ~/go/bin
+nova-release install --from ./release --version v0.17.0 --bin ~/.local/bin --retire ~/go/bin
 ```
 
 `install` verifies the checksums, puts the binaries in place by rename, skips what is already current (answering the version, or
 holding the same bytes)
 and clears this release's own files out of `--retire`. Run it **on the coordinator before adopting**:
-`adopt` fans out with the nova-update this host is holding, and a coordinator behind the release
+`adopt` fans out with the nova-release this host is holding, and a coordinator behind the release
 refuses and says so.
 
 ```sh
-nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from bench1:/home/user/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
+nova-release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from bench.example:./artifacts --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/example/artifacts' --platform linux-amd64
 ```
 
 `adopt` runs from the host that has ssh to every machine and fans out from there. A `--from host:dir`
@@ -1648,8 +1648,8 @@ only after the bench verifies every artifact against `SHA256SUMS`; "already hold
 count (`22/22`), never an existence check.
 
 ```sh
-nova-update release build --version v0.17.0 --out ./release --source . --platform windows-amd64
-nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from ./release --bin 'C:\Users\nova\.local\bin' --dest 'C:\Users\nova\nova-release' --platform windows-amd64
+nova-release build --version v0.17.0 --out ./release --source . --platform windows-amd64
+nova-release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from ./release --bin 'C:\Users\nova\.local\bin' --dest 'C:\Users\nova\example\artifacts' --platform windows-amd64
 ```
 
 A **windows** bench is a target like any other. The build names every artifact for it — a
@@ -1664,7 +1664,7 @@ cannot be run by the host that built it, so the build claims nothing about havin
 [SPEC-RELEASE.md](SPEC-RELEASE.md) §11.
 
 ```sh
-nova-update release pull --version v0.17.0 --out ./release --changelog ./CHANGELOG.md --machines ./machines.tsv --ssh ssh --dest '~/nova-release' --reason "shipped a key"
+nova-release pull --version v0.17.0 --out ./release --changelog ./CHANGELOG.md --machines ./machines.tsv --ssh ssh --dest '~/example/artifacts' --reason "shipped a key"
 ```
 
 `pull` withdraws a release: the artifacts go here and on every machine, by name, from that release's
@@ -1672,7 +1672,7 @@ own `SHA256SUMS` — never recursively — and the tag stays while the changelog
 the date and `--reason`. `--dry-run` says what would be deleted and deletes nothing.
 
 ```sh
-nova-update release cycle --version v1.1.0-dev.abcdef12 --source . --out ~/nova-bench/release-build --inventory ./nova-inventory --benches bench-a,bench-b --reason "the member fix, PR 5092" --ansible "$(command -v ansible-playbook)"
+nova-release cycle --version v1.1.0-dev.abcdef12 --source . --out ./release-build --inventory ./nova-inventory --benches bench-a,bench-b --reason "the card's fix, batch 5092" --ansible "$(command -v ansible-playbook)"
 ```
 
 `cycle` is the fix-land-install cycle from the coordinator in one command: `fleet/tools.yml` with

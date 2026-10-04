@@ -414,16 +414,16 @@ nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft -
 nova-update report --store <host:port> [--timeout <d>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release <cut|build|install|adopt|pull> ...   nova-tools' own release pipeline: nova-update help release prints its usage lines
 nova-update help
 ```
 
-Those ten usage lines are the string `nova-update help` prints, byte for byte, under the
+Those nine usage lines are the string `nova-update help` prints, byte for byte, under the
 banner's opening (what the tool does, how it works, the first run): one string
-in the binary, so the spec and the help cannot drift apart. The release pipeline is one
-line there, so a reader of the manifest verbs is not handed it: its five usage lines are
-`release.Verbs`, which `nova-update help release` prints with its notes, and each release
-verb's `-h` prints its line, its flags with what each wants, and its exit codes. `report --store <host:port>` is the fleet's view: it reads every registered bench's
+in the binary, so the spec and the help cannot drift apart. The release pipeline
+moved to its own binary, nova-release, so a reader of the manifest verbs is not
+handed it: the pipeline's usage lines are
+`release.Verbs`, which `nova-release help` prints with its notes, and each release
+verb's `-h` prints its line, its flags with what each wants, and its exit codes; `nova-update release` is answered with `UPDATE REFUSED: release moved to nova-release; run: nova-release help`. `report --store <host:port>` is the fleet's view: it reads every registered bench's
 beat (`bench:<b>:beat`, field `build`, the version line the bench stamps each
 beat) in two pipelined round trips and prints one `REPORT DRIFT` line per beating bench not on
 the newest build, then one receipt; no ssh, no bus note, exit 1 on drift. `--kind <k>` is rule 19. No
@@ -441,8 +441,10 @@ the ready-to-send draft is `nova-version report --draft …`, the flag typed.
 ## The release verb
 
 `check`, `report` and `adoption` all ask the same question from one end: what is installed
-here, and is it what it should be. `release` is that question from the other end — it is
-what MAKES the thing they read. Build, copy, install and verify are separate verbs with
+here, and is it what it should be. The release pipeline is that question from the other
+end — it is what MAKES the thing they read, and since the pipeline moved to its own
+binary it is `nova-release` that runs it: cut, build, install, adopt and pull, one
+verb per step. Build, copy, install and verify are separate verbs with
 separate receipts, never one nested `ssh` quoting, so when a bench runs an old tool while
 the coordinator believes it is current, the receipts say which step did not happen.
 

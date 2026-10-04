@@ -134,7 +134,7 @@ own checks.
 
 Two tools have a `quickstart` verb — `nova-memory` and `nova-check` — and
 **both still require paths or choices you supply**. `nova-bus`, `nova-tokens`,
-`nova-sandbox`, `nova-self-talk`, `nova-fuse` and `nova-cairn` have none. Each entry below
+`nova-sandbox`, `nova-self-talk`, `nova-fuse`, `nova-cairn` and `nova-release` have none. Each entry below
 names what its own first trial needs.
 
 ### nova-bus — a lasting conversation
@@ -479,6 +479,27 @@ lifting a decision is its own deliberate verb.
 
 **It may not help if** nothing you run consults it, or you need enforcement rather
 than a decision on the record.
+
+### nova-release — one command from a green commit to installed binaries
+
+**Try it when** you maintain a checkout of these tools and want the release
+pipeline run as verbs you can stop between, not one nested script.
+
+**What it does.** Cuts a version from a green commit, builds the stamped
+binaries and their checksums, installs them, adopts them on machines over ssh,
+and withdraws a pulled release, one receipt per step.
+
+**You need** a checkout, a changelog and an output root; a cut or a build runs
+the dogfood gate first and refuses on an open edge.
+
+**First trial.** See the [first-run transcript](TESTS.md#nova-release) and
+[nova-release in the command reference](CLI.md#nova-release).
+
+**It worked if** `nova-release help` printed the release verbs with their flags
+and notes, and the verb you ran refused with the flag it wanted.
+
+**It may not help if** you only want to know whether a tool you use is current —
+that is nova-update's question, and it asks it without building anything.
 
 ## Using several together
 

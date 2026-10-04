@@ -292,7 +292,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		o.version = v
 	}
 	// INSTALL ON THE COORDINATOR FIRST, THEN ADOPT. `adopt` is not a courier:
-	// it is this host's nova-update reading a release, verifying it, and
+	// it is this host's nova-release reading a release, verifying it, and
 	// running THIS RELEASE'S install on every machine. A coordinator behind
 	// the release it is fanning out is a coordinator whose own verb may not
 	// understand what it is holding -- and the fourth dogfood met exactly that
@@ -301,7 +301,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if deps.Self != nil {
 		if self := deps.Self(); olderThan(self, o.version) {
 			return refusal(errs, "ADOPT", refuse(
-				fmt.Sprintf("install it here first: nova-update release install --from %s --version %s --bin <dir>, then adopt with the new binary", o.from, o.version),
+				fmt.Sprintf("install it here first: nova-release install --from %s --version %s --bin <dir>, then adopt with the new binary", o.from, o.version),
 				"this nova-update is %s and the release being adopted is %s: the install every machine runs is the one this host is holding", self, o.version))
 		}
 	}
@@ -451,7 +451,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return refusal(errs, "ADOPT", refuse(
-				fmt.Sprintf("build it first: nova-update release build --version %s --out %s --source <checkout> --platform %s-%s", o.version, o.from, goos, goarch),
+				fmt.Sprintf("build it first: nova-release build --version %s --out %s --source <checkout> --platform %s-%s", o.version, o.from, goos, goarch),
 				"there is nothing to adopt: no %s for %s at %s", o.version, goos+"-"+goarch, local))
 		}
 		return refusal(errs, "ADOPT", err)

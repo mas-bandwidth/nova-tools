@@ -663,6 +663,22 @@ REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20da
 ```
 
 
+## nova-release
+
+### First run
+
+With the binary alone, in any directory: a bare `nova-release` refuses with the
+release verbs and the door, one line on stderr, and nothing is read or written;
+`nova-release help` prints the usage lines, every verb's notes and the first run.
+`cmd/nova-release/firstrun_test.go` runs each `$` line and compares the block
+line for line.
+
+```text
+$ nova-release
+! RELEASE REFUSED: a release verb is required; the release verbs are cut, build, install, adopt, pull, cycle; run: nova-release help
+```
+
+
 ## nova-version
 
 ### First run
