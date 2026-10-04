@@ -145,7 +145,8 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	var ls record.LedgerStore
 	if !*dryRun {
 		ls = record.DialLedger(*addr, seatUser, password)
-		defer ls.Close()
+		// ignored: a deferred close of a store whose batch was applied in one answered round trip: the close holds nothing the answer has not already reported
+		defer func() { _ = ls.Close() }()
 	}
 	days, rows, bad := 0, 0, 0
 	type dayResult struct {
@@ -244,7 +245,8 @@ func cmdReportStore(s *sink, addr, user, passwordEnv, month, by string, max int,
 	if err != nil {
 		return failed(err)
 	}
-	defer ls.Close()
+	// ignored: a deferred close on a read-only store: every read already carried its answer to the printed report
+	defer func() { _ = ls.Close() }()
 	totals, indexed, missing, err := ls.LedgerReport(context.Background(), month, by)
 	if err != nil {
 		return failed(err)
