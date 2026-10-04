@@ -24,9 +24,15 @@ func TestMain(m *testing.M) {
 
 // groupFixture owns only fixture children, with stdin EOF as unconditional cleanup.
 func groupFixture(mode string) int {
+	if mode == "outside" {
+		fmt.Fprintln(os.Stdout, "outside ready")
+		_, _ = io.Copy(os.Stdout, os.Stdin)
+		return 0
+	}
 	if mode == "grandchild" {
 		signal.Ignore(syscall.SIGTERM)
 		fmt.Fprintln(os.Stdout, "grandchild ready")
+		fmt.Fprintln(os.Stdout, "grandchild pid", os.Getpid())
 		ready := os.NewFile(3, "fixture-ready")
 		if ready != nil {
 			_, _ = ready.Write([]byte{1})

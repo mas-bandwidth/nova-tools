@@ -31,7 +31,7 @@ type ownedCommand struct {
 	group           int
 }
 
-// startOwnedCommand follows S36 builder contract 1–5: verify the private
+// startOwnedCommand implements OwnedCommandGroup Spawn/Verify/Launch: verify the private
 // session leader before authorizing argv, and reserve its PID until cleanup.
 func startOwnedCommand(ctx context.Context, o Options) (*ownedCommand, <-chan error, error) {
 	executable, err := os.Executable()
@@ -141,7 +141,7 @@ func startOwnedCommand(ctx context.Context, o Options) (*ownedCommand, <-chan er
 	return owned, done, nil
 }
 
-// cleanup implements contract 6. The owned leader is deliberately not reaped
+// cleanup implements OwnedCommandGroup Term/Kill/Reap. The leader is not reaped
 // until both signals finish, including on normal command completion.
 func (o *ownedCommand) cleanup() error {
 	if o.group <= 1 || o.group == syscall.Getpgrp() || o.group != o.leader.Process.Pid {

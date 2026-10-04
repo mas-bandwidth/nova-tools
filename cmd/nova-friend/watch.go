@@ -14,7 +14,7 @@ import (
 // STANDARD section 2: direct argv and errors are explicit and bounded.
 func watchVerb(ctx context.Context) tool.Verb {
 	return tool.Verb{Name: "watch", Usage: "watch --server <host:port> --friend <name> --argv '<JSON argv>' [--sprint <executable>]", Effect: tool.Delivery + "; beats sprint presence while the invoking harness owns a blocking command", DryRun: true,
-		Detail: "The child command runs directly, without a shell. Child output passes through.\nPresence ends when the command, invocation, or invoking parent ends.\n--stdin-lifetime owns and closes stdin on return; enable only for a closable pipe kept open by the harness.\nPresence does not establish native wake or business acceptance.",
+		Detail: "The child command runs directly, without a shell. Child output passes through.\nPresence ends when the command, invocation, or invoking parent ends.\n--stdin-lifetime owns and closes stdin on return; enable only for a closable pipe kept open by the harness.\nOn Darwin/Linux, stop cleans the owned command group; other targets cancel only the direct child.\nPresence does not establish native wake or business acceptance.",
 		Flags: func(f *tool.Flags) {
 			f.Required("server", "the actual sprint server address")
 			f.Required("friend", "the registered friend identity")
