@@ -755,7 +755,8 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 		measured := map[string]int{"fixture.go:glenn": 1, "fixture.go:hulk": 1}
 		err := update(p, measured)
 		require.Error(t, err, "expected error on attempted growth with new key, got nil")
-		require.True(t, strings.Contains(err.Error(), "refuses to grow") && strings.Contains(err.Error(), "fixture.go:hulk"), "expected error mentioning refusal to grow and unlisted key, got: %v", err)
+		require.True(t, strings.Contains(err.Error(), "refuses to grow"), "expected error mentioning refusal to grow and unlisted key, got: %v", err)
+		require.True(t, strings.Contains(err.Error(), "fixture.go:hulk"), "expected error mentioning refusal to grow and unlisted key, got: %v", err)
 		// Ledger on disk must remain untouched
 		raw, err := os.ReadFile(p)
 		require.NoError(t, err)
@@ -769,7 +770,8 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 		measured := map[string]int{"fixture.go:glenn": 2}
 		err := update(p, measured)
 		require.Error(t, err, "expected error on attempted growth with increased count, got nil")
-		require.True(t, strings.Contains(err.Error(), "refuses to raise a count") && strings.Contains(err.Error(), "measured at 2"), "expected error mentioning refusal to grow and count exceed, got: %v", err)
+		require.True(t, strings.Contains(err.Error(), "refuses to raise a count"), "expected error mentioning refusal to grow and count exceed, got: %v", err)
+		require.True(t, strings.Contains(err.Error(), "measured at 2"), "expected error mentioning refusal to grow and count exceed, got: %v", err)
 		// Ledger on disk must remain untouched
 		raw, err := os.ReadFile(p)
 		require.NoError(t, err)
@@ -793,9 +795,11 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 		parsed, err := allowlist.Parse(p, string(raw), allowlist.Options{Ceiling: true, Counted: true})
 		require.NoError(t, err, "failed to parse updated allowlist: %v", err)
 		ceil, ok := parsed.Ceiling()
-		require.True(t, ok && ceil == 2, "expected ceiling 2, got %d (ok=%v)", ceil, ok)
+		require.True(t, ok, "expected ceiling 2, got %d (ok=%v)", ceil, ok)
+		require.True(t, ceil == 2, "expected ceiling 2, got %d (ok=%v)", ceil, ok)
 		require.Equal(t, 2, len(parsed.Rows()), "expected 2 rows, got %d", len(parsed.Rows()))
-		require.True(t, parsed.Has("fixture.go:emma") && parsed.Has("fixture.go:glenn"), "expected emma and glenn in rows, got: %v", parsed.Rows())
+		require.True(t, parsed.Has("fixture.go:emma"), "expected emma and glenn in rows, got: %v", parsed.Rows())
+		require.True(t, parsed.Has("fixture.go:glenn"), "expected emma and glenn in rows, got: %v", parsed.Rows())
 		require.False(t, parsed.Has("fixture.go:rowan"), "expected rowan to be dropped from rows, got: %v", parsed.Rows())
 		expected := "# comment\n# ceiling: 2\nfixture.go:emma 1\nfixture.go:glenn 3\n"
 		require.Equal(t, expected, string(raw), "unexpected content:\ngot:\n%s\nwant:\n%s", string(raw), expected)
