@@ -466,3 +466,19 @@ with no clock and no store). What it holds:
 generated directory by the coordinator before the add; its `no-sandbox` check
 matches the word `nova-sandbox` on any line, so a card whose PATHS name
 `cmd/nova-sandbox/` draws it though the add admits the card.
+
+### lint-allows-quoted-patterns-in-tests: the PATTERNS TO REFUSE paragraph
+
+A class test that refuses a dangerous command must name it, and the step scans refuse a card
+for naming it. One narrow exemption: a card whose `TEST:` or `PATHS:` line names a class test
+under `internal/ci` (`internal/ci/<name>_class_test.go`) may carry one paragraph that begins
+`PATTERNS TO REFUSE.` and runs to the first blank line. A backtick-quoted literal in that
+paragraph is a pattern, not a command, and no `step-` scan fires on it. Everything else is
+scanned as before:
+
+- every other line of the card, and every unquoted command inside the paragraph;
+- the paragraph in a card that names no class test is itself the finding
+  `patterns-block-without-class-test`, at the paragraph's first line.
+
+`nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
+`TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).
