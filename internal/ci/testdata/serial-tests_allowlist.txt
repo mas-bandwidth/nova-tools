@@ -173,7 +173,6 @@ internal/update/delivery_test.go:TestNewObservationCannotReplaceUnresolvedPendin
 internal/update/delivery_test.go:TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget serial: t.Setenv
 internal/update/delivery_test.go:TestTheBusOwnWordsReachTheCallerBoundedToOneLine serial: t.Setenv
 internal/update/fleetdrift_test.go:TestReportStorePrintsOneDriftLineForTheStaleBench serial: t.Setenv
-internal/update/inventory_spec_test.go:TestSnapshotIsBoundedByTheClock serial: swaps package var update.snapshotChildTimeout
 internal/update/moved_reads_each_build_test.go:TestIssue2288 serial: t.Setenv
 internal/update/moved_reads_each_build_test.go:TestMovedEmptyDiffIsNotARefusal serial: t.Setenv
 internal/update/moved_reads_each_build_test.go:TestMovedIsBoundedByTheClock serial: t.Setenv
