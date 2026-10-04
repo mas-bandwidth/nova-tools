@@ -53,6 +53,14 @@ line the inbox prints for it, filled in; `nova-sprint inbox --open <id>` shows t
   change is a verb. What `where` draws is the owner's (`internal/sprint/TABLES.lock`): a change is asked for.
 - No secret is printed, pasted or put on a command line. No `rm -rf`.
 
+### coordinator-needs-no-seat-only-tools
+
+The seat runs on nova verbs alone. [COORDINATOR-TOOLS.md](COORDINATOR-TOOLS.md) lists every wrapper, script
+and loop a coordinator ran beside them (the seat wrapper, the wake, the dashboard, the friends' beat, ping and
+sync loops, the disk guard, the mirror loop and the hand-written units), each mapped to the verb lines that do
+the same or to the card that adds the verb; a verb or flag on that page that the tool does not carry fails
+`TestEveryCoordinatorToolMapsToARealNovaVerb`. A coordinator who reaches for a tool not on it adds its row first.
+
 ## 2. The day's loop
 
 Look, then answer, then look again. `where` draws the tables, `inbox` lists the open judgments and the
