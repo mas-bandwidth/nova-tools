@@ -50,8 +50,8 @@ func PasswordKey(user string) string {
 	return "NOVA_REDIS_" + strings.ToUpper(user) + "_PASSWORD"
 }
 
-// Cred is one seat's Redis login. String names the seat, user and key; the
-// password formats as secrets.Redacted under every verb.
+// Cred is one seat's Redis login. The password formats as secrets.Redacted
+// under every verb.
 type Cred struct {
 	Seat     string
 	User     string
@@ -64,10 +64,6 @@ type Cred struct {
 	GitHubKey string
 	GitHub    secrets.Secret
 	GitHubErr error
-}
-
-func (c Cred) String() string {
-	return fmt.Sprintf("seat=%s user=%s key=%s", c.Seat, c.User, c.Key)
 }
 
 // Paths is where a seat's file, key and sops are.

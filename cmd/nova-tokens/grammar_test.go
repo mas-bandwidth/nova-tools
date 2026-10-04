@@ -262,3 +262,239 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 	require.True(t, sawPartial, "no TOKENS PARTIAL line was checked against the grammar")
 	require.False(t, n < 10, "%d printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing", n)
 }
+
+// TestStatusGrammar pins the first word after the verb token together with the exit code
+// (docs/STANDARD.md section 2): OK at 0, REFUSED at 2, FAILED at 1. Every verb runs
+// through run() over fixtures in t.TempDir(); ledger runs --dry-run, which dials no
+// store, so no case opens a socket. sources, sum and profiles have no exit-1 path:
+// cmdSources ends in SOURCES OK (main.go), cmdSum exits 0 whenever it ran (its comment
+// above it), and profileSwarmRoot ends in PROFILES OK (profiles.go), so their rows stop
+// at REFUSED. session's exit 1 carries TOKENS REFUSED, never FAILED (session.go), and
+// version prints no status word on success and never exits 1 (version.go); those rows pin
+// the exit code alone.
+func TestStatusGrammar(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		args   func(*testing.T) []string
+		token  string
+		word   string
+		exit   int
+		stream string
+	}{
+		{
+			"fold ok",
+			func(t *testing.T) []string { return statusFoldArgs(t, false) },
+			"TOKENS", "OK", 0, "stdout",
+		},
+		{
+			"fold refused",
+			func(t *testing.T) []string { return []string{"fold"} },
+			"TOKENS", "REFUSED", 2, "stderr",
+		},
+		{
+			"fold failed",
+			func(t *testing.T) []string { return statusFoldArgs(t, true) },
+			"TOKENS", "FAILED", 1, "stderr",
+		},
+		{
+			"check ok",
+			func(t *testing.T) []string { return []string{"check", "--out", statusFoldedOut(t)} },
+			"CHECK", "OK", 0, "stdout",
+		},
+		{
+			"check refused",
+			func(t *testing.T) []string { return []string{"check"} },
+			"CHECK", "REFUSED", 2, "stderr",
+		},
+		{
+			"check failed",
+			func(t *testing.T) []string {
+				return []string{"check", "--out", mkdir(t, filepath.Join(t.TempDir(), "out"))}
+			},
+			"CHECK", "FAILED", 1, "stderr",
+		},
+		{
+			"sources ok",
+			func(t *testing.T) []string {
+				dir, tr := statusTranscriptDir(t, false)
+				return []string{"sources", "--repos", reposFile(t, dir), "--day", "2026-09-11", "--claude", "bench=" + tr}
+			},
+			"SOURCES", "OK", 0, "stdout",
+		},
+		{
+			"sources refused",
+			func(t *testing.T) []string { return []string{"sources"} },
+			"SOURCES", "REFUSED", 2, "stderr",
+		},
+		{
+			"ledger ok",
+			func(t *testing.T) []string {
+				return []string{"ledger", "--out", statusFoldedOut(t), "--day", "2026-09-11", "--redis", "127.0.0.1:0", "--dry-run"}
+			},
+			"LEDGER", "OK", 0, "stdout",
+		},
+		{
+			"ledger refused",
+			func(t *testing.T) []string { return []string{"ledger"} },
+			"LEDGER", "REFUSED", 2, "stderr",
+		},
+		{
+			"ledger failed",
+			func(t *testing.T) []string {
+				empty := mkdir(t, filepath.Join(t.TempDir(), "out"))
+				return []string{"ledger", "--out", empty, "--day", "2026-09-11", "--redis", "127.0.0.1:0", "--dry-run"}
+			},
+			"LEDGER", "FAILED", 1, "stdout",
+		},
+		{
+			"report ok",
+			func(t *testing.T) []string {
+				dir, tr := statusTranscriptDir(t, false)
+				return []string{"report", "--who", "ada", "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "bench=" + tr}
+			},
+			"REPORT", "OK", 0, "stderr",
+		},
+		{
+			"report refused",
+			func(t *testing.T) []string { return []string{"report"} },
+			"REPORT", "REFUSED", 2, "stderr",
+		},
+		{
+			"report redis refused",
+			func(t *testing.T) []string { return []string{"report", "--redis", "127.0.0.1:0"} },
+			"REPORT", "REFUSED", 2, "stderr",
+		},
+		{
+			"report failed",
+			func(t *testing.T) []string {
+				dir, tr := statusTranscriptDir(t, true)
+				return []string{"report", "--who", "ada", "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "bench=" + tr}
+			},
+			"REPORT", "FAILED", 1, "stderr",
+		},
+		{
+			"sum ok",
+			func(t *testing.T) []string { return []string{"sum", "--out", statusFoldedOut(t), "--month", "2026-09"} },
+			"SUM", "OK", 0, "stdout",
+		},
+		{
+			"sum refused",
+			func(t *testing.T) []string { return []string{"sum"} },
+			"SUM", "REFUSED", 2, "stderr",
+		},
+		{
+			"profiles ok",
+			func(t *testing.T) []string {
+				root := mkdir(t, filepath.Join(t.TempDir(), "root"))
+				job := filepath.Join(root, "batch-a", "jobs", "j1")
+				cardPrompt(t, job, "500")
+				cardUsageFile(t, filepath.Join(job, "usage.tsv"),
+					"deepseek", "deepseek-v4", "2026-09-15T10:00:00Z", "1000", "100", "0.0100")
+				return []string{"profiles", "--swarm-root", root}
+			},
+			"PROFILES", "OK", 0, "stdout",
+		},
+		{
+			"profiles refused",
+			func(t *testing.T) []string { return []string{"profiles"} },
+			"PROFILES", "REFUSED", 2, "stderr",
+		},
+		{
+			"session ok",
+			func(t *testing.T) []string { return []string{"session", "--claude-session", writeSession(t)} },
+			"", "", 0, "stdout",
+		},
+		{
+			"session refused",
+			func(t *testing.T) []string { return []string{"session"} },
+			"TOKENS", "REFUSED", 2, "stderr",
+		},
+		{
+			"session refused at exit 1",
+			func(t *testing.T) []string {
+				out := mkdir(t, filepath.Join(t.TempDir(), "out"))
+				write(t, filepath.Join(out, "2026-09-11.tsv"), "not a day file\n")
+				return []string{"session", "--claude-session", writeSession(t), "--out", out}
+			},
+			"TOKENS", "REFUSED", 1, "stderr",
+		},
+		{
+			"version ok",
+			func(t *testing.T) []string { return []string{"version"} },
+			"", "", 0, "stdout",
+		},
+		{
+			"version refused",
+			func(t *testing.T) []string { return []string{"version", "extra"} },
+			"VERSION", "REFUSED", 2, "stderr",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := invoke(t, tc.args(t)...)
+			assert.Equal(t, tc.exit, r.exit, "stdout=%s stderr=%s", r.stdout, r.stderr)
+			if tc.token == "" {
+				return
+			}
+			stream := r.stdout
+			if tc.stream == "stderr" {
+				stream = r.stderr
+			}
+			assert.Equal(t, tc.word, statusWord(stream, tc.token), "stdout=%q stderr=%q", r.stdout, r.stderr)
+		})
+	}
+}
+
+// statusTranscriptDir writes one transcript holding a single message and returns its
+// directory and path. With noid the message carries no id, so a fold over it drops
+// everything it read.
+func statusTranscriptDir(t *testing.T, noid bool) (dir, tr string) {
+	t.Helper()
+	dir = t.TempDir()
+	tr = mkdir(t, filepath.Join(dir, "transcripts"))
+	id := "a1"
+	if noid {
+		id = ""
+	}
+	write(t, filepath.Join(tr, "a.jsonl"), msg(id, "2026-09-11T10:00:00Z", "fable",
+		map[string]int{"input_tokens": 100, "output_tokens": 40}, "/x/schema/a.go")+"\n")
+	return dir, tr
+}
+
+// statusFoldArgs is a fold over the status transcript: a valid day with noid false, a
+// fold that dropped every message with noid true.
+func statusFoldArgs(t *testing.T, noid bool) []string {
+	t.Helper()
+	dir, tr := statusTranscriptDir(t, noid)
+	out := mkdir(t, filepath.Join(dir, "out"))
+	return []string{"fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "bench=" + tr}
+}
+
+// statusFoldedOut folds one valid day and returns the output directory holding it.
+func statusFoldedOut(t *testing.T) string {
+	t.Helper()
+	dir, tr := statusTranscriptDir(t, false)
+	out := mkdir(t, filepath.Join(dir, "out"))
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "bench="+tr)
+	require.Equal(t, 0, r.exit, "fixture fold failed\nstdout:\n%s\nstderr:\n%s", r.stdout, r.stderr)
+	return out
+}
+
+// statusWord is the first status word after the token on any line of the stream, or the
+// empty string when no line of the token carries one.
+func statusWord(stream, token string) string {
+	for _, line := range strings.Split(stream, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != token {
+			continue
+		}
+		if w := strings.TrimSuffix(f[1], ":"); w == "OK" || w == "FAILED" || w == "REFUSED" {
+			return w
+		}
+	}
+	return ""
+}

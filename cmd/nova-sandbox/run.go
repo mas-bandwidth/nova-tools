@@ -7,7 +7,7 @@
 // forget, no half-cleaned job directory to inherit, and no quota that leaks into the next
 // card's disk.
 //
-// Glenn, 2026-09-18: "build our own minimal isolation and hygiene sandboxes on Mac" — the
+// the coordinator, 2026-09-18: "build our own minimal isolation and hygiene sandboxes on Mac" — the
 // Mac equivalent of a container, built out of the two things macOS already has: the
 // seatbelt wall this binary already applies, and an APFS volume that costs nothing to make
 // and nothing to throw away.
@@ -861,7 +861,7 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 
 	code, timedOut := supervise(done, deadlineC, grace.C, sigs, killGroup)
 	// A TIMEOUT IS NOT A DENIAL, and this is the difference between the two sentences a
-	// failed run can be told. Measured in the 20-run soak (Studio, 2026-09-18): a run that
+	// failed run can be told. Measured in the 20-run soak (a bench, 2026-09-18): a run that
 	// passed its --timeout paid the bounded two-second denials query and was then told
 	// "this OS reported no seatbelt denials ... add a --read, or --go" — a remedy for a
 	// wall that was never in the way. The command was still working when its deadline

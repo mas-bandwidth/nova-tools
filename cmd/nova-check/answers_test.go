@@ -68,7 +68,7 @@ func TestAFailedQuickstartNamesTheCheckToFix(t *testing.T) {
 	exit, stdout, _ := runCheck(t, "quickstart", "--dir", dir)
 	assert.Equal(t, 1, exit)
 	last := strings.TrimSpace(stdout[strings.LastIndex(strings.TrimSpace(stdout), "\n")+1:])
-	assert.True(t, strings.HasPrefix(last, "QUICKSTART FAIL checks=2 failed=links worst-exit=1 next=nova-check links --dir "+dir), last)
+	assert.True(t, strings.HasPrefix(last, "QUICKSTART FAILED checks=2 failed=links worst-exit=1 next=nova-check links --dir "+dir), last)
 	assert.NotContains(t, last, "kernel")
 }
 

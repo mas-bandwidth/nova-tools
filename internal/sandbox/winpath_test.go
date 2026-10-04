@@ -3,7 +3,6 @@ package sandbox
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,29 +50,23 @@ func TestWinDirModelsTheVolumeRoot(t *testing.T) {
 
 // internal/sandbox timed out after 600s on windows with the goroutine dump ending in the
 // call to Ancestors: the walk up the tree stopped at the literal "/" and a windows path
-// never reaches one, so it spun on the volume root forever. A test must never wait without
-// a deadline, and this one has five seconds.
+// never reaches one, so it spun on the volume root forever. The call is made directly, so
+// a walk with no stop above the volume root hangs until the package test's own -timeout.
 func TestAncestorsTerminatesOnAWindowsPath(t *testing.T) {
 	t.Parallel()
 
-	done := make(chan []string, 1)
-	go func() { done <- ancestors(winDir, `C:\Users\runneradmin\AppData\Local\Temp\job\w`) }()
-	select {
-	case got := <-done:
-		want := []string{
-			`C:\Users`,
-			`C:\Users\runneradmin`,
-			`C:\Users\runneradmin\AppData`,
-			`C:\Users\runneradmin\AppData\Local`,
-			`C:\Users\runneradmin\AppData\Local\Temp`,
-			`C:\Users\runneradmin\AppData\Local\Temp\job`,
-		}
-		require.Equal(t, strings.Join(want, " "), strings.Join(got, " "), "ancestors = %v, want %v", got, want)
-		for _, d := range got {
-			require.NotEqual(t, d, winDir(d), "the volume root %q is in the ancestor list; the root is granted above, not as an ancestor", d)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("ancestors did not return in 30s on a windows path: the walk up the tree has no stop above the volume root")
+	got := ancestors(winDir, `C:\Users\runneradmin\AppData\Local\Temp\job\w`)
+	want := []string{
+		`C:\Users`,
+		`C:\Users\runneradmin`,
+		`C:\Users\runneradmin\AppData`,
+		`C:\Users\runneradmin\AppData\Local`,
+		`C:\Users\runneradmin\AppData\Local\Temp`,
+		`C:\Users\runneradmin\AppData\Local\Temp\job`,
+	}
+	require.Equal(t, strings.Join(want, " "), strings.Join(got, " "), "ancestors = %v, want %v", got, want)
+	for _, d := range got {
+		require.NotEqual(t, d, winDir(d), "the volume root %q is in the ancestor list; the root is granted above, not as an ancestor", d)
 	}
 }
 

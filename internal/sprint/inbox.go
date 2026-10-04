@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -95,7 +96,10 @@ func (r InboxReq) due(n Note) (time.Time, bool) {
 // stalled stream, stale:<stream>), never its position in the list, so a verb
 // given --group <id> acts on this group or is refused, never on another.
 type Group struct {
-	ID        string   `json:"id"`
+	ID string `json:"id"`
+	// Alias is the group's judgment's alias, j<n> (Note.Alias); "" for a happened
+	// group or a stale stream's.
+	Alias     string   `json:"alias,omitempty"`
 	Kind      string   `json:"kind"`
 	Type      string   `json:"type"`
 	Stream    string   `json:"stream,omitempty"`
@@ -235,7 +239,7 @@ func Inbox(r InboxReq) []Group {
 		}
 	}
 	for i := range judg {
-		judg[i].ID = first[i].ID
+		judg[i].ID, judg[i].Alias = first[i].ID, first[i].Alias
 		judg[i].Waited = r.running(judg[i].Oldest)
 		judg[i].Members = slices.Sorted(maps.Keys(members[i]))
 		judg[i].Size = len(judg[i].Members)
@@ -348,7 +352,7 @@ const (
 // NoteCommands is one open judgment's decisions as commands, the members it
 // names its subjects: as the inbox prints them for a group of one.
 func NoteCommands(n Note, members []string) []Command {
-	g := Group{ID: n.ID, Kind: Judgment, Type: n.Type, Stream: n.Stream, Size: len(members), Notes: []string{n.ID}, Members: members, Decisions: n.Decisions}
+	g := Group{ID: n.ID, Alias: n.Alias, Kind: Judgment, Type: n.Type, Stream: n.Stream, Size: len(members), Notes: []string{n.ID}, Members: members, Decisions: n.Decisions}
 	return commands(g, n, "")
 }
 
@@ -531,3 +535,20 @@ func commands(g Group, first Note, prefix string) []Command {
 	}
 	return out
 }
+
+// A judgment's alias is j<n>, its place among the epoch's judgments and
+// acknowledgements in the order they were written (the store's commit numbers
+// them, under the fence, and keeps each on its note and in its alias index), so
+// the alias is stable for the life of the judgment, and every verb that takes a
+// judgment id takes its alias (the comfort list of 2026-10-03, item 10: the ids
+// are 40 characters and were copied exactly into --answers). A card or note id
+// never has the alias's shape.
+
+// AliasRE is the shape of a judgment's alias.
+var AliasRE = regexp.MustCompile(`^j[1-9][0-9]*$`)
+
+// IsAlias says the word is a judgment's alias, j<n>.
+func IsAlias(word string) bool { return AliasRE.MatchString(word) }
+
+// Alias is the alias of the n'th note written in the epoch, counted from 1.
+func Alias(n int) string { return "j" + strconv.Itoa(n) }

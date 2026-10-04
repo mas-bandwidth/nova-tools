@@ -5,6 +5,10 @@ MCBusCursor.cfg	MCBusCursor.tla	pass	-	ignore-terminal	buscursor	required	-
 MCBusCursorBrokenAdvanceWithoutAck.cfg	MCBusCursor.tla	invariant	AdvanceOnlyPastAcknowledged	ignore-terminal	buscursor	required	-
 MCBusCursorBrokenNearerCursorWins.cfg	MCBusCursor.tla	invariant	FurtherReadWins	ignore-terminal	buscursor	required	-
 MCBusCursorBrokenWriteWithoutAdvance.cfg	MCBusCursor.tla	invariant	NoWriteWithoutAdvance	ignore-terminal	buscursor	required	-
+MCCairnStore.cfg	MCCairnStore.tla	pass	-	ignore-terminal	cairnstore	required	-
+MCCairnStoreBrokenOverwrite.cfg	MCCairnStore.tla	invariant	NoOverwrite	ignore-terminal	cairnstore	required	-
+MCCairnStoreBrokenPublishedWithoutPersisted.cfg	MCCairnStore.tla	invariant	PublishedImpliesPersisted	ignore-terminal	cairnstore	required	-
+MCCairnStoreBrokenReportBeforeFsync.cfg	MCCairnStore.tla	invariant	DurableBeforeReported	ignore-terminal	cairnstore	required	-
 MCCardMachine.cfg	MCCardMachine.tla	pass	-	ignore-terminal	cardmachine	bench	layer-2-original-instance-over-budget
 MCEpochMemberBroken.cfg	MCEpochMemberTable.tla	invariant	NoEpochLeak	ignore-terminal	epochmembertable	required	-
 MCEpochMemberBrokenStale.cfg	MCEpochMemberTable.tla	action	StaleWritesRefuse	ignore-terminal	epochmembertable	required	-

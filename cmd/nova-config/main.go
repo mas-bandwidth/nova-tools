@@ -102,8 +102,10 @@ usage:
 The store is --pg <dsn> (or NOVA_PG_DSN; the password is never on the line:
 NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password,
 NOVA_PG_PASSWORD when it is unset, and never the password itself), or --file
-<path>. --redis is host:port (NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then
-the seat's address). --as is the name a write is recorded under (NOVA_FRIEND).
+<path>, or --seat <name> (or NOVA_SEAT) which supplies the DSN and password
+variable name from the seat profile. --redis is host:port (NOVA_SPRINT_REDIS,
+then NOVA_REDIS_ADDR, then the seat's address). --as is the name a write is
+recorded under (NOVA_FRIEND, or the seat name).
 Lose Redis: run nova-config apply.
 
 Fleet apply and inventory require explicit redis_port and pg_dsn; set both
@@ -421,8 +423,13 @@ func emit(stdout io.Writer, o *tool.Out) int {
 const filePrefix = "file:"
 
 // conn is the store a verb opens, from its flags: --pg (or NOVA_PG_DSN) for
-// PostgreSQL, --file for a local JSON file in its place.
-type conn struct{ pg, file *string }
+// PostgreSQL, --file for a local JSON file in its place, or --seat (or NOVA_SEAT)
+// for a seat profile in seats.tsv supplying the DSN and password variable name.
+type conn struct {
+	pg   *string
+	file *string
+	seat *string
+}
 
 // storeFlags adds --pg and --file to a verb's flag set.
 func storeFlags(fs *stdflag.FlagSet) conn {
@@ -432,27 +439,76 @@ func storeFlags(fs *stdflag.FlagSet) conn {
 	}
 }
 
+// writeStoreFlags adds --pg, --file and --seat to a write verb's flag set.
+func writeStoreFlags(fs *stdflag.FlagSet) conn {
+	c := storeFlags(fs)
+	c.seat = fs.String("seat", "", "the `seat` profile in seats.tsv supplying the PostgreSQL DSN and password variable name (env NOVA_SEAT); exclusive with --file")
+	return c
+}
+
 // dsn is the store to open: the file when --file is given, else the DSN by
-// the rules every reader of nova-config shares (config.ResolveDSN).
+// the rules every reader of nova-config shares (config.ResolveDSN), or from
+// the selected seat profile.
 func (c conn) dsn(getenv func(string) string) (string, error) {
+	seat := ""
+	if c.seat != nil && *c.seat != "" {
+		seat = *c.seat
+	} else if getenv != nil {
+		seat = getenv(seatcred.SeatEnv)
+	}
 	switch {
-	case *c.file != "" && *c.pg != "":
+	case c.file != nil && *c.file != "" && c.pg != nil && *c.pg != "":
 		return "", errors.New("--pg and --file are exclusive: --file keeps the rows in a local file in PostgreSQL's place")
-	case *c.file != "":
+	case c.file != nil && *c.file != "" && seat != "":
+		return "", errors.New("--seat and --file are exclusive: --file keeps the rows in a local file in PostgreSQL's place")
+	case c.file != nil && *c.file != "":
 		return filePrefix + *c.file, nil
-	case *c.pg == "" && getenv(envPG) == "":
+	}
+	if seat != "" {
+		path, err := seatcred.ProfilePath(toolName, getenv)
+		if err != nil {
+			return "", err
+		}
+		prof, err := seatcred.LoadConfigProfile(path, seat)
+		if err != nil {
+			return "", err
+		}
+		lookup := func(k string) string {
+			if k == config.EnvPGPassEnv && (getenv == nil || getenv(config.EnvPGPassEnv) == "") {
+				return prof.PasswordEnv
+			}
+			if getenv != nil {
+				return getenv(k)
+			}
+			return ""
+		}
+		dsn := ""
+		if c.pg != nil && *c.pg != "" {
+			dsn = *c.pg
+		} else {
+			dsn = prof.DSN
+		}
+		return config.ResolveDSN(dsn, lookup)
+	}
+	if (c.pg == nil || *c.pg == "") && (getenv == nil || getenv(envPG) == "") {
 		return "", fmt.Errorf("--pg is required: postgres://user@host:5432/db (or %s), or --file <path> for a local file with no database", envPG)
 	}
-	return config.ResolveDSN(*c.pg, getenv)
+	pg := ""
+	if c.pg != nil {
+		pg = *c.pg
+	}
+	return config.ResolveDSN(pg, getenv)
 }
 
 // again is the store flag a printed command repeats.
 func (c conn) again() string {
 	switch {
-	case *c.file != "":
+	case c.file != nil && *c.file != "":
 		return " --file " + shq(*c.file)
-	case *c.pg != "":
+	case c.pg != nil && *c.pg != "":
 		return " --pg " + shq(*c.pg)
+	case c.seat != nil && *c.seat != "":
+		return " --seat " + shq(*c.seat)
 	}
 	return ""
 }
@@ -500,13 +556,25 @@ func liveRedisAddress(flagValue string, getenv func(string) string) string {
 	return ""
 }
 
-// actorName resolves --as: the flag, else NOVA_FRIEND.
-func actorName(flagValue string, getenv func(string) string) (string, error) {
+// actorName resolves --as: the flag, else NOVA_FRIEND, else the seat name.
+func actorName(flagValue string, getenv func(string) string, seatValues ...string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
-	if v := getenv(envActor); v != "" {
-		return v, nil
+	if getenv != nil {
+		if v := getenv(envActor); v != "" {
+			return v, nil
+		}
+	}
+	for _, s := range seatValues {
+		if s != "" {
+			return s, nil
+		}
+	}
+	if getenv != nil {
+		if v := getenv(seatcred.SeatEnv); v != "" {
+			return v, nil
+		}
 	}
 	return "", fmt.Errorf("--as is required: the name the write is recorded under (or %s)", envActor)
 }
@@ -652,12 +720,20 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		verb, op = k.Name+" add", config.OpAdd
 	}
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	var c conn
+	if add && (k.Name == config.KindMachine || k.Name == config.KindLoop) {
+		c = storeFlags(fs)
+	} else {
+		c = writeStoreFlags(fs)
+	}
 	as := actorFlag(fs)
 	dry := fs.Bool("dry-run", false, "print the change the write would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
 	asJSON := jsonFlag(fs)
 	values := map[string]*string{}
 	for _, f := range k.Fields {
+		if f.Name == "seat" && !add {
+			continue
+		}
 		values[f.Name] = fs.String(f.Name, "", fieldUsage(f, add))
 	}
 	name, rest := nameAndRest(k, args)
@@ -675,7 +751,11 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		}
 	})
 	var problems []string
-	actor, err := actorName(*as, d.getenv)
+	seatVal := ""
+	if c.seat != nil {
+		seatVal = *c.seat
+	}
+	actor, err := actorName(*as, d.getenv, seatVal)
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -820,7 +900,7 @@ func refRemedy(k *config.Kind) string {
 func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
 	verb := k.Name + " remove"
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := writeStoreFlags(fs)
 	as := actorFlag(fs)
 	dry := fs.Bool("dry-run", false, "print the change the remove would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
 	asJSON := jsonFlag(fs)
@@ -837,7 +917,11 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	if err := config.ValidateName(name); err != nil {
 		problems = append(problems, err.Error())
 	}
-	actor, err := actorName(*as, d.getenv)
+	seatVal := ""
+	if c.seat != nil {
+		seatVal = *c.seat
+	}
+	actor, err := actorName(*as, d.getenv, seatVal)
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -1422,7 +1506,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "apply"
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := writeStoreFlags(fs)
 	redisFlag := fs.String("redis", "", "the Redis `host:port` to write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	as := actorFlag(fs)
 	kind := fs.String("kind", "", "one `kind` to apply ("+strings.Join(config.KindNames(), ", ")+"); every kind, in order, when unset")
@@ -1445,9 +1529,13 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		kinds = []string{*kind}
 	}
 	var actor string
+	seatVal := ""
+	if c.seat != nil {
+		seatVal = *c.seat
+	}
 	if !*check {
 		var err error
-		actor, err = actorName(*as, d.getenv)
+		actor, err = actorName(*as, d.getenv, seatVal)
 		if err != nil {
 			problems = append(problems, err.Error())
 		}
@@ -1455,6 +1543,10 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		actor = *as
 	} else if v := d.getenv(envActor); v != "" {
 		actor = v
+	} else if seatVal != "" {
+		actor = seatVal
+	} else if getenv := d.getenv; getenv != nil && getenv(seatcred.SeatEnv) != "" {
+		actor = getenv(seatcred.SeatEnv)
 	}
 	dsn, err := c.dsn(d.getenv)
 	if err != nil {

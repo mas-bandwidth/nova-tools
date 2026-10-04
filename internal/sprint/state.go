@@ -289,6 +289,11 @@ type Snapshot struct {
 	Coordinator, Actor          string
 	Work, Readers, Merge, Fleet *Table
 	Open                        []Open
+	// Answered is who answered each judgment the step names in --answers that
+	// is no longer open (the store's record, read for the ids the step asks
+	// about; absent for an id never a judgment or still open): one the machine
+	// answered is a note, not a refusal (answered).
+	Answered map[string]string
 	// Acked is the tick's conditions the coordinator acknowledged, held
 	// while they hold (Acknowledged).
 	Acked []Open

@@ -328,7 +328,11 @@ func (r Report) Apply(st State, now time.Time) (Report, State, bool) {
 			out.Streams = append(out.Streams, s)
 			continue
 		}
-		entry := StreamState{Now: s.Now, At: now.UTC().Format(time.RFC3339)}
+		// The remembered instant carries the clock's whole reading, fraction
+		// included (docs/SPEC-CHECK.md rule 11): RFC3339Nano is the standard
+		// library's nanosecond-capable RFC3339, and an instant without a
+		// fraction prints as the plain whole-second form it always did.
+		entry := StreamState{Now: s.Now, At: now.UTC().Format(time.RFC3339Nano)}
 		// A tick at or before the remembered instant is the SAME tick read
 		// again, not a second one. The first real run of this verb found it:
 		// two runs of one command over one window would have counted one
@@ -358,7 +362,9 @@ func (r Report) Apply(st State, now time.Time) (Report, State, bool) {
 }
 
 // parseState reads a remembered instant, answering the zero time for a state
-// file written before this field carried one. A zero time is before every tick,
+// file written before this field carried one, or at whole-second precision
+// before this verb kept the clock's fraction. The standard library's RFC3339
+// reader takes both spellings. A zero time is before every tick,
 // so an unreadable instant makes the next tick a new one -- the safe way round:
 // a streak that is counted is a line a person reads, and one that is silently
 // dropped is a red that never comes.

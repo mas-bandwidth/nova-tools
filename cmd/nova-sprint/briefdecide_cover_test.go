@@ -62,7 +62,7 @@ func TestBriefdecideCoverReadBriefBar(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ name, dsn, want string }{
 		{name: "no config store named", dsn: "", want: "--pg is required"},
-		{name: "an address that is no DSN", dsn: "postgres://user@example.invalid:box/nova", want: "--pg: "},
+		{name: "an address that is no DSN", dsn: "postgres://user@example.invalid:box/nova", want: config.EnvPG + " could not be parsed"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
