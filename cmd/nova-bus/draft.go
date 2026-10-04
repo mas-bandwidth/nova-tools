@@ -294,7 +294,7 @@ func writeSkeleton(path string, overwrite bool, skeleton string, stdout, stderr 
 			return 2
 		}
 		if _, err := fmt.Fprint(f, skeleton); err != nil {
-			f.Close()
+			_ = f.Close() // ignored: the write's error is the one this refusal reports
 			fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 			return 2
 		}
@@ -324,7 +324,7 @@ func writeSkeleton(path string, overwrite bool, skeleton string, stdout, stderr 
 		return 2
 	}
 	if _, err := fmt.Fprint(f, skeleton); err != nil {
-		f.Close()
+		_ = f.Close() // ignored: the write's error is the one this refusal reports
 		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
 	}
