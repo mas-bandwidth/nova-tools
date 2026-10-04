@@ -8,7 +8,13 @@ package swarm
 //
 // These tests hold what is reachable without any process: each plants a
 // throwaway filesystem state in t.TempDir(), no real clock, no network, no
-// subprocess, no store. They cover the resolvable branches:
+// subprocess, no store. The EXPECTED side of every compare is resolved at
+// setup: on darwin t.TempDir() is handed out under /var, which IS a symlink
+// to /private/var, and AbsResolved deliberately answers the resolved spelling
+// (pathcase.go:149-153) -- so both sides carry the one name the filesystem
+// uses before they are compared, as the package's own tests already do
+// (slot_containment_test.go:21-28, toolchain_test.go:44-48).
+// They cover the resolvable branches:
 //   - an existing path resolves whole and is cleaned (the main path, pathcase.go:168);
 //   - a symlink is followed so the answer is the target's spelling, not the link's;
 //   - a path whose ancestor exists but whose tail does not is answered from the
@@ -37,13 +43,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// resolvedTempDir is t.TempDir() in the spelling the filesystem itself uses,
+// so the expected side of an AbsResolved compare carries the one name the
+// answer carries too: on darwin the temp dir sits under /var, a symlink to
+// /private/var, and AbsResolved returns the resolved one (pathcase.go:149-153).
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	return dir
+}
+
 // TestPathcaseCoverAbsResolvedResolvesAnExistingPath pins the main path,
 // pathcase.go:168: a path that exists resolves whole and is cleaned, so a
 // redundant slash or a `.` segment does not leak into the recorded spelling.
 func TestPathcaseCoverAbsResolvedResolvesAnExistingPath(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
+	root := resolvedTempDir(t)
 	file := filepath.Join(root, "slot")
 	require.NoError(t, os.WriteFile(file, []byte("k\n"), 0o644))
 
@@ -74,7 +91,7 @@ func TestPathcaseCoverAbsResolvedFollowsASymlink(t *testing.T) {
 
 	t.Run("a symlink resolves to its target, not its own spelling", func(t *testing.T) {
 		t.Parallel()
-		root := t.TempDir()
+		root := resolvedTempDir(t)
 		target := filepath.Join(root, "worker-1")
 		require.NoError(t, os.WriteFile(target, []byte("k\n"), 0o644))
 		link := filepath.Join(root, "worker-2")
@@ -88,7 +105,7 @@ func TestPathcaseCoverAbsResolvedFollowsASymlink(t *testing.T) {
 	// A symlink to a directory, asked for whole, resolves to the directory.
 	t.Run("a symlink to a directory resolves to the directory", func(t *testing.T) {
 		t.Parallel()
-		root := t.TempDir()
+		root := resolvedTempDir(t)
 		target := filepath.Join(root, "worker-1")
 		require.NoError(t, os.MkdirAll(target, 0o755))
 		link := filepath.Join(root, "worker-2")
@@ -107,7 +124,7 @@ func TestPathcaseCoverAbsResolvedFollowsASymlink(t *testing.T) {
 func TestPathcaseCoverAbsResolvedResolvesAnExistingAncestor(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
+	root := resolvedTempDir(t)
 
 	for _, tc := range []struct {
 		name string
@@ -135,7 +152,7 @@ func TestPathcaseCoverAbsResolvedResolvesASymlinkedAncestor(t *testing.T) {
 
 	t.Run("a symlinked ancestor is resolved before the unresolved tail is joined", func(t *testing.T) {
 		t.Parallel()
-		root := t.TempDir()
+		root := resolvedTempDir(t)
 		real := filepath.Join(root, "worker-1")
 		require.NoError(t, os.MkdirAll(real, 0o755))
 		link := filepath.Join(root, "worker-2")
