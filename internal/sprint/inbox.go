@@ -538,7 +538,7 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == "wait 15m" || d == "wait 10m" || d == "wait 30m":
 			add(d, cmd+"wait "+cmp.Or(first.ID, g.ID)+" --for "+strings.TrimPrefix(d, "wait "))
 		case strings.HasPrefix(d, "restart "):
-			// a reader whose width lags its machine: its loop unit is nova-config's record of
+			// a reader reading under its width: its loop unit is nova-config's record of
 			// the reader's name; restarted, it reads its machine's width (readers_behind.go)
 			add(d, "nova-config loop show "+strings.TrimPrefix(d, "restart ")+"  # restart this loop's unit on its machine: it reads its machine row's width at start")
 		case strings.HasPrefix(d, "funded "):
