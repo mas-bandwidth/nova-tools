@@ -151,7 +151,6 @@ internal/release/certify_test.go:TestScriptRemoteOverTheRealSSHIsStillRefusedUnd
 internal/release/certify_test.go:TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard serial: t.Setenv
 internal/scaffold/scaffold_test.go:TestScaffoldNeverOverwritesACollisionRacedInAfterThePreflight serial: swaps package var scaffold.BeforeCreate
 internal/secrets/place_test.go:TestPlaceSSHSeamPanicsUnderTheGuard serial: os.Unsetenv, t.Setenv
-internal/secrets/storepull_test.go:TestStorePullUsesBenchOwnedKey serial: t.Setenv
 internal/swarm/hostguard_test.go:TestHostGuardCleanupRestoresCachedState serial: t.Setenv
 internal/swarm/launchfail_test.go:TestProviderRetryDelayBands serial: os.Unsetenv
 internal/swarm/opencode_numeric_functional_test.go:TestOpenCodeInvalidNumericUsageIsAReadFailure serial: t.Setenv
