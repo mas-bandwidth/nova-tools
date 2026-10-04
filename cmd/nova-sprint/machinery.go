@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/mas-bandwidth/nova-tools/internal/seatcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -34,7 +32,9 @@ import (
 // the default.
 const DashboardEnv = "NOVA_SPRINT_DASHBOARD"
 
-// BusEnv names nova-bus2's Redis; unset is "not configured", never DOWN.
+// BusEnv names nova-bus2's Redis; unset is "not configured", never DOWN. It
+// is dialed as the store is (openConn): the one fleet Redis seat every tool
+// dials with, internal/nsprint/redisauth, never a password variable of its own.
 const BusEnv = "NOVA_BUS_REDIS"
 
 // outside is every reach of the check past the store: each a function a test
@@ -118,11 +118,11 @@ func (a *app) realOutside() outside {
 			return resp.StatusCode, body, err
 		},
 		ping: func(ctx context.Context, addr string) error {
-			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-			c := redis.NewClient(&redis.Options{Addr: addr, Password: a.getenv(BusEnv + "_PASSWORD")})
-			defer c.Close()
-			return c.Ping(ctx).Err()
+			conn, err := a.openConn(ctx, addr)
+			if err != nil {
+				return err
+			}
+			return conn.Close()
 		},
 		hostname: func() string {
 			h, _ := os.Hostname()

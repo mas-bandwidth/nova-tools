@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
@@ -159,4 +160,19 @@ func TestMachineryOverHTTP(t *testing.T) {
 	assert.Contains(t, out, "MACHINERY server OK addr=127.0.0.1:1 ms=0\n", out)
 	assert.Contains(t, out, "MACHINERY dashboard OK addr="+strings.TrimPrefix(dash.URL, "http://")+" status=200 build=3f2a\n", out)
 	assert.Contains(t, out, "MACHINERY OK n=9\n", out)
+}
+
+// The bus is dialed with the one fleet Redis seat every tool dials with
+// (internal/nsprint/redisauth, through openConn), never a variable of its
+// own: with the ACL user named and its password variable empty the ping is
+// refused before any dial, naming the variable to export.
+func TestMachineryBusPingUsesTheFleetSeat(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	env := map[string]string{redisauth.UserEnv: "bench"}
+	ta.a.getenv = func(k string) string { return env[k] }
+	err := ta.a.realOutside().ping(context.Background(), "/nowhere/bus.sock")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "as user bench (password from "+redisauth.DefaultPasswordEnv+")", err.Error())
+	assert.Contains(t, err.Error(), redisauth.DefaultPasswordEnv+" is empty", err.Error())
 }
