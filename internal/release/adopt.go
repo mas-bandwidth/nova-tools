@@ -254,6 +254,20 @@ func olderThan(self, release string) bool {
 	return lessVersion(versionParts(self), versionParts(release))
 }
 
+// dropFetchedRelease removes the directory a remote --from unpacked into when
+// the digest or the artifact checks refuse. The removal is best effort: its
+// error is discarded so a cleanup failure cannot replace the refusal, and it
+// does not touch anything outside that directory. security#72 finding 7
+// (ordering half). docs/SPEC-UPDATE.md, "What adopt will never do": a fetched
+// release is checked against a digest that did not travel with the bits, and
+// bytes that fail that check do not stay in --stage for a later local adopt.
+func dropFetchedRelease(dir string) {
+	if dir == "" {
+		return
+	}
+	_ = os.RemoveAll(dir)
+}
+
 func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	goos, goarch, err := Platform(o.platform)
 	if err != nil {
@@ -356,6 +370,10 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// machine gets bytes this host has already checked.
 	fromHost, fromDir, remoteFrom := RemoteFrom(o.from)
 	localRoot := o.from
+	// fetched is set only after a remote Fetch succeeds, and only until the
+	// digest and VerifyArtifacts both pass. A refusal in between removes that
+	// directory and no other (security#72 finding 7, ordering half).
+	var fetched string
 	if remoteFrom {
 		if o.stage == "" {
 			return refusal(errs, "ADOPT", refuse("pass --stage <dir> to say where the fetched release lands",
@@ -427,7 +445,9 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 		localRoot = o.stage
 		into := ArtifactDir(o.stage, o.version, goos, goarch)
-		if err := os.MkdirAll(into, 0o755); err != nil {
+		// 0700 until the checks below pass: this directory holds far-side
+		// bytes nobody has vouched for yet. One mode, not a later chmod.
+		if err := os.MkdirAll(into, 0o700); err != nil {
 			return refusal(errs, "ADOPT", fmt.Errorf("cannot create %s: %w (name a writable --stage)", into, err))
 		}
 		remoteArtifacts := path.Join(fromDir, o.version, goos+"-"+goarch)
@@ -435,15 +455,18 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		if output, err := ssh.Fetch(ctx, fromHost, remoteArtifacts, into); err != nil {
 			return refusal(errs, "ADOPT", fmt.Errorf("cannot fetch %s from %s: %s (check `ssh %s` reaches it and that %s holds this release)", remoteArtifacts, fromHost, oneLine(output, err), fromHost, fromDir))
 		}
+		fetched = into
 		// Checked BEFORE the checksum file is so much as read, so nothing
 		// this host does downstream is steered by a file it has not vouched
 		// for. Both digests are named: which one is wrong is the whole
 		// question, and a refusal that shows one of them cannot answer it.
 		got, err := fileSum(filepath.Join(into, SumsFile))
 		if err != nil {
+			dropFetchedRelease(fetched)
 			return refusal(errs, "ADOPT", fmt.Errorf("cannot read the fetched %s: %w (the fetch did not bring a checksum file)", SumsFile, err))
 		}
 		if got != expectSums {
+			dropFetchedRelease(fetched)
 			return refusal(errs, "ADOPT", refuse(
 				"do not adopt this release; the bits on that machine are not the bits that were cut",
 				"the %s fetched from %s has digest %s, but %s says the release %s was cut with digest %s", SumsFile, fromHost, got, sumsFrom, o.version, expectSums))
@@ -453,6 +476,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	local := ArtifactDir(localRoot, o.version, goos, goarch)
 	arts, err := ReadSums(local)
 	if err != nil {
+		dropFetchedRelease(fetched)
 		if os.IsNotExist(err) {
 			return refusal(errs, "ADOPT", refuse(
 				fmt.Sprintf("build it first: nova-update release build --version %s --out %s --source <checkout> --platform %s-%s", o.version, o.from, goos, goarch),
@@ -465,6 +489,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// the fleet is left in four different states while somebody reads them.
 	progress(errs, "verifying %d artifacts against %s", len(arts), SumsFile)
 	if _, err := VerifyArtifacts(local, arts); err != nil {
+		dropFetchedRelease(fetched)
 		return refusal(errs, "ADOPT", err)
 	}
 	// THE RELEASE INSTALLS ITSELF. The nova-update that runs the remote

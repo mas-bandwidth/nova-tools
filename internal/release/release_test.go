@@ -1272,6 +1272,65 @@ func TestAdoptRefusesAFetchThatDoesNotMatchItsChecksums(t *testing.T) {
 	}
 }
 
+// A remote fetch unpacks into --stage and only then checks the digest and the
+// artifacts. A refusal after that unpack must not leave the far side's bytes
+// where a later adopt with no remote --from would read them (security#72
+// finding 7, ordering half; docs/SPEC-UPDATE.md, "What adopt will never do").
+func TestAdoptRemovesWhatItFetchedWhenTheDigestOrTheChecksRefuse(t *testing.T) {
+	t.Parallel()
+
+	goos, goarch := platformOf(t, "linux-amd64")
+	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	dir := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
+	if err := testbin.WriteExecutable(filepath.Join(dir, "nova-bus"), []byte("truncated"), 0o755); err != nil {
+		require.NoError(t, err, err)
+	}
+	// The checksum FILE is untouched, so its digest still matches what the cut
+	// recorded: the bytes alone were damaged, and VerifyArtifacts is what refuses.
+	digest, err := fileSum(filepath.Join(dir, SumsFile))
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	intact := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	intactDir := ArtifactDir(intact, "v0.16.0", goos, goarch)
+
+	for _, tc := range []struct {
+		name, served, sums, want string
+	}{
+		{"damaged nova-bus", dir, digest, "nova-bus"},
+		{"wrong expect-sums", intactDir, strings.Repeat("ab", 32), "was cut with"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stage := t.TempDir()
+			marker := filepath.Join(stage, "keep")
+			if err := os.WriteFile(marker, []byte("keep"), 0o644); err != nil {
+				require.NoError(t, err, err)
+			}
+			s := &fakeSSH{serves: map[string]string{"hulk": tc.served}}
+			var o, e bytes.Buffer
+			code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
+				"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
+				"--from", "hulk:/releases", "--stage", stage, "--expect-sums", tc.sums,
+				"--bin", "/b", "--dest", "/d", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+			if code != 2 || !strings.Contains(e.String(), tc.want) {
+				require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
+			}
+			if len(s.sends) != 0 {
+				require.Len(t, s.sends, 0, "a refused fetch was still pushed: %v", s.sends)
+			}
+			staged := ArtifactDir(stage, "v0.16.0", goos, goarch)
+			entries, rerr := os.ReadDir(staged)
+			if !os.IsNotExist(rerr) && (rerr != nil || len(entries) != 0) {
+				require.FailNowf(t, "assertion failed", "unverified fetch left %s: err=%v entries=%v", staged, rerr, entries)
+			}
+			if _, err := os.Stat(marker); err != nil {
+				require.NoError(t, err, "cleanup reached outside the fetched directory: %v", err)
+			}
+		})
+	}
+}
+
 // A colon is ambiguous exactly once, and it is resolved in favour of the local
 // path: a windows artifact root is a path, not a host called C.
 func TestRemoteFromTellsAHostFromAWindowsPath(t *testing.T) {
