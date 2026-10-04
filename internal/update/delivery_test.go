@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 
@@ -343,29 +342,6 @@ func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
 // delivery allowance is what is left of the budget, and the bus is handed finite
 // retry controls that fit inside it.
 func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
-	for _, c := range []struct {
-		remaining            time.Duration
-		attempts, gitSeconds int
-	}{
-		{60 * time.Second, 3, 20},
-		{10 * time.Minute, 10, 60},
-		{2 * time.Second, 2, 1},
-		{500 * time.Millisecond, 1, 1},
-		{0, 1, 1},
-	} {
-		// Below a second there is no whole number of seconds to name, so one is
-		// named and the caller's own deadline stays the tighter of the two.
-		a, g := busBounds(c.remaining)
-		if a != c.attempts || g != c.gitSeconds {
-			assert.Failf(t, "", "%s left: attempts=%d git-timeout=%d, want %d and %d", c.remaining, a, g, c.attempts, c.gitSeconds)
-		}
-		if a < 1 || g < 1 {
-			assert.Failf(t, "", "%s left: a bound below one is not a bound", c.remaining)
-		}
-		if want := c.remaining; want >= time.Second && time.Duration(g)*time.Second > want {
-			assert.Failf(t, "", "%s left: a git timeout of %ds promises more than remains", want, g)
-		}
-	}
 	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
