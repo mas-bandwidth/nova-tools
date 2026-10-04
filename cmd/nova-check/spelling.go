@@ -26,12 +26,12 @@ func spellingFlags(f *tool.Flags) {
 
 func spelling(c *tool.Call) *tool.Out {
 	dir := c.Str("dir")
-	files := c.Get("file").(repeatable)
-	paths := c.Get("path").(repeatable)
-	ignore := c.Get("ignore").(repeatable)
+	files := c.Get("file").([]string)
+	paths := c.Get("path").([]string)
+	ignore := c.Get("ignore").([]string)
 	write := c.Bool("write")
 	dryRun := c.Bool("dry-run")
-	exclude := c.Get("exclude").(repeatable)
+	exclude := c.Get("exclude").([]string)
 	maxFlag := c.Int("max")
 
 	if dir == "" && len(files) == 0 && len(paths) == 0 {

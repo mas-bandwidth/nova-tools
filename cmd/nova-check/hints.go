@@ -1,5 +1,12 @@
 package main
 
+import "github.com/mas-bandwidth/nova-tools/internal/tool"
+
+// maxRemedy is the second half of every MORE line this binary prints; the
+// skeleton's Out.Cap renders it. A cap with no remedy is censorship; a cap
+// with one is an index.
+const maxRemedy = tool.MaxRemedy
+
 // The hints below are each flag's `wants` string: what a required flag IS and
 // what a first run should put there. The skeleton folds each into the refusal
 // "`--<flag> is required; it wants <wants>; refusing to guess`", so the

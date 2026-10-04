@@ -48,7 +48,7 @@ func kernelCheck(c *tool.Call) {
 // then nocode, and both run even when the first says NO.
 func quickstart(c *tool.Call) *tool.Out {
 	dir := c.Str("dir")
-	exclude := c.Get("exclude").(repeatable)
+	exclude := c.Get("exclude").([]string)
 	fmt.Fprintf(c.Stdout, "QUICKSTART RUN dir=%s checks=2: links, then nocode\n", oneline.Field(dir))
 	lo := linksOut(dir, nil, []string(exclude), c.Int("max"))
 	no := nocodeOut(dir, nil, c.Int("max"))
@@ -101,7 +101,7 @@ func attest(c *tool.Call) *tool.Out {
 }
 
 func links(c *tool.Call) *tool.Out {
-	return linksOut(c.Str("dir"), c.Get("file").(repeatable), c.Get("exclude").(repeatable), c.Int("max"))
+	return linksOut(c.Str("dir"), c.Get("file").([]string), c.Get("exclude").([]string), c.Int("max"))
 }
 
 // linksOut runs the links check and returns its Out, shared with quickstart so
@@ -175,7 +175,7 @@ func nocode(c *tool.Call) *tool.Out {
 	denyExt := c.Str("deny-ext")
 	denyExtAdd := c.Str("deny-ext-add")
 	printList := c.Bool("print-deny-list")
-	allow := c.Get("allow").(repeatable)
+	allow := c.Get("allow").([]string)
 	max := c.Int("max")
 	if denyExt != "" && denyExtAdd != "" {
 		return tool.Refuse("--deny-ext and --deny-ext-add are mutually exclusive")

@@ -53,6 +53,7 @@ first run: create the small markdown tree below, then run the example commands.`
 				Example: "quickstart --dir ./self",
 				Effect:  tool.Effect("inspection: reads the directory, writes nothing"),
 				Flags: func(f *tool.Flags) {
+					f.Prints()
 					f.Required("dir", dirHint)
 					f.Max()
 					f.Var(&repeatable{}, "exclude", "path prefix not scanned by links (repeatable; empty by default)")
@@ -216,3 +217,7 @@ func (r *repeatable) Set(v string) error {
 	*r = append(*r, v)
 	return nil
 }
+
+// Get returns the collected values, so the flag satisfies flag.Getter and the
+// skeleton's Call.Get can read it.
+func (r *repeatable) Get() any { return []string(*r) }

@@ -73,7 +73,7 @@ func convergence(c *tool.Call) *tool.Out {
 	timeout := c.Int("timeout")
 	asJSON := c.Bool("json")
 	dryRun := c.Bool("dry-run")
-	by := c.Get("by").(repeatable)
+	by := c.Get("by").([]string)
 
 	if timeout <= 0 {
 		return tool.Refuse(fmt.Sprintf("--timeout must be a positive number of seconds (got %d); a child with no deadline is a wait with no end", timeout))
