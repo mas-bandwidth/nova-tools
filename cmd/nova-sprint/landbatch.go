@@ -127,6 +127,9 @@ func (l *lander) gatePrefix(ctx context.Context, b *batchRun, k int) prefixGate 
 	if err != nil {
 		return prefixGate{env: "the files the batch changed could not be listed: " + firstLine("", err)}
 	}
+	if l.a != nil && l.a.beforeGate != nil {
+		l.a.beforeGate(k)
+	}
 	start = time.Now()
 	why := l.treeGate(ctx, b.dir, treeTestsWanted(changed))
 	since(&b.t.Gate, start)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"math/bits"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -239,5 +241,54 @@ func TestLandTakesAPushedTipAsAGreenBase(t *testing.T) {
 	assert.Equal(t, "", why)
 	_, cached = r.a.baseGateCache[r.git(r.remote, "rev-parse", "main")]
 	assert.True(t, cached, "and so is the second's")
+	r.clean()
+}
+
+// The in-server land holds the server's line for its store steps alone: while its tree
+// gate runs (minutes on a cold build cache; here the test's clock moved on 10 minutes
+// inside it), the line is free, and a tick takes it and ends (tla/ServerLanes.tla,
+// LandHoldsTheLineOnlyForStoreSteps). The landing then lands as it would have.
+func TestALandsGateLeavesTheLineFreeForTheTick(t *testing.T) {
+	t.Parallel()
+	r, _ := gateRig(t, 2, 0)
+	r.ok("start")
+	ticks := 0
+	r.a.beforeGate = func(int) {
+		r.a.sleep(10 * time.Minute) // a long gate, on the test's clock
+		require.True(t, r.a.serial.TryLock(), "the land holds the line through its tree gate")
+		defer r.a.serial.Unlock()
+		r.ok("tick")
+		ticks++
+	}
+	var out bytes.Buffer
+	code := r.a.landRound(context.Background(), "mem:0", []string{"--repo-dir", r.clone, "--base", "main"}, &out)
+	require.Equal(t, 0, code, out.String())
+	assert.Equal(t, 1, ticks, "one gate, and a tick inside it")
+	assert.Contains(t, out.String(), "LAND OK stream=s1 cards=2 base=main")
+	r.clean()
+}
+
+// The land loop lands each stream by a land of its own and says what it did as each
+// ends: two streams, two LAND lines, each printed by its own land.
+func TestTheLandLoopLandsAndSaysEachStreamInTurn(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream a --count 1 --one")
+	r.ok("add --stream b --count 1 --one")
+	heads := map[string]string{"a-1": r.head("a-1", "main", "a.txt", "a\n"), "b-1": r.head("b-1", "main", "b.txt", "b\n")}
+	r.queued(heads, "a-1", "b-1")
+	var lands [][]string
+	r.a.beforePush = func(int) {
+		streams, _, err := r.a.queuedToMerge(context.Background(), "mem:0")
+		require.NoError(t, err)
+		lands = append(lands, streams)
+	}
+	var out bytes.Buffer
+	code := r.a.landRound(context.Background(), "mem:0", []string{"--repo-dir", r.clone, "--base", "main"}, &out)
+	require.Equal(t, 0, code, out.String())
+	assert.Equal(t, [][]string{{"a", "b"}, {"b"}}, lands, "a landed before b's land began")
+	assert.Equal(t, 1, strings.Count(out.String(), "LAND OK stream=a "), out.String())
+	assert.Equal(t, 1, strings.Count(out.String(), "LAND OK stream=b "), out.String())
+	assert.Less(t, strings.Index(out.String(), "stream=a "), strings.Index(out.String(), "stream=b "))
 	r.clean()
 }

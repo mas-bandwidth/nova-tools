@@ -18,18 +18,28 @@
 (*                 BeatNeverWaitsForTheLine fails;                         *)
 (*   "readonline"  a read takes the line: ReadWaitsOnlyForReads fails;     *)
 (*   "rungone"     a write whose caller went is still run (a sync.Mutex    *)
-(*                 that cannot be given up): GoneNeverRuns fails.          *)
+(*                 that cannot be given up): GoneNeverRuns fails;          *)
+(*   "landgate"    the in-server land keeps the line through its git and   *)
+(*                 its tree gate: LandHoldsTheLineOnlyForStoreSteps fails. *)
+(*                                                                         *)
+(* The land lane (landloop.go, land.go): the in-server land takes the line *)
+(* for its store steps alone, the read of the queue and the report, and    *)
+(* runs its fetch, merges, ledger runs and tree gate (minutes on a cold    *)
+(* build cache) with the line free, so a tick never waits for git          *)
+(* (2026-10-04 4:30 PM ET: ticks past their 10 s deadline were suspected   *)
+(* of waiting on the land; the stacks showed the land waiting on them).    *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Callers, KindOf, MaxTicks, Broken
 
 Kinds  == {"beat", "read", "write"}
-Faults == {"beatonline", "readonline", "rungone"}
-ASSUME Broken \subseteq Faults /\ "tick" \notin Callers /\ "none" \notin Callers
+Faults == {"beatonline", "readonline", "rungone", "landgate"}
+ASSUME Broken \subseteq Faults /\ "tick" \notin Callers /\ "none" \notin Callers /\ "land" \notin Callers
 ASSUME \A r \in Callers : KindOf[r] \in Kinds
 
-VARIABLES line,     \* the line's holder: "none", "tick" or a caller
+VARIABLES line,     \* the line's holder: "none", "tick", "land" or a caller
+          lphase,   \* the land: idle, read (a store step), git (fetch, merges, gate), report
           rline,    \* the read lane's holder: "none" or a caller
           pc,       \* each caller: idle, waiting, running, answered, dropped
           gone,     \* each caller: its client has gone away
@@ -37,14 +47,15 @@ VARIABLES line,     \* the line's holder: "none", "tick" or a caller
           ran,      \* each caller: its verb ran (changed the sprint)
           ticks     \* ticks begun, bounded by MaxTicks
 
-vars == <<line, rline, pc, gone, goneWait, ran, ticks>>
+vars == <<line, lphase, rline, pc, gone, goneWait, ran, ticks>>
 
 OnLine(r) == KindOf[r] = "write"
              \/ (KindOf[r] = "beat" /\ "beatonline" \in Broken)
              \/ (KindOf[r] = "read" /\ "readonline" \in Broken)
 
 TypeOK ==
-  /\ line \in {"none", "tick"} \cup Callers
+  /\ line \in {"none", "tick", "land"} \cup Callers
+  /\ lphase \in {"idle", "read", "git", "report"}
   /\ rline \in {"none"} \cup Callers
   /\ pc \in [Callers -> {"idle", "waiting", "running", "answered", "dropped"}]
   /\ gone \in [Callers -> BOOLEAN]
@@ -53,7 +64,7 @@ TypeOK ==
   /\ ticks \in 0..MaxTicks
 
 Init ==
-  /\ line = "none" /\ rline = "none"
+  /\ line = "none" /\ lphase = "idle" /\ rline = "none"
   /\ pc = [r \in Callers |-> "idle"]
   /\ gone = [r \in Callers |-> FALSE]
   /\ goneWait = [r \in Callers |-> FALSE]
@@ -116,10 +127,29 @@ Finish(r) == /\ pc[r] = "running"
              /\ rline' = IF rline = r THEN "none" ELSE rline
              /\ UNCHANGED <<gone, goneWait, ticks>>
 
+\* the land lane: the line for the read of the queue, none for git and the gate, the
+\* line again for the report; landgate keeps it throughout
+LandRead == /\ lphase = "idle" /\ line = "none"
+            /\ line' = "land" /\ lphase' = "read"
+            /\ UNCHANGED <<rline, pc, gone, goneWait, ran, ticks>>
+LandGit == /\ lphase = "read" /\ line = "land"
+           /\ lphase' = "git" /\ line' = IF "landgate" \in Broken THEN "land" ELSE "none"
+           /\ UNCHANGED <<rline, pc, gone, goneWait, ran, ticks>>
+LandGitDone == /\ lphase = "git"
+               /\ IF "landgate" \in Broken THEN line' = line ELSE line = "none" /\ line' = "land"
+               /\ lphase' = "report"
+               /\ UNCHANGED <<rline, pc, gone, goneWait, ran, ticks>>
+LandReport == /\ lphase = "report" /\ line = "land"
+              /\ line' = "none" /\ lphase' = "idle"
+              /\ UNCHANGED <<rline, pc, gone, goneWait, ran, ticks>>
+Land == LandRead \/ LandGit \/ LandGitDone \/ LandReport
+
 Next ==
-  \/ TickBegin \/ TickEnd
-  \/ \E r \in Callers : Send(r) \/ GiveUp(r) \/ TakeLine(r) \/ Drop(r)
-                        \/ BeatStart(r) \/ BeatDrop(r) \/ ReadStart(r) \/ ReadDrop(r) \/ Finish(r)
+  \/ Land
+  \/ /\ UNCHANGED lphase
+     /\ \/ TickBegin \/ TickEnd
+        \/ \E r \in Callers : Send(r) \/ GiveUp(r) \/ TakeLine(r) \/ Drop(r)
+                              \/ BeatStart(r) \/ BeatDrop(r) \/ ReadStart(r) \/ ReadDrop(r) \/ Finish(r)
 
 Fairness ==
   /\ WF_vars(TickEnd)
@@ -150,6 +180,10 @@ GoneNeverRuns == \A r \in Callers : goneWait[r] => ~ran[r]
 
 \* The lanes never hold the line.
 LanesHoldNoLine == \A r \in Callers : KindOf[r] # "write" => line # r
+
+\* The land holds the line for its store steps alone: never while its git and its tree
+\* gate run, so a tick never waits for them.
+LandHoldsTheLineOnlyForStoreSteps == line = "land" => lphase \in {"read", "report"}
 
 \* Every batch sent is answered or dropped (its caller gone).
 EveryBatchEnds == \A r \in Callers :

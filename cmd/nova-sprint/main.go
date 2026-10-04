@@ -121,6 +121,9 @@ type app struct {
 	// gitEnv is the environment land's git and check run in: nil is the
 	// caller's, untouched (a test gives git an identity and no global config).
 	gitEnv []string
+	// beforeGate, when set (a test), runs as each tree gate of a prefix of a batch
+	// begins (landbatch.go), with the prefix's length.
+	beforeGate func(k int)
 	// beforePush, when set (a test), runs before each push land makes, with
 	// the attempt (1, then 2 after the base moved).
 	beforePush func(attempt int)
@@ -151,9 +154,9 @@ type app struct {
 	// coordinator's verbs, forward.go): nil is sprintwire.Client's Do, a test gives the
 	// server's own step.
 	forward func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error)
-	// landFailed is what the land loop's last round printed when it failed, "" after a
+	// landFailed is, by stream, what the land loop last printed of it when it failed, "" after a
 	// round that did not (landloop.go): the same failure again prints nothing.
-	landFailed string
+	landFailed map[string]string
 	// prune is the landed cards' branches waiting for the cleanup (landprune.go), and
 	// landLazy says the land running is the land loop's, which cleans up between its
 	// rounds: land itself then leaves the queue as it is.

@@ -72,26 +72,37 @@ func (a *app) landRound(ctx context.Context, addr string, more []string, stdout 
 	return code
 }
 
-// landOnce is a round's landing: land's exit code, and idle when the merge queue was
-// read and held nothing.
+// landOnce is a round's landing: land's exit code (the worst of its streams'), and idle
+// when the merge queue was read and held nothing. Each stream with cards queued is landed
+// by a land of its own, and what it said is printed when it ends, not when the round
+// does: a round over many streams on a cold build cache runs for many minutes, and on
+// 2026-10-04 (4:32-4:46 PM ET) the log said nothing for fourteen minutes while four
+// cards landed.
 func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout io.Writer) (int, bool) {
 	a.serial.Lock()
-	queued, coordinator, err := a.queuedToMerge(ctx, addr)
+	streams, coordinator, err := a.queuedToMerge(ctx, addr)
 	a.serial.Unlock()
-	idle := err == nil && !queued
-	var lines []string
-	code := 0
+	idle := err == nil && len(streams) == 0
 	switch {
 	case err != nil:
-		lines, code = []string{"LAND FAILED the merge queue could not be read: " + oneline.Err(err) + "; nothing was landed, and the next round tries again; run: nova-sprint where"}, 2
-	case queued && coordinator != "":
+		return a.landSaid(2, []string{"LAND FAILED the merge queue could not be read: " + oneline.Err(err) + "; nothing was landed, and the next round tries again; run: nova-sprint where"}, "", stdout), idle
+	case len(streams) == 0 || coordinator == "":
+		a.landFailed = map[string]string{}
+		return 0, idle
+	}
+	worst := 0
+	for _, stream := range streams {
+		if ctx.Err() != nil {
+			break
+		}
 		var out, errb bytes.Buffer
 		a.landLazy, a.landCtx = true, ctx
-		code = a.cmdLand(append([]string{"--redis", addr, "--actor", coordinator}, more...), &out, &errb)
+		code := a.cmdLand(append([]string{"--redis", addr, "--actor", coordinator, "--stream", stream}, more...), &out, &errb)
 		a.landLazy, a.landCtx = false, nil
 		// what landed (stdout's LAND lines, but its summary), and everything land said
 		// was wrong (stderr: a refused or failed batch, a refusal before any batch, the
 		// remedy)
+		var lines []string
 		for _, line := range strings.Split(out.String(), "\n") {
 			if strings.HasPrefix(line, "LAND ") && !strings.HasPrefix(line, "LAND DONE") {
 				lines = append(lines, line)
@@ -102,41 +113,54 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 				lines = append(lines, line)
 			}
 		}
+		worst = max(worst, a.landSaid(code, lines, stream, stdout))
+	}
+	return worst, idle
+}
+
+// landSaid prints what one land said, stamped with the time, and returns its code: a
+// failed land prints only when it begins, the same failure again (for the same stream)
+// printing nothing until it changes or clears (a.landFailed), so a store that is down or
+// a landing refused round after round is said once, not every LandEvery.
+func (a *app) landSaid(code int, lines []string, stream string, stdout io.Writer) int {
+	if a.landFailed == nil {
+		a.landFailed = map[string]string{}
 	}
 	said := ""
 	if code != 0 {
 		said = strings.Join(lines, "\n")
-		if said == a.landFailed {
-			return code, idle // said when it began
+		if said == a.landFailed[stream] {
+			return code // said when it began
 		}
 	}
-	a.landFailed = said
+	a.landFailed[stream] = said
 	at := oneline.Field(a.now().Format("15:04:05"))
 	for _, line := range lines {
 		fmt.Fprintf(stdout, "%s %s\n", at, oneline.Escape(line))
 	}
-	return code, idle
+	return code
 }
 
-// queuedToMerge says a stream has a card queued to merge, and names the sprint's
-// coordinator, whose the landing is ("" when the sprint has none); err when the sprint
-// could not be read, which says nothing of what is queued.
-func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coordinator string, err error) {
+// queuedToMerge is the streams land would land, in stream order: each with a card queued
+// to merge before its first stuck one, and not stopped (cmdLand's own choice when it is
+// named none); and the sprint's coordinator, whose the landing is ("" when the sprint has
+// none); err when the sprint could not be read, which says nothing of what is queued.
+func (a *app) queuedToMerge(ctx context.Context, addr string) (streams []string, coordinator string, err error) {
 	st, err := a.storeCtx(ctx, common{verb: "where", redis: addr})
 	if err != nil {
-		return false, "", err
+		return nil, "", err
 	}
 	if coordinator, err = st.B.Coordinator(ctx); err != nil {
-		return false, "", err
+		return nil, "", err
 	}
 	s, err := st.Load(ctx, []string{sprint.Merge}, nil)
 	if err != nil {
-		return false, "", err
+		return nil, "", err
 	}
 	for _, row := range s.Merge.Rows() {
-		if s.Merge.Count(row, sprint.Queued) > 0 {
-			return true, coordinator, nil
+		if ctl := s.StreamCtl(row); ctl != nil && ctl.F("state") != sprint.StreamStopped && len(landQueue(s, row)) > 0 {
+			streams = append(streams, row)
 		}
 	}
-	return false, coordinator, nil
+	return streams, coordinator, nil
 }

@@ -331,6 +331,24 @@ const exitReplaced = 3
 // (nova-tools#5122).
 const TickDeadline = 10 * time.Second
 
+// FirstTickDeadline is the bound of a loop's first tick, when it is longer than
+// --tick-deadline: the first tick after a start reads the sprint whole into a cold twin,
+// and on 2026-10-04 (4:28-4:31 PM ET) that read alone ran past 10 s six times in a row,
+// each restart beginning with the same cold read and missing the same deadline, a crash
+// loop with nothing wrong but the bound. Every tick after the first has a warm twin and
+// --tick-deadline.
+const FirstTickDeadline = 2 * time.Minute
+
+// tickBound is how long the loop waits for its tick i (0 the first): d, the
+// --tick-deadline, and for the first tick FirstTickDeadline when that is longer; 0 (no
+// bound) stays 0.
+func tickBound(i int, d time.Duration) time.Duration {
+	if i == 0 && d > 0 {
+		return max(d, FirstTickDeadline)
+	}
+	return d
+}
+
 // exitTickDeadline is run's exit when a tick ran past its deadline: not 0, so
 // its supervisor starts it again.
 const exitTickDeadline = 4
@@ -447,7 +465,7 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		began := a.now()
 		// one tick, or one worker's batch, at a time (serve.go)
 		a.serial.Lock()
-		res, err, over := a.tickWithin(func() (store.TickResult, error) { return st.Tick(ctx) }, a.tickDeadline, began, stdout, stderr)
+		res, err, over := a.tickWithin(func() (store.TickResult, error) { return st.Tick(ctx) }, tickBound(i, a.tickDeadline), began, stdout, stderr)
 		if over {
 			// serial stays held: the tick's goroutine is still in its plan
 			a.exit(exitTickDeadline)
