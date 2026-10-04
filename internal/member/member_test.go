@@ -1660,3 +1660,33 @@ func TestALaneThatFinishesIsRefilledInTheSamePass(t *testing.T) {
 	assert.Equal(t, 1, g.m.Running(), "the member runs at most its width")
 	assert.Equal(t, 2, acted, "one report and one start")
 }
+
+// TestPassReportsCompletedChildWhenQueueReadFails pins that a completed child
+// is collected, reported, and cleaned up even when the queue read fails or
+// times out, and that no new child is launched from an unknown queue state
+// (docs/SPEC-SWARM.md, member; docs/SPEC-SPRINT.md, the fleet).
+func TestPassReportsCompletedChildWhenQueueReadFails(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 2})
+	g.m.pusher = &fakePusher{def: Push{Sha: fullSha}}
+	p := pk("c1")
+	p.Gen = 3
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 3, &p)))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 1, g.m.Running())
+
+	g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "abc123", Report: "# Result\n\ndone"})
+
+	g.s.reset()
+	g.s.set("queue", 2, "timeout: context deadline exceeded")
+	g.s.set("take", 0, takeJSON(t, pk("c2")))
+
+	acted, err := g.tick(t)
+	require.ErrorContains(t, err, "queue: exit 2")
+	require.Equal(t, 1, acted, "acted=%d, want 1 for the finished child", acted)
+	require.Equal(t, 0, g.m.Running(), "the completed child is cleaned up")
+	require.Len(t, g.s.lines("finish"), 1, "the finished child is reported")
+	require.Empty(t, g.s.lines("take"), "no take is issued when queue read fails")
+	require.Equal(t, []string{"c1"}, g.r.started(), "no new child starts from an unknown queue")
+}
