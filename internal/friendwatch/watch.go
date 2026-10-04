@@ -46,7 +46,7 @@ func CheckTiming(every, timeout time.Duration) error {
 // Run beats only while its owned child runs and its invoking parent remains.
 // A failed beat cancels the wait, making store errors visible to the harness.
 // STANDARD section 1: only this invocation's child is cancelled.
-func Run(ctx context.Context, o Options) error {
+func Run(ctx context.Context, o Options) (result error) {
 	if o.Sprint == "" || o.Server == "" || o.Friend == "" || len(o.Argv) == 0 || o.Argv[0] == "" || o.Every <= 0 || o.Timeout <= 0 || o.Parent <= 1 {
 		return errors.New("watch needs sprint executable, server, friend, direct child argv, positive durations and a live invoking parent")
 	}
@@ -70,16 +70,11 @@ func Run(ctx context.Context, o Options) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	child := subproc.Long(ctx, o.Argv[0], o.Argv[1:]...)
-	child.Stdout, child.Stderr = o.Stdout, o.Stderr
-	if !o.StdinLifetime {
-		child.Stdin = o.Stdin
-	}
-	if err := child.Start(); err != nil {
+	owned, done, err := startOwnedCommand(ctx, o)
+	if err != nil {
 		return fmt.Errorf("start owned wait: %w", err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- child.Wait() }()
+	defer func() { result = errors.Join(result, owned.cleanup()) }()
 	closed := make(chan struct{})
 	if o.StdinLifetime {
 		go func() {
@@ -88,7 +83,7 @@ func Run(ctx context.Context, o Options) error {
 			close(closed)
 		}()
 	}
-	stop := func(reason error) error { cancel(); <-done; return reason }
+	stop := func(reason error) error { cancel(); return reason }
 	beat := func() error {
 		if os.Getppid() != o.Parent {
 			return errors.New("invoking harness parent exited; presence stopped")

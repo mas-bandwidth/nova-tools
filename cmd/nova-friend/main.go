@@ -7,12 +7,16 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/mas-bandwidth/nova-tools/internal/friendwatch"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 var version string
 
 func main() {
+	if handled, code := friendwatch.OwnedHelper(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	os.Exit(friendTool(ctx).Run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
