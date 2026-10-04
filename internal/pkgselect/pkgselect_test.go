@@ -452,7 +452,7 @@ func TestOrderHeavyFirstAndFunctional(t *testing.T) {
 	assert.Equal(t, "./cmd/a", ordered[1], "the rest in order")
 	g := Groups{Linux: "lin", Mac: "mac"}
 	got := MarshalLegs(Functional(ordered, g))
-	want := `[{"name":"1/4 lin","packages":"./cmd/nova-bus ./cmd/d"},{"name":"2/4 lin","packages":"./cmd/a ./cmd/e"},{"name":"3/4 lin","packages":"./cmd/b"},{"name":"4/4 lin","packages":"./cmd/c"}]`
+	want := `[{"name":"1/6 lin","packages":"./cmd/nova-bus"},{"name":"2/6 lin","packages":"./cmd/a"},{"name":"3/6 lin","packages":"./cmd/b"},{"name":"4/6 lin","packages":"./cmd/c"},{"name":"5/6 lin","packages":"./cmd/d"},{"name":"6/6 lin","packages":"./cmd/e"}]`
 	assert.Equal(t, want, got, "Functional: the darwin-only packages have no Linux leg")
 	assert.Equal(t, `[{"name":"nothing","packages":""}]`, MarshalLegs(Functional(nil, g)), "Functional of nothing")
 	assert.Equal(t, `[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]`, MarshalLegs([]Leg{NothingLeg(g)}), "the nothing leg")

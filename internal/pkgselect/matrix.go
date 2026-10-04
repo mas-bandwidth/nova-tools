@@ -25,8 +25,10 @@ const (
 	// would need, so the legs are few and each takes a wave.
 	PullRequestShards   = 4
 	MergeGroupMacShards = 4
-	// FunctionalShards is the leg count of the functional tier.
-	FunctionalShards = 4
+	// FunctionalShards is the leg count of the functional tier. Six: the sprint stream moved
+	// slow real-time tests into the tier and four legs ran past the two-minute cap
+	// (functional 1/4 and 3/4 were cancelled at it); the cap is permanent, the split is not.
+	FunctionalShards = 6
 )
 
 // Groups are the labels of the two runner groups the fan-out deals onto. They
