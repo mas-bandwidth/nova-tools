@@ -17,6 +17,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // coldRun is run() with no store behind any address and an empty environment
@@ -228,7 +230,7 @@ func TestServeFailureNamesTheNextStep(t *testing.T) {
 	code, _, errs = h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", h.dir)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "remedy=")
-	assert.Contains(t, errs, "run: ls -ld -- "+shellWord(h.dir))
+	assert.Contains(t, errs, "run: ls -ld -- "+oneline.ShellWord(h.dir))
 	assert.Contains(t, errs, "compare directory access and the explicit --bind/--port")
 	assert.Contains(t, errs, "with the launch error and any redis-server output")
 }
