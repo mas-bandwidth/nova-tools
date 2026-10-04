@@ -363,15 +363,15 @@ func TestSlowtestsUnitTierBudgetsReadTheAllowlist(t *testing.T) {
 	t.Parallel()
 
 	allow := filepath.Join(t.TempDir(), "allow.txt")
-	require.NoError(t, os.WriteFile(allow, []byte("pkg\tTestA\t4.5\t3s@run1\n"), 0o644))
-	stdin := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
-{"Action":"pass","Package":"example.com/pkg","Test":"TestB","Elapsed":1.3}
-{"Action":"pass","Package":"example.com/pkg","Elapsed":4.6}
+	require.NoError(t, os.WriteFile(allow, []byte("internal/pkg\tTestA\t4.5\t3s@run1\n"), 0o644))
+	stdin := `{"Action":"pass","Package":"example.com/m/internal/pkg","Test":"TestA","Elapsed":3.2}
+{"Action":"pass","Package":"example.com/m/internal/pkg","Test":"TestB","Elapsed":1.3}
+{"Action":"pass","Package":"example.com/m/internal/pkg","Elapsed":4.6}
 `
 	code, stdout, stderr := runCI(t, []string{"slowtests", "--package-budget", "2", "--test-budget", "1", "--allowlist", allow, "--enforce", "--load", "1", "--cpus", "2"}, stdin)
 	require.Equal(t, 1, code, "exit = %d, want 1; stderr: %s", code, stderr)
-	want := "CI-SLOW package=example.com/pkg seconds=4.6s budget=2s slowest=TestA:3.2s,TestB:1.3s\n" +
-		"CI-SLOW test=TestB package=example.com/pkg seconds=1.3s budget=1s\n" + loadLine1of2
+	want := "CI-SLOW package=example.com/m/internal/pkg seconds=4.6s budget=2s slowest=TestA:3.2s,TestB:1.3s\n" +
+		"CI-SLOW test=TestB package=example.com/m/internal/pkg seconds=1.3s budget=1s\n" + loadLine1of2
 	assert.Equal(t, want, stdout, "stdout = %q, want %q", stdout, want)
 
 	code, _, stderr = runCI(t, []string{"slowtests", "--package-budget", "2", "--allowlist", filepath.Join(t.TempDir(), "absent")}, "")
@@ -391,19 +391,19 @@ func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 
 	dir := t.TempDir()
 	ledger := filepath.Join(dir, "sleeps.txt")
-	require.NoError(t, os.WriteFile(ledger, []byte("pkg\tTestKnown\t#4221\n"), 0o644))
+	require.NoError(t, os.WriteFile(ledger, []byte("internal/pkg\tTestKnown\t#4221\n"), 0o644))
 	allow := filepath.Join(dir, "allow.txt")
 	repoRows, err := os.ReadFile(filepath.Join("..", "..", "internal", "ci", "slow-tests_allowlist.txt"))
 	require.NoError(t, err)
 	require.NotContains(t, string(repoRows), "cmd/nova-bus\t", "internal/ci/slow-tests_allowlist.txt has a cmd/nova-bus row; probe 6 wants none")
-	require.NoError(t, os.WriteFile(allow, append(repoRows, []byte("pkg\tTestA\t1.2\t0.4s@run36264290984\n")...), 0o644))
-	slow := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":1.4}
-{"Action":"pass","Package":"example.com/pkg","Elapsed":1.5}
+	require.NoError(t, os.WriteFile(allow, append(repoRows, []byte("internal/pkg\tTestA\t1.2\t0.4s@run36264290984\n")...), 0o644))
+	slow := `{"Action":"pass","Package":"example.com/m/internal/pkg","Test":"TestA","Elapsed":1.4}
+{"Action":"pass","Package":"example.com/m/internal/pkg","Elapsed":1.5}
 {"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Test":"TestWait","Elapsed":0.9}
 {"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Elapsed":58.8}
 `
-	sleeps := `{"Action":"output","Package":"example.com/pkg","Test":"TestKnown","Output":"SLEEPS: x\n"}
-{"Action":"skip","Package":"example.com/pkg","Test":"TestKnown","Elapsed":0}
+	sleeps := `{"Action":"output","Package":"example.com/m/internal/pkg","Test":"TestKnown","Output":"SLEEPS: x\n"}
+{"Action":"skip","Package":"example.com/m/internal/pkg","Test":"TestKnown","Elapsed":0}
 {"Action":"output","Package":"example.com/pkg","Test":"TestNew","Output":"SLEEPS: x\n"}
 {"Action":"skip","Package":"example.com/pkg","Test":"TestNew","Elapsed":0}
 {"Action":"pass","Package":"example.com/pkg","Elapsed":0.1}
@@ -417,7 +417,7 @@ func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 			args := append([]string{"slowtests", "--package-budget", "2", "--test-budget", "1", "--allowlist", allow, "--sleeps", ledger, "--load", load, "--cpus", "32"}, leg.args...)
 			code, stdout, stderr := runCI(t, args, slow)
 			want := "CI-SLOW package=github.com/mas-bandwidth/nova-tools/cmd/nova-bus seconds=58.8s budget=2s slowest=TestWait:0.9s\n" +
-				"CI-SLOW test=TestA package=example.com/pkg seconds=1.4s budget=1.2s\n" +
+				"CI-SLOW test=TestA package=example.com/m/internal/pkg seconds=1.4s budget=1.2s\n" +
 				"CI-LOAD load=" + load + ".00 cpus=32 per-cpu="
 			assert.Equal(t, leg.code, code, "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
 			assert.True(t, strings.HasPrefix(stdout, want), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)

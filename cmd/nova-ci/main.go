@@ -48,7 +48,7 @@ usage, in any Go module (no state, no store):
                       <measured>s@<where>, where is run<id> or a bench, - in
                       the test column for a package's own row) raises one
                       package's or test's budget. One row, tab-separated:
-                      pkg	TestA	4.5	3s@run1
+                      internal/pkg	TestA	4.5	3s@run1
                       The host's load average (the
                       larger of its 1- and 5-minute figures, over its CPUs;
                       --load and --cpus give them by hand) is printed and never
