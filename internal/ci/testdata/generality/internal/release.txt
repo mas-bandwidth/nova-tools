@@ -11,4 +11,3 @@ internal/release/adopt.go:vision 1
 internal/release/dogfoodgate.go:glenn 3
 internal/release/dogfoodgate.go:rowan 1
 internal/release/edges.go:johnny 3
-internal/release/pull.go:space 1
