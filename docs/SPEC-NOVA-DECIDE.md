@@ -109,6 +109,16 @@ id, at most one outcome per decision, an outcome only after its decision), check
 by TLC on a bench and recorded in the TLC records; it lands with the export verb,
 the first reader of the record beside calibrate.
 
+### backfill-2026-10-04.w1: importing finished decisions as labelled records
+
+`nova-decide import --record <file>` loads decisions already made as labelled records, so they can be read, calibrated and trained on. It never asks a backend and duplicates none of the verbs: a record it writes is a decision (named `import-<kind>`, backend `import`, empty answers, the source text as the state) with its label attached as the outcome, the same lines `outcome` writes. The sources:
+
+- `--verdicts <glob>`: heavy-read `VERDICT.md` files; the first word of the first line (ACCEPT, REWORK, DROP-OR-RECUT) is the label, kind `verdict`.
+- `--judgments <dir>` with `--log <file>`: the judgment files (`<judgment id>.md`), each labelled by the verb of the last line of a `nova-sprint log --json` export whose `answers` names the judgment, kind `judgment`. A judgment nothing answers is counted as `unanswered` and not recorded.
+- `--reports <glob>`: `REPORT.md` files whose first line is `Verdict: HOLD`, label `HOLD`, kind `report`.
+
+An item's id is its kind and the hash of its absolute source path and content, so a second import adds nothing and an edited source is a new item. The import is one write under the record's lock. It prints `IMPORT OK` with `<kind>_new` and `<kind>_existing` per kind, and `unanswered`. The model is `internal/decide/import.go`; the pin is `TestImportIsIdempotentAndCountsPerKind`.
+
 ## 5. Calibration
 
 `calibrate --decision <name> --question <q> --positive <labels> --negative <labels>`
