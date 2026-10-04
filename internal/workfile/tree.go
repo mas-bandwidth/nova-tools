@@ -10,9 +10,7 @@
 package workfile
 
 import (
-	"fmt"
 	"strconv"
-	"strings"
 )
 
 // Format is the tree file's format word, the second element of the top form.
@@ -112,37 +110,6 @@ func IssueURL(repo string, n int) string { return Web + repo + "/issues/" + strc
 // Path is an issue's path in the tree: repos/<owner>/<repo>/issues/<n>.
 func Path(repo string, number int) string {
 	return "repos/" + repo + "/issues/" + strconv.Itoa(number)
-}
-
-// PathOfURL turns an issue URL into its tree path; the two are one lookup
-// in each direction and nothing is written to the source to make them so.
-func PathOfURL(url string) (string, error) {
-	rest, ok := strings.CutPrefix(url, Web)
-	if !ok {
-		return "", fmt.Errorf("not a GitHub issue URL: %q", url)
-	}
-	parts := strings.Split(rest, "/")
-	if len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[2] != "issues" {
-		return "", fmt.Errorf("not a GitHub issue URL: %q", url)
-	}
-	n, err := strconv.Atoi(parts[3])
-	if err != nil || n <= 0 || strconv.Itoa(n) != parts[3] {
-		return "", fmt.Errorf("not a GitHub issue URL: %q", url)
-	}
-	return Path(parts[0]+"/"+parts[1], n), nil
-}
-
-// URLOfPath turns a tree path into the issue's URL on GitHub.
-func URLOfPath(path string) (string, error) {
-	parts := strings.Split(path, "/")
-	if len(parts) != 5 || parts[0] != "repos" || parts[1] == "" || parts[2] == "" || parts[3] != "issues" {
-		return "", fmt.Errorf("not a tree issue path: %q", path)
-	}
-	n, err := strconv.Atoi(parts[4])
-	if err != nil || n <= 0 || strconv.Itoa(n) != parts[4] {
-		return "", fmt.Errorf("not a tree issue path: %q", path)
-	}
-	return IssueURL(parts[1]+"/"+parts[2], n), nil
 }
 
 // OriginOf is the origin an author association gives: an issue filed by the

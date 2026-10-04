@@ -155,15 +155,3 @@ func Merged(prs []PR) []PR {
 	}
 	return out
 }
-
-// StillOpen keeps the pull requests that are open, so one read of `--state all`
-// can answer both halves when a caller has one.
-func StillOpen(prs []PR) []PR {
-	out := make([]PR, 0, len(prs))
-	for _, pr := range prs {
-		if pr.ClosedAt.IsZero() {
-			out = append(out, pr)
-		}
-	}
-	return out
-}

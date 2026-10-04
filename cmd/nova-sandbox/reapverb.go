@@ -1,7 +1,7 @@
 // The reap verb clears what a SIGKILL left behind, which is the one hole in the run
 // verb's contract that the run verb cannot close from inside.
 //
-// Measured on the Studio in a 20-run soak, 2026-09-18. `nova-sandbox run` deletes its
+// Measured on the bench in a 20-run soak, 2026-09-18. `nova-sandbox run` deletes its
 // volume on every path out — a clean exit, an error, a signal it can catch, a --timeout —
 // and a delete that fails prints SANDBOX LEAK. A SIGKILL is none of those: the tool is
 // gone between one instruction and the next, so there is no path out to take and no line

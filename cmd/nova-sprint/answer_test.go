@@ -97,7 +97,7 @@ func TestAnswerDecideReworksEachCardOfAGroupedJudgment(t *testing.T) {
 	ds := recorded(t, record)
 	require.Len(t, ds, 2)
 	d := ds[g.Notes[0]+":s1-2"]
-	op := "decide." + g.Notes[0] + ":s1-2"
+	op := "decide." + g.Notes[0] + "_s1-2"
 	assert.Equal(t, map[string]string{"judgment": g.ID, "note": g.Notes[0], "kind": "failed", "card": "s1-2", "act": "applying", "op": op, "verb": "rework"}, d.Inputs,
 		"the decision is recorded as applying, with its op, before its verb runs")
 	require.Len(t, d.Acts, 1)
@@ -550,7 +550,7 @@ func TestEveryAppliedVerbCarriesTheDecisionsOp(t *testing.T) {
 	assert.Equal(t, before, ta.applies(), "the op is recorded: a re-run applies nothing")
 	assert.Equal(t, [][]string{{"wait", "n1", "--for", "30m", "--op", "decide.n1"}}, withOp([][]string{{"wait", "n1", "--for", "30m"}}, "decide.n1"))
 	assert.Equal(t, [][]string{{"a", "--op", "decide.n1.1"}, {"b", "--op", "decide.n1.2"}}, withOp([][]string{{"a"}, {"b"}}, "decide.n1"), "each of several lines its own")
-	assert.Equal(t, "decide.ask_2-1.1:s1-2", opOf("ask~2-1.1:s1-2"), "an op holds no '~'")
+	assert.Equal(t, "decide.ask_2-1.1_s1-2", opOf("ask~2-1.1:s1-2"), "an op holds no '~' and no ':'")
 }
 
 // An ack that names a note of several cards is never applied: it would answer the other
