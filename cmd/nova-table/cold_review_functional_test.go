@@ -133,6 +133,10 @@ func TestTheHelpPastesTheStaleRefusalItPrints(t *testing.T) {
 	code, out, errout = runTable(at(addr, "show", "stale-help")...)
 	require.EqualValues(t, 0, code, "show: %d %s %q", code, out, errout)
 	require.Contains(t, out, " epoch=1 ", "show prints the live epoch: %s", out)
+	// the epoch moved under the table, so the row the first epoch made is not
+	// the live one: place it at epoch 1 before a cell goes into it
+	code, out, errout = runTable(at(addr, "row", "add", "stale-help", "build", "--epoch", "1")...)
+	require.EqualValues(t, 0, code, "row add at the live epoch: %d %s %q", code, out, errout)
 	code, out, errout = runTable(at(addr, "cell", "add", "stale-help", "build", "working", "b2", "--epoch", "1", "--receipt")...)
 	require.EqualValues(t, 0, code, "receipt write: %d %s %q", code, out, errout)
 	require.Contains(t, out, "TABLE RECEIPT event=", "the receipt of every write prints the new one: %s", out)

@@ -29,12 +29,12 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 	dryRun := fs.Bool("dry-run", false, "with --write, print the corrections it would make and write nothing")
 	var exclude repeatable
 	fs.Var(&exclude, "exclude", "path prefix not scanned (repeatable; empty by default)")
-	failMax := addFailMax(fs)
+	maxFlag := addMax(fs)
 
 	if !parseFlags(fs, args, stderr) {
 		return 2
 	}
-	if !checkFailMax(fs, *failMax, stderr) {
+	if !checkMax(fs, *maxFlag, stderr) {
 		return 2
 	}
 
@@ -111,12 +111,12 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 	// One verdict for both renderings: what was asked (a check, a write, or a
 	// write planned by --dry-run) decides the status, the exit, the facts and
 	// the listing's bound; the line form and the JSON print the same value.
-	v := spellingVerdictOf(res, *write, *dryRun, *failMax)
+	v := spellingVerdictOf(res, *write, *dryRun, *maxFlag)
 	if asJSON {
 		return renderSpelling(stdout, root, res, v)
 	}
 	if v.planned {
-		list := bounded.Capped(stdout, v.max, "SPELLING", "misspelling", failMaxRemedy)
+		list := bounded.Capped(stdout, v.max, "SPELLING", "misspelling", maxRemedy)
 		for _, f := range res.Findings {
 			list.Line(fmt.Sprintf("SPELLING FIX %s:%d:%d: %s -> %s",
 				oneline.Escape(f.File), f.Line, f.Column, oneline.Escape(f.Original), oneline.Escape(f.Replacement)))
@@ -136,13 +136,13 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if len(res.Findings) > 0 {
-		list := bounded.Capped(stderr, *failMax, "SPELLING", "misspelling", failMaxRemedy)
+		list := bounded.Capped(stderr, *maxFlag, "SPELLING", "misspelling", maxRemedy)
 		for _, f := range res.Findings {
-			list.Line(fmt.Sprintf("SPELLING FAIL %s:%d:%d: %s -> %s",
+			list.Line(fmt.Sprintf("SPELLING FAILED %s:%d:%d: %s -> %s",
 				oneline.Escape(f.File), f.Line, f.Column, oneline.Escape(f.Original), oneline.Escape(f.Replacement)))
 		}
 		list.More()
-		fmt.Fprintf(stderr, "SPELLING FAIL files=%d misspellings=%d shown=%d\n",
+		fmt.Fprintf(stderr, "SPELLING FAILED files=%d misspellings=%d shown=%d\n",
 			res.FilesScanned, list.Total(), list.Shown())
 		return 1
 	}
@@ -152,17 +152,17 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 }
 
 // spellingVerdict is one spelling run's answer, computed once and printed by
-// both renderings: a check of prose says FAIL when it finds a misspelling; a
+// both renderings: a check of prose says FAILED when it finds a misspelling; a
 // write, real or planned by --dry-run, says OK with what it wrote (or would).
 type spellingVerdict struct {
 	planned bool // --write --dry-run: corrections listed, nothing written
 	failed  bool
 	exit    int
-	max     int // the listing's bound: --fail-max, except a real write lists every correction it made
+	max     int // the listing's bound: --max, except a real write lists every correction it made
 }
 
-func spellingVerdictOf(res check.SpellingResult, write, dryRun bool, failMax int) spellingVerdict {
-	v := spellingVerdict{planned: write && dryRun, max: failMax}
+func spellingVerdictOf(res check.SpellingResult, write, dryRun bool, maxFlag int) spellingVerdict {
+	v := spellingVerdict{planned: write && dryRun, max: maxFlag}
 	if write && !dryRun {
 		v.max = 0
 	}

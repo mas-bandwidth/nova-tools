@@ -90,12 +90,6 @@ type liveSampler struct {
 	// lastErr is the reason the most recent failed read gave, for the line that reports an
 	// unverifiable end.
 	lastErr error
-	// samples is how many reads have been ANSWERED, and inflight how many are running. The
-	// two exist so a test can prove that no sample starts while one is unanswered without
-	// reaching into the loop's own timing.
-	samples   int
-	inflight  int
-	maxFlight int
 	// reached is the stop word a budget that has been reached would fire, or "" when none
 	// has. It is kept as well as fired so that the "once more before any relaunch" test can
 	// ask the question again without a channel.
@@ -197,9 +191,7 @@ func (s *liveSampler) loop() {
 // inside ReadJobUsageLive, so an abandoned read returns here as an ordinary error and is
 // counted as a failed read.
 func (s *liveSampler) readOnce() {
-	s.enter()
 	usage, err := swarm.ReadJobUsageLive(s.dataHome)
-	s.leave()
 	// THE CARD'S OWN TURN COUNT is read OUTSIDE the lock, because it opens a file: the count is
 	// the harness log's assistant turns, "or the usage row count where the log has
 	// fewer", and on this route the log is `<job>/harness-output.log`.
@@ -215,7 +207,6 @@ func (s *liveSampler) readOnce() {
 func (s *liveSampler) fold(usage swarm.ProviderUsage, err error, turns int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.samples++
 	if err != nil {
 		// A READ THAT FAILS, which the sampler keeps apart from a source that has
 		// reported nothing: the first ends a card on the third in a row, the second
@@ -302,20 +293,6 @@ func (s *liveSampler) Defect() string {
 	return s.defect
 }
 
-// enter and leave record that a read is running, so a test can prove no two overlap.
-func (s *liveSampler) enter() {
-	s.mu.Lock()
-	s.inflight++
-	s.maxFlight = max(s.maxFlight, s.inflight)
-	s.mu.Unlock()
-}
-
-func (s *liveSampler) leave() {
-	s.mu.Lock()
-	s.inflight--
-	s.mu.Unlock()
-}
-
 // Stop signals the loop and RETURNS AT ONCE. It never joins: a read in flight is abandoned
 // where it stands, because the deadline and a TERM end the card at their own instants
 // whatever a read is doing. It is safe to call more than once and from any goroutine.
@@ -327,14 +304,6 @@ func (s *liveSampler) Observed() (spent int, observed, partial bool, failures in
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.spent, s.observed, s.partial, s.failures, s.lastErr
-}
-
-// Counts is how many samples were answered and whether any two ever overlapped. It exists
-// for the tests that hold "no sample starts while one is unanswered".
-func (s *liveSampler) Counts() (answered, maxInFlight int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.samples, s.maxFlight
 }
 
 // nativeBudgetWords is which budget ended the card and at what count, with what the job

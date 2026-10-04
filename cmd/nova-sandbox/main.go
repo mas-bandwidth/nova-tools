@@ -623,7 +623,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	f.bad = append(f.bad, notForThisVerb("probe", "nova-sandbox probe -h", map[string]bool{
 		"--acl": f.acl != "", "--name": f.name != "", "--cwd": f.cwd != "", "--tmp": f.tmp != "", "--net-allow": len(f.netAllow) > 0,
 	}, ownerOf)...)
-	// EVERY independent problem in ONE run. Emma, dogfooding v0.12.0 (nova-tools #104):
+	// EVERY independent problem in ONE run. A friend, dogfooding v0.12.0 (nova-tools #104):
 	// a bare `probe` named the missing --secret, and named the missing --write only on
 	// the NEXT run, once --secret had been supplied -- a first run sequenced into as many
 	// runs as it had mistakes. `nova-wake serve` names all nine of its missing flags at

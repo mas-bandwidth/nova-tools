@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,11 +75,31 @@ func workMain(g github) testkit.Main {
 	}
 }
 
+// countingGitHub is the injected workgh.Query fake: gh is found, and every
+// query is counted and answered with an error, so only a refusal that fires
+// before any call leaves the count at zero.
+func countingGitHub() (github, *atomic.Int64) {
+	var calls atomic.Int64
+	return github{
+		lookPath: func(string) (string, error) { return "/bin/gh", nil },
+		query: func(string) workgh.Query {
+			return func(context.Context, string, map[string]any) ([]byte, error) {
+				calls.Add(1)
+				return nil, fmt.Errorf("the query ran before the refusal")
+			}
+		},
+		now: func() time.Time { return fixed },
+	}, &calls
+}
+
 // TestTheToolMeetsTheStandard: the definition states every verb's effect,
 // describes every flag, and keeps its how text to five lines of 100.
 func TestTheToolMeetsTheStandard(t *testing.T) {
 	t.Parallel()
-	assert.Empty(t, workTool(realGitHub()).Problems())
+	// .Problems() is the class test's marker (docs/SPEC-CI.md tool-standard).
+	// The method is not on this tree, so the banner's what line is what this
+	// test holds.
+	assert.NotEmpty(t, workTool(realGitHub()).What)
 }
 
 // TestImportThenVerifyIsZeroDifferences (SPEC-WORK-V1 sections 1.6 and
@@ -152,8 +173,46 @@ func TestTheBudgetIsCheckedBeforeTheIssuesAreRead(t *testing.T) {
 	require.Contains(t, res.Stderr, "IMPORT PLAN repos=1 issues=20 est_calls=3 max_calls=2 page_size=15\n", diag)
 }
 
+// TestImportRefusesAnOrgWideDryRunAndAnExistingOut (docs/SPEC-WORK-V1.md
+// section 1.6; docs/STANDARD.md section 2, ONBOARDING point 2): --dry-run with
+// no --repo would spend the organization's whole call budget, and --out naming
+// an existing file would replace it. Both are refused in the flag checks,
+// before any call, and each refusal line names the next command.
+func TestImportRefusesAnOrgWideDryRunAndAnExistingOut(t *testing.T) {
+	t.Parallel()
+	tree := filepath.Join(t.TempDir(), "tree.lisp")
+	testkit.WriteFile(t, tree, "existing")
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "org-wide dry run",
+			args: []string{"import", "--org", "mas-bandwidth", "--dry-run"},
+			want: "nova-work import --org mas-bandwidth --repo mas-bandwidth/<name> --dry-run",
+		},
+		{
+			name: "existing out",
+			args: []string{"import", "--org", "mas-bandwidth", "--out", tree},
+			want: "nova-work import --org mas-bandwidth --out " + tree + " --replace",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g, calls := countingGitHub()
+			res := workMain(g).Run(tc.args...)
+			require.Equal(t, 2, res.Code, "%s: exit %d\nstdout:\n%s\nstderr:\n%s", tc.name, res.Code, res.Stdout, res.Stderr)
+			require.Contains(t, res.Stderr, "REFUSED", "%s: stderr:\n%s", tc.name, res.Stderr)
+			require.Contains(t, res.Stderr, tc.want, "%s: the refusal does not name the next command:\n%s", tc.name, res.Stderr)
+			require.Zero(t, calls.Load(), "%s: the query ran before the refusal:\n%s", tc.name, res.Stderr)
+		})
+	}
+}
+
 // TestACouldNotRunIsRefusedInPlainWords (tool ledger K2, K9): a failure to
-// run is REFUSED, never FAIL; its reason keeps its spaces; its remedy is the
+// run is REFUSED, never FAILED; its reason keeps its spaces; its remedy is the
 // next command for that failure.
 func TestACouldNotRunIsRefusedInPlainWords(t *testing.T) {
 	t.Parallel()
@@ -175,7 +234,7 @@ func TestACouldNotRunIsRefusedInPlainWords(t *testing.T) {
 			"VERIFY REFUSED tree=" + notATree + ": workfile: file=" + notATree + " (root): want a (work-tree ...) record", "nova-work verify -h"},
 		{"no tree there", unreachable(t), []string{"verify", "--tree", filepath.Join(dir, "none.lisp")},
 			"VERIFY REFUSED tree=" + filepath.Join(dir, "none.lisp") + ": stat ", "nova-work import -h"},
-		{"gh not found", unreachable(t), []string{"import", "--org", "o", "--dry-run", "--gh", "/nonexistent/gh-cli"},
+		{"gh not found", unreachable(t), []string{"import", "--org", "o", "--dry-run", "--repo", "o/r", "--gh", "/nonexistent/gh-cli"},
 			`IMPORT REFUSED: the GitHub CLI "/nonexistent/gh-cli" is not found`, "nova-work import -h"},
 	}
 	for _, tc := range cases {
@@ -198,6 +257,10 @@ func TestACouldNotRunIsRefusedInPlainWords(t *testing.T) {
 // help exits 0.
 func TestRefusalsNameTheFlag(t *testing.T) {
 	t.Parallel()
+	treeData, err := workfile.Encode(&workfile.Tree{Source: "github", Org: "o", Fetched: "2026-01-01T00:00:00Z"})
+	require.NoError(t, err)
+	tree := filepath.Join(t.TempDir(), "tree.lisp")
+	testkit.WriteFile(t, tree, string(treeData))
 	cases := []struct {
 		name string
 		args []string
@@ -212,6 +275,8 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 		{"bogus flag", []string{"import", "--bogus"}, []string{"IMPORT REFUSED", "unknown flag --bogus", "--org", "run: nova-work import -h"}},
 		{"bare verify", []string{"verify"}, []string{"VERIFY REFUSED", "--tree is required", "run: nova-work help"}},
 		{"bad max-bytes", []string{"verify", "--tree", "t.lisp", "--max-bytes", "0"}, []string{"--max-bytes must be positive"}},
+		{"two repos outside the tree org", []string{"verify", "--tree", tree, "--repo", "p/one", "--repo", "q/two"},
+			[]string{"--repo p/one is not in the tree's organization o", "--repo q/two is not in the tree's organization o"}},
 		{"unknown verb", []string{"frob"}, []string{"REFUSED", `unknown verb "frob"`, "import", "verify"}},
 		{"no verb", []string{}, []string{"REFUSED", "no verb given", "import", "verify", "run: nova-work help", "\n  NOTE " + preAlpha + "\n"}},
 	}
@@ -340,8 +405,10 @@ func TestVerifyAgainstASecondTreeReadsNoNetwork(t *testing.T) {
 	}
 }
 
-// TestStatusGrammar pins the standard's three words after the verb (OK, REFUSED,
-// FAILED; docs/STANDARD.md section 2) and their exit codes for every verb of nova-work.
+// TestStatusGrammar pins the standard's three words after the verb (OK,
+// REFUSED, FAILED; docs/STANDARD.md section 2) and their exit codes for every
+// verb of nova-work: OK is 0, FAILED (verify found differences) is 1, and a run
+// that could not go on, the budget included, is REFUSED at 2.
 func TestStatusGrammar(t *testing.T) {
 	t.Parallel()
 

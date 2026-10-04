@@ -1,7 +1,7 @@
 roles: bench,runner
 expect: ^GO PATH OK
 
-# NON-INTERACTIVE, deliberately: vision, space and mini had no go at all over plain ssh
+# NON-INTERACTIVE, deliberately: a machine, a machine and a machine had no go at all over plain ssh
 # (GOTOOLCHAIN=NOGO) while a login shell on each of them had one. The version must be at
 # least go.mod's `go` line, because a toolchain below it does not fail loudly -- it refuses
 # the module by name, and only if something is watching.

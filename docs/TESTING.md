@@ -22,7 +22,7 @@ packages the change touched, at most two cores a leg (`make test`, `GOTEST_P`),
 and it is done in under 1 s per test and 2 s per package (`nova-ci slowtests`,
 with `internal/ci/slow-tests_allowlist.txt` for the rows still being cut, each
 naming its measurement; the times are printed on every leg and enforced only on
-the nightly space legs, while a wall-clock wait in a unit test or a
+the nightly bench legs, while a wall-clock wait in a unit test or a
 `t.Skip("SLEEPS: ...")` missing from `internal/ci/sleeps-skips_allowlist.txt` is
 red on every leg). The
 unit tier's PATH holds a `redis-server` that refuses, so a test that needs a

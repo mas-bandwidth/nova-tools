@@ -50,6 +50,9 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	examples := usageExamples(t)
 	require.Len(t, examples, len(sitting), "want an open, an append, an index and a receipt example under `example:`, got %q", examples)
 	// One store for the whole first run: the examples are a sitting, not four.
+	// The documented `./cairns` is swapped for a real directory by whole field,
+	// so a store path this OS spells with a backslash reaches the tool as one
+	// argument instead of becoming escapes the shared splitter refuses.
 	store := filepath.Join(t.TempDir(), "cairns")
 	norms := []onboarding.Norm{onboarding.Path("./cairns", store), onboarding.Instant("stamp")}
 	for i, s := range sitting {

@@ -115,7 +115,7 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	original, ok := t.Resolve(*re)
 	if !ok {
-		fmt.Fprintf(stderr, "REPLY REFUSED: --re %s names no note on this bus; name one from your open list; run: nova-bus inbox --bus %s --as %s --receipt-max-words <n> --open\n", oneline.Field(*re), oneline.Escape(shellQuote(*busDir)), oneline.Escape(shellQuote(*as)))
+		fmt.Fprintf(stderr, "REPLY REFUSED: --re %s names no note on this bus; name one from your open list; run: nova-bus inbox --bus %s --as %s --receipt-max-words <n> --open\n", oneline.Field(*re), oneline.Escape(oneline.ShellWord(*busDir)), oneline.Escape(oneline.ShellWord(*as)))
 		return 2
 	}
 	prepared, err := bus.PrepareReplyFrom(t, me, original, body, now, hostName)

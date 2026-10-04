@@ -161,7 +161,7 @@ func everythingShown(t *testing.T, password string) []showing {
 		require.NoError(t, err, "Open with the password %q: %v", password, err)
 	}
 	trips := CountTrips(conn.Client())
-	refusal := conn.Client().LPush(WithTripLabel(ctx, "push"), "k", "v").Err()
+	refusal := conn.Client().LPush(ctx, "k", "v").Err()
 	out = append(out, showing{what: "the connection: String()", of: "the connection", text: conn.String()})
 	out = append(out, verbs("the connection", conn)...)
 	out = append(out, verbs("the connection, copied", *conn)...)
@@ -170,7 +170,7 @@ func everythingShown(t *testing.T, password string) []showing {
 	out = append(out, verbs("the client's options, copied", *conn.Client().Options())...)
 	out = append(out, verbs("the counter", trips)...)
 	out = append(out, plain("the counts by label", trips.ByLabel())...)
-	out = append(out, plain("the label of a context", TripLabel(WithTripLabel(ctx, "push")))...)
+	out = append(out, plain("the label of a context", TripLabel(ctx))...)
 	out = append(out, failed("Explain of the store's refusal", conn.Explain(refusal))...)
 	out = append(out, failed("Explain of a dropped connection", conn.Explain(fmt.Errorf("row add: %w", io.EOF)))...)
 	for _, s := range failed("Explain of an error that holds the password", conn.Explain(errors.New("the store said: auth bench "+password+" was refused"))) {

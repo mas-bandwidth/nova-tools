@@ -10,7 +10,7 @@ package main
 // HEAD`'s exit code, where the empty tree comes from `git hash-object -t tree
 // /dev/null` run inside the repository rather than a hard-coded constant;
 // SPEC.md:1005,1010 give the exit codes: 0 with a count of zero when nothing
-// classifiable is staged, 1 with `NOCODE FAIL <path>: <reason>` per path on
+// classifiable is staged, 1 with `NOCODE FAILED <path>: <reason>` per path on
 // stderr, 2 for every refusal.
 //
 // Every case drives the command line end to end through run(), over real
@@ -131,7 +131,7 @@ func stLab(t *testing.T) string {
 }
 
 // stLine returns the one line of stream that begins with prefix, so an OK or
-// FAIL line is asserted whole rather than as a substring that another line
+// FAILED line is asserted whole rather than as a substring that another line
 // could satisfy.
 func stLine(t *testing.T, stream, prefix string) string {
 	t.Helper()
@@ -178,12 +178,12 @@ func noCodeStagedClassifiesTheIndex(t *testing.T) {
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
 	require.EqualValues(t, 1, exit, "exit = %d, want 1 (the staged blob is the shebang); stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	{
-		want := "NOCODE FAIL runner: executable script (shebang)"
+		want := "NOCODE FAILED runner: executable script (shebang)"
 		assert.Contains(t, stderr, want, "stderr = %q,\nwant the staged shebang named: %q", stderr, want)
 	}
 	{
-		got, want := stLine(t, stderr, "NOCODE FAIL staged="), "NOCODE FAIL staged=1 findings=1 shown=1 deny-list=floor-list"
-		assert.EqualValues(t, want, got, "FAIL summary = %q, want %q", got, want)
+		got, want := stLine(t, stderr, "NOCODE FAILED staged="), "NOCODE FAILED staged=1 findings=1 shown=1 deny-list=floor-list"
+		assert.EqualValues(t, want, got, "FAILED summary = %q, want %q", got, want)
 	}
 	assert.NotContains(t, stdout, "NOCODE OK", "a failing run printed an OK line: %q", stdout)
 
@@ -249,7 +249,7 @@ func TestNoCodeStagedSaysNo(t *testing.T) {
 	noCodeStagedSaysNo(t)
 }
 
-// Any staged path classified as machinery is one `NOCODE FAIL <path>:
+// Any staged path classified as machinery is one `NOCODE FAILED <path>:
 // <reason>` line per path on stderr, exit 1, and no OK line anywhere; a clean
 // index prints the OK line on stdout (SPEC.md:1010,1013). The three staged
 // tells: the extension floor, a shebang with no extension and no executable
@@ -268,15 +268,15 @@ func noCodeStagedSaysNo(t *testing.T) {
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
 	require.EqualValues(t, 1, exit, "exit = %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	for _, want := range []string{
-		"NOCODE FAIL run.sh: code extension .sh (floor-list)",
-		"NOCODE FAIL runner: executable script (shebang)",
-		"NOCODE FAIL notes.txt: executable (index mode 100755)",
+		"NOCODE FAILED run.sh: code extension .sh (floor-list)",
+		"NOCODE FAILED runner: executable script (shebang)",
+		"NOCODE FAILED notes.txt: executable (index mode 100755)",
 	} {
 		assert.Contains(t, stderr, want, "stderr = %q,\nwant the per-path line: %q", stderr, want)
 	}
 	{
-		got, want := stLine(t, stderr, "NOCODE FAIL staged="), "NOCODE FAIL staged=3 findings=3 shown=3 deny-list=floor-list"
-		assert.EqualValues(t, want, got, "FAIL summary = %q, want %q", got, want)
+		got, want := stLine(t, stderr, "NOCODE FAILED staged="), "NOCODE FAILED staged=3 findings=3 shown=3 deny-list=floor-list"
+		assert.EqualValues(t, want, got, "FAILED summary = %q, want %q", got, want)
 	}
 	assert.EqualValues(t, "", stdout, "a failing run printed to stdout: %q", stdout)
 
@@ -457,7 +457,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	// arriving by reference: classified from its mode alone, its OID never
 	// read -- the one matching rule this mode adds to the audit's.
 	oexit, _, ostderr := runCheck(t, "nocode", "--staged", "--dir", outer)
-	assert.True(t, oexit == 1 && strings.Contains(ostderr, "NOCODE FAIL sub: submodule gitlink (machinery arriving by reference)"), "the staged gitlink exited %d, want 1 with the gitlink finding:\n%s", oexit, ostderr)
+	assert.True(t, oexit == 1 && strings.Contains(ostderr, "NOCODE FAILED sub: submodule gitlink (machinery arriving by reference)"), "the staged gitlink exited %d, want 1 with the gitlink finding:\n%s", oexit, ostderr)
 
 	// An unborn HEAD is gated like every later commit: the base detector
 	// reaches for the empty tree, and the shebang staged for the FIRST commit
@@ -467,7 +467,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	mustWrite(t, first, "runner", "#!/bin/sh\necho hi\n")
 	stGit(t, first, "add", "runner")
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", first)
-	require.True(t, exit == 1 && strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)"), "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.True(t, exit == 1 && strings.Contains(stderr, "NOCODE FAILED runner: executable script (shebang)"), "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
 
 	// The sha256 form: the empty tree is obtained inside the repository, never
 	// hard-coded. The sha1 constant 4b825dc6... names no object a sha256
@@ -481,7 +481,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	stGit(t, s256, "add", "runner")
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", s256)
 	require.NotEqualValues(t, 2, exit, "the unborn sha256 repository was refused; the empty tree was not obtained from inside it (a hard-coded sha1 constant does not exist there):\n%s", stderr)
-	require.True(t, exit == 1 && strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)"), "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.True(t, exit == 1 && strings.Contains(stderr, "NOCODE FAILED runner: executable script (shebang)"), "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
 	{
 		et := strings.TrimSpace(stGit(t, s256, "hash-object", "-t", "tree", os.DevNull))
 		require.NotEqualValues(t, "4b825dc642cb6eb9a060e54bf8d69288fbee4904", et, "this sha256 repository names the sha1 empty tree %q", et)
@@ -507,11 +507,11 @@ func TestFriendSequenceStagedAdvisoryCommit(t *testing.T) {
 	mustWrite(t, dir, "runner", "#!/bin/sh\necho hi\n")
 	stGit(t, dir, "add", "runner")
 
-	// The advisory names the staged shebang: exit 1, one FAIL line on stderr,
+	// The advisory names the staged shebang: exit 1, one FAILED line on stderr,
 	// and no OK line anywhere.
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
 	require.EqualValues(t, 1, exit, "the advisory over the staged script exited %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
-	require.Contains(t, stderr, "NOCODE FAIL runner: executable script (shebang)", "the advisory did not name the staged script:\n%s", stderr)
+	require.Contains(t, stderr, "NOCODE FAILED runner: executable script (shebang)", "the advisory did not name the staged script:\n%s", stderr)
 	// The advisory leaves the index exactly as it found it: the script is
 	// still staged, which is the state the friend acts on next. An advisory
 	// that mutated the index would decide the commit, not the friend.

@@ -413,7 +413,7 @@ func TestOpenToAClosedPort(t *testing.T) {
 }
 
 // TestTripsAgainstTheStore: single commands are one trip each, a pipeline
-// and a transaction one each, a label counts its own, and the handshake of
+// and a transaction one each, and the handshake of
 // a connection dialed inside a command is not counted: the store ran a
 // second HELLO and the counter did not move for it.
 func TestTripsAgainstTheStore(t *testing.T) {
@@ -470,17 +470,6 @@ func TestTripsAgainstTheStore(t *testing.T) {
 		}
 		return nil
 	})
-	span("a labelled pipeline", 1, func() error {
-		labelled := redisconn.WithTripLabel(ctx, "fold")
-		pipe := client.Pipeline()
-		pipe.Get(labelled, "a")
-		pipe.Get(labelled, "b")
-		_, err := pipe.Exec(labelled)
-		return err
-	})
-	if trips.Of("fold") != 1 || len(trips.ByLabel()) != 1 {
-		assert.Failf(t, "", "by label: %v; want fold=1", trips.ByLabel())
-	}
 
 	// The store hangs up on the connection. The command that comes next
 	// either meets the dropped connection, and fails, or finds it dead

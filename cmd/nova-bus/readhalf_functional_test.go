@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/stretchr/testify/require"
 )
 
@@ -384,13 +385,13 @@ func todayGolden(t *testing.T, name, checkout string, r result) {
 	t.Helper()
 	normal := func(s string) string {
 		// The QUOTED spelling first, then the bare one. wait's re-arm line prints every
-		// argument through the binary's own shellQuote, so on a platform whose temporary
-		// directory holds a character shellQuote acts on -- a Windows path's backslashes
+		// argument through oneline.ShellWord, so on a platform whose temporary
+		// directory holds a character ShellWord acts on -- a Windows path's backslashes
 		// and its RUNNER~1 tilde -- the bus arrives as '<path>' and replacing only the
 		// bare path left `--bus '<bus>'` against a golden that says `--bus <bus>`. The
 		// golden is the same bytes on every platform because BOTH spellings normalize to
 		// the same word; quoted first, because the bare path is a substring of it.
-		if q := shellQuote(checkout); q != checkout {
+		if q := oneline.ShellWord(checkout); q != checkout {
 			s = strings.ReplaceAll(s, q, "<bus>")
 		}
 		s = strings.ReplaceAll(s, checkout, "<bus>")

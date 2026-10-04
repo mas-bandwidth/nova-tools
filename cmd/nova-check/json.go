@@ -74,7 +74,7 @@ func renderLinks(w io.Writer, dir string, res check.LinksResult, max int) int {
 		out.Item("broken", "file", b.File, "line", b.Line, "target", b.Target, "reason", b.Reason)
 	}
 	if shown < len(res.Broken) {
-		out.More = []tool.More{{Kind: "broken", Shown: shown, Total: len(res.Broken), Remedy: failMaxRemedy}}
+		out.More = []tool.More{{Kind: "broken", Shown: shown, Total: len(res.Broken), Remedy: maxRemedy}}
 	}
 	if len(res.Broken) > 0 {
 		out.Status = tool.Failed
@@ -98,7 +98,7 @@ func appendFailures(out *tool.Out, kind string, failures []check.Failure, max in
 		out.Item(kind, "subject", f.Subject, "reason", f.Reason)
 	}
 	if shown < len(failures) {
-		out.More = append(out.More, tool.More{Kind: kind, Shown: shown, Total: len(failures), Remedy: failMaxRemedy})
+		out.More = append(out.More, tool.More{Kind: kind, Shown: shown, Total: len(failures), Remedy: maxRemedy})
 	}
 }
 
@@ -133,7 +133,7 @@ func renderSpelling(w io.Writer, dir string, res check.SpellingResult, v spellin
 		out.Item(kind, "file", f.File, "line", f.Line, "column", f.Column, "original", f.Original, "replacement", f.Replacement)
 	}
 	if shown < len(res.Findings) {
-		out.More = []tool.More{{Kind: kind, Shown: shown, Total: len(res.Findings), Remedy: failMaxRemedy}}
+		out.More = []tool.More{{Kind: kind, Shown: shown, Total: len(res.Findings), Remedy: maxRemedy}}
 	}
 	if v.failed {
 		out.Status = tool.Failed

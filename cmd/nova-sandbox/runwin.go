@@ -549,16 +549,15 @@ func wsbDocument(in wsbInput) string {
 // mapped path under C:\Users\WDAGUtilityAccount\Desktop, which is where Windows Sandbox
 // maps a <MappedFolder> by its host base name, and the status file is written there so the
 // HOST can read it through the same folder.
+//
+// The command is one STRING, so the arguments go through winCommandLine: an argument
+// made of several words joined raw reaches the child as two, and winCommandLine quotes
+// each argument the way the child's argv parse reverses.
 func wsbLogonCommand(in wsbInput) string {
 	guest := `C:\Users\WDAGUtilityAccount\Desktop\` + filepath.Base(in.Scratch)
 	var cmd strings.Builder
 	cmd.WriteString(`cmd.exe /c "`)
-	for i, a := range in.Argv {
-		if i > 0 {
-			cmd.WriteString(" ")
-		}
-		cmd.WriteString(a)
-	}
+	cmd.WriteString(winCommandLine(in.Argv))
 	// & not && : the status file is written whatever the command did, because an absent
 	// file is 124 and a failing command is not a timeout.
 	fmt.Fprintf(&cmd, ` & echo %%ERRORLEVEL%% > %s\%s"`, guest, wsbExitFile)

@@ -484,12 +484,21 @@ func (p *Proxy) forward(up net.Conn, queue <-chan held, done <-chan struct{}, en
 		if wait := h.due.Sub(p.clock.now()); wait > 0 && !p.clock.wait(done, wait) {
 			return
 		}
-		p.record(p.clock.now().Sub(h.at))
+		// The hold is measured before the write, but the write is counted only
+		// once the target has accepted all of it: a write that fails or comes
+		// up short (io.ErrShortWrite) ends the connection, and a chunk that did
+		// not reach the target is not a write the proxy forwarded.
+		hold := p.clock.now().Sub(h.at)
+		n, err := up.Write(h.data)
+		if err == nil && n != len(h.data) {
+			err = io.ErrShortWrite
+		}
 		// ignored: a target that cannot be written to ends the connection, which end() does; the client sees the hang-up
-		if _, err := up.Write(h.data); err != nil {
+		if err != nil {
 			end()
 			return
 		}
+		p.record(hold)
 	}
 }
 
