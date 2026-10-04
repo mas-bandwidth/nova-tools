@@ -61,6 +61,19 @@ func busCoverGoodLine(t Type, count int64, day string) string {
 	return BodyLine(day, "emma", "gemini", "schema", t, count, UTC)
 }
 
+// busCoverAll indexes notes the way ReadBus does, by the lane each was read from and its
+// id, which is the index the fold resolves predecessor sets through.
+func busCoverAll(ns ...*note) map[noteKey]*note {
+	all := map[noteKey]*note{}
+	for _, n := range ns {
+		if n == nil {
+			continue
+		}
+		all[noteKey{n.lane, n.id}] = n
+	}
+	return all
+}
+
 func TestBusCoverNearMissSubject(t *testing.T) {
 	t.Parallel()
 
@@ -420,10 +433,7 @@ func TestBusCoverBadPredecessors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			all := map[string]*note{}
-			if tc.pred != nil {
-				all[tc.pred.id] = tc.pred
-			}
+			all := busCoverAll(tc.pred)
 			got := badPredecessors(succ(tc.ids...), all)
 			if tc.want == "" {
 				assert.Empty(t, got, tc.name)
@@ -432,6 +442,14 @@ func TestBusCoverBadPredecessors(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("an id another lane claims does not refuse the owner's own note", func(t *testing.T) {
+		t.Parallel()
+
+		all := busCoverAll(cleanPred("ada", busCoverDay), cleanPred("zed", busCoverDay))
+		assert.Empty(t, badPredecessors(succ("ada-000000000001"), all),
+			"the own lane's claim is the predecessor; the other lane's claim is not")
+	})
 }
 
 func TestBusCoverLaneBasis(t *testing.T) {
@@ -507,7 +525,7 @@ func TestBusCoverFoldLane(t *testing.T) {
 		b := laneNote(t, busCoverSubjectDay("2026-09-12", ""), "ada-000000000002",
 			busCoverGoodLine(Input, 5, "2026-09-12"))
 		s := &Source{Label: Label(KindBus, "ada"), Kind: KindBus}
-		all := map[string]*note{a.id: a, b.id: b}
+		all := busCoverAll(a, b)
 		foldLane(s, "ada", []*note{b, a}, all)
 		require.Len(t, s.Stream, 2)
 		assert.Equal(t, busCoverDay, s.Stream[0].Day, "the days fold in order, whatever order the notes arrived in")
@@ -527,7 +545,7 @@ func TestBusCoverFoldLane(t *testing.T) {
 		succ := laneNote(t, busCoverSubject("supersedes=ada-000000000001"), "ada-000000000002",
 			busCoverGoodLine(Output, 5, busCoverDay))
 		s := &Source{Label: Label(KindBus, "ada"), Kind: KindBus}
-		all := map[string]*note{pred.id: pred, succ.id: succ}
+		all := busCoverAll(pred, succ)
 		foldLane(s, "ada", []*note{pred, succ}, all)
 		require.Len(t, s.Supersededs, 1)
 		assert.Equal(t, "ada-000000000001", s.Supersededs[0].Note)
@@ -547,7 +565,7 @@ func TestBusCoverFoldLane(t *testing.T) {
 		orph := laneNote(t, busCoverSubject("supersedes=ada-000000000009"), "ada-000000000001",
 			busCoverGoodLine(Input, 1, busCoverDay))
 		s := &Source{Label: Label(KindBus, "ada"), Kind: KindBus}
-		foldLane(s, "ada", []*note{orph}, map[string]*note{})
+		foldLane(s, "ada", []*note{orph}, busCoverAll())
 		require.Len(t, s.Unparseds, 1)
 		assert.Contains(t, s.Unparseds[0].Text, "no such note in this lane for this day: ada-000000000009")
 		assert.Contains(t, s.Unparseds[0].Text, "; send a correction whose subject carries supersedes=<id>")
@@ -561,7 +579,7 @@ func TestBusCoverFoldLane(t *testing.T) {
 		a := laneNote(t, busCoverSubject(""), "ada-000000000001", busCoverGoodLine(Input, 1, busCoverDay))
 		b := laneNote(t, busCoverSubject(""), "ada-000000000002", busCoverGoodLine(Input, 2, busCoverDay))
 		s := &Source{Label: Label(KindBus, "ada"), Kind: KindBus}
-		all := map[string]*note{a.id: a, b.id: b}
+		all := busCoverAll(a, b)
 		foldLane(s, "ada", []*note{a, b}, all)
 		require.Len(t, s.Conflicts, 1)
 		assert.Equal(t, busCoverDay, s.Conflicts[0].Day)
@@ -578,13 +596,57 @@ func TestBusCoverFoldLane(t *testing.T) {
 		b := laneNote(t, busCoverSubject("supersedes=ada-000000000001"), "ada-000000000002",
 			busCoverGoodLine(Input, 2, busCoverDay))
 		s := &Source{Label: Label(KindBus, "ada"), Kind: KindBus}
-		all := map[string]*note{a.id: a, b.id: b}
+		all := busCoverAll(a, b)
 		foldLane(s, "ada", []*note{a, b}, all)
 		require.Len(t, s.Unparseds, 2)
 		assert.Contains(t, s.Unparseds[0].Text, "a cycle")
 		assert.Contains(t, s.Unparseds[1].Text, "a cycle")
 		assert.Empty(t, s.Stream)
 	})
+}
+
+// A note another lane holds under an id the lane owner also chose must not refuse the
+// owner's own correction: the predecessor a supersedes= names is the successor's lane's
+// business, resolved there first (security#75 finding 3).
+func TestBusAPlantedNoteIdInAnotherLaneDoesNotRefuseTheOwnersCorrection(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	roster := `{"participants":[{"name":"Alice","lane":"from-alice"},{"name":"Bob","lane":"from-bob"}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "participants.json"), []byte(roster), 0o644))
+	aliceDir := filepath.Join(dir, "from-alice")
+	require.NoError(t, os.MkdirAll(aliceDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(aliceDir, "alice-aaaaaaaaaaaa.md"), []byte(
+		busCoverNoteText(busCoverSubject(""), "alice-aaaaaaaaaaaa", busCoverStamp(),
+			busCoverGoodLine(Input, 1234, busCoverDay))), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(aliceDir, "alice-bbbbbbbbbbbb.md"), []byte(
+		busCoverNoteText(busCoverSubject("supersedes=alice-aaaaaaaaaaaa"), "alice-bbbbbbbbbbbb",
+			busCoverStamp(), busCoverGoodLine(Input, 4321, busCoverDay))), 0o644))
+	bobDir := filepath.Join(dir, "from-bob")
+	require.NoError(t, os.MkdirAll(bobDir, 0o755))
+	// A hand-planted file in another lane whose Id: header carries the owner's id.
+	require.NoError(t, os.WriteFile(filepath.Join(bobDir, "bob-cccccccccccc.md"), []byte(
+		busCoverNoteText(busCoverSubject(""), "alice-aaaaaaaaaaaa", busCoverStamp(),
+			busCoverGoodLine(Input, 7, busCoverDay))), 0o644))
+
+	got := ReadBus(dir, os.DirFS(dir), busCoverRules(t), busCoverAt)
+	require.Len(t, got, 2)
+	alice, bob := got[0], got[1]
+	assert.Empty(t, alice.Unparseds, "another lane's planted id does not refuse the owner's correction")
+	assert.Empty(t, alice.Conflicts)
+	require.Len(t, alice.Stream, 1)
+	v, ok := alice.Stream[0].Counts.Get(Input)
+	assert.True(t, ok, "the correction folds a line")
+	assert.EqualValues(t, 4321, v, "the lane-day shows the corrected counts, not the first note's")
+	require.Len(t, alice.Supersededs, 1)
+	assert.Equal(t, "alice-aaaaaaaaaaaa", alice.Supersededs[0].Note)
+	assert.Equal(t, "alice-bbbbbbbbbbbb", alice.Supersededs[0].By)
+	assert.Equal(t, busCoverDay, alice.Supersededs[0].Day)
+	assert.Equal(t, 1, alice.Stat.Superseded)
+	require.Len(t, bob.Stream, 1)
+	bv, ok := bob.Stream[0].Counts.Get(Input)
+	assert.True(t, ok, "the planted note folds in the lane that holds it")
+	assert.EqualValues(t, 7, bv)
 }
 
 func TestBusCoverReadBus(t *testing.T) {

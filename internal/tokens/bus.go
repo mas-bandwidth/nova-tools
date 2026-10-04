@@ -184,6 +184,14 @@ type note struct {
 // predecessor must be and what a successor must be before it replaces anything.
 func (n *note) clean() bool { return n.dead == nil && len(n.lineErrs) == 0 }
 
+// noteKey is where a note lives in the bus's index: the lane it was read from and the id
+// its own lane gave it. The id is the lane owner's choice, so two lanes can carry the same
+// one, and a note another lane holds under a borrowed id must not win the slot in this
+// lane's chain (security#75 finding 3).
+type noteKey struct {
+	lane, id string
+}
+
 // ReadBus reads every lane the roster names and returns ONE source per lane, because the
 // label of a self-report is the lane owner's name whatever the `who` field of a line
 // inside it says. The lanes are read through the caller's fs.FS, rooted at dir
@@ -199,7 +207,7 @@ func ReadBus(dir string, fsys fs.FS, rules *Rules, at time.Time) []*Source {
 
 	// Every tokens note on the bus, first, because a successor may name a note in
 	// another lane or for another day and the refusal has to be able to say which.
-	all := map[string]*note{}
+	all := map[noteKey]*note{}
 	byLane := map[string][]*note{}
 	sources := map[string]*Source{}
 	for _, name := range roster {
@@ -237,7 +245,7 @@ func ReadBus(dir string, fsys fs.FS, rules *Rules, at time.Time) []*Source {
 			if n == nil {
 				continue
 			}
-			all[n.id] = n
+			all[noteKey{name, n.id}] = n
 			byLane[name] = append(byLane[name], n)
 		}
 	}
@@ -448,7 +456,7 @@ func parseBody(n *note, label string, body []string, offset int, rules *Rules) {
 
 // foldLane resolves one lane's notes: the predecessor sets, the chains, the tips, and the
 // one conflict that folds nothing.
-func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
+func foldLane(s *Source, lane string, notes []*note, all map[noteKey]*note) {
 	label := Label(KindBus, lane)
 
 	// Validate every successor's predecessor set, to a fixed point: a successor whose
@@ -465,9 +473,15 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 			}
 		}
 	}
-	// A cycle at any length, through any member, refuses every note on it.
+	// A cycle at any length refuses every note on it. The walk follows the lane's own
+	// chain: a clean note's predecessors all resolved in this lane (badPredecessors), so
+	// the notes here, keyed by id, are the whole graph the walk can reach.
+	laneAll := map[string]*note{}
 	for _, n := range notes {
-		if n.dead == nil && onCycle(n, all, map[string]bool{}) {
+		laneAll[n.id] = n
+	}
+	for _, n := range notes {
+		if n.dead == nil && onCycle(n, laneAll, map[string]bool{}) {
 			n.dead = &Unparsed{Label: label, Note: n.id, Line: n.subjectLine,
 				Text: "a cycle: this note's predecessor set reaches itself; send a correction whose subject carries supersedes=<id>"}
 		}
@@ -561,15 +575,27 @@ func laneBasis(zones map[string]bool) string {
 }
 
 // badPredecessors names why a successor's predecessor set is refused, or returns the empty
-// string. Every member is checked before anything is replaced.
-func badPredecessors(n *note, all map[string]*note) string {
+// string. Every member is checked before anything is replaced. A predecessor is looked up
+// in the successor's own lane first: the id is the lane owner's choice, so a note another
+// lane holds under the same id must not refuse the owner's correction (security#75 finding
+// 3). Only when the own lane has no such note is the bus scanned, the last roster lane to
+// claim the id being the one an id-only slot would have kept, so the refusal still names
+// the lane it found.
+func badPredecessors(n *note, all map[noteKey]*note) string {
 	for _, id := range n.subject.supersedes {
-		p, ok := all[id]
-		switch {
-		case !ok:
-			return "no such note in this lane for this day: " + id
-		case p.lane != n.lane:
+		p, ok := all[noteKey{n.lane, id}]
+		if !ok {
+			for k, q := range all {
+				if k.id == id && k.lane != n.lane && (p == nil || k.lane > p.lane) {
+					p, ok = q, true
+				}
+			}
+			if !ok {
+				return "no such note in this lane for this day: " + id
+			}
 			return "the predecessor " + id + " is a note of another lane (from-" + p.lane + ")"
+		}
+		switch {
 		case p.subject.day != n.subject.day:
 			return "the predecessor " + id + " is a note for another day (" + p.subject.day + ")"
 		case !p.clean():
