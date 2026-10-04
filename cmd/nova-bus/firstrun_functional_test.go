@@ -66,7 +66,7 @@ func firstTrialBus(t *testing.T) (dir, busPath string) {
 	setup, err := documentedSetup(string(raw))
 	require.NoError(t, err)
 	checkout := filepath.Join(t.TempDir(), "checkout")
-	copyTree(t, filepath.Join("testdata", "example-bus"), filepath.Join(checkout, "cmd", "nova-bus", "testdata", "example-bus"))
+	require.NoError(t, os.CopyFS(filepath.Join(checkout, "cmd", "nova-bus", "testdata", "example-bus"), os.DirFS(filepath.Join("testdata", "example-bus"))), "copying the example bus")
 	sh := exec.Command("sh", "-ec", setup+"\npwd")
 	sh.Dir = checkout
 	sh.Env = append(sh.Environ(),
