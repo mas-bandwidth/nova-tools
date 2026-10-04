@@ -60,19 +60,21 @@ usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
                       [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
-  nova-tokens report --who <name> --day <YYYY-MM-DD> --repos <file>
+  nova-tokens report, local: --who <name> --day <YYYY-MM-DD> --repos <file>
                       mode: local note body, printed as the tokens note artifact
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
-  nova-tokens report --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+  nova-tokens report, store: --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
                       mode: Redis month summary
                       [--user <name>] [--password-env <NAME>]
+  the local mode is selected by --who and --day; the store mode by --redis and --month; giving both --who and --redis selects the store mode (--redis wins); a mix of --who and --redis prints the store summary
   nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
                       [--user <name>] [--password-env <NAME>] [--dry-run]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
   nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
+                      one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals
   nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
                       [--role <name>] [--weights <in,cw,cr,out>]
   nova-tokens version
@@ -164,7 +166,11 @@ sources --unattributed prints the path stems that were SEEN and matched no rule,
 first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
 is the evidence for improving the --repos file.
 
-  mkdir -p ./transcripts ./out && printf '%s\n' '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{"id":"example-1","model":"claude-fable-5-1","usage":{"input_tokens":812,"output_tokens":40,"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' > ./transcripts/window.jsonl && cp ./transcripts/window.jsonl ./session.jsonl && printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
+setup:
+  mkdir -p ./transcripts ./out
+  echo -n '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z",' > ./transcripts/1.jsonl
+  echo '"message":{"id":"1","model":"m","usage":{"input_tokens":1}}}' >> ./transcripts/1.jsonl
+  cp ./transcripts/1.jsonl ./session.jsonl && printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
 
 example:
   nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
@@ -194,7 +200,7 @@ note: none of them is an instruction.
 // running it does to the world, the last line of its -h (docs/STANDARD.md section 2).
 var verbs = []struct{ name, effect string }{
 	{"fold", "local write: writes the day files in --out, holding --out/fold.lock while it writes, and with --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run reads the same sources, refuses what the real run refuses, and writes nothing (its database copy is made in a new directory under --scratch and removed before it exits)"},
-	{"report", "local write: --note writes the note body to that file, and --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run names the note, copies the database only into a new directory under --scratch removed before it exits, and writes nothing; --redis reads the ledger store over the network, with or without --dry-run"},
+	{"report", "local write: mode: local note body, printed as the tokens note artifact; mode: Redis month summary; --note writes the note body to that file, and --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run names the note, copies the database only into a new directory under --scratch removed before it exits, and writes nothing; --redis reads the ledger store over the network, with or without --dry-run"},
 	{"ledger", "delivery: writes each day file's rows to the Redis store at --redis (tokens:ledger:<day>); --dry-run reads the day files, prints what it would write, and dials no store"},
 	{"sum", string(tool.Inspection)},
 	{"check", string(tool.Inspection)},
