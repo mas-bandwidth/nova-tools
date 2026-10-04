@@ -26,6 +26,11 @@ type Fake struct {
 	seq     int64
 	// Fail, when set, is the error every command answers: a store that is down.
 	Fail error
+	// Sleep, when set, is how a BlockRead that finds nothing past its cursor
+	// waits out the block it was given: a test advances its own clock and
+	// returns, so no test waits real time (the entries a test adds inside it
+	// are read by the verb's next call). Unset, the block answers at once.
+	Sleep func(d time.Duration)
 	// Trips counts the commands sent.
 	Trips int
 }
@@ -226,6 +231,51 @@ func (f *Fake) Get(_ context.Context, stream string, entries []string) ([]Entry,
 		}
 	}
 	return out, nil
+}
+
+// Tail is the stream's last entry id, as the wait arms at it; a stream with
+// no entries is "0-0", as the store answers (SPEC-BUS.md, the verbs: wait).
+func (f *Fake) Tail(_ context.Context, stream string) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return "", false, err
+	}
+	es, ok := f.streams[stream]
+	if !ok {
+		return "", false, nil
+	}
+	if len(es) == 0 {
+		return "0-0", true, nil
+	}
+	return es[len(es)-1].Entry, true, nil
+}
+
+// BlockRead is the entries past the cursor after, up to count, answering at
+// once; with none it waits the block out on Sleep, the test's clock, never
+// real time. It touches no group, so what it hands out stays a later recv's
+// (SPEC-BUS.md, the verbs: wait).
+func (f *Fake) BlockRead(_ context.Context, stream, from string, block time.Duration, count int) ([]Entry, error) {
+	f.mu.Lock()
+	if err := f.trip(); err != nil {
+		f.mu.Unlock()
+		return nil, err
+	}
+	var out []Entry
+	for _, e := range f.streams[stream] { // stream order is id order
+		if after(e.Entry, from) && (count <= 0 || len(out) < count) {
+			out = append(out, e)
+		}
+	}
+	sleep := f.Sleep
+	f.mu.Unlock()
+	if len(out) > 0 {
+		return out, nil
+	}
+	if sleep != nil {
+		sleep(block) // the test's clock moves; entries may arrive in it, and a block of 0 parks on the hook
+	}
+	return nil, nil
 }
 
 // after reports whether entry id a is greater than b (<ms>-<seq>, numerically).

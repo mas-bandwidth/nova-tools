@@ -158,6 +158,17 @@ type Store interface {
 	// Get is the named entries of the stream, in one trip (a pipeline of XRANGE
 	// id id); an id that is not there is left out.
 	Get(ctx context.Context, stream string, entries []string) ([]Entry, error)
+	// Tail is the stream's last entry id and whether the stream is there at
+	// all (XINFO STREAM's last-generated-id, "0-0" for an empty one): the
+	// cursor a wait arms at when the caller gives none (SPEC-BUS.md, the
+	// verbs: wait).
+	Tail(ctx context.Context, stream string) (last string, exists bool, err error)
+	// BlockRead hands up to count entries of the stream lying past the id
+	// after (XREAD), waiting up to block for one when block is above zero (0
+	// is for ever), else answering at once. It never touches the consumer
+	// group, so what it hands out is still a later recv's to deliver and ack
+	// (SPEC-BUS.md, the verbs: wait).
+	BlockRead(ctx context.Context, stream, after string, block time.Duration, count int) ([]Entry, error)
 }
 
 // Bus is the rules over a Store.
@@ -348,6 +359,83 @@ func (b *Bus) Peek(ctx context.Context, as string) (pending, fresh []Entry, err 
 
 // logLimit bounds one read of the log; the caller caps what it shows.
 const logLimit = 10000
+
+// WaitMax bounds the message lines one wait prints (SPEC-BUS.md, the verbs:
+// wait); the entries past them stay for the next run.
+const WaitMax = 5
+
+// WaitRead bounds the entries one blocking read of a wait takes: one batch
+// holds the skipped and the counted of one burst, and the decision over it
+// is one pure function (SPEC-BUS.md, the verbs: wait).
+const WaitRead = 100
+
+// WaitPick is the wait's decision over one batch of entries, a pure function
+// (SPEC-BUS.md, the verbs: wait): the first WaitMax entries not from me whose
+// subject starts with none of skips (matched without case), in order, and the
+// cursor past every entry the walk saw -- a skipped entry moves it -- so a
+// caller that re-arms with it misses nothing between runs. The walk stops at
+// the WaitMax-th entry that counts, and the entries after it stay for the
+// next run.
+func WaitPick(entries []Entry, me string, skips []string) (kept []Entry, after string) {
+	prefixes := make([]string, len(skips))
+	for i, s := range skips {
+		prefixes[i] = strings.ToLower(s)
+	}
+	for _, e := range entries {
+		m := e.Message()
+		if m.From == me || hasPrefix(m.Subject, prefixes) {
+			after = e.Entry // a skipped entry moves the cursor and is not printed
+			continue
+		}
+		kept = append(kept, e)
+		if len(kept) == WaitMax {
+			return kept, e.Entry
+		}
+		after = e.Entry
+	}
+	return kept, after
+}
+
+// hasPrefix is whether the subject starts with one of the prefixes, without
+// case.
+func hasPrefix(subject string, prefixes []string) bool {
+	s := strings.ToLower(subject)
+	for _, p := range prefixes {
+		if p != "" && strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// WaitArm is the cursor a wait on as starts from: after when given (the
+// stream's tail is not read), else the stream's last entry id read once
+// ("0-0" when the stream is not there). A name the roster does not hold is
+// refused, never given a stream to wait on (SPEC-BUS.md, the semantics), as
+// recv refuses one.
+func (b *Bus) WaitArm(ctx context.Context, as, after string) (string, error) {
+	if p := CheckName(as); p != "" {
+		return "", &Refusal{[]string{p}}
+	}
+	names, _, err := b.Store.Roster(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !slices.Contains(names, as) {
+		return "", &Refusal{[]string{unknown(as)}}
+	}
+	if after != "" {
+		return after, nil
+	}
+	tail, exists, err := b.Store.Tail(ctx, StreamOf(as))
+	if err != nil {
+		return "", err
+	}
+	if !exists || tail == "" {
+		return "0-0", nil
+	}
+	return tail, nil
+}
 
 // Log is the log's messages from the entry id from ("-" for its start),
 // oldest first, up to logLimit of them.
