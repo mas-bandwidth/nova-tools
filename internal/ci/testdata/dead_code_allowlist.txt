@@ -25,7 +25,6 @@ internal/ntable 17
 internal/pkgselect 22
 internal/redisconn 1
 internal/redisfn 9
-internal/release 1
 internal/sandbox 1
 internal/seatcred 1
 internal/secrets 22
