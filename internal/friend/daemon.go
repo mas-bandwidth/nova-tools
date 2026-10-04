@@ -271,6 +271,7 @@ type loop struct {
 	saidNoLanes  bool
 	dealt        []string // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
 	wake         bool     // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	saidRefusal  string   // the card runner's refusal last recorded, "" when it runs
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -443,7 +444,9 @@ func (l *loop) idle(now time.Time) {
 
 // row is the mode and width the daemon delivers by: the friend's row when
 // Row says it (one-shot needs a harness that opens sessions, LaneHarness,
-// else the daemon delivers in batch and says why once), else batch at Width.
+// else the daemon delivers in batch and says why once; or a CardRunner that
+// can run a card, else its refusal is recorded once and nothing runs), else
+// batch at Width.
 func (l *loop) row(now time.Time) (mode string, width int) {
 	d := l.d
 	mode, width = ModeBatch, d.Width
@@ -460,6 +463,17 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		width = 1
 	}
 	d.status.Width = width
+	if runner, ok := d.Deliver.(CardRunner); ok && mode == ModeOneShot {
+		// a lane per card process: refused, with its remedy, until it can run one
+		why := runner.Refusal()
+		if why != "" && why != l.saidRefusal {
+			d.Record(now.UTC().Format(time.RFC3339) + " mode: one-shot REFUSED: " + why + "; no lane runs")
+		}
+		if l.saidRefusal = why; why != "" {
+			mode = ModeBatch
+		}
+		return mode, width
+	}
 	if mode == ModeOneShot {
 		if _, ok := d.Deliver.(LaneHarness); !ok || l.passive {
 			if !l.saidNoLanes {
