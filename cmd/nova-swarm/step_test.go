@@ -18,7 +18,7 @@ import (
 // benchPasswdHome), so the test never sets HOME and runs in parallel.
 func TestStepReadsGrantsTheToolchainFromTheBenchHomeWhenProcessHomeIsTheSlot(t *testing.T) {
 	t.Parallel()
-	slot := t.TempDir()
+	slot := t.TempDir() // the process HOME of a script step; stepReads takes the bench home as an argument and never reads it
 	home := t.TempDir()
 	sdk := filepath.Join(home, "sdk")
 	require.NoError(t, os.MkdirAll(sdk, 0o755))
