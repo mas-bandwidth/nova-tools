@@ -471,7 +471,8 @@ func TestOnlyFCALLOnARealClient(t *testing.T) {
 			serving.Add(once)
 			go func() {
 				defer serving.Done()
-				defer far.Close()
+				// ignored: the pipe's far end after the client hangs up; the test's own assertions are the report
+				defer func() { _ = far.Close() }()
 				serveCounted(far, &wire)
 			}()
 			return near, nil

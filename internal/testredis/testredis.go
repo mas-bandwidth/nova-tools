@@ -319,7 +319,8 @@ func ping(addr string, until time.Time) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	// ignored: the probe's answer is the read below; a close error on a one-shot connection has nothing left to say
+	defer func() { _ = conn.Close() }()
 	bound := conn.SetDeadline(until)
 	_, sent := io.WriteString(conn, "PING\r\n")
 	line, read := bufio.NewReader(conn).ReadString('\n')
