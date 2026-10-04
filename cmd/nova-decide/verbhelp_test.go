@@ -71,10 +71,12 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		}
 		require.NotEmpty(t, ask, "the example block holds no ask line")
 		// The how text shows the lines the recorded ask printed, byte for
-		// byte, compared by the one comparator (SPEC-TOOLWORK.md rule 6).
+		// byte, compared by the one comparator (SPEC-TOOLWORK.md documents
+		// rule 2; rule 6 holds the example lines to it).
 		shown := shownResultLines(help)
 		require.Len(t, shown, 2, "the how text shows the two lines a recorded ask prints")
-		assert.Empty(t, onboarding.Compare(onboarding.Step{Line: ask, Want: shown}, onboarding.Result{Code: 0, Stdout: askOut}, nil),
+		doc := []onboarding.Step{{Line: ask, Want: shown}}
+		assert.Empty(t, onboarding.CompareTranscript(doc, []onboarding.Result{{Code: 0, Stdout: askOut}}, nil),
 			"the lines the how text shows are not the lines a recorded ask prints")
 	})
 
