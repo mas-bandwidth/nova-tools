@@ -42,7 +42,7 @@ func TestParseRefusesExtraPlatformSeparators(t *testing.T) {
 		name string
 		line string
 		want buildinfo.Fields
-	} {
+	}{
 		{
 			name: "one separator: the canonical linux pair",
 			line: "nova-example " + stamp + " linux/amd64 go1.27.1",
