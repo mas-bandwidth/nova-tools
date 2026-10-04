@@ -146,6 +146,15 @@ type PromotedReq struct {
 
 var shaWord = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
+// PromotedSha is the sha a promotion names, lower cased, or why it is not one.
+func PromotedSha(given string) (string, string) {
+	sha := strings.ToLower(strings.TrimSpace(given))
+	if !shaWord.MatchString(sha) {
+		return "", "--sha wants the merge commit's sha, 7 to 40 hex digits; found " + orDash(given)
+	}
+	return sha, ""
+}
+
 // Promoted records the promotion (nova-sprint promoted --sha <merge sha>): the coordinator's
 // alone; the sha is 7 to 40 hex digits. It writes the work table's PropPromotedAt and
 // PropPromotedSha and closes the judgment "dev is behind"; the next tick counts landings
@@ -156,9 +165,9 @@ func Promoted(s *Snapshot, r PromotedReq) Plan {
 		p.refuse("promoted", strings.Replace(w, "answers a judgment, which is", "is", 1))
 		return p
 	}
-	sha := strings.ToLower(strings.TrimSpace(r.Sha))
-	if !shaWord.MatchString(sha) {
-		p.refuse("promoted", "--sha wants the merge commit's sha, 7 to 40 hex digits; found "+orDash(r.Sha))
+	sha, why := PromotedSha(r.Sha)
+	if why != "" {
+		p.refuse("promoted", why)
 		return p
 	}
 	now := stamp(s.Now)

@@ -38,6 +38,7 @@ var verbExit = map[string]string{
 var verbEffect = map[string]string{
 	"handover":    "inspection: reads the store, writes nothing",
 	"needs":       "inspection: reads the waiting cards, writes nothing",
+	"promoted":    "local write: records the promotion in the sprint's store; --dry-run writes nothing",
 	"preflight":   "inspection: reads the briefs, the table and the repository, writes nothing",
 	"dashboard":   "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
 	"coordinator": "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",

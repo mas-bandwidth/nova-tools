@@ -2528,6 +2528,7 @@ func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("promoted")
 	sha := fs.String("sha", "", "the merge commit's sha on dev, 7 to 40 hex digits (required)")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+	dry := fs.Bool("dry-run", false, "check the sha and say what would be recorded; record nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "promoted", err.Error())
@@ -2538,6 +2539,14 @@ func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "promoted", err.Error())
+	}
+	if *dry {
+		sha, why := sprint.PromotedSha(*sha)
+		if why != "" {
+			return refuse(stderr, "promoted", why)
+		}
+		fmt.Fprintf(stdout, "PROMOTED DRY-RUN sha=%s; nothing was changed\n", sha)
+		return 0
 	}
 	return a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: *sha, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
 }
