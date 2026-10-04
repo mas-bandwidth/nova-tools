@@ -135,5 +135,8 @@ OnlyCurrentNonceAnswers ==
 \* No liveness is claimed: the clock is finite here, and DeafAfterWindow
 \* already says an open challenge is younger than a window at every state,
 \* so once the clock moves a window it is answered or deaf.
+\* This Spec is the awake challenge projection, including A2 RepeatPing.
+\* MCFriendSleep.tla separately defines SleepSpec for sleep/delivery safety;
+\* neither projection alone proves their cross-layer Go daemon integration.
 
 =============================================================================
