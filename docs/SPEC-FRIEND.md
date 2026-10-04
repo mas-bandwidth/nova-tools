@@ -23,17 +23,22 @@ makes the friend up.
   that dies mid-turn is handed the message again once its claim opens, fifteen
   minutes after the read (`ClaimAfter`, SPEC-BUS2.md: longer than the longest
   turn, so a live daemon mid-turn is never handed its message twice).
-- The files, under the friend's working directory, one writer each:
-  `.nova-friend/status.json` (the daemon: its state, rewritten whole every five
-  seconds and when it changes; a reader calls the daemon up while the file is
-  under thirty seconds old), `.nova-friend/pong.json` (the `pong` verb: the
-  session's last answer), `.nova-friend/deliver.log` (the daemon: one line per
-  delivery), `inbox/QUEUE.json` (the coordinator and the session: one record
-  per task with `id`, `state` of queued, working or done, and `deliverable`).
+- The files, one writer each. The state files live in the state directory,
+  `~/.nova-friend/<friend>` under the home directory unless `--state-dir` names
+  another, never on the friend's volume (a background process on this platform
+  may not touch a removable volume without the person's permission; measured
+  2026-10-04, the mkdir refused with "operation not permitted"): `status.json`
+  (the daemon: its state, rewritten whole every five seconds and when it
+  changes; a reader calls the daemon up while the file is under thirty seconds
+  old), `pong.json` (the `pong` verb: the session's last answer), `deliver.log`
+  (the daemon: one line per delivery). The queue file is under the friend's
+  working directory: `inbox/QUEUE.json` (the coordinator and the session: one
+  record per task with `id`, `state` of queued, working or done, and
+  `deliverable`).
 - The launchd agent `com.nova.friend-<friend>`: RunAtLoad, KeepAlive, a five
   second throttle. launchd opens its own log before the daemon runs and cannot
   open one on a network volume (EX_CONFIG, measured 2026-10-03), so that log
-  is under the home directory; the daemon's record is on the friend's volume.
+  is under the home directory, beside the state directory.
 
 ## The protocol
 
@@ -110,9 +115,9 @@ the daemon, and a plain `touch` launchd starts, both refused with "operation
 not permitted" where the same commands from a shell succeed, and tccd logged
 the access request). The permission is granted to the binary in the system's
 privacy settings, by the person, never by the tool, and a rebuilt binary is a
-new one to it. Until it is granted the daemon beats and answers the daemon
-pong but can neither write its state files on the volume nor run the harness
-there; the record says so once a minute.
+new one to it. The state files are out of its way, under the home directory;
+until it is granted the daemon beats and answers the daemon pong but cannot
+run the harness on the volume, and the record says so.
 
 The server side of the ping (the coordinator pinging every friend each window
 from the sprint's run loop, and the table's `awake` and `deaf` columns) is not

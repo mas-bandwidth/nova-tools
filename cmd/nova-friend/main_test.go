@@ -87,7 +87,7 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		{"ping bad since", []string{"ping", "--as", "ada", "--to", "bob", "--since", "yesterday"}, []string{"--since wants an RFC3339 instant"}},
 		{"ping unknown friend", []string{"ping", "--as", "ada", "--to", "zed"}, []string{"zed is no known name", "nova-config friend add zed"}},
 		{"pong nothing given", []string{"pong"}, []string{"--as is required", "--nonce is required"}},
-		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--dir", t.TempDir()}, []string{"--to is required", "no ping has named a seat yet"}},
+		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--state-dir", t.TempDir()}, []string{"--to is required", "no ping has named a seat yet"}},
 		{"wait-pong nothing given", []string{"wait-pong"}, []string{"--from is required", "--nonce is required"}},
 		{"status nothing given", []string{"status"}, []string{"--as is required", "--dir is required"}},
 	}
@@ -110,7 +110,7 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
-	dir := t.TempDir()
+	state := friend.DefaultStateDir(r.home, "bob")
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(1).Err("WAIT-PONG NONE daemon=false: no pong abc123 from bob within 3s")
 
 	sent := cli.Do(t, "ping", "--as", "ada", "--to", "bob", "--nonce", "abc123").Exit(0).Out("PING OK nonce=abc123 id=", " to=bob at=2026-10-04T03:00:", "NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123")
@@ -124,9 +124,9 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	assert.Contains(t, m.Body, "nova-friend pong --as <you> --nonce abc123")
 	cli.Do(t, "ping", "--as", "ada", "--to", "bob").Exit(0).Out("PING OK nonce=r4nd0m")
 
-	// the session answers, naming the coordinator since no daemon has recorded a seat in dir
-	cli.Do(t, "pong", "--as", "bob", "--nonce", "abc123", "--dir", dir, "--to", "ada", "--queue", "2", "--working", "1", "--width", "4").Exit(0).Out("PONG OK nonce=abc123 to=ada id=")
-	p, found, err := friend.ReadPong(dir)
+	// the session answers, naming the coordinator since no daemon has recorded a seat; the pong file goes under the home directory
+	cli.Do(t, "pong", "--as", "bob", "--nonce", "abc123", "--to", "ada", "--queue", "2", "--working", "1", "--width", "4").Exit(0).Out("PONG OK nonce=abc123 to=ada id=")
+	p, found, err := friend.ReadPong(state)
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "abc123", p.Nonce)
@@ -144,11 +144,14 @@ func TestPongCarriesTheDaemonsNameAndTheSeatItRecorded(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
-	dir := t.TempDir()
-	require.NoError(t, friend.WriteStatus(dir, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1"}))
-	cli.Do(t, "pong", "--as", "ada", "--nonce", "n1", "--dir", dir).Exit(2).Err("PONG REFUSED: the daemon in " + dir + " runs as bob, not ada")
-	cli.Do(t, "pong", "--as", "bob", "--nonce", "n1", "--dir", dir).Exit(0).Out("PONG OK nonce=n1 to=ada")
-	cli.Do(t, "status", "--as", "ada", "--dir", dir).Exit(2).Err("runs as bob, not ada")
+	state := t.TempDir()
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1"}))
+	cli.Do(t, "pong", "--as", "ada", "--nonce", "n1", "--state-dir", state).Exit(2).Err("PONG REFUSED: the daemon whose state is in " + state + " runs as bob, not ada")
+	cli.Do(t, "pong", "--as", "bob", "--nonce", "n1", "--state-dir", state).Exit(0).Out("PONG OK nonce=n1 to=ada")
+	cli.Do(t, "status", "--as", "ada", "--dir", "/w/ada", "--state-dir", state).Exit(2).Err("runs as bob, not ada")
+	// the default state directory is under the home directory, by name
+	require.NoError(t, friend.WriteStatus(friend.DefaultStateDir(r.home, "bob"), friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada"}))
+	cli.Do(t, "pong", "--as", "bob", "--nonce", "n2").Exit(0).Out("PONG OK nonce=n2 to=ada")
 }
 
 func TestStatusReadsTheThreeFiles(t *testing.T) {
@@ -156,9 +159,10 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	dir := t.TempDir()
-	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).Err("STATUS NONE: no daemon has run in "+dir, "nova-friend install --as bob")
-	require.NoError(t, friend.WriteStatus(dir, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
-	require.NoError(t, friend.WritePong(dir, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
+	state := friend.DefaultStateDir(r.home, "bob")
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).Err("STATUS NONE: no daemon has run as bob (no status file in "+state+")", "nova-friend install --as bob --harness <h> --dir "+dir)
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
+	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
@@ -218,7 +222,8 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	var out, errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--width", "4"}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
-	s, found, err := friend.ReadStatus(dir)
+	assert.NoDirExists(t, filepath.Join(dir, ".nova-friend"), "nothing of the daemon's on the friend's volume")
+	s, found, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "bob", s.Friend)

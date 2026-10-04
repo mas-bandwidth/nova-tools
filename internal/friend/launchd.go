@@ -13,6 +13,7 @@ import (
 // never started by the model (SPEC-FRIEND.md, the daemon).
 type Agent struct {
 	Friend, Harness, Dir, Session string
+	StateDir                      string // the daemon's state files, when not the default under Home
 	Width                         int
 	Binary                        string // this tool, by absolute path
 	Redis, Server                 string // the bus store and the sprint server
@@ -34,6 +35,9 @@ func (a Agent) Args() []string {
 	if a.Session != "" {
 		args = append(args, "--session", a.Session)
 	}
+	if a.StateDir != "" {
+		args = append(args, "--state-dir", a.StateDir)
+	}
 	return args
 }
 
@@ -41,8 +45,8 @@ func (a Agent) Args() []string {
 // login and is restarted when it dies (pending messages redeliver first,
 // nova-bus2's rule). launchd opens its own log itself, before the daemon
 // runs, and cannot open one on a network volume (EX_CONFIG, measured
-// 2026-10-03), so that log is LaunchdLog, under the home directory; the
-// daemon's own record is on the friend's volume (LogPath).
+// 2026-10-03), so that log is LaunchdLog, under the home directory, and so
+// are the daemon's state files and record (DefaultStateDir).
 func (a Agent) Plist() string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>

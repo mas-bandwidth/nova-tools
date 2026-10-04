@@ -1,4 +1,4 @@
-# Command reference
+| `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts || `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` || `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>]` |# Command reference
 
 [Back to Nova Tools](../README.md)
 
@@ -772,7 +772,7 @@ A Redis whose nova-config rows name ada and bob, its address in `--redis` or
 nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 nova-friend uninstall --as bob --dry-run
 nova-friend ping --as ada --to bob --nonce abc123
-nova-friend pong --as bob --nonce abc123 --dir ./bob --to ada --queue 2 --working 1 --width 4
+nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 nova-friend status --as bob --dir ./bob
 ```
@@ -782,19 +782,22 @@ the plan (`INSTALL PLAN command=`): write the plist, boot out whatever runs
 under that label, bootstrap the new one; without `--dry-run` it does them
 (`INSTALL RAN`) and running it again replaces the agent. `ping` prints `PING OK
 nonce= id= to= at=` and the `wait-pong` line to run next. `pong` prints `PONG
-OK nonce= to= id= at=` and writes the pong file. `wait-pong` prints `WAIT-PONG
+OK nonce= to= id= at=` and writes the pong file under `~/.nova-friend/<me>`
+(the state directory, `--state-dir` to move it; the daemon and the queue file
+keep `--dir`, the friend's working directory). `wait-pong` prints `WAIT-PONG
 OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
 pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
 last_pong= queue= working= width=`, or `STATUS NONE` at exit 1 where no
 daemon ever ran. What a first run gets wrong: a `--harness` that is not one
 of opencode, codex, claude, antigravity, dsh; a `pong --as` that is not the
-name the daemon in `--dir` runs as (refused: the pong carries the daemon's
-name); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a `pong`
+name the daemon whose state directory that is runs as (refused: the pong
+carries the daemon's name); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a `pong`
 with no `--to` before any ping has named a seat; a daemon whose record says
-"operation not permitted" on a removable volume, which is the system's
-privacy permission for background processes, granted to the binary by the
-person in the privacy settings and lost when the binary is rebuilt.
+"operation not permitted" running the harness on a removable volume, which is
+the system's privacy permission for background processes, granted to the
+binary by the person in the privacy settings and lost when the binary is
+rebuilt (the state files are under the home directory, out of its way).
 
 ### The daemon
 
