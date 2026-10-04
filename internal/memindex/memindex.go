@@ -165,7 +165,8 @@ func NormalizeNewlines(s string) string {
 
 // frontmatter reads a minimal frontmatter shape without a YAML dependency: a
 // leading "---" fence, then "name:" and "type:" lines anywhere before the
-// closing fence. Absent or malformed frontmatter returns empty strings —
+// closing fence, which must be a complete "---" line — end of input counts as
+// a line ending. Absent or malformed frontmatter returns empty strings —
 // verify reports absence where a caller declares it required, and parsing
 // here never fails a build.
 func frontmatter(src string) (name, typ string) {
@@ -185,7 +186,26 @@ func frontmatter(src string) (name, typ string) {
 		return "", ""
 	}
 	body := src[4:]
-	end := strings.Index(body, "\n---")
+	// The closing delimiter must be a complete "---" line: "\n---" followed
+	// by a line end, which after folding is "\n" or end of input. A plain
+	// prefix search closed a block on "---suffix" or "----", so a malformed
+	// file supplied a frontmatter name no fence line vouched for — the
+	// evidence verify resolves wikilinks and gates --frontmatter on must be
+	// the corpus's own text, surfaced and never invented (docs/SPEC.md,
+	// nova-memory). Trailing whitespace still reads as no fence.
+	end := -1 // offset of the "\n" that opens the closing fence line
+	for i := 0; ; {
+		j := strings.Index(body[i:], "\n---")
+		if j < 0 {
+			break
+		}
+		i += j
+		if i+4 == len(body) || body[i+4] == '\n' {
+			end = i
+			break
+		}
+		i++ // keep scanning: that line's fence text was a prefix, not a fence
+	}
 	if end < 0 {
 		return "", ""
 	}
