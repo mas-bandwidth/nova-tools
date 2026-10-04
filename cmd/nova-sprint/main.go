@@ -130,6 +130,11 @@ type app struct {
 	// coordinator's verbs, forward.go): nil is sprintwire.Client's Do, a test gives the
 	// server's own step.
 	forward func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error)
+	// beats and reads are the server's two lanes beside its line of control (lanes.go):
+	// the beats and the reads a batch carries run there, each lane on its own view of the
+	// store, so no tick, landing step or worker's write holds them. nil (a twin's server,
+	// or a test that opened none) runs every verb on the line.
+	beats, reads *lane
 	// landFailed is what the land loop's last round printed when it failed, "" after a
 	// round that did not (landloop.go): the same failure again prints nothing.
 	landFailed string
@@ -177,7 +182,6 @@ type app struct {
 
 func newApp(getenv func(string) string) *app {
 	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, after: time.After, exit: os.Exit, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
-	a.backend = a.redisBackend
 	a.inventory = a.readInventory
 	a.friends = a.readFriends
 	a.tip = a.branchTip
@@ -189,10 +193,24 @@ func newApp(getenv func(string) string) *app {
 }
 
 func (a *app) close() {
+	for _, l := range []*lane{a.beats, a.reads} {
+		if l != nil {
+			l.a.close()
+		}
+	}
 	for _, c := range a.conns {
 		// ignored: a close at the end of the run, after every answer is printed
 		_ = c.Close()
 	}
+}
+
+// open is the store at addr through a.backend when it is set (a test's store), else
+// redisBackend, this view's own connection.
+func (a *app) open(ctx context.Context, addr string, names sprint.Names) (store.Backend, error) {
+	if a.backend != nil {
+		return a.backend(ctx, addr, names)
+	}
+	return a.redisBackend(ctx, addr, names)
 }
 
 // redisBackend opens the store once per address, as nova-table dials it: the
@@ -338,7 +356,7 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 		return nil, errors.New(why)
 	}
 	names := sprint.Names{}
-	b, err := a.backend(ctx, c.redis, names)
+	b, err := a.open(ctx, c.redis, names)
 	if err != nil {
 		return nil, err
 	}
