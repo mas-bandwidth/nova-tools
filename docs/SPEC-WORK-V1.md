@@ -73,6 +73,8 @@ the tree.
   the writer refuses any other value rather than write it lossily.
 - GitHub's null is `()` for an enumeration or a milestone and `""` for a string (a deleted
   author, an open issue's closed time). A boolean is the symbol `true` or `false`.
+- A number field (issue, milestone, reference, linked PR) is a positive integer at most
+  2147483648 (2^31): the writer refuses anything larger and the reader refuses it too.
 - The reader (`workfile.Decode`) refuses a missing, repeated or unknown key, a value of the wrong
   kind, records out of order, a comment id repeated within an issue, and an issue whose `:url`
   is not the one its path gives. A refused file is refused whole.
