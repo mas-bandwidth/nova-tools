@@ -97,6 +97,19 @@ func (r *landRig) queued(heads map[string]string, order ...string) {
 	r.ok("read --as reader-a --ok --limit 100")
 	r.ok("read --as reader-b --ok --limit 100")
 	r.ok("accept --read-ok")
+	r.markProtected()
+}
+
+// markProtected marks every stream on the table to land on the protected branches of
+// every repository (docs/SPEC-SPRINT.md section 7), as a promotion stream is: the rig's
+// origin has one branch, main, and its cards land there.
+func (ta *testApp) markProtected() {
+	ta.t.Helper()
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(ta.t, err)
+	s, err := st.Load(context.Background(), []string{sprint.Work, sprint.Merge}, nil)
+	require.NoError(ta.t, err)
+	ta.ok("stream set " + strings.Join(s.Streams(), " ") + " --land-protected " + sprint.LandProtectedAny)
 }
 
 // places is each card's place in the work table and the merge table.
@@ -277,6 +290,7 @@ func TestLandReportsItsCardsWhenAnotherIsQueuedAheadUnderThePush(t *testing.T) {
 		r.ok("accept --read-ok")
 	}
 	accept("s1-2", "s1-3")
+	r.markProtected()
 	once := false
 	r.a.beforePush = func(int) {
 		if !once {
@@ -699,4 +713,30 @@ func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
 			r.clean()
 		})
 	}
+}
+
+// A card based on a protected branch (dev, main) is refused at land, dry run and land
+// alike, before any git, in a stream not marked for its repository, with the mark as
+// the remedy; once marked, the stream lands (docs/SPEC-SPRINT.md section 7).
+func TestLandRefusesAProtectedBaseUntilTheStreamIsMarked(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 1")
+	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
+	r.ok("stream set s1 --land-protected default")
+	before := r.git(r.remote, "rev-parse", "main")
+	why := "reason=card s1-1 lands on main, a protected branch of its repository (it names no REPO: line), and stream s1 is not marked to land on it"
+	for _, land := range []string{"land --repo-dir " + r.clone + " --base main --dry-run", "land --repo-dir " + r.clone + " --base main"} {
+		code, out, errs := r.do(land)
+		assert.Equal(t, 1, code, land)
+		assert.Contains(t, out+errs, "LAND REFUSED stream=s1 cards=1 base=main tip=- ids=s1-1 ", land)
+		assert.Contains(t, out+errs, why, land)
+		assert.Contains(t, out+errs, "; run: nova-sprint stream set s1 --land-protected any\n", land)
+	}
+	assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"), "nothing was pushed")
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"), "nothing was recorded")
+
+	r.ok("stream set s1 --land-protected any")
+	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main"), "LAND OK stream=s1 cards=1 base=main")
+	assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "base"}, r.mainLog())
 }

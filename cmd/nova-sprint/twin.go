@@ -43,7 +43,7 @@ func (a *app) twinOpen(addr string) bool { return a.twins[addr] != nil }
 // shell's. walkthrough_real_test.go runs it as written.
 var realSteps = []string{
 	"git init -q --bare origin.git && git clone -q origin.git work",
-	"git -C work commit -q --allow-empty -m base && git -C work push -q origin HEAD:main",
+	"git -C work commit -q --allow-empty -m base && git -C work push -q origin HEAD:sprint/s1",
 	"nova-sprint init --readers reader-a,reader-b --members m1",
 	"nova-sprint add --stream s1 --count 1",
 	"nova-sprint start",
@@ -56,7 +56,7 @@ var realSteps = []string{
 	"nova-sprint read --as reader-a --begin --epoch 0",
 	"nova-sprint read --as reader-a --ok --epoch 0",
 	"nova-sprint tick",
-	"nova-sprint land --stream s1 --repo-dir work --base main",
+	"nova-sprint land --stream s1 --repo-dir work --base sprint/s1",
 	"nova-sprint tick",
 	"nova-sprint where",
 }

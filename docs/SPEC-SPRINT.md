@@ -1608,6 +1608,19 @@ merges each batch's heads in work order onto a branch cut from the base, checks
 and pushes it, and reports it through this merge step, with the facts above
 when it cannot; it adds no state of its own.
 
+**The protected branches.** The lander never lands on a protected branch of a
+repository, dev or main, unless the card's stream is marked for that repository: a
+stream lands on its sprint branch, and promotion to dev is the marked stream's work
+(a card cut on dev lands straight onto it and ejects the merge queue's promotion
+run). The mark is the stream's control card's `land_protected`,
+the repositories (owner/name, any spelling of its clone URL, comma separated) or `any`
+for every repository, a card naming no `REPO:` line among them, written by the
+coordinator's `stream set <s> --land-protected <owner/name,...|any|default>` (`default`
+takes it off). A batch whose base is a protected branch in a stream not marked for its
+repository is refused before any git, `land` and its dry run alike, nothing pushed or
+recorded and the cards left queued, its remedy the mark; a card meant for the sprint
+branch is re-cut with that `BASE:` line instead (`sprint.ProtectedLandWhy`).
+
 **The lander's checks.** Each head `land` merges is checked by script, no model,
 before the batch's check runs (`internal/diffcheck`), the two checks the decide
 read's calibration of 2026-10-02 found a model read does not make: the merge's
@@ -2222,7 +2235,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
 | reader up | releases the hold; the reader's state is then its beat's |
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
-| stream set | `stream set <s>... --read-tier <flash|pro|default>`: the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`); `default` takes a stream's off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash or pro, or another actor |
+| stream set | `stream set <s>... [--read-tier <flash|pro|default>] [--land-protected <owner/name,...|any|default>]`: the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), and their protected-branch mark, `land_protected` (section 7, the protected branches); `default` takes a stream's off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash or pro, a mark that names no repository, or another actor |
 | set | `set [--read-tier <flash|pro|default>] [--dealt-max <duration|default>]`: the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered) and `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours); the coordinator's; refused whole, nothing written, for a tier that is not flash or pro, a bound that is not a duration above zero, nothing to set, or another actor; a clear starts the next epoch with neither |
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. The table layer never places a removed member again within an epoch, so `add --stream <s>` of a stream removed in this epoch is refused, naming the clear, and adds it fresh after the next clear (`sprint.StreamRemove`, `sprint.RemovedStream`) |
 | ci | records a CI observation for primaries in any state |

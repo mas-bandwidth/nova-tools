@@ -53,6 +53,7 @@ func (r *landRig) queuedOneWithoutHead() {
 	r.ok("read --as reader-a --ok --limit 100")
 	r.ok("read --as reader-b --ok --limit 100")
 	r.ok("accept --read-ok")
+	r.markProtected()
 }
 
 // land --dry-run refuses a head that is not a commit id exactly as land does:

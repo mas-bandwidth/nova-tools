@@ -76,19 +76,23 @@ func stronger(a, b string) string {
 	return a
 }
 
-// SetReq is the coordinator's settings: with Streams, each stream's read tier;
-// without, the sprint's dealt bound and read tier. An empty value leaves that
-// setting as it is; ReadTierDefault takes one off.
+// SetReq is the coordinator's settings: with Streams, each stream's read tier and
+// protected-branch mark; without, the sprint's dealt bound and read tier. An empty
+// value leaves that setting as it is; ReadTierDefault takes one off.
 type SetReq struct {
 	Streams  []string `json:",omitempty"`
 	ReadTier string   `json:",omitempty"`
 	DealtMax string   `json:",omitempty"`
-	Who      string
+	// LandProtected is the streams' mark: the repositories whose protected branches
+	// they land on (FieldLandProtected, docs/SPEC-SPRINT.md section 7).
+	LandProtected string `json:",omitempty"`
+	Who           string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
 // the coordinator, a read tier that is not flash, pro or default, a dealt bound that
-// is not a positive duration, nothing to set, or a stream that is not a stream.
+// is not a positive duration, a mark that names no repository or is not a stream's,
+// nothing to set, or a stream that is not a stream.
 func Set(s *Snapshot, r SetReq) Plan {
 	var p Plan
 	var why []string
@@ -103,7 +107,15 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--dealt-max wants a duration above zero (6h, 90m), or "+ReadTierDefault+" for 3 times the take deadline; found "+r.DealtMax)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" {
+	if r.LandProtected != "" {
+		if w := landProtectedWhy(r.LandProtected); w != "" {
+			why = append(why, w)
+		}
+		if len(r.Streams) == 0 {
+			why = append(why, "--land-protected is a stream's, not the sprint's: nova-sprint stream set <stream> --land-protected "+r.LandProtected)
+		}
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" {
 		why = append(why, "nothing to set: --read-tier or --dealt-max")
 	}
 	if len(r.Streams) > 0 && r.DealtMax != "" {
@@ -121,13 +133,21 @@ func Set(s *Snapshot, r SetReq) Plan {
 	if len(r.Streams) > 0 {
 		for _, st := range r.Streams {
 			ctl := s.StreamCtl(st)
-			entry := setEntry(ctl, map[string]string{FieldReadTier: r.ReadTier})
-			moved := "stream " + st + " read-tier " + r.ReadTier
-			if r.ReadTier == ReadTierDefault {
-				entry = setEntry(ctl, nil, FieldReadTier)
-				moved = "stream " + st + " read-tier the sprint's"
+			set, moved := map[string]string{}, []string{}
+			var unset []string
+			for _, f := range []struct{ field, v, word, off string }{
+				{FieldReadTier, r.ReadTier, "read-tier", "the sprint's"},
+				{FieldLandProtected, r.LandProtected, "land-protected", "none"},
+			} {
+				switch f.v {
+				case "":
+				case ReadTierDefault:
+					unset, moved = append(unset, f.field), append(moved, f.word+" "+f.off)
+				default:
+					set[f.field], moved = f.v, append(moved, f.word+" "+f.v)
+				}
 			}
-			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, entry)}, Moved: moved})
+			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", ")})
 		}
 		return p
 	}
