@@ -175,13 +175,11 @@ func TestHealthReplayOrderBeatAndHold(t *testing.T) {
 	assert.Equal(t, sprint.Down, h.friendStatus("amy"), "a fresh raw beat cannot make an observed-down friend up")
 
 	// asleep: the daemon's word, kept on the row, shown as down
-	rows, err := h.st.FriendRows(h.ctx, h.now)
-	require.NoError(t, err)
 	h.tick(time.Second)
 	_, status, _, err = h.health("amy", "tester", sprint.Asleep, h.now, 1)
 	require.NoError(t, err)
 	assert.Equal(t, sprint.Down, status)
-	rows, err = h.st.FriendRows(h.ctx, h.now)
+	rows, err := h.st.FriendRows(h.ctx, h.now)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, sprint.Down, rows[0].Status)

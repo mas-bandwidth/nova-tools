@@ -630,7 +630,9 @@ the grade), decided:<op> (each attempt decision of its takes: the attempt decisi
 below), asked (its readers), readers (the two whose ok it was accepted on),
 tier (the tier the coordinator pinned it to, `rework --tier`: its tier and its
 ceiling both) and tier_now (the tier it is on: flash at its first deal on a route,
-then the tier the machine escalated it to: section 5, flash first),
+then the tier the machine escalated it to: section 5, flash first; pro from add when
+its gate's measured wall is over the flash bound, with gate_wall, the measurement:
+section 5, the gate's wall),
 counters (failed, reworks, broken_reads, stuck, returns), failure, failure_at and
 identical_at (its last failed work's class and attempt, and the attempt that failed the
 way the one before did: section 2, the second identical failure), returned_attempt (its
@@ -1171,6 +1173,21 @@ and it is the coordinator's decision, receipted.
   `tier_now` pro) and is never dealt below it; `rework --tier` stays the pin it
   is (`TestABriefThatSaysProStartsOnPro`). A card dealt on flash below a pro
   ceiling (dealt before this rule) still escalates at its bound as before.
+  **The gate's wall** (the coordinator, 2026-10-04: a card whose gate cannot run in
+  15 minutes on a flash member is not dealt flash; a 40-minute deadline was missed on
+  flash before pro did the card twice). `add` measures each card's gate: the package
+  its TEST line names, its wall the median wall of the ok work takes the sprint
+  record holds for cards naming that package (each primary's cost records, kind work,
+  end ok, with a usage wall; a take's wall holds the work and the gate both, so it
+  bounds the gate's from above). A card whose measured wall is over the flash bound,
+  15 minutes (`FlashGateBound`), is admitted on pro: `add` writes `tier_now` pro and
+  `gate_wall` (`<median> n=<takes> over <bound>`), its line says `admitted pro: gate
+  <package> measured <median> (median of <n> ok takes) over the flash bound <bound>`,
+  and its first deal draws pro, whatever its ceiling; pro is the top of the ladder, so
+  the machine escalates it no further. A card never measured, measured at or under the
+  bound, with `TEST: none`, a frontier card and a pinned model are admitted as before
+  (`sprint.gateTier`, `internal/sprint/gate_wall.go`;
+  `TestTierFollowsTheGatesMeasuredWall`).
 - The gate verdict (docs/SPEC-NOVA-DECIDE.md section 12; the owner, 2026-10-02,
   layer 3 of the nova-decide plan: "gate verdict: flaky vs caused vs
   pre-existing"). Every deal of a work card (a first deal, a redeal, a rework's)
@@ -2680,6 +2697,7 @@ first on the `LAND REFUSED` line, each other on a `NOTE` line and in the `--json
 `also`: each head of the batch that is not a commit id, with its return), and on a twin,
 which has no git, a `NOTE` that `merge --stream <s> --batch <n>` records the landing in
 land's place; a head that is not a commit id stops the dry run where land stops, the cards before it a batch, that card refused with the conflict fact land would record and nothing recorded; `--json`. A batch landed and reported tags the branches its cards' work cards of every attempt record (`branches_queued=<n>` on its line, `prune` on its item; never the base, an empty name, an option-like name or one not under `sprint/`, each said on a NOTE and counted as `branches_kept=<n>`), and the cleanup deletes only canonical successful-attempt branches from origin later, many in one push, each with an explicit lease against its recorded head; advanced or recreated tips, unowned branches and all recorded stream bases stay on origin, and a retry keeps the original lease; then removes the clone's remote-tracking refs of branches origin no longer holds, never while a landing builds or pushes: the one-shot land once after every stream, the land loop (`run --land`) between rounds when a round finds nothing queued or 256 branches wait, a line per clone `PRUNE OK|FAILED branches= refs= dir= took=` (`--json` `prune`); a failed cleanup fails no landing, and the loop keeps its branches and tries again after a minute; the queue is the process's memory, so a crash or a stop loses it and those branches stay on origin; a dry run queues and deletes nothing and says how many it would queue |
+| promote | the machine's promotion, on a schedule, of a frozen branch cut from the sprint tip (`promo/<YYYY-MM-DD>-<n>`, `git branch --no-track` at that commit), never the live sprint branch: a queued pull request whose head is the live branch blocks the lander's pushes (GH006, found 2026-10-04). `--every <duration>` (default 1h) is the clock; `--landings <n>` also promotes once that many `land <id> (sprint stream <s>)` commits have landed since the last cut, looked for once a minute until the clock elapses; `--branch` (default the checkout's branch), `--repo-dir`, `--base` (default dev), `--check <command>` the tree gate run on the frozen commit before anything is pushed. The pull request body is the landed card ids since `refs/promoted/last`, else since the base, oldest first. Admission is the `enqueuePullRequest` mutation, which carries no merge strategy (the queue refuses one; `gh pr merge` and a flag named auto are the spelling the class test refuses), then a query confirms `mergeQueueEntry`. A merge prints `promoted --sha <sha>` and moves `refs/promoted/last`. A failed merge-group run raises one judgment, the failing check's log tail, decisions `fix-and-recut` and `skip`, and does not record the sha; a later pass of the same branch does not raise a second one. `--dry-run` prints the branch and the cards and cuts nothing. The land loop calls the same step only when promotion is armed; `run --land` does not arm it. The step is `(*promoter).step` (cmd/nova-sprint/promote.go), which cites this section |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level`; down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
@@ -2735,6 +2753,10 @@ no handed card: each acts on the cards it reads in the step's own read of the
 epoch, and with no `--epoch` runs at the epoch that read finds (a clear between
 the read and the write is read again), so they need none; the coordinator
 given `--epoch` is held to it like any other actor.
+
+### Promotion
+
+`nova-sprint promote [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]` cuts a frozen branch `promo/<YYYY-MM-DD>-<n>` from the sprint tip and opens its pull request to dev (section 11, promote). The pull request head is that branch, never the live sprint branch. The tree gate runs on the frozen commit before the push, and the only ref pushed is `refs/heads/<promo>`. The body lists the card ids of `land <id> (sprint stream <s>)` commits since the last promotion. Admission to the merge queue is the `enqueuePullRequest` mutation with no strategy flag; a GraphQL query of `mergeQueueEntry` confirms the entry. The class test refuses `gh pr merge` and a flag named auto, so this verb does not spell either: the mutation is the admission that test names. When the pull request merges, the verb prints `promoted --sha <40-hex>` and records it at `refs/promoted/last`. A merge-group run that fails raises one judgment, with the failing check's log tail and the decisions `fix-and-recut` and `skip`, and does not record the sha. The verb repeats every `--every` (default 1h). `--landings <n>` also cuts once that many cards have landed since the last cut, and until the clock elapses the verb looks once a minute. `--dry-run` is one pass and changes nothing. `run --land` does not arm this step: the land loop calls it only when `promoteArmed` is set, so a server does not open a pull request from its working directory. The step is `(*promoter).step` in cmd/nova-sprint/promote.go.
 
 ### preflight
 
@@ -3098,7 +3120,26 @@ tick: the one writer of the sprint, beside the store. A worker started with `nov
 own machine. A request is a batch: the worker's verbs, each the argument list it would give
 `nova-sprint`, in the order to run them. The server runs each through the verb's own code, in
 its own process, and answers with each verb's exit code and what it printed, one answer a verb,
-in order. One batch, and one tick, at a time: neither runs during the other. The server keeps
+in order. A write runs on the server's one line of control: one batch's writes, and one tick, at
+a time, neither during the other, each waiting its turn in the order it came. A friend's beat and
+a read do not take the line (the owner, 2026-10-04: "a verb is answered within 1 s whatever the
+tick or the lander is doing"; "a beat is a small write"). A friend's beat (`friend beat <friend>` and its report)
+writes one record outside every table, the friend's beat, and runs on the beat lane, beside the
+line and beside every other beat. A read (`where`, `card`, `log`, `check`, `routes`, `stats`,
+`needs`, `goal show`, `handover`, and `inbox` without `--read`) writes nothing and runs on the
+read lane: one read at a time on the lane's own process state, beside the line, as a client
+reading the store directly always has. `queue` records a reader's beat, `fleet beat` can write
+the fleet table and `inbox --read` moves the coordinator's cursor: each takes the line. A batch
+waits for the line only while its caller waits for the answer: a caller that has gone (its
+request ended: a client's deadline, a dropped connection) has the verbs of its batch not yet run
+answered exit 2, not run, and nothing is changed by them. On 2026-10-04 every verb took the line
+and a batch was run whenever its turn came: from 2:06 PM the line held the run loop's tick 10 to
+50 s, from 2:14 PM 36 to 151 s while each tick took 0.5 to 6 s, every friend's beat (two a second
+a friend) timed out at its 10 s deadline and was still run later, and the line never drained. On a
+twin file (`mem:<file>`), which the server writes whole after every verb, every verb takes the
+line. The server says what its batches cost once a minute when it answered any: `SERVE
+batches=<n> beat-lane=<n> read-lane=<n> on-line=<n> gone=<n> wait-max=<d> held-max=<d>
+held-by=<verb> over=<d>`. The model is `tla/ServerLanes.tla`. The server keeps
 nothing between requests.
 
 The server runs the workers' verbs only: `take`, `finish`, `read` and `queue`, each beginning

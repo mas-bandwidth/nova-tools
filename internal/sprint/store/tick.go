@@ -595,7 +595,9 @@ func staleRefusal(refused []sprint.Refusal, at uint64) bool {
 // new epoch.
 func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	began := time.Now()
-	defer func() { res.Said = append(res.Said, st.stats().takeNotes()...) }()
+	// the store the tick was given, never the one repin makes: a repin that fails returns
+	// nil, and the notes are on the counters both share
+	defer func(given *Store) { res.Said = append(res.Said, given.stats().takeNotes()...) }(st)
 	st.stats()
 	st.twin() // made on the store the run loop keeps: its ticks share it
 	defer func() { res.Took = time.Since(began) }()

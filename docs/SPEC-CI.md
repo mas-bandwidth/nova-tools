@@ -2808,6 +2808,24 @@ the original failed measurement.
 **Its remedy line.** `remedy="delete the unreachable function(s) or wire them into cmd/...; the dead code ledger only shrinks and refuses to raise counts or add rows"`.
 **Its narrowings.** Analyzes static reachability from main executables in `cmd/...` without `-test` flags using `golang.org/x/tools/cmd/deadcode` across `linux`, `darwin`, and `windows`.
 
+### `staticcheck` — staticcheck's findings only fall
+
+**The rule.** `staticcheck` (`honnef.co/go/tools/cmd/staticcheck`, a `tool` line in go.mod) runs over `./...` with its default checks, the `unused` check (U1000) among them, and each package's findings, counted per check, are held to a per-package shrink-only ledger. The tool is built at its pinned version with the tree's own toolchain: a staticcheck built by another Go fails on this toolchain's export data.
+**The mistake it prevents.** Go that a best-practice pass names (a value assigned and never read, a deprecated call, an unused function, a loop that is one `append`) accumulating across the tools and modules; the owner asked for "a golang best practices pass over all the tools and modules" with staticcheck clean.
+**The test.** `TestStaticcheckFindings` (`internal/ci/staticcheck_class_test.go`), with `TestStaticcheckFindingsReadsItsChecks` over a planted module. Runs in the functional tier behind `//go:build functional` (a whole-tree analysis is over the unit tier's budget) and starts no redis-server; `make lint` runs it.
+**Its allowlist.** the `staticcheck` package ledger, one shard per package, `<package>:<check> <findings> <why>`, counted and shrink-only; `NOVA_CI_UPDATE=1 go test -tags functional -count=1 -timeout 110s -run '^(TestStaticcheckFindings|TestUncheckedErrors)$' ./internal/ci/` lowers a count and drops a row at zero, and never adds a row or raises a count.
+**Its remedy line.** `fix the finding (staticcheck -explain <check> says how); the ledger only shrinks`, then the command that lowers the ledger.
+**Its narrowings.** One run as `GOOS=linux CGO_ENABLED=0` on every member, whatever its own GOOS, so the ledger reads the same on darwin and linux; no build tags, so a file behind a tag or only for another GOOS is not read; test files are read; a `//lint:ignore` directive silences a finding where it stands.
+
+### `errcheck` — no unchecked error beyond the ledger
+
+**The rule.** `errcheck` (`github.com/kisielk/errcheck`, a `tool` line in go.mod) runs over `./...` and each package's unchecked errors are held to a per-package shrink-only ledger. `fmt.Fprint`, `fmt.Fprintf` and `fmt.Fprintln` to an io.Writer are excluded as the CLI's output convention, and a line carrying `// ignored: <reason>` on it or on the line above counts as checked, as in `discarded`.
+**The mistake it prevents.** A call whose error is dropped as a bare statement (`f.Close()`, `defer f.Close()`, `os.Remove(path)`), which `discarded` does not read: the failure goes silent where it happens.
+**The test.** `TestUncheckedErrors` (`internal/ci/errcheck_class_test.go`), with `TestUncheckedErrorsReadsItsShapes` over a planted module. Runs in the functional tier behind `//go:build functional` and starts no redis-server; `make lint` runs it.
+**Its allowlist.** the `errcheck` package ledger, one shard per package, `<package>:unchecked <sites> <why>`, counted and shrink-only; the update command is the one in `staticcheck`.
+**Its remedy line.** `the call's error is not checked; return it, print it as one line with its remedy, or say why it is safe with `// ignored: <reason>` on this line or the one above; the ledger only shrinks`, then the command that lowers the ledger.
+**Its narrowings.** errcheck's own exclusions stand beside the three prints (a write to a bytes.Buffer or strings.Builder, among others); an error assigned to `_` is `discarded`'s, not this rule's; one run as `GOOS=linux CGO_ENABLED=0` with no build tags, as in `staticcheck`.
+
 ### `fleet-plays` — the fleet plays read only the inventory and work through the Go tools
 
 **The rule.** The plays under `fleet/` that converge a fleet (`tools.yml`, `redis.yml`, `loops.yml`) and their templates read their values from the inventory `nova-config inventory` prints and from `fleet/group_vars/all.yml`, and do their work through the Go tools: no task uses ansible's `shell`, `script` or `raw`; every play runs on a group the inventory prints, or `localhost`; every command task says how its change is read (`changed_when`); every template a task names exists and every template is rendered by a task; every `nova_*` a play or template reads is defined by group_vars, by the inventory (a host variable or `all.vars`), by a `set_fact`, or named by an `assert` as the operator's `-e`; every `loop_*` a template reads is a variable of its play or task, every `l.<field>` a field of the inventory's loop record, every `ansible_*` a fact the plays gather; and `fleet/retired-tools.txt` names no tool `cmd/` ships.

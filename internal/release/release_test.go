@@ -767,13 +767,20 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 			name = "this host " + hostPlatform
 		}
 		t.Run(name, func(t *testing.T) {
-			goos, _ := platformOf(t, platform)
+			goos, goarch := platformOf(t, platform)
 			from := built(t, "v0.16.0", platform, "nova-bus", "nova-swarm", "nova-wake")
 			bin := t.TempDir()
-			// nova-wake is already at the release; the other two are not. It
-			// is written under the name the TARGET installs it as.
+			// nova-wake already holds the artifact's bytes; the other two do
+			// not. It is written under the name the TARGET installs it as.
+			// Skip is the sum, so these bytes are the artifact's
+			// (security#72 finding 2).
 			current := ToolFile("nova-wake", goos)
-			if err := testbin.WriteExecutable(filepath.Join(bin, current), []byte("old"), 0o755); err != nil {
+			wake := filepath.Join(bin, current)
+			if err := testbin.Place(filepath.Join(ArtifactDir(from, "v0.16.0", goos, goarch), current), wake); err != nil {
+				require.NoError(t, err, err)
+			}
+			before, err := os.Stat(wake)
+			if err != nil {
 				require.NoError(t, err, err)
 			}
 			args := []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin}
@@ -809,9 +816,9 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 				assertRunnable(t, filepath.Join(bin, ToolFile(tool, goos)))
 			}
 			// Skipped means untouched, not overwritten with the same bytes.
-			body, err := os.ReadFile(filepath.Join(bin, current))
-			if err != nil || string(body) != "old" {
-				require.FailNowf(t, "assertion failed", "a skipped tool was rewritten: %q %v", body, err)
+			after, err := os.Stat(wake)
+			if err != nil || !os.SameFile(before, after) {
+				require.FailNowf(t, "assertion failed", "a skipped tool was rewritten: %v", err)
 			}
 			// The temporary name never survives the verb.
 			entries, err := os.ReadDir(bin)
@@ -825,6 +832,36 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A file that answers the target version and holds other bytes is replaced.
+// The version line fills the before list for prune and is not a skip
+// (security#72 finding 2). Skip is fileSum equal to the artifact sum
+// (SPEC-RELEASE, install skip).
+func TestInstallReplacesABinaryThatAnswersTheTargetVersionButHoldsOtherBytes(t *testing.T) {
+	t.Parallel()
+
+	goos, goarch := platformOf(t, "")
+	const version = "v0.16.0"
+	from := built(t, version, "", "nova-bus")
+	name := ToolFile("nova-bus", goos)
+	want, err := os.ReadFile(filepath.Join(ArtifactDir(from, version, goos, goarch), name))
+	require.NoError(t, err)
+
+	bin := t.TempDir()
+	target := filepath.Join(bin, name)
+	require.NoError(t, testbin.WriteExecutable(target, []byte("other bytes"), 0o755))
+
+	var out, errs bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", version, "--bin", bin},
+		&out, &errs, Deps{VersionOf: func(context.Context, string) (string, error) {
+			return "nova-bus " + version + " " + goos + "/" + goarch, nil
+		}})
+	require.Equal(t, 0, code, errs.String())
+	require.Contains(t, out.String(), "tools=1")
+	got, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
 }
 
 func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
@@ -1293,6 +1330,43 @@ func TestMachinesFileRefusesAShapeItCannotMean(t *testing.T) {
 				require.FailNowf(t, "assertion failed", "got %v, want a refusal naming %q", err, tc.wants)
 			}
 		})
+	}
+}
+
+// A name that begins with a dash is an ssh flag once ExecSSH appends it after
+// the options, so the machines file refuses it before any dial. The names the
+// file is written to hold still parse.
+func TestMachinesFileRefusesANameBeginningWithADash(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, in, wants string }{
+		{"an ssh version flag", "-V\n", "machine name"},
+		{"an ssh login flag", "-lroot\n", "machine name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Machines(strings.NewReader(tc.in))
+			if err == nil || !strings.Contains(err.Error(), tc.wants) {
+				require.FailNowf(t, "assertion failed", "got %v, want a refusal naming %q", err, tc.wants)
+			}
+		})
+	}
+
+	got, err := Machines(strings.NewReader("hulk\nbench-1\nuser@host\n"))
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	want := []Machine{
+		{Name: "hulk"},
+		{Name: "bench-1"},
+		{Name: "user@host"},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		require.FailNowf(t, "assertion failed", "got %v, want %v", got, want)
+	}
+
+	host, dir, remote := RemoteFrom("-V:/x")
+	if host != "" || dir != "-V:/x" || remote {
+		require.FailNowf(t, "assertion failed", "RemoteFrom(%q) = (%q, %q, %v), want a local path", "-V:/x", host, dir, remote)
 	}
 }
 

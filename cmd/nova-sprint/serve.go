@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,28 +147,48 @@ func flagWord(words []string, name string) (value string, ok bool) {
 // serves a page until it is interrupted and reads through the server.
 var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend clean", "dashboard", "answer"}
 
-// serveFrom is the server's one step: the batch's verbs run in order, each through
+// serveCtx is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The
 // server's own words (the store, the actor) go between the verb and what the
 // worker sent. A verb the server does not run (workerVerb) is answered as a
 // usage refusal, exit 2, and the batch goes on: every verb has its own answer.
 // Local batches run any verb the server runs (verbArgs.unserved), while fleet
-// batches run a worker's verbs only.
-// One batch, and one tick, at a time (a.serial): the lock is taken here, after
-// the request is read whole, and released before any answer is written, so a
-// slow worker never holds the tick.
-func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response {
-	a.serial.Lock()
-	defer a.serial.Unlock()
-	defer func() { a.serving = false }()
+// batches run a worker's verbs only. It is for a caller that can go away (ctx, the request's). A friend's
+// beat runs on the beat lane and a read on the read lane, neither on the line
+// (servelanes.go); every other verb runs on the line (a.serial), one batch's verbs and
+// one tick at a time: the line is taken at the batch's first such verb, after the
+// request is read whole, held to the batch's end, and released before any answer is
+// written, so a slow worker never holds the tick. A batch waits for the line only while
+// its caller waits for the answer: a caller gone (ctx done) before the line is taken has
+// its verbs from there on not run, each answered exit 2 saying so, and nothing changed.
+func (a *app) serveCtx(ctx context.Context, req sprintwire.Request, local bool) sprintwire.Response {
 	out := sprintwire.Response{Results: make([]sprintwire.Result, len(req.Verbs))}
+	lanes := a.lanesFor(ctx)
+	begun := a.now()
+	var took time.Time
+	held, beats, reads, onLine, gone := false, 0, 0, 0, 0
+	var first []string
+	defer func() {
+		var wait, hold time.Duration
+		if held {
+			a.serving = false
+			hold = a.now().Sub(took)
+			wait = took.Sub(begun)
+			a.serial.Unlock()
+		}
+		a.tally(beats, reads, onLine, gone, wait, hold, first)
+	}()
 	for i, argv := range req.Verbs {
 		var args []string
+		serving, lane := false, ""
 		as, words, why := workerVerb(argv)
 		switch {
 		case why == "":
 			// a worker's write names the epoch its worker holds, whoever sent it (runStep)
-			a.serving = true
+			serving = true
+			if lanes != nil && isFriendBeat(argv) {
+				lane = "beat"
+			}
 			args = slices.Concat(argv[:words], []string{"--redis", a.serveAddr, "--actor", as}, argv[words:])
 		case local:
 			v := readVerb(argv)
@@ -175,7 +196,10 @@ func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response 
 				// a worker's verb is held to the epoch its worker holds whatever its words
 				// (runStep); who acts is the caller's --actor, and no one when it gave none,
 				// never whoever the server's own environment names
-				a.serving = verbClasses[v.name] == classWorker
+				serving = verbClasses[v.name] == classWorker
+				if lanes != nil && v.err == nil && !v.help && onReadLane(v) {
+					lane = "read"
+				}
 				args = slices.Concat(argv[:v.words], []string{"--redis", a.serveAddr, "--actor", ""}, argv[v.words:])
 			}
 		}
@@ -187,6 +211,28 @@ func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response 
 			out.Results[i] = sprintwire.Result{Code: 2, Stderr: fmt.Sprintf("%s server: %s: %s; nothing was changed\n", prog, oneline.Escape(verb), oneline.Escape(why))}
 			continue
 		}
+		switch lane {
+		case "beat":
+			beats++
+			out.Results[i] = lanes.friendBeat(ctx, a, argv, args[words:])
+			continue
+		case "read":
+			reads++
+			out.Results[i] = lanes.readVerbRun(ctx, args)
+			continue
+		}
+		if !held {
+			if err := a.serial.LockCtx(ctx); err != nil {
+				for j := i; j < len(req.Verbs); j++ {
+					out.Results[j] = goneResult(req.Verbs[j])
+					gone++
+				}
+				return out
+			}
+			held, took, first = true, a.now(), argv
+		}
+		onLine++
+		a.serving = serving
 		var stdout, stderr bytes.Buffer
 		code := a.run(args, &stdout, &stderr)
 		out.Results[i] = sprintwire.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}
@@ -240,7 +286,7 @@ func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 		out = gz
 	}
 	// ignored: a worker that has gone reads no answer; what ran is in the sprint's log
-	_ = json.NewEncoder(out).Encode(a.serveFrom(req, local))
+	_ = json.NewEncoder(out).Encode(a.serveCtx(r.Context(), req, local))
 }
 
 // takesGzip says a request's Accept-Encoding names gzip and does not refuse it (q=0).
@@ -297,7 +343,10 @@ func (a *app) listen(addr, store string, stdout io.Writer) error {
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
 		lns[addr] = a
 	}
-	a.serveAddr = store
+	a.serveAddr, a.serveLog = store, stdout
+	// the lanes are made before the first batch, while the line is free: a batch never
+	// waits for the line to make them (servelanes.go)
+	a.lanesFor(context.Background())
 	for at, h := range lns {
 		ln, err := net.Listen("tcp", at)
 		if err != nil {

@@ -219,6 +219,13 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 }
 
 func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
+	return a.friendBeat(context.Background(), args, func(c common) (*store.Store, error) { return a.store(c) }, stdout, stderr)
+}
+
+// friendBeat is friend beat on the store open gives it: the verb's (a.store), and the
+// server's beat lane's (servelanes.go), which answer alike. It reads nothing of the app
+// but its environment, so the beat lane runs it beside the line.
+func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (*store.Store, error), stdout, stderr io.Writer) int {
 	const name = "friend beat"
 	fs, c := a.verbSetup(name)
 	running := fs.String("running", "", "the cards she is running now, comma separated (work card ids, her job names or primaries): friend take and friend down leave them with her")
@@ -254,18 +261,18 @@ func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
 		given = &v
 	}
 	c.orActor(friend)
-	st, err := a.store(*c)
+	st, err := open(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	b, err := st.FriendBeatReport(context.Background(), friend, rep, given)
+	b, err := st.FriendBeatReport(ctx, friend, rep, given)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
 	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At}
 	// her row as friend sync last wrote it, so her daemon reads her mode and width from its beat
-	if spec, err := st.FriendSpecOf(context.Background(), friend); err == nil {
+	if spec, err := st.FriendSpecOf(ctx, friend); err == nil {
 		mode := spec.Mode
 		if mode == "" {
 			mode = config.DefaultFriendMode

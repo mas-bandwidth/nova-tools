@@ -134,12 +134,19 @@ type app struct {
 	// serial is the server's one line of control (serve.go): a worker's batch
 	// and a tick of the run loop each hold it, so neither runs during the other.
 	// serveAddr is the store the server runs the workers' verbs on.
-	serial    sync.Mutex
+	serial    serialLock
 	serveAddr string
 	// serving says the verb running is one a worker sent to the server (set and
 	// cleared under serial): its step names the epoch its worker holds, or is
 	// refused (runStep).
 	serving bool
+	// lanes is the server's lanes beside the line (servelanes.go), made at the first
+	// batch under lanesMu; served is what its batches cost since its last SERVE line, said
+	// on serveLog (run's stdout once it listens; nil, a test's, says nothing).
+	lanesMu  sync.Mutex
+	lanes    *serveLanes
+	served   serveTally
+	serveLog io.Writer
 	// forward sends verbs to the sprint's server named by NOVA_SPRINT_SERVER (the
 	// coordinator's verbs, forward.go): nil is sprintwire.Client's Do, a test gives the
 	// server's own step.

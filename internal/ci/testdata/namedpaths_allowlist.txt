@@ -29,7 +29,7 @@ internal/secretsanta/ SPEC-RELEASE.md's example of what prefix matching on `inte
 docs/nova-lessons.md the lessons file lives in the self repository; internal/pulse/watch.go cites it as the source of its rules
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
 
-# internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, Glenn: "Yes it's dead. remove."); the specs cite its files at named commits as history.
+# internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, the owner: "Yes it's dead. remove."); the specs cite its files at named commits as history.
 internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cardheader.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
@@ -58,3 +58,4 @@ internal/bus/instrument.go a file of the git bus, removed 2026-10-04; the rating
 internal/bus/note.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 internal/bus/prepared.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 docs/SPEC-BUS-DELIVERY.md a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/secrets/storepull.go deleted with the dead storepull.go (dead-pkg-secrets-t2b); the 1.1.0 ratings doc cites it as history

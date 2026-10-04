@@ -41,10 +41,13 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	}
 
 	failOut, failCode := redisCIChild(t, "fail")
-	require.True(t, failCode != 0 && strings.Contains(failOut, "redis-server is required under NOVA_CI=1"), "missing redis-server under NOVA_CI=1: exit %d, want a failure\n%s", failCode, failOut)
+	require.True(t, failCode != 0, "missing redis-server under NOVA_CI=1: exit %d, want a failure\n%s", failCode, failOut)
+	require.True(t, strings.Contains(failOut, "redis-server is required under NOVA_CI=1"), "missing redis-server under NOVA_CI=1: exit %d, want a failure\n%s", failCode, failOut)
 	require.NotContains(t, failOut, "--- SKIP:", "missing redis-server under NOVA_CI=1 skipped:\n%s", failOut)
 	skipOut, skipCode := redisCIChild(t, "skip")
-	require.True(t, skipCode == 0 && strings.Contains(skipOut, "--- SKIP:") && strings.Contains(skipOut, "redis-server unavailable"), "missing redis-server outside CI: exit %d, want a skip\n%s", skipCode, skipOut)
+	require.True(t, skipCode == 0, "missing redis-server outside CI: exit %d, want a skip\n%s", skipCode, skipOut)
+	require.True(t, strings.Contains(skipOut, "--- SKIP:"), "missing redis-server outside CI: exit %d, want a skip\n%s", skipCode, skipOut)
+	require.True(t, strings.Contains(skipOut, "redis-server unavailable"), "missing redis-server outside CI: exit %d, want a skip\n%s", skipCode, skipOut)
 
 	// NOVA_CI=1 comes from the functional job's environment (ci.yml), which
 	// is where this file runs: it is behind the functional tag.
@@ -61,8 +64,13 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	fatalAt := strings.Index(helper, "Fatalf")
 	skipAt := strings.Index(helper, "t.Skip")
 	ciAt := strings.Index(helper, "NOVA_CI")
-	require.True(t, ciAt >= 0 && fatalAt >= 0 && skipAt >= 0 && ciAt < fatalAt && fatalAt < skipAt, "helper must check NOVA_CI, fail, then skip; indexes ci=%d fatal=%d skip=%d", ciAt, fatalAt, skipAt)
-	require.True(t, strings.Contains(helper, `"--save", ""`) && strings.Contains(helper, `"127.0.0.1"`), "helper must start redis-server on loopback with --save \"\"")
+	require.True(t, ciAt >= 0, "helper must check NOVA_CI, fail, then skip; indexes ci=%d fatal=%d skip=%d", ciAt, fatalAt, skipAt)
+	require.True(t, fatalAt >= 0, "helper must check NOVA_CI, fail, then skip; indexes ci=%d fatal=%d skip=%d", ciAt, fatalAt, skipAt)
+	require.True(t, skipAt >= 0, "helper must check NOVA_CI, fail, then skip; indexes ci=%d fatal=%d skip=%d", ciAt, fatalAt, skipAt)
+	require.True(t, ciAt < fatalAt, "helper must check NOVA_CI, fail, then skip; indexes ci=%d fatal=%d skip=%d", ciAt, fatalAt, skipAt)
+	require.True(t, fatalAt < skipAt, "helper must check NOVA_CI, fail, then skip; indexes ci=%d fatal=%d skip=%d", ciAt, fatalAt, skipAt)
+	require.True(t, strings.Contains(helper, `"--save", ""`), "helper must start redis-server on loopback with --save \"\"")
+	require.True(t, strings.Contains(helper, `"127.0.0.1"`), "helper must start redis-server on loopback with --save \"\"")
 	offenders := redisServerGates(t, root)
 	require.Empty(t, offenders, "redis-server is started or skipped outside internal/nsprint/testutil: %s", strings.Join(offenders, ", "))
 

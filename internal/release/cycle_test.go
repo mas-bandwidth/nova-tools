@@ -77,7 +77,7 @@ func TestCycleDryRunChecksAndInstallsNothing(t *testing.T) {
 	require.Len(t, play.runs, 1, "a dry run is the check alone")
 	argv := play.runs[0]
 	assert.Equal(t, "--check", argv[len(argv)-1])
-	assert.Equal(t, "batman,vision,localhost", argv[slices.Index(argv, "--limit")+1])
+	assert.Equal(t, "batman,vision,localhost,store_deployer", argv[slices.Index(argv, "--limit")+1])
 	assert.Contains(t, argv, "nova_version=v1.1.0-dev.c2")
 	var build map[string][]string
 	for _, a := range argv {
@@ -106,6 +106,25 @@ func TestCycleChecksThenAppliesAndSaysWhatEachBenchRuns(t *testing.T) {
 	assert.Contains(t, o.String(), "RELEASE BUILD INCREMENTAL version=v1.1.0-dev.c2 platform=linux-amd64 base=v1.1.0-dev.c1 changed=3 rebuilt=nova-swarm reused=17\n")
 	assert.Contains(t, o.String(), "CYCLE BENCH host=batman platform=linux-amd64 version=v1.1.0-dev.c2 was=v1.1.0-dev.c1 state=INSTALLED installed=1 skipped=17\n")
 	assert.Contains(t, o.String(), "CYCLE OK version=v1.1.0-dev.c2 benches=2 changed=2 check=1m0s apply=1m0s total=2m0s ")
+}
+
+func TestCycleLimitCarriesTheStoreDeployer(t *testing.T) {
+	t.Parallel()
+	// The store step (fleet/tools.yml, hosts: store_deployer) is the build's
+	// schema and function library on the store. ansible's --limit accepts group
+	// names, so the store_deployer group is carried on every cycle beside
+	// localhost, whatever --benches names.
+	args, deps, play := cycleRig(t,
+		playOutput("WOULD-INSTALL", "", "a", "b"),
+		playOutput("INSTALLED", "", "a", "b"))
+	args[slices.Index(args, "--benches")+1] = "a,b"
+	var o, e bytes.Buffer
+	code := Run("nova-update", args, &o, &e, deps)
+	require.Equal(t, 0, code, e.String())
+	require.Len(t, play.runs, 2, "the check and the apply both run")
+	for _, run := range play.runs {
+		assert.Equal(t, "a,b,localhost,store_deployer", run[slices.Index(run, "--limit")+1])
+	}
 }
 
 func TestCycleStopsOnAFailedBench(t *testing.T) {

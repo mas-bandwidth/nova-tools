@@ -145,7 +145,7 @@ func (w world) openRedis(ctx context.Context, addr string) (bus.Store, func(), e
 	if err != nil {
 		return nil, nil, err
 	}
-	return bus.Redis{C: conn.Client()}, func() { conn.Close() }, nil
+	return bus.Redis{C: conn.Client()}, func() { conn.Close() }, nil // ignored: closing the store connection at exit, nothing is left to report it to
 }
 
 // stateDir is where the state files of the friend --as names live: --state-dir,

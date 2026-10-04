@@ -19,7 +19,7 @@ func TestFlockHeldSeesAnotherDescriptorsLockAndNothingElse(t *testing.T) {
 	path := filepath.Join(dir, "t1.lock")
 	f, err := os.Create(path)
 	require.NoError(t, err)
-	defer f.Close()
+	defer f.Close() // ignored: a test's lock file
 	assert.False(t, FlockHeld(path), "a file nobody locked")
 	require.NoError(t, syscall.Flock(int(f.Fd()), syscall.LOCK_EX))
 	assert.True(t, FlockHeld(path), "locked on another descriptor, as the Codex app holds a thread")

@@ -105,9 +105,8 @@ func TestACacheOverItsLimitAllInUseRemovesNothingAndSaysSoOnceAnHour(t *testing.
 	first := tr.Round(dir, at, b)
 	assert.False(t, first.InUse, "nothing is said before the cache is measured")
 	var said []int
-	now := at
 	for round := range 140 { // a round every 30 seconds: 70 minutes
-		now = at.Add(time.Duration(round) * 30 * time.Second)
+		now := at.Add(time.Duration(round) * 30 * time.Second)
 		c := tr.Round(dir, now, b)
 		require.Zero(t, c.Failed, c.Why)
 		assert.Zero(t, c.Removed, "round %d", round)

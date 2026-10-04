@@ -17,8 +17,12 @@ import (
 // narrower than what ssh accepts: the thing this verb replaces built its remote
 // commands by pasting a bench name into a shell line, and a name that cannot
 // carry a space, a quote, a semicolon or a `$` cannot be the half of that which
-// went wrong.
-var machineName = regexp.MustCompile(`^[A-Za-z0-9_.@-]+$`)
+// went wrong. The first character is a letter or a digit. ExecSSH appends the
+// name after the ssh options, so a leading dash is read as a flag (`-V` exits
+// 0 without dialing; `-l` changes the login). The benches limit already starts
+// the same way (limitName). docs/SPEC-UPDATE.md, "The machines file";
+// security#72 finding 9.
+var machineName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]*$`)
 
 // installedLine reads a remote install's receipt back out of its output. The
 // receipt is read from what the remote SAID, never from its exit code: a shell

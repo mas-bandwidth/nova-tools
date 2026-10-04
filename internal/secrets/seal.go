@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -79,6 +80,7 @@ type SealOptions struct {
 	Progress io.Writer
 
 	Now   func() time.Time
+	Sleep func(time.Duration)
 	Check func(storeDir, asName, keyPath, sopsPath string) error
 
 	// Exec replaces the os/exec child process. Tests set it to a pure-Go fake
@@ -114,6 +116,9 @@ func RunSeal(opts SealOptions) (line string, err error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	if opts.Sleep == nil {
+		opts.Sleep = time.Sleep
+	}
 
 	if err := CheckInvariant6(opts.KeyPath); err != nil {
 		return "", err
@@ -146,6 +151,8 @@ func RunSeal(opts SealOptions) (line string, err error) {
 			}
 			return checkFn(opts.StoreDir, opts.AsName, opts.KeyPath, opts.SopsPath)
 		},
+		now:   opts.Now,
+		sleep: opts.Sleep,
 	}
 
 	if opts.DryRun {
@@ -219,6 +226,8 @@ type sealCarry struct {
 	noPR     bool
 	say      func(format string, a ...interface{})
 	check    func() error // runs after the merge and the pull
+	now      func() time.Time
+	sleep    func(time.Duration)
 }
 
 // carry writes the ciphertext into place on a fresh branch and carries it to
@@ -228,6 +237,14 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 	say := c.say
 	if say == nil {
 		say = func(string, ...interface{}) {}
+	}
+	nowFn := c.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	sleepFn := c.sleep
+	if sleepFn == nil {
+		sleepFn = time.Sleep
 	}
 	home, err := c.preflight()
 	if err != nil {
@@ -297,27 +314,35 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 	}
 
 	approved := false
-	started := time.Now()
+	started := nowFn()
 	deadline := started.Add(2 * time.Minute)
 	lastSaid := started
 	say("pull request #%s is open; waiting for the gate's approval (up to 2 min)", prNum)
 	for {
-		view, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "view", prNum, "--json", "reviewDecision", "--jq", ".reviewDecision")
+		view, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "view", prNum, "--json", "reviewDecision,state,statusCheckRollup")
 		if err != nil {
-			return "", false, err
+			errStr := strings.ToLower(err.Error())
+			if strings.Contains(errStr, "not found") || strings.Contains(errStr, "could not resolve") || strings.Contains(errStr, "missing") {
+				return "", false, fmt.Errorf("pull request #%s not found: %s; run: gh pr list", prNum, oneline.Err(err))
+			}
+			return "", false, fmt.Errorf("pull request #%s review query failed: %s; run: gh pr view %s", prNum, oneline.Err(err), prNum)
 		}
-		if strings.TrimSpace(view) == "APPROVED" {
+		termErr, isApproved := classifySealReview(view, prNum)
+		if termErr != nil {
+			return "", false, termErr
+		}
+		if isApproved {
 			approved = true
 			break
 		}
-		if time.Now().After(deadline) {
+		if !nowFn().Before(deadline) {
 			break
 		}
-		if time.Since(lastSaid) >= 15*time.Second {
-			say("still waiting for approval (%ds)", int(time.Since(started).Seconds()))
-			lastSaid = time.Now()
+		if nowFn().Sub(lastSaid) >= 15*time.Second {
+			say("still waiting for approval (%ds)", int(nowFn().Sub(started).Seconds()))
+			lastSaid = nowFn()
 		}
-		time.Sleep(5 * time.Second)
+		sleepFn(5 * time.Second)
 	}
 	if !approved {
 		return prNum, false, nil
@@ -636,4 +661,84 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("unable to write %s: %w", path, err)
 	}
 	return nil
+}
+
+type sealPRView struct {
+	State             string          `json:"state"`
+	ReviewDecision    string          `json:"reviewDecision"`
+	StatusCheckRollup []sealCheckItem `json:"statusCheckRollup"`
+}
+
+type sealCheckItem struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	State      string `json:"state"`
+}
+
+// classifySealReview classifies the review state of a seal pull request
+// according to SPEC-SECRETS seal. Terminal states (changes-requested, closed,
+// merged elsewhere, terminal check failure) stop immediately with a redacted
+// one-line error carrying a remedy. Approved continues to the merge path, and
+// pending reviews poll to the bounded deadline.
+func classifySealReview(raw, prNum string) (error, bool) {
+	trimmed := strings.TrimSpace(raw)
+	var view sealPRView
+	if strings.HasPrefix(trimmed, "{") {
+		if err := json.Unmarshal([]byte(trimmed), &view); err != nil {
+			return fmt.Errorf("pull request #%s review query response invalid: %s; run: gh pr view %s", prNum, oneline.Err(err), prNum), false
+		}
+	} else {
+		switch strings.ToUpper(trimmed) {
+		case "APPROVED":
+			view.State = "OPEN"
+			view.ReviewDecision = "APPROVED"
+		case "CHANGES_REQUESTED":
+			view.State = "OPEN"
+			view.ReviewDecision = "CHANGES_REQUESTED"
+		case "CLOSED":
+			view.State = "CLOSED"
+		case "MERGED":
+			view.State = "MERGED"
+		case "FAILURE", "FAILED", "CHECK_FAILURE":
+			view.State = "OPEN"
+			view.StatusCheckRollup = []sealCheckItem{{Name: "gate", Conclusion: "FAILURE"}}
+		case "REVIEW_REQUIRED", "PENDING", "":
+			view.State = "OPEN"
+			view.ReviewDecision = "REVIEW_REQUIRED"
+		default:
+			view.State = "OPEN"
+			view.ReviewDecision = trimmed
+		}
+	}
+
+	if strings.EqualFold(view.State, "CLOSED") {
+		return fmt.Errorf("pull request #%s was closed without merging; run: gh pr reopen %s", prNum, prNum), false
+	}
+	if strings.EqualFold(view.State, "MERGED") {
+		return fmt.Errorf("pull request #%s was merged elsewhere; run: git pull", prNum), false
+	}
+
+	for _, check := range view.StatusCheckRollup {
+		conc := strings.ToUpper(check.Conclusion)
+		st := strings.ToUpper(check.State)
+		if conc == "FAILURE" || conc == "TIMED_OUT" || conc == "CANCELLED" || conc == "STARTUP_FAILURE" || conc == "ACTION_REQUIRED" ||
+			st == "FAILURE" || st == "ERROR" {
+			name := check.Name
+			if name == "" {
+				name = "gate"
+			}
+			return fmt.Errorf("pull request #%s check %s failed; run: gh pr checks %s", prNum, name, prNum), false
+		}
+	}
+
+	if strings.EqualFold(view.ReviewDecision, "CHANGES_REQUESTED") {
+		return fmt.Errorf("pull request #%s changes requested; run: gh pr view %s", prNum, prNum), false
+	}
+
+	if strings.EqualFold(view.ReviewDecision, "APPROVED") {
+		return nil, true
+	}
+
+	return nil, false
 }

@@ -31,7 +31,7 @@ func NewestCodexSession(home, dir string) (string, error) {
 				Updated time.Time `json:"updated_at"`
 			}
 			if err := json.Unmarshal(scan.Bytes(), &row); err != nil {
-				index.Close()
+				index.Close() // ignored: a read-only index, nothing was written through it
 				return "", fmt.Errorf("codex session index: %w", err)
 			}
 			if row.Updated.After(updated[row.ID]) {

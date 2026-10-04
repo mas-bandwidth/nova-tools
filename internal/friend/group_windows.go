@@ -9,6 +9,3 @@ import "os/exec"
 func ownGroup(*exec.Cmd) {}
 
 func killGroup(int) {}
-
-// GroupAlive is always false on Windows: there is no group to ask.
-func GroupAlive(int) bool { return false }

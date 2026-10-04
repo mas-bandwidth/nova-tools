@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -92,3 +93,7 @@ func TestADeliverysOutputIsSaidToTheWatch(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, n.Load(), int64(2))
 }
+
+// GroupAlive says whether any process of the group led by pid is still there (a signal of 0
+// to the group), for the test of the kill.
+func GroupAlive(pid int) bool { return syscall.Kill(-pid, 0) == nil }

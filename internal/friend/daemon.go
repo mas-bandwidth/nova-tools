@@ -203,30 +203,30 @@ func oneLine(s string, n int) string {
 // loop is one run of the daemon: what Run keeps between steps, shared by the
 // batch turn and the one-shot lanes.
 type loop struct {
-	d                     *Daemon
-	ctx                   context.Context
-	b                     *bus.Bus
-	passive               bool
-	silentStop            time.Duration
-	brokenAfter           int
-	answered              map[string]bool // entries whose ping the daemon has ponged
-	failed                map[string]int  // entries whose turn failed, and how often
-	hand                  []bus.Entry     // messages read and not yet in a turn, oldest first
-	inHand                map[string]bool // entries read and not yet acked or failed: in hand or in a turn
-	notice                *Push           // the latest word about the coordinator the session is owed
-	noticeTaken           *Push           // the word the last head() put in a turn
-	saidSilent            bool            // what the session last heard: the coordinator silent
-	busy                  *turn           // the batch turn under way, or deferred in hand
-	retry                 time.Time       // when the deferred turn in hand is tried again; zero while none is
-	deferrals             int
-	deferSaid             time.Time
-	refusal               string // the last provider refusal, and how many turns in a row said it
-	streak                int
-	broken, told          bool
-	results               chan result
-	lanes                 *laneSet
-	mode                  string // the mode the daemon delivers in now
-	saidMode, saidNoLanes bool
+	d            *Daemon
+	ctx          context.Context
+	b            *bus.Bus
+	passive      bool
+	silentStop   time.Duration
+	brokenAfter  int
+	answered     map[string]bool // entries whose ping the daemon has ponged
+	failed       map[string]int  // entries whose turn failed, and how often
+	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
+	inHand       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
+	notice       *Push           // the latest word about the coordinator the session is owed
+	noticeTaken  *Push           // the word the last head() put in a turn
+	saidSilent   bool            // what the session last heard: the coordinator silent
+	busy         *turn           // the batch turn under way, or deferred in hand
+	retry        time.Time       // when the deferred turn in hand is tried again; zero while none is
+	deferrals    int
+	deferSaid    time.Time
+	refusal      string // the last provider refusal, and how many turns in a row said it
+	streak       int
+	broken, told bool
+	results      chan result
+	lanes        *laneSet
+	mode         string // the mode the daemon delivers in now
+	saidNoLanes  bool
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row

@@ -352,3 +352,8 @@ MCSprintRulesGate.cfg	MCSprintRules.tla	pass	-	ignore-terminal	sprintrules	requi
 MCSprintRulesGateBrokenStopFirst.cfg	MCSprintRules.tla	invariant	BaseStopsOnThird	ignore-terminal	sprintrules	required	-
 MCSprintRulesIdle.cfg	MCSprintRules.tla	pass	-	ignore-terminal	sprintrules	required	-
 MCSprintRulesIdleBrokenEveryTick.cfg	MCSprintRules.tla	invariant	AlarmOncePerEpisode	ignore-terminal	sprintrules	required	-
+MCServerLanes.cfg	MCServerLanes.tla	pass	-	ignore-terminal	serverlanes	required	-
+MCServerLanesLive.cfg	MCServerLanes.tla	pass	-	ignore-terminal	serverlanes	required	-
+MCServerLanesBrokenBeatOnLine.cfg	MCServerLanes.tla	invariant	BeatNeverWaitsForTheLine|LanesHoldNoLine	ignore-terminal	serverlanes	required	-
+MCServerLanesBrokenReadOnLine.cfg	MCServerLanes.tla	invariant	ReadWaitsOnlyForReads|LanesHoldNoLine	ignore-terminal	serverlanes	required	-
+MCServerLanesBrokenRunGone.cfg	MCServerLanes.tla	invariant	GoneNeverRuns	ignore-terminal	serverlanes	required	-

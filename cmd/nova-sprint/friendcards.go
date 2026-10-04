@@ -424,7 +424,7 @@ func (a *app) sendBus(ctx context.Context, m bus.Message) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer conn.Close() // ignored: the connection is closed at the end of the verb; a failed close has no one to tell
 	_, err = (&bus.Bus{Store: bus.Redis{C: conn.Client()}}).Send(ctx, m)
 	return err
 }

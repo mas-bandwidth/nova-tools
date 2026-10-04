@@ -1080,7 +1080,7 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 	}
 	log, err := os.OpenFile(filepath.Join(p.cfg.slotDir, "native.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		devNull.Close()
+		devNull.Close() // ignored: /dev/null, opened read-only on an error path that refuses the run
 		refuseNative(errOut, fmt.Sprintf("the run log %s could not be opened: %s", oneline.Field(filepath.Join(p.cfg.slotDir, "native.log")), oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2
 	}
@@ -1090,7 +1090,7 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 	runStart := time.Now()
 	harnessOut, err := os.OpenFile(outLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND|swarm.ONoFollow, 0o644)
 	if err != nil {
-		devNull.Close()
+		devNull.Close() // ignored: /dev/null, opened read-only on an error path that refuses the run
 		log.Close()
 		refuseNative(errOut, fmt.Sprintf("the harness output log %s could not be opened: %s", oneline.Field(outLog), oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2
