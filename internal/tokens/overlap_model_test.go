@@ -34,13 +34,16 @@ func TestOverlapRefusedBeforeWrite(t *testing.T) {
 	rules := claudeCoverRules(t)
 	f := NewFolder()
 	body := overlapModelLine("m1", 100) + overlapModelLine("m2", 1)
-	overlapModelFold(t, "bench", body, rules, f)
+	// The later-sorted label is fed first, so the pair stands in sorted order
+	// only through Folder.Add's sort: the remedy drops B and keeps A, and the sort
+	// is what decides the flag it names.
 	overlapModelFold(t, "copy", body, rules, f)
+	overlapModelFold(t, "bench", body, rules, f)
 
 	require.True(t, f.RefuseWrite(), "a detected overlap is a refusal before the write")
 	overs := f.Overlaps()
 	require.Len(t, overs, 1)
-	assert.Equal(t, "claude:bench", overs[0].A)
+	assert.Equal(t, "claude:bench", overs[0].A, "the pair is sorted, though the later label was fed first")
 	assert.Equal(t, "claude:copy", overs[0].B)
 	assert.Equal(t, 2, overs[0].IDs, "the duplicate count is the shared ids, not a drop")
 	row := f.rows[Key{Day: "2026-09-11", Model: "fable", Repo: "schema"}]
