@@ -44,8 +44,8 @@ const (
 // HeldStaysHeld).
 const ClaimAfter = 15 * time.Minute
 
-// Consumer is the one consumer name of every reader: with ClaimAfter, who
-// holds an entry is told by its idle time, never by a name.
+// Consumer is the default interactive/Recv consumer. Stale claim eligibility
+// uses idle time; named helper consumers distinguish pending recovery ownership.
 const Consumer = "nova-bus2"
 
 // unknown is the refusal of a name the roster does not hold, with how to add one.
