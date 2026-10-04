@@ -144,7 +144,8 @@ func TestWriteBoxAllowsOrdinaryPathAndRootOwnedAncestors(t *testing.T) {
 // models the root-owned outer alias without requiring privileged test setup.
 func TestWriteBoxRefusesAUserOwnedSymlinkBehindARootOwnedAlias(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	target := filepath.Join(dir, "target")
 	require.NoError(t, os.Mkdir(target, 0o755))
 	inner := filepath.Join(dir, "user-link")
@@ -161,7 +162,7 @@ func TestWriteBoxRefusesAUserOwnedSymlinkBehindARootOwnedAlias(t *testing.T) {
 		}
 		return posixLinkOwner(path, info)
 	}
-	err := checkBoxAncestorsWith(filepath.Join(outer, "box.json"), os.Lstat, os.Readlink, owner)
+	err = checkBoxAncestorsWith(filepath.Join(outer, "box.json"), os.Lstat, os.Readlink, owner)
 	require.Error(t, err, "a user-owned link reached through a root-owned alias must be refused")
 	require.Contains(t, err.Error(), inner)
 	require.Contains(t, err.Error(), filepath.Join(target, "box.json"))
