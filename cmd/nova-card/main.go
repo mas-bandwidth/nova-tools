@@ -46,7 +46,6 @@ usage:
   nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
   nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
   nova-card lint --card <file> [--card <file>...]
-  nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
   nova-card template
   nova-card version
   nova-card help [<verb>]
@@ -78,7 +77,6 @@ exit codes: 0 done; 1 a brief is red, named on its LINT DRIFT line, and nothing 
 example:
   nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./cards
   nova-card lint --card ./cards/finding-internal-bus-send.md
-  nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
 `
 
 var verbs = []string{"generate", "lint", "template", "version", "help"}

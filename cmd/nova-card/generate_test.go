@@ -173,3 +173,39 @@ func TestTheBannerNamesEveryVerbAndTheGenerateFlags(t *testing.T) {
 	}
 	assert.Equal(t, 3, lines, "one usage line per source")
 }
+
+// Verify that each example line appears exactly once in the help banner.
+func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
+	t.Parallel()
+	_, banner, _ := runCard("help")
+	// Find all example lines - lines starting with "  nova-card" in the example section
+	lines := strings.Split(banner, "\n")
+	exampleStart := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "example:") {
+			exampleStart = i + 1
+			break
+		}
+	}
+	if exampleStart < 0 {
+		t.Fatal("example section not found")
+	}
+	// Collect example lines (lines starting with "  nova-card")
+	var examples []string
+	for i := exampleStart; i < len(lines); i++ {
+		line := lines[i]
+		if strings.HasPrefix(line, "  nova-card") {
+			examples = append(examples, line)
+		} else if strings.TrimSpace(line) == "" && len(examples) > 0 {
+			break
+		}
+	}
+	// Check no line appears twice
+	for i := range examples {
+		for j := i + 1; j < len(examples); j++ {
+			if examples[i] == examples[j] {
+				t.Errorf("duplicate example line: %s", examples[i])
+			}
+		}
+	}
+}
