@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -301,6 +302,27 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 		require.Fail(t, fmt.Sprintln("redirect loop accepted"))
 	}
 }
+
+// TestDefaultClientRefusesARedirectToAnotherSchemeOrHost pins security#72
+// finding 6: the default client follows a redirect only within the original
+// https host, so a registry or a man-in-the-middle cannot retarget the version
+// read to plain http or to another host.
+func TestDefaultClientRefusesARedirectToAnotherSchemeOrHost(t *testing.T) {
+	t.Parallel()
+	check := defaultClient().CheckRedirect
+	base, err := url.Parse("https://127.0.0.1:1234/x")
+	require.NoError(t, err)
+	via := []*http.Request{{URL: base}}
+	for _, raw := range []string{"http://127.0.0.1:1234/y", "https://127.0.0.1:1235/y"} {
+		req, err := http.NewRequest(http.MethodGet, raw, nil)
+		require.NoError(t, err)
+		assert.Error(t, check(req, via), "a redirect to %s must be refused", raw)
+	}
+	same, err := http.NewRequest(http.MethodGet, "https://127.0.0.1:1234/y", nil)
+	require.NoError(t, err)
+	assert.NoError(t, check(same, via), "a redirect inside the original https host is followed")
+}
+
 func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 	p := manifest(t, row("good", "tool", printer(t, "tool v1.2.3-rc1+dirty\n"), "github:o/r", "none"), row("bad", "tool", "nova-version-no-such-binary", "npm:unused", "none"))
 	env := Environment{Client: &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
