@@ -23,9 +23,10 @@ func VersionTool(stamp string, env Environment) *tool.Tool {
 		How: `report reads each tool's installed version; snapshot records a directory's binaries;
 diff compares two snapshots; moved writes the note of what two commits' binaries changed.
 It is one of two binaries sharing the manifest and report; latest and installing are nova-update's.
-THE MANIFEST is the file --file names, written by hand: one line per tool, six tab-separated fields name kind installed latest apply owner; report -h states its six rules.
+THE MANIFEST is the file --file names, written by hand; report -h states its six rules.
 first run: the binary alone; the example lines write a one-tool manifest and read it.`,
-		NoJSON: "report and send write the note body the bus carries, so they take no --json; report's first line is `REPORT OK checked=1 known=1 unknown=0 changed=- sent=-`",
+		NoJSON:    "report and send write the note body the bus carries, so they take no --json; report's first line is `REPORT OK checked=1 known=1 unknown=0 changed=- sent=-`",
+		UsageNote: "THE MANIFEST is the file --file names: " + manifestShape + "; report -h states its six rules.",
 		ExitTable: "0 done, 2 usage or could not run, for every verb; by verb:\n" +
 			"  report: 0 every entry answered; 1 an entry is UNKNOWN; 2 usage, or a\n" +
 			"    manifest that did not read\n" +

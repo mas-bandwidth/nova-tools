@@ -69,6 +69,11 @@ type Tool struct {
 	// a line they print, so the help and the output cannot drift (ONBOARDING
 	// point 6). Empty keeps the standard sentence.
 	NoJSON string
+	// UsageNote, when set, is printed under the usage block, before the
+	// standard flags sentence: a tool states once, where a reader has just
+	// read the usage lines, the shape of a value several of them name (the
+	// manifest of --file), so no usage line carries it. Empty prints none.
+	UsageNote string
 }
 
 // MaxWords bounds a tool's own status words: a reader learns them all at once.
@@ -393,6 +398,9 @@ func (t *Tool) Banner() string {
 		}
 	}
 	fmt.Fprintf(&b, "  %s help [<verb>]\n\n", t.Name)
+	if t.UsageNote != "" {
+		b.WriteString(t.UsageNote + "\n\n")
+	}
 	var own []string
 	for _, v := range t.verbs() {
 		if v.flags().prints {

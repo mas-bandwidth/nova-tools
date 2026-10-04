@@ -41,7 +41,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	for _, want := range []string{
 		"Every verb but report, send takes --json",
 		"report and send write the note body the bus carries, so they take no --json; report's first line is `",
-		"THE MANIFEST is the file --file names, written by hand: one line per tool, six tab-separated fields name kind installed latest apply owner; report -h states its six rules.",
+		"THE MANIFEST is the file --file names: one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand; report -h states its six rules.",
 		"exit codes: 0 done, 2 usage or could not run, for every verb; by verb:",
 		"  report: 0 ",
 		"  send: 0 ",
