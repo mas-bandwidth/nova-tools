@@ -81,7 +81,9 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	}
 	require.Equal(t, 1, len(data), "folded rows = %q, want [%s]", data, wantRow)
 	require.Equal(t, wantRow, data[0], "folded rows = %q, want [%s]", data, wantRow)
-	require.False(t, strings.Contains(body, bait) || strings.Contains(r.all(), bait) || strings.Contains(body, "515151"), "the fold counted a usage.json the flag did not name:\n%s\n%s", body, r.all())
+	require.False(t, strings.Contains(body, bait), "the fold counted a usage.json the flag did not name:\n%s\n%s", body, r.all())
+	require.False(t, strings.Contains(r.all(), bait), "the fold counted a usage.json the flag did not name:\n%s\n%s", body, r.all())
+	require.False(t, strings.Contains(body, "515151"), "the fold counted a usage.json the flag did not name:\n%s\n%s", body, r.all())
 
 	missing := filepath.Join(dir, "no-such-usage.json")
 	outMiss := mkdir(t, filepath.Join(dir, "out-missing"))
