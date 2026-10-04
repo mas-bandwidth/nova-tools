@@ -1,7 +1,7 @@
 # The `gh pr merge` and `--auto` spellings this repository still permits, one per line as
 # <path>:<func>, each with the reason a reader can check.
 #
-# Glenn, 2026-09-18: nothing reaches the dev merge queue but a batch. `gh pr merge --auto`
+# The owner, 2026-09-18: nothing reaches the dev merge queue but a batch. `gh pr merge --auto`
 # is not an enqueue -- it is a standing instruction the forge executes later, with nobody in
 # the room -- and four pull requests landed on dev that way that morning, from calls made
 # while they were still red. Admission to a merge queue is internal/merge.Enqueuer.Enqueue

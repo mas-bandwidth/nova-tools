@@ -5,6 +5,10 @@ MCBusCursor.cfg	MCBusCursor.tla	pass	-	ignore-terminal	buscursor	required	-
 MCBusCursorBrokenAdvanceWithoutAck.cfg	MCBusCursor.tla	invariant	AdvanceOnlyPastAcknowledged	ignore-terminal	buscursor	required	-
 MCBusCursorBrokenNearerCursorWins.cfg	MCBusCursor.tla	invariant	FurtherReadWins	ignore-terminal	buscursor	required	-
 MCBusCursorBrokenWriteWithoutAdvance.cfg	MCBusCursor.tla	invariant	NoWriteWithoutAdvance	ignore-terminal	buscursor	required	-
+MCCairnStore.cfg	MCCairnStore.tla	pass	-	ignore-terminal	cairnstore	required	-
+MCCairnStoreBrokenOverwrite.cfg	MCCairnStore.tla	invariant	NoOverwrite	ignore-terminal	cairnstore	required	-
+MCCairnStoreBrokenPublishedWithoutPersisted.cfg	MCCairnStore.tla	invariant	PublishedImpliesPersisted	ignore-terminal	cairnstore	required	-
+MCCairnStoreBrokenReportBeforeFsync.cfg	MCCairnStore.tla	invariant	DurableBeforeReported	ignore-terminal	cairnstore	required	-
 MCCardMachine.cfg	MCCardMachine.tla	pass	-	ignore-terminal	cardmachine	bench	layer-2-original-instance-over-budget
 MCEpochMemberBroken.cfg	MCEpochMemberTable.tla	invariant	NoEpochLeak	ignore-terminal	epochmembertable	required	-
 MCEpochMemberBrokenStale.cfg	MCEpochMemberTable.tla	action	StaleWritesRefuse	ignore-terminal	epochmembertable	required	-
@@ -316,3 +320,13 @@ MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	
 MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-
+MCSecretsSeat.cfg	MCSecretsSeat.tla	pass	-	ignore-terminal	secretsseat	required	-
+MCSecretsSeatLive.cfg	MCSecretsSeat.tla	pass	-	ignore-terminal	secretsseat	required	-
+MCSecretsSeatBrokenSeatAddReplaces.cfg	MCSecretsSeat.tla	invariant	SeatFileNeverReplaced	ignore-terminal	secretsseat	required	-
+MCSecretsSeatBrokenSeatAddFileCheck.cfg	MCSecretsSeat.tla	invariant	SeatFileNeverReplaced	ignore-terminal	secretsseat	required	-
+MCSecretsSeatBrokenInjectCopiesUnread.cfg	MCSecretsSeat.tla	invariant	OnlyRecipientsOpen	ignore-terminal	secretsseat	required	-
+MCSecretsSeatBrokenReceiptByValue.cfg	MCSecretsSeat.tla	invariant	ValueNeverInTheClearAtRest	ignore-terminal	secretsseat	required	-
+MCSecretsSeatBrokenPubTakesPrivate.cfg	MCSecretsSeat.tla	invariant	PrivateKeyStaysHome	ignore-terminal	secretsseat	required	-
+MCSecretsSeatBrokenGateMergesAny.cfg	MCSecretsSeat.tla	invariant	GateRefusesEveryRuleBreak	ignore-terminal	secretsseat	required	-
+MCSecretsSeatReachHandSeal.cfg	MCSecretsSeat.tla	invariant	NoHandRoad	ignore-terminal	secretsseat	required	-
+MCSecretsSeatReachDirtyPlace.cfg	MCSecretsSeat.tla	invariant	ReceiptBlobAtHead	ignore-terminal	secretsseat	required	-

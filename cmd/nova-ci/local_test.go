@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/yield"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -347,6 +349,32 @@ func TestMakefileTestTargetTakesGOTEST_P(t *testing.T) {
 	}
 	require.NotEqual(t, "", recipe, "the Makefile has no `test:` rule followed by its recipe")
 	assert.Contains(t, recipe, "-p $(GOTEST_P)", "make test does not pass -p $(GOTEST_P); nova-ci local's GOTEST_P=%s would be a phantom:\n%s", localCores, recipe)
+}
+
+// TestLocalNiceIsYieldNice pins what local.go's compile-time check claims:
+// localNice is the number yield.Nice spells. The check and its comment must
+// also read beside the declaration they pin, folded into one block with it
+// (the reader's finding: nine lines away, the pin and the number did not
+// read together), so the file is read here too: the check lies within three
+// lines below the declaration, with nothing but the block's close between.
+func TestLocalNiceIsYieldNice(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, strconv.Itoa(yield.Nice), localNice, "localNice = %q, want it to spell yield.Nice = %d", localNice, yield.Nice)
+	src, err := os.ReadFile("local.go")
+	require.NoError(t, err, "the pin lives in the verb's own source")
+	decl, check := -1, -1
+	for i, line := range strings.Split(string(src), "\n") {
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(line), `localNice = `):
+			decl = i
+		case strings.Contains(line, "[1]struct{}{}[yield.Nice-"):
+			check = i
+		}
+	}
+	require.NotEqual(t, -1, decl, "local.go no longer declares localNice")
+	require.NotEqual(t, -1, check, "local.go no longer carries the compile-time check that pins yield.Nice")
+	assert.Greater(t, check, decl, "the compile-time check is at line %d, above the localNice declaration at line %d: fold it into one block beside the declaration so the pin and the number read together", check+1, decl+1)
+	assert.LessOrEqual(t, check-decl, 3, "the compile-time check is %d lines below the localNice declaration: fold it into one block beside the declaration so the pin and the number read together", check-decl)
 }
 
 // The real selection starts pkgselect's git and go commands through the verb's

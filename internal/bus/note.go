@@ -76,7 +76,7 @@ type Header struct {
 	// Host is the machine that posted the note, and it is OPTIONAL: an absent Host line is
 	// the shape every note on every bus had before this line existed, and it stays that
 	// shape byte for byte. It exists because one name can post from two places -- the
-	// keeper on the Studio and the bud on the Air both post as Rowan -- and the subject
+	// keeper on a machine and the bud on the Air both post as one person -- and the subject
 	// convention that told them apart, `[bud air]`, spent the subject line on routing.
 	//
 	// It is NOT in the id's preimage (see canonical): the id says a note is the same note
@@ -452,7 +452,7 @@ func minBodyCapacity(retain int64) int {
 const blankLineAdvice = "the header ends at the first blank line; put a blank line after the last header"
 
 // isProseKey reports whether what stands where a key should stand is a sentence. A header
-// key is one word: it holds no space, and it is short. Both halves are needed -- a
+// key is one word: it holds no whitespace, and it is short. Both halves are needed -- a
 // paragraph up to its first colon holds spaces, and a colon that never arrives leaves a
 // whole line -- and neither is a guess about what the writer meant, only about what they
 // cannot have meant.

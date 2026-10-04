@@ -14,10 +14,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
-// TestTimingTableReproduces runs the committed script the way its reader runs
-// it -- go run cmd/nova-ci/timing.go over the committed harvest -- twice, and
+// TestTimingTableReproduces runs the committed program the way its reader runs
+// it -- go run tools/citiming/main.go over the committed harvest -- twice, and
 // holds each run's stdout byte-for-byte against the table committed beside
-// the harvest, and the two runs against each other. Re-running the script
+// the harvest, and the two runs against each other. Re-running the program
 // must reproduce the committed table; that is the whole point of the
 // measurement, so it is the check.
 func TestTimingTableReproduces(t *testing.T) {
@@ -26,7 +26,7 @@ func TestTimingTableReproduces(t *testing.T) {
 	pkg, err := os.Getwd()
 	require.NoError(t, err)
 	root := filepath.Dir(filepath.Dir(filepath.Dir(pkg))) // internal/ci/timing -> the checkout
-	script := filepath.Join(root, "cmd", "nova-ci", "timing.go")
+	script := filepath.Join(root, "tools", "citiming", "main.go")
 	log := filepath.Join(pkg, "testdata", "events.jsonl")
 	golden, err := os.ReadFile(filepath.Join(pkg, "testdata", "table.tsv"))
 	require.NoError(t, err, "the committed table is missing; run the script once and commit its output: %v", err)

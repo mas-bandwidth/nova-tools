@@ -143,7 +143,7 @@ type winPlacer interface {
 	// RemoveTree removes <scratch>/nova-<n>, retrying a transient hold for a bounded
 	// window before it is a leak (W7). The ROOT is the caller's --scratch and it is passed
 	// separately on purpose: deletion in this repository is a verb over a validated path
-	// BELOW A ROOT (Glenn, 2026-09-17, "it is just one mistake away from deleting the whole
+	// BELOW A ROOT (the coordinator, 2026-09-17, "it is just one mistake away from deleting the whole
 	// disk"), and the class test in internal/ci holds every os.RemoveAll of a computed path
 	// to safepath.RemoveUnder. A removal that only knew the leaf could not be checked
 	// against anything but its own parent, which is no check at all.
@@ -549,16 +549,15 @@ func wsbDocument(in wsbInput) string {
 // mapped path under C:\Users\WDAGUtilityAccount\Desktop, which is where Windows Sandbox
 // maps a <MappedFolder> by its host base name, and the status file is written there so the
 // HOST can read it through the same folder.
+//
+// The command is one STRING, so the arguments go through winCommandLine: an argument
+// made of several words joined raw reaches the child as two, and winCommandLine quotes
+// each argument the way the child's argv parse reverses.
 func wsbLogonCommand(in wsbInput) string {
 	guest := `C:\Users\WDAGUtilityAccount\Desktop\` + filepath.Base(in.Scratch)
 	var cmd strings.Builder
 	cmd.WriteString(`cmd.exe /c "`)
-	for i, a := range in.Argv {
-		if i > 0 {
-			cmd.WriteString(" ")
-		}
-		cmd.WriteString(a)
-	}
+	cmd.WriteString(winCommandLine(in.Argv))
 	// & not && : the status file is written whatever the command did, because an absent
 	// file is 124 and a failing command is not a timeout.
 	fmt.Fprintf(&cmd, ` & echo %%ERRORLEVEL%% > %s\%s"`, guest, wsbExitFile)
@@ -601,8 +600,8 @@ func wslInArgv(argv []string) (string, bool) {
 }
 
 // winCommandLine is argv as CreateProcessW wants it: one string, quoted by the rule
-// CommandLineToArgvW un-quotes by. A tool that built this by joining on a space would hand a
-// path with a space in it to the child as TWO arguments -- and `C:\Program Files` is not an
+// CommandLineToArgvW un-quotes by. A tool that built this by joining on whitespace would hand a
+// path with whitespace in it to the child as TWO arguments -- and `C:\Program Files` is not an
 // unusual path on windows, it is the ordinary one. It lives here, beside the platform-
 // independent half, because a quoting rule is a pure function of a string and a pure
 // function of a string is testable on a Mac.

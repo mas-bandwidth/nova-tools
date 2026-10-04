@@ -16,8 +16,8 @@ import (
 // notes in the checkout after fetching --remote/--branch, and writes one reply note into
 // the caller's lane. Without --advance it writes nothing else; with it, the caller's cursor
 // moves in the same commit as the reply.
-func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("reply")
+func cmdReply(args []string, stdout, stderr io.Writer, now time.Time, e runEnv) int {
+	f := newFlagsWith("reply", e.getenv)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	re := f.fs.String("re", "", "the note being answered, by id (required)")
@@ -69,7 +69,7 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if !*dryRun { // the lock is a file in .git; a dry run writes nothing
-		release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
+		release, lockErr := bus.LockCheckout(*busDir, e.lockWait())
 		if lockErr != nil {
 			fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.WithRemedy(oneline.Err(lockErr), "nova-bus reply -h"))
 			return 1
@@ -98,7 +98,7 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// The refresh fetches and fast-forwards the checkout, which writes; a dry run resolves
 	// --re against the checkout as it stands, and says so in its -h.
 	if !*dryRun {
-		if _, err := refreshCheckout(*busDir, *remote, *branch); err != nil {
+		if _, err := e.refresh()(*busDir, *remote, *branch); err != nil {
 			fmt.Fprintf(stderr, "REPLY FAILED: %s\n", oneline.Err(err))
 			printTranscript(stderr, err)
 			return 1
@@ -115,7 +115,7 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	original, ok := t.Resolve(*re)
 	if !ok {
-		fmt.Fprintf(stderr, "REPLY REFUSED: --re %s names no note on this bus; name one from your open list; run: nova-bus inbox --bus %s --as %s --receipt-max-words <n> --open\n", oneline.Field(*re), oneline.Escape(shellQuote(*busDir)), oneline.Escape(shellQuote(*as)))
+		fmt.Fprintf(stderr, "REPLY REFUSED: --re %s names no note on this bus; name one from your open list; run: nova-bus inbox --bus %s --as %s --receipt-max-words <n> --open\n", oneline.Field(*re), oneline.Escape(oneline.ShellWord(*busDir)), oneline.Escape(oneline.ShellWord(*as)))
 		return 2
 	}
 	prepared, err := bus.PrepareReplyFrom(t, me, original, body, now, hostName)

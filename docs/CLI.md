@@ -7,7 +7,7 @@ Command reference and worked examples. Run shell examples from the repository ro
 ## nova-check
 
 ```
-nova-check quickstart --dir <dir> [--fail-max <n>] # the first run: links, then nocode, both run even if the first says NO
+nova-check quickstart --dir <dir> [--max <n>] # the first run: links, then nocode, both run even if the first says NO
 nova-check attest --home <dir> --manifest <file>   # did the full self load: count + bytes + sha256, pasteable at session start
 nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]   # every relative inline link resolves; --file (repeatable) checks just those files, not the whole tree; --exclude (repeatable) keeps a path prefix out of the scan and out of the check
 nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
@@ -19,10 +19,10 @@ nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor 
 nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
 nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>] [--dry-run]   # append one receipt, refusing a verb the list does not declare
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]   # append one receipt, refusing a verb the list does not declare
 nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
 nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>] [--dry-run]   # are we converging: one line per stream, now against --since, with the ratio and the trend
-nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--dry-run] [--exclude <prefix>] [--fail-max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
+nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--dry-run] [--exclude <prefix>] [--max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
 ```
 
 Most verbs only read. Three write, each only when asked and each with `--dry-run`, which makes every check and writes nothing: `dogfood record` appends a receipt, `spelling --write` edits files in place, `convergence --state` stores its two-tick streak. `convergence` also reads the forge through `gh`, over the network. A refusal is one line, `nova-check[ <verb>] REFUSED: <why>; run: nova-check help`; `<verb> -h` ends in the verb's `effect:` line.
@@ -42,7 +42,7 @@ $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
 ```
 
-**Reading it.** Every line is `<CHECK> OK` or `<CHECK> FAIL`; FAIL lines go to stderr with the subject named. `worst-exit=` is the run's exit code. A failing run is bounded: `attest`, `links`, `nocode`, `corpus` and `quickstart` print at most `--fail-max` FAIL lines (default 20, `0` for all), then one `MORE` line naming the flag that shows the rest, then a count line that prints on success too. The four verbs `quickstart` names at the end each want something only you have: a size budget, a boot manifest, a seed to compare against, a ledger of what you have chosen never to lose.
+**Reading it.** Every line is `<CHECK> OK` or `<CHECK> FAILED`; FAILED lines go to stderr with the subject named. `worst-exit=` is the run's exit code. A failing run is bounded: `attest`, `links`, `nocode`, `corpus` and `quickstart` print at most `--max` FAILED lines (default 20, `0` for all), then one `MORE` line naming the flag that shows the rest, then a count line that prints on success too. The four verbs `quickstart` names at the end each want something only you have: a size budget, a boot manifest, a seed to compare against, a ledger of what you have chosen never to lose.
 
 **What the flags want.** `--dir`, `--home` and `--root` are directories you write out, never the working directory. `--file` is one file to measure, with exactly one of `--max-bytes <n>` or `--max-tokens <n> --bytes-per-token <r>`; the divisor is one you measured on your own writing, because one the tool supplied would make the answer a guess that looked like an instrument. `--manifest` is a text file of paths relative to `--home`; `--ledger` is your markdown ledger of protected material and `--min-anchors <n>` its row floor. A run missing several flags names all of them at once. A typo or an unknown verb is one line that names the door (`run: nova-check help`), never the whole banner.
 
@@ -103,7 +103,7 @@ DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from St
 
 A `--closes` naming an id nothing carries closes nothing and leaves the edge
 open: a typo must never read as a close. A receipt the tool cannot parse is exit 1 and a named
-`DOGFOOD FAIL` line, never a quietly shorter ledger. A receipt naming a verb
+`DOGFOOD FAILED` line, never a quietly shorter ledger. A receipt naming a verb
 the list does not declare is named one by one — its file, what it claimed and
 the nearest declared verb — by `ledger` AND by `gate`, because a release lane
 must not be able to pass or fail without learning that the evidence it read was
@@ -194,7 +194,7 @@ $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@m
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
-HYGIENE NO base=main head=card paths=sign/** findings=4
+HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 ### Are we converging
@@ -760,7 +760,28 @@ usage:
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
   nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
-                       (this machine as one member of a sprint's fleet, every sprint verb sent to the sprint's server --server, the run loop nova-sprint run --listen started, so this machine opens no store: beat, queue, push and finish what ended (the child's commit to origin's sprint branch, from outside the wall, never forced; the pull request the child's gh pr create asked for, opened with --gh), each finish judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md), take to the width its fleet row names (read with its queue every tick: a member's own row, a reader's its machine's, reader-<m> running at m's width; --width is a twin's override), each card one native child with its frame and an allowlist environment, on the model, budget and deadline its packet's route names (the card decides: the deal draws a route of its tier, or its model: pin; --model, --tokens and --deadline are the override a card with no route runs on); --pass names the secrets a child is handed, the loop record's nova-secrets keys: a loop whose harness reads its provider key from the environment carries --pass <KEY>, else its children start without it and fail at the provider; --reader runs the readers-table loop, each read on the route the ask drew from the reader tier unless --model, --tokens or --deadline is given, and a flash card's first read a decide read, asked by native with JEV_API_KEY from the reader's environment, which no child is handed (docs/SPEC-SPRINT.md section 6); a work member whose environment holds JEV_API_KEY asks the attempt decision when any take ends, in its own process, and the finish carries it (docs/SPEC-SPRINT.md section 2); a work card's red gate, its child ended not-done, is classed by native's gate decision with the same key before the take is reported (the failing tests run once at the base, bounded), each decision recorded and shown, and routed only on the sprint row's gate bars, empty by default: flaky failures rerun once, pre-existing ones never the card's (docs/SPEC-SPRINT.md section 5, the gate verdict); --identity names the pool identity every child commits under, from the loop's nova-config argv, else the pool's identity.tsv; a launch it is done with leaves no checkout behind (a failed one keeps its directory, the newest 5 of the pool), and it starts no card while the slots' volume has less free than --disk-floor GiB, default 10; each card's checkout is staged within --stage-wall, default 120s, which a slow machine's loop row names longer; a card it will not start is finished staging refused: <why>, so the sprint deals it to another member and says why)
+                       (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
+                        Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
+                        A reader uses its machine's width; --width overrides it. This machine opens no store.
+                        Each card runs as one native child with its frame and an allowlist environment.
+                        Its packet supplies the model, budget and deadline; the flags fill missing route values.
+                        --reader runs reads from the readers table; its flags override the read's route.
+                        A flash card's first read is a decide read, asked by native with JEV_API_KEY
+                        from the reader's environment; children do not receive that key (docs/SPEC-SPRINT.md section 6).
+                        A work member with JEV_API_KEY asks the attempt decision in its own process
+                        when a take ends and carries it in its finish (docs/SPEC-SPRINT.md section 2).
+                        Native classifies a work card's red gate with the gate decision and the same key
+                        before reporting the take; failing tests run once at the base, within a bound.
+                        Decisions are recorded and routed on the sprint row's gate bars, empty by default.
+                        Flaky failures rerun once; pre-existing failures are not charged to the card
+                        (docs/SPEC-SPRINT.md section 5, the gate verdict).
+                        The member pushes the child's commit and opens its requested PR outside the wall, never force-pushing.
+                        Each finish is judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md).
+                        --pass names environment secrets to hand to children; a harness that needs one must receive it.
+                        --identity names the pool's commit identity; otherwise the pool's identity.tsv supplies it.
+                        Completed launches leave no checkout; each pool keeps its newest five failed launches.
+                        No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
+                        A staging refusal reports why so the sprint can deal the card to another member.)
   nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
                        (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 10, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
@@ -770,6 +791,7 @@ usage:
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
   nova-swarm slots list --store <dir>
+  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
@@ -793,13 +815,13 @@ carries the variable's name, never its value. The legacy --auth option copies
 the provider's auth entry into the data home, mode 0600, and removes it when
 the run ends. A worker naming secret refuses --auth and writes no auth file.
 
-EVERY JOB RUNS INSIDE nova-sandbox (docs/SPEC-SANDBOX.md) unless the caller types
---no-wall (native and member), the one opt-out, which no card can ask for and
-which the NATIVE line names as sandbox=none-by-flag. Inside the wall the job
-directory and its data home are the only writable paths; the slot directory and
-whatever read_roots names in the worker description are readable; the key file,
-~/.ssh and the gh configuration are in neither list and the kernel denies them.
-A command that runs outside the wall and dies inside it is missing a read_roots entry.
+Sandbox: native uses nova-sandbox unless --no-wall is explicit
+(docs/SPEC-SANDBOX.md). A card cannot request this opt-out; the NATIVE line
+names it as sandbox=none-by-flag. The job directory, data home, temporary directory and
+default shared cache are writable. The slot, harness and toolchain directories,
+worker read_roots and any borrowed Git objects are readable.
+The worker's key file is kept outside its readable roots. If a command runs
+outside the wall but fails inside it, check its dependencies and read_roots.
 
 Prepare a card: save nova-swarm template --name card to a file, fill its <...>
 lines, then run nova-swarm lint --card <file> --child-rules. REPO: names the
@@ -1525,7 +1547,7 @@ same file again is left unchanged, and a file holding anything else is never
 overwritten. The executable transcript is in [TESTS.md](TESTS.md#nova-update).
 The report reads only installed identities. UNKNOWN means a partial inventory; it
 never means zero or current. Replace the example with your own six-column manifest
-for your bench; it and any snapshot path belong to the caller.
+for your bench; it and any state path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported
@@ -1534,8 +1556,8 @@ UNKNOWN. A row holding a whole argv (`go version`) is run as written.
 Use `nova-update help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. Updates require an explicit `nova-update apply --file ... name`;
 models are listed for the owner to evaluate and pull themselves. No timer is installed.
-For recovery across process death, name `--snapshot`; retries retain the prepared
-note. Version statuses should go to your chosen integrator, with optional Cc;
+For recovery across process death, name `--state`; retries retain the prepared note.
+Version statuses should go to your chosen integrator, with optional Cc;
 participation and updates remain voluntary.
 
 `status` is `check` with every entry's line shown, the current ones too, exit 0 when
@@ -1554,7 +1576,7 @@ nova-update apply --file versions.tsv go --dry-run
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
 `--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
-`--remote` and `--branch`. A busy snapshot wants the current writer to finish
+`--remote` and `--branch`. A busy state file wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
 
 ### The release verb
@@ -1701,7 +1723,7 @@ and a file holding anything else is never overwritten. The executable transcript
 in [TESTS.md](TESTS.md#nova-version).
 The report reads only installed identities. UNKNOWN means a partial inventory; it
 never means zero or current. Replace the example with your own six-column manifest
-for your bench; it and any snapshot path belong to the caller.
+for your bench; it and any state path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported
@@ -1743,10 +1765,6 @@ refused healthy binaries and named a build repair that would have found nothing
 `diff` reads two such files and reports changed, added or removed entries without
 executing the binaries.
 
-This four-column inventory is **not** the six-column manifest accepted by
-`report --file`; the `--bin/--out` shape has no `--owner` flag. The report's
-`--snapshot` option below is a separate delivery-recovery file.
-
 `snapshot`'s `--file` shape instead reads the six-column manifest the caller has
 already adopted and counts how many of its tools answer, printing one
 `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line and one
@@ -1761,13 +1779,13 @@ Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
 `platform=`, are accepted as metadata. A binary that prints no version line is
 refused by name; a partial inventory is not reported as complete. For recovery
-across process death, name `--snapshot`; retries retain the prepared note.
+across process death, name `--state`; retries retain the prepared note.
 Version reports can be sent to the recipient you select, with optional Cc.
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
 `--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
-`--remote` and `--branch`. A busy snapshot wants the current writer to finish
+`--remote` and `--branch`. A busy state file wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
 
 
