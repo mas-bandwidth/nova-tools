@@ -62,3 +62,20 @@ func CompleteResult(raw []byte, head, branch string, resolve func(string) (strin
 	}
 	return []byte(text), nil
 }
+
+// Unformatted is the finish's verdict on `gofmt -l` over the Go files the work changed
+// (one path per line, nothing when every file is formatted): the refusal naming each file,
+// or nil. A one-byte formatting difference in a committed file went red at the landing's
+// own gofmt twice on 2026-10-03, after the readers were paid; it is refused here, before.
+func Unformatted(gofmtList string) error {
+	var files []string
+	for _, line := range strings.Split(gofmtList, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			files = append(files, line)
+		}
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	return fmt.Errorf("gofmt -l names %d unformatted Go file(s): %s; run gofmt -w on each and commit", len(files), strings.Join(files, " "))
+}

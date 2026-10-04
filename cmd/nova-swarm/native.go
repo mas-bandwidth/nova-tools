@@ -1516,7 +1516,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 	// Validate result metadata before a gate decision or work review can spend a read.
 	if cfg.frame != nil && cfg.frame.Kind == "work" && !res.lost && !res.idled && !res.terminated && res.rc == 0 && res.wallReport == "" {
-		if err := completeNativeResult(jobDir, tmpDir); err != nil {
+		if err := completeNativeResult(jobDir, tmpDir, stageRes.BaseSha, nativeFinishCommands(filepath.Join(jobDir, swarm.JobRepo), goBin)); err != nil {
 			refuseNative(errOut, "result completion: "+err.Error()+"; repair RESULT.md against the checkout and run the finish again")
 			res.resultsDir = publishNativeResults(cfg, jobDir, lastAttempt, errOut)
 			return res, 2
@@ -2381,9 +2381,48 @@ func publishNativeResults(cfg nativeRunConfig, jobDir string, attempt int, errOu
 	return dir
 }
 
+// finishCommands are the two commands the finish asks of the staged checkout, injected so
+// the decisions over their answers are unit-tested with no subprocess: git, run in the
+// checkout with its arguments; and `gofmt -l` over the named Go files, run in the checkout,
+// answering the paths it would reformat. nativeFinishCommands is the real pair.
+type finishCommands struct {
+	git   func(args ...string) (string, error)
+	gofmt func(files ...string) (string, error)
+}
+
+// nativeFinishCommands is the finish's real git and gofmt in the checkout at repo: the
+// gofmt is the bench Go's (goBin, the one the child's PATH named), else the member's own.
+func nativeFinishCommands(repo, goBin string) finishCommands {
+	o := gitrun.Options{C: repo, OwnRepo: true}
+	return finishCommands{
+		git: func(args ...string) (string, error) { return gitrun.Output(context.Background(), o, args...) },
+		gofmt: func(files ...string) (string, error) {
+			bin := "gofmt"
+			if goBin != "" {
+				bin = filepath.Join(goBin, "gofmt")
+			}
+			cmd, cancel := subproc.Command(context.Background(), subproc.Tool, bin, append([]string{"-l", "--"}, files...)...)
+			defer cancel()
+			cmd.Dir = repo
+			var out, errb bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &out, &errb
+			if err := cmd.Run(); err != nil {
+				return "", fmt.Errorf("gofmt -l over the changed Go files: %w: %s", err, strings.TrimSpace(errb.String()))
+			}
+			return out.String(), nil
+		},
+	}
+}
+
 // completeNativeResult records Git-derived metadata at the existing finish boundary
-// (docs/SPEC-CARD-CONTRACT.md section 3), retaining the child's RESULT.md unchanged.
-func completeNativeResult(job, tmp string) error {
+// (docs/SPEC-CARD-CONTRACT.md section 3), retaining the child's RESULT.md unchanged. The
+// head and branch are the checkout's, read from git after the child's last commit, never
+// the child's text: a stated head that is not the tip is refused naming both. Before any
+// of it, the Go files the work changed since the staged commit (every Go file the checkout
+// holds when none was recorded) go through `gofmt -l`, and a file it names refuses the
+// finish by name: the child gets its next attempt to format and commit, and no one-byte
+// difference reaches a reader or the landing.
+func completeNativeResult(job, tmp, staged string, run finishCommands) error {
 	if canonical, err := filepath.EvalSymlinks(job); err == nil {
 		job = canonical
 	}
@@ -2403,31 +2442,43 @@ func completeNativeResult(job, tmp string) error {
 	if err != nil {
 		return err
 	}
-	o := gitrun.Options{C: filepath.Join(job, swarm.JobRepo), OwnRepo: true}
-	ctx := context.Background()
-	head, err := gitrun.Output(ctx, o, "rev-parse", "--verify", "HEAD^{commit}")
+	repo := filepath.Join(job, swarm.JobRepo)
+	head, err := run.git("rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
 		return err
 	}
-	branch, err := gitrun.Output(ctx, o, "symbolic-ref", "--short", "HEAD")
+	branch, err := run.git("symbolic-ref", "--short", "HEAD")
 	if err != nil {
 		return err
+	}
+	changed, err := changedGoFiles(run, staged)
+	if err != nil {
+		return err
+	}
+	if len(changed) > 0 {
+		list, err := run.gofmt(changed...)
+		if err != nil {
+			return err
+		}
+		if err := cardcontract.Unformatted(list); err != nil {
+			return err
+		}
 	}
 	resolve := func(ref string) (string, error) {
 		if !typedrec.IsSha(strings.ToLower(ref)) {
 			return "", fmt.Errorf("not a commit abbreviation")
 		}
-		sha, err := gitrun.Output(ctx, o, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
+		sha, err := run.git("rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 		if err != nil {
 			return "", err
 		}
-		if _, err := gitrun.Output(ctx, o, "merge-base", "--is-ancestor", sha, head); err != nil {
+		if _, err := run.git("merge-base", "--is-ancestor", sha, head); err != nil {
 			return "", fmt.Errorf("commit %s is outside HEAD's history", sha)
 		}
 		return sha, nil
 	}
 	artifact := func(ref string) error {
-		for _, p := range []string{ref, filepath.Join(job, ref), filepath.Join(o.C, ref)} {
+		for _, p := range []string{ref, filepath.Join(job, ref), filepath.Join(repo, ref)} {
 			p, err := filepath.EvalSymlinks(p)
 			if err != nil {
 				continue
@@ -2449,6 +2500,29 @@ func completeNativeResult(job, tmp string) error {
 		return err
 	}
 	return atomicfile.Write(filepath.Join(job, cardcontract.FinishName), completed, 0o644)
+}
+
+// changedGoFiles is the Go files the work's commits since staged touch and HEAD still
+// holds (a deleted file is nothing to format); every Go file HEAD holds when no staged
+// commit is known, since then all of the checkout is the work's.
+func changedGoFiles(run finishCommands, staged string) ([]string, error) {
+	var out string
+	var err error
+	if staged == "" {
+		out, err = run.git("ls-files", "--", "*.go")
+	} else {
+		out, err = run.git("diff", "--name-only", "--diff-filter=d", staged, "HEAD", "--", "*.go")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("the Go files the work changed: %w", err)
+	}
+	var files []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			files = append(files, line)
+		}
+	}
+	return files, nil
 }
 
 // copyRegularFile copies one regular file by bytes and rename. A symlink or a

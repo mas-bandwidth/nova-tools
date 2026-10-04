@@ -205,7 +205,10 @@ Each stated step commit expands to its full commit only when Git resolves it uni
 inside HEAD's history. The verdict, report and evidence stay the child's, including
 any separate source revision a rating names. Missing metadata, unknown or ambiguous
 commits and missing referenced output files refuse the finish before a reader is paid;
-no missing commit is replaced with HEAD and no successful verdict is invented.
+no missing commit is replaced with HEAD and no successful verdict is invented. Before any
+of that, `gofmt -l` runs over the Go files the work's commits changed since the staged
+commit, and a file it names refuses the finish by name: the child's next attempt formats
+and commits it, and a one-byte formatting difference never reaches a reader or the landing.
 
 **The verdict per step.** A tree card's result (docs/SPEC-SPRINT.md, a card is a tree of steps)
 also carries one line per work step in its body (under `## Body`, never among the header's

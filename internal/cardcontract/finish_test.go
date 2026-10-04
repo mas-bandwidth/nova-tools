@@ -73,3 +73,26 @@ func TestCompleteResultRefusesUnknownMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestCompleteResultNamesBothHeadsWhenTheStatedOneIsNotTheTip(t *testing.T) {
+	t.Parallel()
+	head, stated := strings.Repeat("a", 40), strings.Repeat("c", 40)
+	raw := "head: " + stated + "\nbranch: b\nverdict: ok\ngate: -\noutput: -\nreport: done\n"
+	got, err := CompleteResult([]byte(raw), head, "owned", func(string) (string, error) { return stated, nil }, func(string) error { return nil })
+	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.Contains(t, err.Error(), stated)
+	assert.Contains(t, err.Error(), head)
+}
+
+func TestUnformattedNamesEveryFileGofmtListed(t *testing.T) {
+	t.Parallel()
+	for _, list := range []string{"", "\n", " \n\n"} {
+		assert.NoError(t, Unformatted(list), "%q: nothing listed is nothing to refuse", list)
+	}
+	err := Unformatted("cmd/a.go\n\ninternal/b_test.go\n")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2 unformatted")
+	assert.Contains(t, err.Error(), "cmd/a.go internal/b_test.go")
+	assert.Contains(t, err.Error(), "gofmt -w", "the remedy")
+}
