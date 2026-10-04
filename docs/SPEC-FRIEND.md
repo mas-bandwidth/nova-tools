@@ -93,16 +93,58 @@ open; the status file.
 The deliver adapter runs the harness directly, never through a shell, as its
 own session leader; past the ten minute budget the whole process group is
 signalled, SIGTERM then SIGKILL, so a harness that forks leaves no orphan.
-Tonight one adapter is real: OpenCode, `opencode run --session <id> --dir
-<dir> <text>`, the newest session of the directory when none is named. A ping
-pushed in carries, at its head, the exact `pong` line for this friend (the
-binary by path, the name, the directory, the store, the nonce), so a small
-model has one line to run and nothing to fill in. Codex, Claude, Antigravity
-and DSH have no deliver command yet: their daemon is passive, taking nothing
-off the stream (the session's own blocking read does), peeking so a ping is
-still answered by the daemon at once, beating, and recording a push it
-cannot deliver; so the tool is honest, and the beat and the daemon pong are
-real for them.
+Two adapters are real: OpenCode, `opencode run --session <id> --dir <dir>
+<text>`, the newest session of the directory when none is named; and
+Antigravity, below. A ping pushed in carries, at its head, the exact `pong`
+line for this friend (the binary by path, the name, the directory, the store,
+the nonce), so a small model has one line to run and nothing to fill in.
+Codex, Claude and DSH have no deliver command yet: their daemon is passive,
+taking nothing off the stream (the session's own blocking read does), peeking
+so a ping is still answered by the daemon at once, beating, and recording a
+push it cannot deliver; so the tool is honest, and the beat and the daemon
+pong are real for them.
+
+### Antigravity
+
+Antigravity (Google's agent IDE, 2.19.1 as measured) has no deliver command
+of its own, but its agents message each other through the language server,
+and that channel takes a message from outside: `agentapi send-message
+--title=nova-friend <conversation> <text>`, `agentapi` being the wrapper under
+`~/.gemini/antigravity/bin` that execs the app's `language_server`. The
+server writes the text into the conversation's mailbox,
+`~/.gemini/antigravity/brain/<conversation>/.system_generated/messages/`, as
+a high-priority message, its watcher starts a turn on it, and the session
+marks it read in `read.json` there as it takes it. Measured 2026-10-04 08:52
+ET: sent at :28, the turn's first step at :32, the friend's "got it" on
+nova-bus2 at :35.
+
+The adapter finds everything each delivery, so a restarted app is found
+again: the server's pid and CSRF token off `ps -axo user=,pid=,args=` for the daemon's own user (the
+`language_server` with `--override_ide_name antigravity` and its
+`--csrf_token`), its listening ports from `lsof -Fn`, and the port that
+answers `get-conversation-metadata` for the conversation (the other is TLS).
+Without `--session`, the conversation is the newest root conversation whose
+workspace is the friend's directory (or its real path), from the harness's
+`conversation_summaries.db`, read immutable through `sqlite3 -json`; that
+table is written when a turn ends, so it names the session and never the
+turn. The command runs through `/usr/bin/env` with
+`ANTIGRAVITY_LS_ADDRESS` and `ANTIGRAVITY_CSRF_TOKEN` set, the text an
+argument; the token is already on the server's own command line, readable
+by every process of the login, so the delivery exposes nothing the harness
+does not.
+
+The ack: `agentapi` exits 0 on an error too (a wrong conversation, a missing
+token print `"error"` in its JSON), so the JSON is read and its exit code is
+not. The delivery is exit 0 once a new message titled exactly `nova-friend` has appeared in the mailbox
+and `read.json` marks it read, polled every half second for two minutes; past
+that it is exit 1 with the message id, the message still in the mailbox for
+the session's next turn, and the daemon redelivers (a duplicate, never a
+loss). The turn the message starts runs on after the ack: a second message
+queues in the mailbox rather than waiting for the turn, which is the
+harness's own order for its agents. The mailbox and `agentapi` are the
+harness's internals for its subagents and scheduled tasks, not a documented
+API; a release that moves them breaks this adapter, and the functional test
+(`NOVA_FRIEND_ANTIGRAVITY_DIR`) says so.
 
 Grok, the Grok Build TUI (xAI's `grok`), is the second real adapter, by the
 only door the open window has. The harness has no deliver verb, no leader
