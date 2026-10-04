@@ -154,6 +154,7 @@ func TestPrepareAndSendAreUnchangedByThisSlice(t *testing.T) {
 // exit 1 `DRAFT REFUSED: --reply-to "bo-999999999999" is not an id on this bus` for the
 // same run with the fetch disabled at the seam.
 func TestReplyRefreshesBeforeItResolves(t *testing.T) {
+	t.Parallel()
 	checkout, bare, drafts := replyBus(t)
 	// A second checkout of the same bare remote pushes a note Ada's checkout has not seen.
 	other := filepath.Join(t.TempDir(), "other")
@@ -170,11 +171,11 @@ func TestReplyRefreshesBeforeItResolves(t *testing.T) {
 	assert.Containsf(t, r.stdout, "moved=true", "the receipt does not say the checkout moved: %s", r.stdout)
 	// The same run with the fetch disabled at the seam: the id is unknown locally.
 	second := t.TempDir()
-	withoutFetch(t, func() {
-		invoke(t, "", replyArgs(checkout, second, "bo-888888888888", body)...).
-			mustCode(t, 1).
-			mustContain(t, "stderr", `DRAFT REFUSED: --reply-to "bo-888888888888" is not an id on this bus`)
-	})
+	runEnv{
+		refreshCheckout: func(dir, remote, branch string) (bool, error) { return false, nil },
+	}.invoke(t, "", replyArgs(checkout, second, "bo-888888888888", body)...).
+		mustCode(t, 1).
+		mustContain(t, "stderr", `DRAFT REFUSED: --reply-to "bo-888888888888" is not an id on this bus`)
 	// The other half of the live listing: a note already carried AND already receipted is
 	// still a legal target, because heard is not answered.
 	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-111111111111",
@@ -1127,15 +1128,13 @@ func TestGeneratedReplySendsAndClosesItsTarget(t *testing.T) {
 //
 // expected= `DRAFT REFUSED: another nova-bus is running on this checkout`, exit 1.
 func TestASecondReplyOnOneCheckoutWaitsAndThenRefuses(t *testing.T) {
+	t.Parallel()
 	checkout, _, drafts := replyBus(t)
 	release, err := bus.LockCheckout(checkout, checkoutLockWait)
 	require.NoError(t, err)
 	defer release()
-	old := checkoutLockWait
-	checkoutLockWait = 50 * 1000 * 1000 // 50ms
-	defer func() { checkoutLockWait = old }()
 	body := bodyFile(t, "Yes.\n")
-	invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).
+	runEnv{checkoutLockWait: 50 * time.Millisecond}.invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).
 		mustCode(t, 1).mustContain(t, "stderr", "DRAFT REFUSED: ")
 	mustEmptyDir(t, drafts)
 }
@@ -1167,18 +1166,18 @@ func withoutFetch(t *testing.T, fn func()) {
 // it; drafts go outside the bus, because send needs its tree clean`, exit 2, nothing
 // written.
 func TestARelativeDraftDirInsideTheCheckoutIsRefused(t *testing.T) {
+	t.Parallel()
 	checkout, _, _ := replyBus(t)
 	body := bodyFile(t, "Yes.\n")
 	inside := filepath.Join(checkout, "scratch")
 	require.NoError(t, os.MkdirAll(inside, 0o755))
-	t.Chdir(checkout)
 	for _, tc := range []struct{ name, bus, draftDir string }{
 		{"a relative draft dir under a relative bus", ".", "scratch"},
 		{"a relative draft dir under an absolute bus", checkout, "scratch"},
 		{"the relative bus root itself", ".", "."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			invoke(t, "", "draft", "--bus", tc.bus, "--as", "Ada", "--reply-to", "bo-abcdef012345",
+			runEnv{workingDir: checkout}.invoke(t, "", "draft", "--bus", tc.bus, "--as", "Ada", "--reply-to", "bo-abcdef012345",
 				"--body-file", body, "--draft-dir", tc.draftDir, "--remote", "origin", "--branch", "main").
 				mustCode(t, 2).
 				mustContain(t, "stderr", "drafts go outside the bus, because send needs its tree clean")
@@ -1199,15 +1198,16 @@ func TestARelativeDraftDirInsideTheCheckoutIsRefused(t *testing.T) {
 // offers no create-exclusive publish; name a --draft-dir on a filesystem that has a
 // create-exclusive publish`, exit 2, nothing written.
 func TestAFilesystemWithNoCreateExclusivePublishIsRefused(t *testing.T) {
+	t.Parallel()
 	checkout, _, drafts := replyBus(t)
 	body := bodyFile(t, "Yes.\n")
-	old := publishDraft
-	publishDraft = func(dir, name string, content []byte) (string, error) {
-		return "", fmt.Errorf("%s: link said %q and %s said %q: %w", dir, "operation not supported",
-			"the no-replace rename", "not supported", bus.ErrNoExclusivePublish)
+	e := runEnv{
+		publishDraft: func(dir, name string, content []byte) (string, error) {
+			return "", fmt.Errorf("%s: link said %q and %s said %q: %w", dir, "operation not supported",
+				"the no-replace rename", "not supported", bus.ErrNoExclusivePublish)
+		},
 	}
-	defer func() { publishDraft = old }()
-	r := invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).mustCode(t, 2)
+	r := e.invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).mustCode(t, 2)
 	r.mustContain(t, "stderr", "DRAFT REFUSED: "+drafts+`: link said "operation not supported"`)
 	r.mustContain(t, "stderr", "this filesystem offers no create-exclusive publish; name a --draft-dir on a filesystem that has a create-exclusive publish")
 	mustEmptyDir(t, drafts)

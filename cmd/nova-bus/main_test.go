@@ -25,9 +25,19 @@ type result struct {
 
 func invoke(t *testing.T, stdin string, args ...string) result {
 	t.Helper()
+	return invokeWith(t, runEnv{}, stdin, args...)
+}
+
+func invokeWith(t *testing.T, env runEnv, stdin string, args ...string) result {
+	t.Helper()
 	var out, errOut bytes.Buffer
-	code := run(args, strings.NewReader(stdin), &out, &errOut, now())
+	code := runWith(env, args, strings.NewReader(stdin), &out, &errOut, now())
 	return result{code, out.String(), errOut.String()}
+}
+
+func (e runEnv) invoke(t *testing.T, stdin string, args ...string) result {
+	t.Helper()
+	return invokeWith(t, e, stdin, args...)
 }
 
 func (r result) mustCode(t *testing.T, want int) result {
