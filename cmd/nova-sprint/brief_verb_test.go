@@ -36,7 +36,7 @@ func TestBriefReplacesAnUnstartedPrimarysBriefOnAStoppedSprint(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream a --count 1 --brief-file " + writeBrief(t, "the old work"))
-	ta.ok("add --stream a a-2 --needs a-1 --brief-file " + writeBrief(t, "the old second"))
+	ta.ok("add --stream a a-2 --one --needs a-1 --brief-file " + writeBrief(t, "the old second"))
 	good := writeBrief(t, "the new work")
 	before := *ta.primary("a-2")
 

@@ -205,8 +205,8 @@ func TestAckTakesTheCommaListInboxPrints(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 1")
 	ta.ok("drop s1-1 --reason obsolete")
-	ta.ok("add --stream s2 b --needs s1-1")
-	ta.ok("add --stream s2 c --needs s1-1")
+	ta.ok("add --stream s2 b --one --needs s1-1")
+	ta.ok("add --stream s2 c --one --needs s1-1")
 	g := ta.group(sprint.NBlocked, "s2")
 	require.Len(t, g.Notes, 2, "%+v", g)
 	var line string

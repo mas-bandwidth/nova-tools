@@ -25,6 +25,19 @@ func IsHeld(c *Card) bool { return c.F(FieldHeld) != "" }
 // FieldHeld is the stamp of a primary admitted held.
 const FieldHeld = "held"
 
+// heldWave is the first held sentinel waiting that waits for nothing itself (a wave loads
+// behind a held sentinel with nothing before it), in work order: the wave behind it is what
+// the tick offers when the fleet is starving (NStarving), since its release is what lets the
+// wave through; nil when no such sentinel is held.
+func heldWave(s *Snapshot) *Card {
+	for _, c := range s.Work.Column(Waiting) {
+		if IsSentinel(c) && IsHeld(c) && len(WaitsFor(s, c, nil)) == 0 {
+			return c
+		}
+	}
+	return nil
+}
+
 // HeldBack is how many primaries no tick moves on its own: every sentinel not
 // released, every card admitted held, and every waiting card that waits,
 // through a need or its place in line, on one of those. where shows them as

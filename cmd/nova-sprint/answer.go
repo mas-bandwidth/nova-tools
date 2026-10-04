@@ -660,7 +660,13 @@ func cardCommands(n sprint.Note, card string) []sprint.Command {
 	cmds := sprint.NoteCommands(n, []string{card})
 	for i := range cmds {
 		for j, l := range cmds[i].Lines {
-			cmds[i].Lines[j] = strings.Replace(l, " --group "+n.ID+" --expect 1", " "+card, 1)
+			l = strings.Replace(l, " --group "+n.ID+" --expect 1", " "+card, 1)
+			// one card of a group, deliberately (docs/SPEC-SPRINT.md section 8): --one, since
+			// rework and drop of one card of a group are refused without it
+			if strings.HasPrefix(l, prog+" rework "+card) || strings.HasPrefix(l, prog+" drop "+card) {
+				l += " --one"
+			}
+			cmds[i].Lines[j] = l
 		}
 	}
 	return cmds

@@ -103,7 +103,7 @@ func TestEveryVerbThatPrintsFailExitsNonZero(t *testing.T) {
 	for _, c := range []struct{ line, token string }{
 		{"add --stream s1 --count 1 --rules " + rules + " --brief-file " + over, "ADD"},
 		{"add --stream s1 --count 1 --json --rules " + rules + " --brief-file " + over, ""},
-		{"add --stream s1 s1-1", "ADD"},
+		{"add --stream s1 s1-1 --one", "ADD"},
 		{"add --stream s1 --count 1 --needs nope", "ADD"},
 		{"release s1-nope --reason x", "RELEASE"},
 		{"resolve s1-nope", "RESOLVE"},

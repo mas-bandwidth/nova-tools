@@ -61,7 +61,7 @@ func TestAddRefusesABriefThatFailsTheCardLint(t *testing.T) {
 	require.Equal(t, before, ta.applies(), "a refused add wrote")
 	// no brief, no lint: a count card, an id card and a sentinel are admitted as before
 	ta.ok("add --stream s1 --count 2")
-	ta.ok("add --stream s1 s1-x")
+	ta.ok("add --stream s1 s1-x --one")
 	ta.ok("add --stream s1 --sentinel gate-1")
 	// a brief that carries every rule is admitted, from the flag and from the file
 	ta.ok("add --stream s2 --count 1 --brief-file " + writeBrief(t, "handle the empty case"))
@@ -231,7 +231,7 @@ func TestAddReadsTheBriefsModelLines(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1")
-	code, _, errs := ta.do("add --stream s1 c1 --brief-file " + writeBrief(t, "c1: the work (s1) tier: pro\nmodel: anthropic/claude-x\ntokens: 5000\ndeadline: 600"))
+	code, _, errs := ta.do("add --stream s1 c1 --one --brief-file " + writeBrief(t, "c1: the work (s1) tier: pro\nmodel: anthropic/claude-x\ntokens: 5000\ndeadline: 600"))
 	require.Equal(t, 0, code, "a pinned brief: %s", errs)
 	for lead, want := range map[string]string{
 		"c2: the work (s1) tier: medium":               "line 1 names tier medium",

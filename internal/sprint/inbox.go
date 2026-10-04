@@ -417,13 +417,13 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "release":
 				add(d, cmd+"release "+ids+" --reason '<what you looked at and found>'"+ans)
 			case "do more before going on":
-				add(d, cmd+"add --stream "+s+" --before "+card+" '<new id>' --brief '<brief>'")
+				add(d, cmd+"add --stream "+s+" --before "+card+" '<new id>' --brief '<brief>' --one")
 			case "drop":
 				add(d, cmd+"drop "+ids+" --reason "+whyText+ans)
 			}
 		case g.Type == NScoredLow && d == "add a repair card":
 			// the work landed: its repair is a new card, then the judgment is answered by ack
-			add(d, append(look(), cmd+"add --stream "+s+" '<fix id>' --brief '<the finding: file:line, the class, the wanted text>'",
+			add(d, append(look(), cmd+"add --stream "+s+" '<fix id>' --brief '<the finding: file:line, the class, the wanted text>' --one",
 				cmd+"ack "+strings.Join(g.Notes, ",")+" --reason 'repair card <fix id> added'")...)
 		case g.Type == NStreamStale:
 			add(d, cmd+"where", cmd+"queue --stream "+s)
@@ -435,9 +435,9 @@ func commands(g Group, first Note, prefix string) []Command {
 				// answered by rework or drop
 				add(d, resume("'<what you did; the lander merges again, regenerating the ledgers; a conflict outside the ledgers is answered by rework or drop>'"))
 			case "rework":
-				add(d, cmd+"return "+card+" --reason conflict", cmd+"rework "+card+" --fix "+fixText, resume("'returned "+card+" for rework'"))
+				add(d, cmd+"return "+card+" --reason conflict", cmd+"rework "+card+" --fix "+fixText+" --one", resume("'returned "+card+" for rework'"))
 			case "drop":
-				add(d, cmd+"drop "+card+" --reason "+whyText+ans, resume("'dropped "+card+"'"))
+				add(d, cmd+"drop "+card+" --reason "+whyText+ans+" --one", resume("'dropped "+card+"'"))
 			}
 		case g.Type == NRed:
 			ret := cmd + "return " + suspects + " --reason 'suspect of the red batch'" + ans
@@ -445,7 +445,7 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "take the suspect off and resume":
 				add(d, append(listBatch, ret, resume("'returned "+strings.Trim(suspects, "'")+"'"))...)
 			case "rework the suspect":
-				add(d, append(listBatch, ret, cmd+"rework "+suspects+" --fix "+fixText, resume("'returned "+strings.Trim(suspects, "'")+" for rework'"))...)
+				add(d, append(listBatch, ret, cmd+"rework "+suspects+" --fix "+fixText+" --one", resume("'returned "+strings.Trim(suspects, "'")+" for rework'"))...)
 			}
 		case g.Type == NCross:
 			switch d {
@@ -458,7 +458,7 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "return":
 				add(d, cmd+"return "+card+" --reason "+whyText+ans, resume("'returned "+card+"'"))
 			case "drop":
-				add(d, cmd+"drop "+card+" --reason "+whyText+ans, resume("'dropped "+card+"'"))
+				add(d, cmd+"drop "+card+" --reason "+whyText+ans+" --one", resume("'dropped "+card+"'"))
 			}
 		case g.Type == NRejected:
 			switch d {

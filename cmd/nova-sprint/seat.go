@@ -136,6 +136,7 @@ type handoverView struct {
 	Members   []memberView    `json:"members"`
 	Routes    routesView      `json:"routes"`
 	Decisions []decisionView  `json:"decisions"`
+	Rules     []string        `json:"rules"`
 	First     []string        `json:"first"`
 	groups    []sprint.Group  // the open judgments, as inbox prints them
 }
@@ -281,6 +282,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 			h.Members = append(h.Members, memberView{Member: m, Status: status})
 		}
 	}
+	h.Rules = []string{handoverWaves}
 	h.First = []string{"nova-sprint where", "nova-sprint inbox --wait --push " + pushSeat, `read docs/SPEC-SPRINT.md, "Handing over the seat"`}
 	return h, a.handoverText(h), nil
 }
@@ -314,6 +316,11 @@ func decisionOf(l sprint.Line) (decisionView, bool) {
 	}
 	return decisionView{At: l.At, Verb: l.Verb, What: what, By: l.Actor, Reason: reason}, true
 }
+
+// handoverWaves is the first rule of the seat (the owner, 2026-10-03: "BATCH EVERYTHING"):
+// the verbs refuse singles (add --one, rework and drop --one) and the tick raises "the fleet
+// is starving" under twice the width.
+const handoverWaves = "Cards are admitted and released in waves of at least the fleet's width: add takes a directory, release names a wave, rework and drop answer a group; a single-card verb outside a judgment is the sign of doing it wrong."
 
 // handoverText is the handover in lines a person reads in one screen.
 func (a *app) handoverText(h handoverView) string {
@@ -371,6 +378,9 @@ func (a *app) handoverText(h handoverView) string {
 			s += ": " + d.Reason
 		}
 		line("%s", s)
+	}
+	for _, r := range h.Rules {
+		line("RULE %s", r)
 	}
 	for _, f := range h.First {
 		line("FIRST %s", f)

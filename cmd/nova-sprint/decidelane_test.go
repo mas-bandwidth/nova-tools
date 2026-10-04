@@ -79,7 +79,7 @@ func TestTheDecideLaneGradesRecordsAndAttachesOutcomes(t *testing.T) {
 	ta.ok("ask --limit 100")
 	ta.ok("read --as reader-a --ok --limit 100")
 	ta.ok("read --as reader-b --ok --limit 100")
-	ta.ok("drop s1-3 --reason 'out of scope'")
+	ta.ok("drop s1-3 --one --reason 'out of scope'")
 	assert.Contains(t, round(), "DECIDE recorded=1 graded=0 written=0 attached=1", "the decision recorded; s1-3's grade labelled dropped, read unplaced")
 	ta.ok("accept --read-ok")
 	ta.ok("merge --stream s1 --batch 10")
