@@ -392,4 +392,14 @@ func TestSpillRefusesAStoreFamilyKey(t *testing.T) {
 		_, err := s.spill(ctx, "sprint", "epoch", "hi", time.Hour)
 		assert.Error(t, err, "scratch.spill wrote a store-family key")
 	}
+
+	// recall is unchanged and guards the boundary from the other side: a
+	// store-family key another tool wrote carries no TTL, so recall refuses it
+	// as UNBOUNDED rather than reading it as scratch.
+	{
+		require.NoError(t, conn.Client().HSet(ctx, "sprint:epoch", "beat", "x").Err())
+		code, stdout, stderr := h.run("recall", "--owner", "sprint", "--name", "epoch")
+		assert.Equal(t, 1, code, "recall of an unbounded store key exits %d, want 1; stdout=%q stderr=%q", code, stdout, stderr)
+		assert.Contains(t, stdout+stderr, "UNBOUNDED", "recall of an unbounded store key must say UNBOUNDED; stdout=%q stderr=%q", stdout, stderr)
+	}
 }
