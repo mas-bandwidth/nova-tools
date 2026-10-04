@@ -27,25 +27,28 @@ import (
 
 var version string
 
-func main() {
+func main() { os.Exit(runCairn(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+
+// runCairn runs one invocation. `help` with more than one word refuses as help
+// before any verb runs its flag checks, so `nova-cairn help open append` is
+// one HELP REFUSED naming the single verb name it wants, not a verb dispatch
+// carrying a stray positional. main and the in-process tests both go through
+// it, so the refusal is exercised by the tests rather than owned by main alone.
+func runCairn(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	t := cairnTool()
-	args := os.Args[1:]
-	// `help` with more than one word: refuse as help before any verb runs its
-	// flag checks, so `nova-cairn help open append` is one refusal, not a verb
-	// dispatch carrying a stray positional.
 	if len(args) >= 3 && args[0] == "help" && args[1] != "help" &&
 		!verbflag.IsHelp(args[1]) && !strings.HasPrefix(args[2], "-") {
 		o := tool.Refuse("help takes one verb name; the verbs are " + verbflag.List(verbNames(t)))
 		o.Verb = "help"
 		o.Remedy = t.Name + " help"
 		asJSON := verbflag.BoolAsked(args, "json")
-		w := io.Writer(os.Stderr)
+		w := stderr
 		if asJSON {
-			w = os.Stdout
+			w = stdout
 		}
-		os.Exit(o.Render(w, asJSON))
+		return o.Render(w, asJSON)
 	}
-	os.Exit(t.Run(args, os.Stdin, os.Stdout, os.Stderr))
+	return t.Run(args, stdin, stdout, stderr)
 }
 
 // verbNames returns the tool's verb names, including the implicit version verb

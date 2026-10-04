@@ -17,7 +17,7 @@ import (
 )
 
 // cli is the tool's entry point in process.
-var cli = testkit.Main(cairnTool().Run)
+var cli = testkit.Main(runCairn)
 
 // rig is one store under test: a fresh directory and the tool pointed at it.
 type rig struct {
@@ -205,6 +205,22 @@ func TestIndexSessionCountsOnlyTheSelection(t *testing.T) {
 	out = c.ok("index")
 	printed(t, out, "INDEX SESSION session=s1 entries=1", "INDEX SESSION session=s2 entries=0",
 		"INDEX OK sessions=2 entries=1")
+}
+
+// TestHelpWithMoreThanOneWordRefusesAsHelp pins the second half of the finding:
+// `help` with more than one word is one HELP REFUSED, naming the single verb
+// name it wants, before the named verb runs its flag checks. `nova-cairn help
+// open append` once dispatched as `open` with a stray positional and printed
+// three missing-flag OPEN REFUSED lines instead.
+func TestHelpWithMoreThanOneWordRefusesAsHelp(t *testing.T) {
+	t.Parallel()
+
+	r := cli.Run("help", "open", "append")
+	require.Equal(t, 2, r.Code, "want exit 2: %+v", r)
+	require.Empty(t, r.Stdout, "a refusal prints no banner: %q", r.Stdout)
+	require.Contains(t, r.Stderr, "HELP REFUSED: help takes one verb name", "stderr: %q", r.Stderr)
+	require.NotContains(t, r.Stderr, "OPEN REFUSED", "help ran open's flag checks: %q", r.Stderr)
+	require.NotContains(t, r.Stderr, "positional", "help carried the stray word into a verb: %q", r.Stderr)
 }
 
 func TestLifecycleVerbsStayRefused(t *testing.T) {
