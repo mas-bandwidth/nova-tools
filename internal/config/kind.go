@@ -327,7 +327,7 @@ const CoordinatorRole = "coordinator"
 // (it names machines, and a friend's desired slots are charged to the
 // fleet's coordinator machine when her beat names none), friends, the
 // sprint row (it names a friend), loops (each names a machine), routes
-// (each names no row), and tiers last (each names routes).
+// (a local one names the machine it is served on), and tiers last (each names routes).
 //
 // A machine's record is exactly the declared facts something reads, one
 // reader each, and nothing invented. Its name is the tailnet host: `ssh <name>`

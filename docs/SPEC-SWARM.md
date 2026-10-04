@@ -533,6 +533,11 @@ Every rule here is normative. Only living verbs are retained.
     harness that reports no cost never reaches it, and the token budget and the deadline stay the
     stops. Whichever budget stopped the card, native's `NATIVE BUDGET` line says which and at what
     count, the cost to the cent rounded up, and the member's failed finish carries those words.
+    A job on a local route (docs/SPEC-LOCAL.md, "Fleet") carries `--local-base <url>`, the
+    serving machine's endpoint, with a `--model local/<model>` and only with one: native
+    declares the provider `local` there in the job's config (OpenCode's OpenAI-compatible
+    provider, no key), its read-deadline proxy in front, and the wall opens the one port when
+    the endpoint is on loopback; the member passes it for a packet that names `serve`.
 12. **Malformed reports are refused.** `verify` checks `RESULT.md` against its contract line,
     and malformed reports or missing lines are refused rather than accepted as verified evidence.
 13. **Publication by rename.** Reports are published whole by renaming `.tmp` over `RESULT.md`.

@@ -853,6 +853,18 @@ and it is the coordinator's decision, receipted.
   the tick's later parts. A member that cannot launch a taken card (no model,
   budget or deadline from its packet or its override) reports it at once as a
   `--failed` finish, `launch refused: <why>`, never leaving it working.
+- A local route (docs/SPEC-LOCAL.md, "Fleet") is a route like any other, of provider
+  `local`, served on one fleet machine (the route's `machine`), and that machine's
+  `local_lanes` (read with the routes from `machine:<m>`, in the same two round trips) is
+  how many cards the local routes served on it take at once: a work card ready or
+  working, or a read card asked or reading, whose `serve` names the machine holds a lane.
+  A draw skips a local route whose machine's lanes are all taken, as it skips a resting
+  route, and the card waits for a lane with no judgment (the route serves the tier); a
+  machine with no lanes serves nothing, so a tier only it would serve is judged as any
+  unserved tier. The draw writes `serve` on the work or read card and the packet hands it
+  to the member, which launches native with `--local-base http://<machine>:11434/v1`;
+  its prices are 0, so its cost is $0 with its tokens recorded; `routes` prints
+  `serve=<machine> lanes=<busy>/<lanes>` on its row.
 - Flash first on every card (the owner, 2026-10-02, cost rule 1 of
   nova-tools#5174, agreed after "The cost of the sprint at $5,400 seems
   excessive.": "Flash first on every card; pro only on escalation"). The tier
