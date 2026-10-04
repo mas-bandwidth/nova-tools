@@ -16,7 +16,7 @@ internal/hygiene 1
 internal/nsprint/fn 5
 internal/nsprint/store 3
 internal/ntable 11
-internal/pkgselect 22
+internal/pkgselect 16
 internal/redisfn 9
 internal/secrets 22
 internal/sprint 2
