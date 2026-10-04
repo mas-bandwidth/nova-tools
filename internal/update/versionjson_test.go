@@ -24,7 +24,7 @@ type envelope struct {
 	Payload string         `json:"payload"`
 }
 
-// The banner promises --json on every verb but watch and release, version
+// The banner promises --json on every verb but watch, version
 // included: one JSON object at exit 0 in internal/tool's envelope, the version
 // line its payload, the same answer nova-version's skeleton verb gives.
 func TestVersionJSONIsTheSkeletonsEnvelope(t *testing.T) {

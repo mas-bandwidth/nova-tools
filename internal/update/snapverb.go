@@ -210,7 +210,7 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].name < rows[j].name })
 	for i := 1; i < len(rows); i++ {
 		if rows[i].stamp != rows[0].stamp {
-			return tool.Refuse(fmt.Sprintf("mixed stamps: %s=%s %s=%s (rebuild the set under one stamp with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", rows[0].name, rows[0].stamp, rows[i].name, rows[i].stamp))
+			return tool.Refuse(fmt.Sprintf("mixed stamps: %s=%s %s=%s (rebuild the set under one stamp with nova-release build --version <v> --out <dir> --source <checkout>, then nova-release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", rows[0].name, rows[0].stamp, rows[i].name, rows[i].stamp))
 		}
 	}
 	// SOURCE METADATA GATE (SPEC-VERSION item 6). The version stamp
@@ -238,7 +238,7 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 			continue
 		}
 		if r.src != firstSrc {
-			return tool.Refuse(fmt.Sprintf("mixed source: %s=%s %s=%s (rebuild the set under one source with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", firstSrcName, sourceString(firstSrc), r.name, sourceString(r.src)))
+			return tool.Refuse(fmt.Sprintf("mixed source: %s=%s %s=%s (rebuild the set under one source with nova-release build --version <v> --out <dir> --source <checkout>, then nova-release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", firstSrcName, sourceString(firstSrc), r.name, sourceString(r.src)))
 		}
 	}
 	// The rows are the result's items as well as the file's lines, so a reader sees

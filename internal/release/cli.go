@@ -62,7 +62,7 @@ const AdoptNote = "adopt runs FROM the host that has ssh to every machine and fa
 	"When the release was built elsewhere, --from may name that machine as host:dir and --stage <dir> says where to fetch it first. " +
 	"Such a fetch is verified against a digest that did NOT travel with the bits: --repo <owner/name> reads it off the annotated tag the cut wrote, --expect-sums <sha256> names it outright, or --expect-sums-from <file> reads it out of the " + DigestFile + " this host's own `release build` wrote. " +
 	"A dev build has no tag, which is why the third exists; the file must be a LOCAL one, because a digest computed on the machine holding the bits is that machine vouching for itself. " +
-	"Install the release on this host before adopting it: the nova-release running the fan-out is the one here, and a coordinator older than the release it is adopting refuses and says so. " +
+	"Install the release on this host before adopting it: the release tool running the fan-out is the one here, and a coordinator older than the release it is adopting refuses and says so. " +
 	"--machines is " + MachinesShape + ". " + RemotePathsNote + ". " +
 	"--retire <dir> removes this release's own nova-* files from a second directory nobody should still be running from (~/go/bin); it refuses to be --bin or the live stamp. " +
 	"--bin, --dest and --retire must be absolute or ~/-rooted and free of shell metacharacters; they are validated before any remote command is composed."
