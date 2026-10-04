@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -629,8 +630,20 @@ func UsdPerMtok(micro, tokens int64) string {
 	return fmt.Sprintf("%.4f", float64(micro)/float64(tokens))
 }
 
-// openSource is the ONE door every reader opens a source file through.
+// opens counts every source file this process has opened. The fold's cost is ONE PASS over
+// each declared file -- there is no index and no incremental mode, and a day file is
+// recomputed whole from the sources every time -- and a count is what a test can pin where
+// a time cannot: the prototype read 2,497 files in about ten seconds, and that number is a
+// fact about a disk rather than about this code.
+var opens atomic.Int64
+
+// Opens is how many source files have been opened since the process started.
+func Opens() int64 { return opens.Load() }
+
+// openSource is the ONE door every reader opens a source file through, so that the count
+// above cannot drift from the truth by somebody reaching for os.Open directly.
 func openSource(path string) (*os.File, error) {
+	opens.Add(1)
 	return os.Open(path)
 }
 
@@ -643,6 +656,7 @@ const maxSourceBytes = 64 << 20
 
 // readSource is openSource for a whole file.
 func readSource(path string) ([]byte, error) {
+	opens.Add(1)
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
