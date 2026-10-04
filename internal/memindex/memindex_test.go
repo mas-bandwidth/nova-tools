@@ -35,11 +35,25 @@ func corpusFS() fstest.MapFS {
 	}
 }
 
-func build(t *testing.T) *Corpus {
+func buildFS(t *testing.T, fsys fstest.MapFS) *Corpus {
 	t.Helper()
-	c, err := Build(corpusFS(), nil)
+	c, err := Build(fsys, nil)
 	require.NoError(t, err, "Build")
 	return c
+}
+
+func build(t *testing.T) *Corpus {
+	t.Helper()
+	return buildFS(t, corpusFS())
+}
+
+// wikilinkFindings returns fsys's unresolved-wikilink findings.
+func wikilinkFindings(t *testing.T, fsys fstest.MapFS) []Finding {
+	t.Helper()
+	c := buildFS(t, fsys)
+	fnds, err := Wikilinks(fsys, c)
+	require.NoError(t, err)
+	return fnds
 }
 
 func TestNormalizeRecoversHiddenPhrases(t *testing.T) {
@@ -245,8 +259,7 @@ func crowdingFS() fstest.MapFS {
 func TestRetrieveDoesNotLetOneLongFileCrowdOutOthers(t *testing.T) {
 	t.Parallel()
 
-	c, err := Build(crowdingFS(), nil)
-	require.NoError(t, err, "Build")
+	c := buildFS(t, crowdingFS())
 	for _, chans := range [][]Channel{
 		{NewBM25(c)},
 		{NewBM25(c), NewTrigram(c)},
@@ -466,10 +479,7 @@ func TestWikilinks(t *testing.T) {
 
 	fsys := corpusFS()
 	fsys["notes/linked.md"] = &fstest.MapFile{Data: []byte("---\nname: linked\n---\n\nsee [[wind-log]] and the unwritten [[storm-glass]] page for the rest")}
-	c, err := Build(fsys, nil)
-	require.NoError(t, err)
-	fnds, err := Wikilinks(fsys, c)
-	require.NoError(t, err)
+	fnds := wikilinkFindings(t, fsys)
 	var hit bool
 	for _, f := range fnds {
 		if strings.Contains(f.Detail, "storm-glass") {
@@ -495,10 +505,7 @@ func TestWikilinksScansAliasedAndHeadingForms(t *testing.T) {
 			"see [[nowhere-page|the missing page]] and [[nowhere-sec#readings]] for what is not written,\n" +
 			"beside [[wind-log|the anemometer log]] and [[glazing-care#the-brass]] which both resolve,\n" +
 			"and [[#a-heading-on-this-page]] which names nothing in the corpus at all.\n")}
-	c, err := Build(fsys, nil)
-	require.NoError(t, err)
-	fnds, err := Wikilinks(fsys, c)
-	require.NoError(t, err)
+	fnds := wikilinkFindings(t, fsys)
 	reported := map[string]bool{}
 	for _, f := range fnds {
 		reported[f.Detail] = true
@@ -602,10 +609,7 @@ func TestWikilinksIgnoresQuotedSpecimens(t *testing.T) {
 		"---\nname: specimens\n---\n\n" +
 			"prose about `[[quoted-specimen]]` and a real dangling [[genuinely-missing]] one\n\n" +
 			"```\nfenced [[fenced-specimen]] here\n```\n")}
-	c, err := Build(fsys, nil)
-	require.NoError(t, err)
-	fnds, err := Wikilinks(fsys, c)
-	require.NoError(t, err)
+	fnds := wikilinkFindings(t, fsys)
 	var sawReal bool
 	for _, f := range fnds {
 		assert.NotContains(t, f.Detail, "quoted-specimen", "inline-code specimen reported as a citation: %s", f.Detail)
@@ -638,10 +642,7 @@ func TestMaskingNeverHidesARealLink(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fsys := corpusFS()
 			fsys["notes/hazard.md"] = &fstest.MapFile{Data: []byte("---\nname: hazard\n---\n\n" + body)}
-			c, err := Build(fsys, nil)
-			require.NoError(t, err)
-			fnds, err := Wikilinks(fsys, c)
-			require.NoError(t, err)
+			fnds := wikilinkFindings(t, fsys)
 			for _, f := range fnds {
 				if strings.Contains(f.Detail, "really-missing") {
 					return
@@ -673,20 +674,18 @@ func TestChannelGeometryContracts(t *testing.T) {
 		// classic idf log(N/n) would be zero here; Lucene smoothing must stay
 		// strictly positive, because a corpus of related notes is full of
 		// common terms and a zero or negative idf scrambles rankings.
-		c, err := Build(fstest.MapFS{
+		c := buildFS(t, fstest.MapFS{
 			"a.md": {Data: []byte("alpha beta gamma")},
 			"b.md": {Data: []byte("alpha delta epsilon")},
-		}, nil)
-		require.NoError(t, err, "Build")
+		})
 		got := NewBM25(c).idf("alpha")
 		assert.Greater(t, got, 0.0, "idf for a term in every chunk = %v, want > 0", got)
 	})
 
 	t.Run("BM25Constants", func(t *testing.T) {
-		c, err := Build(fstest.MapFS{
+		c := buildFS(t, fstest.MapFS{
 			"a.md": {Data: []byte("alpha beta gamma")},
-		}, nil)
-		require.NoError(t, err, "Build")
+		})
 		bm := NewBM25(c)
 		assert.Equal(t, 1.2, bm.K1, "K1 = %v, want 1.2", bm.K1)
 		assert.Equal(t, 0.75, bm.B, "B = %v, want 0.75", bm.B)
@@ -707,11 +706,10 @@ func TestChannelGeometryContracts(t *testing.T) {
 	})
 
 	t.Run("FusionIsReciprocalRankOnly", func(t *testing.T) {
-		c, err := Build(fstest.MapFS{
+		c := buildFS(t, fstest.MapFS{
 			"a.md": {Data: []byte("alpha beta gamma")},
 			"b.md": {Data: []byte("delta epsilon zeta")},
-		}, nil)
-		require.NoError(t, err, "Build")
+		})
 		chA := fixedChannel{name: "A", res: []Scored{
 			{Chunk: 0, Rank: 0, Score: 10},
 			{Chunk: 1, Rank: 1, Score: 5},
@@ -752,10 +750,7 @@ func TestMaskingDoesSilenceQuotedSpecimens(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fsys := corpusFS()
 			fsys["notes/quiet.md"] = &fstest.MapFile{Data: []byte("---\nname: quiet\n---\n\n" + body)}
-			c, err := Build(fsys, nil)
-			require.NoError(t, err)
-			fnds, err := Wikilinks(fsys, c)
-			require.NoError(t, err)
+			fnds := wikilinkFindings(t, fsys)
 			for _, f := range fnds {
 				assert.NotContains(t, f.Detail, "quiet-one", "quoted specimen reported as a citation (%s): %s", name, f.Detail)
 			}
@@ -773,8 +768,7 @@ func TestBuildDoesNotIndexGitContent(t *testing.T) {
 		"real.md":            {Data: []byte("---\nname: real-document\n---\n\nA real document that should be indexed into three separate chunks for the index.\n\nThe second paragraph is about the light and how it travels across water at night.\n\nThe third paragraph is about the diaphone and its nine hours of running.\n")},
 	}
 
-	c, err := Build(fsys, nil)
-	require.NoError(t, err, "Build")
+	c := buildFS(t, fsys)
 
 	for _, ch := range c.Chunks {
 		assert.False(t, strings.HasPrefix(ch.File, ".git/"), "chunk from .git/ reached the index: %s", ch.File)
@@ -801,8 +795,7 @@ func TestBuildSkipsNestedGitDirectory(t *testing.T) {
 		"sub/real.md":            {Data: []byte("---\nname: nested-real\n---\n\nA real document beside the nested git directory that should reach the index.\n")},
 	}
 
-	c, err := Build(fsys, nil)
-	require.NoError(t, err, "Build")
+	c := buildFS(t, fsys)
 
 	for _, ch := range c.Chunks {
 		assert.NotContains(t, "/"+ch.File, "/.git/", "chunk from a nested .git/ reached the index: %s", ch.File)
