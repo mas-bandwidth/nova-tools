@@ -1656,15 +1656,15 @@ func (k Skip) String() string {
 // ones counted as not happening: an entry it refuses (a waiter whose landing
 // is skipped) is skipped too, and the one judgment lists it with why. One the
 // store does not answer stays pending, and says why.
-func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) {
-	r, err := st.finishOp(ctx, op)
+func (st *Store) finish(ctx context.Context, op OpRecord, twins ...*Twin) (RepairResult, error) {
+	r, err := st.finishOp(ctx, op, twins...)
 	if err != nil {
 		return r, err
 	}
 	return r, st.repaired(ctx, r)
 }
 
-func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error) {
+func (st *Store) finishOp(ctx context.Context, op OpRecord, twins ...*Twin) (RepairResult, error) {
 	r := RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairFinished}
 	if op.Lock {
 		// a part's lock (lock.go): its writer holds the fence within the
@@ -1685,7 +1685,7 @@ func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error
 	var barred map[string]string
 	byEntry := func(i int, man ntable.BatchManifest) *RepairResult {
 		if barred == nil {
-			b, err := st.rejudge(ctx, op, i)
+			b, err := st.rejudge(ctx, op, i, twins...)
 			if err != nil {
 				return &RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: fmt.Sprintf("table %s cannot be judged: %v", man.Table, err)}
 			}
@@ -1883,8 +1883,17 @@ func (st *Store) applyProps(ctx context.Context, man ntable.BatchManifest, chang
 // the table layer, so it counts as not happening, as do the entries already
 // skipped. It returns each work-table entry the lifecycle refuses, by stored
 // id, with why.
-func (st *Store) rejudge(ctx context.Context, op OpRecord, from int) (map[string]string, error) {
-	pre, err := st.Load(ctx, []string{sprint.Work}, nil)
+func (st *Store) rejudge(ctx context.Context, op OpRecord, from int, twins ...*Twin) (map[string]string, error) {
+	var pre *sprint.Snapshot
+	var err error
+	if len(twins) > 0 && twins[0] != nil {
+		// The caller holds this twin: read all work records incrementally
+		// for the lifecycle, treating the repair's own pending op as held.
+		// Taking its mutex again or repairing that op again recurses.
+		pre, _, err = st.twinRead(ctx, twins[0], []string{sprint.Work}, nil, nil, op.ID)
+	} else {
+		pre, err = st.Load(ctx, []string{sprint.Work}, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
