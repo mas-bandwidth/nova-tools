@@ -41,11 +41,11 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	}
 
 	failOut, failCode := redisCIChild(t, "fail")
-	require.True(t, failCode != 0, "missing redis-server under NOVA_CI=1: exit %d, want a failure\n%s", failCode, failOut)
+	require.NotEqual(t, 0, failCode, "missing redis-server under NOVA_CI=1: exit %d, want a failure\n%s", failCode, failOut)
 	require.True(t, strings.Contains(failOut, "redis-server is required under NOVA_CI=1"), "missing redis-server under NOVA_CI=1: exit %d, want a failure\n%s", failCode, failOut)
 	require.NotContains(t, failOut, "--- SKIP:", "missing redis-server under NOVA_CI=1 skipped:\n%s", failOut)
 	skipOut, skipCode := redisCIChild(t, "skip")
-	require.True(t, skipCode == 0, "missing redis-server outside CI: exit %d, want a skip\n%s", skipCode, skipOut)
+	require.Equal(t, 0, skipCode, "missing redis-server outside CI: exit %d, want a skip\n%s", skipCode, skipOut)
 	require.True(t, strings.Contains(skipOut, "--- SKIP:"), "missing redis-server outside CI: exit %d, want a skip\n%s", skipCode, skipOut)
 	require.True(t, strings.Contains(skipOut, "redis-server unavailable"), "missing redis-server outside CI: exit %d, want a skip\n%s", skipCode, skipOut)
 
