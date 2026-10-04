@@ -620,3 +620,83 @@ func TestLandHoldsEveryPushURLToTheRepository(t *testing.T) {
 		})
 	}
 }
+
+// NEW authorizes a file only in the card's typed header. The lander still
+// refuses a file named only in prose or a step, and any unrelated file (E12).
+func TestLandChecksNewFilesAgainstTheTypedHeader(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, scope, file string
+		landed            bool
+	}{
+		{"header NEW", "NEW: added.txt", "added.txt", true},
+		{"body NEW", "The task starts here.\nNEW: added.txt", "added.txt", false},
+		{"step NEW", "STEP 1. Work.\n  NEW: added.txt", "added.txt", false},
+		{"unrelated file", "NEW: added.txt", "other.txt", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newLandRig(t)
+			brief := writeNeedsBrief(t, t.TempDir(), "a", "RESULT: a\nPATHS: a.txt\n"+tc.scope, "")
+			r.ok("add --stream s1 a --brief-file " + brief)
+			head := r.head("a", "main", tc.file, "added\n")
+			r.queued(map[string]string{"a": head}, "a")
+			before := r.git(r.remote, "rev-parse", "main")
+			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			if tc.landed {
+				assert.Equal(t, 0, code, out+errs)
+				assert.Equal(t, map[string]string{"a": "landed/merged"}, r.places("a"))
+				assert.Equal(t, "added", r.git(r.remote, "show", "main:"+tc.file))
+			} else {
+				assert.Equal(t, 1, code, out+errs)
+				assert.Contains(t, errs, "it changes files outside its PATHS (E12): "+tc.file)
+				assert.Equal(t, map[string]string{"a": "merging/stuck"}, r.places("a"))
+				assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
+			}
+			r.clean()
+		})
+	}
+}
+
+// The lander's mechanical checks (internal/diffcheck; docs/SPEC-SPRINT.md section 7) end
+// the batch at a card whose merged diff changes a file outside its PATHS (E12) or leaves
+// a stranded sentence fragment (E4), as a head that does not merge ends it: the cards
+// before it land, it is reported with the conflict fact naming what failed, it is off the
+// batch branch, and the card behind it stays queued.
+func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, file, text, why string
+	}{
+		{"a file outside its PATHS", "other.txt", "other\n", "fails the lander's checks: it changes files outside its PATHS (E12): other.txt"},
+		{"a stranded fragment", "doc.md", "the box holds\nThe box is full.\n", `fails the lander's checks: doc.md:2 leaves a sentence fragment: "the box holds" is followed by a new sentence, "The box is full." (E4)`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newLandRig(t)
+			r.git(r.worker, "switch", "-q", "--detach", "origin/main")
+			r.commit("doc.md", "the box holds\nthree cards.\n", "the doc")
+			r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+			r.git(r.worker, "fetch", "-q", "origin")
+			dir := t.TempDir()
+			var briefs string
+			for _, id := range []string{"c1", "c2", "c3"} {
+				paths := id + ".txt"
+				if id == "c2" {
+					paths += ", doc.md"
+				}
+				briefs += " --brief-file " + writeNeedsBrief(t, dir, id, "Fix "+id+".\nPATHS: "+paths, "")
+			}
+			r.ok("add --stream s1" + briefs)
+			heads := map[string]string{"c1": r.head("c1", "main", "c1.txt", "one\n"), "c2": r.head("c2", "main", tc.file, tc.text), "c3": r.head("c3", "main", "c3.txt", "three\n")}
+			r.queued(heads, "c1", "c2", "c3")
+			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			assert.Equal(t, 1, code, out+errs)
+			assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
+			assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=c2 fact=conflict reason=the head "+heads["c2"]+" of c2 "+tc.why)
+			assert.Equal(t, []string{"land c1 (sprint stream s1)", "the doc", "base"}, r.mainLog())
+			assert.Equal(t, map[string]string{"c1": "landed/merged", "c2": "merging/stuck", "c3": "merging/queued"}, r.places("c1", "c2", "c3"))
+			r.clean()
+		})
+	}
+}

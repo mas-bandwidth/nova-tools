@@ -37,10 +37,12 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 )
 
-// UpdateEnv is the variable that turns Check into a rewrite. Only the value "1" does.
-const UpdateEnv = "NOVA_CI_UPDATE"
+// UpdateEnv is the variable that turns Check into a rewrite. Only the value "1" does. It
+// is defined once, beside the lander that runs the update (internal/diffcheck).
+const UpdateEnv = diffcheck.UpdateEnv
 
 // Updating reports whether this run rewrites the lists (NOVA_CI_UPDATE=1).
 func Updating() bool { return updatingFrom(os.Getenv) }
@@ -48,7 +50,7 @@ func Updating() bool { return updatingFrom(os.Getenv) }
 func updatingFrom(getenv func(string) string) bool { return getenv(UpdateEnv) == "1" }
 
 // UpdatedRerun is the sentence the one failure of an update run carries.
-const UpdatedRerun = "updated, rerun"
+const UpdatedRerun = diffcheck.UpdatedRerun
 
 // ceilingPrefix opens the one comment line Check reads: the row count's cap.
 const ceilingPrefix = "# ceiling:"

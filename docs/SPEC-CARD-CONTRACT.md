@@ -16,8 +16,8 @@ and opens the pull request). The model is `tla/CardContract.tla`.
 
 | layer | what it guarantees | checked by |
 |---|---|---|
-| 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for a rework the last pushed head of any earlier attempt, `base_head` and its attempt `base_attempt` in the packet, or for a read the head under read), the branch, the attempt, the head it continues and that head's attempt, why the attempt exists (`why`), the readers' finding and the coordinator's fix, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromTheLastPushedHeadOfAnyEarlierAttempt`, `TestAReworkStagesAtTheLastPushedHeadOfAnyEarlierAttempt` |
-| 2. staging | `native --frame` stages that commit on that branch (never the brief's prose, never a branch name that never reached origin) and writes `JOB.md` into the job directory | `TestStageCardStagesTheFramesCommitOnItsBranch` (functional tier) |
+| 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for a rework the last pushed head of any earlier attempt, `base_head` and its attempt `base_attempt` in the packet, which staging carries onto the tip of the base branch, or for a read the head under read), the branch, the attempt, the head it continues and that head's attempt, why the attempt exists (`why`), the readers' finding and the coordinator's fix, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromTheLastPushedHeadOfAnyEarlierAttempt`, `TestAReworkStagesAtTheLastPushedHeadOfAnyEarlierAttempt` |
+| 2. staging | `native --frame` stages that commit on that branch (never the brief's prose, never a branch name that never reached origin), a rework at the tip of its base branch with that commit's work carried on top where it applies cleanly, and writes `JOB.md` into the job directory | `TestStageCardStagesTheFramesCommitOnItsBranch`, `TestAReworkIsStagedAtTheTipOfItsBase`, `TestAReworkCarriesThePreviousWorkThatApplies`, `TestAReworkWhoseWorkDoesNotApplyIsTheBareTip` (functional tier) |
 | 3. the profile | the child's model family picks a profile; the profile writes the shims first on the child's `PATH` and the text of `JOB.md` | `internal/cardcontract`: unit tests of the text and the shape, functional tests of every shim verb form |
 | 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `internal/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
 | 5. end to end | a scripted child (clone, branch, commit, push, `gh pr create`) runs under the real member and native on the mem twin with a local bare origin, once per profile | `TestTheScriptedChildEndToEnd` (functional tier) |
@@ -38,14 +38,20 @@ already set and named, never a cold one of its own under the job: `go help cache
 is safe for concurrent invocations of the go command.", and sixteen reads each compiling the
 repository from nothing kept a 36-thread bench 85% in the kernel on 2026-10-02; niced, `-count=1 -timeout`;
 `TestJobTextNamesTheSharedBuildCache`), the attempt, and for attempt
-2 and later the attempt it continues and its head (`This checkout continues attempt <n>: its head,
-<sha>, is the last pushed by any attempt before this one, and the checkout starts from it.`; left
-out when no earlier attempt pushed, and the checkout is the base) and, right after the attempt
+2 and later where it was staged: the tip of its base branch and, when an earlier attempt pushed,
+whether that attempt's work was carried on top (`This checkout is staged at the tip of <base> as
+origin held it when it was staged, <sha>, with the work of attempt <n> (its head <sha>) carried on
+top as one commit, <sha>, ...`), the tip already held it, or it did not apply cleanly and is not in
+the checkout; a base that never moves (a sha, a tag) keeps the sentence `This checkout continues
+attempt <n>: its head, <sha>, is the last pushed by any attempt before this one, and the checkout
+starts from it.` (`TestJobTextSaysWhereAReworkWasStaged`) and, right after the attempt
 line, why the attempt exists. A rework
 says three lines, each left out when its value is empty: `This attempt exists because: <how the
 attempt before ended>`, `A reader found: <the finding of its broken read>`, `The coordinator
 asks: <the --fix text>` (left out too when it is the finding, or already in how the attempt
-ended); then `Do that first; a finish with no new commit is refused.` The three are the
+ended), and, when the work before did not apply at the tip, `The previous work: the work of
+attempt <n> must be redone from this tip: ...`; then `Do that first; a finish with no new commit is
+refused.` The three are the
 packet's `why`, `finding` and `fix`, which the rework wrote on the attempt's work card
 (`TestReworkCarriesTheFixTheFindingAndWhyInTheNextPacket`; the lines:
 `TestJobTextOfAReworkSaysWhyAndWhatToDoFirst`). A read's `JOB.md` says to review the
@@ -94,8 +100,14 @@ a 36-thread bench, 2026-10-02, sixteen reads each ran `go test ./internal/ci/`, 
 of processes and build every command, and the machine spent 85% of its CPU in the kernel; the
 work's own gate ran those tests, and CI runs them again. A checkout with no `go.mod` has no gate
 of its own, and its JOB.md says to run the card's. JOB.md repeats no rules:
-the card's own RULES paragraph is in the brief, where the add lint holds it, and the child
-reads it once.
+the RULES paragraph is in the card the child is handed, once. Rules by reference (the owner,
+2026-10-02: "Rules by reference: the member injects fleet/child-rules.txt once; the card does not
+carry it; a per-repo rules file for second repos."; nova-tools#5174 rule 6): the stored brief is
+the card's text alone, and the member, when it writes the card file at the start of a launch,
+appends the RULES paragraph of the held rules file the card names (none when it names none:
+such a card carries its own; docs/SPEC-SPRINT.md section 2), so what the child
+reads is the shape it read when the card carried them
+(`TestTheChildsCardIsUnchangedByRulesByReference`).
 
 **Where a rework starts.** `sprint.BaseOf` is the one place that decides it: the packet's `base_head`
 is the head of the latest earlier attempt whose finish was ok at a full sha, with `base_attempt` its
@@ -105,6 +117,20 @@ changes nothing); with no such attempt both are empty and the base is staged
 rework staged from the immediately previous attempt only). `nova-sprint card <id>` prints each
 attempt's pushed head (`head=`, `-` when none) and one `NEXT` line: the attempt whose head the next
 attempt starts from, or the base (`TestCardShowsTheHeadTheNextAttemptStartsFrom`).
+
+The member stages that work at the tip of the card's base branch (docs/SPEC-SWARM.md, "A rework
+is staged at its base branch's tip"; nova-tools#5215): origin's branch is fetched when the rework
+is staged, and `base_head`'s work is carried onto its tip as one commit, a squashed three-way merge;
+a head that already descends from the tip is staged as it is, work the tip already holds adds
+nothing, and work that does not apply cleanly leaves the bare tip, which JOB.md says. The finish's
+staged commit is that commit, so a child that starts again from the tip is accepted and a head on
+the old base is refused (`TestAReworkStagedAtTheTipFinishesFromItAndNotFromTheOldHead`; end to end, the base moved after
+attempt one, `TestAReworkAfterTheBaseMovedIsStagedAtANewCarryOnItsTip`), and the
+finish's report begins, after the push, with the stage's words (`stage: staged=<sha> tip=<sha> of
+<base> carry=<carried|held|conflict|none>`), so the card's timeline says it. A base that is a full sha
+or a tag never moves, and its rework is staged at `base_head` itself. A rework staged at the old
+head kept a base hours old, and its child, told to start again from the tip, was refused at its
+finish for not descending from the staged commit.
 
 The frame reads the brief's **header only**: line 1 and the `key: value` lines that follow it,
 up to the first blank line or line of prose (`swarm.ReadCardBase`). A `base-repo:`, `BASE:` or
@@ -133,6 +159,18 @@ finish reports failed; JOB.md lists what was staged. Each source opens through a
 recipes directory, so no path component leaves it, a symlinked directory included; the refusal
 names the `Stage:` path and the reason.
 
+**The WHO line** (the owner, 2026-10-03: "Could we try expressing the work left for
+nova-tools-1.1.0 into cards, and doing it via the sprint, but doing parts on friends where we
+would normally do friend work."). A header line `WHO: friend` makes the card a friend's, dealt to
+any friend up with room; `WHO: friend <name>` deals it to that friend, her name a row of the
+sprint's friends table. A card with no WHO line is a machine's and is framed as this page says;
+a friend's card is never framed or staged: the sprint delivers it to her inbox as
+`inbox/<card>/BRIEF.md` and finishes it from her `outbox/<card>/REPORT.md` (docs/SPEC-SPRINT.md
+section 1, a friend's card; docs/FRIENDS.md, a sprint card). `cardhdr.ReadWho` is the one parser:
+the key in any case, under line 1 and above the first blank line; `nova-sprint add` and `brief`
+refuse any other value, and a name the friends table lacks (`TestReadWhoReadsAFriendOrNone`,
+`TestAddHoldsTheWhoLineToTheFriendsTable`).
+
 ## 3. The result shape
 
 The child's end is one shape, one `key: value` per line, then free text. `typedrec.ParseCardResult`
@@ -159,6 +197,15 @@ a file the child is never told to write, so a RESULT.md the child also writes (a
 template asked) overwrites nothing: it rides at the end of the pull request body. A plain child
 writes `<job>/RESULT.md` itself. The finish record wins over RESULT.md. A result without the six
 keys is no result.
+
+**The verdict per step.** A tree card's result (docs/SPEC-SPRINT.md, a card is a tree of steps)
+also carries one line per work step in its body (under `## Body`, never among the header's
+keys), in walk order: `step <n>: <ok|broken|not-done|skipped> <commit sha|-> <one line>`, the
+commit a full sha or its first twelve; a line whose commit is any other word is a defect, read as
+not-done (`TestAStepLineWhoseCommitIsAWordIsADefect`). `cardtree.ParseVerdicts` reads the body's
+lines, and the member's finish of a tree card is judged from them (`member.treeFinish`,
+`TestAFailedStepTwoOfThreeLandsStepOneAndWritesTheRemainder`). A script card's body is written by
+`nova-swarm step --result`, one line per step it ran.
 
 The rules on the shape:
 
@@ -199,8 +246,10 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   reason is `no result: no RESULT.md shape`, and the sprint treats it as an ended take
   (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure: no work came
   back, so there is nothing to judge (the owner, 2026-10-01: "that's fine with me."). A run
-  its budget or its deadline ended with no result is failed work, the end said first
-  (`budget: no RESULT.md shape`);
+  its budget or its deadline ended with no result is failed work, the end said first, and
+  for a budget which budget and at what count, from native's `NATIVE BUDGET` line, the cost
+  the harness reported to the cent and rounded up
+  (`budget: tokens 509,940 of 400,000, $0.03: no RESULT.md shape`);
 - **failed** otherwise, with the reason: `<end>: no RESULT.md shape`, `nothing to do: <why>`
   (`cardhdr.EndNothing`),
   `verdict <word>`, `no commit: <why>` (`cardhdr.EndNoCommit`), `push refused: <git's line>`; a failed finish passes
@@ -239,11 +288,22 @@ harness's own record in the job's data home, at the places the harness profile n
 (`opencode/log/opencode.log`), from where it stood when the run began and bounded to its last
 64 KiB, and its session database (`opencode/opencode.db`, the `message` table). A run that ended
 with no result, by no end of the machinery's (the deadline, a TERM, the watch, the wall, the
-budget, a lost response, a question), is a provider failure when either holds: the log carries
-a provider error written by this run, an `ERROR` line that says a stream error, `server_error`,
-a rate limit, an overload or an HTTP 5xx status; or the run exited 0 and the session's
-last message is not a final assistant message (the last assistant message finished
-`tool-calls`, or none finished). The reason is the cause (`internal/swarm` providercause.go):
+budget, a lost response, a question), is a provider failure when one holds: the session's
+record of a failed message names the provider's refusal for credit (class `out-of-credit`: a
+402, insufficient credit or funds, a payment required), whatever the run's exit and wall; the
+harness's printed output (what the run appended to `<job>/harness-output.log`, where the harness
+prints its `ERROR` lines), or else its log, carries a provider error written by this run, an
+`ERROR` line that says a stream error, `server_error`, a rate limit, an overload, an account out
+of credit or quota (`Insufficient credits`, `Insufficient account funds`, `out of credit`, a
+quota, a payment required) or an HTTP 402, 429 or 5xx status; or the run exited 0 and the
+session's last message is not a final assistant message (the last assistant message finished
+`tool-calls`, or none finished). A session error of any other class is not a provider failure
+by itself; when one of the others holds, it names the cause. The refusal for credit is read
+first (nova-tools#5199; the owner, 2026-10-03: "provider out of funds should never be a mystery
+failure."): a non-retryable 402 at launch makes the harness exit 1 within two seconds, before
+its log holds a line, so the 402 is in the printed output and the session alone
+(`TestANonRetryableProviderRefusalAtLaunchIsAProviderFailure`,
+`TestASessionErrorThatIsNotARefusalForCreditIsNotAProviderFailureByItself`). The reason is the cause (`internal/swarm` providercause.go):
 `provider: class=<class> status=<status|-> msg=<words>`. The class is one of `unknown-model`
 (the provider does not know or serve the model id: a config error), `auth`, `out-of-credit`,
 `rate-limited`, `provider-5xx`, `timeout` and `other` (none of these, or the harness recorded
@@ -291,7 +351,10 @@ description's secret; everything else is dropped. Native puts the bench's Go fir
 child's `PATH` after its shell wrappers: the directory the bench's `go` really lives in
 (`swarm.BenchGoBin`: the first `go` in `~/sdk/bin`, `~/go/bin`, then the member's own `PATH`,
 resolved through its links), so a card's bare `go` and `gofmt` resolve whatever `PATH` the loop
-unit started the member with. A name matching
+unit started the member with. Under the darwin wall, which denies `setpriority`, native
+starts the child's process group at nice 19 and the wrappers' directory carries a `nice` that
+runs its command without asking for a priority the group already has, so a gate's
+`nice -n 19` prints no warning. A name matching
 `TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH` is dropped unless `--pass` names it, even in
 an allowed family. The member keeps the forge credentials for its own push and pull request. A loop record whose harness reads its provider key from the environment carries `--pass <KEY>`; without it the children start with no provider key and fail at the provider, and a member started with no `--pass`, no worker secret and no `--auth` file for a model that is not a local one (`ollama`, `lmstudio`, `llamacpp`, `local`) says so in one `NOTE` line. When the result carries a `title`, the member opens the pull
 request after the push, as itself, from the card's branch into the base ref, with the title and

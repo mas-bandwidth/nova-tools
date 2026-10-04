@@ -34,6 +34,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -44,6 +45,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -67,8 +70,19 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     forced, rebuilding once on a moved base; then reports the batch as merge
     --stream s1 --batch <n> does. A head missing or in conflict ends the batch
     before it and is reported as merge --conflict, a red check as --red, a
-    second rejected push as --rejected. The clone is --repo-dir, else the dir=
-    each line names; git uses the caller's environment.
+    second rejected push as --rejected. Each head merged is checked first, by
+    script and no model: a head whose diff changes a file outside its brief's
+    PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
+    prose, ends the batch as a head in conflict does. A conflict only in the
+    generated ledgers lands: the tip's side, then their tests' update run
+    (NOVA_CI_UPDATE=1) to a fixed point, one commit; any other conflict stops
+    the stream, and after resume land merges the head again. The clone is --repo-dir,
+    else the dir= each line names; git uses the caller's environment. After
+    the whole pass each landed merge diff is scored (nova-decide's score
+    decision, with the key JEV_API_KEY holds, a minute for the pass; recorded in
+    decide/score.jsonl under the land root): a batch whose cards' top class meets
+    the sprint row's decide_score_bar (empty: none) raises one judgment, landed
+    work scored low, listing them (scored=, judged=).
   nova-sprint land --stream s1 --dry-run
     reads the store only: no git, no push, no report. The window: land pins
     each card's head and attempt as it reads them; a caller's --epoch is held
@@ -120,6 +134,9 @@ type landBatch struct {
 	// (landprune.go; a dry run: would put); nil for a batch that did not land, or
 	// whose cards recorded no branch.
 	Prune *landPrune `json:"prune,omitempty"`
+	// Score is the landed batch's scores (landscore.go): nil for a batch that did not
+	// land, and for a dry run.
+	Score *landScore `json:"score,omitempty"`
 }
 
 // landTimes is a batch's steps, in seconds: the fetch, the merges (with any head
@@ -165,6 +182,12 @@ func (b landBatch) line() string {
 			l += " branches_kept=" + strconv.Itoa(len(p.Kept))
 		}
 	}
+	if s := b.Score; s != nil && (s.Scored > 0 || s.Why == "") {
+		l += " scored=" + strconv.Itoa(s.Scored)
+		if s.Judged {
+			l += " judged=yes"
+		}
+	}
 	if b.Fact != "" {
 		l += " fact=" + b.Fact
 	}
@@ -196,6 +219,13 @@ func idSpan(ids []string) string {
 // keeps the id and the epoch), and the repository and base its brief names.
 type landCard struct {
 	id, head, attempt, repo, base string
+	paths                         []string     // the brief's PATHS globs, nil when it names none (checkCard)
+	brief                         string       // the brief, the card a landed diff is scored against (landscore.go)
+	primary                       *sprint.Card // the primary, whose brief decision its landing attaches to (briefdecide.go)
+	// resolved is the card's note when its landing did more than merge its head (the
+	// generated ledgers regenerated, landledger.go): set by each build, reported with the
+	// batch
+	resolved string
 }
 
 // pin is the card as the report's guard and the operation's arguments name
@@ -210,7 +240,13 @@ type lander struct {
 	repoDir, base, check, root string
 	dry, twin                  bool // twin: a mem twin, which has no git
 	out                        []landBatch
-	epoch                      uint64 // the epoch land read: every report is fenced to it
+	epoch                      uint64            // the epoch land read: every report is fenced to it
+	diffs                      map[string]string // each card's merge diff, as checkCard read it, for its score
+	toScore                    []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
+	// gate is the gate decision's backend, clock, bars and record for a red batch gate
+	// (landgate.go), nil when none is made; gateNote says why none is, once.
+	gate     *landGate
+	gateNote string
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -256,7 +292,12 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s land: the sprint is at epoch %d, not %d (cleared since): nothing was fetched, pushed or reported; run: nova-sprint where\n", prog, st.PinnedEpoch(), c.epoch)
 		return 1
 	}
-	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch()}
+	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}}
+	if *check != "" && !*dry {
+		a.serial.Lock()
+		l.gate, l.gateNote = a.landGate(context.Background(), st)
+		a.serial.Unlock()
+	}
 	if *repoDir != "" {
 		if abs, err := filepath.Abs(*repoDir); err == nil {
 			l.repoDir = abs
@@ -295,6 +336,13 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if !a.landLazy && !l.dry {
 		pruned = a.flushPrune(ctx, true)
 	}
+	// the landed diffs' scores, last: under the land loop's context when the loop runs this
+	// land, so its shutdown ends the pass, and one deadline for the pass (landscore.go)
+	sctx := ctx
+	if a.landCtx != nil {
+		sctx = a.landCtx
+	}
+	l.scoreAll(sctx)
 	return l.report(failed, pruned, stdout, stderr)
 }
 
@@ -350,6 +398,10 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			fmt.Fprintf(w, "NOTE the stream is stopped (%s); run: nova-sprint inbox\n", b.Fact)
 		case b.Status == "refused" && !l.dry:
 			fmt.Fprintf(w, "NOTE nothing was pushed or reported for stream %s; its cards stay queued\n", oneline.Field(b.Stream))
+		}
+		if s := b.Score; s != nil && s.Why != "" {
+			// what was not scored is said where the land loop shows what went wrong
+			fmt.Fprintf(stderr, "NOTE %s\n", oneline.Escape(s.Why))
 		}
 		if p := b.Prune; p != nil {
 			if p.Why != "" {
@@ -414,9 +466,9 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 	for _, c := range queue {
 		lc := landCard{id: c.ID, base: l.base}
 		if pr := s.Work.Placed(c.ID); pr != nil {
-			lc.head, lc.attempt = pr.F("head"), pr.F("attempt")
+			lc.head, lc.attempt, lc.primary = pr.F("head"), pr.F("attempt"), pr
 			cb := swarm.ReadCardBase([]byte(pr.F("brief")))
-			lc.repo = cb.Repo
+			lc.repo, lc.paths, lc.brief = cb.Repo, swarm.CardPaths([]byte(pr.F("brief"))), pr.F("brief")
 			if cb.Ref != "" {
 				lc.base = cb.Ref
 			}
@@ -487,7 +539,10 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 			return refuse("the batch branch has no tip: " + firstLine("", err))
 		}
 		start := time.Now()
-		why := l.runCheck(ctx, dir)
+		why, out := l.runCheck(ctx, dir)
+		if why != "" {
+			why = l.gateRerun(ctx, dir, stream, b.Base, tip, cards[:len(merged)], why, out)
+		}
 		since(&b.Times.Check, start)
 		if why != "" {
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
@@ -672,7 +727,15 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	// pushed AND reported: only now are its cards' branches tagged for the cleanup (a
 	// batch pushed and not reported keeps them: land is run again and may need the heads)
 	l.tag(context.Background(), &b, pins)
+	var ends []briefEnd // each card's end, attached to the brief decision it names (briefdecide.go)
+	for _, c := range pins {
+		label, note := decide.LandLabel(c.attempt)
+		ends = append(ends, briefEndOf(c.id, c.primary, decide.End{Label: label, Note: note}))
+	}
+	b.Also = append(b.Also, l.a.attachBriefs(ends)...)
 	l.out = append(l.out, b)
+	// its diffs are scored after the whole pass (landscore.go): a score never holds a landing
+	l.toScore = append(l.toScore, scoreJob{at: len(l.out) - 1, stream: stream, pins: pins})
 	return true
 }
 
@@ -710,10 +773,17 @@ func movedExactly(moved, ids []string) bool {
 // the step's arguments, and under the caller's --op its op id is the op and
 // those arguments, so a replay returns only the receipt of this very batch.
 func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) {
-	// the batch is the pinned cards by name, never the first n of the queue
+	// the batch is the pinned cards by name, never the first n of the queue, each with
+	// what its landing did past a merge of its head
 	r.Cards = make([]string, len(pins))
 	for i, c := range pins {
 		r.Cards[i] = c.id
+		if c.resolved != "" {
+			if r.Resolved == nil {
+				r.Resolved = map[string]string{}
+			}
+			r.Resolved[c.id] = c.resolved
+		}
 	}
 	step := store.MergeStep(r)
 	plan := step.Plan
@@ -836,13 +906,22 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
 	}
-	for _, c := range cards {
-		card, env := l.mergeHead(ctx, dir, stream, c)
+	for i := range cards {
+		c := &cards[i]
+		before, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return nil, failed, "the batch branch has no tip before the merge of " + c.id + ": " + firstLine("", err) + "; no card is blamed and nothing was pushed or reported"
+		}
+		var card, env string
+		card, env, c.resolved = l.mergeHead(ctx, dir, stream, *c)
+		if card == "" && env == "" {
+			card, env = l.checkCard(ctx, dir, *c, before)
+		}
 		switch {
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
 		case card != "":
-			return merged, conflictCard{landCard: c, why: card}, ""
+			return merged, conflictCard{landCard: *c, why: card}, ""
 		}
 		merged = append(merged, c.id)
 	}
@@ -858,9 +937,11 @@ var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such r
 // git failed for any other reason, which is not the card's (an identity, a
 // hook, the disk, the network), with any merge in progress aborted; both ""
 // when it merged. A head the clone lacks is fetched from origin by its id once.
-func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env string) {
+// A merge stopped only on generated ledgers is resolved (landledger.go,
+// resolveLedgers), and note is what the card's timeline says of it.
+func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env, note string) {
 	if why := headNotCommit(stream, c); why != "" {
-		return why, ""
+		return why, "", ""
 	}
 	merge := func() error {
 		_, err := l.git(ctx, dir, "merge", "--no-ff", "--no-edit", "-m", "land "+c.id+" (sprint stream "+stream+")", c.head)
@@ -868,7 +949,7 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 	}
 	err := merge()
 	if err == nil {
-		return "", ""
+		return "", "", ""
 	}
 	if _, missing := l.git(ctx, dir, "cat-file", "-e", c.head+"^{commit}"); missing != nil {
 		_, ferr := l.git(ctx, dir, "fetch", "--no-tags", "origin", c.head)
@@ -878,29 +959,86 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 			// short (a fetch by id wants the whole id) or one behind its branch's tip on
 			// a remote that serves only advertised refs is on origin all the same
 			if _, all := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/*:refs/remotes/origin/*"); all != nil {
-				return "", "the fetch of origin's branches for the head " + c.head + " of " + c.id + " failed: " + firstLine("", all)
+				return "", "the fetch of origin's branches for the head " + c.head + " of " + c.id + " failed: " + firstLine("", all), ""
 			}
 			if _, still := l.git(ctx, dir, "cat-file", "-e", c.head+"^{commit}"); still != nil {
-				return "the head " + c.head + " of " + c.id + " is missing: origin holds no such commit (" + firstLine("", ferr) + ")", ""
+				return "the head " + c.head + " of " + c.id + " is missing: origin holds no such commit (" + firstLine("", ferr) + ")", "", ""
 			}
 		case ferr != nil:
-			return "", "the fetch of the head " + c.head + " of " + c.id + " failed: " + firstLine("", ferr)
+			return "", "the fetch of the head " + c.head + " of " + c.id + " failed: " + firstLine("", ferr), ""
 		}
 		if err = merge(); err == nil {
-			return "", ""
+			return "", "", ""
 		}
 	}
 	unmerged, uerr := l.git(ctx, dir, "ls-files", "--unmerged")
 	_, inMerge := l.git(ctx, dir, "rev-parse", "-q", "--verify", "MERGE_HEAD")
-	if inMerge == nil {
-		if _, aerr := l.git(ctx, dir, "merge", "--abort"); aerr != nil {
-			return "", "git merge --abort failed after the merge of " + c.id + " stopped: " + firstLine("", aerr)
+	conflict := uerr == nil && unmerged != ""
+	why := ""
+	if conflict && inMerge == nil {
+		paths, ours := unmergedPaths(unmerged)
+		if owners, outside := ledgerOwners(paths, l.ledgers()); len(outside) == 0 {
+			var renv string
+			if note, why, renv = l.resolveLedgers(ctx, dir, stream, c, paths, ours, owners); note != "" {
+				return "", "", note
+			}
+			// the failed resolution ended the merge and restored the clone
+			env, why, inMerge = renv, "; "+why, errors.New("no merge in progress")
 		}
 	}
-	if uerr == nil && unmerged != "" {
-		return "the head " + c.head + " of " + c.id + " does not merge: " + firstLine("", err), ""
+	if inMerge == nil {
+		if _, aerr := l.git(ctx, dir, "merge", "--abort"); aerr != nil {
+			return "", "git merge --abort failed after the merge of " + c.id + " stopped: " + firstLine("", aerr), ""
+		}
 	}
-	return "", "the merge of " + c.id + " failed in git, not on its changes: " + firstLine("", err)
+	switch {
+	case env != "":
+		return "", env, ""
+	case conflict:
+		return "the head " + c.head + " of " + c.id + " does not merge: " + firstLine("", err) + why, "", ""
+	}
+	return "", "the merge of " + c.id + " failed in git, not on its changes: " + firstLine("", err), ""
+}
+
+// ledgers is the generated ledgers land regenerates at a merge.
+func (l *lander) ledgers() []landLedger {
+	if l.a.ledgers != nil {
+		return l.a.ledgers
+	}
+	return landLedgers
+}
+
+// checkCard is the lander's mechanical checks of one card merged onto the batch branch
+// at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
+// merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
+// sentence fragment or unmatched backquote (E4). A card that fails is taken off the batch
+// branch (reset to before) and ends the batch as a head that does not merge does, with
+// what failed; card and env are mergeHead's. A merge that made no commit (the head is in
+// the base already) is not checked: it changes nothing the base does not hold.
+func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before string) (card, env string) {
+	after, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil || after == before {
+		return "", ""
+	}
+	diff, err := l.git(ctx, dir, "diff", "-M", "--no-color", before, after)
+	if err != nil {
+		return "", "the diff of the merge of " + c.id + " could not be read: " + firstLine("", err)
+	}
+	var why []string
+	if out := diffcheck.Outside(c.paths, diff); len(out) > 0 {
+		why = append(why, "it changes files outside its PATHS (E12): "+strings.Join(out, ", "))
+	}
+	for _, f := range diffcheck.Fragments(diff) {
+		why = append(why, f.String()+" (E4)")
+	}
+	if len(why) == 0 {
+		l.diffs[c.id] = diff
+		return "", ""
+	}
+	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
+		return "", "the batch branch could not be reset after " + c.id + " failed the lander's checks: " + firstLine("", err)
+	}
+	return "the head " + c.head + " of " + c.id + " fails the lander's checks: " + strings.Join(why, "; "), ""
 }
 
 // containsAny says s holds one of words.
@@ -908,19 +1046,20 @@ func containsAny(s string, words []string) bool {
 	return slices.ContainsFunc(words, func(w string) bool { return strings.Contains(s, w) })
 }
 
-// runCheck runs --check in the clone: "" when it passed or there is none.
-func (l *lander) runCheck(ctx context.Context, dir string) string {
+// runCheck runs --check in the clone: why "" when it passed or there is none, and its
+// output.
+func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
 	if l.check == "" {
-		return ""
+		return "", ""
 	}
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", l.check)
 	defer b.Cancel()
 	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
-	out, err := b.Cmd.CombinedOutput()
+	raw, err := b.Cmd.CombinedOutput()
 	if err = b.Wrap("check "+l.check, err); err != nil {
-		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(string(out))
+		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(string(raw)), string(raw)
 	}
-	return ""
+	return "", string(raw)
 }
 
 // checkTail is ": <the output's last line>", "" for no output.
@@ -1060,13 +1199,17 @@ func rejected(err error) bool {
 }
 
 // git runs one git in dir (none: the current directory, for a clone into a
-// path it names), in the caller's environment, and returns its trimmed
-// stdout; an error carries git's own words.
+// path it names), in the caller's environment, and returns its trimmed stdout,
+// except -z output whose status columns and paths are byte-exact; an error
+// carries git's own words.
 func (l *lander) git(ctx context.Context, dir string, args ...string) (string, error) {
 	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: dir != ""}, args...)
 	if err != nil {
 		words := strings.TrimSpace(string(res.Stderr) + "\n" + string(res.Stdout))
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, words)
+	}
+	if slices.Contains(args, "-z") {
+		return string(res.Stdout), nil
 	}
 	return strings.TrimSpace(string(res.Stdout)), nil
 }

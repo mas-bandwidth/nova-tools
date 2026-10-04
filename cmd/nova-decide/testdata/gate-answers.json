@@ -1,0 +1,3 @@
+{
+  "class": {"choice": "flaky", "p": {"caused": 0.06, "flaky": 0.86, "pre-existing": 0.08}}
+}

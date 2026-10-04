@@ -369,7 +369,7 @@ nothing**: a store already cloned, two refs already present, no network socket. 
 
 **Each ref is a commit, resolved once, before anything reads it.** A ref beginning with `-`
 is the shape of a git option and is refused at exit 2 as
-`SECRETS REFUSED: --head <ref> begins with "-", the shape of an option, not a git ref`
+`SECRETS GATE REFUSED: --head <ref> begins with "-", the shape of an option, not a git ref`
 before git sees it. Every other ref is resolved with
 `git rev-parse --verify --end-of-options <ref>^{commit}`; a ref that names no commit (an
 unknown name, a tree, two words) is `GATE REFUSE rule=0 file=: --head <ref> does not name a
@@ -380,7 +380,7 @@ empty diff approves: `GATE APPROVE files=0`.
 
 **Every gate flag takes one value.** `--store`, `--base`, `--head` or `--machines` given twice
 is refused at exit 2 with one line on stderr naming the flag,
-`SECRETS REFUSED: --head is given more than once; every gate flag takes one value`, before
+`SECRETS GATE REFUSED: --head is given more than once; every gate flag takes one value`, before
 any ref is read.
 
 **It refuses, at exit 2, unless every changed `.sops.yaml` rule has exactly two age
@@ -715,7 +715,7 @@ nova-fuse's `lift` established. The multi-line refusal is written out, its remed
 command in this repo:
 
 ```
-SECRETS EXEC FAIL key=SPACE_KEY: value is multi-line; a file-shaped secret is not an environment variable.
+SECRETS EXEC REFUSED: key=SPACE_KEY: value is multi-line; a file-shaped secret is not an environment variable.
   generate it where it is used: this store holds no file-shaped secrets.
 ```
 
@@ -879,17 +879,19 @@ only **0** is permission; 1 and 2 are treated alike (do not act) while staying d
 
 ## Output grammar
 
-One line per event, first token `SECRETS`, second the verb, third `OK` or `FAIL`, `OK` to
-stdout and `FAIL` to stderr — with `exec`'s single OK line on **stderr**, the **second
+One line per event, first token `SECRETS`, second the verb, third `OK`, `FAIL` (check ran and
+found the store red, exit 1) or `REFUSED` (the verb could not run: exit 2, or 125 for exec),
+`OK` to stdout and `FAIL` and `REFUSED` to stderr; a refusal made before there is a verb is
+`SECRETS REFUSED:` — with `exec`'s single OK line on **stderr**, the **second
 deviation** from Conventions, because from the next instruction the command owns stdout.
 Every `key=value` field is escaped by the shared `internal/oneline` helper so a field is one
 token; the free-text tail after `: ` is never scanned for fields. Nothing a file holds and no
 caller argument can author a second line.
 
 ```
-SECRETS REFUSED: <reason>
+SECRETS REFUSED: <reason>; run: nova-secrets help
+SECRETS <VERB> REFUSED: <reason>; run: <remedy>
 SECRETS EXEC   OK   as=<name> keys=<n> only=<all|n> required=<n> file=<path> head=<sha> cmd=<argv0>
-SECRETS EXEC   FAIL <what>: <why>
 SECRETS NAME        key=<NAME> clear=<true|false>
 SECRETS NAMES  OK   as=<name> keys=<n> shown=<n> sealed=<n> clear=<n>
 SECRETS NAMES  MORE kind=key shown=<n> total=<n> run: <remedy>
@@ -901,11 +903,9 @@ SECRETS RULE        <one line of .sops.yaml to paste>
 SECRETS RULE   NEXT: <the next step, never a state of the world>
 SECRETS SEAT ADD NEXT: <the next step>
 SECRETS SEAT ADD OK as=<seat> from=<seat> keys=<n> file=<path> rule=<n>
-SECRETS SEAT ADD FAIL <why>
 SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> pr=#<n> merged
 SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> pr=#<n> open (gate not yet approved)
 SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> committed branch=<seal/…>
-SECRETS SEAT INJECT FAIL <why>
 SECRETS <PLACE|SEAL|SEAT INJECT> PLAN <step, as key=value fields>
 SECRETS <PLACE|SEAL|SEAT INJECT> DRY-RUN OK <name fields> nothing written, ...
 ```

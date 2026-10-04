@@ -14,6 +14,8 @@ tending/
 /nova-play.exe
 /nova-config
 /nova-config.exe
+/nova-decide
+/nova-decide.exe
 /nova-friend
 /nova-friend.exe
 /nova-sandbox

@@ -1,13 +1,15 @@
 // Package sprintdash is the sprint dashboard's server (docs/SPEC-SPRINT-DASHBOARD.md):
-// one page, embedded in the binary, and /api/sprint, a cached copy of the sprint as
-// `nova-sprint where --json` prints it. The terminal table stays the canonical view;
-// this is a second view of the same JSON.
+// one page, embedded in the binary, /api/sprint, a cached copy of the sprint as
+// `nova-sprint where --json --cards` prints it, /events, each new copy pushed as it is
+// read, and the pull routes (pull.go), a worker's own view of the same copy. The terminal
+// table stays the canonical view; this is a second view of the same JSON.
 //
 // The server is a function of its requests and its clock: Read is how it reads the
 // sprint and Now is its clock, so a test drives it with no socket and no real time.
-// A page asks for /api/sprint every second; the server reads the sprint at most once
-// per Every, and only while a page asks. A read that fails holds the last good copy:
-// the page changes nothing and says nothing, and the failure is a line on Log.
+// The server reads the sprint at most once per Every, and only while a page or a puller
+// asks or an event stream is open (Run, on a ticker the caller hands it). A read that
+// fails holds the last good copy: the page changes nothing and says nothing, and the
+// failure is a line on Log.
 package sprintdash
 
 import (
@@ -60,11 +62,20 @@ type Server struct {
 	Version string
 	// Log takes a line per new read failure and a read-time summary a minute.
 	Log io.Writer
+	// Keepalive is the time between two keepalive comments on an idle /events stream;
+	// zero is KeepaliveDefault.
+	Keepalive time.Duration
+	// keepaliveTick is a test's keepalive ticker in place of the clock's; nil is the clock.
+	keepaliveTick func(time.Duration) (<-chan time.Time, func())
 
 	mu      sync.Mutex
 	reading bool
 	began   time.Time // when the last read began; zero before the first
 	snap    snapshot
+	copy    *sprintCopy   // the last good read as the pull routes read it; nil before one
+	gen     uint64        // the good reads so far: an /events client sends each new one
+	changed chan struct{} // closed, and replaced, at each good read
+	streams int           // the /events clients connected
 	samples []sample
 	stats   readStats
 }
@@ -116,6 +127,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/sprint":
 		s.Refresh()
 		s.send(w, "application/json", s.Snapshot())
+	case "/events":
+		s.events(w, r, func(*sprintCopy) ([]byte, bool) { return s.Snapshot(), true })
 	case "/healthz":
 		s.send(w, "text/plain; charset=utf-8", []byte("ok\n"))
 	default:
@@ -140,10 +153,14 @@ func file(name string) []byte {
 
 // Refresh reads the sprint when Every has passed since the last read began and no
 // read is running; otherwise the cached copy stands.
-func (s *Server) Refresh() {
+func (s *Server) Refresh() { s.refresh(s.Every) }
+
+// refresh reads the sprint when gap has passed since the last read began and no read is
+// running.
+func (s *Server) refresh(gap time.Duration) {
 	s.mu.Lock()
 	start := s.Now()
-	if s.reading || !s.began.IsZero() && start.Sub(s.began) < s.Every {
+	if s.reading || !s.began.IsZero() && start.Sub(s.began) < gap {
 		s.mu.Unlock()
 		return
 	}
@@ -192,6 +209,15 @@ func (s *Server) record(start, end time.Time, body []byte, err error) {
 		// ignored: sprintJSON has read body as JSON; a landed that is no number is 0
 		_ = json.Unmarshal(body, &v)
 		rate, minutes := s.sampleLanded(start, v.Landed)
+		var c sprintCopy
+		// ignored: sprintJSON has read body as JSON; a field of another shape is left zero
+		_ = json.Unmarshal(body, &c)
+		s.copy = &c
+		s.gen++
+		if s.changed != nil {
+			close(s.changed)
+		}
+		s.changed = make(chan struct{})
 		s.snap.OK, s.snap.Error = true, nil
 		s.snap.Data = append(json.RawMessage(nil), bytes.TrimSpace(body)...)
 		s.snap.FetchedAt, s.snap.Throughput, s.snap.ThroughputMinutes = &end, rate, minutes

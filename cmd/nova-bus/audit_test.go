@@ -23,36 +23,34 @@ var messageBusAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|parse|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|parse|name":              "a required flag's name, a literal map key at every call site in this file",
-		"main.go|count|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|count|name":              "a required flag's name, a literal at every call site in this file",
-		"main.go|host|f.verb":             "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|openBus|verb":            "the verb's own name, a literal at every call site in this file",
-		"main.go|printOpenEntries|token":  "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
-		"main.go|printBodyItem|kind":      "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned immediately above the site",
-		"main.go|printBodyItem|bodyBytes": "the note body is the explicitly requested verbatim byte payload; framing is emitted separately and the body is never escaped or rewritten",
-		"main.go|atLeastZero|f.verb":      "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|atLeastZero|name":        "a threshold flag's name, a literal at every call site in this file",
-		"main.go|lockCheckout|token":      "the verb's own event token, the literals \"INBOX\" and \"WAIT\" at the two call sites in this file",
-		"main.go|gitArgs|f.verb":          "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|attempts|f.verb":         "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|gitTimeoutFlag|f.verb":   "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|legacyLine|verb":         "the verb's own name, the literals \"inbox\", \"wait\" and \"check\" at the three call sites in this file",
-		"main.go|waitLoop|lines": "the inbox listing this run has ALREADY printed, through the escape, into waitPoll's buffer -- every value in it went " +
+		"flags.go|count|strings.ToUpper(f.verb)":          "the verb's own name, a literal at every newFlags call site in this package",
+		"flags.go|count|name":                             "a required flag's name, a literal at every call site in this file",
+		"flags.go|host|strings.ToUpper(f.verb)":           "the verb's own name, a literal at every newFlags call site in this package",
+		"main.go|openBus|strings.ToUpper(verb)":           "the verb's own name, a literal at every call site in this file",
+		"inbox.go|printOpenEntries|token":                 "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
+		"inbox.go|printBodyItem|kind":                     "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned immediately above the site",
+		"inbox.go|printBodyItem|bodyBytes":                "the note body is the explicitly requested verbatim byte payload; framing is emitted separately and the body is never escaped or rewritten",
+		"flags.go|atLeastZero|strings.ToUpper(f.verb)":    "the verb's own name, a literal at every newFlags call site in this package",
+		"flags.go|atLeastZero|name":                       "a threshold flag's name, a literal at every call site in this file",
+		"main.go|lockCheckout|token":                      "the verb's own event token, the literals \"INBOX\" and \"WAIT\" at the two call sites in this file",
+		"flags.go|gitArgs|strings.ToUpper(f.verb)":        "the verb's own name, a literal at every newFlags call site in this package",
+		"flags.go|attempts|strings.ToUpper(f.verb)":       "the verb's own name, a literal at every newFlags call site in this package",
+		"flags.go|gitTimeoutFlag|strings.ToUpper(f.verb)": "the verb's own name, a literal at every newFlags call site in this package",
+		"inbox.go|legacyLine|strings.ToUpper(verb)":       "the verb's own name, the literals \"inbox\", \"wait\" and \"check\" at the three call sites in this file",
+		"wait.go|waitLoop|lines": "the inbox listing this run has ALREADY printed, through the escape, into waitPoll's buffer -- every value in it went " +
 			"through oneline.Field or oneline.Escape at the site that wrote it. It is many lines and it is not an event line: escaping it here would " +
 			"fold a whole listing into one unreadable line, which is the mistake printTranscript below documents. The buffer exists because a poll " +
 			"that finds nothing must print nothing, not because anything about the text changed. TestWaitReturnsWhenANoteArrivesDuringTheWait is the " +
 			"behavioural test for this site.",
-		"main.go|waitLoop|next": "the caller's own wait command echoed back after `next=` so they can re-arm it: flag names are literals and every value " +
+		"wait.go|waitLoop|next": "the caller's own wait command echoed back after `next=` so they can re-arm it: flag names are literals and every value " +
 			"in it has already been through the flag parser (--bus is a repo root, --as a roster name, --remote and --branch through bus.ValidGitArg, " +
 			"durations and counts are numbers), and it must stay pasteable spaces-and-all -- escaping it folds a command into one unreadable token, " +
 			"the same one-line-vs-pasteable tradeoff as printSwitchDayNote's INBOX SWITCH sentence. TestWaitEndsWithRearmLine is the behavioural test.",
-		"main.go|hiddenReason|legacy.Text": "not an event line: this function BUILDS a sentence, and both sites that print it pass the whole of it through " +
+		"inbox.go|hiddenReason|legacy.Text": "not an event line: this function BUILDS a sentence, and both sites that print it pass the whole of it through " +
 			"oneline.Escape, so the one-line guarantee is made once over the finished sentence rather than twice over its parts. The value itself is a " +
 			"switch-day line that has been through bus.NewLegacyLine, so it is a UTC date or an RFC 3339 instant and nothing else.",
-		"main.go|hiddenReason|at": "the same sentence, and a time this code formatted itself with bus.LegacyInstantLayout; two sites in the one call.",
-		"draft.go|cmdDraft|name":  "a reply-only flag's name, one of the five literals in replyOnlyFlags (reply.go), which this loop walks",
+		"inbox.go|hiddenReason|at": "the same sentence, and a time this code formatted itself with bus.LegacyInstantLayout; two sites in the one call.",
+		"draft.go|cmdDraft|name":   "a reply-only flag's name, one of the five literals in replyOnlyFlags (reply.go), which this loop walks",
 		"reply.go|cmdDraftReply|offTheListingReason(c, t, target, me, legacy, hasCursor, replyTargetName(target))": "not an event line's argument but a SENTENCE this package built, the way hiddenReason's is: " +
 			"every value inside it went through oneline.Field at the site that wrote it, and the sentence is one line by construction. The one-line " +
 			"guarantee is made once over the finished sentence rather than twice over its parts. TestTargetNotOnTheOpenListIsItsOwnRefusal is the " +
@@ -66,13 +64,13 @@ var messageBusAudit = audit.Config{
 			"spelling, To, Cc and every Re resolved against the roster and the bus, and --subject passed bus.OneLine, which refuses a " +
 			"line break or a control character. Nothing unresolved reaches here: an unresolved anything is a DRAFT REFUSED on stderr and " +
 			"this line never runs. TestDraftPrintsASkeletonTheParserReadsBack is the behavioural test for this site.",
-		"draft.go|writeDraftOut|skeleton": "the skeleton itself, written to the draft file outside the bus; content is checked before this runs",
-		"main.go|printSendDraft|note": "the shaped note itself, printed to stdout VERBATIM because it is the thing `send --dry-run` " +
+		"draft.go|writeSkeleton|skeleton": "the skeleton itself, written to the draft file outside the bus; content is checked before this runs",
+		"send.go|printSendDraft|note": "the shaped note itself, printed to stdout VERBATIM because it is the thing `send --dry-run` " +
 			"frames and a caller pipes to a file: escaping it would fold the very bytes the verb promises to carry. Every value in it " +
 			"has been checked before this line runs -- the header is the same Render the commit writes, from a note that passed the " +
 			"send preflight -- and the count on the SEND DRAFT line above is what frames it. TestSendDryRunPrintsTheShapedNoteAndWritesNothing " +
 			"is the behavioural test for this site.",
-		"main.go|cmdPrepare|artifactJSON": "the prepared artifact itself, printed to stdout VERBATIM because it is a machine-readable JSON " +
+		"send.go|cmdPrepare|artifactJSON": "the prepared artifact itself, printed to stdout VERBATIM because it is a machine-readable JSON " +
 			"object and not an event line: a self-contained artifact that a caller saves, and an escape would fold it or escape its quotes. " +
 			"Every value in it has been checked before this line runs. TestPrepareDecidingTests is the behavioural test for this site.",
 		"main.go|printTranscript|tr": "git's own transcript, printed to stderr VERBATIM and deliberately not through the escape. " +
@@ -129,6 +127,9 @@ var messageBusAudit = audit.Config{
 		// every byte still goes through fmt.Fprintf at the emit site, where the elapsed
 		// duration is rendered through oneline.Field like every other line here.
 		`"sync"`,
+		// sort orders the missing required flags' names so one bare verb's refusal lines
+		// come in one order on every run; it holds no writer and reaches no stream.
+		`"sort"`,
 
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace

@@ -181,11 +181,11 @@ func TestUnreachableStoreIsOneLine(t *testing.T) {
 	t.Parallel()
 	port := "127.0.0.1:" + testredis.FreePort(t)
 	code, stdout, stderr := runTable("list", "--redis", port)
-	oneFailureLine(t, "closed port", code, stdout, stderr, "nova-table list: redis at "+port, ": unreachable: ", "connection refused", "next: start the store or correct the address")
+	oneFailureLine(t, "closed port", code, stdout, stderr, "LIST REFUSED: redis at "+port, ": unreachable: ", "connection refused", "next: start the store or correct the address")
 
 	sock := t.TempDir() + "/absent.sock"
 	code, stdout, stderr = runTable("show", "demo", "--redis", sock)
-	oneFailureLine(t, "absent socket", code, stdout, stderr, "nova-table show: redis at "+sock, ": unreachable: ")
+	oneFailureLine(t, "absent socket", code, stdout, stderr, "SHOW REFUSED: redis at "+sock, ": unreachable: ")
 
 	// The shell dials nothing on entry; the first line that needs the store
 	// fails in the same one line, then names its input line.
@@ -237,7 +237,7 @@ func TestRefusedLoginIsOneLine(t *testing.T) {
 	// The shell refuses an empty password on entering, before any line.
 	var shellOut, shellErrs bytes.Buffer
 	code = (&application{in: strings.NewReader("version\nlist\n"), getenv: func(k string) string { return env[k] }}).run([]string{"shell", "--redis", addr}, &shellOut, &shellErrs)
-	oneFailureLine(t, "shell, empty password", code, shellOut.String(), shellErrs.String(), "nova-table shell: ", "NOVA_TABLE_TEST_PASSWORD is empty")
+	oneFailureLine(t, "shell, empty password", code, shellOut.String(), shellErrs.String(), "SHELL REFUSED: ", "NOVA_TABLE_TEST_PASSWORD is empty")
 
 	delete(env, "NOVA_SPRINT_REDIS_USER")
 	code, stdout, stderr = runAs("list", "--redis", addr)
@@ -301,7 +301,7 @@ func TestShellLineAfterRestart(t *testing.T) {
 	lines := strings.Split(strings.TrimSuffix(errs.String(), "\n"), "\n")
 	answered := code == 0 && errs.Len() == 0 && rows == 2 && strings.Contains(out.String(), "TABLE ROW ADD table=jobs row=after")
 	// Lost: one line, one remedy, show (the write may have committed).
-	lost := code == 2 && rows == 1 && len(lines) == 2 && strings.HasPrefix(lines[0], "nova-table row add: ") &&
+	lost := code == 2 && rows == 1 && len(lines) == 2 && strings.HasPrefix(lines[0], "ROW-ADD REFUSED: ") &&
 		strings.HasSuffix(lines[0], "; run: nova-table show 'jobs'") && !strings.Contains(lines[0], "; next: ") &&
 		lines[1] == "nova-table shell: line 2 failed (exit 2)"
 	t.Logf("after the restart the line took Answered=%v Lost=%v; stderr %q", answered, lost, &errs)

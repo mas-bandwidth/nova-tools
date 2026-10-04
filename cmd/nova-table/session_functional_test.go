@@ -276,7 +276,7 @@ func TestShellLostWriteReplyIsNeverReplayed(t *testing.T) {
 	require.NoError(t, err, "%v", err)
 	// One remedy, show: the write may have committed, so the line sends the
 	// reader to look, never to start the store and write again.
-	const wantErr = "nova-table row add: table \"jobs\" row \"committed\": ns_table_row_add: EOF; run: nova-table show 'jobs'\nnova-table shell: line 1 failed (exit 2)\n"
+	const wantErr = "ROW-ADD REFUSED: table \"jobs\" row \"committed\": ns_table_row_add: EOF; run: nova-table show 'jobs'\nnova-table shell: line 1 failed (exit 2)\n"
 	require.EqualValues(t, 2, code, "lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
 	require.True(t, lost.Load(), "lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
 	require.EqualValues(t, 2, tab.Revision, "lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)

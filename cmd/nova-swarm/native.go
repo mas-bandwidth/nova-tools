@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/url"
 	"os"
@@ -24,6 +25,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -82,6 +85,9 @@ type nativeRunConfig struct {
 	// loop record), the name and email every commit carries; nil reads the pool's
 	// <root>/identity.tsv (swarm.LoadPoolIdentity).
 	identity *swarm.StagingIdentity
+	// usd is the dollar budget (--usd, a route's usd): the harness's reported cost at which
+	// the card is stopped, beside the token budget; nil for none (nova-tools #5094).
+	usd *big.Rat
 	// netAllow is the provider's loopback host:port, passed to the wall as --net-allow.
 	netAllow string
 	// bodySilence is the gap, after response headers, with no body bytes, that
@@ -142,6 +148,13 @@ type nativeRunConfig struct {
 	// frame, when set, is the member's frame of this launch (docs/SPEC-CARD-CONTRACT.md):
 	// staging stages its commit on its branch, and its profile writes JOB.md and the shims.
 	frame *cardcontract.Frame
+	// decider, when set, is the decide read's backend and clock (nativedecide.go): a
+	// test's; nil is Jev over its real transport with the key JEV_API_KEY holds, and the
+	// wall clock.
+	decider *decider
+	// gateRun, when set, is the gate decision's test runner (nativegate.go): a test's; nil
+	// runs go test in the child's wall with the child's environment.
+	gateRun gateRunner
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -518,16 +531,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// GOCACHE. GOTOOLCHAIN=local keeps a card from fetching a toolchain behind the bench's
 	// back. The sharing is safe because Go's caches are concurrency-safe by design and the
 	// module cache is read-mostly. --no-shared-caches keeps today's behaviour exactly: no
-	// names set, the caches under HOME.
+	// names set, the caches under HOME. swarm.EnsureCacheDirs (issue #1048, above) made both
+	// (swarm.GoModCacheDir, swarm.GoBuildCacheDir), under the same condition.
 	cacheDir := nativeCacheDir(cfg)
-	if cacheDir != "" {
-		for _, d := range []string{filepath.Join(cacheDir, "go-mod"), filepath.Join(cacheDir, "go-build")} {
-			if err := os.MkdirAll(d, 0o755); err != nil {
-				refuseNative(errOut, fmt.Sprintf("the shared go cache %s could not be made: %s", oneline.Field(d), oneline.Escape(err.Error())))
-				return nativeRunResult{}, 2
-			}
-		}
-	}
 
 	// (3c) THE SHELL SHIM. The harness spawns its bash tool's shell by NAME,
 	// resolving it through the child's PATH and SHELL, and hands it the harness's own
@@ -541,6 +547,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, fmt.Sprintf("%s the card's shell cannot be scrubbed of the provider key: %s",
 			oneline.Field(cfg.label), oneline.Err(shimErr)))
 		return nativeRunResult{}, 2
+	}
+	// (3d) THE GO SHIM (nova-tools#5174, cost rule 5): with the shared caches on, the go the
+	// child runs by name adds -trimpath, so the machine's warm GOCACHE serves this checkout
+	// and the card's gate does not compile the repository again (shellshim.go).
+	goBin := swarm.BenchGoBin(benchHome(cfg), os.Getenv("PATH"))
+	if cacheDir != "" {
+		if err := writeNativeGoShim(shimDir, goBin); err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s %s", oneline.Field(cfg.label), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
 	}
 
 	// (4) THE AUTH COPY. One entry, the model's provider's, moved to the data home so
@@ -657,10 +673,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	bench := cfg.benchName
 	if bench == "" {
 		if h, err := os.Hostname(); err == nil {
-			if idx := strings.Index(h, "."); idx != -1 {
-				h = h[:idx]
-			}
-			bench = h
+			bench, _, _ = strings.Cut(h, ".")
 		}
 	}
 	if bench == "" {
@@ -681,6 +694,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 		stageOpts.Base = &swarm.CardBase{Repo: url, Sha: fr.StageSha, Ref: fr.BaseRef, Named: fr.Repo}
 		stageOpts.Branch = fr.Branch
+		if fr.Kind == "work" && fr.Attempt > 1 {
+			// a rework is staged at its base branch's tip, the work before it carried on top
+			// where it applies (docs/SPEC-CARD-CONTRACT.md, where a rework starts)
+			stageOpts.Rework = &swarm.Rework{Prev: fr.PrevHead, From: fr.PrevFrom}
+		}
 	}
 	stageRes, stageErr := swarm.StageCard(stageOpts)
 	if stageErr != nil {
@@ -738,6 +756,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
 	// the full 135s -- printed STAGE UNSEEN on every such launch. One line, on success.
 	writeStageOK(os.Stdout, bench, stageRes)
+	if stageRes.Carry != nil {
+		fmt.Fprintln(os.Stdout, oneline.Escape(stageRes.Carry.Line()))
+	}
 	if stageRes.Shared {
 		cfg.borrowed = filepath.Join(stageRes.Mirror, "objects")
 	}
@@ -748,8 +769,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// gh pr create its finish), so the child meets the frame through the commands it knows.
 	// A frame that cannot be installed refuses the launch: a child outside its frame is the
 	// defect the frame closes.
+	decided := ""   // the decide read's op id when a strings read follows it (nativedecide.go)
+	workStart := "" // a framed work card's start: the gate decision's base (nativegate.go)
 	if cfg.frame != nil && stageRes.Staged {
-		if err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, os.Stdout); err != nil {
+		start, err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, stageRes.Carry, os.Stdout)
+		if err != nil {
 			if errors.Is(err, errReadStart) {
 				// a read whose start cannot be known is refused at staging, as a stage that
 				// failed is: no child ran, and the sprint deals the read again
@@ -760,6 +784,36 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 			refuseNative(errOut, fmt.Sprintf("%s the card's frame could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
 			return nativeRunResult{}, 2
+		}
+		workStart = start
+		// THE DECIDE READ (nativedecide.go; docs/SPEC-SPRINT.md section 6): a flash card's
+		// first read is decided here, before any child, when its p(defect) is past a bar
+		switch route, op := nativeDecide(cfg, jobDir, start, stageRes.BaseSha, os.Stdout, errOut); route {
+		case decide.RouteStrings:
+			decided = op
+		case decide.RouteBounce, decide.RouteLand:
+			res := nativeRunResult{rc: 0, harness: "ok", wall: "none", cardSHA256: hex.EncodeToString(cardHash[:]), binarySHA256: binaryHash,
+				job: jobDir, root: cfg.root, configSHA: configSHA, tmp: tmpDir, end: "done", wallSeconds: time.Since(startTime).Seconds()}
+			res.resultsDir = publishDecided(cfg, jobDir, errOut)
+			return res, 0
+		}
+	}
+
+	// (4g) A SCRIPT CARD (docs/SPEC-SPRINT.md, a card is a tree of steps). A work card whose
+	// every work step is a script step runs the executor in place of the harness, and no model
+	// is launched at all. The executor is not the child: it runs outside the child's wall (a
+	// wall does not nest) with no credential in its environment, and puts each program, POST
+	// command and git in the step's own wall, tighter than a child's (below, at the wall).
+	var stepArgv []string
+	if cfg.frame != nil && stageRes.Staged && cfg.frame.Kind == "work" {
+		all, err := installTreeSteps(cfg.card, cfg.slotDir, jobDir)
+		if err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s the card's script steps could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
+		if all != nil {
+			stepArgv = all
+			fmt.Fprintf(os.Stdout, "NATIVE NOTE label=%s every work step is a script step: the executor runs in place of the harness, no model, each step in its own wall\n", oneline.Field(cfg.label))
 		}
 	}
 
@@ -792,6 +846,23 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
 	}
+	// THE CHILD'S PRIORITY, where the wall forbids the child to lower its own (the darwin
+	// wall denies setpriority): native lowers the group after the start, and the card's own
+	// `nice -n 19` resolves to the shim's, which runs the command without the wall's warning.
+	niced := nativeNicesChild(runtime.GOOS, wall != "")
+	if stepArgv != nil {
+		var err error
+		if runPath, runArgv, niced, err = nativeStepLaunch(runtime.GOOS, stepArgv, wall); err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s the wall %s could not be made absolute: %s", oneline.Field(cfg.label), oneline.Field(wall), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
+		wall = ""
+	}
+	if niced && shimDir != "" {
+		if err := writeNativeNiceShim(shimDir); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: %s; a card's nice inside the wall warns setpriority and runs its command anyway\n", oneline.Err(err))
+		}
+	}
 
 	// THE CHILD. The deadline is a context, so the process (and any it started in its
 	// own group) is killed when the wall runs out, not merely handed a suggestion.
@@ -808,8 +879,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell,
-		swarm.BenchGoBin(benchHome(cfg), os.Getenv("PATH")))
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin)
 	if cfg.root != "" {
 		var id swarm.StagingIdentity
 		if cfg.identity != nil {
@@ -838,7 +908,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, "missing configured root for pool identity; refusing to launch under nobody's name")
 		return nativeRunResult{}, 2
 	}
-	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
+	if err := writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv); err != nil {
+		fmt.Fprintf(errOut, "NATIVE NOTE argv log: %s; the run goes on without its record of the argv and environment the child is handed\n", oneline.Err(err))
+	}
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the child's stdin %s could not be opened: %s", oneline.Field(os.DevNull), oneline.Escape(err.Error())))
@@ -874,6 +946,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// where the harness's own log stands before this run: what it appends after is this
 	// run's (nativeprovider.go), the slot keeping one log for every run it hosts
 	providerMark := fileSize(filepath.Join(dataHome, filepath.FromSlash(harnessLogFile)))
+	// and where the run's own capture stands: what the harness prints after it is this
+	// run's (a harness that refused at launch printed its error there alone, #5199)
+	captureMark := fileSize(outLog)
 	runStart := time.Now()
 	harnessOut, err := os.OpenFile(outLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND|swarm.ONoFollow, 0o644)
 	if err != nil {
@@ -974,7 +1049,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// card at their own instants whatever a read is doing (nativesample.go says why at
 	// length).
 	sampler := startLiveSampler("", 0, cfg, outLog)
-	if !cfg.unmetered && cfg.tokens > 0 || (cfg.worker != nil && cfg.worker.HasCardBudget()) {
+	if !cfg.unmetered && cfg.tokens > 0 || cfg.usd != nil || (cfg.worker != nil && cfg.worker.HasCardBudget()) {
 		sampler = startLiveSampler(dataHome, cfg.usageInterval, cfg, outLog)
 	}
 	defer sampler.Stop()
@@ -989,6 +1064,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// previousLaunchEnd is the floor under the NEXT launch's usage window. The zero time is
 	// no floor, which is what the first launch has.
 	var previousLaunchEnd time.Time
+	if stepArgv != nil {
+		childEnv = append(cardtree.ScrubEnv(childEnv), "HOME="+dataHome) // the step needs no model and no credential
+	}
 	// The harness is a long-lived child: it runs under this run's cancellable context and
 	// no deadline (the run's own deadline and idle rules end it), and the context ends
 	// with the run, so no launch outlives the function that started it.
@@ -997,6 +1075,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	for attempt := 1; ; attempt++ {
 		lastAttempt = attempt
 		before := fileSize(outLog)
+		providerBefore := fileSize(filepath.Join(dataHome, filepath.FromSlash(harnessLogFile)))
 		cmd := subproc.Long(runCtx, runPath, runArgv...)
 		ownChildGroup(cmd)
 		cmd.Env = childEnv
@@ -1012,6 +1091,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			return nativeRunResult{}, 2
 		}
 		pgid := cmd.Process.Pid
+		if niced {
+			if err := lowerChildPriority(pgid); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the child's priority could not be lowered: %s\n", oneline.Err(err))
+			}
+		}
 		started := swarm.StartStamp(pgid)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
@@ -1184,9 +1268,19 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			launchTokens = sum
 		}
 		_, published := swarm.FindCardResult(jobDir)
-		if cause, failed := harnessStartFailed(tail, elapsed, launchTokens, published); failed {
+		cause, failed := harnessStartFailed(tail, elapsed, launchTokens, published)
+		_, launchFailure := swarm.ProviderLaunchFailure(tail)
+		// SPEC-SPRINT section 5: a credit/key refusal rests its provider. A
+		// transient wrapper cannot buy another launch; read only this launch.
+		if !published && (failed || launchFailure) {
+			if refusal, ok := providerEnd(dataHome, providerBefore, attemptStart, res.rc, tail); ok &&
+				(refusal.Class == swarm.CauseCredit || refusal.Class == swarm.CauseAuth) {
+				break
+			}
+		}
+		if failed {
 			if startRetries < len(harnessStartWaits) {
-				if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
+				if word := sampler.StopWordAtFinal(jobSpent, jobObserved, spendCost(launchSpends)); word != "" {
 					res.stopped = word
 					break
 				}
@@ -1206,7 +1300,6 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// Inherited grace retry. The tail and the elapsed time do not prove the
 		// provider never accepted the request. A lost response does not take
 		// this path.
-		_, launchFailure := swarm.ProviderLaunchFailure(tail)
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			// ONCE MORE BEFORE ANY RELAUNCH (rule 13d): the stop is rule 13's `spent >= n`,
 			// tested at every sample and once more before any relaunch. The first launch's
@@ -1222,7 +1315,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// AND THE FINAL READS COUNT: the job's spend just folded from this launch's
 			// final read is tested too, so a launch that died before its first sample
 			// cannot buy a relaunch past the budget.
-			if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
+			if word := sampler.StopWordAtFinal(jobSpent, jobObserved, spendCost(launchSpends)); word != "" {
 				res.stopped = word
 				break
 			}
@@ -1408,10 +1501,24 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if !res.lost && !res.idled && !res.terminated && !handedBack && res.stopped == "" && res.wallReport == "" &&
 		(res.wallRefusal == swarm.WallRefusal{}) && (res.shellDenial == swarm.ShellDenial{}) {
 		if _, published := swarm.FindCardResult(jobDir); !published {
-			if cause, ok := providerEnd(dataHome, providerMark, runStart, res.rc); ok {
+			if cause, ok := providerEnd(dataHome, providerMark, runStart, res.rc, tailSince(outLog, captureMark)); ok {
 				fmt.Fprintln(errOut, oneline.Escape(providerLine(cfg.label, res.wallSeconds, cfg.model, cause)))
 			}
 		}
+	}
+	// the strings read after a decide read: its verdict is the decision's outcome
+	if decided != "" {
+		settleDecided(cfg, jobDir, decided, errOut)
+	}
+	// THE GATE VERDICT (nativegate.go; docs/SPEC-SPRINT.md section 5): a work card's red gate
+	// is classified, its flaky failures rerun once, before the member reports the take; a
+	// script card's steps are their own gate
+	if !res.lost && stepArgv == nil {
+		run := cfg.gateRun
+		if run == nil {
+			run = nativeGateRunner(wall, func(argv []string) []string { return nativeSandboxArgv(argv, cfg, dataHome, jobDir, tmpDir) }, childEnv, jobDir, goBin)
+		}
+		nativeGate(cfg, jobDir, tmpDir, workStart, run, os.Stdout, errOut)
 	}
 	// Publish after the blocked report and the asked report exist, and before any
 	// return that has finished the child: the sweep (and --sweep-now) run only once
@@ -1800,8 +1907,13 @@ func benchOS(cfg nativeRunConfig) string {
 // resolve to the toolchain the wall grants whatever PATH the loop unit started the member
 // with. Empty names no Go and leaves PATH as it was.
 func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin string) []string {
+	return nativeChildEnvFrom(os.Environ(), dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin)
+}
+
+// nativeChildEnvFrom is nativeChildEnv over environ, native's own environment.
+func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin string) []string {
 	var kept []string
-	for _, kv := range os.Environ() {
+	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
 		if keepNativeEnv(name) {
 			kept = append(kept, kv)
@@ -1817,6 +1929,8 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	if secretEnv != "" {
 		remove = append(remove, secretEnv)
 	}
+	// the decide read's key is native's own (nativedecide.go), never the child's
+	remove = append(remove, decide.JevSecret)
 	for _, name := range remove {
 		kept = environWithoutName(kept, name)
 	}
@@ -1835,8 +1949,8 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	)
 	if cacheDir != "" {
 		out = append(out,
-			"GOMODCACHE="+filepath.Join(cacheDir, "go-mod"),
-			"GOCACHE="+filepath.Join(cacheDir, "go-build"),
+			"GOMODCACHE="+swarm.GoModCacheDir(filepath.Dir(cacheDir)),
+			"GOCACHE="+swarm.GoBuildCacheDir(filepath.Dir(cacheDir)),
 			"GOTOOLCHAIN=local",
 			"ASDF_OUTPUT_TRANSLATIONS="+swarm.JobASDFOutputTranslations(filepath.Join(jobDir, swarm.JobRepo)),
 		)
@@ -1847,9 +1961,13 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	if shimShell != "" {
 		out = append(out, "SHELL="+shimShell)
 	}
-	if secretEnv != "" {
-		if v, ok := os.LookupEnv(secretEnv); ok {
-			out = append(out, secretEnv+"="+v)
+	// a worker whose description names the decide read's key is handed nothing by it: the
+	// key is native's alone (nativedecide.go)
+	if secretEnv != "" && secretEnv != decide.JevSecret {
+		for _, kv := range environ {
+			if v, ok := strings.CutPrefix(kv, secretEnv+"="); ok {
+				out = append(out, secretEnv+"="+v)
+			}
 		}
 	}
 	return out
@@ -1916,21 +2034,19 @@ func environWithoutName(env []string, name string) []string {
 // writeNativeArgvLog records the exact argv and environment the child is about to be handed
 // into <slot>/native-argv.log, so a later reader can prove what the wall was asked to run.
 // A value whose name carries KEY, TOKEN or SECRET is written as <redacted>, never the secret
-// itself.
-func writeNativeArgvLog(slotDir, runPath string, runArgv, env []string) {
-	f, err := os.OpenFile(filepath.Join(slotDir, "native-argv.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	fmt.Fprintf(f, "argv: %s\n", oneline.Escape(strings.Join(append([]string{runPath}, runArgv...), " ")))
+// itself. A log that cannot be written is the error returned, which the run names on a NOTE
+// line and goes on without.
+func writeNativeArgvLog(slotDir, runPath string, runArgv, env []string) error {
+	var f strings.Builder
+	fmt.Fprintf(&f, "argv: %s\n", oneline.Escape(strings.Join(append([]string{runPath}, runArgv...), " ")))
 	for _, kv := range env {
 		name, val, _ := strings.Cut(kv, "=")
 		if keepNativeSecretName(name) {
 			val = "<redacted>"
 		}
-		fmt.Fprintf(f, "env: %s=%s\n", oneline.Escape(name), oneline.Escape(val))
+		fmt.Fprintf(&f, "env: %s=%s\n", oneline.Escape(name), oneline.Escape(val))
 	}
+	return os.WriteFile(filepath.Join(slotDir, "native-argv.log"), []byte(f.String()), 0o644)
 }
 
 // keepNativeSecretName says whether a name carries a secret, which the argv log redacts.
@@ -2127,6 +2243,12 @@ func launchSpend(v map[string]string) cardcost.Usage {
 	return u
 }
 
+// spendCost is the harness's cost of the launches so far, "" unless every launch that
+// reported tokens reported one (the cost spendWord carries).
+func spendCost(launches []cardcost.Usage) string {
+	return cardcost.ParseSpend(spendWord(launches)).Actual
+}
+
 // spendWord is the job's spend= word over its launches' records: their sum, the model the
 // last one reported, and the harness's cost only when every launch that reported tokens
 // reported one (a cost for part of the job is not the job's).
@@ -2311,49 +2433,52 @@ func writeStageOK(w io.Writer, bench string, st swarm.StageResult) {
 
 // installFrameTimed reports the whole successful frame installation, including
 // recipes and shims, separately from staging (docs/SPEC-CARD-CONTRACT.md, staging).
-func installFrameTimed(cfg nativeRunConfig, jobDir, head string, w io.Writer) error {
+func installFrameTimed(cfg nativeRunConfig, jobDir, head string, carry *cardcontract.Carry, w io.Writer) (start string, err error) {
 	started := time.Now()
-	if err := installFrame(cfg, jobDir, head); err != nil {
-		return err
+	if start, err = installFrame(cfg, jobDir, head, carry); err != nil {
+		return "", err
 	}
 	fmt.Fprintf(w, "FRAME OK secs=%.1f\n", time.Since(started).Seconds())
-	return nil
+	return start, nil
 }
 
 // installFrame records the staged commit in the slot and writes a framed launch's JOB.md
-// and its family's shims into <slot>/shim, the shims handing through to the real git.
-func installFrame(cfg nativeRunConfig, jobDir, head string) error {
+// and its family's shims into <slot>/shim, the shims handing through to the real git; a
+// rework's carry (where it was staged, and whether the work before it came) is JOB.md's. It
+// returns a read's start: the commit the work it reads started from (workStart), "" for
+// work or when none is known.
+func installFrame(cfg nativeRunConfig, jobDir, head string, carry *cardcontract.Carry) (string, error) {
 	git, err := exec.LookPath("git")
 	if err != nil {
-		return fmt.Errorf("no git on PATH for the shims to hand through to: %w", err)
+		return "", fmt.Errorf("no git on PATH for the shims to hand through to: %w", err)
 	}
 	if git, err = filepath.Abs(git); err != nil {
-		return err
+		return "", err
 	}
-	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
-	if d := nativeCacheDir(cfg); d != "" {
-		st.GoCache = filepath.Join(d, "go-build") // the GOCACHE nativeChildEnv hands the child
+	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git, Carry: carry}
+	if nativeCacheDir(cfg) != "" {
+		st.GoCache = swarm.GoBuildCacheDir(cfg.root) // the GOCACHE nativeChildEnv hands the child
 	}
 	if cfg.frame.Kind == "read" {
 		// first, so a read whose start cannot be known leaves nothing of its frame behind
 		if st.Start, err = workStart(git, st.Repo, cfg.frame.ReviewBase); err != nil {
-			return err
+			return "", err
 		}
 		if st.Start != "" {
 			if st.Gate, err = readGate(git, st.Repo, st.Start); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
 	// the commit staged, recorded in the slot (outside the job the child writes): the
 	// member counts the child's commits from it, never from the checkout's own refs
 	if err := atomicfile.Write(filepath.Join(cfg.slotDir, cardcontract.StagedName), []byte(head+"\n"), 0o644); err != nil {
-		return fmt.Errorf("recording the staged commit: %w", err)
+		return "", fmt.Errorf("recording the staged commit: %w", err)
 	}
 	if err := cardcontract.StageRecipes(*cfg.frame, jobDir); err != nil {
-		return err
+		return "", err
 	}
-	return cardcontract.Install(cardcontract.For(cardcontract.FamilyOf(cfg.model)), *cfg.frame, st, nativeShellShimDir(cfg.slotDir))
+	return st.Start, cardcontract.Install(cardcontract.For(cardcontract.FamilyOf(cfg.model)), *cfg.frame, st, nativeShellShimDir(cfg.slotDir))
 }
 
 // errReadStart marks a read refused at staging because the commit its work started from
@@ -2435,12 +2560,8 @@ func readGate(git, checkout, start string) (*cardcontract.Gate, error) {
 // has a believable provider prefix: both sides nonempty, no slash inside the
 // provider.
 func providerOf(model string) (string, bool) {
-	i := strings.Index(model, "/")
-	if i <= 0 || i >= len(model)-1 {
-		return "", false
-	}
-	provider := model[:i]
-	if strings.Contains(provider, "/") {
+	provider, rest, ok := strings.Cut(model, "/")
+	if !ok || provider == "" || rest == "" {
 		return "", false
 	}
 	return provider, true

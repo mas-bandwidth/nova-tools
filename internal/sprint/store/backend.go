@@ -33,6 +33,10 @@ type Backend interface {
 
 	Create(ctx context.Context, t ntable.Table) error
 	RowsAdd(ctx context.Context, table string, rows []string) error
+	// RowsHide hides rows from the drawn table, as the table layer's row hide does: each
+	// stays in the table, its cells and its folds, and is not drawn (a friend's fleet row,
+	// sprint.FriendRow, in the stored view).
+	RowsHide(ctx context.Context, table string, rows []string) error
 	// RowsDel removes rows, with the cards placed in them (a row absent is
 	// skipped): the readers table's reader remove, which first refuses a row
 	// that holds a card (docs/SPEC-SPRINT.md section 6), and stream remove,

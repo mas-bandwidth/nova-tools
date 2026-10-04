@@ -306,3 +306,20 @@ func TestThePullRequestRidesOnTheFinish(t *testing.T) {
 	assert.NotContains(t, g.s.lines("finish")[0], "--failed")
 	assert.Contains(t, g.out.String(), "NOTE pr c1 not opened: no gh\n")
 }
+
+// A rework's finish says where it was staged, after the push and before the child's words, so
+// the card's timeline records the staged commit and whether the work before it carried; a
+// failed finish says it too, after its reason.
+func TestAReworksFinishSaysWhereItWasStaged(t *testing.T) {
+	t.Parallel()
+	const carry = "staged=333333333333 tip=111111111111 of main carry=carried attempt=1 prev=222222222222"
+	g, _ := pushRig(t, &fakePusher{def: Push{Sha: fullSha}}, Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "landed the thing", Carry: carry})
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + fullSha + " to work/c1: stage: " + carry + "; landed the thing --head " + fullSha + " --branch work/c1 --epoch 7"}, g.s.lines("finish"))
+
+	g, _ = pushRig(t, &fakePusher{def: Push{None: "the child committed nothing"}}, Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "checked", Carry: carry})
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"finish --as m c1@1 --report no commit: the child committed nothing; stage: " + carry + "; checked --failed --epoch 7"}, g.s.lines("finish"))
+}

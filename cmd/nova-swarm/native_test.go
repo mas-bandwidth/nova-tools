@@ -1164,6 +1164,13 @@ func TestNativeSharedGoCaches(t *testing.T) {
 	// module inside the wall.
 	argv := strings.Fields(sandboxArgv(t, jobDir))
 	assert.True(t, hasFlagPair(argv, "--write", cacheDir), "the wall argv does not write the shared cache %s:\n%s", cacheDir, strings.Join(argv, " "))
+	// and the go the child runs by name builds -trimpath, so that cache serves this
+	// checkout (nova-tools#5174, cost rule 5; TestTheGoShimBuildsTrimpath)
+	if runtime.GOOS != "windows" {
+		shim, err := os.ReadFile(filepath.Join(slot, "shim", "go"))
+		require.NoError(t, err, "the shared caches write the go shim")
+		assert.Contains(t, string(shim), "-trimpath")
+	}
 }
 
 // TestNativeNoSharedCachesRestoresHomeCaches: --no-shared-caches restores today's behaviour
@@ -1194,6 +1201,8 @@ func TestNativeNoSharedCachesRestoresHomeCaches(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "--no-shared-caches made <root>/cache, want none: err=%v", err)
 	argv := strings.Fields(sandboxArgv(t, jobDir))
 	assert.False(t, hasFlagPair(argv, "--write", filepath.Join(resolvedPath(t, root), "cache")), "--no-shared-caches wrote <root>/cache into the wall argv:\n%s", strings.Join(argv, " "))
+	_, err = os.Stat(filepath.Join(slot, "shim", "go"))
+	assert.True(t, os.IsNotExist(err), "--no-shared-caches wrote the go shim, want none: err=%v", err)
 }
 
 // nativeLoggedEnv reads the env lines of a native-argv.log into a name -> values map.

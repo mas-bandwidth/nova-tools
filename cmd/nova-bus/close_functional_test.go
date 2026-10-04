@@ -88,7 +88,7 @@ func TestCloseBeforeReceiptsOldNotesOnly(t *testing.T) {
 	invoke(t, "", "close", "--bus", checkout, "--as", "Ada",
 		"--before", "2026-09-08T00:00:00Z", "--dry-run").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "CLOSE OK closed=2 kept=1 commit=-")
+		mustContain(t, "stdout", "CLOSE OK closed=2 kept=1 commit=- dry_run=true\n")
 	{
 		entries := mdFiles(t, checkout, "from-ada")
 		require.Emptyf(t, len(entries), "--dry-run wrote %d receipt notes, want 0", len(entries))

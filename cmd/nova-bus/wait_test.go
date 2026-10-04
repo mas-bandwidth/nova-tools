@@ -6,12 +6,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The wait help must document #328, not #674. The flag is accepted and changes
-// nothing, so the long paragraph promising a WAIT OK line on a beat-only change is
-// stale: the flag's own usage string says so, and the banner must agree. (#903)
+// The retired beat flags are out of the banner's usage, and wait -h says --quiet-beats is
+// accepted and changes nothing: a beat-only change never wakes a wait.
 func TestWaitHelpQuietBeatsDocumentsNoWake(t *testing.T) {
 	t.Parallel()
 	banner := invoke(t, "", "help").mustCode(t, 0).stdout
-	require.NotContainsf(t, banner, "makes a wait return on a change that is ONLY beats", "wait help still promises --quiet-beats wakes a wait:\n%s", banner)
-	require.Containsf(t, banner, "accepted and changes nothing", "wait help does not say --quiet-beats is accepted and changes nothing:\n%s", banner)
+	for _, retired := range []string{"--quiet-beats", "--no-beat", "--beat-lease", "--beat "} {
+		require.NotContains(t, banner, retired, "the banner still offers a retired flag")
+	}
+	help := invoke(t, "", "wait", "-h").mustCode(t, 0).stdout
+	require.NotContainsf(t, help, "makes a wait return on a change that is ONLY beats", "wait help still promises --quiet-beats wakes a wait:\n%s", help)
+	require.Containsf(t, help, "retired: accepted and changes nothing", "wait -h does not say --quiet-beats is accepted and changes nothing:\n%s", help)
 }

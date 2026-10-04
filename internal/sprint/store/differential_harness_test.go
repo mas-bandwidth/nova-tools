@@ -504,7 +504,7 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 	}
 	switch a.Kind {
 	case "add":
-		return run(AddStep(sprint.AddReq{Stream: a.Stream, IDs: a.IDs, Needs: a.Needs, Sentinel: a.Sentinel, Before: a.Before, After: a.After, Who: dCoordinator})), cutOK
+		return run(AddStep(sprint.AddReq{Brief: proBrief, Stream: a.Stream, IDs: a.IDs, Needs: a.Needs, Sentinel: a.Sentinel, Before: a.Before, After: a.After, Who: dCoordinator})), cutOK
 	case "tick":
 		_, err := h.st.Tick(h.ctx)
 		return engineErr(err, nil), cutOK

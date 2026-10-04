@@ -77,7 +77,7 @@ func TestPolishUnknownVerbNamesAvailableRemedies(t *testing.T) {
 	t.Parallel()
 	exit, _, stderr := runCheck(t, "bogus")
 	assert.Equal(t, 2, exit)
-	for _, want := range []string{"bogus", "verbs: quickstart", "links", "run: nova-check help"} {
+	for _, want := range []string{"bogus", "the verbs are quickstart", "links", "run: nova-check help"} {
 		assert.Contains(t, stderr, want)
 	}
 }

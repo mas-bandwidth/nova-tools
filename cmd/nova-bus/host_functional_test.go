@@ -69,14 +69,14 @@ func TestAnUnusableHostIsRefusedByName(t *testing.T) {
 	invoke(t, "", "send", "--bus", checkout, "--file", draft, "--host", "The Air",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).
-		mustContain(t, "stderr", "nova-bus send: --host").
+		mustContain(t, "stderr", "SEND REFUSED: --host").
 		mustContain(t, "stderr", "one space-separated")
 
 	writeBusFile(t, checkout, ".nova-bus/defaults", "host=The Air\n")
 	invoke(t, "", "send", "--bus", checkout, "--file", draft,
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).
-		mustContain(t, "stderr", "nova-bus send: --host")
+		mustContain(t, "stderr", "SEND REFUSED: --host")
 }
 
 func TestReplyHostWritesTheHostLine(t *testing.T) {

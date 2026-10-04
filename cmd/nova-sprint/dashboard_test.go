@@ -14,14 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The dashboard reads the sprint in this process exactly as where --json prints it, and
+// The dashboard reads the sprint in this process exactly as where --json --cards prints it, and
 // serves that object as /api/sprint's data.
 func TestDashboardReadsTheSprintAsWhereJSONDoes(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1,m2")
 	ta.ok("add --stream s1 --count 3")
-	want := ta.ok("where --json")
+	want := ta.ok("where --json --cards")
 	got, err := ta.a.whereJSON("", false)
 	require.NoError(t, err)
 	assert.JSONEq(t, want, string(got))
@@ -55,7 +55,7 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 		"localhost:7390,localhost:7390": {"localhost:7390"},
 		"[::1]:7390,,127.0.0.1:7390,":   {"[::1]:7390", "127.0.0.1:7390"},
 	} {
-		got, err := dashboardAddrs(list)
+		got, err := dashboardAddrs("--listen", list)
 		require.NoError(t, err, list)
 		assert.Equal(t, want, got, list)
 	}
@@ -64,7 +64,7 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 		"127.0.0.1":    "wants address:port",
 		"":             "names no address",
 	} {
-		_, err := dashboardAddrs(list)
+		_, err := dashboardAddrs("--listen", list)
 		if assert.Error(t, err, list) {
 			assert.Contains(t, err.Error(), why, list)
 		}
@@ -99,6 +99,9 @@ func TestDashboardRefusesBadUse(t *testing.T) {
 		"dashboard --every 0s":                "--every wants a duration above 0",
 		"dashboard --listen 0.0.0.0:7390":     "does not listen on every network",
 		"dashboard --listen 1.1.1.1:7390":     "a public address",
+		"dashboard --pull 0.0.0.0:7395":       "--pull 0.0.0.0:7395: the page shows the sprint",
+		"dashboard --pull 127.0.0.1":          "--pull wants address:port (or none)",
+		"dashboard --listen none --pull none": "serve nothing",
 		"dashboard --logo " + t.TempDir():     "is not a file",
 		"dashboard --logo /no/such/logo.webp": "is not a file",
 	} {
@@ -117,4 +120,36 @@ func TestDashboardIsNotServed(t *testing.T) {
 	t.Parallel()
 	assert.Contains(t, readVerb([]string{"dashboard"}).unserved(), "dashboard is not run by the server")
 	assert.Equal(t, classRead, verbClasses["dashboard"])
+}
+
+// where --json --cards carries the cards dealt and not finished, each with its row, state,
+// since, deadline and branch, and nothing of the brief; the pull routes serve a friend's
+// from it. Plain where --json is as it was, and --cards wants --json.
+func TestWhereCardsIsWhatThePullRoutesRead(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	assert.NotContains(t, ta.ok("where --json"), `"cards"`)
+	code, _, errs := ta.do("where --cards")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "--cards is a field of the JSON view: give --json with it")
+
+	out := ta.ok("where --json --cards")
+	assert.NotContains(t, out, "REPO:", "no brief in the view")
+	var v whereView
+	require.NoError(t, json.Unmarshal([]byte(out), &v))
+	require.Len(t, v.Cards, 1, out)
+	c := v.Cards[0]
+	assert.Equal(t, dealtCard{ID: "s1-1.w1", Primary: "s1-1", Stream: "s1", Member: "friend.amy", State: "working",
+		Since: c.Since, Deadline: c.Since.Add(2 * time.Hour), Branch: "sprint/s1-1.w1.g1.e0"}, c)
+	assert.False(t, c.Since.IsZero())
+
+	srv := &sprintdash.Server{Read: func() ([]byte, error) { return ta.a.whereJSON("", false) }, Now: ta.a.now, Every: time.Second}
+	w := httptest.NewRecorder()
+	srv.Pull().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/friend/amy", nil))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
+	require.Len(t, lines, 3, w.Body.String())
+	assert.True(t, strings.HasPrefix(lines[1], "friend amy up "), lines[1])
+	assert.Equal(t, "s1-1.w1 s1 working 0s due 2h0m sprint/s1-1.w1.g1.e0", lines[2])
 }

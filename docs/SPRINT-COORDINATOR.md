@@ -81,7 +81,7 @@ the owner's number or word (a width, a route, a release order) goes to the owner
 |---|---|---|
 | a reader found it broken | rework with the finding; each card's fix is its reader's finding. When the finding is wrong, ask another reader | `nova-sprint rework --group <id> --expect <n> --answers <id>`; `nova-sprint ask --group <id> --expect <n> --another --answers <id>` |
 | work came back failed | rework; each card's fix is the report its work gave. Drop only a card that cannot be done as written | `nova-sprint rework --group <id> --expect <n> --answers <id>`; `nova-sprint drop --group <id> --expect <n> --reason '<why>' --answers <id>` |
-| a primary is blocked on something dropped | ack with the reason, which waives the dropped need, when the card can run without it; drop the dependents when it cannot | `nova-sprint ack <note>,<note> --reason '<why nothing is to be done>'`; `nova-sprint drop --group <id> --expect <n> --reason '<why>' --answers <id>` |
+| a primary is blocked on something dropped | ack with the reason when the card can run without it: the ack waives the dropped needs and writes who and when on the card (`card` shows each as waived), and the card is ready at once, or at the next tick on a RUNNING machine, when nothing else holds it (a held sentinel keeps its hold), so a chain behind a dropped card is mended with nothing dropped and added again; you own the risk that it runs without the dropped card's change. Drop the dependents when it cannot | `nova-sprint ack <note>,<note> --reason '<why nothing is to be done>'`; `nova-sprint drop --group <id> --expect <n> --reason '<why>' --answers <id>` |
 | stalled | `card <primary>`: its HELD line says what holds it; then the decision the judgment prints (for a primary asked already, `ask --another`) | `nova-sprint card <primary>`; `nova-sprint ask --group <id> --expect <n> --another --answers <id>` |
 | stream stopped: conflict on a card | return the card, rework it from the sprint branch's tip, resume the stream | `nova-sprint return <card> --reason conflict`; `nova-sprint rework <card> --fix '<fix>'`; `nova-sprint resume --stream <s> --did 'returned <card> for rework' --answers <id>` |
 | a work card is past its deadline | a card dealt and not taken waits or the fleet is levelled; a card taken and not finished goes to the load check of section 4 | `nova-sprint wait <id> --for 30m`; `nova-sprint fleet level`; `nova-sprint fleet down <m>` |
@@ -93,15 +93,17 @@ Notes on the rows:
 - Conflict. The stream is stopped until `resume`. A fix text names the cause and the way out: "Your head does
   not merge onto the sprint branch's tip: a file you touched changed after your base. Start again from the
   current tip, redo only the lines your card lists, and lower a ledger's ceiling from its value at the tip by
-  exactly your own count." The other printed decision, after a conflict the coordinator resolved itself, is
-  `resume --stream <s> --did '<what you did>' --answers <id>`.
+  exactly your own count." The other printed decision is `resume --stream <s> --did '<what you did>' --answers <id>`:
+  land merges the card's head again, and a conflict only in the generated ledgers resolves itself (land regenerates
+  them). A conflict outside the ledgers is answered by rework or drop, never by a resolution on the card's branch,
+  which no reader has read.
 - Past its deadline. A work card not taken is late 15 minutes after it was dealt (counted from the first deal
   since its last take); a card taken and not finished, 2 hours after its first take; a read, 30 minutes asked
   or 2 hours begun ([SPEC-SPRINT.md section 14](SPEC-SPRINT.md#14-the-machine)). A card dealt and not taken
   is the member's queue, not the card's fault: `wait` while the member works through its width, or
   `fleet level` to move cards a member cannot start to one with free lanes. `fleet down <m>` is for the member
   that has held the card its whole deadline.
-- Cannot ask. A read needs two different readers up (`where` shows the readers table). A drop on this ground
+- Cannot ask. A flash card needs one reader up and a pro card two different readers up (`where` shows the readers table). A drop on this ground
   goes on the re-add list (section 3); fixes for the machinery are never made through the sprint.
 - Sentinel reached. The other printed decisions are `add --stream <s> --before <sentinel> '<new id>' --brief
   '<brief>'` and `drop`. A judgment held for a wave not yet agreed stays open, never released to clear the
@@ -113,16 +115,43 @@ Notes on the rows:
   stranded in review, fewer than two readers up (`reader up`), no member up, an operation stuck (`check`).
 - Before PR 5129 the printed `ack` line with several notes is refused: ack one note at a time.
 
-A loop of the coordinator's own may answer the first six kinds with the lines `inbox --open <id>` prints; it
-never answers a sentinel or composes a command the inbox did not print, and stops at a kind it does not know.
+The routine kinds are answered by `nova-sprint answer` (SPEC-SPRINT.md section 8, "Answered by
+nova-decide"), never by a shell loop of the coordinator's own: the night of 2026-10-02 one such loop read one card
+of a grouped judgment and every stream waited under it until morning. Run it as the seat's loop, a row of its own
+beside the server, with the key from the seat's secrets and never on a command line:
+
+```
+nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --dry-run
+nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --every 60s
+```
+
+It answers each card of a broken, failed, blocked, stalled, conflict, deadline, cannot-ask, ready-to-accept or
+bound judgment by itself: the verb nova-decide chose is applied, by the line the inbox prints for that card, when
+its probability is at or above `decide_judgment_bar` (nova-config's sprint row: `nova-config sprint set
+--decide_judgment_bar <p> --as <coordinator>`, then `nova-config apply --kind sprint`); `--bar <p>` gives one for
+a run. The row ships it empty, and with no bar nothing is applied: every decision is recorded and each row says
+what a bar would apply, so the record trains first. 0.8 is a starting point measured on 100 of the coordinator's own judgments, not an independent calibration (SPEC-NOVA-DECIDE.md section 13: 59
+of 100 the coordinator's own verb; at 0.8 it applies 40, 39 of them the coordinator's; on blocked, 3 of 21, and
+bound, 3 of 13, Jev says drop, and a drop is never applied). What it lists is yours, each with why: every drop (with the reason the
+decision chose), everything under the bar, a verb the judgment does not print, a card applied before whose
+judgment is still open, a card it reworked within the last hour, and a provider refusal for want of payment (402, out of credit), which it never asks
+about: a payment is the owner's, so it goes to the owner on the bus. A sentinel and every other kind are left. A
+card is decided once (the record, `~/nova-sprint/decide/judgment.jsonl`, answers it again), so the loop never reworks a
+card round and round; each decision's outcome (landed, dropped, came back) is attached as the card's state says
+it, and `nova-decide calibrate --record ~/nova-sprint/decide/judgment.jsonl --decision judgment --question
+verb=rework --positive landed --negative came-back` reads the bar the record supports. The loop ends when the
+machine is STOPPED; it never composes a command the inbox did not print. Each line it applies carries the
+decision's `--op`, recorded as applying before it runs and applied after, so a loop stopped between the two
+applies nothing twice; one ask that takes past `--timeout` (60s) is that card's failed row, and the loop goes on.
 
 ## 3. Loading work
 
 - A stream is one line of cards: `nova-sprint add --stream <s> ...` opens it. Cards that touch one file or
   ledger belong to one stream, in order or chained with `--needs a,b` (primaries that must land first; a
   dropped or missing need raises its own judgment); `add` does not see two open cards naming one file.
-- A card is a brief, a child's whole brief (at most 16 KiB; `REPO:` and `BASE:` lines; a `tier: pro|frontier`
-  line 1 picks the tier, none is flash). From files, the card's id being the file's name without `.md`:
+- A card is a brief, a child's whole brief (at most 16 KiB; `REPO:` and `BASE:` lines; a a `tier: pro|frontier`
+  line 1 is its ceiling, none is flash: every card is dealt on flash first and the machine escalates it a tier
+  at its bound below the ceiling). From files, the card's id being the file's name without `.md`:
 
   ```
   nova-sprint add --stream <s> --brief-dir <dir>
@@ -133,7 +162,11 @@ never answers a sentinel or composes a command the inbox did not print, and stop
   `add` holds each brief to the card lint and refuses, writing nothing, one that fails.
   `nova-swarm template --name card` prints a card that passes once its `<...>` lines are filled;
   `nova-swarm lint --card <file> --child-rules` checks a file first; `nova-sprint init --rules <file>` records
-  the rule set `add` uses by default. A card with no brief is admitted with a NOTE and given one before it is
+  the rule set `add` uses by default. Under `fleet/child-rules.txt`, a file the members hold, a card on
+  nova-tools (or on a repository with its own `fleet/child-rules.<repo>.txt`) does not carry the rules: the
+  member injects them at stage time (rules by reference, docs/SPEC-SPRINT.md section 2), and the lint refuses
+  only a line that contradicts them; a card on another repository carries its own. Release the members
+  before the coordinator's `nova-sprint`. A card with no brief is admitted with a NOTE and given one before it is
   dealt: `nova-sprint stop`, `nova-sprint brief <card> --brief-file <path>`, `nova-sprint start`; a card that
   has started refuses a new brief.
 - Sentinels hold waves. `nova-sprint add --stream <s> --sentinel <s>-wave2` puts a stop in the line; what
@@ -199,11 +232,18 @@ never answers a sentinel or composes a command the inbox did not print, and stop
   wall. Routes are nova-config rows applied to the store (`nova-config route list`, `route show <name>`). The
   tiers are flash and pro; a frontier card is the coordinator's and is never dealt. A tier's order is
   `nova-config tier set <tier> --routes <a>,<b>,<a> --as <coordinator>`, a route named twice taking two turns.
-  A card's tier is line 1 of its brief; after PR 5097 `rework <card> --tier <tier>` raises it for the next
-  attempt.
+  Flash first on every card (cost rule 1, nova-tools#5174): line 1 of its brief is its ceiling, never its
+  first deal. An attempt at its bound below the ceiling is escalated by the machine (`tier_now`, a new
+  attempt on the next tier, no judgment); at the ceiling the bound is your judgment. `rework <card> --tier
+  <tier>` pins the card to a tier, its ceiling too, never escalated; `card <id>` prints `tier=` and
+  `ceiling=` on its CARD OK line.
 - A provider's failure is not a verdict on a route: a run the provider failed is redealt, never failed work,
   leaving out the routes already drawn for the card. A limit or an empty balance never takes a route out of
   the deal; it clears by itself, and a route taken out for it stays out.
+- The machine rests a route by itself when three of its last ten ended takes left no result (rule 3 of
+  nova-tools#5174): no work card is drawn on it for 30 minutes, the inbox says so with the cards, and
+  `nova-sprint routes` prints `rested_until`. That rest is the sprint's and ends by itself; the row change
+  below is yours, for work that comes back bad.
 - A route rests when measured work on it is bad: its ok and failed counts from `nova-sprint routes` against
   the other routes of the tier, over the whole sprint. Resting is a reversible row change (`--dry-run` first on
   each command); bringing the route back is `--enabled true` and the same apply:
@@ -220,7 +260,7 @@ never answers a sentinel or composes a command the inbox did not print, and stop
 
 ## 6. Landing
 
-The server's `--land` merges each card whose two reads passed into the sprint branch, the branch the cards'
+The server's `--land` merges each card whose reads passed (one for a flash card, two for a pro card) into the sprint branch, the branch the cards'
 `BASE:` line names. The sprint branch reaches the integration branch (`dev`) as a batch.
 
 - Before it: every repair card has landed, and a reader that did not write it has read the whole diff of the
@@ -266,7 +306,7 @@ The server's `--land` merges each card whose two reads passed into the sprint br
   bench, never the coordinator's machine: `go run ./tools/tlacheck groups --stale` names the groups to run,
   and `go run ./tools/tlacheck merge --out tla/RUNS.tsv --keep tla/RUNS.tsv <runs>...` joins the records.
 - `git push origin lander/<date>`, then `gh pr create --base dev --title 'Batch: <heads>' --body-file <file>`,
-  the body listing each head's sha, its two reads, and the last line of each gate; `gh pr checks <number>
+  the body listing each head's sha, its reads, and the last line of each gate; `gh pr checks <number>
   --watch` follows CI. Every job has a 2-minute cap: a darwin leg canceled under load with every test passing
   is rerun when the machine is quieter, `gh run rerun <run id> --failed`.
 - Land with `gh pr merge <number> --merge`. `dev` has a merge queue that runs the functional tier the pull

@@ -9,22 +9,25 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `bounded/` | bounded readers and byte buffers | `go test ./internal/bounded` | `go test ./internal/bounded` |
 | `buildinfo/` | binary identity and version info | `go test ./internal/buildinfo` | `go test ./internal/buildinfo` |
 | `bus/` | append-only coordination bus | `go test ./internal/bus` | `go test ./internal/bus` |
-| `cairn/` | memory distillation and cairn builder | `go test ./internal/cairn` | `go test ./internal/cairn` |
+| `cairn/` | the cairn store: session records, entries, the index and receipts, nested and flat | `go test ./internal/cairn` | `go test ./internal/cairn` |
 | `cardcontract/` | the frame around a card's task: the frame file, JOB.md, the result shape, and the shims of each model family's profile | `go test ./internal/cardcontract` | `go test -tags functional ./internal/cardcontract` |
 | `cardcost/` | what a card cost: a route's price sheet, a run's tokens by class, the predicted cost and a consumer card's usage record, in exact decimal arithmetic | `go test ./internal/cardcost` | `go test ./internal/cardcost` |
 | `cardhdr/` | card header vocabulary and one-invariant lint | `go test ./internal/cardhdr` | `go test ./internal/cardhdr` |
 | `cardlimits/` | a card brief's refusal bound and the lint's size advice: two constants, no dependencies | `go test ./internal/cardlimits` | `go test ./internal/cardlimits` |
-| `check/` | hygiene rules and tree checkers | `go test ./internal/check` | `go test ./internal/check` |
+| `cardtree/` | a card as a tree of steps: the step grammar, its lint, the script step the member runs with no model, the verdict per step and the remainder of a failed step | `go test ./internal/cardtree` | `go test ./internal/cardtree` |
+| `check/` | the record checks: attest, links, kernel, nocode, floors, corpus, spelling | `go test ./internal/check` | `go test ./internal/check` |
 | `ci/` | class tests and CI budget invariants | `go test ./internal/ci` | `go test ./internal/ci` |
 | `cireceipt/` | ci-ok's run receipt: one ev:github row of the workflow_run shape | `go test ./internal/cireceipt` | `go test -tags functional ./internal/cireceipt` |
 | `config/` | nova-config library: kind descriptors, the Postgres store and history, apply into Redis, the Ansible inventory of the applied state | `go test ./internal/config` | `go test ./internal/config` |
 | `converge/` | convergence state and progress math | `go test ./internal/converge` | `go test ./internal/converge` |
+| `decide/` | nova-decide's decision system: schemas (read, attempt, grade), backends (Jev, fixed), the record and calibration | `go test ./internal/decide` | `go test ./internal/decide` |
 | `delayproxy/` | a TCP proxy that holds each write of its clients back by a fixed delay: a store at a distance, made on the loopback, for testredis.Far and tools/fardelay | `go test ./internal/delayproxy` | `go test ./internal/delayproxy` |
+| `diffcheck/` | the lander's mechanical checks of a card's diff: files outside PATHS, stranded fragments | `go test ./internal/diffcheck` | `go test ./internal/diffcheck` |
 | `docs/` | documentation guards and map generator | `go test ./internal/docs` | `go test ./internal/docs` |
 | `dogfood/` | dogfood self-test gates | `go test ./internal/dogfood` | `go test ./internal/dogfood` |
 | `filelock/` | process-exclusive file locks whose holder is named in the file | `go test ./internal/filelock` | `go test ./internal/filelock` |
 | `fleet/` | runner fleet discovery and status | `go test ./internal/fleet` | `go test ./internal/fleet` |
-| `fuse/` | workspace isolation boundaries | `go test ./internal/fuse` | `go test ./internal/fuse` |
+| `fuse/` | the fuse box: read and write the lockdown and quarantine state | `go test ./internal/fuse` | `go test ./internal/fuse` |
 | [ghevent/](ghevent/AGENTS.md) | the GitHub event Redis stream: append and read | `go test ./internal/ghevent` | `go test ./internal/ghevent` |
 | `gitrun/` | the one runner for a one-shot git child: a deadline, WaitDelay and the caller's environment choice | `go test ./internal/gitrun` | `go test ./internal/gitrun` |
 | `gocache/` | Go build cache held under a size, least recently used first | `go test ./internal/gocache` | `go test ./internal/gocache` |
@@ -41,6 +44,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./internal/oneline` | `go test ./internal/oneline` |
 | `pkgselect/` | package selection, the shard deal and the test fan-out that CI and nova-ci local share | `go test ./internal/pkgselect` | `go test ./internal/pkgselect` |
+| `provbalance/` | a model provider's balance read through the seat's key | `go test ./internal/provbalance` | `go test ./internal/provbalance` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
 | `redisacl/` | the fleet store's ACL users rendered from the function library and the key families, and compared with a store's live ACL | `go test ./internal/redisacl` | `go test ./internal/redisacl` |
 | `redisconn/` | the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown | `go test ./internal/redisconn` | `go test ./internal/redisconn` |

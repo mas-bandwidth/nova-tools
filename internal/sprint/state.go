@@ -311,14 +311,42 @@ type Snapshot struct {
 	// tier, read with the routes; a tier with none deals from its enabled routes
 	// in name order (tierArray).
 	Tiers map[string][]string
+	// DecideBounce and DecideReview are the sprint row's bars on a decide read's
+	// p(defect) as nova-config applied them (sprint:decide_bounce,
+	// sprint:decide_review), read with the routes; both "" is no decide read
+	// (steps_review.go, decideFields; docs/SPEC-SPRINT.md section 6).
+	DecideBounce, DecideReview string
+	// DecideScoreBar is the sprint row's bar on a landed diff's score
+	// (sprint:decide_score_bar), read with the routes: a batch whose cards' top class
+	// meets it raises a scored-low judgment (steps_score.go; docs/SPEC-SPRINT.md section
+	// 7, the landed score); "" (the row's default) records the scores and raises none.
+	DecideScoreBar string
+	// DecideAttemptNoResult, DecideAttemptNothingToDo and DecideGrade are the sprint row's
+	// bars of nova-decide's layer 2 (sprint:decide_attempt_no_result,
+	// sprint:decide_attempt_nothing_to_do, sprint:decide_grade), read with the routes: the
+	// deal writes the two attempt bars on each work card it cuts (decide.go), and starts a
+	// card graded pro at or above the grade bar on pro; "" is no bar (docs/SPEC-SPRINT.md
+	// sections 2 and 5).
+	DecideAttemptNoResult, DecideAttemptNothingToDo, DecideGrade string
+	// DecideGateFlaky and DecideGatePreexisting are the sprint row's bars on a failed
+	// gate's decisions (sprint:decide_gate_flaky, sprint:decide_gate_preexisting), read
+	// with the routes; the deal writes them on every work card (gateFields), and both ""
+	// is no gate decision (docs/SPEC-SPRINT.md section 5, the gate verdict).
+	DecideGateFlaky, DecideGatePreexisting string
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.
 	ReaderStates map[string]string
 	// Running says the machine was RUNNING as the step read the sprint: its
-	// pump accepts a primary with two ok reads, so no step opens a "ready to
+	// pump accepts a primary with the ok reads it needs, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").
 	Running bool
+	// rests is the routes resting at Now, settled once by a step that deals
+	// (withRests, route_rest.go); nil is not yet settled.
+	rests map[string]RouteRest
+	// restScans, when set, counts withRests' scans of the fleet table: the tick's
+	// cost gate (TestTheTicksCheckSettlesTheRestsOnceAtScale) holds them to one a part.
+	restScans *int
 }
 
 // T is the loaded table by logical name.
@@ -357,7 +385,7 @@ func (s *Snapshot) MemberCtl(member string) *Card { return s.Fleet.Placed(CtlID(
 // UpMembers is the fleet members whose status is up, in row order.
 func (s *Snapshot) UpMembers() []string {
 	var out []string
-	for _, m := range s.Fleet.Rows() {
+	for _, m := range s.Members() {
 		if s.MemberCtl(m).F("status") == Up {
 			out = append(out, m)
 		}

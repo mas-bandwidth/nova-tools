@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -287,5 +288,33 @@ func TestHostRefusalNamesNoMachine(t *testing.T) {
 	require.Equal(t, "--host: empty; a host is the machine's short name, such as `bench-a` or `laptop`", err.Error())
 	for _, name := range []string{"air", "studio", "hulk", "space", "hetzner", "vision", "batman", "superman", "mini", "captainamerica", "antman", "macbook"} {
 		require.NotContains(t, err.Error(), name, "the refusal names the machine %q", name)
+	}
+}
+
+// A draft with an unknown key is refused for it AND for what its other lines say, in one
+// run; a line that is absent is not reported beside it, since the unknown key may be that
+// line misspelled.
+func TestPrepareNamesWhatTheParsedLinesSayBesideAnUnknownKey(t *testing.T) {
+	t.Parallel()
+	tab := loadBus(t, writeBus(t, fixture()))
+	for _, tc := range []struct {
+		name, draft string
+		wants       []string
+	}{
+		{"an unknown key, a To naming nobody and a Re naming nothing", "From: Ada\nTo: Zed\nRe: bo-deadbeefcafe\nBogus: x\nSubject: s\n\nbody\n",
+			[]string{`unknown header key "Bogus"`, `To: "Zed" names no one on this bus`, "a slug is not a thread"}},
+		{"a misspelled Subject is not also a missing one", "From: Ada\nTo: Bo\nSbuject: s\n\nbody\n",
+			[]string{`unknown header key "Sbuject"`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := PrepareDraft(tab, tc.draft, at("2026-09-09T12:34:56Z"), "", "")
+			require.Error(t, err)
+			reasons := Reasons(err)
+			require.Len(t, reasons, len(tc.wants), "%v", reasons)
+			for i, want := range tc.wants {
+				assert.Contains(t, reasons[i].Error(), want)
+			}
+		})
 	}
 }

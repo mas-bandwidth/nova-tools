@@ -3,14 +3,17 @@ package main
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -72,7 +75,10 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 // checked under `--child-rules`, and always by `nova-sprint add` over every brief.
 //
 // And `placeholder`: a line of the card template left with its <...> fill-ins.
-var cardLintChecks = 23 + len(swarm.CardChildRemedies)
+//
+// And the three rules of a tree card (internal/cardtree): steps-nested, tree-step and
+// script-step, which fire only on a card with a dotted step or a work step.
+var cardLintChecks = 23 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
 
 // Every drift names its remedy, and the binary can print the whole table.
 //
@@ -101,7 +107,7 @@ var cardLintRemedies = map[string]string{
 	// spec section, practice number or issue; tool ledger W5): the rule's token is its name.
 	"result-first":     "line 1 IS the contract: " + swarm.CardContractWanted + ". A title, a heading or a `#` comment on line 1 is this drift, however right the words are",
 	"clone-step":       "STEP 1 enters the repository from the working directory: the whole step, its line and the lines under it, holds a `git clone -q <url> repo && cd repo`, or a `cd ` into a checkout that may already be there. The wording of the STEP line itself is yours; the command is the rule",
-	"steps-numbered":   "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift",
+	"steps-numbered":   "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift; a dotted child step (`STEP 3.1.`) is numbered under its parent instead (steps-nested)",
 	"red-test":         "name the reproducing test by its own name -- `TestSomething` -- or, for a card that only reads, say `probe` or `read` in so many words",
 	"test-command":     "write the gate verbatim, exactly as the card is to run it -- the accepted set is `make`/`gmake <target>`, `go test`, `go vet`, `pytest`, `cargo test`, `npm test`, `dotnet test`, `ctest`, `mvn test`, `gradle test`, `bash <script>` or a bare `./<script>`, or say in words that there are no tests",
 	"deadline":         "give the card its own bound: a `deadline` line, or `finish within <n> minutes`",
@@ -132,7 +138,7 @@ func cardPlaceholders(raw []byte) []cardFinding {
 // one listing and cardLintChecks counts one set. A token defined in both places is a
 // collision this init refuses to paper over.
 func init() {
-	for _, table := range []map[string]string{swarm.CardHeaderRemedies, swarm.CardBaseRemedies, swarm.CardChildRemedies} {
+	for _, table := range []map[string]string{swarm.CardHeaderRemedies, swarm.CardBaseRemedies, swarm.CardChildRemedies, cardtree.Remedies} {
 		for name, remedy := range table {
 			if _, clash := cardLintRemedies[name]; clash {
 				panic("nova-swarm lint: two remedies for the rule " + name)
@@ -144,12 +150,7 @@ func init() {
 
 // cardLintRuleNames is every rule token in one order, so the listing is byte-stable.
 func cardLintRuleNames() []string {
-	names := make([]string, 0, len(cardLintRemedies))
-	for name := range cardLintRemedies {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(cardLintRemedies))
 }
 
 // cardLintRemedy is what one rule wants, in one line. A rule with no entry is a defect this
@@ -202,9 +203,14 @@ type cardStep struct {
 	text string
 }
 
+// cardSteps is the top-level STEP lines: a dotted child (`STEP 3.1.`) of a tree card is
+// numbered under its parent, which cardtree.Lint holds (steps-nested).
 func cardSteps(lines []string) []cardStep {
 	var steps []cardStep
 	for i, l := range lines {
+		if m := cardtree.StepRE.FindStringSubmatch(l); m != nil && strings.Contains(m[1], ".") {
+			continue
+		}
 		if m := cardStepRE.FindStringSubmatch(l); m != nil {
 			n, _ := strconv.Atoi(m[1])
 			steps = append(steps, cardStep{line: i + 1, num: n, text: l})
@@ -341,6 +347,14 @@ func lintCard(raw []byte) []cardFinding {
 	// 12. the card is under the advisory ceiling. Over it is said and never refused.
 	if len(raw) >= cardMaxBytes {
 		add("size", 1, fmt.Sprintf("card is %d bytes, over the %d-byte advisory ceiling; it is not refused and not truncated here, and nova-sprint add refuses a brief over %d bytes", len(raw), cardMaxBytes, cardRefusedBytes))
+	}
+
+	// 13. a tree card's steps: dotted numbers under their parents, each work step's own
+	// PATHS, COMMIT and VERDICT lines, each script step's program and post-condition
+	// (internal/cardtree; docs/SPEC-SPRINT.md, a card is a tree of steps). A flat card has
+	// none of these findings.
+	for _, f := range cardtree.Lint(text) {
+		add(f.Check, f.Line, f.Excerpt)
 	}
 
 	return out
@@ -713,7 +727,7 @@ func fleetNameByte(c byte) bool {
 	return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
-func cmdLint(args []string, stdout, stderr io.Writer) int {
+func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string, now time.Time) (code int) {
 	f := newFlags("lint")
 	card := f.fs.String("card", "", "the card file to lint before any spend")
 	// `--fleet <file>` is the launcher's own lint. A card is checked for
@@ -753,9 +767,17 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// without being asked.
 	childRules := f.fs.Bool("child-rules", false, "also hold the card to the child rules: the built-in general rules, or the sentences of --child-rules-file")
 	childRulesFile := f.fs.String("child-rules-file", "", "the rules `file` to hold the card to instead of the built-in general rules (it implies --child-rules): one required sentence per line, [name] sentence to name the token")
+	// `--member-injects` IS RULES BY REFERENCE (nova-tools#5174 rule 6): the member appends
+	// the rules to the card at stage time, so the card is linted as the child is handed it.
+	memberInjects := f.fs.Bool("member-injects", false, "the member injects the child rules at stage time (rules by reference): the card need not carry them, and a line that contradicts them is still a finding; the rules are --child-rules-file's, else the held file of the card's repository (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another); it implies --child-rules")
 	repoDir := f.fs.String("repo", ".", "with --base-check: the git checkout the card's PATHS are resolved in at the base sha (default the working directory)")
 	legsPath := f.fs.String("legs", "", "with --base-check: the fleet leg table, one leg per line or a TSV whose first column is the leg")
 	p95Path := f.fs.String("p95", "", "with --base-check: a `file` of <kind> <seconds> rows, the p95 wall of each kind's finished cards (* answers for any kind)")
+	// `--decide` IS THE BRIEF DECISION add asks (lintdecide.go): one LINT DECIDE line after
+	// the lint's own, never a change to its verdict.
+	decideBrief := f.fs.Bool("decide", false, "also ask the brief decision nova-sprint add asks (p(converges), the minutes, the questions the card leaves open) and print it on one LINT DECIDE line; Jev with JEV_API_KEY from the environment, or --decide-answers; the lint's verdict is unchanged, and a failing backend prints it, then why, exit 2")
+	decideAnswers := f.fs.String("decide-answers", "", "with --decide: the fixed backend's answers `file` (nova-decide's shape), in place of Jev: no network, no key")
+	decideRecord := f.fs.String("decide-record", "", "with --decide: the record `file` the decision is appended to (nova-decide's; created if absent); none records nothing")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -780,8 +802,8 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		if *card != "" {
 			f.add("--card and --fleet want one input: --card is a worker card, --fleet is a launcher script; give one and lint the other in its own run")
 		}
-		if *typed || *trustPath != "" || *lineupPath != "" {
-			f.add("--typed, --trust and --lineup are card checks; --fleet holds a launcher script, and a card flag over a script is a guess about a different file")
+		if *typed || *trustPath != "" || *lineupPath != "" || *decideBrief {
+			f.add("--typed, --trust, --lineup and --decide are card checks; --fleet holds a launcher script, and a card flag over a script is a guess about a different file")
 		}
 		if f.refused(stderr) {
 			return 2
@@ -827,6 +849,28 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	name := filepath.Base(*card)
+	if (*decideAnswers != "" || *decideRecord != "") && !*decideBrief {
+		fmt.Fprintf(stderr, "nova-swarm lint: --decide-answers and --decide-record go with --decide; run: nova-swarm lint --card %s --decide\n", oneline.Field(*card))
+		return 2
+	}
+	if *decideBrief && strings.TrimSpace(string(raw)) != "" {
+		b, err := lintBackend(*decideAnswers, getenv)
+		if err != nil { // no backend to ask: nothing is linted
+			fmt.Fprintf(stderr, "nova-swarm lint: --decide: %s; run: nova-secrets exec --only JEV_API_KEY -- nova-swarm lint --card %s --decide, or give --decide-answers <file> (no network, no key)\n",
+				oneline.Escape(err.Error()), oneline.Field(*card))
+			return 2
+		}
+		line, err := lintDecide(name, raw, b, *decideRecord, now)
+		if err != nil { // the backend failed: the lint's verdict, then why, exit 2
+			defer func() {
+				fmt.Fprintf(stderr, "nova-swarm lint: --decide: %s; the lint's verdict above stands; run: nova-swarm lint --card %s --decide again once the backend answers, or give --decide-answers <file> (no network, no key)\n",
+					oneline.Escape(err.Error()), oneline.Field(*card))
+				code = 2
+			}()
+		} else {
+			defer fmt.Fprintln(stdout, oneline.Escape(line)) // after the lint's own lines, whatever they say
+		}
+	}
 	// AN EMPTY CARD IS SAID ONCE (swarm.EmptyCardCheck): every rule it fails is the one fact
 	// that there is nothing in it.
 	if strings.TrimSpace(string(raw)) == "" {
@@ -898,11 +942,24 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// rules file the flag names (internal/swarm/lintchild.go). A rule of a file has its own
 	// token, so its remedy is built here and read back where the drift prints.
 	var ruleRemedies map[string]string
-	if *childRulesFile != "" {
-		*childRules = true // a rules file is the ask for the child rules
+	if *childRulesFile != "" || *memberInjects {
+		*childRules = true // a rules file, or the member's, is the ask for the child rules
 	}
 	if *childRules {
 		rules := swarm.DefaultChildRules
+		if *memberInjects && *childRulesFile == "" {
+			name := swarm.OwnRulesName(string(raw), swarm.DefaultRulesName)
+			if name == "" {
+				fmt.Fprintf(stderr, "nova-swarm lint: --member-injects: the card's REPO: names a repository with no rules file the members hold (fleet/child-rules.<repo>.txt), so its card carries its own rules; run: nova-swarm lint --card <file> --child-rules-file <file>\n")
+				return 2
+			}
+			rs, err := swarm.HeldRules(name)
+			if err != nil {
+				fmt.Fprintf(stderr, "nova-swarm lint: --member-injects: %s; run: nova-swarm lint --card <file> --member-injects --child-rules-file <file>\n", oneline.Err(err))
+				return 2
+			}
+			rules = rs
+		}
 		if *childRulesFile != "" {
 			rs, err := swarm.ReadChildRules(*childRulesFile)
 			if err != nil {
@@ -915,7 +972,11 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		for _, r := range rules {
 			ruleRemedies["rule-"+r.Name] = swarm.ChildRemedy(rules, "rule-"+r.Name)
 		}
-		for _, hf := range swarm.LintCardChildWith(raw, rules) {
+		lintChild := swarm.LintCardChildWith
+		if *memberInjects {
+			lintChild = swarm.LintCardChildByReference
+		}
+		for _, hf := range lintChild(raw, rules) {
 			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 		}
 	}

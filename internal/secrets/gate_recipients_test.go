@@ -23,11 +23,14 @@ func gateSops(rules ...string) string {
 	return "creation_rules:\n" + strings.Join(rules, "")
 }
 
-// gateSealedFor is a sealed seat file naming one recipient.
+// gateSealedFor is a sealed seat file naming its seat key and the recovery key.
 func gateSealedFor(seatKey string) string {
 	return "sops:\n" +
 		"    age:\n" +
 		"        - recipient: " + seatKey + "\n" +
+		"          enc: |\n" +
+		"            -----BEGIN AGE ENCRYPTED FILE-----\n" +
+		"        - recipient: " + gateRecoveryKey + "\n" +
 		"          enc: |\n" +
 		"            -----BEGIN AGE ENCRYPTED FILE-----\n" +
 		"    lastmodified: \"2026-09-18T00:00:00Z\"\n" +

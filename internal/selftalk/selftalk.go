@@ -1,29 +1,23 @@
-// Package selftalk finds first-person claims about what the writer of a text
-// permanently IS or permanently CANNOT do, and classifies each as a dated
-// record or a standing claim.
+// Package selftalk finds sentences in which a writer passes a standing
+// verdict on themselves, in two disjoint classes, each finding with the
+// source line it starts on.
 //
-// WHY IT MEASURES A CONSTRUCT AND NOT GRAMMAR. Its predecessor counted
-// negation words and called the ratio "negative self talk". That measured
-// SYNTAX: a rule document is a list of things that must not happen, so it
-// scored worst of anything in the repo it was written for, and improving its
-// score meant deleting a prohibition. That output was acted on: five rules
-// were weakened, one of them floor-level, before a cold reader caught every
-// one. Restoring them made the score worse.
+// Scan finds the first class: a first-person claim (I am, I cannot, I always,
+// my <noun> is ...) carrying a word of failure (fallible, broken, bad at,
+// worst, cannot check ...). A claim with a date or a measurement word is
+// DATED, a record; one without is STANDING. It reads what a sentence says its
+// writer IS, not its grammar: a prohibition ("never merge without a read") is
+// a rule, not a claim, so a document made of rules does not score as one
+// made of self-verdicts.
 //
-//	THE KERNEL GOT STRONGER AND THE TOOL GOT REDDER.
-//	"Never" is not negative self talk. "I am fallible" is.
+// ScanInstallation finds the second class, INSTALLATION: a standing
+// self-verdict built from neutral words, which the first class cannot see (a
+// self-superlative, a door stated shut, a verdict on a practice, a habit),
+// matched by shape. Rules lists every shape and licence with a sentence it
+// finds and one it passes.
 //
-// So this measures the construct instead: a prohibition is only a rule; the
-// sentences worth looking at are the ones that say what their writer IS.
-//
-// WHAT IT MISSES, AND THE MISS IS PERMANENT BY DESIGN: trait claims built
-// from neutral words carry no first-person marker and no negative
-// vocabulary. Widening the pattern to reach them flags half of any file, so
-// the two classes cannot be one tool. A green from this package means ONE
-// CLASS IS CLEAR, never that the file is — and the CLI says so on every run.
-//
-// It is NOT obsoleted by the register improving. A falling score means the
-// input got better, which is the tool working, not the tool finishing.
+// Both classes are partial by design: a shape the table does not hold is not
+// found, so a scan with no finding clears the known shapes, never the file.
 package selftalk
 
 import (
@@ -64,10 +58,10 @@ var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(I am|I'm|I have never|I alwa
 	`reliably|every time|in one direction)\b[^.!?]{0,160}[.!?]`)
 
 // negative is the vocabulary that turns a first-person assertion into a
-// claim worth looking at. Without this filter every ordinary "I am" sentence
-// flags — which is the predecessor's disease. The verb list after "cannot"
-// is deliberately narrow: widening it matches bare "cannot" and flags every
-// prohibition, and scoring prohibitions is exactly what got rules weakened.
+// claim worth looking at: without it every ordinary "I am" sentence flags.
+// The verb list after "cannot" is deliberately narrow: widening it matches
+// bare "cannot" and flags every prohibition, and a prohibition is a rule,
+// not a verdict on its writer.
 var negative = regexp.MustCompile(`(?i)\b(fallib\w*|fail\w*|unreliab\w*|weak\w*|incapab\w*|` +
 	`confabulat\w*|neurotic|inadequa\w*|broken|(?:bad|poor|terrible|awful|hopeless|useless|no good) at|` +
 	`blind|worst|defect\w*|patholog\w*|flatters|(?:can ?not|can't) (?:verify|check|see|tell|trust|reliably|do|ever))\b`)
@@ -86,8 +80,7 @@ var dated = regexp.MustCompile(`(?i)\b(20\d\d-\d\d-\d\d|measured|that day|that n
 var markup = regexp.MustCompile("[*_`>#|]")
 
 // whitespace collapses hard wraps. Prose files are hard-wrapped and a claim
-// spans lines; without this the tool is blind to both regression cases that
-// occasioned it.
+// spans lines; without this a claim broken across two lines is not seen.
 var whitespace = regexp.MustCompile(`\s+`)
 
 // Scan classifies every negative self/capability claim in text.

@@ -48,7 +48,7 @@ Where each field of this cut sits:
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `slots`, `tiers`, `roles`, `width` |
-| sprint (one value for the whole sprint) | `coordinator` (a friend) |
+| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
 | tier (decided per tier) | `routes` |
@@ -226,6 +226,16 @@ facts.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
+| `decide_bounce` | decimal, default 0.5 | | the ask: a flash card's first read is a decide read (docs/SPEC-SPRINT.md section 6), and p(defect) at or above this bar bounces the work; a probability, at least `decide_review`; both bars empty turns the decide read off | `sprint:decide_bounce` |
+| `decide_review` | decimal, default 0.3 | | the ask: below this bar the decide read lands the work with no model read; from it up to `decide_bounce` the card goes to a strings read | `sprint:decide_review` |
+| `decide_score_bar` | decimal, default empty | | land: every landed diff is scored (docs/SPEC-SPRINT.md section 7, the landed score), and a batch whose cards' top class has a p at or above this bar raises one "landed work scored low" judgment listing them; a probability; empty (the default) records the scores and raises none; 0.7 is the starting point once a review round labels cards independently | `sprint:decide_score_bar` |
+| `decide_attempt_no_result` | decimal, default empty | | the deal writes it on every work card (docs/SPEC-SPRINT.md section 2, the attempt decision): a failed finish whose attempt decision is no-result at or above it ends as a take with no result (redealt, never failed work), unless its report is a provider failure; a probability; empty routes nothing on the decision, which is still asked, recorded and shown (nothing routes until a review round labels cards independently); 0.7 is the starting point (class=no-result AUC 0.883, docs/SPEC-NOVA-DECIDE.md section 10) | `sprint:decide_attempt_no_result` |
+| `decide_attempt_nothing_to_do` | decimal, default empty | | the deal writes it on every work card (docs/SPEC-SPRINT.md section 2, the attempt decision): a failed finish whose attempt decision is nothing-to-do at or above it is failed work of the class `decided nothing-to-do`, unless its report is a provider failure; a probability; empty routes nothing on the decision (class=nothing-to-do AUC 0.618, docs/SPEC-NOVA-DECIDE.md section 10). No other class of the attempt decision has a bar | `sprint:decide_attempt_nothing_to_do` |
+| `decide_grade` | decimal, default empty | | the deal: a card graded pro at or above it, its ceiling pro, starts on pro instead of flash (docs/SPEC-SPRINT.md section 5, the grade); a probability; empty keeps the grade a hint on the card; 0.7 is the starting point (grade=pro AUC 0.930 over the store's landed cards, 0.547 over the mechanical set, docs/SPEC-NOVA-DECIDE.md section 11) | `sprint:decide_grade` |
+| `decide_gate_flaky` | decimal, default empty | | the deal (on each work card) and the lander: a failing test of a red gate whose p(flaky) is at or above this bar is rerun once before the take or the batch is reported red (docs/SPEC-SPRINT.md section 5, the gate verdict); a probability, summing above 1 with `decide_gate_preexisting` when both are set; empty (the default) reruns nothing, and every gate decision is still recorded and shown; 0.8 is the starting point (docs/SPEC-NOVA-DECIDE.md section 12) | `sprint:decide_gate_flaky` |
+| `decide_gate_preexisting` | decimal, default empty | | the deal: a work card's failing test whose p(pre-existing) is at or above this bar is reported `pre-existing: <test>`, the base's or the member's, never the card's failure; empty (the default) reclassifies nothing; 0.8 is the starting point, not set yet because at 0.8 24 of the calibration's 39 flaky failures would have been reported pre-existing | `sprint:decide_gate_preexisting` |
+| `decide_judgment_bar` | decimal, default empty | | the ask: `nova-sprint answer` applies the verb the judgment decision chose at or above this bar and lists it for the coordinator below it (docs/SPEC-SPRINT.md section 8, answered by nova-decide); a probability; empty applies nothing (every decision recorded, what a bar would apply listed); 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration | `sprint:decide_judgment_bar` |
+| `decide_brief_bar` | decimal, default empty | | `nova-sprint add`: it asks the brief decision of each card (docs/SPEC-NOVA-DECIDE.md section 14) and refuses a card whose p(converges) is under this bar, naming the questions it failed; empty asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels): it stays empty until `calibrate` on the brief record's own outcomes supports a bar | `sprint:decide_brief_bar` |
 
 **`loop`** (`config.loops`): a supervised process on one machine. Every
 value is data in the row: the code names no machine, seat, secret or
@@ -261,7 +271,7 @@ The log path is derived from the name, `~/nova-bench/loops/<name>.log`
 the machine's loops (`loops=<a,b>`, `-` for none).
 
 **`route`** (`config.routes`): one way to run a model tier, the provider
-and model a card of that tier runs on, its token budget and deadline. A
+and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and
 models, in the order of the tier's array (the `tier` kind below); a card's
 `model:` header pins it instead. Frontier cards are never dealt from
@@ -274,6 +284,7 @@ row: the code names no provider or model.
 | `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
 | `tokens` | int | (0) | the deal: the token budget per card; 0 is unmetered and the deadline is the only stop | `route:<r>` |
+| `usd` | decimal | (empty) | the deal: the dollar budget per card, the harness's reported cost at which native stops the card (`stopped=usd`), beside the token budget; above 0 when set (a 0 is refused at `add` and `set`), empty is no cap | `route:<r>` |
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
 | `enabled` | bool | (true) | the deal: false takes it out of the deal, and needs a `note` | `route:<r>` |
 | `price_input` | decimal | (empty) | a card's cost: USD per million uncached input tokens | `route:<r>` |
@@ -300,7 +311,7 @@ no exponent, kept as text in its one spelling (`internal/cardcost`,
 The kind's `Check`: `provider` is one word with no slash or blank, `model`
 is not empty and has no blank, and `deadline` is above 0; `long_context`
 above 0 comes with both long prices, and a long price with a threshold;
-`price_as_of` is a date; a route that is disabled has a note. A route names no row of another kind.
+`price_as_of` is a date; `usd`, when set, is above 0; a route that is disabled has a note. A route names no row of another kind.
 
 ### The note
 
@@ -402,7 +413,19 @@ config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           created_at, updated_at; the one row inserted by
                           the migration; reader_tier added by 0010, dropped
-                          by 0011)
+                          by 0011; decide_bounce and decide_review added by
+                          0021, text NOT NULL DEFAULT '0.5' and '0.3', a
+                          decimal or ''; decide_score_bar added by 0022,
+                          text NOT NULL DEFAULT '', a decimal or '';
+                          decide_attempt_no_result,
+                          decide_attempt_nothing_to_do and decide_grade
+                          added by 0023, all DEFAULT ''; decide_gate_flaky
+                          and decide_gate_preexisting added by 0024,
+                          text NOT NULL DEFAULT '' each, a decimal or '';
+                          decide_judgment_bar added by 0025, text NOT NULL
+                          DEFAULT '', a decimal or '': no bar;
+                          decide_brief_bar added by 0026, text NOT NULL
+                          DEFAULT '', a decimal or '')
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,
                           created_at, updated_at; CHECK exactly one of

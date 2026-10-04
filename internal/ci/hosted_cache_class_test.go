@@ -65,16 +65,27 @@ func hostedSteps(t *testing.T) []cacheStep {
 // ~/.cache/go-build) plus the module cache; it uses no combined actions/cache
 // step (whose save is a post step a cancelled job skips); the restore comes
 // before `build`, and the save after `build` and before the test step, keyed by
-// the restore's primary key and only when that key was not an exact hit.
+// the restore's primary key and only when that key was not an exact hit. A separate
+// toolchain cache restores before setup-go and saves immediately afterward,
+// preserving the older native cache's paths/key on the first toolchain miss.
 func TestHostedCacheIsWhereGoKeepsIt(t *testing.T) {
 	t.Parallel()
 
 	steps := hostedSteps(t)
 	restore, save, build, test := -1, -1, -1, -1
+	toolDir, toolRestore, toolSave, setup := -1, -1, -1, -1
 	for i, s := range steps {
 		switch {
 		case strings.HasPrefix(s.Uses, "actions/cache@"):
 			assert.Fail(t, fmt.Sprintf("test-hosted step %q uses the combined actions/cache: its save is a post step with post-if success(), so a shard the cap cancels never saves; use actions/cache/restore and actions/cache/save", s.Name))
+		case s.Name == "restore Go toolchain cache":
+			toolRestore = i
+		case s.Name == "save Go toolchain cache":
+			toolSave = i
+		case s.Name == "name the Go toolchain's tool-cache directory":
+			toolDir = i
+		case strings.HasPrefix(s.Uses, "actions/setup-go@"):
+			setup = i
 		case strings.HasPrefix(s.Uses, "actions/cache/restore@"):
 			restore = i
 		case strings.HasPrefix(s.Uses, "actions/cache/save@"):
@@ -87,6 +98,23 @@ func TestHostedCacheIsWhereGoKeepsIt(t *testing.T) {
 	}
 	require.False(t, restore < 0 || save < 0 || build < 0 || test < 0, "test-hosted: restore step %d, save step %d, build %d, test %d; want all four", restore, save, build, test)
 	assert.True(t, restore < build && build < save && save < test, "test-hosted order: restore %d, build %d, save %d, test %d; want restore < build < save < test, so the entry is written before the tests the cap may cancel", restore, build, save, test)
+	require.False(t, toolDir < 0 || toolRestore < 0 || toolSave < 0 || setup < 0, "test-hosted must name, restore, set up and save the toolchain")
+	assert.True(t, toolDir < toolRestore && restore < setup && toolRestore < setup && setup < toolSave && toolSave < build, "test-hosted toolchain order: directory %d, restore %d, setup %d, save %d, build %d; restore before setup-go and save before compilation/tests", toolDir, toolRestore, setup, toolSave, build)
+	assert.Contains(t, steps[toolDir].Run, "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/", "toolchain cache must use setup-go's tool-cache directory")
+	assert.Contains(t, steps[toolDir].Run, "go.mod", "toolchain cache must follow the requested Go version")
+	assert.Equal(t, "go.mod", steps[setup].With["go-version-file"], "setup-go must use the module's requested toolchain")
+	assert.True(t, strings.HasPrefix(steps[toolRestore].Uses, "actions/cache/restore@"))
+	assert.True(t, strings.HasPrefix(steps[toolSave].Uses, "actions/cache/save@"))
+	for _, i := range []int{toolRestore, toolSave} {
+		assert.Equal(t, "${{ env.GO_TOOL_DIR }}", steps[i].With["path"], "toolchain cache must be separate from the established native cache")
+	}
+	assert.Equal(t, "${{ runner.os }}-go-toolchain-${{ hashFiles('go.mod') }}", steps[toolRestore].With["key"])
+	tid := steps[toolRestore].ID
+	require.NotEmpty(t, tid)
+	assert.Contains(t, steps[toolSave].With["key"], "steps."+tid+".outputs.cache-primary-key")
+	assert.Contains(t, steps[toolSave].If, "steps."+tid+".outputs.cache-hit != 'true'")
+	assert.NotContains(t, steps[restore].With["path"], "GO_TOOL_DIR", "adding the toolchain changes the cache version and prevents restoration of the established native cache")
+	assert.Equal(t, "${{ runner.os }}-go-${{ hashFiles('go.mod') }}", steps[restore].With["key"], "the native cache must retain its existing key on a cold toolchain-cache run")
 	for _, i := range []int{restore, save} {
 		s := steps[i]
 		path := s.With["path"]

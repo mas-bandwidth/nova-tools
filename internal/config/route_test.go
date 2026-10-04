@@ -24,10 +24,10 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "routes", k.Table)
 	assert.False(t, k.Singleton)
-	assert.Equal(t, "tier,provider,model,tokens,deadline,enabled,"+
+	assert.Equal(t, "tier,provider,model,tokens,usd,deadline,enabled,"+
 		"price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of,note",
 		strings.Join(k.FieldNames(), ","), "the deal reads exactly these names, the card's cost the price sheet after them, and the note last")
-	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "tokens": TypeInt, "deadline": TypeInt, "enabled": TypeBool,
+	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool,
 		"price_input": TypeDecimal, "price_cache_read": TypeDecimal, "price_cache_write": TypeDecimal, "price_output": TypeDecimal, "reasoning_as_output": TypeBool,
 		"long_context": TypeInt, "price_input_long": TypeDecimal, "price_output_long": TypeDecimal, "price_request": TypeDecimal, "billing": TypeEnum,
 		"gateway_percent": TypeDecimal, "price_source": TypeText, "price_as_of": TypeText, "note": TypeText}
@@ -197,6 +197,12 @@ func TestRouteSetIsCheckedOnTheRowItWouldLeave(t *testing.T) {
 		{name: "a threshold with no long prices", changes: map[string]string{"long_context": "128000"}, refuse: "no --price_input_long"},
 		{name: "a long price with no threshold", changes: map[string]string{"price_output_long": "2"}, refuse: "--price_output_long 2 and no --long_context"},
 		{name: "a price cleared", changes: map[string]string{"price_input": ""}},
+		// a dollar budget is above 0, and empty is no cap: a 0 would be dealt onto every
+		// card and refused by native at every launch (Stella's read of 5098)
+		{name: "a dollar budget", changes: map[string]string{"usd": "0.50"}},
+		{name: "a dollar budget cleared", changes: map[string]string{"usd": ""}},
+		{name: "a dollar budget of 0", changes: map[string]string{"usd": "0"}, refuse: "--usd 0; want a dollar budget above 0, or --usd \"\" (empty) for no cap"},
+		{name: "a dollar budget of 0.00", changes: map[string]string{"usd": "0.00"}, refuse: "--usd 0; want a dollar budget above 0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -223,6 +229,28 @@ func TestRouteSetIsCheckedOnTheRowItWouldLeave(t *testing.T) {
 			}
 			assert.Len(t, hist, 2, "the set is one history row")
 		})
+	}
+}
+
+// A negative dollar budget is no decimal at all and is refused before any row is built, at
+// add and at set alike; a zero one is refused by the route's check at add (here, before any
+// store is opened) as at set (TestRouteSetIsCheckedOnTheRowItWouldLeave, before any write).
+func TestARouteDollarBudgetIsAboveZeroOrEmpty(t *testing.T) {
+	t.Parallel()
+	k, _ := Lookup(KindRoute)
+	_, err := k.Changes(map[string]string{"usd": "-1"})
+	require.Error(t, err, "a set of --usd -1 is refused before any write")
+	assert.Contains(t, err.Error(), "--usd")
+	fields := proRoute("opencode")
+	fields["usd"] = "-1"
+	_, err = k.NewRow("r1", fields)
+	require.Error(t, err, "an add of --usd -1 is refused before any write")
+	for _, zero := range []string{"0", "0.00"} {
+		fields := proRoute("opencode")
+		fields["usd"] = zero
+		_, err := k.NewRow("r1", fields)
+		require.Error(t, err, "an add of --usd %s is refused before any store is opened", zero)
+		assert.Contains(t, err.Error(), "route r1 has --usd 0; want a dollar budget above 0, or --usd \"\" (empty) for no cap", zero)
 	}
 }
 

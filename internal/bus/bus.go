@@ -450,23 +450,6 @@ func (o CheckOptions) tolerates(n *Note) bool {
 	return when.Before(o.LegacyBefore)
 }
 
-// Check validates the whole bus and returns every problem it found, sorted. This is what
-// CI on a bus runs, so it names every failure in one pass rather than the first.
-//
-// What it asserts: every note parses; every header is valid against the roster; every note
-// sits in the lane its From line names; every id is well formed, carries its own lane's
-// slug, and is unique across the bus; every Re resolves to an id or to a path that
-// exists; every receipt line parses and names something that exists; every from-* lane on
-// disk has an owner in the roster; and a lane holds notes and its RECEIPTS file and
-// nothing else.
-//
-// What it deliberately does not assert: anything about a note's body. A body is prose,
-// and prose is the part of the bus no tool has an opinion about.
-//
-// Its findings about a note's HEADER can be TOLERATED for old notes rather than failed;
-// see CheckOptions. Check itself tolerates nothing.
-func (t *Bus) Check() []Problem { return t.CheckWith(CheckOptions{}) }
-
 // CheckWith is Check with a stated tolerance. See CheckOptions.
 func (t *Bus) CheckWith(o CheckOptions) []Problem {
 	var ps []Problem

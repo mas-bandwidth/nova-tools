@@ -1,16 +1,9 @@
-// nova-check version: which build is running.
-//
-// A refusal, a green or a line somebody pastes into a note is evidence about a BUILD, and
-// until this verb existed this binary could not say which one it was: `nova-check version`
-// was exit 2, unknown subcommand. So "we are all running the same nova-check" was a belief
-// rather than a reading, and the release could not assert over the set what no member of
-// the set would answer.
-//
-// The version is NOT a constant maintained by hand -- a hand-maintained constant is wrong
-// exactly at the commit after the release, where it still names the release. It is read
-// from the build itself by internal/buildinfo, which holds the resolution order and the
-// shape of the line for every binary here, so that eleven tools answer this question in
-// one spelling rather than eleven.
+// nova-check version: which build is running. A refusal, a green or a pasted line
+// is evidence about a build, so the binary says which one it is. The version is read
+// from the build itself by internal/buildinfo, which holds the resolution order and
+// the shape of the line for every tool in this repository, so each answers in one
+// spelling; it is never a constant maintained by hand, which would be wrong at the
+// first commit after a release.
 package main
 
 import (
@@ -41,14 +34,14 @@ func cmdVersionWith(args []string, stdout, stderr io.Writer, ver string) int {
 	fs.BoolVar(&asJSON, "json", false, "print this build identity in a JSON envelope")
 	fs.SetOutput(io.Discard)
 	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " version", "takes no flags and no arguments except --json: "+err.Error())
+		return refuse(stderr, " version", "takes no flags and no arguments except --json: "+verbflag.Explain(fs, err))
 	}
 	args = fs.Args()
 	if len(args) > 0 {
 		if asJSON {
 			return refuse(stderr, " version", "takes no arguments; use --json alone")
 		}
-		fmt.Fprintf(stderr, "nova-check version: takes no flags and no arguments, got %d; run: nova-check help\n", len(args))
+		fmt.Fprintf(stderr, "nova-check version REFUSED: takes no flags and no arguments, got %d; run: nova-check help\n", len(args))
 		return 2
 	}
 	if asJSON {

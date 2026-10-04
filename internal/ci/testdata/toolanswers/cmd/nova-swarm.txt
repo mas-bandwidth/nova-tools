@@ -1,3 +1,3 @@
 # tool-answers: the mistakes this tool does not yet answer with the way forward; each row's count only falls
 # ceiling: 1
-cmd/nova-swarm:dry-run 13 verbs whose -h states no effect, or that write with no --dry-run (tool ledger X12)
+cmd/nova-swarm:dry-run 7 verbs whose -h states no effect, or that write with no --dry-run (tool ledger X12; 8 before PR 5084 gave slots list its inspection line)

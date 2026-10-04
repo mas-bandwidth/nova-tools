@@ -153,7 +153,8 @@ func TestTheTickRetiresACardOnlyWhenATakeEndsAtItsBound(t *testing.T) {
 		}
 	}
 	require.Len(t, bound, 1, "the bound's judgment: %+v", p.Notes)
-	assert.Equal(t, TickDecisions[NBound], bound[0].Decisions)
+	// its last take kept no record (its member went down): no cause a wait changes
+	assert.Equal(t, []string{"rework with a fix", "drop"}, bound[0].Decisions)
 }
 
 // The level moves a ready card at a new generation and keeps its redeals and

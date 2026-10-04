@@ -80,6 +80,9 @@ var checkAudit = audit.Config{
 		// field through oneline.Field before it is returned.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"sort"`, `"strings"`,
+		// maps and slices sort map keys (slices.Sorted(maps.Keys), slices.AppendSeq):
+		// they return values and hold no writer.
+		`"maps"`, `"slices"`,
 		// bounded prints the capped FAIL listings and the one MORE line that stands for
 		// what they did not print. Every line reaching it is rendered by a fmt.Sprintf in
 		// THIS package, which the classifier walks like any other print site, and bounded

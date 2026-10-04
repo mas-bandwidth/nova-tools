@@ -1,4 +1,2 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
-cmd/nova-swarm/member.go:nativeRunner.Start:blank 1 the pid file is how a restart finds the running child; a failed write is found only when the restart cannot
-cmd/nova-swarm/native.go:writeNativeArgvLog:bare-return 1 the argv proof log is lost with no line; writeNativeArgvLog has no writer to say so
+# ceiling: 0

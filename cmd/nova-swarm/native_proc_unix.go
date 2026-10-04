@@ -27,3 +27,10 @@ func nativeTermCh() chan os.Signal {
 func stopNativeTerm(ch chan os.Signal) {
 	signal.Stop(ch)
 }
+
+// lowerChildPriority puts the child's whole process group at childNice, from outside the
+// wall (nativeNicesChild). It is called right after the start, before the harness has run
+// a step, and a process the group forks after it inherits the priority.
+func lowerChildPriority(pgid int) error {
+	return syscall.Setpriority(syscall.PRIO_PGRP, pgid, childNice)
+}

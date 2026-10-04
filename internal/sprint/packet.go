@@ -23,7 +23,11 @@ type Packet struct {
 	Gen     int    `json:"gen,omitempty"`
 	Epoch   uint64 `json:"epoch"`
 	Brief   string `json:"brief,omitempty"`
-	Fix     string `json:"fix,omitempty"`
+	// Rules is the held rules file the primary names (FieldRules, nova-tools#5174 rule 6):
+	// the member appends its RULES paragraph to the brief at stage time
+	// (swarm.StagedBrief); "" when the brief carries its own.
+	Rules string `json:"rules,omitempty"`
+	Fix   string `json:"fix,omitempty"`
 	// A rework's: the words of the readers that found the attempt before broken, and how
 	// that attempt ended (steps_review.go reworkGiven); the member's frame writes both
 	// into JOB.md, so the child learns why its attempt exists.
@@ -45,11 +49,22 @@ type Packet struct {
 	Route    string `json:"route,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
+	USD      string `json:"usd,omitempty"` // the dollar budget, a decimal; "" for none (#5094)
 	Deadline int    `json:"deadline,omitempty"`
 	// Tier is the tier the card's route is drawn from when the sprint decided it
 	// and not the brief's line 1: a read's read tier (route.go, readTierOf), a work
 	// card's tier from rework --tier; empty otherwise. JOB.md names it.
 	Tier string `json:"tier,omitempty"`
+	// A decide read's bars on p(defect), the read card's (steps_review.go,
+	// decideFields): its reader asks nova-decide's read decision first and routes the
+	// read by them (docs/SPEC-SPRINT.md section 6); empty for a strings read.
+	DecideBounce string `json:"decide_bounce,omitempty"`
+	DecideReview string `json:"decide_review,omitempty"`
+	// A work card's gate decision bars, the deal's (steps_review.go, gateFields): its
+	// member's native classifies a red gate's failures by them before the take is
+	// reported (docs/SPEC-SPRINT.md section 5, the gate verdict); empty for none.
+	DecideGateFlaky       string `json:"decide_gate_flaky,omitempty"`
+	DecideGatePreexisting string `json:"decide_gate_preexisting,omitempty"`
 	// A read's: the work it reads.
 	Worker     string `json:"worker,omitempty"`
 	Head       string `json:"head,omitempty"`
@@ -57,6 +72,21 @@ type Packet struct {
 	WorkBase   string `json:"work_base,omitempty"`
 	Report     string `json:"report,omitempty"`
 }
+
+// FieldRules is a primary's rules by reference (nova-tools#5174 rule 6): the base name of the
+// held rules file (fleet/child-rules*.txt) the member injects into its brief at stage time,
+// written by add (and brief) with the brief it was held to, absent when the brief carries its
+// own rules. It is the card's, so no later add changes what an earlier card's child reads.
+const FieldRules = "rules"
+
+// FieldBriefOp and FieldBriefRecord are the card's brief decision (internal/decide,
+// docs/SPEC-NOVA-DECIDE.md section 14): the op id add asked it under and the record
+// that holds it, written when add asked one, so land and drop attach the card's end
+// to that decision by its exact id; both absent when none was asked.
+const (
+	FieldBriefOp     = "brief_op"
+	FieldBriefRecord = "brief_record"
+)
 
 // BranchOf is the branch one launch of a work card's attempt is worked on: one per launch,
 // named by the sprint (its prefix, the card), the launch's generation and its epoch, as the
@@ -117,18 +147,20 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 		Gen: c.Int("gen"), Epoch: epoch, Notes: []string{}}
 	if primary != nil {
 		p.Brief = primary.F("brief")
+		p.Rules = primary.F(FieldRules)
 		if primary.Int("attempt") == p.Attempt {
 			p.Fix = primary.F("fix")
 		}
 	}
 	// a work card's route, or a read card's: the ask draws a read's as the deal
 	// draws a work card's (route.go), so a reader needs no --model
-	p.Route, p.Model, p.Tokens, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.Int(FieldDeadline)
+	p.Route, p.Model, p.Tokens, p.USD, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.F(FieldUSD), c.Int(FieldDeadline)
 	if p.Tier = c.F(FieldTier); p.Tier == "" && p.Kind == "work" && primary != nil {
 		p.Tier = primary.F(FieldTier)
 	}
 	if p.Kind == "work" {
 		p.Branch = BranchOf(prefix, epoch, c.ID, c.Int("gen"))
+		p.DecideGateFlaky, p.DecideGatePreexisting = c.F(FieldDecideGateFlaky), c.F(FieldDecideGatePreexisting)
 		p.Finding, p.Why = c.F("finding"), c.F("why")
 		// the attempt's own words, written with its card: the primary's are queued for the next
 		// tick's drain, so a take before it sees the primary at the attempt before
@@ -145,6 +177,7 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 		p.BaseHead, p.BaseAttempt = b.Head, b.Attempt
 		return p
 	}
+	p.DecideBounce, p.DecideReview = c.F(FieldDecideBounce), c.F(FieldDecideReview)
 	if work != nil {
 		p.Worker = work.F("member")
 		p.Head = work.F("head")

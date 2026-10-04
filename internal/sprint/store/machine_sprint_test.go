@@ -308,8 +308,9 @@ func (w *crWorld) coordinate(r int) {
 	for _, o := range open {
 		sub := o.Subject()
 		switch o.Note.Type {
-		case sprint.NWorkFailed, sprint.NReadBroken, sprint.NReadsExhausted, sprint.NCIRed, sprint.NRepairSkipped:
-			if pr := s.Work.Placed(sub); pr != nil && pr.Col == sprint.Review {
+		case sprint.NWorkFailed, sprint.NReadBroken, sprint.NReadsExhausted, sprint.NCIRed, sprint.NRepairSkipped, sprint.NBound:
+			// a second identical failure ("boom" twice) is the bound's judgment (rule 2): reworked too
+			if pr := s.Work.Placed(sub); pr != nil && (pr.Col == sprint.Review || sprint.AtRedealBound(s, pr) != nil) {
 				rework = append(rework, sub)
 			}
 		case sprint.NBlocked:

@@ -20,7 +20,7 @@ func askedWithRoute(t *testing.T) (w *world, held []string, free string) {
 	w = setup(t, 2)
 	finished(w, "s1-1", false)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	w.s.Routes = []Route{{Name: "flash-a", Tier: cardhdr.RouteFlash, Provider: "p", Model: "m", Enabled: true}}
+	w.s.Routes = []Route{{Name: "pro-a", Tier: cardhdr.RoutePro, Provider: "p", Model: "m", Enabled: true}}
 	for _, rc := range readsAt(w.s, w.s.Work.Card("s1-1"), 1) {
 		held = append(held, rc.Row)
 	}
@@ -61,7 +61,7 @@ func TestAskInsteadRetiresTheReadAndAsksAnotherReaderWithARouteInOneStep(t *test
 	added := w.s.Readers.Placed(ReadCardID("s1-1", 1, free))
 	require.NotNil(t, added)
 	assert.Equal(t, Asked, added.Col)
-	assert.Equal(t, "flash-a", added.F(FieldRoute))
+	assert.Equal(t, "pro-a", added.F(FieldRoute))
 	assert.Equal(t, "p/m", added.F(FieldModel))
 	w.clean("instead")
 }

@@ -10,11 +10,12 @@ package gocache
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -182,11 +183,7 @@ func (t *Trim) cutoff(need int64) int64 {
 			all[hour] += n
 		}
 	}
-	hours := make([]int64, 0, len(all))
-	for hour := range all {
-		hours = append(hours, hour)
-	}
-	sort.Slice(hours, func(i, j int) bool { return hours[i] < hours[j] })
+	hours := slices.Sorted(maps.Keys(all))
 	var sum int64
 	for _, hour := range hours {
 		sum += all[hour]

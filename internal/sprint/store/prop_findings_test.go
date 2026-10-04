@@ -66,7 +66,7 @@ func TestTheTickClosingALateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"p2"}}))
+	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", IDs: []string{"p2"}}))
 	h.startMachine()
 	h.machine() // deals p2
 	h.takeAndFinish(false, "p2")
@@ -109,7 +109,7 @@ func TestTheTickClosingTheOnlyLateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"p2"}}))
+	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", IDs: []string{"p2"}}))
 	h.startMachine()
 	h.machine() // deals p2
 	h.takeAndFinish(false, "p2")

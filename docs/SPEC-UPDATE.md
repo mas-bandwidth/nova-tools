@@ -405,6 +405,7 @@ DIFFERENT line, so the morning names a person, not only a number.
 ## The verbs
 
 ```
+usage:
 nova-update example [--out <path>]
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]

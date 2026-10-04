@@ -70,8 +70,11 @@ func initStLabGolden() {
 	if err != nil {
 		panic(err)
 	}
-	if out, err := stGitOut(dir, "init", "-q", "-b", "main"); err != nil {
+	if out, err := stGitOut(dir, "-c", "init.templateDir=", "init", "-q", "-b", "main"); err != nil {
 		panic(fmt.Sprintf("git init: %v\n%s", err, out))
+	}
+	if out, err := stGitOut(dir, "config", "maintenance.auto", "false"); err != nil {
+		panic(fmt.Sprintf("git config: %v\n%s", err, out))
 	}
 	if err := os.WriteFile(filepath.Join(dir, "f.md"), []byte("prose base\n"), 0o644); err != nil {
 		panic(err)

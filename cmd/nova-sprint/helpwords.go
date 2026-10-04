@@ -14,8 +14,9 @@ machine, with NOVA_SPRINT_REDIS naming the store:
   nova-sprint run --listen <address>:<port> --land
     ticks; serves the workers' verbs (take, finish, read, queue, fleet beat) on
     <address>:<port>, this machine's address on the fleet's private network (it
-    checks no credential, so an every-network address such as 0.0.0.0 is
-    refused); serves the coordinator's verbs on 127.0.0.1:<port>; with --land
+    checks no credential, so a name, a public address, a link-local address
+    and an every-network address such as 0.0.0.0 are refused); serves the
+    coordinator's verbs on 127.0.0.1:<port>; with --land
     lands what the readers passed, so land is not run by hand beside it.
 The coordinator's shell then sets NOVA_SPRINT_SERVER=127.0.0.1:<port> and
 NOVA_SPRINT_ACTOR, and needs no store address or credential: every verb is sent
@@ -59,14 +60,21 @@ words:
                free lanes; asked reads are levelled across the readers up the same way
   drain        the tick's first update of the work table: every change steps queued since the last
                tick; MEMBER DRAIN is a member whose binary was replaced, taking no new card
-  tier         a card's class of model, line 1 of its brief: tier: flash|pro|frontier (none is flash)
+  tier         a card's class of model: flash first on every card; line 1 of its brief (tier:
+               flash|pro|frontier, none is flash) is its ceiling; at its bound below it the machine
+               escalates it a tier (tier_now); rework --tier pins it; frontier is never dealt
   route        a nova-config route row: tier, provider/model, token budget, deadline; the deal draws
-               one of the card's tier for each work card, the ask one for each read
+               one of the tier the card is on for each work card, the ask one for each read
   provider     the first half of provider/model; a run the provider failed is redealt, never failed work
+  rested       a route the deal draws no work card on for 30 minutes: 3 of its last 10 ended takes left
+               no result; the tick rests it, tells the inbox, and routes prints rested_until
+  bound        a card tried no more on its tier: its work card redealt 3 times, or its second try
+               failed the way its first did (the second identical failure: two takes with no result,
+               or two attempts with the same reason); a card reached its bound, answered by rework or drop
   head         the commit a work card finished at (finish --head, default the work card's id);
                reads and merges are of that head
   the stream's base  a first attempt's base in its packet: the branch its brief's BASE: line names
-               (a rework starts from the attempt before's branch)
+               (a rework is staged at that branch's tip, the last pushed work carried on top)
   held         a fleet member's status while fleet down or fleet sync holds it, whatever it beats;
                card's HELD line names what holds a primary from stalling
   stuck        the merge column of a card that could not merge: its stream stops until resume

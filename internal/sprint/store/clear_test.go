@@ -114,7 +114,7 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	require.NotEmpty(t, v.Groups, "the old epoch's inbox: %+v %v", v, err)
 
 	// The same ids run again, to landed, in the new epoch.
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
+	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 3}))
 	h.through("s1-1", "s1-2", "s1-3")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
 	if s := h.snap(); s.StateOf("s1-1") != sprint.Landed || s.StateOf("s1-3") != sprint.Landed {

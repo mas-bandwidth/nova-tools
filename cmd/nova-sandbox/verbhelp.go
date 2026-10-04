@@ -86,7 +86,7 @@ func helpIfAsked(args []string, verb string) {
 	panic(verbflag.Help{FS: fs})
 }
 
-// recoverVerbHelp is verbflag.Recover with the verb's own exit codes: the banner it quotes
+// recoverVerbHelp is verbflag.RecoverWith with the verb's own exit codes: the banner it quotes
 // from carries that verb's line in place of the by-verb paragraph.
 func recoverVerbHelp(stdout io.Writer, code *int) {
 	r := recover()

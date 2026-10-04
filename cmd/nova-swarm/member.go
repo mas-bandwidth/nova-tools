@@ -22,6 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/gocache"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/log"
@@ -49,7 +50,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	f := &flags{verb: "member", fs: fs}
 	as := fs.String("as", "", "required: this machine's `name`, its row in the fleet table (with --reader, its row in the readers table, reader-<machine>)")
 	width := fs.Int("width", 0, "an override of the most cards it runs at once, a twin's; a worker runs its fleet row's width, read every tick: a member its own row's, a reader its machine's (reader-<m> runs at m's width)")
-	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards, at its machine's width")
+	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards, at its machine's width; a flash card's first read is a decide read, asked with JEV_API_KEY from this environment (docs/SPEC-SPRINT.md section 6)")
 	harness := fs.String("harness", "", "required: the harness binary `path` each card's child runs under (native --harness)")
 	model := fs.String("model", "", "the `provider/model` a card with no route runs on; a reader given it runs every read on it")
 	root := fs.String("root", "", "required: the `dir` the launches and results sit under")
@@ -177,10 +178,15 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		send = sprintwire.Client{Addr: *server}.Do
 	}
 	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
+	// a member hands native the decide key when its environment holds it (the loop row's
+	// nova-secrets keys): a reader's native asks the decide read with it, a worker's the
+	// gate decision of a red gate, and neither hands it to the child (nativedecide.go,
+	// nativegate.go, nativeChildEnv)
+	nativePass := append(append([]string{}, pass...), decide.JevSecret)
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass, identity: *identity,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, identity: *identity,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
@@ -206,7 +212,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
+	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true, Attempt: workAttempt(*reader, os.Getenv)}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
 	kind := "member"
 	if *reader {
 		kind = "reader"
@@ -495,8 +501,12 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		return nil, err
 	}
+	card, err := childCard(p)
+	if err != nil {
+		return nil, err
+	}
 	cardPath := filepath.Join(r.slots, name+".card.md")
-	if err := os.WriteFile(cardPath, []byte(member.CardText(p)), 0o644); err != nil {
+	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
 		return nil, err
 	}
 	model, tokens, deadline, err := r.route(p)
@@ -510,6 +520,11 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	args := []string{"native", "--harness", r.harness, "--model", model, "--card", cardPath, "--frame", framePath, "--slot", slot,
 		"--root", r.root, "--deadline", deadline.String(), "--tokens", tokens, "--label", p.Card, "--results-root", results,
 		"--stage-timeout", r.stageTimeout().String()}
+	if p.USD != "" {
+		// the route's dollar budget, beside its token budget (#5094); a reader's override
+		// names tokens, not dollars, so an overridden read keeps the route's
+		args = append(args, "--usd", p.USD)
+	}
 	if r.auth != "" {
 		args = append(args, "--auth", r.auth)
 	}
@@ -543,7 +558,11 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		logf.Close()
 		return nil, err
 	}
-	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644); err != nil && r.stderr != nil {
+		// the child runs; only a restart's way back to it is lost, so the member says so and goes on
+		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
+			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
+	}
 	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{})}
 	go func() {
 		c.err = cmd.Wait()
@@ -555,6 +574,23 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	}()
 	r.started(name)
 	return c, nil
+}
+
+// childCard is the card file a child is handed: the packet's brief with the rules file the
+// card names injected at stage time (rules by reference, nova-tools#5174 rule 6:
+// swarm.StagedBrief), then what the sprint adds (member.CardText). A card that names none
+// gets nothing injected: it carries its own rules. A brief that already carries the rules is
+// handed as it is; a card naming a rules file this build does not hold is refused, and it is
+// not started.
+func childCard(p member.Packet) (string, error) {
+	if p.Rules != "" {
+		rules, err := swarm.HeldRules(p.Rules)
+		if err != nil {
+			return "", fmt.Errorf("card %s: the rules by reference: %w", p.Card, err)
+		}
+		p.Brief = swarm.StagedBrief(p.Brief, rules)
+	}
+	return member.CardText(p), nil
 }
 
 // route is what one launch runs on: the packet's route (the card's model, budget and
@@ -694,6 +730,10 @@ func providerReason(log []byte) string {
 	return ""
 }
 
+// nativeGateLine is native's NATIVE GATE line (nativegate.go): where the gate decision sent
+// a not-done child's red gate, and the tests it names.
+var nativeGateLine = regexp.MustCompile(`(?m)^NATIVE GATE \S.*? route=(\S+) tests=(\S*)`)
+
 // nativeStageFail is native's STAGE FAIL line's reason: the launch refused at staging,
 // before any child ran (native.go; tla/CardContract.tla, StageRefused).
 var nativeStageFail = regexp.MustCompile(`(?m)^STAGE FAIL .*\breason=(.+)$`)
@@ -712,8 +752,11 @@ var nativeYieldRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: (yield to CI: 
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
-	nativeKilled   = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
-	nativeTermed   = regexp.MustCompile(`\breason=terminated\b`)
+	// nativeBudgetWhy is the NATIVE BUDGET line's words: which budget ended the run and at
+	// what count (nativeBudgetWords)
+	nativeBudgetWhy = regexp.MustCompile(`(?m)^NATIVE BUDGET \S+ budget: (.+)$`)
+	nativeKilled    = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
+	nativeTermed    = regexp.MustCompile(`\breason=terminated\b`)
 )
 
 // Result reads how the child ended: the NATIVE line's rc and harness word, and
@@ -726,8 +769,12 @@ var (
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage, provider, refused string
+		var end, usage, provider, refused, budget, gate, gateTests, carry string
 		if b, err := os.ReadFile(c.logPath); err == nil {
+			carry = cardcontract.ParseCarryLine(b)
+			if m := nativeGateLine.FindSubmatch(b); m != nil {
+				gate, gateTests = string(m[1]), strings.ReplaceAll(strings.TrimSpace(string(m[2])), ",", ", ")
+			}
 			if m := nativeRefusedWhy.FindSubmatch(b); m != nil {
 				refused = strings.TrimSpace(string(m[1]))
 			}
@@ -759,6 +806,9 @@ func (c *nativeChild) Result() member.Result {
 			}
 			end = nativeEnd(b)
 			provider = providerReason(b)
+			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && end == member.EndBudget {
+				budget = strings.TrimSpace(string(m[1]))
+			}
 		}
 		path := newestResult(c.results)
 		var raw []byte
@@ -799,7 +849,12 @@ func (c *nativeChild) Result() member.Result {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider}
+		if verdict == "not-done" && gate == member.GateGreen {
+			// the child's gate was red only on failures the gate decision classed flaky, and
+			// their rerun passed: the work is done as far as its gate says; the readers read it
+			verdict, report = "ok", "gate: "+gateTests+" flaky, green on the rerun; "+report
+		}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry}
 	})
 	return c.result
 }
@@ -823,6 +878,7 @@ func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 	}
 	if p.Kind == "read" {
 		f.Branch, f.ReviewBase = p.WorkBranch, cb.Ref
+		f.DecideBounce, f.DecideReview = p.DecideBounce, p.DecideReview
 		if p.WorkBase != "" {
 			f.ReviewBase = p.WorkBase
 		}
@@ -831,6 +887,7 @@ func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 		}
 		return f
 	}
+	f.DecideGateFlaky, f.DecideGatePreexisting = p.DecideGateFlaky, p.DecideGatePreexisting
 	if p.BaseHead != "" {
 		f.StageSha, f.PrevHead, f.PrevFrom = p.BaseHead, p.BaseHead, p.BaseFrom
 	}

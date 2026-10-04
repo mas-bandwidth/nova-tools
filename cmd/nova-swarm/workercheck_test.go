@@ -89,6 +89,9 @@ func TestWorkerHelpMatchesOtherVerbs(t *testing.T) {
 	assert.Zero(t, errb.Len(), "worker check --help: help is not a refusal, got stderr %q", errb.String())
 	want := "usage: nova-swarm worker check [flags]\n"
 	assert.True(t, strings.HasPrefix(out.String(), want), "worker check --help: got %q, want it to begin %q", out.String(), want)
+	// every flag says what it wants (flag-usage): the two flags once printed a bare name
+	assert.Contains(t, out.String(), "  --env  also require every secret the description names")
+	assert.Contains(t, out.String(), "  --max <int>  at most this many WORKER DRIFT lines")
 	assert.True(t, strings.HasPrefix(otherOut.String(), "usage: nova-swarm template [flags]\n"), "template --help: got %q", otherOut.String())
 }
 
@@ -122,14 +125,14 @@ func TestWorkerCheckFlagTypes(t *testing.T) {
 	helpLines := strings.Split(help, "\n")
 	hasLine := func(want string) bool {
 		for _, l := range helpLines {
-			if l == want {
+			if strings.HasPrefix(l, want) {
 				return true
 			}
 		}
 		return false
 	}
-	assert.True(t, hasLine("  --env"), "help does not declare --env as a boolean flag (a bare `  --env` line):\n%s", help)
-	assert.True(t, hasLine("  --max <int>"), "help does not declare --max as an integer (`  --max <int>`):\n%s", help)
+	assert.True(t, hasLine("  --env  "), "help does not declare --env as a boolean flag (`  --env  <what it wants>`):\n%s", help)
+	assert.True(t, hasLine("  --max <int>  "), "help does not declare --max as an integer (`  --max <int>  <what it wants>`):\n%s", help)
 
 	// A description with two drifts: the harness is absent, and the named secret is not in
 	// this process's environment (which only --env asks about).

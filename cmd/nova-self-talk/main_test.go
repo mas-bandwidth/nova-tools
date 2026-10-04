@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -214,7 +215,7 @@ func TestInstallationExitsOneWithShapeAndLine(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	got := run([]string{f}, &stdout, &stderr)
 	assert.Equal(t, 1, got, "want exit 1 on an installation, got %d\nstdout: %s", got, stdout.String())
-	assert.Contains(t, stderr.String(), "SELFTALK FAIL "+f+":3: INSTALLATION RANKING match=", "stderr = %q, want a FAIL line naming file, line, class and shape", stderr.String())
+	assert.Contains(t, stderr.String(), "SELFTALK FAIL "+f+":3: RANKING match=", "stderr = %q, want a FAIL line naming file, line, class and shape", stderr.String())
 	assert.NotContains(t, stdout.String(), "SELFTALK OK", "a failing run must not print an OK line, got %q", stdout.String())
 }
 
@@ -243,7 +244,7 @@ func TestRuleDocIsScannedAndBannered(t *testing.T) {
 	want := "SELFTALK RULEDOC " + f + ": rule documents: a finding here is a self-verdict to " +
 		"relocate, NEVER a reason to soften a rule"
 	assert.Contains(t, stdout.String(), want, "stdout = %q, want the rule-document banner", stdout.String())
-	assert.Contains(t, stderr.String(), "INSTALLATION FORECLOSURE", "stderr = %q, want the finding itself", stderr.String())
+	assert.Contains(t, stderr.String(), "FORECLOSURE", "stderr = %q, want the finding itself", stderr.String())
 }
 
 // The banner prints only where there is something to banner: a rule document made of rules is
@@ -361,4 +362,56 @@ func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
 		noForgedLine(t, stdout.String(), stderr.String())
 		assert.Contains(t, stderr.String(), `nova-self-talk REFUSED: unknown flag -bogus\x0aSELFTALK OK files`, "stderr = %q, want this tool's own refusal with the flag escaped", stderr.String())
 	})
+}
+
+// TestFindingsPrintInLineOrderWhicheverClassFoundThem: a reader repairs a page
+// top to bottom, so a page's findings print in line order, the first class's
+// beside the second's, in the lines and in --json alike; the second class's
+// line names its shape alone.
+func TestFindingsPrintInLineOrderWhicheverClassFoundThem(t *testing.T) {
+	t.Parallel()
+	f := filepath.Join(t.TempDir(), "mine.md")
+	require.NoError(t, os.WriteFile(f, []byte("I am the best.\nI am bad at x.\nMy weakest instrument is recall.\n"), 0o644))
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, 1, run([]string{f}, &stdout, &stderr))
+	assert.Equal(t, []string{
+		"SELFTALK FAIL " + f + `:1: RANKING match="I am the best": I am the best.`,
+		"SELFTALK FAIL " + f + `:2: STANDING match="bad at": I am bad at x.`,
+		"SELFTALK FAIL " + f + `:3: RANKING match="My weakest": My weakest instrument is recall.`,
+	}, strings.Split(strings.TrimSuffix(stderr.String(), "\n"), "\n"))
+
+	stdout.Reset()
+	require.Equal(t, 1, run([]string{"--json", f}, &stdout, &stderr))
+	var got struct {
+		Items []struct{ Fields struct{ Line int } }
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	var order []int
+	for _, it := range got.Items {
+		order = append(order, it.Fields.Line)
+	}
+	assert.Equal(t, []int{1, 2, 3}, order)
+}
+
+// TestABasenameThatMatchesNothingIsSaid: a --skip or --rule-doc name that no
+// named file has changes nothing, and the run says so on a NOTE line (and a
+// JSON note), so a mistyped name is not a silent no-op; a name that matches
+// says nothing extra.
+func TestABasenameThatMatchesNothingIsSaid(t *testing.T) {
+	t.Parallel()
+	f := filepath.Join(t.TempDir(), "mine.md")
+	require.NoError(t, os.WriteFile(f, []byte("A plain page.\n"), 0o644))
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, 0, run([]string{"--skip", "zzz.md", "--rule-doc", "nope.md", "--rule-doc", "mine.md", f}, &stdout, &stderr))
+	assert.Contains(t, stdout.String(), "SELFTALK NOTE --skip zzz.md matched no file named on the line, so it skipped nothing")
+	assert.Contains(t, stdout.String(), "SELFTALK NOTE --rule-doc nope.md matched no file named on the line, so it marked nothing")
+	assert.NotContains(t, stdout.String(), "mine.md matched no file")
+	assert.Equal(t, 3, strings.Count(stdout.String(), "SELFTALK NOTE "), "two names that matched nothing, and the note every run carries:\n%s", stdout.String())
+
+	stdout.Reset()
+	require.Equal(t, 0, run([]string{"--json", "--skip", "zzz.md", f}, &stdout, &stderr))
+	var got struct{ Notes []string }
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	require.Len(t, got.Notes, 2)
+	assert.Contains(t, got.Notes[0], "--skip zzz.md matched no file")
 }

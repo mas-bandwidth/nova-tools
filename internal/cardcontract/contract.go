@@ -38,6 +38,16 @@ type Frame struct {
 	ReviewBase string   `json:"review_base,omitempty"`  // a read: the ref the change is reviewed against
 	Stage      []string `json:"stage,omitempty"`        // the recipe files the brief's Stage: header lines name, relative to Recipes
 	Recipes    string   `json:"recipes,omitempty"`      // the member's recipes directory, <root>/recipes
+	// A decide read's bars on p(defect) (docs/SPEC-SPRINT.md section 6): native asks the
+	// read decision over the card and the diff before any child and routes the read by
+	// them; both empty for a strings read.
+	DecideBounce string `json:"decide_bounce,omitempty"`
+	DecideReview string `json:"decide_review,omitempty"`
+	// A work card's gate decision bars (docs/SPEC-SPRINT.md section 5, the gate verdict):
+	// native classifies a red gate's failures by them after the child, before the member
+	// reports the take; both empty for none.
+	DecideGateFlaky       string `json:"decide_gate_flaky,omitempty"`
+	DecideGatePreexisting string `json:"decide_gate_preexisting,omitempty"`
 }
 
 // Staged is what native knows once the checkout is staged: the job directory, the checkout,
@@ -54,6 +64,9 @@ type Staged struct {
 	Start   string
 	GoCache string // the machine's shared build cache the child's GOCACHE names; "" when it has none
 	Gate    *Gate  // a read's gate (ReadGate); nil: the card's
+	// Carry is a rework's staging at the tip of its base branch (Carry); nil for a first
+	// attempt, a read, and a rework whose base is a sha or a tag, which never moves.
+	Carry *Carry
 }
 
 // Shim is one script a profile writes first on the child's PATH.

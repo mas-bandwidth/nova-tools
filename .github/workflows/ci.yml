@@ -978,11 +978,11 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          # This workflow manages caching explicitly; do not probe for a missing go.sum.
-          cache: false
+      - name: name the Go toolchain's tool-cache directory
+        # Run 37167141048 spent 23-31 s installing Go on each macOS shard.
+        # Cache the toolchain separately so the native build cache keeps its old paths/key.
+        shell: bash
+        run: echo "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)" >> "$GITHUB_ENV"
 
       - name: cache go build and module cache
         id: gocache
@@ -1003,6 +1003,28 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
           restore-keys: |
             ${{ runner.os }}-go-
+
+      - name: restore Go toolchain cache
+        id: gotoolcache
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.GO_TOOL_DIR }}
+          key: ${{ runner.os }}-go-toolchain-${{ hashFiles('go.mod') }}
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
+
+      - name: save Go toolchain cache
+        # Save immediately after setup: a later test failure must not discard the toolchain.
+        if: runner.environment == 'github-hosted' && steps.gotoolcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.GO_TOOL_DIR }}
+          key: ${{ steps.gotoolcache.outputs.cache-primary-key }}
 
       - name: build tools/ci once
         # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
@@ -1411,12 +1433,12 @@ jobs:
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+          fetch-depth: 0  # the path filter traverses merge ancestry across retained refs
       - name: checkout retry
         if: steps.checkout.outcome == 'failure'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+          fetch-depth: 0  # the path filter traverses merge ancestry across retained refs
 
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
@@ -1702,7 +1724,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, functional, e2e, lisp, test-hosted, test-hosted-pr]
+    needs: [lint, test, functional, e2e, lisp-changes, lisp, test-hosted, test-hosted-pr]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -1846,7 +1868,7 @@ jobs:
           "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" \
             --skip-ok lisp,test-hosted-pr --skip-ok-on pull_request=functional \
             lint=${{ needs.lint.result }} test=${{ needs.test.result }} functional=${{ needs.functional.result }} \
-            lisp=${{ needs.lisp.result }} e2e=${{ needs.e2e.result }} test-hosted-pr=${{ needs.test-hosted-pr.result }}
+            lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }} e2e=${{ needs.e2e.result }} test-hosted-pr=${{ needs.test-hosted-pr.result }}
       - name: a fork's pull request is red here
         if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         shell: bash
@@ -1859,7 +1881,7 @@ jobs:
         run: |
           "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" --skip-ok lisp \
             lint=${{ needs.lint.result }} test=${{ needs.test.result }} e2e=${{ needs.e2e.result }} \
-            lisp=${{ needs.lisp.result }} test-hosted=${{ needs.test-hosted.result }}
+            lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }} test-hosted=${{ needs.test-hosted.result }}
 
       # THE RUNNER IS THE EVENT SOURCE. The signed webhook receiver sits behind
       # a tailscale funnel kept off by design, so this job, on our own runner

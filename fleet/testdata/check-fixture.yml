@@ -2,14 +2,15 @@
 # the test, named localhost so the inventory marks it ansible_connection=local
 # (NOVA_MACHINE=localhost), with no coordinator, so no task dials a store. Its
 # loops are a member kept alive with a secret from its seat and a
-# periodic loop written disabled.
+# periodic loop written disabled. The play adds the disk guard beside them,
+# its --root the member's.
 machines:
   localhost: {user: nova, seat: seat-local, slots: 2}
 fleet: {store: localhost, coordinator: "", redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova}
 loops:
   member-local:
     machine: localhost
-    argv: [/usr/bin/env, "NOVA_SPRINT_REDIS=old-store:6379", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", nova-swarm, member, --as, localhost]
+    argv: [/usr/bin/env, "NOVA_SPRINT_REDIS=old-store:6379", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", nova-swarm, member, --as, localhost, --root, ~/nova-bench/run/member-local]
     seat: seat-local
     keys: [API_KEY, NOVA_REDIS_BENCH_PASSWORD]
     keepalive: true

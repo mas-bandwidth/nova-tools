@@ -23,7 +23,7 @@ const stagingLine = cardhdr.EndStaging + ": " + stagingReason + "; no child ran"
 
 // fourMembers is the route harness with m3 and m4 up and beating beside m1 and m2.
 func fourMembers(t *testing.T) *harness {
-	h := routeHarness(t, route("pro-a", "pro"))
+	h := routeHarness(t, route("flash-a", "flash"))
 	h.mu.Lock()
 	h.live = append(h.live, "m3", "m4")
 	h.mu.Unlock()
@@ -53,7 +53,7 @@ func (h *harness) stagingNotes() []string {
 func TestAStagingRefusalRedealsTheCardToAnotherMemberAndSpendsNoBound(t *testing.T) {
 	t.Parallel()
 	h := fourMembers(t)
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 	w := h.snap().Fleet.Card("s1-1.w1")
@@ -85,7 +85,7 @@ func TestAStagingRefusalRedealsTheCardToAnotherMemberAndSpendsNoBound(t *testing
 func TestThreeStagingRefusalsThenAnOkOnTheFourthLandsTheAttempt(t *testing.T) {
 	t.Parallel()
 	h := fourMembers(t)
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 	seen := map[string]bool{}
@@ -116,8 +116,8 @@ func TestThreeStagingRefusalsThenAnOkOnTheFourthLandsTheAttempt(t *testing.T) {
 // members and the reason, and the card is not dealt again.
 func TestEveryMemberUpRefusingAtStagingIsOneJudgment(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"))
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h := routeHarness(t, route("flash-a", "flash"))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 	for i := 1; i <= 2; i++ {
@@ -144,8 +144,8 @@ func TestEveryMemberUpRefusingAtStagingIsOneJudgment(t *testing.T) {
 // member refuses a card at most once: one record and one note per member per card.
 func TestTheLevelNeverMovesACardBackOntoItsRefuser(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"))
-	h.addReady("s1", 4, briefOf("pro", ""))
+	h := routeHarness(t, route("flash-a", "flash"))
+	h.addReady("s1", 4, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 	for round := 0; round < 12; round++ {

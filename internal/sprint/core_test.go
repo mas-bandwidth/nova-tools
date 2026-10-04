@@ -50,7 +50,7 @@ func setup(t *testing.T, n int) *world {
 	w := newWorld(t, "reader-a", "reader-b", "reader-c")
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
-	w.must(Add(w.s, AddReq{Stream: "s1", Count: n}))
+	w.must(Add(w.s, AddReq{Brief: proBrief, Stream: "s1", Count: n}))
 	w.clean("setup")
 	return w
 }

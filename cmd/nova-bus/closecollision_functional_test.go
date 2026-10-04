@@ -49,7 +49,7 @@ func TestCloseDoesNotCollideAndIsOneReceiptPerLane(t *testing.T) {
 	// The dry run promises four, and the real run must keep that promise or write nothing.
 	invoke(t, "", "close", "--bus", checkout, "--as", "Ada", "--before", "2026-09-08T00:00:00Z", "--dry-run").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "CLOSE OK closed=4 kept=0 commit=-")
+		mustContain(t, "stdout", "CLOSE OK closed=4 kept=0 commit=- dry_run=true")
 
 	r := invoke(t, "", "close", "--bus", checkout, "--as", "Ada", "--before", "2026-09-08T00:00:00Z",
 		"--remote", "origin", "--branch", "main", "--no-push").

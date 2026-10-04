@@ -131,7 +131,7 @@ func TestBatchCLIRefusesMalformedRawManifestsWithZeroMutations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			code, stdout, stderr := runTable("batch", "--redis", addr, tc.rawJSON)
 			require.EqualValues(t, 2, code, "expected exit code 2, got %d (stdout: %q, stderr: %q)", code, stdout, stderr)
-			assert.Contains(t, stderr, "nova-table batch:", "expected stderr to contain refusal with %q, got: %s", tc.errSubstr, stderr)
+			assert.Contains(t, stderr, "BATCH REFUSED:", "expected stderr to contain refusal with %q, got: %s", tc.errSubstr, stderr)
 			assert.Contains(t, stderr, tc.errSubstr, "expected stderr to contain refusal with %q, got: %s", tc.errSubstr, stderr)
 			assert.Empty(t, stdout, "expected empty stdout on refusal, got: %s", stdout)
 

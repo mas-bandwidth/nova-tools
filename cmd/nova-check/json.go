@@ -114,23 +114,31 @@ func renderCorpus(w io.Writer, ledger string, anchors, floor int, failures, malf
 	return renderResult(w, out)
 }
 
-func renderSpelling(w io.Writer, dir string, res check.SpellingResult, write bool, max int) int {
+func renderSpelling(w io.Writer, dir string, res check.SpellingResult, v spellingVerdict) int {
 	out := &tool.Out{Verb: "spelling", Status: tool.OK}
-	out.Fact("dir", dir).Fact("files", res.FilesScanned).Fact("misspellings", len(res.Findings)).Fact("written", res.Corrected).Fact("excluded", res.Excluded)
+	written := res.Corrected
+	if v.planned {
+		written = 0
+	}
+	out.Fact("dir", dir).Fact("files", res.FilesScanned).Fact("misspellings", len(res.Findings)).Fact("written", written).Fact("excluded", res.Excluded)
+	if v.planned {
+		out.Fact("dry_run", true)
+	}
+	kind := "misspelling"
 	shown := len(res.Findings)
-	if !write && max > 0 && shown > max {
-		shown = max
+	if v.max > 0 && shown > v.max {
+		shown = v.max
 	}
 	for _, f := range res.Findings[:shown] {
-		out.Item("misspelling", "file", f.File, "line", f.Line, "column", f.Column, "original", f.Original, "replacement", f.Replacement)
+		out.Item(kind, "file", f.File, "line", f.Line, "column", f.Column, "original", f.Original, "replacement", f.Replacement)
 	}
 	if shown < len(res.Findings) {
-		out.More = []tool.More{{Kind: "misspelling", Shown: shown, Total: len(res.Findings), Remedy: failMaxRemedy}}
+		out.More = []tool.More{{Kind: kind, Shown: shown, Total: len(res.Findings), Remedy: failMaxRemedy}}
 	}
-	if !write && len(res.Findings) > 0 {
+	if v.failed {
 		out.Status = tool.Failed
-		out.Exit = 1
 	}
+	out.Exit = v.exit
 	return renderResult(w, out)
 }
 

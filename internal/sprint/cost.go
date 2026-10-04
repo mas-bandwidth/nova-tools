@@ -3,7 +3,6 @@ package sprint
 import (
 	"cmp"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"math/big"
 	"sort"
 	"strconv"
@@ -111,6 +110,7 @@ type Consumer struct {
 	Who     string         `json:"who"`            // the member or the reader
 	Route   string         `json:"route,omitempty"`
 	Model   string         `json:"model,omitempty"` // provider/model
+	Tier    string         `json:"tier,omitempty"`  // the tier its route was drawn from (flash first, pro on escalation)
 	End     string         `json:"end"`
 	At      string         `json:"at"`  // when it ended
 	Key     string         `json:"key"` // the card and its run: one record per key, set once
@@ -120,7 +120,7 @@ type Consumer struct {
 // line is the record as the primary keeps it: the consumer's words, then its usage.
 func (c Consumer) line() string {
 	w := []string{"kind=" + c.Kind, "card=" + c.Card, "attempt=" + itoa(c.Attempt), "take=" + itoa(c.Take), "gen=" + itoa(c.Gen),
-		"who=" + orDash(c.Who), "on_route=" + orDash(c.Route), "on_model=" + orDash(c.Model), "end=" + orDash(strings.ReplaceAll(c.End, " ", "-")), "at=" + orDash(c.At)}
+		"who=" + orDash(c.Who), "on_route=" + orDash(c.Route), "on_model=" + orDash(c.Model), "on_tier=" + orDash(c.Tier), "end=" + orDash(strings.ReplaceAll(c.End, " ", "-")), "at=" + orDash(c.At)}
 	return strings.Join(w, " ") + " " + c.Usage.String()
 }
 
@@ -153,6 +153,8 @@ func parseConsumer(key, line string) Consumer {
 			c.Route = undash(v)
 		case "on_model":
 			c.Model = undash(v)
+		case "on_tier":
+			c.Tier = undash(v)
 		case "end":
 			c.End = strings.ReplaceAll(undash(v), "-", " ")
 		case "at":
@@ -205,7 +207,7 @@ func workConsumer(s *Snapshot, c *Card, take int, end, rec string) Consumer {
 	u := cardcost.ParseUsage(rec)
 	key := c.ID + "#g" + itoa(c.Int("gen"))
 	return Consumer{Kind: "work", Card: c.ID, Attempt: c.Int("attempt"), Take: take, Gen: c.Int("gen"), Who: c.Row,
-		Route: c.F(FieldRoute), Model: cmp.Or(u.Model, c.F(FieldModel)), End: end, At: stamp(s.Now), Key: key, Usage: u}
+		Route: c.F(FieldRoute), Model: cmp.Or(u.Model, c.F(FieldModel)), Tier: c.F(FieldTier), End: end, At: stamp(s.Now), Key: key, Usage: u}
 }
 
 // readConsumer is a read card's run as it ends: run is the returned run's number, 0
@@ -217,7 +219,7 @@ func readConsumer(s *Snapshot, c *Card, run int, end, rec string) Consumer {
 		key = c.ID + "#r" + itoa(run)
 	}
 	return Consumer{Kind: "read", Card: c.ID, Attempt: c.Int("attempt"), Take: run, Who: c.F("reader"), Route: u.Route, Model: u.Model,
-		End: end, At: stamp(s.Now), Key: key, Usage: u}
+		Tier: c.F(FieldTier), End: end, At: stamp(s.Now), Key: key, Usage: u}
 }
 
 // CardCostView is a producer card's cost: each consumer that ended, the totals, and
@@ -273,8 +275,8 @@ func (v CardCostView) CostLines() []string {
 		if u.Actual != "" {
 			actualBy = u.ActualBy
 		}
-		out = append(out, fmt.Sprintf("COST kind=%s card=%s attempt=%d%s who=%s route=%s model=%s end=%s %s wait=%s run=%s predicted_usd=%s actual_usd=%s actual_by=%s cost=%s",
-			c.Kind, c.Card, c.Attempt, take, orDash(c.Who), orDash(cmp.Or(c.Route, u.Route)), orDash(c.Model), strings.ReplaceAll(c.End, " ", "-"),
+		out = append(out, fmt.Sprintf("COST kind=%s card=%s attempt=%d%s who=%s route=%s model=%s tier=%s end=%s %s wait=%s run=%s predicted_usd=%s actual_usd=%s actual_by=%s cost=%s",
+			c.Kind, c.Card, c.Attempt, take, orDash(c.Who), orDash(cmp.Or(c.Route, u.Route)), orDash(c.Model), orDash(c.Tier), strings.ReplaceAll(c.End, " ", "-"),
 			tokenWords(u.Tokens), seconds(u.Wait), seconds(u.Run), orDash(u.Predicted), orDash(u.Actual), orDash(actualBy), u.Present()))
 	}
 	t := v.Total
@@ -326,5 +328,5 @@ func MoneyText(usd string) string {
 	if !ok {
 		return "-"
 	}
-	return ntable.Cents(r)
+	return cardcost.Cents(r)
 }

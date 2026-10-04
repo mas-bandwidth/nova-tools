@@ -62,13 +62,13 @@ func TestDraftReTakesTheSubjectOfAnOpenNoteAndWritesTheID(t *testing.T) {
 	invoke(t, "", "draft", "--bus", checkout, "--as", "Ada", "--to", "Bo",
 		"--re", "a subject nobody wrote", "--subject", "s").
 		mustCode(t, 2).
-		mustContain(t, "stderr", `--re "a subject nobody wrote" is not an id on this bus, not a note that exists, and not the subject of a note on your open list`)
+		mustContain(t, "stderr", `--re "a subject nobody wrote" names no id and no path on this bus, and no note with that subject is on your open list`)
 
 	// The match is case-sensitive: two notes on a busy lane differ by a capital, and a tool
 	// that folded them would close the wrong one and say it had closed the right one.
 	invoke(t, "", "draft", "--bus", checkout, "--as", "Ada", "--to", "Bo",
 		"--re", "a question about the gate", "--subject", "s").
-		mustCode(t, 2).mustContain(t, "stderr", "not the subject of a note on your open list")
+		mustCode(t, 2).mustContain(t, "stderr", "no note with that subject is on your open list")
 }
 
 // The same thing at send, where a draft written by hand actually arrives. The Re line names
@@ -203,7 +203,7 @@ func TestAReSubjectOnALaneWithNoOpenListIsTheRefusalItAlwaysWas(t *testing.T) {
 		"send", "--bus", checkout, "--stdin",
 		"--remote", "origin", "--branch", "main", "--attempts", "3", "--no-push").
 		mustCode(t, 1).
-		mustContain(t, "stderr", "not the subject of a note on your open list")
+		mustContain(t, "stderr", "no note with that subject is on your open list")
 }
 
 // readFile is one file out of a checkout, for a test that asserts on the BYTES a send left

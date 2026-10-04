@@ -19,7 +19,7 @@ type Shape struct {
 
 // ShapeOf is a snapshot's shape.
 func ShapeOf(s *Snapshot) Shape {
-	sh := Shape{Readers: append([]string(nil), s.Readers.Rows()...), Members: append([]string(nil), s.Fleet.Rows()...), Status: map[string]string{}}
+	sh := Shape{Readers: append([]string(nil), s.Readers.Rows()...), Members: s.Members(), Status: map[string]string{}}
 	for _, r := range append(append([]string(nil), s.Work.Rows()...), s.Merge.Rows()...) {
 		if !contains(sh.Streams, r) {
 			sh.Streams = append(sh.Streams, r)

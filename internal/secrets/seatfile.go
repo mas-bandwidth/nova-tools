@@ -152,7 +152,8 @@ func storeShape(dir string) error {
 	if fi, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		lacks = append(lacks, "no .git directory")
 	} else if !fi.IsDir() {
-		lacks = append(lacks, "a .git that is a file (a worktree or submodule), where a directory working copy is wanted")
+		lacks = append(lacks, gitIsAFile)
+		remedy = gitFileRemedy(dir)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sops.yaml")); err != nil {
 		lacks = append(lacks, "no .sops.yaml")
@@ -161,6 +162,17 @@ func storeShape(dir string) error {
 		return nil
 	}
 	return fmt.Errorf("store %s has %s; %s", dir, strings.Join(lacks, " and "), remedy)
+}
+
+// gitIsAFile is what a store whose .git is a file has. A worktree's or a submodule's
+// .git is a file pointing at a repository elsewhere, so the HEAD and tracking ref read
+// here would not be the store's own.
+const gitIsAFile = "a .git that is a file (a worktree or submodule), where a directory working copy is wanted"
+
+// gitFileRemedy is the way on from a store whose .git is a file: the store's own
+// working copy, which git names, or a clone of the store.
+func gitFileRemedy(dir string) string {
+	return fmt.Sprintf("pass --store the store's own working copy (for a worktree, the directory holding the .git this prints: git -C %s rev-parse --path-format=absolute --git-common-dir) or a clone of the store; run: git clone <store url> <new dir>", dir)
 }
 
 // seatAbsent refuses a seat with no file in the store, naming the seats the store does

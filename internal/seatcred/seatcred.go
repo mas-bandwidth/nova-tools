@@ -151,23 +151,13 @@ func Process() *Selection { return &process }
 
 func defaultResolver(seat string) (Cred, error) { return Resolve(seat, os.Getenv) }
 
-// Select makes seat this process's seat ("" is none) and forgets any earlier
-// resolution. Nothing is decrypted until Active is first asked.
-func Select(seat string) { process.Select(seat) }
-
 // Addr is this process's seat's Redis address; see Selection.Addr.
 func Addr() string { return process.Addr() }
-
-// Selected is the seat Select recorded, "" when none.
-func Selected() string { return process.Selected() }
 
 // FromArgs selects this process's seat from args; see Selection.FromArgs.
 func FromArgs(args []string, getenv func(string) string) ([]string, error) {
 	return process.FromArgs(args, getenv)
 }
-
-// Anonymous returns an independent Selection for tests running in parallel with every other.
-func Anonymous() *Selection { return new(Selection) }
 
 func (s *Selection) withLookup(getenv func(string) string) *Selection {
 	s.mu.Lock()

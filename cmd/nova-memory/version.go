@@ -32,8 +32,7 @@ var version string
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	verbflag.HelpIfAsked(args, "version")
 	if len(args) > 0 {
-		fmt.Fprintf(stderr, "nova-memory version: takes no flags and no arguments, got %d; run: nova-memory version -h\n", len(args))
-		return 2
+		return refuseWith(stderr, " version", fmt.Sprintf("takes no flags and no arguments, got %d", len(args)), "nova-memory version -h")
 	}
 	fmt.Fprintln(stdout, buildinfo.Line("nova-memory", version))
 	return 0

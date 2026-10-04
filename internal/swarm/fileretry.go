@@ -56,8 +56,11 @@ const steadyPoll = 5 * time.Millisecond
 // held the entire time. So every caller that has a bound of its own hands it down, and the
 // wait here ends at min(its own window, the caller's remaining budget). A caller with no
 // bound passes the zero time and gets the window, as before.
-func steadyDeadline(budget time.Time) time.Time {
-	own := time.Now().Add(SteadyWindow)
+// The steady waits take their time from a steadyClock: the wall clock in the binary, and a
+// clock a test steps, so a wait out to a deadline costs the test no time. The deadline is
+// computed from the now handed in.
+func steadyDeadline(now, budget time.Time) time.Time {
+	own := now.Add(SteadyWindow)
 	if budget.IsZero() || own.Before(budget) {
 		return own
 	}
@@ -84,36 +87,47 @@ func steadyTransient(err error) bool {
 // It reads through readRegular (regular.go), so a path that is a SYMLINK or a FIFO is an
 // answer too -- refused at once, never followed and never waited on. That is every
 // dispatcher read of a worker-writable record: this function, and ReadJSON through it.
-func readFileSteady(path string) ([]byte, error) { return readFileSteadyBy(path, time.Time{}) }
+func readFileSteady(path string) ([]byte, error) {
+	return readFileSteadyBy(wallClock, path, time.Time{})
+}
+
+// steadyClock is what a steady wait reads the time from and spends it on.
+type steadyClock struct {
+	now   func() time.Time
+	sleep func(time.Duration)
+}
+
+// wallClock is the real one, the only one outside a test.
+var wallClock = steadyClock{now: time.Now, sleep: time.Sleep}
 
 // readFileSteadyBy is readFileSteady under a caller's deadline: the collision wait gets the
 // smaller of this package's window and what the caller has left.
-func readFileSteadyBy(path string, budget time.Time) ([]byte, error) {
-	deadline := steadyDeadline(budget)
+func readFileSteadyBy(c steadyClock, path string, budget time.Time) ([]byte, error) {
+	deadline := steadyDeadline(c.now(), budget)
 	for {
 		raw, err := readRegular(path)
-		if err == nil || !steadyTransient(err) || !time.Now().Before(deadline) {
+		if err == nil || !steadyTransient(err) || !c.now().Before(deadline) {
 			return raw, err
 		}
-		time.Sleep(steadyPoll)
+		c.sleep(steadyPoll)
 	}
 }
 
 // renameSteady renames, waiting out a reader that has the destination open. The caller's
 // error is the LAST one, so a path that is genuinely wrong still reports what is wrong
 // with it.
-func renameSteady(from, to string) error { return renameSteadyBy(from, to, time.Time{}) }
+func renameSteady(from, to string) error { return renameSteadyBy(wallClock, from, to, time.Time{}) }
 
 // renameSteadyBy is renameSteady under a caller's deadline, on the same terms as
 // readFileSteadyBy.
-func renameSteadyBy(from, to string, budget time.Time) error {
-	deadline := steadyDeadline(budget)
+func renameSteadyBy(c steadyClock, from, to string, budget time.Time) error {
+	deadline := steadyDeadline(c.now(), budget)
 	for {
 		err := os.Rename(from, to)
-		if err == nil || !steadyTransient(err) || !time.Now().Before(deadline) {
+		if err == nil || !steadyTransient(err) || !c.now().Before(deadline) {
 			return err
 		}
-		time.Sleep(steadyPoll)
+		c.sleep(steadyPoll)
 	}
 }
 

@@ -54,9 +54,7 @@ var realSteps = []string{
 	`nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --head "$(git -C work rev-parse HEAD)" --report done`,
 	"nova-sprint tick",
 	"nova-sprint read --as reader-a --begin --epoch 0",
-	"nova-sprint read --as reader-b --begin --epoch 0",
 	"nova-sprint read --as reader-a --ok --epoch 0",
-	"nova-sprint read --as reader-b --ok --epoch 0",
 	"nova-sprint tick",
 	"nova-sprint land --stream s1 --repo-dir work --base main",
 	"nova-sprint tick",
@@ -78,9 +76,7 @@ var twinSteps = []string{
 	"nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done",
 	"nova-sprint tick",
 	"nova-sprint read --as reader-a --begin --epoch 0",
-	"nova-sprint read --as reader-b --begin --epoch 0",
 	"nova-sprint read --as reader-a --ok --epoch 0",
-	"nova-sprint read --as reader-b --ok --epoch 0",
 	"nova-sprint tick",
 	"nova-sprint merge --stream s1 --batch 1",
 	"nova-sprint tick",
@@ -249,8 +245,9 @@ func writeAtomic(path string, doc []byte) error {
 
 // beatTwin says every member of the twin's fleet is alive: the machines of a
 // twin are this one process's, so each verb begins with a beat of each member
-// the fleet table names, at load 0 (fleet down still holds a member down),
-// and of each reader the readers table names (reader away still holds one away).
+// the fleet table names (a friend's row, sprint.FriendRow, is none), at load 0
+// (fleet down still holds a member down), and of each reader the readers table
+// names (reader away still holds one away).
 // A twin with no fleet table yet (before init) has none to beat.
 func (a *app) beatTwin(ctx context.Context, st *store.Store) error {
 	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
@@ -259,6 +256,9 @@ func (a *app) beatTwin(ctx context.Context, st *store.Store) error {
 	}
 	zero := 0.0
 	for _, r := range shapes[0].Rows {
+		if sprint.IsFriendRow(r.Key) {
+			continue // a friend's row is no machine: she beats as a friend (friend beat)
+		}
 		if _, err := st.Beat(ctx, r.Key, &zero, a.meter); err != nil {
 			return err
 		}

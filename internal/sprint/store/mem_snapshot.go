@@ -49,9 +49,10 @@ type tableSnapshot struct {
 }
 
 type epochSnapshot struct {
-	Rows  []string                     `json:"rows,omitempty"`
-	Texts map[string]map[string]string `json:"texts,omitempty"`
-	Props map[string]string            `json:"props,omitempty"`
+	Rows   []string                     `json:"rows,omitempty"`
+	Hidden map[string]bool              `json:"hidden,omitempty"`
+	Texts  map[string]map[string]string `json:"texts,omitempty"`
+	Props  map[string]string            `json:"props,omitempty"`
 }
 
 type memberSnapshot struct {
@@ -110,7 +111,7 @@ type lineSnapshot struct {
 func snapTable(t *memTable) *tableSnapshot {
 	s := &tableSnapshot{Def: t.def, Rev: t.rev, Epochs: map[uint64]*epochSnapshot{}, Wrote: map[uint64]bool{}, Members: map[string]*memberSnapshot{}, Ops: map[string]opSnapshot{}}
 	for e, ep := range t.epochs {
-		s.Epochs[e] = &epochSnapshot{Rows: ep.rows, Texts: ep.texts, Props: ep.props}
+		s.Epochs[e] = &epochSnapshot{Rows: ep.rows, Hidden: ep.hidden, Texts: ep.texts, Props: ep.props}
 	}
 	maps.Copy(s.Wrote, t.wrote)
 	for id, m := range t.members {
@@ -128,7 +129,7 @@ func snapTable(t *memTable) *tableSnapshot {
 func (s *tableSnapshot) table() *memTable {
 	t := &memTable{def: s.Def, rev: s.Rev, epochs: map[uint64]*memEpoch{}, wrote: map[uint64]bool{}, members: map[string]*memMember{}, ops: map[string]memOp{}}
 	for e, ep := range s.Epochs {
-		me := &memEpoch{rows: ep.Rows, texts: ep.Texts, props: ep.Props}
+		me := &memEpoch{rows: ep.Rows, hidden: ep.Hidden, texts: ep.Texts, props: ep.Props}
 		if me.texts == nil {
 			me.texts = map[string]map[string]string{}
 		}

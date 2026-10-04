@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 )
 
 // DefaultStageTimeout is the hard timeout for card staging (120 s).
@@ -320,6 +322,11 @@ type StageOptions struct {
 	// what the card's header lines say (docs/SPEC-CARD-CONTRACT.md layer 2).
 	Base   *CardBase
 	Branch string
+	// Rework, when set, is a rework's (an attempt after the first): the checkout is staged
+	// at the tip of the base branch on origin, with the work of the last earlier attempt that
+	// pushed carried on top where it applies cleanly (restageAtTip). A first attempt leaves it
+	// nil and is staged as before.
+	Rework *Rework
 
 	// git, when set, builds every staging git call in place of stageGit: a test's seam for
 	// a step git itself would not fail.
@@ -344,6 +351,17 @@ type StageResult struct {
 	// Clone, Fetch and Checkout sum their Git command times; Clone includes
 	// the initial checkout, and Fetch excludes probes and the retry wait.
 	Clone, Fetch, Checkout time.Duration
+	// Carry is a rework's staging at the tip (restageAtTip); nil for a first attempt and for
+	// a rework whose base is a sha or a tag, which never moves.
+	Carry *cardcontract.Carry
+}
+
+// Rework is what a rework's stage carries: the last pushed head of any earlier attempt and
+// the attempt it is the head of (the frame's PrevHead and PrevFrom); Prev is "" when no
+// earlier attempt pushed, and the checkout is the bare tip.
+type Rework struct {
+	Prev string
+	From int
 }
 
 // StageCard stages the repository for a card into TargetDir using the bench mirror.
@@ -531,8 +549,27 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	}
 	head := strings.TrimSpace(string(headOut))
 
-	_ = stageCmd(ctx, "-C", opts.TargetDir, "config", "user.name", "Rowan").Run()
-	_ = stageCmd(ctx, "-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").Run()
+	// A checkout whose identity could not be set would take the model's commits under no
+	// name, found only when it commits: the stage fails here instead, saying which.
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.name", "Rowan").CombinedOutput(); err != nil {
+		return fail("config user.name", out, err)
+	}
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").CombinedOutput(); err != nil {
+		return fail("config user.email", out, err)
+	}
+
+	var carry *cardcontract.Carry
+	if opts.Rework != nil {
+		var what string
+		var out []byte
+		var err error
+		if carry, what, out, err = restageAtTip(ctx, stageCmd, opts.TargetDir, branch, cb.Ref, *opts.Rework, &fetchTime, &checkoutTime); err != nil {
+			return fail(what, out, err)
+		}
+		if carry != nil {
+			head = carry.Staged
+		}
+	}
 
 	return StageResult{
 		BaseRepo: baseRepo,
@@ -546,6 +583,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		Clone:    cloneTime,
 		Fetch:    fetchTime,
 		Checkout: checkoutTime,
+		Carry:    carry,
 	}, nil
 }
 

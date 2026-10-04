@@ -42,7 +42,8 @@ const (
 	NMemberUp       = "fleet member up"
 	NMemberDown     = "fleet member down"
 	NUnknownMachine = "an unknown machine is beating"
-	NStagingRefused = "a member refused a card at staging" // dealt to another member
+	NStagingRefused = "a member refused a card at staging"    // dealt to another member
+	NRestWithdrawn  = "a card withdrawn from a resting route" // dealt again on one that serves
 
 	// The tick's own failure, noted once for each distinct error text it
 	// keeps failing with, and its recovery, noted once with the count of
@@ -67,7 +68,7 @@ const (
 	NSeat      = "seat"
 	NSeatTaken = "seat TAKEN"
 
-	NReadyToAccept   = "ready to accept"    // two different readers said ok at its head
+	NReadyToAccept   = "ready to accept"    // the readers it needs said ok at its head (ReadsNeeded)
 	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
 	NWorkFailed      = "work came back failed"
 	NReadBroken      = "a reader found it broken"
@@ -111,6 +112,7 @@ var Decisions = map[string][]string{
 	NStreamStale:     {"look", "wait"},
 	NSprintDone:      {"clear", "add"},
 	NSentinelReached: {"release", "do more before going on", "drop"},
+	NScoredLow:       {"add a repair card", "ack"}, // landed: a rework is a new card; ack accepts the landing
 	NStalled:         {"look at the card", "wait"}, // each stall names its own
 }
 

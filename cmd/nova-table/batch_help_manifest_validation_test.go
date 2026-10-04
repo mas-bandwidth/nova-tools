@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -50,4 +51,49 @@ func TestIdemHelpDisclaimsDeduplication(t *testing.T) {
 		assert.Contains(t, out, "--idem")
 		assert.Contains(t, out, "does not deduplicate")
 	}
+}
+
+// TestARefusalAskedForAsJSONIsJSON: a verb that takes --json answers its
+// refusal as the one JSON object every nova tool's result is, on stdout, with
+// the exit the refusal carries; a verb asked nothing of the kind keeps its
+// line on stderr.
+func TestARefusalAskedForAsJSONIsJSON(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		exit int
+		why  string
+		run  string
+	}{
+		{"batch, no manifest", []string{"batch", "--json"}, 2, "wants one manifest", "nova-table help batch"},
+		{"batch, unknown flag", []string{"batch", "--json", "--bogus", "m.json"}, 2, "unknown flag --bogus", "nova-table help batch"},
+		{"batch, a manifest that breaks a rule", []string{"batch", "--json", `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"2","operation_id":"x","members":[]}`}, 1, "", "nova-table batch -h"},
+		{"member read, no ids", []string{"member", "read", "demo", "--json"}, 2, "wants a table and member IDs", "nova-table help member read"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			code, out, errout := runTable(tc.args...)
+			assert.EqualValues(t, tc.exit, code)
+			assert.Empty(t, errout)
+			var got struct {
+				Result struct {
+					Verb, Status, Remedy string
+					Exit                 int
+					Why                  []string
+				}
+			}
+			require.NoError(t, json.Unmarshal([]byte(out), &got), "%q", out)
+			assert.Equal(t, "refused", got.Result.Status)
+			assert.Equal(t, tc.exit, got.Result.Exit)
+			assert.Equal(t, tc.run, got.Result.Remedy)
+			require.Len(t, got.Result.Why, 1)
+			assert.Contains(t, got.Result.Why[0], tc.why)
+			assert.Equal(t, 1, strings.Count(out, "\n"), "one object, one line: %q", out)
+		})
+	}
+	code, out, errout := runTable("batch")
+	assert.EqualValues(t, 2, code)
+	assert.Empty(t, out)
+	assert.True(t, strings.HasPrefix(errout, "BATCH REFUSED: wants one manifest"), "%q", errout)
 }

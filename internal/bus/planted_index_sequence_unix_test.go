@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
-	"time"
 )
 
 // Standing probe for issue #233, INDEX half: a symlink and a FIFO planted at a lane's
@@ -36,25 +35,9 @@ func TestFriendSequencePlantedIndexIsRefused(t *testing.T) {
 	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
 		t.Skipf("this platform will not make a FIFO: %v", err)
 	}
-	done := make(chan error, 1)
-	go func() {
-		_, err := ReadLaneIndex(fifoRoot, "from-x")
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		require.Error(t, err, "a FIFO read as a lane INDEX")
-		require.Contains(t, err.Error(), "fifo", "the fifo refusal does not name the kind: %v", err)
-	case <-time.After(plantedIndexWait()):
-		require.FailNow(t, "STILL BLOCKED after waiting on a FIFO at INDEX: the lane reader is wedged")
-	}
-}
-
-func plantedIndexWait() time.Duration {
-	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
-	}
-	return 30 * time.Second
+	// Called directly, as in fifo_test.go: a read that opened the pipe would block, and the
+	// test binary's -timeout names it.
+	_, err = ReadLaneIndex(fifoRoot, "from-x")
+	require.Error(t, err, "a FIFO read as a lane INDEX")
+	require.Contains(t, err.Error(), "fifo", "the fifo refusal does not name the kind: %v", err)
 }

@@ -120,10 +120,10 @@ func TestGitIndexParser(t *testing.T) {
 	run("add", "tracked.txt")
 	run("commit", "-m", "initial")
 
-	tracked, err := ReadGitIndexTrackedFiles(tmp)
-	require.NoError(t, err, "ReadGitIndexTrackedFiles failed: %v", err)
-	assert.True(t, tracked["tracked.txt"], "expected tracked.txt to be in index")
-	assert.False(t, tracked["untracked.txt"], "untracked.txt should not be in index")
+	idx, err := ReadGitIndex(tmp)
+	require.NoError(t, err, "ReadGitIndex failed: %v", err)
+	assert.Contains(t, idx.Entries, "tracked.txt", "expected tracked.txt to be in index")
+	assert.NotContains(t, idx.Entries, "untracked.txt", "untracked.txt should not be in index")
 
 	// 2. Index Version 4 with prefix compression
 	f2 := filepath.Join(tmp, "tracked2.txt")
@@ -140,11 +140,12 @@ func TestGitIndexParser(t *testing.T) {
 		_, ok := idxData.Entries["tracked2.txt"]
 		assert.True(t, ok, "tracked2.txt missing from v4 index")
 	}
-	// Verify blob SHA1 match
-	err = VerifyFileMatchesIndex(tmp, f1, idxData)
-	assert.NoError(t, err, "VerifyFileMatchesIndex f1 failed: %v", err)
-	err = VerifyFileMatchesIndex(tmp, f2, idxData)
-	assert.NoError(t, err, "VerifyFileMatchesIndex f2 failed: %v", err)
+	// The index's blob ids are the working files' own.
+	for _, f := range []string{f1, f2} {
+		data, err := os.ReadFile(f)
+		require.NoError(t, err)
+		assert.Equal(t, GitBlobSHA1(data), idxData.Entries[filepath.Base(f)].BlobSHA1, "%s: index blob differs from the file", f)
+	}
 }
 
 func TestUnquoteYAMLPreservesTrailingQuotes(t *testing.T) {

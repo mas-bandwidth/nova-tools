@@ -37,7 +37,7 @@ func TestOneRefusalNamesEveryMissingFlag(t *testing.T) {
 		{"seat inject", func() string { _, err := RunSeatInject(SeatInjectOptions{}); return errText(err) }, []string{"--store", "--as", "--from", "--key", "--sops", "--only"}},
 		{"keygen", func() string { _, err := RunKeygen("", "", "", ""); return errText(err) }, []string{"--as", "--key", "--age-keygen"}},
 		{"gate", func() string { line, _ := RunGate(GateInput{}); return line }, []string{"--store", "--base", "--head", "run: nova-secrets gate -h"}},
-		{"exec", func() string { _, err := RunExec("", "", "", "", "", nil, nil); return errText(err) }, []string{"--store", "--as", "--key", "--sops", "--only", "the command after '--'", "--as worker"}},
+		{"exec", func() string { _, err := RunExec("", "", "", "", "", nil, nil); return errText(err) }, []string{"--store", "--as", "--key", "--sops", "--only", "no command after '--'", "--as worker"}},
 	} {
 		c := c
 		t.Run(c.verb, func(t *testing.T) {
@@ -88,6 +88,44 @@ func TestOneRefusalNamesEveryWayADirectoryIsNotAStore(t *testing.T) {
 			assert.Contains(t, got, "no .git directory")
 			assert.Contains(t, got, "no .sops.yaml")
 			assert.Contains(t, got, "run: git clone <store url> "+store)
+			entries, err := os.ReadDir(dir)
+			require.NoError(t, err)
+			assert.Len(t, entries, 1, "a refusal writes nothing")
+		})
+	}
+}
+
+// TestAWorktreeStoreIsOneSentenceOnEveryVerb: a --store whose .git is a file (a git
+// worktree or a submodule) is refused by every verb that reads a store in the same words,
+// with the way to the store's own working copy, and nothing is written.
+func TestAWorktreeStoreIsOneSentenceOnEveryVerb(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		verb string
+		run  func(store, dir string) error
+	}{
+		{"names", func(s, _ string) error { _, err := RunNames(s, "a", 20); return err }},
+		{"check", func(s, d string) error {
+			_, _, _, _, _, err := RunCheck(s, "a", filepath.Join(d, "k"), filepath.Join(d, "sops"), 20)
+			return err
+		}},
+		{"exec", func(s, d string) error {
+			_, err := OpenSeatFile(s, "a", filepath.Join(d, "k"), filepath.Join(d, "sops"))
+			return err
+		}},
+		{"the working copy check", func(s, _ string) error { _, err := CheckGitWorkingCopy(s); return err }},
+	} {
+		t.Run(c.verb, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			store := filepath.Join(dir, "store")
+			require.NoError(t, os.Mkdir(store, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(store, ".git"), []byte("gitdir: /elsewhere/.git/worktrees/store\n"), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(store, ".sops.yaml"), []byte("creation_rules:\n"), 0o644))
+			got := errText(c.run(store, dir))
+			assert.Contains(t, got, "store "+store+" has a .git that is a file (a worktree or submodule), where a directory working copy is wanted")
+			assert.Contains(t, got, "git -C "+store+" rev-parse --path-format=absolute --git-common-dir")
+			assert.NotContains(t, got, "git clone <store url> "+store, "a clone into the worktree's own directory cannot run")
 			entries, err := os.ReadDir(dir)
 			require.NoError(t, err)
 			assert.Len(t, entries, 1, "a refusal writes nothing")
