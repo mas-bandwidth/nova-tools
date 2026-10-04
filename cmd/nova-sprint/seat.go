@@ -448,18 +448,25 @@ type pushTarget struct {
 // dirOf is the directory the group is written to with the seat held by holder,
 // "" when there is none to write it to now.
 func (p *pushTarget) dirOf(holder string, g sprint.Group) string {
+	dir, _ := p.target(holder, g)
+	return dir
+}
+
+// target is dirOf with whose inbox the directory is: the name the push's bus
+// message goes to, "" for a --push <dir> loop, which follows no seat and sends none.
+func (p *pushTarget) target(holder string, g sprint.Group) (dir, who string) {
 	if p.fixed != "" {
-		return p.fixed
+		return p.fixed, ""
 	}
 	if g.To != "" && g.To != holder {
 		if dir, _, ok := p.a.seatInbox(g.To); ok {
-			return dir
+			return dir, g.To
 		}
 	}
 	if dir, _, ok := p.a.seatInbox(holder); ok {
-		return dir
+		return dir, holder
 	}
-	return ""
+	return "", ""
 }
 
 // keys is the directory's keys, made and read the first time it is named.

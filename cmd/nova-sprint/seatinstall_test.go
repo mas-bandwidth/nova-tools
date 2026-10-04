@@ -19,7 +19,7 @@ import (
 func TestSeatInstallVerbWritesLoadsAndRemovesTheUnit(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	env := map[string]string{"NOVA_SPRINT_REDIS": "127.0.0.1:6381"}
+	env := map[string]string{"NOVA_SPRINT_REDIS": "127.0.0.1:6381", "NOVA_BUS_REDIS": "127.0.0.1:6390"}
 	a := newApp(func(k string) string { return env[k] })
 	a.goos = "darwin"
 	a.home = func() (string, error) { return home, nil }
@@ -38,6 +38,7 @@ func TestSeatInstallVerbWritesLoadsAndRemovesTheUnit(t *testing.T) {
 	assert.Contains(t, out, "SEAT INSTALL DRY-RUN unit="+unit)
 	assert.Contains(t, out, "<string>--push</string>\n\t\t<string>seat</string>\n\t\t<string>--redis</string>\n\t\t<string>127.0.0.1:6381</string>")
 	assert.Contains(t, out, filepath.Join(home, "Library", "Logs", "nova-sprint-seat-push.log"))
+	assert.Contains(t, out, "<key>NOVA_BUS_REDIS</key>\n\t\t<string>127.0.0.1:6390</string>", "the loop pushes over the bus the verb was given")
 	assert.NoFileExists(t, unit, "a dry run writes nothing")
 	assert.Empty(t, calls, "a dry run loads nothing")
 
@@ -69,6 +70,7 @@ func TestSeatInstallVerbWritesLoadsAndRemovesTheUnit(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(dir, sprint.SeatService))
 	require.NoError(t, err)
 	assert.Contains(t, string(b), `Environment="NOVA_SPRINT_SERVER=127.0.0.1:7480"`)
+	assert.Contains(t, string(b), `Environment="NOVA_BUS_REDIS=127.0.0.1:6390"`)
 	assert.NotContains(t, string(b), "--redis", out)
 
 	// the twin has no machine to wait on: refused, nothing written or loaded
@@ -79,4 +81,18 @@ func TestSeatInstallVerbWritesLoadsAndRemovesTheUnit(t *testing.T) {
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "nova-sprint seat install REFUSED: ")
 	assert.Equal(t, before, len(calls))
+
+	// no bus to push over: refused, naming --bus, nothing written or loaded; --bus
+	// names it over the variable
+	env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6381"
+	delete(env, "NOVA_BUS_REDIS")
+	code, _, errs = do("seat", "install", "--dir", dir)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "--bus <addr> (or NOVA_BUS_REDIS)", errs)
+	assert.Equal(t, before, len(calls))
+	code, _, errs = do("seat", "install", "--dir", dir, "--bus", "127.0.0.1:6391")
+	require.Equal(t, 0, code, errs)
+	b, err = os.ReadFile(filepath.Join(dir, sprint.SeatService))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `Environment="NOVA_BUS_REDIS=127.0.0.1:6391"`)
 }

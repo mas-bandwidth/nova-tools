@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -445,7 +447,7 @@ func (a *app) push(ctx context.Context, src inboxSource, p *pushTarget, holder s
 	if !ok {
 		return 0
 	}
-	dir := p.dirOf(holder, whole)
+	dir, who := p.target(holder, whole)
 	if dir == "" {
 		return 0 // the inbox it goes to went away since the look: the next look finds it
 	}
@@ -456,6 +458,15 @@ func (a *app) push(ctx context.Context, src inboxSource, p *pushTarget, holder s
 	}
 	now := a.now()
 	text := groupText(whole, now, true) + "clock: " + now.UTC().Format(time.RFC3339) + "\n"
+	// the notes written now, and the first one's file: one bus message names them,
+	// sent even when a later write fails, since what was written is pushed
+	var fresh []string
+	first := ""
+	defer func() {
+		if len(fresh) > 0 && who != "" {
+			a.pushBus(ctx, sprint.SeatPushOf(holder, who, whole, fresh, first, text), whole.ID, asJSON, stdout, stderr)
+		}
+	}()
 	for _, id := range noteKeys(whole) {
 		if seen[id] {
 			continue
@@ -466,6 +477,10 @@ func (a *app) push(ctx context.Context, src inboxSource, p *pushTarget, holder s
 		if err != nil {
 			fmt.Fprintf(stderr, "%s inbox --push: %s\n", prog, oneline.Escape(err.Error()))
 			return 1
+		}
+		if written {
+			fresh = append(fresh, id)
+			first = cmp.Or(first, path)
 		}
 		switch {
 		case asJSON:
@@ -478,6 +493,28 @@ func (a *app) push(ctx context.Context, src inboxSource, p *pushTarget, holder s
 		}
 	}
 	return 0
+}
+
+// pushBus sends a pushed group over nova-bus to whose inbox its file went
+// (docs/SPEC-SPRINT.md, "Handing over the seat": the seat is woken by the bus,
+// not only by a file it would have to watch), one message a group. The file is
+// the record and the bus message a wake-up, as friend sync's is (wakeFriend): a
+// send that fails is said on its line, and the loop goes on; the file stands.
+func (a *app) pushBus(ctx context.Context, m sprint.SeatPush, group string, asJSON bool, stdout, stderr io.Writer) {
+	err := a.bus(ctx, bus.Message{From: m.From, To: []string{m.To}, Subject: m.Subject, Body: m.Body})
+	switch {
+	case asJSON:
+		out := map[string]any{"bus": m.To, "group": group, "sent": err == nil, "at": a.now()}
+		if err != nil {
+			out["error"] = err.Error()
+		}
+		b, _ := json.Marshal(out) // ignored: strings, a bool and a time always encode
+		fmt.Fprintln(stdout, string(b))
+	case err == nil:
+		fmt.Fprintf(stdout, "INBOX OK bus=%s group=%s\n", oneline.Field(m.To), oneline.Field(group))
+	default:
+		fmt.Fprintf(stderr, "%s inbox --push: NOTE the bus message of %s to %s was not sent (%s); its file stands\n", prog, oneline.Field(group), oneline.Field(m.To), oneline.Escape(err.Error()))
+	}
 }
 
 // pushedKeys is the keys of the notes the directory holds: its .md files' stems.
