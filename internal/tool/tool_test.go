@@ -2,6 +2,7 @@ package tool
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -1135,6 +1136,84 @@ func TestATopicIsNoneOfTheVerbs(t *testing.T) {
 			d := topicsTool()
 			d.Topics = append(d.Topics, Topic{Name: tc.topic, Text: "x"})
 			assert.Equal(t, []string{tc.want}, d.Problems())
+		})
+	}
+}
+
+// walkTool is a verb that prints two rows as it goes and returns the closing line.
+func walkTool(run func(c *Call) *Out) *Tool {
+	return &Tool{
+		Name: "nova-walk", What: "walks", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{{Name: "walk", Usage: "walk", Effect: Inspection, Run: run}},
+	}
+}
+
+// TestEmitPrintsItemsThenTheClosingLine pins Call.Emit (skeleton contract 2.4,
+// STANDARD §2): two items print as they go, text as item lines and --json as
+// one {"item":{...}} line each, and the Out the verb returns is the closing line.
+func TestEmitPrintsItemsThenTheClosingLine(t *testing.T) {
+	t.Parallel()
+	run := func(c *Call) *Out {
+		if c.Ctx == nil || c.Ctx.Err() != nil {
+			return Fail("no live context")
+		}
+		c.Emit("row", "i", 1)
+		c.Emit("row", "i", 2)
+		return Done()
+	}
+	text := testkit.Main(walkTool(run).Run).Run("walk")
+	assert.Equal(t, 0, text.Code, text.Stderr)
+	assert.Equal(t, "WALK ROW i=1\nWALK ROW i=2\nWALK OK\n", text.Stdout)
+	assert.Empty(t, text.Stderr)
+	js := testkit.Main(walkTool(run).Run).Run("walk", "--json")
+	assert.Equal(t, 0, js.Code, js.Stderr)
+	assert.Equal(t, "{\"item\":{\"kind\":\"row\",\"fields\":{\"i\":1}}}\n"+
+		"{\"item\":{\"kind\":\"row\",\"fields\":{\"i\":2}}}\n"+
+		"{\"result\":{\"verb\":\"walk\",\"status\":\"ok\",\"exit\":0},\"facts\":{}}\n", js.Stdout)
+	assert.Empty(t, js.Stderr)
+}
+
+// TestACancelledContextEndsTheVerb pins RunContext (skeleton contract 2.4): a
+// cancelled context ends the verb before it runs, and the closing line says so,
+// in text and in JSON.
+func TestACancelledContextEndsTheVerb(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		during bool
+		json   bool
+		stdout string
+		stderr string
+	}{
+		{"text", false, false, "", "WALK FAILED: context canceled\n"},
+		{"json", false, true, "{\"result\":{\"verb\":\"walk\",\"status\":\"failed\",\"exit\":1,\"why\":[\"context canceled\"]},\"facts\":{}}\n", ""},
+		{"cancelled while the verb runs", true, false, "", "WALK FAILED: context canceled\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if !tc.during {
+				cancel()
+			}
+			ran := false
+			tool := walkTool(func(c *Call) *Out {
+				ran = true
+				if tc.during {
+					cancel()
+				}
+				return Done()
+			})
+			args := []string{"walk"}
+			if tc.json {
+				args = append(args, "--json")
+			}
+			var out, errb bytes.Buffer
+			code := tool.RunContext(ctx, args, strings.NewReader(""), &out, &errb)
+			assert.Equal(t, 1, code, "stdout %q stderr %q", out.String(), errb.String())
+			assert.Equal(t, tc.during, ran)
+			assert.Equal(t, tc.stdout, out.String())
+			assert.Equal(t, tc.stderr, errb.String())
 		})
 	}
 }

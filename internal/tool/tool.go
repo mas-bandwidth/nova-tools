@@ -17,17 +17,21 @@
 // runs and answers `-h`, and the banner, the usage block and the unknown-verb
 // list do not show it, a probe step verb a user never types. A verb that counts
 // what it read names the fact (Verb.Looks), and an OK over that count at zero
-// is a FAILED unless --allow-empty accepts nothing as the answer. A command
-// holds only what its verbs do.
+// is a FAILED unless --allow-empty accepts nothing as the answer. A long-running
+// verb prints each item as it goes (Call.Emit); the Out it returns is the closing
+// line. Call.Ctx is cancelled when the run's context ends and on interrupt
+// (RunContext). A command holds only what its verbs do.
 package tool
 
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"regexp"
 	"slices"
 	"strconv"
@@ -146,7 +150,23 @@ func (t *Tool) Main() int { return t.Run(os.Args[1:], os.Stdin, os.Stdout, os.St
 // read or written (the CLI style's rule (b)); a tool that refuses help
 // (HelpRefused) still answers `help <verb>` by name, while `<verb> -h` is a
 // refusal at exit 2, since its exit 0 would read as CLEAR.
-func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return t.RunContext(context.Background(), args, stdin, stdout, stderr)
+}
+
+// RunContext is Run on ctx. Call.Ctx is ctx, cancelled also on interrupt, so a
+// long-running verb can stop (skeleton contract 2.4, STANDARD §2). A context
+// that has already ended does not run the verb: the closing line names the
+// context's error. One cancelled while the verb runs replaces that closing line
+// the same way.
+func (t *Tool) RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+	return t.dispatch(ctx, args, stdin, stdout, stderr)
+}
+
+// dispatch is RunContext without the interrupt wrap: help's rewrite keeps ctx.
+func (t *Tool) dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	defer t.help(stdout, stderr, &code)
 	if len(args) == 0 {
 		given := "no verb given"
@@ -180,7 +200,7 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 					return 0
 				}
 			}
-			return t.Run(append(args[1:], "--help"), stdin, stdout, stderr)
+			return t.dispatch(ctx, append(args[1:], "--help"), stdin, stdout, stderr)
 		}
 		fmt.Fprint(stdout, t.Banner())
 		return 0
@@ -195,7 +215,7 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 		}
 	}
 	if match != nil {
-		return t.call(*match, args[len(strings.Fields(match.Name)):], stdin, stdout, stderr)
+		return t.call(ctx, *match, args[len(strings.Fields(match.Name)):], stdin, stdout, stderr)
 	}
 	asJSON := verbflag.BoolAsked(args, "json")
 	if members := t.group(args[0]); len(members) > 0 {
@@ -204,7 +224,7 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 	if t.Default != "" && (strings.HasPrefix(args[0], "-") || strings.ContainsRune(args[0], os.PathSeparator) || exists(args[0])) {
 		for _, v := range t.verbs() { // a flag, a path, or a file: the default verb's
 			if v.Name == t.Default {
-				return t.call(v, args, stdin, stdout, stderr)
+				return t.call(ctx, v, args, stdin, stdout, stderr)
 			}
 		}
 	}
@@ -526,9 +546,10 @@ func lines(s string) []string {
 }
 
 // call parses one verb's flags, runs it, caps its listing, and renders its Out.
-func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	f := v.flags()
-	c := &Call{Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{}}
+	c := &Call{Ctx: ctx, Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{},
+		token: strings.ToUpper(strings.Join(strings.Fields(v.Name), "-"))}
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
 		o := Refuse(oneline.Cap(verbflag.Explain(f.FlagSet, err), oneline.TailBytes))
 		o.Remedy = t.Name + " " + v.Name + " -h"
@@ -536,6 +557,7 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	}
 	f.Visit(func(fl *flag.Flag) { c.given[fl.Name] = true })
 	asJSON := !f.prints && c.Bool("json")
+	c.asJSON = asJSON
 	// One pass over every rule the verb declared, so one run names every
 	// problem: the required flags, the verb's own checks, --max, arguments.
 	for _, r := range f.required {
@@ -553,8 +575,15 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	if o := c.Refused(); o != nil {
 		return t.emit(&v, o, asJSON, stdout, stderr)
 	}
+	if err := c.Ctx.Err(); err != nil {
+		// A cancelled context ends the verb (skeleton contract 2.4): the closing
+		// line names the context's error, and a verb that has not started does not run.
+		return t.emit(&v, Fail(err.Error()), asJSON, stdout, stderr)
+	}
 	o := v.Run(c)
-	if r := c.Refused(); r != nil && (o == nil || o.Status != Refused) {
+	if err := c.Ctx.Err(); err != nil {
+		o = Fail(err.Error())
+	} else if r := c.Refused(); r != nil && (o == nil || o.Status != Refused) {
 		o = r // a problem the verb recorded is never dropped
 	}
 	if o == nil {
@@ -689,14 +718,20 @@ func (f *Flags) Op() {
 // gets no --json, and returns Exit(code) after writing to c.Stdout and c.Stderr.
 func (f *Flags) Prints() { f.prints = true }
 
-// Call is one invocation of a verb: its streams and its parsed flags.
+// Call is one invocation of a verb: its streams, its context and its parsed flags.
 type Call struct {
+	// Ctx is the run's context, cancelled when that context ends and on
+	// interrupt (skeleton contract 2.4). A verb that runs for a while selects
+	// on it; a context that has ended is the closing line, not the verb's Out.
+	Ctx            context.Context
 	Stdin          io.Reader
-	Stdout, Stderr io.Writer // written only by a verb that Prints
+	Stdout, Stderr io.Writer // written by a verb that Prints, and by Emit as each item goes
 	flags          *Flags
 	given          map[string]bool
 	problems       []string
 	dryRead        bool
+	token          string
+	asJSON         bool
 }
 
 // DryRun reports whether --dry-run was given (only a Verb with DryRun takes
@@ -706,6 +741,30 @@ type Call struct {
 func (c *Call) DryRun() bool {
 	c.dryRead = true
 	return c.given["dry-run"] && c.Bool("dry-run")
+}
+
+// Emit prints one item now, so a long-running verb shows its rows as they
+// happen (skeleton contract 2.4, STANDARD §2: one output structure, two
+// renderings). Text is one item line; --json is one {"item":{...}} line. The
+// Out the verb returns is the closing line, printed after these.
+func (c *Call) Emit(kind string, kv ...any) {
+	o := &Out{token: c.token}
+	o.Item(kind, kv...)
+	it := o.Items[0]
+	if c.asJSON {
+		raw, err := marshal(struct {
+			Item Item `json:"item"`
+		}{it})
+		if err != nil {
+			f := Fail("the result is no JSON, so it is not printed: " + err.Error())
+			f.token = c.token
+			f.Render(c.Stderr, false)
+			return
+		}
+		fmt.Fprintf(c.Stdout, "%s\n", raw)
+		return
+	}
+	fmt.Fprintln(c.Stdout, oneline.Field(c.token)+" "+oneline.Field(strings.ToUpper(it.Kind))+it.Fields.text())
 }
 
 // Get is a declared flag's value, for a flag.Value of the verb's own (a flag.Getter).
