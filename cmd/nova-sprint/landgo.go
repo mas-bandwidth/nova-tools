@@ -10,12 +10,12 @@ package main
 //
 // The tree gate is what every tip of the batch branch passes before the next head is
 // merged: the module builds and vets (`go build ./...`, `go vet ./...`), and when a
-// head changes a .md or a _test.go file, the packages that test the tree itself
-// (treeTests, where the clone has them) pass. The base's tip is gated once a batch before
-// any head is merged, so a base that is red refuses the batch and blames no card. A
-// head whose merged tree is red is taken off the batch branch and ends the batch as a
-// head that does not merge does, the gate's run and output its finding. A clone with no
-// go.mod has no module and no gate.
+// head changes a Go file, a document, or testdata (.go, .md, testdata/), the packages
+// that test the tree itself (treeTests, where the clone has them) pass. The base's tip
+// is gated once a batch before any head is merged, so a base that is red refuses the
+// batch and blames no card. A head whose merged tree is red is taken off the batch branch
+// and ends the batch as a head that does not merge does, the gate's run and output its
+// finding. A clone with no go.mod has no module and no gate.
 
 import (
 	"context"
@@ -99,9 +99,10 @@ func withEnv(env []string, set ...string) []string {
 	return out
 }
 
-// treeTested says a change to p is one the tree tests read: a document or a test file.
+// treeTested says a change to p is one the tree tests read: a Go file, a document, or
+// under testdata.
 func treeTested(p string) bool {
-	return strings.HasSuffix(p, ".md") || strings.HasSuffix(p, "_test.go")
+	return strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".md") || strings.Contains(p, "testdata/")
 }
 
 // gateRuns is the tree gate's runs, in order: the build and the vet of the module, then
