@@ -1398,15 +1398,29 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		chosen = kept
 	} else {
 		// Without Cascade a card another waiting primary still needs is
-		// refused for that card, naming the dependants, and nothing moves.
+		// refused for that card, naming the dependants, and nothing
+		// moves. The refusal holds of the plan's end state: a card whose
+		// dependant is refused later in the same plan is refused too, so
+		// no card that stays is left needing one that goes, whatever
+		// shape the selection has (docs/SPEC-SPRINT.md section 11).
+		for changed := true; changed; {
+			changed = false
+			for _, c := range chosen {
+				if !dropping[c.ID] {
+					continue
+				}
+				if deps := waitingNeeding(s, c.ID, dropping); len(deps) > 0 {
+					p.refuse(c.ID, fmt.Sprintf("%s is needed by %s; drop them too with --cascade", c.ID, strings.Join(deps, ", ")))
+					dropping[c.ID] = false
+					changed = true
+				}
+			}
+		}
 		var kept []*Card
 		for _, c := range chosen {
-			if deps := waitingNeeding(s, c.ID, dropping); len(deps) > 0 {
-				p.refuse(c.ID, fmt.Sprintf("%s is needed by %s; drop them too with --cascade", c.ID, strings.Join(deps, ", ")))
-				dropping[c.ID] = false
-				continue
+			if dropping[c.ID] {
+				kept = append(kept, c)
 			}
-			kept = append(kept, c)
 		}
 		chosen = kept
 	}
