@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -157,4 +158,30 @@ func mustMachine() *config.Kind {
 		panic(errors.New("the machine kind is not registered"))
 	}
 	return k
+}
+
+// machineListRow is a machine row as machine list prints it: the tla column
+// reads yes on a record machine and - on the rest (docs/SPEC-CONFIG.md, "The
+// kinds of this cut", the tla row), so the list answers which machines run
+// TLC at a glance, while show, the history and the stores keep the field's
+// own true and false. The line and the JSON render the one row
+// (docs/STANDARD.md, "When building a tool": never two shapes).
+func machineListRow(row config.Row) config.Row {
+	fields := maps.Clone(row.Fields)
+	if fields == nil {
+		fields = map[string]string{}
+	}
+	fields["tla"] = machineTLA(fields["tla"])
+	row.Fields = fields
+	return row
+}
+
+// machineTLA is the tla column machine list shows: yes on a machine
+// registered a record machine (machine set <m> --tla true), - on one that
+// is not.
+func machineTLA(v string) string {
+	if v == "true" {
+		return "yes"
+	}
+	return "-"
 }

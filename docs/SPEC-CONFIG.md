@@ -138,7 +138,7 @@ nothing invented.
 | `slots` | int | yes | apply: the machine ceiling the friends' desired slots must fit under (`ns_capacity_machine`, `ns_capacity_desired`); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
-| `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
+| `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines"); which machines they are is `machine list`'s answer, its `tla` column reading `yes` on a record machine and `-` on the rest, and `nova-config machine set <m> --tla true --as <actor>` (then `nova-config apply`) registers one | `machine:<m>` |
 | `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are

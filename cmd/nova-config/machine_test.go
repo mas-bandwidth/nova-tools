@@ -191,6 +191,43 @@ func TestMachineWidthDefaultIsUnset(t *testing.T) {
 	assert.Equal(t, "CONFIG WIDTH machine=m1 width=0 member=false\n", out, "0 stays no member")
 }
 
+// TestMachineListShowsTheTLAColumn: the list answers which machines run TLC
+// at a glance (docs/SPEC-CONFIG.md, "The kinds of this cut", the tla row:
+// the field puts the machine in the inventory's tla group, so the tools play
+// installs the pinned TLC jar there and tlacheck run --bench any picks among
+// them): the tla column reads yes on a machine registered with machine set
+// --tla true and - on one that is not, in the line and the JSON fields alike
+// (one row, two renderings; docs/STANDARD.md, "When building a tool"), while
+// the row's own tla keeps its true and false for show, the history and the
+// stores.
+func TestMachineListShowsTheTLAColumn(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	code, _, errs := h.run(t, "machine", "add", "m1", "--user", "u", "--seat", "s", "--slots", "8", "--pg", dsn, "--as", "a1")
+	require.Equal(t, 0, code, "add m1: %q", errs)
+	code, _, errs = h.run(t, "machine", "add", "m2", "--user", "u", "--seat", "s", "--slots", "8", "--pg", dsn, "--as", "a1")
+	require.Equal(t, 0, code, "add m2: %q", errs)
+	code, _, errs = h.run(t, "machine", "set", "m1", "--tla", "true", "--pg", dsn, "--as", "a1")
+	require.Equal(t, 0, code, "set m1 --tla true: %q", errs)
+	rows, err := h.store.List(context.Background(), config.KindMachine)
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "the two machines added")
+	lines := map[string]string{}
+	items := map[string][]any{}
+	for _, row := range rows {
+		own := row.Fields["tla"]
+		require.Contains(t, []string{"true", "false"}, own, "the row's own tla is a bool: %s", row.Name)
+		mapped := machineListRow(row)
+		require.Equal(t, own, row.Fields["tla"], "the mapping is a rendering, not a write; the source row keeps its own tla: %s", row.Name)
+		lines[row.Name] = config.ListLine(mustMachine(), mapped)
+		items[row.Name] = rowFields(mustMachine(), mapped)
+	}
+	assert.Equal(t, "MACHINE name=m1 user=u seat=s slots=8 runners=0 width=- tla=yes note=-", lines["m1"], "the line machine list prints for m1")
+	assert.Equal(t, "MACHINE name=m2 user=u seat=s slots=8 runners=0 width=- tla=- note=-", lines["m2"], "the line machine list prints for m2")
+	assert.Equal(t, []any{"name", "m1", "user", "u", "seat", "s", "slots", "8", "runners", "0", "width", "", "tla", "yes", "note", ""}, items["m1"], "the JSON item's fields for m1")
+	assert.Equal(t, []any{"name", "m2", "user", "u", "seat", "s", "slots", "8", "runners", "0", "width", "", "tla", "-", "note", ""}, items["m2"], "the JSON item's fields for m2")
+}
+
 // TestMachineTLAIsTheRecordMachineFact: tla is a declared fact of the machine
 // row, false unless set: add takes it, set moves it, and list and show print
 // it (tlacheck run --bench reads it from the list; the tools play installs
