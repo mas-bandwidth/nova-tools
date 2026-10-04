@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 )
 
 // A BUDGET NEEDS A SOURCE THE TOOL CAN READ, AND THAT IS CHECKED BEFORE ANYTHING IS MADE.
@@ -67,6 +69,10 @@ func NativeBudgetSourceRefusal(source string, tokens int, unmetered, usd bool, w
 	switch source {
 	case UsageNone:
 		return fmt.Sprintf("%s wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read", why)
+	case harness.Claude, harness.Codex, harness.Grok:
+		// a headless harness prints its own usage when it ends (headless.go): the final
+		// read is the source, and no program beside the harness is needed to read it
+		return ""
 	case UsageOpenCode, "":
 		if !SQLiteOnPath() {
 			return fmt.Sprintf("%s is read from the harness's own database with `%s -readonly`, and %s is on no PATH entry of this bench; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Install %s on this bench, or launch with --tokens unmetered and no max_turns or max_cache_read", why, SQLiteBinary, SQLiteBinary, SQLiteBinary)

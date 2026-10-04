@@ -62,7 +62,7 @@ func init() {
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
-		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>]", "brief s1-4 --brief-file s1-4.md", (*app).cmdBrief},
+		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>", "brief s1-4 --brief-file s1-4.md", (*app).cmdBrief},
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
@@ -1413,7 +1413,7 @@ func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, briefs
 // tier, a model: pin) are read by the one parser the deal and the frame use, so
 // a brief the deal would refuse is refused here, before it is admitted.
 func modelLinesWhy(why string) string {
-	return "the brief's model lines: " + why + "; line 1 names `tier: flash|pro|frontier`, and a pinned card carries `model: <provider>/<model>` (with `tokens: <n>|unmetered` and `deadline: <seconds>`) under it"
+	return "the brief's model lines: " + why + "; line 1 names `tier: flash|pro|heavy|frontier`, and a pinned card carries `model: <provider>/<model>` (with `tokens: <n>|unmetered` and `deadline: <seconds>`) under it"
 }
 
 // lintBriefReads holds one brief to the card lint's child rules and to its
@@ -2052,7 +2052,7 @@ func (a *app) cmdRework(args []string, stdout, stderr io.Writer) int {
 	return a.setVerb("rework", args, stdout, stderr, false, func(fs flagSet) {
 		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work; the next attempt is staged at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, and where it does not the child is told that work must be redone")
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
-		tier = fs.String("tier", "", "the tier ("+cardhdr.RouteList+") this attempt and every later deal of the card draws its route from, over its brief's line 1, kept on the card: it pins the card, never escalated past it (flash first); a card whose brief pins a model is refused; at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, frontier) or the provider its takes failed on is back, which lifts it once per tier per card")
+		tier = fs.String("tier", "", "the tier ("+cardhdr.RouteList+") this attempt and every later deal of the card draws its route from, over its brief's line 1, kept on the card: it pins the card, never escalated past it (flash first); a card whose brief pins a model is refused; at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, heavy, frontier) or the provider its takes failed on is back, which lifts it once per tier per card")
 	}, func(ids []string, s *sel) string {
 		var why []string
 		if len(ids) == 0 && s.stream == "" {
@@ -2110,12 +2110,26 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 	brief := fs.String("brief", "", fmt.Sprintf("the new brief: a child's whole brief, at most %d KiB, held to the card lint as add holds one (--rules, else the file init --rules recorded, else the built-in general rules) and refused, exit 2, nothing written, when it fails", cardlimits.MaxBriefBytes>>10))
 	briefFile := fs.String("brief-file", "", "the new brief, read from this file: its bytes as they are, its one trailing newline cut; not with --brief")
 	rules := fs.String("rules", "", "the child rules file the brief is held to (default: the file init --rules recorded, else the built-in general rules)")
+	tier := fs.String("tier", "", "re-tier the card instead of replacing its brief: the tier ("+cardhdr.RouteList+") every later deal and read of the card draws its route from, kept on the card as rework --tier keeps it (it pins the card, never escalated past it); taken on a RUNNING machine and for a card dealt, where it applies to the next attempt; not with --brief or --brief-file")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "brief", err.Error())
 	}
+	if *tier != "" {
+		switch {
+		case len(ids) != 1 || *brief != "" || *briefFile != "" || *rules != "":
+			return refuse(stderr, "brief", "--tier wants one primary and no --brief, --brief-file or --rules: it re-tiers the card and replaces nothing")
+		case !cardhdr.IsRoute(*tier):
+			return refuse(stderr, "brief", "--tier wants "+cardhdr.RouteList+", found "+oneline.Escape(*tier))
+		}
+		st, err := a.store(*c)
+		if err != nil {
+			return refuse(stderr, "brief", err.Error())
+		}
+		return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Tier: *tier, Who: c.actor}), stdout, stderr)
+	}
 	if len(ids) != 1 || (*brief == "") == (*briefFile == "") {
-		return refuse(stderr, "brief", "wants one primary and one of --brief <text>, --brief-file <path>")
+		return refuse(stderr, "brief", "wants one primary and one of --brief <text>, --brief-file <path>, or --tier <t>")
 	}
 	if *briefFile != "" {
 		text, err := readBriefFile(*briefFile)
@@ -2456,7 +2470,7 @@ card's own tier, and default takes the stream's off.`) + "\n"
 // dealt and never taken before it is a judgment (nova-tools#5096 items 22, 27).
 func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("set")
-	tier := fs.String("read-tier", "", "the tier every card's reads draw their route from when it is stronger than the card's own (flash or pro; default takes it off: each card's own tier)")
+	tier := fs.String("read-tier", "", "the tier every card's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: each card's own tier)")
 	dealt := fs.String("dealt-max", "", fmt.Sprintf("how long a work card may wait dealt and never taken (in its member's ready queue, or withdrawn) before it is a judgment: a duration, or default (%s, 3 times the take deadline); a taken card's own deadline starts at its take", sprint.DealtMaxDefault))
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -2493,7 +2507,7 @@ func (a *app) cmdFunded(args []string, stdout, stderr io.Writer) int {
 // sprint's.
 func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stream set")
-	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash or pro; default takes it off: the sprint's)")
+	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: the sprint's)")
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())

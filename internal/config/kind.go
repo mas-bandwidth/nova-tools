@@ -23,6 +23,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 	"time"
 	"unicode"
 
@@ -208,11 +210,11 @@ func checkFriend(r Row) error {
 
 // Tiers are the model tiers a friend can do, capacity.lua's filter_ok
 // spelling (frontier, pro, flash).
-var Tiers = []string{"flash", "frontier", "pro"}
+var Tiers = []string{"flash", "frontier", "heavy", "pro"}
 
 // RouteTiers are the tiers a route serves: Tiers less frontier, whose cards
 // are never drawn from routes and escalate to the coordinator.
-var RouteTiers = []string{"flash", "pro"}
+var RouteTiers = []string{"flash", "pro", "heavy"}
 
 // The sprint row's two bars on a decide read's p(defect) (internal/decide, Bars;
 // docs/SPEC-SPRINT.md section 6, the decide read): apply writes them to
@@ -431,6 +433,7 @@ var Kinds = []*Kind{
 			{Name: "tier", Type: TypeEnum, Enum: RouteTiers, Required: true, Help: "the tier it serves: one of " + strings.Join(RouteTiers, ", ") + " (frontier cards are never drawn from routes, they escalate to the coordinator)"},
 			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
+			{Name: "harness", Type: TypeEnum, Enum: harness.Kinds, Default: harness.OpenCode, Help: "the harness a card on this route runs under: opencode (the default: the providers table launches it with the provider's key) or a headless program of the machine's own subscription login, " + strings.Join(harness.Headless, ", ") + " (the heavy tier)"},
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
 			{Name: "usd", Type: TypeDecimal, Help: "the dollar budget per card, a decimal like 0.50: the harness's reported cost at which the card is stopped, beside the token budget; empty (the default) is none"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},

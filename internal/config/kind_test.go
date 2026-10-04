@@ -107,7 +107,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		if !assert.Equal(t, "builder,may-hold,reader", strings.Join(FriendRoles, ","), assertionMsg98...) {
 			return
 		}
-		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
+		assert.Equal(t, "flash,frontier,heavy,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
 	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars, the landed score's bar, layer 2's three, the gate decision's two, the judgment bar and the brief bar", sprint}
@@ -359,7 +359,7 @@ func TestCanonicalValidatesEveryType(t *testing.T) {
 		{field(friend, "roles"), "king", "", "want a comma list of builder, may-hold, reader"},
 		{field(friend, "tiers"), "pro,frontier", "frontier,pro", ""},
 		{field(friend, "tiers"), "a=b", "", "holds no ="},
-		{field(friend, "tiers"), "ultra", "", "want a comma list of flash, frontier, pro"},
+		{field(friend, "tiers"), "ultra", "", "want a comma list of flash, frontier, heavy, pro"},
 		{field(sprint, "coordinator"), "stella", "stella", ""},
 		{field(sprint, "coordinator"), "", "", ""},
 		{field(sprint, "coordinator"), "Stella", "", "lower-case"},
