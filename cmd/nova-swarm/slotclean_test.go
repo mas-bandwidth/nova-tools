@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -239,9 +240,9 @@ func TestAFiveLevelReadOnlyModuleCacheIsRemoved(t *testing.T) {
 		dirs = append(dirs, d)
 		write(t, filepath.Join(d, "file.go"), "package level\n")
 	}
-	for i := len(dirs) - 1; i >= 0; i-- {
-		require.NoError(t, os.Chmod(filepath.Join(dirs[i], "file.go"), 0o444))
-		require.NoError(t, os.Chmod(dirs[i], 0o555))
+	for _, dir := range slices.Backward(dirs) {
+		require.NoError(t, os.Chmod(filepath.Join(dir, "file.go"), 0o444))
+		require.NoError(t, os.Chmod(dir, 0o555))
 	}
 	fi, err := os.Stat(dirs[4])
 	require.NoError(t, err)

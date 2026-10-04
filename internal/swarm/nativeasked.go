@@ -3,6 +3,7 @@ package swarm
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -151,8 +152,8 @@ func AskedReport(path string) bool {
 // the machinery's words in the child's file, not the child's.
 func lastSpokenLine(capture string) string {
 	lines := strings.Split(strings.ReplaceAll(capture, "\r\n", "\n"), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(stripPaint(lines[i]))
+	for _, line := range slices.Backward(lines) {
+		line := strings.TrimSpace(stripPaint(line))
 		if line == "" || strings.HasPrefix(line, "SANDBOX ") {
 			continue
 		}

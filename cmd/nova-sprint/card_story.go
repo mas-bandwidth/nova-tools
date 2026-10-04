@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -287,8 +288,8 @@ func (a *app) printStory(w io.Writer, v store.CardInfo, events []storyLine, text
 	if h := p.F("head"); h != "" && h != p.ID && !strings.HasPrefix(h, p.ID+".w") {
 		head.WriteString("   head " + h)
 	}
-	for i := len(v.Work) - 1; i >= 0; i-- {
-		if b := v.Work[i].F("branch"); b != "" {
+	for _, v0 := range slices.Backward(v.Work) {
+		if b := v0.F("branch"); b != "" {
 			head.WriteString("   branch " + b)
 			break
 		}

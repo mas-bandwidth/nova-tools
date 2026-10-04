@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -283,8 +284,8 @@ func (p *cmdPackage) refusalSites(fset *token.FileSet, f *ast.File) []refusalSit
 // one. A printer that prints its own remedy lends the run a remedy marker.
 func (p *cmdPackage) printsBefore(list []ast.Stmt) (string, bool) {
 	var parts []string
-	for i := len(list) - 1; i >= 0; i-- {
-		if sw, ok := list[i].(*ast.SwitchStmt); ok {
+	for _, l := range slices.Backward(list) {
+		if sw, ok := l.(*ast.SwitchStmt); ok {
 			// `switch kind { case "a": fmt.Fprintf(...) case "b": ... }`: one
 			// line from whichever case ran; every case must print one.
 			var texts []string
@@ -307,7 +308,7 @@ func (p *cmdPackage) printsBefore(list []ast.Stmt) (string, bool) {
 			parts = append(parts, strings.Join(texts, " "))
 			continue
 		}
-		if loop := loopBody(list[i]); loop != nil {
+		if loop := loopBody(l); loop != nil {
 			// `for _, why := range problems { fmt.Fprintf(...) }`: one
 			// line per problem, read as the run's text.
 			if s, ok := p.printsBefore(loop.List); ok {
@@ -316,12 +317,12 @@ func (p *cmdPackage) printsBefore(list []ast.Stmt) (string, bool) {
 			}
 			break
 		}
-		if earlyReturn(list[i]) {
+		if earlyReturn(l) {
 			// `if answered(err) { return 1 }` between the line and the exit
 			// chooses the code; the line in front of both is the one read.
 			continue
 		}
-		es, ok := list[i].(*ast.ExprStmt)
+		es, ok := l.(*ast.ExprStmt)
 		if !ok {
 			break
 		}

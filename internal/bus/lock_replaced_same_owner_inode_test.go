@@ -10,6 +10,7 @@ import (
 	"errors"
 	"github.com/stretchr/testify/require"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -41,9 +42,9 @@ func TestLockReplacedDuringScanSameOwnerInodeSequence(t *testing.T) {
 	seam := func(fi os.FileInfo) (uint32, bool) {
 		mu.Lock()
 		defer mu.Unlock()
-		for i := len(owners) - 1; i >= 0; i-- {
-			if os.SameFile(owners[i].fi, fi) {
-				return owners[i].uid, true
+		for _, owner := range slices.Backward(owners) {
+			if os.SameFile(owner.fi, fi) {
+				return owner.uid, true
 			}
 		}
 		return 0, false

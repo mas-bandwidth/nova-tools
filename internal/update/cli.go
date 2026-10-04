@@ -799,8 +799,8 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	// and stage itself, last.
 	var staged []string
 	defer func() {
-		for i := len(staged) - 1; i >= 0; i-- {
-			os.Remove(staged[i])
+		for _, s := range slices.Backward(staged) {
+			os.Remove(s)
 		}
 		os.Remove(stage)
 	}()

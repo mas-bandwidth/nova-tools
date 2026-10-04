@@ -586,8 +586,8 @@ func (w *answerer) reworkedWithin(card string, window time.Duration) (string, er
 	if err != nil {
 		return "", err
 	}
-	for i := len(ds) - 1; i >= 0; i-- {
-		d := ds[i]
+	for _, d := range slices.Backward(ds) {
+
 		if d.Decision != decide.JudgmentName || d.Inputs["card"] != card || d.Inputs["verb"] != decide.VerbRework {
 			continue
 		}

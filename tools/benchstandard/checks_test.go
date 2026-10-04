@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -437,8 +438,8 @@ func isProbe(s runSpec) bool {
 }
 
 func lookupEnv(environ []string, key string) string {
-	for i := len(environ) - 1; i >= 0; i-- {
-		if k, v, ok := strings.Cut(environ[i], "="); ok && k == key {
+	for _, e := range slices.Backward(environ) {
+		if k, v, ok := strings.Cut(e, "="); ok && k == key {
 			return v
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -134,8 +135,8 @@ const (
 // line is a status line.
 func lastStatusWord(text string) string {
 	lines := strings.Split(text, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		switch l := lines[i]; {
+	for _, line := range slices.Backward(lines) {
+		switch l := line; {
 		case failWordRe.MatchString(l):
 			return wordFail
 		case okWordRe.MatchString(l):
@@ -150,8 +151,8 @@ func lastStatusWord(text string) string {
 // order they print.
 func (p *cmdPackage) fmtPrintsBefore(list []ast.Stmt) (string, bool) {
 	var parts []string
-	for i := len(list) - 1; i >= 0; i-- {
-		es, ok := list[i].(*ast.ExprStmt)
+	for _, l := range slices.Backward(list) {
+		es, ok := l.(*ast.ExprStmt)
 		if !ok {
 			break
 		}
