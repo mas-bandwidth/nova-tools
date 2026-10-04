@@ -119,25 +119,29 @@ func TestCheckRunnerComparesTheEmbeddedCheckedFilesWithTheRoot(t *testing.T) {
 func TestTheFileThatReadsAPlanRowIsAResultFile(t *testing.T) {
 	t.Parallel()
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
 	where := map[string]string{}
-	for _, pkg := range pkgs {
-		for name, file := range pkg.Files {
-			for _, decl := range file.Decls {
-				switch d := decl.(type) {
-				case *ast.FuncDecl:
-					if d.Recv == nil && d.Name.Name == "ParseCases" {
-						where["ParseCases"] = name
-					}
-					if d.Recv != nil && d.Name.Name == "check" {
-						where["Case.check"] = name
-					}
-				case *ast.GenDecl:
-					for _, spec := range d.Specs {
-						if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == "Case" {
-							where["Case"] = name
-						}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || strings.HasSuffix(name, "_test.go") || !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		require.NoError(t, err)
+		for _, decl := range file.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil && d.Name.Name == "ParseCases" {
+					where["ParseCases"] = name
+				}
+				if d.Recv != nil && d.Name.Name == "check" {
+					where["Case.check"] = name
+				}
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == "Case" {
+						where["Case"] = name
 					}
 				}
 			}
