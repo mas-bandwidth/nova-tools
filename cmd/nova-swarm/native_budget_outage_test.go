@@ -193,9 +193,9 @@ func TestTheReadLimitFollowsTheSlowestAnsweredRead(t *testing.T) {
 		b.now = b.now.Add(b.took)
 		return usageOf(10, ""), nil
 	}
-	b.took = time.Second
+	b.took = time.Second // wall-ok: a fake clock advanced by the fake reader, no real time
 	b.s.readOnce()
-	b.took = 3 * time.Second
+	b.took = 3 * time.Second // wall-ok: the fake clock again
 	b.s.readOnce()
 	b.took = time.Minute // the third read fails and its retry answers, a minute long
 	b.s.readOnce()
