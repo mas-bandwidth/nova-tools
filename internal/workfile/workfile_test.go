@@ -293,3 +293,42 @@ func TestOriginOf(t *testing.T) {
 	require.Equal(t, "external", workfile.OriginOf("CONTRIBUTOR"), "origin")
 	require.Equal(t, "external", workfile.OriginOf(""), "origin")
 }
+
+// TestTheReaderRefusesANonCanonicalNumberSpelling pins security#82 finding 1
+// spelling half: the reader accepts only the spelling Encode writes.
+func TestTheReaderRefusesANonCanonicalNumberSpelling(t *testing.T) {
+	t.Parallel()
+	canonical, err := workfile.Encode(hard())
+	require.NoError(t, err)
+	t.Run("issue number plus", func(t *testing.T) {
+		t.Parallel()
+		s := strings.Replace(string(canonical), "(issue 1\n", "(issue +7\n", 1)
+		s = strings.Replace(s, "/issues/1", "/issues/7", 1)
+		_, err := workfile.Decode("plus", []byte(s), workfile.Limits(len(s)))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "number")
+	})
+	t.Run("issue number leading zero", func(t *testing.T) {
+		t.Parallel()
+		s := strings.Replace(string(canonical), "(issue 1\n", "(issue 007\n", 1)
+		s = strings.Replace(s, "/issues/1", "/issues/7", 1)
+		_, err := workfile.Decode("zero", []byte(s), workfile.Limits(len(s)))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "number")
+	})
+	t.Run("reference number leading zero", func(t *testing.T) {
+		t.Parallel()
+		s := strings.Replace(string(canonical), ":number 9", ":number 09", 1)
+		_, err := workfile.Decode("ref", []byte(s), workfile.Limits(len(s)))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "number")
+	})
+	t.Run("untouched round-trips", func(t *testing.T) {
+		t.Parallel()
+		back, err := workfile.Decode("same", canonical, workfile.Limits(len(canonical)))
+		require.NoError(t, err)
+		again, err := workfile.Encode(back)
+		require.NoError(t, err)
+		assert.True(t, bytes.Equal(canonical, again))
+	})
+}

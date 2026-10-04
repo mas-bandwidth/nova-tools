@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
@@ -97,6 +98,9 @@ func (d decoder) str(at, key string, f worklang.Form) (string, error) {
 func (d decoder) num(at, key string, f worklang.Form) (int, error) {
 	if f.Kind != worklang.Integer || f.Int <= 0 || f.Int > 1<<31 {
 		return 0, d.errf(at, ":%s wants a positive integer", key)
+	}
+	if f.End-f.Offset != len(strconv.Itoa(int(f.Int))) {
+		return 0, d.errf(at, ":%s wants a positive integer written canonically", key)
 	}
 	return int(f.Int), nil
 }
