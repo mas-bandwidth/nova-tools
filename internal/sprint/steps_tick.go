@@ -673,11 +673,10 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 // asked or begun with no route (asked while no route served its tier): what
 // that tier's no-route judgment holds (TickDeal).
 func readsWithoutRoute(s *Snapshot, pr *Card) bool {
-	live := liveReadsAt(s, pr, pr.Int("attempt"))
-	if len(live) < ReadsNeeded(pr) {
+	if ReadsWanted(s, pr) > 0 {
 		return true
 	}
-	for _, rc := range live {
+	for _, rc := range liveReadsAt(s, pr, pr.Int("attempt")) {
 		if (rc.Col == Asked || rc.Col == Reading) && rc.F(FieldRoute) == "" {
 			return true
 		}
@@ -801,10 +800,10 @@ func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 	return bound(FleetStep(s, FleetReq{Op: "level", Who: r.who()}))
 }
 
-// T2. TickAsk asks as many different readers as it needs (ReadsNeeded: one
-// for a flash card, two for a pro card; cost rule 4) of every primary in
-// review whose work did not fail and that has fewer read cards than that at
-// its attempt, readers up only; a read asked of a reader that is not up is
+// T2. TickAsk asks the reads wanted now (ReadsWanted: the first read alone,
+// then the rest it needs once the first came back ok; ReadsNeeded: one for a
+// flash card, two for a pro card; cost rule 4) of every primary in review
+// whose work did not fail, readers up only; a read asked of a reader that is not up is
 // taken back, and its primary is asked again, in the same step. One that
 // cannot be asked, for want of different readers, is a judgment once (N1),
 // closed when it is asked; a primary that needs more readers than are up is
@@ -818,7 +817,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
 	due := 0
 	askable := func(c *Card) string {
-		if c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) {
+		if c.F("result") != "failed" && ReadsWanted(s, c) > 0 {
 			return ""
 		}
 		return "asked, or its work failed"
@@ -1262,7 +1261,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 func MovesDue(s *Snapshot) int {
 	n := len(s.Fleet.Column(Withdrawn))
 	for _, c := range s.Work.Column(Review) {
-		if s.Readers != nil && c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) && enoughReadersUp(s, c) {
+		if s.Readers != nil && c.F("result") != "failed" && ReadsWanted(s, c) > 0 && enoughReadersUp(s, c) {
 			n++
 		}
 	}

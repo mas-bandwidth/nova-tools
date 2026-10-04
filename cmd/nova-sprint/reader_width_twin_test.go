@@ -39,8 +39,9 @@ func readRig(t *testing.T) *serverRig {
 	r.queue("reader-x")
 	r.boss("nova-sprint tick")
 	r.boss("nova-sprint tick")
-	require.Len(t, r.queue("reader-m1")["asked"], 3)
-	require.Len(t, r.queue("reader-x")["asked"], 3)
+	// each card's first read, round the readers (reads are asked one at a time): m1, x, m1
+	require.Len(t, r.queue("reader-m1")["asked"], 2)
+	require.Len(t, r.queue("reader-x")["asked"], 1)
 	return r
 }
 

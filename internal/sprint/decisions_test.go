@@ -67,10 +67,10 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	require.Equal(t, pr.Score, card.Score, "rework did not delegate at once: primary %s card %+v", pr.Col, card)
 	w.clean("delegated")
 	// A report against the retired card is refused, naming the retirement.
-	late := Read(w.s, ReadReq{As: reads[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{reads[1].ID}}})
+	late := Read(w.s, ReadReq{As: reads[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{reads[0].ID}}})
 	require.Empty(t, late.Units, "a report against a retired card moved: %+v", late)
-	w.s.Readers.Put(w.s.Readers.Card(reads[1].ID)) // the loader reads the retired record by name
-	late = Read(w.s, ReadReq{As: reads[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{reads[1].ID}}})
+	w.s.Readers.Put(w.s.Readers.Card(reads[0].ID)) // the loader reads the retired record by name
+	late = Read(w.s, ReadReq{As: reads[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{reads[0].ID}}})
 	require.Len(t, late.Refused, 1, "the refusal does not name the retirement: %+v", late.Refused)
 	require.Contains(t, late.Refused[0].Why, "retired", "the refusal does not name the retirement: %+v", late.Refused)
 	// The fixed work returns: the finish asks no reader (one path asks), and the machine's
@@ -80,8 +80,7 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	require.Empty(t, readsAt(w.s, w.s.Work.Card("s1-1"), 2), "the finish asked readers itself")
 	w.must(Ask(w.s, AskReq{}))
 	again := readsAt(w.s, w.s.Work.Card("s1-1"), 2)
-	require.Len(t, again, 2, "not asked again")
-	assert.NotEqual(t, again[0].F("reader"), again[1].F("reader"), "asked twice of one reader")
+	require.Len(t, again, 1, "not asked again (the first read alone: reads are asked one at a time)")
 	for _, rc := range again {
 		assert.Equal(t, "h2", rc.F("head"), "not asked again at the new head: %s", rc.ID)
 	}
@@ -175,9 +174,7 @@ func TestD4AcceptNamedIsAllOrNothing(t *testing.T) {
 	}
 	w.must(Ask(w.s, AskReq{}))
 	for _, id := range []string{"s1-1", "s1-2"} {
-		for _, rc := range readsAt(w.s, w.s.Work.Card(id), 1) {
-			w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
-		}
+		readOK(w, id)
 	}
 	p := Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1", "s1-2", "s1-3"}}})
 	require.Empty(t, p.Units, "named set with one ineligible: %+v", p)
@@ -400,9 +397,11 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 	// s1-1: both broken; ask another closes both; the third says ok.
 	r1 := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	w.must(Read(w.s, ReadReq{As: r1[0].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r1[0].ID}}}))
-	w.must(Read(w.s, ReadReq{As: r1[1].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r1[1].ID}}}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true})) // the first read broken: no second read but by --another
+	second := askedRead(w, "s1-1")
+	w.must(Read(w.s, ReadReq{As: second.F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{second.ID}}}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
-	third := readsAt(w.s, w.s.Work.Card("s1-1"), 1)[2]
+	third := askedRead(w, "s1-1")
 	w.must(Read(w.s, ReadReq{As: third.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{third.ID}}}))
 	o := w.openOn("s1-1")
 	require.Len(t, o, 1, "reads exhausted by a read: %v", o)
@@ -412,7 +411,9 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 	// and the broken judgment stays open.
 	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{As: r2[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{r2[0].ID}}}))
-	w.must(Read(w.s, ReadReq{As: r2[1].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r2[1].ID}}}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}})) // the second read, once the first came back ok
+	next := askedRead(w, "s1-2")
+	w.must(Read(w.s, ReadReq{As: next.F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{next.ID}}}))
 	broken := w.openOn("s1-2")[0].Note.ID
 	p := w.do(Ack(w.s, AckReq{Notes: []string{broken}, Reason: "not a defect"}))
 	require.Len(t, p.Refused, 1, "ack of a broken read: %+v", p)
@@ -437,9 +438,7 @@ func TestG4StreamStateIsKeptTrue(t *testing.T) {
 	}
 	w.must(Ask(w.s, AskReq{}))
 	for _, id := range []string{"s1-1", "s1-2"} {
-		for _, rc := range readsAt(w.s, w.s.Work.Card(id), 1) {
-			w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
-		}
+		readOK(w, id)
 	}
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r"}))
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1"}}}))
@@ -514,9 +513,7 @@ func TestAReaderCountsOnceWhereItsCardIs(t *testing.T) {
 	}
 	w.must(Ask(w.s, AskReq{}))
 	for _, id := range []string{"s1-1", "s1-2"} {
-		for _, rc := range readsAt(w.s, w.s.Work.Card(id), 1) {
-			w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
-		}
+		readOK(w, id) // both reads, one at a time
 	}
 	// A writer outside the verbs moves s1-2's second ok card onto the first reader's row.
 	rs := readsAt(w.s, w.s.Work.Card("s1-2"), 1)

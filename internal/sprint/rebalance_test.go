@@ -163,7 +163,13 @@ func TestTheReadersRebalanceTakesTheReadsOfAReaderAway(t *testing.T) {
 	w.part(TickAsk, TickReq{})
 	for i := 1; i <= 3; i++ {
 		p := fmt.Sprintf("p%d", i)
-		assert.Len(t, liveReadsAt(w.s, w.s.Work.Card(p), 1), 2, "%s is read by two readers up", p)
+		// a read taken back is asked again only once the one outstanding came back
+		// ok (reads are asked one at a time): every read that stands is a reader up's
+		live := liveReadsAt(w.s, w.s.Work.Card(p), 1)
+		assert.NotEmpty(t, live, "%s is read", p)
+		for _, rc := range live {
+			assert.NotEqual(t, "r1", rc.Row, "%s is read by readers up", p)
+		}
 		if rc := w.s.Readers.Card(ReadCardID(p, 1, "r1")); rc != nil {
 			assert.False(t, rc.Placed(), "%s's read on r1 is retired", p)
 		}

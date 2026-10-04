@@ -28,6 +28,7 @@ func TestTheLastCardLandsAfterReplacingItsReaskedReader(t *testing.T) {
 		"finish --as m1 s1-1.w1@1 --head " + head + " --epoch 0",
 		"ask s1-1 --actor coordinator",
 		"read --as reader-a --ok s1-1.r1.reader-a --epoch 0",
+		"ask s1-1 --actor coordinator", // the second read, the first ok
 		"read --as reader-b --return s1-1.r1.reader-b --reason no-verdict --epoch 0",
 		"ask s1-1 --actor coordinator",
 		"read --as reader-b --begin s1-1.r1.reader-b --epoch 0",

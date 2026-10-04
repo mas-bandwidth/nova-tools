@@ -162,7 +162,7 @@ type Primary struct {
 	Score   float64
 	Attempt int      // the attempt of its current or next work card, from 1
 	Head    int      // the attempt whose finished work is its head; 0 before
-	Pair    []string // sorted: the two readers of its latest ask (the work table's asked field)
+	Pair    []string // sorted: the readers of the reads that stand at its attempt (the work table's asked field)
 	Reached bool     // a sentinel whose needs have all landed or been waived
 	// CI and CIHead are its last CI observation: "", "red" or "green", and
 	// the attempt whose head it was for (0: no head yet).
@@ -654,6 +654,22 @@ func (s State) OkReaders(p string) []string {
 
 // Acceptable is SprintTables.tla Acceptable(p) (Broken = "none").
 func (s State) Acceptable(p string) bool { return len(s.OkReaders(p)) >= 2 }
+
+// ReadsWanted is how many reads the ask places on p now (sprint.ReadsWanted,
+// sequential reads): one while no read of its attempt stands, none while one
+// is outstanding or found it broken, else the rest of the two it needs.
+func (s State) ReadsWanted(p string) int {
+	live := s.LiveReadsOf(p)
+	for _, id := range live {
+		if s.Reads[id].Place != OK {
+			return 0
+		}
+	}
+	if len(live) == 0 {
+		return 1
+	}
+	return max(0, 2-len(live))
+}
 
 // Failed is SprintTables.tla Failed(p).
 func (s State) Failed(p string) bool {

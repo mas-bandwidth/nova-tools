@@ -185,6 +185,36 @@ func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
+// ReadsWanted is how many reads the ask places on the primary now, at its
+// attempt. A card's reads are asked one at a time (docs/SPEC-SPRINT.md section
+// 6, sequential reads; the owner, 2026-10-04, after a night of 4.2 reads per
+// landing against a design of 2: when the first reader finds a card broken the
+// second read, asked with it, is wasted): one while no read of the attempt
+// stands (the first read); none while a read is outstanding, or found it
+// broken (the judgment stands and a rework follows: no second read); the rest
+// it needs (ReadsNeeded) once every read that stands came back ok. A read
+// taken back from a reader away or handed back with no verdict (liveReadsAt)
+// does not stand and is asked again whatever stands: it was wanted when it
+// was placed (a pair's second read by --another too).
+func ReadsWanted(s *Snapshot, pr *Card) int {
+	placed := readsAt(s, pr, pr.Int("attempt"))
+	live := liveReadsAt(s, pr, pr.Int("attempt"))
+	return max(readsWantedOf(pr, live), len(placed)-len(live))
+}
+
+// readsWantedOf is ReadsWanted over the reads that stand, live.
+func readsWantedOf(pr *Card, live []*Card) int {
+	for _, rc := range live {
+		if rc.Col != OK {
+			return 0
+		}
+	}
+	if len(live) == 0 {
+		return 1
+	}
+	return max(0, ReadsNeeded(pr)-len(live))
+}
+
 // sweepReads is the readers' rebalance safety: every read asked or reading of a
 // reader that is not up is taken back, retired as the ask takes back a read
 // asked of a reader away

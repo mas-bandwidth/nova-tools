@@ -1425,11 +1425,25 @@ id (`--op`) returns the original result, with no second counter or notification.
   sprint (below) raises the route its reads are drawn on and never their
   count. The reads per machine are unchanged: a reader still runs at its
   machine's width.
-- ask deals every primary in review that lacks reads to as many different
-  readers UP as it needs (one for a flash card, TWO DIFFERENT readers for a pro
-  card), in work order, each the next reader round the readers from the readers'
-  `ask_index` that has no read card at the attempt, placed or retired. One read
-  card per reader. Reworked work is asked by the same rotation: a read is a
+- ask deals every primary in review that wants a read to as many different
+  readers UP as it wants now, in work order, each the next reader round the
+  readers from the readers' `ask_index` that has no read card at the attempt,
+  placed or retired. One read card per reader. **Reads are asked one at a
+  time** (`sprint.ReadsWanted`; the owner, 2026-10-04, after a night of 3,513
+  reads for 844 landings, 4.2 a landing against a design of 2, because a pro
+  card's two reads were asked together and the second was spent on work the
+  first reader had already found broken): a card's first read is asked alone;
+  while a read is outstanding nothing more is asked; a broken read goes to its
+  judgment and the rework with no second read; once every read that stands
+  came back ok the rest the card needs are asked (ReadsNeeded: one for a flash
+  card, TWO DIFFERENT readers for a pro card). A read taken back from a reader
+  away or handed back with no verdict was wanted when it was placed and is
+  asked again whatever stands; `ask --another` adds one more reader at any
+  time. A pro card whose first read fails once costs three reads to land, not
+  four (`TestAProCardsReadsAreAskedOneAtATime`). The model's `Ask(p)` places
+  the pair (tla/SprintTables.tla line 375, tla/DirtyTick.tla PlaceReads); the
+  reference model (internal/sprint/refmodel) asks one at a time, and the TLA
+  modules are owed the same. Reworked work is asked by the same rotation: a read is a
   fresh child on a freshly drawn route, so the readers of an earlier attempt
   are not preferred, and a busy reader is not asked again only to have the
   next tick's level move the read (the owner, 2026-10-01, deleting the
@@ -2262,7 +2276,7 @@ command that loads it.
 | tick | one tick by hand |
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up); a card on a route that rests is never taken: refused by id, naming the rest, and passed over by count (the tick withdraws it) |
 | finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost); `--decision <json>` (the take's attempt decision, one card a finish, its op naming that take's card and attempt, else refused) is kept on the card, recorded by the server's decide lane, and routes a failed finish when its class is no-result or nothing-to-do at or above that class's bar on the card (section 2, the attempt decision) |
-| ask | deals primaries in review to the readers each needs (one for a flash card, two different readers for a pro card; section 6); `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
+| ask | deals primaries in review the reads each wants now, one at a time (the first read alone, the second of a pro card once the first came back ok; a broken first read is reworked with no second read; section 6); `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |
 | routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish, and `rested_until`, when its rest ends while the machine rests it for children that ended with no result (section 5; `-` when it does not rest); `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` (`rested_until` only while it rests) |
 | stats | the epoch's pass in seconds, each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json` |
@@ -2487,9 +2501,9 @@ stream stopped only on a cross need whose card has landed), deal (T3), accept
 moves to merging and into its stream's merge queue, and the coordinator is
 told once for each stream "ready to merge"; the merge is the coordinator's, and
 the note names `land --stream <s>`, which a `run --land` does itself),
-ask (T2: as many different readers up as it needs, one for a flash card and
-two for a pro card, for each primary in review with fewer read cards than that
-at its attempt and work not failed; a read asked of a
+ask (T2: the reads each primary in review with work not failed wants now, one
+at a time: its first read alone, the rest it needs once the first came back ok,
+one for a flash card and two for a pro card; a read asked of a
 reader that is not up is taken back first, section 6), check (T6: section 9, and the
 no-stall rule), deadlines, overdue, done (the sprint done: the machine
 stops). Each part is

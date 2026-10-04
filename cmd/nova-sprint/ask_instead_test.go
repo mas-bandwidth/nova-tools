@@ -27,6 +27,7 @@ func TestAskInsteadTakesOneReadOffOneReaderStoppedAndRunning(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1")
 	ta.failOnce("m1", "s1-2.w1@1", "tests red")
 	ta.ok("ask s1-1")
+	ta.ok("ask s1-1 --another") // the pair: reads are asked one at a time
 	var takenBack []string // a reader whose read was taken back is never asked the attempt again
 	holds := func() (held, free []string) {
 		for _, rd := range readers {

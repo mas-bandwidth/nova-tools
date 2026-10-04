@@ -218,8 +218,12 @@ func TestEveryJudgmentPrintsItsDecisionsAsCommands(t *testing.T) {
 	ta.a.sleep(time.Second)
 	ta.ok("finish --as m1 s2-1.w1@1 --failed --report 'the tests went red'")
 	ta.ok("ask --limit 100")
+	ta.ok("ask s2-2 --another") // reads are asked one at a time: s2-2's second reader by --another
 	ta.a.sleep(time.Second)
 	ta.ok("read --as reader-a --broken --finding 'line 3: the empty case is not handled' s2-2.r1.reader-a")
+	ta.ok("read --as reader-a --ok --limit 100")
+	ta.ok("read --as reader-b --ok --limit 100")
+	ta.ok("ask --limit 100") // the second reads, the first ok
 	ta.ok("read --as reader-a --ok --limit 100")
 	ta.ok("read --as reader-b --ok --limit 100")
 	ta.ok("accept --read-ok")

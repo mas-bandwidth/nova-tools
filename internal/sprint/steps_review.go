@@ -82,17 +82,19 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
-// Ask deals every primary in review that lacks reads to as many different
-// readers up as it needs (ReadsNeeded: one for a flash card, two for a pro
-// card; readers.go), in work order, each the next reader round the readers
-// (round.go: from the rolling index, wrapping, each the
+// Ask deals every primary in review that wants a read (ReadsWanted) to as many
+// different readers up as it wants now, in work order, each the next reader
+// round the readers (round.go: from the rolling index, wrapping, each the
 // first that has no read card at the attempt, the index moved past it: the
-// readers table's ask_index, written with the ask). Reworked work is asked by
-// the same rotation: a read is a fresh child on a freshly drawn route, so the
-// readers of an earlier attempt are not preferred. A read its reader handed
-// back with no verdict is not a read: it is asked of a reader
-// free at the attempt, or of the same reader again when none is
-// (tla/DirtyTick.tla, JudgedOnlyAfterTheBound). With Another, a primary already asked is dealt to
+// readers table's ask_index, written with the ask). A card's reads are asked
+// one at a time: the first read alone, and the rest it needs (ReadsNeeded: one
+// for a flash card, two for a pro card; readers.go) once the first came back ok,
+// so a first read that finds it broken costs no second read. Reworked work is
+// asked by the same rotation: a read is a fresh child on a freshly drawn route,
+// so the readers of an earlier attempt are not preferred. A read its reader
+// handed back with no verdict is not a read: it is asked of a reader free at
+// the attempt, or of the same reader again when none is (tla/DirtyTick.tla,
+// JudgedOnlyAfterTheBound). With Another, a primary already asked is dealt to
 // one more reader, the next round the readers.
 func Ask(s *Snapshot, r AskReq) Plan {
 	var p Plan
@@ -117,11 +119,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			return insteadHeld(s, c, r.Instead)
 		}
 		asked := len(readsAt(s, c, c.Int("attempt")))
-		have := len(liveReadsAt(s, c, c.Int("attempt")))
 		if another && asked == 0 {
 			return "not asked yet at attempt " + itoa(c.Int("attempt")) + ": the machine's tick asks it, or run: nova-sprint ask " + c.ID + "; --another adds a reader to one already asked"
 		}
-		if !another && have >= ReadsNeeded(c) {
+		if !another && ReadsWanted(s, c) == 0 {
+			if len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) {
+				return "asked already: its reads are asked one at a time, and the next is asked when the one outstanding comes back ok"
+			}
 			return "asked already"
 		}
 		return ""
@@ -175,9 +179,18 @@ func Ask(s *Snapshot, r AskReq) Plan {
 				free = append(free, rd)
 			}
 		}
-		want := max(0, ReadsNeeded(c)-len(all)) // a read taken back from a reader away leaves one to ask
+		// the reads that stand, kept, say how many are asked now (readsWantedOf): the
+		// first alone, then the rest once it came back ok; a read taken back from a
+		// reader away does not stand, so it is asked again
+		// a read handed back, or taken back from a reader away, is not a read and is
+		// asked again whatever stands: it was wanted when it was placed (ReadsWanted)
+		want := max(readsWantedOf(c, kept), len(returned)+len(away))
 		if another {
 			want = 1
+		}
+		if !another && len(all)+len(free)+len(returned) < ReadsNeeded(c) {
+			// not even its first read is asked when no reader could ever read the rest
+			want = ReadsNeeded(c) - len(all)
 		}
 		chosenReaders := rr.picks(want, nil, func(x string) bool { return contains(free, x) })
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
@@ -602,7 +615,9 @@ func inReview(pr *Card, set map[string]string) *Card {
 //     outstanding: stranded in review when its work came back failed, or when
 //     it was never asked at its attempt and the step closes the last judgment
 //     on it (a primary that only arrived in review is asked by the machine);
-//     reads exhausted when its reads are done without two different oks.
+//     nothing while its reads that stand came back ok and it wants more (the
+//     ask places the next one: ReadsWanted); reads exhausted when its reads
+//     are done without the oks it needs.
 //
 // Every step that can leave a primary in review calls it: finish, read,
 // return, ack, ask, ci, and a refused rework. A judgment the step itself
@@ -613,7 +628,7 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	}
 	attempt := pr.Int("attempt")
 	oks := map[string]bool{}
-	outstanding, reads := false, 0
+	outstanding, broken, reads := false, false, 0
 	for _, r := range s.Readers.Rows() {
 		id := ReadCardID(pr.ID, attempt, r)
 		c := s.Readers.Placed(id)
@@ -630,6 +645,8 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 		switch {
 		case col == Asked || col == Reading:
 			outstanding = true
+		case col == Broken:
+			broken = true
 		case col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c):
 			oks[r] = true
 		}
@@ -665,6 +682,10 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 		return Note{}, false
 	case reads == 0:
 		typ, why = NStranded, "never asked at attempt "+itoa(attempt)+" and nothing is open on it"
+	case !broken && reads < ReadsNeeded(pr):
+		// its reads are asked one at a time: the ones that stand came back ok and the
+		// next is the ask's (ReadsWanted), nothing to judge
+		return Note{}, false
 	default:
 		typ, why = NReadsExhausted, fmt.Sprintf("no read is outstanding and %s not said ok at %s", readersWord(ReadsNeeded(pr)), orDash(pr.F("head")))
 	}

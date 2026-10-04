@@ -36,6 +36,11 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 	readsOf := func(h *harness, id string) (drawn, recorded, packed []string) {
 		h.t.Helper()
 		s := h.snap()
+		// the reads are asked one at a time: each read ok, the next is asked
+		for len(s.Readers.Of(id)) < sprint.ReadsNeeded(s.Work.Card(id)) {
+			h.readAllOK(id)
+			s = h.snap()
+		}
 		reads := s.Readers.Of(id)
 		require.Len(h.t, reads, sprint.ReadsNeeded(s.Work.Card(id)), "%s asked of as many readers as its tier needs", id)
 		for _, rc := range reads {

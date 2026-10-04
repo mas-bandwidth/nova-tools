@@ -27,19 +27,25 @@ func TestReworkedWorkIsAskedRoundTheReaders(t *testing.T) {
 	}
 	// attempt 1 of s1-1 is read by reader-a and reader-b: one ok, one broken, reworked
 	first := ask("s1-1")
-	require.Len(t, first, 2)
+	require.Len(t, first, 1, "the first read alone")
 	h.must(ReadStep(sprint.ReadReq{As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
+	first = ask("s1-1") // the second, the first ok
+	require.Len(t, first, 2)
 	h.must(ReadStep(sprint.ReadReq{As: first[1].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	pair := []string{first[0].Row, first[1].Row}
 	require.ElementsMatch(t, []string{"reader-a", "reader-b"}, pair)
-	// s1-2 is asked of reader-c and reader-a: reader-a begins its read and holds it,
-	// reader-c reads ok and is idle
-	for _, rc := range ask("s1-2") {
-		if rc.Row == "reader-a" {
-			h.must(ReadStep(sprint.ReadReq{As: rc.Row, Begin: true, Sel: sprint.Sel{IDs: []string{rc.ID}}}))
-		} else {
-			h.must(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+	// s1-2 is asked of reader-c, who reads ok and is idle, then of reader-a, who
+	// begins its read and holds it
+	for range 2 {
+		for _, rc := range ask("s1-2") {
+			switch {
+			case rc.Col != sprint.Asked:
+			case rc.Row == "reader-a":
+				h.must(ReadStep(sprint.ReadReq{As: rc.Row, Begin: true, Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+			default:
+				h.must(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+			}
 		}
 	}
 	h.finishAttempt("s1-1", false, "h2")
@@ -49,7 +55,7 @@ func TestReworkedWorkIsAskedRoundTheReaders(t *testing.T) {
 	for _, rc := range readsAt(h.snap(), h.snap().Work.Card("s1-1")) {
 		who = append(who, rc.Row)
 	}
-	assert.ElementsMatch(t, []string{"reader-b", "reader-c"}, who, "attempt 2 asked of the next two round the readers")
+	assert.ElementsMatch(t, []string{"reader-b"}, who, "attempt 2 asked its first read of the next reader round the readers")
 	res := h.machine()
 	for _, p := range res.Parts {
 		if p.Name != sprint.PartDrain {

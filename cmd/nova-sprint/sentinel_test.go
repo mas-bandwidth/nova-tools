@@ -31,6 +31,7 @@ func TestReleaseIsTheCoordinators(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1")
 	ta.ok("ask --actor lead")
 	ta.ok("read --as reader-a --ok s1-1.r1.reader-a")
+	ta.ok("ask --actor lead") // the second read, the first ok
 	ta.ok("read --as reader-b --ok s1-1.r1.reader-b")
 	ta.ok("accept s1-1 --actor lead")
 	ta.ok("merge --stream s1")
