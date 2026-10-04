@@ -50,6 +50,7 @@ func init() {
 		{"stop", "", "stop", (*app).cmdMachineStop},
 		{"run", "", "run", (*app).cmdRun},
 		{"tick", "", "tick", (*app).cmdTick},
+		{"selftest", "[--dir <d>] [--keep]", "selftest", (*app).cmdSelftest},
 		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},

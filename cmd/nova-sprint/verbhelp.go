@@ -29,6 +29,7 @@ var verbExit = map[string]string{
 	"friend sync": "exit codes: 0 done, 1 refused (a friend row's name, or a working directory that cannot be read), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
 	"land":        "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
 	"check":       "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
+	"selftest":    "exit codes: 0 the selftest landed its card through the tree gate (SELFTEST OK), 1 it did not (SELFTEST FAILED names the step, the why and the kept directory), 2 usage",
 	"answer":      "exit codes: 0 done (each routine judgment's card applied or listed; --every: the machine is STOPPED), 1 a line applied was refused or a decision's backend failed, 2 usage, an actor not the coordinator, or a sprint that did not answer",
 	"dashboard":   "exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)",
 }
@@ -42,6 +43,7 @@ var verbEffect = map[string]string{
 	"sentinels":     "inspection: reads the sentinels and what each waits on, writes nothing",
 	"reader retire": "local write: retires the named readers in the sprint's store; a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it; --dry-run writes nothing",
 	"preflight":     "inspection: reads the briefs, the table and the repository, writes nothing",
+	"selftest":      "local write: makes a fresh directory, a bare origin and a clone whose base holds a go module, runs the card's flow of the walkthrough on a twin file in it and lands one card through the tree gate; writes only in that directory, opens no store of the caller's and no network, and removes it unless --keep",
 	"dashboard":     "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
 	"coordinator":   "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
 	"answer":        "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
