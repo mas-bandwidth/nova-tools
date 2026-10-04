@@ -208,6 +208,8 @@ Append(s, e, text) ==
                  /\ UNCHANGED <<flatFiles, index, indexed, published, crashedAfterEntry>>
 
 \* CrashAfterEntryBeforeLog: entry file is written and fsynced, but crash precedes log append.
+\* The caller never observes success (no Persisted/Reported); the crashedAfterEntry ghost
+\* variable marks the gap so IndexCoverage reports it (cairn.go:644-667).
 CrashAfterEntryBeforeLog(s, e, text) ==
     /\ sessions[s].open
     /\ entries[s, e] = None
@@ -215,11 +217,10 @@ CrashAfterEntryBeforeLog(s, e, text) ==
     /\ writtenText' = [writtenText EXCEPT ![s, e] = text]
     /\ written' = [written EXCEPT ![s, e] = TRUE]
     /\ fsynced' = [fsynced EXCEPT ![s, e] = TRUE]
-    /\ persisted' = [persisted EXCEPT ![s, e] = TRUE]
-    /\ reported' = [reported EXCEPT ![s, e] = TRUE]
     /\ sessions' = [sessions EXCEPT ![s].pointers = sessions[s].pointers \cup {e}]
     /\ crashedAfterEntry' = [crashedAfterEntry EXCEPT ![s, e] = TRUE]
-    /\ UNCHANGED <<flatFiles, log, index, coverage, logged, indexed, published>>
+    /\ UNCHANGED <<flatFiles, log, index, coverage, logged, indexed, published,
+                   persisted, reported>>
 
 \* CrashAfterLogBeforeIndex: entry logged, but crash precedes index / coverage processing.
 CrashAfterLogBeforeIndex(s, e) ==
