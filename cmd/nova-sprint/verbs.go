@@ -58,6 +58,7 @@ func init() {
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
 		{"take", "--as <member> [<card>@<gen>...] [--epoch <n>] [--max <n>]", "take --as m1 s1-1.w1@1 --epoch 0", (*app).cmdTake},
 		{"finish", "--as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --head 9f3c2e1 --report 'tests green'", (*app).cmdFinish},
+		{"progress", "--as <worker> <card>[@<gen>]... --epoch <n>", "progress --as m1 s1-1.w1@1 --epoch 0", (*app).cmdProgress},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--max <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
 		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--max <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --max 5 --epoch 0", (*app).cmdRead},
@@ -659,7 +660,7 @@ const (
 )
 
 // epochVerbs are the verbs that act on cards handed to an actor outside the
-// sprint: a worker's take by id and finish, a reader's read, a merger's merge
+// sprint: a worker's take by id, finish and progress, a reader's read, a merger's merge
 // and a CI observation. Each names the epoch it was handed its cards at
 // (--epoch, from queue), so a worker, reader or merger from before a clear
 // never reports on the new epoch's card of the same name: a clear moves the
@@ -668,7 +669,7 @@ const (
 // the step's own fenced read of the epoch: with no --epoch the step runs at
 // the epoch it finds (a clear between the read and the write is read again),
 // so the coordinator needs no epoch to name.
-var epochVerbs = map[string]bool{"finish": true, "read": true, "merge": true, "ci": true, "take by id": true}
+var epochVerbs = map[string]bool{"finish": true, "progress": true, "read": true, "merge": true, "ci": true, "take by id": true}
 
 // needsEpoch is whether the verb must be given --epoch: the verbs of
 // epochVerbs, except a merge run by the sprint's coordinator, which merges
@@ -2046,6 +2047,32 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	}
 	return a.runStep("finish", *c, st, store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: ids}, As: *as, Gens: gens, Failed: *failed,
 		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Usage: *usage, Decided: decided, Who: *as}), stdout, stderr)
+}
+
+// cmdProgress stamps progress on the work cards a worker holds: the late rule's sign that a
+// late card moves (docs/SPEC-SPRINT.md section 8, the rules table's row late). The member
+// and the friend daemon send it every sprint.ProgressEvery while the child or the turn
+// prints; a card another row holds is refused.
+func (a *app) cmdProgress(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("progress")
+	as := fs.String("as", "", "the fleet member or friend that holds the cards: only the holder stamps a card's progress")
+	words, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "progress", err.Error())
+	}
+	ids, gens, err := cardGens(words)
+	if err != nil {
+		return refuse(stderr, "progress", err.Error())
+	}
+	if *as == "" || len(ids) == 0 {
+		return refuse(stderr, "progress", "wants --as <worker> and the cards it holds, each as <card> or <card>@<gen>")
+	}
+	c.orActor(*as)
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "progress", err.Error())
+	}
+	return a.runStep("progress", *c, st, store.ProgressStep(sprint.ProgressReq{Sel: sprint.Sel{IDs: ids}, As: *as, Gens: gens, Who: *as}), stdout, stderr)
 }
 
 func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {

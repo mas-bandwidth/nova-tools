@@ -13,12 +13,17 @@
 \*   every waiting card that needs the dropped card (the code's Drop).
 \* Part "rules": one card's attempts under the failed and bound rules: tiers 1 (flash),
 \*   2 (pro), 3 (heavy), 4 (a friend's card, where no rule answers: a mind does).
-\* Part "late": one work card past its deadline, its worker's progress, the one wait a
-\*   generation, and the return and redeal.
+\* Part "late": one work card past its deadline, its holder's progress stamps (the `progress`
+\*   verb, an outside event: Stamp, and Silence as the stamp ages past the window), the one
+\*   wait a generation, the hold of a card whose holder never stamped (the default: wait
+\*   only), and the return and redeal of one whose holder stamped and went silent.
 \* Part "gate": the lander's base tree gate on one base commit: red or green each time
 \*   it is gated; the third failure stops the stream.
 \* Part "idle": the fleet idle or working each tick; the alarm once an episode after
 \*   Window ticks, and the clear note when it recovers.
+\*
+\* Part "late" also has a reachability witness, MCSprintRulesLateReachReturn: the design
+\* still returns a card (gen > 0), so NeverReturned fails there.
 \*
 \* Broken = "none" is the design. Every other value is a reversed witness, each broken
 \* by one property:
@@ -29,6 +34,8 @@
 \*   "nocap"      the failed rule redeals on the same tier for ever: RuleAttemptsBounded
 \*   "down"       the bound rule may lower the tier: LadderClimbs
 \*   "waitalways" the late rule waits whenever there was progress: WaitOnce
+\*   "returnunstamped" the late rule returns a late card with no progress, stamped or not
+\*                (the rule before the stamp existed): NeverStampedNeverReturned
 \*   "stopfirst"  the base gate stops the stream on its first failure: BaseStopsOnThird
 \*   "everytick"  the idle alarm is pushed every tick of an episode: AlarmOncePerEpisode
 
@@ -46,13 +53,13 @@ Cols == {"absent", "waiting", "open", "landed", "dropped"}
 \* -- every part's variables
 VARIABLES col, need, blocked, twin,               \* twins
           tier, fails, st, attempts, envFails,     \* rules
-          gen, waited, progress, late, waits, lst, \* late
+          gen, waited, progress, late, waits, lst, stamped, badReturn, \* late
           gfails, stopped,                         \* gate
           idle, since, said, alarms, clk, nalarm, nclear \* idle
 
 twinVars == <<col, need, blocked, twin>>
 ruleVars == <<tier, fails, st, attempts, envFails>>
-lateVars == <<gen, waited, progress, late, waits, lst>>
+lateVars == <<gen, waited, progress, late, waits, lst, stamped, badReturn>>
 gateVars == <<gfails, stopped>>
 idleVars == <<idle, since, said, alarms, clk, nalarm, nclear>>
 vars == <<twinVars, ruleVars, lateVars, gateVars, idleVars>>
@@ -73,6 +80,8 @@ TypeOK ==
   /\ late \in BOOLEAN
   /\ waits \in 0..2
   /\ lst \in {"working", "withdrawn"}
+  /\ stamped \in BOOLEAN
+  /\ badReturn \in BOOLEAN
   /\ gfails \in 0..3
   /\ stopped \in BOOLEAN
   /\ idle \in BOOLEAN
@@ -88,6 +97,7 @@ Init ==
   /\ twin = [x \in TwinIds |-> None]
   /\ tier = 1 /\ fails = 0 /\ st = "working" /\ attempts = 0 /\ envFails = 0
   /\ gen = 0 /\ waited = -1 /\ progress = FALSE /\ late = FALSE /\ waits = 0 /\ lst = "working"
+  /\ stamped = FALSE /\ badReturn = FALSE
   /\ gfails = 0 /\ stopped = FALSE
   /\ idle = FALSE /\ since = -1 /\ said = FALSE /\ alarms = 0 /\ clk = 0 /\ nalarm = 0 /\ nclear = 0
 
@@ -223,36 +233,62 @@ LadderClimbs == [][tier' >= tier]_ruleVars
 Answered == (st \in {"failed", "bound"}) ~> (st \notin {"failed", "bound"})
 
 -----------------------------------------------------------------------------
-\* Part "late": one work card past its deadline.
+\* Part "late": one work card past its deadline (internal/sprint rules.go, ruleLate).
 
 GoLate ==
   /\ lst = "working" /\ ~late
   /\ late' = TRUE
-  /\ UNCHANGED <<gen, waited, progress, waits, lst>>
-Progress ==
-  /\ progress' = ~progress
-  /\ UNCHANGED <<gen, waited, late, waits, lst>>
+  /\ UNCHANGED <<gen, waited, progress, waits, lst, stamped, badReturn>>
 
-\* the late rule: a wait once a generation with progress, else returned and redealt
+\* the holder's `progress` verb (the member while its child prints, the friend daemon while a
+\* lane's turn prints): a fresh stamp, at the server's time, on the card it works
+Stamp ==
+  /\ lst = "working"
+  /\ stamped' = TRUE /\ progress' = TRUE
+  /\ UNCHANGED <<gen, waited, late, waits, lst, badReturn>>
+
+\* the holder goes silent: its last stamp ages past RuleProgressWindow
+Silence ==
+  /\ progress
+  /\ progress' = FALSE
+  /\ UNCHANGED <<gen, waited, late, waits, lst, stamped, badReturn>>
+
+\* the late rule: a wait once a generation with progress; a card whose holder stamped and went
+\* silent, or whose one wait is spent, returned and redealt; a card whose holder never stamped
+\* this take held (the default, wait only: the judgment closed, raised again later)
 RuleLate ==
   /\ late
   /\ IF progress /\ (waited # gen \/ Broken = "waitalways")
        THEN /\ waited' = gen /\ waits' = waits + 1 /\ late' = FALSE
-            /\ UNCHANGED <<gen, lst>>
-       ELSE /\ gen < MaxGen
+            /\ UNCHANGED <<gen, lst, progress, stamped, badReturn>>
+     ELSE IF stamped \/ waited = gen \/ Broken = "returnunstamped"
+       THEN /\ gen < MaxGen
             /\ gen' = gen + 1 /\ waits' = 0 /\ late' = FALSE /\ lst' = "withdrawn"
+            /\ badReturn' = (badReturn \/ ~stamped)
+            /\ stamped' = FALSE /\ progress' = FALSE \* the next take's holder has stamped nothing
             /\ UNCHANGED waited
-  /\ UNCHANGED progress
+     ELSE /\ late' = FALSE
+          /\ UNCHANGED <<gen, waited, progress, waits, lst, stamped, badReturn>>
 
 Redeal ==
   /\ lst = "withdrawn"
   /\ lst' = "working"
-  /\ UNCHANGED <<gen, waited, progress, late, waits>>
+  /\ UNCHANGED <<gen, waited, progress, late, waits, stamped, badReturn>>
 
-LateNext == (GoLate \/ Progress \/ RuleLate \/ Redeal) /\ waits <= 1
+LateNext == (GoLate \/ Stamp \/ Silence \/ RuleLate \/ Redeal) /\ waits <= 1
 
 \* One wait a generation, whatever the progress.
 WaitOnce == waits <= 1
+
+\* A card whose holder never stamped is never returned by the late rule.
+NeverStampedNeverReturned == ~badReturn
+
+\* Progress is a stamp of this take's holder.
+ProgressIsStamped == progress => stamped
+
+\* The reachability witness's invariant: no card is ever returned. The design returns a card
+\* whose holder stamped and went silent, so TLC's counterexample is the proof it is reached.
+NeverReturned == gen = 0
 
 -----------------------------------------------------------------------------
 \* Part "gate": one base commit gated again and again.
