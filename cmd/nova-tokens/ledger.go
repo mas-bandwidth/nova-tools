@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
@@ -124,7 +123,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer, env toolenv) int {
 	}
 	// The seat is resolved under --dry-run too, so a dry run refuses a login the real run
 	// would refuse; only the dial and the write are skipped.
-	seatUser, password, err := redisauth.Auth(*user, *passwordEnv)
+	seatUser, password, err := seatAuth(*user, *passwordEnv, env.getenv)
 	if err != nil {
 		return ledgerFailed(s, "store", "redis", err)
 	}

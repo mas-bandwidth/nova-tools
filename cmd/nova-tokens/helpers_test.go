@@ -29,9 +29,14 @@ type result struct {
 
 func (r result) all() string { return r.stdout + r.stderr }
 
-// testEnv is the environment invoke runs under: an empty working directory, which
-// resolves a relative path against the process cwd like every os call.
-func testEnv() toolenv { return toolenv{} }
+// noEnv is the environment a test hands run() by default: no variable at all, so the
+// two Redis verbs resolve their seat to no login and every test dials its own store the
+// same way, whatever the machine's environment holds (docs/STANDARD.md section 8).
+func noEnv(string) string { return "" }
+
+// testEnv is the environment invoke runs under: no variables, and an empty working
+// directory, which resolves a relative path against the process cwd like every os call.
+func testEnv() toolenv { return toolenv{getenv: noEnv} }
 
 // processEnv is the environment the tool re-entered through TestMain runs under: the
 // process's own, exactly what main() passes.
@@ -40,7 +45,13 @@ func processEnv() toolenv {
 	if err != nil {
 		wd = ""
 	}
-	return toolenv{wd: wd}
+	return toolenv{getenv: os.Getenv, wd: wd}
+}
+
+// envOf is a test's own environment: the variables it would have set with t.Setenv, as
+// a map the test mutates between invocations, read through the injected getenv.
+func envOf(vars map[string]string) toolenv {
+	return toolenv{getenv: func(k string) string { return vars[k] }}
 }
 
 // invoke runs the binary in process, with the clock and the environment injected.

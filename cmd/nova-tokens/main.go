@@ -242,16 +242,18 @@ func main() {
 	if err != nil {
 		wd = "" // an empty wd resolves a relative path to itself, which every os call resolves against the process's own working directory
 	}
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC(), toolenv{wd: wd}))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC(), toolenv{getenv: os.Getenv, wd: wd}))
 }
 
 // toolenv is the process state the tool reads, injected so that every test runs in
 // parallel with its own (docs/STANDARD.md section 8: the environment and the working
-// directory come in through the code's config, never t.Setenv or a Chdir): wd is the
-// directory a relative flag path resolves against. main passes the process's own
+// directory come in through the code's config, never t.Setenv or a Chdir): getenv is the
+// environment the two Redis verbs read their seat's login from, and wd is the directory a
+// relative flag path resolves against. main passes the process's own os.Getenv and
 // os.Getwd, so the production path reads exactly the environment it always read.
 type toolenv struct {
-	wd string
+	getenv func(string) string
+	wd     string
 }
 
 // resolve is a flag's path as the run sees it: absolute paths and the empty string are
