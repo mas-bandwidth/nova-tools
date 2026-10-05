@@ -58,15 +58,28 @@ const (
 // sources are named, because either one answers and neither is ever guessed.
 const sourceRemedy = "name a verb list: --cli <docs/CLI.md>, or --tools <dir of built nova-* binaries>, or both; refusing to guess"
 
-// Seams for tests. On a real run these stay nil/default and the production
-// clock and runners are used.
-var (
-	dogfoodClock      = time.Now
-	dogfoodGitRunner  dogfood.Runner
-	dogfoodHelpRunner dogfood.HelpRunner
-)
+// dogfoodSeams are the process-wide resources one dogfood run reads: the clock
+// that stamps a receipt, the runner that reads authorship from git, and the
+// runner that asks each binary for its help. The zero value is the production
+// defaults; a test fills one field so it runs beside its neighbours instead of
+// assigning a package variable, which would race every parallel test reading
+// it.
+type dogfoodSeams struct {
+	clock      func() time.Time
+	gitRunner  dogfood.Runner
+	helpRunner dogfood.HelpRunner
+}
 
-func cmdDogfood(args []string, stdout, stderr io.Writer) int {
+// now is the receipt stamp: the injected clock when a test supplied one, and
+// time.Now on a real run.
+func (s dogfoodSeams) now() time.Time {
+	if s.clock != nil {
+		return s.clock()
+	}
+	return time.Now()
+}
+
+func cmdDogfood(seams dogfoodSeams, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
 		verbflag.HelpIfAsked(args[:1], "dogfood")
 	}
@@ -75,11 +88,11 @@ func cmdDogfood(args []string, stdout, stderr io.Writer) int {
 	}
 	switch args[0] {
 	case "ledger":
-		return cmdDogfoodLedger(args[1:], stdout, stderr)
+		return cmdDogfoodLedger(seams, args[1:], stdout, stderr)
 	case "record":
-		return cmdDogfoodRecord(args[1:], stdout, stderr)
+		return cmdDogfoodRecord(seams, args[1:], stdout, stderr)
 	case "gate":
-		return cmdDogfoodGate(args[1:], stdout, stderr)
+		return cmdDogfoodGate(seams, args[1:], stdout, stderr)
 	default:
 		return refuse(stderr, " dogfood", fmt.Sprintf("unknown sub-verb %q; the three are ledger, record and gate", args[0]))
 	}
@@ -106,7 +119,7 @@ func addDogfoodSourceFlags(fs *flag.FlagSet) *dogfoodSources {
 // win and the reference fills in the tools they do not cover; a binary that
 // cannot answer is one NOTE and its tool falls back to the reference, because a
 // half-built directory should cost that tool's rows and not the whole ledger.
-func (s *dogfoodSources) verbList(verb string, maxFlag int, stderr io.Writer) ([]dogfood.Verb, int) {
+func (s *dogfoodSources) verbList(seams dogfoodSeams, verb string, maxFlag int, stderr io.Writer) ([]dogfood.Verb, int) {
 	if s.cli == "" && s.tools == "" {
 		refuse(stderr, " dogfood "+verb, sourceRemedy)
 		fmt.Fprintf(stderr, "  %s\n  %s\n", cliHint, toolsHint)
@@ -125,7 +138,7 @@ func (s *dogfoodSources) verbList(verb string, maxFlag int, stderr io.Writer) ([
 		progress := dogfood.NewProgress(nil, 100*time.Millisecond, 2*time.Second, func(done, total int) {
 			fmt.Fprintf(stderr, "DOGFOOD NOTE asking the binaries for their verbs: %d/%d\n", done, total)
 		})
-		verbs, failures, err := dogfood.VerbsFromTools(ctx, s.tools, dogfoodHelpRunner, progress)
+		verbs, failures, err := dogfood.VerbsFromTools(ctx, s.tools, seams.helpRunner, progress)
 		if err != nil {
 			return nil, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
@@ -164,10 +177,10 @@ type dogfoodRead struct {
 	authors  dogfood.Authors
 }
 
-func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, repo string, gitTimeout, maxFlag int, stderr io.Writer) (dogfoodRead, int) {
+func dogfoodGather(seams dogfoodSeams, verb string, src *dogfoodSources, receiptsDir, authorsFile, repo string, gitTimeout, maxFlag int, stderr io.Writer) (dogfoodRead, int) {
 	var read dogfoodRead
 
-	verbs, code := src.verbList(verb, maxFlag, stderr)
+	verbs, code := src.verbList(seams, verb, maxFlag, stderr)
 	if code != 0 {
 		return read, code
 	}
@@ -201,7 +214,7 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 		progress := dogfood.NewProgress(nil, 100*time.Millisecond, 2*time.Second, func(done, total int) {
 			fmt.Fprintf(stderr, "DOGFOOD NOTE reading authorship from git: %d/%d verbs\n", done, total)
 		})
-		fromGit, err := dogfood.AuthorsFromGit(ctx, repo, verbs, dogfoodGitRunner, progress)
+		fromGit, err := dogfood.AuthorsFromGit(ctx, repo, verbs, seams.gitRunner, progress)
 		if err != nil {
 			return read, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
@@ -250,7 +263,7 @@ func addDogfoodReadFlags(fs *flag.FlagSet) (receipts, authors, repo *string, git
 	return
 }
 
-func cmdDogfoodLedger(args []string, stdout, stderr io.Writer) int {
+func cmdDogfoodLedger(seams dogfoodSeams, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("dogfood ledger", flag.ContinueOnError)
 	src := addDogfoodSourceFlags(fs)
 	receipts, authors, repo, gitTimeout := addDogfoodReadFlags(fs)
@@ -261,7 +274,7 @@ func cmdDogfoodLedger(args []string, stdout, stderr io.Writer) int {
 	if !checkMax(fs, *maxFlag, stderr) {
 		return 2
 	}
-	read, code := dogfoodGather("ledger", src, *receipts, *authors, *repo, *gitTimeout, *maxFlag, stderr)
+	read, code := dogfoodGather(seams, "ledger", src, *receipts, *authors, *repo, *gitTimeout, *maxFlag, stderr)
 	if code != 0 {
 		return code
 	}
@@ -277,7 +290,7 @@ func cmdDogfoodLedger(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
+func cmdDogfoodGate(seams dogfoodSeams, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("dogfood gate", flag.ContinueOnError)
 	src := addDogfoodSourceFlags(fs)
 	receipts, authors, repo, gitTimeout := addDogfoodReadFlags(fs)
@@ -291,7 +304,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	if !checkMax(fs, *maxFlag, stderr) {
 		return 2
 	}
-	read, code := dogfoodGather("gate", src, *receipts, *authors, *repo, *gitTimeout, *maxFlag, stderr)
+	read, code := dogfoodGather(seams, "gate", src, *receipts, *authors, *repo, *gitTimeout, *maxFlag, stderr)
 	if code != 0 {
 		return code
 	}
@@ -335,7 +348,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	return 1
 }
 
-func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
+func cmdDogfoodRecord(seams dogfoodSeams, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("dogfood record", flag.ContinueOnError)
 	src := addDogfoodSourceFlags(fs)
 	tool := fs.String("tool", "", "the binary you ran (required)")
@@ -372,7 +385,7 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 	// The spelling is checked against the same list the ledger will read it
 	// against, so a receipt for a verb spelled differently is refused now
 	// rather than stranded, unread, later.
-	verbs, code := src.verbList("record", *maxFlag, stderr)
+	verbs, code := src.verbList(seams, "record", *maxFlag, stderr)
 	if code != 0 {
 		return code
 	}
@@ -397,7 +410,7 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 		Tool:   *tool,
 		Verb:   *verb,
 		By:     *by,
-		At:     dogfoodClock().UTC().Format(time.RFC3339),
+		At:     seams.now().UTC().Format(time.RFC3339),
 		OK:     *ok,
 		Notes:  *notes,
 		Issue:  *issue,

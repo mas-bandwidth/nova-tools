@@ -13,13 +13,14 @@ package main
 // classifiable is staged, 1 with `NOCODE FAILED <path>: <reason>` per path on
 // stderr, 2 for every refusal.
 //
-// Every case drives the command line end to end through run(), over real
-// temporary git repositories, so the file is red on a tree without the verb
-// and stays red if the wiring moves off the verb the spec names. The one
-// exception is the two records real git cannot emit through this command --
-// an unrecognised status letter and an unclassifiable destination mode --
-// where a fake git stands in front of the real one and crafts the record,
-// because the refusal branches exist precisely for a git that one day will.
+// Every case except the two below drives the command line end to end through
+// run(), over real temporary git repositories, so the file is red on a tree
+// without the verb and stays red if the wiring moves off the verb the spec
+// names. The two exceptions are the records real git cannot emit through this
+// command -- an unrecognised status letter and an unclassifiable destination
+// mode -- where the test drives cmdNoCodeIn directly with a fake git injected
+// as the verb's own git program, because the refusal branches exist precisely
+// for a git that one day will.
 
 import (
 	"bytes"
@@ -149,6 +150,8 @@ func stLine(t *testing.T, stream, prefix string) string {
 // every behaviour the issue names. The six bodies also stand as the six
 // top-level tests below, under the issue's own names.
 func TestIssue2296(t *testing.T) {
+	t.Parallel()
+
 	t.Run("TestNoCodeStagedClassifiesTheIndex", noCodeStagedClassifiesTheIndex)
 	t.Run("TestNoCodeStagedRequiresDir", noCodeStagedRequiresDir)
 	t.Run("TestNoCodeStagedNothingToSay", noCodeStagedNothingToSay)
@@ -293,7 +296,10 @@ func noCodeStagedSaysNo(t *testing.T) {
 	}
 }
 
-func TestNoCodeStagedRefusals(t *testing.T) { noCodeStagedRefusals(t) }
+func TestNoCodeStagedRefusals(t *testing.T) {
+	t.Parallel()
+	noCodeStagedRefusals(t)
+}
 
 // The refusals are exit 2 (SPEC.md:1015-1021): a --dir that is not the root
 // of a git repository, a diff-index that itself fails, unmerged entries, an
@@ -394,9 +400,9 @@ func noCodeStagedRefusals(t *testing.T) {
 			// binary behind the fake. The subcommand is found by scanning
 			// argv, not by position: the tool's own git plumbing runs with
 			// -C and -c configuration overrides in front of the verb, so
-			// no fixed position is the verb.
-			bin := t.TempDir()
-			fakeBin(t, bin, "git", fmt.Sprintf(`sub=
+			// no fixed position is the verb. The fake is the verb's own git
+			// program, injected as a field, so no process PATH is touched.
+			fakeGit := fakeBin(t, t.TempDir(), "git", fmt.Sprintf(`sub=
 skip=0
 for a in "$@"; do
   if [ "$skip" -eq 1 ]; then skip=0; continue; fi
@@ -416,10 +422,9 @@ case "$sub" in
     ;;
 esac
 `, tc.record, real))
-			orig := os.Getenv("PATH")
-			require.NoError(t, os.Setenv("PATH", bin+string(os.PathListSeparator)+orig))
-			exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
-			require.NoError(t, os.Setenv("PATH", orig))
+			var out, errb bytes.Buffer
+			exit := cmdNoCodeIn(stagedSeams{gitBin: fakeGit}, []string{"--staged", "--dir", dir}, &out, &errb)
+			stdout, stderr := out.String(), errb.String()
 			refused(t, tc.name, exit, stderr, tc.want)
 			assert.EqualValues(t, "", stdout, "%s printed to stdout: %q", tc.name, stdout)
 		})

@@ -310,7 +310,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	case "hygiene":
 		return cmdHygiene(args[1:], stdout, stderr)
 	case "dogfood":
-		return cmdDogfood(args[1:], stdout, stderr)
+		return cmdDogfood(dogfoodSeams{}, args[1:], stdout, stderr)
 	case "convergence":
 		return cmdConvergence(args[1:], stdout, stderr)
 	case "spelling":
@@ -674,6 +674,14 @@ func excludeFlags(exclude repeatable) []string {
 }
 
 func cmdNoCode(args []string, stdout, stderr io.Writer) int {
+	return cmdNoCodeIn(stagedSeams{}, args, stdout, stderr)
+}
+
+// cmdNoCodeIn is the audit and the --staged advisory with the git program
+// injected: the production entry point passes the zero value (git on PATH) and
+// a test passes a fake git so it needs no process PATH. Every refusal and every
+// output line is the same as cmdNoCode's.
+func cmdNoCodeIn(seams stagedSeams, args []string, stdout, stderr io.Writer) int {
 	var asJSON bool
 	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
 	defer stderr.(*jsonOutput).finish()
@@ -749,7 +757,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	// refusal the audit already makes, and it never sees a --dir it was
 	// willing to guess. The verb's own wiring is staged.go.
 	if *staged {
-		return stagedRun(*dir, allow, deny, source, *maxFlag, stdout, stderr)
+		return stagedRun(seams, *dir, allow, deny, source, *maxFlag, stdout, stderr)
 	}
 
 	opts := check.NoCodeOptions{Dir: *dir, Allow: allow, DenyExt: deny, DenySource: source}
