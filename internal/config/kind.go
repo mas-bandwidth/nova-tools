@@ -233,8 +233,9 @@ func checkFriend(r Row) error {
 	return nil
 }
 
-// Tiers are the model tiers a friend can do, capacity.lua's filter_ok
-// spelling (frontier, pro, flash).
+// Tiers are the model tiers a friend can do, capacity.lua's filter_ok list
+// (docs/SPEC-CONFIG.md, "friend"); TestTiersMatchCapacityFilter holds the Go
+// and Lua lists equal.
 var Tiers = []string{"flash", "frontier", "heavy", "pro"}
 
 // RouteTiers are the tiers a route serves: Tiers less frontier, whose cards
