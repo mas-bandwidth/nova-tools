@@ -364,6 +364,38 @@ at the landed sha, with `NOVA_SPRINT_REDIS` naming the store for the inventory, 
    seat wrapper. Check: `nova-update version` on each machine; `nova-sprint where` shows the members up with
    loads; `nova-sprint check` prints each violated invariant, none when healthy. Then the re-add list (section 3), and the friends' loops on.
 
+### Adoption is a pipeline (adoption-is-a-pipeline.w1)
+
+On 2026-10-04 and 05 the live server ran a side-branch build for a day while the base moved ahead, because
+every adoption was done by hand and waited on the coordinator remembering. `nova-sprint adopt` is that hand
+adoption as one pipeline (`internal/sprint/adopt.go`), run on a schedule: each run is one pass, and a pass
+starts an adoption whenever the base tip is not the commit the live server's version line names (a
+side-branch build counts as behind). A pass moves it as far as it can and never waits:
+
+1. **build** every tool from the tip on `--bench` (`nova-update release build`, version
+   `<release>-adopt.<tip12>`), fetched to `--out`;
+2. **canary and shadow**: the build's SHA256SUMS verified and its `nova-sprint version` naming the tip, then
+   its `tick --shadow` on the live store, read-only, under the tick deadline;
+3. **cold read**: a card `adopt-read-<tip12>` added to `--stream` (default `adopt`) for a friend, whose report
+   ends `READ OK` or `READ BROKEN: <finding>`; a pass while it is out says `ADOPT WAIT`;
+4. **one judgment** (`JUDGMENT adopt <tip12> canary= shadow= read= finding=`, appended to `--judgment-to` as
+   one JSON line): switch, yes or no. Answer it with
+   `nova-sprint adopt --answer yes|no --judgment <tip12> --reason <text>`; an answer to any other tip is refused.
+   Nothing else in the pipeline asks;
+5. on **yes**: the server binary and every `--daemon` are copied aside (`<path>.adopt-prev`), switched, and
+   the build's own `nova-update release adopt` runs once per `--machines` row, funded or not, each machine's
+   `nova-sprint version` read back. A machine that misses is named (`ADOPT FLEET MISSED`) and pushed again on
+   later passes; it never undoes the switch;
+6. **watch**: `--missed` tick intervals (default 3 of `--tick-every` 1m) with no server tick after the switch
+   restore the kept copies by themselves (`ADOPT ROLLED BACK`); `--watch` intervals (default 15) with ticks
+   adopt it (`ADOPT ADOPTED`).
+
+On **no**, nothing is switched and the live build stays (`ADOPT DECLINED`). A failed stage before the switch
+leaves the record `blocked` and every later pass names what blocks it (`ADOPT BLOCKED tip= at <stage>: ...`)
+until the base moves to another tip; so does a rollback. A base that moves before the switch restarts on the
+new tip, and the old judgment is never acted on. `adopt --show` prints the record (`--state`, default
+`~/.local/state/nova-sprint/adopt.json`).
+
 ## 8. The hourly habits
 
 - The bus. `nova-bus peek --as <coordinator>` lists what waits for the coordinator; `nova-bus recv`
