@@ -521,7 +521,7 @@ func readSealValue(opts SealOptions) (string, error) {
 		return "", fmt.Errorf("empty value: refusing to seal nothing; paste a value on stdin or at the terminal")
 	}
 	if strings.ContainsAny(value, "\r\n") {
-		return "", fmt.Errorf("value is multi-line; a file-shaped secret is not an environment variable.\n  generate it where it is used: this store holds no file-shaped secrets.")
+		return "", fmt.Errorf("value is multi-line; a file-shaped secret is not an environment variable.\n  generate it where it is used: this store holds no file-shaped secrets")
 	}
 	if strings.Contains(value, "\x00") {
 		return "", fmt.Errorf("value contains a NUL byte")
