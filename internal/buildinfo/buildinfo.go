@@ -194,11 +194,13 @@ func Parse(s string) (Fields, bool) {
 		return Fields{}, false
 	}
 	f := Fields{Tool: tokens[0], Version: tokens[1], Platform: tokens[2], GoVersion: tokens[3]}
+	seen := map[string]bool{}
 	for _, e := range tokens[4:] {
 		key, value, found := strings.Cut(e, "=")
-		if !found || key == "" || value == "" {
+		if !found || key == "" || value == "" || seen[key] {
 			return Fields{}, false
 		}
+		seen[key] = true
 		f.Extras = append(f.Extras, e)
 	}
 	return f, true
