@@ -74,9 +74,11 @@ func (s *Snapshot) decideFields(pr *Card, first bool) map[string]string {
 func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	var out []*Card
 	for _, r := range s.Readers.Rows() {
-		c := s.Readers.Placed(ReadCardID(pr.ID, attempt, r))
-		if c != nil {
-			out = append(out, c)
+		for _, id := range ReadCardIDs(pr.ID, attempt, r) {
+			if c := s.Readers.Placed(id); c != nil {
+				out = append(out, c)
+				break
+			}
 		}
 	}
 	return out
@@ -260,7 +262,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			}
 			maps.Copy(fields, s.readRouteOf(ri, c, failed))
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
-			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
+			cardID, _ := ReadCardForAsk(s, c.ID, attempt, rd)
+			u.Changes = append(u.Changes, change(Readers, createEntry(cardID, rd, Asked, c.Score, fields)))
 		}
 		all = append(append(all, chosenReaders...), again...)
 		if pair := strings.Join(all, ","); !another && pair != c.F("asked") {
@@ -291,8 +294,12 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, c.ID)
 		}
 		asked := map[string]string{}
-		for _, rd := range append(append([]string{}, chosenReaders...), again...) {
-			asked[ReadCardID(c.ID, attempt, rd)] = Asked
+		for _, rd := range chosenReaders {
+			cardID, _ := ReadCardForAsk(s, c.ID, attempt, rd)
+			asked[cardID] = Asked
+		}
+		for _, rc := range inPlace {
+			asked[rc.ID] = Asked
 		}
 		if j, ok := reviewJudgment(s, c, reviewStep{moved: asked, closing: noteIDs(u.Closes), who: r.Who}); ok {
 			u.Notes = append(u.Notes, j)
@@ -318,15 +325,27 @@ func Ask(s *Snapshot, r AskReq) Plan {
 // taken back by ask --instead ("" when it is live: asked or reading).
 func insteadHeld(s *Snapshot, pr *Card, rd string) string {
 	attempt := pr.Int("attempt")
-	rc := s.Readers.Card(ReadCardID(pr.ID, attempt, rd))
+	ids := ReadCardIDs(pr.ID, attempt, rd)
+	for _, id := range ids {
+		if rc := s.Readers.Card(id); rc != nil && rc.Placed() && (rc.Col == Asked || rc.Col == Reading) {
+			return ""
+		}
+	}
+	var lastCard *Card
+	for i := len(ids) - 1; i >= 0; i-- {
+		if c := s.Readers.Card(ids[i]); c != nil {
+			lastCard = c
+			break
+		}
+	}
 	at := " of " + pr.ID + " at attempt " + itoa(attempt)
 	switch {
-	case rc == nil:
+	case lastCard == nil:
 		return rd + " holds no read" + at + "; run: nova-sprint card " + pr.ID + " for its readers, or nova-sprint ask " + pr.ID + " --another to add one"
-	case !rc.Placed():
-		return rd + "'s read" + at + " was retired at " + rc.F("retired") + " by " + orDash(rc.F("retired_by")) + ": nothing to take back; run: nova-sprint ask " + pr.ID + " --another to add a reader"
-	case rc.Col != Asked && rc.Col != Reading:
-		return rd + "'s read" + at + " is finished (" + rc.Col + "), not asked or reading: nothing to take back; run: nova-sprint ask " + pr.ID + " --another to add a reader"
+	case !lastCard.Placed():
+		return rd + "'s read" + at + " was retired at " + lastCard.F("retired") + " by " + orDash(lastCard.F("retired_by")) + ": nothing to take back; run: nova-sprint ask " + pr.ID + " --another to add a reader"
+	case lastCard.Col != Asked && lastCard.Col != Reading:
+		return rd + "'s read" + at + " is finished (" + lastCard.Col + "), not asked or reading: nothing to take back; run: nova-sprint ask " + pr.ID + " --another to add a reader"
 	}
 	return ""
 }
@@ -659,25 +678,27 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	oks := map[string]bool{}
 	outstanding, broken, reads := false, false, 0
 	for _, r := range s.Readers.Rows() {
-		id := ReadCardID(pr.ID, attempt, r)
-		c := s.Readers.Placed(id)
-		col, moved := st.moved[id]
-		switch {
-		case c == nil && !moved:
-			continue
-		case c == nil:
-			col = Asked
-		case !moved:
-			col = c.Col
-		}
-		reads++
-		switch {
-		case col == Asked || col == Reading:
-			outstanding = true
-		case col == Broken:
-			broken = true
-		case col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c):
-			oks[r] = true
+		for _, id := range ReadCardIDs(pr.ID, attempt, r) {
+			c := s.Readers.Placed(id)
+			col, moved := st.moved[id]
+			switch {
+			case c == nil && !moved:
+				continue
+			case c == nil:
+				col = Asked
+			case !moved:
+				col = c.Col
+			}
+			reads++
+			switch {
+			case col == Asked || col == Reading:
+				outstanding = true
+			case col == Broken:
+				broken = true
+			case col == OK && c != nil && c.F("head") == pr.F("head") && ReadCardAgrees(c):
+				oks[r] = true
+			}
+			break
 		}
 	}
 	open := map[string]bool{} // the judgment types open on it after the step
