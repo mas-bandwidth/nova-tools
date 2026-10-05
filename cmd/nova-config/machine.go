@@ -58,7 +58,7 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 		if err != nil {
 			return cannotRead("the config cannot be read: "+err.Error(), helpFor(verb))
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }() // ignored: store opened for reading
 		_, found, err := st.Get(ctx, config.KindMachine, name)
 		if err != nil {
 			return cannotRead("the config cannot be read: "+err.Error(), helpFor(verb))
@@ -125,7 +125,7 @@ func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Write
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }() // ignored: store opened for reading
 	ws, err := config.Widths(ctx, st)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
