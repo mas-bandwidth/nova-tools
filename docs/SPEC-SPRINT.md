@@ -700,6 +700,33 @@ written with the moves. A step whose write committed and whose display copies
 then failed to sync reports OK, for every verb, with the sync's error on its own
 line, never FAILED: the table holds what the step wrote.
 
+### friend-reconcile-every-tick-r.w1: the run loop reconciles every friend each tick
+
+Friend reconcile above ran only when the coordinator typed it, so a phantom working count
+stayed until someone looked (2026-10-04: one friend's row read working=4 with nothing
+running). After each tick of a RUNNING machine, `run` reconciles every friend of the friends
+table with the verb's own plan (`reconcileFriend`, shared by `friend reconcile`:
+`sprint.FriendReconcileOf`, the collect of friend sync, `sprint.FriendReturn`), as the
+machine, so each fix is the verb's history line and nothing new decides; her directory is
+`<HOME>/<friend>-working`, HOME the server's, as the verbs take it with no `--root`. It is
+bounded to one stat walk of each friend's directory a tick (the directory, her
+`inbox/QUEUE.json`, each working card's `outbox/<job>/REPORT.md`), and a friend whose
+directory is not reachable from the server, or whose account cannot be read, is skipped
+with one record line, `FRIEND-RECONCILE SKIPPED friend=<name>: <why>`, said once until she
+is read again and never an error. Only moves are printed (`FRIEND-CARD FINISHED`/`REFUSED`,
+`FRIEND-RECONCILE RETURNED`/`REFUSED`), never a keep. Each card it moves pushes the
+coordinator one note naming the card and why: a return's own happened note, `a friend's
+card returned to ready`, addressed to the coordinator (`FriendReturnReq.Push`), and for a
+collect `a friend's card collected by reconcile`. A friend whose row's working count
+still differs from the tasks her QUEUE.json says `working` after the pass is one note to
+the coordinator an episode, `a friend's row disagrees with her QUEUE.json`, and one more,
+`a friend's row agrees with her QUEUE.json again`, when it ends; the episode is kept on the
+fleet table's property `friend_disagree_<friend>` as the idle alarm keeps its own, so it
+is one note across ticks and run loops, never one a tick (`sprint.FriendDisagree`). The
+cards the tick has just dealt are not yet delivered (friend sync delivers them, in the
+coordinator's loop); her account was written before their deal, so the verb's rule keeps
+them. `TestRunReconcilesFriendsEveryTick`.
+
 ## 2. The cards
 
 Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a

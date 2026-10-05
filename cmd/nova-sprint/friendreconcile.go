@@ -100,18 +100,6 @@ func (a *app) cmdFriendReconcile(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s: %s; run: ls -la %s; nothing was changed\n", prog, name, oneline.Escape(why), filepath.Join(dir, "inbox"))
 		return 1
 	}
-	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(friend), sprint.Working)
-	if err != nil {
-		return a.readFailed(name, err, stderr)
-	}
-	packets, err := st.Packets(ctx, cards)
-	if err != nil {
-		return a.readFailed(name, err, stderr)
-	}
-	byID := make(map[string]*sprint.Card, len(cards))
-	for _, wc := range cards {
-		byID[wc.ID] = wc
-	}
 	var said []string
 	say := func(l string) {
 		said = append(said, l)
@@ -123,6 +111,75 @@ func (a *app) cmdFriendReconcile(args []string, stdout, stderr io.Writer) int {
 	if *dry {
 		dryWord = " (dry run: nothing written)"
 	}
+	t, err := a.reconcileFriend(ctx, st, reconcileReq{friend: friend, dir: dir, account: account, dry: *dry, op: c.op, who: c.actor, say: say})
+	if err != nil {
+		return a.readFailed(name, err, stderr)
+	}
+	collected, kept, returned, refused, strays, packets := t.collected, t.kept, t.returned, t.refused, t.strays, t.cards
+	line := fmt.Sprintf("collected=%d kept=%d returned=%d refused=%d strays=%d", collected, kept, returned, refused, len(strays))
+	facts := map[string]any{"friend": friend, "collected": collected, "kept": kept, "returned": returned, "refused": refused, "strays": orEmpty(strays), "dry_run": *dry, "cards": orEmpty(said)}
+	if refused > 0 {
+		// the store and her account still disagree: the exit says so (docs/STANDARD.md, exit codes)
+		if c.json {
+			facts["verb"], facts["status"], facts["exit"] = name, "failed", 1
+			// ignored: a map of strings, numbers, booleans and lists of strings always encodes
+			b, _ := json.Marshal(facts)
+			fmt.Fprintln(stdout, string(b))
+		} else {
+			fmt.Fprintf(stdout, "FRIEND-RECONCILE FAILED friend=%s %s: %d cards were not settled, each on its line; run: nova-sprint friend reconcile %s\n", friend, line, refused, friend)
+		}
+		return 1
+	}
+	if packets+len(strays) == 0 {
+		line += ": nothing to do, no card is working on her row and her QUEUE.json names none"
+	}
+	sayOK(stdout, c.json, name, "FRIEND-RECONCILE OK friend="+friend+" "+line+dryWord, facts)
+	return 0
+}
+
+// reconcileReq is one friend's reconcile: her name, her working directory, her account
+// as read there (friendQueueRead), and how it runs: --dry-run and --op, who acts, the
+// line each card says, and push, the run loop's, which addresses each card moved to the
+// coordinator (friendreconcile_tick.go).
+type reconcileReq struct {
+	friend, dir string
+	account     sprint.FriendAccount
+	dry         bool
+	op, who     string
+	say         func(string)
+	push        bool
+}
+
+// reconcileTally is what one reconcile did: the cards working on her row it read, each
+// one's settlement counted, and her queue's strays.
+type reconcileTally struct {
+	cards, collected, kept, returned, refused int
+	strays                                    []string
+}
+
+// reconcileFriend settles each card working on a friend's row against her account (docs/
+// SPEC-SPRINT.md section 1, friend reconcile): the plan friend reconcile and the run
+// loop's pass (friendreconcile_tick.go) both apply, so nothing but this decides. It
+// writes nothing in her directory; an error is a read or a write of the store.
+func (a *app) reconcileFriend(ctx context.Context, st *store.Store, r reconcileReq) (reconcileTally, error) {
+	var t reconcileTally
+	friend, dir, account, say := r.friend, r.dir, r.account, r.say
+	dryWord := ""
+	if r.dry {
+		dryWord = " (dry run: nothing written)"
+	}
+	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(friend), sprint.Working)
+	if err != nil {
+		return t, err
+	}
+	packets, err := st.Packets(ctx, cards)
+	if err != nil {
+		return t, err
+	}
+	byID := make(map[string]*sprint.Card, len(cards))
+	for _, wc := range cards {
+		byID[wc.ID] = wc
+	}
 	var held []string
 	var back []sprint.FriendReturnCard
 	collected, kept, refused := 0, 0, 0
@@ -131,7 +188,7 @@ func (a *app) cmdFriendReconcile(args []string, stdout, stderr io.Writer) int {
 		held = append(held, p.Card, job)
 		report, bad, at, err := friendReadReport(dir, job)
 		if err != nil {
-			return a.readFailed(name, err, stderr)
+			return t, err
 		}
 		if bad != "" {
 			kept++
@@ -151,32 +208,37 @@ func (a *app) cmdFriendReconcile(args []string, stdout, stderr io.Writer) int {
 			say(fmt.Sprintf("FRIEND-RECONCILE KEPT friend=%s card=%s job=%s: %s", friend, p.Card, oneline.Field(job), oneline.Escape(why)))
 		case action == sprint.ReconcileReturn:
 			back = append(back, sprint.FriendReturnCard{ID: p.Card, Gen: p.Gen, Why: why})
-		case *dry:
+		case r.dry:
 			collected++
 			say(fmt.Sprintf("FRIEND-RECONCILE COLLECT friend=%s card=%s job=%s: %s%s", friend, p.Card, oneline.Field(job), oneline.Escape(why), dryWord))
 		default:
-			done, err := a.friendCollect(ctx, st, friend, p, report, c.op, at, say)
+			done, err := a.friendCollect(ctx, st, friend, p, report, r.op, at, say)
 			if err != nil {
-				return a.readFailed(name, err, stderr)
+				return t, err
 			}
 			if done {
 				collected++
+				if r.push {
+					if err := a.pushCollected(ctx, st, sprint.FriendCollectedReq{Friend: friend, Card: p.Card, Primary: p.Primary, Stream: p.Stream, Who: r.who, Why: why}); err != nil {
+						return t, err
+					}
+				}
 			} else {
 				refused++
 			}
 		}
 	}
 	returned := len(back)
-	if len(back) > 0 && !*dry {
-		step := store.FriendReturnStep(sprint.FriendReturnReq{Friend: friend, Who: c.actor, Cards: back})
-		if c.op != "" {
+	if len(back) > 0 && !r.dry {
+		step := store.FriendReturnStep(sprint.FriendReturnReq{Friend: friend, Who: r.who, Cards: back, Push: r.push})
+		if r.op != "" {
 			// the return's own operation id, apart from each collect's (friendCollect), so --op
 			// replays the step rather than being accepted and ignored
-			step.CallerOp = c.op + ".return." + step.Args
+			step.CallerOp = r.op + ".return." + step.Args
 		}
 		res, err := st.Run(ctx, step)
 		if err != nil {
-			return a.readFailed(name, err, stderr)
+			return t, err
 		}
 		for _, r := range res.Refused {
 			say(fmt.Sprintf("FRIEND-RECONCILE REFUSED friend=%s card=%s: %s; nothing was returned, and the next reconcile reads it again", friend, oneline.Field(r.Key), oneline.Escape(r.Why)))
@@ -195,23 +257,6 @@ func (a *app) cmdFriendReconcile(args []string, stdout, stderr io.Writer) int {
 	for _, id := range strays {
 		say(fmt.Sprintf("NOTE friend=%s: her QUEUE.json says %s for %s, which is no card working on her row; nothing was done", friend, oneline.Field(account.Tasks[id]), oneline.Field(id)))
 	}
-	line := fmt.Sprintf("collected=%d kept=%d returned=%d refused=%d strays=%d", collected, kept, returned, refused, len(strays))
-	facts := map[string]any{"friend": friend, "collected": collected, "kept": kept, "returned": returned, "refused": refused, "strays": orEmpty(strays), "dry_run": *dry, "cards": orEmpty(said)}
-	if refused > 0 {
-		// the store and her account still disagree: the exit says so (docs/STANDARD.md, exit codes)
-		if c.json {
-			facts["verb"], facts["status"], facts["exit"] = name, "failed", 1
-			// ignored: a map of strings, numbers, booleans and lists of strings always encodes
-			b, _ := json.Marshal(facts)
-			fmt.Fprintln(stdout, string(b))
-		} else {
-			fmt.Fprintf(stdout, "FRIEND-RECONCILE FAILED friend=%s %s: %d cards were not settled, each on its line; run: nova-sprint friend reconcile %s\n", friend, line, refused, friend)
-		}
-		return 1
-	}
-	if len(packets)+len(strays) == 0 {
-		line += ": nothing to do, no card is working on her row and her QUEUE.json names none"
-	}
-	sayOK(stdout, c.json, name, "FRIEND-RECONCILE OK friend="+friend+" "+line+dryWord, facts)
-	return 0
+	t.cards, t.collected, t.kept, t.returned, t.refused, t.strays = len(packets), collected, kept, returned, refused, strays
+	return t, nil
 }

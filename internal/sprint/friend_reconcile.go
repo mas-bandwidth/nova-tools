@@ -141,6 +141,9 @@ type FriendReturnReq struct {
 	Friend string
 	Who    string // who acts: the coordinator
 	Cards  []FriendReturnCard
+	// Push addresses each card's note to the coordinator, so inbox --push carries it: the
+	// run loop's pass, which nobody watches as it acts (friend_reconcile_tick.go).
+	Push bool
 }
 
 // FriendReturn returns each card named from the friend's row (docs/SPEC-SPRINT.md section
@@ -191,6 +194,9 @@ func FriendReturn(s *Snapshot, r FriendReturnReq) Plan {
 		what := "returned by friend reconcile: " + fc.Why
 		n := happened(NFriendReturned, pr.Row, s.Now, pr.ID)
 		n.Who, n.What = r.Who, what
+		if r.Push {
+			n.To, n.Hint = s.Coordinator, "run: nova-sprint card "+pr.ID
+		}
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 			change(Fleet, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByReconcile, "return_reason": fc.Why})),
 			change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")),
