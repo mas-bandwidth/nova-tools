@@ -20,16 +20,29 @@ func TestFriendRowsReturnsNameWidthStatusOnly(t *testing.T) {
 	require.NoError(t, err)
 	_, err = h.st.FriendBeat(h.ctx, "amy")
 	require.NoError(t, err)
+	_, _, _, err = h.health("amy", "tester", sprint.Up, h.now, 1)
+	require.NoError(t, err)
 	require.NoError(t, h.st.SetFriendHeld(h.ctx, "bob", true, "c", "", time.Time{}, 0))
 	rows, err := h.st.FriendRows(h.ctx, h.now)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	// up first, then held (FleetOrder); the counts are all zero, never read; her beat's time
-	// is carried (view coordinator reads how stale her report is)
+	// is carried (view coordinator reads how stale her report is), and the evidence her
+	// status rests on, her session's pong, never her beat
 	assert.Equal(t, []FriendRow{
-		{Name: "amy", Width: 3, Status: sprint.Up, Beat: h.now.UTC().Truncate(time.Second)},
-		{Name: "bob", Width: 1, Status: sprint.Held},
+		{Name: "amy", Width: 3, Status: sprint.Up, Evidence: "session pong 0s ago", Beat: h.now.UTC().Truncate(time.Second), Health: &sprint.FriendHealth{State: sprint.Up, Seen: h.now, Generation: 1}},
+		{Name: "bob", Width: 1, Status: sprint.Held, Evidence: "held"},
 	}, rows)
+}
+
+// up is a friend's beat and a wake ping her session answered, observed by the seat's
+// holder at the clock now: a friend up, as the tests that deal to her want her.
+func (h *harness) up(friend string) {
+	h.t.Helper()
+	_, err := h.st.FriendBeat(h.ctx, friend)
+	require.NoError(h.t, err)
+	_, _, _, err = h.health(friend, "tester", sprint.Up, h.now, 1)
+	require.NoError(h.t, err)
 }
 
 // A friend's delivery mode (batch or one-shot) is respected by the store's tick dealing on
@@ -45,10 +58,8 @@ func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 		{Name: "bob", Width: 2, Mode: "one-shot"},
 	})
 	require.NoError(t, err)
-	_, err = h.st.FriendBeat(h.ctx, "amy")
-	require.NoError(t, err)
-	_, err = h.st.FriendBeat(h.ctx, "bob")
-	require.NoError(t, err)
+	h.up("amy")
+	h.up("bob")
 
 	brief := func(who string) string {
 		return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
@@ -117,8 +128,7 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 		{Name: "amy", Width: 2, Mode: "batch"},
 	})
 	require.NoError(t, err)
-	_, err = h.st.FriendBeat(h.ctx, "amy")
-	require.NoError(t, err)
+	h.up("amy")
 
 	brief := func(who string) string {
 		return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."

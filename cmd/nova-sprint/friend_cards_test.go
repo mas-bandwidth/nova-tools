@@ -49,7 +49,7 @@ func friendCardApp(t *testing.T, who string, friends ...string) (*testApp, strin
 	root := t.TempDir()
 	ta.ok("friend sync --root " + root)
 	for _, f := range friends {
-		ta.ok("friend beat " + f)
+		ta.beatUp(f)
 	}
 	brief := filepath.Join(t.TempDir(), "s1-1.md")
 	require.NoError(t, os.WriteFile(brief, []byte(passingBrief("s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: "+who)), 0o644))
@@ -409,7 +409,7 @@ func TestFriendSyncDeliversHerReadyCardsAndKeepsHerQueueFile(t *testing.T) {
 	ta.a.tip = tipIs(t, landHead)
 	root := t.TempDir()
 	ta.ok("friend sync --root " + root)
-	ta.ok("friend beat amy")
+	ta.beatUp("amy")
 	dir := t.TempDir()
 	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(passingBrief(id+": a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy")), 0o644))

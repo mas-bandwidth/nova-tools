@@ -19,9 +19,11 @@ import (
 // is the roster, every friend of nova-config's friend rows (friend sync) with
 // the coordinator's hold of each (friend down; friend up releases it) and her
 // width; friend-beat:<f> is the friend's last beat (friend beat), written by
-// the friend's own machinery. A friend's status is derived when it is shown,
-// never stored, by the friends' rule (sprint.FriendStatus): held, else up
-// while her last beat is within sprint.FriendDownAfter (15 s), else down. Her
+// her daemon, shown and never evidence; friend-finish:<f> is when a card of
+// hers last finished (FriendFinished). A friend's status is derived when it is
+// shown, never stored, by the friends' rule (sprint.FriendStatus): held, else
+// up only on her session's evidence within its window (a wake ping her session
+// answered, friend health; a card of hers finished), else down. Her
 // counts are her sprint cards' (the cards dealt to her fleet row friend.<name>,
 // read from the fleet table by where, never stored as a record here):
 // (the owner, 2026-10-02: "give friends in the friends table the same ready,
@@ -92,6 +94,12 @@ type FriendRow struct {
 	// Health is the coordinator's last accepted observation of her (friend
 	// health), absent until the first.
 	Health *sprint.FriendHealth `json:"health,omitempty"`
+	// Evidence is what her status rests on (sprint.FriendEvidence): for up, the
+	// session's evidence and its age; for down, what is missing, and her beat's
+	// age, which is never evidence. Finished is when a card of hers last
+	// finished, zero for never.
+	Evidence string    `json:"evidence,omitempty"`
+	Finished time.Time `json:"finished,omitzero"`
 	// Reason and Until say why she is held or down and when she is expected
 	// back, when the hold or the observation said (friend down, friend health).
 	Reason string    `json:"reason,omitempty"`
@@ -178,7 +186,7 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 	if len(removed) > 0 {
 		keys := make([]string, 0, len(removed))
 		for _, n := range removed {
-			keys = append(keys, st.Names.Key(friendBeatKey(n)), st.Names.Key(friendHealthKey(n)))
+			keys = append(keys, st.Names.Key(friendBeatKey(n)), st.Names.Key(friendHealthKey(n)), st.Names.Key(friendFinishKey(n)))
 		}
 		if _, err := st.B.DeleteKeys(ctx, keys); err != nil {
 			return added, removed, updated, err
@@ -251,7 +259,7 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 // (ready, working, ok, failed) are her sprint cards', filled by where from her
 // fleet row (friend.<name>), never read or counted here: the store holds no
 // job record. Three reads: the roster, the seat's generation, then every
-// friend's beat and health in one exchange. A store that keeps no records has
+// friend's beat, health and last finish in one exchange. A store that keeps no records has
 // no friends.
 func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, error) {
 	r, kv, err := st.roster(ctx)
@@ -266,9 +274,9 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 		return nil, err
 	}
 	names := slices.Sorted(maps.Keys(r))
-	keys := make([]string, 0, 2*len(names))
+	keys := make([]string, 0, 3*len(names))
 	for _, n := range names {
-		keys = append(keys, friendBeatKey(n), friendHealthKey(n))
+		keys = append(keys, friendBeatKey(n), friendHealthKey(n), friendFinishKey(n))
 	}
 	vals, oks, err := getKeys(ctx, kv, keys)
 	if err != nil {
@@ -279,17 +287,23 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 	for i, n := range names {
 		var b sprint.Beat
 		var h sprint.FriendHealth
-		if 2*i+1 < len(oks) {
-			if oks[2*i] {
+		var fin time.Time
+		if 3*i+2 < len(oks) {
+			if oks[3*i] {
 				// ignored: an unreadable record is no beat, which the next beat replaces
-				_ = json.Unmarshal([]byte(vals[2*i]), &b)
+				_ = json.Unmarshal([]byte(vals[3*i]), &b)
 			}
-			if oks[2*i+1] {
+			if oks[3*i+1] {
 				// ignored: an unreadable record is no observation, which the next replaces
-				_ = json.Unmarshal([]byte(vals[2*i+1]), &h)
+				_ = json.Unmarshal([]byte(vals[3*i+1]), &h)
+			}
+			if oks[3*i+2] {
+				// ignored: an unreadable record is no finish, which the next replaces
+				fin, _ = time.Parse(time.RFC3339, vals[3*i+2])
 			}
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
+		word, evidence := sprint.FriendEvidence(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}, now)
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
 		if b.Friend != nil {
 			row.Active = b.Friend.Active
 		}

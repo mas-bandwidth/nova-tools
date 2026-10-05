@@ -176,7 +176,7 @@ func TestTheCoordinatorViewNamesAFriendWithStaleReports(t *testing.T) {
 	assert.True(t, strings.HasPrefix(f.Next, "nova-sprint friend take amy --all-unstarted --reason 'amy "), "%s", f.Next)
 
 	// her beat answers it
-	ta.ok("friend beat amy")
+	ta.beatUp("amy")
 	_, ok = item(ta.coordView(""), "f:amy")
 	assert.False(t, ok, "she reported")
 }
