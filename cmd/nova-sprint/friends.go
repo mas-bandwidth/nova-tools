@@ -230,7 +230,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1, false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"]})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], Models: config.FriendModels(r), Children: r.Fields[config.FieldFriendChildren], ChildModel: r.Fields[config.FieldFriendChildModel]})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
