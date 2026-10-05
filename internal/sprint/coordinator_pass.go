@@ -130,7 +130,9 @@ func TickCoordinatorPass(s *Snapshot, r TickReq) (Plan, int) {
 }
 
 // deafConds is one condition for each friend not held whose beat carries a session pong
-// older than FriendDeafAfter, in running time.
+// older than FriendDeafAfter, in running time. Not yet live: the nova-friend daemon's
+// beat sends no --pong, so until it does no beat carries one and this finds nothing
+// (docs/SPEC-SPRINT.md, "The coordinator's pass").
 func deafConds(s *Snapshot, r TickReq) []cond {
 	var out []cond
 	for _, f := range slices.Sorted(maps.Keys(r.Sessions)) {

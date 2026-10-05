@@ -2849,6 +2849,12 @@ hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.g
   her pong age and the remedy: a wake note (`nova-friend ping --to <friend> --wake`),
   then the debug steps of docs/SPEC-FRIEND.md (Presence, The harness check). A beat that
   carries no pong judges nothing: deafness is read only from the session's own answer.
+  **Not yet live:** the nova-friend daemon's beat (cmd/nova-friend main.go, `beat`)
+  sends only `--active` and not `--pong` yet, and nothing else in the tree sends a
+  pong, so on the running machine no beat carries one and this judgment stays silent
+  until the daemon passes `--pong <status last_pong>` (a follow-up card, PATHS
+  cmd/nova-friend/**). Until then a deaf session shows only as the idle judgment below,
+  30 minutes on, and only if she holds working cards.
 - **a friend holds working cards and finishes none** (`a friend holds working cards and
   finishes none`), one on each friend not held holding working cards on her row when
   neither her last working-to-done finish (`finished` of her done cards, ok or failed) nor
