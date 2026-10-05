@@ -320,7 +320,10 @@ refusal, an exit code, or a turn that ended with no `RESULT.md`. Lanes never
 share a turn, and a lane never runs two. A lane beyond a width since lowered
 finishes its card and takes no other. The silence watch, the provider's
 refusal streak and the broken session are the batch turn's, across every
-lane.
+lane. The friend daemon stamps progress on the sprint for each card whose
+one-shot turn printed since that card's last stamp (`stampProgress`, at most
+every `ProgressEvery`; docs/SPEC-SPRINT.md section 8, the rules table's row
+late), so the late rule never returns a printing card for want of a stamp.
 
 Only a harness that can open a session and deliver into a named one has
 lanes (`LaneHarness`; OpenCode today: `opencode run --dir <dir> <seed>` with no
