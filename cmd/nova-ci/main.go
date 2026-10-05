@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"io"
@@ -160,7 +161,7 @@ var verbEffect = map[string]tool.Effect{
 	"local":          "local write: runs this checkout's unit tests, writing only a temp dir",
 	"new-rule":       tool.LocalWrite,
 	"new-verb":       tool.LocalWrite,
-	"bench run":      "delivery: copies the tree to a run directory on the bench, runs the command there and removes that directory",
+	"bench run":      benchEffect,
 	"github receipt": "delivery: writes one row of a CI run to a Redis store",
 }
 
@@ -250,7 +251,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	case "new-verb":
 		return cmdNewVerb(args[1:], stdout, stderr)
 	case "bench":
-		return cmdBench(args[1:], stdout, stderr, bench.Exec{})
+		return cmdBench(context.Background(), args[1:], stdin, stdout, stderr, bench.Exec{})
 	case "github":
 		return cmdGitHub(args[1:], stdout, stderr, os.Getenv)
 	case "help", "-h", "--help":
