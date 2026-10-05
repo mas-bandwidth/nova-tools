@@ -583,30 +583,42 @@ pong are real for it all the same.
 
 ### The friend health check
 
-`nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]`
-checks the health of one or more friends from evidence: the launchd daemon, the harness adapter,
-real bus traffic, and the working directory's inbox and outbox.
+The help of `nova-friend check -h` says, and this is the same text:
 
-Per friend, lines in order:
-- `CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<s|-> presence=<up|asleep|down> seen_age=<s|->`
-- `CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->`
-- `CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->` (real: not ping, pong, daemon-pong or keepalive)
-- `CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->` (under its directory)
-- `CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>`
+```
+The health check: is each friend's row true. The friends are the arguments, else every friend with a
+state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
+window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
+this order:
+CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|->
+CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
+CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
+CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
+CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>
+then one summary line: CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>.
+The verdict is a function of those facts, the first rule that holds: broken when the session is marked
+broken or every delivery in the window failed (at least one, and all of them); deaf when a delivery in
+the window succeeded and neither a session pong nor a real message came back in the window; silent when
+no delivery was due in the window and nothing came back; down by presence; else ok. --shown is what a
+consumer shows of each friend, JSON {"<friend>":{"state":"up|asleep|down","working":<n>}} from a file or
+- for stdin; when it says up or working and the verdict is not ok, the verdict stays and the why leads
+with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or its agent
+is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
+friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age},
+harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
+reason}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
+verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
+Exit 0 when every verdict is ok, 1 when any is not (the check found something), 2 when it could not run
+(a refused flag, an unreadable --shown).
+```
 
-The verdict is a pure function of the facts:
-- `broken` when the session is marked broken or every delivery in window failed;
-- `deaf` when deliveries succeed but no session pong or real message came back;
-- `silent` when no delivery was due and nothing came back;
-- `down` by presence;
-- `untrue` when `--shown` says up or working and facts say otherwise;
-- else `ok`.
+Example, as written:
 
-Summary line:
-`CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>`
-Exit codes: 0 when all ok, 1 when any not ok, 2 on error.
+```
+nova-friend check --as ada bob
+```
 
-When `--harness` is provided, `nova-friend check` runs the delivery check (below).
+With `--harness` the verb is the delivery check instead (next section).
 
 ### The delivery check
 

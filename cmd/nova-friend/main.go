@@ -349,21 +349,51 @@ NOTE: a CHECK FAIL is a NOTE, never an undone install.`,
 			{
 				Name:    "check",
 				Usage:   "check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]",
-				Example: "check --as ada bob",
-				Effect:  tool.Inspection + ": the health check for one or more friends",
+				Example: "", // the banner's example block runs nothing that reads a fleet's state; -h carries the example
+				Effect:  tool.Delivery + ": without --harness it only reads (the health check); with --harness it delivers one session check into the live session (the delivery check)",
 				DryRun:  true,
-				Detail: `The friend health check: checks the launchd daemon, the harness adapter, real bus traffic,
-and working inbox/outbox for each friend, and renders one verdict.
-Exit codes: 0 when all checked friends are ok, 1 when any friend is not ok, 2 on error.
+				Detail: `The health check: is each friend's row true. The friends are the arguments, else every friend with a
+state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
+window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
+this order:
+CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|->
+CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
+CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
+CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
+CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>
+then one summary line: CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>.
+The verdict is a function of those facts, the first rule that holds: broken when the session is marked
+broken or every delivery in the window failed (at least one, and all of them); deaf when a delivery in
+the window succeeded and neither a session pong nor a real message came back in the window; silent when
+no delivery was due in the window and nothing came back; down by presence; else ok. --shown is what a
+consumer shows of each friend, JSON {"<friend>":{"state":"up|asleep|down","working":<n>}} from a file or
+- for stdin; when it says up or working and the verdict is not ok, the verdict stays and the why leads
+with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or its agent
+is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
+friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age},
+harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
+reason}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
+verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
+Exit 0 when every verdict is ok, 1 when any is not (the check found something), 2 when it could not run
+(a refused flag, an unreadable --shown).
+With --harness the verb is the delivery check instead, which
+proves the live session takes a delivery: a SESSION CHECK <nonce> goes in through the harness's deliver
+command, the session runs the exact nova-friend pong line it carries, and a pong with that nonce from
+--as is on the bus within --within. It prints CHECK OK harness= took=, or CHECK FAIL harness=
+stage=<deliver|act|reply> why= at exit 1: deliver, the adapter did not take it (a harness with no
+deliver command says its reason); act, the session never ran the line; reply, the line ran and no pong
+reached the bus. The pong goes to --to, else the seat the daemon's status names, else --as itself. Run it
+once a night as a nova-config loop record (docs/TESTING.md). --dry-run checks the flags and the harness
+and prints the line the session would run: nothing is delivered and no store is opened.
 example: nova-friend check --as ada bob`,
 				Flags: func(f *tool.Flags) {
-					f.String("as", "", "your name, a coordinator or friend row")
+					f.String("as", "", "your name, the coordinator (the health check); the friend itself with --harness")
 					f.String("harness", "", "the harness the session runs in (delivery check): "+strings.Join(friend.Harnesses, ", "))
 					f.String("dir", "", "the friend's working directory")
 					f.String("session", "", "the session to deliver into (delivery check)")
 					f.Duration("within", friend.DefaultCheckWithin, "how long to wait for the session's pong (delivery check)")
 					f.String("to", "", "who the pong goes to (default: the seat the daemon's status names, else --as)")
-					f.Duration("since", 24*time.Hour, "how far back to inspect bus and deliveries")
+					f.Duration("since", 24*time.Hour, "the window every fact is judged over: deliveries, deferrals, real messages, the session pong")
 					f.String("shown", "", "path to shown state file, or - for stdin")
 					stateDir(f)
 					redis(f)

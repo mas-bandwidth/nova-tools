@@ -38,7 +38,8 @@ type DaemonFacts struct {
 	SeenAge    string `json:"seen_age"`   // e.g. "4s" or "-"
 }
 
-// HarnessFacts carries facts about the harness, deliveries and breaks.
+// HarnessFacts carries facts about the harness, deliveries and breaks: every
+// delivery count is of the --since window (docs/SPEC-FRIEND.md "Check").
 type HarnessFacts struct {
 	Friend         string `json:"friend"`
 	Harness        string `json:"harness"`
@@ -47,8 +48,10 @@ type HarnessFacts struct {
 	LastExit       string `json:"last_exit"`
 	FailedOfLast20 int    `json:"failed_of_last20"`
 	Deferred       int    `json:"deferred"`
-	Broken         string `json:"broken"` // RFC3339 or "-"
-	Reason         string `json:"reason"` // one line or "-"
+	Delivered      int    `json:"delivered"` // deliveries in the window (JSON only)
+	Failed         int    `json:"failed"`    // of those, the ones that failed (JSON only)
+	Broken         string `json:"broken"`    // RFC3339 or "-"
+	Reason         string `json:"reason"`    // one line or "-"
 }
 
 // BusFacts carries facts about real messages on the bus.
@@ -142,61 +145,71 @@ func QuoteWhy(s string) string {
 	return s
 }
 
-// ParseLog parses deliver / runner log lines for turns, exits and deferrals.
-func ParseLog(lines []string) (last string, lastExit string, failedOfLast20 int, deferred int) {
-	last = "-"
-	lastExit = "-"
+// LogFacts is what the daemon's log says inside a window.
+type LogFacts struct {
+	Last           string // RFC3339 of the newest delivery in the window, or "-"
+	LastExit       string // its exit, or "-"
+	FailedOfLast20 int    // failures among the newest 20 deliveries in the window
+	Deferred       int    // deferrals in the window
+	Delivered      int    // deliveries in the window
+	Failed         int    // of those, the ones that exited non-zero
+}
+
+// ParseLog reads the daemon's log lines for deliveries and deferrals at or
+// after from; a line with no RFC3339 stamp is outside every window
+// (docs/SPEC-FRIEND.md "Check": the facts).
+func ParseLog(lines []string, from time.Time) LogFacts {
+	lf := LogFacts{Last: "-", LastExit: "-"}
 	type turn struct {
 		at   time.Time
 		exit int
 	}
 	var turns []turn
 	for _, raw := range lines {
-		line := strings.TrimSpace(raw)
-		if strings.HasPrefix(line, "RUN ") {
-			line = strings.TrimPrefix(line, "RUN ")
+		line := strings.TrimPrefix(strings.TrimSpace(raw), "RUN ")
+		var at time.Time
+		exit, hasExit := 0, false
+		for _, f := range strings.Fields(line) {
+			if t, err := time.Parse(time.RFC3339, f); err == nil && at.IsZero() {
+				at = t
+			}
+			if val, ok := strings.CutPrefix(f, "exit="); ok {
+				if n, err := strconv.Atoi(val); err == nil {
+					exit, hasExit = n, true
+				}
+			}
+		}
+		if at.IsZero() || at.Before(from) {
+			continue
 		}
 		if strings.Contains(line, "deferred=") || strings.Contains(line, "deferred:") || strings.Contains(line, " deferred ") {
-			deferred++
+			lf.Deferred++
 		}
-		if strings.Contains(line, "exit=") {
-			fields := strings.Fields(line)
-			var at time.Time
-			var exit int
-			var hasExit bool
-			for _, f := range fields {
-				if t, err := time.Parse(time.RFC3339, f); err == nil && at.IsZero() {
-					at = t
-				}
-				if val, ok := strings.CutPrefix(f, "exit="); ok {
-					if n, err := strconv.Atoi(val); err == nil {
-						exit = n
-						hasExit = true
-					}
-				}
-			}
-			if hasExit {
-				turns = append(turns, turn{at: at, exit: exit})
-			}
+		if hasExit {
+			turns = append(turns, turn{at: at, exit: exit})
+		}
+	}
+	lf.Delivered = len(turns)
+	for _, t := range turns {
+		if t.exit != 0 {
+			lf.Failed++
 		}
 	}
 	if len(turns) > 0 {
 		latest := turns[len(turns)-1]
-		if !latest.at.IsZero() {
-			last = latest.at.UTC().Format(time.RFC3339)
-		}
-		lastExit = strconv.Itoa(latest.exit)
-		startIdx := max(0, len(turns)-20)
-		for _, t := range turns[startIdx:] {
+		lf.Last = latest.at.UTC().Format(time.RFC3339)
+		lf.LastExit = strconv.Itoa(latest.exit)
+		for _, t := range turns[max(0, len(turns)-20):] {
 			if t.exit != 0 {
-				failedOfLast20++
+				lf.FailedOfLast20++
 			}
 		}
 	}
-	return last, lastExit, failedOfLast20, deferred
+	return lf
 }
 
-// DefaultReadWork reads directory entries of inbox/ and outbox/ under dir.
+// DefaultReadWork reads directory entries of inbox/ and outbox/ under dir
+// (docs/SPEC-FRIEND.md "Check": the facts, work).
 func DefaultReadWork(dir string) (inboxCount, outboxCount int, newestName string, newestAt time.Time, err error) {
 	newestName = "-"
 	if dir == "" {
@@ -229,102 +242,71 @@ func DefaultReadWork(dir string) (inboxCount, outboxCount int, newestName string
 	return inboxCount, outboxCount, newestName, newestAt, nil
 }
 
-// DecideVerdict is the pure function deciding a friend verdict from facts.
-// Precedence:
-// 1. broken when session is marked broken or every delivery in window failed
-// 2. deaf when deliveries succeed but no session pong or real message came back
-// 3. silent when no delivery was due and nothing came back
-// 4. down by presence
-// 5. untrue when --shown says up or working and facts say otherwise
-// 6. else ok
-func DecideVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, shown *ShownEntry, now time.Time) VerdictFacts {
-	shownStr := "-"
+// DecideVerdict is the pure function deciding a friend verdict from facts; every
+// count and age is of the window (docs/SPEC-FRIEND.md "Check": the verdicts).
+// The facts decide first, in this order:
+//  1. broken when the session is marked broken, or deliveries in the window
+//     are all failures (delivered > 0 and failed == delivered)
+//  2. deaf when a delivery in the window succeeded and neither a session pong
+//     nor a real message came back in the window
+//  3. silent when no delivery was due in the window and nothing came back
+//  4. down by presence
+//  5. else ok
+//
+// Then --shown: when it says up or working and the facts verdict is not ok,
+// the verdict stays the facts' and the why leads with "untrue:", the claim and
+// the facts' reason; when the facts verdict is ok but the friend is asleep or
+// its agent is not loaded, the verdict is untrue.
+func DecideVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, shown *ShownEntry, window time.Duration) VerdictFacts {
+	vf := VerdictFacts{Friend: df.Friend, Shown: "-"}
+	claimsUp := false
 	if shown != nil {
-		shownStr = fmt.Sprintf("%s/%d", shown.State, shown.Working)
+		vf.Shown = fmt.Sprintf("%s/%d", shown.State, shown.Working)
+		claimsUp = shown.State == "up" || shown.Working > 0
 	}
-	vf := VerdictFacts{
-		Friend: df.Friend,
-		Shown:  shownStr,
+	vf.Verdict, vf.Why = factsVerdict(df, hf, bf, wf, window)
+	switch {
+	case !claimsUp:
+	case vf.Verdict != VerdictOK:
+		vf.Why = fmt.Sprintf("untrue: shown %s, %s", vf.Shown, vf.Why)
+	case df.Presence == "asleep":
+		vf.Verdict, vf.Why = VerdictUntrue, fmt.Sprintf("shown %s, facts say asleep", vf.Shown)
+	case df.Agent != "loaded":
+		vf.Verdict, vf.Why = VerdictUntrue, fmt.Sprintf("shown %s, facts say agent %s", vf.Shown, df.Agent)
 	}
-
-	// 1. Broken when the session is marked broken or every delivery in window failed
-	if hf.Broken != "-" || (hf.FailedOfLast20 > 0 && hf.LastExit != "0" && hf.LastExit != "-") {
-		vf.Verdict = VerdictBroken
-		if shown != nil && (shown.State == "up" || shown.Working > 0) {
-			vf.Why = fmt.Sprintf("shown %s/working %d, no turn answered since %s: broken", shown.State, shown.Working, hf.Broken)
-		} else if hf.Reason != "-" && hf.Reason != "" {
-			vf.Why = "session broken: " + hf.Reason
-		} else {
-			vf.Why = "every delivery in window failed"
-		}
-		return vf
-	}
-
-	// 2. Deaf when deliveries succeed but no session pong or real message came back in window
-	if hf.LastExit == "0" && bf.RealSince == 0 && (df.PongAge == "-" || isStaleAge(df.PongAge)) {
-		vf.Verdict = VerdictDeaf
-		vf.Why = "deliveries succeed but no session pong or real message came back"
-		return vf
-	}
-
-	// 3. Silent when no delivery was due and nothing came back
-	noDeliveryDue := (hf.Last == "-" || hf.LastExit == "-") && hf.Deferred == 0 && wf.Inbox == 0
-	nothingCameBack := bf.RealSince == 0 && (df.PongAge == "-" || isStaleAge(df.PongAge))
-	if noDeliveryDue && nothingCameBack && df.Presence != "down" {
-		if shown != nil && (shown.State == "up" || shown.Working > 0) {
-			vf.Verdict = VerdictUntrue
-			vf.Why = fmt.Sprintf("shown %s/working %d, no delivery was due and nothing came back", shown.State, shown.Working)
-		} else {
-			vf.Verdict = VerdictSilent
-			vf.Why = "no delivery was due and nothing came back"
-		}
-		return vf
-	}
-
-	// 4. Down by presence
-	if df.Presence == "down" || df.Agent == "none" || (df.Agent == "not-loaded" && df.Status == "none") {
-		if shown != nil && (shown.State == "up" || shown.Working > 0) {
-			vf.Verdict = VerdictUntrue
-			vf.Why = fmt.Sprintf("shown %s/working %d, facts say down by presence", shown.State, shown.Working)
-		} else {
-			vf.Verdict = VerdictDown
-			vf.Why = "down by presence"
-		}
-		return vf
-	}
-
-	// 5. Untrue when --shown says up or working and facts say otherwise
-	if shown != nil && (shown.State == "up" || shown.Working > 0) {
-		if df.Presence == "asleep" {
-			vf.Verdict = VerdictUntrue
-			vf.Why = fmt.Sprintf("shown %s/working %d, facts say asleep", shown.State, shown.Working)
-			return vf
-		}
-		if df.Agent != "loaded" {
-			vf.Verdict = VerdictUntrue
-			vf.Why = fmt.Sprintf("shown %s/working %d, facts say agent not loaded", shown.State, shown.Working)
-			return vf
-		}
-	}
-
-	// 6. Else ok
-	vf.Verdict = VerdictOK
-	vf.Why = "live"
 	return vf
 }
 
-func isStaleAge(ageStr string) bool {
-	if ageStr == "" || ageStr == "-" {
-		return true
+// factsVerdict is DecideVerdict's rules 1 to 5, before --shown (docs/SPEC-FRIEND.md "Check": the verdicts).
+func factsVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, window time.Duration) (verdict, why string) {
+	cameBack := bf.RealSince > 0 || pongWithin(df.PongAge, window)
+	switch {
+	case hf.Broken != "-":
+		if hf.Reason != "-" && hf.Reason != "" {
+			return VerdictBroken, "session broken: " + hf.Reason
+		}
+		return VerdictBroken, "session broken since " + hf.Broken
+	case hf.Delivered > 0 && hf.Failed == hf.Delivered:
+		return VerdictBroken, fmt.Sprintf("every delivery in the window failed (%d of %d)", hf.Failed, hf.Delivered)
+	case hf.Delivered > hf.Failed && !cameBack:
+		return VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"
+	case hf.Delivered == 0 && hf.Deferred == 0 && wf.Inbox == 0 && !cameBack && df.Presence != PresenceDown:
+		return VerdictSilent, "no delivery was due and nothing came back in the window"
+	case df.Presence == PresenceDown || df.Agent == "none" || (df.Agent == "not-loaded" && df.Status == "none"):
+		return VerdictDown, "down by presence"
 	}
-	d, err := time.ParseDuration(ageStr)
-	if err != nil {
-		return true
-	}
-	return d > SessionQuiet
+	return VerdictOK, "live"
 }
 
-// CheckFriend gathers facts and decides the verdict for one friend.
+// pongWithin reports whether a session pong aged ageStr ("-" is none) is
+// inside the window (docs/SPEC-FRIEND.md "Check": the verdicts, deaf and silent).
+func pongWithin(ageStr string, window time.Duration) bool {
+	d, err := time.ParseDuration(ageStr)
+	return err == nil && d <= window
+}
+
+// CheckFriend gathers the facts through the seams over the window and decides
+// the verdict for one friend (docs/SPEC-FRIEND.md "Check").
 func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since time.Duration, shown *ShownEntry) FriendCheck {
 	now := seams.Now().UTC()
 	harness, dir, _ := seams.HarnessDir(friendName)
@@ -457,7 +439,9 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 
 	if seams.ReadLog != nil {
 		lines, _ := seams.ReadLog(friendName)
-		hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred = ParseLog(lines)
+		lf := ParseLog(lines, now.Add(-since))
+		hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred = lf.Last, lf.LastExit, lf.FailedOfLast20, lf.Deferred
+		hf.Delivered, hf.Failed = lf.Delivered, lf.Failed
 	}
 
 	if st.Session == SessionBroken {
@@ -502,7 +486,7 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 	}
 
 	// Verdict
-	vf := DecideVerdict(df, hf, bf, wf, shown, now)
+	vf := DecideVerdict(df, hf, bf, wf, shown, since)
 
 	return FriendCheck{
 		Friend:  friendName,
@@ -514,7 +498,7 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 	}
 }
 
-// ComputeSummary aggregates verdicts across friends.
+// ComputeSummary aggregates verdicts across friends (docs/SPEC-FRIEND.md "Check": the summary).
 func ComputeSummary(checks []FriendCheck) CheckSummary {
 	var s CheckSummary
 	s.Friends = len(checks)
@@ -537,13 +521,15 @@ func ComputeSummary(checks []FriendCheck) CheckSummary {
 	return s
 }
 
-// IsRealMessage reports whether a message subject is a real turn message (not ping, pong, daemon-pong or keepalive).
+// IsRealMessage reports whether a message subject is a real turn message (not ping, pong, daemon-pong or keepalive)
+// (docs/SPEC-FRIEND.md "Check": the facts, bus).
 func IsRealMessage(subject string) bool {
 	s := strings.TrimSpace(strings.ToLower(subject))
 	return s != "ping" && s != "pong" && s != "daemon-pong" && s != "keepalive"
 }
 
-// BusLogEntries reads the bus store log for real messages from friend since since.
+// BusLogEntries reads the bus store log for real messages from friend since since
+// (docs/SPEC-FRIEND.md "Check": the facts, bus).
 func BusLogEntries(ctx context.Context, st bus.Store, friend string, since time.Time) (realCount int, lastReal time.Time, err error) {
 	if st == nil {
 		return 0, time.Time{}, nil

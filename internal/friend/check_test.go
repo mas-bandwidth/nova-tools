@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,110 +11,90 @@ import (
 
 func TestDecideVerdictPure(t *testing.T) {
 	t.Parallel()
-	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	const window = 24 * time.Hour
+	up := DaemonFacts{Friend: "bob", Presence: "up", Agent: "loaded", Status: "ok", PongAge: "-"}
+	hf := func(delivered, failed int) HarnessFacts {
+		return HarnessFacts{Friend: "bob", Broken: "-", Reason: "-", Delivered: delivered, Failed: failed}
+	}
+	bob := BusFacts{Friend: "bob"}
+	wk := WorkFacts{Friend: "bob"}
+	claim := &ShownEntry{State: "up", Working: 2}
 
-	// 1. Broken when session broken
-	t.Run("broken session", func(t *testing.T) {
-		t.Parallel()
-		df := DaemonFacts{Friend: "bob", Presence: "up"}
-		hf := HarnessFacts{Friend: "bob", Broken: "2026-10-05T10:00:00Z", Reason: "rate limit exceeded"}
-		bf := BusFacts{Friend: "bob"}
-		wf := WorkFacts{Friend: "bob"}
-		vf := DecideVerdict(df, hf, bf, wf, nil, now)
-		assert.Equal(t, VerdictBroken, vf.Verdict)
-		assert.Contains(t, vf.Why, "rate limit exceeded")
-	})
-
-	// 1b. Broken when every delivery failed
-	t.Run("all deliveries failed", func(t *testing.T) {
-		t.Parallel()
-		df := DaemonFacts{Friend: "bob", Presence: "up"}
-		hf := HarnessFacts{Friend: "bob", Broken: "-", LastExit: "1", FailedOfLast20: 3}
-		bf := BusFacts{Friend: "bob"}
-		wf := WorkFacts{Friend: "bob"}
-		vf := DecideVerdict(df, hf, bf, wf, nil, now)
-		assert.Equal(t, VerdictBroken, vf.Verdict)
-		assert.Equal(t, "every delivery in window failed", vf.Why)
-	})
-
-	// 2. Deaf when deliveries succeed but no session pong or real message
-	t.Run("deaf friend", func(t *testing.T) {
-		t.Parallel()
-		df := DaemonFacts{Friend: "bob", Presence: "up", PongAge: "-"}
-		hf := HarnessFacts{Friend: "bob", Broken: "-", LastExit: "0", FailedOfLast20: 0}
-		bf := BusFacts{Friend: "bob", RealSince: 0}
-		wf := WorkFacts{Friend: "bob"}
-		vf := DecideVerdict(df, hf, bf, wf, nil, now)
-		assert.Equal(t, VerdictDeaf, vf.Verdict)
-		assert.Equal(t, "deliveries succeed but no session pong or real message came back", vf.Why)
-	})
-
-	// 3. Silent when no delivery due and nothing came back
-	t.Run("silent friend", func(t *testing.T) {
-		t.Parallel()
-		df := DaemonFacts{Friend: "bob", Presence: "up", PongAge: "-"}
-		hf := HarnessFacts{Friend: "bob", Broken: "-", Last: "-", LastExit: "-", Deferred: 0}
-		bf := BusFacts{Friend: "bob", RealSince: 0}
-		wf := WorkFacts{Friend: "bob", Inbox: 0}
-		vf := DecideVerdict(df, hf, bf, wf, nil, now)
-		assert.Equal(t, VerdictSilent, vf.Verdict)
-		assert.Equal(t, "no delivery was due and nothing came back", vf.Why)
-	})
-
-	// 4. Down by presence
-	t.Run("down friend", func(t *testing.T) {
-		t.Parallel()
-		df := DaemonFacts{Friend: "bob", Presence: "down", Agent: "loaded", Status: "ok"}
-		hf := HarnessFacts{Friend: "bob", Broken: "-", Last: "2026-10-05T11:00:00Z", LastExit: "0"}
-		bf := BusFacts{Friend: "bob", RealSince: 2}
-		wf := WorkFacts{Friend: "bob"}
-		vf := DecideVerdict(df, hf, bf, wf, nil, now)
-		assert.Equal(t, VerdictDown, vf.Verdict)
-		assert.Equal(t, "down by presence", vf.Why)
-	})
-
-	// 5. Untrue when shown says up/working but facts say down
-	t.Run("untrue shown up facts down", func(t *testing.T) {
-		t.Parallel()
-		df := DaemonFacts{Friend: "bob", Presence: "down", Agent: "none"}
-		hf := HarnessFacts{Friend: "bob", Broken: "-"}
-		bf := BusFacts{Friend: "bob"}
-		wf := WorkFacts{Friend: "bob"}
-		shown := &ShownEntry{State: "up", Working: 2}
-		vf := DecideVerdict(df, hf, bf, wf, shown, now)
-		assert.Equal(t, VerdictUntrue, vf.Verdict)
-		assert.Contains(t, vf.Why, "shown up/working 2, facts say down by presence")
-		assert.Equal(t, "up/2", vf.Shown)
-	})
-
-	// 6. Ok live friend
-	t.Run("ok friend", func(t *testing.T) {
-		t.Parallel()
-		df := DaemonFacts{Friend: "bob", Presence: "up", Agent: "loaded", Status: "ok", PongAge: "3s"}
-		hf := HarnessFacts{Friend: "bob", Broken: "-", Last: "2026-10-05T11:59:00Z", LastExit: "0", Route: "push"}
-		bf := BusFacts{Friend: "bob", RealSince: 1, LastReal: "2026-10-05T11:59:30Z"}
-		wf := WorkFacts{Friend: "bob", Inbox: 0, Outbox: 1}
-		shown := &ShownEntry{State: "up", Working: 0}
-		vf := DecideVerdict(df, hf, bf, wf, shown, now)
-		assert.Equal(t, VerdictOK, vf.Verdict)
-		assert.Equal(t, "live", vf.Why)
-		assert.Equal(t, "up/0", vf.Shown)
-	})
+	cases := []struct {
+		name    string
+		df      DaemonFacts
+		hf      HarnessFacts
+		bf      BusFacts
+		shown   *ShownEntry
+		verdict string
+		why     string
+	}{
+		{"broken session", up, HarnessFacts{Friend: "bob", Broken: "2026-10-05T10:00:00Z", Reason: "rate limit exceeded"}, bob, nil, VerdictBroken, "session broken: rate limit exceeded"},
+		{"every delivery in the window failed", up, hf(3, 3), bob, nil, VerdictBroken, "every delivery in the window failed (3 of 3)"},
+		{"one failure among successes is not broken", up, hf(3, 1), BusFacts{RealSince: 1}, nil, VerdictOK, "live"},
+		{"deaf: deliveries succeed, nothing came back", up, hf(2, 0), bob, nil, VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"},
+		{"deaf: a failure beside a success is still deaf", up, hf(2, 1), bob, nil, VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"},
+		{"a pong outside the window does not answer", withPong(up, "25h0m0s"), hf(1, 0), bob, nil, VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"},
+		{"a pong in the window answers", withPong(up, "4s"), hf(1, 0), bob, nil, VerdictOK, "live"},
+		{"silent: no delivery was due", up, hf(0, 0), bob, nil, VerdictSilent, "no delivery was due and nothing came back in the window"},
+		{"down by presence", DaemonFacts{Friend: "bob", Presence: "down", Agent: "loaded", Status: "ok", PongAge: "-"}, hf(1, 0), BusFacts{RealSince: 2}, nil, VerdictDown, "down by presence"},
+		{"shown up, broken: why leads with untrue", up, HarnessFacts{Friend: "bob", Broken: "2026-10-05T10:00:00Z", Reason: "quota"}, bob, claim, VerdictBroken, "untrue: shown up/2, session broken: quota"},
+		{"shown up, deaf: why leads with untrue", up, hf(2, 0), bob, claim, VerdictDeaf, "untrue: shown up/2, deliveries succeed but no session pong or real message came back in the window"},
+		{"shown up, silent: why leads with untrue", up, hf(0, 0), bob, claim, VerdictSilent, "untrue: shown up/2, no delivery was due and nothing came back in the window"},
+		{"shown up, down: why leads with untrue", DaemonFacts{Friend: "bob", Presence: "down", Agent: "none", PongAge: "-"}, hf(0, 0), bob, claim, VerdictDown, "untrue: shown up/2, down by presence"},
+		{"shown working, asleep: untrue", DaemonFacts{Friend: "bob", Presence: "asleep", Agent: "loaded", Status: "ok", PongAge: "4s"}, hf(1, 0), bob, &ShownEntry{State: "asleep", Working: 1}, VerdictUntrue, "shown asleep/1, facts say asleep"},
+		{"shown up, agent not loaded: untrue", DaemonFacts{Friend: "bob", Presence: "up", Agent: "not-loaded", Status: "ok", PongAge: "4s"}, hf(1, 0), bob, claim, VerdictUntrue, "shown up/2, facts say agent not-loaded"},
+		{"shown up and live: ok", withPong(up, "3s"), hf(1, 0), BusFacts{RealSince: 1}, &ShownEntry{State: "up"}, VerdictOK, "live"},
+		{"shown asleep, nothing working: no claim", up, hf(0, 0), bob, &ShownEntry{State: "asleep"}, VerdictSilent, "no delivery was due and nothing came back in the window"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			vf := DecideVerdict(c.df, c.hf, c.bf, wk, c.shown, window)
+			assert.Equal(t, c.verdict, vf.Verdict)
+			assert.Equal(t, c.why, vf.Why)
+		})
+	}
 }
 
-func TestParseLog(t *testing.T) {
+func withPong(df DaemonFacts, age string) DaemonFacts {
+	df.PongAge = age
+	return df
+}
+
+func TestParseLogCountsOnlyTheWindow(t *testing.T) {
 	t.Parallel()
 	lines := []string{
-		"2026-10-05T01:00:00Z subject=ping exit=0",
+		"2026-10-05T01:00:00Z subject=ping exit=1",
 		"RUN 2026-10-05T02:00:00Z deferred=1",
 		"2026-10-05T03:00:00Z subject=task exit=1",
 		"2026-10-05T04:00:00Z subject=card exit=0",
+		"subject=unstamped exit=1",
 	}
-	last, lastExit, failed, deferred := ParseLog(lines)
-	assert.Equal(t, "2026-10-05T04:00:00Z", last)
-	assert.Equal(t, "0", lastExit)
-	assert.Equal(t, 1, failed)
-	assert.Equal(t, 1, deferred)
+	all := ParseLog(lines, time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC))
+	assert.Equal(t, LogFacts{Last: "2026-10-05T04:00:00Z", LastExit: "0", FailedOfLast20: 2, Deferred: 1, Delivered: 3, Failed: 2}, all)
+
+	late := ParseLog(lines, time.Date(2026, 10, 5, 2, 30, 0, 0, time.UTC))
+	assert.Equal(t, LogFacts{Last: "2026-10-05T04:00:00Z", LastExit: "0", FailedOfLast20: 1, Deferred: 0, Delivered: 2, Failed: 1}, late)
+
+	none := ParseLog(lines, time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC))
+	assert.Equal(t, LogFacts{Last: "-", LastExit: "-"}, none)
+}
+
+func TestParseLogFailedOfLast20LooksAtTheNewestTwenty(t *testing.T) {
+	t.Parallel()
+	var lines []string
+	for i := range 25 {
+		exit := 0
+		if i < 5 {
+			exit = 1
+		}
+		lines = append(lines, time.Date(2026, 10, 5, 0, i, 0, 0, time.UTC).Format(time.RFC3339)+" exit="+strconv.Itoa(exit))
+	}
+	lf := ParseLog(lines, time.Time{}.Add(time.Hour))
+	assert.Equal(t, 0, lf.FailedOfLast20)
+	assert.Equal(t, 5, lf.Failed)
+	assert.Equal(t, 25, lf.Delivered)
 }
 
 func TestParseShown(t *testing.T) {
