@@ -43,7 +43,7 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		env, _ := task["environment"].(map[string]any)
 		return cmd["chdir"] == "{{ nova_sprint_src }}" && strings.Contains(argv, "nice -n 19 go build") &&
 			strings.Contains(argv, "go build -trimpath -ldflags -s -w -X main.version={{ nova_version }} -o ") && strings.HasSuffix(argv, "./cmd/nova-sprint") &&
-			strings.Contains(argv, "nova_sprint_out") && env["CGO_ENABLED"] == "0"
+			strings.Contains(argv, "-o {{ nova_sprint_out }}/{{ item }}/nova-sprint{{ '.exe' if item.startswith('windows-') else '' }} ./cmd/nova-sprint") && env["CGO_ENABLED"] == "0"
 	})
 	release := taskIndex(install, func(task map[string]any) bool {
 		cmd, _ := task["ansible.builtin.command"].(map[string]any)
