@@ -1,12 +1,15 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/pprof"
 	"strings"
 	"sync"
@@ -15,9 +18,11 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // The machine: start and stop set its state; run is the process that ticks
@@ -354,6 +359,9 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		if a.decide == nil { // a test's lane, with its backend, is kept
 			a.decide = newDecideLane(decideDir, b, a.now, GradeWait)
 		}
+		if a.decide.diffOf == nil {
+			a.decide.diffOf = a.cardDiff
+		}
 		go a.decideLoop(context.Background(), c.redis, stdout)
 	}
 	// on server start, keep every in-flight read whose lease is live and only
@@ -668,4 +676,56 @@ func idleAlarmFlag(on *bool, byDefault bool) func(flagSet) {
 func (a *app) serverStart(ctx context.Context, st *store.Store) error {
 	_, err := st.Run(ctx, store.ServerRestartStep())
 	return err
+}
+
+// cardDiff reads the unified diff of a card in review as the workers' head left it,
+// against its base from the repository clone under landRoot.
+func (a *app) cardDiff(ctx context.Context, c *sprint.Card) (string, error) {
+	if c == nil {
+		return "", errors.New("no card")
+	}
+	if diff := c.F("diff"); diff != "" {
+		return diff, nil
+	}
+	head := c.F("head")
+	if head == "" {
+		return "", fmt.Errorf("%s has no head", c.ID)
+	}
+	base := swarm.ReadCardBase([]byte(c.F("brief")))
+	if base.Repo == "" {
+		return "", fmt.Errorf("%s brief names no repository", c.ID)
+	}
+	root, err := a.landRoot()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, repoDirName(base.Repo))
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		return "", fmt.Errorf("no clone at %s", dir)
+	}
+	git := func(args ...string) (string, error) {
+		res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: true}, args...)
+		return strings.TrimSpace(string(res.Stdout)), err
+	}
+	branch := c.F("branch")
+	if _, err := git("cat-file", "-e", head+"^{commit}"); err != nil && branch != "" {
+		_, _ = git("fetch", "-q", "--no-tags", "origin", branch)
+	}
+	at := base.Sha
+	if at == "" {
+		ref := cmp.Or(base.Ref, c.F("base"), "main")
+		if _, err := git("rev-parse", "--verify", "-q", "refs/remotes/origin/"+ref+"^{commit}"); err == nil {
+			at = "origin/" + ref
+		} else {
+			at = ref
+		}
+	}
+	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: true}, "diff", "-M", "--no-color", "--end-of-options", at+"..."+head)
+	if err != nil {
+		res, err = gitrun.Run(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: true}, "diff", "-M", "--no-color", "--end-of-options", at, head)
+	}
+	if err != nil {
+		return "", err
+	}
+	return string(res.Stdout), nil
 }
