@@ -64,6 +64,8 @@ func askedRig(t *testing.T, n int) *serverRig {
 	r.queue("r") // a reader's queue is its beat: a reader that never beat is asked nothing
 	r.boss("nova-sprint tick")
 	r.boss("nova-sprint tick")
+	// reads are asked one at a time, the first round the readers: every card's second by --another, so r holds them all
+	r.boss(fmt.Sprintf("nova-sprint ask --another --limit %d", 2*n))
 	require.Len(t, r.queue("r")["asked"], n)
 	return r
 }

@@ -70,7 +70,7 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		require.Nil(t, w.s.Readers.Card(ReadCardID("s1-1", 1, "amy")))
 		require.NotNil(t, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")))
 		require.NotNil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-a")))
-		require.NotNil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-b")))
+		require.Nil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-b")), "reads go one at a time: the second waits for the first")
 		require.Equal(t, Asked, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-a")).Col)
 	})
 

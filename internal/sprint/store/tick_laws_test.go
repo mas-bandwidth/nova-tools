@@ -31,7 +31,7 @@ func (h *harness) driveTo(id, state string) {
 		}
 		h.work("m1")
 		h.work("m2")
-		h.readAll()
+		h.readOutstanding() // the next tick asks the next reads
 		h.tick(time.Second)
 	}
 	require.Equal(h.t, state, h.state(id), "%s after twelve ticks", id)
@@ -172,11 +172,18 @@ func TestTheModelAndTheEngineAgreeOnTheAcceptAndRedealLaws(t *testing.T) {
 	}
 	readOK := func(p string) {
 		t.Helper()
-		s := h.observe()
-		for _, id := range refmodel.Keys(s.Reads) {
-			if rc := s.Reads[id]; rc.Primary == p && (rc.Place == refmodel.Asked || rc.Place == refmodel.Reading) {
-				do(dAction{Kind: "read", Reader: rc.Reader, Card: id, OK: true})
+		// the reads are asked one at a time: the first ok, a tick asks the second
+		for range 2 {
+			s := h.observe()
+			for _, id := range refmodel.Keys(s.Reads) {
+				if rc := s.Reads[id]; rc.Primary == p && (rc.Place == refmodel.Asked || rc.Place == refmodel.Reading) {
+					do(dAction{Kind: "read", Reader: rc.Reader, Card: id, OK: true})
+				}
 			}
+			if h.observe().Acceptable(p) {
+				return
+			}
+			do(dAction{Kind: "tick"})
 		}
 	}
 	both := func(p, state, when string) {
@@ -297,9 +304,7 @@ func TestAnOrphanReturnIsHeldByTheMachine(t *testing.T) {
 	p.setup(1)
 	p.toReview("h", "s1-1")
 	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
-	for _, rc := range p.snap().Readers.Of("s1-1") {
-		p.read(rc.F("reader"), rc.ID, "ok")
-	}
+	p.readAllOK("s1-1")
 	p.m.Fail = func(pt string) error {
 		if pt == "apply t-work before" {
 			return errors.New("cut")

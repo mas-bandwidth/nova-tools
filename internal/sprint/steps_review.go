@@ -82,19 +82,26 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
-// Ask deals every primary in review that lacks reads to as many different
-// readers up as it needs (ReadsNeeded: one for a flash card, two for a pro
-// card; readers.go), in work order, each the reader with the greatest share
-// of room, its free room as a part of its width (readerRooms, round.pickByRoom),
-// that has no read card at the attempt, ties round the readers (round.go:
-// from the rolling index, wrapping, the index moved past it: the readers
-// table's ask_index, written with the ask); a reader at width is given
-// nothing, and a read no reader has room for waits (TickAsk). Reworked work is asked by
-// the same rotation: a read is a fresh child on a freshly drawn route, so the
-// readers of an earlier attempt are not preferred. A read its reader handed
-// back with no verdict is not a read: it is asked of a reader
-// free at the attempt, or of the same reader again when none is
-// (tla/DirtyTick.tla, JudgedOnlyAfterTheBound). With Another, a primary already asked is dealt to
+// Ask deals every primary in review that wants a read (ReadsWanted) to as many
+// different readers up as it wants now, in work order. A card's reads are
+// asked one at a time: the first read alone, and the rest it needs
+// (ReadsNeeded: one for a flash card, two for a pro card; readers.go) once the
+// first came back ok, so a first read that finds it broken costs no second
+// read. Each read goes to a reader with room (askPicks): the finder first on a
+// rework's next attempt (finderFirst: the reader whose finding the fix answers,
+// when it is free and has room), and every other read to the reader with the
+// greatest share of room, its free room as a part of its width (readerRooms,
+// round.pickByRoom), that has no read card at the attempt, ties round the
+// readers (round.go: from the rolling index, wrapping, the index moved past
+// it: the readers table's ask_index, written with the ask; the finder's read
+// is out of turn and moves it not at all); a reader at width is given
+// nothing, and a read no reader has room for waits (TickAsk). Reworked work
+// is asked by the same room: a read is a fresh child on a freshly drawn route,
+// so the readers of an earlier attempt are not preferred, the finder's first
+// read aside. A read its reader handed back with no verdict is not a read: it
+// is asked of a reader free at the attempt, or of the same reader again when
+// none is (tla/DirtyTick.tla, JudgedOnlyAfterTheBound). With Another, a
+// primary already asked is dealt to
 // one more reader, the next round the readers.
 func Ask(s *Snapshot, r AskReq) Plan {
 	var p Plan
@@ -119,11 +126,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			return insteadHeld(s, c, r.Instead)
 		}
 		asked := len(readsAt(s, c, c.Int("attempt")))
-		have := len(liveReadsAt(s, c, c.Int("attempt")))
 		if another && asked == 0 {
 			return "not asked yet at attempt " + itoa(c.Int("attempt")) + ": the machine's tick asks it, or run: nova-sprint ask " + c.ID + "; --another adds a reader to one already asked"
 		}
-		if !another && have >= ReadsNeeded(c) {
+		if !another && ReadsWanted(s, c) == 0 {
+			if len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) {
+				return "asked already: its reads are asked one at a time, and the next is asked when the one outstanding comes back ok"
+			}
 			return "asked already"
 		}
 		return ""
@@ -143,6 +152,9 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	if s.Fleet != nil && len(s.Routes) > 0 {
 		ri = routeIndexesOf(s)
 	}
+	// the reader who found the defect checks the fix: the finders first, their reads
+	// taken off their room before any other read of the step (askFinders)
+	finders := s.askFinders(chosen, another, room)
 	for _, c := range chosen {
 		attempt := c.Int("attempt")
 		var all []string
@@ -172,11 +184,21 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			kept = append(kept, rc)
 		}
 		free := s.freeReaders(c, attempt)
-		want := max(0, ReadsNeeded(c)-len(all)) // a read taken back from a reader away leaves one to ask
+		// the reads that stand, kept, say how many are asked now (readsWantedOf): the
+		// first alone, then the rest once it came back ok; a read handed back, or taken
+		// back from a reader away, is not a read and is asked again whatever stands: it
+		// was wanted when it was placed (ReadsWanted)
+		want := max(readsWantedOf(c, kept), len(returned)+len(away))
 		if another {
 			want = 1
 		}
-		chosenReaders := rr.pickByRoom(want, free, room)
+		if !another && len(all)+len(free)+len(returned) < ReadsNeeded(c) {
+			// not even its first read is asked when no reader could ever read the rest
+			want = ReadsNeeded(c) - len(all)
+		}
+		// each read to a free reader with room, the finder's first (askPicks)
+		finder := finders[c.ID]
+		chosenReaders := askPicks(rr, finder, want, free, room)
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
@@ -200,6 +222,9 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			retiredFrom = append(retiredFrom, rc.F("reader"))
 		}
 		if len(chosenReaders)+len(again) < want {
+			for _, rd := range chosenReaders {
+				room[rd] = room[rd].after(-1) // a primary refused takes no room from the next
+			}
 			full := 0
 			for _, rd := range free {
 				if room[rd].free <= 0 {
@@ -222,11 +247,17 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: takenBack}
 		for _, rd := range chosenReaders {
+			if rd == finder {
+				continue
+			}
 			rr.moved(rd)
 			moves[c.ID] = joinMoves(moves[c.ID], rd)
 		}
 		for i, rd := range chosenReaders {
 			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
+			if rd == finder {
+				fields[FieldFinderRead] = "1" // placed on purpose: the level leaves it where it is
+			}
 			maps.Copy(fields, s.readRouteOf(ri, c, failed))
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
@@ -238,6 +269,9 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": pair})))
 		}
 		named := append([]string{}, chosenReaders...)
+		if finder != "" {
+			named[0] = finder + " (who found attempt " + c.F(FieldFindingAttempt) + " broken: it checks the fix)"
+		}
 		for _, rd := range again {
 			named = append(named, rd+" (again, its read returned)")
 		}
@@ -507,7 +541,12 @@ func Read(s *Snapshot, r ReadReq) Plan {
 				broken[pr.ID]++
 				n := judgment(NReadBroken, pr.Row, s.Now, before, pr.ID)
 				n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), r.Finding
-				if bb, ok := AtBriefBound(pr, r.Finding); ok {
+				// the card as this read leaves it: its spend counts this read's record
+				at := pr
+				if v := costs[pr.ID][FieldCostTotal]; v != "" {
+					at = withField(pr, FieldCostTotal, v)
+				}
+				if bb, ok := AtBriefBound(at, r.Finding, s.AttemptsCap(pr.Row)); ok {
 					// the same finding as the attempt before, or too many attempts on one brief:
 					// the brief is wrong, not the worker, and the judgment offers brief and drop
 					// (brief_bound.go)
@@ -605,7 +644,9 @@ func inReview(pr *Card, set map[string]string) *Card {
 //     outstanding: stranded in review when its work came back failed, or when
 //     it was never asked at its attempt and the step closes the last judgment
 //     on it (a primary that only arrived in review is asked by the machine);
-//     reads exhausted when its reads are done without two different oks.
+//     nothing while its reads that stand came back ok and it wants more (the
+//     ask places the next one: ReadsWanted); reads exhausted when its reads
+//     are done without the oks it needs.
 //
 // Every step that can leave a primary in review calls it: finish, read,
 // return, ack, ask, ci, and a refused rework. A judgment the step itself
@@ -616,7 +657,7 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	}
 	attempt := pr.Int("attempt")
 	oks := map[string]bool{}
-	outstanding, reads := false, 0
+	outstanding, broken, reads := false, false, 0
 	for _, r := range s.Readers.Rows() {
 		id := ReadCardID(pr.ID, attempt, r)
 		c := s.Readers.Placed(id)
@@ -633,6 +674,8 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 		switch {
 		case col == Asked || col == Reading:
 			outstanding = true
+		case col == Broken:
+			broken = true
 		case col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c):
 			oks[r] = true
 		}
@@ -668,6 +711,10 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 		return Note{}, false
 	case reads == 0:
 		typ, why = NStranded, "never asked at attempt "+itoa(attempt)+" and nothing is open on it"
+	case !broken && reads < ReadsNeeded(pr):
+		// its reads are asked one at a time: the ones that stand came back ok and the
+		// next is the ask's (ReadsWanted), nothing to judge
+		return Note{}, false
 	default:
 		typ, why = NReadsExhausted, fmt.Sprintf("no read is outstanding and %s not said ok at %s", readersWord(ReadsNeeded(pr)), orDash(pr.F("head")))
 	}
@@ -980,7 +1027,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		// the brief's bound: the same finding twice, or too many attempts on one brief, and
 		// the brief is wrong, not the worker; a --fix changes the brief not at all, so it does
 		// not lift it (brief_bound.go)
-		if bb, ok := AtBriefBound(c, brokenFindings(s, c)); ok {
+		if bb, ok := AtBriefBound(c, brokenFindings(s, c), s.AttemptsCap(c.Row)); ok {
 			p.refuse(c.ID, bb.Why())
 			stays()
 			continue
@@ -1012,6 +1059,26 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		given := reworkGiven(s, c)
 		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"], FieldFindingAttempt: c.F("attempt"),
 			"reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
+		// what this attempt found, kept for the cap's judgment (brief_bound.go, FieldFindings):
+		// its readers' finding, else the report of its failed work, else its bound's class
+		found := given["finding"]
+		if found == "" {
+			found = ownFix(s, c)
+		}
+		if found == "" && bound != nil {
+			found = BoundClass(bound)
+		}
+		if lines := findingsOf(c, c.Int("attempt"), found); len(lines) > 0 {
+			set[FieldFindings] = findingsLine(lines)
+		}
+		// the reader who found it broken checks the fix: the next attempt's first read is
+		// asked of them (Ask, finderFirst); a rework of failed work names none
+		unset := []string{"readers"}
+		if finder := finderOf(s, c); finder != "" {
+			set[FieldFindingReader] = finder
+		} else {
+			unset = append(unset, FieldFindingReader)
+		}
 		if bound != nil {
 			// the attempt ended at its bound: its end is the primary's record of its failed
 			// work, as a failed finish writes it (failureSet), read by the next rework at a bound
@@ -1032,7 +1099,6 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		maps.Copy(set, one.Set)
 		// the head a reader passed: a next attempt that finds nothing to do at it goes back to
 		// review there, not to the coordinator as failed work (FieldPassedHead, Finish)
-		unset := []string{"readers"}
 		if len(okReaders(s, c)) > 0 && c.F("result") != "failed" {
 			set[FieldPassedHead] = c.F("head")
 		} else {
@@ -1138,6 +1204,22 @@ func ownFix(s *Snapshot, c *Card) string {
 	if c.F("result") == "failed" {
 		if wc := s.Fleet.Card(c.F("work")); wc != nil {
 			return wc.F("report")
+		}
+	}
+	return ""
+}
+
+// finderOf is the reader who found the primary broken at its attempt: the first
+// broken read's reader in reader row order (the readers table's declaration
+// order, as readsAt scans it; never name order, which Of's work order falls
+// back to for reads of one score), "" when no read of it is broken. An attempt
+// has two broken reads only when a second was asked beside the first (ask
+// --another); the reference model's Rework names the same reader
+// (TestTheFinderIsTheFirstBrokenReadInReaderRowOrder).
+func finderOf(s *Snapshot, c *Card) string {
+	for _, rc := range readsAt(s, c, c.Int("attempt")) {
+		if rc.Col == Broken {
+			return rc.Row
 		}
 	}
 	return ""

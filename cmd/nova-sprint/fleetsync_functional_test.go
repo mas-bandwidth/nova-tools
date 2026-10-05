@@ -69,7 +69,7 @@ func TestFleetSyncFollowsTheInventoryOnTheStore(t *testing.T) {
 		require.Equal(t, want, code, "%v: exit %d, want %d\n%s%s", args, code, want, out.String(), errb.String())
 		return out.String()
 	}
-	rows := func() map[string]map[string]string {
+	rows := func() map[string]map[string]any {
 		t.Helper()
 		var w whereView
 		require.NoError(t, json.Unmarshal([]byte(run(0, "where", "--json")), &w))

@@ -22,7 +22,7 @@ const (
 	DutyLevel      = "level"       // the members' backlogs are evened, at the tick's start
 	DutyLevelReads = "level reads" // the readers' loads are evened, at the tick's start
 	DutyAccept     = "accept"      // primaries in review with two ok reads are accepted and queued to merge
-	DutyAsk        = "ask"         // primaries in review are asked of two readers
+	DutyAsk        = "ask"         // primaries in review are asked the reads they want, one at a time
 	DutyCheck      = "check"       // a broken rule and a stall are judgments
 	DutyDeadlines  = "deadlines"   // a late card or stream is a judgment
 	DutyOverdue    = "overdue"     // a judgment past its due time is marked
