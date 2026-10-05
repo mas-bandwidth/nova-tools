@@ -1,8 +1,6 @@
 package main
 
 import (
-	"go/parser"
-	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,13 +9,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/tools/go/packages"
 )
 
 // Test 16: TestNoKeychainAndNoCryptoDependency
 func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
 	t.Parallel()
 	pkgs := []string{"cmd/nova-secrets", "internal/secrets"}
-	fset := token.NewFileSet()
 
 	forbiddenImports := []string{
 		"filippo.io/age",
@@ -38,16 +36,18 @@ func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
 			}
 		}
 
-		pkgsMap, err := parser.ParseDir(fset, dir, nil, parser.ImportsOnly)
-		require.NoError(t, err, "failed to parse package in %s: %v", dir, err)
+		// golang.org/x/tools/go/packages, the replacement parser.ParseDir's
+		// deprecation names (SA1019): the imports of the package and its test
+		// variants as the build reads them.
+		cfg := packages.Config{Mode: packages.NeedName | packages.NeedImports, Dir: dir, Tests: true}
+		loaded, err := packages.Load(&cfg, ".")
+		require.NoError(t, err, "failed to load package in %s: %v", dir, err)
+		require.NotEmpty(t, loaded, "no package loaded from %s", dir)
 
-		for _, p := range pkgsMap {
-			for fileName, f := range p.Files {
-				for _, imp := range f.Imports {
-					pathVal := strings.Trim(imp.Path.Value, `"`)
-					for _, forb := range forbiddenImports {
-						assert.NotContains(t, pathVal, forb, "%s imports %s; forbidden cryptography or keychain dependency", fileName, pathVal)
-					}
+		for _, lp := range loaded {
+			for imp := range lp.Imports {
+				for _, forb := range forbiddenImports {
+					assert.NotContains(t, imp, forb, "%s imports %s; forbidden cryptography or keychain dependency", lp.PkgPath, imp)
 				}
 			}
 		}
