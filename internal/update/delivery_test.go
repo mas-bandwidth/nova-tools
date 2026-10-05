@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -26,6 +27,14 @@ func TestMain(m *testing.M) {
 		fakeBus()
 		return
 	}
+	// the runtime starts its signal goroutine on the first signal.Notify of the process; a
+	// verb under test (tool.RunContext) notifies, and when the first one ran inside a
+	// synctest bubble the goroutine joined that bubble and the next signal use outside it
+	// was a fatal error (2026-10-05, CI shard 4/4; TestSnapshotIsBoundedByTheClock first
+	// under -shuffle). Started here, outside every bubble, once.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt)
+	signal.Stop(sigs)
 	code := m.Run()
 	if testCleanup != nil {
 		testCleanup()
