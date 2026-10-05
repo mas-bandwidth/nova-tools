@@ -2862,6 +2862,8 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | seat install, seat uninstall | the seat's push loop as a service of this machine ("Handing over the seat"): `seat install` writes it and loads it, `seat uninstall` unloads it and removes its file; `--dir`, `--dry-run`, `--json`; run where they are typed, never by the server |
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
 | goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
+| selftest land | lands a canned card on a scratch clone with this binary; green on a good binary, red on a broken lander |
+| server switch | `<binary> [--rollback]`: switches the server binary on disk, keeping the previous binary; with `--rollback`, rolls back if a land fails within the window; `--rollback` alone restores the previous binary |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm sprint` |
 | teardown | drops the tables, the view and every key of the sprint, of every epoch; `--confirm sprint` |
 | selftest | the install gate, one verb (`selftest [--dir <d>] [--keep]`, the machine's, needing no actor): a build installed for a fleet is gated by running the binary itself before it lands anything, because a build of 2026-10-04 refused every landing for nine minutes ("the base dev fails the tree gate": go build said "package os is not in std") while its unit tests were green, and the install was gated by hand with the help's walkthrough. It makes a fresh directory (under `--dir`, else the system's temporary directory), a bare repository origin.git standing for the forge and a clone work whose base commit holds a go.mod (module selftest, the go directive of nova-sprint's go.mod, from the toolchain that built the binary) and a main.go importing fmt and os, so the lander's tree gate (section 7) really builds, then runs the walkthrough's card flow (realSteps) in process on a twin file in that directory — init with two readers and one member, one card, start, ticks, take, a commit pushed to the card's branch, finish with `--head`, a read ok, `land --repo-dir work --base main`, a tick — and checks origin's main holds the landing. It prints one line: `SELFTEST OK landed=1 land=<duration> gate=<duration> go=<go version> dir=<d>` at exit 0 (land the landing step took, gate the whole selftest, go the toolchain that built the binary), or `SELFTEST FAILED step=<name> why=<one line> dir=<d>` at exit 1, naming the step and its own reason — the lander's for a red gate, so the gate's go output is printed ("package os is not in std" would be). The directory is removed unless `--keep` or a failure (a failure keeps it and names it); a removal that cannot run is said on a NOTE line and keeps the exit. It opens no store of the caller's, no Redis and no network |
@@ -3435,6 +3437,17 @@ what landed and everything land said was wrong (a refused or failed batch, a ref
 batch, its remedy); a round that could not read the merge queue prints `LAND FAILED` with why,
 since an unreadable queue is not an empty one, and the next round tries again. A failure is
 printed once, when it begins: the same failure again prints nothing until it changes or clears.
+
+With `server switch <binary> [--rollback]` the coordinator or an install switches the server's
+binary file on disk, keeping the previous binary (`<target>.prev`). With `--rollback`, if a
+land fails within the rollback window (default 15 minutes, `--window`), the failed landing
+in `run --land` rolls back the binary on disk to the previous binary, causing the running loop
+to stop (`RUN STOP the binary this loop runs was replaced...`, exit 3) so its supervisor restarts
+it with the previous binary. `server switch --rollback` without a binary immediately restores
+the previous binary.
+
+`nova-sprint selftest land` lands a canned card on a scratch clone with this binary, run by
+any install before switching: green on a good binary and red on a broken lander (item 14).
 
 With `run --decide <dir>` the server keeps the record of nova-decide's layer 2 (section 2,
 the attempt decision; section 5, the grade): `<dir>/attempt.jsonl` and `<dir>/grade.jsonl`,
