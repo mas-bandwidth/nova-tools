@@ -5,7 +5,7 @@
 // coordinator's pings at once and pushes them in so the session answers as
 // its own turn, and tells the session when the coordinator goes silent; and,
 // on the coordinator's side, the ping loop that pings every friend each
-// second. The verbs are run, install, uninstall, status, pong, ping,
+// second. The verbs are run, install, uninstall, check, status, pong, ping,
 // wait-pong and serve; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
@@ -230,8 +230,8 @@ nova-bus stream and, when the session is free, pushes every waiting message in a
 harness's deliver command), beats to the sprint server while the session answers, answers the
 coordinator PING at once (daemon-pong, never presence); presence is the session's answer to a nonce.
 state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.`,
-		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon), 2 could not run (a flag, an input, a store or a server that did not answer).",
-		Words:     []string{"NONE"},
+		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
+		Words:     []string{"NONE", "FAIL"},
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
@@ -307,13 +307,16 @@ and sops are found on PATH at install and written by absolute path. --dry-run pr
 writes nothing. For harness grok, a NOTE prints the one line the open session runs, ` + friend.GrokMonitorLine("") + `
 (--session names the wake file in place of <file>.wake): one command in the session, not a flag, an
 environment variable or a wrapper at app start. While no such monitor runs, a delivery is deferred
-(the message stays pending and is tried again), never failed and never dropped.`,
+(the message stays pending and is tried again), never failed and never dropped. Once the agent is
+loaded, install runs the delivery check once (nova-friend check, --within) and says its line in a
+NOTE: a CHECK FAIL is a NOTE, never an undone install.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
 					f.String("secrets", "", "the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec")
 					f.String("seat", "", "the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets")
 					f.String("launchd-log", "", "launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)")
+					f.Duration("within", friend.DefaultCheckWithin, "how long the delivery check after loading waits for the session's pong")
 					f.Check(func(c *tool.Call) {
 						if c.Str("secrets") != "" && c.Str("seat") == "" {
 							c.Problem("--secrets wants --seat <seat>: the seat the secrets are opened as")
@@ -337,6 +340,43 @@ environment variable or a wrapper at app start. While no such monitor runs, a de
 					f.Required("as", "your name, the friend the agent was installed for")
 				},
 				Run: w.uninstall,
+			},
+			{
+				Name:    "check",
+				Usage:   "check --as <me> --harness <h> --dir <d> [--session <id>] [--within <d>] [--to <seat>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
+				Example: "", // a live delivery: the banner's example block runs nothing that needs a session; -h carries the example
+				Effect:  tool.Delivery + ": one session check into the live session through the harness's deliver command",
+				DryRun:  true,
+				Detail: `The one promise every harness adapter makes, checked end to end (docs/SPEC-FRIEND.md,
+delivery-conformance-r.w1): a SESSION CHECK <nonce> goes in through the harness's deliver command,
+the session runs the exact nova-friend pong line it carries, and a pong with that nonce from --as is
+on the bus within --within. Prints one line: CHECK OK harness= took=, or CHECK FAIL harness=
+stage=<deliver|act|reply> why= at exit 1: deliver, the adapter did not take it (a harness with no
+deliver command says its reason); act, the session never ran the line (its pong file never held the
+nonce); reply, the line ran and no pong reached the bus. The pong goes to --to, else the seat the
+daemon's status names, else --as itself. Run it once a night as a nova-config loop record
+(docs/TESTING.md). --dry-run checks the flags and the harness and prints the line the session
+would run: nothing is delivered and no store is opened.
+example: nova-friend check --as bob --harness opencode --dir ./bob --within 2m`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, a nova-config friend row")
+					f.Required("harness", "the harness the session runs in: "+strings.Join(friend.Harnesses, ", "))
+					f.Required("dir", "the friend's working directory, the session's")
+					f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir)")
+					f.Duration("within", friend.DefaultCheckWithin, "how long to wait for the session's pong")
+					f.String("to", "", "who the pong goes to (default: the seat the daemon's status names, else --as)")
+					stateDir(f)
+					redis(f)
+					f.Check(func(c *tool.Call) {
+						if h := c.Str("harness"); h != "" && !friend.Known(h) {
+							c.Problem(fmt.Sprintf("--harness %q is no harness; it wants one of %s", h, strings.Join(friend.Harnesses, ", ")))
+						}
+						if c.Dur("within") <= 0 {
+							c.Problem("--within wants a positive duration, such as 5m")
+						}
+					})
+				},
+				Run: w.check,
 			},
 			{
 				Name:    "ping",
@@ -754,7 +794,89 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if err != nil {
 		return noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session)
 	}
+	// the delivery check, once, against the session the agent now serves; a fail is said, never undone
+	res, refusal := w.deliveryCheck(c, a.Friend, a.Harness, a.Dir, a.Session, w.stateDir(c), "", c.Dur("within"))
+	if refusal != "" {
+		o.Note("check: not run: " + refusal)
+	} else {
+		o.Note("check: " + res.Line())
+	}
 	return noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session)
+}
+
+// check is the delivery check against the live session (friend.Conformance).
+func (w world) check(c *tool.Call) *tool.Out {
+	name, harness, dir, state := c.Str("as"), c.Str("harness"), c.Str("dir"), w.stateDir(c)
+	if c.DryRun() {
+		if _, err := friend.NewDeliverer(harness, dir, c.Str("session"), w.exec, nil); err != nil {
+			return tool.Refuse(err.Error())
+		}
+		nonce := w.random()
+		return tool.Done().Fact("harness", harness).Fact("dir", dir).Fact("within", c.Dur("within").String()).
+			Item("plan", "command", tool.Text(w.pongCommand(name, nonce, state, c.Str("redis"))+" --to "+w.checkTo(c.Str("to"), name, state))).
+			Note("nothing was delivered; the session would run the plan line and its pong would end the check")
+	}
+	c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+"), where the pong is read")
+	if o := c.Refused(); o != nil {
+		return o
+	}
+	res, refusal := w.deliveryCheck(c, name, harness, dir, c.Str("session"), state, c.Str("to"), c.Dur("within"))
+	if refusal != "" {
+		return tool.Refuse(refusal)
+	}
+	if res.Stage != "" {
+		return tool.Fail().As("FAIL").Fact("harness", harness).Fact("stage", res.Stage).Fact("why", tool.Text(res.Why))
+	}
+	return tool.Done().Fact("harness", harness).Fact("took", res.Took.String())
+}
+
+// checkTo is whom the check's pong goes to: to, else the seat the daemon's
+// status names, else the friend itself.
+func (w world) checkTo(to, name, state string) string {
+	if to != "" {
+		return to
+	}
+	if s, found, err := friend.ReadStatus(state); err == nil && found && s.Seat != "" {
+		return s.Seat
+	}
+	return name
+}
+
+// pongCommand is the pong line a session check carries, as the daemon's
+// own check carries it: this binary's pong verb, the friend's state
+// directory and store.
+func (w world) pongCommand(name, nonce, state, redis string) string {
+	bin, err := w.binary()
+	if err != nil {
+		bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
+	}
+	return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s", bin, name, nonce, state, redis)
+}
+
+// deliveryCheck runs friend.Conformance once against the live session; the
+// refusal is set when it could not run (no harness, no store).
+func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, to string, within time.Duration) (friend.CheckResult, string) {
+	deliver, err := friend.NewDeliverer(harness, dir, session, w.exec, nil)
+	if err != nil {
+		return friend.CheckResult{}, err.Error()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
+	st, closeStore, err := w.open(ctx, c.Str("redis"))
+	cancel()
+	if err != nil {
+		return friend.CheckResult{}, "the store did not answer: " + err.Error()
+	}
+	defer closeStore()
+	to = w.checkTo(to, name, state)
+	check := &friend.Conformance{
+		Friend: name, Harness: harness, Deliver: deliver, Store: st, Within: within, Now: w.now, Nonce: w.random,
+		Wait: func(ctx context.Context) bool { w.sleep(ctx, friend.CheckPoll); return ctx.Err() == nil },
+		Text: func(nonce string) string {
+			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis")), to)
+		},
+		Pong: func() (friend.Pong, bool, error) { return friend.ReadPong(state) },
+	}
+	return check.Run(context.Background()), ""
 }
 
 // noteGrokMonitor appends the one line a grok session runs, when harness is grok.

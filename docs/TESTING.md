@@ -68,6 +68,22 @@ Action names correspond to `EpochMemberTable.tla`; this is bounded execution
 coverage, not exhaustive model checking or a concurrent-writer test. External
 bindings, batches, definition edits and row sorting have separate tests.
 
+### delivery-conformance-r.w1 — the nightly delivery check
+
+The unit tier proves every harness adapter against fakes
+(`TestEveryAdapterPassesDeliveryConformance`, internal/friend); the live
+session is proved once a night by `nova-friend check` on each friend's
+machine, one nova-config loop record per friend (kind loop), never a hand
+loop or a script:
+
+```sh
+nova-config loop add friend-check-<friend> --machine <the friend's machine> --argv '["/usr/bin/env","NOVA_BUS_REDIS=<the bus store, host:port>","nova-friend","check","--as","<friend>","--harness","<harness>","--dir","<the friend's working directory>"]' --every 86400 --as <coordinator>
+```
+
+Its line (`CHECK OK harness= took=`, or `CHECK FAIL harness= stage= why=` at
+exit 1) is the loop's record; the check is docs/SPEC-FRIEND.md, the subsection
+of the same name.
+
 ## `NOVA_CI_UPDATE=1`
 
 A change that removes offenders -- a sleep fixed, a serial test made parallel, a

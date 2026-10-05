@@ -581,6 +581,23 @@ answers pings with the daemon
 pong, beats, and records what it could not push in; the beat and the daemon
 pong are real for it all the same.
 
+### The delivery check
+
+`nova-friend check --as <me> --harness <h> --dir <d> [--session <id>]
+[--within <d>] [--to <seat>]` proves the live session takes a delivery: a
+`SESSION CHECK <nonce>` goes in through the harness's deliver command, the
+session runs the `nova-friend pong` line it carries, and the pong with that
+nonce is on the bus within `--within` (default 5m). It prints one line, `CHECK
+OK harness= took=`, or `CHECK FAIL harness= stage=<deliver|act|reply> why=` at
+exit 1: deliver, the adapter did not take it (a harness with no deliver command
+says its surveyed reason); act, the session never ran the line; reply, the line
+ran and no pong reached the bus. The pong goes to `--to`, else the seat the
+daemon's status names, else `--as`. `--dry-run` prints the pong line the
+session would run (`CHECK PLAN command=`) and delivers nothing. `install` runs
+the check once after loading the agent (its `--within`) and says the line in a
+NOTE; a fail never undoes the install. It runs once a night on each friend's
+machine as a nova-config loop record ([TESTING.md](TESTING.md)).
+
 ### The coordinator's ping loop
 
 ```sh

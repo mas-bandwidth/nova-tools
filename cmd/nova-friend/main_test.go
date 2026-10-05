@@ -34,6 +34,7 @@ type rig struct {
 	home      string
 	answered  map[string]bool // the session checks bob's fake session has answered
 	alive     friend.Aliver
+	deaf      bool // bob's opencode session takes a turn and never runs the pong line
 }
 
 type fakeAlive struct {
@@ -80,7 +81,22 @@ func (r *rig) world() world {
 		},
 		random: func() string { return "r4nd0m" },
 		alive:  r.alive,
+		exec:   r.opencode,
 	}
+}
+
+// opencode is bob's opencode session behind the Exec seam: its newest
+// session is the directory's, and a turn carrying a session check is
+// answered with the check's nonce unless the session is deaf.
+func (r *rig) opencode(_ context.Context, dir, _ string, args []string, _ string) (string, int, error) {
+	if args[0] == "session" {
+		return `[{"id":"ses_1","directory":"` + dir + `","updated":1}]`, 0, nil
+	}
+	text := args[len(args)-1]
+	if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok && !r.deaf {
+		r.answer(nonce)
+	}
+	return "", 0, nil
 }
 
 // answerChecks is bob's session, alive: each session check the daemon put
@@ -142,6 +158,8 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--state-dir", t.TempDir()}, []string{"--to is required", "no ping has named a seat yet"}},
 		{"wait-pong nothing given", []string{"wait-pong"}, []string{"--from is required", "--nonce is required"}},
 		{"status nothing given", []string{"status"}, []string{"--as is required", "--dir is required"}},
+		{"check nothing given", []string{"check"}, []string{"--as is required", "--harness is required", "--dir is required"}},
+		{"check bad harness and window", []string{"check", "--as", "bob", "--harness", "vim", "--dir", "d", "--within", "0s"}, []string{`--harness "vim" is no harness`, "--within wants a positive duration"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -247,7 +265,8 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	assert.Empty(t, r.launchctl)
 
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--session", "ses_1").Exit(0).
-		Out("INSTALL OK label=com.nova.friend-bob plist="+plist, `INSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL RAN command="launchctl bootstrap gui/501 `+plist+`"`, "NOTE check it: nova-friend status --as bob --dir /w/bob")
+		Out("INSTALL OK label=com.nova.friend-bob plist="+plist, `INSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL RAN command="launchctl bootstrap gui/501 `+plist+`"`,
+			"INSTALL NOTE check: CHECK OK harness=opencode took=", "NOTE check it: nova-friend status --as bob --dir /w/bob")
 	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
@@ -714,4 +733,39 @@ func TestRunPutsTheHarnessWatchInFrontOfTheBeat(t *testing.T) {
 	r.now = st.At
 	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
 		Out("NOTE the last beat failed: harness not running")
+}
+
+// check runs the delivery check against the live session: one line, OK with
+// how long the pong took, or FAIL with the stage at exit 1. A harness with no
+// deliver command fails at deliver with its reason; install says the check's
+// line in a NOTE and stays installed whatever it says.
+func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	state := t.TempDir()
+	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state).Exit(0).Out("CHECK OK harness=opencode took=")
+	got := r.store.Len(bus.LogKey)
+	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--json").Exit(0).Out(`"status":"ok"`, `"harness":"opencode"`)
+	assert.Equal(t, got+1, r.store.Len(bus.LogKey), "one pong a check")
+
+	r.deaf = true
+	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--within", "10s").Exit(1).
+		Err(`CHECK FAIL harness=opencode stage=act why="no pong r4nd0m from bob within 10s: the session did not run the line the check carried"`)
+	cli.Do(t, "check", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--state-dir", state).Exit(1).
+		Err(`CHECK FAIL harness=claude stage=deliver why="no deliver command for claude yet`)
+	cli.Do(t, "check", "--as", "bob", "--harness", "cursor", "--dir", "/w/bob", "--state-dir", state).Exit(1).
+		Err(`CHECK FAIL harness=cursor stage=deliver why="no deliver command for cursor: not installed here`)
+
+	// the plan, from the same pong line, with nothing delivered and no store opened
+	r.store.Fail = errors.New("store down")
+	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--to", "ada", "--dry-run").Exit(0).
+		Out("CHECK OK harness=opencode dir=/w/bob within=5m0s", "CHECK PLAN command=\"/opt/nova/bin/nova-friend pong --as bob --nonce r4nd0m --state-dir "+state+" --redis store.test:6379 --to ada\"", "NOTE nothing was delivered")
+	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state).Exit(2).Err("CHECK REFUSED: the store did not answer: store down")
+
+	// install: the check's fail is a NOTE, the agent stays loaded
+	r.store.Fail = nil
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--within", "5s").Exit(0).
+		Out("INSTALL OK label=com.nova.friend-bob", "INSTALL NOTE check: CHECK FAIL harness=opencode stage=act")
+	assert.FileExists(t, filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
 }
