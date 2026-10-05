@@ -47,10 +47,37 @@ type Card struct {
 	ID, Brief, Outbox string
 }
 
-// Epoch is the sprint epoch the card was delivered at, its directory's <id>~<epoch>.
+// JobName is the full job directory name, e.g. <id>~<epoch>.g<gen> or <id>~<epoch>.
+func (c Card) JobName() string {
+	if c.Outbox != "" {
+		return filepath.Base(c.Outbox)
+	}
+	return c.ID
+}
+
+// Epoch is the sprint epoch the card was delivered at, its directory's <id>~<epoch>[.g<gen>].
+// It returns only the numeric epoch string (e.g. "15"), stripped of any generation suffix,
+// for sprint server commands.
 func (c Card) Epoch() string {
-	_, epoch, _ := strings.Cut(filepath.Base(c.Outbox), "~")
+	base := filepath.Base(c.Outbox)
+	_, ep, _, ok := ParseJob(base)
+	if ok && ep > 0 {
+		return strconv.Itoa(ep)
+	}
+	_, epoch, _ := strings.Cut(base, "~")
+	if before, _, found := strings.Cut(epoch, "."); found {
+		return before
+	}
 	return epoch
+}
+
+// Gen is the card's generation (1 for first generation, >1 for later ones).
+func (c Card) Gen() int {
+	_, _, gen, ok := ParseJob(filepath.Base(c.Outbox))
+	if ok {
+		return gen
+	}
+	return 1
 }
 
 // ProgressEvery is how often the daemon stamps progress on a card whose lane turn prints:
@@ -78,22 +105,25 @@ func ProgressArgv(friend string, cards []Card) [][]string {
 // Result is the card's RESULT.md, whose presence after a turn is the card done.
 func (c Card) Result() string { return filepath.Join(c.Outbox, "RESULT.md") }
 
-// cardDir is the card's directory under root (inbox or outbox): <id>~<epoch>,
-// the highest epoch when friend sync delivered more than one.
+// cardDir is the card's directory under root (inbox or outbox): <id>~<epoch>[.g<gen>],
+// the highest (epoch, gen) when friend sync delivered more than one.
 func cardDir(root, id string) (string, bool) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return "", false
 	}
-	best, bestEpoch := "", -1
+	best := ""
+	bestEpoch, bestGen := -1, -1
 	for _, e := range entries {
-		name, epoch, ok := strings.Cut(e.Name(), "~")
-		n, err := strconv.Atoi(epoch)
-		if !ok || name != id || !e.IsDir() || err != nil {
+		if !e.IsDir() {
 			continue
 		}
-		if n > bestEpoch {
-			best, bestEpoch = e.Name(), n
+		card, ep, gen, ok := ParseJob(e.Name())
+		if !ok || card != id {
+			continue
+		}
+		if ep > bestEpoch || (ep == bestEpoch && gen > bestGen) {
+			best, bestEpoch, bestGen = e.Name(), ep, gen
 		}
 	}
 	return best, best != ""
@@ -138,10 +168,12 @@ func exists(path string) bool {
 type lane struct {
 	n        int // from 1
 	session  string
+	title    string
 	opening  bool
 	openAt   time.Time // when an open that failed is tried again
 	card     *Card
 	attempts int
+	capped   bool
 	t        *turn
 }
 
@@ -158,6 +190,9 @@ type laneResult struct {
 type laneSet struct {
 	lanes   []*lane
 	given   map[string]bool
+	skipped map[string]bool
+	took    map[string]bool
+	lowered bool
 	state   LaneState
 	loaded  bool
 	results chan laneResult
@@ -246,13 +281,49 @@ func CardText(c Card, n, width int, sendLine, pong, notice string, msgs []bus.Me
 func (l *loop) laneStep(now time.Time, width int) {
 	s := l.lanes
 	d := l.d
+	at := now.UTC().Format(time.RFC3339)
+
+	if d.StateDir != "" && exists(filepath.Join(d.StateDir, "PAUSED")) {
+		return
+	}
+
+	if d.WriteShims != nil {
+		if _, err := d.WriteShims(d.Dir, d.Friend); err != nil {
+			d.Record(at + " shims: " + err.Error())
+		}
+	}
+
+	if d.LoadMax > 0 && d.Load1 != nil {
+		if ld, ok := d.Load1(); ok {
+			heldWidth := d.HeldWidth
+			if heldWidth <= 0 {
+				heldWidth = DefaultHeldWidth
+			}
+			eff := EffectiveWidthHeld(width, ld, d.LoadMax, heldWidth)
+			if eff < width && !s.lowered {
+				s.lowered = true
+				d.Record(fmt.Sprintf("%s LOAD %.1f above %.1f: lanes held at %d of %d", at, ld, d.LoadMax, eff, width))
+				if l.coordinator() != "" {
+					l.tell(fmt.Sprintf("%s lanes at %d: host load %.1f", d.Friend, eff, ld),
+						fmt.Sprintf("1-minute load %.1f above %.1f with %s at %d lanes; new lanes held to %d until it falls", ld, d.LoadMax, d.Friend, width, eff), now)
+				}
+			} else if eff == width && s.lowered {
+				s.lowered = false
+				d.Record(fmt.Sprintf("%s LOAD %.1f at or below %.1f: lanes back to %d", at, ld, d.LoadMax, width))
+			}
+			width = eff
+		}
+	}
+
 	if !s.loaded {
 		s.loaded = true
 		s.given = map[string]bool{}
+		s.skipped = map[string]bool{}
+		s.took = map[string]bool{}
 		if d.LoadLanes != nil {
 			st, err := d.LoadLanes()
 			if err != nil {
-				d.Record(now.UTC().Format(time.RFC3339) + " lanes: the lane state cannot be read: " + err.Error() + "; every lane opens a new session")
+				d.Record(at + " lanes: the lane state cannot be read: " + err.Error() + "; every lane opens a new session")
 			}
 			s.state = st
 		}
@@ -263,13 +334,37 @@ func (l *loop) laneStep(now time.Time, width int) {
 			s.given[id] = true
 		}
 	}
+
+	if d.TokenCap > 0 && d.TokensOf != nil {
+		for _, ln := range s.lanes {
+			if ln.t != nil && ln.card != nil && !ln.capped {
+				queryKey := ln.title
+				if queryKey == "" {
+					queryKey = ln.session
+				}
+				tk, err := d.TokensOf(l.ctx, queryKey)
+				if err == nil && CheckTokenCap(tk.Total(), d.TokenCap) {
+					ln.capped = true
+					_ = os.MkdirAll(ln.card.Outbox, 0o755) // ignored: outbox directory may already exist
+					draftPath := filepath.Join(ln.card.Outbox, "REPORT.draft.md")
+					draftContent := HoldReportTokenCap(tk.Total(), ln.attempts+1, "token cap reached", d.Friend, d.TokenCap)
+					_ = os.WriteFile(draftPath, []byte(draftContent), 0o644) // ignored: token cap draft report write is best-effort
+					d.Record(fmt.Sprintf("%s TOKEN CAP %s: %d tokens; lane stopped", at, ln.card.JobName(), tk.Total()))
+					if ln.t.cancel != nil {
+						ln.t.cancel()
+					}
+				}
+			}
+		}
+	}
+
 	for len(s.lanes) < width {
 		n := len(s.lanes) + 1
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
 	}
 	lh := d.Deliver.(LaneHarness)
 	held := func(id string) bool {
-		if s.given[id] {
+		if s.given[id] || s.skipped[id] || s.took[id] {
 			return true
 		}
 		return slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && ln.card.ID == id })
@@ -292,15 +387,59 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		if ln.card == nil {
-			c, found, err := NextCard(d.Dir, held)
-			if err != nil {
-				d.Record(now.UTC().Format(time.RFC3339) + " lanes: the queue file: " + err.Error())
-				return
+			ln.capped = false
+			for {
+				c, found, err := NextCard(d.Dir, held)
+				if err != nil {
+					d.Record(at + " lanes: the queue file: " + err.Error())
+					return
+				}
+				if !found {
+					break
+				}
+				jobDir := filepath.Join(d.Dir, "jobs", c.JobName())
+				jobDirExists := exists(jobDir)
+				if jobDirExists {
+					if !s.skipped[c.ID] {
+						s.skipped[c.ID] = true
+						d.Record(fmt.Sprintf("%s SKIP %s: jobs/%s exists, started outside this runner", at, c.JobName(), c.JobName()))
+					}
+					continue
+				}
+				if d.Filter != "" || len(d.Tiers) > 0 {
+					briefBytes, _ := os.ReadFile(c.Brief)
+					tier := ReadCardTier(string(briefBytes))
+					stream := ReadCardStream(string(briefBytes), c.ID)
+					verdict, reason := CardFilter(c.ID, stream, tier, d.Filter, d.Tiers, d.Friend)
+					if verdict == "take" {
+						if ShouldTakeBack(verdict, jobDirExists) {
+							if !s.took[c.ID] {
+								s.took[c.ID] = true
+								if d.TakeCard != nil {
+									if err := d.TakeCard(l.ctx, c.ID, reason); err != nil {
+										d.Record(fmt.Sprintf("%s TAKE %s refused: %s", at, c.ID, err.Error()))
+									} else {
+										d.Record(fmt.Sprintf("%s TAKE %s back: %s", at, c.ID, reason))
+									}
+								}
+							}
+						}
+						continue
+					}
+					if verdict == "skip" {
+						if !s.skipped[c.ID] {
+							s.skipped[c.ID] = true
+							d.Record(fmt.Sprintf("%s SKIP %s: %s", at, c.JobName(), reason))
+						}
+						continue
+					}
+				}
+				ln.card, ln.attempts = &c, 0
+				break
 			}
-			if !found {
+			if ln.card == nil {
 				continue // messages wait: they ride only with a card
 			}
-			ln.card, ln.attempts = &c, 0
 		}
 		t := &turn{}
 		t.entries, t.msgs = l.take()
@@ -317,6 +456,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 		}
 		t.text = CardText(*ln.card, ln.n, width, send, pong, notice, t.msgs)
 		ln.t = t
+		ln.title = fmt.Sprintf("%s one-shot %s %d", d.Friend, ln.card.JobName(), now.Unix())
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
 			lt, err := lh.DeliverTo(LaneContext(ctx), ln.session, t.text)
 			return laneResult{ln: ln, turn: lt, err: err, t: t}
@@ -345,6 +485,34 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	t := r.t
 	t.running = false
 	ln.t = nil
+	card := *ln.card
+
+	provErr, isProv := IsProviderFailure(r.turn.Output)
+	if !isProv && r.err != nil {
+		provErr, isProv = IsProviderFailure(r.err.Error())
+	}
+	if isProv {
+		if d.StateDir != "" {
+			pausedPath := filepath.Join(d.StateDir, "PAUSED")
+			if !exists(pausedPath) {
+				content := fmt.Sprintf("%s %s: %s\n", now.Format("2006-01-02 03:04:05 PM"), card.JobName(), provErr)
+				_ = os.WriteFile(pausedPath, []byte(content), 0o644) // ignored: pause file write is best-effort
+			}
+		}
+		d.Record(fmt.Sprintf("%s PAUSED provider failure on %s: %s", at, card.JobName(), provErr))
+		for _, other := range s.lanes {
+			if other.t != nil && other.t.cancel != nil {
+				other.t.cancel()
+			}
+		}
+		if d.PauseFriend != nil {
+			reason := fmt.Sprintf("provider failure (%s): %s", d.Model, provErr)
+			if err := d.PauseFriend(l.ctx, d.Friend, reason); err != nil {
+				d.Record(fmt.Sprintf("%s pause friend failed: %s", at, err.Error()))
+			}
+		}
+	}
+
 	ok := r.err == nil && r.turn.Exit == 0 && !t.stopped
 	line := fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s exit=%d", at, ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
 	if r.err != nil {
@@ -357,9 +525,89 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		line += fmt.Sprintf(" rejected=%q", r.turn.Rejected)
 	}
 	line += l.settle(t, ok, r.err, now)
-	card := *ln.card
+
+	reportPath := filepath.Join(card.Outbox, "REPORT.md")
+	draftPath := filepath.Join(card.Outbox, "REPORT.draft.md")
+	hasDraft := exists(draftPath)
+	hasReport := exists(reportPath)
+	hasResult := exists(card.Result())
+
+	if (hasDraft || hasReport || hasResult) && d.TokensOf != nil {
+		var tk OpencodeTokens
+		var tkErr error
+		queryKey := ln.title
+		if queryKey == "" {
+			queryKey = ln.session
+		}
+		tk, tkErr = d.TokensOf(l.ctx, queryKey)
+		if tkErr != nil {
+			d.Record(fmt.Sprintf("%s tokens of %s: %v", at, card.JobName(), tkErr))
+		}
+		var price *RoutePrice
+		if d.RoutePrice != nil {
+			price, _ = d.RoutePrice(l.ctx, d.Model)
+		}
+		cost := CostOf(tk, price, d.Model)
+		oc := Dollars(tk.Cost)
+		routeName := ""
+		if price != nil {
+			routeName = price.RouteName
+		}
+		cline := FormatCostLine(cost, oc, tk, d.Model, routeName)
+
+		src := ""
+		if hasDraft {
+			src = draftPath
+		} else if hasReport {
+			src = reportPath
+		}
+		if src != "" {
+			raw, err := os.ReadFile(src)
+			if err == nil && !strings.Contains(string(raw), "Cost: ") {
+				updated := PublishReportWithCost(string(raw), cline)
+				_ = os.WriteFile(reportPath, []byte(updated), 0o644) // ignored: report write is best-effort
+				if src == draftPath {
+					_ = os.Remove(draftPath) // ignored: draft removal is best-effort
+				}
+				hasReport = true
+			}
+		}
+
+		if hasResult {
+			resRaw, err := os.ReadFile(card.Result())
+			if err == nil && !strings.Contains(string(resRaw), "tokens:") {
+				resUpdated := AppendResultCost(string(resRaw), cost, oc, tk, d.Model)
+				_ = os.WriteFile(card.Result(), []byte(resUpdated), 0o644) // ignored: result write is best-effort
+			}
+		}
+
+		rep := "no"
+		if hasReport {
+			if repBytes, err := os.ReadFile(reportPath); err == nil {
+				rep = strings.SplitN(string(repBytes), "\n", 2)[0]
+			}
+		}
+		wall := now.Sub(t.started)
+		subj, body := FinishBusNote(d.Friend, card.JobName(), rep, cost, oc, wall)
+		l.tell(subj, body, now)
+	} else if hasDraft && !hasReport {
+		if raw, err := os.ReadFile(draftPath); err == nil {
+			_ = os.WriteFile(reportPath, raw, 0o644) // ignored: draft promotion is best-effort
+			_ = os.Remove(draftPath)                 // ignored: draft removal is best-effort
+		}
+	}
+
 	if exists(card.Result()) {
 		line += " card=done"
+		ln.card, ln.attempts = nil, 0
+		d.Record(line)
+		return
+	}
+	if ln.capped {
+		line += " card=capped"
+		s.given[card.ID] = true
+		s.state.GivenUp = append(s.state.GivenUp, card.ID)
+		l.saveLanes(now)
 		ln.card, ln.attempts = nil, 0
 		d.Record(line)
 		return

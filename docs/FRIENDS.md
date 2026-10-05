@@ -230,3 +230,11 @@ nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127
    session proof of life (card fr-session-proof-of-life): `nova-friend` tracks
    presence via nonces answered by each friend's session, so no background ping
    script is run.
+
+## One-shot runner behaviors and parity
+
+Friends operating one-shot lanes follow the runner stopgap parity contract:
+- **Card directory**: `inbox/<card>~<epoch>[.g<gen>]/BRIEF.md`, `outbox/<card>~<epoch>[.g<gen>]/`.
+- **Reports and results**: `REPORT.draft.md` is published as `REPORT.md` with a `Cost: ...` line inserted under `Head:`. `RESULT.md` has `tokens:` and `cost:` appended.
+- **Provider pauses**: on quota or rate limit failures, `<state-dir>/PAUSED` is written and the friend is marked down until cleared.
+- **Dealer take-back**: cards incompatible with the friend's configured tier or filter are taken back via `friend take` before work begins.

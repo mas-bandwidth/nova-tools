@@ -147,6 +147,16 @@ $ nova-friend status --as bob --dir ./bob
 ! STATUS NONE: no daemon has run as bob (no status file in ./home/.nova-friend/bob); run: nova-friend install --as bob --harness <h> --dir ./bob
 ```
 
+### One-shot lanes runner parity
+
+Run by `internal/friend/lanes_parity_test.go` (`TestOpencodeLanesDoWhatTheRunnerStopgapsDid`):
+exercises the nine runner stopgap parity behaviors: card tier and stream filtering,
+generation-aware job directory naming (`<card>~<epoch>[.g<gen>]`), session title naming,
+Host refusal shims for `go` and `gofmt`, load shedding and held width under machine load,
+per-card token cap stopping with `Verdict: HOLD`, provider failure detection and pause,
+token querying from SQLite and sprint route row pricing with `Cost:` injection in `REPORT.md`,
+and completion bus notification to the coordinator.
+
 ## nova-sandbox
 
 Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/path/to/pool` standing in for yours, and the lines are what the platform prints with the paths shortened.

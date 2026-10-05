@@ -664,6 +664,19 @@ small table of known models (a flash model is a one-shot by nature), giving
 smart defaults the row's `mode` and `width` override, and the deal giving a
 friend no card above her tier.
 
+### opencode-lanes-parity.w1 — parity with runner.zsh stopgaps
+
+In one-shot mode with OpenCode, `nova-friend` implements the stopgap behaviors originally in `runner.zsh`:
+1. **Card filtering & dealer take-back**: configured by `row_filter=` or `--filter` (`flash` or `security`), and `row_tiers=` or `--tiers`. For `flash`, only flash tier cards run; non-flash cards are taken back (`nova-sprint friend take <friend> <card> --reason ...`) if not yet started. For `security`, only security streams or IDs (`fp-sec*`, `sec-*`, `security-*`) run; other streams are skipped.
+2. **Job directory naming & generations**: job directories are named `<card>~<epoch>` for generation 1 and `<card>~<epoch>.g<gen>` for generation > 1. `cardDir` resolves the highest `(epoch, gen)` tuple. Sprint progress stamps use the numeric epoch string.
+3. **Session titles**: each turn is named `<friend> one-shot <job> <epoch_sec>`.
+4. **Host refusal shims**: executable shims for `go` and `gofmt` in `<dir>/bin` refuse compilation on the local host and redirect to a remote build runner over SSH.
+5. **Load shedding**: when 1-minute load exceeds `row_load_max` or `--load-max`, active lane width is held to 3 (or `--held-width`). Transitions are recorded and reported to the coordinator on the bus.
+6. **Token cap**: when total session tokens exceed `row_token_cap` or `--token-cap`, the turn is cancelled and `REPORT.draft.md` is written with `Verdict: HOLD`.
+7. **Provider failure detection**: unrecoverable errors (402, 429, out of credits, quota exceeded, rate limit) stop all lanes, write `<state-dir>/PAUSED`, and call `nova-sprint friend down`.
+8. **Token querying and route pricing**: queries session and child token counts from OpenCode's SQLite database, calculates cost using sprint route pricing sheets (per million tokens, reasoning as output), inserts `Cost:` line under `Head:` in `REPORT.md` (promoting draft if present), and appends `tokens:` and `cost:` to `RESULT.md`.
+9. **Coordinator bus completion note**: on completion, sends a finish notification to the coordinator with the card's verdict, cost, opencode reported cost, and wall clock time.
+
 ### buds-in-the-wall-r.w5 — every lane child runs inside a wall profile
 
 A lane's child (the harness run that opens its session and each card's turn)

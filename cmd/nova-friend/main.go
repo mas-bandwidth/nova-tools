@@ -30,6 +30,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
@@ -281,6 +282,12 @@ dir= state= redis=): no store is opened and nothing is written.`,
 					f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)")
 					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
 					f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated")
+					f.String("model", "", "override the friend's model (e.g. inception/mercury-2.5)")
+					f.String("filter", "", "filter for one-shot lanes: flash, security, or empty")
+					f.String("tiers", "", "allowed tiers for one-shot lanes, comma-separated")
+					f.Float64("load-max", 0, "1-minute load above which lane width is held to 3 (default: 0 disabled)")
+					f.Int("held-width", 0, "width held to when load exceeds load-max (default: 3)")
+					f.Int64("token-cap", 0, "per-card token cap before stopping lane with HOLD (default: 0 disabled)")
 					f.Check(func(c *tool.Call) {
 						if m := c.Str("mode"); m != "" && m != friend.ModeBatch && m != friend.ModeOneShot {
 							c.Problem(fmt.Sprintf("--mode %q wants batch or one-shot", m))
@@ -663,7 +670,26 @@ func (w world) run(c *tool.Call) *tool.Out {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: telling " + to + " failed: " + err.Error() + ": " + subject)
 		}
 	}
-	d := &friend.Daemon{
+	splitCommas := func(val string) []string {
+		var out []string
+		for _, p := range strings.Split(val, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	callFloat := func(name string) float64 {
+		v, _ := c.Get(name).(float64)
+		return v
+	}
+	callInt64 := func(name string) int64 {
+		v, _ := c.Get(name).(int64)
+		return v
+	}
+	var d *friend.Daemon
+	d = &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
@@ -675,6 +701,24 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Beat: func(ctx context.Context, active time.Time) error {
 			return sc.Beat(fl.Beat(func(ctx context.Context) error {
 				answer, err := w.beat(ctx, server, name, active)
+				if err == nil {
+					cfg := friend.ParseFriendRow(answer)
+					if c.Str("filter") == "" && cfg.Filter != "" {
+						d.Filter = cfg.Filter
+					}
+					if len(d.Tiers) == 0 && len(cfg.Tiers) > 0 {
+						d.Tiers = cfg.Tiers
+					}
+					if callFloat("load-max") == 0 && cfg.LoadMax > 0 {
+						d.LoadMax = cfg.LoadMax
+					}
+					if callInt64("token-cap") == 0 && cfg.TokenCap > 0 {
+						d.TokenCap = cfg.TokenCap
+					}
+					if c.Str("model") == "" && cfg.Model != "" {
+						d.Model = cfg.Model
+					}
+				}
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
 				}
@@ -728,6 +772,49 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
 		},
+		Filter:    c.Str("filter"),
+		Tiers:     splitCommas(c.Str("tiers")),
+		LoadMax:   callFloat("load-max"),
+		HeldWidth: c.Int("held-width"),
+		TokenCap:  callInt64("token-cap"),
+		Model:     c.Str("model"),
+		StateDir:  state,
+		Load1:     hostload.Local().Load1,
+		TakeCard: func(ctx context.Context, card, reason string) error {
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, []string{"friend", "take", name, card, "--reason", reason})
+			if err != nil {
+				return err
+			}
+			if len(res) == 1 && res[0].Code != 0 {
+				return fmt.Errorf("%s", res[0].Stderr)
+			}
+			return nil
+		},
+		PauseFriend: func(ctx context.Context, friendName, reason string) error {
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, []string{"friend", "down", friendName, "--reason", reason})
+			if err != nil {
+				return err
+			}
+			if len(res) == 1 && res[0].Code != 0 {
+				return fmt.Errorf("%s", res[0].Stderr)
+			}
+			return nil
+		},
+		TokensOf: func(ctx context.Context, titleOrID string) (friend.OpencodeTokens, error) {
+			dbPath := filepath.Join(w.home, ".local", "share", "opencode", "opencode.db")
+			return friend.QuerySessionTokens(ctx, dbPath, titleOrID, nil)
+		},
+		RoutePrice: func(ctx context.Context, model string) (*friend.RoutePrice, error) {
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, []string{"routes", "--json"})
+			if err != nil {
+				return nil, err
+			}
+			if len(res) != 1 || res[0].Code != 0 {
+				return nil, fmt.Errorf("routes: failed to read routes from server")
+			}
+			return friend.FindRoutePrice(res[0].Stdout, model)
+		},
+		WriteShims: friend.WriteRefusalShims,
 	}
 	watch = friend.WatchHarness(d, deliver)
 	if w.alive != nil {

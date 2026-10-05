@@ -133,6 +133,20 @@ type Daemon struct {
 	// Progress stamps progress on the cards whose lane turn printed (ProgressArgv to the
 	// sprint server); nil stamps none.
 	Progress func(ctx context.Context, cards []Card) error
+	// Filter and Tiers configure card filtering for one-shot lanes.
+	Filter      string
+	Tiers       []string
+	LoadMax     float64
+	HeldWidth   int
+	Load1       func() (float64, bool)
+	TokenCap    int64
+	Model       string
+	StateDir    string
+	TakeCard    func(ctx context.Context, card, reason string) error
+	PauseFriend func(ctx context.Context, friend, reason string) error
+	TokensOf    func(ctx context.Context, titleOrID string) (OpencodeTokens, error)
+	RoutePrice  func(ctx context.Context, model string) (*RoutePrice, error)
+	WriteShims  func(dir, friend string) (string, error)
 
 	m           *Machine
 	status      Status

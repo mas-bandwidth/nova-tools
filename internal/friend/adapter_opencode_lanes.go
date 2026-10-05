@@ -37,6 +37,7 @@ type LaneHarness interface {
 type LaneTurn struct {
 	Exit     int
 	Rejected string // the line of the output where the harness refused a permission, if any
+	Output   string
 }
 
 // permissionRejected is a line of a turn's output where a tool call was
@@ -201,5 +202,5 @@ func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, er
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
 	exit, err = refused(id, out, exit, err)
-	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
+	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), Output: out}, err
 }
