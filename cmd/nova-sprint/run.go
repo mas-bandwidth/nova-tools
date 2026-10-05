@@ -709,7 +709,16 @@ func (a *app) cardDiff(ctx context.Context, c *sprint.Card) (string, error) {
 	}
 	branch := c.F("branch")
 	if _, err := git("cat-file", "-e", head+"^{commit}"); err != nil && branch != "" {
-		_, _ = git("fetch", "-q", "--no-tags", "origin", branch)
+		// the head is not in the clone, so the diff cannot run without this fetch: its
+		// failure is the one that explains the card, said with its remedy
+		res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: true}, "fetch", "-q", "--no-tags", "origin", branch)
+		if err != nil {
+			why := firstLine("", err)
+			if stderr := strings.TrimSpace(string(res.Stderr)); stderr != "" {
+				why += ": " + firstLine(stderr, nil)
+			}
+			return "", fmt.Errorf("%s: head %s is not in the clone at %s and fetching branch %s from origin failed (%s); check the branch was pushed and origin is reachable, then run git -C %s fetch origin %s", c.ID, head, dir, branch, why, dir, branch)
+		}
 	}
 	at := base.Sha
 	if at == "" {
