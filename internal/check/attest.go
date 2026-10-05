@@ -144,7 +144,7 @@ func Attest(home, manifest string) (Attestation, []Failure, error) {
 		n = binary.PutUvarint(lenBuf[:], uint64(size))
 		h.Write(lenBuf[:n])
 		copied, err := io.Copy(h, f)
-		f.Close()
+		_ = f.Close() // ignored: the file is opened only for reading, so a close fault is not a report; io.Copy's error is the one returned
 		if err != nil {
 			fail(entry, fmt.Sprintf("unreadable: %v", err))
 			continue
@@ -170,7 +170,7 @@ func parseManifest(path string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("manifest: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the manifest is opened only for reading; the scan's error is the one returned
 
 	var entries []string
 	sc := bufio.NewScanner(f)

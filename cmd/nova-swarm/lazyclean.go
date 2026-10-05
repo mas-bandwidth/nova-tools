@@ -35,8 +35,8 @@ import (
 //     read after a run is stopped and cleared. A name that does not parse as a launch's, a
 //     link, and anything of a launch that is running or claimed is left alone, always.
 //   - the build cache: the Go build cache this loop's launches share (GOCACHE, nativeChildEnv)
-//     is held under gocache.Limit, least recently used entries removed first, never one used
-//     in the last hour (internal/gocache).
+//     is held under --gocache-limit (gocache.Limit, 20 GiB), least recently used entries removed
+//     first down to 80% of it, never one used in the last two hours (internal/gocache).
 
 // keepEpochs is how many epochs, the current one included, keep their slot entries and
 // results: the current one, which is running, and the one before it, whose logs are read
@@ -54,10 +54,11 @@ const lazyRound = 32
 // directory listing.
 const lazyEvery = 2 * time.Second
 
-// The build cache's trim (internal/gocache): held under gocache.Limit, then gocache.Slack
-// under it. cacheDirsPerRound is how many of the cache's 256 subdirectories a round reads
-// (measures, and trims when over): the size is never measured by walking the whole cache at
-// once, but as a running sum, each subdirectory's part re-read once every 64 rounds.
+// The build cache's trim (internal/gocache): held under the member's --gocache-limit, then
+// down to the low-water mark a fifth under it (gocache.SlackOf). cacheDirsPerRound is how
+// many of the cache's 256 subdirectories a round reads (measures, and trims when over): the
+// size is never measured by walking the whole cache at once, but as a running sum, each
+// subdirectory's part re-read once every 64 rounds.
 // cacheRemovePerRound is the most entries one round removes.
 const (
 	cacheDirsPerRound   = 4
@@ -87,11 +88,26 @@ func (r *nativeRunner) lazy(now time.Time) {
 	if dir == "" {
 		return
 	}
-	if c := r.cache.Round(dir, now, gocache.Bounds{Limit: gocache.Limit, Slack: gocache.Slack, Dirs: cacheDirsPerRound, Remove: cacheRemovePerRound}); c.Removed > 0 || c.Failed > 0 {
+	limit := r.gocacheLimit()
+	c := r.cache.Round(dir, now, gocache.Bounds{Limit: limit, Slack: gocache.SlackOf(limit), Dirs: cacheDirsPerRound, Remove: cacheRemovePerRound})
+	if c.Removed > 0 || c.Failed > 0 {
 		failures := lazyCount{failed: c.Failed, why: c.Why}.failures()
 		fmt.Fprintf(r.stderr, "CLEAN go build cache: removed %d entries, %s freed, %s now, limit %s%s\n", c.Removed,
-			oneline.Escape(sizeWord(c.Freed)), oneline.Escape(sizeWord(c.Size)), oneline.Escape(sizeWord(gocache.Limit)), oneline.Escape(failures))
+			oneline.Escape(sizeWord(c.Freed)), oneline.Escape(sizeWord(c.Size)), oneline.Escape(sizeWord(limit)), oneline.Escape(failures))
 	}
+	if c.InUse {
+		fmt.Fprintf(r.stderr, "CLEAN go build cache: over the limit, all entries in use: raise the limit (%s now, limit %s, every entry used in the last two hours; nothing is removed; said once an hour; nova-swarm member --gocache-limit <GiB>)\n",
+			oneline.Escape(sizeWord(c.Size)), oneline.Escape(sizeWord(limit)))
+	}
+}
+
+// gocacheLimit is the size the build cache is held under: the member's --gocache-limit,
+// else gocache.Limit.
+func (r *nativeRunner) gocacheLimit() int64 {
+	if r.cacheLimit > 0 {
+		return r.cacheLimit
+	}
+	return gocache.Limit
 }
 
 // goBuildCache is the build cache this loop's launches share: native's GOCACHE under the

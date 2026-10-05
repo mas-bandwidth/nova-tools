@@ -6,7 +6,7 @@
 # three was killed at 100 s on windows-latest.
 #
 # The first rows were measured on an idle bench. The four git-fixture packages
-# were re-measured on hulk on 2026-09-18 WHILE IT CARRIED ITS EIGHT RUNNERS, so
+# were re-measured on a bench on 2026-09-18 WHILE IT CARRIED ITS EIGHT RUNNERS, so
 # those are loaded-bench numbers and sit above an idle one — which is the
 # condition CI actually runs in.
 #

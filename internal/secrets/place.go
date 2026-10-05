@@ -2,12 +2,10 @@ package secrets
 
 import (
 	"bytes"
-	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,7 +14,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -62,6 +59,18 @@ type PlaceInput struct {
 	// verb needs to know the secret exists) but no ssh child runs and no receipt is written.
 	DryRun bool
 	Now    func() time.Time
+
+	// Exec replaces the os/exec child process, as it does for seal: the sops decrypt, the
+	// version probe and the ssh delivery all run through it. Tests set a strict fake so
+	// place's refusals run with no real sops and no host reached.
+	Exec execCommand
+}
+
+func (in PlaceInput) exec() execCommand {
+	if in.Exec != nil {
+		return in.Exec
+	}
+	return realExecCommand
 }
 
 // PlacedInput is one `nova-secrets placed` invocation.
@@ -135,13 +144,13 @@ func storeHead(storeDir string) string {
 // joined by errors.Join with the decrypt's or the write's own error when that step had
 // already failed, and the plaintext is zeroed and not returned, so no caller places a
 // value read through a snapshot that is still on disk.
-func decryptSnapshot(sopsPath, keyPath, file string, sealed []byte) ([]byte, error) {
-	return decryptSnapshotWithRemoval(sopsPath, keyPath, file, sealed, safepath.RemoveUnder)
+func decryptSnapshot(run execCommand, sopsPath, keyPath, file string, sealed []byte) ([]byte, error) {
+	return decryptSnapshotWithRemoval(run, sopsPath, keyPath, file, sealed, safepath.RemoveUnder)
 }
 
 // decryptSnapshotWithRemoval keeps cleanup injection local to one call, so failure
 // probes share no mutable state with other decrypts.
-func decryptSnapshotWithRemoval(sopsPath, keyPath, file string, sealed []byte, removeUnder func(string, string) error) (out []byte, err error) {
+func decryptSnapshotWithRemoval(run execCommand, sopsPath, keyPath, file string, sealed []byte, removeUnder func(string, string) error) (out []byte, err error) {
 	dir, err := os.MkdirTemp("", "nova-secrets-place-*")
 	if err != nil {
 		return nil, fmt.Errorf("cannot make a private snapshot directory for %s: %w", file, err)
@@ -159,7 +168,7 @@ func decryptSnapshotWithRemoval(sopsPath, keyPath, file string, sealed []byte, r
 	if err := os.WriteFile(snapshot, sealed, 0o600); err != nil {
 		return nil, fmt.Errorf("cannot write the private snapshot of %s: %w", file, err)
 	}
-	out, err = DecryptFile(sopsPath, keyPath, snapshot)
+	out, err = DecryptFile(run, sopsPath, keyPath, snapshot)
 	if err != nil {
 		// The snapshot is gone when this is read; the remedy names the store's file.
 		return nil, errors.New(strings.ReplaceAll(err.Error(), snapshot, file))
@@ -234,10 +243,11 @@ func RunPlace(in PlaceInput) (string, error) {
 	}
 	head := storeHead(in.StoreDir)
 
+	run := in.exec()
 	if err := CheckInvariant6(in.KeyPath); err != nil {
 		return "", err
 	}
-	if _, err := CheckSopsVersion(in.SopsPath); err != nil {
+	if _, err := CheckSopsVersion(run, in.SopsPath); err != nil {
 		return "", err
 	}
 
@@ -266,7 +276,7 @@ func RunPlace(in PlaceInput) (string, error) {
 		return "", fmt.Errorf("cannot read the sealed file %s: %w", targetFile, err)
 	}
 	blobID := GitBlobSHA1(sealed)
-	decData, err := decryptSnapshot(in.SopsPath, in.KeyPath, targetFile, sealed)
+	decData, err := decryptSnapshot(run, in.SopsPath, in.KeyPath, targetFile, sealed)
 	if err != nil {
 		return "", err
 	}
@@ -287,7 +297,7 @@ func RunPlace(in PlaceInput) (string, error) {
 	}
 
 	if err := sec.Use(func(value string) error {
-		return sshPlaceSecret(in.SSH, machine.Target, remotePath, value)
+		return sshPlaceSecret(run, in.SSH, machine.Target, remotePath, value)
 	}); err != nil {
 		return "", err
 	}
@@ -390,23 +400,15 @@ func RunPlaced(in PlacedInput) (string, []string, error) {
 
 // sshPlaceSecret writes value to remotePath over ssh with mode 0600. The value travels on
 // stdin; the remote path is the only caller text in the command, shell-quoted.
-func sshPlaceSecret(sshPath, target, remotePath, value string) error {
+func sshPlaceSecret(run execCommand, sshPath, target, remotePath, value string) error {
 	remoteCmd := fmt.Sprintf("umask 077 && set -e && mkdir -p \"$(dirname %s)\" && cat > %s && chmod 600 %s",
 		shSingleQuote(remotePath), shSingleQuote(remotePath), shSingleQuote(remotePath))
 	testguard.RefuseHosts(sshPath, target, remoteCmd)
-	cmd, cancel := subproc.Command(context.Background(), subproc.SSH, sshPath, target, remoteCmd)
-	defer cancel()
-	cmd.Stdin = bytes.NewReader([]byte(value))
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
-	if err := cmd.Run(); err != nil {
-		code := 1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			code = exitErr.ExitCode()
-		}
+	_, err := runOr(run)(bytes.NewReader([]byte(value)), nil, "", sshPath, target, remoteCmd)
+	if err != nil {
 		// The remote transcript is withheld; it can carry a command's own output and this
 		// path exists for a value, so nothing from it is printed.
-		return fmt.Errorf("ssh to %s failed: exit %d (transcript withheld)", target, code)
+		return fmt.Errorf("ssh to %s failed: exit %d (transcript withheld)", target, exitCodeOf(err, 1))
 	}
 	return nil
 }

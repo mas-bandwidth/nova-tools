@@ -42,18 +42,15 @@ func TestNoReplacePublishesOnlyAfterModeAndSync(t *testing.T) {
 	}
 	h.remove = func(p string) error { calls = append(calls, "remove"); return remove(p) }
 	h.syncDir = func(p string) error { calls = append(calls, "dir-sync"); return syncDir(p) }
-	err := writeWithHooks(path, []byte("complete"), 0644, h, ExactMode(), NoReplace())
-	require.NoError(t, err)
-	want := []string{"chmod", "sync", "close", "link", "remove", "dir-sync"}
-	require.Equal(t, want, calls, "calls=%v want=%v", calls, want)
-	err = WriteFile(path, []byte("replacement"), 0600, NoReplace())
-	require.ErrorIs(t, err, fs.ErrExist, "existing entry: %v", err)
+	require.NoError(t, writeWithHooks(path, []byte("complete"), 0644, h, ExactMode(), NoReplace()))
+	require.Equal(t, []string{"chmod", "sync", "close", "link", "remove", "dir-sync"}, calls)
+	require.ErrorIs(t, WriteFile(path, []byte("replacement"), 0600, NoReplace()), fs.ErrExist)
 	data, err := os.ReadFile(path)
-	require.NoError(t, err, "retained bytes=%q err=%v", data, err)
-	require.Equal(t, "complete", string(data), "retained bytes=%q err=%v", data, err)
+	require.NoError(t, err)
+	require.Equal(t, "complete", string(data))
 	entries, err := os.ReadDir(filepath.Dir(path))
-	require.NoError(t, err, "entries=%v err=%v", entries, err)
-	require.Len(t, entries, 1, "entries=%v err=%v", entries, err)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
 }
 
 func TestNoReplacePreservesConcurrentWinnerAndReportsFailures(t *testing.T) {
@@ -85,27 +82,27 @@ func TestNoReplacePreservesConcurrentWinnerAndReportsFailures(t *testing.T) {
 			if mode == "concurrent winner" {
 				wantErr = fs.ErrExist
 			}
-			require.ErrorIs(t, err, wantErr, "error=%v want=%v", err, wantErr)
+			require.ErrorIs(t, err, wantErr)
 			data, readErr := os.ReadFile(path)
 			wantEntries := 0
 			switch mode {
 			case "concurrent winner":
 				wantEntries = 1
-				require.NoError(t, readErr, "winner=%q err=%v", data, readErr)
-				require.Equal(t, "winner", string(data), "winner=%q err=%v", data, readErr)
+				require.NoError(t, readErr)
+				require.Equal(t, "winner", string(data))
 			case "link fails":
-				require.ErrorIs(t, readErr, fs.ErrNotExist, "failed publication left target: %v", readErr)
+				require.ErrorIs(t, readErr, fs.ErrNotExist)
 			case "cleanup fails":
 				wantEntries = 2
-				require.NoError(t, readErr, "published=%q err=%v dirSynced=%v", data, readErr, synced)
-				require.Equal(t, "complete", string(data), "published=%q err=%v dirSynced=%v", data, readErr, synced)
-				require.True(t, synced, "published=%q err=%v dirSynced=%v", data, readErr, synced)
-				require.Contains(t, err.Error(), "created", "error hides published state: %v", err)
-				require.Contains(t, err.Error(), "cleanup failed", "error hides published state: %v", err)
+				require.NoError(t, readErr)
+				require.Equal(t, "complete", string(data))
+				require.True(t, synced)
+				require.Contains(t, err.Error(), "created")
+				require.Contains(t, err.Error(), "cleanup failed")
 			}
 			entries, e := os.ReadDir(dir)
-			require.NoError(t, e, "entries=%v err=%v want=%d", entries, e, wantEntries)
-			require.Len(t, entries, wantEntries, "entries=%v err=%v want=%d", entries, e, wantEntries)
+			require.NoError(t, e)
+			require.Len(t, entries, wantEntries)
 		})
 	}
 }

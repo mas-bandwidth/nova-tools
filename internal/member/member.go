@@ -19,6 +19,7 @@ package member
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -73,6 +74,19 @@ type Child interface {
 	// "" when unknown), and the report (one paragraph, the child's own words).
 	Result() Result
 }
+
+// Printer is a Child that says when it last printed output (zero: never). The member stamps
+// progress on its card while it prints (stampProgress); a child that is not a Printer is
+// never stamped, and the late rule never returns its card for want of a stamp.
+type Printer interface {
+	Printed() time.Time
+}
+
+// ProgressEvery is how often the member stamps progress on a card whose child prints: the
+// sprint's own number (internal/sprint ProgressEvery, inside its RuleProgressWindow of ten
+// minutes with room for a stamp that is late or lost; docs/SPEC-SPRINT.md section 8, the
+// rules table's row late).
+const ProgressEvery = 3 * time.Minute
 
 // Pusher puts a work card's commit on origin, outside the wall: the commit
 // the child's result names (Result.Head) pushed to the branch the packet
@@ -164,6 +178,13 @@ const (
 	EndNoResult = cardhdr.EndNoResult // the child left no result: the sprint deals the card again
 	EndBudget   = "budget"
 	EndDeadline = "deadline"
+	// EndUnverifiable is native's end=budget-unverifiable (docs/SPEC-SWARM.md, native): the
+	// member's usage source, its read of the harness's usage database, stopped answering and
+	// native ended the child for a budget it could no longer see. Judge says it as a budget
+	// end when the child left a result; a child it ended with none is the member's failure
+	// (the source is this machine's), finished staging refused, and the member rests
+	// (UsageRest).
+	EndUnverifiable = "budget-unverifiable"
 )
 
 // Finish is how a work launch ended, as the member judges it (tla/CardContract.tla).
@@ -190,12 +211,17 @@ const (
 func Judge(r Result, pu Push) (fin Finish, why string) {
 	defer func() {
 		// a budget or a deadline names how the run ended first; the provider's kind is
-		// the provider case's own (below), never a prefix on another reason
-		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging {
-			if r.End == EndBudget && r.Budget != "" {
+		// the provider case's own (below), never a prefix on another reason, and nor is
+		// the staging kind (the stage's own case, and the usage source's)
+		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging && !strings.HasPrefix(why, EndStaging) {
+			end := r.End
+			if end == EndUnverifiable {
+				end = EndBudget // the budget's words say which: "budget: unverifiable: ..."
+			}
+			if end == EndBudget && r.Budget != "" {
 				why = r.Budget + ": " + why // which budget, and at what count (#5094)
 			}
-			why = r.End + ": " + why
+			why = end + ": " + why
 		}
 	}()
 	switch {
@@ -203,6 +229,14 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// the member's machine refused the launch before any child ran: the kind and the
 		// stage's reason; the sprint deals the card to another member (StageRefused)
 		return FinishFailed, EndStaging + ": " + r.Staging
+	case r.End == EndUnverifiable && !r.Shaped:
+		// this member's usage source stopped answering and native ended the child for it,
+		// which left no result: the member's failure and never the card's (the owner,
+		// 2026-10-03: a provider problem is never a card problem), on the staging kind, so
+		// the sprint deals the card to another member without spending its redeal bound
+		// and opens no judgment on it (StageRefused); a result with the shape is judged
+		// below as any budget end's is
+		return FinishFailed, EndStaging + ": budget " + cmp.Or(r.Budget, "unverifiable: the usage source stopped answering")
 	case pu.Refused != "":
 		return FinishFailed, "push refused: " + pu.Refused
 	case r.End == EndProvider && r.Provider != "" && !r.Shaped:
@@ -269,7 +303,8 @@ type Packet struct {
 	Route    string `json:"route,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
-	USD      string `json:"usd,omitempty"` // the dollar budget per card, a decimal; "" for none (#5094)
+	USD      string `json:"usd,omitempty"`     // the dollar budget per card, a decimal; "" for none (#5094)
+	Harness  string `json:"harness,omitempty"` // the harness the route names (internal/harness); "" is the member's --harness
 	Deadline int    `json:"deadline,omitempty"`
 	// Tier is the tier the route was drawn from when the sprint decided it (a read's
 	// read tier, a rework's --tier); empty when the brief's line 1 names it.
@@ -374,6 +409,7 @@ type launch struct {
 	spent   bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
 	retryAt time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
 	retried bool      // a read run again after a stage failure: a second one is returned
+	stamped time.Time // when the member last stamped progress on the card (stampProgress); zero: never
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -398,6 +434,9 @@ type Member struct {
 	noRow        bool   // a reader whose queue said it is no row of the readers table, said once
 	beaten       uint64 // the Meter's samples the last written beat has carried
 	noRoom       bool   // Room said no on the last tick it was asked
+	// usageStopped is when a launch of this member last ended because its usage source
+	// stopped answering (EndUnverifiable); zero when none has, or the rest after it ended
+	usageStopped time.Time
 	// spent is where the last pass's time went, by part (PassTimes)
 	spent PassTimes
 	// have is the --have of the cards the last pass ended holding (haveWords), for the
@@ -464,10 +503,15 @@ func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 // stops when Running is 0.
 func (m *Member) Drain() { m.drain = true }
 
-// DrainMost is the longest a draining member waits for its children: the stop timeout of
-// the loop units (fleet/templates: TimeoutStopSec, ExitTimeOut) is DrainMost and a minute,
-// so a member always stops by itself before its supervisor kills what is left.
-const DrainMost = 2 * time.Hour
+// DrainMost is the longest a draining member waits for its children: two minutes.
+// A member that drains does no new work, so a restart that waits longer costs the
+// machine's whole width, while a card killed at the bound is redealt at the cost of
+// one card; past the bound the member reports what finished and stops, and the
+// cards still running are left for the server to redeal as for any member that
+// stops. The stop timeout of the loop units (fleet/templates: TimeoutStopSec,
+// ExitTimeOut) is DrainMost and a minute, so a member always stops by itself
+// before its supervisor kills what is left.
+const DrainMost = 2 * time.Minute
 
 // DrainBound is how long a member stopped by its supervisor (SIGTERM) waits for the children
 // it runs: the longest deadline they run to, and LongStall for the push and the report after
@@ -726,23 +770,6 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		fmt.Fprintf(m.out, "NOTE width 0: no fleet row names this worker's width, so it takes nothing; a member runs at its own fleet row's, a reader named reader-<m> runs at machine m's (nova-config machine set <m> --width <n>, then nova-sprint fleet sync)\n")
 	}
 	held := []string{"--epoch", strconv.FormatUint(q.Epoch, 10)}
-	// every card this tick would start is started, or, when Config.Room says no, finished as
-	// refused at staging with its reason, so the sprint deals it to another member and says why
-	// (refuseStaging)
-	launch := m.start
-	if ok, why := m.room(); !ok {
-		launch = func(p Packet) bool {
-			returned := m.refuseStaging(p, why)
-			if returned && p.Kind == "read" {
-				// a read handed back under the floor is a return like any other: the
-				// sprint asks it again in place at most twice, then judges it
-				// (internal/sprint MaxReadReasks; tla/DirtyTick.tla, ReasksBounded),
-				// and this reader waits ReadStageRetry before it begins it again
-				m.returnedAt[p.Card] = now
-			}
-			return returned
-		}
-	}
 	ids := make([]string, 0, len(q.Cards))
 	byID := map[string]queueCard{}
 	for _, c := range q.Cards {
@@ -793,6 +820,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			continue
 		}
 		r := *l.res
+		if r.End == EndUnverifiable {
+			m.usageStopped = now // the member's rest (UsageRest), from the last such end
+		}
 		launched := []string{"--epoch", strconv.FormatUint(l.epoch, 10)}
 		var args []string
 		ok := r.OK // as reported: a work card whose push was refused is reported failed
@@ -930,9 +960,30 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
 	}
+	if out := m.stampProgress(now); out != nil {
+		noAnswer("progress", out)
+	}
 	m.spent.Report = since()
 	if m.drain {
 		return acted, nil
+	}
+	// every card this tick would start is started, or, when Config.Room says no, finished as
+	// refused at staging with its reason, so the sprint deals it to another member and says why
+	// (refuseStaging); asked after the reports, so a launch whose end rested the member
+	// (room) rests it in this pass
+	launch := m.start
+	if ok, why := m.room(now); !ok {
+		launch = func(p Packet) bool {
+			returned := m.refuseStaging(p, why)
+			if returned && p.Kind == "read" {
+				// a read handed back under the floor is a return like any other: the
+				// sprint asks it again in place at most twice, then judges it
+				// (internal/sprint MaxReadReasks; tla/DirtyTick.tla, ReasksBounded),
+				// and this reader waits ReadStageRetry before it begins it again
+				m.returnedAt[p.Card] = now
+			}
+			return returned
+		}
 	}
 	// 2. Recover in-flight (working/reading) cards that have no child of ours,
 	// clamped to width. A card in the queue as working (reading) with no child
@@ -1197,6 +1248,51 @@ func (m *Member) collect() (acted int) {
 	return acted
 }
 
+// stampProgress stamps progress on the work cards whose child printed since the card's last
+// stamp, each at most every ProgressEvery: `progress --as <member> <card>@<gen>... --epoch
+// <n>`, one verb for the cards of each epoch (docs/SPEC-SPRINT.md section 8, the rules
+// table's row late; tla/SprintRules.tla, Stamp). A child that prints nothing stamps nothing:
+// the silence is what the late rule reads. A refused stamp waits ProgressEvery like any
+// other; it returns what the verb printed when the store did not answer, nil otherwise.
+func (m *Member) stampProgress(now time.Time) (unanswered []byte) {
+	if m.cfg.Reader {
+		return nil
+	}
+	byEpoch := map[uint64][]string{}
+	for id, l := range m.running {
+		p, ok := l.child.(Printer)
+		if !ok || l.busy || l.spent || l.res != nil || l.child.Done() {
+			continue
+		}
+		if at := p.Printed(); at.IsZero() || !at.After(l.stamped) || now.Sub(l.stamped) < ProgressEvery {
+			continue
+		}
+		byEpoch[l.epoch] = append(byEpoch[l.epoch], id)
+	}
+	for _, epoch := range slices.Sorted(maps.Keys(byEpoch)) {
+		ids := slices.Sorted(slices.Values(byEpoch[epoch]))
+		args := []string{"progress", "--as", m.cfg.As}
+		for _, id := range ids {
+			args = append(args, id+"@"+strconv.Itoa(m.running[id].gen))
+		}
+		args = append(args, "--epoch", strconv.FormatUint(epoch, 10))
+		code, out := m.run(args...)
+		if code == 2 {
+			unanswered = out
+			continue
+		}
+		if code != 0 {
+			fmt.Fprintf(m.out, "NOTE progress refused (exit %d): %s\n", code, oneLine(strings.TrimSpace(string(out))))
+		}
+		for _, id := range ids {
+			l := m.running[id]
+			l.stamped = now
+			m.running[id] = l
+		}
+	}
+	return unanswered
+}
+
 // forget drops a launch and what is remembered of its card, and tells a runner that is an
 // Ender the launch is done with (failed: a person may want to inspect it).
 func (m *Member) forget(id string, failed bool) {
@@ -1215,13 +1311,33 @@ type Waiter interface {
 	Wait() <-chan struct{}
 }
 
-// room is whether a child may be started this tick (Config.Room) and why, saying so when
-// the answer changes: the refusal once when it begins, and once when it ends.
-func (m *Member) room() (bool, string) {
-	if m.cfg.Room == nil {
-		return true, ""
+// UsageRest is how long a member starts no card after a launch of its ended because its
+// usage source stopped answering (EndUnverifiable: native's read of the harness's usage
+// database, this machine's own): a launch started while it stays so would end the same way,
+// and each such end is the member's failure, reported on the staging kind (Judge). A launch
+// that ends so during the rest begins it again from its end; the rest is a clock's, since no
+// launch runs to read the source again while it holds (the usage source outage of
+// 2026-10-03, 11:46 PM, ended every child on the flash routes together, and each end was
+// judged as its card's).
+const UsageRest = 10 * time.Minute
+
+// room is whether a child may be started this tick (Config.Room, then the usage source's
+// rest) and why, saying so when the answer changes: the refusal once when it begins, and
+// once when it ends.
+func (m *Member) room(now time.Time) (bool, string) {
+	ok, why := true, ""
+	if m.cfg.Room != nil {
+		ok, why = m.cfg.Room()
 	}
-	ok, why := m.cfg.Room()
+	if ok && !m.usageStopped.IsZero() {
+		since := m.usageStopped.UTC().Format(time.RFC3339)
+		if until := m.usageStopped.Add(UsageRest); now.Before(until) {
+			ok, why = false, "the usage source stopped answering since "+since+": no card is started until "+until.UTC().Format(time.RFC3339)
+		} else {
+			why = "the rest after the usage source stopped answering (" + since + ") ended"
+			m.usageStopped = time.Time{}
+		}
+	}
 	switch {
 	case !ok && !m.noRoom:
 		fmt.Fprintf(m.out, "take REFUSED: %s\n", why)

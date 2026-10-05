@@ -232,7 +232,7 @@ func addrFault(addr string) string {
 	path := strings.HasPrefix(addr, "/")
 	for _, r := range addr {
 		if unicode.IsControl(r) || (!path && unicode.IsSpace(r)) {
-			return "it holds a space or a control character"
+			return "it holds whitespace or a control character"
 		}
 	}
 	if path {

@@ -156,7 +156,7 @@ func TestMachinesReadInFileOrder(t *testing.T) {
 			names = append(names, m.Name)
 		}
 	}
-	assert.Equal(t, "hulk,vision,threadripper-wsl,space", strings.Join(names, ","), "the benches are %v, want hulk, vision, threadripper-wsl, space in file order", names)
+	assert.Equal(t, "bench,worker,threadripper-wsl,machine", strings.Join(names, ","), "the benches are %v, want bench, worker, threadripper-wsl, machine in file order", names)
 	got := len(reg.Machines())
 	assert.Equal(t, 8, got, "the fleet has %d machines, want 8", got)
 }
@@ -185,14 +185,14 @@ func TestTheExampleIsTheFleetWeHave(t *testing.T) {
 
 	reg := example(t)
 	want := map[string]string{
-		"studio":           "coordination,runner",
-		"hulk":             "bench,runner",
-		"vision":           "bench,runner",
+		"coordinator":      "coordination,runner",
+		"bench":            "bench,runner",
+		"worker":           "bench,runner",
 		"threadripper-wsl": "bench,runner",
-		"space":            "bench,services",
-		"mini":             "runner",
-		"batman":           "runner",
-		"superman":         "runner",
+		"machine":          "bench,services",
+		"example-host":     "runner",
+		"example-host-2":   "runner",
+		"example-host-3":   "runner",
 	}
 	for name, roles := range want {
 		m, ok := reg.Lookup(name)
@@ -205,7 +205,7 @@ func TestTheExampleIsTheFleetWeHave(t *testing.T) {
 			assert.True(t, ok, "%s is shared with no dated exception", name)
 		}
 	}
-	for _, name := range []string{"batman", "superman", "studio", "mini"} {
+	for _, name := range []string{"example-host-2", "example-host-3", "coordinator", "example-host"} {
 		m, _ := reg.Lookup(name)
 		assert.False(t, m.HasRole(RoleBench), "the example lets a card reach %s", name)
 	}

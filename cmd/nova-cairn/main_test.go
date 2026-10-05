@@ -17,7 +17,7 @@ import (
 )
 
 // cli is the tool's entry point in process.
-var cli = testkit.Main(cairnTool().Run)
+var cli = testkit.Main(runCairn)
 
 // rig is one store under test: a fresh directory and the tool pointed at it.
 type rig struct {
@@ -181,6 +181,68 @@ func TestConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 	require.Contains(t, out, "INDEX OK sessions=2 entries=2", "index printed %q", out)
 	out = c.ok("index", "--session", "alpha")
 	require.Contains(t, out, "INDEX ENTRY session=alpha entry=e", "per-session index printed %q", out)
+}
+
+// TestIndexSessionCountsOnlyTheSelection pins the --session coverage fix:
+// index --session reports the count the selection covers, not the whole store,
+// and prints an INDEX SESSION line for every session in the selection, entries
+// or none, so an empty session is found.
+func TestIndexSessionCountsOnlyTheSelection(t *testing.T) {
+	t.Parallel()
+
+	c := newRig(t)
+	c.ok("open", "--session", "s1", "--publish", "manual")
+	c.ok("append", "--session", "s1", "--entry", "e1", "--text", "words of s1", "--publish", "manual")
+	c.ok("open", "--session", "s2", "--publish", "manual")
+
+	// An empty session is counted and named: sessions= is the selection's count,
+	// not the store's, and INDEX SESSION lists it with entries=0.
+	out := c.ok("index", "--session", "s2")
+	printed(t, out, "INDEX SESSION session=s2 entries=0", "INDEX OK sessions=1 entries=0")
+	require.NotContains(t, out, "sessions=2", "sessions= counted the whole store, not the selection: %s", out)
+
+	// The full index names every session, empty or not.
+	out = c.ok("index")
+	printed(t, out, "INDEX SESSION session=s1 entries=1", "INDEX SESSION session=s2 entries=0",
+		"INDEX OK sessions=2 entries=1")
+}
+
+// TestHelpWithMoreThanOneWordRefusesAsHelp pins the second half of the finding:
+// `help` with more than one word is one HELP REFUSED, naming the single verb
+// name it wants, before the named verb runs its flag checks. `nova-cairn help
+// open append` once dispatched as `open` with a stray positional and printed
+// three missing-flag OPEN REFUSED lines instead.
+func TestHelpWithMoreThanOneWordRefusesAsHelp(t *testing.T) {
+	t.Parallel()
+
+	r := cli.Run("help", "open", "append")
+	require.Equal(t, 2, r.Code, "want exit 2: %+v", r)
+	require.Empty(t, r.Stdout, "a refusal prints no banner: %q", r.Stdout)
+	require.Contains(t, r.Stderr, "HELP REFUSED: help takes one verb name", "stderr: %q", r.Stderr)
+	require.NotContains(t, r.Stderr, "OPEN REFUSED", "help ran open's flag checks: %q", r.Stderr)
+	require.NotContains(t, r.Stderr, "positional", "help carried the stray word into a verb: %q", r.Stderr)
+
+	// A flag between help, the verb and the stray word is no verb dispatch
+	// either: `help open --json append` and `help open -- append` refuse as
+	// help before open runs its flag checks.
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"flag before the stray word", []string{"help", "open", "--json", "append"}},
+		{"-- before the stray word", []string{"help", "open", "--", "append"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := cli.Run(tc.args...)
+			require.Equal(t, 2, r.Code, "want exit 2: %+v", r)
+			got := r.Stdout + r.Stderr
+			require.Contains(t, got, "help takes one verb name", "help refused as the wrong verb: %q", got)
+			require.NotContains(t, got, "OPEN REFUSED", "help ran open's flag checks: %q", got)
+			require.NotContains(t, got, "positional", "help carried the stray word into a verb: %q", got)
+			require.NotContains(t, got, "store is required", "help ran open's flag checks: %q", got)
+		})
+	}
 }
 
 func TestLifecycleVerbsStayRefused(t *testing.T) {

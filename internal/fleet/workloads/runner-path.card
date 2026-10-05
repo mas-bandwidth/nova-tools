@@ -8,7 +8,7 @@ expect: ^RUNNER PATH OK
 # the 1.27.1 later in the same line.
 #
 # BOTH SCOPES AND BOTH NAMINGS. The first version of this check probed `systemctl --user`
-# only and reported space's sixteen runners as unmanaged. They were already sixteen SYSTEM
+# only and reported a machine's sixteen runners as unmanaged. They were already sixteen SYSTEM
 # units, nova-runner-1..16.service, enabled with Restart=always -- and acting on that wrong
 # finding installed svc.sh beside them and produced THIRTY-TWO listeners for sixteen units
 # for ten minutes. So: both scopes, both namings (`nova-runner-*` and `actions.runner.*`),

@@ -19,7 +19,7 @@ import (
 // nova-sprint verbs wrote by hand until now, through the same Redis
 // Functions (internal/nsprint/fn/lua: capacity.lua's ns_capacity_desired
 // for slots and tiers, friend_roles.lua's ns_friend_roles for roles), and her
-// width, a plain field of friend:<f>:desired no function touches. Her
+// width and delivery mode, plain fields of friend:<f>:desired no function touches. Her
 // logins and wake path are what she would just know: her own presence
 // writes them, apply never touches friends:login or friend:<f>:wakepath. A
 // machine's ceiling goes through ns_capacity_machine; its registry row has
@@ -231,7 +231,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -254,6 +254,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			"tiers": sortedList(str(d, 1)),
 			"roles": sortedList(roles[i].Val()),
 			"width": intText(str(d, 2)),
+			"mode":  str(d, 3),
 		}
 	}
 	return views, revValue(rev), nil
@@ -387,6 +388,10 @@ func tiersArg(tiers string) string {
 	return tiers
 }
 
+// writeFriend applies one friend row: her slots and tiers through
+// ns_capacity_desired, charged to the machine her beat reports or the fleet's
+// coordinator machine, then her width, delivery mode and roles
+// (docs/SPEC-CONFIG.md, "friend").
 func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, actor, idem string) error {
 	f := row.Name
 	// 1. slots and tiers, registering the friend (ns_capacity_desired),
@@ -410,6 +415,13 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	case "NAME-IS-LOGIN":
 		return &RefusedError{Err: ErrActor, Detail: fmt.Sprintf("%s is a login in Redis (friends:login), not a friend", f)}
 	default:
+		// capacity_desired's INVALID reply names the check that refused
+		// beside the machine and the two numbers (the fifth word), so a
+		// friend row apply cannot accept is refused with the reason, never a
+		// bare "INVALID <machine> 0 0".
+		if check := word(words, 4); check != "" {
+			return fmt.Errorf("redis: friend %s slots: INVALID %s", f, check)
+		}
 		return fmt.Errorf("redis: friend %s slots: %s", f, strings.Join(words, " "))
 	}
 	// 2. her width, the desired hash's own field beside slots and tiers that
@@ -419,14 +431,18 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	// the role here, derived by Kind.Derive): each only when it differs,
 	// both in one round trip, after slots registered her.
 	writeWidth := prev == nil || prev["width"] != row.Fields["width"]
+	writeMode := prev == nil || prev["mode"] != row.Fields["mode"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeRoles {
+	if !writeWidth && !writeMode && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
 	var roles *redis.Cmd
 	if writeWidth {
 		pipe.HSet(ctx, "friend:"+f+":desired", "width", row.Fields["width"])
+	}
+	if writeMode { // her delivery mode, a plain field beside width (nova-friend run reads it through friend beat)
+		pipe.HSet(ctx, "friend:"+f+":desired", "mode", row.Fields["mode"])
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)
@@ -638,12 +654,23 @@ func (a *RedisApplier) writeMachine(ctx context.Context, row Row, prev View, act
 	return nil
 }
 
+// registrySet is the set that holds the names of one kind's rows that name a
+// machine: the function library writes friend names to "friends" and bench
+// names to "benches" (internal/nsprint/fn/lua/capacity.lua registry_set).
+func registrySet(kind string) string {
+	if kind == KindFriend {
+		return FriendsKey
+	}
+	return "benches"
+}
+
 func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string) error {
 	var users []string
 	for _, kind := range []string{KindFriend, "bench"} {
-		names, err := a.Client.SMembers(ctx, kind+"s").Result()
+		set := registrySet(kind)
+		names, err := a.Client.SMembers(ctx, set).Result()
 		if err != nil {
-			return fmt.Errorf("redis: read %ss: %w", kind, err)
+			return fmt.Errorf("redis: read %s: %w", set, err)
 		}
 		if len(names) == 0 {
 			continue
@@ -654,7 +681,7 @@ func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string)
 			cmds[i] = pipe.HGet(ctx, kind+":"+n+":desired", "machine")
 		}
 		if err := redisconn.Exec(ctx, pipe); err != nil {
-			return fmt.Errorf("redis: read %ss: %w", kind, err)
+			return fmt.Errorf("redis: read %s: %w", set, err)
 		}
 		for i, n := range names {
 			if cmds[i].Val() == m {

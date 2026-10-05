@@ -45,7 +45,7 @@ var realSteps = []string{
 	"git init -q --bare origin.git && git clone -q origin.git work",
 	"git -C work commit -q --allow-empty -m base && git -C work push -q origin HEAD:main",
 	"nova-sprint init --readers reader-a,reader-b --members m1",
-	"nova-sprint add --stream s1 --count 1",
+	"nova-sprint add --stream s1 --count 1 --one",
 	"nova-sprint start",
 	"nova-sprint tick",
 	"nova-sprint tick",
@@ -68,7 +68,7 @@ var realSteps = []string{
 // to what a twin does.
 var twinSteps = []string{
 	"nova-sprint init --readers reader-a,reader-b --members m1",
-	"nova-sprint add --stream s1 --count 1",
+	"nova-sprint add --stream s1 --count 1 --one",
 	"nova-sprint start",
 	"nova-sprint tick",
 	"nova-sprint tick",

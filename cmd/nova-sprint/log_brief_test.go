@@ -18,7 +18,7 @@ func TestTheLogSaysABriefWithoutPrintingIt(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	brief := passingBrief("Fix the parser.")
 	path := writeNeedsBrief(t, t.TempDir(), "brief", "Fix the parser.", "")
-	ta.ok("add --stream s1 --count 1 --brief-file " + path)
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + path)
 	out := ta.ok("log")
 	assert.NotContains(t, out, "Fix the parser.", "the brief's words")
 	assert.NotContains(t, out, `\x0a`, "an escaped brief")

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
@@ -24,19 +23,6 @@ import (
 // as one monthly GROUP BY.
 // The fold is untouched and the day TSVs stay the record; the ledger is what a month query
 // reads instead of every file. The key layout is internal/record's package comment.
-
-// openLedger opens the fleet Redis at addr. The seat is the one every nova tool dials with
-// (redisauth.Auth): --user, else NOVA_SPRINT_REDIS_USER; the password is never a flag,
-// it is the variable --password-env names, else (for a user) NOVA_SPRINT_REDIS_PASSWORD_ENV's
-// or NOVA_REDIS_BENCH_PASSWORD. With no user, no variable is consulted unless --password-env
-// names one. Dialing does not ping.
-func openLedger(addr, user, passwordEnv string) (record.LedgerStore, error) {
-	user, password, err := redisauth.Auth(user, passwordEnv)
-	if err != nil {
-		return nil, err
-	}
-	return record.DialLedger(addr, user, password), nil
-}
 
 const wantsRedis = "the fleet Redis host:port whose tokens:ledger:<day> hashes this reads or writes"
 
@@ -215,86 +201,4 @@ func ledgerFailed(s *sink, key, value string, err error) int {
 	s.fact(key, value)
 	s.o.Why = append(s.o.Why, err.Error())
 	return s.done(1, 0)
-}
-
-// cmdReportStore is `report --redis`: the month's ledger grouped by model, repo,
-// day, or the (day, model, repo) tuple, every one of the five types apart and a dash where
-// no row reported a type.
-func cmdReportStore(s *sink, addr, user, passwordEnv, month, by string, max int, stderr io.Writer) int {
-	r := &refusals{token: "REPORT", s: s}
-	switch {
-	case month == "":
-		r.add("--month is required; it wants " + wantsMonth + "; refusing to guess")
-	case !validMonth(month):
-		r.add("--month is not a month: " + month + "; it wants " + wantsMonth)
-	}
-	if _, ok := record.LedgerGroupings[by]; !ok {
-		r.add("--by is model, repo, day or tuple, got " + by)
-	}
-	checkMax(r, max)
-	if len(r.list) > 0 {
-		return r.print(stderr)
-	}
-	failed := func(err error) int {
-		fmt.Fprintf(s.err(), "REPORT FAILED store=redis err=%s\n", oneline.Err(err))
-		s.o.Why = append(s.o.Why, err.Error())
-		return s.done(1, 0)
-	}
-	ls, err := openLedger(addr, user, passwordEnv)
-	if err != nil {
-		return failed(err)
-	}
-	defer ls.Close()
-	totals, indexed, missing, err := ls.LedgerReport(context.Background(), month, by)
-	if err != nil {
-		return failed(err)
-	}
-	rows := 0
-	for i, t := range totals {
-		rows += t.Rows
-		if max != 0 && i >= max {
-			continue
-		}
-		var keys []string
-		var kv []any
-		for _, c := range record.LedgerGroupings[by] {
-			switch c {
-			case "day":
-				keys, kv = append(keys, "day="+oneline.Field(t.Day)), append(kv, "day", t.Day)
-			case "model":
-				keys, kv = append(keys, "model="+oneline.Field(t.Model)), append(kv, "model", t.Model)
-			case "repo":
-				keys, kv = append(keys, "repo="+oneline.Field(t.Repo)), append(kv, "repo", t.Repo)
-			}
-		}
-		line := "REPORT " + strings.Join(keys, " ") + fmt.Sprintf(" rows=%d", t.Rows)
-		kv = append(kv, "rows", t.Rows)
-		for i, name := range record.LedgerTypes {
-			cell := tokens.Dash
-			if t.Known[i] {
-				cell = strconv.FormatInt(t.Tokens[i], 10)
-			}
-			line += " " + name + "=" + cell
-			kv = append(kv, name, cell)
-		}
-		fmt.Fprintln(s.out(), line)
-		s.item("group", kv...)
-	}
-	if max != 0 && len(totals) > max {
-		fmt.Fprintf(s.out(), "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", max, len(totals))
-		s.o.More = append(s.o.More, tool.More{Kind: "group", Shown: max, Total: len(totals), Remedy: tool.MaxRemedy})
-	}
-	s.fact("month", month)
-	s.fact("source", "redis")
-	if indexed == 0 {
-		fmt.Fprintf(s.out(), "REPORT FAILED month=%s source=redis indexed=0\n", oneline.Field(month))
-		s.fact("indexed", 0)
-		return s.done(1, 0)
-	}
-	fmt.Fprintf(s.out(), "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)
-	s.fact("groups", len(totals))
-	s.fact("rows", rows)
-	s.fact("indexed", indexed)
-	s.fact("missing", missing)
-	return s.done(0, 0)
 }

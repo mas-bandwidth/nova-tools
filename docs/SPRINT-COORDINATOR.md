@@ -53,6 +53,14 @@ line the inbox prints for it, filled in; `nova-sprint inbox --open <id>` shows t
   change is a verb. What `where` draws is the owner's (`internal/sprint/TABLES.lock`): a change is asked for.
 - No secret is printed, pasted or put on a command line. No `rm -rf`.
 
+### coordinator-needs-no-seat-only-tools
+
+The seat runs on nova verbs alone. [COORDINATOR-TOOLS.md](COORDINATOR-TOOLS.md) lists every wrapper, script
+and loop a coordinator ran beside them (the seat wrapper, the wake, the dashboard, the friends' beat, ping and
+sync loops, the disk guard, the mirror loop and the hand-written units), each mapped to the verb lines that do
+the same or to the card that adds the verb; a verb or flag on that page that the tool does not carry fails
+`TestEveryCoordinatorToolMapsToARealNovaVerb`. A coordinator who reaches for a tool not on it adds its row first.
+
 ## 2. The day's loop
 
 Look, then answer, then look again. `where` draws the tables, `inbox` lists the open judgments and the
@@ -179,7 +187,9 @@ applies nothing twice; one ask that takes past `--timeout` (60s) is that card's 
   holds the rules.
 - Releasing. `nova-sprint release <sentinel> --reason '<what you looked at and found>'` lands the sentinel and
   moves what waited behind it, up to the next sentinel, to ready. It is run only when the gate for that wave
-  is passed, in the order agreed with the owner; a sentinel not yet reached is refused.
+  is passed, in the order agreed with the owner. A sentinel not yet reached is released when each card it
+  waits for has landed, was dropped, or is in flight (taken, in review, merging), so a starving fleet frees
+  the cards behind work in flight in one step; while any has not started it is refused, naming the first.
 - Repair cards go to the front of their stream: `nova-sprint add --stream <s> --before <first card> <id>
   --brief-file <path>`, or for a card already added `nova-sprint rank <id> --first`
   (`nova-sprint move <id>... --stream <s>` moves cards between streams). A fix for the machinery itself is a
@@ -356,8 +366,8 @@ at the landed sha, with `NOVA_SPRINT_REDIS` naming the store for the inventory, 
 
 ## 8. The hourly habits
 
-- The bus. `nova-bus inbox --bus <bus> --as <coordinator> --receipt-max-words 40 --bodies` lists the notes
-  addressed to the coordinator; each is answered and receipted with `nova-bus receipt`.
+- The bus. `nova-bus peek --as <coordinator>` lists what waits for the coordinator; `nova-bus recv`
+  takes one in, answered with `nova-bus send --re <id>` and acked.
 - Friends' outboxes. A friend works only inside its own directory: a job is delivered as
   `~/<friend>-working/inbox/<job>/BRIEF.md` and collected from `~/<friend>-working/outbox/<job>/REPORT.md`,
   whose `Verdict:` line holds the result. After PR 5126 `nova-sprint friend sync [--root <dir>]` reads those
@@ -403,8 +413,8 @@ changes it ([SPEC-SPRINT.md section 11](SPEC-SPRINT.md#11-verbs)). `nova-config 
 
 Each is a place this runbook describes a workaround; the change that removes it is named.
 - [nova-tools#5096](https://github.com/mas-bandwidth/nova-tools/issues/5096), the coordinator's comfort items:
-  a `--seat` flag in place of wrappers (5); the judgment line cut at the terminal width (6); `release` of an
-  unreached sentinel, `add --held` (13, 15); a deadline from the take (22); a reader's beat that creates no
+  a `--seat` flag in place of wrappers (5); the judgment line cut at the terminal width (6); `add --held`
+  (15); a deadline from the take (22); a reader's beat that creates no
   row (23); `fleet/loops.yml` with no record filter (24, 25); SIGTERM draining a member (26); a read tier per
   stream (27); `fleet down` saying where cards went (21).
   [nova-tools#5152](https://github.com/mas-bandwidth/nova-tools/issues/5152): no command lists the secrets

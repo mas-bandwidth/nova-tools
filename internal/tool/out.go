@@ -264,8 +264,26 @@ func (fs Fields) text() string {
 	return typed.String() + prose.String()
 }
 
+// bidiEscapes replaces the bidi controls of encoded JSON with their six-character
+// \uNNNN escapes: the embeddings and overrides U+202A..U+202E and the isolates
+// U+2066..U+2069, the set internal/oneline escapes for the typed rendering
+// (oneline's reordersALine), so one rendering cannot reorder a line for its reader
+// while the other hands him the raw runes. encoding/json escapes the C0 controls and
+// U+2028/U+2029 but passes these through, and they are format characters, not
+// controls: a terminal that honors them displays the rest of the line with its
+// visible order rearranged. The code points can stand only inside a JSON string
+// (the grammar's own characters are ASCII), and the escape decodes to the
+// identical string, so the replacement is lossless for every parser and covers
+// every tool's --json at once.
+var bidiEscapes = strings.NewReplacer(
+	"\u202a", `\u202a`, "\u202b", `\u202b`, "\u202c", `\u202c`, "\u202d", `\u202d`, "\u202e", `\u202e`,
+	"\u2066", `\u2066`, "\u2067", `\u2067`, "\u2068", `\u2068`, "\u2069", `\u2069`,
+)
+
 // marshal is json.Marshal without the HTML escape (`<` stays `<`): the
-// output is read by a program or an AI, never pasted into a page.
+// output is read by a program or an AI, never pasted into a page. The bidi
+// controls are escaped as well (bidiEscapes), so nothing in the JSON can
+// reorder the line a reader reads.
 func marshal(v any) ([]byte, error) {
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
@@ -273,7 +291,7 @@ func marshal(v any) ([]byte, error) {
 	if err := enc.Encode(v); err != nil {
 		return nil, err
 	}
-	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+	return []byte(bidiEscapes.Replace(strings.TrimSuffix(b.String(), "\n"))), nil
 }
 
 // MarshalJSON writes the fields as one object in the order they were added.

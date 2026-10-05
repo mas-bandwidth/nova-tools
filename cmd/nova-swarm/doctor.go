@@ -46,8 +46,10 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // doctorLookPath resolves a bare binary name on PATH. A package var so a test answers the
@@ -197,11 +199,88 @@ type doctorEnv struct {
 	lookPath func(string) (string, error)
 	homeDir  func() (string, error)
 	read     func(string) (string, error)
+	// run runs a headless harness's verb (`<binary> --version`, its login verb) under the
+	// doctor's deadline: its first line and its exit code; nil runs it (runVerbLine).
+	run func(binary string, args ...string) (line string, rc int)
 }
 
 // liveDoctorEnv is the machine's environment through the package seams.
 func liveDoctorEnv() doctorEnv {
-	return doctorEnv{lookPath: doctorLookPath, homeDir: doctorHomeDir, read: doctorReadVersion}
+	return doctorEnv{lookPath: doctorLookPath, homeDir: doctorHomeDir, read: doctorReadVersion, run: runVerbLine}
+}
+
+// runVerbLine runs `<binary> <args...>` under the version deadline, stdin closed, and
+// returns the first line of what it printed (stdout, else stderr) and its exit code; -1
+// when it could not be started or was killed.
+func runVerbLine(binary string, args ...string) (string, int) {
+	ctx, cancel := context.WithTimeout(context.Background(), doctorVersionDeadline)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	out, errb := &firstLineWriter{limit: doctorVersionLineMax}, &firstLineWriter{limit: doctorVersionLineMax}
+	cmd.Stdout, cmd.Stderr = out, errb
+	cmd.WaitDelay = doctorVersionGrace
+	err := cmd.Run()
+	line, _ := out.result()
+	if strings.TrimSpace(line) == "" {
+		line, _ = errb.result()
+	}
+	rc := 0
+	if err != nil {
+		rc = -1
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() >= 0 {
+			rc = exit.ExitCode()
+		}
+	}
+	return strings.TrimSpace(line), rc
+}
+
+// headlessReport is one headless harness as the doctor found it: the binary on PATH (""
+// when none), its version line and whether its login verb said it is logged in.
+type headlessReport struct {
+	kind, binary, version, said string
+	loggedIn                    bool
+}
+
+// headlessReports asks each headless harness (internal/harness; docs/SPEC-SWARM.md, the
+// headless harnesses) whether it is on PATH, its version, and its login, in the order of
+// harness.Headless. A machine without one has no report to refuse on: the heavy tier's
+// members have them and the others do not.
+func (e doctorEnv) headlessReports() []headlessReport {
+	var out []headlessReport
+	if e.run == nil {
+		return nil // an environment with no runner (a test's fake) has no harness to ask
+	}
+	for _, kind := range harness.Headless {
+		r := headlessReport{kind: kind}
+		if bin, err := e.lookPath(kind); err == nil && bin != "" {
+			r.binary = bin
+			r.version, _ = e.run(bin, "--version")
+			line, rc := e.run(bin, swarm.HeadlessLoginArgv(kind)...)
+			r.loggedIn, r.said = swarm.HeadlessLogin(kind, []byte(line), rc)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// writeHeadlessReports prints one DOCTOR HARNESS line per headless harness: where it is,
+// what it says it is, and whether it is logged in; `-` for one that is not on PATH. The
+// lines inform and never refuse: a launch under a logged-out harness ends as a provider
+// failure of class auth (nativeprovider.go, swarm.HeadlessFailure), named on its card.
+func writeHeadlessReports(w io.Writer, reports []headlessReport) {
+	for _, r := range reports {
+		if r.binary == "" {
+			fmt.Fprintf(w, "DOCTOR HARNESS kind=%s binary=- version=- login=-\n", oneline.Field(r.kind))
+			continue
+		}
+		login := "no"
+		if r.loggedIn {
+			login = "yes"
+		}
+		fmt.Fprintf(w, "DOCTOR HARNESS kind=%s binary=%s version=%s login=%s said=%s\n",
+			oneline.Field(r.kind), oneline.Field(r.binary), doctorExcerpt(doctorStamp(r.version)), oneline.Field(login), doctorExcerpt(doctorStamp(r.said)))
+	}
 }
 
 // resolveBinaries answers the two questions in one place: which nova-swarm comes
@@ -369,6 +448,7 @@ func (e doctorEnv) cmdDoctor(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 		fmt.Fprintf(stdout, "DOCTOR OK stamp=%s\n", doctorExcerpt(r.stamp))
+		writeHeadlessReports(stdout, e.headlessReports())
 		return 0
 	}
 	writeDoctorRefusal(stderr, r)

@@ -43,12 +43,12 @@ const exampleDogfood = "testdata/example-dogfood"
 func localize(args []string) []string {
 	out := append([]string(nil), args...)
 	for i, a := range out {
-		switch {
-		case a == "./self":
+		switch a {
+		case "./self":
 			out[i] = exampleSelf
-		case a == "./docs/CLI.md":
+		case "./docs/CLI.md":
 			out[i] = filepath.Join(exampleDogfood, "CLI.md")
-		case a == "./dogfood-receipts":
+		case "./dogfood-receipts":
 			out[i] = filepath.Join(exampleDogfood, "receipts")
 		default:
 			if rest, ok := strings.CutPrefix(a, "./self/"); ok {
