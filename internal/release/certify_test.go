@@ -292,20 +292,21 @@ func mustCerts(t *testing.T, path string) []fleet.Certificate {
 	return certs
 }
 
-// armHostGuard turns NOVA_TEST_NO_HOST on for one test, as the Makefile does for the whole
-// run. The Reload cleanup is registered BEFORE t.Setenv, so it runs AFTER t.Setenv restores
-// the environment and the cached value always matches what the environment says.
-func armHostGuard(t *testing.T) {
-	t.Helper()
-	t.Cleanup(testguard.Reload)
-	t.Setenv(testguard.EnvNoHost, "1")
-	testguard.Reload()
-}
+// The two tests below hold the host guard at the SSH edge with a per-test seam:
+// the serial-tests allowlist header states "The way off this list is a per-test
+// seam: cmd.Env for a child, a field on the value under test for a clock or a
+// dialer, t.TempDir for a path", and ExecSSH carries its armed guard as the
+// Guard field, so neither test touches the environment or the package state and
+// both run in parallel.
 
 // The adapter starts no child, so an injected fake SSH must answer under the host guard:
 // guarding the adapter as well refused every certify test before its fake could speak.
+// The fake's path consults no guard at all, so it answers whatever the guard's state is;
+// on the CI path the process-wide guard stands armed from the environment, and the armed
+// guard itself is pinned per-test, without t.Setenv, by the injected one beside this test.
 func TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard(t *testing.T) {
-	armHostGuard(t)
+	t.Parallel()
+
 	s := &certifySSH{perClass: map[string]string{"go": "ok\n"}}
 	r := scriptRemote{ssh: s, parent: context.Background()}
 	out, err := r.Run(context.Background(), "hulk", "# nova-certify workload go\ntrue\n")
@@ -318,10 +319,12 @@ func TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard(t *testing.T) {
 }
 
 // The real seam stays refused: the same adapter over ExecSSH panics at the edge that
-// starts ssh, naming it, before any host is reached.
+// starts ssh, naming it, before any host is reached. The guard is armed per-test on the
+// value under test, through its Guard field, so the test runs in parallel.
 func TestScriptRemoteOverTheRealSSHIsStillRefusedUnderTheHostGuard(t *testing.T) {
-	armHostGuard(t)
-	r := scriptRemote{ssh: ExecSSH{Path: "ssh"}, parent: context.Background()}
+	t.Parallel()
+
+	r := scriptRemote{ssh: ExecSSH{Path: "ssh", Guard: testguard.NewGuard(true)}, parent: context.Background()}
 	defer func() {
 		v := recover()
 		msg, _ := v.(string)
