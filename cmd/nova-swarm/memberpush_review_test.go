@@ -1,3 +1,8 @@
+//go:build slow
+
+// Real git repositories and pushes: behind the `slow` tag with slow_test.go's tier, so the unit
+// tier stays under its 2 s package budget (internal/ci/slow-tests_allowlist.txt, its header).
+
 package main
 
 import (

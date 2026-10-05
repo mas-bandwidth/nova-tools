@@ -16,6 +16,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
+// gitAs is a git with an identity, for the commits a test makes.
+func gitAs(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	return strings.TrimSpace(runGit(t, dir, append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...))
+}
+
 // The stage wall scales with the machine: a member's --stage-wall (default 120s, the loop
 // row's argv in nova-config) is every launch's native --stage-timeout (a 36-thread bench,
 // 2026-10-02: a 2.3 GHz bench under load staged in 73-108 s median against a 120 s wall).

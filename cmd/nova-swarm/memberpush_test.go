@@ -1,3 +1,8 @@
+//go:build slow
+
+// Real git repositories and pushes: behind the `slow` tag with slow_test.go's tier, so the unit
+// tier stays under its 2 s package budget (internal/ci/slow-tests_allowlist.txt, its header).
+
 package main
 
 import (
@@ -26,12 +31,6 @@ import (
 type pushBench struct {
 	root, slots, origin, checkout, base string
 	p                                   member.Packet
-}
-
-// gitAs is a git with an identity, for the commits a test makes.
-func gitAs(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	return strings.TrimSpace(runGit(t, dir, append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...))
 }
 
 func newPushBench(t *testing.T) *pushBench {
