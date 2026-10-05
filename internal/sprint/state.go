@@ -352,6 +352,11 @@ type Snapshot struct {
 	// Friends is each friend the deal may give a friend's card to, or whose delivery
 	// mode is consulted by friendNext (FriendSeat); nil is none.
 	Friends []FriendSeat
+	// PaidWidth is the sprint row's subscription-first switch (config.FieldPaidWidth),
+	// read with the routes: false deals no card a subscription friend covers to the
+	// fleet's paid routes (sub_pacing.go, subCovers); true lets the fleet take it once
+	// no subscription friend has headroom (docs/SPEC-SPRINT.md section 1, sub-pacingb.w1).
+	PaidWidth bool
 	// Running says the machine was RUNNING as the step read the sprint: its
 	// pump accepts a primary with the ok reads it needs, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").

@@ -225,13 +225,114 @@ func FriendMode(r Row) string {
 
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
-// instead). A width that failed its own validation is absent and skipped.
+// instead), and her windows read (ParseWindows). A width that failed its own
+// validation is absent and skipped.
 func checkFriend(r Row) error {
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
 		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
 	}
+	if w, ok := r.Fields[FieldFriendWindows]; ok && w != "" {
+		if _, err := ParseWindows(w); err != nil {
+			return fmt.Errorf("friend %s: %v", r.Name, err)
+		}
+	}
 	return nil
 }
+
+// A subscription friend's plan (docs/SPEC-CONFIG.md, friend; docs/SPEC-SPRINT.md section 1,
+// sub-pacingb.w1; the owner, 2026-10-04: "always make sure that subs are 100% utilized
+// before spending on fleet", and "if we find we are exhausting the rowan buds too quick
+// for the weekly plan"): her windows are the plan's shape, one or two of them, each a
+// duration word (5h) or weekly; none (the default) is no pacing, and she runs at her
+// width as before. Her usage is where her burn is read from: limit-messages (the default:
+// the tokens of each card and the limit messages seen) or a harness's own readout. The
+// sprint paces her to each window's reset (sprint.SubPace).
+const (
+	FieldFriendWindows = "windows"
+	FieldFriendUsage   = "usage"
+	// WindowWeekly is the word of a weekly window, seven days.
+	WindowWeekly = "weekly"
+	// MaxWindows bounds a plan's windows: a five-hour and a weekly one.
+	MaxWindows = 2
+)
+
+// FriendUsages are the usage sources: limit-messages infers the burn from the tokens of
+// each card and the limit messages seen (every harness); claude-status is the Claude
+// /status readout and codex-limit a Codex usage-limit notice, each a harness's own reader
+// behind the same interface (sprint.UsageReader). A later harness adds one word.
+var FriendUsages = []string{FriendUsageLimits, FriendUsageClaudeStatus, FriendUsageCodexLimit}
+
+// The usage sources, and the default a row without one has.
+const (
+	FriendUsageLimits       = "limit-messages"
+	FriendUsageClaudeStatus = "claude-status"
+	FriendUsageCodexLimit   = "codex-limit"
+	DefaultFriendUsage      = FriendUsageLimits
+)
+
+// ParseWindows reads a friend's windows field: a comma list of one or two window
+// words, each a duration (5h, 300m) or weekly, into their lengths in the order given.
+// "" is no window (no pacing). An empty item, a word that is no duration, a length
+// under a minute, or more than MaxWindows is refused with the remedy.
+func ParseWindows(v string) ([]time.Duration, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil, nil
+	}
+	remedy := "want --" + FieldFriendWindows + " 5h, weekly or 5h,weekly (one or two, each a duration or weekly), or empty for no pacing"
+	var out []time.Duration
+	for _, w := range strings.Split(v, ",") {
+		w = strings.TrimSpace(w)
+		if w == "" {
+			return nil, fmt.Errorf("windows %q has an empty window; %s", v, remedy)
+		}
+		if w == WindowWeekly {
+			out = append(out, 7*24*time.Hour)
+			continue
+		}
+		d, err := time.ParseDuration(w)
+		if err != nil || d < time.Minute {
+			return nil, fmt.Errorf("window %q is not a duration of at least a minute or weekly; %s", w, remedy)
+		}
+		out = append(out, d)
+	}
+	if len(out) > MaxWindows {
+		return nil, fmt.Errorf("windows %q names %d windows, and a plan has at most %d; %s", v, len(out), MaxWindows, remedy)
+	}
+	return out, nil
+}
+
+// FriendWindows is a friend row's windows as words, each trimmed, in the order given;
+// none for a row with none or one that does not read.
+func FriendWindows(r Row) []string {
+	if _, err := ParseWindows(r.Fields[FieldFriendWindows]); err != nil {
+		return nil
+	}
+	var out []string
+	for _, w := range strings.Split(r.Fields[FieldFriendWindows], ",") {
+		if w = strings.TrimSpace(w); w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// FriendUsage is a friend row's usage source: its usage field, DefaultFriendUsage when
+// the row has none.
+func FriendUsage(r Row) string {
+	if u := r.Fields[FieldFriendUsage]; u != "" {
+		return u
+	}
+	return DefaultFriendUsage
+}
+
+// FieldPaidWidth is the sprint row's subscription-first switch (docs/SPEC-SPRINT.md section
+// 1, sub-pacingb.w1; the owner, 2026-10-04: "always make sure that subs are 100% utilized
+// before spending on fleet"): false (the default) deals no card whose tier a subscription
+// friend (one with windows) covers to the fleet's paid routes, so it waits for a friend
+// with room; true lets the fleet take it once no subscription friend has headroom. Apply
+// writes it to SprintKey(FieldPaidWidth), which the sprint's routes read takes.
+const FieldPaidWidth = "paid_width"
 
 // Tiers are the model tiers a friend can do, capacity.lua's filter_ok list
 // (docs/SPEC-CONFIG.md, "friend"); TestTiersMatchCapacityFilter holds the Go
@@ -403,13 +504,15 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, and her delivery mode",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, her width, the jobs she works at once, her delivery mode, and for a subscription friend her plan's windows and usage source",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
+			{Name: FieldFriendWindows, Type: TypeText, Help: "her plan's shape, for a subscription friend: one or two comma-separated windows, each a duration (5h) or weekly, as 5h,weekly; the sprint paces her burn to each window's reset and offloads what she cannot spend in time; empty (the default) is no pacing, she runs at her width"},
+			{Name: FieldFriendUsage, Type: TypeEnum, Enum: FriendUsages, Default: DefaultFriendUsage, Help: "where her burn is read: limit-messages (the default: the tokens of each card and the limit messages seen, any harness), claude-status (the Claude /status readout) or codex-limit (a Codex usage-limit notice)"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
@@ -437,6 +540,7 @@ var Kinds = []*Kind{
 			{Name: FieldDecideGatePreexisting, Type: TypeDecimal, Default: "", Help: "the gate decision's pre-existing bar: a work card's failing test whose p(pre-existing) is at or above it is reported `pre-existing: <test>`, the base's or the member's and never the card's; a probability; empty (the default) reclassifies nothing; 0.8 is the starting point, though at 0.8 24 of the calibration's 39 flaky failures would have been reported pre-existing"},
 			{Name: FieldDecideJudgment, Type: TypeDecimal, Help: "the judgment bar: nova-sprint answer applies the verb the judgment decision chose when its probability is at or above it, and lists it for the coordinator below it; a probability; empty (the default) applies nothing: every decision is recorded and what a bar would apply is listed; 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration"},
 			{Name: FieldDecideBriefBar, Type: TypeDecimal, Help: "the brief bar: nova-sprint add asks the brief decision of each card and refuses a card whose p(converges) is under it, naming the questions it failed; a probability; empty (the default) asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels, docs/SPEC-NOVA-DECIDE.md section 14): leave it empty until calibrate on the brief record's own outcomes supports a bar"},
+			{Name: FieldPaidWidth, Type: TypeBool, Default: "false", Help: "the subscription-first switch: false (the default) deals no card whose tier a subscription friend (a friend row with windows) covers to the fleet's paid routes, so it waits for a subscription friend with room; true lets the fleet take it once no subscription friend has headroom (the owner, 2026-10-04: subs are 100% utilized before spending on fleet)"},
 			{Name: FieldAnswerRulesOff, Type: TypeList, Enum: AnswerRules, Help: "the rules the machine does not answer judgments by: comma list of " + strings.Join(AnswerRules, ", ") + "; empty (the default) answers by every rule: failed and no-result work redealt then raised a tier, a card at its bound raised a tier (heavy to a friend), a late card waited once or returned and redealt, a conflict in a file no ledger owns returned, redone on the tip and resumed, the same finding twice marked a brief defect, and the base tree gate retried before a stream stops (docs/SPEC-SPRINT.md section 8, answered by rule)"},
 		},
 		Check: checkSprint,

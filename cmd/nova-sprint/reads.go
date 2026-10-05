@@ -975,6 +975,11 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		if f.Status == sprint.Down {
 			friends[i].Working = 0 // down, she works nothing
 		}
+		if len(f.Windows) > 0 {
+			// a subscription friend's pace, from her record on the fleet table (sub-pacingb.w1)
+			pv := sprint.PaceView(fleetProps(shapes), f.Name, f.Windows, f.Width, now)
+			friends[i].Pace = &pv
+		}
 	}
 	v.Friends = friends
 	ft := a.friendsTable(friends, now)
@@ -1085,6 +1090,16 @@ func splitFriendRows(t ntable.Table) (ntable.Table, map[string]store.FriendRow) 
 }
 
 // providersView is the providers table from the routes and the fleet table's properties as
+// fleetProps is the fleet table with its properties alone, as the view's shapes read
+// them (no card is read), for what the properties hold: the rests, the friends' pace.
+func fleetProps(shapes []ntable.Table) *sprint.Table {
+	fleet := sprint.NewTable(sprint.Fleet)
+	if i := slices.Index(sprint.ViewOrder, sprint.Fleet); i >= 0 && i < len(shapes) {
+		fleet.SetProps(shapes[i].Props)
+	}
+	return fleet
+}
+
 // the view's shapes read them (no card is read).
 func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, now time.Time) ([]sprint.ProviderRow, error) {
 	routes, _, err := st.Routes(ctx)

@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
@@ -101,6 +102,20 @@ type FriendSeat struct {
 	Tiers   []string
 	Dir     string
 	Running []string
+	// Windows and Usage are her plan's shape and her usage source, her nova-config row's
+	// (config.FriendWindows, config.FriendUsage): windows make her a subscription friend,
+	// paced by the tick (sub_pacing.go); none is unpaced.
+	Windows []string
+	Usage   string
+	// Until and Reason are her daemon's word on a friend down (FriendHealth, friend
+	// down): when it expects her back, and why; the pacing reads a down with an until as
+	// a limit seen.
+	Until  time.Time
+	Reason string
+	// Configured is her configured width while Width is her paced one (subPace); 0 when
+	// she is unpaced. Pace is her record as the pass left it, nil when unpaced.
+	Configured int
+	Pace       *FriendPace
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
@@ -177,6 +192,9 @@ func friendStarted(s *Snapshot, f FriendSeat, c *Card) bool {
 // friendRoom is the friend's room and her lanes: DealAhead times her width and her width
 // in batch mode, 1 and 1 in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card").
 func friendRoom(f FriendSeat) (room, width int) {
+	if f.Width <= 0 {
+		return 0, 0 // paced to nothing (subPace): dealt nothing more
+	}
 	if f.Mode == config.FriendModeOneShot {
 		return 1, 1
 	}

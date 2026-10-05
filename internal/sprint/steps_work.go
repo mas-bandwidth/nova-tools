@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"maps"
 	"slices"
 	"sort"
@@ -1208,8 +1209,13 @@ type FinishReq struct {
 	// than the finish, so the stats time a friend's run from her take to her report and
 	// her report lag from it to the finish (RunWall). Zero is unknown.
 	Reported time.Time `json:",omitzero"`
-	Who      string
-	Friends  []FriendSeat
+	// LimitUntil and LimitReason are a limit the run's text named (sprint.ReadUsage, by
+	// the friend's usage source; friend sync reads her REPORT.md), when it did: a
+	// subscription friend is at her limit until then (sub_pacing.go). Zero is none.
+	LimitUntil  time.Time `json:",omitzero"`
+	LimitReason string
+	Who         string
+	Friends     []FriendSeat
 }
 
 // Finish moves work cards working -> done and their primaries working ->
@@ -1227,6 +1233,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		s.Friends = r.Friends
 	}
 	var p Plan
+	var burns paceBurns
 	if !named(r.Sel) && r.As == "" {
 		p.refuse("finish", "a finish by selection names its member: --as <member>; better, name each card: finish <card>@<gen>")
 		return p
@@ -1343,6 +1350,12 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Usage != "" {
 			cardSet[FieldUsage] = rec
 		}
+		if friend, ok := FriendOfRow(c.Row); ok {
+			// a subscription friend's burn: the tokens of her card as it ends, and the limit
+			// its text named (sub_pacing.go)
+			burns.burn(s, friend, cardcost.ParseUsage(rec).Tokens.Total())
+			burns.limit(s, friend, r.LimitUntil, r.LimitReason)
+		}
 		set := map[string]string{"head": head, "result": result}
 		maps.Copy(set, finishStamps(pr, c, s.Now))
 		decidedSets(r, used, pr, cardSet, set)
@@ -1428,6 +1441,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		friendNext(s, c, &u, p.Units)
 		p.Units = append(p.Units, u)
 	}
+	p.Props = append(p.Props, burns.writes()...)
 	return p
 }
 

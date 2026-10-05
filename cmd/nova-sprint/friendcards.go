@@ -234,6 +234,20 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 	return r, nil
 }
 
+// friendUsage reads the report for what the run spent and whether it hit its limit: a
+// `Usage:` line (cardcost.Usage words, input=... output=...) becomes the finish's usage,
+// and the report read by the friend's usage source (sprint.ReadUsage: limit-messages,
+// claude-status or codex-limit) sets the finish's limit until when the text names one
+// (docs/SPEC-SPRINT.md section 1, sub-pacingb.w1). A report with neither changes nothing.
+func friendUsage(r *sprint.FinishReq, report, source string, now time.Time) {
+	if u, ok := reportValue(report, "usage"); ok && strings.TrimSpace(u) != "" {
+		r.Usage = strings.TrimSpace(u)
+	}
+	if read, ok := sprint.ReadUsage(source, report, now); ok && read.Limited && !read.Until.IsZero() {
+		r.LimitUntil, r.LimitReason = read.Until, oneline.Cap(read.Reason, 200)
+	}
+}
+
 // friendInbox is the directory a friend's card is delivered into, inbox/<job> of her
 // working directory dir; why is a refusal: a card id that is not one (the job directory
 // is named by it), or an inbox/<job> that is a symlink or a file, so nothing is written
@@ -740,6 +754,13 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 // the same --op returns the recorded result.
 func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p sprint.Packet, report, op string, at time.Time, say func(string)) (done bool, err error) {
 	r, err := friendFinish(ctx, name, p, report, a.tip)
+	// her usage: a `Usage:` line of the report (cardcost words: tokens by class) is the
+	// take's usage record, her burn, and the report read by her usage source (her roster
+	// entry's, friend sync's copy of her row) names her limit when it hit one
+	// (docs/SPEC-SPRINT.md section 1, sub-pacingb.w1)
+	if spec, serr := st.FriendSpecOf(ctx, name); serr == nil {
+		friendUsage(&r, report, spec.Usage, at)
+	}
 	if err != nil {
 		say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
 		return false, nil

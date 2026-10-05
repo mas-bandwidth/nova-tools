@@ -104,6 +104,9 @@ type Bars struct {
 	// RulesOff is the sprint row's rules the machine does not answer by (answer_rules_off: a
 	// comma list of config.AnswerRules); "" turns none off.
 	RulesOff string
+	// PaidWidth is the sprint row's subscription-first switch (paid_width: "true" or
+	// "false"; sub-pacingb.w1); "" is off.
+	PaidWidth string
 }
 
 // fields is each bar by its sprint row field (config.SprintKey(field) holds it).
@@ -119,6 +122,7 @@ func (b *Bars) fields() map[string]*string {
 		config.FieldDecideGatePreexisting:    &b.GatePreexisting,
 		config.FieldDecideJudgment:           &b.Judgment,
 		config.FieldAnswerRulesOff:           &b.RulesOff,
+		config.FieldPaidWidth:                &b.PaidWidth,
 	}
 }
 
@@ -130,6 +134,7 @@ func (rs RouteSet) into(s *sprint.Snapshot) {
 	s.DecideScoreBar = rs.Bars.Score
 	s.DecideGateFlaky, s.DecideGatePreexisting = rs.Bars.GateFlaky, rs.Bars.GatePreexisting
 	s.RulesOff = sprint.Split(rs.Bars.RulesOff)
+	s.PaidWidth, _ = strconv.ParseBool(rs.Bars.PaidWidth)
 }
 
 // routes is the routes a dealing step plans with, by name, and the tiers'
@@ -358,6 +363,14 @@ func (m *Mem) SetRulesOff(rules ...string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.bars.RulesOff = strings.Join(rules, ",")
+}
+
+// SetPaidWidth gives the store the subscription-first switch, as nova-config's apply does a
+// live one (sprint:paid_width).
+func (m *Mem) SetPaidWidth(on bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bars.PaidWidth = strconv.FormatBool(on)
 }
 
 // RulesOff is the rules the machine does not answer by as nova-config applied them, read

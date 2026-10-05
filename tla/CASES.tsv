@@ -401,3 +401,6 @@ MCCoordinatorPassBehind.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordin
 MCCoordinatorPassBrokenDoublePush.cfg	MCCoordinatorPass.tla	invariant	OnePushATick	ignore-terminal	coordinatorpass	required	-
 MCWhoPreference.cfg	MCWhoPreference.tla	pass	-	ignore-terminal	whopreference	required	-
 MCWhoPreferenceOnlyWrong.cfg	MCWhoPreference.tla	invariant	OnlyToItsFriend	ignore-terminal	whopreference	required	-
+MCSubPacing.cfg	MCSubPacing.tla	pass	-	ignore-terminal	subpacing	required	-
+MCSubPacingBrokenPastPace.cfg	MCSubPacing.tla	invariant	NoDealPastPace	ignore-terminal	subpacing	required	-
+MCSubPacingBrokenDealsLimited.cfg	MCSubPacing.tla	invariant	LimitedNeverDealt	ignore-terminal	subpacing	required	-

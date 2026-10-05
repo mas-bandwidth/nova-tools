@@ -37,10 +37,14 @@ const (
 // them (a push on the card's branch, her beat naming it running), each with its why.
 // AllOrNothing takes none of the cards named when any one is refused.
 type FriendTakeReq struct {
-	Friend       string
-	IDs          []string
-	All          bool
-	Hold         bool
+	Friend string
+	IDs    []string
+	All    bool
+	Hold   bool
+	// Limit is the take-back of a friend at her limit (sub_pacing.go): every unstarted
+	// card of hers, as the hold takes them (no taken_from, so her own named cards come
+	// back to her at the reset), her started ones kept.
+	Limit        bool
 	AllOrNothing bool
 	Reason       string
 	Started      map[string]string
@@ -51,6 +55,9 @@ type FriendTakeReq struct {
 func (r FriendTakeReq) takenBackWhy() string {
 	if r.Hold {
 		return "taken back by the hold of friend " + r.Friend + " (friend down)"
+	}
+	if r.Limit {
+		return "taken back at the limit of friend " + r.Friend + ": " + r.Reason
 	}
 	if r.Reason == "" {
 		return "taken back by the coordinator"
@@ -119,7 +126,7 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 		// the take, not the hold, keeps her from it; a card never taken from her has its whole
 		// dealt bound again from now (untaken_since), its first take unset
 		set, unset := map[string]string{FieldTakenBack: why, "untaken_since": stamp(s.Now)}, []string{"first_taken"}
-		if r.Hold {
+		if r.Hold || r.Limit {
 			unset = append(unset, FieldTakenFrom)
 		} else {
 			set[FieldTakenFrom] = row

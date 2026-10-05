@@ -231,7 +231,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", FieldFriendWindows, FieldFriendUsage)
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -255,6 +255,9 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			"roles": sortedList(roles[i].Val()),
 			"width": intText(str(d, 2)),
 			"mode":  str(d, 3),
+			// her plan's windows and usage source, plain fields beside width (sub-pacingb.w1)
+			FieldFriendWindows: str(d, 4),
+			FieldFriendUsage:   str(d, 5),
 		}
 	}
 	return views, revValue(rev), nil
@@ -432,8 +435,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	// both in one round trip, after slots registered her.
 	writeWidth := prev == nil || prev["width"] != row.Fields["width"]
 	writeMode := prev == nil || prev["mode"] != row.Fields["mode"]
+	writePlan := prev == nil || prev[FieldFriendWindows] != row.Fields[FieldFriendWindows] || prev[FieldFriendUsage] != row.Fields[FieldFriendUsage]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeRoles {
+	if !writeWidth && !writeMode && !writePlan && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -443,6 +447,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	}
 	if writeMode { // her delivery mode, a plain field beside width (nova-friend run reads it through friend beat)
 		pipe.HSet(ctx, "friend:"+f+":desired", "mode", row.Fields["mode"])
+	}
+	if writePlan { // her plan's windows and usage source, plain fields beside width (nova-sprint friend sync reads them)
+		pipe.HSet(ctx, "friend:"+f+":desired", FieldFriendWindows, row.Fields[FieldFriendWindows], FieldFriendUsage, row.Fields[FieldFriendUsage])
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)

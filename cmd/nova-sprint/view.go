@@ -138,8 +138,12 @@ type coordinatorView struct {
 	N      coordCounts `json:"n"`
 	Items  []viewItem  `json:"items"`
 	Rows   []viewRow   `json:"rows,omitempty"`
-	Same   int         `json:"same,omitempty"` // with --since: items left out, unchanged
-	Gone   int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
+	// Pace is one line per subscription friend (a friend row with windows): each window's
+	// burn against its paced target, her paced width over her configured width, and her
+	// reset (docs/SPEC-SPRINT.md section 1, sub-pacingb.w1).
+	Pace []sprint.FriendPaceView `json:"pace,omitempty"`
+	Same int                     `json:"same,omitempty"` // with --since: items left out, unchanged
+	Gone int                     `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
 }
 
 // workerCard is one of a worker's cards.
@@ -452,6 +456,12 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	if all {
 		v.Rows = rows
 	}
+	// the subscription friends' pace, one line each, from their records on the fleet table
+	for _, f := range friends {
+		if len(f.Windows) > 0 {
+			v.Pace = append(v.Pace, sprint.PaceView(s.Fleet, f.Name, f.Windows, f.Width, now))
+		}
+	}
 
 	// the alarms: effects on the cards, never a load number
 	running := merr == nil && machine.Running()
@@ -668,6 +678,9 @@ func coordinatorText(v coordinatorView) string {
 		}
 		b.WriteString(oneline.Escape(itemLine(it)) + "\n")
 		lines++
+	}
+	for _, pv := range v.Pace {
+		b.WriteString(oneline.Escape(pv.Line(v.At)) + "\n")
 	}
 	if v.Same+v.Gone > 0 {
 		fmt.Fprintf(&b, "since: same=%d gone=%d\n", v.Same, v.Gone)

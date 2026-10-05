@@ -919,6 +919,59 @@ time goes, from the medians of `all`. A card whose path skips a stamping step
 go through the steps above) has no sample for the stages that need it.
 (`TestStageTimesGiveMedianAndP90PerStage`).
 
+### sub-pacingb.w1: a subscription friend is paced to her plan's reset
+
+**Pacing and offloading** (the owner, 2026-10-04: "There is another thing,
+which is PACING and offloading"; "for example, if we find we are exhausting
+the rowan buds too quick for the weekly plan"; "or grok, or emma, or stella";
+and "always make sure that subs are 100% utilized before spending on fleet";
+`sprint.subPace`, internal/sprint/sub_pacing.go; the model is
+`tla/SubPacing.tla`). A friend whose nova-config row names `windows` (one or
+two of `5h` and `weekly`, docs/SPEC-CONFIG.md, friend) is a subscription
+friend; a friend with none is unpaced and runs at her width as before. The
+sprint keeps one record of her pace on the fleet table, the property
+`sub_pace_<friend>` (as the rule-3 rests are kept, never a table or a column),
+bounded per window: for each window, when it started (the last reset seen, or
+her first usage record), the tokens of her cards that ended since (each card's
+usage record as its finish writes it, "What a card cost"; never wall time), and
+its allowance, the burn of the last full window or, before one exists, the
+burn up to the first limit seen; and the limits seen (her daemon's `friend
+health` down with its `--until`, limits-mean-down, or a limit the sprint's
+usage reader found in her `REPORT.md`, `sprint.ReadUsage` by her row's
+`usage`; at most eight kept) and her paced width, the sprint's, never config.
+`friend sync` reads a `Usage:` line of her `REPORT.md` as the finish's usage
+(the tokens by class), so a daemon that writes one has its burn counted. The
+target is to spend evenly to the reset: paced burn at time t is allowance x
+elapsed / window length. Every tick, before its deal, a friend ahead of pace in
+any window has her paced width lowered by one (never under 0) and a friend
+behind pace has it raised by one (never over her configured width); the deal
+and the level see her at her paced width, so the deal gives her nothing past
+it and `friend level` moves her unstarted ready cards to a subscription friend
+with headroom (up, with room under her paced width). Lowering the width takes
+back nothing she has started. On a limit she is down until the reset: the
+tick takes back every card of hers she has not started at once (`FriendTake`,
+as `friend down` does, with no `taken_from`, so her own named cards come back
+to her), notes it to the coordinator (`a friend is at her limit: her unstarted
+cards taken back`), and the friends' deal places them again; at the reset she
+is dealt again and that window restarts, its burn the next allowance. The
+`paid_width` switch (the sprint row, default false) is subscription-first: off,
+a card whose tier a subscription friend covers is never dealt to the fleet's
+paid routes and waits for a subscription friend with room; on, the fleet takes
+it only while no subscription friend has headroom. `view coordinator` prints
+one `PACE <friend>` line per subscription friend: each window's burn against
+its paced target (`ahead` when past it), her paced width over her configured
+width (`width=1/8`), and the time to the next reset, or `limited until=` while
+she is at her limit; `where --json` carries the same fields on her friends row
+(`pace`: `windows`, `width`, `configured`, `until`, `limited`). Checked under
+TLC: `NoDealPastPace` (no friend is dealt past her pace while another
+subscription friend has headroom, and the fleet takes nothing while one has),
+`LimitedNeverDealt` (a friend at her limit holds nothing she has not started)
+and `LimitedComesBack` (a down friend comes back at her reset), with the two
+reversed witnesses `MCSubPacingBrokenPastPace` and
+`MCSubPacingBrokenDealsLimited` each caught
+(`TestASubscriptionFriendIsPacedToItsReset`, on the twin store with a fake
+clock).
+
 ## 2. The cards
 
 Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a

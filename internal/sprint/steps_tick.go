@@ -424,7 +424,7 @@ func ReturnedAtAttempt(c *Card) bool {
 
 // Empty says a plan writes nothing.
 func (p Plan) Empty() bool {
-	return len(p.Units) == 0 && len(p.Notes) == 0 && len(p.Closes) == 0 && len(p.Rows) == 0 && len(p.Updates) == 0 && p.Stop == ""
+	return len(p.Units) == 0 && len(p.Notes) == 0 && len(p.Closes) == 0 && len(p.Rows) == 0 && len(p.Updates) == 0 && len(p.Props) == 0 && p.Stop == ""
 }
 
 // bound keeps the first TickMaxMoves units, and says how many it left out:
@@ -579,7 +579,12 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		offer = append(offer, c)
 	}
-	fp, dealt, dealtWorking := friendDeal(s, streamTurns(offer, streamRound(s, PropStreamIndex)), r.Friends)
+	// the subscription friends paced first (sub_pacing.go): the seats the deal and the
+	// level see carry each one's paced width, a friend at her limit is down, and her
+	// unstarted cards are taken back in this plan
+	pace := subPace(s, r.Friends, r.who())
+	seats := pace.seats
+	fp, dealt, dealtWorking := friendDeal(s, streamTurns(offer, streamRound(s, PropStreamIndex)), seats)
 	friendPlaced := map[string]bool{}
 	for _, u := range fp.Units {
 		friendPlaced[u.Key] = true
@@ -635,6 +640,13 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			// no other (bench_deal.go); the no-stall rule says why (held.go)
 			continue
 		}
+		if tier := cardTierOf(escalating(s, c)); subCovers(seats, tier) && (!s.PaidWidth || subHeadroom(s, seats, tier)) {
+			// subscription first (sub_pacing.go; the owner, 2026-10-04: subs are 100%
+			// utilized before spending on fleet): a card a subscription friend covers waits
+			// for one with room, and goes to a paid route only with paid_width on and no
+			// subscription friend with headroom
+			continue
+		}
 		ready = append(ready, c)
 	}
 	// a primary whose attempt failed the way the attempt before did (rule 2): the bound's
@@ -669,7 +681,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// one judgment per provider while its routes rest for its funds or its key, never one
 	// per card (provider_funds.go)
 	pc, stop := providerConds(s)
-	pc, stop = friendsKeepRunning(pc, stop, r.Friends)
+	pc, stop = friendsKeepRunning(pc, stop, seats)
 	conds = append(conds, pc...)
 	// a member whose cards are timing out, three within the window (overload.go)
 	conds = append(conds, overloadConds(s)...)
@@ -717,12 +729,14 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	p.Rows, p.Units, p.Refused = append(p.Rows, fp.Rows...), append(p.Units, fp.Units...), append(p.Refused, fp.Refused...)
-	if len(r.Friends) > 0 {
+	p.Units, p.Refused, p.Notes, p.Props = append(p.Units, pace.units...), append(p.Refused, pace.refused...), append(p.Notes, pace.notes...), append(p.Props, pace.props...)
+	if len(seats) > 0 {
 		// the friends level after the deal, every tick and on the tick a friend comes up, so
 		// an idle lane is filled and a backlog evens itself without the coordinator, at most
 		// FriendLevelPerTick cards a tick (docs/SPEC-SPRINT.md section 1,
-		// friend-deal-idle-lanes-first.w1)
-		lp := friendLevel(s, FriendLevelReq{Seats: r.Friends, Who: r.who(), Max: FriendLevelPerTick}, dealt, dealtWorking)
+		// friend-deal-idle-lanes-first.w1); a paced friend's seat carries her paced width,
+		// so what she cannot take goes to a subscription friend with headroom (sub_pacing.go)
+		lp := friendLevel(s, FriendLevelReq{Seats: seats, Who: r.who(), Max: FriendLevelPerTick}, dealt, dealtWorking)
 		for _, row := range lp.Rows {
 			if !slices.Contains(p.Rows, row) {
 				p.Rows = append(p.Rows, row)
