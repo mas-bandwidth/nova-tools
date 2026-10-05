@@ -117,6 +117,13 @@ Run this card on claude-opus-5-5: in a child agent on claude-opus-5-5 when your 
 
 Her REPORT.md then carries `Model: <model>`. `nova-friend whoami --as <me> --dir <d>` prints her
 row (tiers, the model per tier, her directory, her delivery session); run it at session start.
+
+Before her first card of a tier her row maps to a model, friend sync puts a probe in her inbox,
+`inbox/probe-<tier>-<model>/BRIEF.md`: run it in a child on that model and write
+`outbox/probe-<tier>-<model>/REPORT.md` with `Model:` (the model the child really runs on) and
+`Harness:`, and a one-line RESULT.md. No real card of the tier reaches her until the probe
+reports her row's model; a probe naming another model keeps the tier closed until she reports
+again (docs/SPEC-FRIEND.md, a friend's models, 5).
 Then the working-directory line below, a later attempt's start (the current tip
 of the card's base branch on origin, never an older base, with the work of the
 last attempt that pushed carried onto it by her, redone where it does not

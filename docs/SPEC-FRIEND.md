@@ -1077,8 +1077,17 @@ answers it. The machine makes sure she knows:
    on its `Usage:` line); a LAND on a card that carries a model whose report names none, or
    another, is finished failed ("friend <f> LAND on the wrong model: ..."), the "work came back
    failed" judgment to the coordinator (`sprint.FriendModelMismatch`).
-5. **Proven before first use.** Not built yet: the probe card a new tier deals her, and the gate
-   that holds real cards of that tier until it returns the right model.
+5. **Proven before first use.** A tier her row maps to a model is dealt no real card until her
+   probe of it has reported that model (`sprint.FriendProven`, part of `friendTakes`, so the
+   deal and the level both hold it; a card pinned to her waits ready). Friend sync writes the
+   probe, `inbox/probe-<tier>-<model>/BRIEF.md` (`FriendProbeBrief`: run it in a child on the
+   model, report `Model:` and `Harness:`), adds it to her queue file as a task with its tier
+   and model (so a lane runs it on the model's flag), and wakes her with it
+   (`FRIEND-PROBE DELIVERED`). When `outbox/probe-<tier>-<model>/REPORT.md` is there, the model
+   it names is recorded on her seat (`store.SetFriendProbe`, the roster's `probes`, which a
+   sync keeps): her row's model opens the tier (`FRIEND-PROBE PROVEN`); another keeps it
+   closed (`FRIEND-PROBE WRONG ... reported=<m>`, said once) until she reports again. A changed
+   model is a new probe, by its own job. A tier with no model needs no probe.
 
 `nova-friend check` adds, for each friend whose queue file carries her row, `CHECK MODELS
 friend= tiers= models= how= children= child_model= lanes= harness= warn= refused=`: a tier with

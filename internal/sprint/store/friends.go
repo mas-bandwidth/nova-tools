@@ -60,6 +60,11 @@ type friendEntry struct {
 	Models     map[string]string `json:"models,omitempty"`
 	Children   string            `json:"children,omitempty"`
 	ChildModel string            `json:"child_model,omitempty"`
+	// Probes is the model her probe card of each tier reported (SetFriendProbe; friend
+	// sync, docs/SPEC-FRIEND.md, a friend's models): a tier whose model is not the one its
+	// probe reported is dealt no real card (sprint.FriendProven). Friend sync never writes
+	// it from her row, so a sync keeps it.
+	Probes map[string]string `json:"probes,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -82,6 +87,9 @@ type FriendSpec struct {
 	Models     map[string]string
 	Children   string
 	ChildModel string
+	// Probes is the model her probe of each tier reported (FriendSpecOf fills it; SyncFriends
+	// never reads it).
+	Probes map[string]string
 }
 
 // sameModels says two friends' model maps hold the same models, none being empty.
@@ -104,6 +112,8 @@ type FriendRow struct {
 	Mode    string `json:"mode,omitempty"`
 	// Models is her row's model per tier, as friend sync last wrote it; absent when none.
 	Models map[string]string `json:"models,omitempty"`
+	// Probes is the model her probe of each tier reported; absent when none returned.
+	Probes map[string]string `json:"probes,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -357,7 +367,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Models: r[n].Models, Load: b.Load, Report: b.Friend, Beat: b.At}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Models: r[n].Models, Probes: r[n].Probes, Load: b.Load, Report: b.Friend, Beat: b.At}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
@@ -404,7 +414,7 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Models: r.Models, Why: whys[r.Name]}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Models: r.Models, Probes: r.Probes, Why: whys[r.Name]}
 		if r.Reason != "" && seats[i].Why != "" {
 			seats[i].Why += ": " + r.Reason
 		}
@@ -592,7 +602,31 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, Models: e.Models, Children: e.Children, ChildModel: e.ChildModel}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, Models: e.Models, Children: e.Children, ChildModel: e.ChildModel, Probes: e.Probes}, nil
+}
+
+// SetFriendProbe records the model the friend's probe card of the tier reported (friend
+// sync, docs/SPEC-FRIEND.md, a friend's models): changed is false when the roster already
+// held it, and nothing is written; a friend the roster lacks is refused.
+func (st *Store) SetFriendProbe(ctx context.Context, friend, tier, model string) (changed bool, err error) {
+	r, kv, err := st.roster(ctx)
+	if err != nil {
+		return false, err
+	}
+	e, ok := r[friend]
+	if !ok {
+		return false, noFriend(r, friend)
+	}
+	if had, ok := e.Probes[tier]; ok && had == model {
+		return false, nil
+	}
+	e.Probes = maps.Clone(e.Probes)
+	if e.Probes == nil {
+		e.Probes = map[string]string{}
+	}
+	e.Probes[tier] = model
+	r[friend] = e
+	return true, putRoster(ctx, kv, r)
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last
