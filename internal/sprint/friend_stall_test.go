@@ -20,7 +20,7 @@ import (
 func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"))
-	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up}}
+	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash"}}
 	dealWith(w, seats...)
 
 	wc1 := w.s.Fleet.Card("s1-1.w1")
@@ -128,7 +128,7 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 func TestFriendStallLadderResetsOnProgress(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"))
-	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up}}
+	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "flash"}}
 	dealWith(w, seats...)
 
 	t0 := w.s.Now
@@ -150,7 +150,7 @@ func TestFriendStallLadderResetsOnProgress(t *testing.T) {
 func TestFriendStallLadderProgressDoesNotReleaseDownFriend(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"))
-	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up}}
+	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "flash"}}
 	dealWith(w, seats...)
 
 	// Started card stays through stall ladder

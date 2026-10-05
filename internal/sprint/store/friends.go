@@ -363,8 +363,10 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 // friendSeats is every friend of the roster as the tick's deal and level see her
 // (sprint.TickDeal, sprint.FriendLevel, and the attempt cap's deal, sprint.AttemptCapDeal): her name, width and status at now and what her
 // beat names running, read every tick while the roster has a friend, whether or not a
-// friend's card is ready, so a friend coming up is levelled on the same tick
-// (docs/SPEC-SPRINT.md section 1, friend-deal-idle-lanes-first.w1); nil when it has none.
+// card is ready: the deal offers every ready card to the friends first, a queued change or
+// a dependency resolution can make work ready later in the same tick, and a friend coming
+// up is levelled on the same tick (docs/SPEC-SPRINT.md, WHO preference, and section 1,
+// friend-deal-idle-lanes-first.w1); nil when it has none.
 // The snapshot no longer gates the read; it stays in the signature for its callers.
 func (st *Store) friendSeats(ctx context.Context, _ *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
 	return st.FriendSeats(ctx, now)

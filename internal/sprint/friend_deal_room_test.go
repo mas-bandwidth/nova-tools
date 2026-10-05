@@ -189,7 +189,9 @@ func TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff(t *testing.T) {
 	t.Run("never back to the friend it was taken back from", func(t *testing.T) {
 		t.Parallel()
 		// the coordinator takes bob's cards back (taken_from=bob) while amy is held: bob,
-		// up, is the friend each was taken from and amy the one each left, so none moves
+		// up, is the friend each was taken from and amy the one each left, so no friend
+		// is dealt one; WHO is a preference, so each is the fleet's (docs/SPEC-SPRINT.md,
+		// WHO preference)
 		w := fullWorld(t, "friend", "", 0)
 		dealWith(w, running, bobUp)
 		taken := w.must(FriendTake(w.s, FriendTakeReq{Friend: "bob", All: true, Reason: "slow", Who: "coordinator"}))
@@ -201,7 +203,8 @@ func TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff(t *testing.T) {
 		require.NotEmpty(t, his)
 		dealWith(w, bobUp, FriendSeat{Name: "amy", Width: 16, Status: Held, Class: "flash,pro"})
 		for _, id := range his {
-			assert.Equal(t, Withdrawn, w.s.Fleet.Card(id).Col, "%s waits: taken back from bob, and amy is held", id)
+			wc := w.s.Fleet.Card(id)
+			assert.False(t, IsFriendRow(wc.Row), "%s: taken back from bob, and amy is held: no friend, the fleet's (on %s)", id, wc.Row)
 		}
 	})
 }

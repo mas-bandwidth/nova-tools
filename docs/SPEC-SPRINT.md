@@ -278,15 +278,26 @@ working friends down). The model is
 
 **A friend's card** (the owner, 2026-10-03: "Could we try expressing the work
 left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
-parts on friends where we would normally do friend work."). A card whose
-brief's header carries `WHO: friend` (any friend) or `WHO: friend <name>` is a
-friend's card (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho` is
-the one parser). `add` and `brief` refuse any other WHO value, a name that is
-no row of the friends table, and `WHO: friend` while the table has no row
-(exit 2, nothing written); the primary's field `who` is `friend` or
-`friend.<name>`, written with its brief, and `card` prints `who=` on its
-`CARD OK` line (`--json` `who`). A card with no WHO line is a machine's, dealt
-as before. The tick's deal deals a friend's card ready, in the deal's stream turns, to a
+parts on friends where we would normally do friend work."). WHO is a preference (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho`
+is the one parser). A card with no WHO line, or `WHO: -`, is unpinned. `WHO: friend`
+is any friend. `WHO: friend <name>` prefers that friend while she is up with room.
+`WHO: only friend <name>` is the one hard pin and waits for her alone. `add` and
+`brief` refuse any other WHO value, a name that is no row of the friends table, and
+`WHO: friend` while the table has no row (exit 2, nothing written). The primary's
+field `who` is `friend`, `friend.<name>`, or `only.friend.<name>`, written with its
+brief, and `card` prints `who=` on its `CARD OK` line (`--json` `who`).
+`nova-sprint unpin <id>... --reason <text>` (or `unpin --stream <s> --reason <text>`)
+removes that stored value from a waiting or ready primary that has never been dealt,
+or whose first attempt `friend take` returned to ready without starting or ending a
+take, including while the machine runs. The returned work card keeps its identity and
+is redealt at its next generation. It changes no brief bytes. Each unpin records the
+actor, time, reason and removed WHO line. An already-unpinned card is a reported
+no-op. `--dry-run` reports the plan without writing it; any refusal, including a
+mixed preview, has status `refused` and exit 1 in text and JSON. `WhoPreference.tla`
+checks the selection and the hard pin; the reversed only witness permits fallback
+and violates `OnlyToItsFriend`. The tick reads the friends' roster before each pump,
+because a queued change can make work ready in the same tick. The tick's deal offers
+ready work, in the deal's stream turns, to a
 friend up (the friends' rule: not held, a beat within 15 s) below her room: in
 batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
 times her friends row's `width`, as the machines' rule fills a member (section
@@ -303,12 +314,16 @@ waiting is 8 working and 8 ready, and a 17th on a landing). In one-shot mode
 (`mode: one-shot`), the machine deals one card at a time, straight into
 `working` (room 1, lane 1), and the next only after the last one finished
 (item 22 of tmp/manual-to-verbs-2026-10-04.md;
-`TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal picks the
-friend the card names, or for `WHO: friend` the friend up with the most room
-free, the first by name among equals; with none it waits ready, held by the
-no-stall rule as waiting for a friend (`sprint.TickDeal`). The tick reads the
-friends' records (the roster, then the beats: two round trips) only when a
-friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
+`TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal (friends
+first, before the machines' deal) offers every ready card to its named friend
+first, then to the friends up whose tiers hold its tier, an idle lane first,
+then the most room free, the first by name among equals, then to the fleet. A
+hard pin (`WHO: only friend <name>`) with no room waits ready, held by the
+no-stall rule as waiting for her (`sprint.TickDeal`, `sprint.FriendDeal`,
+`sprint.OnlyFriend`); a card a friend takes is never held for want of a machine
+route of its tier (`TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier`).
+The tick reads the friends' records every tick while the roster has a friend.
+Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name
 holds, so it is no machine's and no fleet verb names it), straight into
 `working` at generation 1, dealt and taken at once (nothing takes it), member
@@ -328,9 +343,9 @@ when it goes into working on her row (her deal, her next on a finish, a level
 or a redeal), and absent while she has no ok attempt: nova-tools#5300's member
 rule, written here for friends under its own names because #5300 was not on
 dev (`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
-`TestAFriendsNextCardsDeadlineFollowsHerRunWall`). The machines' `deal` verb refuses a friend's card, and
-`rework` of one sends its primary ready with the fix, for the tick to deal to
-a friend.
+`TestAFriendsNextCardsDeadlineFollowsHerRunWall`). The machines' `deal` verb refuses a hard pin (`WHO: only friend`), and
+`rework` of a friend's card sends its primary ready with the fix, for the tick to
+offer again.
 
 **A friend's card taken back** (the owner, 2026-10-04, on cards dealt to a
 friend who would not start them, which could only be dropped and added again:
@@ -357,10 +372,10 @@ it. The friends' deal places the same work card again (`friendRedealUnit`): to
 the friend up with room its WHO line allows, never the friend it was taken
 from, at its next generation, so on its own branch, and as its own job
 (`<card>.g<gen>` from the second generation: a card dealt back to the same
-friend after a hold is a new job whose brief names its branch); a card whose
-WHO line names only the friend it was taken from waits ready, held by the
-no-stall rule as waiting on the coordinator, until it is briefed for another
-friend or dropped. While the machine runs, the take's work-table change waits
+friend after a hold is a new job whose brief names its branch); a hard pin taken
+back from the only friend it names waits ready until she has room again, or until
+`unpin` releases it. A preference taken back from her is offered to another
+eligible friend, then to the fleet. While the machine runs, the take's work-table change waits
 for the pump (section 4), so the tick after the next deals it. `friend sync`
 writes a card taken back as `taken` in her queue file, so her daemon starts
 none of them. `friend down <friend>` holds her as `fleet down` holds a machine
@@ -789,10 +804,10 @@ them. `TestRunReconcilesFriendsEveryTick`.
 **`WHO: -` is the fleet** (the owner, 2026-10-04: "Keep looking for verbs you
 are missing"; an add was refused for a brief whose header said `WHO: -`).
 `cardhdr.ReadWho` reads `WHO: -` as no WHO line: the card is a machine's,
-dealt to the fleet, and `add` and `brief` take it with no refusal. Every other
-WHO value is held to a friend's card's rule as before: `WHO: friend` and
-`WHO: friend <name>` read as they did, and any other value (`WHO: - -`,
-`WHO: friend -`, `WHO: junk`) is refused (`TestWhoDashIsTheFleet`).
+dealt to the fleet, and `add` and `brief` take it with no refusal. `WHO: friend`,
+`WHO: friend <name>` and `WHO: only friend <name>` read as the preference section
+says, and any other value (`WHO: - -`, `WHO: friend -`, `WHO: junk`) is refused
+(`TestWhoDashIsTheFleet`).
 
 ### friend-take-partial.w1
 

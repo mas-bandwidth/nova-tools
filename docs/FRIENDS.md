@@ -53,8 +53,9 @@ sprint epoch, without the generation suffix.
 
 ## A sprint card
 
-A card of the sprint whose brief says `WHO: friend` or `WHO: friend <name>` is
-dealt to a friend (docs/SPEC-SPRINT.md section 1, a friend's card; the owner,
+A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or
+`WHO: only friend <name>`, and a card with no WHO line whose tier a friend covers,
+is offered to a friend before the fleet (docs/SPEC-SPRINT.md section 1, a friend's card; the owner,
 2026-10-03: "Could we try expressing the work left for nova-tools-1.1.0 into
 cards, and doing it via the sprint, but doing parts on friends where we would
 normally do friend work."). It arrives as a job like any other:

@@ -71,13 +71,17 @@ friends between work and fleet in its default frame, which draws no merge
 table; the friends table is drawn after merge only under where --all, up
 first, then held, then down, each by name, with no load column.
 
-A friend's card: a card whose brief says WHO: friend (any friend) or
-WHO: friend <name> (a row of the friends table; add and brief refuse any other)
-is dealt by the tick to a friend up below her width, the one it names or the
-one with the most free width, on her own fleet row friend.<name>, straight into
-working (in batch mode, up to her width and ready behind; in one-shot mode,
-one card at a time and the next only after the last one finished); no machine is dealt it, and no presence or rebalance takes it back: friend take
-takes back the cards she has not started, and friend down every one.
+WHO: friend <name> prefers a known friend while she is up with room.
+WHO: only friend <name> waits for that friend alone. Other work, including
+cards with no WHO line, goes first to subscription friends whose tiers cover
+it, then to the fleet. Among eligible friends, most free room wins and name
+breaks ties. In batch mode her room is twice her width: she works at width and
+queues the rest. In one-shot mode she holds one card, and the next only after
+the last one finished. nova-sprint unpin <id>... --reason <text> removes an
+unstarted card's stored WHO choice without editing its brief; --stream <s>
+selects a stream, and --dry-run only previews it. Work assigned to a friend
+uses her fleet row friend.<name>; presence never takes it back. friend take
+takes back what she has not started, and friend down takes back every card.
 friend sync writes it as <friend>-working/inbox/<job>/BRIEF.md, the job
 directory <card> at epoch 0 and <card>~<epoch> after a clear (its STATUS line
 names the card, the branch to push and the report), and finishes it from

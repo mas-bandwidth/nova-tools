@@ -165,11 +165,11 @@ type TickReq struct {
 	// Started is the machine's first start of the sprint's epoch, the time
 	// the done part's note counts from; zero is not known.
 	Started time.Time
-	// Friends is each friend the deal may give a friend's card to, read by
-	// the binding with every tick while the roster has a friend (friendDeal),
-	// with what her beat names running (FriendSeat.Running): the tick levels
-	// them after its deal (FriendLevel). nil is none: a friend's card waits
-	// ready and no friend is levelled.
+	// Friends is each friend the deal offers ready work first, read by the binding
+	// with every tick while the roster has a friend (friendDeal, before the residual
+	// fleet deal), with what her beat names running (FriendSeat.Running): the tick
+	// levels them after its deal (FriendLevel). nil is none: every card is the fleet's
+	// but a hard pin, which waits ready, and no friend is levelled.
 	Friends []FriendSeat
 	// AnswerRules says the tick answers the mechanical judgments by rule (rules.go; run
 	// --answer-rules); false leaves every judgment to the coordinator.
@@ -566,14 +566,29 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var conds []cond
 	unserved, whyOf := map[string][]string{}, map[string]string{}
 	up := s.UpMembers()
-	var friends []*Card
+	// Friends first: every ready card a friend may take, except a held stream
+	// (dealt nowhere) and a bench card (bench_deal.go keeps it for its bench).
+	// A hard pin that no friend takes stays out of the fleet below.
+	var offer []*Card
+	for _, c := range s.Work.Column(Ready) {
+		if StreamHeld(s, c.Row) || IsSentinel(c) {
+			continue
+		}
+		if b := Bench(c); len(b) > 0 {
+			continue
+		}
+		offer = append(offer, c)
+	}
+	fp, dealt, dealtWorking := friendDeal(s, streamTurns(offer, streamRound(s, PropStreamIndex)), r.Friends)
+	friendPlaced := map[string]bool{}
+	for _, u := range fp.Units {
+		friendPlaced[u.Key] = true
+	}
 	for _, c := range s.Work.Column(Ready) {
 		if StreamHeld(s, c.Row) {
 			continue // its stream is held (hold.go): dealt to no machine and no friend until unhold
 		}
-		if _, ok := FriendCard(c); ok && !IsSentinel(c) {
-			// a friend's card: dealt to a friend below, never to a machine (friend_deal.go)
-			friends = append(friends, c)
+		if friendPlaced[c.ID] || OnlyFriend(c) {
 			continue
 		}
 		if wc := AtRedealBound(s, c); wc != nil {
@@ -701,12 +716,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
 	}
-	var dealt, dealtWorking map[string]int
-	if len(friends) > 0 {
-		var fp Plan
-		fp, dealt, dealtWorking = friendDeal(s, streamTurns(friends, streamRound(s, PropStreamIndex)), r.Friends)
-		p.Rows, p.Units, p.Refused = append(p.Rows, fp.Rows...), append(p.Units, fp.Units...), append(p.Refused, fp.Refused...)
-	}
+	p.Rows, p.Units, p.Refused = append(p.Rows, fp.Rows...), append(p.Units, fp.Units...), append(p.Refused, fp.Refused...)
 	if len(r.Friends) > 0 {
 		// the friends level after the deal, every tick and on the tick a friend comes up, so
 		// an idle lane is filled and a backlog evens itself without the coordinator, at most
