@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -235,19 +236,26 @@ its process group, the reason on the record. The same provider refusal (an inval
 on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
 bus; a restart clears it. The friend row's mode and width come with each beat's answer (row_mode=,
-row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
+row_width=, row_config_dir=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
-next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. Prints
+next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. A claude
+lane is a process per card instead (env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the brief>, stdin
+/dev/null), its result read from the card's outbox; a claude row in one-shot mode with no config_dir
+(nor --config-dir) is refused on the record with the remedy, and no lane runs. Prints
 one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.
 --dry-run checks the flags and the harness and prints the daemon it would run (RUN DRY-RUN as= harness=
 dir= state= redis=): no store is opened and nothing is written.`,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
 					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
+					f.String("config-dir", "", "override the friend row's config_dir, the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR (default: the row's, read from each beat as row_config_dir=)")
 					f.Check(func(c *tool.Call) {
 						if m := c.Str("mode"); m != "" && m != friend.ModeBatch && m != friend.ModeOneShot {
 							c.Problem(fmt.Sprintf("--mode %q wants batch or one-shot", m))
+						}
+						if d := c.Str("config-dir"); d != "" && !filepath.IsAbs(d) {
+							c.Problem(fmt.Sprintf("--config-dir %q wants an absolute path: CLAUDE_CONFIG_DIR is read as given, never expanded", d))
 						}
 					})
 					f.Prints()
@@ -457,8 +465,21 @@ func (w world) run(c *tool.Call) *tool.Out {
 			oc.Allow = append(oc.Allow, alias)
 		}
 	}
-	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width)
+	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
+	var rowConfigDir atomic.Pointer[string] // read by the lanes' runs, written by the beat
+	if cl, ok := deliver.(*friend.Claude); ok {
+		cl.Friend = name
+		cl.ConfigDir = func() string {
+			if d := c.Str("config-dir"); d != "" {
+				return d // the override
+			}
+			if d := rowConfigDir.Load(); d != nil {
+				return *d
+			}
+			return ""
+		}
+	}
 	record := func(line string) {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
@@ -478,6 +499,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 			answer, err := w.beat(ctx, server, name)
 			if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 				rowMode, rowWidth = m, wd
+				dir := friend.RowConfigDir(answer)
+				rowConfigDir.Store(&dir)
 			}
 			return err
 		},
