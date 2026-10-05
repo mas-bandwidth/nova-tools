@@ -132,6 +132,7 @@ var DefaultCatalog = []Entry{
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-table", "nova-table guide: the design statement, the keys, the verbs, the render rules", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/ratings", "cold ratings of the tools, one file per rater and tool", "go test ./internal/docs", "go test ./internal/docs"),
+	E("docs/sprint", "nova-sprint brand sheet: name, mark, colours, type and voice", "go test ./internal/ci", "go test ./internal/ci"),
 
 	// tools/
 	E("tools/agentsmap", "AGENTS.md map generator CLI", "go test ./internal/docs", "make map"),

@@ -2889,6 +2889,15 @@ the original failed measurement.
 **Its remedy line.** Each site names its kind's remedy after `to clear it:`; moving the tool onto `internal/tool` clears every kind but `dry-run`, which clears verb by verb with `Verb.DryRun` and `Call.DryRun`.
 **Its narrowings.** The unknown flag is tried on one verb per tool (the first whose `-h` lists a flag): a tool parses every verb through one seam. A verb's effect is read from its `-h`, so a tool not on `internal/tool` meets `dry-run` only where a verb lists `--dry-run`.
 
+### `sprint-brand` — the nova-sprint brand sheet is complete and every asset has provenance
+
+**The rule.** `docs/sprint/BRAND.md` carries a second-level heading for each of Name, Mark, Colours, Type and Voice, and every regular file under `assets/sprint/` has its exact first-cell file row in `docs/ASSET-PROVENANCE.md`.
+**The mistake it prevents.** The documentation suite for nova-sprint builds on the brand sheet; a sheet missing a part, or generated art entering the tree with no record of its tool, date and requester, leaves every later page inventing its own look or carrying an asset nobody can account for.
+**The test.** `TestSprintBrandSheetIsCompleteAndEveryAssetHasProvenance` (`internal/ci/sprint_brand_class_test.go`).
+**Its allowlist.** None; the rule holds with an empty allowlist.
+**Its remedy line.** `docs/sprint/BRAND.md needs the exact second-level heading ...` and `<asset> needs its exact file row in docs/ASSET-PROVENANCE.md`.
+**Its narrowings.** It checks that a heading and a row exist, never that the colours match the dashboard or that the hash in a row matches the file; a row is matched by its exact first cell, so a path written another way is not found.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays
