@@ -22,9 +22,12 @@ import (
 )
 
 func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"uncertain", "hang"} {
 		t.Run(mode, func(t *testing.T) {
-			log := fakeBusPath(t)
+			t.Parallel()
+			rig := fakeBusPath(t)
+			log := rig.log
 			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 			statePath := filepath.Join(t.TempDir(), "s.json")
 			args := []string{"report", "--file", p, "--send", "--snapshot", statePath, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--timeout", "5s"}
@@ -37,8 +40,7 @@ func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
 				// thirty-second sleep.
 				args = append(args, "--budget", "10s")
 			}
-			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
-			code, _, errout := run(t, Environment{}, args...)
+			code, _, errout := run(t, rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE="+mode), args...)
 			if code != 1 {
 				require.EqualValues(t, 1, code, code)
 			}
@@ -54,8 +56,8 @@ func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
 					require.NotEqualValues(t, "", id, "no ID retained")
 				}
 			}
-			t.Setenv("NOVA_UPDATE_BUS_MODE", "ok")
-			code, out, errout := run(t, Environment{}, args...)
+			ok := rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE=ok")
+			code, out, errout := run(t, ok, args...)
 			if code != 0 {
 				require.EqualValuesf(t, 0, code, "%d %s %s", code, out, errout)
 			}
@@ -64,7 +66,7 @@ func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
 			if nprep != 1 || nsend != 2 {
 				require.Fail(t, fmt.Sprintln(nprep, nsend))
 			}
-			code, out, errout = run(t, Environment{}, args...)
+			code, out, errout = run(t, ok, args...)
 			if code != 0 {
 				require.EqualValuesf(t, 0, code, "%d %s %s", code, out, errout)
 			}

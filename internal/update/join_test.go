@@ -245,7 +245,6 @@ func newReporter(t *testing.T, version string) reporter {
 	if err := os.WriteFile(m, []byte(Header+"\n"+row("x", "tool", printer(t, version), "npm:unused", "none")+"\n"), 0600); err != nil {
 		require.NoError(t, err, err)
 	}
-	t.Setenv("NOVA_UPDATE_HELPER", "1")
 	return reporter{bus: b, bin: bin, manifest: m, snapshot: filepath.Join(dir, "s.json")}
 }
 func (r reporter) args() []string {

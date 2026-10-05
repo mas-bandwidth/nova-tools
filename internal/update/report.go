@@ -198,7 +198,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 		args := []string{"nova-bus", "send", "--prepared-stdin", "--bus", o.bus, "--remote", o.remote, "--branch", o.branch, "--as", o.as,
 			"--attempts", strconv.Itoa(attempts), "--git-timeout", strconv.Itoa(gitSeconds)}
 		child, cancel := context.WithTimeout(ctx, allowance)
-		r := captureRun(child, args, p.Artifact, ChildCap)
+		r := captureRun(child, env, args, p.Artifact, ChildCap)
 		cancel()
 		line := ""
 		for _, l := range strings.Split(r.Stdout, "\n") {
@@ -247,7 +247,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 		return sent, fmt.Errorf("delivery budget exhausted (retry --send with the same --snapshot)")
 	}
 	child, cancel := context.WithTimeout(ctx, allowance)
-	prepared := captureRun(child, []string{"nova-bus", "prepare", "--bus", o.bus, "--as", o.as, "--stdin"}, body, ChildCap)
+	prepared := captureRun(child, env, []string{"nova-bus", "prepare", "--bus", o.bus, "--as", o.as, "--stdin"}, body, ChildCap)
 	cancel()
 	if prepared.Reason != "" {
 		return sent, fmt.Errorf("prepare refused: %s; the bus said: %s (check nova-bus and the named bus; retry --send)", prepared.Reason, busSaid(prepared))

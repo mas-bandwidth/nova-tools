@@ -27,7 +27,10 @@ import (
 // Environment supplies deterministic clock/network seams. Nil values use the
 // machine clock and a credential-free, redirect-bounded HTTP client.
 type Environment struct {
-	Process     processFunc
+	Process processFunc
+	// Env is the environment a spawned child gets, and the PATH its name is
+	// looked up on. Nil inherits this process's own.
+	Env         []string
 	Now         func() time.Time
 	Client      *http.Client
 	Context     context.Context
@@ -552,9 +555,9 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 				e := entries[i]
 				r := entryRead{Entry: e, Installed: installed(ctx, e, o.timeout, report, env.runProcess), Latest: Read{Source: e.Latest}}
 				if !report {
-					r.Latest = Latest(ctx, e, o.timeout, env.Client)
+					r.Latest = latestIn(ctx, env.Env, e, o.timeout, env.Client)
 				} else if strings.HasPrefix(e.Latest, "local:") {
-					r.Latest = Latest(ctx, e, o.timeout, env.Client)
+					r.Latest = latestIn(ctx, env.Env, e, o.timeout, env.Client)
 				}
 				rs[i] = r
 			}
@@ -625,7 +628,7 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 	started := env.Now()
 	target := o.target
 	if target == "" {
-		r := Latest(context.Background(), *e, o.timeout, env.Client)
+		r := latestIn(context.Background(), env.Env, *e, o.timeout, env.Client)
 		if !r.Known() {
 			return refused("apply", help, fmt.Sprintf("latest unknown for %s (pass --version <v>, or ask again when the source answers)", name))
 		}
@@ -637,7 +640,7 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 			return refused("apply", help, fmt.Sprintf("invalid target %q (pass a complete version with --version, such as 1.2.3)", o.target))
 		}
 	}
-	before := Installed(context.Background(), *e, o.timeout, false)
+	before := installed(context.Background(), *e, o.timeout, false, env.runProcess)
 	args := append([]string(nil), e.Apply...)
 	for i := range args {
 		args[i] = strings.ReplaceAll(args[i], "{version}", target)
@@ -652,9 +655,9 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 	res.Item("before", "name", name, "kind", e.Kind, "installed", before.Version, "path", before.Path, "latest", target, "source", e.Latest)
 	res.Item("run", "name", name, "argv", len(args), "version", target, "command", strings.Join(args, " "))
 	ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
-	p := process(ctx, args, nil, ChildCap)
+	p := process(ctx, env.Env, args, nil, ChildCap)
 	cancel()
-	after := Installed(context.Background(), *e, o.timeout, false)
+	after := installed(context.Background(), *e, o.timeout, false, env.runProcess)
 	res.Item("after", "name", name, "installed", after.Version, "was", before.Version)
 	reason := p.Reason
 	if reason == "" && !after.Known() {
@@ -1059,6 +1062,6 @@ func safeRevision(rev string) string {
 }
 
 // Kept as a narrow seam for command tests and bus delivery; no shell is involved.
-func captureRun(ctx context.Context, args []string, input []byte, cap int) ProcessResult {
-	return process(ctx, args, bytes.NewReader(input), cap)
+func captureRun(ctx context.Context, env Environment, args []string, input []byte, cap int) ProcessResult {
+	return process(ctx, env.Env, args, bytes.NewReader(input), cap)
 }

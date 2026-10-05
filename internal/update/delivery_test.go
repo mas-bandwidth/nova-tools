@@ -36,6 +36,11 @@ func TestMain(m *testing.M) {
 		}
 		return
 	}
+	// A race-built helper child otherwise sleeps at exit; every helper this
+	// binary spawns inherits the setting.
+	if os.Getenv("GORACE") == "" {
+		os.Setenv("GORACE", "atexit_sleep_ms=0")
+	}
 	code := m.Run()
 	if joinCleanup != nil {
 		joinCleanup()
@@ -91,7 +96,14 @@ func fakeBus() {
 	fmt.Printf("SEND OK id=%s path=from-fixture/fixture.md commit=synthetic pushed=true attempts=0 state=already-published\n", a["id"])
 	os.Exit(0)
 }
-func fakeBusPath(t *testing.T) string {
+
+// busRig is a nova-bus stand-in placed in its own directory. A test hands the
+// bus to the code under test through the Environment its with method builds,
+// so the stand-in is found on that child's PATH and no process-wide variable
+// is touched.
+type busRig struct{ dir, log string }
+
+func fakeBusPath(t *testing.T) busRig {
 	t.Helper()
 	dir := t.TempDir()
 	name := "nova-bus"
@@ -105,12 +117,16 @@ func fakeBusPath(t *testing.T) string {
 	if e = testbin.Place(raw, filepath.Join(dir, name)); e != nil {
 		require.NoError(t, e, e)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("NOVA_UPDATE_FAKE_BUS", "1")
-	t.Setenv("GORACE", "atexit_sleep_ms=0")
-	log := filepath.Join(dir, "calls")
-	t.Setenv("NOVA_UPDATE_BUS_CALLS", log)
-	return log
+	return busRig{dir: dir, log: filepath.Join(dir, "calls")}
+}
+
+// with returns env whose children find the stand-in first on PATH and run it
+// as the fake bus, with any further KEY=value pairs on top.
+func (b busRig) with(env Environment, kv ...string) Environment {
+	env.Env = append(os.Environ(), "PATH="+b.dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"NOVA_UPDATE_FAKE_BUS=1", "GORACE=atexit_sleep_ms=0", "NOVA_UPDATE_BUS_CALLS="+b.log)
+	env.Env = append(env.Env, kv...)
+	return env
 }
 func calls(t *testing.T, p string) (int, int) {
 	t.Helper()
@@ -122,19 +138,20 @@ func calls(t *testing.T, p string) (int, int) {
 	return strings.Count(s, "prepare\n"), strings.Count(s, "send\n")
 }
 func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
-	log := fakeBusPath(t)
+	t.Parallel()
+	rig := fakeBusPath(t)
+	log := rig.log
 	p := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
 	sp := filepath.Join(t.TempDir(), "s.json")
 	args := []string{"report", "--file", p, "--send", "--snapshot", sp, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main"}
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "uncertain")
-	run(t, Environment{}, args...)
+	run(t, rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE=uncertain"), args...)
 	s, _ := readSnapshot(sp)
 	var old string
 	for _, v := range s.Pending {
 		old = v.ID
 	}
 	os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600)
-	if c, _, _ := run(t, Environment{}, args...); c != 1 {
+	if c, _, _ := run(t, rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE=uncertain"), args...); c != 1 {
 		require.EqualValues(t, 1, c, c)
 	}
 	if np, ns := calls(t, log); np != 1 || ns != 2 {
@@ -146,8 +163,7 @@ func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
 			require.Fail(t, fmt.Sprintln("pending was replaced"))
 		}
 	}
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "ok")
-	if c, o, e := run(t, Environment{}, args...); c != 0 {
+	if c, o, e := run(t, rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE=ok"), args...); c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
 	if np, ns := calls(t, log); np != 2 || ns != 4 {
@@ -244,6 +260,7 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 // line now reaches the caller's diagnostic -- one line, clipped, and no binary
 // on PATH can turn one event into two.
 func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
+	t.Parallel()
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL one\nSEND FAIL two\n"}); got != "SEND FAIL one" {
 		require.EqualValuesf(t, "SEND FAIL one", got, "%q", got)
 	}
@@ -260,10 +277,10 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 	}
 	for _, mode := range []string{"prepare-fail", "prepare-shouty"} {
 		t.Run(mode, func(t *testing.T) {
-			fakeBusPath(t)
+			t.Parallel()
+			rig := fakeBusPath(t)
 			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
-			c, _, errout := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+			c, _, errout := run(t, rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE="+mode), "report", "--file", p, "--send", "--snapshot",
 				filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 				"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
 			if c != 1 {
@@ -343,6 +360,7 @@ func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
 // delivery allowance is what is left of the budget, and the bus is handed finite
 // retry controls that fit inside it.
 func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		remaining            time.Duration
 		attempts, gitSeconds int
@@ -366,9 +384,10 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 			assert.Failf(t, "", "%s left: a git timeout of %ds promises more than remains", want, g)
 		}
 	}
-	log := fakeBusPath(t)
+	rig := fakeBusPath(t)
+	log := rig.log
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+	c, out, errs := run(t, rig.with(Environment{}), "report", "--file", p, "--send", "--snapshot",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--budget", "60s")
 	if c != 0 {
@@ -419,6 +438,7 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 // A binary on PATH called nova-bus that answers in no grammar this tool knows
 // must not get to write on the caller's event line.
 func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
+	t.Parallel()
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL from-x/n.md: a named reason"}); got != "SEND FAIL from-x/n.md: a named reason" {
 		require.EqualValuesf(t, "SEND FAIL from-x/n.md: a named reason", got, "the bus's own grammar was not relayed: %q", got)
 	}
@@ -430,10 +450,9 @@ func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
 			assert.Failf(t, "", "%q was relayed as %q", alien, got)
 		}
 	}
-	fakeBusPath(t)
+	rig := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "prepare-alien")
-	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+	c, out, errs := run(t, rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE=prepare-alien"), "report", "--file", p, "--send", "--snapshot",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
 	if c != 1 {
