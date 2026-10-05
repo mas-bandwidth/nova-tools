@@ -6,16 +6,16 @@
 #   ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=<v> -e nova_source=<checkout> --check --diff | cat
 #   ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=<v> -e nova_source=<checkout> | cat
 #
-# The build is one `nova-update release build` on the machine running the play,
+# The build is one `nova-release build` on the machine running the play,
 # every platform in one call; each machine installs its platform's directory
-# with that release's own `nova-update release install`, which verifies the
+# with that release's own `nova-release install`, which verifies the
 # SHA256SUMS whole and skips a tool already answering the version or holding
 # its bytes, and every tool nova-tools once shipped and ships no more
 # (fleet/retired-tools.txt, by exact name) is removed from the bin directory;
 # --check lists each as WOULD-REMOVE. A platform already built at the version is not built again.
 # A new version directory on a machine is seeded from the installed build's,
 # on the machine, so the copy sends only the binaries whose checksums differ;
-# `nova-update release cycle` runs this play --check, then for real, with
+# `nova-release cycle` runs this play --check, then for real, with
 # the build --incremental (docs/SPEC-RELEASE.md rule 13).
 # The build and the install each remove, last, the old version directories of
 # their own root (the build's out, the machine's release directory), keeping
@@ -55,7 +55,7 @@
 
     - name: build the missing platforms in one call, niced, with its own Go cache
       ansible.builtin.command:
-        argv: "{{ ['nice', '-n', '19', 'nova-update', 'release', 'build', '--version', nova_version, '--out', nova_release_out,
+        argv: "{{ ['nice', '-n', '19', 'nova-release', 'build', '--version', nova_version, '--out', nova_release_out,
                    '--source', nova_source, '--platform', tools_missing | join(',')] + nova_release_gate_args + nova_release_build_args }}"
       environment: { GOMAXPROCS: "4", GOCACHE: "{{ nova_release_gocache }}" }
       vars:
@@ -156,7 +156,7 @@
 
     - name: install them into the bin directory (verified whole, a tool at the version skipped)
       ansible.builtin.command:
-        argv: [ "{{ tools_stage }}/nova-update", release, install, --from, "{{ nova_release_dir }}", --version, "{{ nova_version }}",
+        argv: [ "{{ tools_stage }}/nova-release", install, --from, "{{ nova_release_dir }}", --version, "{{ nova_version }}",
                 --bin, "{{ nova_bin_dir }}", --platform, "{{ nova_platform }}" ]
       register: tools_install
       changed_when: "tools_install.stdout is search('RELEASE INSTALLED .*tools=[1-9]')"

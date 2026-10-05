@@ -73,7 +73,7 @@ func Platform(flagValue string) (string, string, error) {
 // to make impossible, and it is a defect that hides: it is right on the host
 // that happens to match and silently wrong on every other, so the artifacts end
 // up called one thing while everything looking for them asks for another. The
-// product half is `adopt` composing the remote command as a bare `nova-update`,
+// product half is `adopt` composing the remote command as a bare `nova-release`,
 // which names a path that does not exist on a windows bench.
 func ExeSuffix(goos string) string {
 	if goos == "windows" {
@@ -175,6 +175,17 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		return refusal(errs, "BUILD", refuse("name a nova-tools checkout with --source",
 			"%s holds no cmd/nova-* directory, so this build would ship an empty set", o.source))
 	}
+	// --dry-run ENDS HERE: the platforms, the tools and the gate are decided,
+	// and no directory has been made. The plan is the receipt.
+	if o.dryRun {
+		var plat []string
+		for _, tgt := range targets {
+			plat = append(plat, tgt.goos+"-"+tgt.goarch)
+		}
+		fmt.Fprintf(out, "RELEASE BUILD OK version=%s platforms=%s tools=%d dogfood=%s out=%s dry-run=yes\n",
+			field(o.version), field(strings.Join(plat, ",")), len(tools), gate, field(o.out))
+		return 0
+	}
 	// THE STAMP IS COMPOSED ONCE, before the first target, the way
 	// tools/ghrelease's ldflags verb composes it once for the release
 	// workflow: `-X main.version=` with an empty value is a legal linker flag
@@ -273,7 +284,7 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// LAST, and never a reason to fail: every platform is built and verified,
 	// and the version directories under --out that prune.go's rule does not keep are
 	// removed. The version just built stays, and so does the version of the
-	// nova-update running this build, which is what this machine has installed.
+	// nova-release running this build, which is what this machine has installed.
 	self := ""
 	if deps.Self != nil {
 		self = deps.Self()

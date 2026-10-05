@@ -667,6 +667,36 @@ REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20da
 ```
 
 
+## nova-release
+
+### First run
+
+With the binary alone, in an empty directory: every verb names its paths on
+the command line and nothing is guessed, so a first run reads. `cut` with no
+flags names every flag it wants in one refusal, and a verb's `-h` carries the
+shape every one of them keeps: its usage line, its flags with what each wants,
+and the exit codes. There is no quickstart verb: a cut needs a repository, a
+branch, a version and a changelog, all named on the command line.
+
+```text
+$ nova-release cut
+! CUT REFUSED: missing --repo, --from, --version, --changelog; refusing to guess (supply each named flag); run: nova-release cut -h
+$ nova-release install -h
+usage: nova-release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+install verifies one platform's built release whole and puts its binaries in --bin.
+flags:
+  --bin <string>  the directory the binaries are installed into
+  --dry-run  verify the release and print what would be installed, write nothing
+  --from <string>  the artifact root a release build wrote (its --out)
+  --platform <string>  goos-goarch (default: this host)
+  --retire <string>  a second directory to clear of this release's tools
+  --timeout <duration>  the whole run's deadline, such as 10m
+  --version <string>  the release version, such as 1.2.0
+exit codes: 0 the verb did what its line says (a --dry-run printed its plan and changed nothing); 1 it ran and a step failed partway, the FAIL or REFUSED line naming what was done and what to do next; 2 it refused before acting, naming the command to run.
+example: nova-release help
+effect: local write: replaces the release's binaries in --bin, optionally clears --retire, and prunes older releases under --from; --dry-run verifies the release and writes nothing
+```
+
 ## nova-version
 
 ### First run

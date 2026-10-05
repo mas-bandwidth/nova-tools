@@ -404,16 +404,14 @@ usage:
   nova-update watch --adopt <checks.tsv> [--as <friend> --to <who,who>] [--host <label>]
     [--timeout <d>] [--budget <d>]
   nova-update adoption --file <path> [--as <friend>] [--max <n>]
-  nova-update release <cut|build|install|adopt|pull> ...
-    nova-tools' own release pipeline: nova-update help release prints its usage lines
   nova-update help
 ```
 
-Those ten usage lines are the string `nova-update help` prints, byte for byte, under the
+Those nine usage lines are the string `nova-update help` prints, byte for byte, under the
 banner's opening (what the tool does, how it works, the first run): one string
-in the binary, so the spec and the help cannot drift apart. The release pipeline is one
-line there, so a reader of the manifest verbs is not handed it: its five usage lines are
-`release.Verbs`, which `nova-update help release` prints with its notes, and each release
+in the binary, so the spec and the help cannot drift apart. The release pipeline is its
+own tool, nova-release, so a reader of the manifest verbs is not handed it: its usage
+lines are `release.Verbs`, which `nova-release help` prints with its notes, and each
 verb's `-h` prints its line, its flags with what each wants, and its exit codes. `report --store <host:port>` is the fleet's view: it reads every registered bench's
 beat (`bench:<b>:beat`, field `build`, the version line the bench stamps each
 beat) in two pipelined round trips and prints one `REPORT DRIFT` line per beating bench not on
@@ -429,13 +427,14 @@ where report's `--snapshot <path>` option is the recovery state file.
 `nova-version report --as x --to y` prints the inventory and composes nothing (rule 26);
 the ready-to-send draft is `nova-version report --draft …`, the flag typed.
 
-## The release verb
+## The release tool, nova-release
 
 `check`, `report` and `adoption` all ask the same question from one end: what is installed
-here, and is it what it should be. `release` is that question from the other end — it is
-what MAKES the thing they read. Build, copy, install and verify are separate verbs with
-separate receipts, never one nested `ssh` quoting, so when a bench runs an old tool while
-the coordinator believes it is current, the receipts say which step did not happen.
+here, and is it what it should be. `nova-release` is that question from the other end — it
+is what MAKES the thing they read, as a tool of its own. Build, copy, install and verify
+are separate verbs with separate receipts, never one nested `ssh` quoting, so when a bench
+runs an old tool while the coordinator believes it is current, the receipts say which step
+did not happen.
 
 Five verbs, and each one can refuse. Three of the refusals are gates rather than steps, and
 [SPEC-RELEASE.md](SPEC-RELEASE.md) is where they are written out for a person who is not
@@ -469,7 +468,7 @@ carries, and what `pull` deletes.
   rather than of a marker file. `RELEASE INSTALLED version=… tools=… skipped=…`.
 - **`adopt`** does that install on every machine in `--machines`, over the `--ssh` binary:
   the artifact directory goes over as a tar stream written here, and the command that runs
-  on the far side is the `nova-update` JUST SENT, so a bench with no nova-tools at all
+  on the far side is the `nova-release` JUST SENT, so a bench with no nova-tools at all
   adopts with the same command as one a version behind. One `RELEASE ADOPTED machine=…`
   receipt per machine, read from what the remote SAID and not from its exit code, or one
   `RELEASE REFUSED machine=… : <cause> (<remedy>)`, and a final count. Exit 1 if any
@@ -488,8 +487,8 @@ never needs the machines to reach one another. This is not a preference, it is t
 the fleet: the first dogfood pass ran `adopt` on the build host, and 3 of 3 machines
 refused — short names did not resolve, and Tailscale addresses gave `Permission denied
 (publickey)`, because **no bench in this fleet has ssh trust to any other bench**; only the
-coordinator's host does. That pass brought the fleet current by running `release install`
-on each bench by hand, which is the thing this verb exists to stop anybody having to do.
+coordinator's host does. That pass brought the fleet current by running `nova-release
+install` on each bench by hand, which is the thing this tool exists to stop anybody having to do.
 
 A jump host (`ssh -J`) does not fix it and was not chosen: `-J` forwards the *connection*
 but still authenticates to the target with the **calling** host's key, so fanning out from
@@ -590,7 +589,7 @@ and a test, not a note.
   being read. It is checked before the checksum file is so much as parsed, and a mismatch
   refuses naming **both** digests, because which one is wrong is the whole question.
 - **Never run a far-side binary found on `$PATH`.** The remote command names the
-  `nova-update` this verb just sent and verified, by absolute (or `~/`-rooted) path.
+  `nova-release` this verb just sent and verified, by absolute (or `~/`-rooted) path.
 - **Never interpolate an unvalidated host or path into a remote command.** `--bin`, `--dest`,
   `--retire` and the machines file's columns are checked against `ValidRemotePath` — absolute
   or `~/`-rooted, no `..`, and none of the characters a shell reads as syntax — **before any
