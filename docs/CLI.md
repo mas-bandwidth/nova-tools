@@ -581,6 +581,28 @@ answers pings with the daemon
 pong, beats, and records what it could not push in; the beat and the daemon
 pong are real for it all the same.
 
+### The coordinator's ping loop
+
+```sh
+nova-friend serve --as <coordinator> --dry-run
+nova-config loop add friend-serve --machine <m> --argv '["/usr/bin/env","NOVA_BUS_REDIS=127.0.0.1:6381","nova-friend","serve","--as","<coordinator>"]' --keepalive true --as <coordinator>
+```
+
+`serve` is the coordinator's side of the connection: each second it reads the
+pongs on its own stream, says each friend whose state changed, and pings every
+nova-config friend row but its own, read from the bus store's `friends` set
+(what `nova-config apply` writes), so the loop needs the bus store and nothing
+else; a friend is down after ten seconds without a pong to a ping of the last
+ten seconds. `--dry-run` reads the rows and prints
+`SERVE OK friends= every=1s down_after=10s dry_run=true`, sending nothing. The
+loop prints that line once, then one line per state change, never one per
+ping: `SERVE UP friend= at=` and `SERVE DOWN friend= at= last_pong= reason=`;
+`SERVE STOP interrupted` at a signal. It is installed as the loop row above,
+kept alive, its log the loop's; it replaces a hand ping loop, which is retired
+once the row's unit runs. What it gets wrong first: no `--redis` and no
+`NOVA_BUS_REDIS` (refused); no friend row but its own (refused, with
+`nova-config friend add`).
+
 ### Commands
 
 | Command | What it does |
@@ -592,6 +614,7 @@ pong are real for it all the same.
 | `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` | The session's answer: one note to the coordinator, and the pong file |
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
 | `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
+| `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
 Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the
