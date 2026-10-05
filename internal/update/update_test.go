@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,19 +28,17 @@ var helperTiming func([]string) bool
 func TestHelperProcess(t *testing.T) {
 	t.Parallel()
 
-	// A helper child names itself on argv as `-- helper <action>`; the same
-	// test binary run as a plain test has no such marker and returns.
+	if os.Getenv("NOVA_UPDATE_HELPER") != "1" {
+		return
+	}
 	a := os.Args
 	for len(a) > 0 && a[0] != "--" {
 		a = a[1:]
 	}
-	if len(a) < 2 || a[1] != "helper" {
-		return
-	}
-	a = a[2:]
-	if len(a) == 0 {
+	if len(a) < 2 {
 		os.Exit(22)
 	}
+	a = a[1:]
 	if p := os.Getenv("NOVA_UPDATE_CALLS"); p != "" {
 		f, _ := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		_, _ = fmt.Fprintln(f, strings.Join(a, " ")) // ignored: test helper subprocess log
@@ -79,8 +78,8 @@ func TestHelperProcess(t *testing.T) {
 		// a caller named is gone.
 		b, _ := base64.StdEncoding.DecodeString(a[1])
 		fmt.Print(string(b))
-		c := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", "helper", "hold", a[2])
-		c.Env = append(os.Environ(), "GORACE=atexit_sleep_ms=0")
+		c := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", "hold", a[2])
+		c.Env = append(os.Environ(), "NOVA_UPDATE_HELPER=1")
 		c.Stdout = os.Stdout
 		if c.Start() != nil {
 			os.Exit(5)
@@ -106,7 +105,9 @@ func TestHelperProcess(t *testing.T) {
 }
 func command(t *testing.T, action string, a ...string) string {
 	t.Helper()
-	return strings.Join(append([]string{os.Args[0], "-test.run=TestHelperProcess", "--", "helper", action}, a...), " ")
+	t.Setenv("NOVA_UPDATE_HELPER", "1")
+	t.Setenv("GORACE", "atexit_sleep_ms=0")
+	return strings.Join(append([]string{os.Args[0], "-test.run=TestHelperProcess", "--", action}, a...), " ")
 }
 func printer(t *testing.T, s string) string {
 	return command(t, "print", base64.StdEncoding.EncodeToString([]byte(s)))
@@ -301,9 +302,45 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 		require.Fail(t, fmt.Sprintln("redirect loop accepted"))
 	}
 }
-func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
+func TestDefaultClientRefusesARedirectToAnotherSchemeOrHost(t *testing.T) {
 	t.Parallel()
 
+	c := defaultClient()
+
+	baseReq, _ := http.NewRequest("GET", "https://api.github.com/x", nil)
+	via0 := &http.Request{Method: "GET", URL: &url.URL{Scheme: "https", Host: "api.github.com", Path: "/x"}}
+
+	t.Run("redirect to another host returns error", func(t *testing.T) {
+		via := []*http.Request{via0}
+		req := baseReq.Clone(baseReq.Context())
+		req.URL = &url.URL{Scheme: "https", Host: "evil.example", Path: "/y"}
+		err := c.CheckRedirect(req, via)
+		if err == nil {
+			t.Fatal("want error for redirect to different host")
+		}
+	})
+
+	t.Run("redirect to http scheme returns error", func(t *testing.T) {
+		via := []*http.Request{via0}
+		req := baseReq.Clone(baseReq.Context())
+		req.URL = &url.URL{Scheme: "http", Host: "api.github.com", Path: "/y"}
+		err := c.CheckRedirect(req, via)
+		if err == nil {
+			t.Fatal("want error for redirect to http")
+		}
+	})
+
+	t.Run("redirect to same host and https succeeds", func(t *testing.T) {
+		via := []*http.Request{via0}
+		req := baseReq.Clone(baseReq.Context())
+		req.URL = &url.URL{Scheme: "https", Host: "api.github.com", Path: "/y"}
+		err := c.CheckRedirect(req, via)
+		if err != nil {
+			t.Fatalf("want nil for redirect to same host, got %v", err)
+		}
+	})
+}
+func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 	p := manifest(t, row("good", "tool", printer(t, "tool v1.2.3-rc1+dirty\n"), "github:o/r", "none"), row("bad", "tool", "nova-version-no-such-binary", "npm:unused", "none"))
 	env := Environment{Client: &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
 		assert.Fail(t, fmt.Sprintln("report used HTTP"))
@@ -321,7 +358,6 @@ func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 	}
 }
 func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state")
 	_ = os.WriteFile(state, []byte("1.0.0\n"), 0600) // ignored: test setup
@@ -346,8 +382,8 @@ func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	}
 	need(t, err, "installed 1.1.1, asked 1.3.0")
 	calls := filepath.Join(dir, "calls")
-	logged := Environment{Env: append(os.Environ(), "NOVA_UPDATE_CALLS="+calls)}
-	c, _, _ = run(t, logged, "apply", "--file", p, "--version", "9.0.0", "x")
+	t.Setenv("NOVA_UPDATE_CALLS", calls)
+	c, _, _ = run(t, Environment{}, "apply", "--file", p, "--version", "9.0.0", "x")
 	if c != 2 {
 		require.EqualValues(t, 2, c, c)
 	}
@@ -471,8 +507,6 @@ func TestFourReadConcurrencyLimit(t *testing.T) {
 	}
 }
 func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
-	t.Parallel()
-
 	s := filepath.Join(t.TempDir(), "snapshot.json")
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, o, e := run(t, Environment{}, "report", "--file", p, "--snapshot", s)
@@ -564,8 +598,6 @@ func TestReportStateFlagBytesAndSendVerb(t *testing.T) {
 }
 
 func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
-	t.Parallel()
-
 	rows := []string{}
 	for i := 0; i < 26; i++ {
 		rows = append(rows, row(fmt.Sprint(i), "tool", "1.0.0", "npm:pkg", "none"))
@@ -596,15 +628,13 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 // The three process failures a person acts on differently must stay
 // distinguishable in the reason, which one collapsed "execution failed" did not.
 func TestProcessFailuresAreDistinguishable(t *testing.T) {
-	t.Parallel()
-
-	if r := process(context.Background(), nil, nil, nil, ChildCap); r.Reason != "empty argv" {
+	if r := process(context.Background(), nil, nil, ChildCap); r.Reason != "empty argv" {
 		require.EqualValues(t, "empty argv", r.Reason, r.Reason)
 	}
-	if r := process(context.Background(), nil, []string{"nova-no-such-tool-exists"}, nil, ChildCap); r.Reason != "not_found" {
+	if r := process(context.Background(), []string{"nova-no-such-tool-exists"}, nil, ChildCap); r.Reason != "not_found" {
 		require.EqualValues(t, "not_found", r.Reason, r.Reason)
 	}
-	if r := process(context.Background(), nil, mustArgv(t, command(t, "fail")), nil, ChildCap); r.Reason != "exit 3" {
+	if r := process(context.Background(), mustArgv(t, command(t, "fail")), nil, ChildCap); r.Reason != "exit 3" {
 		require.EqualValues(t, "exit 3", r.Reason, r.Reason)
 	}
 }
@@ -621,8 +651,6 @@ func mustArgv(t *testing.T, s string) []string {
 // not REPORT UNKNOWN not_found. The installed column is a version string (v1.2.3) and
 // latest is local:/path/to/binary that prints that same version.
 func TestReportLocalLocatorWithVersionStringInstalled(t *testing.T) {
-	t.Parallel()
-
 	// The fake binary prints "tool v1.2.3", which versionKey extracts as "1.2.3".
 	binCmd := printer(t, "tool v1.2.3\n")
 	// installed is a version string, not a command; latest points to the real binary.
