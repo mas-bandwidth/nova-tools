@@ -36,11 +36,11 @@ func fakeBus() {
 	input, _ := io.ReadAll(os.Stdin)
 	verb := os.Args[1]
 	log, _ := os.OpenFile(os.Getenv("NOVA_UPDATE_BUS_CALLS"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-	fmt.Fprintln(log, verb)
+	_, _ = fmt.Fprintln(log, verb)
 	// The whole argv too, on its own line, so a test can assert what bounds the
 	// reporter handed the bus rather than trusting that it handed any.
-	fmt.Fprintln(log, "argv "+strings.Join(os.Args[1:], " "))
-	log.Close()
+	_, _ = fmt.Fprintln(log, "argv "+strings.Join(os.Args[1:], " "))
+	_ = log.Close() // ignored: test fixture log file
 	mode := os.Getenv("NOVA_UPDATE_BUS_MODE")
 	if verb != "send" {
 		fmt.Fprintf(os.Stderr, "BUS REFUSED: unknown verb %q\n", verb)
@@ -113,7 +113,7 @@ func TestAnUnconfirmedSendRecordsNothingAndTheNextSendSends(t *testing.T) {
 	run(t, Environment{}, args...)
 	s, _ := readSnapshot(sp)
 	require.Empty(t, s.Delivered)
-	os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600)
+	_ = os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600) // ignored: test setup
 	if c, _, _ := run(t, Environment{}, args...); c != 1 {
 		require.EqualValues(t, 1, c, c)
 	}
