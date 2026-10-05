@@ -123,7 +123,7 @@ func TestGuardChildProcess(t *testing.T) {
 	case "":
 		t.Skip("child half of TestFakeUnderGOTMPDIRIsAFake, TestRelativeGOTMPDIRIsAFake and TestRealSSHIsNotAFake; runs only when started by them")
 	case "gotmpdir":
-		require.True(t, Refusing(), "the child must run under %s=1", EnvNoHost)
+		require.True(t, os.Getenv(EnvNoHost) == "1", "the child must run under %s=1", EnvNoHost)
 		fake := filepath.Join(t.TempDir(), "ssh")
 		if runtime.GOOS == "windows" {
 			fake += ".bat"
@@ -132,7 +132,7 @@ func TestGuardChildProcess(t *testing.T) {
 		RefuseHosts(fake, "hulk", "uptime") // a panic here fails the parent with the refusal
 		fmt.Printf("FAKE-OK %s\n", fake)
 	case "realssh":
-		require.True(t, Refusing(), "the child must run under %s=1", EnvNoHost)
+		require.True(t, os.Getenv(EnvNoHost) == "1", "the child must run under %s=1", EnvNoHost)
 		defer func() {
 			r := recover()
 			require.NotNil(t, r, "the armed guard let the system ssh through")
