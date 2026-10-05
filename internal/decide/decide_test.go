@@ -529,3 +529,32 @@ func (r *racingBackend) Ask(ctx context.Context, s Schema, state string) (map[st
 	}
 	return r.Backend.Ask(ctx, s, state)
 }
+
+// A line holding more than one of decision, outcome and act is refused with the file and line number.
+func TestLoadRefusesALineHoldingMoreThanOneKind(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, tc := range []struct{ name, body, says string }{
+		{"decision and outcome", `{"decision":{"id":"a"},"outcome":{"id":"a","label":"ok"}}` + "\n", "holds more than one of decision, outcome and act"},
+		{"outcome and act", `{"outcome":{"id":"a","label":"ok"},"act":{"id":"a","act":"applying"}}` + "\n", "holds more than one of decision, outcome and act"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, tc.name+".jsonl")
+			require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o600))
+			_, err := Load(path)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, path)
+			assert.ErrorContains(t, err, ":1")
+			assert.ErrorContains(t, err, tc.says)
+		})
+	}
+	// Ordinary records still load.
+	good := filepath.Join(dir, "good.jsonl")
+	require.NoError(t, os.WriteFile(good, []byte(
+		`{"decision":{"id":"a"}}`+"\n"+
+			`{"outcome":{"id":"a","label":"ok"}}`+"\n"+
+			`{"act":{"id":"a","act":"applying"}}`+"\n"), 0o600))
+	ds, err := Load(good)
+	require.NoError(t, err)
+	require.Len(t, ds, 1)
+}
