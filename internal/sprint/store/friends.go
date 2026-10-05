@@ -191,14 +191,20 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 // second, reporting nothing more; a friend the roster lacks is refused and
 // nothing is written.
 func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, error) {
-	return st.FriendBeatReport(ctx, friend, sprint.FriendReport{}, nil)
+	return st.FriendBeatAsleep(ctx, friend, false)
+}
+
+// FriendBeatAsleep is FriendBeat with the asleep flag: true is the beat of a
+// friend whose daemon sleeps (nova-friend sleep) and still answers.
+func (st *Store) FriendBeatAsleep(ctx context.Context, friend string, asleep bool) (sprint.Beat, error) {
+	return st.FriendBeatReport(ctx, friend, sprint.FriendReport{}, nil, asleep)
 }
 
 // FriendBeatReport is FriendBeat with what her machinery reports of her work
 // (sprint.FriendReport: the cards she is running, which friend take and friend
 // down keep with her, and her own counts) and her load (nil: none), kept on the
 // beat until the next replaces it.
-func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint.FriendReport, load *float64) (sprint.Beat, error) {
+func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint.FriendReport, load *float64, asleep bool) (sprint.Beat, error) {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
 		return sprint.Beat{}, err
@@ -206,7 +212,7 @@ func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint
 	if _, ok := r[friend]; !ok {
 		return sprint.Beat{}, noFriend(r, friend)
 	}
-	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second)}
+	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second), Asleep: asleep}
 	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
 		b.Friend = &rep // a beat that reports nothing carries no report
 	}
