@@ -3120,6 +3120,31 @@ by rule unless `--answer-rules=false` (a `tick` by hand only with `--answer-rule
 internal/sprint/rules_conflict_test.go and cmd/nova-sprint/base_gate_rule_test.go; the model is tla/SprintRules.tla (`RuleAnswersBounded`,
 `LadderClimbs`, `WaitOnce`, `BaseStopsOnThird`).
 
+#### judgments-answered-by-rule.w1
+
+Five further answers, each logged `answered by rule <name>: ...`, each turned off by its
+name on the snapshot (`RulesOff`). The names are not in `RuleNames`: `store/rule_answers_test.go:276`
+holds that list equal to nova-config's enum, and `internal/config/kind.go:299` is outside
+this card, so `nova-config apply` cannot set them yet. A snapshot that already carries the
+name still turns the rule off.
+
+| rule | when | what the tick does |
+|---|---|---|
+| `friend-unstarted` | a friend's work card is past its bound and she has not started it (no `progress`, and her beat's `running` does not name it) | `friend take`, the lateness closed, then `FriendDeal` onto a friend other than the one it was taken from. The tick reads the roster at the start of every tick while it has a friend (`store/friends.go` `friendSeats`), so the request already holds it and this part deals in that tick. A request with no roster leaves the card for the next tick's deal. The late row's "a friend keeps her cards" is the card she has started |
+| `returned-read` | a read was handed back and answer-rules is on | the readers' one ask runs this rule in front of the machine ask (`ask --instead`). `friend_read.go`'s init wraps that ask; `judgment_rules.go`'s init, which sorts after that file, composes the rule onto the wrapped function. One part keeps the name `ask`, so the store loads routes and reader states (`store/tick.go`, `routesPart` and the ask reader's flag). A second part named `ask` is not installed: `store/tick.go` runs a part whose view is nil instead of passing it over, and that spends an operation id. When the rule has a plan, that plan is the part and the machine ask sees the committed hand-back on the next tick. No rule plan, and the part is the machine ask. No other reader free, and the machine ask re-asks her |
+| `hold-unlanded` | work came back failed and the report says the word HOLD | for the rule parts of that tick, `result` is `hold`, so the failed rule's precondition (`rules.go:259`, result failed) does not see it, then `result` is put back to `failed` so the next ask still refuses it. The word HOLD naming another primary that has not landed records `hold_need` and one log line, once. The judgment stays open: a review card has no move to waiting (`lifecycle.go:52`) and a need on it breaks check rule 11 (`check.go:221`). A HOLD that names no such card is shielded the same way and not counted as a rule answer: the coordinator still has the judgment |
+
+`reader-broken` (a first finding reworked with that finding as the fix; the same finding
+twice left as the brief defect) and `deadline-no-run` (a working card past its deadline
+with no live run finished failed and reworked once; a live run is progress inside the late
+rule's window, or a friend's beat naming the card running) are implemented and covered by
+`TestAMechanicalJudgmentIsAnsweredByItsRule` on the twin. The tick does not run them.
+`store/rule_answers_test.go:239` still requires a first finding to stay a judgment, and
+`store/rule_answers_test.go:132` still requires an unstamped late card to stay working.
+Both files are outside this card. `RuleAnswersInHour` counts rule-answer notes in the last
+hour. `view coordinator` does not show that count: `cmd/nova-sprint/view.go:114` is outside
+this card.
+
 #### v11-conflict-rule-in-tick-now.w1
 
 A refused head is the tick's, not the coordinator's (the owner: "the machine keeps itself

@@ -242,6 +242,9 @@ const PartDrain = "drain"
 // model is tla/DirtyTick.tla.
 var TickTables = []TableUpdate{
 	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {"deal", TickDeal}, {"accept", TickAccept}}},
+	// One ask. judgment_rules.go's init composes the returned-read rule in front of
+	// it. A second part named ask would be its own operation whenever the tick
+	// cannot see its twin (store/tick.go parts: a nil view is run, not passed over).
 	{Readers, []TickPartDef{{"ask", TickAsk}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
 	{Fleet, []TickPartDef{{"presence", TickPresence}}},
@@ -286,7 +289,12 @@ var TickEnd = []TickPartDef{
 func TickEndWith(rules, idle bool) []TickPartDef {
 	out := append([]TickPartDef(nil), TickEnd[:2]...)
 	if rules {
+		// Friend take and the HOLD shield run before the older rules, and the shield
+		// is put back after them (judgment_rules.go). A first broken read and a late
+		// card with no live run are not in this list.
+		out = append(out, JudgmentRulesBefore...)
 		out = append(out, TickRules...)
+		out = append(out, JudgmentRulesAfter...)
 	}
 	out = append(out, TickEnd[2])
 	if idle {
