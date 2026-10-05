@@ -63,7 +63,8 @@ func cmdReportStore(s *sink, addr, user, passwordEnv, month, by string, max int,
 	if err != nil {
 		return failed(err)
 	}
-	defer ls.Close()
+	// ignored: a deferred close on a read-only store: every read already carried its answer to the printed report
+	defer func() { _ = ls.Close() }()
 	totals, indexed, missing, err := ls.LedgerReport(context.Background(), month, by)
 	if err != nil {
 		return failed(err)
