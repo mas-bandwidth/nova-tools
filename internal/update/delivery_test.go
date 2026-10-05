@@ -71,7 +71,10 @@ func fakeBus() {
 	fmt.Printf("SEND OK id=%s to=x cc=- at=2026-10-04T17:00:00Z\n", "fixture-"+shaText(note)[:12])
 	os.Exit(0)
 }
-func fakeBusPath(t *testing.T) string {
+
+// fakeBusPath places the fake nova-bus in a temp directory and returns its call log and
+// the child environment that puts it first on PATH; the bus is told its mode by busMode.
+func fakeBusPath(t *testing.T) (string, []string) {
 	t.Helper()
 	dir := t.TempDir()
 	name := "nova-bus"
@@ -85,12 +88,17 @@ func fakeBusPath(t *testing.T) string {
 	if e = testbin.Place(raw, filepath.Join(dir, name)); e != nil {
 		require.NoError(t, e, e)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("NOVA_UPDATE_FAKE_BUS", "1")
-	t.Setenv("GORACE", "atexit_sleep_ms=0")
 	log := filepath.Join(dir, "calls")
-	t.Setenv("NOVA_UPDATE_BUS_CALLS", log)
-	return log
+	return log, []string{
+		"PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"NOVA_UPDATE_FAKE_BUS=1",
+		"NOVA_UPDATE_BUS_CALLS=" + log,
+	}
+}
+
+// busMode is the fake bus's environment with the answer it gives named.
+func busMode(busEnv []string, mode string) []string {
+	return append(append([]string(nil), busEnv...), "NOVA_UPDATE_BUS_MODE="+mode)
 }
 func calls(t *testing.T, p string) int {
 	t.Helper()
@@ -105,21 +113,21 @@ func calls(t *testing.T, p string) int {
 // A send the bus did not confirm records no delivery, so the next --send sends again, the
 // newer observation included, and a confirmed one records the id it was given.
 func TestAnUnconfirmedSendRecordsNothingAndTheNextSendSends(t *testing.T) {
-	log := fakeBusPath(t)
+	t.Parallel()
+
+	log, busEnv := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
 	sp := filepath.Join(t.TempDir(), "s.json")
 	args := []string{"report", "--file", p, "--send", "--snapshot", sp, "--as", "fixture", "--to", "integrator"}
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "uncertain")
-	run(t, Environment{}, args...)
+	run(t, Environment{ChildEnv: busMode(busEnv, "uncertain")}, args...)
 	s, _ := readSnapshot(sp)
 	require.Empty(t, s.Delivered)
 	os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600)
-	if c, _, _ := run(t, Environment{}, args...); c != 1 {
+	if c, _, _ := run(t, Environment{ChildEnv: busMode(busEnv, "uncertain")}, args...); c != 1 {
 		require.EqualValues(t, 1, c, c)
 	}
 	require.Equal(t, 2, calls(t, log))
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "ok")
-	c, o, e := run(t, Environment{}, args...)
+	c, o, e := run(t, Environment{ChildEnv: busMode(busEnv, "ok")}, args...)
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
@@ -176,6 +184,8 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 // line now reaches the caller's diagnostic -- one line, clipped, and no binary
 // on PATH can turn one event into two.
 func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
+	t.Parallel()
+
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL one\nSEND FAIL two\n"}); got != "SEND FAIL one" {
 		require.EqualValuesf(t, "SEND FAIL one", got, "%q", got)
 	}
@@ -192,10 +202,11 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 	}
 	for _, mode := range []string{"send-fail", "send-shouty"} {
 		t.Run(mode, func(t *testing.T) {
-			fakeBusPath(t)
+			t.Parallel()
+
+			_, busEnv := fakeBusPath(t)
 			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
-			c, _, errout := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+			c, _, errout := run(t, Environment{ChildEnv: busMode(busEnv, mode)}, "report", "--file", p, "--send", "--snapshot",
 				filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator")
 			if c != 1 {
 				require.EqualValues(t, 1, c, c)
@@ -252,9 +263,11 @@ func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
 // delivery allowance is what is left of the budget, and the bus is handed finite
 // retry controls that fit inside it.
 func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
-	log := fakeBusPath(t)
+	t.Parallel()
+
+	log, busEnv := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+	c, out, errs := run(t, Environment{ChildEnv: busEnv}, "report", "--file", p, "--send", "--snapshot",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator", "--budget", "60s")
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
@@ -283,6 +296,8 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 // A binary on PATH called nova-bus that answers in no grammar this tool knows
 // must not get to write on the caller's event line.
 func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
+	t.Parallel()
+
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL from-x/n.md: a named reason"}); got != "SEND FAIL from-x/n.md: a named reason" {
 		require.EqualValuesf(t, "SEND FAIL from-x/n.md: a named reason", got, "the bus's own grammar was not relayed: %q", got)
 	}
@@ -294,10 +309,9 @@ func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
 			assert.Failf(t, "", "%q was relayed as %q", alien, got)
 		}
 	}
-	fakeBusPath(t)
+	_, busEnv := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "send-alien")
-	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+	c, out, errs := run(t, Environment{ChildEnv: busMode(busEnv, "send-alien")}, "report", "--file", p, "--send", "--snapshot",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator")
 	if c != 1 {
 		require.EqualValues(t, 1, c, c)

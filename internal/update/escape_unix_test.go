@@ -11,12 +11,12 @@ import (
 // version command's group kill (kill(-pgid)) cannot reach it. It inherits the
 // caller's stdout, keeping that pipe's write end open past the caller's death.
 func spawnEscapedHolder(d string, readyFile ...string) error {
-	args := []string{"-test.run=TestHelperProcess", "--", "hold", d}
+	args := []string{"-test.run=TestHelperProcess", "--", "helper", "hold", d}
 	if len(readyFile) > 0 && readyFile[0] != "" {
 		args = append(args, readyFile[0])
 	}
 	c := exec.Command(os.Args[0], args...)
-	c.Env = append(os.Environ(), "NOVA_UPDATE_HELPER=1")
+	c.Env = append(os.Environ(), helperChildEnv...)
 	c.Stdout = os.Stdout
 	setGroup(c)
 	return c.Start()

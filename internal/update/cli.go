@@ -33,7 +33,39 @@ type Environment struct {
 	WorkerStart func(id int)
 	JobAttempt  func(index int)
 	DrainTimer  func(time.Duration) (<-chan time.Time, func() bool)
+	// ChildEnv is appended to the environment of every child this value starts,
+	// and a PATH entry in it is also the PATH the child's name is looked up on.
+	// Empty, the children inherit this process's environment unchanged.
+	ChildEnv []string
+	// RenameSnapshot is the snapshot writer's atomic commit operation; nil is
+	// os.Rename.
+	RenameSnapshot func(oldPath, newPath string) error
 }
+
+// writeSnapshot writes the snapshot through this value's commit operation.
+func (env Environment) writeSnapshot(path string, s *snapshot) error {
+	if env.RenameSnapshot == nil {
+		return writeSnapshot(path, s)
+	}
+	return writeSnapshotVia(env.RenameSnapshot, path, s)
+}
+
+// root is the context every run hangs from: the caller's, or Background, with
+// the drain timer and the child environment this value carries.
+func (env Environment) root() context.Context {
+	ctx := env.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if env.DrainTimer != nil {
+		ctx = WithDrainTimer(ctx, env.DrainTimer)
+	}
+	if len(env.ChildEnv) > 0 {
+		ctx = withChildEnv(ctx, env.ChildEnv)
+	}
+	return ctx
+}
+
 type options struct {
 	file, host, snapshot, as, to, target, adopt, store string
 	max                                                int
@@ -480,14 +512,7 @@ func checked(name, verb string, o options, positional []string, env Environment)
 	}
 	kinds := slices.Sorted(maps.Keys(present))
 	started := env.Now()
-	baseCtx := env.Context
-	if baseCtx == nil {
-		baseCtx = context.Background()
-	}
-	if env.DrainTimer != nil {
-		baseCtx = WithDrainTimer(baseCtx, env.DrainTimer)
-	}
-	ctx, cancel := context.WithTimeout(baseCtx, o.budget)
+	ctx, cancel := context.WithTimeout(env.root(), o.budget)
 	defer cancel()
 	if verb == "report" || verb == "send" {
 		return report(ctx, verb, entries, selected, o, strings.Join(kinds, ","), help, started, env)
@@ -627,7 +652,7 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 	started := env.Now()
 	target := o.target
 	if target == "" {
-		r := Latest(context.Background(), *e, o.timeout, env.Client)
+		r := Latest(env.root(), *e, o.timeout, env.Client)
 		if !r.Known() {
 			return refused("apply", help, fmt.Sprintf("latest unknown for %s (pass --version <v>, or ask again when the source answers)", name))
 		}
@@ -639,7 +664,7 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 			return refused("apply", help, fmt.Sprintf("invalid target %q (pass a complete version with --version, such as 1.2.3)", o.target))
 		}
 	}
-	before := Installed(context.Background(), *e, o.timeout, false)
+	before := Installed(env.root(), *e, o.timeout, false)
 	args := append([]string(nil), e.Apply...)
 	for i := range args {
 		args[i] = strings.ReplaceAll(args[i], "{version}", target)
@@ -653,10 +678,10 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 	res := &tool.Out{Verb: "apply", Status: tool.OK}
 	res.Item("before", "name", name, "kind", e.Kind, "installed", before.Version, "path", before.Path, "latest", target, "source", e.Latest)
 	res.Item("run", "name", name, "argv", len(args), "version", target, "command", strings.Join(args, " "))
-	ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
+	ctx, cancel := context.WithTimeout(env.root(), o.timeout)
 	p := process(ctx, args, nil, ChildCap)
 	cancel()
-	after := Installed(context.Background(), *e, o.timeout, false)
+	after := Installed(env.root(), *e, o.timeout, false)
 	res.Item("after", "name", name, "installed", after.Version, "was", before.Version)
 	reason := p.Reason
 	if reason == "" && !after.Known() {
@@ -726,7 +751,7 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	// and every help hangs off both, through the same bounded process
 	// machinery -- internal/bounded's capture -- the rest of this package
 	// already runs its children through.
-	run, cancelRun := context.WithTimeout(context.Background(), budget)
+	run, cancelRun := context.WithTimeout(env.root(), budget)
 	defer cancelRun()
 	runChild := func(argv []string) ProcessResult {
 		ctx, cancel := context.WithTimeout(run, timeout)

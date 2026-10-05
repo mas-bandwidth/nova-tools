@@ -15,11 +15,13 @@ import (
 // but substantial stream and exits at once is drained in full, never cut short
 // by a drain allowance that only the deadline case may shrink.
 func TestDeadlineHealthyChildUnderLoadIsFullyDrained(t *testing.T) {
+	t.Parallel()
+
 	args, err := argv(command(t, "flood", strconv.Itoa(40)))
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(withChildEnv(t.Context(), helperChildEnv), 30*time.Second)
 	defer cancel()
 	p := process(ctx, args, nil, ChildCap)
 	if p.Reason != "" {

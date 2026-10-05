@@ -165,7 +165,7 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 	// The run's own deadline. Every child hangs off it, so a directory of
 	// binaries cannot cost more than `--budget` however many of them there are
 	// and however long each one is allowed.
-	run, cancelRun := context.WithTimeout(context.Background(), budget)
+	run, cancelRun := context.WithTimeout(env.root(), budget)
 	defer cancelRun()
 	var rows []snapRow
 	var skipped []string
@@ -308,7 +308,7 @@ func snapshotAdopted(file string, timeout, budget time.Duration, env Environment
 	}
 	o := tool.Done()
 	known := 0
-	run, cancelRun := context.WithTimeout(context.Background(), budget)
+	run, cancelRun := context.WithTimeout(env.root(), budget)
 	defer cancelRun()
 	for _, e := range entries {
 		// Installed bounds the tool by timeout under the run's context, and tells a

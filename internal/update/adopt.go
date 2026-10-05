@@ -256,7 +256,7 @@ func watchMain(name string, args []string, out, errs io.Writer, env Environment)
 		return refusal(errs, "ADOPT", help, fmt.Errorf("cannot adopt %s (supply a readable --adopt checks file: %v)", o.adopt, err))
 	}
 	started := env.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), o.budget)
+	ctx, cancel := context.WithTimeout(env.root(), o.budget)
 	defer cancel()
 	return watchAdopt(ctx, checks, o, started, out, errs, env)
 }

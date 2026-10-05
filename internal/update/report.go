@@ -72,7 +72,7 @@ func report(ctx context.Context, verb string, all, entries []Entry, o options, k
 			}
 		}
 		state.Observed = seen
-		if err = writeSnapshot(o.snapshot, state); err != nil {
+		if err = env.writeSnapshot(o.snapshot, state); err != nil {
 			return refused(verb, help, err.Error())
 		}
 	}
@@ -213,7 +213,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 	scope := snapshotScope(o)
 	save := func() error {
 		if o.snapshot != "" {
-			return writeSnapshot(o.snapshot, s)
+			return env.writeSnapshot(o.snapshot, s)
 		}
 		return nil
 	}

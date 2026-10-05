@@ -4,6 +4,7 @@ package update
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -18,6 +19,8 @@ import (
 // snapshot's writer (a leftover is preferable to deleting another writer's
 // work), and the killed write retries cleanly on top of the leftover.
 func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGKILL on a process group stages the death; the owed Windows validation is named in the pull request")
 	}
@@ -25,10 +28,12 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 	dir := t.TempDir()
 	snapA := filepath.Join(dir, "a.json")
 	snapB := filepath.Join(dir, "b.json")
-	t.Setenv("NOVA_UPDATE_HELPER", "1")
+	childEnv := append(os.Environ(), helperChildEnv...)
 	runReport := func(m, snap string) {
 		t.Helper()
-		if out, err := exec.Command(bin, "report", "--file", m, "--snapshot", snap).CombinedOutput(); err != nil {
+		c := exec.Command(bin, "report", "--file", m, "--snapshot", snap)
+		c.Env = childEnv
+		if out, err := c.CombinedOutput(); err != nil {
 			require.NoErrorf(t, err, "%v\n%s", err, out)
 		}
 	}
@@ -43,6 +48,7 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 	for attempt := 0; attempt < 12 && !surviving; attempt++ {
 		p := manifest(t, row("x", "tool", printer(t, fmt.Sprintf("v3.%d.0", attempt)), "npm:unused", "none"))
 		c := exec.Command(bin, "report", "--file", p, "--snapshot", snapA)
+		c.Env = childEnv
 		setGroup(c)
 		if err := c.Start(); err != nil {
 			require.NoError(t, err, err)

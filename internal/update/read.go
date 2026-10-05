@@ -8,7 +8,9 @@ import (
 	"math/big"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -116,7 +118,8 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 		r.Reason = "empty argv"
 		return r
 	}
-	path, err := exec.LookPath(args[0])
+	extra, _ := ctx.Value(childEnvKey{}).([]string)
+	path, err := lookPath(args[0], extra)
 	if err != nil {
 		r.Reason = "not_found"
 		return r
@@ -127,6 +130,9 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	out, errs := bounded.NewCapture(cap, cancel), bounded.NewCapture(cap, cancel)
 	cmd := subproc.Context(child, path, args[1:]...)
 	cmd.Stdin = input
+	if len(extra) > 0 {
+		cmd.Env = append(os.Environ(), extra...)
+	}
 	// The pipes are created here rather than handed to os/exec as plain writers,
 	// so this process can close the read ends itself when the deadline passes and
 	// an escaped grandchild is still holding the write ends open.
@@ -252,6 +258,37 @@ func drainAllowanceAt(ctx context.Context, now time.Time) time.Duration {
 		drain = min(drain, deadline.Sub(now))
 	}
 	return max(drain, drainFloor)
+}
+
+type childEnvKey struct{}
+
+// withChildEnv attaches the environment entries a child is started with.
+func withChildEnv(ctx context.Context, env []string) context.Context {
+	return context.WithValue(ctx, childEnvKey{}, env)
+}
+
+// lookPath resolves name like exec.LookPath, on the PATH the extra entries
+// name when they carry one, else on this process's.
+func lookPath(name string, extra []string) (string, error) {
+	path := ""
+	for _, kv := range extra {
+		if v, ok := strings.CutPrefix(kv, "PATH="); ok {
+			path = v
+		}
+	}
+	if path == "" || strings.ContainsRune(name, filepath.Separator) {
+		return exec.LookPath(name)
+	}
+	for _, dir := range filepath.SplitList(path) {
+		p := filepath.Join(dir, name)
+		if runtime.GOOS == "windows" {
+			p += ".exe"
+		}
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && (runtime.GOOS == "windows" || fi.Mode()&0o111 != 0) {
+			return p, nil
+		}
+	}
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
 }
 
 type drainTimerKey struct{}

@@ -21,9 +21,11 @@ import (
 // Past the grace the refusal must name the pipe rather than blame the version
 // command, and it must say so without echoing a byte the child wrote.
 func TestHeldPipePastGraceIsNamedAndEchoesNoContent(t *testing.T) {
+	t.Parallel()
+
 	secret := "x 9.9.9-secret"
 	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte(secret+"\n")), (killGrace+time.Second).String()))}
-	r := Installed(context.Background(), e, killGrace+5*time.Second, false)
+	r := Installed(withChildEnv(context.Background(), helperChildEnv), e, killGrace+5*time.Second, false)
 	if r.Known() || r.Reason != "output_not_closed" {
 		require.Failf(t, "", "reason=%q remedy=%q", r.Reason, r.Remedy)
 	}
