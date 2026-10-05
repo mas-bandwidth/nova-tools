@@ -202,18 +202,16 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 
 // The `### First run` block of docs/TESTS.md is EXECUTED: every documented
 // command is run, in order, and its whole output is compared with the block
-// written under it -- same number of lines, same lines, same order.
-//
-// WHAT THIS REPLACES. The old test collected the SHAPES a command printed into
-// a `printed map[string]bool`, with the numbers, paths and tails deliberately
-// NOT compared. Under that comparison `LINKS OK files=4 links=3 excluded=0`
-// and `LINKS OK files=0 links=0 excluded=0` are the same line -- a quickstart
-// that had stopped finding the fixture's files would read as green -- and a
-// dropped line removes a lookup rather than an assertion.
+// written under it -- same number of lines, same lines, same order -- through
+// the one comparator, onboarding.CompareTranscript (docs/SPEC-TOOLWORK.md
+// documents rule 3).
 //
 // NOTHING IS NORMALISED. The fixture is on disk and every count on every line
-// is of it, so all of them reproduce; onboarding.Execute is handed no Norm and
-// says so under any line that disagrees.
+// is of it, so all of them reproduce; the comparator is handed no field of the
+// onboarding.Volatile table and says so under any line that disagrees. Under a
+// shape comparison `LINKS OK files=4 links=3 excluded=0` and `LINKS OK files=0
+// links=0 excluded=0` are the same line, so a quickstart that had stopped
+// finding the fixture's files would read as green.
 //
 // The fixture is typed as written. The documented `./self` is what a reader
 // types and what the tool PRINTS BACK on `dir=`, so the fixture is copied to
@@ -234,8 +232,14 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	dir := t.TempDir()
 	copyTree(t, fixture, filepath.Join(dir, "self"))
 	t.Chdir(dir)
-	for _, p := range onboarding.Execute(steps, runDocumented) {
-		assert.Fail(t, "check failed", p)
+	got := make([]onboarding.Result, 0, len(steps))
+	for _, s := range steps {
+		res, err := runDocumented(s)
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
+		got = append(got, res)
+	}
+	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
+		assert.Fail(t, p.Error())
 	}
 }
 
