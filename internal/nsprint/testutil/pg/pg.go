@@ -171,7 +171,9 @@ func (s *Server) ready() error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() {
+		_ = db.Close() // ignored: closing a temporary connection opened only to check server readiness
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	deadline := time.Now().Add(30 * time.Second)
@@ -207,7 +209,9 @@ func (s *Server) Database(t testing.TB) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		_ = db.Close() // ignored: closing a temporary connection used only for database setup
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if _, err := db.ExecContext(ctx, "CREATE DATABASE "+name); err != nil {
