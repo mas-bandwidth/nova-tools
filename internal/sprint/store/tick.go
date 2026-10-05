@@ -200,9 +200,11 @@ func (st *Store) putMachine(ctx context.Context, m Machine) error {
 }
 
 // MachineLine is the machine's part of the sprint line: the state word alone,
-// running, STOPPED (also a RUNNING machine that has not ticked for
-// MachineSilence) or DONE, with no suffix of any kind: a silent loop, a failing
-// tick and moves due are the inbox's judgments.
+// running, STOPPED or DONE, with no suffix of any kind but a RUNNING machine's
+// late tick: "running (tick late 16s)", the whole seconds since its last tick,
+// once that is longer ago than MachineSilence (docs/SPEC-SPRINT.md section 14).
+// STOPPED is a stop's alone, the record's state; a late tick is never one. A
+// silent loop, a failing tick and moves due are the inbox's judgments.
 func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	if m.Done() {
 		return "machine: " + DoneState
@@ -217,8 +219,10 @@ func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	if m.Since.After(last) {
 		last = m.Since
 	}
-	if now.Sub(last) > MachineSilence {
-		return "machine: STOPPED"
+	if late := now.Sub(last); late > MachineSilence {
+		// running, late: the server ticks 7 to 16 s apart at times, and a gap
+		// is not a stop (section 14)
+		return fmt.Sprintf("machine: running (tick late %ds)", int64(late/time.Second))
 	}
 	return "machine: running"
 }

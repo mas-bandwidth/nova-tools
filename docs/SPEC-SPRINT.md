@@ -414,8 +414,14 @@ merge, friends, fleet, and `where --json` carries every table and every row of i
 with the flag or without. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
 line (landed / all primaries, percent, ETA, with no machine text) when it is
-running; a RUNNING machine that has not ticked for 5 s shows
-`STOPPED`, with no count of seconds. Every count cell is an ordered set.
+running; a RUNNING machine whose last tick is older than MachineSilence
+(15 s) keeps the summary line, with the machine's `running (tick late 16s)`
+after it, the whole seconds since that tick, and is never shown `STOPPED`,
+which is a stop's alone: the machine's record STOPPED (section 14). The
+coordinator measured the old reading at 2:23 PM on 2026-10-04: sampled every 2
+to 3 s, `where` said `machine: STOPPED` for about 7 s, then running, over and
+over, while the server was RUNNING the whole time, ticking 7 to 16 s apart.
+Every count cell is an ordered set.
 The summary line shows `held=N` after the percent when cards are held back:
 waiting behind a sentinel not released, admitted held (`add --held`), or
 waiting on one of those through a need (`sprint.HeldBack`, counted by the
@@ -3092,9 +3098,11 @@ moves nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick and before each of its parts: after `stop`
 returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
 wait. `inbox` says `machine: running`, `machine: STOPPED` or `machine: DONE`,
-and nothing after the word: `machine: STOPPED` is also what it says when the
-state is RUNNING and nothing has ticked for 15 s (MachineSilence), on a store
-a run loop ticks. A twin (`mem:<file>`) is ticked by hand and nothing ticks
+and nothing after the word but a late tick: when the state is RUNNING and
+nothing has ticked for 15 s (MachineSilence), on a store a run loop ticks, it
+says `machine: running (tick late 16s)`, the whole seconds since the last
+tick; a late tick is never `machine: STOPPED`, which is a stop's alone, the
+record STOPPED. A twin (`mem:<file>`) is ticked by hand and nothing ticks
 between its commands, so there a RUNNING machine says `machine: running`
 however long since its last tick, and the inbox's judgment that it is not
 ticking names `nova-sprint tick` (a twin refuses `run`). The sprint line of every
