@@ -145,8 +145,9 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		promotions             int
 	)
 	// decide runs the group's command for the decision as the inbox gives it, its merge sha
-	// placeholder filled with sha: the exit code, and false when the group offers none
-	decide := func(g sprint.Group, decision, sha string) (int, bool) {
+	// placeholder filled with sha: the exit code and what the command said on a refusal,
+	// and false when the group offers none
+	decide := func(g sprint.Group, decision, sha string) (int, string, bool) {
 		for _, cmd := range g.Commands {
 			if cmd.Decision != decision || len(cmd.Lines) == 0 {
 				continue
@@ -156,9 +157,10 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 				continue
 			}
 			var o, e bytes.Buffer
-			return coord.run(words[1:], &o, &e), true
+			code := coord.run(words[1:], &o, &e)
+			return code, strings.TrimSpace(e.String()), true
 		}
-		return 0, false
+		return 0, "", false
 	}
 	wake := make(chan struct{}, 1)
 	coordDone := make(chan struct{})
@@ -205,7 +207,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 					// machines up: the judgment closes itself when they are
 				case sprint.NReadyToAccept:
 					// accepted mechanically, with the command the inbox gives
-					code, offered := decide(g, "accept", "")
+					code, _, offered := decide(g, "accept", "")
 					mu.Lock()
 					switch {
 					case !offered:
@@ -219,7 +221,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 				case sprint.NDevBehind:
 					// a true judgment: the drive lands thousands and nothing promotes them;
 					// promoted as a coordinator does, with the command the inbox gives
-					code, offered := decide(g, "promoted", "0123abc")
+					code, why, offered := decide(g, "promoted", "0123abc")
 					mu.Lock()
 					switch {
 					case !offered:
@@ -227,7 +229,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 					case code == 0:
 						promotions++
 					default:
-						judgments = append(judgments, fmt.Sprintf("%s: promoted refused (%d)", g.Type, code))
+						judgments = append(judgments, fmt.Sprintf("%s: promoted refused (%d): %s", g.Type, code, why))
 					}
 					mu.Unlock()
 				default:
