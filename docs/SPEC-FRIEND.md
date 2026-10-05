@@ -653,6 +653,34 @@ card), so today the profile is `run --profile`. A cancelled turn signals the
 wall's group, and the wall passes SIGTERM to the harness's own group; the
 SIGKILL after `KillDelay` reaches the wall only.
 
+### delivery-conformance-r.w1 — one delivery check every adapter passes
+
+Every harness adapter makes one promise, and `friend.Conformance`
+(internal/friend/conformance.go) checks it end to end: a session check
+carrying a fresh nonce (`SessionCheckText`, the daemon's own) goes in through
+the adapter's `Deliver`, the session runs the exact `nova-friend pong` line it
+carries, and a pong with that nonce, from the friend (the message's from,
+never its body) and newer than the check, is on the bus within the window
+(`DefaultCheckWithin`, the session bound, five minutes). It is the presence
+model's Ask then Answer within the bound (tla/FriendPresence.tla), run once on
+demand. A failure names its stage: `deliver` (an error, a `Deferred` or a
+nonzero exit from the adapter; a `Stub` says its surveyed reason), `act` (the
+pong file never held the nonce: the session did not run the line) or `reply`
+(the pong file holds it and no pong reached the bus). The unit tier
+(`TestEveryAdapterPassesDeliveryConformance`) runs the same function for every
+name in `Harnesses`: the six with a deliver command (opencode, codex, gemini,
+dsh, grok, antigravity) over a fake `Exec` (and a temporary home or an
+in-memory mailbox where the harness reads files) with bus's Fake for the
+store and a clock moved by the check's own waits, and every Stub, claude
+among them, failing at `deliver` with its reason; an adapter with a deliver
+command and no rig fails the test. `nova-friend check` runs it against the live
+session (docs/CLI.md), `install` runs it once after loading the agent and
+says the line in a NOTE, and a nova-config loop record runs it nightly on
+each friend's machine (docs/TESTING.md). Not covered: a lane's
+`OpenSession`/`DeliverTo` path, and a check delivered while the daemon's own
+turn is under way goes in beside it, not after it (the check runs in its own
+process and does not hold the daemon's turn).
+
 ## The coordinator's ping (cmd/nova-friend serve; internal/friend/keepalive.go)
 
 The server side of the connection, as the owner designed it: the coordinator
