@@ -184,10 +184,16 @@ func friendRoom(f FriendSeat) (room, width int) {
 }
 
 // preferredFriend is the friend of names a card goes to (docs/SPEC-SPRINT.md section 1,
-// friend-deal-idle-lanes-first.w1): a friend with an idle lane (lanes > 0) before every
-// friend with none, the most idle lanes first, then the most room free, then the first by
-// name; "" when names is empty. The caller gives only the friends the card may go to.
-func preferredFriend(names []string, lanes, free map[string]int) string {
+// friend-deal-idle-lanes-first.w1 and friend-deal-one-tier.w2): who, the friend its WHO
+// line names, when she is one of names; else a friend with an idle lane (lanes > 0) before
+// every friend with none, the most idle lanes first, then the most room free, then the
+// first by name; "" when names is empty. The caller gives only the friends the card may go
+// to, each serving its tier (friendTakes), so the WHO line is a preference among them and
+// never a pin past the tier.
+func preferredFriend(names []string, who string, lanes, free map[string]int) string {
+	if who != "" && slices.Contains(names, who) {
+		return who
+	}
 	best := ""
 	for _, f := range names {
 		switch {
@@ -251,7 +257,7 @@ func friendLoad(s *Snapshot, name string) int {
 // names a friend goes to her first while she is up, below her room, not one it has left,
 // and her tiers hold its tier; else (or with no WHO line, or WHO: friend) it goes to a
 // friend up whose tiers hold its tier (friendTakes, every friend deal's gate; a card with
-// no tier is the dealer's default, flash: cardTierOf), below her room, and never one it has
+// no tier is the dealer's default, flash: CardTier), below her room, and never one it has
 // left (friendsLeft), chosen by preferredFriend: an idle lane first, the most idle lanes,
 // then the most room, then by name (docs/SPEC-SPRINT.md section 1,
 // friend-deal-idle-lanes-first.w1). A card no friend takes stays for the fleet's deal,
@@ -308,35 +314,32 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 			continue
 		}
 		escalated := wc != nil && redealBound(wc)
-		tier := cardTierOf(escalating(s, c))
+		tier := CardTier(escalating(s, c))
 		left := friendsLeft(wc)
-		name, _ := FriendCard(c)
-		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(seat[name], tier)) {
-			name = "" // the friend it names is not up with room, it has left her, or not her tier
+		named, _ := FriendCard(c)
+		// the friends it may go to: up with room, not one it has left, serving its tier; a
+		// hard pin only to the friend it names, and only while she serves its tier
+		var may []string
+		for _, f := range up {
+			if free[f] > 0 && !slices.Contains(left, f) && friendTakes(seat[f], tier) && (!OnlyFriend(c) || f == named) {
+				may = append(may, f)
+			}
 		}
-		if name == "" && !OnlyFriend(c) {
-			var may []string
+		if len(may) == 0 && wc != nil && !OnlyFriend(c) {
+			// a card withdrawn off a friend held or down (or taken back) whom no friend
+			// it has not left may take: the friends the level moved it off may have it
+			// back, so it is not stranded ready while one is up with room (the owner's
+			// rule: a held or down friend's cards go to the up friends' ready queues);
+			// never the friend it was withdrawn from or taken back from
+			gone := withdrawnFrom(wc)
 			for _, f := range up {
-				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(seat[f], tier) {
+				if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(seat[f], tier) {
 					may = append(may, f)
 				}
 			}
-			if len(may) == 0 && wc != nil {
-				// a card withdrawn off a friend held or down (or taken back) whom no friend
-				// it has not left may take: the friends the level moved it off may have it
-				// back, so it is not stranded ready while one is up with room (the owner's
-				// rule: a held or down friend's cards go to the up friends' ready queues);
-				// never the friend it was withdrawn from or taken back from
-				gone := withdrawnFrom(wc)
-				for _, f := range up {
-					if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(seat[f], tier) {
-						may = append(may, f)
-					}
-				}
-				left = slices.DeleteFunc(slices.Clone(left), func(f string) bool { return !slices.Contains(gone, f) })
-			}
-			name = preferredFriend(may, lanes, free)
+			left = slices.DeleteFunc(slices.Clone(left), func(f string) bool { return !slices.Contains(gone, f) })
 		}
+		name := preferredFriend(may, named, lanes, free)
 		if name == "" || slices.Contains(left, name) || free[name] <= 0 {
 			continue // no friend it may go to is up with room: the fleet's, or (only) it waits ready
 		}
@@ -389,13 +392,14 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 	return p
 }
 
-// friendWithFree is the up friend of one of the classes with the most free width in
-// free, the first by name among equals; "" when none has room. AttemptCapDeal passes
-// the free width it has left in this plan, decremented after each deal.
-func friendWithFree(seats []FriendSeat, free map[string]int, classes ...string) string {
+// friendWithFree is the up friend serving one of the tiers (friendTakes: her tiers, never
+// her whole tier list as one class) with the most free width in free, the first by name
+// among equals; "" when none has room. AttemptCapDeal passes the free width it has left in
+// this plan, decremented after each deal.
+func friendWithFree(seats []FriendSeat, free map[string]int, tiers ...string) string {
 	var up []string
 	for _, f := range seats {
-		if f.Status == Up && slices.Contains(classes, f.Class) {
+		if f.Status == Up && slices.ContainsFunc(tiers, func(t string) bool { return friendTakes(f, t) }) {
 			up = append(up, f.Name)
 		}
 	}
@@ -428,6 +432,13 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, col string, set map[string]
 			fields[k] = v
 		}
 	}
+	// the tier the friend's lane reads off the packet (PacketOf), never off the brief: the
+	// primary's one tier as this deal leaves it (CardTier; an escalation's set moves it)
+	after := c
+	for k, v := range set {
+		after = withField(after, k, v)
+	}
+	fields[FieldTier] = CardTier(after)
 	if col == Working {
 		name, _ := FriendOfRow(row)
 		dl, _ := friendDeadline(s, name)
@@ -454,6 +465,7 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
 	// kept on a friend's card withdrew it every tick, and each deal again was a new inbox copy)
 	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom,
 		FieldRoute, FieldModel, FieldTokens, FieldUSD, FieldHarness, FieldDeadline}
+	set[FieldTier] = CardTier(c) // the tier her lane reads off the packet, the deal's own
 	if left := friendsLeft(wc); len(left) > 0 {
 		set[FieldFriendsLeft] = strings.Join(left, ",") // the friend it was taken from, kept past the take
 	}

@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
@@ -260,10 +261,18 @@ func AttemptCapDeal(s *Snapshot, r TickReq) Plan {
 			p.Rows = append(p.Rows, RowAdd{Fleet, row})
 			declared[row] = true
 		}
+		// the card is pinned to the tier she is chosen for, the strongest of hers, so the one
+		// tier every friend decision reads (CardTier) is the one it was dealt on and the level
+		// never takes it back off her (docs/SPEC-SPRINT.md section 1, friend-deal-one-tier.w2)
+		tier := cardhdr.RouteHeavy
+		if i := slices.IndexFunc(r.Friends, func(f FriendSeat) bool { return f.Name == name }); i >= 0 && friendTakes(r.Friends[i], cardhdr.RouteFrontier) {
+			tier = cardhdr.RouteFrontier
+		}
 		u := friendDealUnit(s, c, card, row, Working, map[string]string{
 			FieldWho:          row,
 			"brief":           briefGainsWho(c.F("brief"), name),
 			FieldBriefAttempt: c.F("attempt"),
+			FieldTier:         tier,
 		})
 		if prev := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); prev != nil && prev.Col == Withdrawn {
 			// the capped attempt's withdrawn work card is retired, its record kept, as

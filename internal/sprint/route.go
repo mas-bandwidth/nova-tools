@@ -312,10 +312,14 @@ func ceilingTier(c *Card, m cardhdr.Model) string {
 		return t // a critical card runs on pro from its first deal (weight.go)
 	}
 	if m.Tier == "" {
-		return cardhdr.RouteFlash
+		return DefaultTier
 	}
 	return m.Tier
 }
+
+// DefaultTier is the dealer's default: the tier of a card whose brief names none and that
+// no deal, escalation or pin has put on another (ceilingTier).
+const DefaultTier = cardhdr.RouteFlash
 
 // CardTiers is the tier the primary is on (cardTier) and its ceiling, as `card` prints
 // them.
@@ -324,11 +328,19 @@ func CardTiers(c *Card) (now, ceiling string) {
 	return cardTier(c, m), ceilingTier(c, m)
 }
 
-// cardTierOf is the tier the primary c is on (cardTier).
-func cardTierOf(c *Card) string {
+// CardTier is the one tier resolution of the primary c (docs/SPEC-SPRINT.md section 1,
+// friend-deal-one-tier.w2): the tier it is on now (cardTier), the dealer's default
+// (DefaultTier) when it names none. Every friend decision reads it and no other: the
+// friends' deal and level, the take back of a card re-tiered off its holder's tiers
+// (friendRetierTakes), and the packet a friend's lane reads (PacketOf), so a lane never
+// parses a tier of its own off the brief.
+func CardTier(c *Card) string {
 	now, _ := CardTiers(c)
 	return now
 }
+
+// cardTierOf is CardTier, under the name the machines' rules call it by.
+func cardTierOf(c *Card) string { return CardTier(c) }
 
 // NextTier is the tier the primary c escalates to when it reaches its bound: the next tier
 // of the ladder above the one it is on, up to its ceiling; "" at its ceiling (a pinned

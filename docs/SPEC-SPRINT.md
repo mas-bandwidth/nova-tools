@@ -843,7 +843,7 @@ not level the friends":
 - **Eligibility is by tier, never by class.** Every friend deal and every
   level move, whatever the card's WHO line, goes only to a friend up whose
   tiers (her `FriendSeat.Tiers`, else her class's) hold the card's tier; a card
-  with no tier is the dealer's default, flash (`cardTierOf`), and a withdrawn
+  with no tier is the dealer's default, flash (`CardTier`), and a withdrawn
   attempt at its redeal bound below its ceiling is offered at the tier it
   escalates to (`escalating`), a new attempt on that tier. A friend whose row
   names no tier takes none; a named friend without the tier is passed over for
@@ -888,6 +888,57 @@ not level the friends":
 
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
+
+### friend-deal-one-tier.w2
+
+**One tier resolution decides every friend decision** (the owner, 2026-10-05:
+"You should automatically rebalance queues", "it should just happen
+mechanically" and "What else is like this? Bugs in how cards are dealt and
+rebalanced?"; `sprint.CardTier`, `sprint.DefaultTier`). Four mismatches were
+seen on 2026-10-04 and 05: a friend serving flash and pro held heavy cards,
+dealt untiered and re-tiered heavy after, and nothing dealt them again; a
+friend serving flash only was dealt untiered cards while her lane runner parsed
+`-` off the brief and took each back, a deal and take-back loop every tick; a
+WHO friend was described as a pin past the tier; and the attempt cap's friend
+was matched by her whole tier list as one class string. This replaces
+`cardTierOf` above:
+
+- **One resolution.** `CardTier` is the primary's tier now (the tier its last
+  deal drew, else its ceiling: a pin, the brief's line 1), `DefaultTier`
+  (flash) when it names none. The friends' deal, the level, the take back below
+  and the packet read it and nothing else.
+- **The packet carries it.** Every friend's work card is written with the tier
+  as `tier` (`FieldTier`) when it is dealt (`friendDealUnit`, the attempt cap's
+  deal through it, an escalation at the tier it escalates to), dealt again
+  (`friendRedealUnit`) or moved (the level), so `PacketOf` hands her lane a
+  tier, flash for an untiered card, and a lane never parses one off the brief.
+- **A WHO line is a preference among the friends serving the tier.** The deal
+  gathers the friends up with room, not one the card has left, whose tiers hold
+  its tier; `preferredFriend` returns the friend the WHO line names only when
+  she is one of them, else idle lanes, room and name as above. A hard pin
+  (`WHO: only friend`) gathers only her, so it waits ready while she does not
+  serve the tier, never dealt past it.
+- **A re-tier takes back.** Before it moves anything, every level (the tick's
+  and `friend level`) takes back each card on a friend's row that she has not
+  started (`friendStarted`) and whose `CardTier` is not one of her tiers, as
+  `friend take` does (`friendRetierTakes`: withdrawn, `taken_from` her,
+  `taken_back` naming her tiers and each card's tier, its primary ready); the
+  next tick's deal places it on a friend serving the tier, or the fleet's deal
+  does. A started card stays with her and finishes on the tier it was dealt
+  (`brief --tier` applies to the next attempt). A friend a card was taken from
+  is not levelled that tick, and a card its holder does not serve never moves
+  by the level.
+- **Tiers, never a class string.** The attempt cap's default answer picks a
+  friend serving frontier or heavy by her tiers (`friendWithFree`,
+  `friendTakes`), so a friend serving flash,frontier,heavy,pro is one, and pins
+  the card to the tier she is chosen for (`tier`, frontier when she serves it,
+  else heavy), so its one tier is the one it was dealt on and the level never
+  takes it back off her.
+
+`TestEveryFriendDecisionReadsTheOneTierOfTheCard`. Not yet: the friend sync's
+queue file and BRIEF.md do not print the tier (the packet carries it); the
+`friend level` verb's help (`friendLevelWords`) still says "of one class";
+and `tla/WhoPreference.tla` does not model the tier gate or the take back.
 
 ## 2. The cards
 
