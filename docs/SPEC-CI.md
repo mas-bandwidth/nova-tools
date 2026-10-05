@@ -510,6 +510,31 @@ this entry covers the identifier ledger, not the files its rows name. Each
 referenced fixture still needs a reason and a finding, and each counted shard
 is parsed and checked by its class rule.
 
+### Sprint brand sheet and asset provenance
+
+**The rule.** `TestSprintBrandSheetIsCompleteAndEveryAssetHasProvenance`
+(`internal/ci/sprint_brand_class_test.go`) reads `docs/sprint/BRAND.md` and
+requires the Name, Mark, Colours, Type and Voice headings. It also requires
+at least one regular asset under `assets/sprint/` and an exact, nonempty
+provenance row for every such file in `docs/ASSET-PROVENANCE.md`.
+
+**The hurt.** A documentation suite cannot share one identity when its brand
+sheet omits a basic treatment, or an asset enters the tree without saying
+where it came from. A filename mentioned elsewhere is not its provenance row.
+
+**Its allowlist.** None. Every regular Sprint asset is checked, including
+files in nested directories.
+
+**Its remedy.** Add the missing brand heading or the asset's exact file row
+with its origin, tool, date and request context; keep third-party licence
+terms beside any third-party file. The test checks presence and nonempty
+provenance, not legal rights or aesthetic approval.
+
+**Its narrowings.** Only the brand sheet and Sprint asset subtree are in
+scope. Removing any required heading, either current asset's row, or the
+contents of a provenance cell makes the guard fail. The test reads repository
+files and starts no process or service.
+
 ### `waits` — no fixed wall-clock wait on the CI path
 
 **The rule.** No `_test.go` on the CL path carries a `time.Sleep` over 100 ms, a

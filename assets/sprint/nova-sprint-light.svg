@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="200" viewBox="0 0 760 200" role="img" aria-labelledby="title desc">
+  <title id="title">nova-sprint</title>
+  <desc id="desc">A gold Nova star above three separate blue lanes, beside the nova-sprint name. Coordinated work for AI teams.</desc>
+  <rect width="760" height="200" rx="24" fill="#f4f5f7"/>
+  <g fill="none" stroke="#2a78d6" stroke-width="8" stroke-linecap="round">
+    <path d="M40 96h96M40 120h96M40 144h96"/>
+  </g>
+  <path d="m88 35 8 18 18 8-18 8-8 18-8-18-18-8 18-8Z" fill="#ad6b00"/>
+  <g fill="#121417">
+    <circle cx="118" cy="96" r="5"/><circle cx="74" cy="120" r="5"/><circle cx="98" cy="144" r="5"/>
+    <text x="176" y="106" font-family="Nunito, ui-rounded, system-ui, sans-serif" font-size="62" font-weight="800" letter-spacing="-1.5">nova-sprint</text>
+  </g>
+  <text x="180" y="143" fill="#525963" font-family="system-ui, sans-serif" font-size="21">Coordinated work for AI teams.</text>
+</svg>
