@@ -342,7 +342,7 @@ func parseDiffIndex(raw string) ([]stagedRecord, error) {
 // need no substrate: the name floor, the location floor and the extension
 // floor. The reason strings are the audit's own, so a finding reads the same
 // whichever mode produced it. Names and locations are lowercased on both
-// sides, matching the audit, and a trailing space in an extension is trimmed
+// sides, matching the audit, and a trailing blank in an extension is trimmed
 // for matching only.
 func stagedPathReasons(rel string, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
 	// Every dynamic piece is escaped where it is built, the same shape
