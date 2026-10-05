@@ -1105,6 +1105,22 @@ deal, one finish, one push, one pull request, its reads; dependencies stay at th
   <brief> --remainder <id> --from <n> --land <pushed sha>` prints it; the coordinator adds it and
   the deal deals it as any card. A member adds no card: `add` is the coordinator's.
 
+### recut-widen-r.w1: a HOLD's PATHS-PROPOSED line widens the twin
+
+A card held for PATHS too narrow is re-cut by the tool, not by hand: `recut <id> --widen
+[--repo-dir <clone>] [--new <id>]` reads the PATHS-PROPOSED line of the report of the card's
+latest attempt (docs/SPEC-CARD-CONTRACT.md section 4), and re-cuts the card as its twin with
+the old brief, every `PATHS:` line of it the union of the old globs and the proposed ones (the
+old first, each once), and a `CARRY: <id> attempt <n> head=<sha>` header line naming that
+attempt's pushed head, where the twin's first attempt starts (the member's packet takes it as
+`base_head` when no attempt of the twin pushed one); the verb says `NEXT <twin> starts from <id>
+attempt <n> head=<sha>`. The base's files and the head's are read in `--repo-dir`, else land's
+clone of the card's `REPO:`, the head's branch and the base fetched from origin when the clone
+lacks them. Refused, exit 1, nothing written, naming every problem: a card with no attempt, a
+report with no PATHS-PROPOSED line, an attempt with no pushed head, no clone, a glob that
+climbs out with `..` or is absolute, and a glob that names no file at the base nor at the head;
+and as `recut` is refused otherwise (`TestRecutWidenAppliesPathsProposed`).
+
 ## 3. The lifecycle of a primary
 
 Six states, fixed, in one Go file (`internal/sprint/lifecycle.go`) mirrored by
