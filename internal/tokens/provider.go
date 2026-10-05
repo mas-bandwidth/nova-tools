@@ -177,12 +177,12 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	var reports []Type
 	for i, col := range header {
 		col = strings.TrimSpace(col)
-		switch {
-		case col == sh.stamp:
+		switch col {
+		case sh.stamp:
 			stampCol = i
-		case col == sh.date:
+		case sh.date:
 			dateCol = i
-		case col == sh.model:
+		case sh.model:
 			modelCol = i
 		default:
 			t, ok := sh.columns[col]
