@@ -392,7 +392,7 @@ type held struct {
 // goroutine, and two more hold and forward the requests.
 func (p *Proxy) serve(client net.Conn) {
 	defer func() { <-p.slots }()
-	defer client.Close()
+	defer func() { _ = client.Close() }() // ignored: the connection is over either way; a close error has nothing left to lose
 	dialCtx, cancelDial := context.WithTimeout(p.ctx, dialBound)
 	up, err := p.dial(dialCtx, "tcp", p.target)
 	cancelDial()
@@ -404,7 +404,7 @@ func (p *Proxy) serve(client net.Conn) {
 		}
 		return
 	}
-	defer up.Close()
+	defer func() { _ = up.Close() }() // ignored: the connection is over either way; a close error has nothing left to lose
 
 	done := make(chan struct{}) // closed when this connection is over
 	var once sync.Once
