@@ -184,10 +184,10 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 			test = i
 		}
 	}
-	require.False(t, restore < 0, "certification.yml test is missing a step: restore=%d deps=%d save=%d test=%d", restore, deps, save, test)
-	require.False(t, deps < 0, "certification.yml test is missing a step: restore=%d deps=%d save=%d test=%d", restore, deps, save, test)
-	require.False(t, save < 0, "certification.yml test is missing a step: restore=%d deps=%d save=%d test=%d", restore, deps, save, test)
-	require.False(t, test < 0, "certification.yml test is missing a step: restore=%d deps=%d save=%d test=%d", restore, deps, save, test)
+	require.GreaterOrEqual(t, restore, 0, "certification.yml test is missing a step: restore=%d deps=%d save=%d test=%d", restore, deps, save, test)
+	require.GreaterOrEqual(t, deps, 0, "certification.yml test is missing a step: restore=%d deps=%d save=%d test=%d", restore, deps, save, test)
+	require.GreaterOrEqual(t, save, 0, "certification.yml test is missing a step: restore=%d deps=%d save=%d test=%d", restore, deps, save, test)
+	require.GreaterOrEqual(t, test, 0, "certification.yml test is missing a step: restore=%d deps=%d save=%d test=%d", restore, deps, save, test)
 	assert.True(t, restore < deps && deps < save && save < test, "certification.yml test must restore (%d), build the race dependencies (%d), save (%d), then test (%d), in that order", restore, deps, save, test)
 	assert.Contains(t, job.Steps[deps].Run, ciRunner+" race-deps", "the dependency build is not `ci race-deps`:\n%s", job.Steps[deps].Run)
 	verb := readFile(t, filepath.Join(repoRoot(t), "tools", "ci", "sel_racedeps.go"))

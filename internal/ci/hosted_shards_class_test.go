@@ -142,8 +142,8 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 			test = i
 		}
 	}
-	require.True(t, vet >= deal, "test-hosted's vet (%d) and test (%d) steps must follow the deal (%d)", vet, test, deal)
-	require.True(t, test >= deal, "test-hosted's vet (%d) and test (%d) steps must follow the deal (%d)", vet, test, deal)
+	require.GreaterOrEqual(t, vet, deal, "test-hosted's vet (%d) and test (%d) steps must follow the deal (%d)", vet, test, deal)
+	require.GreaterOrEqual(t, test, deal, "test-hosted's vet (%d) and test (%d) steps must follow the deal (%d)", vet, test, deal)
 	for _, i := range []int{vet, test} {
 		assert.Contains(t, job.Steps[i].Run, `PKGS="$HOSTED_PKGS"`, "test-hosted step %q does not read the deal's HOSTED_PKGS", job.Steps[i].Name)
 	}
