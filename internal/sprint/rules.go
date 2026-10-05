@@ -162,6 +162,8 @@ func RuleAnswers(s *Snapshot, r TickReq) []RuleAnswer {
 			ruleBrief(s, &a)
 		case NReadBroken:
 			a.Act, a.Why = ActLeft, "a reader's finding needs a mind (the same finding twice is a brief defect)"
+		case NBaseRed:
+			ruleBaseGate(s, &a)
 		default:
 			a.Act, a.Why = ActLeft, "no rule answers it"
 		}
@@ -431,6 +433,26 @@ func ruleBrief(s *Snapshot, a *RuleAnswer) {
 	}
 }
 
+// ruleBaseGate: a stream stopped because the base tree gate failed (NBaseRed).
+// Each land pass re-checks the base tip; when it passes, the stream resumes by rule.
+func ruleBaseGate(s *Snapshot, a *RuleAnswer) {
+	a.Rule = RuleBaseGate
+	ctl := s.StreamCtl(a.open.Note.Stream)
+	if ctl == nil || ctl.F("state") != StreamStopped || ctl.F("cause") != "base" {
+		left(a, "the stream is not stopped on a red base")
+		return
+	}
+	base := ctl.F(FieldBaseGateBase)
+	if base == "" {
+		base = "main"
+	}
+	if ctl.F(FieldBaseGatePassed) != "" {
+		a.Act, a.Why = ActResume, "the base "+base+" passes its tree gate again"
+		return
+	}
+	left(a, "the base "+base+" fails its tree gate; each land pass re-checks the base tip")
+}
+
 // The tick's rule parts, in the order they run: the conflict's return, its resume, every
 // rework (failed, bound, the conflict's redo), the late cards, the brief defects. Each is
 // a step of its own on a fresh read, so the conflict's three moves can all be made in one
@@ -494,10 +516,14 @@ func TickRuleResume(s *Snapshot, r TickReq) (Plan, int) {
 			continue
 		}
 		seen[st] = true
-		q := Resume(s, ResumeReq{Stream: st, Did: RuleSaid(RuleConflict, a.Why), Who: r.who()})
+		rule := a.Rule
+		if rule == "" {
+			rule = RuleConflict
+		}
+		q := Resume(s, ResumeReq{Stream: st, Did: RuleSaid(rule, a.Why), Who: r.who()})
 		for _, u := range q.Units {
 			for _, o := range u.Closes {
-				u.Notes = append(u.Notes, decided(o, RuleSaid(RuleConflict, a.Why), r.who(), s.Now))
+				u.Notes = append(u.Notes, decided(o, RuleSaid(rule, a.Why), r.who(), s.Now))
 			}
 			p.Units = append(p.Units, u)
 		}
