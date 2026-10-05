@@ -70,7 +70,7 @@ func TestWaitReturnsOnTheFirstMessageForMeWithoutTakingIt(t *testing.T) {
 	assert.Equal(t, "WAIT MESSAGE id=01JONE from=ada subject=one bytes=8", lines[1])
 	assert.Equal(t, "WAIT MESSAGE id=01JTWO from=ada subject=two bytes=8", lines[2])
 	assert.Regexp(t, `^WAIT OK after=\d+-\d+$`, lines[3])
-	cli.Do(t, "recv", "--as", "bob", "--all").Exit(0).Out("subject=hello", "subject=one", "subject=two")
+	cli.Do(t, "recv", "--as", "bob", "--all").Exit(0).Out(`subject="hello"`, `subject="one"`, `subject="two"`)
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=3 new=0")
 }
 
