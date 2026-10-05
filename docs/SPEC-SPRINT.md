@@ -2833,6 +2833,49 @@ it quiet until the episode ends (the next is raised again); `wait --for` until t
 much running time has passed, when one that still stands is raised again; `off` takes
 an alarm off, and an open one clears.
 
+### The coordinator's pass
+
+The owner, 2026-10-05: "everything I described above needs to be mechanical, so you
+have a reminder to do it (notification) coming from the machine every 10 minutes.
+Otherwise, you will eventually drift and forget." The night before, one friend's
+session was deaf from about midnight to 8:41 AM and finished no card while his row read
+8/8 working, and reader findings and failed attempts waited on the coordinator for four
+hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.go,
+`TickCoordinatorPass`), three conditions the tick keeps, each a judgment:
+
+- **a friend's session is deaf** (`a friend's session is deaf`), one on each friend not
+  held whose beat carries a session pong (`friend beat --pong <RFC3339>`, her daemon's
+  `last_pong`) older than 10 minutes of running time (`FriendDeafAfter`); it names her,
+  her pong age and the remedy: a wake note (`nova-friend ping --to <friend> --wake`),
+  then the debug steps of docs/SPEC-FRIEND.md (Presence, The harness check). A beat that
+  carries no pong judges nothing: deafness is read only from the session's own answer.
+- **a friend holds working cards and finishes none** (`a friend holds working cards and
+  finishes none`), one on each friend not held holding working cards on her row when
+  neither her last working-to-done finish (`finished` of her done cards, ok or failed) nor
+  her oldest working card's take is within the friend-finish window (`set
+  --friend-finish <duration|default>`, the work table's property `friend_finish`, default
+  30m); it names her cards and the age of her last finish. Only her work cards count: a
+  read is not card work.
+- **judgments wait on the coordinator past their deadline** (`judgments wait on the
+  coordinator past their deadline`), one about the sprint while any open judgment is
+  overdue (its review time, else `DeadlineJudgment`, as the overdue line has it), naming
+  them by type and count. The pass's own judgments are not counted.
+
+Each is an episode, keyed by its type and subject: written once when its condition
+starts, raised again in place every 10 minutes of running time while it holds
+(`PassEvery`; the k-th raise again is due k times that after it was written, and the
+judgment's `before` counts them), and closed when it stops holding. A raise again
+rewrites the judgment with the latest facts and writes one happened note to the
+coordinator, `a judgment still holds: raised again`, so each tick that raises one ends
+with a tick-end note and `inbox --wait` wakes on it: a coordinator who missed one is
+woken again. `ack` (deaf and idle list it) keeps one quiet until its episode ends, and
+`wait` until its review time; a friend the coordinator holds (`friend down`, `hold`) is
+judged neither deaf nor idle. The model is tla/CoordinatorPass.tla: one judgment an
+episode (`OneJudgmentAnEpisode`), never a whole window unraised (`PushedEveryWindow`),
+closed when it stops holding (`ClosedWhenCleared`), each with a reversed witness TLC
+catches. Pinned by `TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes`
+on the twin store with a fake clock.
+
 ### Answered by nova-decide
 
 `answer` answers the routine judgments by the judgment decision

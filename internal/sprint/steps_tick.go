@@ -146,6 +146,10 @@ var TickDecisions = map[string][]string{
 	NAlarmMerging: {"ack", "wait"},
 	NAlarmReady:   {"ack", "wait"},
 	NAlarmFleet:   {"ack", "wait"},
+	// the coordinator's pass (coordinator_pass.go): each names its own
+	NFriendDeaf:        {"ack", "wait"},
+	NFriendIdle:        {"ack", "wait"},
+	NCoordinatorBehind: {"act", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -173,6 +177,10 @@ type TickReq struct {
 	IdleAlarm bool
 	// WakeFriend wakes a friend by bus message during the stall ladder (cmd/nova-sprint/friendcards.go).
 	WakeFriend func(friend string, rung int, d time.Duration) error
+	// Sessions is each friend's session as her last beat carries it, and whether the
+	// coordinator holds her, read by the binding with every tick (coordinator_pass.go);
+	// nil is none read, and no friend is deaf.
+	Sessions map[string]FriendSession
 }
 
 func (r TickReq) who() string {
@@ -256,9 +264,9 @@ const (
 var TickStart = []TickPartDef{{PartLevel, TickLevel}, {PartLevelReads, TickLevelReads}}
 
 // TickEnd is the tick's end, once the tables are settled: what is always
-// true held, the deadlines (with the backlog alarms, alarms.go) and the overdue
-// judgments, and the done part last.
-// It writes notes, no table.
+// true held, the deadlines (with the backlog alarms, alarms.go), the overdue
+// judgments (with the coordinator's pass, coordinator_pass.go), and the done
+// part last. It writes notes, no table.
 var TickEnd = []TickPartDef{
 	{"check", TickCheck},
 	{"deadlines", TickDeadlines},
@@ -1092,8 +1100,18 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 // the judgment closes or is no longer overdue (a wait moved its review time
 // on), so a judgment overdue again is marked again. A coordinator who is
 // silent is visible: every judgment waiting on them is named, once, as
-// overdue.
+// overdue. The coordinator's pass (TickCoordinatorPass) runs in this part
+// too, after the overdue lines: it reminds the coordinator, every PassEvery,
+// of the judgments still late and of the friends deaf or idle.
 func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
+	p, due := tickOverdue(s, r)
+	pass, passDue := TickCoordinatorPass(s, r)
+	p.Notes, p.Closes, p.Updates = append(p.Notes, pass.Notes...), append(p.Closes, pass.Closes...), append(p.Updates, pass.Updates...)
+	return p, due + passDue
+}
+
+// tickOverdue is the overdue lines and holds of TickOverdue.
+func tickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	type judg struct {
 		note     Note
@@ -1113,17 +1131,7 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		j.subjects = append(j.subjects, o.Subject())
 	}
-	overdue := func(n Note) bool {
-		if !n.Review.IsZero() && n.ReviewSet.IsZero() {
-			return s.Now.After(n.Review)
-		}
-		if !n.Review.IsZero() {
-			d, ok := r.running(s.Now, stamp(n.ReviewSet))
-			return ok && d >= n.Review.Sub(n.ReviewSet)
-		}
-		d, ok := r.running(s.Now, stamp(n.At))
-		return ok && d > DeadlineJudgment
-	}
+	overdue := func(n Note) bool { return JudgmentOverdue(s, r, n) }
 	marked := map[string]bool{} // judgment id + subject, held as overdue
 	for _, o := range s.Acked {
 		if o.Note.Type != NOverdue {
@@ -1172,6 +1180,20 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 	return p, due
 }
 
+// JudgmentOverdue says the judgment is past its due time in running time: its review
+// time when the coordinator set one (wait), else DeadlineJudgment after it was written.
+func JudgmentOverdue(s *Snapshot, r TickReq, n Note) bool {
+	if !n.Review.IsZero() && n.ReviewSet.IsZero() {
+		return s.Now.After(n.Review)
+	}
+	if !n.Review.IsZero() {
+		d, ok := r.running(s.Now, stamp(n.ReviewSet))
+		return ok && d >= n.Review.Sub(n.ReviewSet)
+	}
+	d, ok := r.running(s.Now, stamp(n.At))
+	return ok && d > DeadlineJudgment
+}
+
 // cond is a condition the tick tells the coordinator of: a judgment of a type
 // on its subjects (primaries, or the stream as a whole; a stream-level
 // condition with no stream is about the sprint).
@@ -1191,7 +1213,7 @@ type cond struct {
 func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
-		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet:
+		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFriendDeaf, NFriendIdle, NCoordinatorBehind:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
