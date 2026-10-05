@@ -66,6 +66,10 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 	a.serial.Lock()
 	queued, coordinator, err := a.queuedToMerge(ctx, addr)
 	a.serial.Unlock()
+	var resumeErr error
+	if err == nil && queued {
+		resumeErr = a.resumeRejected(ctx, addr, coordinator)
+	}
 	idle := err == nil && !queued
 	var lines []string
 	code := 0
@@ -90,6 +94,9 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 				lines = append(lines, line)
 			}
 		}
+	}
+	if resumeErr != nil {
+		lines = append(lines, "NOTE the stream stopped by a rejected push could not be resumed: "+oneline.Err(resumeErr)+"; the next round tries again")
 	}
 	said := ""
 	if code != 0 {
@@ -127,4 +134,44 @@ func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coor
 		}
 	}
 	return false, coordinator, nil
+}
+
+// resumeRejected resumes each stream the merge queue's rejection stopped, so the next
+// landing pushes again: a refusal that was transient (a protected-branch hook, a base
+// that moved twice) clears by itself, where it would otherwise wait for a person. A
+// stream is resumed at most sprint.RejectedResumes times in a row (a.rejectResumes,
+// cleared when the stream is no longer stopped with cards queued), after which it stays
+// stopped with its one open judgment. A failed resume is returned, said by the round, and tried again by the next.
+func (a *app) resumeRejected(ctx context.Context, addr, coordinator string) error {
+	a.serial.Lock()
+	defer a.serial.Unlock()
+	st, err := a.storeCtx(ctx, common{verb: "where", redis: addr})
+	if err != nil {
+		return err
+	}
+	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+	if err != nil {
+		return err
+	}
+	for _, name := range s.Streams() {
+		ctl := s.StreamCtl(name)
+		if ctl == nil || ctl.F("state") != sprint.StreamStopped || ctl.F("cause") != "rejected" {
+			if ctl != nil && ctl.F("state") != sprint.StreamMerging {
+				delete(a.rejectResumes, name)
+			}
+			continue
+		}
+		if a.rejectResumes[name] >= sprint.RejectedResumes || s.Merge.Count(name, sprint.Queued) == 0 {
+			continue
+		}
+		if a.rejectResumes == nil {
+			a.rejectResumes = map[string]int{}
+		}
+		a.rejectResumes[name]++
+		var out, errb bytes.Buffer
+		if a.cmdResume([]string{"--redis", addr, "--actor", coordinator, "--stream", name, "--did", "the land loop retries the push after the merge queue rejected it"}, &out, &errb) != 0 {
+			return fmt.Errorf("resume --stream %s: %s", name, strings.TrimSpace(errb.String()))
+		}
+	}
+	return nil
 }

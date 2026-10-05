@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -78,4 +79,50 @@ func TestALandFailureIsSaidOnceUntilItChangesOrClears(t *testing.T) {
 	assert.Empty(t, out.String(), "the store is back and nothing is queued: nothing is said")
 	a.backend = down
 	assert.Equal(t, 1, rounds(3), "the failure came back after it cleared: said again")
+}
+
+// A stream stopped by a transient push refusal resumes by itself (docs/SPEC-SPRINT.md,
+// "A stopped stream"): the push is refused twice in one round (the stop), then succeeds
+// in the next, and the stream lands with no person resuming it. A refusal that never
+// clears is bounded: after sprint.RejectedResumes tries the stream stays stopped with
+// exactly one judgment open.
+func TestAStreamStoppedByATransientPushRefusalResumesByItself(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		clears int // pushes refused before one succeeds
+		state  string
+		open   int
+	}{
+		{"clears", 2, "landed", 0},
+		{"never clears", 1 << 30, "stopped rejected", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newLandRig(t)
+			r.ok("add --stream s1 --count 2")
+			r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2", "main", "b.txt", "b\n")}, "s1-1", "s1-2")
+			more := []string{"--repo-dir", r.clone, "--base", "main"}
+			pushes := 0
+			r.a.beforePush = func(int) {
+				pushes++
+				if pushes <= tc.clears {
+					r.moveBase("main", "moved"+strconv.Itoa(pushes)+".txt")
+				}
+			}
+			var out bytes.Buffer
+			for range sprint.RejectedResumes + 3 {
+				r.a.landRound(context.Background(), "mem:0", more, &out)
+			}
+			assert.Equal(t, tc.state, r.streamState("s1"), out.String())
+			inbox := r.ok("inbox")
+			assert.Contains(t, inbox, "INBOX OK judgments="+strconv.Itoa(tc.open), inbox)
+			if tc.clears == 2 {
+				assert.Equal(t, 3, pushes)
+			} else {
+				assert.Equal(t, 2*(sprint.RejectedResumes+1), pushes, "bounded")
+			}
+			r.clean()
+		})
+	}
 }

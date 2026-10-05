@@ -411,6 +411,12 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	return p
 }
 
+// RejectedResumes is how many times the land loop resumes a stream stopped because the
+// merge queue rejected its push, before it leaves the stream stopped for the judgment
+// (docs/SPEC-SPRINT.md, a stopped stream): a transient refusal clears by itself, a
+// lasting one is the coordinator's.
+const RejectedResumes = 3
+
 // ResumeReq moves a stopped stream again.
 type ResumeReq struct {
 	Stream  string
