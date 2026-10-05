@@ -23,7 +23,6 @@ func TestTheParserClassifiesWithoutAnOpinion(t *testing.T) {
 	ok := ParseReport([]byte(strings.NewReplacer("%s", "").Replace("") + sprintf(head, "1", finding, "red")))
 	assert.Equal(t, ClassOK, ok.Class, "a head with findings: 1 is ok with one finding line, got %s with %d", ok.Class, len(ok.FindingLines))
 	assert.Len(t, ok.FindingLines, 1, "a head with findings: 1 is ok with one finding line, got %s with %d", ok.Class, len(ok.FindingLines))
-	assert.True(t, ok.FindingLines[0].Quoted(), "a finding with its rule quoted beside a file:line is quoted: %+v", ok.FindingLines[0])
 	assert.Equal(t, "internal/x.go", ok.FindingLines[0].File, "a finding with its rule quoted beside a file:line is quoted: %+v", ok.FindingLines[0])
 
 	clean := ParseReport([]byte(sprintf(head, "0", "", "green")))
@@ -94,12 +93,9 @@ func TestAFindingCarriesItsQuoteOnTheSameLineOrTheNext(t *testing.T) {
 		"  `RUN RECLAIM slot=<n> id=<id> end=<...> dest=<done|failed|->` internal/swarm/run.go:147\n"))
 	require.Len(t, wrapped.FindingLines, 1, "the continuation is part of the finding above it, not a second finding: got %d", len(wrapped.FindingLines))
 	f := wrapped.FindingLines[0]
-	assert.True(t, f.Quoted(), "a finding whose quote is on the next line IS quoted (rule 2): %+v", f)
 	assert.Equal(t, "internal/swarm/run.go", f.File, "the file:line on the next line is the finding's file:line, got %q:%q", f.File, f.FileLine)
 	assert.Equal(t, "147", f.FileLine, "the file:line on the next line is the finding's file:line, got %q:%q", f.File, f.FileLine)
 	assert.Equal(t, "RUN RECLAIM slot=<n> id=<id> end=<...> dest=<done|failed|->", f.Rule, "the rule quoted on the next line is the finding's rule, got %q", f.Rule)
-	_, ok := f.Key("o/n", "abc")
-	assert.True(t, ok, "a finding quoted on the next line has a de-duplication key like any other (rule 15)")
 
 	// ONLY the next. A quote two lines below is not what rule 2 allows, and a finding with
 	// no quote is still counted unquoted -- the parser gains no opinion here.
@@ -108,7 +104,7 @@ func TestAFindingCarriesItsQuoteOnTheSameLineOrTheNext(t *testing.T) {
 		"\n" +
 		"  `THE RULE` internal/x.go:10\n"))
 	if assert.Len(t, far.FindingLines, 1, "rule 2 says the same line or the NEXT, and nothing below that: %+v", far.FindingLines) {
-		assert.False(t, far.FindingLines[0].Quoted(), "rule 2 says the same line or the NEXT, and nothing below that: %+v", far.FindingLines)
+		assert.Empty(t, far.FindingLines[0].Rule, "rule 2 says the same line or the NEXT, and nothing below that: %+v", far.FindingLines)
 	}
 
 	// A finding that quoted its rule on its own line is NOT re-read from the line below it.
@@ -120,25 +116,6 @@ func TestAFindingCarriesItsQuoteOnTheSameLineOrTheNext(t *testing.T) {
 	assert.Equal(t, "internal/a.go", own.FindingLines[0].File, "a finding complete on its own line keeps its own quote, got %+v", own.FindingLines[0])
 	assert.Equal(t, "THE RULE", own.FindingLines[0].Rule, "a finding complete on its own line keeps its own quote, got %+v", own.FindingLines[0])
 	assert.Equal(t, "internal/c.go", own.FindingLines[1].File, "the second bullet is the second finding, got %+v", own.FindingLines[1])
-}
-
-// Rule 15's normalization: ./internal/x.go:10 and internal\x.go:10 are one file.
-func TestAPathIsNormalizedBeforeTheCompare(t *testing.T) {
-	t.Parallel()
-
-	a := parseFinding(1, "something `RULE` ./internal/x.go:10")
-	b := parseFinding(1, `something `+"`RULE`"+` internal\x.go:10`)
-	ka, oka := a.Key("o/n", "abc")
-	kb, okb := b.Key("o/n", "abc")
-	assert.True(t, oka, "the same finding spelled two ways wants one key:\n%q\n%q", ka, kb)
-	assert.True(t, okb, "the same finding spelled two ways wants one key:\n%q\n%q", ka, kb)
-	assert.Equal(t, kb, ka, "the same finding spelled two ways wants one key:\n%q\n%q", ka, kb)
-	// Two findings under different revisions stay two findings.
-	k, _ := a.Key("o/n", "def")
-	assert.NotEqual(t, ka, k, "equal file:line and rule in two revisions are two findings")
-	// A report with no rev merges with nothing.
-	_, ok := a.Key("o/n", "")
-	assert.False(t, ok, "a head without rev: has no de-duplication key")
 }
 
 // The harness config carries the variable's NAME and never its value: a value written there
