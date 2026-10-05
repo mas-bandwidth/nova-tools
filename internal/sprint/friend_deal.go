@@ -221,7 +221,11 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, col string) Unit {
 // ready -> working on it, its attempt as it was: a take-back is no attempt and spends no
 // bound.
 func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
-	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom}
+	// a card the fleet held before carries its fleet route; a friend runs her own model, so
+	// the route comes off as a first deal to her writes none (2026-10-04: a resting route
+	// kept on a friend's card withdrew it every tick, and each deal again was a new inbox copy)
+	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom,
+		FieldRoute, FieldModel, FieldTokens, FieldUSD, FieldHarness, FieldDeadline}
 	if wc.F(FieldTakeEnded) != "" {
 		set["redeals"] = itoa(wc.Int("redeals") + 1)
 		unset = append(unset, FieldTakeEnded, FieldProviderError, FieldDecided, FieldDecidedUsed)
