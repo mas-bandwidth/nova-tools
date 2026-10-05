@@ -158,6 +158,9 @@ func (a *app) seatCheck(ctx context.Context, st *store.Store, redisAddr string) 
 	if o.serverAddr != nil {
 		addr, self = o.serverAddr()
 	}
+	if addr == "" && !self {
+		addr = a.seatServer() // the server seat install recorded, when the environment names none
+	}
 	m.Server = sprint.ServerM{Addr: addr, Self: self}
 	switch {
 	case self:
@@ -321,7 +324,7 @@ func (a *app) runSeatCheckVerb(verb string, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	r := a.seatCheck(context.Background(), st, c.redis)
+	r := a.withConfigSeat(a.seatCheck(context.Background(), st, c.redis))
 	if c.json {
 		fmt.Fprintln(stdout, r.JSON())
 	} else {

@@ -16,7 +16,7 @@ import (
 func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "status"
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := seatStoreFlags(fs)
 	redisFlag := fs.String("redis", "", "the Redis `host:port` apply writes (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); without one, status reads the store alone")
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {

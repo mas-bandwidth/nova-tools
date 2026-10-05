@@ -17,7 +17,7 @@ import (
 func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "apply"
 	fs := verbflag.New(verb)
-	c := writeStoreFlags(fs)
+	c := seatStoreFlags(fs)
 	redisFlag := fs.String("redis", "", "the Redis `host:port` to write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	as := actorFlag(fs)
 	kind := fs.String("kind", "", "one `kind` to apply ("+strings.Join(config.KindNames(), ", ")+"); every kind, in order, when unset")

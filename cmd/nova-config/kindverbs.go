@@ -113,7 +113,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	if add && (k.Name == config.KindMachine || k.Name == config.KindLoop) {
 		c = storeFlags(fs)
 	} else {
-		c = writeStoreFlags(fs)
+		c = seatStoreFlags(fs)
 	}
 	as := actorFlag(fs)
 	dry := fs.Bool("dry-run", false, "print the change the write would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
@@ -302,7 +302,7 @@ func refRemedy(k *config.Kind) string {
 func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
 	verb := k.Name + " remove"
 	fs := verbflag.New(verb)
-	c := writeStoreFlags(fs)
+	c := seatStoreFlags(fs)
 	as := actorFlag(fs)
 	dry := fs.Bool("dry-run", false, "print the change the remove would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
 	asJSON := jsonFlag(fs)
@@ -430,7 +430,7 @@ func liveFields(bs map[string]*config.Beat, name string) []any {
 func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
 	verb := k.Name + " list"
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := seatStoreFlags(fs)
 	redisFlag := liveFlag(fs, k)
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
@@ -485,7 +485,7 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 func runKindRead(ctx context.Context, k *config.Kind, which string, args []string, stdout, stderr io.Writer, d deps) int {
 	verb := k.Name + " " + which
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := seatStoreFlags(fs)
 	var redisFlag *string
 	if which == "show" {
 		redisFlag = liveFlag(fs, k)

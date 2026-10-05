@@ -66,13 +66,20 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	dir := fs.String("dir", "", "the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)")
 	logf := fs.String("log", "", "the file the loop's lines go to, macOS (default: ~/Library/Logs/nova-sprint-seat-push.log); on Linux they are in the journal")
 	dry := fs.Bool("dry-run", false, "print the unit and where it would go, and write and load nothing")
+	server := fs.String("server", "", "the sprint's server, `host:port` (default NOVA_SPRINT_SERVER): the unit's, and recorded in the seat beside the store login, where seat check reads it when NOVA_SPRINT_SERVER is not set")
+	cs := addConfigSeatFlags(fs)
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, name, argErr("takes no words ", err, pos...))
 	}
+	if _, _, err := cs.profile(); err != nil {
+		return refuse(stderr, name, err.Error())
+	}
 	goos := a.seatOS()
 	u := sprint.SeatUnit{OS: goos, Log: *logf}
-	if srv := a.server(fs); srv != "" {
+	if srv := strings.TrimSpace(*server); srv != "" {
+		u.Server = srv
+	} else if srv := a.server(fs); srv != "" {
 		u.Server = srv
 	} else {
 		u.Redis = strings.TrimSpace(c.redis)
@@ -108,6 +115,9 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 		fmt.Fprintf(stdout, "SEAT INSTALL DRY-RUN unit=%s; nothing was written or loaded\n%s", oneline.Field(path), text)
+		if err := a.installSeat(cs, u.Server, true, stdout); err != nil {
+			return refuse(stderr, name, err.Error())
+		}
 		return 0
 	}
 	r, err := a.seatInstaller(goos, *dir).Install(u)
@@ -115,13 +125,19 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s FAILED: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
+	var seat strings.Builder
+	if err := a.installSeat(cs, u.Server, false, &seat); err != nil {
+		fmt.Fprintf(stderr, "%s %s FAILED: the unit is installed, and %s\n", prog, name, oneline.Escape(err.Error()))
+		return 1
+	}
 	if c.json {
-		b, _ := json.Marshal(map[string]any{"path": r.Path, "written": r.Changed, "loaded": true, "args": u.Args()}) // ignored: strings and bools always encode
+		b, _ := json.Marshal(map[string]any{"path": r.Path, "written": r.Changed, "loaded": true, "args": u.Args(), "seat": strings.Split(strings.TrimSpace(seat.String()), "\n")}) // ignored: strings and bools always encode
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
 	fmt.Fprintf(stdout, "SEAT INSTALL OK unit=%s written=%t loaded=true\n", oneline.Field(r.Path), r.Changed)
 	fmt.Fprintf(stdout, "  runs: %s\n", strings.Join(u.Args(), " "))
+	fmt.Fprint(stdout, seat.String())
 	return 0
 }
 
