@@ -225,3 +225,36 @@ its machine rows; no new kind or field was needed.
 send: two (the roster and `TIME` in one pipeline, then the transaction). recv:
 four (the roster, the group, the claim, the read). ack: five (group, pending,
 the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one.
+
+## The deadlines
+
+The finding (2026-10-04, one timeout while the Studio's load average was 35) was
+read against the base tip first. The client already set a bound on every network
+step, in `internal/redisconn/open.go`: `OpenTimeout`, `DialTimeout`, `WriteTimeout`,
+`ReadTimeout` and `PoolTimeout`, 5 s each; a command that blocks gets its block
+plus 10 s (go-redis); `MaxRetries` is -1, so nothing was retried. What was missing
+was a bound of the bus's own and the words for it: a call that ran out surfaced
+as a bare `i/o timeout`, there was no `--timeout`, and a transient stall on a
+read ended the verb at once.
+
+The rule, in `internal/bus/redis.go` (`Redis.call`):
+
+- Every store call runs under a context deadline of `Timeout` (`--timeout`, default
+  `CallTimeout`, 5 s). `recv --forever` reads with `BLOCK` 30 s (`ForeverBlock`) and
+  gets that plus `BlockMargin`, a fixed 10 s.
+- A call that runs out is refused with
+  `redis did not answer within <d> at <host:port>: the host may be overloaded (load average), try again`.
+  The line names the address and nothing of the login.
+- One retry, for a read that changes nothing: `Members` (names), `Marks`, `Pending`,
+  `Group`, `Range` and `Get` (peek, log). Never a send (`AddAll`), an `Ack`, an
+  `Unmark`, a `Release`, a `Claim` or a `Read`: a second try of those could act twice
+  or hand an entry out twice. A caller whose own context ended is not retried.
+- `--timeout` must be above zero: a call with no deadline is the defect.
+
+Worst case for a retried read is two deadlines (10 s at the default); for a send, one (5 s).
+
+Measured with a stalled in-process store (`internal/bus/timeout_test.go`, a pipe
+that reads and never answers): `Roster` at `Timeout` 20 ms sent its pipeline (two SMEMBERS) twice and
+refused; `AddAll` and `Ack` sent once; a blocking `Read` of 10 ms with a 20 ms
+margin and 20 ms timeout refused at 50 ms (20 + 10 + 20) having sent XREADGROUP once. The tests
+assert counts and the refusal, never elapsed time.

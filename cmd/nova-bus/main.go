@@ -187,6 +187,7 @@ line with no id, writing nothing.`,
 					f.String("re", "", "the id of the message this one answers")
 					f.String("kind", bus.KindStatus, "the kind of message, one of "+strings.Join(bus.Kinds, ", ")+": what a reader filters on")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.Duration("timeout", bus.CallTimeout, "how long one call to Redis may take before it is refused as unanswered; a blocking wait gets its block and "+bus.BlockMargin.String()+" more")
 					f.Check(func(c *tool.Call) {
 						if c.Given("body") == c.Given("stdin") {
 							c.Problem("the body comes from exactly one of --body <text> or --stdin")
@@ -207,6 +208,7 @@ line with no id, writing nothing.`,
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.String("kind", "", "only these kinds, comma-separated, of "+strings.Join(bus.Kinds, ", ")+" (default: every kind)")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.Duration("timeout", bus.CallTimeout, "how long one call to Redis may take before it is refused as unanswered; a blocking wait gets its block and "+bus.BlockMargin.String()+" more")
 				},
 				Run: w.peek,
 			},
@@ -241,6 +243,7 @@ before kinds existed.`,
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.Duration("timeout", bus.CallTimeout, "how long one call to Redis may take before it is refused as unanswered; a blocking wait gets its block and "+bus.BlockMargin.String()+" more")
 					f.Check(func(c *tool.Call) {
 						if c.Bool("forever") && c.Str("exec") == "" {
 							c.Problem("--forever wants --exec <command>: a loop that acks nothing would hand out the same message for ever")
@@ -275,6 +278,7 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.Required("id", "the message ids, comma-separated, as recv printed them")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.Duration("timeout", bus.CallTimeout, "how long one call to Redis may take before it is refused as unanswered; a blocking wait gets its block and "+bus.BlockMargin.String()+" more")
 				},
 				Run: w.ack,
 			},
@@ -289,6 +293,7 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 					f.Bool("bodies", false, "print each message's body as well")
 					f.Max()
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.Duration("timeout", bus.CallTimeout, "how long one call to Redis may take before it is refused as unanswered; a blocking wait gets its block and "+bus.BlockMargin.String()+" more")
 				},
 				Run: w.log,
 			},
@@ -300,6 +305,7 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 				Detail:  "Prints NAMES OK count=<n>, then one NAMES NAME name=<name> line per known name: nova-config's friend and machine rows.",
 				Flags: func(f *tool.Flags) {
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.Duration("timeout", bus.CallTimeout, "how long one call to Redis may take before it is refused as unanswered; a blocking wait gets its block and "+bus.BlockMargin.String()+" more")
 				},
 				Run: w.names,
 			},
@@ -324,6 +330,14 @@ func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
 	st, login, closeStore, err := w.open(ctx, addr)
 	if err != nil {
 		return nil, "", nil, tool.Refuse(err.Error())
+	}
+	if r, ok := st.(bus.Redis); ok {
+		r.Timeout = c.Dur("timeout")
+		if r.Timeout <= 0 {
+			closeStore()
+			return nil, "", nil, tool.Refuse("--timeout must be above zero: a call with no deadline can wait for ever on a store that does not answer")
+		}
+		st = r
 	}
 	return &bus.Bus{Store: st}, login, closeStore, nil
 }
