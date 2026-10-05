@@ -48,6 +48,13 @@ type friendEntry struct {
 	// Mode is her delivery mode, her nova-config row's (batch or one-shot),
 	// which her daemon reads back from her beat; empty is batch.
 	Mode string `json:"mode,omitempty"`
+	// Models is her row's model per tier, and Children and ChildModel what her harness
+	// can do (config.FriendModels, children, child_model; docs/SPEC-FRIEND.md, a friend's
+	// models): the deal writes the model of a card's tier on the card, and her queue file
+	// carries the three to her daemon. Empty is none, and yes.
+	Models     map[string]string `json:"models,omitempty"`
+	Children   string            `json:"children,omitempty"`
+	ChildModel string            `json:"child_model,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -63,6 +70,16 @@ type FriendSpec struct {
 	Width int
 	Class string
 	Mode  string // her delivery mode, config.FriendMode of her row
+	// Models, Children and ChildModel are her row's model per tier and what her harness
+	// can do (config.FriendModels, children, child_model).
+	Models     map[string]string
+	Children   string
+	ChildModel string
+}
+
+// sameModels says two friends' model maps hold the same models, none being empty.
+func sameModels(a, b map[string]string) bool {
+	return maps.Equal(a, b) || len(a) == 0 && len(b) == 0
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -78,6 +95,8 @@ type FriendRow struct {
 	Status  string `json:"status"`
 	Class   string `json:"class,omitempty"`
 	Mode    string `json:"mode,omitempty"`
+	// Models is her row's model per tier, as friend sync last wrote it; absent when none.
+	Models map[string]string `json:"models,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -152,11 +171,12 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || !sameModels(e.Models, s.Models) || e.Children != s.Children || e.ChildModel != s.ChildModel:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
 		e.Width, e.Class, e.Mode = s.Width, s.Class, s.Mode
+		e.Models, e.Children, e.ChildModel = s.Models, s.Children, s.ChildModel
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -308,7 +328,7 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 				_ = json.Unmarshal([]byte(vals[2*i+1]), &h)
 			}
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Mode: r[n].Mode, Models: r[n].Models, Load: b.Load, Report: b.Friend, Beat: b.At}
 		if b.Friend != nil {
 			row.Active = b.Friend.Active
 		}
@@ -352,7 +372,7 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Models: r.Models}
 		if r.Report != nil {
 			seats[i].Running = r.Report.Running
 		}
@@ -521,7 +541,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, Models: e.Models, Children: e.Children, ChildModel: e.ChildModel}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last
