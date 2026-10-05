@@ -84,10 +84,16 @@ func (b ProviderBalance) Low() bool { return b.Known && b.Balance <= max(0, b.Sp
 // spendSince is the spend an hour between the read before (was) and this one at now: from
 // the provider's count used when both reads have one, else from the balance's fall; the
 // spend measured before when neither says (the first read, a payment between the two).
+// For opencode with no balance endpoint, the spend comes from internal cost records.
 func spendSince(was ProviderBalance, r ProviderRead, now time.Time) float64 {
 	h := now.Sub(was.At).Hours()
 	switch {
 	case was.At.IsZero() || h <= 0:
+		// For opencode without an endpoint, return the internal spend record
+		if r.Provider == "opencode" && !r.Known {
+			// Return total spend from internal records as the hour value
+			return r.Used
+		}
 		return 0
 	case r.HasUsed && was.HasUsed && r.Used >= was.Used:
 		return (r.Used - was.Used) / h
