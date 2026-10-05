@@ -99,7 +99,6 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 	if problem := ruleRecipientsProblem([]string{opts.Pub, recoveryKey}, recoveryKey); problem != "" {
 		return nil, fmt.Errorf("the rule seat add writes for %s %s; --pub is the new seat's own key, from its keygen receipt, never the store's recovery key", opts.AsName, problem)
 	}
-
 	seatFile := opts.AsName + ".yaml"
 	targetFile := filepath.Join(opts.StoreDir, seatFile)
 	if _, err := os.Stat(targetFile); err == nil {
@@ -110,6 +109,15 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 		return nil, fmt.Errorf("source seat file %s.yaml is absent in %s", opts.From, opts.StoreDir)
 	}
 	if err := seatAddRuleIsFree(original, seatFile); err != nil {
+		return nil, err
+	}
+	// A --pub an existing rule already names is a seat's key already, and a seat added
+	// under it is a seat whose file a different seat's key opens: refused before any
+	// write, naming the seat that owns the key (SPEC-SECRETS "seat add";
+	// tla/SecretsSeat.tla on sprint/md-secrets-h.w1.g1.e15, the SeatAdd action, whose
+	// guards on --pub name the recovery key and the private half but not a key another
+	// rule already carries).
+	if err := seatAddPubIsFree(original, opts.Pub, recoveryKey); err != nil {
 		return nil, err
 	}
 
@@ -267,6 +275,51 @@ func seatAddHasCreationRules(config []byte) bool {
 	return slices.ContainsFunc(strings.Split(string(config), "\n"), func(line string) bool {
 		return strings.HasPrefix(strings.TrimSpace(line), "creation_rules:")
 	})
+}
+
+// seatAddPubIsFree refuses a --pub that any creation rule already names as a
+// recipient: the key is a seat's key already, and the seat added under it is a seat
+// whose file a different seat's key opens, its first values re-sealed to that seat
+// (SPEC-SECRETS "seat add"; tla/SecretsSeat.tla on sprint/md-secrets-h.w1.g1.e15, the
+// SeatAdd action). The gate's registry check could stand in for this judgement, but it
+// is dormant without --machines (SPEC-SECRETS "gate"), so the wall stands in the verb,
+// before any write. The refusal names the seat that owns the key and the rule that
+// names it, and never the key's value beyond what the rule file already shows. The
+// store's recovery key is ruleRecipientsProblem's own refusal, which runs first, and a
+// config whose rules do not parse names no owner: the store's own refusals answer it.
+func seatAddPubIsFree(config []byte, pub, recoveryKey string) error {
+	if pub == recoveryKey {
+		return nil
+	}
+	cfg, err := parseSopsConfig(bytes.NewReader(config))
+	if err != nil {
+		return nil
+	}
+	for i := range cfg.CreationRules {
+		rule := &cfg.CreationRules[i]
+		if !slices.Contains(rule.Recipients, pub) {
+			continue
+		}
+		return fmt.Errorf("--pub is already the key of seat %s (rule %d of .sops.yaml); a seat is one seat key, and a new seat's key comes from its own keygen receipt",
+			seatAddSeatOfRule(rule.PathRegex), i+1)
+	}
+	return nil
+}
+
+// seatAddSeatOfRule names the seat a creation rule governs: the anchored shape
+// invariant 1 demands and seatAddAppendRule writes, ^<seat>\.yaml$, gives <seat>; a
+// path_regex of any other shape answers itself, what the rule file shows
+// (SPEC-SECRETS invariant 1).
+func seatAddSeatOfRule(pathRegex string) string {
+	p := strings.TrimPrefix(pathRegex, "^")
+	p = strings.TrimSuffix(p, "$")
+	if seat, ok := strings.CutSuffix(p, `\.yaml`); ok {
+		return seat
+	}
+	if seat, ok := strings.CutSuffix(p, ".yaml"); ok {
+		return seat
+	}
+	return pathRegex
 }
 
 // seatAddAppendRule adds one rule, in the shape invariant 1 demands and keygen prints:
