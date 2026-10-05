@@ -13,12 +13,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
-// writeBaseBrief writes a passing brief whose header block names its repository and,
+// writeBaseBrief writes a passing brief whose header block names its repository (repo,
+// from briefRepo, whose tree add's brief checks read) and,
 // unless base is "", its BASE: line, as a card the coordinator cuts does, and returns
 // its path.
-func writeBaseBrief(t *testing.T, dir, id, base string) string {
+func writeBaseBrief(t *testing.T, repo, dir, id, base string) string {
 	t.Helper()
-	lead := "RESULT: " + id + " sha=000000000000\nKIND: fix\nREPO: mas-bandwidth/nova-tools\n"
+	lead := "RESULT: " + id + " sha=000000000000, tier: flash\nKIND: fix\nREPO: " + repo + "\nTEST: none the base is the subject\n"
 	if base != "" {
 		lead += "BASE: " + base + "\n"
 	}
@@ -46,10 +47,11 @@ func TestEveryStreamLandsOnTheSprintBranchAndOnlyPromotionReachesDev(t *testing.
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	dir := t.TempDir()
-	onDev := writeBaseBrief(t, dir, "d1", "dev")
-	pinned := writeBaseBrief(t, dir, "d2", "dev@0123456789012345678901234567890123456789")
-	onSprint := writeBaseBrief(t, dir, "k1", "sprint/mechanical-2026-10-02")
-	noBase := writeBaseBrief(t, dir, "n1", "")
+	repo := briefRepo(t, ta.a, []string{"internal/d1.go", "internal/d2.go", "internal/k1.go", "internal/n1.go", "internal/m1.go", "internal/m2.go"}, "dev", "sprint/mechanical-2026-10-02")
+	onDev := writeBaseBrief(t, repo, dir, "d1", "dev")
+	pinned := writeBaseBrief(t, repo, dir, "d2", "dev@0123456789012345678901234567890123456789")
+	onSprint := writeBaseBrief(t, repo, dir, "k1", "sprint/mechanical-2026-10-02")
+	noBase := writeBaseBrief(t, repo, dir, "n1", "")
 
 	for _, c := range []struct{ name, line, card string }{
 		{"one brief", "add --stream s1 d1 --one --brief-file " + onDev, "d1"},
@@ -69,15 +71,20 @@ func TestEveryStreamLandsOnTheSprintBranchAndOnlyPromotionReachesDev(t *testing.
 	}
 
 	many := t.TempDir()
-	writeBaseBrief(t, many, "m1", "sprint/mechanical-2026-10-02")
-	writeBaseBrief(t, many, "m2", "dev")
+	writeBaseBrief(t, repo, many, "m1", "sprint/mechanical-2026-10-02")
+	writeBaseBrief(t, repo, many, "m2", "dev")
 	code, out, errs := ta.do("add --stream s2 --brief-dir " + many)
 	assert.NotEqual(t, 0, code, "many-brief add with a dev card: %s%s", out, errs)
 	assert.Contains(t, out+errs, "card m2 is cut on dev, and stream s2 is not the promotion stream")
 	assert.False(t, ta.placed("m1") || ta.placed("m2"), "nothing written, all or none")
 
 	assert.Contains(t, ta.ok("add --stream s1 k1 --one --brief-file "+onSprint), "MOVED k1 -> ready", "a card cut on the sprint branch is admitted")
-	assert.Contains(t, ta.ok("add --stream s1 n1 --one --brief-file "+noBase), "MOVED n1 -> ready", "a card naming no BASE lands on the lander's --base")
+	// a coding card naming no BASE has no tree for add's brief checks to read: refused,
+	// never admitted on no evidence (holdBriefChecks)
+	code, _, errs = ta.do("add --stream s1 n1 --one --brief-file " + noBase)
+	assert.Equal(t, 2, code, errs)
+	assert.Contains(t, errs, "base-is-live: 1: MISSING: the brief names no BASE:", "a coding card naming no BASE is refused")
+	assert.False(t, ta.placed("n1"), "nothing written")
 
 	code, out, errs = ta.do("quack --streams q --count 1 --repo https://example.com/quack.git --base dev")
 	assert.NotEqual(t, 0, code, "quack on dev: %s%s", out, errs)
