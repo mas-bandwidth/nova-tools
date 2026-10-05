@@ -1078,8 +1078,7 @@ jobs:
       - name: deal this shard's packages
         # The heavy packages first, one per shard: two heavy packages dealt by
         # count alone once shared shard 3 of 4 and the ubuntu leg was cancelled
-        # at 123 s. cmd/nova-swarm is the one heavy command left (the git bus,
-        # 46 s -short, is removed). Then every other package
+        # at 123 s. cmd/nova-swarm is the one heavy command left. Then every other package
         # round-robin in go list order (stable: go list sorts), continuing after the
         # heavy ones. One line of space-separated packages, so vet and test below
         # read the same deal ($HOSTED_PKGS). `go run ./tools/ci help deal`;
