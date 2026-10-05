@@ -2147,7 +2147,9 @@ See [SPEC-CI.md](SPEC-CI.md).
 against a copy of a local tree, in place of the ssh, rsync and ssh recipe a
 brief used to carry. It makes a fresh run directory under `--root` on the bench
 (`mktemp -d`, default `nova-bench/runs` under the login's home), copies the tree
-into `<run>/repo` with `.git` left out unless `--with-git`, runs the command
+into `<run>/repo` (a tar stream this process writes onto ssh's stdin, unpacked
+by the bench's tar; nothing but ssh runs here) with `.git` left out unless
+`--with-git`, runs the command
 there under `nice -n 19` with `GOCACHE` (`--cache`, default
 `nova-bench/cache/go-build`), `GOFLAGS=-mod=readonly` and `NOVA_TEST_NO_HOST=1`,
 streams its output to stdout and stderr as it arrives, and removes the run
@@ -2157,8 +2159,9 @@ for `--fallback` with one `CI BENCH PASSED host=<h> reason=<why> next=<h>` line;
 a host that answers is never passed over. The run ends with one line on stderr,
 `CI BENCH host=<h> run=<dir> exit=<n> removed=yes|no`, so stdout is exactly the
 command's. The exit status is the command's own; a run that never reached the
-command (usage, no bench answered, the copy failed) is one `nova-ci bench run
-REFUSED:` line at exit 2. Neither bench is guessed: `--host` is required, and
+command (usage, no bench answered, the copy failed) is one `BENCH-RUN REFUSED:`
+line at exit 2. The verb is on internal/tool, so its flags come before `--` and
+every word after the first `--` is the command. Neither bench is guessed: `--host` is required, and
 `--root` and `--cache` are plain paths, relative to the login's home or
 absolute, never `~`, `..`, the home or `/`. For example, `nova-ci bench run
 --host <bench> --fallback <other-bench> --dir . -- go test -count=1 ./cmd/nova-ci/`.

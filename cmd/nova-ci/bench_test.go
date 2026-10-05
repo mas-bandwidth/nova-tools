@@ -55,7 +55,7 @@ func (f *fakeBench) Copy(_ context.Context, host, src, dst string, withGit bool,
 func benchRun(t *testing.T, f *fakeBench, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := cmdBench(append([]string{"run"}, args...), &stdout, &stderr, f)
+	code := cmdBench(context.Background(), append([]string{"run"}, args...), nil, &stdout, &stderr, f)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -117,7 +117,7 @@ func TestBenchRunCopiesRunsAndCleansUp(t *testing.T) {
 		code, stdout, stderr := benchRun(t, f, "--host", "vision", "--fallback", "hetzner", "--dir", tree, "--", "go", "version")
 		assert.Equal(t, 2, code)
 		assert.Empty(t, stdout)
-		assert.Contains(t, stderr, "nova-ci bench run REFUSED: no bench answered: vision (")
+		assert.Contains(t, stderr, "BENCH-RUN REFUSED: no bench answered: vision (")
 		for _, c := range f.calls {
 			assert.NotContains(t, c, "rm -rf", "a run that made nothing removes nothing")
 		}
@@ -140,8 +140,8 @@ func TestBenchRunRefusesUsage(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--dir", tree, "--", "go", "version"}, "--host wants the bench"},
-		{[]string{"--host", "vision", "--", "go", "version"}, "--dir wants the local tree"},
+		{[]string{"--dir", tree, "--", "go", "version"}, "--host is required"},
+		{[]string{"--host", "vision", "--", "go", "version"}, "--dir is required"},
 		{[]string{"--host", "vision", "--dir", tree}, "no command after --"},
 		{[]string{"--host", "-oProxyCommand=x", "--dir", tree, "--", "go", "version"}, "is not a host name"},
 		{[]string{"--host", "vision", "--fallback", "vision", "--dir", tree, "--", "go"}, "same bench"},
@@ -153,13 +153,16 @@ func TestBenchRunRefusesUsage(t *testing.T) {
 		f := &fakeBench{}
 		code, _, stderr := benchRun(t, f, tc.args...)
 		assert.Equal(t, 2, code, "%v", tc.args)
-		assert.Contains(t, stderr, "nova-ci bench run REFUSED: ")
+		assert.Contains(t, stderr, "BENCH-RUN REFUSED: ")
 		assert.Contains(t, stderr, tc.want, "%v", tc.args)
 		assert.Empty(t, f.calls, "a refused call reaches no bench: %v", tc.args)
 	}
 	var stderr bytes.Buffer
-	assert.Equal(t, 2, cmdBench([]string{"walk"}, io.Discard, &stderr, &fakeBench{}))
-	assert.Contains(t, stderr.String(), `unknown verb "walk" after bench; the one verb is run`)
+	assert.Equal(t, 2, cmdBench(context.Background(), []string{"walk"}, nil, io.Discard, &stderr, &fakeBench{}))
+	assert.Contains(t, stderr.String(), `unknown verb "bench walk"`)
+	stderr.Reset()
+	assert.Equal(t, 2, cmdBench(context.Background(), []string{"run", "--host", "vision", "--dir", tree, "go", "version"}, nil, io.Discard, &stderr, &fakeBench{}))
+	assert.Contains(t, stderr.String(), "takes no positional arguments", "the command comes after --, never in among the flags")
 }
 
 func TestBenchRunAnswersHelpAndTouchesNothing(t *testing.T) {
@@ -173,4 +176,10 @@ func TestBenchRunAnswersHelpAndTouchesNothing(t *testing.T) {
 	assert.Contains(t, stdout, "--with-git")
 	assert.Contains(t, stdout, "bench run: the command's own exit status")
 	assert.Contains(t, stdout, "effect: delivery: ")
+}
+
+// The bench tool meets the standard its banner and help carry (tool.Problems).
+func TestBenchToolHasNoProblems(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, benchTool(&fakeBench{}, nil).Problems())
 }
