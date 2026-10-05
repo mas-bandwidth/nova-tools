@@ -237,7 +237,7 @@ func TestInboxPushThroughTheServerWritesTheGroupWhole(t *testing.T) {
 	c, boss := clientOf(t, r, "boss", &sent)
 	waited := clock
 	c.now = func() time.Time { return waited }
-	ctx, stop := context.WithCancel(context.Background())
+	ctx, stop := context.WithCancel(t.Context())
 	t.Cleanup(stop)
 	c.notify = func(context.Context) (context.Context, context.CancelFunc) { return ctx, stop }
 	polls := 0

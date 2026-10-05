@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 const MinSopsVersion = "3.13.3"
@@ -117,7 +119,7 @@ func DecryptFile(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer safepath.RemoveUnder(os.TempDir(), tmpDir)
 
 	// Build isolated environment: do not inherit caller's AWS_*, VAULT_*, GNUPGHOME, etc.
 	cleanEnv := []string{

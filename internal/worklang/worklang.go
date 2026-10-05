@@ -43,8 +43,8 @@ func (r *Refusal) Error() string {
 	return "plan file=" + r.File + ": " + r.Reason
 }
 
-// ExitCode is 2 for every refusal, the code docs/nova-lessons.md fixes for a
-// plan that could not be read.
+// ExitCode is 2 for every refusal, the code the self repository's lessons
+// file nova-lessons.md fixes for a plan that could not be read.
 func (r *Refusal) ExitCode() int { return 2 }
 
 func refuse(file, reason string) *Refusal { return &Refusal{File: file, Reason: reason} }

@@ -502,6 +502,62 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 		release()
 	}
 }
+
+// The delivery-recovery file is named by --snapshot on this path, for report and
+// for send alike: the state-file flag is registered for both verbs, so the
+// delivery verb of the same path accepts it too. The clock is fixed so the one
+// stamp the file carries does not differ between the runs, and each run's file,
+// read with os.ReadFile, must equal one pinned JSON: the writer is untouched, so
+// report and send set the same bytes. The send verb parses the flag (no
+// unknown-flag refusal) and writes the file before the unconfirmed delivery
+// fails at exit 1.
+func TestReportStateFlagBytesAndSendVerb(t *testing.T) {
+	t.Parallel()
+
+	p := manifest(t, row("x", "tool", "v1.2.3", "npm:unused", "none"))
+	env := Environment{Now: func() time.Time { return time.Date(2026, 10, 2, 15, 4, 5, 0, time.UTC) }}
+	want := `{"observed":{"x":{"raw":"1.2.3","status":"known","at":"2026-10-02T15:04:05Z"}},"delivered":{}}` + "\n"
+
+	t.Run("report", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "s.json")
+		c, out, errs := run(t, env, "report", "--file", p, "--snapshot", path)
+		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
+		state, err := readSnapshot(path)
+		require.NoError(t, err, err)
+		require.Len(t, state.Observed, 1)
+		need(t, out, "snapshot="+path)
+		b, err := os.ReadFile(path)
+		require.NoError(t, err, err)
+		require.Equalf(t, want, string(b), "report wrote a state file whose bytes differ")
+	})
+
+	// nova-version's send is the delivery verb of the same path, so the state
+	// file flag names the same file there and writes the same bytes. The fake
+	// child confirms nothing, so the delivery fails at exit 1 after the file is
+	// written; that the flag parsed and the file was set is what this pins, not
+	// the delivery.
+	t.Run("send", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "s.json")
+		sendEnv := Environment{Now: env.Now, Process: func(context.Context, []string, io.Reader, int) ProcessResult {
+			return ProcessResult{Stderr: "SEND REFUSED: no store\n"}
+		}}
+		var out, errs bytes.Buffer
+		c := Run("nova-version", []string{"send", "--file", p, "--snapshot", path, "--as", "fixture",
+			"--to", "integrator"}, "v0", &out, &errs, sendEnv)
+		require.EqualValuesf(t, 1, c, "%d %s %s", c, out.String(), errs.String())
+		require.NotContains(t, errs.String(), "unknown flag")
+		state, err := readSnapshot(path)
+		require.NoError(t, err, err)
+		require.Len(t, state.Observed, 1)
+		need(t, errs.String(), "snapshot="+path)
+		b, err := os.ReadFile(path)
+		require.NoError(t, err, err)
+		require.Equalf(t, want, string(b), "send wrote a state file whose bytes differ from report's")
+	})
+}
+
 func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 	rows := []string{}
 	for i := 0; i < 26; i++ {
