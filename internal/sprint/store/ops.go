@@ -202,7 +202,7 @@ func (st *Store) Held(ctx context.Context, id string) (sprint.Hold, error) {
 		return sprint.Hold{}, err
 	}
 	if f.Pending != nil {
-		return sprint.Hold{ID: id, Place: id, Why: "operation " + f.Pending.ID + " (" + f.Pending.Verb + ") is pending: the tables are a partial state of it; run: nova-sprint repair"}, nil
+		return pendingHold(id, f.Pending), nil
 	}
 	s, err := st.Load(ctx, All, func(s *sprint.Snapshot) map[string][]string {
 		return map[string][]string{sprint.Work: append(sprint.ResolveExtras(s), id)}
@@ -215,6 +215,12 @@ func (st *Store) Held(ctx context.Context, id string) (sprint.Hold, error) {
 		return sprint.Hold{}, err
 	}
 	return sprint.Holder(h, s.Now, id), nil
+}
+
+// pendingHold is the hold while a fence operation is unfinished: the tables
+// are that operation's partial state, and nothing is read to name another.
+func pendingHold(id string, op *OpRecord) sprint.Hold {
+	return sprint.Hold{ID: id, Place: id, Why: "operation " + op.ID + " (" + op.Verb + ") is pending: the tables are a partial state of it; run: nova-sprint repair"}
 }
 
 // SyncMirrors brings the display cells up to date: the fleet's (SyncFleet:
