@@ -51,12 +51,12 @@ func TestToolCoverDurReadsADurationFlag(t *testing.T) {
 
 // TestToolCoverDurRefusesABadDuration pins the refusal beside Dur's main path:
 // a value the duration flag cannot parse is refused before the verb runs, with
-// the flag named and what it wants.
+// the flag named, what it wants and the value it got.
 func TestToolCoverDurRefusesABadDuration(t *testing.T) {
 	t.Parallel()
 	r := testkit.Main(durationTool().Run).Run("wait", "--for", "soon")
 	assert.Equal(t, 2, r.Code)
-	assert.Contains(t, r.Stderr, "invalid value for --for: it wants a duration")
+	assert.Contains(t, r.Stderr, `--for wants a duration such as 30s or 5m (how long to wait), got "soon"`)
 	assert.Contains(t, r.Stderr, "run: nova-cover wait -h")
 }
 

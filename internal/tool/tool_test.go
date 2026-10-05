@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
@@ -453,8 +454,8 @@ func TestRun(t *testing.T) {
 			stderr: []string{"PUT REFUSED: unknown flag --stor; the flags of put are --json, --key, --max, --n, --store; did you mean --store?; run: nova-demo put -h\n"}},
 		{name: "an unknown flag with nothing near names the flags alone", args: []string{"who", "--zzzz"}, code: 2, emptyStdout: true,
 			stderr: []string{"WHO REFUSED: unknown flag --zzzz; the flags of who are --actor, --json, --op, --redis, --width; run: nova-demo who -h\n"}},
-		{name: "a bad value says what the flag wants and never repeats the value", args: []string{"put", "--n", "x"}, code: 2, emptyStdout: true,
-			absent: []string{`"x"`}, stderr: []string{`PUT REFUSED: invalid value for --n: it wants a whole number (how many rows); run: nova-demo put -h`}},
+		{name: "a bad value says what the flag wants and what it got", args: []string{"put", "--n", "x"}, code: 2, emptyStdout: true,
+			stderr: []string{`PUT REFUSED: --n wants a whole number (how many rows), got "x"; run: nova-demo put -h`}},
 		{name: "a flag with no value says what it wants", args: []string{"put", "--store"}, code: 2, emptyStdout: true,
 			stderr: []string{"PUT REFUSED: --store needs a value: it wants a directory (required); run: nova-demo put -h"}},
 		{name: "a misspelled verb names the nearest verb and the verbs", args: []string{"pt"}, code: 2, emptyStdout: true,
@@ -572,6 +573,238 @@ func TestNamesInARefusal(t *testing.T) {
 		{"seal", ""},
 	} {
 		assert.Equal(t, tc.want, didYouMean(tc.got, []string{"--session", "--store", "--key", "open", "put", "deny"}), tc.got)
+	}
+}
+
+// TestCmdRendersTheWordsAShellReadsBack pins Cmd (skeleton contract 1.9: a
+// remedy is one runnable command): every word goes through oneline.ShellWord,
+// so a word holding a blank, a quote or a $ is one word a shell reads back and
+// a word no shell gives a meaning prints as it is. The words are split the way
+// a shell splits them (onboarding.SplitShell, nothing executed), never run.
+func TestCmdRendersTheWordsAShellReadsBack(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		words []string
+		want  string
+	}{
+		{"words no shell reads print as they are", []string{"nova-demo", "put", "-h"}, "nova-demo put -h"},
+		{"a blank, a quote and a $ stay one word each", []string{"work trees", "it's", "e$f"}, `'work trees' 'it'"'"'s' 'e$f'`},
+		{"the empty word is quoted, so it is still one word", []string{"nova-demo", ""}, "nova-demo ''"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := Cmd(tc.words...)
+			assert.Equal(t, tc.want, got)
+			back, err := onboarding.SplitShell(got)
+			require.NoError(t, err)
+			assert.Equal(t, tc.words, back, "a shell reads the command back as the words meant")
+		})
+	}
+}
+
+// TestAUniquePrefixIsTheNearestName pins the nearest-name rule an unknown name
+// is answered with (STANDARD §2: the names there are and the nearest): a name
+// within two edits, or the one name an unknown word is a unique prefix of, is
+// the nearest; a prefix of two names and a word nothing is near guess nothing.
+func TestAUniquePrefixIsTheNearestName(t *testing.T) {
+	t.Parallel()
+	names := []string{"configure", "recall", "scan", "shapes"}
+	for _, tc := range []struct{ got, want string }{
+		{"conf", " did you mean configure?"}, // a unique prefix, five edits away
+		{"recal", " did you mean recall?"},   // one edit
+		{"s", ""},                            // a prefix of scan and shapes: not unique
+		{"zzz", ""},                          // nothing near and no prefix
+	} {
+		t.Run(tc.got, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, didYouMean(tc.got, names), tc.got)
+		})
+	}
+}
+
+// TestAnUnknownVerbListsEveryName pins that an unknown-verb refusal lists every
+// verb and names a unique prefix, never cutting the list to "and <n> more"
+// (STANDARD §2: an unknown verb is answered with the names there are and the
+// nearest).
+func TestAnUnknownVerbListsEveryName(t *testing.T) {
+	t.Parallel()
+	verbs := make([]Verb, 0, verbflag.ListMax+2)
+	for i := 1; i <= verbflag.ListMax+2; i++ {
+		verbs = append(verbs, Verb{Name: fmt.Sprintf("v%02d", i), Usage: "v", Effect: Inspection,
+			Run: func(*Call) *Out { return Done() }})
+	}
+	verbs = append(verbs, Verb{Name: "configure", Usage: "configure", Effect: Inspection,
+		Run: func(*Call) *Out { return Done() }})
+	tool := &Tool{Name: "nova-many", What: "has many verbs", ExitTable: "0 done, 1 said no, 2 could not run.", Verbs: verbs}
+	r := testkit.Main(tool.Run).Run("conf")
+	assert.Equal(t, 2, r.Code, "stderr %q", r.Stderr)
+	assert.Contains(t, r.Stderr, "did you mean configure?")
+	assert.Contains(t, r.Stderr, "v18", "the last numbered verb is named")
+	assert.Contains(t, r.Stderr, "version", "the version verb every tool has is named")
+	assert.NotContains(t, r.Stderr, "and", "the list is never cut to 'and <n> more'")
+	far := testkit.Main(tool.Run).Run("zzzz")
+	assert.NotContains(t, far.Stderr, "did you mean", "nothing near is not a guess")
+}
+
+// TestAnUnknownFlagNamesTheNearestAndEveryFlag pins an unknown-flag refusal
+// (STANDARD §2): one flag within two edits, a two-edit short flag, or a unique
+// prefix is named, a word nothing is near is not, and every flag is listed,
+// never "and <n> more".
+func TestAnUnknownFlagNamesTheNearestAndEveryFlag(t *testing.T) {
+	t.Parallel()
+	n := verbflag.ListMax + 2
+	tool := &Tool{Name: "nova-flags", What: "has many flags", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{{Name: "put", Usage: "put", Effect: Inspection, Flags: func(f *Flags) {
+			f.String("configure", "", "a long flag")
+			f.String("op", "", "a short flag")
+			for i := 1; i <= n; i++ {
+				f.String(fmt.Sprintf("f%02d", i), "", "a flag")
+			}
+		}, Run: func(*Call) *Out { return Done() }}}}
+	run := func(flag string) string {
+		t.Helper()
+		r := testkit.Main(tool.Run).Run("put", flag)
+		assert.Equal(t, 2, r.Code, "%s: stderr %q", flag, r.Stderr)
+		assert.Contains(t, r.Stderr, "run: nova-flags put -h", flag)
+		assert.Contains(t, r.Stderr, "--f18", "the flag past the old list cut is named")
+		assert.NotContains(t, r.Stderr, "and", "the list is never cut to 'and <n> more'")
+		return r.Stderr
+	}
+	assert.Contains(t, run("--conf"), "did you mean --configure?", "a unique prefix")
+	assert.Contains(t, run("--ope"), "did you mean --op?", "one edit")
+	assert.Contains(t, run("--xy"), "did you mean --op?", "two edits on a short flag")
+	assert.NotContains(t, run("--zzzz"), "did you mean", "nothing near is not a guess")
+}
+
+// oneOf is a flag.Value of a verb's own: it words its own reason when it
+// refuses a value, and the refusal carries that reason after the value.
+type oneOf struct{ s string }
+
+func (v *oneOf) String() string { return v.s }
+func (v *oneOf) Set(s string) error {
+	if s != "a" && s != "b" {
+		return fmt.Errorf("only a or b")
+	}
+	v.s = s
+	return nil
+}
+
+// TestEveryBadValueIsNamedAtOnce pins every bad value at once (skeleton
+// contract 1.8; STANDARD §3 point 2: one run reports every problem it can
+// find): the skeleton parses every flag value, words each failure as one
+// problem in the order the words were typed, and refuses once listing all, so
+// two bad values and an unknown flag are three problems in one refusal, and no
+// message holds the flag package's own `parse error` or `provided but not
+// defined`.
+func TestEveryBadValueIsNamedAtOnce(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string // the whole of stderr: one refusal, one line per problem, in order
+	}{
+		{"two bad values and an unknown flag are three problems in one refusal",
+			[]string{"put", "--n", "x", "--fix", "--max", "y"},
+			`PUT REFUSED: --n wants a whole number (how many rows), got "x"; run: nova-demo put -h` + "\n" +
+				`PUT REFUSED: unknown flag --fix; the flags of put are --json, --key, --max, --n, --store; did you mean --max?; run: nova-demo put -h` + "\n" +
+				`PUT REFUSED: --max wants a whole number (items listed before one MORE line stands for the rest; 0 lists all), got "y"; run: nova-demo put -h` + "\n"},
+		{"a bad value and a flag missing its value are two problems",
+			[]string{"put", "--n", "x", "--store"},
+			`PUT REFUSED: --n wants a whole number (how many rows), got "x"; run: nova-demo put -h` + "\n" +
+				`PUT REFUSED: --store needs a value: it wants a directory (required); run: nova-demo put -h` + "\n"},
+		{"a word after an unknown flag hides no bad value behind it",
+			[]string{"put", "--fix", "s", "--n", "x"},
+			`PUT REFUSED: unknown flag --fix; the flags of put are --json, --key, --max, --n, --store; did you mean --max?; run: nova-demo put -h` + "\n" +
+				`PUT REFUSED: --n wants a whole number (how many rows), got "x"; run: nova-demo put -h` + "\n"},
+		{"a bad boolean value wants true or false, and the next flag is read on",
+			[]string{"fn", "load", "--dry-run=x", "--name"},
+			`FN-LOAD REFUSED: --dry-run wants true or false (print what the verb would write and write nothing), got "x"; run: nova-demo fn load -h` + "\n" +
+				`FN-LOAD REFUSED: --name needs a value: it wants the function's name (required); run: nova-demo fn load -h` + "\n"},
+		{"a malformed flag word is named and the reading goes on",
+			[]string{"put", "--=x", "--n", "y"},
+			`PUT REFUSED: bad flag syntax: --=x; run: nova-demo put -h` + "\n" +
+				`PUT REFUSED: --n wants a whole number (how many rows), got "y"; run: nova-demo put -h` + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(demo().Run).Run(tc.args...)
+			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			assert.Empty(t, r.Stdout)
+			assert.Equal(t, tc.want, r.Stderr)
+			assert.NotContains(t, r.Stderr, "parse error", "the flag package's own text is no wording")
+			assert.NotContains(t, r.Stderr, "provided but not defined", "the flag package's own text is no wording")
+		})
+	}
+	// A flag.Value of the verb's own words its own reason: the refusal carries
+	// it after the value, so the reason the value was refused is not lost.
+	own := &Tool{Name: "nova-own", What: "reads one value of its own", ExitTable: "0 done, 2 could not run.",
+		Verbs: []Verb{{Name: "put", Usage: "put --one <a|b>", Effect: Inspection,
+			Flags: func(f *Flags) { f.Var(&oneOf{}, "one", "the letter a or b") },
+			Run:   func(*Call) *Out { return Done() }}}}
+	r := testkit.Main(own.Run).Run("put", "--one", "c")
+	assert.Equal(t, 2, r.Code, "stderr %q", r.Stderr)
+	assert.Equal(t, `PUT REFUSED: --one wants the letter a or b, got "c" (only a or b); run: nova-own put -h`+"\n", r.Stderr)
+}
+
+// TestEveryRefusalUnderJSONIsOneObjectOnStdout pins refusals under --json on
+// stdout (skeleton contract 1.4 and 1.6: "--json always stdout"): when --json
+// was given, a refusal is one JSON object on stdout and nothing on stderr,
+// including a refusal raised before the verb is known — an unknown verb or an
+// unknown flag with --json anywhere in argv, and the -h refusal of a tool that
+// refuses help (Tool.HelpRefused). The why array holds each reason alone,
+// never the whole `VERB REFUSED: ...; run: ...` line.
+func TestEveryRefusalUnderJSONIsOneObjectOnStdout(t *testing.T) {
+	t.Parallel()
+	helpRefused := func() *Tool {
+		d := demo()
+		d.HelpRefused = true
+		return d
+	}
+	for _, tc := range []struct {
+		name string
+		tool func() *Tool
+		args []string
+		verb string
+		why  []string // each reason alone, in order
+	}{
+		{"an unknown verb with --json after it", demo, []string{"bogus", "--json"}, "",
+			[]string{`unknown verb "bogus"; the verbs are put, who, deny, forget, raw, fn load, fn ls, careless, lib check, lib load, lib bogus, scan, version`}},
+		{"an unknown flag with --json anywhere in argv", demo, []string{"put", "--fix", "s", "--json"}, "put",
+			[]string{"unknown flag --fix; the flags of put are --json, --key, --max, --n, --store; did you mean --max?"}},
+		{"every bad value at once under --json: why holds each reason alone", demo,
+			[]string{"put", "--json", "--n", "x", "--fix", "--max", "y"}, "put",
+			[]string{`--n wants a whole number (how many rows), got "x"`,
+				"unknown flag --fix; the flags of put are --json, --key, --max, --n, --store; did you mean --max?",
+				`--max wants a whole number (items listed before one MORE line stands for the rest; 0 lists all), got "y"`}},
+		{"the -h refusal of a tool that refuses help", helpRefused, []string{"put", "--json", "-h"}, "put",
+			[]string{"-h is not an answer this tool gives, its exit 0 means CLEAR"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(tc.tool().Run).Run(tc.args...)
+			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			assert.Empty(t, r.Stderr, "a refusal under --json prints nothing on stderr")
+			var j struct {
+				Result struct {
+					Verb   string   `json:"verb"`
+					Status string   `json:"status"`
+					Exit   int      `json:"exit"`
+					Remedy string   `json:"remedy"`
+					Why    []string `json:"why"`
+				} `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(r.Stdout), &j), "stdout is one JSON object: %q", r.Stdout)
+			assert.Equal(t, "refused", j.Result.Status)
+			assert.Equal(t, 2, j.Result.Exit)
+			assert.Equal(t, tc.verb, j.Result.Verb)
+			assert.NotEmpty(t, j.Result.Remedy, "the refusal carries its remedy")
+			assert.Equal(t, tc.why, j.Result.Why)
+			for _, w := range j.Result.Why {
+				assert.NotContains(t, w, "REFUSED", "why holds the reason alone, never the envelope")
+				assert.NotContains(t, w, "; run:", "why holds the reason alone, never the remedy")
+			}
+		})
 	}
 }
 
