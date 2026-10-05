@@ -229,7 +229,7 @@ func (a *app) selftestFlow(d string, env []string) (land time.Duration, landed i
 		name string
 		args []string
 	}{
-		{"finish", []string{"finish", "--as", "m1", "s1-1.w1@1", "--epoch", "0", "--head", head, "--report", "done"}},
+		{"finish", []string{"finish", "--as", "m1", "s1-1.w1@1", "--epoch", "0", "--head", head, "--report", "nothing to do: the selftest lands an empty commit"}},
 		{"tick", []string{"tick"}},
 		{"read", []string{"read", "--as", "reader-a", "--begin", "--epoch", "0"}},
 		{"read", []string{"read", "--as", "reader-a", "--ok", "--epoch", "0"}},
