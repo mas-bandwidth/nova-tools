@@ -84,10 +84,11 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 		return "", err
 	}
 
+	run := opts.exec()
 	if err := CheckInvariant6(opts.KeyPath); err != nil {
 		return "", err
 	}
-	if _, err := CheckSopsVersion(opts.SopsPath); err != nil {
+	if _, err := CheckSopsVersion(run, opts.SopsPath); err != nil {
 		return "", err
 	}
 	recoveryKey, err := ReadRecoveryPub(opts.StoreDir)
@@ -117,7 +118,6 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 
 	// The read. A source this bench cannot open is refused naming the seat and the
 	// key, before anything is written.
-	run := opts.exec()
 	opts.say("reading %s.yaml", opts.From)
 	plaintext, err := sealDecrypt(run, opts.SopsPath, opts.KeyPath, sourceFile)
 	if err != nil {

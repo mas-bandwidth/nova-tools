@@ -22,7 +22,10 @@ func TestCardPrintsTheTierAndItsCeiling(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.m.SetRoutes(costRoutes())
-	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "s1: the work (s1) tier: pro"))
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, "s1: the work (s1) tier: pro"))
+	// a card on flash below its pro ceiling, as one dealt before line 1 became the starting
+	// tier (a brief that says pro starts on pro: TestABriefThatSaysProStartsOnPro)
+	ta.tierNow("s1-1", "flash")
 	ta.deal(1)
 	tiers := func() (string, string) {
 		t.Helper()

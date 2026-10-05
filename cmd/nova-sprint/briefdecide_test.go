@@ -137,7 +137,7 @@ func TestAddAsksTheBriefDecisionOfEveryCard(t *testing.T) {
 	assert.Contains(t, ta.ok("add --stream s2 b1 b2 --brief-file "+one), "BRIEF card=b2 op=b2@brief-")
 	assert.Equal(t, 4, b.asks, "one brief named with two ids is two decisions")
 	var res output
-	code, stdout, stderr := ta.do("add --stream s3 c1 --brief-file " + one + " --json")
+	code, stdout, stderr := ta.do("add --stream s3 c1 --one --brief-file " + one + " --json")
 	require.Equal(t, 0, code, stderr)
 	require.NoError(t, json.Unmarshal([]byte(stdout), &res), "with --json the add's object is alone on stdout")
 	require.Len(t, res.Brief, 1, "with --json the BRIEF line is the object's brief field")
@@ -168,12 +168,12 @@ func TestAddAsksNothingOfACardItRefuses(t *testing.T) {
 	for _, c := range []struct{ args, says string }{
 		{"add --brief-dir " + dir, "wants --stream"},
 		{"add --stream s1 --brief-dir " + dir + " --score abc", "--score wants a number"},
-		{"add --stream s1 a1 --brief-file " + one + " --score abc", "--score wants a number"},
-		{"add --stream s1 --brief-file " + bad, "LINT DRIFT brief"},
+		{"add --stream s1 a1 --one --brief-file " + one + " --score abc", "--score wants a number"},
+		{"add --stream s1 --one --brief-file " + bad, "LINT DRIFT brief"},
 		{"add --stream s1 b1 b2 --brief-file " + bad, "LINT DRIFT brief"},
 		{"add --stream s1 --brief-dir " + shared, "internal/x.go is named in PATHS by q1 and q2"},
 		{"add --stream s1 --brief-dir " + big, "over the"},
-		{"add --stream s1 a1 --brief-file " + one + " --brief-op a1=a1@brief-deadbeef", "--brief-op is the served add's wire word"},
+		{"add --stream s1 a1 --one --brief-file " + one + " --brief-op a1=a1@brief-deadbeef", "--brief-op is the served add's wire word"},
 	} {
 		code, _, stderr := ta.do(c.args)
 		assert.Equal(t, 2, code, c.args)
@@ -188,7 +188,7 @@ func TestAddSaysWhenTheRecordCannotBeNamed(t *testing.T) {
 	t.Parallel()
 	ta, b, _ := briefTestApp(t, "")
 	ta.a.briefRecord = func() (string, error) { return "", errors.New("$HOME is not defined") }
-	out := ta.ok("add --stream s1 a1 --brief-file " + writeNeedsBrief(t, t.TempDir(), "a", "Fix a. converges=0.8", ""))
+	out := ta.ok("add --stream s1 a1 --one --brief-file " + writeNeedsBrief(t, t.TempDir(), "a", "Fix a. converges=0.8", ""))
 	assert.Contains(t, out, "NOTE brief: no brief decision: the record: $HOME is not defined\n")
 	assert.Contains(t, out, "MOVED a1 -> ready")
 	assert.Zero(t, b.asks)
@@ -231,7 +231,7 @@ func TestAddGoesOnWhenTheBriefDecisionCannotBeMade(t *testing.T) {
 	plain.a.decideBackend = func(string) decide.Backend { called = true; return &briefBackend{} }
 	plain.a.briefRecord = func() (string, error) { return filepath.Join(t.TempDir(), "brief.jsonl"), nil }
 	plain.ok("init --readers reader-a,reader-b --members m1")
-	out := plain.ok("add --stream s1 a1 --brief-file " + writeNeedsBrief(t, t.TempDir(), "a", "Fix a. converges=0.1", ""))
+	out := plain.ok("add --stream s1 a1 --one --brief-file " + writeNeedsBrief(t, t.TempDir(), "a", "Fix a. converges=0.1", ""))
 	assert.NotContains(t, out, "BRIEF")
 	assert.False(t, called, "with no key no backend is made")
 
@@ -322,7 +322,7 @@ func TestAServedAddAsksWhereItIsTyped(t *testing.T) {
 	writeNeedsBrief(t, dir, "a2", "Fix a2. converges=0.7", "")
 	out.Reset()
 	errb.Reset()
-	require.Equal(t, 0, c.run([]string{"add", "--stream", "s2", "--brief-file", filepath.Join(dir, "a2.md"), "x2", "--decide-record", record, "--json"}, &out, &errb), errb.String())
+	require.Equal(t, 0, c.run([]string{"add", "--stream", "s2", "--brief-file", filepath.Join(dir, "a2.md"), "x2", "--one", "--decide-record", record, "--json"}, &out, &errb), errb.String())
 	var res output
 	require.NoError(t, json.Unmarshal(out.Bytes(), &res), out.String())
 	require.Len(t, res.Moved, 1)
@@ -337,11 +337,11 @@ func TestAServedAddAsksWhereItIsTyped(t *testing.T) {
 	for _, key := range []string{"k-test", ""} {
 		env[decide.JevSecret] = key
 		errb.Reset()
-		assert.Equal(t, 2, c.run([]string{"add", "--stream", "s3", "y1", "--brief-file", filepath.Join(dir, "a2.md"), "--brief-op", "y1=y1@brief-deadbeef"}, &out, &errb))
+		assert.Equal(t, 2, c.run([]string{"add", "--stream", "s3", "y1", "--one", "--brief-file", filepath.Join(dir, "a2.md"), "--brief-op", "y1=y1@brief-deadbeef"}, &out, &errb))
 		assert.Contains(t, errb.String(), "--brief-op is the served add's wire word")
 	}
 	assert.Empty(t, sent, "nothing is sent")
-	res2 := r.a.serveFrom(sprintwire.Request{Verbs: [][]string{{"add", "--actor", "boss", "--stream", "s3", "y1", "--brief-file", filepath.Join(dir, "a2.md"), "--brief-op", "y1=a1@brief-" + strings.TrimPrefix(op, "a1@brief-")}}}, true).Results[0]
+	res2 := r.a.serveFrom(sprintwire.Request{Verbs: [][]string{{"add", "--actor", "boss", "--stream", "s3", "y1", "--one", "--brief-file", filepath.Join(dir, "a2.md"), "--brief-op", "y1=a1@brief-" + strings.TrimPrefix(op, "a1@brief-")}}}, true).Results[0]
 	assert.Equal(t, 2, res2.Code, res2.Stdout+res2.Stderr)
 	assert.Contains(t, res2.Stderr, "names no brief decision of a card of this add")
 	assert.NotEqual(t, 0, r.a.run([]string{"card", "y1"}, &out, &errb), "nothing was written")
@@ -357,7 +357,7 @@ func TestACardsEndAttachesToItsBrief(t *testing.T) {
 	dir := t.TempDir()
 	writeNeedsBrief(t, dir, "a1", "Fix a1. converges=0.8", "")
 	ta.ok("add --stream s1 --brief-dir " + dir)
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	out := ta.ok("drop a1 s1-1 --reason obsolete")
 	assert.NotContains(t, out, "brief decision")
 	assert.Equal(t, map[string]string{"a1": "dropped: obsolete"}, endsOf(t, record))

@@ -110,16 +110,29 @@ local function write_desired(kind, name, slots, machine, actor, idem, at, legacy
   receipt('capacity ' .. kind, kind .. ':' .. name, machine, slots, actor, idem, at, legacy)
 end
 
+-- TIERS is the model tiers a friend's tiers filter may name, in one place:
+-- Go's config.Tiers holds this same list (internal/config/kind.go) and
+-- TestTiersMatchCapacityFilter reads this line, so apply and the runtime
+-- cannot drift on which tiers a friend can do.
+local TIERS = { 'flash', 'frontier', 'heavy', 'pro' }
+
+local function tier_ok(n)
+  for _, t in ipairs(TIERS) do
+    if t == n then return true end
+  end
+  return false
+end
+
 -- filter_ok: a kinds or tiers value is '' (keep), '-' (clear) or a comma
 -- list of names; a kinds name is work, read or fix; a tiers name is one of
--- the three model types, frontier, pro or flash (what the worker advertises
--- it can run; TM.MODEL_TYPES in the move file).
+-- TIERS (what the worker advertises it can run; TM.MODEL_TYPES in the move
+-- file).
 local function filter_ok(v, kinds)
   if v == '' or v == '-' then return true end
   if not string.match(v, '^[%w_,-]+$') then return false end
   for n in string.gmatch(v, '[^,]+') do
     if kinds and n ~= 'work' and n ~= 'read' and n ~= 'fix' then return false end
-    if not kinds and n ~= 'frontier' and n ~= 'pro' and n ~= 'flash' then return false end
+    if not kinds and not tier_ok(n) then return false end
   end
   return true
 end
@@ -136,7 +149,7 @@ end
 -- CI legs: legs on a bench whose role is or becomes friends returns ROLE
 -- friends and writes nothing. (optional eleventh and twelfth) kinds and tiers:
 -- the consumer's copy filters, comma lists (kinds of work, read, fix; tiers
--- frontier, pro, flash); '' keeps the stored value, '-' clears it. The same
+-- flash, frontier, heavy, pro); '' keeps the stored value, '-' clears it. The same
 -- slots, machine, paused, legs, role, kinds and tiers as stored return
 -- SAME and write nothing.
 local function capacity_desired(keys, args)
@@ -150,7 +163,7 @@ local function capacity_desired(keys, args)
   local set_tiers = args[12] or ''
 
   if kind ~= 'friend' and kind ~= 'bench' then
-    return { 'INVALID', machine, '0', '0' }
+    return { 'INVALID', machine, '0', '0', 'kind' }
   end
   -- NAME-IS-LOGIN: a name mapped in friends:login never registers as
   -- a friend, so the desired write refuses it before any ceiling or write.
@@ -158,16 +171,19 @@ local function capacity_desired(keys, args)
     return { 'NAME-IS-LOGIN', name }
   end
   if set_legs ~= '' and (kind ~= 'bench' or not string.match(set_legs, '^[%w_,-]+$')) then
-    return { 'INVALID', machine, '0', '0' }
+    return { 'INVALID', machine, '0', '0', 'legs' }
   end
   if set_paused ~= '' and set_paused ~= '0' and set_paused ~= '1' then
-    return { 'INVALID', machine, '0', '0' }
+    return { 'INVALID', machine, '0', '0', 'paused' }
   end
-  if not filter_ok(set_kinds, true) or not filter_ok(set_tiers, false) then
-    return { 'INVALID', machine, '0', '0' }
+  if not filter_ok(set_kinds, true) then
+    return { 'INVALID', machine, '0', '0', 'kinds' }
+  end
+  if not filter_ok(set_tiers, false) then
+    return { 'INVALID', machine, '0', '0', 'tiers' }
   end
   if set_role ~= '' and (kind ~= 'bench' or (set_role ~= 'friends' and set_role ~= 'fleet')) then
-    return { 'INVALID', machine, '0', '0' }
+    return { 'INVALID', machine, '0', '0', 'role' }
   end
   local role = set_role
   if kind == 'bench' and role == '' then
@@ -177,7 +193,7 @@ local function capacity_desired(keys, args)
     return { 'ROLE', 'friends' }
   end
   if not slots or slots < 0 then
-    return { 'INVALID', machine, '0', '0' }
+    return { 'INVALID', machine, '0', '0', 'slots' }
   end
   local ceiling_text = redis.call('HGET', 'machine:' .. machine .. ':ceiling', 'slots')
   if not ceiling_text then
