@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // A friend's card (the owner, 2026-10-03: "Could we try expressing the work left for
@@ -126,8 +127,10 @@ func friendLoad(s *Snapshot, name string) int {
 func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 	var p Plan
 	free, lanes := map[string]int{}, map[string]int{}
+	seatsByName := make(map[string]FriendSeat, len(seats))
 	var up []string
 	for _, f := range seats {
+		seatsByName[f.Name] = f
 		if f.Status == Up {
 			free[f.Name] = DealAhead*f.Width - friendLoad(s, f.Name)
 			lanes[f.Name] = f.Width - s.Fleet.Count(FriendRow(f.Name), Working)
@@ -152,13 +155,12 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 		}
 		if name == "" {
 			for _, f := range up {
-				seat := friendSeat(seats, f)
-				if f != not && free[f] > 0 && friendRestrictionAllows(seat, c) && (name == "" || free[f] > free[name]) {
+				if f != not && free[f] > 0 && friendRestrictionAllows(seatsByName[f], c) && (name == "" || free[f] > free[name]) {
 					name = f
 				}
 			}
 		}
-		if name == "" || name == not || free[name] <= 0 || !friendRestrictionAllows(friendSeat(seats, name), c) {
+		if name == "" || name == not || free[name] <= 0 || !friendRestrictionAllows(seatsByName[name], c) {
 			continue // no friend it may go to is up with room: it waits ready
 		}
 		card := WorkCardID(c.ID, c.Int("attempt")+1)
@@ -236,12 +238,6 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d %s (taken back, dealt again: friend sync delivers it to her inbox)", c.ID, c.Col, wc.ID, row, wc.Int("gen")+1, col)}
 }
 
-// friendSeat finds the configuration for a friend.
-func friendSeat(seats []FriendSeat, name string) FriendSeat {
-	for _, seat := range seats { if seat.Name == name { return seat } }
-	return FriendSeat{}
-}
-
 
 // SplitFriendRestriction canonicalizes the comma-separated values carried from nova-config.
 func SplitFriendRestriction(raw string) []string {
@@ -271,6 +267,9 @@ func friendRestrictionAllows(seat FriendSeat, c *Card) bool {
 
 // BriefKind reads the task kind from a card brief header.
 func BriefKind(brief string) string {
-	for _, line := range strings.Split(brief, "\n") { if value, ok := strings.CutPrefix(strings.TrimSpace(line), "KIND:"); ok { return strings.TrimSpace(value) } }
-	return ""
+	value, ok := swarm.CardHeaderValue([]byte(brief), "KIND")
+	if !ok {
+		return ""
+	}
+	return value
 }

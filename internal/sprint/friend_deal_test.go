@@ -224,3 +224,9 @@ func TestFriendRestrictionsTrimConfigWhitespace(t *testing.T) {
 	why := FriendRestrictionWhy(SplitFriendRestriction(" security* "), SplitFriendRestriction(" fix-red, review "), "security-a", "review")
 	assert.Empty(t, why, "comma-separated config values with surrounding spaces match after sync")
 }
+
+func TestBriefKindReadsOnlyTheTypedHeader(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "fix-red", BriefKind("task\nREPO: mas-bandwidth/nova-tools\nKIND: fix-red\n\nThe work."))
+	assert.Empty(t, BriefKind("task\nREPO: mas-bandwidth/nova-tools\n\nThe work.\nKIND: fix-red"), "a KIND line in the body does not grant a restriction match")
+}

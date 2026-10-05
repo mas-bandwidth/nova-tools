@@ -1447,6 +1447,7 @@ func uniquify(ids []string) []string {
 // 2, nothing written. A brief with no WHO line is a machine's, as before.
 func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, stream string, briefs ...string) int {
 	var specs []store.FriendSpec
+	byName := map[string]store.FriendSpec{}
 	read := false
 	for _, b := range briefs {
 		w, why := cardhdr.ReadWho(b)
@@ -1461,18 +1462,25 @@ func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, stream
 			if specs, err = st.FriendSpecs(context.Background()); err != nil {
 				return a.readFailed(verbName, err, stderr)
 			}
+			byName = make(map[string]store.FriendSpec, len(specs))
+			for _, spec := range specs {
+				byName[spec.Name] = spec
+			}
 			read = true
 		}
-		byName := make(map[string]store.FriendSpec, len(specs))
-		for _, spec := range specs { byName[spec.Name] = spec }
 		switch {
 		case len(specs) == 0:
 			return refuse(stderr, verbName, "the brief says WHO: friend, and the friends table has no friend: its rows are nova-config's friend rows; run: nova-sprint friend sync")
 		case w.Name != "" && byName[w.Name].Name == "":
-			names := make([]string, 0, len(specs)); for _, spec := range specs { names = append(names, spec.Name) }
+			names := make([]string, 0, len(specs))
+			for _, spec := range specs {
+				names = append(names, spec.Name)
+			}
 			return refuse(stderr, verbName, fmt.Sprintf("the brief says WHO: friend %s, and %s is no row of the friends table (friends: %s): name one, or write WHO: friend for any; run: nova-sprint friend sync", w.Name, w.Name, strings.Join(names, ",")))
 		case w.Name != "":
-			if why := byName[w.Name].RestrictionWhy(stream, sprint.BriefKind(b)); why != "" { return refuse(stderr, verbName, "the named friend cannot receive this card: "+why) }
+			if why := byName[w.Name].RestrictionWhy(stream, sprint.BriefKind(b)); why != "" {
+				return refuse(stderr, verbName, "the named friend cannot receive this card: "+why)
+			}
 		}
 	}
 	return 0
