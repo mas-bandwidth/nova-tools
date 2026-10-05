@@ -847,17 +847,6 @@ func streamID(s string) bool {
 	return errMS == nil && errSeq == nil
 }
 
-// waitSkips is --skip-subject: the prefixes a subject starting with none of
-// counts, lower-case, empty words dropped; the flag's default is PING,PONG
-// (docs/SPEC-BUS.md, the verbs: wait).
-func waitSkips(csv string) []string {
-	var out []string
-	for _, p := range names(csv) {
-		out = append(out, strings.ToLower(p))
-	}
-	return out
-}
-
 // waitLine prints one wait line on stdout: the verb prints as it goes (the
 // ARMED line first, so a caller that re-arms with that id misses nothing
 // between two runs), as recv --forever prints each message.
@@ -909,7 +898,10 @@ func (w world) wait(c *tool.Call) *tool.Out {
 		}
 		offset = size
 	}
-	skips := waitSkips(c.Str("skip-subject"))
+	// --skip-subject is a comma list of prefixes, empty words dropped; the
+	// match without case is WaitPick's, the one place the rule lives
+	// (docs/SPEC-BUS.md, the verbs: wait).
+	skips := names(c.Str("skip-subject"))
 	start := w.now()
 	timeout := c.Dur("timeout")
 	for {
