@@ -15,10 +15,12 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     caller must treat an error as BLOWN; ErrNoBox tells them apart, so a refusal
     can name the right remedy (CreateBox for the first, a hand repair for the
     second). Lstat refuses a link or non-regular path before open; SameFile then
-    proves the opened descriptor is the file that was inspected. errors.Is with
-    fs.ErrNotExist distinguishes absent from unreadable; it does not say which
-    part of the path is missing, and it does not need to, since both answers
-    refuse. A box comes into being by
+    proves the opened descriptor is the file that was inspected. The read is
+    limited to 1 MiB and refuses a file that reaches the limit: a box is only a
+    few lines, and an unbounded read lets a directory writer exhaust memory.
+    errors.Is with fs.ErrNotExist distinguishes absent from unreadable; it does
+    not say which part of the path is missing, and it does not need to, since
+    both answers refuse. A box comes into being by
     CreateBox, which never replaces one, or by a write verb on a box that was read.
 
  2. MALFORMED IS UNREADABLE. A JSON array, a bare string, a truncated file, a
@@ -209,6 +211,9 @@ func (b Box) Surfaces() []string {
 // (CreateBox). See note 1.
 var ErrNoBox = errors.New("no box")
 
+// maxBoxBytes bounds the bytes ReadBox accepts (docs/SPEC.md, nova-fuse: The box).
+const maxBoxBytes = 1 << 20
+
 // ReadBox returns the fuse box, or the reason it could not be read. See note 1.
 //
 // A nil error means the box was read, and an empty Box then means VERIFIED CLEAR. A
@@ -242,9 +247,12 @@ func ReadBox(path string) (Box, error) {
 	if !os.SameFile(info, opened) {
 		return Box{}, fmt.Errorf("%s changed while it was opened; use the real fuse box file path", path)
 	}
-	data, err := io.ReadAll(f)
+	data, err := io.ReadAll(io.LimitReader(f, maxBoxBytes))
 	if err != nil {
 		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	if len(data) == maxBoxBytes {
+		return Box{}, fmt.Errorf("%s reached the %d-byte fuse box limit", path, maxBoxBytes)
 	}
 	var b Box
 	// The top level is required to be the object a box is, before any decoding: a
