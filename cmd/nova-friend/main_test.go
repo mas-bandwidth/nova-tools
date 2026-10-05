@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,6 +94,9 @@ func (r *rig) world() world {
 		alive:    r.alive,
 		exec:     r.opencode,
 		settings: r.fs,
+		sprint: func(context.Context, string, []string) ([]sprintwire.Result, error) {
+			return nil, errors.New("no sprint server in a test")
+		},
 	}
 }
 
