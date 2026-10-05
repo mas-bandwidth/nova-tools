@@ -678,7 +678,7 @@ var epochVerbs = map[string]bool{"finish": true, "progress": true, "read": true,
 // epochVerbs, except a merge run by the sprint's coordinator, which merges
 // the cards of its own read of the merge queue and names no handed card.
 func needsEpoch(verbName string, coordinator bool) bool {
-	return epochVerbs[verbName] && !(verbName == "merge" && coordinator)
+	return epochVerbs[verbName] && (verbName != "merge" || !coordinator)
 }
 
 // runStep runs a step and reports it: exit 0 when everything named moved, 1
@@ -1403,7 +1403,7 @@ func sharedPaths(cards []sprint.CardAdd) string {
 		ids := byPath[p]
 		for i := range ids {
 			for _, b := range ids[i+1:] {
-				if a := ids[i]; !reaches(a, b, map[string]bool{}) && !reaches(b, a, map[string]bool{}) && !(shared[a][p] && shared[b][p]) {
+				if a := ids[i]; !reaches(a, b, map[string]bool{}) && !reaches(b, a, map[string]bool{}) && (!shared[a][p] || !shared[b][p]) {
 					clash = append(clash, fmt.Sprintf("%s is named in PATHS by %s and %s, and neither needs the other", p, a, b))
 				}
 			}
