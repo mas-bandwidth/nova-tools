@@ -37,7 +37,7 @@ func (s *certifySSH) Run(ctx context.Context, machine string, argv []string) (st
 	if !strings.Contains(joined, "openssl base64 -d") {
 		return s.fakeSSH.Run(ctx, machine, argv)
 	}
-	s.fakeSSH.runs = append(s.fakeSSH.runs, machine+": <certify script>")
+	s.runs = append(s.runs, machine+": <certify script>")
 	var script string
 	for _, a := range argv {
 		if raw, err := base64.StdEncoding.DecodeString(a); err == nil && len(raw) > 0 {
