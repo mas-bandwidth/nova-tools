@@ -517,8 +517,8 @@ func TestAReadRunsOnItsCardsTierAtThatTiersIndex(t *testing.T) {
 		routes []string
 		index  string
 	}{
-		"s1-1": {"pro", []string{"pro-b", "pro-a"}, "3"}, // the deal took pro-a: the reads take entries 1 and 2
-		"s2-1": {"flash", []string{"flash-b"}, "2"},      // the deal took flash-a: the one read takes entry 1
+		"s1-1": {"pro", []string{"pro-b"}, "2"},     // the deal took pro-a: the first read takes entry 1 (the second is asked once it comes back ok)
+		"s2-1": {"flash", []string{"flash-b"}, "2"}, // the deal took flash-a: the one read takes entry 1
 	} {
 		tier := want.tier
 		reads := s.Readers.Of(id)
@@ -587,9 +587,11 @@ func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	h.finishAttempt("s1-1", false, pushedA)
 	h.machine()
 	first := h.snap().Readers.Of("s1-1")
-	require.Len(t, first, 2, "attempt 1 asked of two readers")
+	require.Len(t, first, 1, "attempt 1 asked its first read")
 	h.must(ReadStep(sprint.ReadReq{As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
-	h.must(ReadStep(sprint.ReadReq{As: first[1].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
+	h.machine() // the second read, the first ok
+	second := h.askedRead("s1-1")
+	h.must(ReadStep(sprint.ReadReq{As: second.Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{second.ID}}}))
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	h.finishAttempt("s1-1", false, pushedB)
 	pr := h.snap().Work.Card("s1-1")
@@ -597,7 +599,11 @@ func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	assert.Empty(t, readsAt(h.snap(), pr), "the finish asks no reader")
 	h.machine()
 	reads := readsAt(h.snap(), h.snap().Work.Card("s1-1"))
-	require.Len(t, reads, 2, "attempt 2 asked of two readers by the machine's ask")
+	require.Len(t, reads, 1, "attempt 2 asked its first read by the machine's ask")
+	h.must(ReadStep(sprint.ReadReq{As: reads[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{reads[0].ID}}}))
+	h.machine() // and the second, the first ok
+	reads = readsAt(h.snap(), h.snap().Work.Card("s1-1"))
+	require.Len(t, reads, 2, "attempt 2 asked of two readers, one at a time")
 	var who []string
 	for _, rc := range reads {
 		who = append(who, rc.F("reader"))

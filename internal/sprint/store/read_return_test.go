@@ -22,6 +22,12 @@ func (h *harness) asked1(n int) {
 	h.work("m1")
 	h.work("m2")
 	h.machine()
+	// the tick asks each card its first read alone (reads are asked one at a time,
+	// sprint.ReadsWanted); these tests are about one read of a pair, so the second
+	// is asked by --another
+	for _, c := range h.snap().Work.Column(sprint.Review) {
+		h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Another: true}))
+	}
 }
 
 // returnNotes is every note of a read returned.
@@ -312,6 +318,10 @@ func TestAReadReturnedPastItsReasksIsJudgedNotAskedAgain(t *testing.T) {
 	}
 	ret()
 	assert.Nil(t, h.snap().Readers.Placed(id), "the return past the bound is counted: the card is retired")
+	// reads are asked one at a time: reader-b's, outstanding, is read ok, and the
+	// second read is wanted of a reader who has not read the attempt: none
+	h.must(ReadStep(sprint.ReadReq{As: "reader-b", Verdict: "ok", Sel: sprint.Sel{IDs: []string{sprint.ReadCardID("s1-1", 1, "reader-b")}}, Who: "reader-b"}))
+	h.machine()
 	open := h.openOf(sprint.NCannotAsk)
 	require.Len(t, open, 1, "the coordinator is told: cannot ask")
 	assert.Contains(t, open[0].Note.What, "needs 1 different readers and 0 is free")
@@ -407,6 +417,8 @@ func TestAReturnCountsItselfWhileFewerThanTwoReadersAreUp(t *testing.T) {
 	assert.Empty(t, f[sprint.FieldReadTake+fmt.Sprint(sprint.MaxReadReasks+2)], "the cost records stop at the bound")
 	assert.NotEmpty(t, h.openOf(sprint.NFewReaders), "the coordinator is told while fewer than two are up")
 	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-b", false, "coordinator"))
+	// reader-b's read, outstanding, comes back ok: the second read is wanted and no reader is free
+	h.must(ReadStep(sprint.ReadReq{As: "reader-b", Verdict: "ok", Sel: sprint.Sel{IDs: []string{sprint.ReadCardID("s1-1", 1, "reader-b")}}, Who: "reader-b"}))
 	h.machine()
 	assert.NotEmpty(t, h.openOf(sprint.NCannotAsk), "two up, none free: cannot ask")
 	h.clean("bounded with one reader up")

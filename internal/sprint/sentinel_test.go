@@ -295,9 +295,7 @@ func TestASentinelInsertedInLine(t *testing.T) {
 	w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	w.must(Ask(w.s, AskReq{}))
-	for _, rc := range readsAt(w.s, w.s.Work.Card("s1-4"), 1) {
-		w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
-	}
+	readOK(w, "s1-4")
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-4"}}}))
 	p = mergeOne(w, "s1")
 	require.Len(t, notesIn(p, NSentinelReached), 1, "not reached when s1-4 landed")

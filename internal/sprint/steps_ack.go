@@ -51,7 +51,7 @@ func Ack(s *Snapshot, r AckReq) Plan {
 			continue
 		}
 		n := entries[0].Note
-		if !contains(n.Decisions, "ack") {
+		if !contains(n.Decisions, "ack") && !contains(n.Decisions, "keep") { // keep (readtier.go) is an ack by another name
 			p.refuse(id, notAckable(n, entries))
 			continue
 		}

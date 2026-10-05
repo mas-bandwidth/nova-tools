@@ -69,9 +69,15 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		askReaders(t, w, []FriendSeat{frontierSeat("amy", 2, Up, t.TempDir())})
 		require.Nil(t, w.s.Readers.Card(ReadCardID("s1-1", 1, "amy")))
 		require.NotNil(t, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")))
-		require.NotNil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-a")))
-		require.NotNil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-b")))
-		require.Equal(t, Asked, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-a")).Col)
+		// the reads are asked one at a time (SPEC-SPRINT section 6): the pro card's first read
+		// alone, the second once the first came back ok
+		first := w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-a"))
+		second := w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-b"))
+		require.True(t, (first == nil) != (second == nil), "exactly one of the two readers is asked first")
+		if first == nil {
+			first = second
+		}
+		require.Equal(t, Asked, first.Col)
 	})
 
 	t.Run("heavy read tier frontier", func(t *testing.T) {

@@ -32,7 +32,11 @@ cards finish where they are (fleet down deals them again elsewhere); --width
 <n> ends the drain. Each says where the cards went on its MOVED line: down
 "moved=N to <member>(n),...; stayed=K withdrawn: <ids>" (a card no member up
 has room for is withdrawn and dealt again where there is room), up
-"moved=N to <member>(n) from <member>(n),..." (the level). The load cell is the machine's CPU busy percent of all
+"moved=N to <member>(n) from <member>(n),..." (the level). fleet up --deadline <d> pins
+the deadline every card dealt to the member gets (--deadline default takes the
+pin off): a card's deadline is otherwise the larger of its own and three times
+the member's median run wall over its last fifty ok attempts, so a slow
+machine does not time out twice as often. The load cell is the machine's CPU busy percent of all
 its cores (the one-minute load average over the cores where that cannot be
 measured), the highest of the last `+sprint.LoadWindow.String()+`.
 
@@ -60,8 +64,9 @@ reader with its row says it is there by asking for its own queue (queue --as
 reader false, and the reader loop says MEMBER NOT A READER. A reader is up while its last beat is under `+sprint.ReaderBeatBound.String()+` old, away
 when it beat and has lapsed, down when it has never beaten; reader away holds
 one away whatever it beats and reader up releases the hold. A flash card is
-read once and a pro card twice, by two different readers, each read on a route
-of the card's tier. The ask deals a read to a reader up only: a read asked of a
+read once and a pro card twice, by two different readers, one read at a time
+(the second asked once the first comes back ok), each read on a route of the
+card's tier. The ask deals a read to a reader up only: a read asked of a
 reader that is not up is asked of another at the next tick, and a card that
 needs more readers than are up is not asked: the tick raises one judgment
 (fewer than two readers up). reader remove takes a row off the readers table, refused while the
@@ -75,8 +80,8 @@ it back.`) + "\n"
 // counts as a beat of the member, and brings it up at once when it is alive, and sets its
 // width when width is above zero; down holds it down; level evens the ready
 // queues.
-func (a *app) fleetStep(st *store.Store, op, member, who string, width int, drain bool) store.Step {
-	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width, Drain: drain}
+func (a *app) fleetStep(st *store.Store, op, member, who string, width int, drain bool, deadline int, deadlineOff bool) store.Step {
+	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width, Drain: drain, Deadline: deadline, DeadlineOff: deadlineOff}
 	switch op {
 	case "up":
 		r.Op = "release"
