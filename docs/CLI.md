@@ -975,6 +975,8 @@ nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] |
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint promote [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint promoted --sha <merge sha> [--answers <note>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint backup --file <path>
 nova-sprint fleet beat <member> [--load <percent>]
@@ -1031,6 +1033,10 @@ ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
+
+### Promotion
+
+`nova-sprint promote [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]` cuts a frozen branch `promo/<YYYY-MM-DD>-<n>` from the live sprint tip, merges the target branch (`--base`, default `dev`) into the cut first, runs the tree gate on the frozen commit, pushes the cut branch, opens its pull request to dev, waits for its checks to pass, puts it in the merge queue, watches the merge queue, and records the promotion (`promoted --sha <merge>`) when it lands. A merge conflict stops the promotion with one judgment naming the files; a queue failure raises one judgment naming the failing check. `--dry-run` prints the branch and landed cards and changes nothing. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#promotion).
 
 ### The sprint backup
 
