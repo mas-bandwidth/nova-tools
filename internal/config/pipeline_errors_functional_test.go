@@ -74,13 +74,13 @@ func TestMachineRemovalRefusesLaterDependencyReadError(t *testing.T) {
 				c.HSet(ctx, MachineKey("fixture"), "slots", "8"),
 				c.HSet(ctx, MachineCeilingKey("fixture"), "slots", "8"),
 				c.HSet(ctx, "machine:fixture:budget", "slots", "8"),
-				c.SAdd(ctx, kind+"s", "one", "two"),
+				c.SAdd(ctx, registrySet(kind), "one", "two"),
 			} {
 				scopedErr83 := cmd.Err()
 				require.NoError(t, scopedErr83)
 			}
 			// Use this server's set order; the set is unchanged until Remove reads it.
-			names, err := c.SMembers(ctx, kind+"s").Result()
+			names, err := c.SMembers(ctx, registrySet(kind)).Result()
 			assertionMsg73 := []any{"members %v: %v", names, err}
 			require.NoError(t, err, assertionMsg73...)
 			require.Len(t, names, 2, assertionMsg73...)
