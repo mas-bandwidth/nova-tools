@@ -3154,8 +3154,7 @@ itself, recorded as the machine's start with the stop it ends, and runs it
 and the time, and the span goes on; a clear takes them off, so nothing starts
 a cleared sprint; when every provider is out of credit at `--until` the
 machine stays STOPPED for that cause, as a start is refused then. The
-machine's own stops carry their cause instead (below). The scoped transition
-model is `tla/MachineStop.tla`; its finite instance is `MCMachineStop`.
+machine's own stops carry their cause instead (below).
 
 The machine stops itself when the sprint is done (section 8): the tick's last
 part, done, says so to the coordinator and, in the same step, sets the record

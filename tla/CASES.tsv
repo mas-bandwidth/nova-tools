@@ -1,5 +1,4 @@
 config	module	expected	property	deadlock	group	gate	debt
-MCMachineStop.cfg	MachineStop.tla	pass	-	ignore-terminal	machine-stop	required	-
 MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal	benchstage	required	-
 MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal	benchstage	required	-
 MCCairnStore.cfg	MCCairnStore.tla	pass	-	ignore-terminal	cairnstore	required	-

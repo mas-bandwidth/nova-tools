@@ -1,8 +1,6 @@
 # tla: the models of nova-tools' state machines, and their runners
 
-> **The broad nova-sprint models are stale as of 2026-10-01 and are not the design.**
-> The scoped `MachineStop` model is an exception: it states only the timed stop
-> transition in `docs/SPEC-SPRINT.md` section 14. The owner's ruling that day: nova-tables is
+> **The nova-sprint models are stale as of 2026-10-01 and are not the design.** The owner's ruling that day: nova-tables is
 > the modelled layer and stays so; nova-sprint is in its get-it-done stage and is changed, tested on the twin store, read,
 > landed and run on the real fleet without a model change each time ("we aren't going to model the whole thing in TLA+
 > everytime we make a change"; "the thing that is built upon, is held to a higher standard than the thing built on top of
@@ -22,7 +20,6 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | Module | Instance | What it is |
 |---|---|---|
 | `CardMachine.tla` | `MCCardMachine` | the card's life over cells (the copy model of 02_card_move.lua), the corrected design after its three findings |
-| `MachineStop.tla` | `MCMachineStop.cfg` | the section 14 hand-stop transition: replacement deadline, clear, timed restart and the every-provider-out guard |
 | `CardISA.tla` | `MCCardISA*`, `MCCardISALive` | the card instruction set (docs/SPEC-ISA.md, layer 1): a card is one instruction and its kind says what it carries. It `EXTENDS CardMachine` and reuses its actions through one frame; it adds only what the kinds add: the one `wait` kind, whose one action `Wait(c)` has one guard `OperandHolds(c)` over an operand that is a card id, `release` or `external` (today's hold, sentinel and wave are one action's data, where CardMachine's `Release` is one path and the code it was read from holds three), and the per-kind results (`think`/`script`/`merge` a head and a verdict, `verify` a verdict, `wait` none). It replaces `CardMachine.Release`, `DealWork`, `Land` and `LandEvent`, named in its header. It proves `NoCardRetiresTwice` (no card lands twice), `RetiredHeadOnBase` (a landed card's head is an ancestor of its base) and `WaitDispatchesOnlyWhenOperandHolds` (a wait card is never dispatched before its operand holds), with one reversed witness each (`MCCardISABrokenSecondLand`, `MCCardISABrokenOtherBase`, `MCCardISABrokenWaitFirst`), and, on the small `MCCardISALive`, that a wait whose operand comes to hold is dealt. The card model's stale note above does not cover this module; it is written to `docs/SPEC-ISA.md` (landed on the base at `817177be66d4a2764bd228c223eb485a8ef7c164`), and `LandTwoLevel.tla` (the `merge-tree-proof` branch, head `40e9dc34ea18f7362f3b1b914ac204fe48263ae7`) is cited by branch and head, not copied: that branch has not landed |
 | `TableMachine.tla` | `MCTable*` | nova-table as table.lua is today at f7745885, with its actual gaps (Stella; the strict gate fails on purpose) |
 | `MemberTable.tla`, `EpochMemberTable.tla` | `MCMember*`, `MCEpochMember*` | the corrected member placement and epoch protocol (Stella): one place per table inside the epoch, lossless shape, no owned alias, stale writers refused |
