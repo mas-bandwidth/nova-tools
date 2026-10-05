@@ -24,14 +24,18 @@ const DSHProgram = "/Applications/DeepSeek Harness.app/Contents/Resources/runtim
 // Dir from the store (DSH_HOME, else ~/.dsh). The desktop app the friend
 // sits in shares the store. Measured 2026-10-04 and 2026-10-05 (docs/SPEC-FRIEND.md,
 // the dsh row): a session under an agent preset is refused by the one-shot
-// runner whatever the text, exit 1 before any write, its transcript hash
-// unchanged (the runner adopts only a session with no preset, and a session
-// never returns to none): that delivery is Deferred, so the message stays
-// pending instead of being given up after three refusals. On the survey machine,
-// deliver.log records 1339+ deferred deliveries against Zhi's real open session,
-// and the desktop app exposes no local listener or IPC socket. No route into
-// the open desktop session exists, so Route answers defer; the session reads the
-// bus itself with nova-bus wait or nova-bus recv.
+// runner whatever the text, before any write, its transcript hash unchanged
+// (the runner adopts only a session with no preset, and a session never
+// returns to none). From 2026-10-04 that refusal came with exit 0, and a
+// profile with no provider key stops at MISSING_CREDENTIAL: either is read
+// from the output whatever the exit code and answered SessionRefused, so the
+// daemon marks the session broken at once, keeps the message pending and the
+// friend reads down until a turn succeeds (docs/SPEC-FRIEND.md, a session
+// that cannot take a turn). On the survey machine, deliver.log records 1339+
+// refused deliveries against Zhi's real open session, and the desktop app
+// exposes no local listener or IPC socket. No route into the open desktop
+// session exists, so Route answers defer; the session reads the bus itself
+// with nova-bus wait or nova-bus recv.
 type DSH struct {
 	Dir, Session string
 	Run          Exec
@@ -99,8 +103,14 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 		program = DSHProgram
 	}
 	out, exit, err := d.Run(ctx, d.Dir, program, DSHArgs(id), text)
-	if m := dshPresetRefusal.FindStringSubmatch(out); exit != 0 && err == nil && m != nil {
-		return 0, Deferred{Reason: fmt.Sprintf("session %s runs under agent preset %q, which dsh's headless runner does not compose (it adopts only a session with no agent preset); the message stays pending: start a session in %s without an agent preset and name it with --session, or read the bus with nova-bus recv", id, m[1], d.Dir)}
+	if err == nil {
+		// whatever the exit: the runner said both at exit 0 (the finding of 2026-10-05)
+		if m := dshPresetRefusal.FindStringSubmatch(out); m != nil {
+			return exit, SessionRefused{Harness: "dsh", Session: id, Reason: "agent preset " + m[1]}
+		}
+		if dshMissingCredential.MatchString(out) {
+			return exit, SessionRefused{Harness: "dsh", Session: id, Reason: "missing credential", HarnessWide: true}
+		}
 	}
 	if d.Out != nil && out != "" {
 		fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
@@ -117,8 +127,13 @@ func (d *DSH) Route(ctx context.Context) (route, line string, err error) {
 }
 
 // dshPresetRefusal is the one-shot runner's refusal of a session under an
-// agent preset, the preset its group.
-var dshPresetRefusal = regexp.MustCompile(`runs under agent preset "([^"]*)", which the one-shot runner does not compose`)
+// agent preset, the preset its group; dshMissingCredential is a turn stopped
+// for want of a provider key. Neither output is written to the record: the
+// reason is said in fixed words, so no credential value is ever printed.
+var (
+	dshPresetRefusal     = regexp.MustCompile(`runs under agent preset "([^"]*)", which the one-shot runner does not compose`)
+	dshMissingCredential = regexp.MustCompile(`\bMISSING_CREDENTIAL\b`)
+)
 
 func dshHome() string {
 	if h := os.Getenv("DSH_HOME"); h != "" {
