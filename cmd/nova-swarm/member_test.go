@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
@@ -414,6 +415,91 @@ func markerRunner(t *testing.T) (r *nativeRunner, slots, marker string) {
 	return r, slots, marker
 }
 
+// TestLocalChildIsRefusedAboveTheLoadBound pins SPEC-FRIEND's local child load
+// gate: a fake one-minute reading above the configured bound names both values
+// and prevents the executable, slot and card from being created.
+func TestLocalChildIsRefusedAboveTheLoadBound(t *testing.T) {
+	t.Parallel()
+	r, slots, marker := markerRunner(t)
+	r.maxLoad = 32
+	r.warnLoad = 28
+	r.load = hostload.Source{Load1: func() (float64, bool) { return 35, true }}
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+
+	child, err := r.Start(p)
+	if child != nil {
+		<-child.(*nativeChild).done // reap an unexpectedly started fixture before asserting refusal
+	}
+	require.Error(t, err)
+	require.Nil(t, child)
+	assert.Contains(t, err.Error(), "load 35.00")
+	assert.Contains(t, err.Error(), "bound 32.00")
+	for _, path := range []string{marker, filepath.Join(slots, launchName(p)), filepath.Join(slots, launchName(p)+".card.md")} {
+		_, statErr := os.Stat(path)
+		assert.True(t, os.IsNotExist(statErr), "%s exists after a refused launch: %v", path, statErr)
+	}
+}
+
+// TestLocalChildWarnsNearTheLoadBound pins the configured near threshold: a
+// fake load at that threshold warns with the load and bound, then still starts.
+func TestLocalChildWarnsNearTheLoadBound(t *testing.T) {
+	t.Parallel()
+	r, _, marker := markerRunner(t)
+	r.maxLoad = 32
+	r.warnLoad = 28
+	r.load = hostload.Source{Load1: func() (float64, bool) { return 28, true }}
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+
+	child, err := r.Start(p)
+	require.NoError(t, err)
+	<-child.(*nativeChild).done
+	require.FileExists(t, marker)
+	warning := r.stderr.(*bytes.Buffer).String()
+	assert.Contains(t, warning, "load 28.00")
+	assert.Contains(t, warning, "bound 32.00")
+}
+
+// TestLocalChildStartsAtTheBoundOrWithoutAReading pins the two non-refusal
+// edges in SPEC-FRIEND: the maximum itself is admitted, and an unavailable
+// reading preserves the member's existing launch behavior.
+func TestLocalChildStartsAtTheBoundOrWithoutAReading(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		load func() (float64, bool)
+	}{
+		{name: "exactly at maximum", load: func() (float64, bool) { return 32, true }},
+		{name: "reading unavailable", load: func() (float64, bool) { return 0, false }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, _, marker := markerRunner(t)
+			r.maxLoad = 32
+			r.load = hostload.Source{Load1: tc.load}
+			p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+
+			child, err := r.Start(p)
+			require.NoError(t, err)
+			<-child.(*nativeChild).done
+			require.FileExists(t, marker)
+		})
+	}
+}
+
+// TestLocalChildAdmissionLeavesExistingDefaultsUnchanged pins that default 0
+// maxLoad preserves existing admission behavior even under high load.
+func TestLocalChildAdmissionLeavesExistingDefaultsUnchanged(t *testing.T) {
+	t.Parallel()
+	r, _, marker := markerRunner(t)
+	r.load = hostload.Source{Load1: func() (float64, bool) { return 999, true }}
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+
+	child, err := r.Start(p)
+	require.NoError(t, err)
+	<-child.(*nativeChild).done
+	require.FileExists(t, marker)
+}
+
 // TestALiveChildIsAdoptedNotRunTwice pins the restart path: a launch whose
 // pid file names a live process is adopted, not started again. The pid file
 // here names this test's own process; Start starts nothing (no marker, no slot
@@ -427,6 +513,11 @@ func TestALiveChildIsAdoptedNotRunTwice(t *testing.T) {
 	pidPath := filepath.Join(slots, name+".pid")
 	self := strconv.Itoa(os.Getpid()) + "\n"
 	write(t, pidPath, self)
+	r.maxLoad = 32
+	r.load = hostload.Source{Load1: func() (float64, bool) {
+		require.Fail(t, "the load was read while adopting an existing child")
+		return 35, true
+	}}
 	// Removing the `if pid := livePID(pidPath); pid > 0 {` adoption branch in
 	// nativeRunner.Start makes this fail: a second child is started over the
 	// first (the slot and card file appear, the pid file is overwritten).
@@ -550,6 +641,34 @@ func TestMemberRefusesBothOnceAndNonPositiveTicksNamesBothPins(t *testing.T) {
 	require.Equal(t, 2, run(args, strings.NewReader(""), &out, &errb, time.Now()))
 	require.Contains(t, errb.String(), "give --once or --ticks <n>, not both")
 	require.Contains(t, errb.String(), "give --ticks 1 or more, or leave it out to run until stopped")
+}
+
+// TestMemberRefusesNonFiniteLoadThresholds pins that a configured guard cannot
+// be silently disabled by NaN or infinity; the refusal names the finite value it wants.
+func TestMemberRefusesNonFiniteLoadThresholds(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "maximum NaN", args: []string{"--max-load", "NaN"}, want: "--max-load is the finite maximum one-minute host load"},
+		{name: "maximum infinity", args: []string{"--max-load", "+Inf"}, want: "--max-load is the finite maximum one-minute host load"},
+		{name: "warning NaN", args: []string{"--max-load", "32", "--warn-load", "NaN"}, want: "--warn-load is the finite one-minute host load"},
+		{name: "warning infinity", args: []string{"--max-load", "32", "--warn-load", "+Inf"}, want: "--warn-load is the finite one-minute host load"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			args := append(memberFull(root), tc.args...)
+			var out, errb bytes.Buffer
+			code := cmdMember(args[1:], &out, &errb, noServer)
+			require.Equal(t, 2, code, "stderr %q", errb.String())
+			assert.Contains(t, errb.String(), tc.want)
+			_, statErr := os.Stat(filepath.Join(root, "slots"))
+			assert.True(t, os.IsNotExist(statErr), "invalid load threshold made slots: %v", statErr)
+		})
+	}
 }
 
 // TestMemberAcceptsPositiveTicks pins that valid positive --ticks runs for the
