@@ -200,9 +200,35 @@ func enoughReadersUp(s *Snapshot, pr *Card) bool {
 	return len(s.upReadersOf(pr)) >= ReadsNeeded(pr)
 }
 
+// ScriptReadPrefix begins the finding of an ok read a script reader gave: the reader ran
+// the card's SCRIPT program at the attempt's start commit and its diff was the head's,
+// byte for byte (docs/SPEC-SPRINT.md, the script read; member.VerifyScript).
+const ScriptReadPrefix = "script read: "
+
+// scriptVerified says the primary is a script card (CLASS: script, with its SCRIPT
+// program) with an ok read at its current attempt and head whose finding is a script
+// read's: that one read counts as every read the card needs. A script read that found
+// a difference gives no verdict (the member goes on to read the card as a model reader),
+// so a card whose head the program did not make is read by models as any card is, and
+// no read is accepted on the worker's word: the reader ran the program itself.
+func scriptVerified(s *Snapshot, pr *Card) bool {
+	if c, _ := cardhdr.ReadClass(pr.F("brief")); !c.IsScript() {
+		return false
+	}
+	for _, c := range readsAt(s, pr, pr.Int("attempt")) {
+		if c.Col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c) && strings.HasPrefix(c.F("finding"), ScriptReadPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // acceptable says the primary has ok reads from ReadsNeeded different readers
-// at its current attempt and head (okReaders).
-func acceptable(s *Snapshot, pr *Card) bool { return len(okReaders(s, pr)) >= ReadsNeeded(pr) }
+// at its current attempt and head (okReaders), or one script read of a script card
+// (scriptVerified).
+func acceptable(s *Snapshot, pr *Card) bool {
+	return len(okReaders(s, pr)) >= ReadsNeeded(pr) || scriptVerified(s, pr)
+}
 
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
 // the ask takes back or places again: the reads that stand.

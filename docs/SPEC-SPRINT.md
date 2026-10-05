@@ -2445,6 +2445,25 @@ id (`--op`) returns the original result, with no second counter or notification.
   in `listen` (`run --listen`), both through `serverStart`, so in-flight reads with live
   leases survive a server restart while lapsed reads are retired and re-asked.
 
+### script-cards-self-verify.w1: the script read
+
+A mechanical card made by a program is read by a program, not a model. A brief says `CLASS: script` and
+names the program on a `SCRIPT: <command>` header line (run from the repository root at the start
+commit, argv split on blanks, no shell); `cardhdr.ReadClass` is the one parser of both, and of the
+`DEADLINE:` line that bounds the run. A step's own `SCRIPT: regex|go|lisp` is the card tree's and is
+never read as the header's. A reader whose `Config.ScriptVerify` is set (`member.ScriptVerifier.Verify`)
+asks it first of every read of a script card: it checks out the attempt's start commit (the packet's
+base head, else the merge base of the head and the work's base branch), runs the program under the
+wall with the card's deadline (30 minutes when it names none), and compares the resulting diff with
+the head's diff, `git diff --binary --full-index`, byte for byte. Identical, and not empty, is an ok
+read whose finding begins `script read: ` (`sprint.ScriptReadPrefix`), and `acceptable` counts that one
+read as all the reads the card needs, a pro card's two included. Any difference, an empty diff, a
+missing commit or a failed run is no verdict: the same reader goes on to read the card as a model
+reader does, and the card needs the reads its tier needs as any card does. The head is never accepted
+on the worker's word: the reader ran the program itself. The model is the readers' (`tla/DirtyTick.tla`):
+the script read is a read, placed and counted as one, and adds no state.
+(`TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead`.)
+
 ## 7. Merging
 
 1. In work order, never random: the head of the stream's queued cell first.
