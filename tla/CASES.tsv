@@ -401,3 +401,14 @@ MCCoordinatorPassBehind.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordin
 MCCoordinatorPassBrokenDoublePush.cfg	MCCoordinatorPass.tla	invariant	OnePushATick	ignore-terminal	coordinatorpass	required	-
 MCWhoPreference.cfg	MCWhoPreference.tla	pass	-	ignore-terminal	whopreference	required	-
 MCWhoPreferenceOnlyWrong.cfg	MCWhoPreference.tla	invariant	OnlyToItsFriend	ignore-terminal	whopreference	required	-
+MCFriendCard.cfg	MCFriendCard.tla	pass	-	check	friendcard	required	-
+MCFriendCardLive.cfg	MCFriendCard.tla	pass	-	check	friendcard	required	-
+MCFriendCardLiveUp.cfg	MCFriendCard.tla	pass	-	check	friendcard	required	-
+MCFriendCardFindingPresenceFromSessionOnly.cfg	MCFriendCard.tla	action	DealOnlyToHearing	check	friendcard	required	-
+MCFriendCardFindingWakePingEvery.cfg	MCFriendCard.tla	invariant	DeafShownWithinBound	check	friendcard	required	-
+MCFriendCardFindingFriendDeliveryVisible.cfg	MCFriendCard.tla	action	DeliveredOnlyIntoLiveSession	check	friendcard	required	-
+MCFriendCardFindingFriendWorkingMeansStarted.cfg	MCFriendCard.tla	invariant	WorkingOnlyAfterStart	check	friendcard	required	-
+MCFriendCardFindingPrFriendStallComplete.cfg	MCFriendCard.tla	invariant	NoUnstartedCardOffUp	check	friendcard	required	-
+MCFriendCardFindingLaneEndFinishesTheCard.cfg	MCFriendCard.tla	invariant	DeadRunFinishedWithinBound	check	friendcard	required	-
+MCFriendCardFindingFriendBackUpAutomatic.cfg	MCFriendCard.tla	temporal	AbleFriendUp	check	friendcard	required	-
+MCFriendCardFindingDashboardFriendLowestLayer.cfg	MCFriendCard.tla	invariant	DashNeverOkWhileFailing	check	friendcard	required	-

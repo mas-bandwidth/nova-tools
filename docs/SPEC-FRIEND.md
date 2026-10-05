@@ -213,6 +213,19 @@ the hold takes back only the cards not yet started
 a card the hold took back may be dealt to the same friend again (only
 `friend take` keeps it off them, `taken_from`). The provider's limit only
 stops answers in the model; limit.go's `Down` until the reset is not in it.
+### A friend's card's lifecycle (tla/FriendCard.tla)
+
+The layers above presence, a card's life from the deal to its return with the
+friend's own liveness under it (up, hears, delivered, started, progressing,
+finished, returned, balanced, shown), are modelled in `tla/FriendCard.tla`
+(card friend-card-lifecycle-tla). Its transitions, the evidence each reads and
+the bound past which the machine raises an alarm, and the eight places the
+code today differs from it (each a TLC counterexample in `tla/CASES.tsv`
+named by the card that closes it), are tabled in docs/SPEC-SPRINT.md,
+"friend-card-lifecycle-tla". Two of them are this daemon's: the session check
+goes in only after `SessionQuiet` (wake-ping-every), and a broken session waits
+for a person (friend-back-up-automatic).
+
 ## A friend's status, from evidence (internal/friend/status.go)
 
 The owner, 2026-10-04: "Once again I look at friends and I wonder, are
