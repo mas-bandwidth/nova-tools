@@ -1,4 +1,4 @@
--- 0033: the friend's working directory (internal/config/kind.go: Kinds,
+-- 0034: the friend's working directory (internal/config/kind.go: Kinds,
 -- "friend"; docs/SPEC-CONFIG.md, friend): the absolute path of the directory
 -- nova-sprint delivers her cards into and reads her outbox from. Nullable:
 -- unset, every row before this file, is <root>/<name>-working as before (the
