@@ -102,6 +102,17 @@ func TestAFriendsDirectoryComesFromHerRowNotASymlink(t *testing.T) {
 		assert.FileExists(t, filepath.Join(dir, "inbox", j, "BRIEF.md"), "%s is delivered into her dir", j)
 	}
 	assert.NoDirExists(t, amyAlias, "nothing is written to <root>/amy-working")
+	text, err := os.ReadFile(filepath.Join(dir, "inbox", "s1-1.w1", "BRIEF.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(text), "Work in "+dir+"/jobs/s1-1.w1/: every clone, worktree and build output goes inside it, GOCACHE="+dir+"/.cache/go-build, and the report goes to "+dir+"/outbox/s1-1.w1/REPORT.md.\n", "her brief names her real directory")
+	assert.NotContains(t, string(text), "amy-working", "and never the symlink")
+
+	// her worker view names the brief and the report in her dir
+	var wv workerView
+	ta.json("view worker --as amy", &wv)
+	require.NotEmpty(t, wv.Cards)
+	assert.Equal(t, filepath.Join(dir, "inbox", "s1-1.w1", "BRIEF.md"), wv.Cards[0].Brief)
+	assert.Contains(t, wv.Next, dir+"/outbox/s1-1.w1/REPORT.md")
 
 	// sync collects a report from her dir's outbox
 	report := func(job string) {

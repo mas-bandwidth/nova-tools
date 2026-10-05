@@ -245,7 +245,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 		}
 	}
 	for _, s := range specs {
-		d, f, err := a.friendCardsOf(ctx, st, s.Name, a.friendDir(s.Name, s.Dir, root, stderr), say)
+		d, f, err := a.friendCardsOf(ctx, st, s.Name, a.friendDir(s.Name, s.Dir, root, stderr), s.Dir, say)
 		delivered, finished = delivered+d, finished+f
 		if err != nil {
 			fmt.Fprintf(stderr, "%s %s: the sprint cards of %s cannot be delivered or collected: %s; the friends table is synced; run: nova-sprint friend sync\n", prog, name, s.Name, oneline.Escape(err.Error()))
