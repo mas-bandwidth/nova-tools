@@ -27,10 +27,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
@@ -46,6 +46,7 @@ var version string
 func main() {
 	a := newApp(os.Getenv)
 	a.briefRecord = a.defaultBriefRecord // a test's app has none: no brief record, no brief decision
+	a.seatLoginOn()                      // a test's app has none: no recorded store login (storelogin.go)
 	defer a.close()
 	os.Exit(a.run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -211,6 +212,14 @@ type app struct {
 	briefRecord   func() (string, error)
 	briefBar      func(ctx context.Context) (string, error)
 	gateOnly      *briefAsked
+	// The seat's store login (storelogin.go): loginFile is where seat login records it
+	// (nil, as in a test's app until its test turns it on: none is recorded or read),
+	// loginSecret, when set (a test), reads its password in place of nova-secrets, and
+	// dialStore, when set (a test), is the store opened with the login's options and the
+	// getenv its password is read through, in place of a Redis dialed.
+	loginFile   func() (string, error)
+	loginSecret func(secrets.Login) (secrets.Secret, error)
+	dialStore   func(ctx context.Context, addr string, o redisconn.Options, getenv func(string) string, names sprint.Names) (store.Backend, error)
 }
 
 // controlLine is the server's one line of control (app.serial): a tick of the run
@@ -302,7 +311,8 @@ func (a *app) close() {
 
 // redisBackend opens the store once per address, as nova-table dials it: the
 // address, then NOVA_SPRINT_REDIS_USER and the variable
-// NOVA_SPRINT_REDIS_PASSWORD_ENV names.
+// NOVA_SPRINT_REDIS_PASSWORD_ENV names, else the recorded seat login
+// (storeOptions, storelogin.go).
 func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names) (store.Backend, error) {
 	if isTwin(addr) {
 		return a.twinBackend(addr)
@@ -311,10 +321,29 @@ func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names)
 	if b, ok := a.cached[key]; ok {
 		return b, nil
 	}
+	o, getenv, err := a.storeOptions(addr)
+	if err != nil {
+		return nil, err
+	}
+	dial := a.dialStore
+	if dial == nil {
+		dial = a.dialRedis
+	}
+	b, err := dial(ctx, addr, o, getenv, names)
+	if err != nil {
+		return nil, err
+	}
+	a.cached[key] = b
+	return b, nil
+}
+
+// dialRedis is the store at addr over Redis, logged in with o (its password read
+// through getenv), its function library checked once per process and address.
+func (a *app) dialRedis(ctx context.Context, addr string, o redisconn.Options, getenv func(string) string, names sprint.Names) (store.Backend, error) {
 	conn, ok := a.conns[addr]
 	if !ok {
 		var err error
-		conn, err = a.openConn(ctx, addr)
+		conn, err = openWith(ctx, o, getenv)
 		if err != nil {
 			return nil, err
 		}
@@ -327,24 +356,25 @@ func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names)
 	}
 	b := &store.Redis{C: conn.Client(), Names: names, Now: a.now}
 	b.CountTrips() // a tick's cost says its round trips (store/stats.go)
-	a.cached[key] = b
 	return b, nil
 }
 
 // openConn dials the address as nova-table does: the address, then
 // NOVA_SPRINT_REDIS_USER and the variable NOVA_SPRINT_REDIS_PASSWORD_ENV
-// names, bounded to 10 s.
+// names, else the recorded seat login (storeOptions), bounded to 10 s.
 func (a *app) openConn(ctx context.Context, addr string) (*redisconn.Conn, error) {
-	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
-	if a.getenv(redisauth.UserEnv) != "" {
-		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
-		if a.getenv(redisauth.PasswordEnvEnv) == "" {
-			o.PasswordEnv = redisauth.DefaultPasswordEnv
-		}
+	o, getenv, err := a.storeOptions(addr)
+	if err != nil {
+		return nil, err
 	}
+	return openWith(ctx, o, getenv)
+}
+
+// openWith dials with the options, the password read through getenv, bounded to 10 s.
+func openWith(ctx context.Context, o redisconn.Options, getenv func(string) string) (*redisconn.Conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	return redisconn.Open(ctx, o, a.getenv)
+	return redisconn.Open(ctx, o, getenv)
 }
 
 // libraryMatches refuses a store whose loaded table function library is not
@@ -408,7 +438,7 @@ func (c *common) register(fs flagSet, getenv func(string) string) {
 // and --json.
 func (c *common) registerStore(fs flagSet, getenv func(string) string) {
 	c.epoch = -1
-	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)")
+	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR", seatLoginAddr), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)")
 	fs.StringVar(&c.actor, "actor", getenv("NOVA_SPRINT_ACTOR"), "who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)")
 	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
 }
@@ -436,8 +466,11 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 		return nil, errors.New("NOVA_SPRINT_PREFIX is set: " + noPrefix + "; unset it")
 	}
 	if strings.TrimSpace(c.redis) == "" {
+		if _, _, err := a.recordedLogin(); err != nil {
+			return nil, err // a seat login that cannot be read is refused as it is, never passed over
+		}
 		// the twin is named here too, so a first run with no Redis is one turn away (tool ledger P9)
-		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR); with no Redis, --redis mem:<file> runs it on the in-memory twin kept in that file (nova-sprint help, trying it without a Redis)")
+		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a login recorded by nova-sprint seat login); with no Redis, --redis mem:<file> runs it on the in-memory twin kept in that file (nova-sprint help, trying it without a Redis)")
 	}
 	if why := needsActor(c); why != "" {
 		return nil, errors.New(why)
