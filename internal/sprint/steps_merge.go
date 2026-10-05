@@ -375,7 +375,12 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
-				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
+				// a landing gives back the lander's one retry of a refused push
+				var unset []string
+				if ctl.F("did") == RejectedRetryDid {
+					unset = append(unset, "did")
+				}
+				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet, unset...)))
 				u.Notes = notes
 			}
 			merged := map[string]string{"merged": now}
@@ -410,6 +415,13 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	}
 	return p
 }
+
+// RejectedRetryDid is the `did` of the lander's resume of a stream the merge queue
+// rejected: a stream stopped for a rejection that still carries it was resumed already
+// and stays stopped for the coordinator, and a landing clears it, so the next refused push
+// is retried once again. The mark lives on the stream's control card, so a restart of the
+// server keeps the count.
+const RejectedRetryDid = "the push was refused; the lander resumed the stream once and lands again"
 
 // ResumeReq moves a stopped stream again.
 type ResumeReq struct {

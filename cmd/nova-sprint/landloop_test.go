@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -78,4 +79,52 @@ func TestALandFailureIsSaidOnceUntilItChangesOrClears(t *testing.T) {
 	assert.Empty(t, out.String(), "the store is back and nothing is queued: nothing is said")
 	a.backend = down
 	assert.Equal(t, 1, rounds(3), "the failure came back after it cleared: said again")
+}
+
+// A push the remote refuses stops the stream (the merge queue rejected), and the loop
+// resumes it once by itself: the next round lands the batch when the refusal is gone, and
+// when it is not the stream stays stopped with the one judgment, however many rounds
+// follow (docs/SPEC-SPRINT.md, a stopped stream; no real time, the rounds are driven).
+func TestAStreamStoppedByATransientPushRefusalResumesOrRaisesOneJudgment(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		refuses int // pushes refused before the remote takes one; 0 refuses always
+		state   string
+		places  string
+		open    int
+	}{
+		{"refuses once", 2, "landed", "landed/merged", 0},
+		{"refuses always", 0, "stopped rejected", "merging/queued", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newLandRig(t)
+			r.ok("add --stream s1 --count 2")
+			r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2", "main", "b.txt", "b\n")}, "s1-1", "s1-2")
+			more := []string{"--repo-dir", r.clone, "--base", "main"}
+			pushes := 0
+			r.a.beforePush = func(int) {
+				pushes++
+				if tc.refuses == 0 || pushes <= tc.refuses {
+					r.moveBase("main", "moved"+strconv.Itoa(pushes)+".txt")
+				}
+			}
+			var out bytes.Buffer
+			assert.Equal(t, 1, r.a.landRound(context.Background(), "mem:0", more, &out), out.String())
+			assert.Equal(t, "stopped rejected", r.streamState("s1"), "the first refusal stops the stream")
+			for range 5 {
+				r.a.landRound(context.Background(), "mem:0", more, &out)
+			}
+			assert.Equal(t, 1, strings.Count(out.String(), "LAND RESUMED stream=s1"), "resumed once: %s", out.String())
+			assert.Equal(t, tc.state, r.streamState("s1"), out.String())
+			assert.Equal(t, map[string]string{"s1-1": tc.places, "s1-2": tc.places}, r.places("s1-1", "s1-2"))
+			inbox := r.ok("inbox")
+			assert.Equal(t, tc.open, strings.Count(inbox, "JUDGMENT "), "judgments open: %s", inbox)
+			if tc.refuses == 0 {
+				assert.Equal(t, 4, pushes, "two rounds of two pushes, and no more")
+			}
+			r.clean()
+		})
+	}
 }

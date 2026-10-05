@@ -64,8 +64,11 @@ func (a *app) landRound(ctx context.Context, addr string, more []string, stdout 
 // read and held nothing.
 func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout io.Writer) (int, bool) {
 	a.serial.Lock()
-	queued, coordinator, err := a.queuedToMerge(ctx, addr)
+	queued, coordinator, rejected, err := a.queuedToMerge(ctx, addr)
 	a.serial.Unlock()
+	if err == nil && coordinator != "" {
+		a.resumeRejected(addr, coordinator, rejected, stdout)
+	}
 	idle := err == nil && !queued
 	var lines []string
 	code := 0
@@ -106,25 +109,48 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 	return code, idle
 }
 
-// queuedToMerge says a stream has a card queued to merge, and names the sprint's
-// coordinator, whose the landing is ("" when the sprint has none); err when the sprint
+// resumeRejected resumes each stream the merge queue's rejection stopped, once: a push
+// refused by the remote (a protected-branch hook, a base that moved) is usually gone by
+// the next round, and a stream left stopped waits for a person. The retry is spent on
+// the stream's control card (sprint.RejectedRetryDid) and given back when a landing
+// lands: a stream rejected again stays stopped, with the one judgment the stop raised,
+// for the coordinator. The resume closes the judgment of the first stop.
+func (a *app) resumeRejected(addr, coordinator string, rejected []string, stdout io.Writer) {
+	for _, stream := range rejected {
+		var out, errb bytes.Buffer
+		code := a.cmdResume([]string{"--redis", addr, "--actor", coordinator, "--stream", stream, "--did", sprint.RejectedRetryDid}, &out, &errb)
+		at := oneline.Field(a.now().Format("15:04:05"))
+		fmt.Fprintf(stdout, "%s LAND RESUMED stream=%s after a refused push (exit %d); a second refusal stops it for the coordinator; run: nova-sprint where\n", at, oneline.Field(stream), code)
+	}
+}
+
+// queuedToMerge says a stream has a card queued to merge, names the sprint's
+// coordinator, whose the landing is ("" when the sprint has none), and lists the streams
+// stopped because the merge queue rejected a batch and not yet resumed for it; err when the sprint
 // could not be read, which says nothing of what is queued.
-func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coordinator string, err error) {
+func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coordinator string, rejected []string, err error) {
 	st, err := a.storeCtx(ctx, common{verb: "where", redis: addr})
 	if err != nil {
-		return false, "", err
+		return false, "", nil, err
 	}
 	if coordinator, err = st.B.Coordinator(ctx); err != nil {
-		return false, "", err
+		return false, "", nil, err
 	}
 	s, err := st.Load(ctx, []string{sprint.Merge}, nil)
 	if err != nil {
-		return false, "", err
+		return false, "", nil, err
 	}
 	for _, row := range s.Merge.Rows() {
+		if ctl := s.StreamCtl(row); ctl != nil && ctl.F("state") == sprint.StreamStopped && ctl.F("cause") == "rejected" {
+			if ctl.F("did") != sprint.RejectedRetryDid {
+				rejected = append(rejected, row)
+				queued = true // resumed before the landing, so it lands this round
+			}
+			continue
+		}
 		if s.Merge.Count(row, sprint.Queued) > 0 {
-			return true, coordinator, nil
+			queued = true
 		}
 	}
-	return false, coordinator, nil
+	return queued, coordinator, rejected, nil
 }
