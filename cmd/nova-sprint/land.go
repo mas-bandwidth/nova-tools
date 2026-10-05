@@ -262,9 +262,12 @@ type lander struct {
 	// build stopped on the base's third failure; now and rulesOff are a test's clock and
 	// rules turned off (nil: the app's clock, nova-config's sprint row).
 	baseGateFails map[string]*baseGateFail
-	baseStop      bool
-	now           func() time.Time
-	rulesOff      []string
+	// pushFails is the push-retry rule's record of the streams whose push was refused after
+	// its rebuild, kept across rounds with the base-gate record (landpush.go).
+	pushFails map[string]*pushFail
+	baseStop  bool
+	now       func() time.Time
+	rulesOff  []string
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -316,7 +319,10 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if a.baseGateFails == nil {
 		a.baseGateFails = map[string]*baseGateFail{}
 	}
-	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
+	if a.pushFails == nil {
+		a.pushFails = map[string]*pushFail{}
+	}
+	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails, pushFails: a.pushFails}
 	if *check != "" && !*dry {
 		a.serial.Lock()
 		l.gate, l.gateNote = a.landGate(context.Background(), st)
@@ -548,6 +554,9 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" {
 		return refuse("the clone " + dir + " is not clean (" + firstLine(out, err) + "); commit or discard its changes, then run land again")
 	}
+	if f := l.pushFails[stream]; f != nil && l.clock().Before(f.next) {
+		return refuse(f.said())
+	}
 	b.Times = &landTimes{}
 	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)
 	b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
@@ -591,6 +600,7 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		_, err = l.git(ctx, dir, "push", "--porcelain", "origin", tip+":refs/heads/"+b.Base)
 		since(&b.Times.Push, start)
 		if err == nil {
+			delete(l.pushFails, stream)
 			b.Tip = tip
 			if !l.landed(b, stream, cards[:len(merged)]) {
 				return false, false
@@ -606,6 +616,9 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		}
 		if attempt == 2 {
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
+			if why, stop := l.pushRefused(stream, b.Base, err); !stop {
+				return refuse(why)
+			}
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Rejected: true, Note: firstLine("", err)}, cards[:len(merged)], "rejected", "the push to "+b.Base+" was rejected again after a rebuild on the moved base: "+firstLine("", err))
 		}
 		merged, failed, why = l.build(ctx, dir, stream, cards, b.Times)

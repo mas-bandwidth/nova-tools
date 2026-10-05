@@ -213,8 +213,8 @@ func TestLandStopsAtAHeadThatDoesNotMerge(t *testing.T) {
 }
 
 // A base that moved under the push is fetched and the batch rebuilt on its
-// new tip once; a second rejection is reported with the rejected fact and
-// the cards stay queued.
+// new tip once; a second rejection refuses the batch (the push-retry rule keeps the
+// stream going; landpush_test.go has the stop) and the cards stay queued.
 func TestLandRebuildsOnceOnAMovedBase(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -226,7 +226,7 @@ func TestLandRebuildsOnceOnAMovedBase(t *testing.T) {
 		places string
 	}{
 		{"moved once", 1, 0, "LAND OK stream=s1 cards=2", "landed", "landed/merged"},
-		{"moved twice", 2, 1, "LAND REFUSED stream=s1 cards=2 base=main tip=- ids=s1-1..s1-2 dir=", "stopped rejected", "merging/queued"},
+		{"moved twice", 2, 1, "LAND REFUSED stream=s1 cards=2 base=main tip=- ids=s1-1..s1-2 dir=", "merging", "merging/queued"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

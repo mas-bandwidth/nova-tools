@@ -159,6 +159,9 @@ type app struct {
 	// baseGateFails is the base-gate rule's record of base commits that failed their tree
 	// gate (landgo.go, treeGateBase), kept across rounds as the cache is.
 	baseGateFails map[string]*baseGateFail
+	// pushFails is the push-retry rule's record of the streams whose push was refused
+	// after its rebuild (landpush.go), kept across rounds as the base-gate record is.
+	pushFails map[string]*pushFail
 	// tickDeadline is how long the run loop waits for one tick (run
 	// --tick-deadline; 0, a test's loop, waits for ever); after is the clock
 	// it waits on (time.After unless a test sets it), and exit how the loop

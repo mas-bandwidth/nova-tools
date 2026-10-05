@@ -583,6 +583,13 @@ func TickRuleBrief(s *Snapshot, r TickReq) (Plan, int) {
 // the failure after them is its third, and stops the stream (MergeReq.BaseRed, NBaseRed).
 var BaseGateRetries = []time.Duration{2 * time.Minute, 5 * time.Minute}
 
+// PushRetries is the push-retry rule's waits (cmd/nova-sprint, landpush.go): a push refused
+// again after its one rebuild on the moved base is tried again after the first wait, and
+// again after the second; the refusal after them is its third, and stops the stream
+// (MergeReq.Rejected, NRejected). A transient refusal (a protection hook, a remote that
+// is down) heals inside them and the stream never stops.
+var PushRetries = []time.Duration{2 * time.Minute, 5 * time.Minute}
+
 // sameFailure is why a failure is the fleet's and not the card's: RuleSameFailureCards or
 // more cards hold it now (in review with their work failed that way, or ready at their
 // redeal bound with that class), "" when fewer do or the class is unknown. A toolchain a

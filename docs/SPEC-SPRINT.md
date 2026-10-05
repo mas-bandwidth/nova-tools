@@ -2012,7 +2012,7 @@ accepts.
 
 `since` is the clock time the state last changed. The merge step is mechanical
 and is given its facts by the caller (what merged, what conflicted, ci result);
-it never decides. Causes of a stop: conflict on a card; stream branch red; a
+it never decides. A stream stopped by a transient push refusal does not wait for a person: the push-retry rule (section 8) pushes again before the stream stops. Causes of a stop: conflict on a card; stream branch red; a
 card needs a card of another stream first; the merge queue rejected.
 
 `land` is the coordinator's landing step as one command (section 11): it
@@ -2567,6 +2567,7 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `conflict` | stream stopped: conflict on a card, where the lander said the paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports) | the card returned to review (`rule_redo` its attempt), the stream resumed, and the card reworked with the fix `redo the same change on the current tip`; a conflict in a ledger the lander could not resolve, or one whose files the lander did not say, is left |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
 | `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
+| `push-retry` | (no judgment: the lander's) a push refused again after its one rebuild on the moved base (a protection hook, a remote that is down) | the batch is refused, the stream not stopped, with the remote's words and when the push is tried again: land pushes the stream again after 2 minutes and again after 5 (`sprint.PushRetries`), a landing inside the wait refused before any git; a push that succeeds lands and forgets the refusals; the third refusal stops the stream, `stream stopped: the merge queue rejected` (`merge --rejected`), the one judgment. Kept in the server's memory like base-gate's record, so a restart starts the count again. No off switch: the rule shows in the refused landing's line (`TestAStreamStoppedByATransientPushRefusalResumesByItselfOrRaisesOneJudgment`) |
 
 A failure many cards share is the fleet's, not the card's: when `RuleSameFailureCards` (3) or
 more cards hold the same failure class now (in review with their work failed that way, or
