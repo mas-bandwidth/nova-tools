@@ -88,7 +88,12 @@ func TestMergeWindowOpenPausesLandingForItsDurationWithTheReason(t *testing.T) {
 	assert.Equal(t, 1, code, errs)
 	assert.Contains(t, errs, "--for wants a duration above zero")
 
-	out := r.ok("merge-window open --for 10m --reason 'the release merges by hand'")
+	out := r.ok("merge-window open --for 10m --reason 'the release merges by hand' --dry-run")
+	assert.Contains(t, out, "MERGE-WINDOW OPEN DRY-RUN for=10m0s until=")
+	out = r.ok(land + " --dry-run")
+	assert.NotContains(t, out, "paused:", "a dry run opens no window")
+
+	out = r.ok("merge-window open --for 10m --reason 'the release merges by hand'")
 	assert.Contains(t, out, "merge window open until ")
 	assert.Contains(t, out, "(the release merges by hand): landing pauses")
 	asked := r.queue.asked
