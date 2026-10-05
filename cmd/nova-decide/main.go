@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -421,7 +422,12 @@ func (w world) findings(c *tool.Call) *tool.Out {
 	clusters, scored := decide.Findings(ds, from, bar)
 	o := tool.Done().Fact("scored", scored).Fact("classes", len(clusters)).Fact("bar", round(bar)).Fact("since", from.Format(time.RFC3339))
 	for _, cl := range clusters {
-		o.Item("finding", "class", cl.Class, "count", cl.Count, "cards", strings.Join(cl.Cards, ","))
+		cardsEscaped := make([]string, len(cl.Cards))
+		for i, card := range cl.Cards {
+			escaped := strings.ReplaceAll(card, ",", `\x2c`)
+			cardsEscaped[i] = oneline.Field(escaped)
+		}
+		o.Item("finding", "class", cl.Class, "count", cl.Count, "cards", strings.Join(cardsEscaped, " "))
 	}
 	if c.Str("shadow") == "" {
 		return o

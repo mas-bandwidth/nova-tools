@@ -817,8 +817,8 @@ CALIBRATE CATCH-ALL at=0.45 caught=3 of=3 bounced=1 of_negatives=5
 
 $ nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01
 FINDINGS OK scored=5 classes=4 bar=0.5 since=2026-10-01T00:00:00Z
-FINDINGS FINDING class=stranded_fragment count=2 cards=s1-1,s1-2
-FINDINGS FINDING class=cut_citation count=2 cards=s1-1,s1-3
+FINDINGS FINDING class=stranded_fragment count=2 cards=s1-1\x20s1-2
+FINDINGS FINDING class=cut_citation count=2 cards=s1-1\x20s1-3
 FINDINGS FINDING class=invented_reason count=1 cards=s1-2
 FINDINGS FINDING class=unnamed count=1 cards=s1-4
 ```

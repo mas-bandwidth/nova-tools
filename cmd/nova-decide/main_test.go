@@ -289,6 +289,38 @@ func TestScoreThroughJevNamesTheTopClassAndFindingsClustersIt(t *testing.T) {
 	})
 }
 
+// TestFindingsDoesNotMergeACardIDWithACommaIntoTwoCards ensures that card ids
+// containing commas are not split when rendered in findings output.
+func TestFindingsDoesNotMergeACardIDWithACommaIntoTwoCards(t *testing.T) {
+	t.Parallel()
+	calls := new(atomic.Int32)
+	jev := testkit.Main(decideTool(testWorld("k-test", calls, jevScoreReply(0.91))).Run)
+	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
+	score := []string{"score", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "jev", "--record", rec, "--op", "card,a@landed@0123456789ab"}
+	jev.Do(t, score...).Exit(0).Out(
+		"SCORE OK id=card,a@landed@0123456789ab decision=score backend=jev:jev-latest top=stranded_fragment p=0.91 tokens_in=1200 tokens_out=40 recorded=new",
+		"SCORE ANSWER question=stranded_fragment type=noul value=yes p=yes:0.91")
+	out := jev.Do(t, "findings", "--record", rec, "--since", "2026-10-02").Stdout
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	require.Len(t, lines, 2, "findings should output exactly 2 lines: summary and finding")
+	findingLine := lines[1]
+	var count, cards string
+	for _, part := range strings.Fields(findingLine) {
+		if strings.HasPrefix(part, "count=") {
+			count = strings.TrimPrefix(part, "count=")
+		}
+		if strings.HasPrefix(part, "cards=") {
+			cards = strings.TrimPrefix(part, "cards=")
+		}
+	}
+	require.Equal(t, "1", count, "should have exactly 1 card in findings")
+	// Verify the comma is escaped in the cards value so it can't be split incorrectly
+	require.Contains(t, cards, `\x2c`, "comma should be escaped in cards field")
+	// The cards field should not be splittable into more items than count on unescaped comma
+	unescapedCommaCount := strings.Count(cards, ",")
+	require.Equal(t, 0, unescapedCommaCount, "cards field should have no unescaped commas")
+}
+
 // jevChoice answers a one-choice decision (attempt, grade) with the option at p, the rest of
 // the mass on the other options.
 func jevChoice(question, option string, p float64) func([]byte) ([]byte, error) {
