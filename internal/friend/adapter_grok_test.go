@@ -2,11 +2,14 @@ package friend
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -187,4 +190,47 @@ func TestWakeLineIsOneLine(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "nova-friend: hello", WakeLine("hello\n"))
 	assert.Equal(t, "nova-friend: PING n1 ⏎ run: pong", WakeLine("PING n1\r\nrun: pong\n\n"))
+}
+
+func TestGrokAdapterBacklogDeliveredAsPacedWrites(t *testing.T) {
+	t.Parallel()
+	home, dir, wake, listing := grokHouse(t)
+	const pace = 50 * time.Millisecond
+
+	now := time.Time{}.Add(time.Hour)
+	var clockMu sync.Mutex
+	clock := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return now
+	}
+	advance := func(d time.Duration) {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		now = now.Add(d)
+	}
+
+	fe := &fakeExec{out: listing}
+	d, err := NewDeliverer("grok", dir, "", fe.run, nil)
+	require.NoError(t, err)
+	g := d.(*Grok)
+	g.Home = home
+	g.wakePace = pace
+	g.clock = clock
+
+	for i := 0; i < 3; i++ {
+		_, err := g.Deliver(context.Background(), fmt.Sprintf("msg%d", i))
+		require.NoError(t, err)
+
+		if i == 0 {
+			assert.Equal(t, now, g.lastWake, "first write happens immediately")
+		} else {
+			assert.Equal(t, time.Time{}.Add(time.Hour).Add(time.Duration(i)*pace), g.lastWake,
+				"write %d should be paced at %v", i, time.Duration(i)*pace)
+		}
+
+		if i < 2 {
+			advance(pace)
+		}
+	}
 }

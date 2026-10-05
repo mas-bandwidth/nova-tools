@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Grok delivers into the Grok Build TUI (xAI's `grok`), which has no deliver
@@ -32,11 +34,15 @@ import (
 // and the reason carries the one line the session runs. A wake path that
 // is not absolute is a refusal and nothing is written.
 type Grok struct {
-	Dir  string    // the friend's directory: the session's cwd
-	Wake string    // the wake file, when named; else the one the session's monitor tails
-	Run  Exec      // runs ps
-	Out  io.Writer // the daemon's record, when set
-	Home string    // the grok home, ~/.grok when empty
+	Dir      string        // the friend's directory: the session's cwd
+	Wake     string        // the wake file, when named; else the one the session's monitor tails
+	Run      Exec          // runs ps
+	Out      io.Writer     // the daemon's record, when set
+	Home     string        // the grok home, ~/.grok when empty
+	wakePace time.Duration // minimum duration between writes
+	lastWake time.Time     // time of last write
+	mu       sync.Mutex    // protects lastWake
+	clock    func() time.Time
 }
 
 func (g *Grok) home() (string, error) {
@@ -50,6 +56,43 @@ func (g *Grok) home() (string, error) {
 	return filepath.Join(h, ".grok"), nil
 }
 
+func (g *Grok) initClock() {
+	if g.clock == nil {
+		g.clock = time.Now
+	}
+}
+
+func (g *Grok) waitGap(ctx context.Context) error {
+	g.initClock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	now := g.clock()
+	if !g.lastWake.IsZero() {
+		elapsed := now.Sub(g.lastWake)
+		if elapsed < g.wakePace {
+			wait := g.wakePace - elapsed
+			g.mu.Unlock()
+			timer := time.NewTimer(wait)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				g.mu.Lock()
+				return ctx.Err()
+			}
+			g.mu.Lock()
+			now = g.clock()
+		}
+	}
+	g.lastWake = now
+	return nil
+}
+
+func (g *Grok) reserveWake(ctx context.Context) error {
+	return g.waitGap(ctx)
+}
+
 func (g *Grok) Deliver(ctx context.Context, text string) (int, error) {
 	wake, deferred, err := g.classify(ctx)
 	if err != nil {
@@ -57,6 +100,9 @@ func (g *Grok) Deliver(ctx context.Context, text string) (int, error) {
 	}
 	if deferred != nil {
 		return 0, Deferred{Reason: deferred.Error()}
+	}
+	if err := g.reserveWake(ctx); err != nil {
+		return 0, err
 	}
 	f, err := os.OpenFile(wake, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
