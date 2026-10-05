@@ -40,3 +40,36 @@ func TestTheMedianWallIsOverTheLastFiftyOkAttempts(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, off)
 }
+
+// The median is measured once a member for the done-ok cell the fleet table holds, not
+// once a card dealt, and a card put on the table is a new cell, measured again
+// (deadline.go, medianWalls).
+func TestTheMedianWallIsMeasuredOnceACellAndAgainAfterAPut(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a")
+	member := "median-memo-m1"
+	put := func(i int, wall string) {
+		w.s.Fleet.Put(&Card{ID: fmt.Sprintf("q%d.w1", i), Row: member, Col: DoneOK, Rev: 1,
+			Fields: map[string]string{"kind": "work", "primary": fmt.Sprintf("q%d", i), "attempt": "1", "ok": "yes", "finished": fmt.Sprintf("2030-01-01T00:%02d:00Z", i), FieldUsage: "wall=" + wall}})
+	}
+	put(1, "100s")
+	put(2, "100s")
+	median, n := MemberMedianWall(w.s, member)
+	assert.Equal(t, 100.0, median)
+	assert.Equal(t, 2, n)
+	first := &w.s.Fleet.Cell(member, DoneOK)[0]
+	again, _ := MemberMedianWall(w.s, member)
+	assert.Equal(t, 100.0, again, "the same cell, the same median")
+	assert.Same(t, first, &w.s.Fleet.Cell(member, DoneOK)[0], "asking again does not rebuild the cell")
+	put(3, "400s")
+	put(4, "400s")
+	put(5, "400s")
+	median, n = MemberMedianWall(w.s, member)
+	assert.Equal(t, 400.0, median, "a card put is a new cell, measured again")
+	assert.Equal(t, 5, n)
+	empty := NewTable(Fleet)
+	w.s.Fleet = empty
+	median, n = MemberMedianWall(w.s, member)
+	assert.Zero(t, median, "a member with no ok attempts has no median")
+	assert.Zero(t, n)
+}
