@@ -934,6 +934,7 @@ nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
 nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
+nova-sprint backup --dir <dir> [--keep <n>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint fleet beat <member> [--load <percent>]

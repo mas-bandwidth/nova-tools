@@ -64,6 +64,7 @@ var verbEffect = map[string]string{
 	"friend level":     "local write: moves queued cards between the friends' rows in the sprint's store; --dry-run writes nothing",
 	"friend health":    "local write: records the coordinator's observation of the friend in the sprint's store; --dry-run writes nothing",
 	"reader retire":    "local write: retires the named readers in the sprint's store; a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it; --dry-run writes nothing",
+	"backup":           "local write: writes the store to a file in --dir, restores the file into a twin and compares its counts, scans it for key shapes (a hit writes nothing) and prunes to --keep; the store is only read",
 	"promoted":         "local write: records the promotion in the sprint's store; --dry-run writes nothing",
 	"preflight":        "inspection: reads the briefs, the table and the repository, writes nothing",
 	"selftest":         "local write: makes a fresh directory, a bare origin and a clone whose base holds a go module, runs the card's flow of the walkthrough on a twin file in it and lands one card through the tree gate; writes only in that directory, opens no store of the caller's and no network, and removes it unless --keep",
