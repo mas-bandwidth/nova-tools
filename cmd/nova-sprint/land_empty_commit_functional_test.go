@@ -11,7 +11,7 @@ import (
 )
 
 // TestLandReturnsAnEmptyCommitLandingToReview tests that land refuses a landing whose head
-// commit's diff from the attempt's start commit is empty while RESULT.md claims changes,
+// commit's diff from the attempt's start commit is empty while the card's recorded result (its finish report) claims changes,
 // and returns the card to review with the finding (docs/SPEC-SPRINT.md section 7, the lander's
 // checks).
 func TestLandReturnsAnEmptyCommitLandingToReview(t *testing.T) {
