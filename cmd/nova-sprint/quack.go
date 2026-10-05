@@ -133,7 +133,7 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 	if len(problems) > 0 {
 		return refuse(stderr, "quack", strings.Join(problems, "; "))
 	}
-	if code := lintBriefFiles(all, rs, c.max, stderr); code != 0 {
+	if code := lintBriefFiles("add", all, rs, c.max, stderr); code != 0 {
 		return code
 	}
 	step := store.AddEachStep(reqs)
