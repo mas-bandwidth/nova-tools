@@ -381,28 +381,13 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			}
 			continue
 		}
-		r, err := friendFinish(ctx, name, p, report, a.tip)
-		if err != nil {
-			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
-			continue
-		}
-		r.Reported = at
-		step := store.FinishStep(r)
-		step.Actor, step.Epoch = r.Who, &p.Epoch
-		res, err := st.Run(ctx, step)
+		done, err := a.friendCollect(ctx, st, name, p, report, "", at, say)
 		if err != nil {
 			return delivered, finished, err
 		}
-		if len(res.Refused) > 0 {
-			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s", name, p.Card, oneline.Escape(res.Refused[0].Why)))
-			continue
+		if done {
+			finished++
 		}
-		finished++
-		result := "ok"
-		if r.Failed {
-			result = "failed"
-		}
-		say(fmt.Sprintf("FRIEND-CARD FINISHED friend=%s card=%s result=%s head=%s: %s", name, p.Card, result, cmp.Or(r.Head, "-"), oneline.Escape(oneline.Cap(r.Report, 200))))
 	}
 	return delivered, finished, nil
 }
@@ -664,4 +649,40 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 		return err
 	}
 	return atomicfile.WriteFile(path, after, 0o644)
+}
+
+// friendCollect finishes one card working on a friend's row from her report (friendFinish,
+// then the finish step as her row), the one collect of friend sync and friend reconcile
+// (docs/SPEC-SPRINT.md section 1, friend sync and friend reconcile). It says what it did in
+// a line: FINISHED, or REFUSED when the tip or the sprint refused the finish, the card left
+// working for the next sync to read the report again; done says the card was finished. op,
+// when not empty, is the caller's --op: the finish runs under op.collect.<its args> (one
+// operation id per card, as land.go gives each merge its own), so a retry of the verb with
+// the same --op returns the recorded result.
+func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p sprint.Packet, report, op string, at time.Time, say func(string)) (done bool, err error) {
+	r, err := friendFinish(ctx, name, p, report, a.tip)
+	if err != nil {
+		say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
+		return false, nil
+	}
+	r.Reported = at
+	step := store.FinishStep(r)
+	step.Actor, step.Epoch = r.Who, &p.Epoch
+	if op != "" {
+		step.CallerOp = op + ".collect." + step.Args
+	}
+	res, err := st.Run(ctx, step)
+	if err != nil {
+		return false, err
+	}
+	if len(res.Refused) > 0 {
+		say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s", name, p.Card, oneline.Escape(res.Refused[0].Why)))
+		return false, nil
+	}
+	result := "ok"
+	if r.Failed {
+		result = "failed"
+	}
+	say(fmt.Sprintf("FRIEND-CARD FINISHED friend=%s card=%s result=%s head=%s: %s", name, p.Card, result, cmp.Or(r.Head, "-"), oneline.Escape(oneline.Cap(r.Report, 200))))
+	return true, nil
 }

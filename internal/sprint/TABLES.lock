@@ -119,6 +119,25 @@
 # --until. No column, fold or row changed, so the lines below are unchanged. Held by
 # TestStopCarriesReasonAndUntilAndTheMachineRestartsItself (internal/sprint) and
 # TestStopByHandSaysWhoWhyAndWhenEverywhere (cmd/nova-sprint).
+#
+#
+# Note, 2026-10-04, the friends table's working cell made true, not a column (nova-sprint
+# card verb-friend-reconcile; a friend said all 35 of her cards were done while the table
+# showed 34 working). The card's amendment, in Glenn's words as the card gives them:
+# "trust but VERIFY";
+# "I want to trust the ok%";
+# "Mechanical. You know the drill.";
+# "Are they actually doing the work that is shown in the friend table? Really?";
+# "i don't want dollar amounts for friends. token counts are fine."
+# friend reconcile <friend> (docs/SPEC-SPRINT.md section 1) compares her inbox/QUEUE.json
+# and outbox with the cards working on her row and collects, keeps or returns each, so
+# friends.working counts what she is really doing; a returned card counts in neither
+# friends.ok nor friends.failed, so friends.done and friends.okpct (ok%) are not moved by
+# it. Friends carry no dollar or cost column, and none is added; token counts, when a
+# friends column carries them, come with their own lock change. No column, fold or row
+# changes, so the lines below are unchanged. Held by TestSprintTablesAreLocked,
+# TestFriendReconcileCollectsOrReturnsEachCard and
+# TestFriendReconcileSettlesEachCardOnTheTwin (cmd/nova-sprint).
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown

@@ -406,6 +406,44 @@ the deal first adds it), so the stored view `sprint` does not draw it either;
 as for any hidden row, its counts stay in that table's folded footer there,
 where `where` leaves them out.
 
+**Friend reconcile** (the owner, 2026-10-04: "trust but VERIFY"; "Are they actually
+doing the work that is shown in the friend table? Really?"; "Mechanical. You know the
+drill."; the case: a friend said all 35 of her cards were done while the table showed
+34 working). `friend reconcile <friend>` (the coordinator's; `--op`, each collect run
+under `<op>.collect.<its args>` and the return under `<op>.return.<its args>`, so a retry
+with the same `--op` replays; `--root` as friend sync takes
+it, else HOME; `--dry-run`) compares her own account of her cards with the store's and
+settles each card working on her row (`sprint.FriendReconcileOf`). Her account is
+`<friend>-working/inbox/QUEUE.json`, `{"tasks":[{"id":<id>,"state":<state>}]}`, an id
+being the work card's or its job's (`sprint.StoredID`) and a state `queued`, `working`
+or `done`, with the time the file was last written; it is read only as a regular file of
+at most 1 MiB, and a file that is not there, is not that shape, has a task with no id or
+an id twice, is refused, exit 1, nothing changed, as is a friend no row of the friends
+table names. For each card: when `outbox/<job>/REPORT.md` is there it is collected, the
+very finish friend sync gives it (its LAND read at origin's tip, its refusals the same);
+else, when her account says `queued` or `working`, it is kept; else, when it says `done`,
+or does not hold the card and was written in a second after the card's deal (her account
+is newer than the deal, so she has had it to account for), it is returned; a card her
+account does not hold that was dealt in or after the second her account was last
+written, a card with no deal stamp, and a state of any other word are kept, each said.
+A return (`sprint.FriendReturn`, one step for all of them, all or none) retires the work
+card off her row, its record kept (`retired_by` `friend reconcile`, `return_reason` the
+line), and moves its primary working -> ready, as a member going down leaves one: no
+failed-work judgment, no redeal spent, and nothing counted in her done or ok%; the
+tick's friend deal places it again at its next attempt, a new work card. A card that
+moved since it was read, is not working on her row, or whose primary is not working on
+it is refused. Each card says one line, `FRIEND-CARD FINISHED`/`REFUSED` for a collect
+(friend sync's lines), `FRIEND-RECONCILE COLLECT` for a collect under `--dry-run`,
+`FRIEND-RECONCILE KEPT`, `FRIEND-RECONCILE RETURNED` and
+`FRIEND-RECONCILE REFUSED`; each return is one move line in the log and one happened
+note, `a friend's card returned to ready`, carrying the actor and the line. An id of her
+account that is no card working on her row is named on a `NOTE` line and never acted
+on. It ends `FRIEND-RECONCILE OK friend= collected= kept= returned= refused= strays=`,
+exit 0, or `FRIEND-RECONCILE FAILED` with the same counts, exit 1, when a collect or the
+return was refused; `--json` carries the counts, the strays and every line. It writes
+nothing in her directory, and the server does not run it (it reads the directories of
+the machine it runs on).
+
 The frame of `where` and `where --watch` shows work, friends, fleet in that order: the
 readers and merge tables are hidden from it (the owner, 2026-10-02: "I feel like
 reading and merging is something you can handle now. it seems to work, so please
@@ -2813,7 +2851,7 @@ default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, hold, unhold, fleet
-up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, friend take, friend level, friend health, reader add, reader away, reader up, reader remove, stream remove, merge-window open, wait, ack, answer, clear, teardown, repair,
+up, fleet down, fleet level, fleet sync, friend sync, friend reconcile, friend down, friend up, friend take, friend level, friend health, reader add, reader away, reader up, reader remove, stream remove, merge-window open, wait, ack, answer, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it (the seat
@@ -2880,6 +2918,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | unhold | `unhold <name>... [--reason <text>]`: releases the holds of the names (resolved as hold resolves them, all or none), the reason in its note (`released from a hold`): a member that beats is up at once and is dealt again, otherwise down until it beats; a reader's and a friend's state is then their beat's; a stream's primaries are dealt again. `reader up` and `friend up` are its old words, for one release; `fleet up` still releases a member's hold and adds a member or sets a width |
 | merge-window open | `merge-window open --for <duration> --reason <text>`: landing pauses from now for the duration, the reason on every batch it pauses (section 7, the lander's pause); a store write of the merge table's properties `merge_window_until` and `merge_window_reason`, replacing a window open before; the coordinator's; refused whole, nothing written, for a duration that is none or not above zero, no reason, a reason over 8 KiB, or another actor |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
+| friend reconcile | a friend's own account of her cards, `<friend>-working/inbox/QUEUE.json`, and her outbox compared with the cards working on her row, each collected, kept or returned to ready (section 1, friend reconcile): `friend reconcile <friend> [--root <dir>] [--dry-run]`; never run by the server |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 20 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
 | friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
 | friend down, friend up | `hold <friend>` and `unhold <friend>` in the old words, for one release: hold a friend (status `held`, whatever she beats or the coordinator observes; every card dealt to her she has not started goes back to ready and a card she has started finishes; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (not a beat: `down` until she beats or is observed up; `--width <n>` sets her width) |
@@ -3456,8 +3495,8 @@ The coordinator's verbs go to the server too. The server listens a second time o
 loopback address at the same port, and there it runs any verb of the command but the ones it
 runs for nobody: itself (`run`, `tick`), `land` and `play`, which work outside the store for
 seconds or minutes, `fleet sync` and `friend sync`, which read the config store with their
-caller's own credentials, and `friend clean`, which works on the directories of the machine it
-runs on, nor a read that waits for the sprint to move (`where --watch`, `inbox --wait`): the
+caller's own credentials, and `friend clean` and `friend reconcile`, which work on the directories of the machine they
+run on, nor a read that waits for the sprint to move (`where --watch`, `inbox --wait`): the
 server moves the sprint on the one line of control such a verb would hold. With
 `NOVA_SPRINT_SERVER=<host:port>` set (the loopback address `run --listen` prints), every verb the
 server runs, the reads included, is not run where it is typed: its arguments are sent to the
