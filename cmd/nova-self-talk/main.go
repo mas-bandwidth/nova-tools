@@ -4,6 +4,7 @@
 // from neutral words, which the first class cannot see. It is an advisory
 // instrument, not a wall: whether to date a finding, cut it, relocate it, or
 // keep it is the writer's judgment, never the tool's.
+// Finding match and text are capped at oneline.TailBytes in both line and JSON renderings.
 //
 // Exit 0 no findings, 1 any finding, 2 could not run. Every file is named by
 // the caller; nothing is skipped by default and no basename is special by
