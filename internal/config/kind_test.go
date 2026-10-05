@@ -85,7 +85,7 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 
 // TestTheFriendRowIsWhatSomeoneDecidesForHer: Glenn 2026-09-27, "anything
 // that a friend would just know, is runtime redis data". Four fields:
-// slots, tiers, roles and width (2026-10-02, the jobs she works at once); no
+// slots, tiers, roles, width, mode, streams and kinds; no
 // machine, harness, logins, wake or note; and no coordinator role, which is
 // the sprint row's.
 func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
@@ -93,7 +93,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width,mode", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode,streams,kinds", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -701,4 +701,13 @@ func TestLoopApplyAloneTakesTheStoresDirectory(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalid)
 	assert.ErrorContains(t, err, "run: nova-config fleet set --loops_dir <path>")
 	assert.Zero(t, c.Exists(ctx, LoopKey("member-m1")).Val(), "a refused apply writes no hash")
+}
+
+func TestFriendStreamRestrictionRejectsMalformedGlob(t *testing.T) {
+	t.Parallel()
+	friend, ok := Lookup(KindFriend)
+	require.True(t, ok)
+	err := friend.Check(Row{Name: "friend-a", Fields: map[string]string{"width": "1", "streams": "["}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid stream glob")
 }

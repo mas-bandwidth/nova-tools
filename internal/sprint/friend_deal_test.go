@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -366,4 +367,27 @@ func TestFriendNextGatesQueuedPromotionWhenActiveWorkOrReadRemainsInOneShot(t *t
 	assert.Equal(t, 1, w.s.Fleet.Count(amy, Working), "promoted exactly one card")
 	assert.Equal(t, 0, w.s.Fleet.Count(amy, Ready), "no cards left in ready")
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-4.w1").Col)
+}
+
+func TestDealerNeverDealsAFriendOutsideHerStreams(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("only friend amy"))
+	brief := "c: in-scope friend work\nREPO: mas-bandwidth/nova-tools\nWHO: only friend amy\nKIND: fix\n\nThe task."
+	w.must(Add(w.s, AddReq{Stream: "security-a", Cards: []CardAdd{{ID: "security-a-1", Brief: brief}, {ID: "security-a-2", Brief: strings.Replace(brief, "KIND: fix", "KIND: test", 1)}}}))
+	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash", Streams: []string{"security*"}, Kinds: []string{"fix"}})
+	assert.Equal(t, Ready, w.s.StateOf("s1-1"), "outside the stream restriction remains ready")
+	assert.Equal(t, Working, w.s.StateOf("security-a-1"), "matching stream and kind are dealt")
+	assert.Equal(t, Ready, w.s.StateOf("security-a-2"), "a kind outside the restriction remains ready")
+}
+
+func TestFriendRestrictionsTrimConfigWhitespace(t *testing.T) {
+	t.Parallel()
+	why := FriendRestrictionWhy(SplitFriendRestriction(" security* "), SplitFriendRestriction(" fix-red, review "), "security-a", "review")
+	assert.Empty(t, why, "comma-separated config values with surrounding spaces match after sync")
+}
+
+func TestBriefKindReadsOnlyTheTypedHeader(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "fix-red", BriefKind("task\nREPO: mas-bandwidth/nova-tools\nKIND: fix-red\n\nThe work."))
+	assert.Empty(t, BriefKind("task\nREPO: mas-bandwidth/nova-tools\n\nThe work.\nKIND: fix-red"), "a KIND line in the body does not grant a restriction match")
 }

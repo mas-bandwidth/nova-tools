@@ -494,3 +494,26 @@ func TestFriendQueueCarriesTheAssignmentGenerationAndJob(t *testing.T) {
 	assert.Equal(t, "queued", q.Tasks[0].State, "a new epoch is a new job too")
 	assert.Equal(t, "c.w1~16.g2", q.Tasks[0].Job)
 }
+
+func TestAddAndBriefRefuseNamedFriendOutsideRestrictions(t *testing.T) {
+	t.Parallel()
+	ta, cfg := friendApp(t, "amy")
+	_, _, err := cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"streams": " security* ", "kinds": " fix-red, review "}, "test")
+	require.NoError(t, err)
+	ta.ok("friend sync")
+	brief := passingBrief("s1-1: restricted friend card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\nKIND: fix-red")
+	briefPath := filepath.Join(t.TempDir(), "brief.md")
+	require.NoError(t, os.WriteFile(briefPath, []byte(brief), 0o644))
+	code, _, errs := ta.do("add --stream s1 --one --brief-file " + briefPath)
+	assert.NotZero(t, code)
+	assert.Contains(t, errs, "streams restriction")
+
+	ta, cfg = friendApp(t, "amy")
+	_, _, err = cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"streams": "security*"}, "test")
+	require.NoError(t, err)
+	ta.ok("friend sync")
+	ta.ok("add --stream s1 --count 1 --one")
+	code, _, errs = ta.do("brief s1-1 --brief-file " + briefPath)
+	assert.NotZero(t, code)
+	assert.Contains(t, errs, "streams restriction")
+}

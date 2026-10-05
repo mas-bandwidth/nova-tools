@@ -285,7 +285,7 @@ is any friend. `WHO: friend <name>` prefers that friend while she is up with roo
 `brief` refuse any other WHO value, a name that is no row of the friends table, and
 `WHO: friend` while the table has no row (exit 2, nothing written). The primary's
 field `who` is `friend`, `friend.<name>`, or `only.friend.<name>`, written with its
-brief, and `card` prints `who=` on its `CARD OK` line (`--json` `who`).
+brief, and `card` prints `who=` on its `CARD OK` line (`--json` `who`). A named friend receives a card only when its stream matches one of her configured `streams` globs and its `KIND:` value is in her configured `kinds`; an empty restriction allows every value. An any-friend card skips friends whose restrictions do not match and remains ready when none qualify. `add` and `brief` refuse a named friend card outside her configured restrictions and name the restriction.
 `nova-sprint unpin <id>... --reason <text>` (or `unpin --stream <s> --reason <text>`)
 removes that stored value from a waiting or ready primary that has never been dealt,
 or whose first attempt `friend take` returned to ready without starting or ending a

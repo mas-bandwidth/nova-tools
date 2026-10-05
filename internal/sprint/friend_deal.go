@@ -3,11 +3,13 @@ package sprint
 import (
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // A friend's card (the owner, 2026-10-03: "Could we try expressing the work left for
@@ -101,6 +103,8 @@ type FriendSeat struct {
 	Tiers   []string
 	Dir     string
 	Running []string
+	Streams []string
+	Kinds   []string
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
@@ -311,13 +315,13 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		tier := cardTierOf(escalating(s, c))
 		left := friendsLeft(wc)
 		name, _ := FriendCard(c)
-		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(seat[name], tier)) {
+		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(seat[name], tier) || !friendRestrictionAllows(seat[name], c)) {
 			name = "" // the friend it names is not up with room, it has left her, or not her tier
 		}
 		if name == "" && !OnlyFriend(c) {
 			var may []string
 			for _, f := range up {
-				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(seat[f], tier) {
+				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(seat[f], tier) && friendRestrictionAllows(seat[f], c) {
 					may = append(may, f)
 				}
 			}
@@ -329,7 +333,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 				// never the friend it was withdrawn from or taken back from
 				gone := withdrawnFrom(wc)
 				for _, f := range up {
-					if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(seat[f], tier) {
+					if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(seat[f], tier) && friendRestrictionAllows(seat[f], c) {
 						may = append(may, f)
 					}
 				}
@@ -337,7 +341,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 			}
 			name = preferredFriend(may, lanes, free)
 		}
-		if name == "" || slices.Contains(left, name) || free[name] <= 0 {
+		if name == "" || slices.Contains(left, name) || free[name] <= 0 || !friendRestrictionAllows(seat[name], c) {
 			continue // no friend it may go to is up with room: the fleet's, or (only) it waits ready
 		}
 		card := WorkCardID(c.ID, c.Int("attempt")+1)
@@ -476,4 +480,59 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
 		change(Fleet, moveEntry(wc, row, col, set, unset...)),
 		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d %s (taken back, dealt again: friend sync delivers it to her inbox)", c.ID, c.Col, wc.ID, row, wc.Int("gen")+1, col)}
+}
+
+// SplitFriendRestriction canonicalizes the comma-separated values carried from nova-config.
+func SplitFriendRestriction(raw string) []string {
+	var out []string
+	for _, item := range strings.Split(raw, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// FriendRestrictionWhy applies configured stream globs and KIND values to one card
+// (docs/SPEC-SPRINT.md, section 1, friend restrictions).
+func FriendRestrictionWhy(streams, kinds []string, stream, kind string) string {
+	if len(streams) > 0 {
+		matched := false
+		for _, glob := range streams {
+			if ok, err := path.Match(strings.TrimSpace(glob), stream); err == nil && ok {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Sprintf("stream %q is outside this friend's streams restriction (%s)", stream, strings.Join(streams, ","))
+		}
+	}
+	if len(kinds) > 0 {
+		for _, allowed := range kinds {
+			if strings.TrimSpace(allowed) == kind {
+				return ""
+			}
+		}
+		return fmt.Sprintf("KIND %q is outside this friend's kinds restriction (%s)", kind, strings.Join(kinds, ","))
+	}
+	return ""
+}
+
+func friendRestrictionAllows(seat FriendSeat, c *Card) bool {
+	stream := c.F("stream")
+	if stream == "" {
+		stream = c.Row
+	}
+	kind := BriefKind(c.F("brief"))
+	return FriendRestrictionWhy(seat.Streams, seat.Kinds, stream, kind) == ""
+}
+
+// BriefKind reads the task kind from a card brief header.
+func BriefKind(brief string) string {
+	value, ok := swarm.CardHeaderValue([]byte(brief), "KIND")
+	if !ok {
+		return ""
+	}
+	return value
 }
