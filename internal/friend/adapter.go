@@ -123,6 +123,33 @@ func (p ProviderRefused) Error() string {
 	return "the provider refused the turn in session " + p.Session + ": " + p.Reason
 }
 
+// SessionRefused is a Deliverer's answer when the harness said, in the
+// turn's output and whatever the exit code, that the session cannot take a
+// turn at all: dsh's one-shot runner refusing a session under an agent
+// preset, or a headless profile with no provider key (MISSING_CREDENTIAL).
+// Nothing was delivered. The daemon marks the session broken with Down on
+// the first such turn, keeps every message pending and tries again every
+// RecheckEvery, and the friend reads down until a turn succeeds (the finding
+// of 2026-10-05: such a turn exited 0, counted as delivered, and for four
+// hours a friend's row read up while every message went nowhere). Reason is
+// fixed text, never read from the output, so no credential value is said;
+// HarnessWide is a reason of the harness's profile, not of the session.
+type SessionRefused struct {
+	Harness, Session, Reason string
+	HarnessWide              bool
+}
+
+// Down is the reason the friend reads down: "dsh session <id>: agent preset
+// minimal", or "dsh: missing credential".
+func (s SessionRefused) Down() string {
+	if s.HarnessWide {
+		return s.Harness + ": " + s.Reason
+	}
+	return s.Harness + " session " + s.Session + ": " + s.Reason
+}
+
+func (s SessionRefused) Error() string { return s.Down() }
+
 // providerErrorType is a provider's JSON error, the shape OpenAI- and
 // Anthropic-style APIs print and harnesses pass on: "type":"<x>_error".
 var (

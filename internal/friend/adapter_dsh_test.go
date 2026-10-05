@@ -2,6 +2,8 @@ package friend
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,28 +90,80 @@ func (f *fakeStdinExec) run(_ context.Context, dir, name string, args []string, 
 
 // A session that runs under an agent preset is refused by dsh's one-shot
 // runner, whatever the text (measured 2026-10-04 12:50 PM ET on Zhi's
-// session, preset "minimal"): nothing has failed that a retry fixes and
-// nothing was delivered, so the delivery is Deferred, never a failure the
-// daemon gives up on. Any other nonzero exit stays the harness's exit.
-func TestDSHDefersASessionUnderAPresetTheOneShotRunnerDoesNotCompose(t *testing.T) {
+// session, preset "minimal"), and a headless profile with no provider key
+// stops at MISSING_CREDENTIAL: either way the session cannot take a turn at
+// all. Read from the output whatever the exit code (the finding of
+// 2026-10-05: from 2026-10-04 her turns printed the preset refusal and exited
+// 0, and four hours of messages counted as delivered), the delivery is a
+// SessionRefused naming the session and the reason, and the output is not
+// written to the record. Any other nonzero exit stays the harness's exit.
+func TestDSHRefusesASessionThatCannotTakeATurnWhateverTheExit(t *testing.T) {
 	t.Parallel()
-	refusal := `dsh: session "session-zhi" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n"
-	var turn strings.Builder
-	fe := &fakeStdinExec{exit: 1, out: refusal}
-	d := &DSH{Dir: "/w/zhi", Session: "session-zhi", Run: fe.run, Program: "dsh", Out: &turn}
-	exit, err := d.Deliver(context.Background(), "hello")
-	assert.Equal(t, 0, exit)
-	var deferred Deferred
-	require.ErrorAs(t, err, &deferred)
-	assert.Contains(t, deferred.Reason, `session-zhi runs under agent preset "minimal"`)
-	assert.Contains(t, deferred.Reason, "nova-bus recv", "says what the friend does")
-	assert.Empty(t, turn.String(), "the daemon says the reason, once a minute; the refusal is not written every recheck")
+	preset := `dsh: session "session-zhi" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n"
+	credential := "turn 1: MISSING_CREDENTIAL: no provider key for the headless profile (DEEPSEEK_API_KEY=sk-fake-not-a-key)\n"
+	for _, c := range []struct {
+		name, out string
+		exit      int
+		want      SessionRefused
+		said      string
+	}{
+		{"preset at exit 0", preset, 0, SessionRefused{Harness: "dsh", Session: "session-zhi", Reason: "agent preset minimal"}, "dsh session session-zhi: agent preset minimal"},
+		{"preset at exit 1", preset, 1, SessionRefused{Harness: "dsh", Session: "session-zhi", Reason: "agent preset minimal"}, "dsh session session-zhi: agent preset minimal"},
+		{"missing credential at exit 0", credential, 0, SessionRefused{Harness: "dsh", Session: "session-zhi", Reason: "missing credential", HarnessWide: true}, "dsh: missing credential"},
+		{"missing credential at exit 1", credential, 1, SessionRefused{Harness: "dsh", Session: "session-zhi", Reason: "missing credential", HarnessWide: true}, "dsh: missing credential"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			var turn strings.Builder
+			fe := &fakeStdinExec{exit: c.exit, out: c.out}
+			d := &DSH{Dir: "/w/zhi", Session: "session-zhi", Run: fe.run, Program: "dsh", Out: &turn}
+			exit, err := d.Deliver(context.Background(), "hello")
+			assert.Equal(t, c.exit, exit)
+			var refused SessionRefused
+			require.ErrorAs(t, err, &refused)
+			assert.Equal(t, c.want, refused)
+			assert.Equal(t, c.said, refused.Down())
+			assert.Equal(t, c.said, err.Error())
+			assert.NotContains(t, err.Error(), "sk-fake", "no credential value is ever said")
+			assert.Empty(t, turn.String(), "the refusal is not written to the record: the daemon says the reason once")
+		})
+	}
 
-	fe = &fakeStdinExec{exit: 1, out: "dsh: unknown session \"session-gone\"\n"}
-	d = &DSH{Dir: "/w/zhi", Session: "session-gone", Run: fe.run, Program: "dsh"}
-	exit, err = d.Deliver(context.Background(), "hello")
+	fe := &fakeStdinExec{exit: 1, out: "dsh: unknown session \"session-gone\"\n"}
+	d := &DSH{Dir: "/w/zhi", Session: "session-gone", Run: fe.run, Program: "dsh"}
+	exit, err := d.Deliver(context.Background(), "hello")
 	require.NoError(t, err, "any other refusal is a failed delivery, as before")
 	assert.Equal(t, 1, exit)
+}
+
+// fakeDSHEnv names, in a fake dsh's environment, the file that says what the
+// fake does with its turn: "preset" prints the one-shot runner's refusal,
+// "credential" stops at MISSING_CREDENTIAL, anything else takes the turn;
+// each exits 0, as the real runner did on 2026-10-04.
+const fakeDSHEnv = "NOVA_FRIEND_FAKE_DSH"
+
+// This test binary is the fake dsh when started as `<bin> headless
+// --session-id <id> -` with fakeDSHEnv set; it never runs the tests then.
+func init() {
+	mode := os.Getenv(fakeDSHEnv)
+	if mode == "" || len(os.Args) != 5 || os.Args[1] != "headless" {
+		return
+	}
+	os.Exit(fakeDSH(mode, os.Args[3]))
+}
+
+func fakeDSH(modeFile, id string) int {
+	mode, _ := os.ReadFile(modeFile) // ignored: no mode file takes the turn
+	text, _ := io.ReadAll(os.Stdin)  // ignored: the turn's text is only counted
+	switch strings.TrimSpace(string(mode)) {
+	case "preset":
+		fmt.Printf("dsh: session %q runs under agent preset \"minimal\", which the one-shot runner does not compose\n", id)
+	case "credential":
+		fmt.Printf("turn 1: MISSING_CREDENTIAL: no provider key for the headless profile (DEEPSEEK_API_KEY=sk-fake-not-a-key)\n")
+	default:
+		fmt.Printf("turn taken in %s: %d bytes\n", id, len(text))
+	}
+	return 0
 }
 
 func TestDSHRouteIsDeferWithTheBusReadTheSessionRuns(t *testing.T) {
@@ -119,26 +173,4 @@ func TestDSHRouteIsDeferWithTheBusReadTheSessionRuns(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "defer", route, "no push into the open desktop session was found")
 	assert.Contains(t, line, "nova-bus wait", "the session reads the bus itself")
-}
-
-func TestDSHDeliversIntoTheOpenDesktopSession(t *testing.T) {
-	t.Parallel()
-	// Verifies that delivery into an open desktop session (which runs under an agent preset
-	// such as "minimal") is Deferred rather than failed, and that Route reports defer with
-	// the bus wait command.
-	refusal := `dsh: session "session-zhi" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n"
-	var turn strings.Builder
-	fe := &fakeStdinExec{exit: 1, out: refusal}
-	d := &DSH{Dir: "/w/zhi", Session: "session-zhi", Run: fe.run, Program: "dsh", Out: &turn}
-	exit, err := d.Deliver(context.Background(), "ping")
-	assert.Equal(t, 0, exit)
-	var deferred Deferred
-	require.ErrorAs(t, err, &deferred)
-	assert.Contains(t, deferred.Reason, `session-zhi runs under agent preset "minimal"`)
-	assert.Contains(t, deferred.Reason, "nova-bus recv")
-
-	route, line, err := d.Route(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, "defer", route)
-	assert.Contains(t, line, "nova-bus wait --as <friend>")
 }
