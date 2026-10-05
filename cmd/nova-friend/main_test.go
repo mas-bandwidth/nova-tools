@@ -27,16 +27,17 @@ var start = time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)
 // rig is the tool over one fake store with ada and bob known, a fake
 // launchctl, a fixed home and clock: no socket, no real time, no launchd.
 type rig struct {
-	store     *bustest.Fake
-	env       map[string]string
-	launchctl []string
-	copy      friend.CopyFile
-	onPath    map[string]string // what lookPath finds, by name
-	now       time.Time
-	home      string
-	answered  map[string]bool // the session checks bob's fake session has answered
-	alive     friend.Aliver
-	deaf      bool // bob's opencode session takes a turn and never runs the pong line
+	store        *bustest.Fake
+	env          map[string]string
+	launchctl    []string
+	launchctlOut string
+	copy         friend.CopyFile
+	onPath       map[string]string // what lookPath finds, by name
+	now          time.Time
+	home         string
+	answered     map[string]bool // the session checks bob's fake session has answered
+	alive        friend.Aliver
+	deaf         bool // bob's opencode session takes a turn and never runs the pong line
 }
 
 type fakeAlive struct {
@@ -67,6 +68,9 @@ func (r *rig) world() world {
 		},
 		launchctl: func(_ context.Context, args ...string) (string, error) {
 			r.launchctl = append(r.launchctl, strings.Join(args, " "))
+			if r.launchctlOut != "" {
+				return r.launchctlOut, nil
+			}
 			return "", nil
 		},
 		now:     func() time.Time { r.answerChecks(); r.now = r.now.Add(time.Second); return r.now },
@@ -161,7 +165,7 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--state-dir", t.TempDir()}, []string{"--to is required", "no ping has named a seat yet"}},
 		{"wait-pong nothing given", []string{"wait-pong"}, []string{"--from is required", "--nonce is required"}},
 		{"status nothing given", []string{"status"}, []string{"--as is required", "--dir is required"}},
-		{"check nothing given", []string{"check"}, []string{"--as is required", "--harness is required", "--dir is required"}},
+		{"check delivery nothing given", []string{"check", "--harness", "opencode"}, []string{"--as is required", "--dir is required"}},
 		{"check bad harness and window", []string{"check", "--as", "bob", "--harness", "vim", "--dir", "d", "--within", "0s"}, []string{`--harness "vim" is no harness`, "--within wants a positive duration"}},
 	}
 	for _, c := range cases {

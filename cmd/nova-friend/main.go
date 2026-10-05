@@ -224,9 +224,10 @@ func friendTool(w world) *tool.Tool {
 		})
 	}
 	return &tool.Tool{
-		Name:  "nova-friend",
-		What:  "what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon",
-		Stamp: version,
+		Name:    "nova-friend",
+		Default: "check",
+		What:    "what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon",
+		Stamp:   version,
 		How: `one launchd agent per friend (install) runs the daemon (run): it parks on the friend's
 nova-bus stream and, when the session is free, pushes every waiting message in as one turn (the
 harness's deliver command), beats to the sprint server while the session answers, answers the
@@ -347,36 +348,74 @@ NOTE: a CHECK FAIL is a NOTE, never an undone install.`,
 			},
 			{
 				Name:    "check",
-				Usage:   "check --as <me> --harness <h> --dir <d> [--session <id>] [--within <d>] [--to <seat>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
-				Example: "", // a live delivery: the banner's example block runs nothing that needs a session; -h carries the example
-				Effect:  tool.Delivery + ": one session check into the live session through the harness's deliver command",
+				Usage:   "check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]",
+				Example: "", // the banner's example block runs nothing that reads a fleet's state; -h carries the example
+				Effect:  tool.Delivery + ": without --harness it only reads (the health check); with --harness it delivers one session check into the live session (the delivery check)",
 				DryRun:  true,
-				Detail: `The one promise every harness adapter makes, checked end to end (docs/SPEC-FRIEND.md,
-delivery-conformance-r.w1): a SESSION CHECK <nonce> goes in through the harness's deliver command,
-the session runs the exact nova-friend pong line it carries, and a pong with that nonce from --as is
-on the bus within --within. Prints one line: CHECK OK harness= took=, or CHECK FAIL harness=
+				Detail: `The health check: is each friend's row true. The friends are the arguments, else every friend with a
+state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
+window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
+this order:
+CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|->
+CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
+CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
+CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
+CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>
+then one summary line: CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>.
+The verdict is a function of those facts, the first rule that holds: broken when the session is marked
+broken or every delivery in the window failed (at least one, and all of them); deaf when a delivery in
+the window succeeded and neither a session pong nor a real message came back in the window; silent when
+no delivery was due in the window and nothing came back; down by presence; else ok. --shown is what a
+consumer shows of each friend, JSON {"<friend>":{"state":"up|asleep|down","working":<n>}} from a file or
+- for stdin; when it says up or working and the verdict is not ok, the verdict stays and the why leads
+with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or its agent
+is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
+friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age},
+harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
+reason}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
+verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
+Exit 0 when every verdict is ok, 1 when any is not (the check found something), 2 when it could not run
+(a refused flag, an unreadable --shown).
+With --harness the verb is the delivery check instead, which
+proves the live session takes a delivery: a SESSION CHECK <nonce> goes in through the harness's deliver
+command, the session runs the exact nova-friend pong line it carries, and a pong with that nonce from
+--as is on the bus within --within. It prints CHECK OK harness= took=, or CHECK FAIL harness=
 stage=<deliver|act|reply> why= at exit 1: deliver, the adapter did not take it (a harness with no
-deliver command says its reason); act, the session never ran the line (its pong file never held the
-nonce); reply, the line ran and no pong reached the bus. The pong goes to --to, else the seat the
-daemon's status names, else --as itself. Run it once a night as a nova-config loop record
-(docs/TESTING.md). --dry-run checks the flags and the harness and prints the line the session
-would run: nothing is delivered and no store is opened.
-example: nova-friend check --as bob --harness opencode --dir ./bob --within 2m`,
+deliver command says its reason); act, the session never ran the line; reply, the line ran and no pong
+reached the bus. The pong goes to --to, else the seat the daemon's status names, else --as itself. Run it
+once a night as a nova-config loop record (docs/TESTING.md). --dry-run checks the flags and the harness
+and prints the line the session would run: nothing is delivered and no store is opened.
+example: nova-friend check --as ada bob`,
 				Flags: func(f *tool.Flags) {
-					f.Required("as", "your name, a nova-config friend row")
-					f.Required("harness", "the harness the session runs in: "+strings.Join(friend.Harnesses, ", "))
-					f.Required("dir", "the friend's working directory, the session's")
-					f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir)")
-					f.Duration("within", friend.DefaultCheckWithin, "how long to wait for the session's pong")
+					f.String("as", "", "your name, the coordinator (the health check); the friend itself with --harness")
+					f.String("harness", "", "the harness the session runs in (delivery check): "+strings.Join(friend.Harnesses, ", "))
+					f.String("dir", "", "the friend's working directory")
+					f.String("session", "", "the session to deliver into (delivery check)")
+					f.Duration("within", friend.DefaultCheckWithin, "how long to wait for the session's pong (delivery check)")
 					f.String("to", "", "who the pong goes to (default: the seat the daemon's status names, else --as)")
+					f.Duration("since", 24*time.Hour, "the window every fact is judged over: deliveries, deferrals, real messages, the session pong")
+					f.String("shown", "", "path to shown state file, or - for stdin")
 					stateDir(f)
 					redis(f)
 					f.Check(func(c *tool.Call) {
-						if h := c.Str("harness"); h != "" && !friend.Known(h) {
-							c.Problem(fmt.Sprintf("--harness %q is no harness; it wants one of %s", h, strings.Join(friend.Harnesses, ", ")))
-						}
-						if c.Dur("within") <= 0 {
-							c.Problem("--within wants a positive duration, such as 5m")
+						callArgs.Store(c, f.Args())
+						if h := c.Str("harness"); h != "" {
+							if c.Str("as") == "" {
+								c.Problem("--as is required")
+							}
+							if c.Str("dir") == "" {
+								c.Problem("--dir is required")
+							}
+							if !friend.Known(h) {
+								c.Problem(fmt.Sprintf("--harness %q is no harness; it wants one of %s", h, strings.Join(friend.Harnesses, ", ")))
+							}
+							if c.Dur("within") <= 0 {
+								c.Problem("--within wants a positive duration, such as 5m")
+							}
+						} else {
+							if c.Dur("since") <= 0 {
+								c.Problem("--since wants a positive duration, such as 24h")
+							}
 						}
 					})
 				},
@@ -826,32 +865,6 @@ func (w world) install(c *tool.Call) *tool.Out {
 		o.Note("check: " + res.Line())
 	}
 	return noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session)
-}
-
-// check is the delivery check against the live session (friend.Conformance).
-func (w world) check(c *tool.Call) *tool.Out {
-	name, harness, dir, state := c.Str("as"), c.Str("harness"), c.Str("dir"), w.stateDir(c)
-	if c.DryRun() {
-		if _, err := friend.NewDeliverer(harness, dir, c.Str("session"), w.exec, nil); err != nil {
-			return tool.Refuse(err.Error())
-		}
-		nonce := w.random()
-		return tool.Done().Fact("harness", harness).Fact("dir", dir).Fact("within", c.Dur("within").String()).
-			Item("plan", "command", tool.Text(w.pongCommand(name, nonce, state, c.Str("redis"))+" --to "+w.checkTo(c.Str("to"), name, state))).
-			Note("nothing was delivered; the session would run the plan line and its pong would end the check")
-	}
-	c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+"), where the pong is read")
-	if o := c.Refused(); o != nil {
-		return o
-	}
-	res, refusal := w.deliveryCheck(c, name, harness, dir, c.Str("session"), state, c.Str("to"), c.Dur("within"))
-	if refusal != "" {
-		return tool.Refuse(refusal)
-	}
-	if res.Stage != "" {
-		return tool.Fail().As("FAIL").Fact("harness", harness).Fact("stage", res.Stage).Fact("why", tool.Text(res.Why))
-	}
-	return tool.Done().Fact("harness", harness).Fact("took", res.Took.String())
 }
 
 // checkTo is whom the check's pong goes to: to, else the seat the daemon's

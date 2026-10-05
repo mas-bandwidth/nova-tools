@@ -732,6 +732,56 @@ each friend's machine (docs/TESTING.md). Not covered: a lane's
 turn is under way goes in beside it, not after it (the check runs in its own
 process and does not hold the daemon's turn).
 
+### Check
+
+`nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]`
+judges whether each friend's row is true, from evidence, with no consumer's code: any coordinator of
+friends runs it. The friends are the arguments, else every friend with a state directory or on the bus.
+`--since` (default 24h) is the window; every count and age below is of it, and the window start is
+the check's clock minus `--since`.
+
+**The facts**, each gathered through an injected seam (launchctl, the status, presence and pong files,
+the log file, the bus store, the directory listing) so the verdict is a function and the tests use fakes:
+
+1. Daemon: the launchd agent (`loaded`, `not-loaded`, `none`) and its pid, the status file's freshness
+   (`ok` within `DaemonStale`, `stale`, `none`), connection, challenge, the session pong's age, presence
+   and its seen age.
+2. Harness: the route (`push`, `defer`, `passive`) and, from the daemon's log, the deliveries (`exit=`
+   lines) and deferrals stamped at or after the window start; a line with no stamp is outside every
+   window. `last` and `last_exit` are the newest delivery in the window, `failed_of_last20` the failures
+   among the newest twenty in the window. `delivered` and `failed` (JSON only) are the window's whole
+   counts: the verdict reads them. And the session mark: `broken` and its `reason` when the status says
+   the session is broken.
+3. Bus: `real_since`, the messages from the friend in the window that are real (not ping, pong,
+   daemon-pong or keepalive), and `last_real`.
+4. Work: the entries in the friend's `inbox/` (not dotfiles or `QUEUE.json`) and `outbox/`, and the
+   newest outbox entry.
+
+**The verdicts**, a pure function of the facts, the first rule that holds:
+
+1. `broken` when the session is marked broken, or `delivered > 0` and `failed == delivered`: every
+   delivery in the window failed. One failure among successes is not broken.
+2. `deaf` when a delivery in the window succeeded (`delivered > failed`) and no session pong aged
+   within the window and no real message in the window came back.
+3. `silent` when no delivery was due in the window (`delivered == 0`, no deferral, an empty inbox),
+   nothing came back, and the friend is not down.
+4. `down` by presence: presence down, no agent, or an agent not loaded with no status.
+5. `ok` otherwise.
+
+**`--shown`** is what a consumer shows of each friend, `{"<friend>":{"state":"up|asleep|down","working":<n>}}`
+(a consumer passes its own table through it; the tool reads no consumer). A friend is claimed alive
+when its state is `up` or `working > 0`. One precedence covers every non-ok verdict: when a claimed-alive
+friend's facts verdict is not `ok`, the verdict stays the facts' and the why leads with
+`untrue: shown <state>/<working>, ` and the facts' reason (the measured case: shown up, working 1, the
+session marked broken: `verdict=broken`, why `untrue: shown up/1, session broken: <reason>`). When the
+facts verdict is `ok` but the friend is asleep or its agent is not loaded, the verdict is `untrue`.
+
+The summary is `CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>`. Exit 0
+when every verdict is ok, 1 when any is not, 2 when the check could not run. With `--json` the same
+facts and verdicts are one object: `friends[]` of `daemon`, `harness`, `bus`, `work` and `verdict`, and
+`summary`. The model is the functions `DecideVerdict` and `factsVerdict`, `ParseLog` and `pongWithin` in
+internal/friend/check.go; each cites this section.
+
 ## The coordinator's ping (cmd/nova-friend serve; internal/friend/keepalive.go)
 
 The server side of the connection, as the owner designed it: the coordinator
