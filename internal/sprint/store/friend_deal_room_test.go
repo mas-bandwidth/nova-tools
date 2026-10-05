@@ -10,7 +10,7 @@ import (
 )
 
 // On the twin store the tick deals a friend's card to an idle friend before a full one,
-// and levels the friends every tick with no verb, reading the seats and what her beat
+// and levels the friends every tick with no verb, reading the seats (each up on her session's pong) and what her beat
 // names running though no friend's card is ready (docs/SPEC-SPRINT.md section 1,
 // friend-deal-idle-lanes-first.w1).
 func TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick(t *testing.T) {
@@ -24,8 +24,7 @@ func TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick(t *testing.T) {
 		t.Parallel()
 		h, newest := fullAmy(t)
 		for _, f := range []string{"bob", "cat"} {
-			_, err := h.st.FriendBeat(h.ctx, f)
-			require.NoError(t, err)
+			h.up(f)
 		}
 		h.must(AddStep(sprint.AddReq{Stream: "s2", Cards: friendCards("s2", 5)}))
 		h.machine()
@@ -48,8 +47,7 @@ func TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick(t *testing.T) {
 	t.Run("a friend coming up is levelled on that tick, with no friend's card ready", func(t *testing.T) {
 		t.Parallel()
 		h, newest := fullAmy(t)
-		_, err := h.st.FriendBeat(h.ctx, "bob")
-		require.NoError(t, err)
+		h.up("bob")
 		h.machine()
 		snap := h.snap()
 		assert.Equal(t, 2, snap.Fleet.Count(bob, sprint.Working), "his idle lanes first")
@@ -81,8 +79,7 @@ func fullAmy(t *testing.T) (*harness, string) {
 	})
 	require.NoError(t, err)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: friendCards("s1", 16)}))
-	_, err = h.st.FriendBeat(h.ctx, "amy")
-	require.NoError(t, err)
+	h.up("amy")
 	h.startMachine()
 	h.machine()
 	amy := sprint.FriendRow("amy")

@@ -68,6 +68,7 @@ func TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendApp(t, "amy")
 	ta.ok("friend sync")
+	ta.pong("amy")
 	out := ta.ok("friend beat amy --working 2 --queue 3 --width 4 --running s1-1.w1,s1-2.w1 --load 40%")
 	assert.Contains(t, out, "FRIEND-BEAT OK amy at=")
 	assert.Contains(t, out, " working=2 queue=3 width=4 load=40.0% running=s1-1.w1,s1-2.w1")
@@ -79,10 +80,10 @@ func TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad(t *testing.T) {
 	assert.Equal(t, []string{"s1-1.w1", "s1-2.w1"}, f.Report.Running)
 	assert.Equal(t, 40.0, f.Load)
 	assert.Equal(t, 8, f.Width, "her width is the roster's, not her word")
-	assert.Equal(t, sprint.Up, f.Status)
+	assert.Equal(t, sprint.Up, f.Status, "on her session's pong, never on the beat")
 
 	// a beat with none reports none: the last one's counts are not kept
-	ta.ok("friend beat amy")
+	ta.beatUp("amy")
 	f = whereFriends(ta)["amy"]
 	assert.Nil(t, f.Report)
 	assert.Zero(t, f.Load)
@@ -112,7 +113,7 @@ func TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow(t *testing.T) {
 	ta.ok("friend sync --root " + root)
 	require.Equal(t, "queued", queueStates(t, root, "amy")["s1-2.w1"])
 	ta.ok("friend up bob")
-	ta.ok("friend beat bob")
+	ta.beatUp("bob")
 
 	assert.Contains(t, ta.dry("friend level --dry-run"), "FRIEND-LEVEL DRY-RUN up=amy,bob; nothing was changed")
 	out := ta.ok("friend level")
@@ -138,8 +139,8 @@ func TestFriendLevelRespectsOneShotDeliveryMode(t *testing.T) {
 
 	root := t.TempDir()
 	ta.ok("friend sync --root " + root)
-	ta.ok("friend beat amy")
-	ta.ok("friend beat bob")
+	ta.beatUp("amy")
+	ta.beatUp("bob")
 
 	for i := 1; i <= 4; i++ {
 		id := fmt.Sprintf("s1-%d", i)
@@ -154,7 +155,7 @@ func TestFriendLevelRespectsOneShotDeliveryMode(t *testing.T) {
 	ta.ok("friend sync --root " + root)
 
 	ta.ok("friend up bob")
-	ta.ok("friend beat bob")
+	ta.beatUp("bob")
 
 	out := ta.ok("friend level")
 	// bob has room 1 (one-shot mode), so only 1 card moves (even though bob's width is 2 and amy has 2 ready cards)
@@ -211,7 +212,7 @@ func TestAFriendsNextCardsDeadlineFollowsHerRunWall(t *testing.T) {
 	report := filepath.Join(root, "amy-working", "outbox", "s1-1.w1", "REPORT.md")
 	require.NoError(t, os.Chtimes(report, taken.Add(time.Hour), taken.Add(time.Hour)))
 	ta.ok("friend sync --root " + root)
-	ta.ok("friend beat amy")
+	ta.beatUp("amy")
 	ta.ok("tick") // s1-3 dealt to her and taken, s1-1's hour behind her
 
 	var w whereView
