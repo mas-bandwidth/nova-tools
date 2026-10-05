@@ -58,6 +58,10 @@ var verbExit = map[string]string{
 // flags so a cold reader still finds them (docs/STANDARD.md section 3, ONBOARDING point 6).
 // The banner keeps what member, lint and disk-guard are, and names the verb's -h for the rest.
 var verbDetail = map[string]string{
+	"version":    "prints this build's identity: the version, the commit it was built from and the time it was stamped.",
+	"profile":    "reads the timeline.tsv of every job the glob names and prints one PROFILE line per job and one mean summary, so a slow card shows where its time went.",
+	"slots init": "creates the slot store for an owner: the machine's capacity and the owner's share of it, which slots take then leases from.",
+	"slots list": "prints the store's slots: each owner's capacity and share, and every lease held, with its label and when it expires.",
 	"member": `run this machine as a sprint member; --server is the address of nova-sprint run --listen.
 Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
 A reader uses its machine's width; --width overrides it. This machine opens no store.
@@ -103,6 +107,23 @@ var verbEffect = map[string]string{
 	"member":       "delivery: joins a sprint's fleet through --server, runs its cards as native children, pushes their commits and opens their pull requests",
 }
 
+// verbExample is one worked invocation per verb, printed on the verb's -h as an `example:`
+// line, for a verb whose help text carries none of its own.
+var verbExample = map[string]string{
+	"version":       "nova-swarm version",
+	"doctor":        "nova-swarm doctor",
+	"lint":          "nova-swarm lint --card card.md --child-rules",
+	"profile":       "nova-swarm profile --jobs 'jobs/*'",
+	"slots":         "nova-swarm slots list --store /srv/slots",
+	"slots init":    "nova-swarm slots init --store /srv/slots --owner ada --capacity 8 --share 4",
+	"slots list":    "nova-swarm slots list --store /srv/slots",
+	"slots release": "nova-swarm slots release --store /srv/slots --owner ada --label card1",
+	"slots take":    "nova-swarm slots take --store /srv/slots --owner ada --n 1 --for 30m --label card1",
+	"template":      "nova-swarm template --name card",
+	"verify":        "nova-swarm verify --result RESULT.md --contract 'RESULT: done' --label card1",
+	"worker check":  "nova-swarm worker check worker.json",
+}
+
 // commonExit is the codes of every other verb.
 const commonExit = "exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation"
 
@@ -132,7 +153,11 @@ func recoverHelp(out io.Writer, code *int) {
 	var b strings.Builder
 	verbflag.Print(&b, "nova-swarm", usage, h.FS, strings.Split(verbExits(name), "\n")...)
 	*code = 0
-	help := verbflag.Insert(b.String(), verbHelpLines(name))
+	lines := verbHelpLines(name)
+	if e, ok := verbExample[name]; ok && !strings.Contains("\n"+lines+b.String(), "\nexample:") {
+		lines += "example: " + e + "\n"
+	}
+	help := verbflag.Insert(b.String(), lines)
 	if e, ok := verbEffect[name]; ok {
 		help += "effect: " + e + "\n"
 	}
