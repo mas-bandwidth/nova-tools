@@ -452,6 +452,14 @@ server. The re-encoding removes input whitespace and escapes `<`, `>` and `&`.
 The server bounds the bytes it receives. ID and field-value sizes count decoded
 UTF-8 bytes.
 
+The same two text bounds hold the single-verb writes, checked on the Go client
+before the payload is built and before anything is sent: a row set value, a row
+add label, exclude or owner, and a view set title or summary are each at most
+`field value bytes` (65536), and a member id named to member create or a cell
+verb at most `member id bytes` (256). An overlong one refuses as `LIMIT`,
+naming the bound and the count found, never echoing the input. A value of
+exactly the bound is sent, not refused.
+
 `columns per table` and `rows per table` bound the size of a table: `create`, `bind`,
 `set` (`--columns`, `col add`) and `row add`, `rows add` refuse the column or the row
 past the bound as `LIMIT`, naming the bound and the count, before any write. A bind
