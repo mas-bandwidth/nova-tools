@@ -18,5 +18,3 @@ docs/SPEC-SECRETS.md:space 9
 docs/SPEC-SECRETS.md:stella 1
 docs/SPEC-SECRETS.md:studio 1
 docs/SPEC-SWARM.md:space 2
-docs/TESTS.md:emma 4
-docs/TESTS.md:rowan 2
