@@ -71,11 +71,15 @@ friends between work and fleet in its default frame, which draws no merge
 table; the friends table is drawn after merge only under where --all, up
 first, then held, then down, each by name, with no load column.
 
-WHO: friend <name> prefers a known friend while she is up with room.
-WHO: only friend <name> waits for that friend alone. Other work, including
-cards with no WHO line, goes first to subscription friends whose tiers cover
-it, then to the fleet. Among eligible friends, most free room wins and name
-breaks ties. In batch mode her room is twice her width: she works at width and
+Every friend decision reads one tier for a card: its tier now, flash when it
+names none. WHO: friend <name> prefers a known friend while she is up with
+room and serves that tier; a named friend without it is passed over.
+WHO: only friend <name> waits for that friend alone, and only while she serves
+the tier. Other work, including cards with no WHO line, goes first to
+subscription friends whose tiers cover it, then to the fleet. Among eligible
+friends, an idle lane wins, then most free room, and name breaks ties. A card
+re-tiered off the tiers of the friend holding it, not yet started, is taken
+back by the next tick and dealt again. In batch mode her room is twice her width: she works at width and
 queues the rest. In one-shot mode she holds one card, and the next only after
 the last one finished. nova-sprint unpin <id>... --reason <text> removes an
 unstarted card's stored WHO choice without editing its brief; --stream <s>

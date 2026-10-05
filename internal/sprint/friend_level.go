@@ -46,8 +46,12 @@ type FriendLevelReq struct {
 // backlog first. It goes at its next generation (its own branch and job), into working
 // when she has a lane free and ready behind her working cards otherwise. Each move lowers
 // the idle lanes, or keeps them and lowers the sum of squared backlogs, and a card moves at
-// most once, so it ends. Each move is one line; the first unit's line also says where the
-// cards went: "moved=N to <friend>(n),... from <friend>(n),...".
+// most once, so it ends. Each move is one line; the first move's line also says where the
+// cards went: "moved=N to <friend>(n),... from <friend>(n),...". Before it moves anything it
+// takes back every unstarted card re-tiered since its deal (CardTier) off its holder's
+// tiers (friendRetierTakes, docs/SPEC-SPRINT.md section 1, friend-deal-one-tier.w3): such a
+// card never moves, and a friend it was taken from is not levelled until the next tick. A card
+// moved carries the tier it is moved on (FieldDealtTier).
 func FriendLevel(s *Snapshot, r FriendLevelReq) Plan {
 	return friendLevel(s, r, nil, nil)
 }
@@ -56,10 +60,12 @@ func FriendLevel(s *Snapshot, r FriendLevelReq) Plan {
 // places on each friend's row, and dealtWorking those of them that go into working; they
 // count against her room and her lanes, and none of them moves.
 func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]int) Plan {
-	var p Plan
+	// first the cards re-tiered off their holder's tiers go back (friendRetierTakes); a
+	// friend one was taken from is not levelled this tick, and the next tick deals them
+	p, taken := friendRetierTakes(s, r.Seats, r.Who)
 	var seats []FriendSeat
 	for _, f := range r.Seats {
-		if f.Status == Up {
+		if f.Status == Up && !taken[f.Name] {
 			seats = append(seats, f)
 		}
 	}
@@ -81,7 +87,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	// to is where the card goes, "" when nowhere: below her room, of its tier, not a
 	// friend it left, and an idle lane for a giver with none or an even smaller backlog
 	to := func(giver string, c *Card) string {
-		tier, left := cardTierOf(s.Work.Placed(c.F("primary"))), friendsLeft(c)
+		tier, left := CardTier(s.Work.Placed(c.F("primary"))), friendsLeft(c)
 		free, idle := map[string]int{}, map[string]int{}
 		var may []string
 		for _, f := range seats {
@@ -94,9 +100,9 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 				may = append(may, n)
 			}
 		}
-		return preferredFriend(may, idle, free)
+		return preferredFriend(may, "", idle, free)
 	}
-	gives, got, moved := map[string]int{}, map[string]int{}, 0
+	gives, got, moved, first := map[string]int{}, map[string]int{}, 0, len(p.Units)
 	for r.Max == 0 || moved < r.Max {
 		givers := slices.Clone(seats)
 		slices.SortStableFunc(givers, func(a, b FriendSeat) int {
@@ -130,6 +136,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		col := Ready
 		set, unset := nextGen(c, FriendRow(short), s.Now), []string{FieldFriendDeadline}
 		set[FieldFriendsLeft] = strings.Join(append(friendsLeft(c), long), ",")
+		set[FieldDealtTier] = CardTier(s.Work.Placed(c.F("primary"))) // the tier it is moved on (friendRetierTakes)
 		if working[short] < width[short] {
 			working[short]++
 			col = Working
@@ -144,8 +151,8 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, FriendRow(short), col, set, unset...))},
 			Moved: fmt.Sprintf("%s %s:ready -> %s:%s gen=%d", c.ID, c.Row, FriendRow(short), col, c.Int("gen")+1)})
 	}
-	if len(p.Units) > 0 {
-		p.Units[0].Moved += fmt.Sprintf("; moved=%d to %s from %s", moved, countsByMember(got), countsByMember(gives))
+	if moved > 0 {
+		p.Units[first].Moved += fmt.Sprintf("; moved=%d to %s from %s", moved, countsByMember(got), countsByMember(gives))
 	}
 	return p
 }
