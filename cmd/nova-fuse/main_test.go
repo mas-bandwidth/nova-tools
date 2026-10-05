@@ -1738,7 +1738,7 @@ func TestCheckRefusesTheSpellingStatusDisplaysForARawByteKey(t *testing.T) {
 
 	box := boxIn(t)
 	now := nowish()
-	writeRaw(t, box, `{"lockdown":null,"quarantine":{"a\ufffdb":{"at":"2026-01-01T00:00:00Z","why":"hand edited"}}}`)
+	writeRaw(t, box, `{"lockdown":null,"quarantine":{"a\ufffdb":{"at":"2026-01-01T00:00:00Z","reason":"hand edited"}}}`)
 
 	code, _, errOut := capture(t, []string{"check", "--box", box, `a\xffb`}, now)
 	assert.Equal(t, 1, code, "check with a raw-byte escape must exit 1, got %d", code)

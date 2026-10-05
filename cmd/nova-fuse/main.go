@@ -29,7 +29,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
@@ -636,7 +635,7 @@ func unescapeField(s string) string {
 			h3, ok3 := unhex(s[i+4])
 			h4, ok4 := unhex(s[i+5])
 			if ok1 && ok2 && ok3 && ok4 {
-				out = utf8.AppendRune(out, rune(h1)<<12|rune(h2)<<8|rune(h3)<<4|rune(h4))
+				out = append(out, string(rune(h1)<<12|rune(h2)<<8|rune(h3)<<4|rune(h4))...)
 				i += 6
 				continue
 			}
