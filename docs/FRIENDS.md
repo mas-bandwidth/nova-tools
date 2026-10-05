@@ -34,6 +34,16 @@ never from her daemon's beat alone, and shows the evidence beside it
 status=down why="no session answer 12m" evidence="harness unknown; no session answer 12m; no limit; 2 undelivered; last result 40m exit=0"
 ```
 
+A friend on dsh (DeepSeek Harness) whose headless turn cannot be taken (a
+session under an agent preset the one-shot runner refuses, or no provider key,
+`MISSING_CREDENTIAL`) reads down with the reason, whatever exit code dsh gave:
+`session=broken reason="dsh session <id>: agent preset minimal"` (or
+`"dsh: missing credential"`), and no beat until a turn succeeds. Her messages
+are deferred, never lost: they stay pending and go in with the first turn that
+works. Start her a session without an agent preset and name it with
+`--session`, or store DEEPSEEK_API_KEY for the headless profile
+(docs/SPEC-FRIEND.md, a session that cannot take a turn).
+
 ## A sprint card
 
 A card of the sprint whose brief says `WHO: friend` or `WHO: friend <name>` is

@@ -363,19 +363,40 @@ func TestADeferredDeliveryIsTriedAgainAndNeverGivenUpOrAcked(t *testing.T) {
 }
 
 // refusalWatch is a Deliverer that says each turn's end: the error the
-// adapter under it answered, in order.
+// adapter under it answered, in order, and a token on ended; wait is the
+// daemon's Pause over it, which waits for a turn under way to end.
 type refusalWatch struct {
 	Deliverer
-	mu   sync.Mutex
-	ends []error
+	mu      sync.Mutex
+	ends    []error
+	running int
+	ended   chan struct{}
 }
 
 func (w *refusalWatch) Deliver(ctx context.Context, text string) (int, error) {
+	w.mu.Lock()
+	w.running++
+	w.mu.Unlock()
 	exit, err := w.Deliverer.Deliver(ctx, text)
 	w.mu.Lock()
 	w.ends = append(w.ends, err)
+	w.running--
 	w.mu.Unlock()
+	w.ended <- struct{}{}
 	return exit, err
+}
+
+func (w *refusalWatch) wait(ctx context.Context, _ time.Duration) {
+	w.mu.Lock()
+	running := w.running
+	w.mu.Unlock()
+	if running == 0 {
+		return // no turn under way (or not yet started): the next step looks again
+	}
+	select {
+	case <-w.ended:
+	case <-ctx.Done():
+	}
 }
 
 func (w *refusalWatch) turns() []error {
@@ -406,9 +427,9 @@ func TestDSHRefusalOnExitZeroMarksTheFriendDownWithTheReason(t *testing.T) {
 			mode := filepath.Join(t.TempDir(), "mode")
 			require.NoError(t, os.WriteFile(mode, []byte(c.mode), 0o600))
 			r := newRig(t)
-			w := &refusalWatch{Deliverer: &DSH{Dir: t.TempDir(), Session: "session-zhi", Program: bin, Run: envExec(fakeDSHEnv + "=" + mode)}}
+			w := &refusalWatch{ended: make(chan struct{}, 8), Deliverer: &DSH{Dir: t.TempDir(), Session: "session-zhi", Program: bin, Run: envExec(fakeDSHEnv + "=" + mode)}}
 			r.d.Deliver, r.d.Harness = w, "dsh"
-			r.d.Pause = func(context.Context, time.Duration) { time.Sleep(2 * time.Millisecond) } // the turn is a real process
+			r.d.Pause = w.wait // the turn is a real process
 			r.d.Beat = func(context.Context, time.Time) error { r.mu.Lock(); r.beats++; r.mu.Unlock(); return nil }
 			r.send(t, "ada", "hello", "are you there?")
 

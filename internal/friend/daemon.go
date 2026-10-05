@@ -244,6 +244,7 @@ type loop struct {
 	deferSaid    time.Time
 	refusal      string // the last provider refusal, and how many turns in a row said it
 	streak       int
+	down         string // while the session cannot take a turn (SessionRefused), its reason: no beat until a turn succeeds
 	broken, told bool
 	results      chan result
 	lanes        *laneSet
@@ -331,7 +332,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		if l.broken && !l.told {
 			l.told = d.tellBroken(ctx, l.b, l.brokenAfter)
 		}
-		if storeOK {
+		if l.down != "" {
+			d.status.BeatError = "no beat: " + l.down // the friend's row reads down until a turn succeeds
+		} else if storeOK {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
 			}
@@ -713,7 +716,7 @@ func (l *loop) stampProgress(now time.Time) {
 // session; any other failure counts toward MaxDeliveries.
 func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	d := l.d
-	line := ""
+	line, cleared := "", false
 	for _, e := range t.entries {
 		delete(l.inHand, e) // acked below, or pending for the claim to hand in again
 	}
@@ -721,6 +724,7 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	switch {
 	case ok:
 		l.streak, l.refusal = 0, ""
+		cleared = l.down != ""
 		if len(t.entries) > 0 {
 			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
 				d.status.StoreError = err.Error()
@@ -782,14 +786,51 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 		line += fmt.Sprintf("\n%s session %s broken: %s (%d turns in a row); delivering nothing into it until the daemon restarts, every message stays pending",
 			now.UTC().Format(time.RFC3339), d.status.SessionID, d.status.SessionReason, l.brokenAfter)
 	}
+	if cleared {
+		line += "\n" + l.up(now) // said after the turn's own line
+	}
 	return line
 }
 
-// batchDone is the batch turn's end: a deferral keeps it in hand, tried
-// again; anything else settles its messages.
+// refusedSession is a turn the session could not take at all
+// (SessionRefused): nothing was delivered, so the turn stays in hand, tried
+// again every RecheckEvery and counted toward nothing, as a deferral is; but
+// the session is broken with the reason on the first such turn, said once
+// per reason, and the beat is held, so the friend reads down until a turn
+// succeeds (up). docs/SPEC-FRIEND.md, a session that cannot take a turn.
+func (l *loop) refusedSession(t *turn, exit int, refused SessionRefused, now time.Time) {
+	d := l.d
+	l.retry = now.Add(RecheckEvery)
+	if l.down == refused.Down() {
+		return
+	}
+	l.down = refused.Down()
+	d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionBroken, refused.Session, l.down, now
+	d.status.BeatError = "no beat: " + l.down
+	d.Record(fmt.Sprintf("%s subject=%s messages=%d took=%s exit=%d session=broken: %s; nothing was delivered: every message stays pending, tried again every %s, and the friend reads down (no beat) until a turn succeeds",
+		now.UTC().Format(time.RFC3339), t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), exit, l.down, RecheckEvery))
+}
+
+// up is the end of a session that could not take a turn: a turn succeeded,
+// the session is ok again and the beat goes on; it answers the record's line.
+func (l *loop) up(now time.Time) string {
+	d, was := l.d, l.down
+	l.down = ""
+	d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt, d.status.BeatError = SessionOK, "", "", time.Time{}, ""
+	return now.UTC().Format(time.RFC3339) + " session ok: " + was + " cleared by a turn that succeeded"
+}
+
+// batchDone is the batch turn's end: a deferral, or a session that could not
+// take the turn, keeps it in hand, tried again; anything else settles its
+// messages.
 func (l *loop) batchDone(r result, now time.Time) {
 	d := l.d
 	r.t.running = false
+	var cannot SessionRefused
+	if errors.As(r.err, &cannot) && !r.t.stopped {
+		l.refusedSession(r.t, r.exit, cannot, now)
+		return
+	}
 	var deferred Deferred
 	if errors.As(r.err, &deferred) && !r.t.stopped { // not a failure: the turn stays in hand, tried again, counted toward nothing
 		l.deferrals++
