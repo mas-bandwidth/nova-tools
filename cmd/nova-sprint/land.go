@@ -507,7 +507,11 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 				lc.base = cb.Ref
 			}
 		}
-		lc.protected = sprint.ProtectedLandWhy(s, stream, lc.repo, lc.base, c.ID)
+		if lc.protected = sprint.ProtectedLandWhy(s, stream, lc.repo, lc.base, c.ID); lc.protected != "" {
+			// the refusal names the promotion flag beside the mark (docs/SPEC-SPRINT.md
+			// section 7, protected-bases-p.w1)
+			lc.protected += "; or mark it the promotion stream, for every repository: nova-sprint stream set " + stream + " --promotion"
+		}
 		cards = append(cards, lc)
 	}
 	for len(cards) > 0 {
