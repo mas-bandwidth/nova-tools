@@ -278,12 +278,6 @@ func (e *XaiUsageNotFileError) Error() string {
 	return "the path is not one file; --provider xai wants one usage.json path and does not scan a directory"
 }
 
-// ReadXaiUsageFile reads the one path --provider xai was given. A missing path
-// is *XaiUsageMissingError. A directory is *XaiUsageNotFileError.
-func ReadXaiUsageFile(path string) ([]byte, error) {
-	return readXaiUsageFile(path)
-}
-
 func readProviderSource(kind, path string) ([]byte, error) {
 	if kind == "xai" {
 		return readXaiUsageFile(path)
