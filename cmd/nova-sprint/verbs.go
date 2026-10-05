@@ -2118,6 +2118,12 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	if *as == "" || n != 1 {
 		return refuse(stderr, "read", "wants --as <reader> and one of --begin, --ok, --broken, --return <card> --reason <text>")
 	}
+	// Attribution is never a finding (docs/SPEC-SPRINT.md, reader-ignores-attribution):
+	// a broken read whose every sentence is about the trailer, the By: line or the
+	// model or harness named is refused before the store is touched.
+	if *broken && sprint.AttributionOnly(*finding) {
+		return refuse(stderr, "read", sprint.AttributionRefusal)
+	}
 	if *ret != "" {
 		if len(ids) > 0 || *reason == "" {
 			return refuse(stderr, "read", "--return names its one card and wants --reason <text>")
