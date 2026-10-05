@@ -3241,7 +3241,7 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `late` | a work card is past its deadline | with progress in the last 10 minutes (the work card's `progress` stamp: the server's time of its holder's last `progress` verb, which the member sends every 3 minutes while its child prints and the friend daemon while a lane's turn on the card prints; a stamp from before the card's take is another holder's and counts as none) a wait of 30 minutes, once a generation (`rule_waited`). The default is wait only: a working card whose holder has stamped no progress since its take is held 30 minutes at a time and never returned by this rule, so a member that does not stamp never loses an honest long child to it (`tla/SprintRules.tla`, `NeverStampedNeverReturned`). A card whose holder stamped and then went silent past the 10 minutes, or whose one wait is spent, is returned and dealt again once its holder has had its own whole deadline (withdrawn, the take ended: it spends a redeal, so a card late again and again reaches its bound and climbs); a card just dealt again is held until its holder's own deadline. Each answer keeps a hold on the condition until the time it names, and the tick raises it again then if it still holds. A friend's card is left: a friend keeps her cards |
 | `conflict` | stream stopped: conflict on a card, where the lander refused a head one of three ways (`sprint.RefusalWay`): its paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports), it fails the lander's checks (files outside its PATHS, E12, or another check), or its merged tree fails the tree gate | in one tick: the card returned to review (`rule_redo` its attempt, `rule_refused` the way, `rule_refusal` the lander's words, `tier_now=flash`), the stream resumed, so the rest of its batch lands on the next landing, and the card reworked at flash, staged on the base's tip, with the fix `redo the same change on the current tip` (a PATHS, checks or gate refusal adds `; the lander refused attempt <n>: <its words>`). The same card refused the same way as the refusal it was last returned on is a brief defect: the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, the stream left stopped for a mind. A conflict in a ledger the lander could not resolve, one whose files the lander did not say, and a head that is no commit or that origin does not hold are left |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
-| `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
+| `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops the stream that met it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the one judgment for that base, carrying the error and naming the failing tests; every other stream that meets the base red is refused under that judgment and never stopped. Each land pass re-checks the tip of a base that stopped a stream, and a green tip (`sprint.BaseGreen`, `base_gate_passed`) resumes every stream stopped only on that base's red, the judgment answered by rule (`v11-base-red-auto-resume-now`, below); a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves), the pass re-checks nothing and a stopped stream waits for a mind |
 
 A failure many cards share is the fleet's, not the card's: when `RuleSameFailureCards` (3) or
 more cards hold the same failure class now (in review with their work failed that way, or
@@ -3291,6 +3291,34 @@ the stream with one judgment, `stream stopped: the base fails its tree gate`, it
 the base, the gate, the refusals and the first refusal's time, every card where it is; `resume`
 then moves the stream and clears the count, as do a pass that merges and every other stop
 (`TestBaseGateRefusedThreeTimesStopsTheStreamWithAJudgment`, cmd/nova-sprint/land_basegate_count_test.go).
+
+#### v11-base-red-auto-resume-now
+
+The base's health is one fact (the coordinator, 2026-10-04: the base went red for a few
+minutes, every stream that tried to land stopped with a judgment of its own, and once the base
+was fixed eight streams were resumed by hand). The first stream a red base stops carries the
+one judgment for that base: its text names the failing tests (`failing TestX, ...`, read from
+the gate's `--- FAIL:` lines, `sprint.FailingTests`), and the stop keeps the base on the
+stream's control card (`base_gate_base`). Every other stream that meets the same base red while
+that judgment is open is refused under it, its refusals counted, and is never stopped, so it
+raises no judgment of its own and lands at its first pass after the base is green. Both are
+the lander's refusal on a red base (`sprint.LandBaseRefused`, the merge step's count with the
+one judgment); a hand `merge --base-red` stops its stream as it always did. A stopped stream
+gets no land pass of its own, so each land pass first re-checks the tip of every base that
+stopped a stream, even when every stream is stopped (cmd/nova-sprint, land.go, `baseRecheck`:
+the base fetched, the tree gate run once a base, a red tip gated again no sooner than the
+rule's last wait) and prints what it found (`NOTE`, and `base_checks` in `--json`). A green
+tip is its own step (`sprint.BaseGreen`, verb `merge base-green`): every stream stopped on
+that base's red is marked `base_gate_passed=<commit>` for the stop it is in
+(`base_gate_passed_stop`, the stop's `since`; a mark left from an earlier stop is no mark), a
+stream stopped by a hand `merge --base-red` with no base when it is the one named. The tick's
+`base-gate` rule then resumes every marked stream (`TickRuleResume`), clearing the mark, `did`
+and the judgment's answer `answered by rule base-gate: the base <b> passes its tree gate again
+at <commit>`, in the log. A stream stopped on another base, or for another cause, stays
+stopped; with the rule off nothing is re-checked or resumed.
+`TestStreamsResumeWhenTheBaseGatePassesAgain` (internal/sprint/land_base_test.go, the twin
+store, rule on and off) and `TestALandPassFindsTheBaseGreenAndItsStreamResumesByRule`
+(cmd/nova-sprint/landbase_test.go, a twin repository) drive it.
 
 ## 9. What is always true
 

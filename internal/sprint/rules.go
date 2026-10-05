@@ -26,7 +26,7 @@ import (
 
 // The rules, by name: the names nova-config's answer_rules_off takes (config.AnswerRules).
 const (
-	RuleBaseGate    = "base-gate"    // the lander's base tree gate, retried before a stream stops (cmd/nova-sprint, landgo.go)
+	RuleBaseGate    = "base-gate"    // the lander's base tree gate, retried before a stream stops, and its streams resumed when a land pass finds it green (landgo.go, land_base.go)
 	RuleBound       = "bound"        // a card reached its bound: a new attempt a tier up, heavy to a friend
 	RuleBriefDefect = "brief-defect" // the same finding twice: the card marked a brief defect, held
 	RuleConflict    = "conflict"     // a head the lander refused (a file conflict, its PATHS, the tree gate): returned, redone on the tip at flash, resumed; the same refusal twice a brief defect
@@ -198,6 +198,8 @@ func RuleAnswers(s *Snapshot, r TickReq) []RuleAnswer {
 			ruleBrief(s, &a)
 		case NReadBroken:
 			a.Act, a.Why = ActLeft, "a reader's finding needs a mind (the same finding twice is a brief defect)"
+		case NBaseRed:
+			ruleBaseGate(s, &a)
 		default:
 			a.Act, a.Why = ActLeft, "no rule answers it"
 		}
@@ -502,6 +504,28 @@ func ruleBrief(s *Snapshot, a *RuleAnswer) {
 	}
 }
 
+// ruleBaseGate: a stream stopped on its base's red (NBaseRed), the one judgment of every stream
+// stopped on that base (land_base.go). Resumed when a land pass found the base's tip green
+// again (FieldBaseGatePassed); until then left, the lander re-checking the tip each pass.
+func ruleBaseGate(s *Snapshot, a *RuleAnswer) {
+	a.Rule = RuleBaseGate
+	ctl := s.StreamCtl(a.open.Note.Stream)
+	if ctl == nil || ctl.F("state") != StreamStopped || ctl.F("cause") != "base" {
+		left(a, "the stream is not stopped on its base's red")
+		return
+	}
+	if sha := basePassed(ctl); sha != "" {
+		a.Act, a.Why = ActResume, baseGreenSaid(ctl.F(FieldBaseGateBase), sha)
+		return
+	}
+	left(a, "the base "+orDash(ctl.F(FieldBaseGateBase))+" fails its tree gate; each land pass re-checks its tip")
+}
+
+// baseGreenSaid is the base-gate rule's resume, in its answer.
+func baseGreenSaid(base, sha string) string {
+	return "the base " + orDash(base) + " passes its tree gate again at " + sha
+}
+
 // The tick's rule parts, in the order they run: the conflict's return, its resume, every
 // rework (failed, bound, the conflict's redo), the late cards, the brief defects. Each is
 // a step of its own on a fresh read, so the conflict's three moves can all be made in one
@@ -571,24 +595,38 @@ func TickRuleReturn(s *Snapshot, r TickReq) (Plan, int) {
 	return p, 0
 }
 
-// TickRuleResume resumes the streams whose conflict card the conflict rule took out.
+// TickRuleResume resumes the streams whose conflict card the conflict rule took out, and
+// every stream stopped on a base's red that a land pass found green again (the base-gate
+// rule): the one with the judgment answers it, and the ones stopped under it resume with it.
 func TickRuleResume(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	seen := map[string]bool{}
-	for _, a := range acting(s, r, ActResume) {
-		st := a.open.Note.Stream
-		if seen[st] {
-			continue
-		}
+	resume := func(st, rule, why string) {
 		seen[st] = true
-		q := Resume(s, ResumeReq{Stream: st, Did: RuleSaid(RuleConflict, a.Why), Who: r.who()})
+		q := Resume(s, ResumeReq{Stream: st, Did: RuleSaid(rule, why), Who: r.who()})
 		for _, u := range q.Units {
+			if ctl := s.StreamCtl(st); ctl != nil {
+				clearBasePassed(&u, ctl)
+			}
 			for _, o := range u.Closes {
-				u.Notes = append(u.Notes, decided(o, RuleSaid(RuleConflict, a.Why), r.who(), s.Now))
+				u.Notes = append(u.Notes, decided(o, RuleSaid(rule, why), r.who(), s.Now))
 			}
 			p.Units = append(p.Units, u)
 		}
 		p.Refused = append(p.Refused, q.Refused...)
+	}
+	for _, a := range acting(s, r, ActResume) {
+		if st := a.open.Note.Stream; !seen[st] {
+			resume(st, a.Rule, a.Why)
+		}
+	}
+	if r.AnswerRules && !s.RuleOff(RuleBaseGate) {
+		for _, st := range BaseGreenStreams(s) {
+			if !seen[st] {
+				ctl := s.StreamCtl(st)
+				resume(st, RuleBaseGate, baseGreenSaid(ctl.F(FieldBaseGateBase), basePassed(ctl)))
+			}
+		}
 	}
 	return p, 0
 }
