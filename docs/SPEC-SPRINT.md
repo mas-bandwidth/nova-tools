@@ -1037,7 +1037,10 @@ deal, one finish, one push, one pull request, its reads; dependencies stay at th
   with no wall binary refuses unless `--no-wall` is given, and then says the programs run
   unconfined. The walk stops at the first step that is not ok.
 - *The verdict per step.* The result's body carries one line per work step, `step <n>: <ok|
-  broken|not-done|skipped> <commit sha|-> <one line>`, the commit a full sha or its first twelve;
+  broken|not-done|skipped> <commit sha|-> <one line>`, the commit `-` or 7 to 40 hex, a shorter
+  sha a prefix resolved to the full sha on the pushed branch and a full sha checked the same way;
+  an ambiguous prefix is not-done (`the step line's commit <prefix> is ambiguous on <branch>`) and
+  an unknown prefix is not-done (`the step line's commit <prefix> is on no commit of <branch>`);
   a line whose commit is any other word is a defect, read as not-done. The first work step that is
   not ok (a step with no line is not-done) is the failed step; a body with no step line at all
   keeps the result's own verdict. A failed first step is a failed finish whose reason is `step <n>
