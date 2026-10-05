@@ -27,7 +27,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -607,7 +606,7 @@ func unfield(s string) string {
 	if !strings.Contains(s, `\`) {
 		return s
 	}
-	var b strings.Builder
+	out := make([]byte, 0, len(s))
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\\' && i+1 < len(s) {
 			n := 0
@@ -617,21 +616,40 @@ func unfield(s string) string {
 			case 'u':
 				n = 4
 			}
-			if n > 0 && i+2+n <= len(s) {
-				if v, err := strconv.ParseUint(s[i+2:i+2+n], 16, 32); err == nil {
-					if n == 2 {
-						b.WriteByte(byte(v))
-					} else {
-						b.WriteRune(rune(v))
-					}
-					i += 1 + n
-					continue
+			if v, ok := hexAt(s, i+2, n); ok {
+				if n == 2 {
+					out = append(out, byte(v))
+				} else {
+					out = append(out, string(rune(v))...)
 				}
+				i += 1 + n
+				continue
 			}
 		}
-		b.WriteByte(s[i])
+		out = append(out, s[i])
 	}
-	return b.String()
+	return string(out)
+}
+
+// hexAt reads n hex digits of s at i; n 0 or a short or non-hex span is not ok.
+func hexAt(s string, i, n int) (int, bool) {
+	if n == 0 || i+n > len(s) {
+		return 0, false
+	}
+	v := 0
+	for _, c := range []byte(s[i : i+n]) {
+		switch {
+		case c >= '0' && c <= '9':
+			v = v<<4 | int(c-'0')
+		case c >= 'a' && c <= 'f':
+			v = v<<4 | int(c-'a'+10)
+		case c >= 'A' && c <= 'F':
+			v = v<<4 | int(c-'A'+10)
+		default:
+			return 0, false
+		}
+	}
+	return v, true
 }
 
 // cmdLockdown stops everything. It is the one command that must work even when the fuse
