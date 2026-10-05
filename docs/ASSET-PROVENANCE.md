@@ -9,6 +9,8 @@ are not ours would say so on its own line rather than being assumed.
 |---|---|
 | `nova-tools-workshop.png` | **Generated**, not photographed or drawn: made with OpenAI image generation for Nova Tools on 2026-09-12, at the maintainer's request. It is the header image `README.md` shows. No third-party work is depicted in it and no other authorship is claimed for it. |
 | `internal/sprintdash/page/nunito-800.woff2` | **Third-party**: the Nunito typeface, weight 800, latin subset, as Google Fonts serves it (`fonts.gstatic.com/s/nunito/v32/`), copyright 2014 The Nunito Project Authors. It is licensed under the SIL Open Font License 1.1, whose text is `internal/sprintdash/page/OFL.txt` beside it and is embedded in the binary with it. It is the sprint dashboard's wordmark face. |
+| `assets/sprint/nova-sprint-dark.svg` | **Generated**: original SVG drawing made with OpenAI Codex (GPT-6) on 2026-10-05, at the maintainer's request for Nova Sprint branding. The star, lanes and wordmark extend the Nova family; no raster illustration, third-party character, embedded font or remote resource is included. This is the dark documentation variant, not a dashboard screenshot. |
+| `assets/sprint/nova-sprint-light.svg` | **Generated**: original SVG drawing made with OpenAI Codex (GPT-6) on 2026-10-05, at the maintainer's request for Nova Sprint branding. The star, lanes and wordmark extend the Nova family; no raster illustration, third-party character, embedded font or remote resource is included. This is the light documentation variant, not a dashboard screenshot. |
 
 A file added here gets its row in the same commit. "Generated" is worth writing
 down: an image with no provenance line reads as a photograph or as somebody
