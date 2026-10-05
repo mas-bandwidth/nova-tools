@@ -477,6 +477,20 @@ where the coordinator reads it (a sprint note, like the idle alarm); and
 the model (tla/Bus2.tla gaining the owed set, with a reversed witness for
 a daemon ack that clears it).
 
+## The beat comes from the daemon
+
+A friend's beat is the daemon's alone: the loop above beats once a second
+while it runs, and nothing else beats for her (the owner, 2026-10-04: "Golang
+nova-tools and nova-sprint verbs only"; "Make the ping loop mechanical!!!!").
+The per-friend shell loops that beat for a friend every second whether or not
+her session was there, part of why a closed app read up, are retired
+(docs/FRIENDS.md, "A friend's beat comes only from her daemon"). The beat
+proves the daemon; whether her session answers is the coordinator's
+observation (`friend health`). The roster and her cards are moved by the
+friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
+row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
+loop"; cmd/nova-sprint/friend_loop.go).
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,

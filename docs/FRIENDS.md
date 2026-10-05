@@ -66,7 +66,7 @@ asks:`), a blank line, and the card's brief. What a friend does with it:
    onto the card, cut to 1 KiB.
 
 The sync finishes the card on its next run after the report (the period of the
-loop that runs it: 15 s in the coordinator's loop): `LAND` goes to review at
+loop that runs it: 15 s in the friend sync loop, below): `LAND` goes to review at
 origin's tip of the branch when that tip is the full sha `Head:` names; a Head
 that is not the tip (a commit not pushed there, or pushed to after the report)
 or a branch origin does not hold finishes nothing, and the sync says so naming
@@ -84,6 +84,51 @@ is read-only: it changes nothing, and her inbox and outbox stay how work arrives
 reported.
 `curl -s http://<tailnet address>:<port>/team` is every friend at once, each with the
 cards she holds, so friends see what each other are on (`/api/team` as JSON).
+
+## The friend sync loop
+
+`nova-sprint friend sync --every <d>` is the loop: it syncs, waits `d`, and
+syncs again until it is interrupted (the owner, 2026-10-04: "Golang nova-tools
+and nova-sprint verbs only"; "Make the ping loop mechanical!!!!"). Each pass
+reopens the store, so it runs at the sprint's epoch then, and, given no
+`--actor`, acts as the sprint's coordinator seat as the store says it then, so
+a seat that moves takes the loop with it. A pass that changed something (a
+friend added, taken off or updated, a card delivered or finished) prints its
+lines; a pass with nothing to do prints nothing; a failing pass is said once on
+stderr as `FRIEND-SYNC FAILING`, again only when what it says changes, and the
+first pass that is ok after it prints `FRIEND-SYNC OK again after <n> failing
+passes`. An interrupt ends it with 0 (`FRIEND-SYNC STOP interrupted`), and a
+binary replaced under it with 3, so its supervisor starts the new one.
+
+It is installed as a nova-config loop row kept alive on the machine that holds
+the friends' working directories, its secrets by name from that machine's seat
+and no shell in its argv; `--root` is left out, so the friends' directories are
+under the unit's HOME:
+
+```
+nova-config loop add friend-sync --machine bench-a --argv '["/usr/bin/env","NOVA_PG_PASSWORD_ENV=NOVA_PG_CONFIG_PASSWORD","NOVA_SPRINT_REDIS=127.0.0.1:6380","NOVA_SPRINT_REDIS_USER=coordinator","NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_COORDINATOR_PASSWORD","NOVA_BUS_REDIS=127.0.0.1:6381","nova-sprint","friend","sync","--every","15s","--pg","postgres://nova_config@127.0.0.1:5432/nova"]' --seat bench --keys NOVA_PG_CONFIG_PASSWORD,NOVA_REDIS_COORDINATOR_PASSWORD --keepalive true --as ada
+```
+
+Its log is the loop's, `~/nova-bench/loops/friend-sync.log`. It replaces the
+hand-written launch agent `com.nova.friend-sync`, a zsh `while` loop around
+`friend sync` that read the seat with `where --json | jq`: once the row is
+applied and its unit runs, that agent is retired, unloaded and its plist
+removed (`launchctl bootout gui/$(id -u)/com.nova.friend-sync`, then
+`rm ~/Library/LaunchAgents/com.nova.friend-sync.plist`), so one loop syncs.
+
+### A friend's beat comes only from her daemon
+
+A friend's `friend beat` is sent by her nova-friend daemon alone, once a second
+while it runs (`nova-friend install`; docs/SPEC-FRIEND.md, "The beat comes from
+the daemon"). The hand-written per-friend beat loops are retired: the launch
+agents `com.nova.loop.friend-beat-<friend>`, each a zsh `while` loop running
+`nova-sprint friend beat <friend>` every second whether or not her session was
+there, which is part of why a friend whose app was closed read up. Each is
+unloaded and its plist removed, as above
+(`launchctl bootout gui/$(id -u)/com.nova.loop.friend-beat-<friend>`, then
+`rm ~/Library/LaunchAgents/com.nova.loop.friend-beat-<friend>.plist`), and no
+loop row, wrapper or other shell loop beats for a friend. A friend with no
+daemon running has no beat, and reads down.
 
 ## Where a job's work lives
 
