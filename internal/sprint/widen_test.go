@@ -143,7 +143,7 @@ func TestTheWidenRuleReadsTheFilesAFindingNames(t *testing.T) {
 	assert.True(t, sprint.HeldForPaths("PATHS-PROPOSED: internal/x/*_test.go"))
 	assert.False(t, sprint.HeldForPaths("verdict not-done; the tests fail at internal/x/a_test.go:12"))
 	assert.Equal(t, []string{"internal/x/a.go", "internal/x/*_test.go"},
-		sprint.WidenFiles("Branch: sprint/c.w1.g3.e15 `internal/x/a.go:12:3` /Volumes/n/x/b.go ~/w/c.go ../x/d.go ./internal/x/ https://github.com/o/r/e.go mas-bandwidth/nova-tools PATHS-PROPOSED: internal/x/*_test.go."))
+		sprint.WidenFiles("Branch: sprint/c.w1.g3.e15 `internal/x/a.go:12:3` /Volumes/n/x/b.go ~/w/c.go ../x/d.go ./internal/x/ https://example.invalid/o/r/e.go mas-bandwidth/nova-tools PATHS-PROPOSED: internal/x/*_test.go."))
 
 	paths := []string{"internal/x/a.go", "internal/z/"}
 	for _, tc := range []struct {

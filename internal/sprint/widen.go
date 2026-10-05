@@ -15,8 +15,8 @@ import (
 )
 
 // Widened by rule (docs/SPEC-SPRINT.md section 8, "Answered by rule", the row widen; the
-// owner, 2026-10-05, at 12:10 PM: "now all the things you are doing manually now in LLM
-// space, make sure there are cards for this sprint to have them automated by the machine").
+// owner, 2026-10-05, at 12:10 PM: every judgment the coordinator answers by hand is a card
+// to have the machine answer it, surfacing to the coordinator only what needs a mind).
 // That day the coordinator twinned ten cards by hand whose work was done and green but held
 // for files outside PATHS: each file read from the finding, appended to PATHS and SHARED, and
 // the twin pointed at the finished head. The tick does it by rule: a card in review whose open
@@ -80,7 +80,8 @@ var heldForPathsRE = regexp.MustCompile(`(?i)\b(outside|beyond|not in|too narrow
 func HeldForPaths(text string) bool { return heldForPathsRE.MatchString(text) }
 
 // widenFileRE is a repository path a text names: a relative path of two or more parts whose
-// last has an extension of letters (internal/x/a_test.go, docs/SPEC.md), or a glob of one.
+// last has an extension of letters (internal/sprint/widen_test.go, docs/SPEC-SPRINT.md), or a
+// glob of one.
 var widenFileRE = regexp.MustCompile(`^[A-Za-z0-9_.*][A-Za-z0-9_.*+-]*(/[A-Za-z0-9_.*+-]+)+$`)
 
 // widenExtRE is the extension a file's last part ends in: letters only, so a branch
@@ -89,7 +90,7 @@ var widenExtRE = regexp.MustCompile(`\.[A-Za-z]{1,8}$`)
 
 // WidenFiles is every repository file (or glob) text names, each once, in the order named: a
 // relative path with a directory and an extension of letters, read through backticks,
-// brackets, quotes and a trailing line number (internal/x/a.go:12). Absolute paths, home
+// brackets, quotes and a trailing line number (internal/sprint/widen.go:12). Absolute paths, home
 // paths, paths that climb with .., URLs, directories, go package patterns and branch names
 // are not files.
 func WidenFiles(text string) []string {
