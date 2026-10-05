@@ -137,6 +137,21 @@ type Daemon struct {
 	// run ended with no REPORT.md (lane_end.go). Nil, or a finish not answered, leaves it to
 	// friend sync, which reads the REPORT.md the lane wrote.
 	Finish func(ctx context.Context, argv []string) error
+	// What the one-shot lanes took over from the runner stopgaps (lanes_parity.go).
+	// Lanes is their config beyond the row, read each step (nil: no filter, no load
+	// hold, no cap). Dealt is the cards the sprint dealt her (nova-sprint queue --as
+	// friend.<me> --json, ParseDealt); nil reads the queue file alone and asks for
+	// nothing back. Load is the machine's 1-minute load (nil: never loaded). TokensOf
+	// is a lane session's tokens with its children's (SessionTokens; nil: no cap, and
+	// every card unpriced), and Route the route row of the lanes' model (FindRoute;
+	// nil: unpriced). HoldPath is the provider hold's file (HoldFile in the state
+	// directory; "": the hold lasts until a restart).
+	Lanes    func() LaneConfig
+	Dealt    func(ctx context.Context) ([]Dealt, error)
+	Load     func() (float64, bool)
+	TokensOf func(ctx context.Context, session string) (Tokens, error)
+	Route    func(ctx context.Context, model string) (Route, bool, error)
+	HoldPath string
 
 	m           *Machine
 	status      Status
@@ -166,6 +181,7 @@ type turn struct {
 	seenN    int64
 	lastOut  time.Time // when the daemon last saw the turn print, or its start
 	stopped  bool      // the daemon stopped it: silent past SilentStop
+	halted   bool      // the daemon stopped it: the provider's hold stopped every lane
 	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
 }
@@ -335,7 +351,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		if l.broken && !l.told {
 			l.told = d.tellBroken(ctx, l.b, l.brokenAfter)
 		}
-		if storeOK {
+		if held := l.lanes.gov.Held(); held != "" && d.HoldPath != "" {
+			// held by the provider: no beat, so her row reads down until a person resumes her
+			d.status.BeatError = "held: " + held
+		} else if storeOK {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
 			}

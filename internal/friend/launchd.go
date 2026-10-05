@@ -37,6 +37,9 @@ type Agent struct {
 	// ConfigDir is the friend's harness config directory (CLAUDE_CONFIG_DIR),
 	// the daemon's --config-dir, written only when set.
 	ConfigDir string
+	// LaneArgs are the one-shot lanes' flags as given (--tiers, --cards, --load-max,
+	// --load-width, --token-cap, --model, --opencode-db, --go-bench), written as they are.
+	LaneArgs []string
 }
 
 // Label is the agent's launchd label.
@@ -79,7 +82,7 @@ func (a Agent) Args() []string {
 	if a.BrokenAfter > 0 && a.BrokenAfter != DefaultBrokenAfter {
 		args = append(args, "--broken-after", fmt.Sprint(a.BrokenAfter))
 	}
-	return args
+	return append(args, a.LaneArgs...)
 }
 
 // Plist is the agent's plist: RunAtLoad and KeepAlive, so it starts at

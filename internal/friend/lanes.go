@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
@@ -124,6 +125,11 @@ func (c Card) Result() string { return filepath.Join(c.Outbox, "RESULT.md") }
 // Report is the card's REPORT.md, the one friend sync finishes the card from.
 func (c Card) Report() string { return filepath.Join(c.Outbox, "REPORT.md") }
 
+// Draft is the card's REPORT.draft.md, the report a lane's turn writes: the lane publishes it
+// as REPORT.md with the card's Cost: line when the card leaves it, so friend sync never reads
+// a report without its cost (PublishCost).
+func (c Card) Draft() string { return filepath.Join(c.Outbox, ReportDraft) }
+
 // cardDir selects the exact generation and recorded job when present, otherwise
 // its highest epoch (docs/FRIENDS.md, generation-specific jobs).
 func cardDir(root string, task Task) (string, bool) {
@@ -173,8 +179,8 @@ func cardDir(root string, task Task) (string, bool) {
 
 // NextCard is the first card of dir's queue file (inbox/QUEUE.json, in its
 // order) that is queued, delivered (inbox/<id>~<epoch>/BRIEF.md), not done
-// (no outbox/<id>~<epoch>/RESULT.md, and no REPORT.md: a card with a report
-// is friend sync's to finish) and not skipped (held by another lane, or set
+// (no outbox/<id>~<epoch>/RESULT.md, and no REPORT.md or REPORT.draft.md: a
+// card with a report is friend sync's to finish) and not skipped (held by another lane, or set
 // aside); found is false when there is none.
 func NextCard(dir string, skip func(Card) bool) (c Card, found bool, err error) {
 	var q Queue
@@ -193,7 +199,7 @@ func NextCard(dir string, skip func(Card) bool) (c Card, found bool, err error) 
 			continue
 		}
 		c := Card{ID: t.ID, Brief: filepath.Join(dir, "inbox", base, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", base)}
-		if skip(c) || !exists(c.Brief) || exists(c.Result()) || exists(c.Report()) {
+		if skip(c) || !exists(c.Brief) || exists(c.Result()) || exists(c.Report()) || exists(c.Draft()) {
 			continue
 		}
 		return c, true, nil
@@ -217,6 +223,13 @@ type lane struct {
 	card     *Card
 	attempts int
 	t        *turn
+	// the card's tokens: its session's before the card (base, read when the card came
+	// to the lane; baseErr when it could not be), when it came, and its tokens when the
+	// cap stopped it (0: not capped)
+	base    Tokens
+	baseErr string
+	since   time.Time
+	capped  int64
 }
 
 type laneResult struct {
@@ -238,6 +251,15 @@ type laneSet struct {
 	gov     LaneGovernor // the live cap under rate limits, the hold when out of funds (ratelimit.go)
 	width   int          // the row's width at the last step
 	now     time.Time    // the last step's clock
+	cfg     LaneConfig   // the lanes' config at the last step
+	limit   int          // the lanes allowed at the last step: the governor's cap and the load's
+	dealt   []Dealt      // the cards the sprint dealt her, as last read
+	dealtOK bool         // dealt was read
+	saidErr string       // the last failure to read dealt, said once
+	asked   map[string]bool
+	notRun  map[string]bool // jobs outside her filter, said once
+	loaded1 bool            // the load holds the lanes now
+	filed   bool            // the provider's hold is in HoldPath
 }
 
 func (s *laneSet) running() bool {
@@ -256,6 +278,9 @@ func (s *laneSet) running() bool {
 func (s *laneSet) said(width int) string {
 	var out []string
 	limit := s.gov.Cap(width)
+	if s.limit > 0 {
+		limit = min(limit, s.limit) // the load's hold too
+	}
 	for _, ln := range s.lanes {
 		card := "-"
 		if ln.card != nil {
@@ -302,7 +327,7 @@ func LaneSeed(friend string, n, width int, agents, memory string) string {
 	case agents != "":
 		fmt.Fprintf(&b, "Read %s first: it is who you are.\n", agents)
 	}
-	b.WriteString("From the next turn on, each turn hands you exactly one card: do it, write its REPORT.md and RESULT.md, send one bus line, and stop.\nAnswer this turn with the one word: ready.\n")
+	b.WriteString("From the next turn on, each turn hands you exactly one card: do it, write its REPORT.draft.md and RESULT.md, send one bus line, and stop.\nAnswer this turn with the one word: ready.\n")
 	return b.String()
 }
 
@@ -316,7 +341,7 @@ func CardText(c Card, n, width int, sendLine, pong, notice string, msgs []bus.Me
 	}
 	fmt.Fprintf(&b, "nova-friend: lane %d of %d: one card this turn, %s. Do exactly these three things, then stop.\n", n, width, c.ID)
 	fmt.Fprintf(&b, "1. Do the card. Its brief is %s; work as it says, only where it says.\n", c.Brief)
-	fmt.Fprintf(&b, "2. Write %s/REPORT.md and %s/RESULT.md as the brief's END step says.\n", c.Outbox, c.Outbox)
+	fmt.Fprintf(&b, "2. Write the report the brief's END step asks for as %s/%s (never REPORT.md: the lane publishes it as REPORT.md with the card's cost when the turn ends), and %s/RESULT.md as the END step says.\n", c.Outbox, ReportDraft, c.Outbox)
 	fmt.Fprintf(&b, "3. Send one bus line: %s\n", sendLine)
 	if notice != "" {
 		b.WriteString("\nnova-friend: " + notice + "\n")
@@ -337,13 +362,22 @@ func (l *loop) laneStep(now time.Time, width int) {
 	s := l.lanes
 	d := l.d
 	s.width, s.now = width, now
-	for _, line := range s.gov.Step(now, width) {
-		d.Record(now.UTC().Format(time.RFC3339) + " " + line)
+	at := now.UTC().Format(time.RFC3339)
+	s.cfg = LaneConfig{}
+	if d.Lanes != nil {
+		s.cfg = d.Lanes()
 	}
-	limit, paused := s.gov.Cap(width), s.gov.Paused(now)
+	for _, line := range s.gov.Step(now, width) {
+		d.Record(at + " " + line)
+	}
 	if !s.loaded {
 		s.loaded = true
-		s.given = map[string]bool{}
+		s.given, s.asked, s.notRun = map[string]bool{}, map[string]bool{}, map[string]bool{}
+		if msg, found := ReadHold(d.HoldPath); d.HoldPath != "" && found {
+			s.gov.Hold(msg)
+			s.filed = true
+			d.Record(fmt.Sprintf("%s held: %s holds the lanes from before the restart: %s; nova-friend resume --as %s releases it", at, d.HoldPath, oneLine(msg, 300), d.Friend))
+		}
 		if d.LoadLanes != nil {
 			st, err := d.LoadLanes()
 			if err != nil {
@@ -364,6 +398,15 @@ func (l *loop) laneStep(now time.Time, width int) {
 			s.state.Started = map[string]Started{}
 		}
 	}
+	if _, found := ReadHold(d.HoldPath); s.filed && !found && s.gov.Release() {
+		s.filed = false
+		d.Record(fmt.Sprintf("%s resumed: %s was removed; the lanes start again", at, d.HoldPath))
+	}
+	l.readDealt(now)
+	limit := min(s.gov.Cap(width), l.loadCap(now, width))
+	s.limit = limit
+	paused := s.gov.Paused(now)
+	l.capCheck(now)
 	for len(s.lanes) < width {
 		n := len(s.lanes) + 1
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
@@ -375,7 +418,10 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if s.given[id] || (legacy && s.given[c.ID]) {
 			return true
 		}
-		return slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && ln.card.Outbox == c.Outbox })
+		if slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && ln.card.Outbox == c.Outbox }) {
+			return true
+		}
+		return !l.works(c, now)
 	}
 	for _, ln := range s.lanes {
 		if ln.t != nil || ln.opening {
@@ -416,6 +462,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.card, ln.attempts = &c, 0
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)
+			l.cardBase(ln, now)
 		}
 		t := &turn{}
 		t.entries, t.msgs = l.take()
@@ -467,7 +514,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	ln.t = nil
 	var rate RateLimited
 	var funds OutOfFunds
-	limited := (errors.As(r.err, &rate) || errors.As(r.err, &funds)) && !t.stopped
+	limited := ((errors.As(r.err, &rate) || errors.As(r.err, &funds)) && !t.stopped) || t.halted
 	if limited && exists(ln.card.Result()) {
 		r.err, limited = nil, false // the card is done: the words were the card's, not the provider's answer
 	}
@@ -504,11 +551,31 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		ln.card, ln.attempts = nil, 0
 		return
 	}
-	if exists(card.Result()) || exists(card.Report()) {
+	if exists(card.Result()) || exists(card.Report()) || exists(card.Draft()) {
 		end.NoReport = true
-		line += " card=done " + l.endCard(ln.n, card, end, now)
-		ln.card, ln.attempts = nil, 0
+		line += " card=done " + l.leave(ln, card, end, now)
 		d.Record(line)
+		ln.card, ln.attempts = nil, 0
+		return
+	}
+	if ln.capped > 0 {
+		// the token cap stopped it: a HOLD naming the cap, the card set aside, never handed again
+		head, branch := PushedHead(d.Dir, card)
+		report := CapReport(d.Friend, card.ID, ln.capped, s.cfg.TokenCap, head, branch)
+		err := os.MkdirAll(card.Outbox, 0o755)
+		if err == nil {
+			err = atomicfile.WriteFile(card.Report(), []byte(report), 0o644)
+		}
+		line += fmt.Sprintf(" card=capped tokens=%d cap=%d ", ln.capped, s.cfg.TokenCap)
+		if err != nil {
+			line += fmt.Sprintf("report_error=%q ", err.Error())
+		}
+		job := filepath.Base(card.Outbox)
+		s.given[job] = true
+		s.state.GivenUp = append(s.state.GivenUp, job)
+		end.Cap = fmt.Sprintf("the token cap, %d tokens at %d", s.cfg.TokenCap, ln.capped)
+		d.Record(line + l.leave(ln, card, end, now))
+		ln.card, ln.attempts, ln.capped = nil, 0, 0
 		return
 	}
 	ln.attempts++
@@ -527,11 +594,10 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		d.Record(line + fmt.Sprintf(" card=again turn=%d/%d reason=%q", ln.attempts, CardTurns, why))
 		return
 	}
-	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why) + l.endCard(ln.n, card, end, now))
 	job := filepath.Base(card.Outbox)
 	s.given[job] = true
 	s.state.GivenUp = append(s.state.GivenUp, job)
-	l.saveLanes(now)
+	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why) + l.leave(ln, card, end, now))
 	ln.card, ln.attempts = nil, 0
 	l.tell(fmt.Sprintf("friend %s: card %s not finished after %d turns (lane %d): %s", d.Friend, card.ID, CardTurns, ln.n, oneLine(why, 200)),
 		fmt.Sprintf("Lane %d of %s handed card %s (%s) %d times and no RESULT.md appeared in %s. The last turn: %s. The lane has set the card aside, finished it failed in the sprint (its REPORT.md says how the run ended) and takes the next.\n", ln.n, d.Friend, card.ID, card.Brief, CardTurns, card.Outbox, why), now)
@@ -546,9 +612,12 @@ func (l *loop) limitedTurn(r laneResult, now time.Time) {
 	d, ln, t := l.d, r.ln, r.t
 	line := fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s exit=%d", now.UTC().Format(time.RFC3339), ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
 	var funds OutOfFunds
-	if errors.As(r.err, &funds) {
+	switch {
+	case errors.As(r.err, &funds):
 		line += fmt.Sprintf(" out_of_funds=%q", funds.Reason)
-	} else {
+	case t.halted:
+		line += fmt.Sprintf(" halted=%q", "the provider's hold stopped every lane")
+	default:
 		line += fmt.Sprintf(" rate_limited=%q", oneLine(r.err.Error(), 300))
 	}
 	for _, e := range t.entries {
@@ -559,7 +628,9 @@ func (l *loop) limitedTurn(r laneResult, now time.Time) {
 		l.saidSilent = t.notice.Subject != "coordinator silent"
 	}
 	d.Record(line + fmt.Sprintf(" card=kept turn=%d/%d", ln.attempts, CardTurns))
-	l.providerLimit(r.err, t.started, now)
+	if r.err != nil {
+		l.providerLimit(r.err, t.started, now)
+	}
 }
 
 // providerLimit is the governor's answer to a rate limit or out of funds met
@@ -575,7 +646,7 @@ func (l *loop) providerLimit(err error, started, now time.Time) bool {
 	switch {
 	case errors.As(err, &funds):
 		if s.gov.Hold(funds.Reason) {
-			d.Record(fmt.Sprintf("%s out of funds: lanes held until the daemon restarts, every card kept in hand: %s", at, oneLine(funds.Reason, 200)))
+			l.holdAll(funds.Reason, now)
 			subject, body := FundsJudgmentText(d.Friend, funds.Reason)
 			l.tellKind(bus.KindBlocker, subject, body, now)
 		}

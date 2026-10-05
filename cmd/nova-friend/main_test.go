@@ -580,7 +580,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		assert.True(t, strings.HasPrefix(runs[0], "run --dir "+dir+" You are bob: one of 1 one-shot lanes of bob, this is lane 1"), runs[0])
 		assert.Contains(t, runs[0], "Read "+filepath.Join(dir, "AGENTS.md")+" first")
 		assert.True(t, strings.HasPrefix(runs[1], "run --session ses_lane1 --dir "+dir+" nova-friend: lane 1 of 1: one card this turn, c1."), runs[1])
-		assert.Contains(t, runs[1], `3. Send one bus line: /opt/nova/bin/nova-bus send --as bob --to ada --subject "card c1 done" --body "<the first line of your REPORT.md>" --redis store.test:6379`)
+		assert.Contains(t, runs[1], `3. Send one bus line: /opt/nova/bin/nova-bus send --as bob --to ada --subject "card c1 done" --body "<the first line of your REPORT.draft.md>" --redis store.test:6379`)
 		lanes, err := friend.ReadLanes(friend.DefaultStateDir(r.home, "bob"))
 		require.NoError(t, err)
 		assert.Equal(t, map[int]string{1: "ses_lane1"}, lanes.Sessions)
@@ -869,4 +869,113 @@ func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`daemon=down`, `status=down why="bus cannot deliver: daemon down 31s (2 undelivered)"`)
 
 	cli.Do(t, "status", "--as", "bob", "--dir", dir, "--redis", "").Exit(0).Out(`undelivered not counted`)
+}
+
+// resume is the person bringing her up after a provider's hold: it removes the hold file her
+// daemon wrote, and her daemon starts her lanes and beats again at its next step; with no
+// hold it says NONE at exit 1, and --dry-run removes nothing.
+func TestResumeRemovesTheProvidersHold(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	state := friend.DefaultStateDir(r.home, "bob")
+	hold := filepath.Join(state, friend.HoldFile)
+	cli.Do(t, "resume", "--as", "bob").Exit(1).Err("RESUME NONE: no hold on bob's lanes (no " + hold + ")")
+	require.NoError(t, os.MkdirAll(state, 0o755))
+	require.NoError(t, friend.WriteHold(hold, "2026-10-05T15:00:00Z Error: insufficient balance"))
+	cli.Do(t, "resume", "--as", "bob", "--dry-run").Exit(0).Out("RESUME OK", "was=\"2026-10-05T15:00:00Z Error: insufficient balance\"", "NOTE dry run: the hold stays")
+	assert.FileExists(t, hold)
+	cli.Do(t, "resume", "--as", "bob").Exit(0).Out("RESUME OK", "hold="+hold, "NOTE her lanes start again", "nova-sprint friend up bob")
+	assert.NoFileExists(t, hold)
+}
+
+// --go-bench puts the refusal shims on every lane child's PATH: run writes go and gofmt in
+// <state>/bin as links to this binary, and each lane child (the session's open, the list, the
+// card's turn) runs as env PATH=<state>/bin:<PATH> GOROOT=<nowhere> NOVA_FRIEND_GO_BENCH=<benches>
+// <harness>; the daemon's own commands (her session check) run as they were. The binary run
+// by a shim's name refuses (friend.RunShim).
+func TestRunWithGoBenchPutsTheShimsOnTheLanesPath(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, "ada", "bob")
+		r.onPath = map[string]string{"nova-bus": "/opt/nova/bin/nova-bus"}
+		w := r.world()
+		self := filepath.Join(t.TempDir(), "nova-friend")
+		require.NoError(t, os.WriteFile(self, []byte("binary"), 0o755))
+		w.binary = func() (string, error) { return self, nil }
+		var cancel context.CancelFunc
+		w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+			ctx, cancel = context.WithCancel(ctx)
+			return ctx, cancel
+		}
+		w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
+		state := friend.DefaultStateDir(r.home, "bob")
+		bin := filepath.Join(state, friend.ShimDir)
+		shim := []string{"PATH=" + bin + ":/usr/bin:/bin", "GOROOT=" + friend.NoGoRoot, friend.GoBenchEnv + "=bench-a,bench-b"}
+		var mu sync.Mutex
+		var lane, own, bad []string
+		lists := 0
+		checked := false
+		w.exec = func(_ context.Context, _, name string, args []string, _ string) (string, int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if name == "env" { // a lane's child: the shims' words, then the harness
+				if len(args) < len(shim)+2 || !slices.Equal(shim, args[:len(shim)]) {
+					bad = append(bad, strings.Join(args, " "))
+					return "", 1, nil
+				}
+				name, args = args[len(shim)], args[len(shim)+1:]
+				lane = append(lane, name+" "+args[0])
+			} else {
+				own = append(own, name+" "+args[0])
+			}
+			if !checked {
+				if args[0] == "session" {
+					return `[{"id":"ses_main","directory":"` + dir + `","updated":1}]`, 0, nil
+				}
+				if nonce, ok := strings.CutPrefix(strings.SplitN(args[len(args)-1], "\n", 2)[0], friend.SessionCheckPrefix); ok {
+					checked = true
+					r.answer(nonce)
+					return "answered\n", 0, nil
+				}
+			}
+			if args[0] == "session" {
+				lists++
+				if lists == 1 {
+					return "[]", 0, nil
+				}
+				return `[{"id":"ses_lane1","directory":"` + dir + `","updated":1}]`, 0, nil
+			}
+			return "ok\n", 0, nil
+		}
+		beats := 0
+		w.beat = func(context.Context, string, string, time.Time) (string, error) {
+			if beats++; beats == 12 {
+				cancel()
+			}
+			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
+		}
+		var out, errb strings.Builder
+		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada", "--go-bench", "bench-a,bench-b"}, strings.NewReader(""), &out, &errb, w)
+		require.Equal(t, 0, code, errb.String())
+		assert.Empty(t, bad, "every lane child carries the shims' words first")
+		assert.Contains(t, lane, "opencode run", "the lane's open and its card's turn run with the shims first: %v", lane)
+		assert.Contains(t, lane, "opencode session", "and the open's listing")
+		assert.NotEmpty(t, own, "the daemon's own session check runs as it was")
+		for _, cmd := range own {
+			assert.True(t, strings.HasPrefix(cmd, "opencode "), cmd)
+		}
+		for _, name := range friend.ShimNames {
+			to, err := os.Readlink(filepath.Join(bin, name))
+			require.NoError(t, err, name)
+			assert.Equal(t, self, to, name)
+		}
+		var refusal strings.Builder
+		assert.Equal(t, 1, friend.RunShim(filepath.Join(bin, "go"), "bench-a,bench-b", &refusal))
+		assert.Contains(t, refusal.String(), "GO REFUSED go: go never runs on this machine; sync the clone to bench-a,bench-b")
+	})
 }

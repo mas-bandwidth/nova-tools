@@ -258,3 +258,17 @@ nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127
    session proof of life (card fr-session-proof-of-life): `nova-friend` tracks
    presence via nonces answered by each friend's session, so no background ping
    script is run.
+
+## One-shot lanes in place of runner.zsh
+
+The friends' `runner.zsh` stopgaps are retired by `nova-friend`'s one-shot
+lanes (docs/SPEC-FRIEND.md, opencode-lanes-parity.w2): her filter, load bound,
+token cap, model and the go refusal are flags of `nova-friend install` (written
+into her agent), for example
+`nova-friend install --as bob --harness opencode --dir ~/bob-working --tiers flash --load-max 90 --token-cap 6000000 --model <provider>/<model> --go-bench bench-a,bench-b`
+and, for a friend who works security cards only, `--cards 'security*,fp-sec*,sec-*,security-*'`.
+Her row's mode is `one-shot` and its width her lanes. A provider out of funds
+holds her lanes and her beat, with the exact message in `~/.nova-friend/<me>/HELD`;
+`nova-friend resume --as <me>` brings her up once paid. Cards outside her
+filter are asked back from the coordinator, who runs the `friend take` line
+the blocker carries.

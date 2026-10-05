@@ -157,16 +157,21 @@ func TestALaneThatEndsWithNoReportFinishesItsCardFailed(t *testing.T) {
 	t.Run("restart", func(t *testing.T) {
 		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
-			dir := laneEndFixture(t, "c3~15", "c4~15")
+			dir := laneEndFixture(t, "c3~15", "c4~15", "c6~15")
 			c3 := Card{ID: "c3", Brief: filepath.Join(dir, "inbox", "c3~15", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c3~15")}
 			c4 := Card{ID: "c4", Brief: filepath.Join(dir, "inbox", "c4~15", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c4~15")}
 			require.NoError(t, os.MkdirAll(c4.Outbox, 0o755))
 			require.NoError(t, os.WriteFile(c4.Report(), []byte("Verdict: FAIL\n\nmine\n"), 0o644))
+			// c6: her REPORT.draft.md, written before the daemon that ran her went, is published as hers
+			c6 := Card{ID: "c6", Brief: filepath.Join(dir, "inbox", "c6~15", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c6~15")}
+			require.NoError(t, os.MkdirAll(c6.Outbox, 0o755))
+			require.NoError(t, os.WriteFile(c6.Draft(), []byte("Verdict: LAND\nHead: 0123456789abcdef0123456789abcdef01234567\n\ndrafted\n"), 0o644))
 			h := &lanesHarness{dir: dir, active: map[string]int{}}
 			r, state := laneRig(t, h, 2)
 			*state = LaneState{Sessions: map[int]string{1: "ses_1", 2: "ses_2"}, Started: map[string]Started{
 				"c3~15": {Lane: 1, Card: c3, At: t0.Add(-time.Hour)},
 				"c4~15": {Lane: 2, Card: c4, At: t0.Add(-time.Hour)},
+				"c6~15": {Lane: 2, Card: c6, At: t0.Add(-time.Hour)},
 			}}
 			f := &finishes{}
 			r.d.Finish = f.finish
@@ -179,13 +184,17 @@ func TestALaneThatEndsWithNoReportFinishesItsCardFailed(t *testing.T) {
 			mine, err := os.ReadFile(c4.Report())
 			require.NoError(t, err)
 			assert.Equal(t, "Verdict: FAIL\n\nmine\n", string(mine), "her own report is never written over")
+			drafted, err := os.ReadFile(c6.Report())
+			require.NoError(t, err)
+			assert.Equal(t, "Verdict: LAND\nHead: 0123456789abcdef0123456789abcdef01234567\n\ndrafted\n", string(drafted), "her draft is published as her report")
+			assert.NoFileExists(t, c6.Draft())
 			sent := f.got()
 			require.Len(t, sent, 1, "only the card with no report is finished by the lane")
 			assert.Equal(t, "c3@1", sent[0][3])
 			turns, _, _ := h.got()
 			assert.Empty(t, turns, "neither card is handed again")
 			assert.Empty(t, state.Started)
-			assert.ElementsMatch(t, []string{"c3~15", "c4~15"}, state.GivenUp)
+			assert.ElementsMatch(t, []string{"c3~15", "c4~15", "c6~15"}, state.GivenUp)
 			records := strings.Join(r.records, "\n")
 			assert.Contains(t, records, "lane 1: card c3 was begun at "+t0.Add(-time.Hour).Format(time.RFC3339)+" and its run is gone: finish=failed sent=server")
 			assert.Contains(t, records, "lane 2: card c4 was begun at "+t0.Add(-time.Hour).Format(time.RFC3339)+" and its run is gone: finish=report")

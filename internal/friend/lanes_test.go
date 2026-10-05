@@ -58,6 +58,7 @@ type lanesHarness struct {
 	turns   []string // session: card
 	texts   []string
 	finish  map[string]bool
+	draft   map[string]string // the REPORT.draft.md a finished card's turn writes, when set
 	reject  map[string]string
 	active  map[string]int
 	maxBusy int
@@ -101,6 +102,11 @@ func (h *lanesHarness) DeliverTo(ctx context.Context, session, text string) (Lan
 		}
 		if err := os.WriteFile(filepath.Join(out, "RESULT.md"), []byte("RESULT: "+id+"\n"), 0o644); err != nil {
 			return LaneTurn{}, err
+		}
+		if d, ok := h.draft[id]; ok {
+			if err := os.WriteFile(filepath.Join(out, ReportDraft), []byte(d), 0o644); err != nil {
+				return LaneTurn{}, err
+			}
 		}
 	}
 	return LaneTurn{Exit: 0, Rejected: h.reject[id]}, nil
@@ -170,7 +176,7 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		first := texts[0]
 		assert.Contains(t, first, "lane "+c1Lane+" of 2: one card this turn, c1.")
 		assert.Contains(t, first, "Its brief is "+filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"))
-		assert.Contains(t, first, "2. Write "+filepath.Join(dir, "outbox", "c1~15")+"/REPORT.md and "+filepath.Join(dir, "outbox", "c1~15")+"/RESULT.md")
+		assert.Contains(t, first, "2. Write the report the brief's END step asks for as "+filepath.Join(dir, "outbox", "c1~15")+"/REPORT.draft.md (never REPORT.md: the lane publishes it as REPORT.md with the card's cost when the turn ends), and "+filepath.Join(dir, "outbox", "c1~15")+"/RESULT.md")
 		assert.Contains(t, first, "3. Send one bus line: nova-bus send --as bob --to ada --subject 'card c1 done'")
 		assert.Contains(t, first, Text(hello), "the waiting message rides with the first card")
 		for _, text := range texts[1:] {
@@ -182,7 +188,15 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		assert.Equal(t, "later", pending[0].Message().Subject)
 		assert.Empty(t, fresh)
 
-		got := r.adaGot(t)
+		var got, notes []string
+		for _, m := range r.adaGot(t) {
+			if strings.HasPrefix(m, "bob card ") {
+				notes = append(notes, m)
+			} else {
+				got = append(got, m)
+			}
+		}
+		assert.Len(t, notes, 3, "a finish note for each card that left its lane: c1, c3 done, c2 set aside: %v", notes)
 		require.Len(t, got, 2)
 		assert.Equal(t, "daemon-pong: daemon-pong n1", got[0])
 		assert.True(t, strings.HasPrefix(got[1], "friend bob: card c2 not finished after 2 turns (lane "+c2Lane+"): the harness refused a permission: Permission to read /elsewhere was auto-rejected"), got[1])

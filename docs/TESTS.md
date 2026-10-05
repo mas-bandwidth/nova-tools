@@ -120,6 +120,17 @@ stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of 
 home directory and the uid the plan names. The run-owned values are the
 message `id=` (a ULID from the store's time), `at=`, and `took=`.
 
+The one-shot lanes' parity with the runner stopgaps is pinned in
+`internal/friend/lanes_parity_test.go`, `TestOpencodeLanesDoWhatTheRunnerStopgapsDid`,
+one table per behaviour (filter, take back, generation job name, width under
+load, token cap HOLD, provider hold, provider lines, cost line, shims, row and
+install), over the daemon rig with fakes for the sprint's queue and routes,
+opencode's database and the load: no socket, no wall clock. `resume` is pinned
+in `cmd/nova-friend/main_test.go`, `TestResumeRemovesTheProvidersHold`, and
+`run --go-bench` putting the shims on every lane child's PATH (and on none of
+the daemon's own commands) in `TestRunWithGoBenchPutsTheShimsOnTheLanesPath`. A
+draft published at a restart is in `TestALaneThatEndsWithNoReportFinishesItsCardFailed`.
+
 `serve`, the coordinator's ping loop, is not a step of this sitting: it runs
 until a signal, so the banner has no example of it to run here. What it prints
 is pinned in `cmd/nova-friend/serve_test.go` on the in-memory store with an

@@ -688,7 +688,10 @@ rate limit, the runner held him down as if out of funds and returned 20
 cards, and the coordinator cleared the pause by hand and lowered him to 12).
 The OpenCode lanes read the last 2 KiB of each turn's output, whatever its
 exit, and of a failed session open (`ProviderLimit`, `internal/friend/ratelimit.go`),
-before a provider's refusal of the session: a line saying out of funds or
+before a provider's refusal of the session. Only the harness's error lines are
+read (`Error: ...`, `AI_APICallError: ...`, a JSON error event; the runner read
+only its `^Error:` lines): the model's own words, in a card about rate limits or
+a 402, are the card's. On such a line, a line saying out of funds or
 credit (a `402`, `payment required`, `insufficient balance`, `insufficient
 ... credits`, `out of funds`) is `OutOfFunds`, unless its reset is beside it
 (that is the harness's own limit, `Limits` above); else a line saying a rate
@@ -718,20 +721,105 @@ coordinator, `friend <name>: lane cap lowered 3 times in 1h0m0s by rate
 limits, now <c> of <w>`, naming `nova-config friend set <name> --width <c>`
 as the way to keep it lower; the next three are another.
 
-Out of funds holds the lanes: no new turn or open until the daemon restarts,
-every card kept in its lane's hand, the status's lanes `:held`, said once on
-the record (`out of funds: lanes held until the daemon restarts`) and once
-to the coordinator as a blocker, `friend <name>: out of funds: <reason>`,
-with the `nova-sprint friend down` line that shows it on her row and the
-restart once paid. It lowers no cap.
+Out of funds holds the lanes: every lane's turn under way is stopped at once
+(its card kept in its lane's hand, `halted=` on the record, counted toward
+nothing), no new turn or open starts, the status's lanes say `:held`, and it
+is said once on the record (`out of funds: lanes held ...`) and once to the
+coordinator as a blocker, `friend <name>: out of funds: <reason>`, with the
+`nova-sprint friend down` line that shows the exact message on her row and
+`nova-friend resume --as <name>` once paid. With a hold file (`HELD` in the
+state directory, which `nova-friend run` always names) the exact message is
+written there, the daemon stops beating (her row reads down within the
+sprint's down-after; status says `beat_error="held: <message>"`), a restart
+keeps the hold (`held: <file> holds the lanes from before the restart`), and
+nothing resumes until a person runs `nova-friend resume --as <name>`, which
+removes the file: the next step says `resumed: <file> was removed` and the
+lanes and the beat start again. Without a hold file (a test's daemon) the hold
+lasts until the daemon restarts. It lowers no cap.
 `TestARateLimitBacksOffAndResumesWithoutAHold`,
 `TestOutOfFundsHoldsTheLanesWithOneJudgment`,
 `TestTheLaneGovernorBacksOffAndRaisesByMeasurement`. Not here: the batch
 turn (one session, no lanes) still treats a rate limit as an ordinary failed
 turn; a line that says a rate limit with a reset in minutes beside it
 (`rate limit reached ... try again in 2 minutes`) is still read by `Limits`
-as the harness's limit; and the funds hold does not stop the beat, so her
-row reads down only when the coordinator runs the line it is told.
+as the harness's limit; and `nova-sprint friend down` and `friend take` are
+the coordinator's verbs (the sprint server refuses them from a friend), so the
+daemon holds her down by its silence and asks for the rest.
+
+### opencode-lanes-parity.w2 — what the runner stopgaps did, in the lanes
+
+Two friends ran their cards through two zsh copies of one runner
+(`runner.zsh` in each friend's directory) because the lanes lacked what it did (the owner, 2026-10-05: "We need to get
+away from these one shot shell scripts"). Each is now the daemon's, a small
+function with its own table in `TestOpencodeLanesDoWhatTheRunnerStopgapsDid`
+(`internal/friend/lanes_parity.go`, `lanes_steps.go`), configured by `run`'s
+flags (and `install`'s, written into the agent), never in code:
+
+- The card filter: `--tiers` (the tiers she works, e.g. `flash`) and `--cards`
+  (glob patterns over a card's stream or id, e.g. `security*,fp-sec*,sec-*,security-*`).
+  The tier and stream are the sprint's (`nova-sprint queue --as friend.<me> --json`,
+  each step; the tier is the one its brief says, `tier: <word>`), else the tier the
+  delivered brief says. A card outside the filter is never handed, said once
+  (`lanes: card <id> (<job>) not run: <why>`).
+- The take back: a dealt card outside the filter that she has not started (no
+  lane holds it, no `jobs/<job>`, no `outbox/<job>/REPORT.md`) is asked back from
+  the coordinator, once per job, in one blocker carrying the exact `nova-sprint
+  friend take <me> <id>... --reason ...` line: `friend take` is the coordinator's
+  verb, which the sprint server refuses from a friend.
+- The generation's job name: `<card>~<epoch>`, and `.g<gen>` past the first
+  (`JobName`, as friend sync names the inbox directory; `cardDir` reads it).
+- The width under load: `--load-max` (the machine's 1-minute load, read each
+  step) above which new lanes are held to `--load-width` (default 3); each change
+  on the record, and the hold told to the coordinator. A lane beyond it finishes
+  its turn and takes no other, as beyond a lowered width.
+- The token cap: `--token-cap` tokens, every kind, of one card: the card's are
+  what its lane's session (and its children) counted beyond what the session
+  counted when the card came to the lane, read each step from opencode's
+  database (`--opencode-db`, default `~/.local/share/opencode/opencode.db`, by
+  `sqlite3 -readonly` over the session table, as `internal/swarm` reads it: the
+  tree has no SQLite driver). At the cap the lane's turn is stopped, its
+  `REPORT.md` is a HOLD naming the cap (`CapReport`; `Head:` the head she pushed
+  on the brief's branch when a clone holds it, `PushedHead`, else `none`), and the
+  card is set aside, never handed again (`card=capped` on the record), its end a
+  lane's end (`finish=report`, friend sync reads the HOLD).
+- The provider's hold: out of funds, above (a rate limit backs off instead, by
+  the later finding of 10:34 AM the same day).
+- The cost: at each card's finish (done, set aside or capped) its tokens are
+  priced by the route row of `--model` (`nova-sprint routes --json`, the exact
+  provider/model; `cardcost.Predict`, reasoning as output when the sheet says
+  so) rounded up to the cent, else `unpriced (<why>)`, never a guess; a sheet
+  with a long-context price is unpriced (the session sums keep no request's
+  prompt). Each card's turn asks for the report as `REPORT.draft.md`, never
+  `REPORT.md` (`CardText`), so friend sync never finishes a card from a report
+  without its cost: when the card leaves its lane the draft (else a `REPORT.md`
+  already there) is published as `REPORT.md` with `Cost: <cost> (opencode: <its
+  own>) tokens input= cache_read= cache_write= output= reasoning= model=
+  harness=opencode price_route=` under its `Head:` line, and `RESULT.md` gets
+  `tokens:` and `cost:` lines; then the lane's end runs (above: her report is the
+  finish, else the lane writes one, which gets the `Cost:` line too). A daemon
+  that starts up and finds a started card with a draft and no report publishes
+  the draft as it is (its tokens since the card came were not kept). With no
+  token source (a harness other than opencode) the draft is published as it is
+  and no cost is written. `--model` is the one `install` writes into
+  `<dir>/opencode.json`; `install` gives it to the daemon too. The draft and the cap are in
+  `internal/friend/tla/LaneEnd.tla` (`Publishes`, `Capped`): NoOrphan, HersStands
+  and Finished hold on `MCLaneEnd.cfg` (338 distinct states, TLC on a bench), and
+  `MCLaneEndBrokenNoPublish.cfg`, a lane that never publishes the draft, breaks
+  NoOrphan.
+- The shims: with `--go-bench <benches>`, `go` and `gofmt` in
+  `<state>/bin` are links to this binary, which refuses by those names (`GO
+  REFUSED`, naming the benches), every lane child runs through `env` with that
+  directory first on `PATH` and `GOROOT` nowhere (`ShimExec`, inside the wall,
+  which reads both directories).
+- The bus note: at each finish, `<friend> card <job>: <the report's first
+  line>` to the coordinator, with the cost and the wall time.
+
+The friend row's words `row_tiers=`, `row_cards=`, `row_load_max=`,
+`row_load_width=`, `row_token_cap=` and `row_model=` on a beat's answer take the
+place of the flags (`ParseLaneRow`), but `nova-sprint friend beat` prints none
+of them yet and the nova-config friend row has no such columns
+(cmd/nova-sprint, internal/config and internal/sprint are outside this card):
+until then the flags are the config.
 
 Open design question, not built (the owner, 2026-10-04 1:45 PM: "tbd."): a
 per-friend `tier` on the row (flash, pro, heavy, frontier), defaulted from a

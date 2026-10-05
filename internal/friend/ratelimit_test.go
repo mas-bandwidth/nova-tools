@@ -78,6 +78,17 @@ func limitRig(t *testing.T, width, cards int) (*rig, *limitHarness, *LaneState) 
 	return r, h, state
 }
 
+// blockers is the messages that are not a lane's finish note (lanes_steps.go finish).
+func blockers(msgs []bus.Message) []bus.Message {
+	var out []bus.Message
+	for _, m := range msgs {
+		if !strings.HasPrefix(m.Subject, "bob card ") {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // adaMessages is every message on the coordinator's stream.
 func (r *rig) adaMessages(t *testing.T) []bus.Message {
 	t.Helper()
@@ -165,8 +176,8 @@ func TestARateLimitBacksOffAndResumesWithoutAHold(t *testing.T) {
 		// no hold: every step beat, the session is ok, and the one message is the judgment
 		assert.Equal(t, 900, r.beats, "the beat never stopped")
 		assert.Equal(t, SessionOK, r.last().Session)
-		got := r.adaMessages(t)
-		require.Len(t, got, 1, "one judgment, nothing else: %v", got)
+		got := blockers(r.adaMessages(t))
+		require.Len(t, got, 1, "one judgment, nothing else beside the finish notes: %v", got)
 		assert.Equal(t, bus.KindBlocker, got[0].Kind)
 		assert.Contains(t, got[0].Subject, "friend bob: lane cap lowered 3 times in 1h0m0s by rate limits")
 		assert.Contains(t, got[0].Body, "nova-config friend set bob --width")
@@ -271,11 +282,11 @@ func TestProviderLimitTellsARateLimitFromOutOfFunds(t *testing.T) {
 	rate := []string{
 		`AI_APICallError: statusCode: 429`,
 		`Error: Rate limit reached for model in organization on tokens per min (TPM). Please try again in 1.2s.`,
-		`HTTP 429 Too Many Requests`,
+		`Error: HTTP 429 Too Many Requests`,
 		`{"error":{"code":429,"message":"Provider returned error"}}`,
 		`Error: input token limit exceeded for this minute`,
 		`{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`,
-		`too many requests, retry later`,
+		`Error: too many requests, retry later`,
 	}
 	for _, out := range rate {
 		err := ProviderLimit("ses_1", "working...\n"+out+"\n")
@@ -288,7 +299,7 @@ func TestProviderLimitTellsARateLimitFromOutOfFunds(t *testing.T) {
 		`{"error":{"code":402,"message":"Insufficient credits. Add more using https://openrouter.test/settings/credits"}}`,
 		`AI_APICallError: statusCode: 402 Payment Required`,
 		`Error: insufficient balance`,
-		`429 rate limit; insufficient balance on the account`,
+		`Error: 429 rate limit; insufficient balance on the account`,
 	}
 	for _, out := range funds {
 		var oof OutOfFunds
@@ -299,7 +310,13 @@ func TestProviderLimitTellsARateLimitFromOutOfFunds(t *testing.T) {
 		"You've hit your usage limit. Try again at 6:52 PM",
 		"line 429: an ordinary line\n",
 		strings.Repeat("x", 3*LimitTail) + "\n",
-		"429 Too Many Requests\n" + strings.Repeat("the reply went on\n", 200),
+		"Error: 429 Too Many Requests\n" + strings.Repeat("the reply went on\n", 200),
+		// the model's own words, in a card about rate limits or funds, are the card's: only the
+		// harness's error lines are read (the runner's ^Error: lines)
+		"The handler retries on HTTP 429 Too Many Requests with a backoff.\n",
+		"- a rate limit reached mid-card pauses the lanes\n",
+		"Tests cover 402 Payment Required and insufficient balance.\n",
+		"  out of funds holds every lane until a person resumes her\n",
 	} {
 		assert.NoError(t, ProviderLimit("ses_1", out), out)
 	}

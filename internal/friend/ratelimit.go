@@ -47,11 +47,17 @@ func (o OutOfFunds) Error() string {
 var (
 	rateLimitLine = regexp.MustCompile(`(?i)(?:status|code|error|http)[^\n0-9]{0,24}429\b|\b429\b[^\n0-9]{0,8}(?:too many|rate)|rate[ _-]?limit[ _-]?(?:ed|error|reached|exceeded)\b|too many requests|input[ _-]tokens?[ _-](?:per[ _-]minute[ _-])?limit[ _-](?:exceeded|reached)|tokens per min`)
 	fundsLine     = regexp.MustCompile(`(?i)(?:status|code|error|http)[^\n0-9]{0,24}402\b|payment required|insufficient (?:balance|funds|[a-z ]{0,20}credits)|out of (?:funds|credits?)\b|credit balance is too low`)
+	// errorLine is a line the harness says an error on: "Error: ...", "AI_APICallError: ...",
+	// or a JSON error event. Only such a line is read for a provider's limit: the model's own
+	// words about rate limits or a 402, in a card about them, are the card's (the runner read
+	// only its ^Error: lines; opencode-lanes-parity.w1's reader, 2026-10-05).
+	errorLine = regexp.MustCompile(`^\s*(?:\w*Error\b\s*:|\{"(?:type"\s*:\s*"error|error"\s*:))`)
 )
 
 // ProviderLimit reads the tail of a lane turn's output (the last LimitTail
-// bytes: a harness says it last) for a rate limit or out of funds, out of
-// funds first: OutOfFunds, RateLimited, or nil. A line with its reset beside
+// bytes: a harness says it last) for a rate limit or out of funds on the
+// harness's error lines (errorLine), out of funds first: OutOfFunds,
+// RateLimited, or nil. A line with its reset beside
 // it ("Insufficient AI Credits ... will refresh 6:52 PM") is the harness's
 // own limit (Limits: down until the reset, then woken), never out of funds
 // here.
@@ -63,6 +69,9 @@ func ProviderLimit(session, out string) error {
 	var rate string
 	for _, line := range strings.Split(tail, "\n") {
 		line = stripANSI(line)
+		if !errorLine.MatchString(line) {
+			continue
+		}
 		if fundsLine.MatchString(line) {
 			if lim, found := ReadLimit(line, time.Time{}); found && lim.Limited {
 				continue // a reset beside it: the harness's limit
@@ -200,6 +209,14 @@ func (g *LaneGovernor) Hold(reason string) bool {
 	return true
 }
 
+// Release ends an out-of-funds hold: a person resumed the friend (nova-friend
+// resume removed the hold file). It answers whether there was one.
+func (g *LaneGovernor) Release() bool {
+	was := g.held != ""
+	g.held = ""
+	return was
+}
+
 // RateJudgmentText is what the coordinator is told when a friend's lane cap
 // was lowered RateJudgeAfter times within RateJudgeWithin: one judgment.
 func RateJudgmentText(friend string, cap, width int, reason string) (subject, body string) {
@@ -210,10 +227,12 @@ func RateJudgmentText(friend string, cap, width int, reason string) (subject, bo
 }
 
 // FundsJudgmentText is what the coordinator is told when a friend's
-// provider is out of funds: one judgment.
+// provider is out of funds: one judgment. Her lanes stop and her daemon stops
+// beating, so her row reads down; the line that shows the message on her row
+// is the coordinator's (friend down is a coordinator's verb).
 func FundsJudgmentText(friend, reason string) (subject, body string) {
 	subject = fmt.Sprintf("friend %s: out of funds: %s", friend, oneLine(reason, 160))
-	body = fmt.Sprintf("Her provider refused a lane for want of funds or credit: %s. Her lanes start nothing more until her daemon restarts; every card stays in its lane's hand, none set aside. A payment is the owner's. To show it on her row: nova-sprint friend down %s --reason %s. Once paid, restart her daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).\n",
-		oneLine(reason, 200), friend, shellQuote("out of funds: "+oneLine(reason, 120)), friend)
+	body = fmt.Sprintf("Her provider refused a lane for want of funds or credit: %s. Every lane of hers is stopped and starts nothing more, and her daemon has stopped beating, until a person resumes her; every card stays in its lane's hand, none set aside. A payment is the owner's. To show it on her row: nova-sprint friend down %s --reason %s. Once paid: nova-friend resume --as %s (with the hold file in her state directory, a restart alone does not resume her; without one, a restart does), then nova-sprint friend up %s.\n",
+		oneLine(reason, 200), friend, shellQuote("out of funds: "+oneLine(reason, 120)), friend, friend)
 	return subject, body
 }

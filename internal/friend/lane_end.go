@@ -25,6 +25,9 @@ import (
 // sends the failed finish to the sprint server (docs/SPEC-FRIEND.md, a lane's end). The
 // model is internal/friend/tla/LaneEnd.tla: NoOrphan, HersStands and Finished hold, and its
 // reversed witness (MCLaneEndBrokenNoWrite.cfg, a lane that writes nothing) breaks NoOrphan.
+// Her REPORT.draft.md (opencode-lanes-parity.w2) is the model's Publishes: published as her
+// report at the run's end, at the cap and at a restart; MCLaneEndBrokenNoPublish.cfg, a lane
+// that never publishes it, breaks NoOrphan.
 
 // Started is a card a lane began, kept in the lane state until the lane is done with it:
 // a daemon that starts up and finds one finishes it, for the run that held it is gone.
@@ -220,14 +223,20 @@ func remoteRef(gd, ref string) string {
 	return ""
 }
 
-// endCard is the lane done with card: the friend's REPORT.md, when there, is the finish
-// (friend sync reads it); else the lane writes one naming how the run ended and sends the
+// endCard is the lane done with card: the friend's REPORT.md (her REPORT.draft.md published
+// as it), when there, is the finish (friend sync reads it); else the lane writes one naming how the run ended and sends the
 // failed finish to the sprint server. Either way the card is no longer started. It answers
 // the record's words.
 func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 	d, s := l.d, l.lanes
 	delete(s.state.Started, filepath.Base(card.Outbox))
 	defer l.saveLanes(now)
+	if !exists(card.Report()) && exists(card.Draft()) {
+		// her draft unpublished (a daemon gone before the card left its lane): published as it is
+		if err := os.Rename(card.Draft(), card.Report()); err != nil {
+			return fmt.Sprintf("finish=failed report_error=%q", err.Error())
+		}
+	}
 	if exists(card.Report()) {
 		return "finish=report"
 	}

@@ -7,15 +7,21 @@
    one and sends the failed finish, which the server may not answer. A daemon
    starting up ends every card still marked. Friend sync finishes any working
    card with a report. LaneWrites = FALSE is the reversed witness: the lane
-   before this change, which wrote nothing and left the card working. *)
+   before this change, which wrote nothing and left the card working.
+   The draft (opencode-lanes-parity.w2): a card's turn asks for the report as
+   REPORT.draft.md, which friend sync does not read; the lane publishes it as
+   REPORT.md with the card's cost when the run ends, and a daemon starting up
+   publishes one a gone run left. Publishes = FALSE is its reversed witness: a
+   lane that never publishes the draft leaves the card working (NoOrphan).
+   The cap (a token cap) ends the run with the lane's HOLD as the report. *)
 EXTENDS FiniteSets
 
-CONSTANTS Cards, LaneWrites
+CONSTANTS Cards, LaneWrites, Publishes
 
 VARIABLES store,    \* the sprint's word on the card: "working" or "finished"
           run,      \* "none", "running", "ended" (the lane saw it end), "gone" (its daemon went away)
           started,  \* the mark in lanes.json
-          report,   \* outbox REPORT.md: "none", "friend" (hers), "lane" (the lane's)
+          report,   \* outbox REPORT.md: "none", "draft" (her REPORT.draft.md only), "friend" (hers), "lane" (the lane's)
           up        \* a daemon is running
 
 vars == <<store, run, started, report, up>>
@@ -32,24 +38,37 @@ Begin(c) == /\ up /\ run[c] = "none" /\ report[c] = "none"
             /\ started' = [started EXCEPT ![c] = TRUE]
             /\ UNCHANGED <<store, report, up>>
 
-\* the friend writes her REPORT.md during the run
+\* the friend writes her report during the run: REPORT.draft.md as the turn asks,
+\* or REPORT.md as a brief may say
 FriendReports(c) == /\ run[c] = "running" /\ report[c] = "none"
-                    /\ report' = [report EXCEPT ![c] = "friend"]
+                    /\ \E r \in {"draft", "friend"} : report' = [report EXCEPT ![c] = r]
                     /\ UNCHANGED <<store, run, started, up>>
+
+\* the report a lane's end leaves: her draft published as hers (when it publishes),
+\* hers as it is, else the lane's (when it writes one)
+Ended(r) == IF r = "draft" /\ Publishes THEN "friend"
+            ELSE IF r = "none" /\ LaneWrites THEN "lane"
+            ELSE r
 
 \* the lane ends the card: hers stands; else it writes one (when it does) and
 \* the finish it sends is answered or not
 EndCard(c, sent) ==
     /\ started' = [started EXCEPT ![c] = FALSE]
-    /\ IF report[c] = "none" /\ LaneWrites
-         THEN /\ report' = [report EXCEPT ![c] = "lane"]
-              /\ store' = IF sent THEN [store EXCEPT ![c] = "finished"] ELSE store
-         ELSE UNCHANGED <<report, store>>
+    /\ report' = [report EXCEPT ![c] = Ended(report[c])]
+    /\ store' = IF sent /\ report'[c] = "lane" /\ report[c] = "none" THEN [store EXCEPT ![c] = "finished"] ELSE store
 
 RunEnds(c, sent) == /\ up /\ run[c] = "running"
                     /\ run' = [run EXCEPT ![c] = "ended"]
                     /\ EndCard(c, sent)
                     /\ UNCHANGED up
+
+\* the token cap stops the run: the lane writes its HOLD when she has no report of
+\* her own (a draft is hers, published), and the card leaves the lane
+Capped(c) == /\ up /\ run[c] = "running"
+             /\ run' = [run EXCEPT ![c] = "ended"]
+             /\ started' = [started EXCEPT ![c] = FALSE]
+             /\ report' = [report EXCEPT ![c] = IF report[c] = "none" THEN "lane" ELSE Ended(report[c])]
+             /\ UNCHANGED <<store, up>>
 
 \* the daemon stops, is killed or crashes: its runs are gone, the marks stay
 Down == /\ up
@@ -61,16 +80,16 @@ Down == /\ up
 Restart(sent) ==
     /\ ~up /\ up' = TRUE
     /\ started' = [c \in Cards |-> FALSE]
-    /\ report' = [c \in Cards |-> IF started[c] /\ report[c] = "none" /\ LaneWrites THEN "lane" ELSE report[c]]
+    /\ report' = [c \in Cards |-> IF started[c] THEN Ended(report[c]) ELSE report[c]]
     /\ store' = [c \in Cards |-> IF sent /\ started[c] /\ report[c] = "none" /\ LaneWrites THEN "finished" ELSE store[c]]
     /\ UNCHANGED run
 
-\* friend sync finishes a working card from its REPORT.md
-Sync(c) == /\ store[c] = "working" /\ report[c] # "none"
+\* friend sync finishes a working card from its REPORT.md (never from a draft)
+Sync(c) == /\ store[c] = "working" /\ report[c] \in {"friend", "lane"}
            /\ store' = [store EXCEPT ![c] = "finished"]
            /\ UNCHANGED <<run, started, report, up>>
 
-Next == \/ \E c \in Cards : Begin(c) \/ FriendReports(c) \/ Sync(c) \/ \E s \in BOOLEAN : RunEnds(c, s)
+Next == \/ \E c \in Cards : Begin(c) \/ FriendReports(c) \/ Sync(c) \/ Capped(c) \/ \E s \in BOOLEAN : RunEnds(c, s)
         \/ Down
         \/ \E s \in BOOLEAN : Restart(s)
 
@@ -79,12 +98,12 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Restart(FALSE)) /\ \A c \in Cards : WF_
 TypeOK == /\ store \in [Cards -> {"working", "finished"}]
           /\ run \in [Cards -> {"none", "running", "ended", "gone"}]
           /\ started \in [Cards -> BOOLEAN]
-          /\ report \in [Cards -> {"none", "friend", "lane"}]
+          /\ report \in [Cards -> {"none", "draft", "friend", "lane"}]
           /\ up \in BOOLEAN
 
 \* no card stays working after its run with no way to be finished: a report for
 \* sync to read, or a mark for the next daemon to end
-NoOrphan == \A c \in Cards : (store[c] = "working" /\ run[c] \in {"ended", "gone"}) => (report[c] # "none" \/ started[c])
+NoOrphan == \A c \in Cards : (store[c] = "working" /\ run[c] \in {"ended", "gone"}) => (report[c] \in {"friend", "lane"} \/ started[c])
 
 \* the lane never writes over the friend's own report
 HersStands == [][\A c \in Cards : report[c] = "friend" => report'[c] = "friend"]_vars
