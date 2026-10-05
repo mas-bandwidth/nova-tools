@@ -16,7 +16,7 @@ import (
 // second reader would drift -- prints what each yielded, and writes nothing. It exists so
 // a person can see what a fold would count before it writes, and it exits 0 whenever it
 // ran, because asserting is not its job.
-func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdSources(args []string, stdout, stderr io.Writer, now time.Time, env toolenv) int {
 	fs := newFlagSet("sources")
 	day := fs.String("day", "", "one UTC day to inspect as YYYY-MM-DD")
 	all := fs.Bool("all", false, "inspect every day named by the sources")
@@ -30,14 +30,14 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	r := &refusals{token: "SOURCES", s: s}
 	checkDay(r, *day, *all)
-	sf.check(r)
+	sf.check(r, env)
 	checkMax(r, *max)
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	rules, err := tokens.LoadRules(sf.repos)
+	rules, err := tokens.LoadRules(env.resolve(sf.repos))
 	if err != nil {
-		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
+		r.add("--repos " + sf.repos + ": " + reroot(err, env.resolve(sf.repos), sf.repos).Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
 	// The tally is switched on BEFORE any source is read, because it is taken inside the
@@ -48,7 +48,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 			rules.FilterDay(*day)
 		}
 	}
-	sources, copyNotes := sf.read(rules, now, true)
+	sources, copyNotes := sf.read(rules, now, true, env)
 	if !*all {
 		// When --day is specified (without --all), message counts, row keys, and unattributed
 		// path tallies are scoped to the selected day. Source-wide inventory and error metadata

@@ -137,7 +137,7 @@ func avgRate(usdMicro, tokens int64, priced bool) float64 {
 // THIS IS THE ONE PLACE IN THE FAMILY WHERE THE OK LINE LEAVES STDOUT, because here stdout
 // is the artifact. The spec says so in as many words, which is the exception SPEC.md's
 // Conventions allow when a spec states one.
-func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, env toolenv) int {
 	fs := newFlagSet("report")
 	who := fs.String("who", "", "name to write in each note body row")
 	day := fs.String("day", "", "one UTC day to report as YYYY-MM-DD")
@@ -171,7 +171,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case !tokens.ValidDay(*day):
 		r.add("--day is not a day: " + *day + "; it wants " + wantsDay)
 	}
-	sf.check(r)
+	sf.check(r, env)
 	checkMax(r, *max)
 	seen := map[string]bool{}
 	for _, id := range supersedes {
@@ -186,14 +186,14 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	rules, err := tokens.LoadRules(sf.repos)
+	rules, err := tokens.LoadRules(env.resolve(sf.repos))
 	if err != nil {
-		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
+		r.add("--repos " + sf.repos + ": " + reroot(err, env.resolve(sf.repos), sf.repos).Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
 	sorted := slices.Sorted(slices.Values(supersedes))
 
-	sources, copyNotes := sf.read(rules, now, *dryRun)
+	sources, copyNotes := sf.read(rules, now, *dryRun, env)
 	folder := tokens.NewFolder()
 	for _, src := range sources {
 		for _, m := range src.Stream {
@@ -270,12 +270,12 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *notePath != "" {
 		// A dry run checks the note's path exactly as the write would (atomicfile.Check)
 		// and refuses what it refuses; only the write itself is skipped.
-		write := func() error { return atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644) }
+		write := func() error { return atomicfile.Write(env.resolve(filepath.Clean(*notePath)), []byte(body), 0o644) }
 		if *dryRun {
-			write = func() error { return atomicfile.Check(filepath.Clean(*notePath), 0o644) }
+			write = func() error { return atomicfile.Check(env.resolve(filepath.Clean(*notePath)), 0o644) }
 		}
 		if err := write(); err != nil {
-			r.add("--note " + *notePath + ": " + err.Error())
+			r.add("--note " + *notePath + ": " + reroot(err, env.resolve(filepath.Clean(*notePath)), filepath.Clean(*notePath)).Error())
 			return r.print(stderr)
 		}
 	}

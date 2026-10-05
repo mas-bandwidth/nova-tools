@@ -45,6 +45,11 @@ var tokensAudit = audit.Config{
 		// oneline.Field at the print site below.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"runtime"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
+		// errors holds the text of an operation's error re-rooted onto the path as the
+		// caller typed it (the injected working directory, main.go's reroot): it holds no
+		// writer of its own, and the text it carries is printed through this package's own
+		// error sites.
+		`"errors"`,
 		// maps and slices hold no writer: they return keys, sorted copies and membership,
 		// which this package renders through oneline at its own print sites.
 		`"maps"`, `"slices"`,

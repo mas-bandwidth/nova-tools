@@ -77,7 +77,7 @@ func ledgerEntries(d tokens.DayFile) []record.LedgerEntry {
 // replaced whole, so indexing twice is the table indexing once. It reads the day files and
 // writes nothing beside them. Under --dry-run it reads and checks the same day files, prints
 // the rows it would write, and dials no store.
-func cmdLedger(args []string, stdout, stderr io.Writer) int {
+func cmdLedger(args []string, stdout, stderr io.Writer, env toolenv) int {
 	fs := newFlagSet("ledger")
 	out := fs.String("out", "", "directory containing daily token files")
 	day := fs.String("day", "", "one UTC day to index as YYYY-MM-DD")
@@ -110,7 +110,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	if *day != "" {
 		paths = []string{tokens.Path(*out, *day)}
 	} else {
-		matches, err := filepath.Glob(filepath.Join(*out, *month+"-*"+tokens.FileSuffix))
+		matches, err := filepath.Glob(filepath.Join(env.resolve(*out), *month+"-*"+tokens.FileSuffix))
 		if err != nil {
 			r.add("--out " + *out + ": " + err.Error())
 			return r.print(stderr)
