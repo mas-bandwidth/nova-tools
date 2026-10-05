@@ -561,6 +561,53 @@ func TestDiskGuardWithoutTheOpenPathsRemovesNothingThatNeedsThem(t *testing.T) {
 	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE freed=0 free=107374182400 failed=1\n")
 }
 
+// A launch agent's PATH leaves out /usr/sbin, where macOS keeps lsof: the guard looks for
+// lsof on PATH, then at its standard paths, and says once at its start which it took, or
+// that it has none and what that costs the run.
+func TestDiskGuardFindsLsofOffPathAndSaysSoOnce(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	missing, there := filepath.Join(dir, "sbin", "lsof"), filepath.Join(dir, "usr", "sbin", "lsof")
+	dgFile(t, there, 10, dgNow)
+	require.NoError(t, os.Chmod(there, 0o755))
+	notOnPath := func(string) (string, error) { return "", errors.New("executable file not found in $PATH") }
+
+	path, note := findLsof(func(string) (string, error) { return "/opt/bin/lsof", nil }, []string{there}, isExecutable)
+	assert.Equal(t, "/opt/bin/lsof", path, "PATH's lsof is taken first")
+	assert.Empty(t, note, "nothing to say when PATH has it")
+
+	path, note = findLsof(notOnPath, []string{missing, there}, isExecutable)
+	assert.Equal(t, there, path, "off PATH, the first standard path that holds an executable lsof")
+	assert.Equal(t, "NOTE lsof is not on PATH; the open files of live processes are read with "+there, note)
+
+	plain := filepath.Join(dir, "plain", "lsof")
+	dgFile(t, plain, 10, dgNow)
+	require.NoError(t, os.Chmod(plain, 0o644))
+	path, note = findLsof(notOnPath, []string{missing, plain}, isExecutable)
+	assert.Empty(t, path, "a file that cannot be run is no lsof")
+	assert.Contains(t, note, "NOTE lsof is not on PATH nor at "+missing+", "+plain+": the open files of live processes cannot be read")
+
+	held, err := lsofHeld("")
+	assert.Nil(t, held)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lsof is not on PATH nor at /usr/sbin/lsof")
+
+	g, out := dgGuard(t)
+	g.start = []string{note}
+	g.held = func() ([]string, error) { return lsofHeld("") }
+	land := t.TempDir()
+	clone := filepath.Join(land, "github.com-o-r-0123456789abcdef")
+	dgFile(t, filepath.Join(clone, "main.go"), 100, dgNow.Add(-48*time.Hour))
+	dgAge(t, clone, dgNow.Add(-48*time.Hour))
+	g.landDir = land
+	assert.Equal(t, 1, g.run())
+	assert.DirExists(t, clone, "without lsof nothing a live process may hold is removed")
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.NotEmpty(t, lines)
+	assert.Equal(t, note, lines[0], "the run says what it lacks before any rule")
+	assert.Equal(t, 1, strings.Count(out.String(), "NOTE lsof is not on PATH"), "and says it once")
+}
+
 // lsofPaths reads lsof's -F pn listing: every absolute name, the guard's own pid's left out.
 func TestDiskGuardLsofPathsLeavesOutItsOwnFiles(t *testing.T) {
 	t.Parallel()

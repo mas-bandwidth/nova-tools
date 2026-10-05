@@ -84,6 +84,17 @@ tier of the card it reads, the tier its work was dealt on (flash when line 1
 names none), at that tier's rolling index, and
 the packet hands the reader its model, budget and deadline; a reader started
 with `--model`, `--tokens` and `--deadline` runs its reads on those instead.
+A loop record runs a verb its program must still have: a release that retires
+the verb leaves the unit exiting at every start (`sprint-table-live` ran
+`nova-sprint table` that way until 2026-10-04). The loop kind asks each nova
+program in a record's argv `help <verb>` (`internal/config/loop.go`: exit 2
+naming verbs is a verb gone; a program not installed where nova-config runs
+judges nothing): `CheckLoopVerb` is the refusal of an enabled record whose
+verb is gone, and `DeadLoops` the line for each, with its `nova-config loop
+remove <name>`. Until `loop add`, `loop set` and `status` call them, check a
+record by hand with `<program> help <verb>` and remove a dead one with
+`nova-config loop remove <name>`.
+
 Both loops name the identity every child commits under, `--identity
 <owner>,<name>,<email>`, in their argv, so no file is written into a pool by
 hand; a loop without it reads the pool's `identity.tsv`.
@@ -358,8 +369,12 @@ per-machine artifact the fleet writes, and what removes it, when:
 A process works in a path when its working directory or a file it holds open
 lies under it (lsof on darwin, `/proc/<pid>/cwd` and `/proc/<pid>/fd` on Linux):
 a `git push` or a `make` run inside a land clone names no path on its argument
-line, and keeps the clone all the same. A run that cannot read the open files
-removes nothing that needs them and ends `INCOMPLETE`.
+line, and keeps the clone all the same. A launch agent's PATH leaves out
+`/usr/sbin`, where macOS keeps lsof, so the guard takes lsof from PATH, else
+from `/usr/sbin/lsof`, `/usr/bin/lsof`, `/sbin/lsof` or `/bin/lsof`, and says
+once at its start, on a `NOTE` line, which it took off PATH or that it found
+none. A run that cannot read the open files removes nothing that needs them
+and ends `INCOMPLETE`.
 
 Each run prints one line per action (`REMOVED`, `TRIMMED`, `CLEANED`,
 `ROTATED`, with `freed=<bytes>`, or `KEPT` with why), a `DISK-GUARD WARN` line
