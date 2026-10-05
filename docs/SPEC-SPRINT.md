@@ -798,7 +798,24 @@ readers' finding at its current attempt is the same finding (`sprint.SameFinding
 finding of files outside the card's PATHS one class however worded) as that one, both
 since the brief last changed, or when it has made more than `MaxAttemptsPerBrief` (5)
 attempts since the brief last changed (`brief_attempt`, written by `brief`; absent is
-attempt 0). Then `rework` is refused, nothing written, one line: `<id> has failed the
+attempt 0). **The attempt cap's default answer is a friend card** (`sprint.AttemptCapDeal`,
+brief_bound.go; `TestTheAttemptCapJudgmentsDefaultAnswerDealsAFriendCard`,
+`TestTwoCappedCardsDoNotExceedAFriendsWidth`): a primary ready and past its cap
+(`sprint.AtBriefBound` asked with `sprint.AttemptsCap`, the stream control card's
+`attempts` when that field is set, else the work table's property `attempts` when set,
+else 4) is dealt as a friend card (section 1) to a frontier or heavy-class friend up
+with room (`sprint.FriendOfClass` over her seat's class), the friend up with the most
+free width (her width less the cards she holds), the first by name among equals. The
+plan counts that free width as it deals, decremented per card and picked again, so one
+friend's width takes one such card and a card that no longer fits stays ready. The card
+keeps its work and findings, its brief gains `WHO: friend <name>` for the friend chosen
+(the fields the brief edit writes, so the cap count resets as a replaced brief does),
+its next attempt's work card is created on her row in working and the judgment the cap
+raised closes. With no such friend up with room the card stays ready and the deal
+raises the brief-bound judgment with friend, brief and drop as its decisions. The
+tick's deal does not call this step, and a friend's roster class is the tiers her row
+names, comma joined, which this chooser matches whole. Then `rework` is refused,
+nothing written, one line: `<id> has failed the
 same way twice (attempts <n> and <m>: <the finding's first sentence>); the brief is
 wrong, not the worker; run: nova-sprint brief <id> --brief-file <path> (a waiting card)
 or drop <id> and add it again with the brief corrected` (or `<id> has made <k> attempts
