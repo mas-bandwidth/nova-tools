@@ -46,8 +46,8 @@ store by friend sync (--pg, else NOVA_PG_DSN, as nova-config takes it): a friend
 the store lacks is added, one nova-config no longer has is taken off with her
 beat, and a friend that stays keeps her hold. The same sync writes each friend's width,
 the jobs she works at once: her friend row's width (nova-config friend set
-<friend> --width <n>, at least 1), `+fmt.Sprint(config.DefaultFriendWidth)+` when the row names none; a row whose width is
-below 1 is refused with nothing changed. where counts the cards: ready, working,
+<friend> --width <n>, at least 1), `+fmt.Sprint(config.DefaultFriendWidth)+` when the row names none; and her delivery mode (mode:
+batch|one-shot, default batch); a row whose width is below 1 is refused with nothing changed. where counts the cards: ready, working,
 width, done (ok and failed), ok% (ok over done, pooled in the footer) and
 status, all from the friend's sprint cards — the cards dealt to her fleet row
 friend.<name>, their states and their finish verdicts — never from her
@@ -71,7 +71,8 @@ A friend's card: a card whose brief says WHO: friend (any friend) or
 WHO: friend <name> (a row of the friends table; add and brief refuse any other)
 is dealt by the tick to a friend up below her width, the one it names or the
 one with the most free width, on her own fleet row friend.<name>, straight into
-working; no machine is dealt it, and no presence or rebalance takes it back: friend take
+working (in batch mode, up to her width and ready behind; in one-shot mode,
+one card at a time and the next only after the last one finished); no machine is dealt it, and no presence or rebalance takes it back: friend take
 takes back the cards she has not started, and friend down every one.
 friend sync writes it as <friend>-working/inbox/<job>/BRIEF.md, the job
 directory <card> at epoch 0 and <card>~<epoch> after a clear (its STATUS line

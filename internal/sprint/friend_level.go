@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 )
 
 // The friends' level (docs/SPEC-SPRINT.md section 1, friend level; the owner, 2026-10-04:
@@ -28,7 +30,8 @@ type FriendLevelReq struct {
 // FriendLevel evens the ready queues of the friends up within each class, as level evens
 // the members': a friend's backlog is the cards on her row, ready and working, less her
 // width; while the largest backlog of a friend with a card that may move and the smallest
-// of the friends below their room (DealAhead times their width) differ by more than one,
+// of the friends below their room (DealAhead times their width in batch mode; 1 in one-shot
+// mode, docs/SPEC-SPRINT.md section 1, "A friend's card") differ by more than one,
 // the newest card that may move of the largest goes to the smallest (the first by name
 // among equals), at its next generation (its own branch and job), into working when she
 // has a lane free and ready behind her working cards otherwise. Each move lowers the sum
@@ -49,7 +52,11 @@ func FriendLevel(s *Snapshot, r FriendLevelReq) Plan {
 		held, working, width, queues := map[string]int{}, map[string]int{}, map[string]int{}, map[string][]*Card{}
 		backlog := func(f string) int { return held[f] - width[f] }
 		for _, f := range seats {
-			width[f.Name] = f.Width
+			w := f.Width
+			if f.Mode == config.FriendModeOneShot {
+				w = 1
+			}
+			width[f.Name] = w
 			row := FriendRow(f.Name)
 			held[f.Name], working[f.Name] = friendLoad(s, f.Name), s.Fleet.Count(row, Working)
 			for _, c := range s.Fleet.Cell(row, Ready) {
@@ -65,7 +72,11 @@ func FriendLevel(s *Snapshot, r FriendLevelReq) Plan {
 				if len(queues[f.Name]) > 0 && (long == "" || backlog(f.Name) > backlog(long)) {
 					long = f.Name
 				}
-				if held[f.Name] < DealAhead*f.Width && (short == "" || backlog(f.Name) < backlog(short)) {
+				room := DealAhead * f.Width
+				if f.Mode == config.FriendModeOneShot {
+					room = 1
+				}
+				if held[f.Name] < room && (short == "" || backlog(f.Name) < backlog(short)) {
 					short = f.Name
 				}
 			}

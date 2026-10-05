@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -120,6 +123,49 @@ func TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow(t *testing.T) {
 	assert.Equal(t, "taken", queueStates(t, root, "amy")["s1-2.w1"], "not hers to start any more")
 	assert.Equal(t, "working", queueStates(t, root, "bob")["s1-2.w1"])
 	assert.Contains(t, ta.ok("friend level"), "FRIEND-LEVEL OK moved=0")
+	ta.clean()
+}
+
+// friend level respects a friend's delivery mode: a one-shot friend has room 1, so only 1 card moves.
+func TestFriendLevelRespectsOneShotDeliveryMode(t *testing.T) {
+	t.Parallel()
+	ta, cfg := friendApp(t)
+	ta.a.tip = func(_ context.Context, _, _ string) (string, error) { return "", nil }
+	_, err := cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "amy", Fields: map[string]string{"tiers": "flash", "width": "2", "mode": "batch"}}, "t")
+	require.NoError(t, err)
+	_, err = cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "bob", Fields: map[string]string{"tiers": "flash", "width": "2", "mode": "one-shot"}}, "t")
+	require.NoError(t, err)
+
+	root := t.TempDir()
+	ta.ok("friend sync --root " + root)
+	ta.ok("friend beat amy")
+	ta.ok("friend beat bob")
+
+	for i := 1; i <= 4; i++ {
+		id := fmt.Sprintf("s1-%d", i)
+		brief := filepath.Join(t.TempDir(), id+".md")
+		require.NoError(t, os.WriteFile(brief, []byte(passingBrief(id+": a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend")), 0o644))
+		ta.ok("add --stream s1 --brief-dir " + filepath.Dir(brief))
+	}
+	ta.ok("start")
+
+	ta.ok("friend down bob")
+	ta.ok("tick") // amy (batch, width 2) fills her room of 4: 2 working, 2 ready
+	ta.ok("friend sync --root " + root)
+
+	ta.ok("friend up bob")
+	ta.ok("friend beat bob")
+
+	out := ta.ok("friend level")
+	// bob has room 1 (one-shot mode), so only 1 card moves (even though bob's width is 2 and amy has 2 ready cards)
+	assert.Contains(t, out, "FRIEND-LEVEL OK moved=1")
+	assert.Contains(t, ta.ok("friend level"), "FRIEND-LEVEL OK moved=0")
+
+	f := whereFriends(ta)
+	assert.Equal(t, 2, f["amy"].Working)
+	assert.Equal(t, 1, f["amy"].Ready)
+	assert.Equal(t, 1, f["bob"].Working)
+	assert.Equal(t, 0, f["bob"].Ready)
 	ta.clean()
 }
 

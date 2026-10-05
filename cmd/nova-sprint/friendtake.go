@@ -128,7 +128,7 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 }
 
 // friendLevelWords is what friend level says on -h.
-const friendLevelWords = "friend level evens the friends' ready queues as fleet level evens the members': among the friends up of one class (the tiers her nova-config row says she can do), while one has two more cards over her width than another below her room (twice her width), the newest card of the first moves to the second at its next generation, into working when she has a lane free. Only a card for any friend (WHO: friend) that is ready on her row and that she has not started (a push on its branch, her beat naming it running) moves; a card naming her and a working card stay. The MOVED line says moved=N to <friend>(n) from <friend>(n). friend sync delivers a moved card as a new job and marks it taken in the queue file of the friend it left.\n"
+const friendLevelWords = "friend level evens the friends' ready queues as fleet level evens the members': among the friends up of one class (the tiers her nova-config row says she can do), while one has two more cards over her width than another below her room (twice her width in batch mode, 1 in one-shot mode), the newest card of the first moves to the second at its next generation, into working when she has a lane free. Only a card for any friend (WHO: friend) that is ready on her row and that she has not started (a push on its branch, her beat naming it running) moves; a card naming her and a working card stay. The MOVED line says moved=N to <friend>(n) from <friend>(n). friend sync delivers a moved card as a new job and marks it taken in the queue file of the friend it left.\n"
 
 func (a *app) cmdFriendLevel(args []string, stdout, stderr io.Writer) int {
 	const name = "friend level"
@@ -152,7 +152,7 @@ func (a *app) cmdFriendLevel(args []string, stdout, stderr io.Writer) int {
 	}
 	r := sprint.FriendLevelReq{Started: map[string]string{}, Who: c.actor}
 	for _, f := range rows {
-		r.Seats = append(r.Seats, sprint.FriendSeat{Name: f.Name, Width: f.Width, Status: f.Status, Class: f.Class})
+		r.Seats = append(r.Seats, sprint.FriendSeat{Name: f.Name, Width: f.Width, Status: f.Status, Class: f.Class, Mode: f.Mode})
 		if f.Status != sprint.Up {
 			continue
 		}
