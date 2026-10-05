@@ -34,6 +34,7 @@ import (
 	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
@@ -83,7 +84,7 @@ func launchRedis(ctx context.Context, spec launchSpec, stdout, stderr io.Writer)
 func serveVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "serve",
-		Usage:   "serve --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--dry-run]",
+		Usage:   "serve --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>] [--dry-run]",
 		Example: "version",
 		Effect:  tool.LocalWrite,
 		DryRun:  true,
@@ -96,6 +97,7 @@ looks up no redis-server and launches nothing.`,
 			f.String("bind", "", "comma-separated IP addresses to listen on, loopback (127.0.0.1, ::1) or tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48) only")
 			f.String("port", "", "the TCP port to listen on, 1 to 65535 (6379 is Redis's own)")
 			f.String("dir", "", "the absolute path of the store directory (AOF and RDB files), created 0700 when missing")
+			loginUnitFlags(f)
 			f.Check(func(c *tool.Call) {
 				if !c.Given("bind") {
 					c.Problem("--bind is required: comma-separated IP addresses to listen on, loopback (127.0.0.1, ::1) or tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48) only; refusing to guess")
@@ -168,9 +170,9 @@ func serveRun(c *tool.Call, d deps) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
-	password := d.getenv(PasswordEnv)
-	if password == "" {
-		return tool.Refuse(fmt.Sprintf("%s is empty; run under `nova-secrets exec --only %s -- nova-redis serve ...` so auth comes from nova-secrets at run time, never an argument", PasswordEnv, PasswordEnv))
+	password, err := servePassword(c, d)
+	if err != nil {
+		return tool.Refuse(err.Error())
 	}
 	program, err := d.lookPath(redisServerProgram)
 	if err != nil {
@@ -195,6 +197,44 @@ func serveRun(c *tool.Call, d deps) *tool.Out {
 	}
 	fmt.Fprintf(c.Stdout, "SERVE STOP bind=%s port=%d\n", oneline.Field(strings.Join(opts.binds, ",")), opts.port)
 	return tool.Exit(0)
+}
+
+// servePassword is the instance's password, read in this process: from the login
+// the flags name (--secrets, --as, --key, --sops, --secret: one name in one seat of a
+// secrets store, read through internal/secrets.ReadLogin, the path nova-secrets exec
+// takes), else from PasswordEnv, which nova-secrets exec fills. The login is how a
+// unit written by install store or install bus runs serve with no wrapper and no
+// password in the unit; the value is handed to redis-server on stdin only.
+func servePassword(c *tool.Call, d deps) (string, error) {
+	l := secrets.Login{Store: c.Str("secrets"), As: c.Str("as"), Key: c.Str("key"), Sops: c.Str("sops"), Name: c.Str("secret")}
+	given := l.Store != "" || l.As != "" || l.Key != "" || l.Sops != "" || l.Name != ""
+	if !given {
+		password := d.getenv(PasswordEnv)
+		if password == "" {
+			return "", fmt.Errorf("%s is empty; name the login serve reads the password from (--secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>), or run under `nova-secrets exec --only %s -- nova-redis serve ...`; auth comes from nova-secrets at run time, never an argument", PasswordEnv, PasswordEnv)
+		}
+		return password, nil
+	}
+	var missing []string
+	for _, f := range []struct{ v, flag string }{{l.Store, "--secrets"}, {l.As, "--as"}, {l.Key, "--key"}, {l.Sops, "--sops"}, {l.Name, "--secret"}} {
+		if f.v == "" {
+			missing = append(missing, f.flag)
+		}
+	}
+	if len(missing) > 0 {
+		return "", fmt.Errorf("%w; it names no %s", errNoLogin, strings.Join(missing, ", "))
+	}
+	read := d.readLogin
+	if read == nil {
+		read = secrets.ReadLogin
+	}
+	s, err := read(l)
+	if err != nil {
+		return "", fmt.Errorf("the password of the login %s does not resolve: %v", l.String(), err)
+	}
+	password := ""
+	_ = s.Use(func(p string) error { password = p; return nil }) // ignored: the function never fails
+	return password, nil
 }
 
 // validBinds parses --bind and refuses every address that is not loopback or

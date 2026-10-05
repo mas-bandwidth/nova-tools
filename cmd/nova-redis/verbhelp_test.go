@@ -27,9 +27,15 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "acl render"},
 		{Verb: "acl check", Flags: []string{"--addr", "{addr}"}},
 		{Verb: "acl apply", Flags: []string{"--addr", "{addr}"}},
+		{Verb: "install"},
+		{Verb: "install store", Flags: []string{"--units", "{dir}/units", "--dir", "{dir}/store"}},
+		{Verb: "install bus", Flags: []string{"--units", "{dir}/units", "--dir", "{dir}/bus"}},
+		{Verb: "uninstall"},
+		{Verb: "uninstall store", Flags: []string{"--units", "{dir}/units"}},
+		{Verb: "uninstall bus", Flags: []string{"--units", "{dir}/units"}},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, redisRun, "nova-redis", "serve", "spill", "recall", "fn", "fn load", "fn check", "acl", "acl render", "acl check", "acl apply", "version")
+	testverbhelp.HelpVerb(t, redisRun, "nova-redis", "serve", "spill", "recall", "fn", "fn load", "fn check", "acl", "acl render", "acl check", "acl apply", "install", "install store", "install bus", "uninstall", "uninstall store", "uninstall bus", "version")
 }
 
 func redisRun(args []string, stdout, stderr io.Writer) int {

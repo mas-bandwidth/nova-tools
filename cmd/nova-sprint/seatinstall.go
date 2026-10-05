@@ -1,20 +1,16 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // seat install and seat uninstall (docs/SPEC-SPRINT.md, "Handing over the seat"; the
@@ -40,13 +36,7 @@ func (a *app) seatDir(goos string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if goos == "linux" {
-		if x := a.getenv("XDG_CONFIG_HOME"); x != "" {
-			return filepath.Join(x, "systemd", "user"), nil
-		}
-		return filepath.Join(home, ".config", "systemd", "user"), nil
-	}
-	return filepath.Join(home, "Library", "LaunchAgents"), nil
+	return sprint.UnitDir(goos, home, a.getenv), nil
 }
 
 // seatInstaller is the installer into dir, its loader the test's when one is set.
@@ -180,42 +170,4 @@ func (a *app) cmdSeatUninstall(args []string, stdout, stderr io.Writer) int {
 // macOS, its label the file's name without .plist, and systemctl --user on Linux, its
 // service the file's name. Under NOVA_TEST_NO_HOST it refuses: a test gives its own
 // loader.
-func loadSeatUnit(goos, op, path string) error {
-	if os.Getenv("NOVA_TEST_NO_HOST") != "" {
-		return errors.New("NOVA_TEST_NO_HOST is set: no service is loaded or unloaded on this machine")
-	}
-	ctx := context.Background()
-	run := func(name string, args ...string) error {
-		cmd, cancel := subproc.Command(ctx, subproc.Tool, name, args...)
-		defer cancel()
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-		}
-		return nil
-	}
-	if goos == "linux" {
-		unit := filepath.Base(path)
-		if op == "unload" {
-			return run("systemctl", "--user", "disable", "--now", unit)
-		}
-		if err := run("systemctl", "--user", "daemon-reload"); err != nil {
-			return err
-		}
-		if err := run("systemctl", "--user", "enable", unit); err != nil {
-			return err
-		}
-		return run("systemctl", "--user", "restart", unit)
-	}
-	service := "gui/" + strconv.Itoa(os.Getuid()) + "/" + strings.TrimSuffix(filepath.Base(path), ".plist")
-	loaded := run("launchctl", "print", service) == nil
-	if loaded {
-		if err := run("launchctl", "bootout", service); err != nil {
-			return err
-		}
-	}
-	if op == "unload" {
-		return nil
-	}
-	return run("launchctl", "bootstrap", "gui/"+strconv.Itoa(os.Getuid()), path)
-}
+func loadSeatUnit(goos, op, path string) error { return sprint.LoadUnit(goos, op, path) }
