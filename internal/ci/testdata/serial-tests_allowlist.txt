@@ -23,7 +23,7 @@
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
 # nova-check: TestTESTSFirstRunIsWhatTheToolPrints, TestIssue2296, TestNoCodeStagedRefusals removed (ceiling 226 in abb4e02a3, 207 on current base)
-# ceiling: 207
+# ceiling: 145
 cmd/nova-sandbox/denied_test.go:TestTheDenialReaderUsesPosixPathsOnEveryPlatform serial: swaps package var main.denialStat
 cmd/nova-sandbox/denied_test.go:TestTheDeniedLineNamesThePathTheOpAndTheRemedy serial: swaps package var main.denialStat
 cmd/nova-sandbox/egress_test.go:TestEgressApplyAndDropRefuseOffLinux serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
@@ -102,19 +102,8 @@ cmd/nova-sandbox/worktree_test.go:TestWorktreePruneRemovesMergedAndClosedAndKeep
 cmd/nova-sandbox/worktree_test.go:TestWorktreePruneStaleUsesTheClockAndTheProbe serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit, swaps package var main.worktreeInUse, swaps package var main.worktreeNow
 cmd/nova-sandbox/worktree_test.go:TestWorktreeRefusals serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
 cmd/nova-sandbox/worktree_test.go:TestWorktreeSecondCallReusesTheTree serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
-cmd/nova-tokens/boundary_test.go:TestNoVerbTouchesACheckoutOrItsRemote serial: t.Setenv
 cmd/nova-tokens/contract_test.go:TestEachDeclaredFileIsOpenedOncePerRun serial: counts the process-wide tokens.Opens(), which every parallel fold adds to
-cmd/nova-tokens/demanded_test.go:TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout serial: t.Setenv
-cmd/nova-tokens/demanded_test.go:TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted serial: t.Setenv
-cmd/nova-tokens/demanded_test.go:TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted serial: t.Setenv
-cmd/nova-tokens/determinism_test.go:TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay serial: t.Setenv
-cmd/nova-tokens/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
-cmd/nova-tokens/firstrun_test.go:TestTheExampleLinesRun serial: t.Chdir
-cmd/nova-tokens/firstrun_test.go:TestTheTranscriptIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-tokens/gen_transcript_test.go:TestGenerateTranscript serial: t.Chdir
 cmd/nova-tokens/slow_test.go:TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn serial: t.Setenv
-cmd/nova-tokens/token_ledger_test.go:TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly serial: t.Setenv
-cmd/nova-tokens/xai_usage_test.go:TestXaiProviderOneUsageFileFoldsRow serial: t.Setenv
 internal/nsprint/store/store_test.go:TestOpenAuthenticatesFromEnv serial: t.Setenv
 internal/secrets/place_test.go:TestPlaceSSHSeamPanicsUnderTheGuard serial: os.Unsetenv, t.Setenv
 internal/swarm/hostguard_test.go:TestHostGuardCleanupRestoresCachedState serial: t.Setenv
@@ -132,7 +121,6 @@ internal/swarm/result_collision_test.go:TestTheCollisionSeamCountsOnlyReadsOfThe
 internal/swarm/stage_functional_test.go:TestStageUsesTheBenchMirrorAndTimesOut serial: t.Setenv
 internal/swarm/toolchain_test.go:TestToolchainVersionDirReadsTheVersionOffTheLauncher serial: t.Setenv
 internal/testbin/testbin_test.go:TestPlaceFallsBackToCopyWhenLinkFails serial: swaps package var testbin.link
-cmd/nova-tokens/token_ledger_test.go:TestLedgerAndReportDialAsTheAclUser serial: t.Setenv
 internal/nsprint/store/open_sends_no_command_test.go:TestOpenSendsNoCommandBeforeTheCallersFirstBatch serial: t.Setenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeDrainDeliversPoolIdentityToChild serial: os.Setenv, os.Unsetenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMalformedPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv

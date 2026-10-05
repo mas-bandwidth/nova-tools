@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -49,7 +50,7 @@ func mkdirAllRefuses(path string) error {
 	return nil
 }
 
-func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdSession(args []string, stdout, stderr io.Writer, now time.Time, env toolenv) int {
 	fs := newFlagSet("session")
 	session := fs.String("claude-session", "", "one Claude Code session transcript jsonl")
 	out := fs.String("out", "", "directory for the resulting daily token file")
@@ -74,9 +75,9 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return r.print(stderr)
 	}
 
-	sum, err := tokens.ReadClaudeSession(*session)
+	sum, err := tokens.ReadClaudeSession(env.resolve(*session))
 	if err != nil {
-		return refuseVerb(s, "TOKENS", fmt.Sprintf("cannot read %s: %s", oneline.Field(*session), oneline.Err(err)))
+		return refuseVerb(s, "TOKENS", fmt.Sprintf("cannot read %s: %s", oneline.Field(*session), oneline.Err(reroot(err, env.resolve(*session), *session))))
 	}
 	// Every field of the SESSION line is a %d over an integer, so the escape is a no-op --
 	// and it is here anyway, because the tripwire that keeps this binary's output one line
@@ -107,17 +108,18 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// The fold. One day file per day the session's turns fell on, merged by source the way
 	// every other fold merges: this run recomputes the rows its own source wrote and keeps
 	// every other row exactly as it is. A dry run reads the day files and writes nothing.
-	mkdir := func() error { return os.MkdirAll(*out, 0o755) }
+	resolvedOut := env.resolve(*out)
+	mkdir := func() error { return os.MkdirAll(resolvedOut, 0o755) }
 	if *dryRun {
-		mkdir = func() error { return mkdirAllRefuses(*out) }
+		mkdir = func() error { return mkdirAllRefuses(resolvedOut) }
 	}
 	if err := mkdir(); err != nil {
-		return refuseVerb(s, "TOKENS", fmt.Sprintf("cannot open --out: %s", oneline.Err(err)))
+		return refuseVerb(s, "TOKENS", fmt.Sprintf("cannot open --out: %s", oneline.Err(reroot(err, resolvedOut, *out))))
 	}
 	if !*dryRun {
-		release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
+		release, err := tokens.TakeFoldLock(resolvedOut, tokens.LockWait)
 		if err != nil {
-			return refuseVerb(s, "TOKENS", oneline.Err(err))
+			return refuseVerb(s, "TOKENS", oneline.Err(reroot(err, resolvedOut, filepath.Clean(*out))))
 		}
 		defer release()
 	}
@@ -144,19 +146,21 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		fresh := sum.Rows(d, *role)
 		var old []tokens.DayRow
-		prior, findings, err := tokens.ReadDayFile(tokens.Path(*out, d))
+		dayPath := tokens.Path(*out, d)
+		prior, findings, err := tokens.ReadDayFile(env.resolve(dayPath))
 		if err != nil {
 			if !os.IsNotExist(err) {
+				shown := reroot(err, env.resolve(dayPath), dayPath).Error()
 				fmt.Fprintf(s.err(), "TOKENS REFUSED: cannot read %s: %s\n",
-					oneline.Field(tokens.Path(*out, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
-				s.item("refused", "day", d, "why", tool.Text("cannot read "+tokens.Path(*out, d)+": "+err.Error()))
+					oneline.Field(dayPath), oneline.WithRemedy(shown, "nova-tokens session -h"))
+				s.item("refused", "day", d, "why", tool.Text("cannot read "+dayPath+": "+shown))
 				exit = 1
 				continue
 			}
 		} else {
 			if len(findings) > 0 {
 				fmt.Fprintf(s.err(), "TOKENS REFUSED: the day file %s has %d findings; the repair is nova-tokens check --out %s\n",
-					oneline.Field(tokens.Path(*out, d)), len(findings), oneline.Field(*out))
+					oneline.Field(dayPath), len(findings), oneline.Field(*out))
 				s.item("refused", "day", d, "findings", len(findings), "why", tool.Text("the day file has findings; the repair is nova-tokens check --out "+*out))
 				exit = 1
 				continue
@@ -177,9 +181,10 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		written := false
 		if !*dryRun {
-			if err := f.Save(*out); err != nil {
-				fmt.Fprintf(s.err(), "TOKENS REFUSED: cannot write %s: %s\n", oneline.Field(tokens.Path(*out, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
-				s.item("refused", "day", d, "why", tool.Text("cannot write "+tokens.Path(*out, d)+": "+err.Error()))
+			if err := f.Save(resolvedOut); err != nil {
+				shown := reroot(err, resolvedOut, filepath.Clean(*out)).Error()
+				fmt.Fprintf(s.err(), "TOKENS REFUSED: cannot write %s: %s\n", oneline.Field(dayPath), oneline.WithRemedy(shown, "nova-tokens session -h"))
+				s.item("refused", "day", d, "why", tool.Text("cannot write "+dayPath+": "+shown))
 				exit = 1
 				continue
 			}

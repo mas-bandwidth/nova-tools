@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,7 +35,7 @@ var foldLists = []struct {
 // a row mixed two day bases, a lane-day had competing reports, or a day would have shrunk
 // -- and it still writes the rest, because the exit code is about the claim. Under
 // --dry-run it reads and decides exactly the same and writes nothing, the lock included.
-func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdFold(args []string, stdout, stderr io.Writer, now time.Time, env toolenv) int {
 	fs := newFlagSet("fold")
 	out := fs.String("out", "", "directory for daily token files")
 	day := fs.String("day", "", "one UTC day to fold as YYYY-MM-DD")
@@ -51,28 +52,29 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	r := &refusals{token: "TOKENS", s: s}
 	r.required("out", *out, wantsOut)
 	checkDay(r, *day, *all)
-	sf.check(r)
+	sf.check(r, env)
 	checkMax(r, *max)
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	fi, statErr := os.Stat(*out)
+	resolvedOut := env.resolve(*out)
+	fi, statErr := os.Stat(resolvedOut)
 	if statErr != nil || !fi.IsDir() {
 		if statErr != nil && os.IsNotExist(statErr) {
 			r.add("--out does not exist: " + *out + "; it wants " + wantsOut)
 		} else if statErr != nil {
-			r.add("--out " + *out + ": " + statErr.Error() + "; it wants " + wantsOut)
+			r.add("--out " + *out + ": " + reroot(statErr, resolvedOut, *out).Error() + "; it wants " + wantsOut)
 		} else {
 			r.add("--out is not a directory: " + *out + "; it wants " + wantsOut)
 		}
 		return r.print(stderr)
 	}
-	rules, err := tokens.LoadRules(sf.repos)
+	rules, err := tokens.LoadRules(env.resolve(sf.repos))
 	if err != nil {
-		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
+		r.add("--repos " + sf.repos + ": " + reroot(err, env.resolve(sf.repos), sf.repos).Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
-	sources, copyNotes := sf.read(rules, now, *dryRun)
+	sources, copyNotes := sf.read(rules, now, *dryRun, env)
 	folder := tokens.NewFolder()
 	for _, src := range sources {
 		for _, m := range src.Stream {
@@ -85,9 +87,9 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return refuseOverlap(s, folder.Overlaps())
 	}
 	if !*dryRun {
-		release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
+		release, err := tokens.TakeFoldLock(resolvedOut, tokens.LockWait)
 		if err != nil {
-			r.add(err.Error())
+			r.add(reroot(err, resolvedOut, filepath.Clean(*out)).Error())
 			return r.print(stderr)
 		}
 		defer release()
@@ -162,7 +164,8 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 				"date", m.Day, "model", m.Model, "repo", m.Repo, "bases", strings.Join(m.Bases, ",")))
 		}
 		outPath := tokens.Path(*out, d)
-		old, findings, readErr := tokens.ReadDayFile(outPath)
+		opPath := env.resolve(outPath)
+		old, findings, readErr := tokens.ReadDayFile(opPath)
 		if len(rows) == 0 && !conflictDays[d] && readErr != nil && os.IsNotExist(readErr) {
 			continue
 		}
@@ -174,7 +177,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if !conflictDays[d] {
 			switch {
 			case readErr != nil && !os.IsNotExist(readErr):
-				lists["unreadable"].Line(unreadableLine(s, "TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: readErr.Error()}))
+				lists["unreadable"].Line(unreadableLine(s, "TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: reroot(readErr, opPath, outPath).Error()}))
 			case readErr == nil && len(findings) > 0:
 				for _, f := range findings {
 					why := oneline.Escape(f.Reason)
@@ -239,8 +242,8 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 				daysWritten++
 				rowsWritten += len(rows)
 			case wouldWrite:
-				if err := file.Save(*out); err != nil {
-					lists["unreadable"].Line(unreadableLine(s, "TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: err.Error()}))
+				if err := file.Save(resolvedOut); err != nil {
+					lists["unreadable"].Line(unreadableLine(s, "TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: reroot(err, resolvedOut, filepath.Clean(*out)).Error()}))
 				} else {
 					written = true
 					daysWritten++

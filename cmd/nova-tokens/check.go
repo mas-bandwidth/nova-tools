@@ -23,7 +23,7 @@ import (
 // named only under --strict or a --no-spend list. A gate that cannot go green is a gate
 // people learn to skip, and this one could not: 40 findings on reports/tokens, none of
 // them work anybody would do.
-func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time, env toolenv) int {
 	fs := newFlagSet("check")
 	out := fs.String("out", "", "directory containing daily token files")
 	max := fs.Int("max", bounded.Default, "maximum findings to print; 0 prints all")
@@ -47,9 +47,9 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	opt := tokens.CheckOptions{Strict: *strict, Through: strings.TrimSpace(*through)}
 	if strings.TrimSpace(*noSpend) != "" {
-		days, err := tokens.ReadNoSpendFile(*noSpend)
+		days, err := tokens.ReadNoSpendFile(env.resolve(*noSpend))
 		if err != nil {
-			r.add("--no-spend " + *noSpend + ": " + err.Error())
+			r.add("--no-spend " + *noSpend + ": " + reroot(err, env.resolve(*noSpend), *noSpend).Error())
 		} else {
 			opt.NoSpend = days
 		}
@@ -57,9 +57,12 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	res, err := tokens.Check(*out, opt)
+	// The findings and strays are read from the resolved --out and re-rooted onto the
+	// typed one: a finding names the flag's own path, exactly as it always has.
+	resolvedOut := env.resolve(*out)
+	res, err := tokens.Check(resolvedOut, opt)
 	if err != nil {
-		r.add(err.Error())
+		r.add(reroot(err, resolvedOut, *out).Error())
 		return r.print(stderr)
 	}
 	remedyLine := "nova-tokens check --out " + *out + " --max 0"
@@ -68,17 +71,18 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	missing := s.list(true, *max, "CHECK", "missing", remedyLine)
 	strays := s.list(true, *max, "CHECK", "stray", remedyLine)
 	for _, f := range res.Findings {
+		path := typedUnder(resolvedOut, *out, f.Path)
 		reason := oneline.Cap(f.Reason, oneline.TailBytes)
-		line := fmt.Sprintf("CHECK FAILED %s: %s", oneline.Escape(f.Path), oneline.Escape(reason))
+		line := fmt.Sprintf("CHECK FAILED %s: %s", oneline.Escape(path), oneline.Escape(reason))
 		if f.Line > 0 {
-			line = fmt.Sprintf("CHECK FAILED %s:%d: %s", oneline.Escape(f.Path), f.Line, oneline.Escape(reason))
+			line = fmt.Sprintf("CHECK FAILED %s:%d: %s", oneline.Escape(path), f.Line, oneline.Escape(reason))
 		}
 		kind, list := "file", files
 		if f.Line > 2 {
 			kind, list = "row", rowsList
 		}
 		list.Line(line)
-		s.item(kind, "path", f.Path, "line", f.Line, "why", tool.Text(reason))
+		s.item(kind, "path", path, "line", f.Line, "why", tool.Text(reason))
 	}
 	files.More()
 	rowsList.More()
@@ -88,8 +92,9 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	missing.More()
 	for _, p := range res.Strays {
-		strays.Line("CHECK STRAY " + oneline.Escape(p))
-		s.item("stray", "path", p)
+		path := typedUnder(resolvedOut, *out, p)
+		strays.Line("CHECK STRAY " + oneline.Escape(path))
+		s.item("stray", "path", path)
 	}
 	strays.More()
 

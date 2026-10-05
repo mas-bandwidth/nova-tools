@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
@@ -77,7 +76,7 @@ func ledgerEntries(d tokens.DayFile) []record.LedgerEntry {
 // replaced whole, so indexing twice is the table indexing once. It reads the day files and
 // writes nothing beside them. Under --dry-run it reads and checks the same day files, prints
 // the rows it would write, and dials no store.
-func cmdLedger(args []string, stdout, stderr io.Writer) int {
+func cmdLedger(args []string, stdout, stderr io.Writer, env toolenv) int {
 	fs := newFlagSet("ledger")
 	out := fs.String("out", "", "directory containing daily token files")
 	day := fs.String("day", "", "one UTC day to index as YYYY-MM-DD")
@@ -110,7 +109,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	if *day != "" {
 		paths = []string{tokens.Path(*out, *day)}
 	} else {
-		matches, err := filepath.Glob(filepath.Join(*out, *month+"-*"+tokens.FileSuffix))
+		matches, err := filepath.Glob(filepath.Join(env.resolve(*out), *month+"-*"+tokens.FileSuffix))
 		if err != nil {
 			r.add("--out " + *out + ": " + err.Error())
 			return r.print(stderr)
@@ -124,7 +123,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	}
 	// The seat is resolved under --dry-run too, so a dry run refuses a login the real run
 	// would refuse; only the dial and the write are skipped.
-	seatUser, password, err := redisauth.Auth(*user, *passwordEnv)
+	seatUser, password, err := seatAuth(*user, *passwordEnv, env.getenv)
 	if err != nil {
 		return ledgerFailed(s, "store", "redis", err)
 	}

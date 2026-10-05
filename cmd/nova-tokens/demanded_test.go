@@ -20,21 +20,28 @@ import (
 // ---------------------------------------------------------------- rule 1: every path is a flag
 
 func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
+	t.Parallel()
+
+	opensGate.Lock()
+	defer opensGate.Unlock()
+
 	dir := t.TempDir()
 	// A complete, valid set of sources sitting under every variable a tool might reach for.
 	bait := mkdir(t, filepath.Join(dir, "bait"))
 	write(t, filepath.Join(bait, "t", "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 5}, "/x/schema/a.go")+"\n")
 	reposFile(t, bait)
-	t.Setenv("HOME", bait)
-	t.Setenv("TMPDIR", bait)
-	t.Setenv("XDG_DATA_HOME", bait)
+	env := envOf(map[string]string{
+		"HOME":          bait,
+		"TMPDIR":        bait,
+		"XDG_DATA_HOME": bait,
+	})
 
 	// Rule 1: "$HOME, $TMPDIR, $XDG_DATA_HOME and every other variable are ignored, and a
 	// test sets them and proves it." The proof is the count of source files this process
 	// has opened: a read does not change the number of entries in a directory, so
 	// counting entries proved nothing, and the refusal returns before any source is read.
 	opensBefore := tokens.Opens()
-	r := invoke(t, "fold", "--day", "2026-09-11")
+	r := invokeEnvLocked(t, env, foldStamp, "fold", "--day", "2026-09-11")
 	wantExit(t, r, 2)
 	{
 		opened := tokens.Opens() - opensBefore
@@ -48,7 +55,7 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 5}, "/x/schema/a.go")+"\n")
 	opensBefore = tokens.Opens()
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
+	wantExit(t, invokeEnvLocked(t, env, foldStamp, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
 	{
 		opened := tokens.Opens() - opensBefore
 		assert.Equal(t, int64(1), opened, "the fold opened %d source files, want the 1 its --claude names; the bait tree under $HOME, $TMPDIR and $XDG_DATA_HOME holds one more", opened)
@@ -1266,6 +1273,8 @@ func TestRule15AMixedRowSumsPerTypeOverTheSourcesThatReportedIt(t *testing.T) {
 // ---------------------------------------------------------------- rule 16 and 19: sources are read-only, one subprocess
 
 func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	scratch := mkdir(t, filepath.Join(dir, "scratch"))
@@ -1370,6 +1379,8 @@ func TestRule17TheDayComesFromTheMessageStamp(t *testing.T) {
 // and it landed in 2026-09-11.tsv with day_basis=utc. A stamp this tool cannot read is
 // rule 3's business: counted and printed, never skipped silently -- it vanished.
 func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
