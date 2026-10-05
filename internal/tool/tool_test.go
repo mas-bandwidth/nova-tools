@@ -864,6 +864,7 @@ func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
 		})
 	}
 }
+
 // topicsTool is a tool whose reference text lives in its help topics instead
 // of its banner (skeleton contract 2.7): the banner stays bounded and a
 // reader takes the reference text one topic at a time.
