@@ -23,14 +23,18 @@ tune the same way.
 
 ## Serving and publishing
 
-`nova-sprint dashboard [--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none] [--logo <file>] [--every 1s]`
+`nova-sprint dashboard [--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none | <url>] [--logo <file>] [--every 1s]`
 serves the page on each `--listen` address (default `127.0.0.1:7390`), one listener
 each, sharing one cached copy of the sprint. It reads the sprint in-process the way
 `where --json --cards` does (through the sprint's server when `NOVA_SPRINT_SERVER` names
-one, else on the store `--redis` names), at most once per `--every` and only while a page
-or a puller asks or an event stream is open: `/api/sprint` is that copy, with the build
-number and the throughput, and `/events` pushes each new copy as it is read (server-sent
-events). The pull routes a worker reads its own view from (`/friend/<name>`,
+one, else on the store `--redis` names), in one place, once per `--every` whether or not
+a page is open, so the copy is never older than a tick (the owner, 2026-10-04: "I need to
+be able to always trust the dashboard"; "Golang nova-tools and nova-sprint verbs only"):
+`/api/sprint` is that copy, with the build number and the throughput, and `/events`
+pushes each new copy as it is read (server-sent events); a request between two ticks is
+answered from the copy and reads nothing. The page is served by this verb from the
+installed release and by nothing else: no side build, no other server in front of the
+reads. The pull routes a worker reads its own view from (`/friend/<name>`,
 `/machine/<name>`, their `/api/` and `/events/` forms) are served on the `--pull`
 listeners (default `127.0.0.1:7395`), never on the page's, from the same copy:
 [SPEC-SPRINT.md](SPEC-SPRINT.md), the dashboard. The copy also names the ready
@@ -43,6 +47,21 @@ and the dashboard's output takes one line per new failure, and once a minute a l
 the reads' count, failures and read times. `--logo` names an image file
 served as the logo and the favicon; with none, the slot renders nothing.
 `/healthz` answers `ok`.
+
+One freshness check: the served data's age is the time since its read (before any good
+read, since the dashboard started). Older than 2 s for 30 s raises the alarm: one line
+on the dashboard's output (`ALARM stale: ...`), once an episode; while it stands
+`/healthz` answers 503 with why, on the page's listeners and the pull routes', and
+`/api/sprint` carries `"stale": true`. The first fresh read clears it, with one line
+(`FRESH again: ...`).
+
+The public copy is the same verb as a puller: `nova-sprint dashboard --pull <url>`, the
+`http://` or `https://` URL of another dashboard (its `/api/sprint`, or the base it is
+under), reads that dashboard's copy once per `--every` in place of the sprint and serves
+the page alone (no pull routes). It serves the copy as the upstream serves it (its data,
+its read time and its throughput), so the two pages agree; an upstream holding a failed
+read is a failed read here too, and the puller's freshness check is on the upstream's
+read time, so a page that has stopped moving upstream raises the alarm on both.
 
 The verb itself listens only inside the fleet's private network: `--listen
 127.0.0.1:7390,<tailnet-address>:7390` serves this machine and the tailnet, and an

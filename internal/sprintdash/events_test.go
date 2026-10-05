@@ -99,12 +99,12 @@ func next(t *testing.T, lines <-chan string) (name, data string) {
 
 // /events sends the current copy at once, then each new copy as the ticker's refresh
 // reads it: no poll, so no answer's latency on top of the second. Nobody connected, the
-// ticker reads nothing.
+// ticker reads all the same: the copy is never older than a tick.
 func TestEventsSendEachNewCopyAsTheRefreshReadsIt(t *testing.T) {
 	t.Parallel()
 	r := newStreamRig(t, func(n int) []byte { return where(n) })
 	r.tick <- r.now
-	assert.Equal(t, 0, r.reads(), "no stream: a tick reads nothing")
+	require.Eventually(t, func() bool { return r.reads() == 1 }, 5*time.Second, time.Millisecond, "no stream: a tick reads all the same")
 
 	resp, lines := r.open(r.s, "/events")
 	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
@@ -122,12 +122,12 @@ func TestEventsSendEachNewCopyAsTheRefreshReadsIt(t *testing.T) {
 		assert.NotEmpty(t, v.Build, "the same JSON as /api/sprint")
 		return v.Data.Landed
 	}
-	assert.InDelta(t, 0, landed(), 0, "the first event at once: the copy read at the connect")
+	assert.InDelta(t, 0, landed(), 0, "the first event at once: the copy the tick read")
 	for want := 1; want <= 3; want++ {
 		r.second()
 		assert.InDelta(t, float64(want), landed(), 0, "a tick a second on: a new read, a new event")
 	}
-	assert.Equal(t, 4, r.reads())
+	assert.Equal(t, 4, r.reads(), "the connect read nothing: the tick's copy was under a second old")
 }
 
 // /events/friend/<name> streams one friend's view, the JSON /api/friend/<name> answers;
