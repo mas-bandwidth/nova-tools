@@ -19,4 +19,3 @@ internal/swarm 41
 internal/testguard 5
 internal/tokens 2
 internal/tool 1
-internal/workgh 1
