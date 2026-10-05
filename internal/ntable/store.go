@@ -950,6 +950,14 @@ func RowSet(ctx context.Context, c redis.Cmdable, name, key string, texts map[st
 	if len(texts) == 0 {
 		return 0, fmt.Errorf("table %q: row set wants at least one text value", name)
 	}
+	// The batch's field-value bound holds the single verb too, refused before
+	// the payload is built (docs/SPEC-NOVA-TABLE.md, Manifest, identity and
+	// bounds).
+	for _, text := range texts {
+		if err := over(limitNameFieldValue, LimitFieldValueBytes, len(text), ""); err != nil {
+			return 0, (operation{table: name, row: key}).beforeSending(err)
+		}
+	}
 	body, err := payload(texts)
 	if err != nil {
 		return 0, err
@@ -1054,6 +1062,12 @@ func DropDefinition(ctx context.Context, c redis.Cmdable, name string, opts ...W
 // MemberCreate allocates an unplaced identity in the table's record namespace.
 // Existing IDs, including removed members and older epochs, are refused.
 func MemberCreate(ctx context.Context, c redis.Cmdable, name, id string, opts ...WriteOptions) error {
+	// The batch's member-id bound holds the single verb too, refused before
+	// anything is sent (docs/SPEC-NOVA-TABLE.md, Manifest, identity and
+	// bounds).
+	if err := over(limitNameMemberID, LimitMemberIDBytes, len(id), ""); err != nil {
+		return (operation{table: name}).beforeSending(err)
+	}
 	_, err := (operation{table: name, member: id}).write(ctx, c, FnMemberCreate, opts, id)
 	return err
 }
@@ -1069,6 +1083,14 @@ func RowAdd(ctx context.Context, c redis.Cmdable, name, key string, spec RowSpec
 	o := operation{table: name, row: key}
 	if !ValidRowKey(key) {
 		return Row{}, fmt.Errorf("%s: row wants a non-empty UTF-8 key with no ASCII control characters; run: nova-table row help", o.location())
+	}
+	// The batch's field-value bound holds the single verb too, refused before
+	// the payload is built (docs/SPEC-NOVA-TABLE.md, Manifest, identity and
+	// bounds).
+	for _, text := range []string{spec.Label, spec.Exclude, spec.Owner} {
+		if err := over(limitNameFieldValue, LimitFieldValueBytes, len(text), ""); err != nil {
+			return Row{}, o.beforeSending(err)
+		}
 	}
 	body, err := payload(spec)
 	if err != nil {
@@ -1243,6 +1265,14 @@ func writeMembers(ctx context.Context, c redis.Cmdable, o operation, fn string, 
 	if len(members) == 0 {
 		return 0, fmt.Errorf("%s: wants at least one member", o.location())
 	}
+	// The batch's member-id bound holds the cell verbs too, refused before the
+	// payload is built (docs/SPEC-NOVA-TABLE.md, Manifest, identity and
+	// bounds).
+	for _, m := range members {
+		if err := over(limitNameMemberID, LimitMemberIDBytes, len(m), ""); err != nil {
+			return 0, o.beforeSending(err)
+		}
+	}
 	o.member = members[0]
 	for _, m := range members {
 		args = append(args, m)
@@ -1331,6 +1361,14 @@ func ViewStateResult(name string, cmd *redis.Cmd) error {
 
 // ViewSet writes a view; every table must exist.
 func ViewSet(ctx context.Context, c redis.Cmdable, v View) error {
+	// The batch's field-value bound holds the single verb too, refused before
+	// anything is sent (docs/SPEC-NOVA-TABLE.md, Manifest, identity and
+	// bounds).
+	for _, text := range []string{v.Title, v.Summary} {
+		if err := over(limitNameFieldValue, LimitFieldValueBytes, len(text), ""); err != nil {
+			return (operation{table: v.Name, view: true}).beforeSending(err)
+		}
+	}
 	_, err := (operation{table: v.Name, view: true}).call(ctx, c, "ns_view_set", false, strings.Join(v.Tables, ","), v.Title, v.Summary)
 	return err
 }
