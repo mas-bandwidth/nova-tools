@@ -398,6 +398,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 			col = Waiting
 		}
 		fields := map[string]string{"kind": kind, "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
+		if kind == "primary" && col == Ready {
+			fields[FieldReadyAt] = stamp(s.Now)
+		}
 		if r.Held {
 			fields[FieldHeld] = stamp(s.Now)
 		}
@@ -755,7 +758,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 			continue
 		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, readyStamp(c, s.Now)))},
 			Moved: c.ID + " waiting -> ready"})
 	}
 	return p
@@ -777,7 +780,7 @@ func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
 			}
 			continue
 		}
-		out = append(out, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
+		out = append(out, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, readyStamp(c, s.Now)))},
 			Moved: c.ID + " waiting -> ready (its needs landed)"})
 	}
 	return out
@@ -1341,6 +1344,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			cardSet[FieldUsage] = rec
 		}
 		set := map[string]string{"head": head, "result": result}
+		maps.Copy(set, finishStamps(pr, c, s.Now))
 		decidedSets(r, used, pr, cardSet, set)
 		identical := false
 		if r.Failed && !passed {

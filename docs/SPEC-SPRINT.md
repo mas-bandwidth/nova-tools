@@ -889,6 +889,33 @@ not level the friends":
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
 
+### cycle-time-breakdownb.w1: where a card's wall time goes
+
+**Each card records its stage times on itself** (the owner, 2026-10-04: the
+wall-clock lens, the time from add to landed measured per stage, and the waits
+removed). The steps that already move a card write the stamps; none is
+recomputed from the log. A primary carries `admitted` (added), `ready_at`
+(first ready: add, resolve), `dealt_at` and `taken_at` (its final attempt's
+work card, the deal and take it ran on), `finished_at` (its last finish),
+`rework_s` (the seconds from each finish to the deal of the next attempt,
+summed; written at that attempt's finish), `read_asked_at` and `read_done_at`
+(the first ask and the last ok of the reads its accept counts), `accepted` and
+`landed`; its merge card carries `queued`, stamped at the accept.
+
+`sprint.CycleTimes` reads them from the snapshot: for each stage, the median and
+p90 (nearest rank) in seconds over the primaries landed in the last 24 h. The
+stages are `needs` (added to ready), `deal` (ready to dealt, a card never
+reworked), `take`, `work`, `rework` (a reworked card), `read_wait` (finished to
+first ask), `read` (first ask to last ok), `accept` and `merge` (queued to
+landed). A stage is sampled for a card only when both its stamps are on it and
+in order. The tick keeps the result in the where record (`stage_times`), and
+`where --json` carries it as `stage_times`: `all` and `streams.<stream>`, each
+stage `{median_s, p90_s, n}`; the dashboard draws one stacked bar, where wall
+time goes, from the medians of `all`. A card whose path skips a stamping step
+(a friend's deal or take, a sentinel's release or an ack's release, which do not
+go through the steps above) has no sample for the stages that need it.
+(`TestStageTimesGiveMedianAndP90PerStage`).
+
 ## 2. The cards
 
 Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a
