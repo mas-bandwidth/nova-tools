@@ -161,7 +161,7 @@ The test requirements are listed under **Tests this spec demands**.
    (`tools/sandboxcheck`, checks `dns_resolves` and
    `dns_resolves_control`: the same profile with the literal removed does not
    resolve, so the check cannot pass by the socket being irrelevant.)
-   **`mach-lookup` is narrowed to three services, measured.** An unqualified
+   **`mach-lookup` is narrowed to five services, measured.** An unqualified
    `(allow mach-lookup)` allows `pbpaste` to read the clipboard inside the
    wall. The bounded set supports
    `/bin/sh -c true`, `git status`, `curl https://example.com`,
@@ -170,6 +170,7 @@ The test requirements are listed under **Tests this spec demands**.
    ```
    (allow mach-lookup
      (global-name "com.apple.system.opendirectoryd.libinfo")   ; getpwuid, getaddrinfo
+     (global-name "com.apple.system.opendirectoryd.membership") ; reported stall did not reproduce on macOS 27.2 (measured 2026-10-05)
      (global-name "com.apple.SecurityServer")                  ; TLS trust evaluation
      (global-name "com.apple.system.logger")                   ; os_log
      (global-name "com.apple.trustd.agent"))                   ; SecTrustEvaluateWithError: Go's TLS
@@ -181,7 +182,7 @@ The test requirements are listed under **Tests this spec demands**.
    verifies through `SecurityServer`. Under the three-name set `go mod download`
    failed every fetch with `tls: failed to verify certificate: x509: OSStatus -26276`
    and the same fetch passed with this name added; `com.apple.trustd` alone did not
-   help, and `pbpaste` stays `rc=1` under the four.
+   help, and `pbpaste` stays `rc=1` under the five.
 
    All five pass under it and `pbpaste` is `rc=1`
    (`tools/sandboxcheck`, check `clipboard_denied`). **Accepted width,
@@ -2012,9 +2013,10 @@ must be **executed on the machine** before the spec's word is trusted. A build
 that cannot confirm one changes this document rather than asserting it.
 
 1. That the measured `mach-lookup` set
-   (`com.apple.system.opendirectoryd.libinfo`, `com.apple.SecurityServer`,
-   `com.apple.system.logger`, and `com.apple.trustd.agent` for Go's TLS, measured
-   2026-10-04), with `/` and `/dev` in the roots, is enough for
+   (`com.apple.system.opendirectoryd.libinfo`, `com.apple.system.opendirectoryd.membership`,
+   `com.apple.SecurityServer`, `com.apple.system.logger`, and `com.apple.trustd.agent` for Go's TLS,
+   measured 2026-10-04 through 2026-10-05; membership: reported stall did not reproduce on macOS 27.2),
+   with `/` and `/dev` in the roots, is enough for
    a Node-based harness and a Go toolchain under the profile, and if not, which
    further service each needs, added by measurement — the unqualified
    `(allow mach-lookup)` is forbidden and is not the fallback, while
