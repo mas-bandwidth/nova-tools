@@ -131,8 +131,8 @@ func TestSummaryAndNeverDown(t *testing.T) {
 }
 
 // A check that ran in the server's own process (Server.Self) measured nothing
-// outside the store: the dashboard, the bus and a friend's agent say so, and
-// are not DOWN for it.
+// outside the store: the dashboard, the bus, the dev merge queue, machine
+// versions and a friend's agent say so, and are not DOWN for it.
 func TestServedCheckSaysNotMeasured(t *testing.T) {
 	t.Parallel()
 	m := up()

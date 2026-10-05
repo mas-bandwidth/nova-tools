@@ -39,7 +39,8 @@ const Token = "MACHINERY"
 // ServerM is the sprint's server as measured: the address the environment
 // names (NOVA_SPRINT_SERVER), Self when the measure ran in the server's own
 // process (a served coordinator or handover), which measured nothing outside
-// the store (the dashboard, the bus, the friends' agents: NotMeasured), the
+// the store (the dashboard, the bus, the dev merge queue, machine versions
+// and the friends' agents: NotMeasured), the
 // error of one verb round trip, its time, and the pid of a listener on the
 // address when it is local (0 unknown).
 type ServerM struct {
