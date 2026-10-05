@@ -94,6 +94,12 @@ const templateFixCard = `fix-card — take one card and land the fix
    pick it up with no other context.
 `
 
+// GateNamesWhoseFile is the sentence the gate step of a card ends with (docs/SPEC-CARD-CONTRACT.md,
+// the card's steps): a red gate line names its file and says whether the file is the child's own
+// (in PATHS) or was already red at BASE, so the child neither fixes a file it may not touch nor
+// reports a failure that is not its own. templateCard and cardgen.Render share it.
+const GateNamesWhoseFile = "When a test fails, name its file and say whether that file is in PATHS (yours) or not (already red at BASE: run the same test on the unchanged base to say so), and report that line first."
+
 // templateCard is the card the coordinator starts from: the contract line, the RULES
 // paragraph with every general rule of DefaultChildRules quoted verbatim (lintchild.go), the task,
 // and the steps. It passes `nova-swarm lint --card --child-rules` as printed; under a rules file
@@ -101,7 +107,7 @@ const templateFixCard = `fix-card — take one card and land the fix
 // the writer fills it. It is what `nova-sprint add` holds every brief to under the general rules: a
 // card without the paragraph is refused
 // before anything is written. The <angle> words are the writer's to fill.
-var templateCard = "RESULT: <label> sha=<sha12>\n" +
+var templateCard ="RESULT: <label> sha=<sha12>\n" +
 	"REPO: <owner>/<name>\n" +
 	"BASE: <branch>\n" +
 	"The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).\n" +
@@ -116,7 +122,7 @@ var templateCard = "RESULT: <label> sha=<sha12>\n" +
 	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.\n" +
 	"STEP 2. Write the red test first, named TestSomething, in <file>_test.go, opening with t.Parallel(). Run go test -count=1 -timeout 600s ./internal/<package>/ -run TestSomething and keep the failing line.\n" +
 	"STEP 3. Make it pass in the files this card names, and only those. Cite the model or the design section from each function that implements a rule.\n" +
-	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each.\n" +
+	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each. " + GateNamesWhoseFile + "\n" +
 	"STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against <base>, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n" +
 	"STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).\n"
 
