@@ -133,7 +133,8 @@ type Cluster struct {
 // FindingsSkipped clusters the score decisions made at or after since by every class each
 // gives a p at or above bar, plus Unnamed for p(defect) at or above bar with no class there;
 // most cards first, then class order; scored is the decisions in the window. It also
-// returns the ids, in record order, of the score decisions it left out because their at is not RFC 3339: such a decision cannot be placed in the window, and
+// returns the ids, in record order, of the score decisions it left out because their at
+// is not RFC 3339: such a decision cannot be placed in the window, and
 // the caller says so rather than count it as nothing (security#79 finding 3). A decision of
 // another kind is not a score and is never named.
 func FindingsSkipped(ds []Decision, since time.Time, bar float64) (clusters []Cluster, scored int, skipped []string) {
