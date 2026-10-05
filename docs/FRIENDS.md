@@ -48,6 +48,24 @@ normally do friend work."). It arrives as a job like any other:
 STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; when done, write outbox/<card>/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>
 ```
 
+## A read asked of her
+
+`nova-sprint friend sync` delivers each read asked of `reader-<name>` into
+`inbox/reads/<read-card>/`:
+
+- `READ.md` tells her to clone at the head, judge the merge-base diff against
+  the brief, run the touched packages' vet and tests on a Linux bench, and
+  finish with `nova-sprint read --as reader-<name> --ok`, `--broken --finding
+  <file:line>`, or `--return --reason <reason>`
+- `BRIEF.md` is the primary's brief
+- `WORKER-REPORT.txt` is the worker's report
+
+It sends her a bus note whose subject says `read asked`. Once the read is
+recorded (no longer asked or reading), the next sync removes that directory.
+It does not follow a symlink at `inbox/reads` or at the read's directory.
+Her reader room is her `read_slots`, apart from the width of the jobs she
+works (docs/SPEC-SPRINT.md section 6).
+
 then the working-directory line below, a later attempt's start (the current tip
 of the card's base branch on origin, never an older base, with the work of the
 last attempt that pushed carried onto it by her, redone where it does not

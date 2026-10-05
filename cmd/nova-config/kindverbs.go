@@ -125,6 +125,13 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		}
 		values[f.Name] = fs.String(f.Name, "", fieldUsage(f, add))
 	}
+	// --read-slots is the owner's spelling of the read_slots field. The
+	// generated flag is --read_slots; both write that field, and the two
+	// together must agree.
+	var readSlotsDash *string
+	if k.Name == config.KindFriend {
+		readSlotsDash = fs.String("read-slots", "", "her reader room, the same field as --read_slots; 2 by default, 0 asks her none")
+	}
 	name, rest := nameAndRest(k, args)
 	if code, ok := parse(fs, rest, stderr, verb); !ok {
 		return code
@@ -134,12 +141,24 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		return refuse(stderr, verb, err.Error())
 	}
 	given := map[string]string{}
+	var alias string
+	aliasSet := false
 	fs.Visit(func(f *stdflag.Flag) {
 		if v, ok := values[f.Name]; ok {
 			given[f.Name] = *v
 		}
+		if f.Name == "read-slots" && readSlotsDash != nil {
+			alias, aliasSet = *readSlotsDash, true
+		}
 	})
 	var problems []string
+	if aliasSet {
+		if prev, ok := given["read_slots"]; ok && prev != alias {
+			problems = append(problems, fmt.Sprintf("--read-slots %s and --read_slots %s disagree; pass one", alias, prev))
+		} else if !ok {
+			given["read_slots"] = alias
+		}
+	}
 	seatVal := ""
 	if c.seat != nil {
 		seatVal = *c.seat

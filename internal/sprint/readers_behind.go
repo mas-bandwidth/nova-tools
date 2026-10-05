@@ -142,9 +142,11 @@ func (b ReadersLag) Decisions() []string {
 
 // readersBehindCond is the tick's condition when the readers are behind (NReadersBehind).
 func readersBehindCond(s *Snapshot) []cond {
-	b, ok := ReadersBehind(s)
-	if !ok {
-		return nil
+	var out []cond
+	if b, ok := ReadersBehind(s); ok {
+		out = append(out, cond{typ: NReadersBehind, streamLevel: true, what: b.What(), decisions: b.Decisions()})
 	}
-	return []cond{{typ: NReadersBehind, streamLevel: true, what: b.What(), decisions: b.Decisions()}}
+	// one judgment per friend reader whose asked read has waited (read_slots.go);
+	// the sprint's own judgment above is unchanged when no friend map is set
+	return append(out, readWaitsConds(s)...)
 }

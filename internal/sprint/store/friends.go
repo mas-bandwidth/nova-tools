@@ -48,6 +48,10 @@ type friendEntry struct {
 	// Mode is her delivery mode, her nova-config row's (batch or one-shot),
 	// which her daemon reads back from her beat; empty is batch.
 	Mode string `json:"mode,omitempty"`
+	// ReadSlots is her reader room, apart from Width. 0 is stored as absent
+	// and reads back as 0: she is asked no read. A friend sync'd before this
+	// field existed also reads 0 until the next sync writes her row's number.
+	ReadSlots int `json:"read_slots,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -59,10 +63,11 @@ type friendEntry struct {
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
 // of nova-config), her width and her class.
 type FriendSpec struct {
-	Name  string
-	Width int
-	Class string
-	Mode  string // her delivery mode, config.FriendMode of her row
+	Name      string
+	Width     int
+	Class     string
+	Mode      string // her delivery mode, config.FriendMode of her row
+	ReadSlots int    // her reader room, config.FriendReadSlots of her row; 0 asks her none
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -152,11 +157,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ReadSlots != s.ReadSlots:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode = s.Width, s.Class, s.Mode
+		e.Width, e.Class, e.Mode, e.ReadSlots = s.Width, s.Class, s.Mode, s.ReadSlots
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -185,6 +190,53 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		}
 	}
 	return added, removed, updated, nil
+}
+
+// WriteFriendReadSlots writes sprint.PropFriendReadSlots, a JSON object of
+// each friend's name to her read slots, when that JSON differs from the
+// property the fleet holds. It writes nothing when the JSON is the same, so
+// a second friend sync stays idle. Every friend is in the map, including one
+// at 0: a name absent from the map is not a friend.
+func (st *Store) WriteFriendReadSlots(ctx context.Context, specs []FriendSpec) (bool, error) {
+	slots := make(map[string]int, len(specs))
+	for _, s := range specs {
+		slots[s.Name] = s.ReadSlots
+	}
+	b, err := json.Marshal(slots)
+	if err != nil {
+		return false, err
+	}
+	want := string(b)
+	res, err := st.Run(ctx, Step{
+		Verb: "friend sync",
+		Load: []string{sprint.Fleet},
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			if s.Fleet == nil {
+				return sprint.Plan{}
+			}
+			cur, ok := s.Fleet.Prop(sprint.PropFriendReadSlots)
+			if ok && cur == want {
+				return sprint.Plan{}
+			}
+			return sprint.Plan{
+				Props: []sprint.PropWrite{{
+					Table: sprint.Fleet, Name: sprint.PropFriendReadSlots,
+					Value: want, Was: cur, WasAbsent: !ok,
+				}},
+				Units: []sprint.Unit{{Key: "read-slots", Moved: "friend read slots"}},
+			}
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+	if res.Lost {
+		return false, fmt.Errorf("the fleet's read slots were not written; run: nova-sprint friend sync")
+	}
+	if len(res.Refused) > 0 {
+		return false, errors.New(res.Refused[0].Why)
+	}
+	return len(res.Moved) > 0, nil
 }
 
 // FriendBeat writes one beat of the friend at the store's clock, to the
@@ -467,7 +519,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ReadSlots: e.ReadSlots}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last

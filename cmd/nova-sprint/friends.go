@@ -90,6 +90,13 @@ that came back failed, and a LAND without a full sha, an empty report and any
 other verdict finish the card failed too, each with the report's first
 paragraph. card prints who=; where counts it on her friends row.
 
+A friend's reader is reader-<name>. Her reader room is her read slots
+(nova-config friend set <name> --read-slots <n>, 2 by default, 0 asks her
+none), apart from her width. friend sync delivers each read asked of her
+into inbox/reads/<read-card>/ as READ.md, BRIEF.md and WORKER-REPORT.txt,
+sends a bus note "read asked", and removes that directory once the read is
+recorded.
+
 friend reconcile <friend> settles her cards when her own account and the table
 disagree: it reads <friend>-working/inbox/QUEUE.json, {"tasks":[{"id":"<card>",
 "state":"queued|working|done"}]} (an id is the card or its job directory), and
@@ -224,15 +231,26 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1, false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r)})
+		slots := config.FriendReadSlots(r)
+		if slots < 0 {
+			fmt.Fprintf(stderr, "%s %s: friend %s has read_slots %d, and a friend's read slots are 0 or more; run: nova-config friend set %s --read-slots <n>; nothing was changed\n", prog, name, n, slots, n)
+			return 1, false
+		}
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ReadSlots: slots})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
 		return a.readFailed(name, err, stderr), false
 	}
+	slotsWrote, err := st.WriteFriendReadSlots(ctx, specs)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s %s: the friends' read slots were not written: %s; the friends table is synced; run: nova-sprint friend sync\n", prog, name, oneline.Escape(err.Error()))
+		return 1, false
+	}
 	// the friends' sprint cards: each one dealt to her delivered into her inbox, each one
 	// she reported on finished from her outbox (friendcards.go)
 	delivered, finished := 0, 0
+	readsDelivered, readsRemoved := 0, 0
 	var said []string
 	say := func(l string) {
 		said = append(said, l)
@@ -247,17 +265,30 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: the sprint cards of %s cannot be delivered or collected: %s; the friends table is synced; run: nova-sprint friend sync\n", prog, name, s.Name, oneline.Escape(err.Error()))
 			return 1, false
 		}
+		rd, rr, err := a.friendReadsOf(ctx, st, s.Name, filepath.Join(root, s.Name+"-working"), say)
+		readsDelivered, readsRemoved = readsDelivered+rd, readsRemoved+rr
+		if err != nil {
+			fmt.Fprintf(stderr, "%s %s: the reads asked of %s cannot be delivered: %s; the friends table is synced; run: nova-sprint friend sync\n", prog, name, s.Name, oneline.Escape(err.Error()))
+			return 1, false
+		}
 	}
 	line := fmt.Sprintf("FRIEND-SYNC OK added=%s removed=%s updated=%s friends=%d", orDashStr(strings.Join(added, ","), "-"), orDashStr(strings.Join(removed, ","), "-"), orDashStr(strings.Join(updated, ","), "-"), len(rows))
 	if delivered+finished > 0 {
 		line += fmt.Sprintf(" delivered=%d finished=%d", delivered, finished)
 	}
-	if len(added)+len(removed)+len(updated)+delivered+finished == 0 {
+	if readsDelivered+readsRemoved > 0 {
+		line += fmt.Sprintf(" reads=%d reads_removed=%d", readsDelivered, readsRemoved)
+	}
+	if slotsWrote {
+		line += " read_slots"
+	}
+	idle := len(added)+len(removed)+len(updated)+delivered+finished+readsDelivered+readsRemoved == 0 && !slotsWrote
+	if idle {
 		line += ": nothing to do, the friends table already matches the config"
 	}
 	sayOK(stdout, c.json, name, line, map[string]any{"added": orEmpty(added), "removed": orEmpty(removed), "updated": orEmpty(updated), "friends": len(rows),
 		"delivered": delivered, "finished": finished, "cards": orEmpty(said)})
-	return 0, len(added)+len(removed)+len(updated)+delivered+finished > 0
+	return 0, !idle
 }
 
 func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
@@ -340,8 +371,8 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		if mode == "" {
 			mode = config.DefaultFriendMode
 		}
-		line += fmt.Sprintf(" row_mode=%s row_width=%d", mode, spec.Width)
-		facts["row_mode"], facts["row_width"] = mode, spec.Width
+		line += fmt.Sprintf(" row_mode=%s row_width=%d row_read_slots=%d", mode, spec.Width, spec.ReadSlots)
+		facts["row_mode"], facts["row_width"], facts["row_read_slots"] = mode, spec.Width, spec.ReadSlots
 	}
 	for _, n := range []struct {
 		key string
