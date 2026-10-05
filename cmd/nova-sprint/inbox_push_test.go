@@ -198,29 +198,30 @@ func TestInboxPushRefusesWhatItCannotCombine(t *testing.T) {
 
 // The ack line inbox prints joins the group's notes with commas; ack takes
 // that line as printed (nova-tools#5096, item 14): the comma list is every
-// note of the group, closed in one step.
+// note of the group, closed in one step. A need naming a dropped card is
+// refused at add (docs/SPEC-SPRINT.md section 11), so the two waiters on the
+// dropped need are never admitted: the add names the id and its outcome,
+// writes nothing, and no blocked group opens. The comma-list close itself is
+// pinned at the store (store/ack_line_test.go covers NBlocked and
+// NMissingNeed).
 func TestAckTakesTheCommaListInboxPrints(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 1 --one")
 	ta.ok("drop s1-1 --reason obsolete")
-	ta.ok("add --stream s2 b --one --needs s1-1")
-	ta.ok("add --stream s2 c --one --needs s1-1")
-	g := ta.group(sprint.NBlocked, "s2")
-	require.Len(t, g.Notes, 2, "%+v", g)
-	var line string
-	for _, c := range g.Commands {
-		if c.Decision == "ack" {
-			line = c.Lines[0]
-		}
+	before := ta.applies()
+	for _, id := range []string{"b", "c"} {
+		code, out, errs := ta.do("add --stream s2 " + id + " --one --needs s1-1")
+		require.Equal(t, 1, code, "add on a dropped need: %s%s", out, errs)
+		require.NotContains(t, out, "MOVED", "add on a dropped need wrote: %s", out)
+		assert.Contains(t, errs, "needs s1-1, which was dropped", "add on a dropped need: %s", errs)
 	}
-	require.Contains(t, line, "ack "+strings.Join(g.Notes, ",")+" --reason", "the printed ack line: %+v", g.Commands)
-	out := ta.ok(strings.TrimPrefix(strings.Replace(line, "'<why nothing is to be done>'", "'the need is waived'", 1), "nova-sprint "))
-	assert.Equal(t, 2, strings.Count(out, "acknowledged: the need is waived"), out)
+	require.Equal(t, before, ta.applies(), "a refused add wrote")
 	for _, g := range ta.inboxGroups() {
-		assert.False(t, g.Kind == sprint.Judgment && g.Type == sprint.NBlocked, "the blocked judgment is still open: %+v", g)
+		assert.False(t, g.Kind == sprint.Judgment && g.Type == sprint.NBlocked, "a refused add opened a blocked judgment: %+v", g)
 	}
+	ta.clean()
 }
 
 // inbox --wait --push through the server: the wait and the files are here,

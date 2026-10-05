@@ -104,8 +104,8 @@ func TestRankRefusesALandedPrimary(t *testing.T) {
 	h.must(RankStep(sprint.RankReq{IDs: []string{"s1-2"}, First: true}))
 }
 
-// add refuses a need that names no primary; a need on a primary on the
-// table, placed or kept (dropped), is admitted waiting.
+// add refuses a need that names no primary and one that names a dropped
+// card, naming the id and its outcome.
 func TestAddRefusesANeedThatDoesNotExist(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -115,19 +115,23 @@ func TestAddRefusesANeedThatDoesNotExist(t *testing.T) {
 	require.Len(t, res.Refused, 2, "add with a need on no primary: moved %v refused %v", res.Moved, res.Refused)
 	require.Contains(t, res.Refused[0].Why, "nosuch", "add with a need on no primary: moved %v refused %v", res.Moved, res.Refused)
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
-	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1", "b2"}, Needs: []string{"s1-1", "s1-2"}}))
-	require.Equal(t, sprint.Waiting, h.state("b1"), "b1 is %s, b2 is %s", h.state("b1"), h.state("b2"))
-	require.Equal(t, sprint.Waiting, h.state("b2"), "b1 is %s, b2 is %s", h.state("b1"), h.state("b2"))
+	res = h.run(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1", "b2"}, Needs: []string{"s1-1", "s1-2"}}))
+	require.Empty(t, res.Moved, "add with a need on a dropped card: moved %v refused %v", res.Moved, res.Refused)
+	require.Len(t, res.Refused, 2, "add with a need on a dropped card: moved %v refused %v", res.Moved, res.Refused)
+	require.Contains(t, res.Refused[0].Why, "s1-2", "add with a need on a dropped card: moved %v refused %v", res.Moved, res.Refused)
+	require.Contains(t, res.Refused[0].Why, "dropped", "add with a need on a dropped card: moved %v refused %v", res.Moved, res.Refused)
 	h.clean("added")
 }
 
-// Two needs dropped in one step give one blocked note per waiting primary.
+// Needs dropped at two times give one blocked note per waiting primary.
 func TestTwoDroppedNeedsGiveOneBlockedNote(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"later"}, Needs: []string{"s1-1", "s1-2"}}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "obsolete"}))
+	seedDroppedNeed(h, "s1-1")
+	seedDroppedNeed(h, "s1-2")
+	h.must(ResolveStep(sprint.ResolveReq{}))
 	notes, _, err := h.m.NotesSince(h.ctx, "", 1000)
 	require.NoError(t, err)
 	var blocked []sprint.Note

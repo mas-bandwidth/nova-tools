@@ -188,28 +188,26 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	ta.ok("add --stream s1 --sentinel s1-stop")
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s2 --count 1 --one")
-	ta.ok("drop s2-1 --reason 'obsolete: the tool went away'")
+	// b waits on the live s2-1: a need naming a dropped card is refused at
+	// add, and drop refuses a card a waiting card still needs without
+	// --cascade (docs/SPEC-SPRINT.md section 11), so no blocked judgment opens.
 	ta.ok("add --stream s3 b --one --needs s2-1")
 	ta.ok("fleet down m2")
-	blocked := ta.group(sprint.NBlocked, "s3")
 
 	out := ta.ok("handover")
 	for _, want := range []string{
 		"HANDOVER seat=coordinator since=init\n",
 		"STREAM s1 waiting=3 ready=1 working=0 review=0 merging=0 landed=0\n",
 		"SENTINEL s1-stop stream=s1 held: 2 wait behind it (s1-",
-		"JUDGMENT " + blocked.ID,
-		"    nova-sprint ack " + blocked.Notes[0],
 		"MEMBER m2 held by coordinator\n",
 		"DECISION ",
-		" drop s2-1 by coordinator: obsolete: the tool went away\n",
 		" fleet down m2 by coordinator\n",
 		"RULE Cards are admitted and released in waves of at least the fleet's width: add takes a directory, release names a wave, rework and drop answer a group; a single-card verb outside a judgment is the sign of doing it wrong.\n",
 		"FIRST nova-sprint where\n",
 		"FIRST nova-sprint inbox --wait --push seat\n",
 		"FIRST read docs/SPEC-SPRINT.md, \"Handing over the seat\"\n",
 		"JUDGMENT machine:stopped",
-		"HANDOVER OK judgments=2 sentinels=1 members=1 decisions=2\n",
+		"HANDOVER OK judgments=1 sentinels=1 members=1 decisions=1\n",
 	} {
 		assert.Contains(t, out, want, out)
 	}
@@ -232,13 +230,12 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	out = ta.ok("handover --json")
 	require.NoError(t, json.Unmarshal([]byte(out), &h), out)
 	assert.Equal(t, "coordinator", h.Seat.Holder)
-	require.Len(t, h.Judgments, 2, "the stopped machine's and the blocked primary's")
+	require.Len(t, h.Judgments, 1, "the stopped machine's")
 	require.Len(t, h.Sentinels, 1)
 	assert.Equal(t, "s1-stop", h.Sentinels[0].ID)
 	assert.Len(t, h.Sentinels[0].Behind, 2)
-	require.Len(t, h.Decisions, 2)
-	assert.Equal(t, "drop", h.Decisions[0].Verb)
-	assert.Equal(t, "obsolete: the tool went away", h.Decisions[0].Reason)
+	require.Len(t, h.Decisions, 1)
+	assert.Equal(t, "fleet down", h.Decisions[0].Verb)
 	assert.Len(t, h.First, 3)
 }
 
