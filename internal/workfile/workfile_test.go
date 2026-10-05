@@ -366,3 +366,47 @@ func TestDecodeRefusesANullSourceReferenceCarryingARepoOrURL(t *testing.T) {
 		assert.True(t, bytes.Equal(canonical, again))
 	})
 }
+
+// TestEncodeRefusesANumberDecodeWouldRefuse pins security#82 finding 3:
+// Encode accepts the same positive-integer bound decoder.num enforces, so a
+// tree with an issue, reference or linked-PR number above 2^31 is refused
+// instead of encoding bytes that cannot read back.
+func TestEncodeRefusesANumberDecodeWouldRefuse(t *testing.T) {
+	t.Parallel()
+	base := func(issue int) *workfile.Tree {
+		return &workfile.Tree{Source: "github", Org: "o", Fetched: "2026-01-01T00:00:00Z", Repos: []workfile.Repo{{
+			Name: "o/a", URL: workfile.Web + "o/a",
+			Issues: []workfile.Issue{{Number: issue, URL: workfile.IssueURL("o/a", issue), NodeID: "I_1", Title: "", State: "OPEN", Origin: "internal", AuthorAssociation: "OWNER"}},
+		}}}
+	}
+	for _, n := range []int{2147483648, 2147483649} {
+		data, err := workfile.Encode(base(n))
+		if n == 2147483648 {
+			require.NoError(t, err)
+			back, err := workfile.Decode("x", data, workfile.Limits(len(data)))
+			require.NoError(t, err)
+			require.Len(t, back.Repos, 1)
+			require.Len(t, back.Repos[0].Issues, 1)
+			assert.Equal(t, n, back.Repos[0].Issues[0].Number)
+			continue
+		}
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "2147483649")
+		assert.Contains(t, err.Error(), "above")
+	}
+
+	linked := base(1)
+	linked.Repos[0].Issues[0].LinkedPRs = []workfile.LinkedPR{{Repo: "o/a", Number: 2147483648, URL: "u", State: "MERGED"}}
+	data, err := workfile.Encode(linked)
+	require.NoError(t, err)
+	back, err := workfile.Decode("x", data, workfile.Limits(len(data)))
+	require.NoError(t, err)
+	require.Len(t, back.Repos[0].Issues[0].LinkedPRs, 1)
+	assert.Equal(t, 2147483648, back.Repos[0].Issues[0].LinkedPRs[0].Number)
+
+	linked.Repos[0].Issues[0].LinkedPRs[0].Number = 2147483649
+	_, err = workfile.Encode(linked)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2147483649")
+	assert.Contains(t, err.Error(), "above")
+}
