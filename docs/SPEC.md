@@ -1729,7 +1729,8 @@ with the same bytes, and refuses before writing anything if one has other
 bytes; `--dry-run` writes nothing. It is the tool's only write.
 
 **Findings.** Each finding line carries `match="<words>"`: the words its rule
-matched. **`--json`** prints the run as one JSON object on stdout (`result`,
+matched (a TRAIT span over 120 bytes is its signal words alone), and an installation sentence over 500 bytes is cut with a
+`...+<n>B` mark in both renderings. **`--json`** prints the run as one JSON object on stdout (`result`,
 `facts` with the closing line's counts, `items` one per finding, skip and
 banner, `more`, `notes`), capped by `--max` the same way; a refusal under
 `--json` is the same object with `status` `refused`.

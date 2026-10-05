@@ -134,7 +134,7 @@ func TestOneGiantTraitSentenceCannotMakeAFindingLineOrJSONItemGiant(t *testing.T
 	require.Equal(t, 1, exit, "stdout: %.200s stderr: %.200s", stdout, stderr)
 	fails := 0
 	for _, line := range strings.Split(stderr+stdout, "\n") {
-		if strings.HasPrefix(line, "SELFTALK FAIL ") {
+		if strings.Contains(line, " match=") {
 			fails++
 		}
 		assert.Less(t, len(line), bound, "a lines-mode line is %d bytes", len(line))
