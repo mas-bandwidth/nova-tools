@@ -17,7 +17,7 @@ import (
 func TestLandReturnsAnEmptyCommitLandingToReview(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 
 	// One head: an empty commit on the card's branch, pushed alone. No RESULT.md is planted in
 	// the lander's clone: the claim is what the card's finish records (--report), as in a real landing.

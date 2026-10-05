@@ -50,7 +50,7 @@ var realSteps = []string{
 	"nova-sprint tick",
 	"nova-sprint tick",
 	"nova-sprint take --as m1 --epoch 0",
-	"git -C work commit -q --allow-empty -m s1-1 && git -C work push -q origin HEAD:sprint/s1-1.w1.g1.e0",
+	"echo done > work/s1-1.txt && git -C work add s1-1.txt && git -C work commit -q -m s1-1 && git -C work push -q origin HEAD:sprint/s1-1.w1.g1.e0",
 	`nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --head "$(git -C work rev-parse HEAD)" --report done`,
 	"nova-sprint tick",
 	"nova-sprint read --as reader-a --begin --epoch 0",

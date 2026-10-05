@@ -35,8 +35,12 @@ func TestTheHelpsWalkthroughLandsACardForReal(t *testing.T) {
 	sprintEnv := map[string]string{"NOVA_SPRINT_REDIS": "mem:" + filepath.Join(dir, "sprint.twin"), "NOVA_SPRINT_ACTOR": "boss"}
 	var last string
 	for _, line := range realSteps {
-		if strings.HasPrefix(line, "git ") {
+		if strings.HasPrefix(line, "git ") || strings.HasPrefix(line, "echo ") {
 			for _, part := range strings.Split(line, " && ") {
+				if text, file, ok := strings.Cut(strings.TrimPrefix(part, "echo "), " > "); ok && strings.HasPrefix(part, "echo ") {
+					require.NoError(t, os.WriteFile(filepath.Join(dir, file), []byte(text+"\n"), 0o600)) // the worker's change
+					continue
+				}
 				args, err := onboarding.SplitShell(part)
 				require.NoError(t, err, part)
 				git(args[1:]...)
