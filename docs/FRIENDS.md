@@ -2,8 +2,9 @@
 
 A friend is an AI who works beside the coordinator under her own name: a
 nova-config friend row (docs/SPEC-CONFIG.md, `friend`), a row of the sprint's
-friends table (docs/FLEET.md), and a working directory `~/<name>-working` on
-the machine she runs on. The coordinator is a friend row too (the sprint row's
+friends table (docs/FLEET.md), and a working directory on the machine she runs
+on: her friend row's `dir` (`nova-config friend set <name> --dir <absolute
+path>`, a real directory and never a symlink), else `~/<name>-working`. The coordinator is a friend row too (the sprint row's
 `coordinator` names one), and her own working directory follows the same
 standard. This page is the standard for that directory: how a job arrives, how
 it is reported, where its work lives, and how the work is removed once done.
@@ -184,6 +185,29 @@ Work in ~/<name>-working/jobs/<job>/: every clone, worktree and build output goe
 A clone left inside `inbox/<job>/`, beside its brief (the layout before this
 line), is found there too.
 
+### Her directory is her row's
+
+nova-sprint finds a friend's inbox and outbox at her nova-config row's `dir`, and
+only at `<root>/<name>-working` (`--root`, else HOME) when the row has none, saying
+so once a run (`NOTE friend=<name> has no dir on her nova-config row ...`). On
+2026-10-03 the friends' directories moved to another disk with symlinks left at
+`~/<name>-working`, and a symlinked path broke one friend's sandbox, whose writable
+root refused it, for ten hours. So a friend's directory is declared on her
+row, as the real path:
+
+```
+nova-config friend set <name> --dir /srv/friends/<name>/working
+nova-config apply --kind friend
+nova-sprint friend sync
+```
+
+`--dir` is refused when the path is not an existing directory on the machine running
+nova-config, or is a symlink (the refusal names where the link points); `--dir ''`
+unsets it. friend sync, friend reconcile (the verb and the run loop's), friend clean
+and the seat's inbox read it. The work line above, which friend sync writes into each
+brief, still names `~/<name>-working`: the brief generator reads no row yet
+(friend-dir-from-the-row.w2), so a friend's symlink stays until it does.
+
 ## Retention: `nova-sprint friend clean`
 
 A done job's clones are removed by the machine, nightly, by the rule the bench
@@ -237,7 +261,8 @@ nova-config loop add seat-push --machine bench-a --argv '["/usr/bin/env","NOVA_S
 
    Its log is the loop's, `~/nova-bench/loops/seat-push.log`. It writes each new
    judgment and note into the holder's inbox directory,
-   `~/<holder>-working/inbox/sprint-judgments/`, and follows the seat when it
+   `inbox/sprint-judgments/` in the holder's working directory (her row's `dir`,
+   else `~/<holder>-working`), and follows the seat when it
    moves. It replaces the hand-written launch agent `com.nova.loop.seat-push-<seat>`
    (a zsh script under `nova-secrets exec`).
 

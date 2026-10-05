@@ -18,6 +18,7 @@ import (
 	"maps"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -100,6 +101,11 @@ type Field struct {
 	// characters (ListLine), so one row stays one short line; show, --json and
 	// the history keep it whole.
 	Cut bool
+	// Valid, when set, is the rule on a value add or set names, run on its
+	// canonical form when it is not empty and never on a stored row: what the
+	// machine running nova-config can see of it now (a friend's dir is an
+	// existing directory, not a symlink). nil checks nothing.
+	Valid func(v string) error
 }
 
 // Kind is one kind of configuration. See the package comment.
@@ -223,14 +229,63 @@ func FriendMode(r Row) string {
 	return DefaultFriendMode
 }
 
+// FriendDir is a friend row's working directory: its dir field, "" when the
+// row has none (nova-sprint then joins <root>/<name>-working, and says so).
+func FriendDir(r Row) string { return r.Fields["dir"] }
+
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
-// instead). A width that failed its own validation is absent and skipped.
+// instead), and a dir she has is an absolute, clean path. A width that failed
+// its own validation is absent and skipped.
 func checkFriend(r Row) error {
+	var problems []string
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
-		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
+		problems = append(problems, fmt.Sprintf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w))
+	}
+	if d := r.Fields["dir"]; d != "" && (!filepath.IsAbs(d) || filepath.Clean(d) != d) {
+		problems = append(problems, fmt.Sprintf("friend %s has dir %q; a friend's dir is an absolute path with no trailing slash, . or ..: want --dir %s", r.Name, d, cleanAbs(d)))
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// cleanAbs is the path a refused dir likely meant, for the refusal's remedy.
+func cleanAbs(d string) string {
+	if !filepath.IsAbs(d) {
+		return "/<absolute path>"
+	}
+	return filepath.Clean(d)
+}
+
+// validFriendDir is the friend dir field's Valid: the directory is there on
+// this machine and is a directory itself, never a symlink to one (a symlinked
+// working directory is what a sandbox's writable root refuses; the owner,
+// 2026-10-05: "I'd like the symlinks to go away").
+func validFriendDir(d string) error {
+	if !filepath.IsAbs(d) || filepath.Clean(d) != d {
+		return fmt.Errorf("--dir %q: a friend's dir is an absolute path with no trailing slash, . or ..: want --dir %s", d, cleanAbs(d))
+	}
+	fi, err := os.Lstat(d)
+	switch {
+	case err != nil:
+		return fmt.Errorf("--dir %s is not an existing directory on this machine (%v); make it, or name her real working directory", d, err)
+	case fi.Mode()&os.ModeSymlink != 0:
+		real, _ := filepath.EvalSymlinks(d) // ignored: the refusal names the link either way
+		return fmt.Errorf("--dir %s is a symlink, and a friend's dir is her real directory: want --dir %s", d, orText(real, "<the directory it points to>"))
+	case !fi.IsDir():
+		return fmt.Errorf("--dir %s is not a directory", d)
+	}
+	return nil
+}
+
+// orText is s, or dflt when s is empty.
+func orText(s, dflt string) string {
+	if s == "" {
+		return dflt
+	}
+	return s
 }
 
 // Tiers are the model tiers a friend can do, capacity.lua's filter_ok list
@@ -410,6 +465,7 @@ var Kinds = []*Kind{
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
+			{Name: "dir", Type: TypeText, Nullable: true, Valid: validFriendDir, Help: "her working directory, the absolute path of an existing directory and never a symlink, where nova-sprint delivers her cards and reads her outbox; unset (the default, or --dir '') is <root>/<name>-working"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
@@ -1062,6 +1118,9 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 			continue
 		}
 		c, err := f.Canonical(v)
+		if err == nil && f.Valid != nil && c != "" {
+			err = f.Valid(c)
+		}
 		if err != nil {
 			problems = append(problems, err.Error())
 			continue
@@ -1113,6 +1172,9 @@ func (k *Kind) Changes(raw map[string]string) (map[string]string, error) {
 			continue
 		}
 		c, err := f.Canonical(v)
+		if err == nil && f.Valid != nil && c != "" {
+			err = f.Valid(c)
+		}
 		if err != nil {
 			problems = append(problems, err.Error())
 			continue
