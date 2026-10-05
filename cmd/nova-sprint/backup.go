@@ -32,6 +32,7 @@ func init() {
 func (a *app) cmdBackup(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("backup")
 	file := fs.String("file", "", "the file the backup is written to (required; it must not exist)")
+	dry := fs.Bool("dry-run", false, "verify the backup in memory without writing --file; writes nothing")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "backup", argErr("takes no words ", err, pos...))
@@ -57,11 +58,15 @@ func (a *app) cmdBackup(args []string, stdout, stderr io.Writer) int {
 		return backupFailed(stderr, "this store has no backup; run: nova-sprint backup --redis <a Redis address> --file "+*file)
 	}
 	var out strings.Builder
-	if err := runBackup(context.Background(), src, twin, *file, &out); err != nil {
+	if err := runBackup(context.Background(), src, twin, *file, *dry, &out); err != nil {
 		return backupFailed(stderr, err.Error())
 	}
 	if c.json {
-		b, _ := json.Marshal(map[string]any{"file": *file, "line": strings.TrimSpace(out.String())})
+		m := map[string]any{"file": *file, "line": strings.TrimSpace(out.String())}
+		if *dry {
+			m["dry_run"] = true
+		}
+		b, _ := json.Marshal(m)
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -81,10 +86,40 @@ func backupFailed(stderr io.Writer, what string) int {
 // compare counts and (a document) the restored store's own document, scan for
 // secrets. A file that fails any step is removed, so the path holds only a
 // verified, secret-free backup. The one line it prints says what was proved.
-func runBackup(ctx context.Context, src store.SnapshotSource, twin store.SnapshotTwin, path string, out io.Writer) error {
+func runBackup(ctx context.Context, src store.SnapshotSource, twin store.SnapshotTwin, path string, dry bool, out io.Writer) error {
 	rdb, live, err := src.Save(ctx)
 	if err != nil {
 		return fmt.Errorf("the store gave no backup: %w; run: nova-sprint backup --file "+path, err)
+	}
+	if dry {
+		sum := sha256.Sum256(rdb)
+		got, err := twin.Load(rdb)
+		if err != nil {
+			return fmt.Errorf("the backup %s does not restore into a twin: %v", path, err)
+		}
+		if why := backupCountsDiffer(live, got); why != "" {
+			return fmt.Errorf("the backup %s restored with other counts than the store held (%s)", path, why)
+		}
+		compared := "counts"
+		if _, ok := twin.(store.MemTwin); ok {
+			once, err := backupRoundTrip(rdb)
+			if err == nil {
+				var twice []byte
+				twice, err = backupRoundTrip(once)
+				if err == nil && string(twice) != string(once) {
+					err = errors.New("the restored store writes a different document when restored again")
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("the backup %s does not restore into a twin that holds what it holds: %v", path, err)
+			}
+			compared = "document+counts"
+		}
+		if lines := secretLines(rdb); len(lines) > 0 {
+			return fmt.Errorf("the backup %s holds secret-shaped text on line %s (the value is not shown); find the card or key that holds it and remove it; run: nova-sprint backup --file %s", path, joinInts(lines), path)
+		}
+		fmt.Fprintf(out, "BACKUP DRY-RUN file=%s sha256=%s bytes=%d %s restored=twin compared=%s secrets=none; nothing was written\n", path, hex.EncodeToString(sum[:]), len(rdb), countsText(got), compared)
+		return nil
 	}
 	if err := writeAtomic(path, rdb); err != nil {
 		return fmt.Errorf("%s cannot be written: %v; run: nova-sprint backup --file <a writable path>", path, err)

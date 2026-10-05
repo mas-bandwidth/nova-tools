@@ -115,9 +115,26 @@ func TestBackupFailsAndRemovesTheFileWhenTheRestoreDiffers(t *testing.T) {
 	} {
 		dest := filepath.Join(t.TempDir(), "b.bak")
 		var out bytes.Buffer
-		err := runBackup(context.Background(), store.MemSource{M: m}, tw, dest, &out)
+		err := runBackup(context.Background(), store.MemSource{M: m}, tw, dest, false, &out)
 		require.Error(t, err, name)
 		_, serr := os.Stat(dest)
 		assert.True(t, os.IsNotExist(serr), "%s: the failed backup is removed", name)
 	}
+}
+
+func TestBackupDryRunVerifiesAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	file := filepath.Join(dir, "sprint.twin")
+	for _, line := range twinSteps[:3] {
+		code, out, errs := twinProcess(t, file, line)
+		require.Equal(t, 0, code, "%s: exit %d\n%s%s", line, code, out, errs)
+	}
+	dest := filepath.Join(dir, "backup.bak")
+	code, out, errs := twinProcess(t, file, "nova-sprint backup --file "+dest+" --dry-run")
+	require.Equal(t, 0, code, "backup: exit %d\n%s%s", code, out, errs)
+	assert.Contains(t, out, "BACKUP DRY-RUN file="+dest)
+	assert.Contains(t, out, "nothing was written")
+	_, err := os.Stat(dest)
+	assert.True(t, os.IsNotExist(err), "dry run writes no file")
 }

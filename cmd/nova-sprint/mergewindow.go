@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"strconv"
@@ -30,12 +31,24 @@ func (a *app) cmdMergeWindowOpen(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("merge-window open")
 	dur := fs.String("for", "", "how long landing pauses, from now: a duration above zero (10m, 1h); a window opened again replaces the one open")
 	reason := fs.String("reason", "", "why landing pauses, shown on every batch the window pauses (required)")
+	dry := fs.Bool("dry-run", false, "check --for and --reason, say how long landing would pause, and write nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "merge-window open", err.Error())
 	}
 	if len(pos) > 0 {
 		return refuse(stderr, "merge-window open", "takes no positional words: --for <duration> --reason <text>")
+	}
+	if *dry {
+		d, err := time.ParseDuration(*dur)
+		if err != nil || d <= 0 {
+			return refuse(stderr, "merge-window open", "--for wants a duration above zero (10m, 1h); found "+strconv.Quote(*dur))
+		}
+		if strings.TrimSpace(*reason) == "" {
+			return refuse(stderr, "merge-window open", "--reason wants why landing pauses, shown on every paused landing")
+		}
+		fmt.Fprintf(stdout, "MERGE-WINDOW OPEN DRY-RUN for=%s until=%s; nothing was written\n", d, a.now().Add(d).UTC().Format(time.RFC3339))
+		return 0
 	}
 	st, err := a.store(*c)
 	if err != nil {
