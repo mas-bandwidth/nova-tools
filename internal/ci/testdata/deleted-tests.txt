@@ -2076,3 +2076,4 @@ internal/sprint/unpin_returned_test.go nova-sprint moved to its own repository 2
 internal/sprint/unpin_test.go nova-sprint moved to its own repository 2026-10-04 (ideas#850); dev added or changed this test after the split was cut and the carry of it is owed to nova-sprint
 internal/sprint/who_no_route_test.go nova-sprint moved to its own repository 2026-10-04 (ideas#850); dev added or changed this test after the split was cut and the carry of it is owed to nova-sprint
 internal/sprint/who_preference_test.go nova-sprint moved to its own repository 2026-10-04 (ideas#850); dev added or changed this test after the split was cut and the carry of it is owed to nova-sprint
+internal/docs/processor_doc_test.go the test held docs/PROCESSOR.md, the sprint-as-a-processor page, to files that moved to its own repository 2026-10-04 (ideas#850); the page left with them and the carry of both is owed to nova-sprint

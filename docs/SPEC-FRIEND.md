@@ -599,7 +599,7 @@ proves the daemon; whether her session answers is the coordinator's
 observation (`friend health`). The roster and her cards are moved by the
 friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
 row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
-loop"; cmd/nova-sprint/friend_loop.go).
+loop"; the loop lives in nova-sprint).
 
 ## One-shot lanes (internal/friend/lanes.go)
 
@@ -1042,7 +1042,7 @@ records them for pacing. Claude has no deliver command, so its
 `Watch`. The state machine (up, down until a reset, waking on a nonce) wants
 its TLA+ module beside `tla/Friend.tla`.
 
-## Chaos: detection proved by breaking it (internal/friend/chaos_functional_test.go)
+## Chaos: detection proved by breaking it
 
 The owner, 2026-10-04: "If your detection that they are down doesn't work
 WHEN THEY ARE DOWN, that seems like a bad design." One functional test,
@@ -1067,7 +1067,7 @@ bubble, so the long bounds are fake time.
 "None left on him" for the down cases is the presence model's invariant (a
 held or down friend holds no card, fr-presence-model); today a down friend
 keeps the cards dealt to him and the deadline judges them (`FriendDownAfter`,
-internal/sprint/presence.go), and no card yet names that withdrawal.
+nova-sprint presence), and no card yet names that withdrawal.
 
 A part the landed code cannot meet is owed: it is checked like the rest, and
 when it fails the case fails, each line
