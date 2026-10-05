@@ -89,7 +89,7 @@ were written for, because a rule document is a list of absolutes, and acting on
 that output weakened five rules before a cold reader caught them. One was
 floor-level. If you find the next one of those, we want it.
 
-### secrets-never-in-errors.w4
+### secrets-never-in-errors.w5
 
 A secret handed to an opener must not come back out of it. `TestNoSecretReachesAnError`
 (`internal/ci/secrets_in_errors_class_test.go`) drives secret-shaped strings (a Postgres
