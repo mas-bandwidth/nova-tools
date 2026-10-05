@@ -28,13 +28,18 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "version"},
 	})
 	testverbhelp.HelpVerb(t, cli.NoStdin(), "nova-decide", "ask", "read", "score", "gate", "brief", "outcome", "calibrate", "findings", "version")
+	// The help a cold reader gets first: what it shows is what the tool does.
+	t.Run("schema_and_result_line", helpShowsASchemaAndAResultLine)
+	t.Run("result_lines_are_what_ask_prints", helpResultLinesAreWhatAskPrints)
+	t.Run("usage_wraps_at_100_columns", helpUsageWrapsAtOneHundredColumns)
+	t.Run("examples_run_from_an_empty_dir", usageBannerExamplesRun)
 }
 
-// TestHelpShowsASchemaAndAResultLine holds the banner's how-it-works text to
+// helpShowsASchemaAndAResultLine holds the banner's how-it-works text to
 // what a cold reader needs before a first run: the term noul defined where it
 // first appears, one inline schema, state and fixed-backend answers file, the
 // ANSWER line the run prints, and that exit 0 means the decision was recorded.
-func TestHelpShowsASchemaAndAResultLine(t *testing.T) {
+func helpShowsASchemaAndAResultLine(t *testing.T) {
 	t.Parallel()
 	help := cli.OK(t, "help").Stdout
 
@@ -55,7 +60,7 @@ func TestHelpShowsASchemaAndAResultLine(t *testing.T) {
 
 // The ASK lines the help shows are the lines a recorded ask prints, byte for
 // byte: the setup: lines and the first example are run and compared.
-func TestHelpResultLinesAreWhatAskPrints(t *testing.T) {
+func helpResultLinesAreWhatAskPrints(t *testing.T) {
 	t.Parallel()
 	help := cli.OK(t, "help").Stdout
 	examples, err := onboarding.ExampleLines(help, "nova-decide")
@@ -76,7 +81,7 @@ func TestHelpResultLinesAreWhatAskPrints(t *testing.T) {
 
 // Every help line is at most 100 columns, and a usage form that wraps continues
 // on a line indented deeper than the synopsis it belongs to.
-func TestHelpUsageWrapsAtOneHundredColumns(t *testing.T) {
+func helpUsageWrapsAtOneHundredColumns(t *testing.T) {
 	t.Parallel()
 	help := cli.OK(t, "help").Stdout
 	_, tail, _ := strings.Cut(help, "usage:\n")

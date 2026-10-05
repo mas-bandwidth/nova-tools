@@ -63,7 +63,7 @@ func emptyDir(t *testing.T, help string) func(args []string) onboarding.Result {
 
 // The usage banner's example block is ask, outcome and findings, in that order,
 // and runs as printed in an empty directory after the setup: lines, each exiting 0.
-func TestUsageBannerExamplesRun(t *testing.T) {
+func usageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 	help := cli.OK(t, "help").Stdout
 	examples, err := onboarding.ExampleLines(help, "nova-decide")
